@@ -6,6 +6,7 @@ pub struct DocumentSummary {
     pub id: i64,
     pub doc_type: String,
     pub doc_date: Option<String>, // RFC3339
+    pub doc_date_end: Option<String>, // RFC3339
     pub title: Option<String>,
     pub page_count: i32,
 }
@@ -15,6 +16,7 @@ impl From<&Document> for DocumentSummary {
             id: d.id,
             doc_type: d.doc_type.as_str().to_string(),
             doc_date: d.doc_date.map(|x| x.to_rfc3339()),
+            doc_date_end: d.doc_date_end.map(|x| x.to_rfc3339()),
             title: d.title.clone(),
             page_count: d.page_count,
         }

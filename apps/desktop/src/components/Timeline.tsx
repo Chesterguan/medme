@@ -34,7 +34,9 @@ export default function Timeline({ docs }: { docs: DocumentSummary[] }) {
                className={`bg-white border border-slate-200 border-l-4 ${TYPE_ACCENT[d.doc_type] ?? "border-slate-300"} rounded-2xl p-4 shadow-sm hover:shadow-md transition-all`}>
             <div className="flex items-center justify-between">
               <span className="font-medium text-slate-800">{d.title ?? "(无标题)"}</span>
-              <span className="text-xs font-mono text-slate-500">{fmtDate(d.doc_date)}</span>
+              {d.doc_date_end
+                ? <span className="text-xs font-mono text-slate-500">{fmtDate(d.doc_date)} → {fmtDate(d.doc_date_end)}</span>
+                : <span className="text-xs font-mono text-slate-500">{fmtDate(d.doc_date)}</span>}
             </div>
             <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-600 mt-1 inline-block">
               {TYPE_LABEL[d.doc_type] ?? d.doc_type}

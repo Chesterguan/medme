@@ -2,6 +2,7 @@ export interface DocumentSummary {
   id: number;
   doc_type: string;
   doc_date: string | null; // RFC3339
+  doc_date_end: string | null; // RFC3339
   title: string | null;
   page_count: number;
 }

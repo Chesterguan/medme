@@ -61,6 +61,7 @@ pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
                 source_file_id: sid,
                 doc_type: e.doc_type.clone(),
                 doc_date: e.doc_date,
+                doc_date_end: e.doc_date_end,
                 title: Some(name.clone()),
                 language: e.language,
                 page_count: e.page_count,
@@ -139,5 +140,18 @@ mod tests {
         assert_eq!(o.status, IngestStatus::StoredNoText);
         assert!(!v.has_document(o.source_file_id).unwrap()); // 没建 document
         assert_eq!(v.timeline().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn ingest_captures_date_range() {
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let p = fdir.path().join("discharge.txt");
+        std::fs::write(&p, "出院记录\n入院日期:2023-01-01 出院日期:2023-01-20\n脑梗死").unwrap();
+        ingest(&v, &p).unwrap();
+        let tl = v.timeline().unwrap();
+        assert_eq!(tl[0].doc_date.unwrap().format("%Y-%m-%d").to_string(), "2023-01-01");
+        assert_eq!(tl[0].doc_date_end.unwrap().format("%Y-%m-%d").to_string(), "2023-01-20");
     }
 }
