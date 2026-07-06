@@ -166,7 +166,8 @@ impl Vault {
 
     pub fn add_ocr(&self, o: NewOcr) -> Result<i64, MedmeError> {
         let now = Self::now_rfc3339();
-        self.conn().execute(
+        let tx = self.conn().unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO ocr_result
              (document_id, page_no, backend, model_version, text, confidence, created_at)
              VALUES (?1,?2,?3,?4,?5,?6,?7)",
@@ -175,17 +176,18 @@ impl Vault {
                 o.model_version, o.text, o.confidence, now
             ],
         )?;
-        let ocr_id = self.conn().last_insert_rowid();
+        let ocr_id = tx.last_insert_rowid();
         // FTS body:分词后写入(偏离 003 的触发器方案,原因见 Global Constraints)
-        let title: Option<String> = self.conn().query_row(
+        let title: Option<String> = tx.query_row(
             "SELECT title FROM document WHERE id = ?1", [o.document_id], |r| r.get(0),
         )?;
         let body = crate::tokenize::tokenize(&o.text);
         let title_tok = title.as_deref().map(crate::tokenize::tokenize);
-        self.conn().execute(
+        tx.execute(
             "INSERT INTO document_fts(document_id, title, body) VALUES (?1,?2,?3)",
             rusqlite::params![o.document_id, title_tok, body],
         )?;
+        tx.commit()?;
         Ok(ocr_id)
     }
 }
@@ -260,5 +262,13 @@ mod tests {
         }).unwrap();
         assert!(ocr_id > 0);
         assert_eq!(v.debug_count("document_fts"), 1);
+
+        // body 应为分词后文本,含中英 token
+        let body: String = v.conn().query_row(
+            "SELECT body FROM document_fts WHERE document_id = ?1", [doc.id], |r| r.get(0),
+        ).unwrap();
+        assert!(body.contains("肌酐"));
+        assert!(body.contains("Creatinine"));
+        assert!(body.split_whitespace().count() >= 3); // 已分词
     }
 }

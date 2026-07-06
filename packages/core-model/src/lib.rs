@@ -20,6 +20,7 @@ impl Vault {
         std::fs::create_dir_all(root.join("objects"))?;
         std::fs::write(root.join("VERSION"), "1")?;
         let conn = Connection::open(root.join("medme.db"))?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         schema::migrate(&conn)?;
         Ok(Vault { conn, root: root.to_path_buf() })
     }
