@@ -48,6 +48,11 @@ impl Vault {
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
+
+    /// 把 vault 内相对路径(如 `storage_path`)拼到 vault root,得到绝对路径。
+    pub fn root_join(&self, rel: &str) -> std::path::PathBuf {
+        self.root().join(rel)
+    }
 }
 
 #[cfg(test)]

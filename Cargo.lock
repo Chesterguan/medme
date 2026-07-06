@@ -2320,6 +2320,8 @@ dependencies = [
 name = "medme-desktop"
 version = "0.1.0"
 dependencies = [
+ "core-model",
+ "pipeline",
  "serde",
  "serde_json",
  "tauri",
