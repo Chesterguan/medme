@@ -19,8 +19,15 @@ pub struct TimelineEntry {
 
 impl Vault {
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, MedmeError> {
-        let match_q = crate::tokenize::tokenize(query);
-        if match_q.trim().is_empty() { return Ok(vec![]); }
+        // 把每个 token 包成 FTS5 字面短语("...",内部引号翻倍),并丢弃纯标点 token,
+        // 使 '-'/':'/'"'/'(' 等运算符字符被当作字面量,原始用户输入不会触发 FTS5 语法错误。
+        let match_q: String = crate::tokenize::tokenize(query)
+            .split_whitespace()
+            .filter(|t| t.chars().any(|c| c.is_alphanumeric()))
+            .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if match_q.is_empty() { return Ok(vec![]); }
         let mut stmt = self.conn().prepare(
             "SELECT document_id, title, snippet(document_fts, 1, '[', ']', '…', 12) AS snip
              FROM document_fts WHERE document_fts MATCH ?1 LIMIT ?2",
@@ -92,6 +99,23 @@ mod tests {
         assert_eq!(v.search("肌酐", 10).unwrap().len(), 1);
         assert_eq!(v.search("Metoprolol", 10).unwrap().len(), 1);
         assert_eq!(v.search("nonexistent", 10).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn search_handles_fts5_special_chars_gracefully() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        seed(&v, "炎症", "C-reactive protein 反应蛋白 升高", Some("2023-05-01T00:00:00Z"));
+
+        // 连字符查询过去会报 Sqlite 错误;现在应正常命中
+        let hits = v.search("C-reactive", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        // 杂散引号 / 冒号 / 括号:不得 panic 或返回 Err
+        assert!(v.search("\"unterminated", 10).is_ok());
+        assert!(v.search("col:val", 10).is_ok());
+        assert!(v.search("a AND (b", 10).is_ok());
+        // 纯标点:短路返回空
+        assert!(v.search("---", 10).unwrap().is_empty());
     }
 
     #[test]
