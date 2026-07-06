@@ -8,5 +8,6 @@ core-model = { path = "../core-model" }
 chrono.workspace = true
 anyhow.workspace = true
 pdf-extract.workspace = true
+regex.workspace = true
 
 [dev-dependencies]

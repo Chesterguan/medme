@@ -2780,6 +2780,7 @@ dependencies = [
  "chrono",
  "core-model",
  "pdf-extract",
+ "regex",
 ]
 
 [[package]]
