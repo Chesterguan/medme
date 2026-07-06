@@ -1,0 +1,76 @@
+use sha2::{Digest, Sha256};
+use std::path::Path;
+use crate::{Vault, MedmeError};
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(bytes);
+    hex(&h.finalize())
+}
+
+pub fn object_relpath(hash: &str) -> String {
+    format!("objects/{}/{}/{}", &hash[0..2], &hash[2..4], hash)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes { s.push_str(&format!("{:02x}", b)); }
+    s
+}
+
+impl Vault {
+    /// 原子写入 CAS。返回 (hash, 相对路径, 是否实际写入)。已存在则不覆盖。
+    pub fn store_object(&self, bytes: &[u8]) -> Result<(String, String, bool), MedmeError> {
+        let hash = sha256_hex(bytes);
+        let rel = object_relpath(&hash);
+        let abs = self.root().join(&rel);
+        if abs.exists() {
+            return Ok((hash, rel, false));
+        }
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // 临时文件 + 原子 rename
+        let tmp = abs.with_extension("tmp");
+        std::fs::write(&tmp, bytes)?;
+        std::fs::rename(&tmp, &abs)?;
+        Ok((hash, rel, true))
+    }
+
+    pub(crate) fn root(&self) -> &Path { &self.root }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Vault;
+
+    #[test]
+    fn store_is_dedup_and_immutable() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+
+        let (h1, path1, w1) = v.store_object(b"hello medme").unwrap();
+        assert!(w1, "first write should persist");
+        assert!(dir.path().join(&path1).is_file());
+
+        // 相同内容再存:去重,不重复写
+        let (h2, path2, w2) = v.store_object(b"hello medme").unwrap();
+        assert_eq!(h1, h2);
+        assert_eq!(path1, path2);
+        assert!(!w2, "second identical write should be skipped");
+
+        // objects/ 下应只有 1 个对象文件
+        let count = walk_files(&dir.path().join("objects"));
+        assert_eq!(count, 1);
+    }
+
+    fn walk_files(p: &std::path::Path) -> usize {
+        let mut n = 0;
+        for e in std::fs::read_dir(p).unwrap() {
+            let e = e.unwrap();
+            if e.file_type().unwrap().is_dir() { n += walk_files(&e.path()); }
+            else { n += 1; }
+        }
+        n
+    }
+}
