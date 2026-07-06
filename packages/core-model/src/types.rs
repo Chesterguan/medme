@@ -62,6 +62,36 @@ pub struct Import {
     pub deduped: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct Document {
+    pub id: i64,
+    pub source_file_id: i64,
+    pub doc_type: DocType,
+    pub doc_date: Option<DateTime<Utc>>,
+    pub title: Option<String>,
+    pub language: Option<String>,
+    pub page_count: i32,
+    pub created_at: DateTime<Utc>,
+}
+
+pub struct NewDocument {
+    pub source_file_id: i64,
+    pub doc_type: DocType,
+    pub doc_date: Option<DateTime<Utc>>,
+    pub title: Option<String>,
+    pub language: Option<String>,
+    pub page_count: i32,
+}
+
+pub struct NewOcr {
+    pub document_id: i64,
+    pub page_no: i32,
+    pub backend: OcrBackendKind,
+    pub model_version: String,
+    pub text: String,
+    pub confidence: Option<f32>,
+}
+
 impl Vault {
     pub(crate) fn now_rfc3339() -> String { Utc::now().to_rfc3339() }
 
@@ -108,6 +138,56 @@ impl Vault {
     pub(crate) fn debug_count(&self, table: &str) -> i64 {
         self.conn().query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap()
     }
+
+    pub fn add_document(&self, d: NewDocument) -> Result<Document, MedmeError> {
+        let now = Self::now_rfc3339();
+        let date_s = d.doc_date.map(|x| x.to_rfc3339());
+        self.conn().execute(
+            "INSERT INTO document
+             (source_file_id, doc_type, doc_date, title, language, page_count, created_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params![
+                d.source_file_id, d.doc_type.as_str(), date_s,
+                d.title, d.language, d.page_count, now
+            ],
+        )?;
+        let id = self.conn().last_insert_rowid();
+        Ok(Document {
+            id,
+            source_file_id: d.source_file_id,
+            doc_type: d.doc_type,
+            doc_date: d.doc_date,
+            title: d.title,
+            language: d.language,
+            page_count: d.page_count,
+            created_at: parse_dt(now),
+        })
+    }
+
+    pub fn add_ocr(&self, o: NewOcr) -> Result<i64, MedmeError> {
+        let now = Self::now_rfc3339();
+        self.conn().execute(
+            "INSERT INTO ocr_result
+             (document_id, page_no, backend, model_version, text, confidence, created_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params![
+                o.document_id, o.page_no, o.backend.as_str(),
+                o.model_version, o.text, o.confidence, now
+            ],
+        )?;
+        let ocr_id = self.conn().last_insert_rowid();
+        // FTS body:分词后写入(偏离 003 的触发器方案,原因见 Global Constraints)
+        let title: Option<String> = self.conn().query_row(
+            "SELECT title FROM document WHERE id = ?1", [o.document_id], |r| r.get(0),
+        )?;
+        let body = crate::tokenize::tokenize(&o.text);
+        let title_tok = title.as_deref().map(crate::tokenize::tokenize);
+        self.conn().execute(
+            "INSERT INTO document_fts(document_id, title, body) VALUES (?1,?2,?3)",
+            rusqlite::params![o.document_id, title_tok, body],
+        )?;
+        Ok(ocr_id)
+    }
 }
 
 pub(crate) fn parse_dt(s: String) -> DateTime<Utc> {
@@ -148,5 +228,37 @@ mod tests {
         // 损坏字符串 → epoch 哨兵,不 panic
         let bad = parse_dt("not-a-date".to_string());
         assert_eq!(bad.timestamp(), 0);
+    }
+
+    #[test]
+    fn add_document_and_ocr_populates_fts() {
+        use crate::types::{NewDocument, NewOcr};
+        use crate::OcrBackendKind;
+        use crate::DocType;
+
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let imp = v.import("r.txt", "text/plain", b"x").unwrap();
+
+        let doc = v.add_document(NewDocument {
+            source_file_id: imp.source_file.id,
+            doc_type: DocType::LabReport,
+            doc_date: None,
+            title: Some("血常规".into()),
+            language: Some("zh".into()),
+            page_count: 1,
+        }).unwrap();
+        assert!(doc.id > 0);
+
+        let ocr_id = v.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "text-layer".into(),
+            text: "肌酐 Creatinine 120 umol/L".into(),
+            confidence: None,
+        }).unwrap();
+        assert!(ocr_id > 0);
+        assert_eq!(v.debug_count("document_fts"), 1);
     }
 }
