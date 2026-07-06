@@ -20,6 +20,7 @@ impl DocType {
             DocType::Unknown => "unknown",
         }
     }
+    #[allow(clippy::should_implement_trait)] // inherent infallible mapping (Unknown fallback), not std::str::FromStr
     pub fn from_str(s: &str) -> DocType {
         match s {
             "lab_report" => DocType::LabReport,
@@ -110,7 +111,12 @@ impl Vault {
 }
 
 pub(crate) fn parse_dt(s: String) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(&s).map(|d| d.with_timezone(&Utc)).unwrap_or_else(|_| Utc::now())
+    DateTime::parse_from_rfc3339(&s)
+        .map(|d| d.with_timezone(&Utc))
+        // 解析失败(如手工改库/损坏行)时回退到 Unix epoch 哨兵值:明显异常、可被发现,
+        // 而非用 now() 伪装成真实导入时间。正常路径下本代码写入的都是合法 RFC3339,不会触发。
+        .unwrap_or_else(|_| DateTime::from_timestamp(0, 0)
+            .expect("Unix epoch (timestamp 0) is always a valid DateTime"))
 }
 
 #[cfg(test)]
@@ -132,5 +138,15 @@ mod tests {
 
         let n: i64 = v.debug_count("source_file");
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn parse_dt_valid_and_sentinel() {
+        use crate::types::parse_dt;
+        let good = parse_dt("2023-05-01T00:00:00+00:00".to_string());
+        assert_eq!(good.format("%Y-%m-%d").to_string(), "2023-05-01");
+        // 损坏字符串 → epoch 哨兵,不 panic
+        let bad = parse_dt("not-a-date".to_string());
+        assert_eq!(bad.timestamp(), 0);
     }
 }
