@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "desktop",
+        "title": "MedMe 医我",
         "width": 800,
         "height": 600
       }
