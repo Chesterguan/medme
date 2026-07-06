@@ -26,6 +26,7 @@ pub fn run() {
             commands::import_paths,
             commands::read_source_bytes,
             commands::export_vault,
+            commands::get_patient_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

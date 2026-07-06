@@ -97,6 +97,32 @@ fn build_date(caps: &regex::Captures) -> Option<DateTime<Utc>> {
     Utc.with_ymd_and_hms(y, m, d, 0, 0, 0).single()
 }
 
+pub struct Demographics {
+    pub name: Option<String>,
+    pub gender: Option<String>,      // "男" / "女"
+    pub birth_date: Option<String>,  // RFC3339 date if 出生日期/生日 present
+    pub age: Option<String>,         // 年龄数字(字符串)
+}
+
+pub fn extract_demographics(text: &str) -> Demographics {
+    static NAME: OnceLock<Regex> = OnceLock::new();
+    static GENDER: OnceLock<Regex> = OnceLock::new();
+    static AGE: OnceLock<Regex> = OnceLock::new();
+    static BIRTH: OnceLock<Regex> = OnceLock::new();
+    let name = NAME.get_or_init(|| Regex::new(r"(?:姓名|名字)[:：]\s*([^\s，,;；、\d]{1,10})").expect("name regex"));
+    let gender = GENDER.get_or_init(|| Regex::new(r"性别[:：]\s*([男女])").expect("gender regex"));
+    let age = AGE.get_or_init(|| Regex::new(r"年龄[:：]\s*(\d{1,3})").expect("age regex"));
+    let birth = BIRTH.get_or_init(|| Regex::new(r"(?:出生日期|出生|生日)[:：]\s*(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})").expect("birth regex"));
+    let cap1 = |re: &Regex| re.captures(text).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
+    let birth_date = birth.captures(text).map(|c| format!("{}-{:0>2}-{:0>2}", &c[1], &c[2], &c[3]));
+    Demographics {
+        name: cap1(name),
+        gender: cap1(gender),
+        birth_date,
+        age: cap1(age),
+    }
+}
+
 pub fn classify(text: &str) -> DocType {
     let lower = text.to_lowercase(); // 拉丁字母小写化;中文不变,仍能匹配
     let has = |kw: &str| lower.contains(kw);
@@ -181,6 +207,17 @@ mod tests {
         assert_eq!(classify("chest CT scan report\nnodule"), DocType::ImagingReport);
         // 整词边界:不因 "doctor"(含 ct)/"available"(含 lab) 误判为影像/化验
         assert_eq!(classify("The doctor saw the patient; results available."), DocType::Unknown);
+    }
+
+    #[test]
+    fn extract_demographics_basic() {
+        let d = extract_demographics("北京协和医院\n姓名:张建国  性别:男  年龄:60岁 病案号:62198842");
+        assert_eq!(d.name.as_deref(), Some("张建国"));
+        assert_eq!(d.gender.as_deref(), Some("男"));
+        assert_eq!(d.age.as_deref(), Some("60"));
+        // 无 demographic 的文本 → 全 None
+        let e = extract_demographics("超声所见:肝脏形态正常。");
+        assert!(e.name.is_none() && e.gender.is_none() && e.age.is_none());
     }
 
     #[test]

@@ -110,3 +110,12 @@ pub fn export_vault(_state: State<AppState>, _dest_path: String) -> Result<Expor
         byte_size: 0,
     })
 }
+
+#[tauri::command]
+pub fn get_patient_profile(state: State<AppState>) -> Result<PatientProfile, String> {
+    let v = lock(&state)?;
+    let p = pipeline::patient_profile(&v).map_err(|e| e.to_string())?;
+    Ok(PatientProfile {
+        name: p.name, gender: p.gender, birth_date: p.birth_date, age: p.age, record_count: p.record_count,
+    })
+}

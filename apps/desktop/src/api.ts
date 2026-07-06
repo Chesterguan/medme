@@ -5,6 +5,7 @@ import type {
   DocumentDetail,
   ImportOutcome,
   ExportSummary,
+  PatientProfile,
 } from "./types";
 
 export const api = {
@@ -17,4 +18,5 @@ export const api = {
   readSourceBytes: (id: number) => invoke<number[]>("read_source_bytes", { id }),
   exportVault: (destPath: string) =>
     invoke<ExportSummary>("export_vault", { destPath }),
+  getPatientProfile: () => invoke<PatientProfile>("get_patient_profile"),
 };

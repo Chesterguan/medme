@@ -142,6 +142,17 @@ impl Vault {
         }
         Ok(parts.join("\n"))
     }
+
+    /// 所有 OCR 文本(用于派生病人档案等跨文档聚合)。
+    pub fn all_ocr_texts(&self) -> Result<Vec<String>, MedmeError> {
+        let mut stmt = self.conn().prepare("SELECT text FROM ocr_result")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]

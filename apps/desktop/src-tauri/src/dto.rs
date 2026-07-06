@@ -69,3 +69,12 @@ pub struct ExportSummary {
     pub file_count: i64,
     pub byte_size: i64,
 }
+
+#[derive(Serialize)]
+pub struct PatientProfile {
+    pub name: Option<String>,
+    pub gender: Option<String>,
+    pub birth_date: Option<String>,
+    pub age: Option<String>,
+    pub record_count: i64,
+}

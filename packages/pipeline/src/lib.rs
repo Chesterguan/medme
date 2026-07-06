@@ -1,4 +1,5 @@
 use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind, Vault};
+use std::collections::HashMap;
 use std::path::Path;
 
 pub fn mime_for(path: &Path) -> &'static str {
@@ -95,6 +96,40 @@ pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
     }
 }
 
+pub struct PatientProfile {
+    pub name: Option<String>,
+    pub gender: Option<String>,
+    pub birth_date: Option<String>,
+    pub age: Option<String>,
+    pub record_count: i64,
+}
+
+/// 从所有文档 OCR 文本派生病人档案:各字段取众数(最常出现值)。
+/// 年龄随时间变,取众数为近似;身份靠姓名+性别(稳定)。
+pub fn patient_profile(vault: &Vault) -> anyhow::Result<PatientProfile> {
+    let texts = vault.all_ocr_texts()?;
+    let record_count = texts.len() as i64;
+    let mut names: HashMap<String, i32> = HashMap::new();
+    let mut genders: HashMap<String, i32> = HashMap::new();
+    let mut births: HashMap<String, i32> = HashMap::new();
+    let mut ages: HashMap<String, i32> = HashMap::new();
+    for t in &texts {
+        let d = parser::extract_demographics(t);
+        if let Some(n) = d.name { *names.entry(n).or_insert(0) += 1; }
+        if let Some(g) = d.gender { *genders.entry(g).or_insert(0) += 1; }
+        if let Some(b) = d.birth_date { *births.entry(b).or_insert(0) += 1; }
+        if let Some(a) = d.age { *ages.entry(a).or_insert(0) += 1; }
+    }
+    let mode = |m: HashMap<String, i32>| m.into_iter().max_by_key(|(_, c)| *c).map(|(k, _)| k);
+    Ok(PatientProfile {
+        name: mode(names),
+        gender: mode(genders),
+        birth_date: mode(births),
+        age: mode(ages),
+        record_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +188,24 @@ mod tests {
         let tl = v.timeline().unwrap();
         assert_eq!(tl[0].doc_date.unwrap().format("%Y-%m-%d").to_string(), "2023-01-01");
         assert_eq!(tl[0].doc_date_end.unwrap().format("%Y-%m-%d").to_string(), "2023-01-20");
+    }
+
+    #[test]
+    fn patient_profile_aggregates_mode() {
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        for (i, body) in [
+            "检验报告\n姓名:张建国 性别:男 年龄:59岁\n日期 2024-01-01 肌酐 90",
+            "出院记录\n姓名:张建国 性别:男 年龄:60岁\n日期 2025-02-02 脑梗死",
+        ].iter().enumerate() {
+            let p = fdir.path().join(format!("r{i}.txt"));
+            std::fs::write(&p, body).unwrap();
+            ingest(&v, &p).unwrap();
+        }
+        let prof = patient_profile(&v).unwrap();
+        assert_eq!(prof.name.as_deref(), Some("张建国"));
+        assert_eq!(prof.gender.as_deref(), Some("男"));
+        assert_eq!(prof.record_count, 2);
     }
 }

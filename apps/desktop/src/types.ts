@@ -32,3 +32,10 @@ export interface ExportSummary {
   file_count: number;
   byte_size: number;
 }
+export interface PatientProfile {
+  name: string | null;
+  gender: string | null;
+  birth_date: string | null;
+  age: string | null;
+  record_count: number;
+}
