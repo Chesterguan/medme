@@ -6,7 +6,7 @@ pub mod tokenize;
 pub mod types;
 
 pub use error::MedmeError;
-pub use query::{SearchHit, TimelineEntry};
+pub use query::{extract_provider, SearchHit, TimelineEntry};
 pub use types::{
     DocType, Document, Encounter, EncounterKind, Import, NewDocument, NewOcr, OcrBackendKind,
     SourceFile,
@@ -52,7 +52,7 @@ mod tests {
     fn open_creates_vault_and_migrates() {
         let dir = tempfile::tempdir().unwrap();
         let v = Vault::open(dir.path()).unwrap();
-        assert_eq!(v.user_version().unwrap(), 3);
+        assert_eq!(v.user_version().unwrap(), 4);
         assert!(dir.path().join("objects").is_dir());
         assert!(dir.path().join("medme.db").is_file());
     }

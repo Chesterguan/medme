@@ -29,6 +29,63 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
+/// 从文本抽取医院/医学中心名(2-18 个中文字,以 医院/医学中心 结尾)。取第一个匹配。
+pub fn extract_provider(text: &str) -> Option<String> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"([\x{4e00}-\x{9fa5}]{2,18}?(?:医院|医学中心))").expect("provider regex")
+    });
+    re.captures(text).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
+}
+
+/// 给定一组文档 id,返回各文档 OCR 文本命中的 provider 名(未去重,用于统计众数)。
+fn providers_for_doc_ids(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+) -> Result<Vec<String>, MedmeError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(",");
+    let sql = format!("SELECT text FROM ocr_result WHERE document_id IN ({placeholders})");
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|i| i as &dyn rusqlite::ToSql).collect();
+    let rows = stmt.query_map(params.as_slice(), |r| r.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        let text = r?;
+        if let Some(p) = extract_provider(&text) {
+            out.push(p);
+        }
+    }
+    Ok(out)
+}
+
+/// 组内 provider 众数(第一个达到最高频次的);transferred = 是否出现 ≥2 家不同医院。
+fn provider_summary(providers: &[String]) -> (Option<String>, bool) {
+    use std::collections::HashMap;
+    let mut order: Vec<&String> = Vec::new();
+    let mut counts: HashMap<&String, usize> = HashMap::new();
+    for p in providers {
+        if !counts.contains_key(p) {
+            order.push(p);
+        }
+        *counts.entry(p).or_insert(0) += 1;
+    }
+    let transferred = order.len() >= 2;
+    let mut best: Option<&String> = None;
+    let mut best_count = 0usize;
+    for p in &order {
+        let c = counts[*p];
+        if c > best_count {
+            best_count = c;
+            best = Some(p);
+        }
+    }
+    (best.cloned(), transferred)
+}
+
 #[derive(Debug, Clone)]
 pub struct TimelineEntry {
     pub document_id: i64,
@@ -172,26 +229,36 @@ impl Vault {
             let (Some(start), Some(end)) = (parse(dd), parse(dde)) else {
                 continue;
             };
-            let title = format!("住院 · {} → {}", start.format("%Y-%m-%d"), end.format("%Y-%m-%d"));
-            tx.execute(
-                "INSERT INTO encounter (kind, provider, start_date, end_date, title, created_at) VALUES ('inpatient', NULL, ?1, ?2, ?3, ?4)",
-                rusqlite::params![start.to_rfc3339(), end.to_rfc3339(), title, now],
-            )?;
-            let enc_id = tx.last_insert_rowid();
             let _ = id;
+            // 先收集区间内(且未被更早住院窗占用)的文档 id,再统计 provider,最后一次性写入
+            let mut member_ids: Vec<i64> = Vec::new();
             for (id2, _dt2, dd2, _dde2, _t2) in &docs {
                 if assigned.contains(id2) {
                     continue;
                 }
                 if let Some(date2) = parse(dd2) {
                     if date2 >= start && date2 <= end {
-                        tx.execute(
-                            "UPDATE document SET encounter_id = ?1 WHERE id = ?2",
-                            rusqlite::params![enc_id, id2],
-                        )?;
+                        member_ids.push(*id2);
                         assigned.insert(*id2);
                     }
                 }
+            }
+            let providers = providers_for_doc_ids(&tx, &member_ids)?;
+            let (provider, transferred) = provider_summary(&providers);
+            let mut title = format!("住院 · {} → {}", start.format("%Y-%m-%d"), end.format("%Y-%m-%d"));
+            if transferred {
+                title.push_str(" · 转院");
+            }
+            tx.execute(
+                "INSERT INTO encounter (kind, provider, start_date, end_date, title, transferred, created_at) VALUES ('inpatient', ?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![provider, start.to_rfc3339(), end.to_rfc3339(), title, transferred, now],
+            )?;
+            let enc_id = tx.last_insert_rowid();
+            for id2 in &member_ids {
+                tx.execute(
+                    "UPDATE document SET encounter_id = ?1 WHERE id = ?2",
+                    rusqlite::params![enc_id, id2],
+                )?;
             }
         }
 
@@ -214,13 +281,19 @@ impl Vault {
             let kind = if emergency { "emergency" } else { "outpatient" };
             let label = if emergency { "急诊" } else { "门诊" };
             let start = format!("{day}T00:00:00+00:00");
-            let title = format!("{label} · {day}");
+            let member_ids: Vec<i64> = group.iter().map(|(id, _)| *id).collect();
+            let providers = providers_for_doc_ids(&tx, &member_ids)?;
+            let (provider, transferred) = provider_summary(&providers);
+            let mut title = format!("{label} · {day}");
+            if transferred {
+                title.push_str(" · 转院");
+            }
             tx.execute(
-                "INSERT INTO encounter (kind, provider, start_date, end_date, title, created_at) VALUES (?1, NULL, ?2, NULL, ?3, ?4)",
-                rusqlite::params![kind, start, title, now],
+                "INSERT INTO encounter (kind, provider, start_date, end_date, title, transferred, created_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6)",
+                rusqlite::params![kind, provider, start, title, transferred, now],
             )?;
             let enc_id = tx.last_insert_rowid();
-            for (id, _) in group {
+            for id in member_ids {
                 tx.execute(
                     "UPDATE document SET encounter_id = ?1 WHERE id = ?2",
                     rusqlite::params![enc_id, id],
@@ -234,7 +307,7 @@ impl Vault {
 
     pub fn encounters_with_docs(&self) -> Result<Vec<(Encounter, Vec<Document>)>, MedmeError> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, kind, provider, start_date, end_date, title, created_at FROM encounter
+            "SELECT id, kind, provider, start_date, end_date, title, transferred, created_at FROM encounter
              ORDER BY start_date IS NULL, start_date DESC, id DESC",
         )?;
         let encs: Vec<Encounter> = stmt
@@ -246,7 +319,8 @@ impl Vault {
                     start_date: r.get::<_, Option<String>>(3)?.map(parse_dt),
                     end_date: r.get::<_, Option<String>>(4)?.map(parse_dt),
                     title: r.get(5)?,
-                    created_at: parse_dt(r.get::<_, String>(6)?),
+                    transferred: r.get::<_, i64>(6)? != 0,
+                    created_at: parse_dt(r.get::<_, String>(7)?),
                 })
             })?
             .collect::<Result<_, _>>()?;
@@ -488,6 +562,77 @@ mod tests {
         let outpatient = groups.iter().find(|(e, _)| e.kind == EncounterKind::Outpatient).unwrap();
         assert_eq!(outpatient.1.len(), 2);
         assert!(v.standalone_documents().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rebuild_marks_transfer_across_providers_in_inpatient_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let d = |s: &str| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let mk = |v: &Vault, dt: DocType, start: &str, end: Option<&str>, title: &str, text: &str| {
+            let imp = v.import(title, "text/plain", title.as_bytes()).unwrap();
+            let doc = v
+                .add_document(crate::types::NewDocument {
+                    source_file_id: imp.source_file.id,
+                    doc_type: dt,
+                    doc_date: Some(d(start)),
+                    doc_date_end: end.map(d),
+                    title: Some(title.into()),
+                    language: None,
+                    page_count: 1,
+                })
+                .unwrap();
+            v.add_ocr(crate::types::NewOcr {
+                document_id: doc.id,
+                page_no: 1,
+                backend: crate::OcrBackendKind::Native,
+                model_version: "text-layer".into(),
+                text: text.into(),
+                confidence: None,
+            })
+            .unwrap();
+            doc.id
+        };
+        // 住院窗:两份文档来自不同医院 → 转院
+        mk(
+            &v,
+            DocType::DischargeSummary,
+            "2023-04-24T00:00:00Z",
+            Some("2023-05-01T00:00:00Z"),
+            "出院记录",
+            "北京协和医院 出院记录",
+        );
+        mk(
+            &v,
+            DocType::LabReport,
+            "2023-04-26T00:00:00Z",
+            None,
+            "住院期间化验",
+            "上海华山医院 化验单",
+        );
+        v.rebuild_encounters().unwrap();
+
+        let groups = v.encounters_with_docs().unwrap();
+        let (inpatient, _) = groups
+            .iter()
+            .find(|(e, _)| e.kind == EncounterKind::Inpatient)
+            .unwrap();
+        assert!(inpatient.transferred, "should be marked as transferred");
+        assert!(
+            inpatient.provider.as_deref() == Some("北京协和医院")
+                || inpatient.provider.as_deref() == Some("上海华山医院"),
+            "provider should be one of the two hospitals, got {:?}",
+            inpatient.provider
+        );
+        assert!(
+            inpatient.title.as_deref().unwrap_or("").contains("转院"),
+            "title should note 转院, got {:?}",
+            inpatient.title
+        );
     }
 
     #[test]

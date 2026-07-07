@@ -67,6 +67,14 @@ pub fn migrate(conn: &Connection) -> Result<(), MedmeError> {
              COMMIT;",
         )?;
     }
+    if v < 4 {
+        conn.execute_batch(
+            "BEGIN;\n\
+             ALTER TABLE encounter ADD COLUMN transferred INTEGER NOT NULL DEFAULT 0;\n\
+             PRAGMA user_version = 4;\n\
+             COMMIT;",
+        )?;
+    }
     Ok(())
 }
 
@@ -83,7 +91,7 @@ mod tests {
     fn migration_is_v2_with_doc_date_end() {
         let dir = tempfile::tempdir().unwrap();
         let v = Vault::open(dir.path()).unwrap();
-        assert_eq!(v.user_version().unwrap(), 3);
+        assert_eq!(v.user_version().unwrap(), 4);
         // 列存在且可空:round-trip 一个区间
         let imp = v.import("h.txt", "text/plain", b"stay").unwrap();
         let start = chrono::DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z")
@@ -130,7 +138,7 @@ mod tests {
         assert_eq!(
             conn.query_row::<i64, _, _>("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap(),
-            3
+            4
         );
         // 新列可用
         conn.execute("INSERT INTO source_file (content_hash,original_name,mime_type,byte_size,storage_path,imported_at) VALUES ('h','n','m',1,'p','t')", []).unwrap();

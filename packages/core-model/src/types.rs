@@ -126,6 +126,7 @@ pub struct Encounter {
     pub start_date: Option<DateTime<Utc>>,
     pub end_date: Option<DateTime<Utc>>,
     pub title: Option<String>,
+    pub transferred: bool,
     pub created_at: DateTime<Utc>,
 }
 

@@ -21,6 +21,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_timeline,
+            commands::list_timeline_grouped,
             commands::search,
             commands::get_document,
             commands::import_paths,

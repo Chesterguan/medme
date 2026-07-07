@@ -1,4 +1,4 @@
-use core_model::{Document, SourceFile};
+use core_model::{Document, Encounter, SourceFile};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -68,6 +68,44 @@ pub struct ImportOutcome {
 pub struct ExportSummary {
     pub file_count: i64,
     pub byte_size: i64,
+}
+
+#[derive(Serialize)]
+pub struct EncounterSummary {
+    pub id: i64,
+    pub kind: String, // inpatient|outpatient|emergency|exam
+    pub provider: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub title: Option<String>,
+    pub transferred: bool,
+    pub doc_count: i64,
+}
+impl EncounterSummary {
+    pub fn from_encounter(e: &Encounter, doc_count: i64) -> Self {
+        EncounterSummary {
+            id: e.id,
+            kind: e.kind.as_str().to_string(),
+            provider: e.provider.clone(),
+            start_date: e.start_date.map(|x| x.to_rfc3339()),
+            end_date: e.end_date.map(|x| x.to_rfc3339()),
+            title: e.title.clone(),
+            transferred: e.transferred,
+            doc_count,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "group_type")]
+pub enum TimelineGroup {
+    #[serde(rename = "encounter")]
+    Encounter {
+        encounter: EncounterSummary,
+        docs: Vec<DocumentSummary>,
+    },
+    #[serde(rename = "document")]
+    Document { doc: DocumentSummary },
 }
 
 #[derive(Serialize)]

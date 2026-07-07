@@ -26,6 +26,37 @@ pub fn list_timeline(state: State<AppState>) -> Result<Vec<DocumentSummary>, Str
 }
 
 #[tauri::command]
+pub fn list_timeline_grouped(state: State<AppState>) -> Result<Vec<TimelineGroup>, String> {
+    let v = lock(&state)?;
+    v.rebuild_encounters().map_err(|e| e.to_string())?; // 幂等,确保 CLI 导入的数据也分组
+    let mut groups: Vec<(Option<String>, TimelineGroup)> = Vec::new(); // (sort_date, group)
+    for (enc, docs) in v.encounters_with_docs().map_err(|e| e.to_string())? {
+        let sort = enc.start_date.map(|d| d.to_rfc3339());
+        let summary = EncounterSummary::from_encounter(&enc, docs.len() as i64);
+        let doc_dtos = docs.iter().map(DocumentSummary::from).collect();
+        groups.push((
+            sort,
+            TimelineGroup::Encounter {
+                encounter: summary,
+                docs: doc_dtos,
+            },
+        ));
+    }
+    for d in v.standalone_documents().map_err(|e| e.to_string())? {
+        let sort = d.doc_date.map(|x| x.to_rfc3339());
+        groups.push((sort, TimelineGroup::Document { doc: DocumentSummary::from(&d) }));
+    }
+    // 按日期倒序,无日期最后
+    groups.sort_by(|a, b| match (&a.0, &b.0) {
+        (Some(x), Some(y)) => y.cmp(x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    Ok(groups.into_iter().map(|(_, g)| g).collect())
+}
+
+#[tauri::command]
 pub fn search(
     state: State<AppState>,
     query: String,
@@ -88,6 +119,7 @@ pub fn import_paths(
             doc_type: o.doc_type.map(|d| d.as_str().to_string()),
         });
     }
+    v.rebuild_encounters().map_err(|e| e.to_string())?;
     Ok(out)
 }
 
