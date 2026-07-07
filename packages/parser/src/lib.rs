@@ -64,6 +64,14 @@ pub fn guess_date_range(text: &str) -> (Option<DateTime<Utc>>, Option<DateTime<U
     });
     let mut dates: Vec<DateTime<Utc>> = Vec::new();
     for caps in iso.captures_iter(text) {
+        // 拒绝嵌在更长数字串里的"日期"(如住院号 HS-2024-08-2201 里的 2024-08-22):
+        // 匹配两侧若紧邻数字,说明是 ID 的一部分,不是真日期。
+        let m = caps.get(0).expect("group 0 always present");
+        let before_digit = text[..m.start()].chars().next_back().is_some_and(|c| c.is_ascii_digit());
+        let after_digit = text[m.end()..].chars().next().is_some_and(|c| c.is_ascii_digit());
+        if before_digit || after_digit {
+            continue;
+        }
         if let Some(d) = build_date(&caps) {
             dates.push(d);
         }
@@ -253,5 +261,15 @@ mod tests {
         assert!(e1.is_none());
         // 无日期
         assert_eq!(guess_date_range("no dates here"), (None, None));
+    }
+
+    #[test]
+    fn guess_date_ignores_id_embedded_dates() {
+        // 住院号 HS-2024-08-2201 含 "2024-08-22",但两侧紧邻数字 → 不当作日期;
+        // 只取真正的出院日期 2024-08-12。
+        let t = "住院号:HS-2024-08-2201\n入院日期:2024-08-08 出院日期:2024-08-12";
+        let (s, e) = guess_date_range(t);
+        assert_eq!(s.unwrap().format("%Y-%m-%d").to_string(), "2024-08-08");
+        assert_eq!(e.unwrap().format("%Y-%m-%d").to_string(), "2024-08-12");
     }
 }

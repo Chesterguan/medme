@@ -6,10 +6,12 @@ import type {
   ImportOutcome,
   ExportSummary,
   PatientProfile,
+  TimelineGroup,
 } from "./types";
 
 export const api = {
   listTimeline: () => invoke<DocumentSummary[]>("list_timeline"),
+  listTimelineGrouped: () => invoke<TimelineGroup[]>("list_timeline_grouped"),
   search: (query: string, limit = 30) =>
     invoke<SearchResult[]>("search", { query, limit }),
   getDocument: (id: number) => invoke<DocumentDetail>("get_document", { id }),

@@ -39,3 +39,17 @@ export interface PatientProfile {
   age: string | null;
   record_count: number;
 }
+export interface EncounterSummary {
+  id: number;
+  kind: string; // inpatient | outpatient | emergency | exam
+  provider: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  title: string | null;
+  transferred: boolean;
+  doc_count: number;
+}
+// list_timeline_grouped 返回的分组:就诊组 或 独立文档
+export type TimelineGroup =
+  | { group_type: "encounter"; encounter: EncounterSummary; docs: DocumentSummary[] }
+  | { group_type: "document"; doc: DocumentSummary };
