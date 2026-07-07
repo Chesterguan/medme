@@ -18,6 +18,7 @@ import {
   Enums as csToolsEnums,
 } from "@cornerstonejs/tools";
 import * as dicomImageLoader from "@cornerstonejs/dicom-image-loader";
+import dicomParser from "dicom-parser";
 import { SlidersHorizontal, Ruler, RotateCcw } from "lucide-react";
 
 // 交互式 DICOM 查看器(基于 Cornerstone3D / OHIF 引擎,imaging overhaul P2):
@@ -122,14 +123,26 @@ export default function DicomViewer({
 
         // 每张切片:拷贝出独立 ArrayBuffer(Uint8Array 可能是大 buffer 的视图)→
         // Blob → fileManager.add → `dicomfile:N` imageId。切片已在后端按堆栈顺序排好。
-        const imageIds = slices.map((bytes) => {
-          const blob = new Blob([bytes.slice().buffer], {
-            type: "application/dicom",
-          });
+        // 多帧文件(超声动态 / 增强CT/MR 等,一个文件内含 N 帧)→ 用 dicom-parser 读
+        // NumberOfFrames,>1 时为每帧建 `?frame=i` imageId,整体当一叠滚动。
+        const imageIds: string[] = [];
+        slices.forEach((bytes) => {
+          const u8 = bytes.slice();
+          const blob = new Blob([u8.buffer], { type: "application/dicom" });
           const imageId = dicomImageLoader.wadouri.fileManager.add(blob);
           const idx = Number(imageId.split(":")[1]);
           if (!Number.isNaN(idx)) fileIndices.push(idx);
-          return imageId;
+          let frames = 1;
+          try {
+            frames = parseInt(dicomParser.parseDicom(u8).string("x00280008") || "1", 10) || 1;
+          } catch {
+            /* 解析失败按单帧处理 */
+          }
+          if (frames > 1) {
+            for (let f = 0; f < frames; f++) imageIds.push(`${imageId}?frame=${f}`);
+          } else {
+            imageIds.push(imageId);
+          }
         });
 
         const engine = new RenderingEngine(ids.engine);
