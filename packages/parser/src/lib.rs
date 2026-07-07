@@ -52,45 +52,105 @@ pub fn detect_language(text: &str) -> Option<String> {
 
 /// 抽取文本中所有合法日期,返回 (最早, 最晚)。最晚为 None 当只有一个不同日期时。
 /// 用于住院等跨度文档:入院=起、出院=止;单点文档 end=None。
-pub fn guess_date_range(text: &str) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
-    static ISO: OnceLock<Regex> = OnceLock::new();
-    static CN: OnceLock<Regex> = OnceLock::new();
-    let iso = ISO.get_or_init(|| {
-        Regex::new(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})").expect("static ISO date regex compiles")
-    });
-    let cn = CN.get_or_init(|| {
-        Regex::new(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
-            .expect("static CN date regex compiles")
-    });
-    let mut dates: Vec<DateTime<Utc>> = Vec::new();
-    for caps in iso.captures_iter(text) {
-        // 拒绝嵌在更长数字串里的"日期"(如住院号 HS-2024-08-2201 里的 2024-08-22):
-        // 匹配两侧若紧邻数字,说明是 ID 的一部分,不是真日期。
-        let m = caps.get(0).expect("group 0 always present");
-        let before_digit = text[..m.start()].chars().next_back().is_some_and(|c| c.is_ascii_digit());
-        let after_digit = text[m.end()..].chars().next().is_some_and(|c| c.is_ascii_digit());
-        if before_digit || after_digit {
+fn iso_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})").expect("iso date re"))
+}
+fn cn_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日").expect("cn date re"))
+}
+
+/// 某字符串里第一个合法日期(ISO 优先,再中文);拒绝嵌在更长数字串里的"日期"(如住院号里的)。
+fn first_date_in(s: &str) -> Option<DateTime<Utc>> {
+    for caps in iso_re().captures_iter(s) {
+        let m = caps.get(0).expect("group 0");
+        let before = s[..m.start()].chars().next_back().is_some_and(|c| c.is_ascii_digit());
+        let after = s[m.end()..].chars().next().is_some_and(|c| c.is_ascii_digit());
+        if before || after {
             continue;
         }
         if let Some(d) = build_date(&caps) {
-            dates.push(d);
+            return Some(d);
         }
     }
-    for caps in cn.captures_iter(text) {
+    cn_re().captures_iter(s).find_map(|c| build_date(&c))
+}
+
+/// 全文所有合法日期,排序去重。
+fn all_dates_in(text: &str) -> Vec<DateTime<Utc>> {
+    let mut v: Vec<DateTime<Utc>> = Vec::new();
+    for caps in iso_re().captures_iter(text) {
+        let m = caps.get(0).expect("group 0");
+        let before = text[..m.start()].chars().next_back().is_some_and(|c| c.is_ascii_digit());
+        let after = text[m.end()..].chars().next().is_some_and(|c| c.is_ascii_digit());
+        if before || after {
+            continue;
+        }
         if let Some(d) = build_date(&caps) {
-            dates.push(d);
+            v.push(d);
         }
     }
-    dates.sort();
-    dates.dedup();
-    match dates.len() {
+    for caps in cn_re().captures_iter(text) {
+        if let Some(d) = build_date(&caps) {
+            v.push(d);
+        }
+    }
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// 标签后紧跟的日期(标签后约 24 字符窗口内)。
+fn labeled_date(text: &str, labels: &[&str]) -> Option<DateTime<Utc>> {
+    for lbl in labels {
+        if let Some(pos) = text.find(lbl) {
+            let after: String = text[pos + lbl.len()..].chars().take(24).collect();
+            if let Some(d) = first_date_in(&after) {
+                return Some(d);
+            }
+        }
+    }
+    None
+}
+
+/// 文档日期:优先"带标签的报告日期"(避免抓到正文引用的历史日期),住院取 入院→出院 区间,
+/// 都没有才回退全文最早/最晚。
+pub fn guess_date_range(text: &str) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+    // 1) 住院:入院 + 出院 → 区间
+    let admit = labeled_date(text, &["入院日期", "入院时间"]);
+    let discharge = labeled_date(text, &["出院日期", "出院时间"]);
+    if let (Some(a), Some(d)) = (admit, discharge) {
+        return (Some(a), Some(d));
+    }
+    // 2) 报告类标签(文档自己的日期,优先于正文引用的历史日期)
+    let report = labeled_date(
+        text,
+        &[
+            "检查日期", "检测日期", "检验日期", "报告日期", "报告时间", "就诊日期", "就诊时间",
+            "收到日期", "采集时间", "采集日期", "签发日期", "手术日期", "检查时间", "诊断日期",
+        ],
+    );
+    if let Some(d) = report {
+        return (Some(d), None);
+    }
+    // 3) 单个 入院/出院,或泛"日期"标签
+    if let Some(d) = admit.or(discharge) {
+        return (Some(d), None);
+    }
+    if let Some(d) = labeled_date(text, &["日期"]) {
+        return (Some(d), None);
+    }
+    // 4) 回退:全文最早/最晚
+    let all = all_dates_in(text);
+    match all.len() {
         0 => (None, None),
-        1 => (Some(dates[0]), None),
-        _ => (Some(dates[0]), Some(dates[dates.len() - 1])),
+        1 => (Some(all[0]), None),
+        _ => (Some(all[0]), Some(all[all.len() - 1])),
     }
 }
 
-/// 单点日期(向后兼容):取最早。
+/// 单点日期(向后兼容):取文档日期。
 pub fn guess_date(text: &str) -> Option<DateTime<Utc>> {
     guess_date_range(text).0
 }
@@ -279,6 +339,22 @@ mod tests {
         assert!(e1.is_none());
         // 无日期
         assert_eq!(guess_date_range("no dates here"), (None, None));
+    }
+
+    #[test]
+    fn guess_date_prefers_labeled_report_date_over_history() {
+        // 复查报告:正文引用既往卒中日期 2023-04-24,但文档日期应取"检查日期"
+        let t = "头颅MRI复查\n患者于 2023-04-24 因急性脑梗死入院治疗。\n检查日期:2023-11-02\n所见:软化灶形成。";
+        assert_eq!(
+            guess_date_range(t).0.unwrap().format("%Y-%m-%d").to_string(),
+            "2023-11-02"
+        );
+        // 检测日期优先
+        let t2 = "既往 2020-01-01 患糖尿病。\n检测日期:2024-05-18\n肌酐 108";
+        assert_eq!(
+            guess_date_range(t2).0.unwrap().format("%Y-%m-%d").to_string(),
+            "2024-05-18"
+        );
     }
 
     #[test]
