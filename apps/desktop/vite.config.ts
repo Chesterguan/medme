@@ -12,9 +12,6 @@ export default defineConfig(async () => ({
   // Cornerstone3D 的 dicom-image-loader 用 ES-module web worker,worker 内部又对
   // WASM codec(JPEG2000/JPEG-LS/HTJ2K…)做动态 import 拆分 → 必须用 'es' 格式,
   // 否则默认 'iife' 无法承载代码分割,vite build 会报 worker.format 错误。
-  worker: {
-    format: "es",
-  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

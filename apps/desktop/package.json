@@ -10,10 +10,6 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@cornerstonejs/core": "^5.2.1",
-    "@cornerstonejs/dicom-image-loader": "^5.2.1",
-    "@cornerstonejs/metadata": "5.2.1",
-    "@cornerstonejs/tools": "^5.2.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2",

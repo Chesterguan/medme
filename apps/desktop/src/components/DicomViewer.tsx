@@ -1,40 +1,29 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  RenderingEngine,
-  Enums as csEnums,
-  cache,
-  init as coreInit,
-  type Types as csTypes,
-} from "@cornerstonejs/core";
-import {
-  init as toolsInit,
-  addTool,
-  ToolGroupManager,
-  StackScrollTool,
-  WindowLevelTool,
-  ZoomTool,
-  PanTool,
-  LengthTool,
-  Enums as csToolsEnums,
-} from "@cornerstonejs/tools";
-import * as dicomImageLoader from "@cornerstonejs/dicom-image-loader";
 import dicomParser from "dicom-parser";
-import { SlidersHorizontal, Ruler, RotateCcw } from "lucide-react";
+import { SlidersHorizontal, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 
-// 交互式 DICOM 查看器(基于 Cornerstone3D / OHIF 引擎,imaging overhaul P2):
-// 鼠标滚轮天然逐张滚动序列(不必先选工具)、窗宽窗位预设、缩放平移、长度测量。
-// 仅在全屏 lightbox 中挂载;卸载时销毁渲染引擎、工具组并清空图像缓存,避免泄漏。
-// 本地字节(无服务器):每张切片的字节 → Blob → wadouri fileManager → `dicomfile:N`
-// imageId → 一个 STACK 视口 setStack。压缩(JPEG2000/JPEG-LS 等)在 web worker +
-// WASM codec 里解码,由 Cornerstone3D 的图像缓存按需管理。
+// 轻量交互式 DICOM 查看器(纯 canvas + dicom-parser,无 Cornerstone / 无 web worker /
+// 无 WASM)—— 之前的 Cornerstone3D 在 Tauri+Vite 下把整个应用白屏(JPEG codec 是
+// CommonJS 无 default 导出、ESM/worker/WASM 与 Vite 打包冲突),故整体替换。
+//
+// 帧模型:每张切片(Uint8Array)用 dicomParser.parseDicom 解析成 dataSet;一个文件可能
+// 是多帧(NumberOfFrames>1,如超声动态),展平成 frames[] 每项记 { dataSet, frameIndex }。
+// 解码按需进行,只缓存当前帧 + 邻近几帧,几百帧也只常驻几十 MB(014 大数据顾虑)。
+//
+// 交互:滚轮翻层(主诉求)、左键拖拽调窗宽窗位(灰度)、右键拖拽缩放、中键拖拽平移、
+// +/- 按钮缩放、窗位预设、重置。ESC 由外层 lightbox 处理。
 
-const { ViewportType, Events: csEvents } = csEnums;
-const { MouseBindings } = csToolsEnums;
+const TS_UNCOMPRESSED = new Set([
+  "1.2.840.10008.1.2", // Implicit VR Little Endian
+  "1.2.840.10008.1.2.1", // Explicit VR Little Endian
+  "1.2.840.10008.1.2.1.99", // Deflated Explicit VR LE(解析层已解压)
+]);
+const TS_JPEG_BASELINE = new Set([
+  "1.2.840.10008.1.2.4.50", // JPEG Baseline (Process 1)
+  "1.2.840.10008.1.2.4.51", // JPEG Extended (Process 2 & 4)
+]);
 
-// 图像缓存上限(014 大数据顾虑):几百切片也只常驻几十 MB,滚动时解新淘旧。
-const CACHE_MAX_BYTES = 300 * 1024 * 1024;
-
-// 窗宽窗位预设:center(C)/width(W) → voiRange。默认 = 用 DICOM 自带窗位(resetProperties)。
+// 窗宽窗位预设:center(C)/width(W)。默认 = 用 DICOM 自带窗位(无则用像素 min/max)。
 const PRESETS: { label: string; center: number | null; width: number | null }[] = [
   { label: "默认", center: null, width: null },
   { label: "脑窗", center: 40, width: 80 },
@@ -43,261 +32,535 @@ const PRESETS: { label: string; center: number | null; width: number | null }[] 
   { label: "软组织", center: 40, width: 400 },
 ];
 
-type LeftTool = "WindowLevel" | "Length";
-
-// Cornerstone3D 全局初始化只做一次(core / tools / dicomImageLoader + 工具注册 +
-// 缓存上限)。多次挂载共享同一个 promise,避免重复注册 worker / 工具。
-let initPromise: Promise<void> | null = null;
-function ensureCornerstoneInit(): Promise<void> {
-  if (!initPromise) {
-    initPromise = (async () => {
-      coreInit();
-      toolsInit();
-      // web worker(Vite `new URL(..., import.meta.url)`)+ WASM codec 解码压缩帧。
-      dicomImageLoader.init();
-      cache.setMaxCacheSize(CACHE_MAX_BYTES);
-      // 工具类全局注册一次;每个查看器实例再各自建 ToolGroup 绑定按键。
-      addTool(StackScrollTool);
-      addTool(WindowLevelTool);
-      addTool(ZoomTool);
-      addTool(PanTool);
-      addTool(LengthTool);
-    })();
-  }
-  return initPromise;
+// 一帧的元信息(从 dataSet + 帧下标解出),解码时用。
+interface FrameMeta {
+  dataSet: dicomParser.DataSet;
+  frameIndex: number;
+  rows: number;
+  columns: number;
+  bitsAllocated: number;
+  pixelRepresentation: number; // 0 无符号 / 1 有符号
+  samplesPerPixel: number;
+  planarConfiguration: number; // 0 交错 / 1 平面
+  photometric: string;
+  invert: boolean; // MONOCHROME1 → 反相
+  color: boolean;
+  transferSyntax: string;
+  defaultCenter: number | null;
+  defaultWidth: number | null;
 }
 
-let seq = 0;
+// 解码结果缓存项。
+type Decoded =
+  | { kind: "gray"; values: Float32Array; rows: number; cols: number; invert: boolean }
+  | { kind: "rgba"; data: ImageData }
+  | { kind: "bitmap"; bitmap: ImageBitmap; rows: number; cols: number }
+  | { kind: "unsupported" }
+  | { kind: "error" };
+
+const DECODE_CACHE_MAX = 7; // 当前帧 + 前后几帧;超出按离当前最远淘汰。
+
+function num(ds: dicomParser.DataSet, tag: string, def: number): number {
+  const v = ds.uint16(tag);
+  return v === undefined ? def : v;
+}
+function floatStr(ds: dicomParser.DataSet, tag: string): number | null {
+  const v = ds.floatString(tag);
+  return v === undefined || Number.isNaN(v) ? null : v;
+}
+
+// 解析每张切片 → 展平成 frames[]。解析失败的切片跳过,不抛。
+function buildFrames(slices: Uint8Array[]): FrameMeta[] {
+  const frames: FrameMeta[] = [];
+  for (const bytes of slices) {
+    let ds: dicomParser.DataSet;
+    try {
+      ds = dicomParser.parseDicom(bytes);
+    } catch {
+      continue;
+    }
+    const rows = num(ds, "x00280010", 0);
+    const columns = num(ds, "x00280011", 0);
+    if (!rows || !columns) continue;
+    const bitsAllocated = num(ds, "x00280100", 16);
+    const pixelRepresentation = num(ds, "x00280103", 0);
+    const samplesPerPixel = num(ds, "x00280002", 1);
+    const planarConfiguration = num(ds, "x00280006", 0);
+    const photometric = (ds.string("x00280004") || "MONOCHROME2").trim().toUpperCase();
+    const transferSyntax = (ds.string("x00020010") || "1.2.840.10008.1.2").trim();
+    const nFrames = parseInt(ds.string("x00280008") || "1", 10) || 1;
+    const defaultCenter = floatStr(ds, "x00281050");
+    const defaultWidth = floatStr(ds, "x00281051");
+    for (let f = 0; f < nFrames; f++) {
+      frames.push({
+        dataSet: ds,
+        frameIndex: f,
+        rows,
+        columns,
+        bitsAllocated,
+        pixelRepresentation,
+        samplesPerPixel,
+        planarConfiguration,
+        photometric,
+        invert: photometric === "MONOCHROME1",
+        color: samplesPerPixel >= 3,
+        transferSyntax,
+        defaultCenter,
+        defaultWidth,
+      });
+    }
+  }
+  return frames;
+}
+
+// 从对齐副本读取灰度原始像素 → 应用 modality rescale(v = raw*slope + intercept)。
+function readGrayValues(fm: FrameMeta): Float32Array {
+  const ds = fm.dataSet;
+  const pd = ds.elements.x7fe00010;
+  const byteArray = ds.byteArray;
+  const bytesPerPixel = fm.bitsAllocated <= 8 ? 1 : 2;
+  const pxCount = fm.rows * fm.columns;
+  const frameLength = pxCount * bytesPerPixel; // SamplesPerPixel 1
+  const absStart = byteArray.byteOffset + pd.dataOffset + fm.frameIndex * frameLength;
+  // 复制到独立、对齐的 ArrayBuffer,保证 Int16/Uint16 视图的字节对齐正确。
+  const buf = byteArray.buffer.slice(absStart, absStart + frameLength);
+  const slope = floatStr(ds, "x00281053") ?? 1;
+  const intercept = floatStr(ds, "x00281052") ?? 0;
+  const out = new Float32Array(pxCount);
+  if (bytesPerPixel === 1) {
+    const raw = new Uint8Array(buf);
+    for (let i = 0; i < pxCount; i++) out[i] = raw[i] * slope + intercept;
+  } else if (fm.pixelRepresentation === 1) {
+    const raw = new Int16Array(buf); // 小端(浏览器均小端)
+    for (let i = 0; i < pxCount; i++) out[i] = raw[i] * slope + intercept;
+  } else {
+    const raw = new Uint16Array(buf);
+    for (let i = 0; i < pxCount; i++) out[i] = raw[i] * slope + intercept;
+  }
+  return out;
+}
+
+// 未压缩彩色(RGB)→ ImageData。处理 PlanarConfiguration 0 交错 / 1 平面。
+function readColor(fm: FrameMeta): ImageData {
+  const ds = fm.dataSet;
+  const pd = ds.elements.x7fe00010;
+  const byteArray = ds.byteArray;
+  const pxCount = fm.rows * fm.columns;
+  const frameLength = pxCount * 3; // 8-bit RGB
+  const absStart = byteArray.byteOffset + pd.dataOffset + fm.frameIndex * frameLength;
+  const src = new Uint8Array(byteArray.buffer, absStart, frameLength);
+  const img = new ImageData(fm.columns, fm.rows);
+  const d = img.data;
+  if (fm.planarConfiguration === 1) {
+    const plane = pxCount;
+    for (let i = 0; i < pxCount; i++) {
+      d[i * 4] = src[i];
+      d[i * 4 + 1] = src[plane + i];
+      d[i * 4 + 2] = src[2 * plane + i];
+      d[i * 4 + 3] = 255;
+    }
+  } else {
+    for (let i = 0; i < pxCount; i++) {
+      d[i * 4] = src[i * 3];
+      d[i * 4 + 1] = src[i * 3 + 1];
+      d[i * 4 + 2] = src[i * 3 + 2];
+      d[i * 4 + 3] = 255;
+    }
+  }
+  return img;
+}
+
+async function decodeFrame(fm: FrameMeta): Promise<Decoded> {
+  try {
+    const ts = fm.transferSyntax;
+    if (TS_UNCOMPRESSED.has(ts)) {
+      if (fm.color) return { kind: "rgba", data: readColor(fm) };
+      return {
+        kind: "gray",
+        values: readGrayValues(fm),
+        rows: fm.rows,
+        cols: fm.columns,
+        invert: fm.invert,
+      };
+    }
+    if (TS_JPEG_BASELINE.has(ts)) {
+      const pd = fm.dataSet.elements.x7fe00010;
+      const encoded = dicomParser.readEncapsulatedImageFrame(fm.dataSet, pd, fm.frameIndex);
+      const copy = encoded.slice(); // 独立 buffer 给 Blob
+      const blob = new Blob([copy], { type: "image/jpeg" });
+      const bitmap = await createImageBitmap(blob);
+      return { kind: "bitmap", bitmap, rows: bitmap.height, cols: bitmap.width };
+    }
+    // JPEG2000 / JPEG-LS / RLE 等:不在此轻量查看器解码。
+    return { kind: "unsupported" };
+  } catch (e) {
+    console.error("DICOM 帧解码失败", e);
+    return { kind: "error" };
+  }
+}
 
 export default function DicomViewer({
   slices,
-  fileName,
 }: {
   slices: Uint8Array[];
   fileName: string;
 }) {
-  const elementRef = useRef<HTMLDivElement | null>(null);
-  const engineRef = useRef<RenderingEngine | null>(null);
-  // 每个实例唯一的 id,避免多次挂载/HMR 时渲染引擎与工具组冲突。
-  const ids = useRef({
-    engine: `dicom-engine-${++seq}`,
-    viewport: `dicom-viewport-${seq}`,
-    toolGroup: `dicom-toolgroup-${seq}`,
-  }).current;
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const [ready, setReady] = useState(false);
+  const framesRef = useRef<FrameMeta[]>([]);
+  const cacheRef = useRef<Map<number, Decoded>>(new Map());
+  const drawTokenRef = useRef(0);
+  const winRef = useRef({ center: 40, width: 400 }); // 当前窗宽窗位(灰度)
+  const viewRef = useRef({ zoom: 1, panX: 0, panY: 0 });
+  const idxRef = useRef(0);
+  const dragRef = useRef<{ button: number; x: number; y: number } | null>(null);
+
+  const [frameTotal, setFrameTotal] = useState(0);
+  const [frameIndex, setFrameIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [leftTool, setLeftTool] = useState<LeftTool>("WindowLevel");
-  const [sliceIndex, setSliceIndex] = useState(0);
-  const [sliceTotal, setSliceTotal] = useState(slices.length);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  // 首次打开中央浮一条"滚轮翻层"提示,几秒后淡出。
+  const [showHint, setShowHint] = useState(true);
 
-  const getViewport = () =>
-    engineRef.current?.getViewport(ids.viewport) as
-      | csTypes.IStackViewport
-      | undefined;
+  // 把已解码帧画到 canvas(应用 fit + 缩放/平移;灰度再应用窗宽窗位)。
+  const paint = (dec: Decoded) => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-  // 初始化 + 加载:字节 → imageIds → STACK 视口 → 工具组(滚轮滚动切片)。
-  // 畸形 DICOM 可能抛错 —— try/catch 转成内联错误提示,避免冒泡把整个应用白屏
-  // (外层还有 ErrorBoundary 兜底)。
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(ch * dpr)) {
+      canvas.width = Math.round(cw * dpr);
+      canvas.height = Math.round(ch * dpr);
+      canvas.style.width = `${cw}px`;
+      canvas.style.height = `${ch}px`;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, cw, ch);
+
+    if (dec.kind === "unsupported" || dec.kind === "error") return;
+
+    // 组一张原尺寸 offscreen 图。
+    let srcCols: number;
+    let srcRows: number;
+    let source: CanvasImageSource;
+    if (dec.kind === "bitmap") {
+      srcCols = dec.cols;
+      srcRows = dec.rows;
+      source = dec.bitmap;
+    } else if (dec.kind === "rgba") {
+      srcCols = dec.data.width;
+      srcRows = dec.data.height;
+      const off = document.createElement("canvas");
+      off.width = srcCols;
+      off.height = srcRows;
+      off.getContext("2d")!.putImageData(dec.data, 0, 0);
+      source = off;
+    } else {
+      // gray:按当前窗宽窗位映射到 8-bit 灰阶。
+      srcCols = dec.cols;
+      srcRows = dec.rows;
+      const { center, width } = winRef.current;
+      const w = width <= 0 ? 1 : width;
+      const low = center - w / 2;
+      const img = new ImageData(srcCols, srcRows);
+      const d = img.data;
+      const vals = dec.values;
+      for (let i = 0; i < vals.length; i++) {
+        let out = ((vals[i] - low) / w) * 255;
+        out = out < 0 ? 0 : out > 255 ? 255 : out;
+        if (dec.invert) out = 255 - out;
+        const o = i * 4;
+        d[o] = d[o + 1] = d[o + 2] = out;
+        d[o + 3] = 255;
+      }
+      const off = document.createElement("canvas");
+      off.width = srcCols;
+      off.height = srcRows;
+      off.getContext("2d")!.putImageData(img, 0, 0);
+      source = off;
+    }
+
+    const fit = Math.min(cw / srcCols, ch / srcRows);
+    const { zoom, panX, panY } = viewRef.current;
+    const dw = srcCols * fit * zoom;
+    const dh = srcRows * fit * zoom;
+    const dx = (cw - dw) / 2 + panX;
+    const dy = (ch - dh) / 2 + panY;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(source, dx, dy, dw, dh);
+  };
+
+  // 计算某帧的"默认"窗宽窗位:标签优先,否则用灰度像素 min/max。
+  const defaultWindowFor = (fm: FrameMeta, dec: Decoded): { center: number; width: number } => {
+    if (fm.defaultCenter != null && fm.defaultWidth != null && fm.defaultWidth > 0) {
+      return { center: fm.defaultCenter, width: fm.defaultWidth };
+    }
+    if (dec.kind === "gray") {
+      let mn = Infinity;
+      let mx = -Infinity;
+      const v = dec.values;
+      for (let i = 0; i < v.length; i++) {
+        if (v[i] < mn) mn = v[i];
+        if (v[i] > mx) mx = v[i];
+      }
+      if (!Number.isFinite(mn) || !Number.isFinite(mx) || mx <= mn) {
+        return { center: 128, width: 256 };
+      }
+      return { center: (mn + mx) / 2, width: mx - mn };
+    }
+    return { center: 128, width: 256 };
+  };
+
+  // 淘汰离当前帧最远的缓存项(bitmap 需 close 释放)。
+  const evictCache = (current: number) => {
+    const cache = cacheRef.current;
+    while (cache.size > DECODE_CACHE_MAX) {
+      let far = -1;
+      let farDist = -1;
+      for (const k of cache.keys()) {
+        const dist = Math.abs(k - current);
+        if (dist > farDist) {
+          farDist = dist;
+          far = k;
+        }
+      }
+      if (far < 0) break;
+      const ent = cache.get(far);
+      if (ent && ent.kind === "bitmap") ent.bitmap.close();
+      cache.delete(far);
+    }
+  };
+
+  // 显示第 idx 帧:命中缓存直接画,否则解码(异步,token 防竞态),顺带预取邻帧。
+  const showFrame = async (idx: number, resetWindow = false) => {
+    const frames = framesRef.current;
+    if (idx < 0 || idx >= frames.length) return;
+    idxRef.current = idx;
+    setFrameIndex(idx);
+    setNotice(null);
+    const token = ++drawTokenRef.current;
+    const fm = frames[idx];
+
+    let dec = cacheRef.current.get(idx);
+    if (!dec) {
+      dec = await decodeFrame(fm);
+      if (token !== drawTokenRef.current) {
+        if (dec.kind === "bitmap") dec.bitmap.close();
+        return;
+      }
+      cacheRef.current.set(idx, dec);
+      evictCache(idx);
+    }
+    if (token !== drawTokenRef.current) return;
+
+    if (dec.kind === "unsupported") {
+      setNotice("此压缩格式暂不支持交互查看,请用上方原件缩略图");
+    }
+    if (dec.kind === "error") {
+      setNotice("影像加载失败");
+    }
+    if (resetWindow) {
+      winRef.current = defaultWindowFor(fm, dec);
+    }
+    paint(dec);
+    prefetch(idx);
+  };
+
+  // 预取当前帧前后各一帧(不阻塞、不改动 token / 当前显示)。
+  const prefetch = (idx: number) => {
+    const frames = framesRef.current;
+    for (const j of [idx + 1, idx - 1]) {
+      if (j < 0 || j >= frames.length || cacheRef.current.has(j)) continue;
+      decodeFrame(frames[j]).then((d) => {
+        if (cacheRef.current.has(j)) {
+          if (d.kind === "bitmap") d.bitmap.close();
+          return;
+        }
+        cacheRef.current.set(j, d);
+        evictCache(idxRef.current);
+      });
+    }
+  };
+
+  // 只重画当前帧(窗位 / 缩放 / 平移变化后,无需重新解码)。
+  const redraw = () => {
+    const dec = cacheRef.current.get(idxRef.current);
+    if (dec) paint(dec);
+  };
+
+  // 解析切片 → 建 frames → 显示第 0 帧。所有解析/解码包在 try/catch,绝不冒泡到 React。
   useEffect(() => {
     let disposed = false;
-    const element = elementRef.current;
-    if (!element) return;
     setReady(false);
     setError(null);
-    setSliceTotal(slices.length);
-    setSliceIndex(0);
-
-    // fileManager 会一直持有 Blob;记录本次加入的下标,卸载时移除。
-    const fileIndices: number[] = [];
-
-    const onStackNewImage = () => {
-      const vp = getViewport();
-      if (vp) setSliceIndex(vp.getCurrentImageIdIndex());
-    };
-
-    (async () => {
-      try {
-        await ensureCornerstoneInit();
-        if (disposed) return;
-
-        // 每张切片:拷贝出独立 ArrayBuffer(Uint8Array 可能是大 buffer 的视图)→
-        // Blob → fileManager.add → `dicomfile:N` imageId。切片已在后端按堆栈顺序排好。
-        // 多帧文件(超声动态 / 增强CT/MR 等,一个文件内含 N 帧)→ 用 dicom-parser 读
-        // NumberOfFrames,>1 时为每帧建 `?frame=i` imageId,整体当一叠滚动。
-        const imageIds: string[] = [];
-        slices.forEach((bytes) => {
-          const u8 = bytes.slice();
-          const blob = new Blob([u8.buffer], { type: "application/dicom" });
-          const imageId = dicomImageLoader.wadouri.fileManager.add(blob);
-          const idx = Number(imageId.split(":")[1]);
-          if (!Number.isNaN(idx)) fileIndices.push(idx);
-          let frames = 1;
-          try {
-            frames = parseInt(dicomParser.parseDicom(u8).string("x00280008") || "1", 10) || 1;
-          } catch {
-            /* 解析失败按单帧处理 */
-          }
-          if (frames > 1) {
-            for (let f = 0; f < frames; f++) imageIds.push(`${imageId}?frame=${f}`);
-          } else {
-            imageIds.push(imageId);
-          }
-        });
-
-        const engine = new RenderingEngine(ids.engine);
-        engineRef.current = engine;
-        engine.enableElement({
-          viewportId: ids.viewport,
-          type: ViewportType.STACK,
-          element,
-        });
-
-        const viewport = engine.getViewport(
-          ids.viewport
-        ) as csTypes.IStackViewport;
-        await viewport.setStack(imageIds);
-        if (disposed) return;
-        viewport.render();
-
-        setSliceTotal(imageIds.length);
-        setSliceIndex(viewport.getCurrentImageIdIndex());
-        element.addEventListener(csEvents.STACK_NEW_IMAGE, onStackNewImage);
-
-        // 工具组:滚轮 → 序列滚动(主要诉求);左键窗位、右键缩放、中键平移;
-        // 长度测量 passive(选中"长度测量"时切到左键)。
-        const toolGroup = ToolGroupManager.createToolGroup(ids.toolGroup);
-        if (toolGroup) {
-          toolGroup.addTool(StackScrollTool.toolName);
-          toolGroup.addTool(WindowLevelTool.toolName);
-          toolGroup.addTool(ZoomTool.toolName);
-          toolGroup.addTool(PanTool.toolName);
-          toolGroup.addTool(LengthTool.toolName);
-          toolGroup.addViewport(ids.viewport, ids.engine);
-          toolGroup.setToolActive(StackScrollTool.toolName, {
-            bindings: [{ mouseButton: MouseBindings.Wheel }],
-          });
-          toolGroup.setToolActive(WindowLevelTool.toolName, {
-            bindings: [{ mouseButton: MouseBindings.Primary }],
-          });
-          toolGroup.setToolActive(ZoomTool.toolName, {
-            bindings: [{ mouseButton: MouseBindings.Secondary }],
-          });
-          toolGroup.setToolActive(PanTool.toolName, {
-            bindings: [{ mouseButton: MouseBindings.Auxiliary }],
-          });
-          toolGroup.setToolPassive(LengthTool.toolName);
-        }
-
-        if (!disposed) setReady(true);
-      } catch (e) {
-        console.error("DICOM 加载失败", e);
-        if (!disposed) setError("DICOM 加载失败");
+    setNotice(null);
+    setFrameIndex(0);
+    cacheRef.current.clear();
+    viewRef.current = { zoom: 1, panX: 0, panY: 0 };
+    try {
+      const frames = buildFrames(slices);
+      framesRef.current = frames;
+      setFrameTotal(frames.length);
+      if (frames.length === 0) {
+        setError("影像加载失败");
+        return;
       }
-    })();
-
+      idxRef.current = 0;
+      showFrame(0, true).then(() => {
+        if (!disposed) setReady(true);
+      });
+    } catch (e) {
+      console.error("DICOM 加载失败", e);
+      setError("影像加载失败");
+    }
     return () => {
       disposed = true;
-      element.removeEventListener(csEvents.STACK_NEW_IMAGE, onStackNewImage);
-      try {
-        ToolGroupManager.destroyToolGroup(ids.toolGroup);
-      } catch {
-        /* 未成功创建时忽略 */
+      drawTokenRef.current++;
+      for (const ent of cacheRef.current.values()) {
+        if (ent.kind === "bitmap") ent.bitmap.close();
       }
-      try {
-        engineRef.current?.destroy();
-      } catch {
-        /* 已销毁时忽略 */
-      }
-      engineRef.current = null;
-      // 释放 fileManager 里本次的 Blob,并清空图像缓存(同一时刻只有一个查看器)。
-      fileIndices.forEach((i) => dicomImageLoader.wadouri.fileManager.remove(i));
-      try {
-        cache.purgeCache();
-      } catch {
-        /* 忽略 */
-      }
+      cacheRef.current.clear();
+      framesRef.current = [];
     };
-  }, [slices, fileName, ids]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slices]);
 
-  // 左键工具切换:窗宽窗位 ⇄ 长度测量。两者不能共享主键,故把另一个设为 passive。
+  // 容器尺寸变化 → 重画。
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const ro = new ResizeObserver(() => redraw());
+    ro.observe(container);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 加载完成后显示"滚轮翻层"提示,4.5 秒后淡出。
   useEffect(() => {
     if (!ready) return;
-    const tg = ToolGroupManager.getToolGroup(ids.toolGroup);
-    if (!tg) return;
-    if (leftTool === "WindowLevel") {
-      tg.setToolPassive(LengthTool.toolName);
-      tg.setToolActive(WindowLevelTool.toolName, {
-        bindings: [{ mouseButton: MouseBindings.Primary }],
-      });
+    setShowHint(true);
+    const t = setTimeout(() => setShowHint(false), 4500);
+    return () => clearTimeout(t);
+  }, [ready]);
+  useEffect(() => {
+    if (frameIndex > 0) setShowHint(false);
+  }, [frameIndex]);
+
+  // 滚轮:Ctrl → 缩放;否则翻层(主诉求)。React 的 onWheel 是被动监听,preventDefault
+  // 无效,故用原生 { passive:false } 监听。
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey) {
+        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        viewRef.current.zoom = Math.min(20, Math.max(0.2, viewRef.current.zoom * factor));
+        redraw();
+        return;
+      }
+      setShowHint(false);
+      const next = idxRef.current + (e.deltaY > 0 ? 1 : -1);
+      if (next < 0 || next >= framesRef.current.length) return;
+      showFrame(next);
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    dragRef.current = { button: e.button, x: e.clientX, y: e.clientY };
+  };
+  const onMouseMove = (e: React.MouseEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    const dec = cacheRef.current.get(idxRef.current);
+    if (drag.button === 0) {
+      // 左键:灰度调窗宽窗位(dx→宽,dy→中心);彩色帧无意义则平移。
+      if (dec && dec.kind === "gray") {
+        winRef.current.width = Math.max(1, winRef.current.width + dx * 2);
+        winRef.current.center = winRef.current.center + dy * 2;
+        redraw();
+      } else {
+        viewRef.current.panX += dx;
+        viewRef.current.panY += dy;
+        redraw();
+      }
+    } else if (drag.button === 2) {
+      // 右键:缩放(上移放大)。
+      const factor = Math.exp(-dy * 0.005);
+      viewRef.current.zoom = Math.min(20, Math.max(0.2, viewRef.current.zoom * factor));
+      redraw();
     } else {
-      tg.setToolPassive(WindowLevelTool.toolName);
-      tg.setToolActive(LengthTool.toolName, {
-        bindings: [{ mouseButton: MouseBindings.Primary }],
-      });
+      // 中键:平移。
+      viewRef.current.panX += dx;
+      viewRef.current.panY += dy;
+      redraw();
     }
-  }, [leftTool, ready, ids.toolGroup]);
+  };
+  const onMouseUp = () => {
+    dragRef.current = null;
+  };
 
   const applyPreset = (center: number | null, width: number | null) => {
-    const vp = getViewport();
-    if (!vp) return;
-    try {
-      if (center == null || width == null) {
-        vp.resetProperties();
-      } else {
-        vp.setProperties({
-          voiRange: { lower: center - width / 2, upper: center + width / 2 },
-        });
-      }
-      vp.render();
-    } catch (e) {
-      console.error("窗位设置失败", e);
+    const fm = framesRef.current[idxRef.current];
+    const dec = cacheRef.current.get(idxRef.current);
+    if (!fm || !dec) return;
+    if (center == null || width == null) {
+      winRef.current = defaultWindowFor(fm, dec);
+    } else {
+      winRef.current = { center, width };
     }
+    redraw();
+  };
+
+  const zoomBy = (factor: number) => {
+    viewRef.current.zoom = Math.min(20, Math.max(0.2, viewRef.current.zoom * factor));
+    redraw();
   };
 
   const handleReset = () => {
-    const vp = getViewport();
-    if (!vp) return;
-    try {
-      vp.resetCamera();
-      vp.resetProperties();
-      vp.render();
-    } catch (e) {
-      console.error("重置失败", e);
-    }
+    const fm = framesRef.current[idxRef.current];
+    const dec = cacheRef.current.get(idxRef.current);
+    viewRef.current = { zoom: 1, panX: 0, panY: 0 };
+    if (fm && dec) winRef.current = defaultWindowFor(fm, dec);
+    redraw();
   };
 
   return (
-    <div
-      className="flex flex-col h-full w-full"
-      onClick={(e) => e.stopPropagation()}
-    >
+    <div className="flex flex-col h-full w-full" onClick={(e) => e.stopPropagation()}>
       <div className="relative z-10 flex items-center gap-2 px-3 py-2 shrink-0 flex-wrap bg-black/60">
-        {/* 左键工具:窗宽窗位 / 长度测量。滚轮滚动切片无需选工具。 */}
+        {/* 缩放 */}
         <button
-          onClick={() => setLeftTool("WindowLevel")}
-          className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
-            leftTool === "WindowLevel"
-              ? "bg-white text-slate-900"
-              : "bg-white/10 text-white/80 hover:bg-white/20"
-          }`}
+          onClick={() => zoomBy(1.2)}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors"
         >
-          <SlidersHorizontal className="w-3.5 h-3.5" /> 窗宽窗位
+          <ZoomIn className="w-3.5 h-3.5" /> 放大
         </button>
         <button
-          onClick={() => setLeftTool("Length")}
-          className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
-            leftTool === "Length"
-              ? "bg-white text-slate-900"
-              : "bg-white/10 text-white/80 hover:bg-white/20"
-          }`}
+          onClick={() => zoomBy(1 / 1.2)}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors"
         >
-          <Ruler className="w-3.5 h-3.5" /> 长度测量
+          <ZoomOut className="w-3.5 h-3.5" /> 缩小
         </button>
 
         <span className="w-px h-4 bg-white/20 mx-1" />
 
         {/* 窗位预设 */}
+        <SlidersHorizontal className="w-3.5 h-3.5 text-white/50" />
         {PRESETS.map((p) => (
           <button
             key={p.label}
@@ -317,27 +580,47 @@ export default function DicomViewer({
           <RotateCcw className="w-3.5 h-3.5" /> 重置
         </button>
 
-        {sliceTotal > 1 && ready && (
+        {frameTotal > 1 && ready && (
           <span className="text-xs font-mono text-white/70 ml-1">
-            第 {sliceIndex + 1} / 共 {sliceTotal} 张
+            第 {frameIndex + 1} / 共 {frameTotal} 张
           </span>
         )}
         {error && <span className="text-xs text-rose-300 ml-1">{error}</span>}
-        {!ready && !error && (
-          <span className="text-xs text-white/50 ml-1">加载中…</span>
-        )}
+        {!ready && !error && <span className="text-xs text-white/50 ml-1">加载中…</span>}
         {ready && !error && (
-          <span className="text-[11px] text-white/40 ml-auto hidden sm:inline">
-            滚轮翻页 · 左键窗位 · 右键缩放 · 中键平移
+          <span className="ml-auto text-[11px] text-white/70">
+            {frameTotal > 1 ? "↕ 滚轮翻看每一层 · " : ""}左键调明暗 · 右键缩放 · ESC 返回
           </span>
         )}
       </div>
-      <div
-        ref={elementRef}
-        className="flex-1 min-h-0 relative bg-black overflow-hidden"
-        style={{ touchAction: "none" }}
-        onContextMenu={(e) => e.preventDefault()}
-      />
+      <div className="flex-1 min-h-0 relative">
+        <div
+          ref={containerRef}
+          className="absolute inset-0 bg-black overflow-hidden"
+          style={{ touchAction: "none" }}
+        >
+          <canvas
+            ref={canvasRef}
+            className="block"
+            style={{ touchAction: "none" }}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+            onContextMenu={(e) => e.preventDefault()}
+          />
+        </div>
+        {notice && (
+          <div className="pointer-events-none absolute top-4 left-1/2 -translate-x-1/2 bg-black/75 text-white/90 text-xs px-4 py-2 rounded-lg max-w-[80%] text-center">
+            {notice}
+          </div>
+        )}
+        {ready && showHint && frameTotal > 1 && (
+          <div className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 bg-black/75 text-white text-sm px-5 py-2.5 rounded-full flex items-center gap-2 shadow-lg">
+            <span className="text-base">↕</span> 滚轮上下翻看每一层(共 {frameTotal} 张)
+          </div>
+        )}
+      </div>
     </div>
   );
 }
