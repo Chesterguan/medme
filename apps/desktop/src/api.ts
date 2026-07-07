@@ -4,6 +4,7 @@ import type {
   DocumentDetail,
   ImportOutcome,
   ExportSummary,
+  ShareResult,
   PatientProfile,
   TimelineGroup,
 } from "./types";
@@ -20,6 +21,8 @@ export const api = {  listTimelineGrouped: () => invoke<TimelineGroup[]>("list_t
     invoke<ExportSummary>("export_vault", { destPath }),
   exportTimelineHtml: (destPath: string) =>
     invoke<ExportSummary>("export_timeline_html", { destPath }),
+  createShare: (destPath: string, expiresDays?: number) =>
+    invoke<ShareResult>("create_share", { destPath, expiresDays }),
   getPatientProfile: () => invoke<PatientProfile>("get_patient_profile"),
   getInboxPath: () => invoke<string>("get_inbox_path"),
   setInboxPath: (path: string) => invoke<void>("set_inbox_path", { path }),

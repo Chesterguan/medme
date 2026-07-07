@@ -72,6 +72,14 @@ pub struct ExportSummary {
     pub byte_size: i64,
 }
 
+/// 加密分享生成结果:口令(分组显示)、记录数、文件字节数。
+#[derive(Serialize)]
+pub struct ShareResult {
+    pub passphrase: String,
+    pub record_count: i64,
+    pub byte_size: i64,
+}
+
 #[derive(Serialize)]
 pub struct EncounterSummary {
     pub id: i64,

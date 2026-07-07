@@ -28,6 +28,8 @@ dicom = { path = "../../../packages/dicom" }
 notify = "8.2.0"
 tauri-plugin-dialog = "2.7.1"
 base64 = "0.22"
+aes-gcm = "0.10"
+rand = "0.8"
 chrono.workspace = true
 
 [dev-dependencies]

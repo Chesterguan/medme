@@ -25,8 +25,49 @@ fn escape_html(s: &str) -> String {
     out
 }
 
+/// 一条按病程正序整理好的记录:文档 + 原件 + OCR 文本。时间线导出与加密分享
+/// (`crate::share`)共用此遍历逻辑,避免重复走 vault。
+pub(crate) struct GatheredRecord {
+    pub doc: core_model::Document,
+    pub source_file: SourceFile,
+    pub text: String,
+}
+
+/// 按病程正序(旧→新,无日期最后)遍历 vault,取出每条文档的原件与 OCR 文本。
+pub(crate) fn gather_records(vault: &Vault) -> Result<Vec<GatheredRecord>, String> {
+    // Vault::timeline() 按日期倒序(无日期最后);正序更利于阅读,反转后把无日期挪到末尾。
+    let mut entries = vault.timeline().map_err(|e| e.to_string())?;
+    entries.reverse();
+    let (mut dated, undated): (Vec<_>, Vec<_>) =
+        entries.into_iter().partition(|e| e.doc_date.is_some());
+    dated.extend(undated);
+
+    let mut out = Vec::new();
+    for entry in &dated {
+        let Some(doc) = vault
+            .document_by_id(entry.document_id)
+            .map_err(|e| e.to_string())?
+        else {
+            continue;
+        };
+        let Some(sf) = vault
+            .source_file_by_id(doc.source_file_id)
+            .map_err(|e| e.to_string())?
+        else {
+            continue;
+        };
+        let text = vault.ocr_text(doc.id).map_err(|e| e.to_string())?;
+        out.push(GatheredRecord {
+            doc,
+            source_file: sf,
+            text,
+        });
+    }
+    Ok(out)
+}
+
 /// 与前端 `docmeta.ts` 的 `TYPE_LABEL` 保持一致的中文类型徽标。
-fn doc_type_label(t: &DocType) -> &'static str {
+pub(crate) fn doc_type_label(t: &DocType) -> &'static str {
     match t {
         DocType::LabReport => "化验",
         DocType::ImagingReport => "检查",
@@ -89,33 +130,16 @@ fn format_patient_line(p: &pipeline::PatientProfile) -> String {
 
 /// 构建整条时间线的自包含导出 HTML。返回 `(html, 记录数)`。
 pub fn build_timeline_html(vault: &Vault) -> Result<(String, i64), String> {
-    // Vault::timeline() 按日期倒序(无日期最后);导出按病程正序(旧→新)更利于
-    // 医生阅读,反转后再把无日期的挪到末尾。
-    let mut entries = vault.timeline().map_err(|e| e.to_string())?;
-    entries.reverse();
-    let (mut dated, undated): (Vec<_>, Vec<_>) =
-        entries.into_iter().partition(|e| e.doc_date.is_some());
-    dated.extend(undated);
-
+    let records = gather_records(vault)?;
     let profile = pipeline::patient_profile(vault).map_err(|e| e.to_string())?;
 
     let mut body = String::new();
     let mut record_count: i64 = 0;
 
-    for entry in &dated {
-        let Some(doc) = vault
-            .document_by_id(entry.document_id)
-            .map_err(|e| e.to_string())?
-        else {
-            continue;
-        };
-        let Some(sf) = vault
-            .source_file_by_id(doc.source_file_id)
-            .map_err(|e| e.to_string())?
-        else {
-            continue;
-        };
-        let text = vault.ocr_text(doc.id).map_err(|e| e.to_string())?;
+    for rec in &records {
+        let doc = &rec.doc;
+        let sf = &rec.source_file;
+        let text = &rec.text;
 
         let title = doc.title.clone().unwrap_or_else(|| sf.original_name.clone());
         let date_str = match (fmt_date(doc.doc_date), fmt_date(doc.doc_date_end)) {
@@ -124,7 +148,7 @@ pub fn build_timeline_html(vault: &Vault) -> Result<(String, i64), String> {
             (None, _) => "无日期".to_string(),
         };
 
-        let preview = render_preview(vault, &sf)?;
+        let preview = render_preview(vault, sf)?;
 
         body.push_str("<section class=\"record\">\n");
         body.push_str(&format!(
@@ -144,7 +168,7 @@ pub fn build_timeline_html(vault: &Vault) -> Result<(String, i64), String> {
         if !text.trim().is_empty() {
             body.push_str(&format!(
                 "<pre class=\"ocr-text\">{}</pre>\n",
-                escape_html(&text)
+                escape_html(text)
             ));
         } else if sf.mime_type == "application/pdf" {
             body.push_str("<div class=\"note\">(PDF 原件未内嵌预览,请参见原始文件)</div>\n");

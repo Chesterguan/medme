@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
-import { UploadCloud, ScanLine, FolderOpen, Inbox, Download, FileDown } from "lucide-react";
+import {
+  UploadCloud,
+  ScanLine,
+  FolderOpen,
+  Inbox,
+  Download,
+  FileDown,
+  ShieldCheck,
+  Copy,
+  Check,
+} from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
@@ -22,6 +32,54 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
   const [exportMsg, setExportMsg] = useState<
     { kind: "ok"; text: string; path: string } | { kind: "err"; text: string } | null
   >(null);
+
+  // 加密分享
+  const [shareDays, setShareDays] = useState(5);
+  const [sharing, setSharing] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [shareResult, setShareResult] = useState<
+    | { kind: "ok"; passphrase: string; count: number; days: number; path: string }
+    | { kind: "err"; text: string }
+    | null
+  >(null);
+
+  // 端到端加密分享:选保存路径 → 生成自包含加密 HTML(含浏览器内查看器)→
+  // 返回口令(需另行单独告知医生)。数据零服务器,浏览器本地解密。
+  const doShare = async () => {
+    let path: string | null;
+    try {
+      path = await save({
+        defaultPath: "MedMe加密分享.html",
+        filters: [{ name: "HTML", extensions: ["html"] }],
+      });
+    } catch (e) {
+      setShareResult({ kind: "err", text: `选择保存位置失败:${String(e)}` });
+      return;
+    }
+    if (!path) return;
+    const days = Number.isFinite(shareDays) && shareDays > 0 ? Math.floor(shareDays) : 5;
+    setSharing(true);
+    setShareResult(null);
+    setCopied(false);
+    try {
+      const r = await api.createShare(path, days);
+      setShareResult({ kind: "ok", passphrase: r.passphrase, count: r.record_count, days, path });
+    } catch (e) {
+      setShareResult({ kind: "err", text: `生成失败:${String(e)}` });
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const copyPass = async (pass: string) => {
+    try {
+      await navigator.clipboard.writeText(pass);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* 剪贴板不可用时忽略 —— 用户可手动选择复制 */
+    }
+  };
 
   useEffect(() => {
     api.getInboxPath().then(setInboxPath).catch(() => {});
@@ -203,6 +261,79 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
                   打开文件
                 </button>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* 加密分享给医生:端到端加密、零服务器,需口令打开 */}
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center gap-2 text-slate-800 font-medium mb-2">
+            <ShieldCheck className="w-5 h-5 text-emerald-600" /> 加密分享给医生
+          </div>
+          <div className="text-sm text-slate-500 leading-relaxed mb-3">
+            生成一个<b className="text-slate-700">端到端加密</b>的 HTML 文件(含浏览器内查看器):
+            <b className="text-slate-700">零服务器</b>,医生用任意浏览器打开、输入<b className="text-slate-700">口令</b>即在本地解密查看,数据不上传任何服务器。
+          </div>
+          <div className="flex items-center gap-3 mb-3">
+            <label className="text-sm text-slate-600">有效期</label>
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={shareDays}
+              onChange={(e) => setShareDays(Number(e.target.value))}
+              className="w-20 text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500"
+            />
+            <span className="text-sm text-slate-500">天</span>
+          </div>
+          <button
+            type="button"
+            onClick={doShare}
+            disabled={sharing}
+            className="flex items-center gap-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-wait rounded-xl px-4 py-2.5 transition-colors cursor-pointer"
+          >
+            <ShieldCheck className="w-4 h-4" /> {sharing ? "生成中…" : "生成加密分享文件"}
+          </button>
+
+          {shareResult && shareResult.kind === "err" && (
+            <div className="mt-3 rounded-xl px-4 py-2.5 text-sm bg-rose-50 text-rose-700 break-all">
+              {shareResult.text}
+            </div>
+          )}
+          {shareResult && shareResult.kind === "ok" && (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+              <div className="text-[11px] font-mono text-emerald-700 uppercase tracking-widest mb-1">
+                口令(请务必单独告知医生)
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-base font-mono font-semibold text-slate-900 bg-white border border-emerald-200 rounded-lg px-3 py-2 break-all select-all">
+                  {shareResult.passphrase}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => copyPass(shareResult.passphrase)}
+                  className="shrink-0 flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-white border border-emerald-200 hover:bg-emerald-50 rounded-lg px-3 py-2 transition-colors cursor-pointer"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? "已复制" : "复制"}
+                </button>
+              </div>
+              <div className="mt-3 text-sm text-slate-600 leading-relaxed">
+                已生成 {shareResult.count} 份记录。把文件发给医生(或存到你的云盘发链接),
+                <b className="text-slate-800">口令请另行单独告知,切勿和文件放一起</b>。
+                医生用任意浏览器打开 → 输口令 → 查看。有效期 {shareResult.days} 天。
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  api
+                    .openPath(shareResult.path)
+                    .catch((e) => setShareResult({ kind: "err", text: `打开失败:${String(e)}` }))
+                }
+                className="mt-2 text-sm font-medium text-emerald-700 hover:underline cursor-pointer"
+              >
+                打开文件
+              </button>
             </div>
           )}
         </div>

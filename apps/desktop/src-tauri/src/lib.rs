@@ -2,6 +2,7 @@ mod commands;
 mod dto;
 mod export;
 mod inbox;
+mod share;
 
 use commands::AppState;
 use core_model::Vault;
@@ -45,6 +46,7 @@ pub fn run() {
             commands::render_dicom,
             commands::export_vault,
             commands::export_timeline_html,
+            commands::create_share,
             commands::get_patient_profile,
             commands::get_inbox_path,
             commands::set_inbox_path,

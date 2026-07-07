@@ -166,6 +166,27 @@ pub fn export_timeline_html(
     })
 }
 
+/// 端到端加密分享:把全部病历打包成一份自包含加密 HTML 写到 `dest_path`
+/// (见 `crate::share::build_encrypted_share`),返回口令(需另行单独告知医生)、
+/// 记录数与文件字节数。默认有效期 5 天。
+#[tauri::command]
+pub fn create_share(
+    state: State<AppState>,
+    dest_path: String,
+    expires_days: Option<u32>,
+) -> Result<ShareResult, String> {
+    let v = lock(&state)?;
+    let days = expires_days.unwrap_or(5);
+    let (html, passphrase, record_count) = crate::share::build_encrypted_share(&v, days)?;
+    let byte_size = html.len() as i64;
+    std::fs::write(&dest_path, html).map_err(|e| e.to_string())?;
+    Ok(ShareResult {
+        passphrase,
+        record_count,
+        byte_size,
+    })
+}
+
 #[tauri::command]
 pub fn get_patient_profile(state: State<AppState>) -> Result<PatientProfile, String> {
     let v = lock(&state)?;

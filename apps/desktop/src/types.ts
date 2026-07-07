@@ -34,6 +34,11 @@ export interface ExportSummary {
   file_count: number;
   byte_size: number;
 }
+export interface ShareResult {
+  passphrase: string;
+  record_count: number;
+  byte_size: number;
+}
 export interface PatientProfile {
   name: string | null;
   gender: string | null;
