@@ -18,6 +18,7 @@ export const api = {
   importPaths: (paths: string[]) =>
     invoke<ImportOutcome[]>("import_paths", { paths }),
   readSourceBytes: (id: number) => invoke<number[]>("read_source_bytes", { id }),
+  renderDicom: (id: number) => invoke<number[]>("render_dicom", { id }),
   exportVault: (destPath: string) =>
     invoke<ExportSummary>("export_vault", { destPath }),
   getPatientProfile: () => invoke<PatientProfile>("get_patient_profile"),

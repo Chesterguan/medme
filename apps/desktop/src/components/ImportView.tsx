@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { UploadCloud } from "lucide-react";
+import { UploadCloud, ScanLine } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { api } from "../api";
 import type { ImportOutcome } from "../types";
@@ -76,6 +76,35 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
           <div className="text-xs font-mono text-slate-400 mt-2">
             PDF · 图片(PNG / JPG / TIFF)· TXT · 原始文件永久保存,自动去重
           </div>
+        </div>
+
+        {/* 用户引导:怎样获得最准的识别 */}
+        <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/50 p-5">
+          <div className="flex items-center gap-2 text-blue-800 font-medium mb-3">
+            <ScanLine className="w-5 h-5" /> 怎样识别最准
+          </div>
+          <ul className="space-y-2.5 text-sm text-slate-600 leading-relaxed">
+            <li className="flex gap-2">
+              <span className="text-blue-500 font-bold shrink-0">①</span>
+              <span>
+                <b className="text-slate-800">优先用扫描 App</b>:扫描全能王 · 微信「扫一扫」文档模式 ·
+                iOS 备忘录/文件扫描 —— 自动纠偏去阴影,识别最准,导出 PDF/图片后拖进来即可。
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-blue-500 font-bold shrink-0">②</span>
+              <span>
+                <b className="text-slate-800">直接拍照也行</b>:报告平铺填满画面、光线均匀、避免阴影反光、对焦清晰。
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-blue-500 font-bold shrink-0">③</span>
+              <span>
+                支持 <b className="text-slate-800">PDF · 图片 · 文本</b>;
+                <b className="text-slate-800">原件永久保存、自动去重</b>,内容由 OCR 自动识别并归类到时间线。
+              </span>
+            </li>
+          </ul>
         </div>
 
         {error && <div className="mt-4 text-sm text-rose-600">导入失败:{error}</div>}

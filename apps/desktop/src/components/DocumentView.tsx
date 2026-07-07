@@ -19,15 +19,18 @@ export default function DocumentView({
   const [lightbox, setLightbox] = useState(false);
   const isImage = sf.mime_type.startsWith("image/");
   const isPdf = sf.mime_type === "application/pdf";
-  const hasOriginal = isImage || isPdf;
+  const isDicom = sf.mime_type === "application/dicom";
+  const showAsImage = isImage || isDicom; // DICOM 渲染成灰度预览图,与图片同样呈现
+  const hasOriginal = showAsImage || isPdf;
 
   useEffect(() => {
     if (!hasOriginal) return;
     let url: string | null = null;
-    api
-      .readSourceBytes(doc.id)
+    const bytesP = isDicom ? api.renderDicom(doc.id) : api.readSourceBytes(doc.id);
+    const blobType = isDicom ? "image/png" : sf.mime_type;
+    bytesP
       .then((bytes) => {
-        const blob = new Blob([new Uint8Array(bytes)], { type: sf.mime_type });
+        const blob = new Blob([new Uint8Array(bytes)], { type: blobType });
         url = URL.createObjectURL(blob);
         setOrigUrl(url);
       })
@@ -35,7 +38,7 @@ export default function DocumentView({
     return () => {
       if (url) URL.revokeObjectURL(url);
     };
-  }, [doc.id, hasOriginal, sf.mime_type]);
+  }, [doc.id, hasOriginal, isDicom, sf.mime_type]);
 
   const dateStr = doc.doc_date_end
     ? `${fmtDate(doc.doc_date)} → ${fmtDate(doc.doc_date_end)}`
@@ -87,7 +90,7 @@ export default function DocumentView({
               <div className="text-[11px] font-mono text-slate-400 uppercase tracking-widest mb-2">
                 原件 · 附件
               </div>
-              {isImage ? (
+              {showAsImage ? (
                 origUrl ? (
                   <button
                     onClick={() => setLightbox(true)}
@@ -164,7 +167,7 @@ export default function DocumentView({
             </button>
           </div>
           <div className="flex-1 overflow-auto flex items-center justify-center p-4">
-            {isImage ? (
+            {showAsImage ? (
               <img
                 src={origUrl}
                 alt={sf.original_name}
