@@ -53,15 +53,21 @@ export default function App() {
             加载失败:{error}
           </div>
         )}
-        {detail ? (
-          <DocumentView detail={detail} onBack={() => setDetail(null)} />
-        ) : tab === "import" ? (
-          <ImportView onImported={afterImport} />
-        ) : tab === "search" ? (
-          <SearchView onSelect={openDoc} />
-        ) : (
-          <Timeline groups={groups} onSelect={openDoc} />
-        )}
+        {/* 底层视图常驻(不卸载),详情以覆盖层显示 → 返回时保留展开态/搜索词/滚动位置 */}
+        <div className="flex-1 relative overflow-hidden">
+          {tab === "import" ? (
+            <ImportView onImported={afterImport} />
+          ) : tab === "search" ? (
+            <SearchView onSelect={openDoc} />
+          ) : (
+            <Timeline groups={groups} onSelect={openDoc} />
+          )}
+          {detail && (
+            <div className="absolute inset-0 z-10 bg-slate-50 flex flex-col">
+              <DocumentView detail={detail} onBack={() => setDetail(null)} />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

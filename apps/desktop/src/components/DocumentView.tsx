@@ -57,7 +57,7 @@ export default function DocumentView({
           onClick={onBack}
           className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 mb-3 cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" /> 返回时间线
+          <ArrowLeft className="w-4 h-4" /> 返回
         </button>
         <div className="flex items-center gap-3 flex-wrap">
           {(() => {
