@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { DocumentDetail } from "../types";
 import { TYPE_LABEL, TYPE_BADGE, TYPE_ICON, fmtDate, fmtBytes } from "../docmeta";
 import ReportContent from "./ReportContent";
+import DicomViewer from "./DicomViewer";
 
 // 内容(识别文本)为主,原件作为附件:缩略图/文件条,点击全屏查看。
 // OCR 已把内容读出来 → 阅读用文本,原图只在需要出示时全屏打开。
@@ -17,12 +18,14 @@ export default function DocumentView({
   const { document: doc, source_file: sf, ocr_text } = detail;
   const [origUrl, setOrigUrl] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState(false);
+  const [dicomBytes, setDicomBytes] = useState<Uint8Array | null>(null);
   const isImage = sf.mime_type.startsWith("image/");
   const isPdf = sf.mime_type === "application/pdf";
   const isDicom = sf.mime_type === "application/dicom";
-  const showAsImage = isImage || isDicom; // DICOM 渲染成灰度预览图,与图片同样呈现
+  const showAsImage = isImage || isDicom; // 缩略图:DICOM 渲染成灰度 PNG,与图片同样呈现
   const hasOriginal = showAsImage || isPdf;
 
+  // 缩略图:DICOM 用后端渲染的静态 PNG(快),其他原样读取。
   useEffect(() => {
     if (!hasOriginal) return;
     let url: string | null = null;
@@ -39,6 +42,26 @@ export default function DocumentView({
       if (url) URL.revokeObjectURL(url);
     };
   }, [doc.id, hasOriginal, isDicom, sf.mime_type]);
+
+  // 全屏查看 DICOM:按需读取原始字节,交给 dwv 做交互式渲染(窗宽窗位/缩放/滚动)。
+  useEffect(() => {
+    if (!isDicom || !lightbox) return;
+    let cancelled = false;
+    api
+      .readSourceBytes(doc.id)
+      .then((raw) => {
+        if (!cancelled) setDicomBytes(new Uint8Array(raw));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [doc.id, isDicom, lightbox]);
+
+  // 关闭后释放原始字节,避免大文件常驻内存。
+  useEffect(() => {
+    if (!lightbox) setDicomBytes(null);
+  }, [lightbox]);
 
   const dateStr = doc.doc_date_end
     ? `${fmtDate(doc.doc_date)} → ${fmtDate(doc.doc_date_end)}`
@@ -155,7 +178,7 @@ export default function DocumentView({
       </div>
 
       {/* 全屏查看 lightbox */}
-      {lightbox && origUrl && (
+      {lightbox && (isDicom || origUrl) && (
         <div className="fixed inset-0 z-50 bg-black/85 flex flex-col" onClick={() => setLightbox(false)}>
           <div className="flex justify-between items-center px-5 py-3 text-white/90 shrink-0">
             <span className="text-sm font-mono truncate">{sf.original_name}</span>
@@ -166,17 +189,34 @@ export default function DocumentView({
               关闭 <X className="w-4 h-4" />
             </button>
           </div>
-          <div className="flex-1 overflow-auto flex items-center justify-center p-4">
-            {showAsImage ? (
+          <div
+            className={
+              isDicom
+                ? "flex-1 min-h-0 overflow-hidden flex"
+                : "flex-1 overflow-auto flex items-center justify-center p-4"
+            }
+          >
+            {isDicom ? (
+              dicomBytes ? (
+                <DicomViewer bytes={dicomBytes} fileName={sf.original_name} />
+              ) : (
+                <div
+                  className="flex-1 flex items-center justify-center text-white/60 text-sm"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  加载 DICOM 原始数据…
+                </div>
+              )
+            ) : showAsImage ? (
               <img
-                src={origUrl}
+                src={origUrl ?? undefined}
                 alt={sf.original_name}
                 className="max-w-full max-h-full object-contain"
                 onClick={(e) => e.stopPropagation()}
               />
             ) : (
               <iframe
-                src={origUrl}
+                src={origUrl ?? undefined}
                 title={sf.original_name}
                 className="w-full h-full max-w-5xl bg-white rounded-lg"
                 onClick={(e) => e.stopPropagation()}
