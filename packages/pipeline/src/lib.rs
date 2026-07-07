@@ -88,21 +88,54 @@ pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
             })
         }
         Err(_) => {
-            // 无文本层(图片/扫描件):仍建 document,用文件名推断类型/日期,
-            // 使其在时间线可见、可查看原件;文字由后续 OCR(Plan B)补齐。
-            let (doc_date, doc_date_end) = parser::guess_date_range(&name);
-            let doc_type = parser::classify(&name);
-            vault.add_document(NewDocument {
-                source_file_id: sid,
-                doc_type: doc_type.clone(),
-                doc_date,
-                doc_date_end,
-                title: Some(name.clone()),
-                language: None,
-                page_count: 1,
-            })?;
-            // 不建 ocr_result(暂无文本)
-            Ok(IngestOutcome { source_file_id: sid, name, status: IngestStatus::StoredNoText, doc_type: Some(doc_type) })
+            // 无文本层(图片/扫描件):先尝试 OCR。
+            match ocr::recognize(&bytes) {
+                Ok(text) if !text.trim().is_empty() => {
+                    // OCR 成功:像文本文档一样处理(分类/日期取自识别文本)
+                    let doc_type = parser::classify(&text);
+                    let (doc_date, doc_date_end) = parser::guess_date_range(&text);
+                    let doc = vault.add_document(NewDocument {
+                        source_file_id: sid,
+                        doc_type: doc_type.clone(),
+                        doc_date,
+                        doc_date_end,
+                        title: Some(name.clone()),
+                        language: parser::detect_language(&text),
+                        page_count: 1,
+                    })?;
+                    vault.add_ocr(NewOcr {
+                        document_id: doc.id,
+                        page_no: 1,
+                        backend: OcrBackendKind::Onnx,
+                        model_version: "ppocr-v5".into(),
+                        text,
+                        confidence: None,
+                    })?;
+                    let status = if imp.deduped {
+                        IngestStatus::Backfilled
+                    } else {
+                        IngestStatus::New
+                    };
+                    Ok(IngestOutcome { source_file_id: sid, name, status, doc_type: Some(doc_type) })
+                }
+                _ => {
+                    // OCR 失败/空:退回文件名元数据(保持现状),原文件已永存,
+                    // 使其在时间线可见、可查看原件。
+                    let (doc_date, doc_date_end) = parser::guess_date_range(&name);
+                    let doc_type = parser::classify(&name);
+                    vault.add_document(NewDocument {
+                        source_file_id: sid,
+                        doc_type: doc_type.clone(),
+                        doc_date,
+                        doc_date_end,
+                        title: Some(name.clone()),
+                        language: None,
+                        page_count: 1,
+                    })?;
+                    // 不建 ocr_result(暂无文本)
+                    Ok(IngestOutcome { source_file_id: sid, name, status: IngestStatus::StoredNoText, doc_type: Some(doc_type) })
+                }
+            }
         }
     }
 }

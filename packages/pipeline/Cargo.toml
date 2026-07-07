@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 core-model = { path = "../core-model" }
 parser = { path = "../parser" }
+ocr = { path = "../ocr" }
 anyhow.workspace = true
 
 [dev-dependencies]
