@@ -13,6 +13,7 @@ import type { DocumentDetail } from "../types";
 import { TYPE_LABEL, TYPE_BADGE, TYPE_ICON, fmtDate, fmtBytes } from "../docmeta";
 import ReportContent from "./ReportContent";
 import DicomViewer from "./DicomViewer";
+import ImageViewer from "./ImageViewer";
 
 // 低置信度阈值:低于此值提示扫描可能不清晰/不可用,建议重拍或核对原件。
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
@@ -259,7 +260,7 @@ export default function DocumentView({
           </div>
           <div
             className={
-              isDicom
+              isDicom || isImage
                 ? "flex-1 min-h-0 overflow-hidden flex"
                 : "flex-1 overflow-auto flex items-center justify-center p-4"
             }
@@ -275,13 +276,8 @@ export default function DocumentView({
                   加载 DICOM 原始数据…
                 </div>
               )
-            ) : showAsImage ? (
-              <img
-                src={origUrl ?? undefined}
-                alt={sf.original_name}
-                className="max-w-full max-h-full object-contain"
-                onClick={(e) => e.stopPropagation()}
-              />
+            ) : isImage ? (
+              <ImageViewer src={origUrl ?? ""} alt={sf.original_name} />
             ) : (
               <iframe
                 src={origUrl ?? undefined}
