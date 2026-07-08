@@ -17,7 +17,7 @@
 
 ## 方式 B:从源码运行(开发者)
 
-前置:**Rust**(rustup)、**Node 18+**、**pnpm**。
+前置:**Rust**(rustup)、**Node 18+**、**pnpm**、**CMake + C/C++ 工具链**(编译内置的 JPEG2000/JPEG-LS 影像编解码;macOS:`brew install cmake`)。首次构建会编译 OpenJPEG/CharLS,较慢;**装好的 .dmg 无需这些**(编解码已静态打包)。
 
 ```bash
 git clone https://github.com/Lexuan-Lin/shadow_medical_record-.git
