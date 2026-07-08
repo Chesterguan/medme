@@ -185,7 +185,14 @@ async function decodeFrame(fm: FrameMeta): Promise<Decoded> {
     }
     if (TS_JPEG_BASELINE.has(ts)) {
       const pd = fm.dataSet.elements.x7fe00010;
-      const encoded = dicomParser.readEncapsulatedImageFrame(fm.dataSet, pd, fm.frameIndex);
+      // BOT(基本偏移表)有条目时按帧读;很多设备的多帧(如超声动态)BOT 为空,此时
+      // readEncapsulatedImageFrame 会抛错,改按 fragment 下标读(一帧一 fragment 的常见情形
+      // fragmentIndex === frameIndex,能正确取出每帧 JPEG)。
+      const bot = pd.basicOffsetTable;
+      const encoded =
+        bot && bot.length > 0
+          ? dicomParser.readEncapsulatedImageFrame(fm.dataSet, pd, fm.frameIndex)
+          : dicomParser.readEncapsulatedPixelDataFromFragments(fm.dataSet, pd, fm.frameIndex);
       const copy = encoded.slice(); // 独立 buffer 给 Blob
       const blob = new Blob([copy], { type: "image/jpeg" });
       const bitmap = await createImageBitmap(blob);
