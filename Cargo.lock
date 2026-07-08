@@ -3583,6 +3583,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "medme-mobile"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "core-model",
+ "dicom",
+ "medme-share",
+ "pipeline",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tempfile",
+]
+
+[[package]]
 name = "medme-share"
 version = "0.1.0"
 dependencies = [
