@@ -247,6 +247,28 @@ pub fn render_dicom(state: State<AppState>, id: i64) -> Result<tauri::ipc::Respo
     Ok(tauri::ipc::Response::new(png))
 }
 
+/// Decodes one frame of a DICOM instance to raw pixels for the interactive
+/// viewer, handling compressed transfer syntaxes the JS viewer can't
+/// (JPEG 2000 / JPEG-LS / RLE). Returns a single buffer: 4-byte little-endian
+/// header length + JSON [`dicom::DecodedFrameHeader`] + raw pixel bytes (see
+/// `DicomViewer.tsx`, which slices it back apart and applies window/level).
+#[tauri::command]
+pub fn decode_dicom_frame(
+    state: State<AppState>,
+    source_file_id: i64,
+    frame_index: u32,
+) -> Result<tauri::ipc::Response, String> {
+    let v = lock(&state)?;
+    let sf = v
+        .source_file_by_id(source_file_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("source_file {source_file_id} not found"))?;
+    let bytes = std::fs::read(v.root_join(&sf.storage_path)).map_err(|e| e.to_string())?;
+    let frame = dicom::decode_frame(&bytes, frame_index).map_err(|e| e.to_string())?;
+    let wire = frame.into_ipc_bytes().map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(wire))
+}
+
 #[tauri::command]
 pub fn export_vault(_state: State<AppState>, _dest_path: String) -> Result<ExportSummary, String> {
     // C2/后续:真正打包 objects/ + JSON 清单。此处占位返回 0,避免未实现命令。

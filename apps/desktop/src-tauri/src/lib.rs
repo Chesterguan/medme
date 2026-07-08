@@ -45,6 +45,7 @@ pub fn run() {
             commands::load_demo_data,
             commands::read_source_bytes,
             commands::render_dicom,
+            commands::decode_dicom_frame,
             commands::get_imaging_instances,
             commands::export_vault,
             commands::export_timeline_html,

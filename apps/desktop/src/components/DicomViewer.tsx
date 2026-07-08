@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import dicomParser from "dicom-parser";
 import { Stethoscope, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { api } from "../api";
 
 // 轻量交互式 DICOM 查看器(纯 canvas + dicom-parser,无 Cornerstone / 无 web worker /
 // 无 WASM)—— 之前的 Cornerstone3D 在 Tauri+Vite 下把整个应用白屏(JPEG codec 是
@@ -35,6 +36,7 @@ const PRESETS: { label: string; center: number | null; width: number | null }[] 
 // 一帧的元信息(从 dataSet + 帧下标解出),解码时用。
 interface FrameMeta {
   dataSet: dicomParser.DataSet;
+  sourceFileId: number; // 该帧所属切片的 source_file id(压缩帧交回后端按 id 解码)
   frameIndex: number;
   rows: number;
   columns: number;
@@ -69,10 +71,13 @@ function floatStr(ds: dicomParser.DataSet, tag: string): number | null {
   return v === undefined || Number.isNaN(v) ? null : v;
 }
 
-// 解析每张切片 → 展平成 frames[]。解析失败的切片跳过,不抛。
-function buildFrames(slices: Uint8Array[]): FrameMeta[] {
+// 解析每张切片 → 展平成 frames[]。解析失败的切片跳过,不抛。sliceIds 与 slices 一一对应,
+// 供压缩帧交回后端(decode_dicom_frame)按 source_file id 解码。
+function buildFrames(slices: Uint8Array[], sliceIds: number[]): FrameMeta[] {
   const frames: FrameMeta[] = [];
-  for (const bytes of slices) {
+  for (let s = 0; s < slices.length; s++) {
+    const bytes = slices[s];
+    const sourceFileId = sliceIds[s] ?? -1;
     let ds: dicomParser.DataSet;
     try {
       ds = dicomParser.parseDicom(bytes);
@@ -94,6 +99,7 @@ function buildFrames(slices: Uint8Array[]): FrameMeta[] {
     for (let f = 0; f < nFrames; f++) {
       frames.push({
         dataSet: ds,
+        sourceFileId,
         frameIndex: f,
         rows,
         columns,
@@ -170,6 +176,72 @@ function readColor(fm: FrameMeta): ImageData {
   return img;
 }
 
+// 后端解码帧头(与 Rust `DecodedFrameHeader` 对应)。
+interface RustFrameHeader {
+  rows: number;
+  cols: number;
+  samples_per_pixel: number;
+  bits_allocated: number;
+  bits_stored: number;
+  pixel_representation: number; // 0 无符号 / 1 有符号
+  photometric: string; // MONOCHROME1 / MONOCHROME2 / RGB
+  rescale_slope: number;
+  rescale_intercept: number;
+  window_center: number | null;
+  window_width: number | null;
+}
+
+// 压缩格式(JPEG2000/JPEG-LS/RLE)交回 Rust 后端解码为原始像素,再喂进本查看器
+// 完全相同的窗宽窗位 + canvas 绘制路径。后端返回单个 ArrayBuffer:4 字节小端头长 +
+// JSON 帧头 + 原始像素(灰度 u8/u16/i16 小端未加 rescale / 或交错 RGB8)。这里拆包后:
+// 灰度按 bits_allocated + pixelRepresentation 读原始样本并应用 rescale(与 readGrayValues 一致),
+// 彩色组 ImageData —— 输出的 Decoded 与 JS 路径同构,后续绘制/调窗完全共用。
+async function decodeViaRust(fm: FrameMeta): Promise<Decoded> {
+  const buf = await api.decodeDicomFrame(fm.sourceFileId, fm.frameIndex);
+  const dv = new DataView(buf);
+  const headerLen = dv.getUint32(0, true);
+  const header: RustFrameHeader = JSON.parse(
+    new TextDecoder().decode(new Uint8Array(buf, 4, headerLen)),
+  );
+  // 独立、对齐到 0 的像素 buffer(保证 Int16/Uint16 视图字节对齐)。
+  const pixels = buf.slice(4 + headerLen);
+  const pxCount = header.rows * header.cols;
+
+  if (header.samples_per_pixel >= 3 || header.photometric === "RGB") {
+    const src = new Uint8Array(pixels);
+    const img = new ImageData(header.cols, header.rows);
+    const d = img.data;
+    for (let i = 0; i < pxCount; i++) {
+      d[i * 4] = src[i * 3];
+      d[i * 4 + 1] = src[i * 3 + 1];
+      d[i * 4 + 2] = src[i * 3 + 2];
+      d[i * 4 + 3] = 255;
+    }
+    return { kind: "rgba", data: img };
+  }
+
+  const slope = header.rescale_slope ?? 1;
+  const intercept = header.rescale_intercept ?? 0;
+  const out = new Float32Array(pxCount);
+  if (header.bits_allocated <= 8) {
+    const raw = new Uint8Array(pixels);
+    for (let i = 0; i < pxCount; i++) out[i] = raw[i] * slope + intercept;
+  } else if (header.pixel_representation === 1) {
+    const raw = new Int16Array(pixels);
+    for (let i = 0; i < pxCount; i++) out[i] = raw[i] * slope + intercept;
+  } else {
+    const raw = new Uint16Array(pixels);
+    for (let i = 0; i < pxCount; i++) out[i] = raw[i] * slope + intercept;
+  }
+  return {
+    kind: "gray",
+    values: out,
+    rows: header.rows,
+    cols: header.cols,
+    invert: header.photometric === "MONOCHROME1",
+  };
+}
+
 async function decodeFrame(fm: FrameMeta): Promise<Decoded> {
   try {
     const ts = fm.transferSyntax;
@@ -198,7 +270,12 @@ async function decodeFrame(fm: FrameMeta): Promise<Decoded> {
       const bitmap = await createImageBitmap(blob);
       return { kind: "bitmap", bitmap, rows: bitmap.height, cols: bitmap.width };
     }
-    // JPEG2000 / JPEG-LS / RLE 等:不在此轻量查看器解码。
+    // JPEG2000 / JPEG-LS / RLE 等:轻量 JS 查看器解不了,交回 Rust 后端解码为原始像素
+    // (稳健、无浏览器 WASM),再走本查看器相同的窗宽窗位 + canvas 路径。
+    if (fm.sourceFileId >= 0) {
+      return await decodeViaRust(fm);
+    }
+    // 无有效 source id(理论上不会发生)才真正判为不支持。
     return { kind: "unsupported" };
   } catch (e) {
     console.error("DICOM 帧解码失败", e);
@@ -208,8 +285,10 @@ async function decodeFrame(fm: FrameMeta): Promise<Decoded> {
 
 export default function DicomViewer({
   slices,
+  sliceIds,
 }: {
   slices: Uint8Array[];
+  sliceIds: number[];
   fileName: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -413,7 +492,7 @@ export default function DicomViewer({
     cacheRef.current.clear();
     viewRef.current = { zoom: 1, panX: 0, panY: 0 };
     try {
-      const frames = buildFrames(slices);
+      const frames = buildFrames(slices, sliceIds);
       framesRef.current = frames;
       setFrameTotal(frames.length);
       if (frames.length === 0) {

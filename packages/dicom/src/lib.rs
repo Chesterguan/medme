@@ -8,6 +8,7 @@
 use anyhow::Context;
 use dicom_object::{FileDicomObject, InMemDicomObject};
 use dicom_pixeldata::{ConvertOptions, PixelDecoder};
+use serde::Serialize;
 use std::io::Cursor;
 
 /// Metadata extracted from a DICOM instance's tags (no pixel decoding).
@@ -123,6 +124,145 @@ pub fn render_png(dcm_bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(png_bytes.into_inner())
 }
 
+/// Header describing a single decoded DICOM frame's raw pixels, so the frontend
+/// can interpret the accompanying byte buffer and apply window/level itself.
+///
+/// Mirrors what `DicomViewer.tsx` needs for its shared window/level + canvas
+/// draw path: grayscale frames carry raw (un-rescaled) samples as little-endian
+/// `u8` / `u16` / `i16` (per `bits_allocated` + `pixel_representation`) plus the
+/// modality rescale + any VOI window so the client applies them; color frames
+/// carry interleaved 8-bit RGB (`samples_per_pixel == 3`, `photometric == "RGB"`).
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+pub struct DecodedFrameHeader {
+    pub rows: u32,
+    pub cols: u32,
+    pub samples_per_pixel: u16,
+    pub bits_allocated: u16,
+    pub bits_stored: u16,
+    /// 0 = unsigned samples, 1 = signed (two's-complement) samples.
+    pub pixel_representation: u16,
+    /// Photometric interpretation of the returned pixels: "MONOCHROME1",
+    /// "MONOCHROME2", or "RGB" (color is always converted to interleaved RGB).
+    pub photometric: String,
+    pub rescale_slope: f64,
+    pub rescale_intercept: f64,
+    /// Default VOI window center (0028,1050), when the object defines one.
+    pub window_center: Option<f64>,
+    /// Default VOI window width (0028,1051), when the object defines one.
+    pub window_width: Option<f64>,
+}
+
+/// A decoded frame: its [`DecodedFrameHeader`] plus the raw pixel bytes.
+#[derive(Debug, Clone)]
+pub struct DecodedFrame {
+    pub header: DecodedFrameHeader,
+    /// Little-endian grayscale samples (u8/u16/i16) or interleaved RGB8, per
+    /// `header`. Length = rows * cols * samples_per_pixel * ceil(bits_allocated/8).
+    pub pixels: Vec<u8>,
+}
+
+impl DecodedFrame {
+    /// Wire format for one IPC round-trip: 4-byte little-endian header length,
+    /// then the UTF-8 JSON [`DecodedFrameHeader`], then the raw pixel bytes.
+    /// The frontend slices the buffer back apart by the leading length.
+    pub fn into_ipc_bytes(self) -> anyhow::Result<Vec<u8>> {
+        let json = serde_json::to_vec(&self.header).context("failed to serialize frame header")?;
+        let mut out = Vec::with_capacity(4 + json.len() + self.pixels.len());
+        out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        out.extend_from_slice(&json);
+        out.extend_from_slice(&self.pixels);
+        Ok(out)
+    }
+}
+
+/// Decodes a single frame of a DICOM instance to raw pixels for the interactive
+/// viewer — handles ANY transfer syntax the enabled `dicom-pixeldata` codecs
+/// support (uncompressed, JPEG baseline, JPEG 2000, JPEG-LS, RLE Lossless).
+///
+/// Grayscale frames return raw (un-rescaled) little-endian samples so the client
+/// applies rescale + window/level for diagnostic-correct display; color frames
+/// return interleaved RGB8 (YBR is converted to RGB during decode).
+pub fn decode_frame(dcm_bytes: &[u8], frame_index: u32) -> anyhow::Result<DecodedFrame> {
+    use dicom_pixeldata::{PhotometricInterpretation, PixelRepresentation};
+
+    let obj = dicom_object::from_reader(Cursor::new(dcm_bytes))
+        .context("failed to parse DICOM object")?;
+    // Decode just this frame (cheap for large multi-frame series; keeps
+    // scrolling + neighbor prefetch responsive).
+    let decoded = obj
+        .decode_pixel_data_frame(frame_index)
+        .context("failed to decode DICOM pixel data")?;
+
+    let rows = decoded.rows();
+    let cols = decoded.columns();
+    let samples_per_pixel = decoded.samples_per_pixel();
+    let bits_allocated = decoded.bits_allocated();
+    let bits_stored = decoded.bits_stored();
+
+    // Modality rescale (first/only entry — we decoded a single frame).
+    let (rescale_slope, rescale_intercept) = decoded
+        .rescale()
+        .ok()
+        .and_then(|r| r.first())
+        .map(|r| (r.slope, r.intercept))
+        .unwrap_or((1.0, 0.0));
+
+    // Default VOI window, if the object carries one.
+    let (window_center, window_width) = decoded
+        .window()
+        .ok()
+        .flatten()
+        .and_then(|w| w.first())
+        .map(|w| (Some(w.center), Some(w.width)))
+        .unwrap_or((None, None));
+
+    let is_color = samples_per_pixel >= 3;
+    let (photometric, pixels) = if is_color {
+        // Color: let the codec normalize (YBR→RGB, planar→interleaved) and hand
+        // the canvas straight 8-bit RGB.
+        let img = decoded
+            .to_dynamic_image(0)
+            .context("failed to render color frame")?
+            .to_rgb8();
+        ("RGB".to_string(), img.into_raw())
+    } else {
+        // Grayscale: raw native-endian samples (little-endian on all supported
+        // targets), un-rescaled — the client applies rescale + window/level.
+        let photometric = match decoded.photometric_interpretation() {
+            PhotometricInterpretation::Monochrome1 => "MONOCHROME1",
+            _ => "MONOCHROME2",
+        }
+        .to_string();
+        let bytes = decoded
+            .frame_data(0)
+            .context("failed to read decoded frame samples")?
+            .to_vec();
+        (photometric, bytes)
+    };
+
+    let pixel_representation = match decoded.pixel_representation() {
+        PixelRepresentation::Signed => 1,
+        PixelRepresentation::Unsigned => 0,
+    };
+
+    Ok(DecodedFrame {
+        header: DecodedFrameHeader {
+            rows,
+            cols,
+            samples_per_pixel: if is_color { 3 } else { 1 },
+            bits_allocated: if is_color { 8 } else { bits_allocated },
+            bits_stored: if is_color { 8 } else { bits_stored },
+            pixel_representation,
+            photometric,
+            rescale_slope,
+            rescale_intercept,
+            window_center,
+            window_width,
+        },
+        pixels,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +342,90 @@ mod tests {
     #[test]
     fn parse_meta_errors_on_garbage_bytes() {
         assert!(parse_meta(b"not a dicom file").is_err());
+    }
+
+    #[test]
+    fn decodes_uncompressed_ct_frame() {
+        let bytes = sample("CT_small.dcm");
+        let frame = decode_frame(&bytes, 0).unwrap();
+        assert_eq!((frame.header.rows, frame.header.cols), (128, 128));
+        assert_eq!(frame.header.samples_per_pixel, 1);
+        assert_eq!(frame.header.bits_allocated, 16);
+        assert_eq!(frame.header.pixel_representation, 1); // CT_small is signed
+        // 16-bit grayscale → 2 bytes/sample.
+        assert_eq!(frame.pixels.len(), 128 * 128 * 2);
+    }
+
+    #[test]
+    fn decodes_jpeg2000_frame() {
+        // JPEG2000.dcm: TS 1.2.840.10008.1.2.4.91, 1024x256 grayscale.
+        let bytes = sample("JPEG2000.dcm");
+        let frame = decode_frame(&bytes, 0).unwrap();
+        assert_eq!((frame.header.rows, frame.header.cols), (1024, 256));
+        assert_eq!(frame.header.samples_per_pixel, 1);
+        assert!(!frame.pixels.is_empty());
+        assert_eq!(
+            frame.pixels.len(),
+            1024 * 256 * (frame.header.bits_allocated as usize / 8)
+        );
+    }
+
+    #[test]
+    fn decodes_jpeg2000_lossless_grayscale_512() {
+        // 693_J2KR.dcm: TS ...4.90 (JPEG2000 lossless), 512x512 16-bit grayscale
+        // — a real-world image the pure-Rust openjp2 backend crashed on, which is
+        // why we decode J2K via vendored OpenJPEG (openjpeg-sys).
+        let bytes = sample("693_J2KR.dcm");
+        let frame = decode_frame(&bytes, 0).unwrap();
+        assert_eq!((frame.header.rows, frame.header.cols), (512, 512));
+        assert_eq!(frame.header.samples_per_pixel, 1);
+        assert_eq!(
+            frame.pixels.len(),
+            512 * 512 * (frame.header.bits_allocated as usize / 8)
+        );
+    }
+
+    #[test]
+    fn decodes_jpeg2000_color_ultrasound() {
+        // US1_J2KR.dcm: TS ...4.90 (JPEG2000 lossless), 480x640 color.
+        let bytes = sample("US1_J2KR.dcm");
+        let frame = decode_frame(&bytes, 0).unwrap();
+        assert_eq!((frame.header.rows, frame.header.cols), (480, 640));
+        assert_eq!(frame.header.samples_per_pixel, 3);
+        assert_eq!(frame.header.photometric, "RGB");
+        assert_eq!(frame.pixels.len(), 480 * 640 * 3);
+    }
+
+    #[test]
+    fn decodes_jpeg_ls_lossless_frame() {
+        // MR_small_jpeg_ls_lossless.dcm: TS ...4.80, 64x64 grayscale.
+        let bytes = sample("MR_small_jpeg_ls_lossless.dcm");
+        let frame = decode_frame(&bytes, 0).unwrap();
+        assert_eq!((frame.header.rows, frame.header.cols), (64, 64));
+        assert_eq!(frame.header.samples_per_pixel, 1);
+        assert!(!frame.pixels.is_empty());
+    }
+
+    #[test]
+    fn decodes_rle_lossless_frame() {
+        // MR_small_RLE.dcm: TS 1.2.840.10008.1.2.5, 64x64 grayscale.
+        let bytes = sample("MR_small_RLE.dcm");
+        let frame = decode_frame(&bytes, 0).unwrap();
+        assert_eq!((frame.header.rows, frame.header.cols), (64, 64));
+        assert_eq!(frame.header.samples_per_pixel, 1);
+        assert!(!frame.pixels.is_empty());
+    }
+
+    #[test]
+    fn ipc_bytes_roundtrip_header_and_pixels() {
+        let bytes = sample("MR_small_RLE.dcm");
+        let frame = decode_frame(&bytes, 0).unwrap();
+        let header = frame.header.clone();
+        let pixel_len = frame.pixels.len();
+        let wire = frame.into_ipc_bytes().unwrap();
+        let hlen = u32::from_le_bytes(wire[0..4].try_into().unwrap()) as usize;
+        let parsed: DecodedFrameHeader = serde_json::from_slice(&wire[4..4 + hlen]).unwrap();
+        assert_eq!(parsed, header);
+        assert_eq!(wire.len() - 4 - hlen, pixel_len);
     }
 }

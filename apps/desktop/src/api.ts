@@ -23,6 +23,10 @@ export const api = {  listTimelineGrouped: () => invoke<TimelineGroup[]>("list_t
   // invoke() 对应解析为 ArrayBuffer,避免大文件在 IPC 上被膨胀成文本。
   readSourceBytes: (id: number) => invoke<ArrayBuffer>("read_source_bytes", { id }),
   renderDicom: (id: number) => invoke<ArrayBuffer>("render_dicom", { id }),
+  // 后端解码压缩 DICOM 帧(JPEG2000/JPEG-LS/RLE,轻量 JS 查看器解不了的格式)→ 原始像素。
+  // 返回单个 ArrayBuffer:4 字节小端头长 + JSON 帧头 + 原始像素字节(见 DicomViewer 拆包)。
+  decodeDicomFrame: (sourceFileId: number, frameIndex: number) =>
+    invoke<ArrayBuffer>("decode_dicom_frame", { sourceFileId, frameIndex }),
   getImagingInstances: (documentId: number) =>
     invoke<ImagingInstance[]>("get_imaging_instances", { documentId }),
   exportVault: (destPath: string) =>

@@ -45,6 +45,8 @@ export default function DocumentView({
   // 影像检查:整叠切片的原始字节(imaging overhaul P1)。lightbox 打开时按堆栈顺序
   // 载入,关闭时释放。单张 DICOM 或无切片记录时退回该文档自身的 source。
   const [dicomSlices, setDicomSlices] = useState<Uint8Array[] | null>(null);
+  // 与 dicomSlices 一一对应的 source_file id,供查看器把压缩帧交回后端解码。
+  const [dicomSliceIds, setDicomSliceIds] = useState<number[] | null>(null);
   const isImage = sf.mime_type.startsWith("image/");
   const isPdf = sf.mime_type === "application/pdf";
   const isDicom = sf.mime_type === "application/dicom";
@@ -94,7 +96,10 @@ export default function DocumentView({
         const ids =
           insts.length > 0 ? insts.map((i) => i.source_file_id) : [sf.id];
         const buffers = await Promise.all(ids.map((id) => api.readSourceBytes(id)));
-        if (!cancelled) setDicomSlices(buffers.map((b) => new Uint8Array(b)));
+        if (!cancelled) {
+          setDicomSlices(buffers.map((b) => new Uint8Array(b)));
+          setDicomSliceIds(ids);
+        }
       } catch {
         /* 读取失败:保持 null,lightbox 显示加载态 */
       }
@@ -106,7 +111,10 @@ export default function DocumentView({
 
   // 关闭后释放整叠字节,避免大序列常驻内存。
   useEffect(() => {
-    if (!lightbox) setDicomSlices(null);
+    if (!lightbox) {
+      setDicomSlices(null);
+      setDicomSliceIds(null);
+    }
   }, [lightbox]);
 
   // 全屏查看时按 ESC 返回(看图软件的标准操作,避免放大后不知如何退出)
@@ -277,7 +285,11 @@ export default function DocumentView({
           >
             {isDicom ? (
               dicomSlices ? (
-                <DicomViewer slices={dicomSlices} fileName={sf.original_name} />
+                <DicomViewer
+                  slices={dicomSlices}
+                  sliceIds={dicomSliceIds ?? []}
+                  fileName={sf.original_name}
+                />
               ) : (
                 <div
                   className="flex-1 flex items-center justify-center text-white/60 text-sm"
