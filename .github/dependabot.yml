@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # Rust workspace (root Cargo.toml / Cargo.lock)
+  # Rust workspace (root Cargo.toml / Cargo.lock) — all updates in ONE grouped PR
   - package-ecosystem: cargo
     directory: "/"
     schedule:
@@ -9,12 +9,10 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
-      cargo-minor-patch:
-        update-types:
-          - minor
-          - patch
+      cargo:
+        patterns: ["*"]
 
-  # Desktop frontend (pnpm)
+  # Desktop frontend (pnpm) — all updates in ONE grouped PR
   - package-ecosystem: npm
     directory: "/apps/desktop"
     schedule:
@@ -23,15 +21,16 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
-      npm-minor-patch:
-        update-types:
-          - minor
-          - patch
+      npm:
+        patterns: ["*"]
 
-  # GitHub Actions used in workflows
+  # GitHub Actions used in workflows — all updates in ONE grouped PR
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
     commit-message:
       prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]
