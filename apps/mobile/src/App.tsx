@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import { api } from "./api";
 import type {
@@ -90,6 +89,9 @@ export default function App() {
   const capture = useCallback(async () => {
     setShare(null);
     try {
+      // 延迟加载 dialog 插件:仅在用户点击采集时才引入,避免顶层导入
+      // 在插件未就绪时拖垮首屏渲染。
+      const { open } = await import("@tauri-apps/plugin-dialog");
       const picked = await open({
         multiple: false,
         title: "选择病历 / 化验单 / 报告",

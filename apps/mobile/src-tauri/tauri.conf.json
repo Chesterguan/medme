@@ -5,12 +5,20 @@
   "identifier": "com.medme.mobile",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
     "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "医我 MedMe",
+        "width": 430,
+        "height": 932
+      }
+    ],
     "security": {
       "csp": null
     }
