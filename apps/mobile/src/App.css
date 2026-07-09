@@ -329,8 +329,9 @@
   border-radius: 12px; padding: 10px 13px;
 }
 .conf svg { width: 17px; height: 17px; flex: 0 0 auto; }
-.conf.ok { background: var(--ok-soft); color: var(--ok); }
-.conf.low { background: var(--warn-soft); color: var(--warn); }
+.conf.high { background: var(--ok-soft); color: var(--ok); }
+.conf.mid { background: var(--warn-soft); color: var(--warn); }
+.conf.low { background: #fdeaea; color: #b42318; }
 .conf b { font-weight: 700; }
 
 /* —— 查看原件按钮 —— */
@@ -358,6 +359,13 @@
   white-space: pre-wrap; word-break: break-word;
 }
 .doc-p:last-child { margin-bottom: 0; }
+/* —— 结论/印象卡片:患者只看结论,单独提炼成醒目卡片 —— */
+.doc-conclusion {
+  background: #e6f6fb; border: 1px solid rgba(23, 137, 193, .25); border-left: 4px solid #1789c1;
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0;
+}
+.doc-conclusion .doc-h { color: #1560a8; margin-top: 0; }
+.doc-conclusion .doc-p { color: #0f2b3d; font-weight: 500; }
 .doc-med {
   font-size: 14px; line-height: 1.6; color: var(--ink); font-weight: 600;
   padding: 9px 0; border-bottom: 1px solid var(--line);

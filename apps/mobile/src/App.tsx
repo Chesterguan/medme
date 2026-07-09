@@ -688,14 +688,31 @@ function ClinicalText({ text, docType }: { text: string; docType: string }) {
   const lines = raw.split("\n");
   const nodes: ReactNode[] = [];
   let para: string[] = [];
+  let seq = 0;
+  // 结论/印象类小节(诊断意见、结论、提示等):患者往往只看结论,单独提炼成醒目卡片。
+  // 命中该小节标题后,直到下一个小节标题前的内容都归入卡片;其余渲染方式不变。
+  let conclusionBuf: ReactNode[] | null = null;
+  const active = () => conclusionBuf ?? nodes;
+  const isConclusionHeader = (label: string) => /诊断|印象|结论|提示/.test(label) || /意见$/.test(label);
+
   const flushPara = () => {
     if (para.length) {
-      nodes.push(
-        <p className="doc-p" key={`p${nodes.length}`}>
+      active().push(
+        <p className="doc-p" key={`p${seq++}`}>
           {para.join("\n")}
         </p>,
       );
       para = [];
+    }
+  };
+  const flushConclusion = () => {
+    if (conclusionBuf) {
+      nodes.push(
+        <div className="doc-conclusion" key={`c${seq++}`}>
+          {conclusionBuf}
+        </div>,
+      );
+      conclusionBuf = null;
     }
   };
 
@@ -708,9 +725,14 @@ function ClinicalText({ text, docType }: { text: string; docType: string }) {
     // 小节标题:【…】 或以冒号结尾的短标题
     if (/^【.+】$/.test(t) || (t.length <= 12 && /[::]$/.test(t))) {
       flushPara();
-      nodes.push(
-        <div className="doc-h" key={`h${nodes.length}`}>
-          {t.replace(/^【|】$/g, "")}
+      const label = t.replace(/^【|】$/g, "").replace(/[::]$/, "");
+      flushConclusion(); // 上一个结论块(若有)到此结束
+      if (isConclusionHeader(label)) {
+        conclusionBuf = [];
+      }
+      active().push(
+        <div className="doc-h" key={`h${seq++}`}>
+          {label}
         </div>,
       );
       return;
@@ -720,8 +742,8 @@ function ClinicalText({ text, docType }: { text: string; docType: string }) {
       const row = parseLabRow(line);
       if (row) {
         flushPara();
-        nodes.push(
-          <div className="lab-row" key={`l${nodes.length}`}>
+        active().push(
+          <div className="lab-row" key={`l${seq++}`}>
             <span className="nm">{row.name}</span>
             <span className={`val ${row.flag}`}>
               {row.value}
@@ -736,8 +758,8 @@ function ClinicalText({ text, docType }: { text: string; docType: string }) {
     // 处方:编号药品行 → 加粗条目;其后「用法…」缩进行归入正常段落。
     if (docType === "prescription" && /^\d+\.\s/.test(t)) {
       flushPara();
-      nodes.push(
-        <div className="doc-med" key={`m${nodes.length}`}>
+      active().push(
+        <div className="doc-med" key={`m${seq++}`}>
           {t}
         </div>,
       );
@@ -746,6 +768,7 @@ function ClinicalText({ text, docType }: { text: string; docType: string }) {
     para.push(line);
   });
   flushPara();
+  flushConclusion();
 
   return <div className="doc-body">{nodes}</div>;
 }
@@ -801,10 +824,10 @@ function DetailScreen({ id, onBack }: { id: number; onBack: () => void }) {
   const isImage = sf?.mime_type.startsWith("image/") ?? false;
   const typeLabel = doc ? DOC_LABEL[doc.doc_type] ?? doc.doc_type : "";
 
-  // OCR 置信度:Apple Vision 识别照片时给出;可能个别字识错,故显式展示 + 低分预警。
+  // OCR 置信度:Apple Vision 识别照片时给出;换算成患者能看懂的三档,而非裸百分比。
   const conf = detail?.ocr_confidence ?? null;
-  const pct = conf != null ? Math.round(conf * 100) : null;
-  const lowConf = conf != null && conf < 0.85;
+  const confTier =
+    conf == null ? null : conf >= 0.9 ? "high" : conf >= 0.75 ? "mid" : "low";
 
   // 查看原件:图片复用已加载的原图 URL;PDF/其他按需读字节生成 blob 供 iframe 预览。
   const openOriginal = useCallback(async () => {
@@ -861,13 +884,25 @@ function DetailScreen({ id, onBack }: { id: number; onBack: () => void }) {
               </div>
             </div>
 
-            {/* OCR 置信度徽标:低于 85% 用琥珀色预警并提示核对原件。 */}
-            {pct != null && (
-              <div className={`conf ${lowConf ? "low" : "ok"}`}>
-                {lowConf ? <AlertTriangleIcon /> : <CheckCircleIcon />}
+            {/* OCR 置信度徽标:三档(高/中/低)比裸百分比更易懂;悬浮说明识别原理。 */}
+            {confTier != null && (
+              <div
+                className={`conf ${confTier}`}
+                title="识别由 AI 自动完成,个别文字可能不准,但大部分是准确的。可点『查看原件』核对。"
+              >
+                {confTier === "high" ? <CheckCircleIcon /> : <AlertTriangleIcon />}
                 <span>
-                  识别置信度 {pct}%
-                  {lowConf && <b> · 个别文字可能有误,建议核对原件</b>}
+                  {confTier === "high" && "识别质量:高"}
+                  {confTier === "mid" && (
+                    <>
+                      识别质量:中<b> · 个别字可能有误,可核对原件</b>
+                    </>
+                  )}
+                  {confTier === "low" && (
+                    <>
+                      识别质量:低<b> · 建议重新拍摄</b>
+                    </>
+                  )}
                 </span>
               </div>
             )}
