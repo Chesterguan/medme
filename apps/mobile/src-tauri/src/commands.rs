@@ -323,6 +323,29 @@ pub fn read_source_bytes(state: State<AppState>, id: i64) -> Result<tauri::ipc::
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// 读取一份已生成的加密分享 `.html` 文件字节。前端据此构造 `File`,调起 iOS 系统
+/// 「分享」sheet(navigator.share)把文件发给医生。安全:只允许读取保险箱 `shares/`
+/// 目录下的文件,`canonicalize` 后校验前缀,杜绝任意路径读取 / 路径穿越。
+#[tauri::command]
+pub fn read_share_bytes(
+    state: State<AppState>,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    let shares_dir = state
+        .vault_dir
+        .join("shares")
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let target = std::path::PathBuf::from(&path)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if !target.starts_with(&shares_dir) {
+        return Err("非法的分享文件路径".to_string());
+    }
+    let bytes = std::fs::read(&target).map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// 患者档案头(姓名/性别/年龄/记录数)—— 健康档案页顶部展示。
 #[tauri::command]
 pub fn get_patient_profile(state: State<AppState>) -> Result<PatientProfile, String> {

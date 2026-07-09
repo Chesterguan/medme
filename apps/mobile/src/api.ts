@@ -17,6 +17,9 @@ export const api = {
   getDocument: (id: number) => invoke<DocumentDetail>("get_document", { id }),
   readSourceBytes: (id: number) =>
     invoke<ArrayBuffer>("read_source_bytes", { id }),
+  // 读取已生成的加密分享 .html 文件字节(前端据此构造 File 调起系统「分享」sheet)。
+  readShareBytes: (path: string) =>
+    invoke<ArrayBuffer>("read_share_bytes", { path }),
   getPatientProfile: () => invoke<PatientProfile>("get_patient_profile"),
   createShare: (expiresDays?: number) =>
     invoke<ShareResult>("create_share", { expiresDays }),
