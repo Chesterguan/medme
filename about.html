@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light only" />
+<title>关于我们 · MedMe 医我</title>
+<meta name="description" content="MedMe(医我)背后的团队、原则与路线图。健康数据事关信任——真实的人、真实的背景、可查证的身份。" />
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f8fafc; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+    --blue:#2563eb; --blue-50:#eff6ff; --card:#ffffff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;background:#f8fafc}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",
+      "Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.7;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+  a{color:var(--blue);text-decoration:none}
+  /* sticky nav (same shell as homepage) */
+  nav.top{position:sticky;top:0;z-index:50;background:rgba(248,250,252,.85);
+    backdrop-filter:saturate(180%) blur(10px);border-bottom:1px solid var(--line)}
+  nav.top .inner{max-width:1040px;margin:0 auto;padding:11px 24px;display:flex;
+    align-items:center;justify-content:space-between;gap:16px}
+  nav.top .brand{display:inline-flex;align-items:center;gap:9px;font-weight:800;
+    font-size:16px;color:var(--ink)}
+  nav.top .brand svg{width:22px;height:22px;color:var(--blue)}
+  nav.top .brand .cn{color:var(--muted);font-weight:600;font-size:14px}
+  nav.top .links{display:flex;align-items:center;gap:24px}
+  nav.top .links a{color:var(--muted);font-size:14px;font-weight:500}
+  nav.top .links a:hover{color:var(--blue)}
+  nav.top .links a.nav-cta{background:var(--blue);color:#fff;padding:7px 16px;
+    border-radius:10px;font-weight:600}
+  nav.top .links a.nav-cta:hover{color:#fff}
+  @media(max-width:760px){nav.top .links a.hide-sm{display:none}}
+  /* page hero */
+  header.phead{background:linear-gradient(160deg,#eff6ff 0%,#f8fafc 62%);
+    border-bottom:1px solid var(--line);padding:66px 0 54px;text-align:center}
+  header.phead h1{font-size:38px;letter-spacing:-.5px;margin-bottom:10px}
+  header.phead p{color:var(--muted);font-size:17px;max-width:640px;margin:0 auto}
+  /* sections */
+  section{padding:60px 0}
+  section.alt{background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  h2{font-size:28px;letter-spacing:-.3px;margin-bottom:14px;text-align:center}
+  .section-lead{color:var(--muted);text-align:center;max-width:640px;margin:0 auto 40px;font-size:16px}
+  /* team */
+  .team-intro{color:var(--muted);text-align:center;max-width:640px;margin:0 auto 40px;font-size:16px}
+  .team{display:grid;grid-template-columns:repeat(2,1fr);gap:22px;max-width:840px;margin:0 auto}
+  .member{background:#fff;border:1px solid var(--line);border-radius:18px;padding:30px 26px;text-align:center}
+  section.alt .member{background:var(--bg)}
+  .member .avatar{width:96px;height:96px;border-radius:50%;overflow:hidden;margin:0 auto 16px;
+    background:var(--blue-50);border:1px solid #dbeafe;display:flex;align-items:center;justify-content:center;color:#93c5fd}
+  .member .avatar img{width:100%;height:100%;object-fit:cover}
+  .member .avatar svg{width:46px;height:46px}
+  .member h3{font-size:18px;margin-bottom:4px}
+  .member .role{font-size:13px;color:var(--blue);font-weight:600;margin-bottom:12px}
+  .member p{color:var(--muted);font-size:14px;margin-bottom:16px;min-height:42px}
+  .member .links{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+  .member .links a{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--muted);font-weight:500}
+  .member .links a:hover{color:var(--blue)}
+  .member .links svg{width:15px;height:15px}
+  /* roadmap */
+  .road{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+  .road .row{display:flex;gap:16px;align-items:flex-start;background:#fff;border:1px solid var(--line);
+    border-radius:14px;padding:18px 22px}
+  section.alt .road .row{background:var(--bg)}
+  .road .tag{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;flex:0 0 auto}
+  .road .tag.done{background:#dcfce7;color:#166534} .road .tag.next{background:var(--blue-50);color:#1e40af}
+  .road .tag.later{background:#f1f5f9;color:#475569}
+  .road .row div b{font-size:15px}
+  .road .row div p{color:var(--muted);font-size:14px;margin-top:2px}
+  /* principles */
+  .principles{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;max-width:820px;margin:0 auto}
+  .prin{display:flex;gap:14px;align-items:flex-start;background:#fff;border:1px solid var(--line);
+    border-radius:14px;padding:20px}
+  section.alt .prin{background:var(--bg)}
+  .prin .dot{width:8px;height:8px;border-radius:50%;background:var(--blue);margin-top:9px;flex:0 0 auto}
+  .prin b{display:block;font-size:15px;margin-bottom:3px}
+  .prin span{color:var(--muted);font-size:14px}
+  /* disclaimer block */
+  .disc-box{max-width:820px;margin:0 auto;background:#fff;border:1px solid var(--line);
+    border-radius:16px;padding:28px 30px;color:var(--muted);font-size:15px;line-height:1.9}
+  .disc-box b{color:var(--ink)}
+  /* back cta */
+  .backcta{text-align:center;margin-top:44px}
+  .btn{display:inline-flex;align-items:center;gap:7px;font-size:15px;font-weight:600;
+    padding:12px 26px;border-radius:12px;transition:transform .15s,box-shadow .15s}
+  .btn:hover{transform:translateY(-1px)}
+  .btn.primary{background:var(--blue);color:#fff;box-shadow:0 6px 18px rgba(37,99,235,.28)}
+  /* footer */
+  footer{background:#0f172a;color:#cbd5e1;padding:44px 0;text-align:center;font-size:14px}
+  footer .flinks{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-bottom:20px}
+  footer .flinks a{color:#cbd5e1;font-weight:500}
+  footer .flinks a:hover{color:#fff}
+  footer .disc{max-width:720px;margin:0 auto 16px;color:#94a3b8;font-size:13px;line-height:1.8}
+  footer b{color:#e2e8f0}
+  @media(max-width:760px){
+    header.phead h1{font-size:30px}
+    .team{grid-template-columns:1fr}
+    .principles{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="inner">
+    <a class="brand" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+      MedMe <span class="cn">医我</span>
+    </a>
+    <div class="links">
+      <a class="hide-sm" href="index.html#how">怎么帮你</a>
+      <a class="hide-sm" href="index.html#start">下载</a>
+      <a class="hide-sm" href="about.html">关于</a>
+      <a class="nav-cta" href="index.html#start">下载 · 安装</a>
+    </div>
+  </div>
+</nav>
+
+<header class="phead">
+  <div class="wrap">
+    <h1>关于我们</h1>
+    <p>健康数据事关信任。这里是 MedMe(医我)背后的人、我们坚持的原则,以及正在走的路。</p>
+  </div>
+</header>
+
+<!-- ===== 我们是谁(团队) ===== -->
+<section>
+  <div class="wrap">
+    <h2>我们是谁</h2>
+    <p class="team-intro">健康数据事关信任。我们把团队摆在明处——真实的人、真实的背景、可查证的身份。</p>
+    <div class="team">
+
+      <!-- 成员 1:项目创始人 -->
+      <div class="member">
+        <div class="avatar">
+          <img src="https://github.com/chesterguan.png" alt="Ziyuan Guan" onerror="this.remove()" />
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <h3>Ziyuan (Chester) Guan</h3>
+        <div class="role">联合创始人 · 工程与研究</div>
+        <p>University of Florida 智能临床医疗中心(IC3)数据科学家 · 人工智能 / 多模态电子病历 / 分布式系统。主导 MedMe 的本地优先架构与端到端加密。</p>
+        <div class="links">
+          <a href="https://github.com/chesterguan" target="_blank" rel="noopener" title="GitHub"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 22 12c0-5.52-4.48-10-10-10z"/></svg> GitHub</a>
+          <a href="https://www.linkedin.com/in/ziyuanguan" target="_blank" rel="noopener" title="LinkedIn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14zM8.34 17V10.4H6.16V17h2.18zM7.25 9.5a1.26 1.26 0 1 0 0-2.52 1.26 1.26 0 0 0 0 2.52zM18 17v-3.62c0-1.93-.41-3.42-2.67-3.42-1.08 0-1.81.6-2.11 1.16h-.03V10.4h-2.09V17h2.18v-3.26c0-.86.16-1.69 1.23-1.69 1.05 0 1.07.98 1.07 1.75V17H18z"/></svg> LinkedIn</a>
+          <a href="https://scholar.google.com/citations?user=VsYXfV8AAAAJ&amp;hl=en" target="_blank" rel="noopener" title="Google Scholar"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v3.5L12 20l7-3.32v-3.5L12 17l-7-3.82z"/></svg> Scholar</a>
+        </div>
+      </div>
+
+      <!-- 创始人(医学背景)· 置左 -->
+      <div class="member" style="order:-1">
+        <div class="avatar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <h3>Lexuan Lin</h3>
+        <div class="role">创始人 · 临床医学背景</div>
+        <p>医学背景 · 在读。更多见 LinkedIn。</p>
+        <div class="links">
+          <a href="https://www.linkedin.com/in/%E4%B9%90%E8%90%B1-%E6%9E%97-5175483b6" target="_blank" rel="noopener" title="LinkedIn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14zM8.34 17V10.4H6.16V17h2.18zM7.25 9.5a1.26 1.26 0 1 0 0-2.52 1.26 1.26 0 0 0 0 2.52zM18 17v-3.62c0-1.93-.41-3.42-2.67-3.42-1.08 0-1.81.6-2.11 1.16h-.03V10.4h-2.09V17h2.18v-3.26c0-.86.16-1.69 1.23-1.69 1.05 0 1.07.98 1.07 1.75V17H18z"/></svg> LinkedIn</a>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ===== 我们的原则 ===== -->
+<section class="alt">
+  <div class="wrap">
+    <h2>我们的原则</h2>
+    <p class="section-lead">救命的东西,不能含糊。</p>
+    <div class="principles">
+      <div class="prin"><span class="dot"></span><div><b>患者优先</b><span>面向普通人(含老年人),概念翻译成"门诊/住院/手术"这类看得懂的词。</span></div></div>
+      <div class="prin"><span class="dot"></span><div><b>本地优先</b><span>默认无账号、无服务器,数据在你的设备;要同步就放进你自己的云盘。</span></div></div>
+      <div class="prin"><span class="dot"></span><div><b>原件不灭</b><span>原始文件内容寻址、永不修改;事件日志追加式记录,删库可零损失重建。</span></div></div>
+      <div class="prin"><span class="dot"></span><div><b>AI 辅助</b><span>OCR 与归类是辅助,标注置信度、低置信主动提示,始终可溯源回原件。</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 路线图 ===== -->
+<section>
+  <div class="wrap">
+    <h2>路线图</h2>
+    <p class="section-lead">已交付 v1.0,持续演进。</p>
+    <div class="road">
+      <div class="row"><span class="tag done">v1.0 已交付</span><div><b>桌面端</b><p>采集/OCR · 健康档案 · 富渲染 · DICOM 阅片 · 端到端加密分享 · 审计追踪 · 数据安全引导</p></div></div>
+      <div class="row"><span class="tag next">v1.1 进行中</span><div><b>手机 App(采集为主)</b><p>与桌面共享 Rust 内核与存储,通过云盘保险箱自然同步;导出按时间范围选择</p></div></div>
+      <div class="row"><span class="tag later">规划中</span><div><b>个人健康助手 · AI 健康洞察</b><p>有了你整理好的档案,给出趋势、异常提示与随访提醒——<b>始终是辅助参考,不替代医生诊断</b>(目前尚未支持)</p></div></div>
+      <div class="row"><span class="tag later">后续</span><div><b>更强能力</b><p>可选口令加密(适配第三方云) · 分享短信验证 / 可撤销 · FHIR/OMOP 导出 · 自愿匿名的群体数据贡献</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 完整声明 ===== -->
+<section class="alt">
+  <div class="wrap">
+    <h2>完整声明</h2>
+    <p class="section-lead">关于 MedMe 的定位与你的数据,我们把话讲清楚。</p>
+    <div class="disc-box">
+      <p><b>MedMe(医我)</b> 是个人医疗数据整理与保存工具,<b>非医疗器械,不提供任何医疗诊断或建议</b>。软件对报告的识别、归类与渲染均为辅助整理,可能存在误差,<b>一切以原始医疗文件为准,并请咨询执业医师</b>。</p>
+      <p style="margin-top:14px">数据的调取须经本人或其法定责任人同意。软件采用去中心化本地存储,<b>我们不持有、不上传、不访问你的数据</b>;端到端加密分享的内容仅由持有口令者在本地解密查看。</p>
+    </div>
+    <div class="backcta">
+      <a class="btn primary" href="index.html#start">开始使用 →</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="flinks">
+      <a href="index.html">首页</a>
+      <a href="https://github.com/Chesterguan/medme" target="_blank" rel="noopener">源码</a>
+      <a href="viewer/" target="_blank" rel="noopener">在线查看器</a>
+    </div>
+    <p class="disc">
+      <b>MedMe(医我)</b> 是个人医疗数据整理与保存工具,非医疗器械,<b>不提供任何医疗诊断或建议</b>。
+      一切以原始医疗文件为准,并请咨询执业医师。数据的调取须经本人或其法定责任人同意。
+      软件采用去中心化本地存储,我们不持有、不上传、不访问你的数据。
+    </p>
+    <div>© MedMe Team 2026 · 本地优先的个人医疗数据保险箱</div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,15 @@
+[package]
+name = "pipeline"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core-model = { path = "../core-model" }
+parser = { path = "../parser" }
+ocr = { path = "../ocr" }
+dicom = { path = "../dicom" }
+anyhow.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

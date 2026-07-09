@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light only" />
+<title>MedMe 医我 · 你自己的看病记录保险箱</title>
+<meta name="description" content="把你所有的看病记录——化验单、CT 片子、出院小结、疫苗本——收进一个只属于你的保险箱。自动认字、按时间理清,需要时一键给医生看。本地优先 · 原件永存 · 端到端加密分享 · 零服务器。" />
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f8fafc; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+    --blue:#2563eb; --blue-50:#eff6ff; --card:#ffffff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;background:#f8fafc}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",
+      "Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.7;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+  a{color:var(--blue);text-decoration:none}
+  /* editorial helpers */
+  .kicker{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.12em;
+    color:var(--blue);text-transform:uppercase;margin-bottom:12px}
+  .lead-h{font-size:34px;line-height:1.25;letter-spacing:-.6px;margin-bottom:16px;max-width:20ch}
+  .lead-h .accent{color:var(--blue)}
+  .lead-p{color:var(--muted);font-size:17px;max-width:52ch}
+  /* sticky nav */
+  nav.top{position:sticky;top:0;z-index:50;background:rgba(248,250,252,.85);
+    backdrop-filter:saturate(180%) blur(10px);border-bottom:1px solid var(--line)}
+  nav.top .inner{max-width:1040px;margin:0 auto;padding:11px 24px;display:flex;
+    align-items:center;justify-content:space-between;gap:16px}
+  nav.top .brand{display:inline-flex;align-items:center;gap:9px;font-weight:800;
+    font-size:16px;color:var(--ink)}
+  nav.top .brand svg{width:22px;height:22px;color:var(--blue)}
+  nav.top .brand .cn{color:var(--muted);font-weight:600;font-size:14px}
+  nav.top .links{display:flex;align-items:center;gap:24px}
+  nav.top .links a{color:var(--muted);font-size:14px;font-weight:500}
+  nav.top .links a:hover{color:var(--blue)}
+  nav.top .links a.nav-cta{background:var(--blue);color:#fff;padding:7px 16px;
+    border-radius:10px;font-weight:600}
+  nav.top .links a.nav-cta:hover{color:#fff}
+  @media(max-width:760px){nav.top .links a.hide-sm{display:none}}
+  /* hero */
+  header.hero{
+    background:linear-gradient(160deg,#eff6ff 0%,#f8fafc 62%);
+    border-bottom:1px solid var(--line);padding:80px 0 70px;text-align:center;
+  }
+  .badge-logo{
+    width:64px;height:64px;border-radius:18px;background:#fff;border:1px solid #dbeafe;
+    display:inline-flex;align-items:center;justify-content:center;margin-bottom:22px;
+    box-shadow:0 6px 20px rgba(37,99,235,.12);
+  }
+  .badge-logo svg{width:34px;height:34px;color:var(--blue)}
+  .hero h1{font-size:44px;letter-spacing:-.5px;margin-bottom:6px}
+  .hero h1 .cn{color:var(--ink)} .hero h1 .en{color:var(--blue)}
+  .hero .sub{font-size:20px;color:var(--ink);font-weight:600;margin-bottom:16px}
+  .hero p.lead{font-size:19px;color:var(--ink);max-width:640px;margin:0 auto 10px;line-height:1.55}
+  .hero p.lead b{color:var(--blue)}
+  .hero p.who{font-size:15px;color:var(--muted);max-width:560px;margin:0 auto 26px}
+  .pills{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  .pill{font-size:13px;color:#1e40af;background:var(--blue-50);border:1px solid #dbeafe;
+    padding:6px 14px;border-radius:999px;font-weight:500}
+  .cta{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:28px}
+  .btn{display:inline-flex;align-items:center;gap:7px;font-size:15px;font-weight:600;
+    padding:12px 26px;border-radius:12px;transition:transform .15s,box-shadow .15s}
+  .btn:hover{transform:translateY(-1px)}
+  .btn.primary{background:var(--blue);color:#fff;box-shadow:0 6px 18px rgba(37,99,235,.28)}
+  .btn.ghost{background:#fff;color:var(--blue);border:1px solid #dbeafe}
+  /* download (VERBATIM styles) */
+  h2{font-size:28px;letter-spacing:-.3px;margin-bottom:14px;text-align:center}
+  .section-lead{color:var(--muted);text-align:center;max-width:640px;margin:0 auto 40px;font-size:16px}
+  section{padding:64px 0}
+  section.alt{background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .dl{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:820px;margin:0 auto}
+  .dl-col{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px}
+  .dl-head{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:700;margin-bottom:14px}
+  .dl-head svg{width:22px;height:22px}
+  .dl-item{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:12px 14px;border:1px solid var(--line);border-radius:11px;margin-bottom:10px;background:#fff}
+  .dl-item:last-child{margin-bottom:0}
+  a.dl-item:hover{border-color:#bfdbfe;box-shadow:0 4px 14px rgba(37,99,235,.1)}
+  .dl-item.disabled{opacity:.6}
+  .dl-item b{font-size:15px;color:var(--ink)}
+  .dl-item div span{display:block;font-size:12.5px;color:var(--muted);font-weight:400}
+  .st{font-size:11.5px;font-weight:700;padding:4px 9px;border-radius:999px;flex:0 0 auto;white-space:nowrap}
+  .st.ready{background:#dcfce7;color:#166534}
+  .st.soon{background:#f1f5f9;color:#64748b}
+  .st.src{background:var(--blue-50);color:#1e40af}
+  .doctor-cta{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;margin-top:28px;color:var(--muted);font-size:15px}
+  .storebadge{display:inline-flex;align-items:center;gap:9px;background:#000;color:#fff;
+    border-radius:10px;padding:8px 16px;margin-bottom:10px}
+  .storebadge svg{width:24px;height:24px}
+  .storebadge .txt{display:flex;flex-direction:column;line-height:1.15;text-align:left}
+  .storebadge .txt small{font-size:10px;letter-spacing:.3px;opacity:.85}
+  .storebadge .txt b{font-size:17px;font-weight:600}
+  .storebadge.disabled{opacity:.5}
+  .dl-alt{font-size:13px;color:var(--muted)}
+  /* demo video slot (placeholder — real <video>/embed drops in later) */
+  .video-slot{position:relative;max-width:900px;margin:0 auto 12px;aspect-ratio:16/9;
+    border-radius:20px;overflow:hidden;border:1px solid #dbeafe;
+    background:linear-gradient(150deg,#eaf2ff 0%,#f4f8ff 55%,#eef6ff 100%);
+    box-shadow:0 20px 50px rgba(37,99,235,.14);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+  .video-slot .play{width:76px;height:76px;border-radius:50%;background:var(--blue);
+    box-shadow:0 10px 26px rgba(37,99,235,.4);display:flex;align-items:center;justify-content:center}
+  .video-slot .play svg{width:30px;height:30px;color:#fff;margin-left:4px}
+  .video-slot .cap{font-size:15px;font-weight:600;color:#1e40af}
+  .video-slot .cap small{display:block;font-weight:400;color:#64748b;font-size:13px;margin-top:2px}
+  .video-slot .corner{position:absolute;top:14px;right:16px;font-size:11.5px;font-weight:700;
+    letter-spacing:.06em;color:#1e40af;background:rgba(255,255,255,.75);
+    border:1px solid #dbeafe;padding:4px 10px;border-radius:999px}
+  /* showpiece: before -> after */
+  .show{display:grid;grid-template-columns:0.85fr auto 1.15fr;gap:28px;align-items:center;margin-top:8px}
+  .show .arrow{color:#94a3b8;display:flex;align-items:center;justify-content:center}
+  .show .arrow svg{width:34px;height:34px}
+  /* messy pile */
+  .pile{position:relative;height:300px}
+  .pile .lbl{position:absolute;top:-6px;left:0;font-size:12.5px;color:var(--muted);font-weight:600}
+  .chip{position:absolute;background:#fff;border:1px solid var(--line);border-radius:10px;
+    padding:11px 14px;font-size:13px;color:#475569;box-shadow:0 6px 18px rgba(15,23,42,.08);
+    display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .chip svg{width:15px;height:15px;color:#94a3b8;flex:0 0 auto}
+  .chip.c1{top:36px;left:6px;transform:rotate(-7deg)}
+  .chip.c2{top:78px;left:120px;transform:rotate(4deg)}
+  .chip.c3{top:130px;left:30px;transform:rotate(-3deg)}
+  .chip.c4{top:180px;left:140px;transform:rotate(6deg)}
+  .chip.c5{top:224px;left:16px;transform:rotate(-5deg)}
+  .chip.c6{top:150px;left:170px;transform:rotate(9deg);opacity:.9}
+  /* clean timeline card (styled like the app) */
+  .tl-card{background:#fff;border:1px solid var(--line);border-radius:18px;
+    box-shadow:0 14px 40px rgba(15,23,42,.10);overflow:hidden}
+  .tl-top{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#f8fbff,#fff)}
+  .tl-top .who{width:38px;height:38px;border-radius:50%;background:var(--blue-50);color:var(--blue);
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;flex:0 0 auto}
+  .tl-top b{font-size:15px;display:block}
+  .tl-top small{font-size:12.5px;color:var(--muted)}
+  .tl-top .search{margin-left:auto;color:#cbd5e1}
+  .tl-top .search svg{width:18px;height:18px}
+  .tl-body{padding:8px 20px 18px;position:relative}
+  .tl-item{position:relative;padding:14px 0 14px 26px;border-bottom:1px dashed #eef2f7}
+  .tl-item:last-child{border-bottom:0}
+  .tl-item::before{content:"";position:absolute;left:5px;top:20px;bottom:-1px;width:2px;background:#e2e8f0}
+  .tl-item:last-child::before{display:none}
+  .tl-item .dot{position:absolute;left:0;top:18px;width:12px;height:12px;border-radius:50%;
+    background:#fff;border:3px solid var(--blue)}
+  .tl-row1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .tl-date{font-size:12.5px;color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
+  .tag{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px}
+  .tag.lab{background:#eff6ff;color:#1e40af}
+  .tag.stay{background:#fef3c7;color:#92400e}
+  .tag.img{background:#f3e8ff;color:#6b21a8}
+  .tag.vax{background:#dcfce7;color:#166534}
+  .tl-title{font-size:14.5px;font-weight:600;margin-top:4px}
+  .tl-detail{font-size:13px;color:var(--muted);margin-top:2px}
+  .up{color:#dc2626;font-weight:700} .down{color:#16a34a;font-weight:700}
+  /* steps row */
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:52px}
+  .step{display:flex;gap:14px;align-items:flex-start}
+  .step .num{width:34px;height:34px;border-radius:10px;background:var(--blue);color:#fff;
+    font-weight:800;font-size:16px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .step b{display:block;font-size:16px;margin-bottom:3px}
+  .step p{color:var(--muted);font-size:14px}
+  .step .tech{display:block;margin-top:6px;font-size:12px;color:#94a3b8}
+  /* personas */
+  .persona-list{display:flex;flex-direction:column;gap:0;max-width:820px}
+  .persona{display:flex;gap:20px;align-items:flex-start;padding:22px 0;border-top:1px solid var(--line)}
+  .persona:last-child{border-bottom:1px solid var(--line)}
+  .persona .who{flex:0 0 168px;font-size:17px;font-weight:700;display:flex;gap:11px;align-items:center}
+  .persona .who .ic{width:34px;height:34px;border-radius:10px;background:var(--blue-50);color:var(--blue);
+    display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .persona .who .ic svg{width:19px;height:19px}
+  .persona .desc{color:var(--muted);font-size:16px;padding-top:5px}
+  @media(max-width:760px){.persona{flex-direction:column;gap:8px}.persona .who{flex:none}}
+  /* trust band (signature tinted panel) */
+  .trust-band{background:linear-gradient(155deg,#eff6ff,#f8fafc);border:1px solid #dbeafe;
+    border-radius:24px;padding:44px 40px;max-width:960px;margin:0 auto}
+  .trust-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:26px;margin-top:8px}
+  .trust-item{display:flex;flex-direction:column;gap:8px}
+  .trust-item .ic{width:44px;height:44px;border-radius:12px;background:#fff;border:1px solid #dbeafe;
+    color:var(--blue);display:flex;align-items:center;justify-content:center}
+  .trust-item .ic svg{width:23px;height:23px}
+  .trust-item b{font-size:16px}
+  .trust-item span{color:var(--muted);font-size:14px}
+  .trust-oneline{margin-top:30px;font-size:18px;font-weight:600;text-align:center}
+  .trust-oneline .accent{color:var(--blue)}
+  @media(max-width:760px){.trust-grid{grid-template-columns:1fr}.trust-band{padding:32px 24px}}
+  /* voices (honest empty state) */
+  .voices{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;max-width:960px;margin:0 auto}
+  .voice{background:var(--bg);border:1.5px dashed #cbd5e1;border-radius:16px;padding:24px;
+    display:flex;flex-direction:column;gap:12px;min-height:168px}
+  .voice .qm{font-size:34px;line-height:.5;color:#cbd5e1;font-weight:800}
+  .voice p{color:#94a3b8;font-size:15px;font-style:italic;flex:1}
+  .voice .who{display:flex;align-items:center;gap:10px;color:#94a3b8;font-size:13px}
+  .voice .who .av{width:30px;height:30px;border-radius:50%;background:#f1f5f9;border:1px dashed #cbd5e1;flex:0 0 auto}
+  .voice-cta{text-align:center;margin-top:34px;display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+  /* footer */
+  footer{background:#0f172a;color:#cbd5e1;padding:44px 0;text-align:center;font-size:14px}
+  footer .flinks{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-bottom:20px}
+  footer .flinks a{color:#cbd5e1;font-weight:500}
+  footer .flinks a:hover{color:#fff}
+  footer .disc{max-width:720px;margin:0 auto 16px;color:#94a3b8;font-size:13px;line-height:1.8}
+  footer b{color:#e2e8f0}
+  @media(max-width:760px){
+    .hero h1{font-size:34px}
+    .lead-h{font-size:27px}
+    .dl{grid-template-columns:1fr}
+    .show{grid-template-columns:1fr;gap:36px}
+    .show .arrow{transform:rotate(90deg)}
+    .pile{height:260px}
+    .steps{grid-template-columns:1fr;gap:18px;margin-top:36px}
+    .voices{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="inner">
+    <a class="brand" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+      MedMe <span class="cn">医我</span>
+    </a>
+    <div class="links">
+      <a class="hide-sm" href="#how">怎么帮你</a>
+      <a class="hide-sm" href="#start">下载</a>
+      <a class="hide-sm" href="about.html">关于</a>
+      <a class="nav-cta" href="#start">下载 · 安装</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="badge-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+    </div>
+    <h1><span class="en">MedMe</span> · <span class="cn">医我</span></h1>
+    <div class="sub">个人医疗数据保险箱</div>
+    <p class="lead">把你所有的看病记录,<b>收进一个只属于你的保险箱</b>。</p>
+    <p class="who">为慢病复诊、异地就医、帮父母管健康、带娃看病的你而做。</p>
+    <div class="pills">
+      <span class="pill">本地优先</span>
+      <span class="pill">原件永存</span>
+      <span class="pill">端到端加密分享</span>
+      <span class="pill">零服务器</span>
+      <span class="pill">中文优先</span>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="#start">下载 · 安装</a>
+      <a class="btn ghost" href="viewer/" target="_blank" rel="noopener">医生 · 查看加密分享 →</a>
+    </div>
+  </div>
+</header>
+
+<!-- ===== 开始使用 / 下载(原样保留) ===== -->
+<section id="start" class="alt">
+  <div class="wrap">
+    <h2>开始使用</h2>
+    <p class="section-lead">选择你的设备下载整理自己的档案;医生无需安装,用在线查看器打开病人发来的加密分享。</p>
+    <div class="dl">
+      <div class="dl-col">
+        <div class="dl-head"><svg viewBox="0 0 24 24" fill="currentColor" style="color:#111"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg> 苹果用户</div>
+        <span class="storebadge disabled">
+          <svg viewBox="0 0 24 24" fill="#fff"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          <span class="txt"><small>即将上线</small><b>App Store</b></span>
+        </span>
+        <p class="dl-alt">现在可先装 <a href="https://github.com/Chesterguan/medme/blob/main/TESTING.md" target="_blank" rel="noopener">macOS 桌面测试版 →</a></p>
+      </div>
+      <div class="dl-col">
+        <div class="dl-head"><svg viewBox="0 0 24 24" fill="currentColor" style="color:#3ddc84"><path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85-.29-.15-.65-.06-.83.22l-1.88 3.24a11.46 11.46 0 0 0-8.94 0L5.65 5.67c-.19-.29-.58-.38-.87-.2-.28.18-.37.54-.22.83L6.4 9.48A10.78 10.78 0 0 0 1 18h22a10.78 10.78 0 0 0-5.4-8.52M7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5m10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5"/></svg> 安卓 / 其他</div>
+        <span class="storebadge disabled">
+          <svg viewBox="0 0 24 24"><path d="M3.6 2.4c-.3.2-.5.6-.5 1.1v17c0 .5.2.9.5 1.1l.06.05L13.2 12.06v-.12z" fill="#00d3ff"/><path d="M16.8 15.6l-3.6-3.54v-.12l3.6-3.54.08.05 4.27 2.42c1.22.69 1.22 1.83 0 2.53l-4.27 2.42z" fill="#ffce00"/><path d="M16.88 15.55L13.2 12 3.6 21.6c.4.42 1.06.47 1.8.06l11.48-6.11" fill="#ff3b44"/><path d="M16.88 8.45L5.4 2.34C4.66 1.93 4 1.98 3.6 2.4L13.2 12z" fill="#00f076"/></svg>
+          <span class="txt"><small>规划中</small><b>Google Play</b></span>
+        </span>
+        <p class="dl-alt">开发者可 <a href="https://github.com/Chesterguan/medme/blob/main/TESTING.md" target="_blank" rel="noopener">从源码构建 Windows / Linux →</a></p>
+      </div>
+    </div>
+    <div class="doctor-cta">
+      <span>医生收到加密分享文件?无需安装 ——</span>
+      <a class="btn ghost" href="viewer/" target="_blank" rel="noopener">打开在线查看器 →</a>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 它怎么帮你:showpiece before→after ===== -->
+<section id="how">
+  <div class="wrap">
+    <!-- ===== 演示视频占位:录制后把下面的 .video-slot 整块替换为
+         <video controls poster="..." style="width:100%;aspect-ratio:16/9;border-radius:20px">
+           <source src="演示视频文件路径.mp4" type="video/mp4">
+         </video>
+         或直接换成一个 <iframe> 嵌入(注意 GitHub Pages 上使用相对路径)。===== -->
+    <div class="video-slot" role="img" aria-label="产品演示视频,录制中,即将上线">
+      <span class="corner">演示视频</span>
+      <span class="play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+      <span class="cap">产品演示 · 录制中<small>一分钟看懂:怎么把一抽屉报告变成一份健康档案</small></span>
+    </div>
+
+    <span class="kicker" style="margin-top:44px">它怎么帮你</span>
+    <h2 class="lead-h" style="text-align:left">从一抽屉<span class="accent">散乱的报告</span>,<br>到一条看得懂的<span class="accent">就诊记录</span>。</h2>
+    <p class="lead-p" style="margin-bottom:44px">化验单、CT 片子、出院小结、手机里随手拍的报告照片……全丢进来就行,剩下的交给它。</p>
+
+    <div class="show">
+      <!-- before: messy pile -->
+      <div class="pile">
+        <span class="lbl">现在:哪儿都是,哪张都找不到</span>
+        <span class="chip c1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>化验单.jpg</span>
+        <span class="chip c2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>出院小结.pdf</span>
+        <span class="chip c3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="3"/></svg>CT_20251003.dcm</span>
+        <span class="chip c4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15l5-5 4 4 3-3 6 6"/></svg>微信图片.jpg</span>
+        <span class="chip c5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>处方笺.png</span>
+        <span class="chip c6"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>疫苗本.jpg</span>
+      </div>
+
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+
+      <!-- after: clean timeline card -->
+      <div class="tl-card" aria-label="健康档案示例">
+        <div class="tl-top">
+          <span class="who">李</span>
+          <div><b>李桂英</b><small>女 · 68 岁 · 健康档案</small></div>
+          <span class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+        </div>
+        <div class="tl-body">
+          <div class="tl-item"><span class="dot"></span>
+            <div class="tl-row1"><span class="tl-date">2026.05.09</span><span class="tag lab">化验单</span></div>
+            <div class="tl-title">内分泌科复诊 · 血糖控制</div>
+            <div class="tl-detail">糖化血红蛋白 6.8% <span class="down">↓ 已达标</span></div>
+          </div>
+          <div class="tl-item"><span class="dot"></span>
+            <div class="tl-row1"><span class="tl-date">2025.11.02</span><span class="tag stay">出院</span></div>
+            <div class="tl-title">心内科住院 · 冠心病</div>
+            <div class="tl-detail">出院小结 · 用药 3 项 · 附检查 5 份</div>
+          </div>
+          <div class="tl-item"><span class="dot"></span>
+            <div class="tl-row1"><span class="tl-date">2025.10.03</span><span class="tag img">影像</span></div>
+            <div class="tl-title">胸部 CT 平扫</div>
+            <div class="tl-detail">原始 DICOM 可内置阅片 · 未见明显异常</div>
+          </div>
+          <div class="tl-item"><span class="dot"></span>
+            <div class="tl-row1"><span class="tl-date">2024.03.18</span><span class="tag lab">化验单</span></div>
+            <div class="tl-title">血常规</div>
+            <div class="tl-detail">白细胞 11.2 <span class="up">↑ 偏高</span> · 手机照片自动认字</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step"><span class="num">1</span><div><b>拍照或拖进来</b><p>纸质报告、CT 片子、相册里的照片,统统丢进来,不用分类、不用改名。</p><span class="tech">支持 PDF · 图片 · 文本 · CT/MRI 影像</span></div></div>
+      <div class="step"><span class="num">2</span><div><b>自动认字、理清顺序</b><p>它把照片里的字认出来,按看病的时间排好,变成上面这样一条清清楚楚的记录。</p><span class="tech">中文 OCR + 按时间自动归类</span></div></div>
+      <div class="step"><span class="num">3</span><div><b>需要时一键拿出来</b><p>复诊、换院、去急诊,加密发给医生看,或导出一份可打印的资料。</p><span class="tech">端到端加密分享 · 一键导出 PDF</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 无论你是谁(personas = 好处) ===== -->
+<section class="alt">
+  <div class="wrap">
+    <span class="kicker">无论你是——</span>
+    <h2 class="lead-h" style="text-align:left">它懂你在<span class="accent">看病这件事上</span>的难处。</h2>
+    <p class="lead-p" style="margin-bottom:40px">不是一堆功能,而是不同的人、同样实在的省心。</p>
+    <div class="persona-list">
+      <div class="persona">
+        <div class="who"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><path d="M9 10l2 2 4-4"/></svg></span>慢病 / 肿瘤患者</div>
+        <div class="desc">多年、多院、多科室的记录理成一条线,复诊或换医生,不用从头再讲一遍。</div>
+      </div>
+      <div class="persona">
+        <div class="who"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="3"/><path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/></svg></span>异地 / 转诊就医</div>
+        <div class="desc">完整病史随身带着走,到了外地、进了急诊,也能立刻掏给医生看。</div>
+      </div>
+      <div class="persona">
+        <div class="who"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg></span>帮父母管健康</div>
+        <div class="desc">替不太会用手机的老人把报告整理好,人在外地,也能随时远程调取。</div>
+      </div>
+      <div class="persona">
+        <div class="who"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M2 20a7 7 0 0 1 14 0"/><path d="M18 8v6M15 11h6"/></svg></span>有娃家庭</div>
+        <div class="desc">疫苗本、生长记录、历次就诊,一人一档分开管,查哪次都清清楚楚。</div>
+      </div>
+      <div class="persona">
+        <div class="who"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>注重隐私的人</div>
+        <div class="desc">数据只待在你自己的设备里,不上传、不进任何平台、任何云。</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 隐私与信任(signature band) ===== -->
+<section id="privacy">
+  <div class="wrap">
+    <div class="trust-band">
+      <span class="kicker">隐私与信任</span>
+      <h2 class="lead-h" style="text-align:left;margin-bottom:24px">健康数据事关信任,<br>所以我们把话说在明处。</h2>
+      <div class="trust-grid">
+        <div class="trust-item">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+          <b>数据只在你的设备</b>
+          <span>本地优先、零服务器。我们不上传、不持有、也看不到你的任何数据。</span>
+        </div>
+        <div class="trust-item">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/></svg></span>
+          <b>原件永久保存、可溯源</b>
+          <span>原始文件永不改动,随时能翻回最初那份报告,来源清清楚楚。</span>
+        </div>
+        <div class="trust-item">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><circle cx="12" cy="16" r="1.5"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+          <b>加密分享,凭口令查看</b>
+          <span>发给医生的是加密网页,只有拿到口令的人,才能在浏览器里本地打开。</span>
+        </div>
+      </div>
+      <p class="trust-oneline">一句话:<span class="accent">你的档案,始终由你掌控。</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 口碑(诚实空态) ===== -->
+<section class="alt" id="voices">
+  <div class="wrap">
+    <h2>口碑,来自使用它的人</h2>
+    <p class="section-lead">现在还是早期测试阶段。MedMe 没有大机构背书,靠的是真实用户的口碑一点点成长——你的每一句反馈和推荐,都在塑造它。</p>
+    <div class="voices">
+      <div class="voice"><span class="qm">&ldquo;</span><p>期待第一条评价,来自你。</p><div class="who"><span class="av"></span><span>虚位以待</span></div></div>
+      <div class="voice"><span class="qm">&ldquo;</span><p>用得顺手?哪里别扭?说给我们听。</p><div class="who"><span class="av"></span><span>虚位以待</span></div></div>
+      <div class="voice"><span class="qm">&ldquo;</span><p>你的一句推荐,也许能帮到下一个正为病历发愁的人。</p><div class="who"><span class="av"></span><span>虚位以待</span></div></div>
+    </div>
+    <div class="voice-cta">
+      <a class="btn primary" href="https://github.com/Chesterguan/medme/issues" target="_blank" rel="noopener">留下反馈 · 提建议 →</a>
+      <a class="btn ghost" href="mailto:chesterfield199512@gmail.com?subject=MedMe%20%E5%8F%8D%E9%A6%88">发邮件告诉我们</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="flinks">
+      <a href="about.html">关于我们</a>
+      <a href="https://github.com/Chesterguan/medme" target="_blank" rel="noopener">源码</a>
+      <a href="viewer/" target="_blank" rel="noopener">在线查看器</a>
+    </div>
+    <p class="disc">
+      <b>MedMe(医我)</b> 是个人医疗数据整理与保存工具,非医疗器械,<b>不提供任何医疗诊断或建议</b>。
+      一切以原始医疗文件为准,并请咨询执业医师。数据的调取须经本人或其法定责任人同意。
+      软件采用去中心化本地存储,我们不持有、不上传、不访问你的数据。
+    </p>
+    <div>© MedMe Team 2026 · 本地优先的个人医疗数据保险箱</div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+/* 根字号:正常档(16px 浏览器默认) */
+html {
+  font-size: 16px;
+}
+
+:root {
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", Avenir, Helvetica, Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}

@@ -1,0 +1,30 @@
+[package]
+name = "medme-mobile"
+version = "0.1.0"
+description = "MedMe 医我 — 手机端(采集 + 随身健康档案 + 加密分享)"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix keeps the lib name unique from the bin name (see desktop).
+# `staticlib`/`cdylib` are required for the iOS/Android mobile targets.
+name = "mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2.7.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Shared platform-independent crates, reused verbatim from the desktop app.
+core-model = { path = "../../../packages/core-model" }
+pipeline = { path = "../../../packages/pipeline" }
+dicom = { path = "../../../packages/dicom" }
+medme-share = { path = "../../../packages/share" }
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }

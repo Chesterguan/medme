@@ -1,0 +1,20 @@
+# Rust build output
+/target
+
+# Node / frontend
+node_modules/
+**/dist/
+
+# Tauri generated schemas (regenerated on build)
+**/gen/schemas/
+
+# OS junk
+.DS_Store
+examples/*/corpus/
+examples/*/photos/
+examples/*/dicom/
+examples/**/*.jpg
+examples/**/*.png
+examples/**/*.pdf
+.playwright-mcp/
+/ui-*.png

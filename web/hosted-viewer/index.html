@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MedMe 加密分享查看器</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif; color: #1e293b; margin: 0; padding: 0; background: #f8fafc; }
+  .wrap { max-width: 900px; margin-inline: auto; padding: 24px; }
+  /* 口令输入屏 */
+  .gate { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .gate-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px; max-width: 420px; width: 100%; box-shadow: 0 8px 30px rgba(15,23,42,.06); }
+  .gate-card h1 { font-size: 20px; color: #1d4ed8; margin: 0 0 6px; }
+  .gate-card p { font-size: 13px; color: #64748b; line-height: 1.6; margin: 0 0 18px; }
+  .gate-card label { display: block; font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 6px; }
+  .gate-card input { width: 100%; font-size: 15px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 10px; letter-spacing: .5px; }
+  .gate-card input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+  .gate-card button { width: 100%; margin-top: 14px; font-size: 15px; font-weight: 600; color: #fff; background: #2563eb; border: none; border-radius: 10px; padding: 12px; cursor: pointer; }
+  .gate-card button:hover { background: #1d4ed8; }
+  .gate-err { color: #be123c; font-size: 13px; margin-top: 12px; min-height: 18px; }
+  /* 头部 */
+  .doc-header { border-bottom: 2px solid #2563eb; padding-bottom: 12px; margin-bottom: 20px; }
+  .doc-header h1 { font-size: 22px; color: #1d4ed8; margin: 0 0 6px; }
+  .patient { font-size: 14px; color: #334155; }
+  .generated { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+  .privacy-note { font-size: 12px; color: #475569; background: #eff6ff; border: 1px solid #dbeafe; border-radius: 10px; padding: 10px 12px; margin-bottom: 20px; line-height: 1.6; }
+  /* 记录卡片 */
+  .record { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; page-break-inside: avoid; }
+  .record-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .record-head h2 { font-size: 16px; margin: 0; color: #0f172a; flex: 1; min-width: 120px; }
+  .badge { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 10px; }
+  .date { font-size: 12px; color: #64748b; font-variant-numeric: tabular-nums; }
+  .content { font-size: 15px; line-height: 1.7; color: #334155; }
+  .content > * + * { margin-top: 10px; }
+  .content table { width: 100%; border-collapse: collapse; font-size: 13px; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+  .content thead tr { background: #f8fafc; color: #64748b; font-size: 12px; }
+  .content th { text-align: left; font-weight: 600; padding: 7px 12px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+  .content td { padding: 6px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+  .content tr.high td { color: #b45309; }
+  .content tr.low td { color: #1d4ed8; }
+  .content tr.normal td { color: #334155; }
+  .content .section { font-weight: 600; color: #0f172a; padding-top: 2px; }
+  .content .label { font-weight: 600; color: #0f172a; }
+  .content .para { white-space: pre-wrap; word-break: break-word; }
+  /* 处方 */
+  .meds { display: flex; flex-direction: column; gap: 8px; }
+  .med { display: flex; gap: 12px; background: #ecfdf5; border: 1px solid #d1fae5; border-radius: 12px; padding: 12px; }
+  .med .n { width: 26px; height: 26px; border-radius: 8px; background: #d1fae5; color: #047857; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-weight: 700; font-size: 13px; }
+  .med .name { font-weight: 600; color: #1e293b; }
+  .med .usage { font-size: 13px; color: #64748b; line-height: 1.6; }
+  .meds-label { font-size: 11px; font-family: ui-monospace, monospace; color: #94a3b8; letter-spacing: .15em; text-transform: uppercase; }
+  .img { max-width: 100%; max-height: 480px; display: block; margin: 8px 0; border: 1px solid #e2e8f0; border-radius: 8px; }
+  /* 影像检查:缩略卡 + 说明 */
+  .imaging-card { margin: 10px 0; }
+  .imaging-open { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; background: #0f172a; color: #fff; border: none; border-radius: 10px; padding: 10px 16px; font-size: 14px; font-weight: 600; }
+  .imaging-open:hover { background: #1e293b; }
+  .imaging-open .ico { font-size: 16px; }
+  .imaging-meta { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.6; }
+  .imaging-png { max-width: 100%; max-height: 480px; display: block; margin: 8px 0; background: #000; border: 1px solid #e2e8f0; border-radius: 8px; }
+  .imaging-note { font-size: 12px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 10px; margin-top: 6px; line-height: 1.6; }
+  /* 全屏阅片 overlay(移植桌面端 lightbox 观感)*/
+  .dcm-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.9); display: flex; flex-direction: column; }
+  .dcm-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: rgba(0,0,0,.6); color: rgba(255,255,255,.85); }
+  .dcm-bar .name { font-family: ui-monospace, Menlo, monospace; font-size: 13px; margin-right: auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dcm-btn { font-size: 12px; padding: 6px 12px; border-radius: 8px; background: rgba(255,255,255,.1); color: rgba(255,255,255,.85); border: none; cursor: pointer; }
+  .dcm-btn:hover { background: rgba(255,255,255,.2); }
+  .dcm-doctor { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: #fcd34d; }
+  .dcm-sep { width: 1px; height: 16px; background: rgba(255,255,255,.2); }
+  .dcm-idx { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: rgba(255,255,255,.7); }
+  .dcm-hintbar { font-size: 11px; color: rgba(255,255,255,.7); margin-left: auto; }
+  .dcm-stage { position: relative; flex: 1; min-height: 0; background: #000; overflow: hidden; }
+  .dcm-stage canvas { display: block; touch-action: none; }
+  .dcm-notice { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.75); color: rgba(255,255,255,.9); font-size: 12px; padding: 8px 16px; border-radius: 8px; max-width: 80%; text-align: center; pointer-events: none; }
+  .dcm-floathint { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.75); color: #fff; font-size: 14px; padding: 10px 20px; border-radius: 999px; pointer-events: none; }
+  .statement { text-align: center; font-size: 11px; color: #94a3b8; margin-top: 24px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
+  .expired { max-width: 480px; margin: 80px auto; text-align: center; background: #fff; border: 1px solid #fecdd3; border-radius: 16px; padding: 40px 28px; }
+  .expired h1 { font-size: 18px; color: #be123c; margin: 0 0 10px; }
+  .expired p { font-size: 14px; color: #64748b; line-height: 1.7; margin: 0; }
+  @media print {
+    body { background: #fff; }
+    .record { border: 1px solid #cbd5e1; box-shadow: none; }
+    .privacy-note { background: #fff; }
+    @page { margin: 16mm 14mm; }
+  }
+  /* 托管查看器:文件投放区 */
+  .dropzone { border: 2px dashed #cbd5e1; border-radius: 12px; padding: 22px 16px; text-align: center; cursor: pointer; background: #f8fafc; transition: border-color .15s, background .15s; margin-bottom: 16px; }
+  .dropzone:hover { border-color: #93c5fd; background: #f1f5f9; }
+  .dropzone.drag { border-color: #2563eb; background: #eff6ff; }
+  .dz-icon { font-size: 26px; }
+  .dz-main { font-size: 13px; color: #475569; margin-top: 6px; line-height: 1.6; }
+  .dz-file { font-size: 12px; color: #047857; margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; min-height: 16px; }
+</style>
+</head>
+<body>
+<div id="gate" class="gate">
+  <div class="gate-card">
+    <h1>MedMe 加密分享查看器</h1>
+    <p>数据在你的浏览器本地解密,不经过任何服务器。请拖入本人给你的 MedMe 加密分享文件并输入其另行告知的<b>口令</b>。</p>
+    <div id="drop" class="dropzone" role="button" tabindex="0">
+      <div class="dz-icon">📄</div>
+      <div class="dz-main">拖入 MedMe 加密分享文件(.html)或点击选择</div>
+      <div id="fileName" class="dz-file"></div>
+    </div>
+    <input id="fileInput" type="file" accept=".html,.htm,text/html" style="display:none">
+    <label for="pw">口令</label>
+    <input id="pw" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴或输入口令">
+    <button id="go" type="button">查看</button>
+    <div id="err" class="gate-err"></div>
+  </div>
+</div>
+<div id="app" class="wrap" style="display:none"></div>
+
+<script>
+/*! dicom-parser - 1.8.12 - 2023-02-20 | (c) 2017 Chris Hafey | https://github.com/cornerstonejs/dicomParser */
+!function(e,t){"object"==typeof exports&&"object"==typeof module?module.exports=t(require("zlib")):"function"==typeof define&&define.amd?define("dicom-parser",["zlib"],t):"object"==typeof exports?exports["dicom-parser"]=t(require("zlib")):e.dicomParser=t(e.zlib)}(this,function(r){return a=[function(e,t){e.exports=r},function(e,t,s){"use strict";s.r(t),s.d(t,"isStringVr",function(){return d}),s.d(t,"isPrivateTag",function(){return f}),s.d(t,"parsePN",function(){return a}),s.d(t,"parseTM",function(){return n}),s.d(t,"parseDA",function(){return o}),s.d(t,"explicitElementToString",function(){return l}),s.d(t,"explicitDataSetToJS",function(){return u}),s.d(t,"createJPEGBasicOffsetTable",function(){return p}),s.d(t,"parseDicomDataSetExplicit",function(){return q}),s.d(t,"parseDicomDataSetImplicit",function(){return T}),s.d(t,"readFixedString",function(){return b}),s.d(t,"alloc",function(){return k}),s.d(t,"version",function(){return L}),s.d(t,"bigEndianByteArrayParser",function(){return N}),s.d(t,"ByteStream",function(){return J}),s.d(t,"sharedCopy",function(){return j}),s.d(t,"DataSet",function(){return w}),s.d(t,"findAndSetUNElementLength",function(){return y}),s.d(t,"findEndOfEncapsulatedElement",function(){return g}),s.d(t,"findItemDelimitationItemAndSetElementLength",function(){return x}),s.d(t,"littleEndianByteArrayParser",function(){return M}),s.d(t,"parseDicom",function(){return V}),s.d(t,"readDicomElementExplicit",function(){return B}),s.d(t,"readDicomElementImplicit",function(){return A}),s.d(t,"readEncapsulatedImageFrame",function(){return W}),s.d(t,"readEncapsulatedPixelData",function(){return K}),s.d(t,"readEncapsulatedPixelDataFromFragments",function(){return _}),s.d(t,"readPart10Header",function(){return G}),s.d(t,"readSequenceItemsExplicit",function(){return I}),s.d(t,"readSequenceItemsImplicit",function(){return F}),s.d(t,"readSequenceItem",function(){return S}),s.d(t,"readTag",function(){return h});var r={AE:!0,AS:!0,AT:!1,CS:!0,DA:!0,DS:!0,DT:!0,FL:!1,FD:!1,IS:!0,LO:!0,LT:!0,OB:!1,OD:!1,OF:!1,OW:!1,PN:!0,SH:!0,SL:!1,SQ:!1,SS:!1,ST:!0,TM:!0,UI:!0,UL:!1,UN:void 0,UR:!0,US:!1,UT:!0},d=function(e){return r[e]},f=function(e){e=parseInt(e[4],16);if(isNaN(e))throw"dicomParser.isPrivateTag: cannot parse last character of group";return e%2==1},a=function(e){if(void 0!==e){e=e.split("^");return{familyName:e[0],givenName:e[1],middleName:e[2],prefix:e[3],suffix:e[4]}}};function n(e,t){if(2<=e.length){var r=parseInt(e.substring(0,2),10),a=4<=e.length?parseInt(e.substring(2,4),10):void 0,n=6<=e.length?parseInt(e.substring(4,6),10):void 0,i=8<=e.length?e.substring(7,13):void 0,i=i?parseInt(i,10)*Math.pow(10,6-i.length):void 0;if(t&&(isNaN(r)||void 0!==a&&isNaN(a)||void 0!==n&&isNaN(n)||void 0!==i&&isNaN(i)||r<0||23<r||a&&(a<0||59<a)||n&&(n<0||59<n)||i&&(i<0||999999<i)))throw"invalid TM '".concat(e,"'");return{hours:r,minutes:a,seconds:n,fractionalSeconds:i}}if(t)throw"invalid TM '".concat(e,"'")}function i(e,t,r){return!isNaN(r)&&(0<t&&t<=12&&0<e&&e<=function(e,t){switch(e){case 2:return t%4==0&&t%100||t%400==0?29:28;case 9:case 4:case 6:case 11:return 30;default:return 31}}(t,r))}function o(e,t){if(e&&8===e.length){var r=parseInt(e.substring(0,4),10),a=parseInt(e.substring(4,6),10),n=parseInt(e.substring(6,8),10);if(t&&!0!==i(n,a,r))throw"invalid DA '".concat(e,"'");return{year:r,month:a,day:n}}if(t)throw"invalid DA '".concat(e,"'")}function l(n,e){if(void 0===n||void 0===e)throw"dicomParser.explicitElementToString: missing required parameters";if(void 0===e.vr)throw"dicomParser.explicitElementToString: cannot convert implicit element to string";var t,r=e.vr,i=e.tag;function a(e,t){for(var r="",a=0;a<e;a++)0!==a&&(r+="/"),r+=t.call(n,i,a).toString();return r}if(!0===d(r))t=n.string(i);else{if("AT"===r){var o=n.uint32(i);return void 0===o?void 0:"x".concat((o=o<0?4294967295+o+1:o).toString(16).toUpperCase())}"US"===r?t=a(e.length/2,n.uint16):"SS"===r?t=a(e.length/2,n.int16):"UL"===r?t=a(e.length/4,n.uint32):"SL"===r?t=a(e.length/4,n.int32):"FD"===r?t=a(e.length/8,n.double):"FL"===r&&(t=a(e.length/4,n.float))}return t}function u(e,t){if(void 0===e)throw"dicomParser.explicitDataSetToJS: missing required parameter dataSet";t=t||{omitPrivateAttibutes:!0,maxElementLength:128};var r,a={};for(r in e.elements){var n=e.elements[r];if(!0!==t.omitPrivateAttibutes||!f(r))if(n.items){for(var i=[],o=0;o<n.items.length;o++)i.push(u(n.items[o].dataSet,t));a[r]=i}else{var s=void 0;n.length<t.maxElementLength&&(s=l(e,n)),a[r]=void 0!==s?s:{dataOffset:n.dataOffset,length:n.length}}}return a}function c(e,t){return 255===e.byteArray[t]&&217===e.byteArray[t+1]}function m(e,t,r){for(var a,n,i=r;i<t.fragments.length;i++)if(a=e,n=i,n=t.fragments[n],!(!c(a,n.position+n.length-2)&&!c(a,n.position+n.length-3)))return i}function p(e,t,r){if(void 0===e)throw"dicomParser.createJPEGBasicOffsetTable: missing required parameter dataSet";if(void 0===t)throw"dicomParser.createJPEGBasicOffsetTable: missing required parameter pixelDataElement";if("x7fe00010"!==t.tag)throw"dicomParser.createJPEGBasicOffsetTable: parameter 'pixelDataElement' refers to non pixel data tag (expected tag = x7fe00010'";if(!0!==t.encapsulatedPixelData)throw"dicomParser.createJPEGBasicOffsetTable: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(!0!==t.hadUndefinedLength)throw"dicomParser.createJPEGBasicOffsetTable: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(void 0===t.basicOffsetTable)throw"dicomParser.createJPEGBasicOffsetTable: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(void 0===t.fragments)throw"dicomParser.createJPEGBasicOffsetTable: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(t.fragments.length<=0)throw"dicomParser.createJPEGBasicOffsetTable: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(r&&r.length<=0)throw"dicomParser.createJPEGBasicOffsetTable: parameter 'fragments' must not be zero length";r=r||t.fragments;for(var a=[],n=0;;){a.push(t.fragments[n].offset);var i=m(e,t,n);if(void 0===i||i===t.fragments.length-1)return a;n=i+1}}function h(e){if(void 0===e)throw"dicomParser.readTag: missing required parameter 'byteStream'";var t=256*e.readUint16()*256,e=e.readUint16();return"x".concat("00000000".concat((t+e).toString(16)).substr(-8))}function g(e,t,r){if(void 0===e)throw"dicomParser.findEndOfEncapsulatedElement: missing required parameter 'byteStream'";if(void 0===t)throw"dicomParser.findEndOfEncapsulatedElement: missing required parameter 'element'";if(t.encapsulatedPixelData=!0,t.basicOffsetTable=[],t.fragments=[],"xfffee000"!==h(e))throw"dicomParser.findEndOfEncapsulatedElement: basic offset table not found";for(var a=e.readUint32()/4,n=0;n<a;n++){var i=e.readUint32();t.basicOffsetTable.push(i)}for(var o=e.position;e.position<e.byteArray.length;){var s=h(e),d=e.readUint32();if("xfffee0dd"===s)return e.seek(d),void(t.length=e.position-t.dataOffset);if("xfffee000"!==s)return r&&r.push("unexpected tag ".concat(s," while searching for end of pixel data element with undefined length")),d>e.byteArray.length-e.position&&(d=e.byteArray.length-e.position),t.fragments.push({offset:e.position-o-8,position:e.position,length:d}),e.seek(d),void(t.length=e.position-t.dataOffset);t.fragments.push({offset:e.position-o-8,position:e.position,length:d}),e.seek(d)}r&&r.push("pixel data element ".concat(t.tag," missing sequence delimiter tag xfffee0dd"))}function y(e,t){if(void 0===e)throw"dicomParser.findAndSetUNElementLength: missing required parameter 'byteStream'";for(var r=e.byteArray.length-8;e.position<=r;)if(65534===e.readUint16()){var a=e.readUint16();if(57565===a)return 0!==e.readUint32()&&e.warnings("encountered non zero length following item delimiter at position ".concat(e.position-4," while reading element of undefined length with tag ").concat(t.tag)),void(t.length=e.position-t.dataOffset)}t.length=e.byteArray.length-t.dataOffset,e.seek(e.byteArray.length-e.position)}function b(e,t,r){if(r<0)throw"dicomParser.readFixedString - length cannot be less than 0";if(t+r>e.length)throw"dicomParser.readFixedString: attempt to read past end of buffer";for(var a,n="",i=0;i<r;i++){if(0===(a=e[t+i]))return t+=r,n;n+=String.fromCharCode(a)}return n}function v(e,t){for(var r=0;r<t.length;r++){var a=t[r];a.enumerable=a.enumerable||!1,a.configurable=!0,"value"in a&&(a.writable=!0),Object.defineProperty(e,a.key,a)}}function P(e,t){return void 0!==e.parser?e.parser:t}var w=function(){function a(e,t,r){!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,a),this.byteArrayParser=e,this.byteArray=t,this.elements=r}var e,t,r;return e=a,(t=[{key:"uint16",value:function(e,t){e=this.elements[e];if(t=void 0!==t?t:0,e&&0!==e.length)return P(e,this.byteArrayParser).readUint16(this.byteArray,e.dataOffset+2*t)}},{key:"int16",value:function(e,t){e=this.elements[e];if(t=void 0!==t?t:0,e&&0!==e.length)return P(e,this.byteArrayParser).readInt16(this.byteArray,e.dataOffset+2*t)}},{key:"uint32",value:function(e,t){e=this.elements[e];if(t=void 0!==t?t:0,e&&0!==e.length)return P(e,this.byteArrayParser).readUint32(this.byteArray,e.dataOffset+4*t)}},{key:"int32",value:function(e,t){e=this.elements[e];if(t=void 0!==t?t:0,e&&0!==e.length)return P(e,this.byteArrayParser).readInt32(this.byteArray,e.dataOffset+4*t)}},{key:"float",value:function(e,t){e=this.elements[e];if(t=void 0!==t?t:0,e&&0!==e.length)return P(e,this.byteArrayParser).readFloat(this.byteArray,e.dataOffset+4*t)}},{key:"double",value:function(e,t){e=this.elements[e];if(t=void 0!==t?t:0,e&&0!==e.length)return P(e,this.byteArrayParser).readDouble(this.byteArray,e.dataOffset+8*t)}},{key:"numStringValues",value:function(e){e=this.elements[e];if(e&&0<e.length){e=b(this.byteArray,e.dataOffset,e.length).match(/\\/g);return null===e?1:e.length+1}}},{key:"string",value:function(e,t){e=this.elements[e];if(e&&e.Value)return e.Value;if(e&&0<e.length){e=b(this.byteArray,e.dataOffset,e.length);return 0<=t?e.split("\\")[t].trim():e.trim()}}},{key:"text",value:function(e,t){e=this.elements[e];if(e&&0<e.length){e=b(this.byteArray,e.dataOffset,e.length);return 0<=t?e.split("\\")[t].replace(/ +$/,""):e.replace(/ +$/,"")}}},{key:"floatString",value:function(e,t){var r=this.elements[e];if(r&&0<r.length){t=this.string(e,t=void 0!==t?t:0);if(void 0!==t)return parseFloat(t)}}},{key:"intString",value:function(e,t){var r=this.elements[e];if(r&&0<r.length){t=this.string(e,t=void 0!==t?t:0);if(void 0!==t)return parseInt(t)}}},{key:"attributeTag",value:function(e){var t=this.elements[e];if(t&&4===t.length){var r=P(t,this.byteArrayParser).readUint16,e=this.byteArray,t=t.dataOffset;return"x".concat("00000000".concat((256*r(e,t)*256+r(e,t+2)).toString(16)).substr(-8))}}}])&&v(e.prototype,t),r&&v(e,r),Object.defineProperty(e,"prototype",{writable:!1}),a}();function x(e,t){if(void 0===e)throw"dicomParser.readDicomElementImplicit: missing required parameter 'byteStream'";for(var r=e.byteArray.length-8;e.position<=r;)if(65534===e.readUint16()){var a=e.readUint16();if(57357===a)return 0!==e.readUint32()&&e.warnings("encountered non zero length following item delimiter at position ".concat(e.position-4," while reading element of undefined length with tag ").concat(t.tag)),void(t.length=e.position-t.dataOffset)}t.length=e.byteArray.length-t.dataOffset,e.seek(e.byteArray.length-e.position)}var E=function(e,t){if(void 0!==e.vr)return"SQ"===e.vr;if(t.position+4<=t.byteArray.length){e=h(t);return t.seek(-4),"xfffee000"===e||"xfffee0dd"===e}return t.warnings.push("eof encountered before finding sequence item tag or sequence delimiter tag in peeking to determine VR"),!1};function A(e,t,r){if(void 0===e)throw"dicomParser.readDicomElementImplicit: missing required parameter 'byteStream'";var a=h(e),a={tag:a,vr:void 0!==r?r(a):void 0,length:e.readUint32(),dataOffset:e.position};return 4294967295===a.length&&(a.hadUndefinedLength=!0),a.tag===t||(!E(a,e)||f(a.tag)&&!a.hadUndefinedLength?a.hadUndefinedLength?x(e,a):e.seek(a.length):(F(e,a,r),f(a.tag)&&(a.items=void 0))),a}function S(e){if(void 0===e)throw"dicomParser.readSequenceItem: missing required parameter 'byteStream'";var t={tag:h(e),length:e.readUint32(),dataOffset:e.position};if("xfffee000"!==t.tag)throw"dicomParser.readSequenceItem: item tag (FFFE,E000) not found at offset ".concat(e.position);return t}function D(e,t){var r=S(e);return 4294967295===r.length?(r.hadUndefinedLength=!0,r.dataSet=function(e,t){for(var r={};e.position<e.byteArray.length;){var a=A(e,void 0,t);if("xfffee00d"===(r[a.tag]=a).tag)return new w(e.byteArrayParser,e.byteArray,r)}return e.warnings.push("eof encountered before finding sequence item delimiter in sequence item of undefined length"),new w(e.byteArrayParser,e.byteArray,r)}(e,t),r.length=e.position-r.dataOffset):(r.dataSet=new w(e.byteArrayParser,e.byteArray,{}),T(r.dataSet,e,e.position+r.length,{vrCallback:t})),r}function F(e,t,r){if(void 0===e)throw"dicomParser.readSequenceItemsImplicit: missing required parameter 'byteStream'";if(void 0===t)throw"dicomParser.readSequenceItemsImplicit: missing required parameter 'element'";t.items=[],(4294967295===t.length?function(e,t,r){for(;e.position+4<=e.byteArray.length;){var a=h(e);if(e.seek(-4),"xfffee0dd"===a)return t.length=e.position-t.dataOffset,e.seek(8);a=D(e,r);t.items.push(a)}e.warnings.push("eof encountered before finding sequence delimiter in sequence of undefined length"),t.length=e.byteArray.length-t.dataOffset}:function(e,t,r){for(var a=t.dataOffset+t.length;e.position<a;){var n=D(e,r);t.items.push(n)}})(e,t,r)}function O(e,t){var r=S(e);return 4294967295===r.length?(r.hadUndefinedLength=!0,r.dataSet=function(e,t){for(var r={};e.position<e.byteArray.length;){var a=B(e,t);if("xfffee00d"===(r[a.tag]=a).tag)return new w(e.byteArrayParser,e.byteArray,r)}return t.push("eof encountered before finding item delimiter tag while reading sequence item of undefined length"),new w(e.byteArrayParser,e.byteArray,r)}(e,t),r.length=e.position-r.dataOffset):(r.dataSet=new w(e.byteArrayParser,e.byteArray,{}),q(r.dataSet,e,e.position+r.length)),r}function I(e,t,r){if(void 0===e)throw"dicomParser.readSequenceItemsExplicit: missing required parameter 'byteStream'";if(void 0===t)throw"dicomParser.readSequenceItemsExplicit: missing required parameter 'element'";t.items=[],(4294967295===t.length?function(e,t,r){for(;e.position+4<=e.byteArray.length;){var a=h(e);if(e.seek(-4),"xfffee0dd"===a)return t.length=e.position-t.dataOffset,e.seek(8);a=O(e,r);t.items.push(a)}r.push("eof encountered before finding sequence delimitation tag while reading sequence of undefined length"),t.length=e.position-t.dataOffset}:function(e,t,r){for(var a=t.dataOffset+t.length;e.position<a;){var n=O(e,r);t.items.push(n)}})(e,t,r)}var U=function(e){return"OB"===e||"OD"===e||"OL"===e||"OW"===e||"SQ"===e||"OF"===e||"UC"===e||"UR"===e||"UT"===e||"UN"===e?4:2};function B(e,t,r){if(void 0===e)throw"dicomParser.readDicomElementExplicit: missing required parameter 'byteStream'";var a={tag:h(e),vr:e.readFixedString(2)};return 2===U(a.vr)?a.length=e.readUint16():(e.seek(2),a.length=e.readUint32()),a.dataOffset=e.position,4294967295===a.length&&(a.hadUndefinedLength=!0),a.tag===r||("SQ"===a.vr?I(e,a,t):4294967295===a.length?"x7fe00010"===a.tag?g(e,a,t):("UN"===a.vr?F:x)(e,a):e.seek(a.length)),a}function q(e,t,r){var a=3<arguments.length&&void 0!==arguments[3]?arguments[3]:{};if(r=void 0===r?t.byteArray.length:r,void 0===t)throw"dicomParser.parseDicomDataSetExplicit: missing required parameter 'byteStream'";if(r<t.position||r>t.byteArray.length)throw"dicomParser.parseDicomDataSetExplicit: invalid value for parameter 'maxP osition'";for(var n=e.elements;t.position<r;){var i=B(t,e.warnings,a.untilTag);if((n[i.tag]=i).tag===a.untilTag)return}if(t.position>r)throw"dicomParser:parseDicomDataSetExplicit: buffer overrun"}function T(e,t,r){var a=3<arguments.length&&void 0!==arguments[3]?arguments[3]:{};if(r=void 0===r?e.byteArray.length:r,void 0===t)throw"dicomParser.parseDicomDataSetImplicit: missing required parameter 'byteStream'";if(r<t.position||r>t.byteArray.length)throw"dicomParser.parseDicomDataSetImplicit: invalid value for parameter 'maxPosition'";for(var n=e.elements;t.position<r;){var i=A(t,a.untilTag,a.vrCallback);if((n[i.tag]=i).tag===a.untilTag)return}}function k(e,t){if("undefined"!=typeof Buffer&&e instanceof Buffer)return Buffer.alloc(t);if(e instanceof Uint8Array)return new Uint8Array(t);throw"dicomParser.alloc: unknown type for byteArray"}var L="1.8.12",N={readUint16:function(e,t){if(t<0)throw"bigEndianByteArrayParser.readUint16: position cannot be less than 0";if(t+2>e.length)throw"bigEndianByteArrayParser.readUint16: attempt to read past end of buffer";return(e[t]<<8)+e[t+1]},readInt16:function(e,t){if(t<0)throw"bigEndianByteArrayParser.readInt16: position cannot be less than 0";if(t+2>e.length)throw"bigEndianByteArrayParser.readInt16: attempt to read past end of buffer";t=(e[t]<<8)+e[t+1];return t=32768&t?t-65535-1:t},readUint32:function(e,t){if(t<0)throw"bigEndianByteArrayParser.readUint32: position cannot be less than 0";if(t+4>e.length)throw"bigEndianByteArrayParser.readUint32: attempt to read past end of buffer";return 256*(256*(256*e[t]+e[t+1])+e[t+2])+e[t+3]},readInt32:function(e,t){if(t<0)throw"bigEndianByteArrayParser.readInt32: position cannot be less than 0";if(t+4>e.length)throw"bigEndianByteArrayParser.readInt32: attempt to read past end of buffer";return(e[t]<<24)+(e[t+1]<<16)+(e[t+2]<<8)+e[t+3]},readFloat:function(e,t){if(t<0)throw"bigEndianByteArrayParser.readFloat: position cannot be less than 0";if(t+4>e.length)throw"bigEndianByteArrayParser.readFloat: attempt to read past end of buffer";var r=new Uint8Array(4);return r[3]=e[t],r[2]=e[t+1],r[1]=e[t+2],r[0]=e[t+3],new Float32Array(r.buffer)[0]},readDouble:function(e,t){if(t<0)throw"bigEndianByteArrayParser.readDouble: position cannot be less than 0";if(t+8>e.length)throw"bigEndianByteArrayParser.readDouble: attempt to read past end of buffer";var r=new Uint8Array(8);return r[7]=e[t],r[6]=e[t+1],r[5]=e[t+2],r[4]=e[t+3],r[3]=e[t+4],r[2]=e[t+5],r[1]=e[t+6],r[0]=e[t+7],new Float64Array(r.buffer)[0]}};function j(e,t,r){if("undefined"!=typeof Buffer&&e instanceof Buffer)return e.slice(t,t+r);if(e instanceof Uint8Array)return new Uint8Array(e.buffer,e.byteOffset+t,r);throw"dicomParser.from: unknown type for byteArray"}function C(e,t){for(var r=0;r<t.length;r++){var a=t[r];a.enumerable=a.enumerable||!1,a.configurable=!0,"value"in a&&(a.writable=!0),Object.defineProperty(e,a.key,a)}}var J=function(){function a(e,t,r){if(!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,a),void 0===e)throw"dicomParser.ByteStream: missing required parameter 'byteArrayParser'";if(void 0===t)throw"dicomParser.ByteStream: missing required parameter 'byteArray'";if(t instanceof Uint8Array==!1&&("undefined"==typeof Buffer||t instanceof Buffer==!1))throw"dicomParser.ByteStream: parameter byteArray is not of type Uint8Array or Buffer";if(r<0)throw"dicomParser.ByteStream: parameter 'position' cannot be less than 0";if(r>=t.length)throw"dicomParser.ByteStream: parameter 'position' cannot be greater than or equal to 'byteArray' length";this.byteArrayParser=e,this.byteArray=t,this.position=r||0,this.warnings=[]}var e,t,r;return e=a,(t=[{key:"seek",value:function(e){if(this.position+e<0)throw"dicomParser.ByteStream.prototype.seek: cannot seek to position < 0";this.position+=e}},{key:"readByteStream",value:function(e){if(this.position+e>this.byteArray.length)throw"dicomParser.ByteStream.prototype.readByteStream: readByteStream - buffer overread";var t=j(this.byteArray,this.position,e);return this.position+=e,new a(this.byteArrayParser,t)}},{key:"getSize",value:function(){return this.byteArray.length}},{key:"readUint16",value:function(){var e=this.byteArrayParser.readUint16(this.byteArray,this.position);return this.position+=2,e}},{key:"readUint32",value:function(){var e=this.byteArrayParser.readUint32(this.byteArray,this.position);return this.position+=4,e}},{key:"readFixedString",value:function(e){var t=b(this.byteArray,this.position,e);return this.position+=e,t}}])&&C(e.prototype,t),r&&C(e,r),Object.defineProperty(e,"prototype",{writable:!1}),a}(),M={readUint16:function(e,t){if(t<0)throw"littleEndianByteArrayParser.readUint16: position cannot be less than 0";if(t+2>e.length)throw"littleEndianByteArrayParser.readUint16: attempt to read past end of buffer";return e[t]+256*e[t+1]},readInt16:function(e,t){if(t<0)throw"littleEndianByteArrayParser.readInt16: position cannot be less than 0";if(t+2>e.length)throw"littleEndianByteArrayParser.readInt16: attempt to read past end of buffer";t=e[t]+(e[t+1]<<8);return t=32768&t?t-65535-1:t},readUint32:function(e,t){if(t<0)throw"littleEndianByteArrayParser.readUint32: position cannot be less than 0";if(t+4>e.length)throw"littleEndianByteArrayParser.readUint32: attempt to read past end of buffer";return e[t]+256*e[t+1]+256*e[t+2]*256+256*e[t+3]*256*256},readInt32:function(e,t){if(t<0)throw"littleEndianByteArrayParser.readInt32: position cannot be less than 0";if(t+4>e.length)throw"littleEndianByteArrayParser.readInt32: attempt to read past end of buffer";return e[t]+(e[t+1]<<8)+(e[t+2]<<16)+(e[t+3]<<24)},readFloat:function(e,t){if(t<0)throw"littleEndianByteArrayParser.readFloat: position cannot be less than 0";if(t+4>e.length)throw"littleEndianByteArrayParser.readFloat: attempt to read past end of buffer";var r=new Uint8Array(4);return r[0]=e[t],r[1]=e[t+1],r[2]=e[t+2],r[3]=e[t+3],new Float32Array(r.buffer)[0]},readDouble:function(e,t){if(t<0)throw"littleEndianByteArrayParser.readDouble: position cannot be less than 0";if(t+8>e.length)throw"littleEndianByteArrayParser.readDouble: attempt to read past end of buffer";var r=new Uint8Array(8);return r[0]=e[t],r[1]=e[t+1],r[2]=e[t+2],r[3]=e[t+3],r[4]=e[t+4],r[5]=e[t+5],r[6]=e[t+6],r[7]=e[t+7],new Float64Array(r.buffer)[0]}};function G(e){var i=1<arguments.length&&void 0!==arguments[1]?arguments[1]:{};if(void 0===e)throw"dicomParser.readPart10Header: missing required parameter 'byteArray'";var o=i.TransferSyntaxUID,s=new J(M,e);return function(){var e=function(){if(s.getSize()<=132&&o)return!1;if(s.seek(128),"DICM"===s.readFixedString(4))return!0;if(!(i||{}).TransferSyntaxUID)throw"dicomParser.readPart10Header: DICM prefix not found at location 132 - this is not a valid DICOM P10 file.";return s.seek(0),!1}(),t=[],r={};if(!e)return s.position=0,{elements:{x00020010:{tag:"x00020010",vr:"UI",Value:o}},warnings:t};for(;s.position<s.byteArray.length;){var a=s.position,n=B(s,t);if("x0002ffff"<n.tag){s.position=a;break}n.parser=M,r[n.tag]=n}return(e=new w(s.byteArrayParser,s.byteArray,r)).warnings=s.warnings,e.position=s.position,e}()}var z="1.2.840.10008.1.2.2";function V(i){var o=1<arguments.length&&void 0!==arguments[1]?arguments[1]:{};if(void 0===i)throw new Error("dicomParser.parseDicom: missing required parameter 'byteArray'");var e,a=function(e){if(void 0===e.elements.x00020010)throw new Error("dicomParser.parseDicom: missing required meta header attribute 0002,0010");e=e.elements.x00020010;return e&&e.Value||b(i,e.dataOffset,e.length)};function t(t){var e=a(t),r="1.2.840.10008.1.2"!==e,e=function(e,t){var r="[object process]"===Object.prototype.toString.call("undefined"!=typeof process?process:0);if("1.2.840.10008.1.2.1.99"!==e)return new J(e===z?N:M,i,t);if(o&&o.inflater){e=o.inflater(i,t);return new J(M,e,0)}if(!0==r){var a=s(0),n=j(i,t,i.length-t),a=a.inflateRawSync(n),n=k(i,a.length+t);return i.copy(n,0,0,t),a.copy(n,t),new J(M,n,0)}if("undefined"==typeof pako)throw"dicomParser.parseDicom: no inflater available to handle deflate transfer syntax";return a=i.slice(t),n=pako.inflateRaw(a),(a=k(i,n.length+t)).set(i.slice(0,t),0),a.set(n,t),new J(M,a,0)}(e,t.position),t=new w(e.byteArrayParser,e.byteArray,{});t.warnings=e.warnings;try{(r?q:T)(t,e,e.byteArray.length,o)}catch(e){throw{exception:e,dataSet:t}}return t}return function(e,t){for(var r in e.elements)e.elements.hasOwnProperty(r)&&(t.elements[r]=e.elements[r]);return void 0!==e.warnings&&(t.warnings=e.warnings.concat(t.warnings)),t}(e=G(i,o),t(e))}var R=function(e,t,r){for(var a=0,n=t;n<t+r;n++)a+=e[n].length;return a};function _(e,t,r,a,n){if(n=n||t.fragments,void 0===e)throw"dicomParser.readEncapsulatedPixelDataFromFragments: missing required parameter 'dataSet'";if(void 0===t)throw"dicomParser.readEncapsulatedPixelDataFromFragments: missing required parameter 'pixelDataElement'";if(void 0===r)throw"dicomParser.readEncapsulatedPixelDataFromFragments: missing required parameter 'startFragmentIndex'";if(void 0===(a=a||1))throw"dicomParser.readEncapsulatedPixelDataFromFragments: missing required parameter 'numFragments'";if("x7fe00010"!==t.tag)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'pixelDataElement' refers to non pixel data tag (expected tag = x7fe00010";if(!0!==t.encapsulatedPixelData)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(!0!==t.hadUndefinedLength)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(void 0===t.basicOffsetTable)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(void 0===t.fragments)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(t.fragments.length<=0)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(r<0)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'startFragmentIndex' must be >= 0";if(r>=t.fragments.length)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'startFragmentIndex' must be < number of fragments";if(a<1)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'numFragments' must be > 0";if(r+a>t.fragments.length)throw"dicomParser.readEncapsulatedPixelDataFromFragments: parameter 'startFragment' + 'numFragments' < number of fragments";var i=new J(e.byteArrayParser,e.byteArray,t.dataOffset),t=S(i);if("xfffee000"!==t.tag)throw"dicomParser.readEncapsulatedPixelData: missing basic offset table xfffee000";i.seek(t.length);var o=i.position;if(1===a)return j(i.byteArray,o+n[r].offset+8,n[r].length);for(var t=R(n,r,a),s=k(i.byteArray,t),d=0,f=r;f<r+a;f++)for(var l=o+n[f].offset+8,u=0;u<n[f].length;u++)s[d++]=i.byteArray[l++];return s}var H=function(e,t){for(var r=0;r<e.length;r++)if(e[r].offset===t)return r},Q=function(e,t,r,a){if(e===t.length-1)return r.length-a;for(var n=t[e+1],i=a+1;i<r.length;i++)if(r[i].offset===n)return i-a;throw"dicomParser.calculateNumberOfFragmentsForFrame: could not find fragment with offset matching basic offset table"};function W(e,t,r,a,n){if(a=a||t.basicOffsetTable,n=n||t.fragments,void 0===e)throw"dicomParser.readEncapsulatedImageFrame: missing required parameter 'dataSet'";if(void 0===t)throw"dicomParser.readEncapsulatedImageFrame: missing required parameter 'pixelDataElement'";if(void 0===r)throw"dicomParser.readEncapsulatedImageFrame: missing required parameter 'frameIndex'";if(void 0===a)throw"dicomParser.readEncapsulatedImageFrame: parameter 'pixelDataElement' does not have basicOffsetTable";if("x7fe00010"!==t.tag)throw"dicomParser.readEncapsulatedImageFrame: parameter 'pixelDataElement' refers to non pixel data tag (expected tag = x7fe00010)";if(!0!==t.encapsulatedPixelData)throw"dicomParser.readEncapsulatedImageFrame: parameter 'pixelDataElement' refers to pixel data element that does not have encapsulated pixel data";if(!0!==t.hadUndefinedLength)throw"dicomParser.readEncapsulatedImageFrame: parameter 'pixelDataElement' refers to pixel data element that does not have undefined length";if(void 0===t.fragments)throw"dicomParser.readEncapsulatedImageFrame: parameter 'pixelDataElement' refers to pixel data element that does not have fragments";if(0===a.length)throw"dicomParser.readEncapsulatedImageFrame: basicOffsetTable has zero entries";if(r<0)throw"dicomParser.readEncapsulatedImageFrame: parameter 'frameIndex' must be >= 0";if(r>=a.length)throw"dicomParser.readEncapsulatedImageFrame: parameter 'frameIndex' must be < basicOffsetTable.length";var i=a[r],i=H(n,i);if(void 0===i)throw"dicomParser.readEncapsulatedImageFrame: unable to find fragment that matches basic offset table entry";return _(e,t,i,Q(r,a,n,i),n)}var $=!1;function K(e,t,r){if($||($=!0,console&&console.log&&console.log("WARNING: dicomParser.readEncapsulatedPixelData() has been deprecated")),void 0===e)throw"dicomParser.readEncapsulatedPixelData: missing required parameter 'dataSet'";if(void 0===t)throw"dicomParser.readEncapsulatedPixelData: missing required parameter 'element'";if(void 0===r)throw"dicomParser.readEncapsulatedPixelData: missing required parameter 'frame'";if("x7fe00010"!==t.tag)throw"dicomParser.readEncapsulatedPixelData: parameter 'element' refers to non pixel data tag (expected tag = x7fe00010)";if(!0!==t.encapsulatedPixelData)throw"dicomParser.readEncapsulatedPixelData: parameter 'element' refers to pixel data element that does not have encapsulated pixel data";if(!0!==t.hadUndefinedLength)throw"dicomParser.readEncapsulatedPixelData: parameter 'element' refers to pixel data element that does not have encapsulated pixel data";if(void 0===t.basicOffsetTable)throw"dicomParser.readEncapsulatedPixelData: parameter 'element' refers to pixel data element that does not have encapsulated pixel data";if(void 0===t.fragments)throw"dicomParser.readEncapsulatedPixelData: parameter 'element' refers to pixel data element that does not have encapsulated pixel data";if(r<0)throw"dicomParser.readEncapsulatedPixelData: parameter 'frame' must be >= 0";return 0!==t.basicOffsetTable.length?W(e,t,r):_(e,t,0,t.fragments.length)}t.default={isStringVr:d,isPrivateTag:f,parsePN:a,parseTM:n,parseDA:o,explicitElementToString:l,explicitDataSetToJS:u,createJPEGBasicOffsetTable:p,parseDicomDataSetExplicit:q,parseDicomDataSetImplicit:T,readFixedString:b,alloc:k,version:L,bigEndianByteArrayParser:N,ByteStream:J,sharedCopy:j,DataSet:w,findAndSetUNElementLength:y,findEndOfEncapsulatedElement:g,findItemDelimitationItemAndSetElementLength:x,littleEndianByteArrayParser:M,parseDicom:V,readDicomElementExplicit:B,readDicomElementImplicit:A,readEncapsulatedImageFrame:W,readEncapsulatedPixelData:K,readEncapsulatedPixelDataFromFragments:_,readPart10Header:G,readSequenceItemsExplicit:I,readSequenceItemsImplicit:F,readSequenceItem:S,readTag:h,LEI:"1.2.840.10008.1.2",LEE:"1.2.840.10008.1.2.1"}}],i={},n.m=a,n.c=i,n.d=function(e,t,r){n.o(e,t)||Object.defineProperty(e,t,{enumerable:!0,get:r})},n.r=function(e){"undefined"!=typeof Symbol&&Symbol.toStringTag&&Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},n.t=function(t,e){if(1&e&&(t=n(t)),8&e)return t;if(4&e&&"object"==typeof t&&t&&t.__esModule)return t;var r=Object.create(null);if(n.r(r),Object.defineProperty(r,"default",{enumerable:!0,value:t}),2&e&&"string"!=typeof t)for(var a in t)n.d(r,a,function(e){return t[e]}.bind(null,a));return r},n.n=function(e){var t=e&&e.__esModule?function(){return e.default}:function(){return e};return n.d(t,"a",t),t},n.o=function(e,t){return Object.prototype.hasOwnProperty.call(e,t)},n.p="",n(n.s=1);function n(e){if(i[e])return i[e].exports;var t=i[e]={i:e,l:!1,exports:{}};return a[e].call(t.exports,t,t.exports,n),t.l=!0,t.exports}var a,i});
+//# sourceMappingURL=dicomParser.min.js.map
+</script>
+<script>
+let EMBEDDED_BLOB = null; // 由投放的分享文件提取,见页脚脚本
+
+const TYPE_LABEL = { lab_report:"化验", imaging_report:"检查", discharge_summary:"出院", prescription:"处方", clinical_note:"病历", pathology:"病理", surgery:"手术", other:"其他", unknown:"未分类" };
+// bg | color(与桌面端 TYPE_BADGE 一致)
+const TYPE_BADGE = {
+  lab_report:      ["#eff6ff","#1d4ed8"],
+  imaging_report:  ["#fffbeb","#b45309"],
+  discharge_summary:["#eef2ff","#4338ca"],
+  prescription:    ["#ecfdf5","#047857"],
+  clinical_note:   ["#f0f9ff","#0369a1"],
+  pathology:       ["#fff1f2","#be123c"],
+  surgery:         ["#faf5ff","#7e22ce"],
+  other:           ["#f1f5f9","#475569"],
+  unknown:         ["#f1f5f9","#475569"],
+};
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function b64urlToBytes(s) {
+  let t = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (t.length % 4) t += "=";
+  return b64ToBytes(t);
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+// ── 内容解析(移植 ReportContent.tsx)──
+function splitCells(line) { return line.trim().split(/\s{2,}|\t/).filter(c => c.length > 0); }
+function isTableHeader(line) {
+  const keys = ["项目","结果","单位","参考","提示","名称","缩写"];
+  return keys.filter(k => line.includes(k)).length >= 2 && splitCells(line).length >= 3;
+}
+function isDataRow(line) { return splitCells(line).length >= 3 && /\d/.test(line); }
+function rowStatus(cells) {
+  const j = cells.join(" ");
+  if (cells.includes("↑") || /↑|偏高|升高/.test(j)) return "high";
+  if (cells.includes("↓") || /↓|偏低|降低|减低/.test(j)) return "low";
+  if (/正常/.test(j)) return "normal";
+  return "";
+}
+function parseBlocks(text) {
+  const lines = text.split(/\r?\n/);
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) { i++; continue; }
+    if (isTableHeader(trimmed) || isDataRow(trimmed)) {
+      const start = i;
+      const header = isTableHeader(trimmed) ? splitCells(trimmed) : null;
+      if (header) i++;
+      const rows = [];
+      while (i < lines.length && lines[i].trim() && isDataRow(lines[i])) {
+        rows.push(splitCells(lines[i])); i++;
+      }
+      if (rows.length >= 2) { blocks.push({ kind:"table", header, rows }); continue; }
+      i = start;
+    }
+    if (/^[【[].+[】\]]$/.test(trimmed) || (trimmed.length <= 14 && /[:：]$/.test(trimmed))) {
+      blocks.push({ kind:"section", text: trimmed });
+    } else {
+      blocks.push({ kind:"para", text: lines[i] });
+    }
+    i++;
+  }
+  return blocks;
+}
+const LABEL_RE = /^([一-龥A-Za-z]{2,10})([:：])(.*)$/;
+function renderPara(text) {
+  const t = text.replace(/\s+$/, "");
+  const m = t.match(LABEL_RE);
+  if (m && m[3].trim().length > 0) {
+    return '<div class="para"><span class="label">' + esc(m[1]) + esc(m[2]) + "</span>" + esc(m[3]) + "</div>";
+  }
+  return '<div class="para">' + esc(text) + "</div>";
+}
+function renderBlocks(blocks) {
+  let html = "";
+  for (const b of blocks) {
+    if (b.kind === "table") {
+      const cols = Math.max(b.header ? b.header.length : 0, ...b.rows.map(r => r.length));
+      html += '<div style="overflow-x:auto"><table>';
+      if (b.header) {
+        html += "<thead><tr>";
+        for (const h of b.header) html += "<th>" + esc(h) + "</th>";
+        html += "</tr></thead>";
+      }
+      html += "<tbody>";
+      for (const r of b.rows) {
+        const st = rowStatus(r);
+        html += '<tr class="' + st + '">';
+        for (let c = 0; c < cols; c++) html += "<td>" + esc(r[c] || "") + "</td>";
+        html += "</tr>";
+      }
+      html += "</tbody></table></div>";
+    } else if (b.kind === "section") {
+      html += '<div class="section">' + esc(b.text) + "</div>";
+    } else {
+      html += renderPara(b.text);
+    }
+  }
+  return html;
+}
+// ── 处方:用药清单(移植 parseMeds)──
+function parseMeds(text) {
+  const lines = text.split(/\r?\n/);
+  const meds = [], intro = [], footer = [];
+  let cur = null, started = false, ended = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    const numbered = line.match(/^(\d+)\s*[.、)]\s*(.+)/);
+    if (numbered) {
+      started = true; ended = false;
+      if (cur) meds.push(cur);
+      cur = { name: numbered[2].trim(), usage: [] };
+      continue;
+    }
+    if (/^(医师|药师|审核|备注|Rp\.?|处方)/.test(line)) {
+      if (cur) { meds.push(cur); cur = null; }
+      if (started) ended = true;
+      if (line && !/^Rp\.?$/.test(line)) { if (started) footer.push(line); else intro.push(line); }
+      continue;
+    }
+    if (cur && line) { cur.usage.push(line); continue; }
+    if (line) { if (!started) intro.push(line); else if (ended) footer.push(line); }
+  }
+  if (cur) meds.push(cur);
+  return meds.length ? { intro, meds, footer } : null;
+}
+function renderContent(text, docType) {
+  if (!text || !text.trim()) return '<div style="color:#94a3b8;font-size:14px">无文本内容。</div>';
+  if (docType === "prescription") {
+    const p = parseMeds(text);
+    if (p) {
+      let html = "";
+      if (p.intro.length) html += p.intro.map(renderPara).join("");
+      html += '<div class="meds-label">用药</div><div class="meds">';
+      p.meds.forEach((m, i) => {
+        html += '<div class="med"><div class="n">' + (i + 1) + '</div><div><div class="name">' + esc(m.name) + "</div>";
+        html += m.usage.map(u => '<div class="usage">' + esc(u) + "</div>").join("");
+        html += "</div></div>";
+      });
+      html += "</div>";
+      if (p.footer.length) html += '<div style="color:#64748b;font-size:13px">' + p.footer.map(renderPara).join("") + "</div>";
+      return html;
+    }
+  }
+  return renderBlocks(parseBlocks(text));
+}
+
+// ══ 交互式 DICOM 阅片器(移植 DicomViewer.tsx 的解码逻辑到纯 JS + canvas)══
+// 纯 dicom-parser + canvas,无 Cornerstone / worker / WASM。按需解码 + 有界缓存,
+// 几百帧也只常驻几十 MB(014 §5 大数据顾虑)。
+const DCM_TS_UNCOMPRESSED = new Set(["1.2.840.10008.1.2","1.2.840.10008.1.2.1","1.2.840.10008.1.2.1.99"]);
+const DCM_TS_JPEG_BASELINE = new Set(["1.2.840.10008.1.2.4.50","1.2.840.10008.1.2.4.51"]);
+const DCM_PRESETS = [
+  { label:"默认", center:null, width:null },
+  { label:"脑窗", center:40, width:80 },
+  { label:"骨窗", center:500, width:2000 },
+  { label:"肺窗", center:-600, width:1500 },
+  { label:"软组织", center:40, width:400 },
+];
+const DCM_CACHE_MAX = 7; // 当前帧 + 邻近几帧;超出按离当前最远淘汰。
+
+function dcmNum(ds, tag, def) { const v = ds.uint16(tag); return v === undefined ? def : v; }
+function dcmFloat(ds, tag) { const v = ds.floatString(tag); return (v === undefined || Number.isNaN(v)) ? null : v; }
+
+// 解析每张切片 → 展平成 frames[](NumberOfFrames>1 的多帧展开)。解析失败的切片跳过。
+function dcmBuildFrames(slices) {
+  const frames = [];
+  for (const bytes of slices) {
+    let ds;
+    try { ds = dicomParser.parseDicom(bytes); } catch (e) { continue; }
+    const rows = dcmNum(ds, "x00280010", 0);
+    const columns = dcmNum(ds, "x00280011", 0);
+    if (!rows || !columns) continue;
+    const bitsAllocated = dcmNum(ds, "x00280100", 16);
+    const pixelRepresentation = dcmNum(ds, "x00280103", 0);
+    const samplesPerPixel = dcmNum(ds, "x00280002", 1);
+    const planarConfiguration = dcmNum(ds, "x00280006", 0);
+    const photometric = (ds.string("x00280004") || "MONOCHROME2").trim().toUpperCase();
+    const transferSyntax = (ds.string("x00020010") || "1.2.840.10008.1.2").trim();
+    const nFrames = parseInt(ds.string("x00280008") || "1", 10) || 1;
+    const defaultCenter = dcmFloat(ds, "x00281050");
+    const defaultWidth = dcmFloat(ds, "x00281051");
+    for (let f = 0; f < nFrames; f++) {
+      frames.push({ dataSet: ds, frameIndex: f, rows, columns, bitsAllocated, pixelRepresentation,
+        samplesPerPixel, planarConfiguration, photometric, invert: photometric === "MONOCHROME1",
+        color: samplesPerPixel >= 3, transferSyntax, defaultCenter, defaultWidth });
+    }
+  }
+  return frames;
+}
+
+// 未压缩灰度:读原始像素 → modality rescale(v = raw*slope + intercept)。
+function dcmReadGray(fm) {
+  const ds = fm.dataSet;
+  const pd = ds.elements.x7fe00010;
+  const byteArray = ds.byteArray;
+  const bytesPerPixel = fm.bitsAllocated <= 8 ? 1 : 2;
+  const pxCount = fm.rows * fm.columns;
+  const frameLength = pxCount * bytesPerPixel;
+  const absStart = byteArray.byteOffset + pd.dataOffset + fm.frameIndex * frameLength;
+  const buf = byteArray.buffer.slice(absStart, absStart + frameLength); // 对齐副本
+  const slope = dcmFloat(ds, "x00281053") ?? 1;
+  const intercept = dcmFloat(ds, "x00281052") ?? 0;
+  const out = new Float32Array(pxCount);
+  if (bytesPerPixel === 1) {
+    const raw = new Uint8Array(buf);
+    for (let i = 0; i < pxCount; i++) out[i] = raw[i] * slope + intercept;
+  } else if (fm.pixelRepresentation === 1) {
+    const raw = new Int16Array(buf);
+    for (let i = 0; i < pxCount; i++) out[i] = raw[i] * slope + intercept;
+  } else {
+    const raw = new Uint16Array(buf);
+    for (let i = 0; i < pxCount; i++) out[i] = raw[i] * slope + intercept;
+  }
+  return out;
+}
+
+// 未压缩彩色(RGB)→ ImageData。处理 PlanarConfiguration 0 交错 / 1 平面。
+function dcmReadColor(fm) {
+  const ds = fm.dataSet;
+  const pd = ds.elements.x7fe00010;
+  const byteArray = ds.byteArray;
+  const pxCount = fm.rows * fm.columns;
+  const frameLength = pxCount * 3;
+  const absStart = byteArray.byteOffset + pd.dataOffset + fm.frameIndex * frameLength;
+  const src = new Uint8Array(byteArray.buffer, absStart, frameLength);
+  const img = new ImageData(fm.columns, fm.rows);
+  const d = img.data;
+  if (fm.planarConfiguration === 1) {
+    const plane = pxCount;
+    for (let i = 0; i < pxCount; i++) { d[i*4]=src[i]; d[i*4+1]=src[plane+i]; d[i*4+2]=src[2*plane+i]; d[i*4+3]=255; }
+  } else {
+    for (let i = 0; i < pxCount; i++) { d[i*4]=src[i*3]; d[i*4+1]=src[i*3+1]; d[i*4+2]=src[i*3+2]; d[i*4+3]=255; }
+  }
+  return img;
+}
+
+async function dcmDecodeFrame(fm) {
+  try {
+    const ts = fm.transferSyntax;
+    if (DCM_TS_UNCOMPRESSED.has(ts)) {
+      if (fm.color) return { kind:"rgba", data: dcmReadColor(fm) };
+      return { kind:"gray", values: dcmReadGray(fm), rows: fm.rows, cols: fm.columns, invert: fm.invert };
+    }
+    if (DCM_TS_JPEG_BASELINE.has(ts)) {
+      const pd = fm.dataSet.elements.x7fe00010;
+      // 空 BOT(如超声动态多帧)→ 按 fragment 下标读;有 BOT → 按帧读。
+      const bot = pd.basicOffsetTable;
+      const encoded = (bot && bot.length > 0)
+        ? dicomParser.readEncapsulatedImageFrame(fm.dataSet, pd, fm.frameIndex)
+        : dicomParser.readEncapsulatedPixelDataFromFragments(fm.dataSet, pd, fm.frameIndex);
+      const copy = encoded.slice();
+      const blob = new Blob([copy], { type: "image/jpeg" });
+      const bitmap = await createImageBitmap(blob);
+      return { kind:"bitmap", bitmap, rows: bitmap.height, cols: bitmap.width };
+    }
+    return { kind:"unsupported" }; // JPEG2000 / JPEG-LS / RLE 等此轻量器不解
+  } catch (e) {
+    console.error("DICOM 帧解码失败", e);
+    return { kind:"error" };
+  }
+}
+
+function dcmDefaultWindow(fm, dec) {
+  if (fm.defaultCenter != null && fm.defaultWidth != null && fm.defaultWidth > 0)
+    return { center: fm.defaultCenter, width: fm.defaultWidth };
+  if (dec.kind === "gray") {
+    let mn = Infinity, mx = -Infinity;
+    const v = dec.values;
+    for (let i = 0; i < v.length; i++) { if (v[i] < mn) mn = v[i]; if (v[i] > mx) mx = v[i]; }
+    if (!Number.isFinite(mn) || !Number.isFinite(mx) || mx <= mn) return { center: 128, width: 256 };
+    return { center: (mn + mx) / 2, width: mx - mn };
+  }
+  return { center: 128, width: 256 };
+}
+
+// 打开一个全屏阅片 overlay。slices: Uint8Array[]。返回后自动释放。
+function openDicomViewer(slices, name) {
+  const frames = dcmBuildFrames(slices);
+  const overlay = document.createElement("div");
+  overlay.className = "dcm-overlay";
+  overlay.innerHTML =
+    '<div class="dcm-bar">' +
+      '<span class="name"></span>' +
+      '<button class="dcm-btn" data-z="in">放大</button>' +
+      '<button class="dcm-btn" data-z="out">缩小</button>' +
+      '<span class="dcm-sep"></span>' +
+      '<span class="dcm-doctor" title="窗宽窗位:医生调明暗看不同组织的专业工具">🩺 医生 · 窗位</span>' +
+      DCM_PRESETS.map((p,i)=>'<button class="dcm-btn" data-p="'+i+'">'+esc(p.label)+'</button>').join("") +
+      '<span class="dcm-sep"></span>' +
+      '<button class="dcm-btn" data-reset="1">重置</button>' +
+      '<span class="dcm-idx"></span>' +
+      '<span class="dcm-hintbar"></span>' +
+      '<button class="dcm-btn" data-close="1">关闭 · ESC</button>' +
+    '</div>' +
+    '<div class="dcm-stage"><canvas></canvas>' +
+      '<div class="dcm-notice" style="display:none"></div>' +
+      '<div class="dcm-floathint" style="display:none"></div>' +
+    '</div>';
+  overlay.querySelector(".name").textContent = name || "";
+  document.body.appendChild(overlay);
+
+  const canvas = overlay.querySelector("canvas");
+  const stage = overlay.querySelector(".dcm-stage");
+  const idxEl = overlay.querySelector(".dcm-idx");
+  const hintBar = overlay.querySelector(".dcm-hintbar");
+  const noticeEl = overlay.querySelector(".dcm-notice");
+  const floatHint = overlay.querySelector(".dcm-floathint");
+
+  const cache = new Map();
+  let drawToken = 0;
+  let win = { center: 40, width: 400 };
+  let view = { zoom: 1, panX: 0, panY: 0 };
+  let curIdx = 0;
+  let drag = null;
+  const total = frames.length;
+
+  hintBar.textContent = total > 1 ? "↕ 滚轮翻看每一层 · 左键调明暗 · Ctrl+滚轮缩放" : "左键调明暗 · Ctrl+滚轮缩放";
+
+  function setNotice(t) { if (t) { noticeEl.textContent = t; noticeEl.style.display = "block"; } else noticeEl.style.display = "none"; }
+  function setIdx() { idxEl.textContent = total > 1 ? ("第 " + (curIdx+1) + " / 共 " + total + " 张") : ""; }
+
+  function paint(dec) {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const cw = stage.clientWidth, ch = stage.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(cw*dpr) || canvas.height !== Math.round(ch*dpr)) {
+      canvas.width = Math.round(cw*dpr); canvas.height = Math.round(ch*dpr);
+      canvas.style.width = cw+"px"; canvas.style.height = ch+"px";
+    }
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle = "#000"; ctx.fillRect(0,0,cw,ch);
+    if (!dec || dec.kind === "unsupported" || dec.kind === "error") return;
+    let srcCols, srcRows, source;
+    if (dec.kind === "bitmap") { srcCols = dec.cols; srcRows = dec.rows; source = dec.bitmap; }
+    else if (dec.kind === "rgba") {
+      srcCols = dec.data.width; srcRows = dec.data.height;
+      const off = document.createElement("canvas"); off.width = srcCols; off.height = srcRows;
+      off.getContext("2d").putImageData(dec.data, 0, 0); source = off;
+    } else {
+      srcCols = dec.cols; srcRows = dec.rows;
+      const w = win.width <= 0 ? 1 : win.width; const low = win.center - w/2;
+      const img = new ImageData(srcCols, srcRows); const d = img.data; const vals = dec.values;
+      for (let i = 0; i < vals.length; i++) {
+        let out = ((vals[i]-low)/w)*255; out = out<0?0:out>255?255:out;
+        if (dec.invert) out = 255-out;
+        const o = i*4; d[o]=d[o+1]=d[o+2]=out; d[o+3]=255;
+      }
+      const off = document.createElement("canvas"); off.width = srcCols; off.height = srcRows;
+      off.getContext("2d").putImageData(img, 0, 0); source = off;
+    }
+    const fit = Math.min(cw/srcCols, ch/srcRows);
+    const dw = srcCols*fit*view.zoom, dh = srcRows*fit*view.zoom;
+    const dx = (cw-dw)/2 + view.panX, dy = (ch-dh)/2 + view.panY;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(source, dx, dy, dw, dh);
+  }
+
+  function evict(current) {
+    while (cache.size > DCM_CACHE_MAX) {
+      let far = -1, farDist = -1;
+      for (const k of cache.keys()) { const dist = Math.abs(k-current); if (dist > farDist) { farDist = dist; far = k; } }
+      if (far < 0) break;
+      const ent = cache.get(far); if (ent && ent.kind === "bitmap") ent.bitmap.close();
+      cache.delete(far);
+    }
+  }
+  function redraw() { const dec = cache.get(curIdx); if (dec) paint(dec); }
+  function prefetch(idx) {
+    for (const j of [idx+1, idx-1]) {
+      if (j < 0 || j >= frames.length || cache.has(j)) continue;
+      dcmDecodeFrame(frames[j]).then(d => {
+        if (cache.has(j)) { if (d.kind === "bitmap") d.bitmap.close(); return; }
+        cache.set(j, d); evict(curIdx);
+      });
+    }
+  }
+  async function showFrame(idx, resetWindow) {
+    if (idx < 0 || idx >= frames.length) return;
+    curIdx = idx; setIdx(); setNotice(null);
+    const token = ++drawToken;
+    const fm = frames[idx];
+    let dec = cache.get(idx);
+    if (!dec) {
+      dec = await dcmDecodeFrame(fm);
+      if (token !== drawToken) { if (dec.kind === "bitmap") dec.bitmap.close(); return; }
+      cache.set(idx, dec); evict(idx);
+    }
+    if (token !== drawToken) return;
+    if (dec.kind === "unsupported") setNotice("此压缩格式暂不支持交互查看(见卡片关键切片)");
+    if (dec.kind === "error") setNotice("影像加载失败");
+    if (resetWindow) win = dcmDefaultWindow(fm, dec);
+    paint(dec); prefetch(idx);
+  }
+
+  // 交互:滚轮翻层 / Ctrl+滚轮缩放;左键调窗位(灰度)否则平移;右键缩放;中键平移。
+  function onWheel(e) {
+    e.preventDefault();
+    if (e.ctrlKey) { const f = e.deltaY>0?0.9:1.1; view.zoom = Math.min(20, Math.max(0.2, view.zoom*f)); redraw(); return; }
+    if (floatHint) floatHint.style.display = "none";
+    const next = curIdx + (e.deltaY>0?1:-1);
+    if (next < 0 || next >= frames.length) return;
+    showFrame(next);
+  }
+  function onDown(e) { drag = { button: e.button, x: e.clientX, y: e.clientY }; }
+  function onMove(e) {
+    if (!drag) return;
+    const dx = e.clientX-drag.x, dy = e.clientY-drag.y; drag.x = e.clientX; drag.y = e.clientY;
+    const dec = cache.get(curIdx);
+    if (drag.button === 0) {
+      if (dec && dec.kind === "gray") { win.width = Math.max(1, win.width + dx*2); win.center = win.center + dy*2; redraw(); }
+      else { view.panX += dx; view.panY += dy; redraw(); }
+    } else if (drag.button === 2) { const f = Math.exp(-dy*0.005); view.zoom = Math.min(20, Math.max(0.2, view.zoom*f)); redraw(); }
+    else { view.panX += dx; view.panY += dy; redraw(); }
+  }
+  function onUp() { drag = null; }
+  function applyPreset(i) {
+    const p = DCM_PRESETS[i]; const fm = frames[curIdx]; const dec = cache.get(curIdx);
+    if (!fm || !dec) return;
+    win = (p.center == null || p.width == null) ? dcmDefaultWindow(fm, dec) : { center: p.center, width: p.width };
+    redraw();
+  }
+  function reset() {
+    view = { zoom: 1, panX: 0, panY: 0 };
+    const fm = frames[curIdx]; const dec = cache.get(curIdx);
+    if (fm && dec) win = dcmDefaultWindow(fm, dec);
+    redraw();
+  }
+
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+  canvas.addEventListener("mousedown", onDown);
+  canvas.addEventListener("mousemove", onMove);
+  canvas.addEventListener("mouseup", onUp);
+  canvas.addEventListener("mouseleave", onUp);
+  canvas.addEventListener("contextmenu", e => e.preventDefault());
+  const ro = new ResizeObserver(() => redraw()); ro.observe(stage);
+
+  overlay.addEventListener("click", e => {
+    const t = e.target;
+    if (t.dataset && t.dataset.close) { close(); return; }
+    if (t.dataset && t.dataset.reset) { reset(); return; }
+    if (t.dataset && t.dataset.z) { const f = t.dataset.z === "in" ? 1.2 : 1/1.2; view.zoom = Math.min(20, Math.max(0.2, view.zoom*f)); redraw(); return; }
+    if (t.dataset && t.dataset.p != null && t.dataset.p !== "") { applyPreset(parseInt(t.dataset.p,10)); return; }
+  });
+  function onKey(e) { if (e.key === "Escape") close(); }
+  document.addEventListener("keydown", onKey);
+
+  function close() {
+    drawToken++;
+    ro.disconnect();
+    document.removeEventListener("keydown", onKey);
+    for (const ent of cache.values()) if (ent.kind === "bitmap") ent.bitmap.close();
+    cache.clear();
+    overlay.remove();
+  }
+
+  setIdx();
+  if (frames.length === 0) { setNotice("影像加载失败"); return; }
+  if (total > 1) { floatHint.textContent = "↕ 滚轮上下翻看每一层(共 " + total + " 张)"; floatHint.style.display = "block";
+    setTimeout(() => { floatHint.style.display = "none"; }, 4500); }
+  showFrame(0, true);
+}
+
+function render(payload) {
+  const app = document.getElementById("app");
+  const p = payload.patient || {};
+  const parts = [];
+  if (p.name) parts.push(esc(p.name));
+  if (p.gender) parts.push(esc(p.gender));
+  if (p.age) parts.push(esc(p.age) + "岁");
+  const patientLine = parts.length ? parts.join(" · ") : "(未识别到患者基本信息)";
+  const gen = (payload.generated || "").slice(0, 10);
+
+  let html = '<header class="doc-header"><h1>MedMe 医我 · 加密病历分享</h1>';
+  html += '<div class="patient">' + patientLine + "</div>";
+  html += '<div class="generated">生成时间:' + esc(gen) + " · 共 " + (p.record_count || 0) + " 份记录</div></header>";
+  html += '<div class="privacy-note">本页由 MedMe 端到端加密分享生成,数据在您的浏览器本地解密,未上传任何服务器。不构成医疗建议,以原件为准。</div>';
+
+  const records = payload.records || [];
+  for (let ri = 0; ri < records.length; ri++) {
+    const r = records[ri];
+    const type = r.doc_type || "unknown";
+    const label = TYPE_LABEL[type] || TYPE_LABEL.unknown;
+    const bc = TYPE_BADGE[type] || TYPE_BADGE.unknown;
+    const title = r.title || label;
+    let dateStr = "无日期";
+    if (r.doc_date && r.doc_date_end && r.doc_date !== r.doc_date_end) dateStr = r.doc_date + " → " + r.doc_date_end;
+    else if (r.doc_date) dateStr = r.doc_date;
+
+    html += '<section class="record"><div class="record-head">';
+    html += '<span class="badge" style="background:' + bc[0] + ";color:" + bc[1] + '">' + esc(label) + "</span>";
+    html += "<h2>" + esc(title) + '</h2><span class="date">' + esc(dateStr) + "</span></div>";
+    html += '<div class="content">' + renderContent(r.text || "", type);
+    for (const img of (r.images || [])) {
+      if (typeof img === "string" && img.startsWith("data:image/")) html += '<img class="img" src="' + img + '" alt="原件">';
+    }
+    // 影像检查:诊断档(交互阅片)或降级档(关键切片 PNG + 说明)。
+    const dcm = r.dicom;
+    if (dcm && dcm.mode === "interactive") {
+      const n = dcm.count || (dcm.frames ? dcm.frames.length : 0);
+      html += '<div class="imaging-card">';
+      html += '<button class="imaging-open" data-dcm="' + ri + '"><span class="ico">🎞</span> 打开影像阅片器' + (n > 1 ? "(共 " + n + " 张,可滚轮翻层)" : "") + '</button>';
+      html += '<div class="imaging-meta">诊断档:完整序列已端到端加密内嵌 · 滚轮翻层 · 左键调窗位 · 窗宽窗位预设</div>';
+      html += '</div>';
+    } else if (dcm && dcm.mode === "png") {
+      html += '<div class="imaging-card">';
+      if (dcm.png) html += '<img class="imaging-png" src="' + dcm.png + '" alt="影像关键切片">';
+      if (dcm.note) html += '<div class="imaging-note">' + esc(dcm.note) + '</div>';
+      html += '</div>';
+    }
+    html += "</div></section>";
+  }
+  html += '<footer class="statement">本页由 MedMe 端到端加密分享生成 · 数据以原件为准 · 不构成医疗建议</footer>';
+  app.innerHTML = html;
+  document.getElementById("gate").style.display = "none";
+  app.style.display = "block";
+
+  // 阅片按钮:点开时才把 base64 帧解成 Uint8Array 交给查看器(关闭即释放,内存有界)。
+  app.querySelectorAll("[data-dcm]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const rec = records[parseInt(btn.getAttribute("data-dcm"), 10)];
+      if (!rec || !rec.dicom || !rec.dicom.frames) return;
+      const slices = rec.dicom.frames.map(f => b64ToBytes(f));
+      openDicomViewer(slices, rec.title || "影像检查");
+    });
+  });
+}
+
+function showExpired(expires) {
+  document.getElementById("gate").style.display = "none";
+  const app = document.getElementById("app");
+  const until = (expires || "").slice(0, 10);
+  app.innerHTML = '<div class="expired"><h1>此分享已过期</h1><p>有效期至 ' + esc(until) +
+    ',请向本人重新索取。</p></div>';
+  app.style.display = "block";
+}
+
+async function decryptAndRender(passphrase) {
+  const blob = b64ToBytes(EMBEDDED_BLOB);
+  const iv = blob.slice(0, 12);
+  const data = blob.slice(12);
+  // 仅去空白/换行还原分组;不可去 "-",因为它是 base64url 字母表的一部分。
+  const keyBytes = b64urlToBytes(passphrase.replace(/\s+/g, ""));
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["decrypt"]);
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data); // 口令错误则抛异常
+  const payload = JSON.parse(new TextDecoder().decode(pt));
+  // 有效期在解密后的 payload 内强制执行
+  if (payload.expires && Date.now() > Date.parse(payload.expires)) { showExpired(payload.expires); return; }
+  render(payload);
+}
+
+const pw = document.getElementById("pw");
+const errEl = document.getElementById("err");
+const drop = document.getElementById("drop");
+const fileInput = document.getElementById("fileInput");
+const fileNameEl = document.getElementById("fileName");
+let shareFileText = null;
+
+// 从投放的 MedMe 分享文件里提取内嵌加密 blob。标记与 share.rs 一致:
+// 生成的分享 HTML 内含一行  const EMBEDDED_BLOB = "<标准 base64>";
+// 标准 base64 字母表不含双引号,故 [^"]+ 精确截取。
+function extractBlob(text) {
+  const m = text.match(/EMBEDDED_BLOB\s*=\s*"([^"]+)"/);
+  return m ? m[1] : null;
+}
+function loadFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    shareFileText = String(reader.result);
+    fileNameEl.textContent = "已选择:" + file.name;
+    errEl.textContent = "";
+  };
+  reader.onerror = () => { errEl.textContent = "读取文件失败,请重试。"; };
+  reader.readAsText(file);
+}
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } });
+fileInput.addEventListener("change", e => loadFile(e.target.files && e.target.files[0]));
+["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("drag"); }));
+["dragleave"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("drag"); }));
+drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("drag"); loadFile(e.dataTransfer.files && e.dataTransfer.files[0]); });
+// 允许把文件拖到页面任意处(阻止浏览器直接打开文件)。
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => {
+  e.preventDefault();
+  if (document.getElementById("gate").style.display !== "none") loadFile(e.dataTransfer.files && e.dataTransfer.files[0]);
+});
+
+async function submit() {
+  errEl.textContent = "";
+  if (!shareFileText) { errEl.textContent = "请先拖入或选择 MedMe 加密分享文件(.html)。"; return; }
+  const blob = extractBlob(shareFileText);
+  if (!blob) { errEl.textContent = "未在该文件中找到加密数据,请确认这是 MedMe 加密分享文件。"; return; }
+  EMBEDDED_BLOB = blob;
+  const val = pw.value.trim();
+  if (!val) { errEl.textContent = "请输入口令。"; return; }
+  try {
+    await decryptAndRender(val);
+  } catch (e) {
+    errEl.textContent = "口令错误,无法解密。请核对本人告知的口令。";
+  }
+}
+document.getElementById("go").addEventListener("click", submit);
+pw.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+</script>
+</body>
+</html>
