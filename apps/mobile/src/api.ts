@@ -14,4 +14,5 @@ export const api = {
     invoke<ShareResult>("create_share", { expiresDays }),
   loadDemoData: () => invoke<number>("load_demo_data"),
   getVaultPath: () => invoke<string>("get_vault_path"),
+  resetVault: () => invoke<void>("reset_vault"),
 };

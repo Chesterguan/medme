@@ -199,3 +199,30 @@ fn collect_files_recursive(dir: &std::path::Path, out: &mut Vec<std::path::PathB
 pub fn get_vault_path(state: State<AppState>) -> String {
     state.vault_dir.to_string_lossy().to_string()
 }
+
+/// 「清空保险箱 · 重置」:安全地抹掉本 App 的保险箱并重建一个空的,
+/// 让示例数据/已导入内容可逆(载入 → 试用 → 清空 → 从头开始)。
+///
+/// 保险箱的「真相」= `objects/`(内容寻址存储)+ `log/`(追加式事件日志),
+/// `medme.db` 只是派生缓存(见 core-model)。因此重置 = 删掉整个 vault_dir
+/// 再用 `Vault::open` 重建 —— 与 lib.rs 里首次创建保险箱的方式完全一致,
+/// 之后 `load_archive` 会返回空。
+///
+/// 安全性:只删 `state.vault_dir` 这一个目录,绝不触碰它之外的任何东西。
+/// 幂等:目录不存在也不报错(重复点击安全)。Unix 上即便旧连接仍打开着
+/// 被删的 `medme.db`,inode 依然有效,替换 `*guard` 时旧 Vault 才被 drop。
+#[tauri::command]
+pub fn reset_vault(state: State<AppState>) -> Result<(), String> {
+    let dir = &state.vault_dir;
+    // 兜底:必须是一个名为 `vault` 的目录,防止误删沙盒其它内容。
+    if dir.file_name().and_then(|n| n.to_str()) != Some("vault") {
+        return Err("保险箱路径异常,已中止重置".to_string());
+    }
+    let mut guard = state.vault.lock().map_err(|_| "vault lock poisoned".to_string())?;
+    if dir.exists() {
+        std::fs::remove_dir_all(dir).map_err(|e| format!("清空保险箱失败:{e}"))?;
+    }
+    let fresh = Vault::open(dir).map_err(|e| format!("重建保险箱失败:{e}"))?;
+    *guard = fresh; // 旧 Vault(连接/日志句柄)在此被 drop
+    Ok(())
+}

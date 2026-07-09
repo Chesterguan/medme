@@ -35,6 +35,7 @@ pub fn run() {
             commands::create_share,
             commands::load_demo_data,
             commands::get_vault_path,
+            commands::reset_vault,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

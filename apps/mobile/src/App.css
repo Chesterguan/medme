@@ -133,15 +133,15 @@
 
 /* Tab bar */
 .tabbar {
-  flex: 0 0 auto; height: 60px; border-top: 1px solid var(--line); display: flex; background: var(--panel);
+  flex: 0 0 auto; height: 68px; border-top: 1px solid var(--line); display: flex; background: var(--panel);
   padding-bottom: env(safe-area-inset-bottom);
 }
 .tabbar .t {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  font-size: 11px; color: var(--faint); background: none; border: none; cursor: pointer;
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+  padding: 8px 0; font-size: 11px; color: var(--faint); background: none; border: none; cursor: pointer;
 }
 .tabbar .t.on { color: var(--blue); }
-.tabbar .t svg { width: 22px; height: 22px; }
+.tabbar .t svg { width: 26px; height: 26px; }
 
 /* Toast / result banner */
 .toast {
@@ -163,3 +163,53 @@
 
 .empty { text-align: center; color: var(--muted); font-size: 14px; padding: 40px 20px; }
 .empty .big { font-size: 40px; margin-bottom: 10px; }
+
+/* Settings (设置) */
+.group {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+}
+.group .row {
+  width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+  display: flex; align-items: center; gap: 12px; padding: 14px 15px;
+  border-bottom: 1px solid var(--line); font-size: 15px; color: var(--ink);
+}
+.group .row:last-child { border-bottom: none; }
+.group .row:active { background: var(--screen); }
+.group .row:disabled { opacity: .5; }
+.group .row .ri {
+  width: 34px; height: 34px; border-radius: 10px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--blue-soft); color: var(--blue); font-size: 17px;
+}
+.group .row .rt { flex: 1 1 auto; min-width: 0; }
+.group .row .rt b { font-weight: 600; display: block; }
+.group .row .rt span { font-size: 12.5px; color: var(--muted); display: block; margin-top: 2px; }
+.group .row .chev { color: var(--faint); font-size: 18px; flex: 0 0 auto; }
+.group .row.danger { color: #b91c1c; }
+.group .row.danger .ri { background: #fef2f2; color: #dc2626; }
+.group .row.danger b { color: #b91c1c; }
+
+.group .info { padding: 14px 15px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); line-height: 1.6; }
+.group .info:last-child { border-bottom: none; }
+.group .info b { color: var(--ink); font-weight: 600; }
+.group .info a { color: var(--blue); text-decoration: none; font-weight: 600; }
+.group .info .kv { display: flex; justify-content: space-between; align-items: center; color: var(--ink); }
+.group .info .kv span { color: var(--faint); }
+.group .info .disc { font-size: 12px; color: var(--faint); }
+
+/* Confirm dialog */
+.scrim {
+  position: fixed; inset: 0; z-index: 50; background: rgba(15, 23, 42, .45);
+  display: flex; align-items: center; justify-content: center; padding: 28px;
+}
+.dialog {
+  background: var(--panel); border-radius: 18px; padding: 20px; width: 100%; max-width: 340px;
+  box-shadow: 0 24px 60px -18px rgba(15, 23, 42, .5);
+}
+.dialog h3 { font-size: 17px; font-weight: 800; margin-bottom: 8px; color: var(--ink); }
+.dialog p { font-size: 13.5px; color: var(--muted); line-height: 1.6; margin-bottom: 18px; }
+.dialog .acts { display: flex; gap: 10px; }
+.dialog .acts button { flex: 1; padding: 13px; border-radius: 12px; font-size: 15px; font-weight: 700; border: none; cursor: pointer; }
+.dialog .acts .cancel { background: var(--screen); color: var(--ink); border: 1px solid var(--line); }
+.dialog .acts .confirm { background: #dc2626; color: #fff; }
+.dialog .acts button:disabled { opacity: .5; }

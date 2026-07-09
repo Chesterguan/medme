@@ -59,7 +59,7 @@ function groupDesc(g: TimelineGroup): string {
   return DOC_LABEL[g.doc.doc_type] ?? g.doc.doc_type;
 }
 
-type Tab = "capture" | "archive";
+type Tab = "capture" | "archive" | "settings";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("capture");
@@ -68,6 +68,8 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [lastImport, setLastImport] = useState<ImportOutcome | null>(null);
   const [share, setShare] = useState<ShareResult | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [version, setVersion] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -82,6 +84,14 @@ export default function App() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // 版本号取自 tauri.conf.json(与 App 包一致)。延迟加载,失败也不影响首屏。
+  useEffect(() => {
+    import("@tauri-apps/api/app")
+      .then(({ getVersion }) => getVersion())
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
 
   // 采集:通过系统文件/相册选择器拿到沙盒路径,交给 pipeline ingest。
   // 说明:iOS 上用 tauri-plugin-dialog 的 open() 打开原生选择器,返回沙盒内可读路径。
@@ -120,6 +130,22 @@ export default function App() {
       setTab("archive");
     } catch (e) {
       alert(`载入示例失败:${e}`);
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh]);
+
+  // 清空保险箱 · 重置:让示例数据可逆(载入 → 试用 → 清空 → 从头开始)。
+  const resetVault = useCallback(async () => {
+    setShare(null);
+    setLastImport(null);
+    try {
+      setBusy("正在清空保险箱…");
+      await api.resetVault();
+      await refresh();
+      setConfirmReset(false);
+    } catch (e) {
+      alert(`清空失败:${e}`);
     } finally {
       setBusy(null);
     }
@@ -205,7 +231,7 @@ export default function App() {
             数据保存在本机保险箱(iCloud 同步:v1.1)
           </div>
         </div>
-      ) : (
+      ) : tab === "archive" ? (
         <div className="body">
           <div className="phead">
             <div className="avatar">{initial}</div>
@@ -249,6 +275,74 @@ export default function App() {
               ))}
             </div>
           )}
+        </div>
+      ) : (
+        <div className="body">
+          {/* 数据:载入 ↔ 清空 成对出现,让示例数据可逆 */}
+          <div className="sect">数据</div>
+          <div className="group">
+            <button className="row" onClick={loadDemo} disabled={!!busy}>
+              <span className="ri">📥</span>
+              <span className="rt">
+                <b>载入示例数据(张建国)</b>
+                <span>导入一份完整的示例病历,先试试看</span>
+              </span>
+              <span className="chev">›</span>
+            </button>
+            <button className="row danger" onClick={() => setConfirmReset(true)} disabled={!!busy}>
+              <span className="ri">🗑️</span>
+              <span className="rt">
+                <b>清空保险箱 · 重置</b>
+                <span>删除全部记录,回到初始空状态</span>
+              </span>
+              <span className="chev">›</span>
+            </button>
+          </div>
+
+          {/* 同步:v1.1 iCloud container 之前的手动方案指引 */}
+          <div className="sect">同步</div>
+          <div className="group">
+            <div className="info">
+              把「保险箱」放进你自己的云盘即可与桌面自动同步:
+              <b>苹果用户用 iCloud 云盘,安卓/其他用坚果云</b>。
+            </div>
+          </div>
+
+          {/* 关于 */}
+          <div className="sect">关于</div>
+          <div className="group">
+            <div className="info">
+              <div className="kv">
+                版本号 <span>{version ? `v${version}` : "—"}</span>
+              </div>
+            </div>
+            <div className="info">
+              <a href="https://chesterguan.github.io/medme/" target="_blank" rel="noreferrer">
+                项目主页 ›
+              </a>
+            </div>
+            <div className="info disc">
+              医疗免责声明:MedMe 是个人医疗数据整理工具,非医疗器械,不提供任何诊断或医疗建议;一切以原始医疗文件为准,请咨询执业医师。
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 清空确认:破坏性操作,二次确认 */}
+      {confirmReset && (
+        <div className="scrim" onClick={() => !busy && setConfirmReset(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>清空保险箱?</h3>
+            <p>确定清空全部记录?示例数据和已导入内容都会删除,此操作不可撤销。</p>
+            <div className="acts">
+              <button className="cancel" onClick={() => setConfirmReset(false)} disabled={!!busy}>
+                取消
+              </button>
+              <button className="confirm" onClick={resetVault} disabled={!!busy}>
+                清空
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -315,6 +409,13 @@ export default function App() {
             <line x1="3" y1="18" x2="3.01" y2="18" />
           </svg>
           档案
+        </button>
+        <button className={`t ${tab === "settings" ? "on" : ""}`} onClick={() => setTab("settings")}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          设置
         </button>
       </div>
     </div>
