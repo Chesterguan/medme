@@ -159,6 +159,35 @@ export const LinkIcon = () => (
     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
   </Svg>
 );
+// 分享(iOS 方框+上箭头风格)—— 「分享文件」按钮。
+export const ShareIcon = () => (
+  <Svg>
+    <path d="M12 2v13" />
+    <path d="m8 6 4-4 4 4" />
+    <path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7" />
+  </Svg>
+);
+// 复制(两张卡片)—— 「复制口令」按钮。
+export const CopyIcon = () => (
+  <Svg>
+    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+    <path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2" />
+  </Svg>
+);
+// 查看原件(眼睛)—— 详情里「查看原件」按钮。
+export const EyeIcon = () => (
+  <Svg>
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+    <circle cx="12" cy="12" r="3" />
+  </Svg>
+);
+// 盾牌(端到端加密标识)。
+export const ShieldIcon = () => (
+  <Svg>
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    <path d="M9 12l2 2 4-4" />
+  </Svg>
+);
 
 // 文档类型 → 图标组件(与桌面 docmeta.ts TYPE_ICON 对应)。
 const DOC_ICON: Record<string, () => ReactNode> = {

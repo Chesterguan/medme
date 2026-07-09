@@ -35,6 +35,7 @@ pub fn run() {
             commands::ingest_bytes,
             commands::get_document,
             commands::read_source_bytes,
+            commands::read_share_bytes,
             commands::get_patient_profile,
             commands::create_share,
             commands::load_demo_data,

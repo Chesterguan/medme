@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, ReactNode } from "react";
 import "./App.css";
 import { api } from "./api";
 import type {
@@ -18,9 +18,12 @@ import {
   TrashIcon,
   AlertTriangleIcon,
   CheckCircleIcon,
-  ImageIcon,
   ArrowLeftIcon,
   LinkIcon,
+  ShareIcon,
+  CopyIcon,
+  EyeIcon,
+  ShieldIcon,
 } from "./icons";
 
 // doc_type / encounter kind → 中文标签(见 core-model types.rs)
@@ -504,28 +507,8 @@ export default function App() {
         </div>
       )}
 
-      {/* 加密分享结果(M1 简版):展示口令 + 落盘路径。系统「分享」sheet 导出 = M2。 */}
-      {share && (
-        <div className="toast" onClick={() => setShare(null)}>
-          <div className="h ok">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 6L9 17l-5-5" />
-            </svg>
-            已生成 · 端到端加密 · {share.record_count} 份
-          </div>
-          <div className="copyline">
-            <span className="k">口令</span>
-            <span className="v">{share.passphrase}</span>
-          </div>
-          <div className="note">
-            数据在对方浏览器本地解密,不经服务器。文件已存到:
-            <br />
-            <small>{share.path}</small>
-            <br />
-            <small>系统「分享」导出为 M2</small>
-          </div>
-        </div>
-      )}
+      {/* 加密分享结果:两步清晰动作 —— 分享文件(系统 sheet)+ 复制口令(另发)。 */}
+      {share && <ShareModal share={share} onClose={() => setShare(null)} />}
 
       {busy && (
         <div className="toast">
@@ -564,12 +547,222 @@ export default function App() {
   );
 }
 
+// 加密分享结果:自包含加密 HTML 文件(数据+查看器内嵌,零服务器)。给用户两个
+// 清晰动作 —— (1)分享文件:调起 iOS 系统「分享」sheet 把 .html 发给医生;
+// (2)复制口令:口令必须「另发」(不同渠道)。医生打开文件输口令即可查看。
+function ShareModal({ share, onClose }: { share: ShareResult; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
+
+  const filename = share.path.split("/").pop() || "medme-share.html";
+
+  // 分享文件:优先 Web Share API(WKWebView 里会拉起 iOS 系统分享 sheet,可发
+  // 微信/邮件/AirDrop);不支持时回退到 opener 打开文件(Quick Look 自带分享按钮),
+  // 再不行就明确告知文件位置。口令绝不放进分享内容 —— 必须另发。
+  const doShareFile = useCallback(async () => {
+    setMsg(null);
+    setSharing(true);
+    try {
+      const buf = await api.readShareBytes(share.path);
+      const file = new File([buf], filename, { type: "text/html" });
+      const nav = navigator as Navigator & {
+        canShare?: (d?: unknown) => boolean;
+        share?: (d: unknown) => Promise<void>;
+      };
+      if (nav.share) {
+        try {
+          if (!nav.canShare || nav.canShare({ files: [file] })) {
+            await nav.share({ files: [file], title: "MedMe 加密病历" });
+            return;
+          }
+        } catch (e) {
+          if ((e as Error)?.name === "AbortError") return; // 用户在 sheet 里取消
+          // 否则落到下面的回退
+        }
+      }
+      // 回退:用系统默认程序打开文件(iOS 会用 Quick Look,内含「分享」按钮)。
+      const { openPath } = await import("@tauri-apps/plugin-opener");
+      await openPath(share.path);
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") return;
+      setMsg(`无法调起系统分享。文件已保存在应用内:\n${filename}\n可在「文件」App 的本应用目录中找到后发送。`);
+    } finally {
+      setSharing(false);
+    }
+  }, [share.path, filename]);
+
+  const doCopyPass = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(share.passphrase);
+    } catch {
+      // WKWebView 里 clipboard API 偶尔不可用,回退到 execCommand。
+      const ta = document.createElement("textarea");
+      ta.value = share.passphrase;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        /* 忽略 */
+      }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  }, [share.passphrase]);
+
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="dialog share" onClick={(e) => e.stopPropagation()}>
+        <div className="share-h">
+          <span className="share-badge"><ShieldIcon /></span>
+          <div>
+            <h3>加密分享已生成</h3>
+            <span className="share-sub">端到端加密 · {share.record_count} 份记录</span>
+          </div>
+        </div>
+
+        <p className="share-tip">
+          把<b>文件</b>发给医生,<b>口令另发</b>(用不同渠道,如口令走短信、文件走微信);
+          医生打开文件、输入口令即可查看。数据端到端加密,<b>不经服务器</b>。
+        </p>
+
+        <div className="share-pass">
+          <span className="k">口令</span>
+          <span className="v">{share.passphrase}</span>
+        </div>
+
+        <div className="share-acts">
+          <button className="primary" onClick={doShareFile} disabled={sharing}>
+            <ShareIcon />
+            {sharing ? "调起分享…" : "分享文件"}
+          </button>
+          <button className="second" onClick={doCopyPass}>
+            <CopyIcon />
+            {copied ? "已复制" : "复制口令"}
+          </button>
+        </div>
+
+        {msg && <div className="share-msg">{msg}</div>}
+
+        <button className="full" onClick={onClose}>
+          完成
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// —— 档案详情:把识别文本渲染得「整洁易读」(轻量启发式,非完整解析器) ——
+// 规则:【…】/短标题行 → 小节标题;化验单的「项目 结果 参考范围」行 → 三列对齐
+// (值用等宽 + tabular-nums 对齐,异常↑↓染色);处方的编号药品行 → 药品条目;
+// 其余 → 正常段落(保留换行、舒适行高)。任何行解析失败都安全回退为段落。
+type LabRow = { name: string; value: string; ref: string; flag: "hi" | "lo" | "" };
+
+function parseLabRow(line: string): LabRow | null {
+  const cells = line.trim().split(/\s{2,}/).filter(Boolean);
+  if (cells.length < 2) return null;
+  const idx = cells.findIndex((c) => /^[<>]?\s*-?\d+(\.\d+)?$/.test(c.trim()));
+  if (idx <= 0) return null; // 第一格必须是名称,不能是数值
+  const name = cells.slice(0, idx).join(" ");
+  const value = cells[idx].trim();
+  const rest = cells.slice(idx + 1).join(" ");
+  const tail = line;
+  const flag: LabRow["flag"] = /↑|偏高|升高/.test(tail)
+    ? "hi"
+    : /↓|偏低|降低/.test(tail)
+      ? "lo"
+      : "";
+  const ref = rest.replace(/[↑↓]/g, "").trim();
+  return { name, value, ref, flag };
+}
+
+function ClinicalText({ text, docType }: { text: string; docType: string }) {
+  const raw = text.replace(/\r\n/g, "\n");
+  if (!raw.trim()) {
+    return (
+      <div className="doc-body">
+        <span className="muted">此文件尚未识别出文字。原始文件已完整保存,可点「查看原件」出示给医生。</span>
+      </div>
+    );
+  }
+  const lines = raw.split("\n");
+  const nodes: ReactNode[] = [];
+  let para: string[] = [];
+  const flushPara = () => {
+    if (para.length) {
+      nodes.push(
+        <p className="doc-p" key={`p${nodes.length}`}>
+          {para.join("\n")}
+        </p>,
+      );
+      para = [];
+    }
+  };
+
+  lines.forEach((line) => {
+    const t = line.trim();
+    if (!t) {
+      flushPara();
+      return;
+    }
+    // 小节标题:【…】 或以冒号结尾的短标题
+    if (/^【.+】$/.test(t) || (t.length <= 12 && /[::]$/.test(t))) {
+      flushPara();
+      nodes.push(
+        <div className="doc-h" key={`h${nodes.length}`}>
+          {t.replace(/^【|】$/g, "")}
+        </div>,
+      );
+      return;
+    }
+    // 化验单:三列对齐行
+    if (docType === "lab_report") {
+      const row = parseLabRow(line);
+      if (row) {
+        flushPara();
+        nodes.push(
+          <div className="lab-row" key={`l${nodes.length}`}>
+            <span className="nm">{row.name}</span>
+            <span className={`val ${row.flag}`}>
+              {row.value}
+              {row.flag === "hi" ? " ↑" : row.flag === "lo" ? " ↓" : ""}
+            </span>
+            <span className="ref">{row.ref}</span>
+          </div>,
+        );
+        return;
+      }
+    }
+    // 处方:编号药品行 → 加粗条目;其后「用法…」缩进行归入正常段落。
+    if (docType === "prescription" && /^\d+\.\s/.test(t)) {
+      flushPara();
+      nodes.push(
+        <div className="doc-med" key={`m${nodes.length}`}>
+          {t}
+        </div>,
+      );
+      return;
+    }
+    para.push(line);
+  });
+  flushPara();
+
+  return <div className="doc-body">{nodes}</div>;
+}
+
 // 文档详情:类型/日期/来源 + 识别文本;图片文档额外渲染缩略图。
 // 无 DICOM 阅片(交给桌面/在线查看器),影像文档只展示文本与元信息。
 function DetailScreen({ id, onBack }: { id: number; onBack: () => void }) {
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
+  // 「查看原件」全屏预览:图片直接看原图,PDF/其他用 iframe 内联渲染原件。
+  const [viewer, setViewer] = useState(false);
+  const [origUrl, setOrigUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -612,6 +805,37 @@ function DetailScreen({ id, onBack }: { id: number; onBack: () => void }) {
   const isImage = sf?.mime_type.startsWith("image/") ?? false;
   const typeLabel = doc ? DOC_LABEL[doc.doc_type] ?? doc.doc_type : "";
 
+  // OCR 置信度:Apple Vision 识别照片时给出;可能个别字识错,故显式展示 + 低分预警。
+  const conf = detail?.ocr_confidence ?? null;
+  const pct = conf != null ? Math.round(conf * 100) : null;
+  const lowConf = conf != null && conf < 0.85;
+
+  // 查看原件:图片复用已加载的原图 URL;PDF/其他按需读字节生成 blob 供 iframe 预览。
+  const openOriginal = useCallback(async () => {
+    if (!sf) return;
+    if (isImage && imgUrl) {
+      setOrigUrl(imgUrl);
+      setViewer(true);
+      return;
+    }
+    try {
+      const bytes = await api.readSourceBytes(sf.id);
+      const blob = new Blob([bytes], { type: sf.mime_type || "application/octet-stream" });
+      setOrigUrl(URL.createObjectURL(blob));
+      setViewer(true);
+    } catch (e) {
+      alert(`打开原件失败:${e}`);
+    }
+  }, [sf, isImage, imgUrl]);
+
+  const closeViewer = useCallback(() => {
+    setViewer(false);
+    setOrigUrl((u) => {
+      if (u && u !== imgUrl) URL.revokeObjectURL(u); // 图片 URL 由缩略图 effect 统一回收
+      return null;
+    });
+  }, [imgUrl]);
+
   return (
     <div className="app">
       <div className="appbar">
@@ -641,6 +865,23 @@ function DetailScreen({ id, onBack }: { id: number; onBack: () => void }) {
               </div>
             </div>
 
+            {/* OCR 置信度徽标:低于 85% 用琥珀色预警并提示核对原件。 */}
+            {pct != null && (
+              <div className={`conf ${lowConf ? "low" : "ok"}`}>
+                {lowConf ? <AlertTriangleIcon /> : <CheckCircleIcon />}
+                <span>
+                  识别置信度 {pct}%
+                  {lowConf && <b> · 个别文字可能有误,建议核对原件</b>}
+                </span>
+              </div>
+            )}
+
+            {/* 查看原件:让用户对照原始照片/文件,核对不确定的识别文字。 */}
+            <button className="viewbtn" onClick={openOriginal}>
+              <EyeIcon />
+              查看原件
+            </button>
+
             {isImage && (
               <div className="dimg">
                 {imgUrl ? <img src={imgUrl} alt={sf!.original_name} /> : <div className="empty">加载原图…</div>}
@@ -648,19 +889,29 @@ function DetailScreen({ id, onBack }: { id: number; onBack: () => void }) {
             )}
 
             <div className="sect">
-              <ImageIcon />
+              <FileTextIcon />
               <span style={{ marginLeft: 6 }}>{isImage ? "识别文本" : "文档内容"}</span>
             </div>
-            <div className="dtext">
-              {detail.ocr_text.trim() ? (
-                detail.ocr_text
-              ) : (
-                <span className="muted">此文件尚未识别出文字。原始文件已完整保存,可直接出示给医生。</span>
-              )}
-            </div>
+            <ClinicalText text={detail.ocr_text} docType={doc!.doc_type} />
+            {/* TODO(M2):文本纠错编辑 —— 允许用户就地修正个别识错的字。 */}
           </>
         )}
       </div>
+
+      {/* 全屏原件预览 */}
+      {viewer && origUrl && (
+        <div className="viewer" onClick={closeViewer}>
+          <button className="vclose" onClick={closeViewer}>
+            <ArrowLeftIcon />
+            关闭
+          </button>
+          {isImage ? (
+            <img src={origUrl} alt="原件" onClick={(e) => e.stopPropagation()} />
+          ) : (
+            <iframe src={origUrl} title="原件" onClick={(e) => e.stopPropagation()} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
