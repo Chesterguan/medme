@@ -6,7 +6,7 @@
 //! (`VNRecognizeTextRequest`) — offline, no download, excellent Chinese.
 //!
 //! ## How the Swift↔Rust bridge works
-//! `gen/apple/Sources/medme-mobile/Vision.swift` exposes two C-ABI symbols via
+//! `gen/apple/Sources/medme-mobile/OcrVision.swift` exposes two C-ABI symbols via
 //! `@_cdecl`. The app target compiles that Swift source and links Rust's
 //! `libapp.a`, so these `extern "C"` references resolve against the Swift
 //! symbols inside the same binary — no Tauri Swift plugin package, no Podfile

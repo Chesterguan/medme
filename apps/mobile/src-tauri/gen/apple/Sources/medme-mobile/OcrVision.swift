@@ -12,6 +12,10 @@
 // or SPM wiring needed. `VNImageRequestHandler.perform` is synchronous, so the
 // call is a simple blocking FFI (Rust owns the returned buffer and frees it via
 // `medme_vision_free`).
+//
+// NOTE: this file is deliberately NOT named `Vision.swift` — a source file whose
+// name matches an imported framework module shadows it, so `import Vision` would
+// be ignored and `VNRecognizeTextRequest` et al. would fail to resolve.
 
 import CoreGraphics
 import Foundation
