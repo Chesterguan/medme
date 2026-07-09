@@ -3,7 +3,7 @@ import { ShieldCheck, Globe, Code2 } from "lucide-react";
 import { api } from "../api";
 
 const HOMEPAGE_URL = "https://lexuan-lin.github.io/shadow_medical_record-/";
-const REPO_URL = "https://github.com/Lexuan-Lin/shadow_medical_record-";
+const REPO_URL = "https://github.com/Chesterguan/medme";
 
 interface Section {
   t: string;

@@ -66,7 +66,7 @@ from a cloud service. We are particularly interested in:
   recovery, key/password leakage, downgrade, predictable nonce, offline brute
   force
 - **在线预览器 (hosted viewer)**(`web/hosted-viewer` /
-  https://chesterguan.github.io/medme-viewer/):在浏览器中本地解密时的 XSS /
+  https://chesterguan.github.io/medme/viewer/):在浏览器中本地解密时的 XSS /
   数据外泄 / client-side decryption XSS or exfiltration in the browser viewer
 - **导入/解析管线**(OCR、PDF、DICOM 解析):处理不可信文件时的内存安全 /
   路径穿越 / 拒绝服务 / memory-safety, path traversal, or DoS when parsing

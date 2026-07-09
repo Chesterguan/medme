@@ -31,7 +31,7 @@ are both welcome.
 ### 克隆与运行 / Clone and run
 
 ```bash
-git clone https://github.com/Chesterguan/medme-app.git
+git clone https://github.com/Chesterguan/medme.git
 cd medme-app
 
 # 桌面应用(Tauri v2 + React)
@@ -126,7 +126,7 @@ Rust 工作区 crate 名(供 `cargo -p` 使用):`core-model`、`parser`、`pipel
 
 - 用法 / 找不到入口:先看官网 <https://chesterguan.github.io/medme/> 与
   [README](README.md)、[TESTING.md](TESTING.md)。
-- 功能建议 / bug:开一个 [issue](https://github.com/Chesterguan/medme-app/issues)
+- 功能建议 / bug:开一个 [issue](https://github.com/Chesterguan/medme/issues)
   (用对应模板)。
 - 安全问题:**私下**邮件 `chesterfield199512@gmail.com`(见 [SECURITY.md](SECURITY.md))。
 

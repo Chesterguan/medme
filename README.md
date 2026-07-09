@@ -5,7 +5,7 @@
 **个人医疗数据保险箱**
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![CI](https://github.com/Chesterguan/medme-app/actions/workflows/ci.yml/badge.svg)](https://github.com/Chesterguan/medme-app/actions/workflows/ci.yml)
+[![CI](https://github.com/Chesterguan/medme/actions/workflows/ci.yml/badge.svg)](https://github.com/Chesterguan/medme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/desktop-macOS-lightgrey.svg)](https://chesterguan.github.io/medme/)
 [![Made with Tauri + Rust](https://img.shields.io/badge/built_with-Tauri_v2_%C2%B7_Rust_%C2%B7_React-orange.svg)](#技术架构--architecture)
 
@@ -15,8 +15,8 @@
 `本地优先` · `原件永存` · `端到端加密分享` · `零服务器` · `中文优先`
 
 [官网 / Landing](https://chesterguan.github.io/medme/) ·
-[加密分享在线预览 / Share viewer](https://chesterguan.github.io/medme-viewer/) ·
-[下载 / Releases](https://github.com/Chesterguan/medme-app/releases)
+[加密分享在线预览 / Share viewer](https://chesterguan.github.io/medme/viewer/) ·
+[下载 / Releases](https://github.com/Chesterguan/medme/releases)
 
 </div>
 
@@ -45,7 +45,7 @@
 ## 截图 / 演示 · Screenshots & demo
 
 先到 [官网](https://chesterguan.github.io/medme/) 看产品截图与介绍;
-想不安装就体验,可打开 [加密分享在线预览](https://chesterguan.github.io/medme-viewer/)。
+想不安装就体验,可打开 [加密分享在线预览](https://chesterguan.github.io/medme/viewer/)。
 
 > 📸 _演示 GIF / 视频待补充(placeholder — a demo GIF/video will go here)._
 
@@ -59,7 +59,7 @@
 
 ## 安装 · Install
 
-- **推荐(无需开发环境)**:到 [Releases](https://github.com/Chesterguan/medme-app/releases)
+- **推荐(无需开发环境)**:到 [Releases](https://github.com/Chesterguan/medme/releases)
   或 [官网](https://chesterguan.github.io/medme/) 下载 `.dmg`(Apple Silicon /
   Intel),拖进「应用程序」即可。
 - **测试版未签名**:首次打开会被 macOS 拦住(正常)。在访达里**右键 MedMe → 打开**,
@@ -76,7 +76,7 @@
   影像编解码。macOS:`brew install cmake`;Ubuntu:`sudo apt-get install cmake build-essential`。
 
 ```bash
-git clone https://github.com/Chesterguan/medme-app.git
+git clone https://github.com/Chesterguan/medme.git
 cd medme-app
 
 # 桌面应用(Tauri v2 + React)
