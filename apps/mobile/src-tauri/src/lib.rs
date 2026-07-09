@@ -32,6 +32,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::load_archive,
             commands::ingest_file,
+            commands::ingest_bytes,
             commands::get_document,
             commands::read_source_bytes,
             commands::get_patient_profile,

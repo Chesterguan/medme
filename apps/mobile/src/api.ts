@@ -10,6 +10,10 @@ import type {
 export const api = {
   loadArchive: () => invoke<TimelineGroup[]>("load_archive"),
   ingestFile: (path: string) => invoke<ImportOutcome>("ingest_file", { path }),
+  // 相机/相册直传:传原始文件名 + 字节(数组),后端写临时文件再走 ingest。
+  // iOS WKWebView 里选中的照片只有 File 对象、拿不到沙盒路径,故传字节而非路径。
+  ingestBytes: (filename: string, data: number[]) =>
+    invoke<ImportOutcome>("ingest_bytes", { filename, data }),
   getDocument: (id: number) => invoke<DocumentDetail>("get_document", { id }),
   readSourceBytes: (id: number) =>
     invoke<ArrayBuffer>("read_source_bytes", { id }),

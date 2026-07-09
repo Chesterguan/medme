@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 import "./App.css";
 import { api } from "./api";
 import type {
@@ -88,6 +89,11 @@ export default function App() {
   const [detailId, setDetailId] = useState<number | null>(null);
   // 就诊组在档案里点开时展开其子文档(每份可再点开详情)。
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  // 采集来源选择弹层(拍照 / 从相册选)。
+  const [chooser, setChooser] = useState(false);
+  // 两个隐藏 file input:相机(capture=environment 直接调起后置相机)与相册(无 capture)。
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const libraryInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -111,37 +117,37 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // 采集:通过系统相册/文件选择器拿到沙盒可读路径,交给 pipeline ingest。
-  // 说明:iOS 上用 tauri-plugin-dialog 的 open() 打开原生选择器;插件会把选中的
-  // 文件拷进 App 缓存目录并返回沙盒内可读路径,ingest 直接读取。
-  // filters 只保留有稳定 UTType 映射的图片/PDF —— 之前带 "dcm" 会让 iOS 的
-  // UIDocumentPicker 因无法解析 UTType 而整体失败(采集点了没反应的根因);
-  // DICOM 阅片本就交给桌面/在线查看器,手机端不需要。
-  // 真正的「相机内实时拍摄」需相机插件(原生),列为后续跟进。
-  const capture = useCallback(async () => {
-    setShare(null);
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const picked = await open({
-        multiple: false,
-        title: "拍照 / 从相册或文件选择",
-        filters: [
-          { name: "照片 / 报告", extensions: ["jpg", "jpeg", "png", "heic", "heif", "pdf"] },
-        ],
-      });
-      if (!picked || Array.isArray(picked)) return;
-      const path = typeof picked === "string" ? picked : (picked as { path: string }).path;
-      setBusy("正在识别并入库…");
-      const outcome = await api.ingestFile(path);
-      setLastImport(outcome);
-      await refresh();
-    } catch (e) {
-      console.error("capture failed", e);
-      alert(`采集失败:${e}`);
-    } finally {
-      setBusy(null);
-    }
-  }, [refresh]);
+  // 采集:iOS WKWebView 里最可靠的相机路径 = 隐藏的 HTML file input。
+  //  - `accept="image/*" capture="environment"` → 直接调起后置相机拍照;
+  //  - `accept="image/*"`(无 capture)→ 相册选择。
+  // 选中后拿到的是 File 对象(WKWebView 里没有沙盒文件系统路径可给 Rust),
+  // 于是读出字节交给 `ingest_bytes`:后端写临时文件再走同一套 pipeline ingest。
+  // 这替代了原先的 tauri-plugin-dialog open()(那是「文件」文档选择器,没有相机,
+  // 正是「只能选图、无法拍照」的根因)。
+  const onPicked = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const input = e.currentTarget;
+      const file = input.files?.[0];
+      input.value = ""; // 允许连续选同一张
+      setChooser(false);
+      if (!file) return; // 用户取消
+      setShare(null);
+      try {
+        setBusy("识别中…");
+        const buf = await file.arrayBuffer();
+        const data = Array.from(new Uint8Array(buf));
+        const outcome = await api.ingestBytes(file.name || "capture.jpg", data);
+        setLastImport(outcome);
+        await refresh();
+      } catch (err) {
+        console.error("capture failed", err);
+        alert(`采集失败:${err}`);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
 
   const loadDemo = useCallback(async () => {
     setShare(null);
@@ -237,7 +243,7 @@ export default function App() {
 
       {tab === "capture" ? (
         <div className="body">
-          <button className="shoot" onClick={capture} disabled={!!busy}>
+          <button className="shoot" onClick={() => setChooser(true)} disabled={!!busy}>
             <div className="cam">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
@@ -413,6 +419,52 @@ export default function App() {
             <div className="info disc">
               医疗免责声明:MedMe 是个人医疗数据整理工具,非医疗器械,不提供任何诊断或医疗建议;一切以原始医疗文件为准,请咨询执业医师。
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 隐藏的采集输入:相机(capture=environment)与相册。放在渲染树里,由弹层触发 click。 */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        onChange={onPicked}
+      />
+      <input ref={libraryInputRef} type="file" accept="image/*" hidden onChange={onPicked} />
+
+      {/* 采集来源选择:拍照(调起相机)/ 从相册选。 */}
+      {chooser && (
+        <div className="scrim" onClick={() => !busy && setChooser(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>添加记录</h3>
+            <p>拍摄病历、化验单、报告,或从相册选择已有照片存入健康档案。</p>
+            <div className="acts">
+              <button
+                className="primary"
+                onClick={() => {
+                  setChooser(false);
+                  cameraInputRef.current?.click();
+                }}
+                disabled={!!busy}
+              >
+                拍照
+              </button>
+              <button
+                className="cancel"
+                onClick={() => {
+                  setChooser(false);
+                  libraryInputRef.current?.click();
+                }}
+                disabled={!!busy}
+              >
+                从相册选
+              </button>
+            </div>
+            <button className="full" onClick={() => setChooser(false)} disabled={!!busy}>
+              取消
+            </button>
           </div>
         </div>
       )}

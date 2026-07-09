@@ -10,6 +10,14 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>NSCameraUsageDescription</key>
+	<string>MedMe 需要使用相机来拍摄病历、化验单、报告并存入你的健康档案。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>MedMe 需要访问相册,以便你选择医疗单据图片存入健康档案。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>MedMe 需要访问相册,以便你选择医疗单据图片存入健康档案。</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
@@ -17,7 +25,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>1.0.0</string>
+	<string>1.0.0.1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

@@ -61,13 +61,10 @@ pub fn load_archive(state: State<AppState>) -> Result<Vec<TimelineGroup>, String
     Ok(groups.into_iter().map(|(_, g)| g).collect())
 }
 
-/// 采集(mobile P1):对一张拍摄/选取的文件跑 pipeline ingest,然后重建就诊分组。
-/// 单文件版本的 `import_paths`。
-#[tauri::command]
-pub fn ingest_file(state: State<AppState>, path: String) -> Result<ImportOutcome, String> {
-    let v = lock(&state)?;
-    let p = std::path::Path::new(&path);
-    let outcome = match pipeline::ingest(&v, p) {
+/// 跑一次 pipeline ingest 并映射为前端 `ImportOutcome`。抽取失败(扫描图等)不致命
+/// —— 原文件已进 CAS,返回 status="failed" 让前端提示「未能识别」而非报错崩溃。
+fn ingest_one(v: &Vault, path: &std::path::Path) -> ImportOutcome {
+    match pipeline::ingest(v, path) {
         Ok(o) => {
             let status = match o.status {
                 pipeline::IngestStatus::New => "new",
@@ -85,11 +82,11 @@ pub fn ingest_file(state: State<AppState>, path: String) -> Result<ImportOutcome
             }
         }
         Err(e) => {
-            let name = p
+            let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.clone());
-            eprintln!("[ingest] failed for {}: {e}", p.display());
+                .unwrap_or_else(|| "unknown".to_string());
+            eprintln!("[ingest] failed for {}: {e}", path.display());
             ImportOutcome {
                 name,
                 source_file_id: 0,
@@ -97,8 +94,69 @@ pub fn ingest_file(state: State<AppState>, path: String) -> Result<ImportOutcome
                 doc_type: None,
             }
         }
-    };
+    }
+}
+
+/// 采集(mobile P1):对一张拍摄/选取的文件跑 pipeline ingest,然后重建就诊分组。
+/// 单文件版本的 `import_paths`。桌面/带真实沙盒路径的场景仍可用(例如插件返回路径)。
+#[tauri::command]
+pub fn ingest_file(state: State<AppState>, path: String) -> Result<ImportOutcome, String> {
+    let v = lock(&state)?;
+    let outcome = ingest_one(&v, std::path::Path::new(&path));
     v.rebuild_encounters().map_err(|e| e.to_string())?;
+    Ok(outcome)
+}
+
+/// 采集(相机/相册直传):前端从 `<input type=file capture=environment>` 拿到 `File`
+/// 后,把字节 + 原始文件名直接传进来。这样绕开了 Web File API 拿不到的沙盒路径 ——
+/// iOS WKWebView 里选中的照片只有 `File` 对象,没有可读的文件系统路径。
+///
+/// 流程:字节落到 App 缓存目录下的一次性临时文件(**保留原扩展名** —— pipeline 靠
+/// 扩展名判 MIME / PDF / DICOM,见 `pipeline::mime_for`)→ 跑同一套 ingest 管线入库
+/// → 重建就诊分组 → 删掉临时文件(「真相」已进 CAS/日志,临时件用完即弃)。
+#[tauri::command]
+pub fn ingest_bytes(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    filename: String,
+    data: Vec<u8>,
+) -> Result<ImportOutcome, String> {
+    use tauri::Manager;
+    if data.is_empty() {
+        return Err("空文件,未采集到任何数据".to_string());
+    }
+    // 净化文件名:只取基名防路径穿越;缺扩展名兜底 .jpg(相机默认输出 JPEG)。
+    let base = std::path::Path::new(&filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+        .unwrap_or("capture.jpg");
+    let safe_name = if std::path::Path::new(base).extension().is_some() {
+        base.to_string()
+    } else {
+        format!("{base}.jpg")
+    };
+
+    // 每次采集用一个唯一子目录,里面放「真实文件名」——这样入库后的 original_name
+    // 就是用户可读的名字,而不是带时间戳的临时名。用后整目录删除。
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S%f");
+    let tmp_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("medme-ingest")
+        .join(stamp.to_string());
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let tmp_path = tmp_dir.join(&safe_name);
+    std::fs::write(&tmp_path, &data).map_err(|e| format!("写入临时文件失败:{e}"))?;
+
+    let outcome = {
+        let v = lock(&state)?;
+        let o = ingest_one(&v, &tmp_path);
+        v.rebuild_encounters().map_err(|e| e.to_string())?;
+        o
+    };
+    let _ = std::fs::remove_dir_all(&tmp_dir); // 尽力清理,失败无妨
     Ok(outcome)
 }
 

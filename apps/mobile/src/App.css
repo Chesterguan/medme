@@ -283,4 +283,12 @@
 .dialog .acts button { flex: 1; padding: 13px; border-radius: 12px; font-size: 15px; font-weight: 700; border: none; cursor: pointer; }
 .dialog .acts .cancel { background: var(--screen); color: var(--ink); border: 1px solid var(--line); }
 .dialog .acts .confirm { background: #dc2626; color: #fff; }
+.dialog .acts .primary { background: var(--blue); color: #fff; }
 .dialog .acts button:disabled { opacity: .5; }
+/* Capture chooser 全宽「取消」 */
+.dialog .full {
+  width: 100%; margin-top: 10px; padding: 12px; border-radius: 12px;
+  font-size: 14.5px; font-weight: 700; cursor: pointer;
+  background: var(--screen); color: var(--muted); border: 1px solid var(--line);
+}
+.dialog .full:disabled { opacity: .5; }
