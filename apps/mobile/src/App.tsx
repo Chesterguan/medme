@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
 import "./App.css";
+import markUrl from "./assets/medme-mark.svg";
 import { api } from "./api";
 import type {
   TimelineGroup,
@@ -233,7 +234,7 @@ export default function App() {
     <div className="app">
       <div className="appbar">
         <div className="brand">
-          <span className="logo">医</span>
+          <img className="logo" src={markUrl} alt="医我" />
           医我
         </div>
         <div className="who">{initial}</div>
