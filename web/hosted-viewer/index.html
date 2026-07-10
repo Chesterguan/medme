@@ -738,6 +738,7 @@ async function submit() {
   if (!val) { errEl.textContent = "请输入口令。"; return; }
   try {
     await decryptAndRender(val);
+    pw.value = ""; // 成功后清空口令输入,避免明文口令滞留 DOM
   } catch (e) {
     errEl.textContent = "口令错误,无法解密。请核对本人告知的口令。";
   }
