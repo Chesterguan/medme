@@ -108,6 +108,15 @@ impl Vault {
                     }
                 }
                 ApplyOutcome::Deferred => {
+                    // Cap this device's watermark below the deferred seq so the
+                    // event is retried next time — even if a HIGHER-seq event of
+                    // the same device was already applied this pass. That can
+                    // happen if the device's clock regressed (NTP step / manual
+                    // set): a higher seq then carries an earlier `ts` and sorts
+                    // first. Without this cap the watermark could sit above the
+                    // deferred seq and the event would be dropped forever.
+                    let cur = new_map.entry(entry.device_id.clone()).or_insert(0);
+                    *cur = (*cur).min(entry.seq - 1);
                     stopped.insert(entry.device_id.clone());
                 }
             }
@@ -578,11 +587,13 @@ mod tests {
             .unwrap();
         } // drop: close the sqlite connection before poking the file directly
 
-        // Simulate a pre-refactor, DB-only vault: drop the log + reset the watermark.
+        // Simulate a pre-refactor, DB-only vault: drop the log + clear the
+        // per-device watermark map (the current watermark key) so nothing is
+        // marked already-applied.
         std::fs::remove_dir_all(dir.path().join("log")).unwrap();
         {
             let conn = rusqlite::Connection::open(dir.path().join("medme.db")).unwrap();
-            conn.execute("UPDATE meta SET value = '0' WHERE key = 'applied_seq'", [])
+            conn.execute("DELETE FROM meta WHERE key = 'applied_seq_map'", [])
                 .unwrap();
         }
 
@@ -837,6 +848,100 @@ mod tests {
         v.materialize().unwrap();
         assert_eq!(v.debug_count("ocr_result"), 1, "deferred OCR applied once blob present");
         assert_eq!(v.search("MissingObjNeedle", 10).unwrap().len(), 1);
+    }
+
+    /// M3 regression: a deferred (missing-CAS) event must not be stranded even
+    /// when a HIGHER-seq event of the same device sorts before it — which happens
+    /// if the device's clock regresses so a later append carries an earlier `ts`.
+    /// The deferred device's watermark must be capped below the deferred seq, or
+    /// the higher seq pushes it past the gap and the event is dropped forever.
+    #[test]
+    fn deferred_ocr_not_stranded_when_higher_seq_sorts_first() {
+        use crate::event::{DocRef, Event, LogEntry};
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let dev = v.device_id.clone();
+        let sfh = cas::sha256_hex(b"anchor-file");
+        let append = |seq: i64, ts: &str, ev: Event| {
+            v.log
+                .append(&LogEntry::new(seq, ts.into(), dev.clone(), ev).unwrap())
+                .unwrap();
+        };
+        // Anchor file (seq 1) + a 2-page document (seq 2).
+        append(
+            1,
+            "2024-01-01T00:00:10Z",
+            Event::FileImported {
+                content_hash: sfh.clone(),
+                original_name: "a.txt".into(),
+                mime_type: "text/plain".into(),
+                byte_size: 6,
+                imported_at: "2024-01-01T00:00:10Z".into(),
+            },
+        );
+        append(
+            2,
+            "2024-01-01T00:00:11Z",
+            Event::DocumentAdded {
+                source_file_hash: sfh.clone(),
+                doc_type: "lab_report".into(),
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("c".into()),
+                language: None,
+                page_count: 2,
+                created_at: "2024-01-01T00:00:11Z".into(),
+            },
+        );
+        // page-2 OCR: seq 4, blob PRESENT, EARLIER ts (clock regressed on append).
+        let (h2, _, _) = v.store_object(b"Page2PresentNeedle").unwrap();
+        append(
+            4,
+            "2024-01-01T00:00:12Z",
+            Event::OcrAdded {
+                document_ref: DocRef {
+                    source_file_hash: sfh.clone(),
+                },
+                page_no: 2,
+                backend: "native".into(),
+                model_version: "m".into(),
+                text_hash: h2,
+                confidence: None,
+                created_at: "2024-01-01T00:00:12Z".into(),
+            },
+        );
+        // page-1 OCR: seq 3 (LOWER), blob MISSING, LATER ts → sorts AFTER seq 4.
+        let h1 = cas::sha256_hex(b"Page1MissingNeedle");
+        append(
+            3,
+            "2024-01-01T00:00:13Z",
+            Event::OcrAdded {
+                document_ref: DocRef {
+                    source_file_hash: sfh.clone(),
+                },
+                page_no: 1,
+                backend: "native".into(),
+                model_version: "m".into(),
+                text_hash: h1,
+                confidence: None,
+                created_at: "2024-01-01T00:00:13Z".into(),
+            },
+        );
+
+        // First pass: seq 4 (page 2) applies; seq 3 (page 1) defers on its missing blob.
+        v.materialize().unwrap();
+        assert_eq!(v.debug_count("ocr_result"), 1, "only the present page applied");
+
+        // The missing blob arrives → re-materialize. Without the watermark cap the
+        // higher seq (4) would have pushed the watermark past 3 and page 1 would be
+        // dropped forever; with the cap it recovers.
+        v.store_object(b"Page1MissingNeedle").unwrap();
+        v.materialize().unwrap();
+        assert_eq!(
+            v.debug_count("ocr_result"),
+            2,
+            "deferred page recovered — not stranded by the higher-seq event"
+        );
     }
 
     #[test]

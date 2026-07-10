@@ -506,7 +506,8 @@ pub fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     // links). Reject `file://` and custom-scheme URLs so a malicious invoke can't use
     // this to open local files or trigger arbitrary URL-scheme handlers.
     let u = url.trim();
-    if !(u.starts_with("http://") || u.starts_with("https://")) {
+    let scheme = u.to_ascii_lowercase();
+    if !(scheme.starts_with("http://") || scheme.starts_with("https://")) {
         return Err("拒绝:只允许打开 http(s) 链接".to_string());
     }
     app.opener()

@@ -61,8 +61,17 @@ pub fn ensure_meta_table(conn: &Connection) -> Result<(), MedmeError> {
 /// `user_version` migration ladder (like `ensure_meta_table`) so it doesn't
 /// perturb the existing `user_version` assertions.
 pub fn ensure_imaging_instance_unique_index(conn: &Connection) -> Result<(), MedmeError> {
+    // A pre-refactor, multi-device-merged vault may already hold duplicate
+    // (document_id, source_file_id) rows — the old projection had no UNIQUE
+    // constraint. Dedup (keep the lowest id per natural key) BEFORE creating the
+    // index, or `CREATE UNIQUE INDEX` aborts and permanently bricks Vault::open
+    // on that vault. On a clean vault the DELETE is a no-op.
     conn.execute_batch(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_imaging_instance_natural_key \
+        "DELETE FROM imaging_instance
+         WHERE id NOT IN (
+             SELECT MIN(id) FROM imaging_instance GROUP BY document_id, source_file_id
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_imaging_instance_natural_key \
          ON imaging_instance(document_id, source_file_id);",
     )?;
     Ok(())
