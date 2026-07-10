@@ -62,7 +62,8 @@ export default function SettingsView({ onNav }: { onNav: (id: string) => void })
           <div className="mt-3 flex items-start gap-2 text-sm text-slate-500 leading-relaxed">
             <CloudCog className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
             <span>
-              把这个文件夹放到 iCloud / 坚果云 等云同步目录,即可多设备同步(去中心化,无需服务器)。
+              把这个文件夹放进云同步目录,多设备就自动同步(去中心化,无需服务器):
+              <b className="text-slate-700">设备全是苹果 → iCloud 云盘;有安卓 / Windows → 坚果云</b>。
             </span>
           </div>
         </div>

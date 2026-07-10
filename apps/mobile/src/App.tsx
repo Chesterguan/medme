@@ -390,12 +390,17 @@ export default function App() {
             </button>
           </div>
 
-          {/* 同步:v1.1 iCloud container 之前的手动方案指引 */}
-          <div className="sect">同步</div>
+          {/* 同步:诚实说明——手机端数据本地存;跨设备现用加密分享,自动同步 v1.1 */}
+          <div className="sect">同步与备份</div>
           <div className="group">
             <div className="info">
-              把「保险箱」放进你自己的云盘即可与桌面自动同步:
-              <b>苹果用户用 iCloud 云盘,安卓/其他用坚果云</b>。
+              病历存在<b>这台手机</b>上。想给医生、或换一台设备看某份记录,
+              用记录详情页里的<b>「加密分享」</b>——发一个加密文件 + 一串口令,不经过任何服务器。
+            </div>
+            <div className="info">
+              <b>多设备自动同步:</b>在<b>电脑端</b>把保险箱文件夹放进云盘就能自动同步——
+              <b>设备全是苹果 → 用 iCloud 云盘;有安卓 / Windows → 用坚果云</b>。
+              手机端自动同步(iCloud)将在 v1.1 上线。
             </div>
           </div>
 
