@@ -614,6 +614,16 @@ function render(payload) {
   html += '<div class="generated">生成时间:' + esc(gen) + " · 共 " + (p.record_count || 0) + " 份记录</div></header>";
   html += '<div class="privacy-note">本页由 MedMe 端到端加密分享生成,数据在您的浏览器本地解密,未上传任何服务器。不构成医疗建议,以原件为准。</div>';
 
+  // 复阅期限:仅为分享方给出的非强制提醒,绝不阻断查看(文件持有者始终可解密)。
+  const adviseUntil = (payload.expires || "").slice(0, 10);
+  if (adviseUntil) {
+    const past = payload.expires && Date.now() > Date.parse(payload.expires);
+    const msg = past
+      ? '分享方建议的复阅期限(' + esc(adviseUntil) + ')已过 · 文件仍可正常查看,如需最新记录请自行向本人确认。'
+      : '分享方建议的复阅期限:' + esc(adviseUntil) + '(仅为提醒,过后文件仍可查看,请自行向本人确认是否为最新)。';
+    html += '<div style="margin:0 0 14px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;color:#92400e;font-size:13px;line-height:1.6">' + msg + '</div>';
+  }
+
   const records = payload.records || [];
   for (let ri = 0; ri < records.length; ri++) {
     const r = records[ri];

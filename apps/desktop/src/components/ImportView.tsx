@@ -336,7 +336,7 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
             <b className="text-slate-700">零服务器</b>,医生用任意浏览器打开、输入<b className="text-slate-700">口令</b>即在本地解密查看,数据不上传任何服务器。
           </div>
           <div className="flex items-center gap-3 mb-1.5">
-            <label className="text-sm text-slate-600">有效期</label>
+            <label className="text-sm text-slate-600">建议复阅期限</label>
             <input
               type="number"
               min={1}
@@ -348,7 +348,7 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
             <span className="text-sm text-slate-500">天</span>
           </div>
           <div className="text-xs text-slate-400 mb-3">
-            演示/长期分享可设很大有效期(如 36500 天 ≈ 100 年)
+            仅作为给医生的复阅提醒,<b className="text-slate-500">并非强制</b>——文件本身不会到期失效,持有文件与口令者始终可解密查看。长期分享可设很大值(如 36500 天 ≈ 100 年)。
           </div>
           <button
             type="button"
@@ -385,7 +385,7 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
               <div className="mt-3 text-sm text-slate-600 leading-relaxed">
                 已生成 {shareResult.count} 份记录。把文件发给医生(或存到你的云盘发链接),
                 <b className="text-slate-800">口令请另行单独告知,切勿和文件放一起</b>。
-                医生用任意浏览器打开 → 输口令 → 查看。有效期 {shareResult.days} 天。
+                医生用任意浏览器打开 → 输口令 → 查看。建议复阅期限 {shareResult.days} 天(仅为提醒,非强制,文件不会自动失效)。
               </div>
               <button
                 type="button"
