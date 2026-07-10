@@ -20,10 +20,7 @@ pub fn run() {
             // TODO iCloud container:v1.1 迁移到 iCloud container，实现与桌面经
             // 用户自己的云盘自动同步(见 docs/011_Storage_Sync.md)。现在先用
             // Documents,保证 M1 能开箱可用。
-            let docs = app
-                .path()
-                .document_dir()
-                .expect("iOS documents dir");
+            let docs = app.path().document_dir().expect("iOS documents dir");
             std::fs::create_dir_all(&docs).ok();
             let vault_dir = docs.join("vault");
             let vault = Vault::open(&vault_dir).expect("open vault");
