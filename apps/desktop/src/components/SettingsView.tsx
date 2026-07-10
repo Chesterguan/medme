@@ -82,7 +82,7 @@ export default function SettingsView({ onNav }: { onNav: (id: string) => void })
                 onClick={changeLocation}
                 className="flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 rounded-lg px-3 py-1.5 transition-colors cursor-pointer"
               >
-                <FolderSync className="w-3.5 h-3.5" /> 更换位置…
+                <FolderSync className="w-3.5 h-3.5" /> 云文件夹设置…
               </button>
               <button
                 type="button"
