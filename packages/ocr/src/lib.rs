@@ -63,16 +63,19 @@ fn pipeline() -> Result<&'static OAROCR> {
 /// intermediates) on top — OOM from a few hundred bytes of input. We decode with
 /// explicit [`image::Limits`] so such inputs return `Err` instead. 512 MiB is far
 /// above any real phone photo / document scan yet bounds the worst case.
+#[cfg_attr(not(feature = "engine"), allow(dead_code))]
 const MAX_IMAGE_ALLOC_BYTES: u64 = 512 * 1024 * 1024;
 /// Hard ceiling on either image dimension. The alloc cap above already rejects
 /// most floods, but a 1-byte-per-pixel grayscale image can declare very large
 /// dimensions while staying just under it; this bounds each axis explicitly.
+#[cfg_attr(not(feature = "engine"), allow(dead_code))]
 const MAX_IMAGE_DIM: u32 = 20_000;
 
 /// Decode image bytes (png/jpg/tiff/...) into a [`DynamicImage`] under explicit
 /// allocation + dimension limits, so a small file declaring huge dimensions
 /// errors cleanly rather than driving a multi-gigabyte allocation. Behaves
 /// identically to `image::load_from_memory` for normally-sized inputs.
+#[cfg_attr(not(feature = "engine"), allow(dead_code))]
 fn decode_image_bounded(image_bytes: &[u8]) -> Result<DynamicImage> {
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(MAX_IMAGE_ALLOC_BYTES);
