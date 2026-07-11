@@ -11,6 +11,10 @@ use image::{DynamicImage, GenericImageView, GrayImage, Luma};
 use imageproc::filter::gaussian_blur_f32;
 use imageproc::geometric_transformations::{rotate_about_center, Border, Interpolation};
 use lopdf::{Document, Object};
+/// macOS on-device OCR via Apple Vision — primary recognizer on the desktop
+/// build (oar-ocr is the fallback). See the module for the rationale (#41).
+#[cfg(target_os = "macos")]
+mod vision_macos;
 #[cfg(feature = "engine")]
 use oar_ocr::oarocr::{OAROCRBuilder, OAROCR};
 #[cfg(feature = "engine")]
@@ -292,7 +296,7 @@ fn deskew(gray: &GrayImage, angle_deg: f32) -> GrayImage {
 /// builds the OCR pipeline on first call (models auto-download from
 /// ModelScope on first ever run on this machine).
 #[cfg(feature = "engine")]
-pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
+fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
     let ocr = pipeline()?;
     let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
     let dynamic = preprocess(dynamic);
@@ -320,11 +324,48 @@ pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
     })
 }
 
-/// No-`engine` stub (Android build): oar-ocr/ONNX Runtime isn't linked in on
-/// this platform (it wouldn't work there anyway -- see the `engine` feature
-/// doc in Cargo.toml). Always errors; callers already treat OCR failure as
-/// non-fatal and fall back to storing the file without extracted text.
-#[cfg(not(feature = "engine"))]
+/// macOS: decode the bytes then run Apple Vision on the RGBA pixels.
+#[cfg(target_os = "macos")]
+fn recognize_vision(image_bytes: &[u8]) -> Result<OcrOutcome> {
+    let dynamic =
+        decode_image_bounded(image_bytes).context("ocr::recognize(vision): decode image")?;
+    let rgba = dynamic.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    vision_macos::recognize_rgba(w, h, rgba.as_raw())
+}
+
+/// Recognize text in image bytes. **macOS**: Apple Vision is the primary
+/// recognizer (offline, strong Chinese, #41); if it errors or finds no text,
+/// fall back to the oar-ocr / PP-OCRv5 engine. **Other platforms**: the engine
+/// (or a stub error when the engine isn't linked in, e.g. a no-`engine` build).
+#[cfg(target_os = "macos")]
+pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
+    match recognize_vision(image_bytes) {
+        Ok(outcome) if !outcome.text.trim().is_empty() => return Ok(outcome),
+        Ok(_) => {} // Vision ran but found nothing — try the engine.
+        Err(e) => eprintln!("[ocr] Apple Vision failed, falling back to engine: {e:#}"),
+    }
+    #[cfg(feature = "engine")]
+    {
+        recognize_engine(image_bytes)
+    }
+    #[cfg(not(feature = "engine"))]
+    {
+        Ok(OcrOutcome {
+            text: String::new(),
+            confidence: 0.0,
+        })
+    }
+}
+
+#[cfg(all(not(target_os = "macos"), feature = "engine"))]
+pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
+    recognize_engine(image_bytes)
+}
+
+/// No-`engine`, non-macOS stub: nothing to recognize with. Callers treat OCR
+/// failure as non-fatal (store the file without extracted text).
+#[cfg(all(not(target_os = "macos"), not(feature = "engine")))]
 pub fn recognize(_image_bytes: &[u8]) -> Result<OcrOutcome> {
     anyhow::bail!("ocr::recognize: OCR engine not available on this platform")
 }
