@@ -450,7 +450,15 @@ pub fn export_timeline_html(
     // (see validate_dest_path) so a malicious invoke can't clobber arbitrary files.
     let dest = validate_dest_path(&dest_path, &["html", "htm"])?;
     let v = lock(&state)?;
-    let (html, record_count) = medme_share::export::build_timeline_html(&v)?;
+    // SECURITY (advisory GHSA-24px): render each DICOM's anchor slice in the
+    // isolated decode child, NOT in-process. The desktop workspace build links
+    // the C/C++ JPEG2000/JPEG-LS codecs into the shared `dicom` dep (feature
+    // unification), so decoding attacker-supplied compressed pixels here would be
+    // the same RCE surface the viewer path already isolates. A crash/timeout comes
+    // back as `None` and the export degrades to a text line. See `dicom_subprocess`.
+    let (html, record_count) = medme_share::export::build_timeline_html(&v, &|b| {
+        crate::dicom_subprocess::render_png(b).ok()
+    })?;
     let byte_size = html.len() as i64;
     let sha256 = core_model::cas::sha256_hex(html.as_bytes());
     std::fs::write(&dest, html).map_err(|e| e.to_string())?;
@@ -479,7 +487,15 @@ pub fn create_share(
     let dest = validate_dest_path(&dest_path, &["html", "htm"])?;
     let v = lock(&state)?;
     let days = expires_days.unwrap_or(5);
-    let (html, passphrase, record_count) = medme_share::share::build_encrypted_share(&v, days)?;
+    // SECURITY (advisory GHSA-24px): when an oversized imaging study degrades to a
+    // key-slice PNG, decode that slice in the isolated child process, NOT in-process
+    // — the desktop build links the C/C++ codecs into the shared `dicom` dep, so an
+    // in-process decode of attacker-supplied compressed pixels is an RCE surface. A
+    // crash/timeout degrades to the existing text line. See `dicom_subprocess`.
+    let (html, passphrase, record_count) =
+        medme_share::share::build_encrypted_share(&v, days, &|b| {
+            crate::dicom_subprocess::render_png(b).ok()
+        })?;
     let byte_size = html.len() as i64;
     let sha256 = core_model::cas::sha256_hex(html.as_bytes());
     std::fs::write(&dest, html).map_err(|e| e.to_string())?;
