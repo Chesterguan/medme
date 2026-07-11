@@ -519,7 +519,7 @@ mod tests {
         assert!(looks_like_dicom(&buf));
         // 太短 / 无魔数 → 否。
         assert!(!looks_like_dicom(b"DICM"));
-        assert!(!looks_like_dicom(&vec![0u8; 132]));
+        assert!(!looks_like_dicom(&[0u8; 132]));
     }
 
     /// #53:无扩展名的 DICOM(PACS/光盘导出常见)靠 "DICM" 魔数被内容嗅探识别为
