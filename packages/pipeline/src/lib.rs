@@ -13,8 +13,10 @@ fn is_pdf(path: &Path) -> bool {
     mime_for(path) == "application/pdf"
 }
 
-fn is_dicom(path: &Path) -> bool {
-    mime_for(path) == "application/dicom"
+/// DICOM 内容嗅探:标准 DICOM 文件在 128 字节前导后有 "DICM" 魔数(DICM at offset
+/// 128)。据此识别**无扩展名 / 错扩展名**的 DICOM(PACS/光盘导出常见),而不只认 .dcm。
+fn looks_like_dicom(bytes: &[u8]) -> bool {
+    bytes.len() >= 132 && &bytes[128..132] == b"DICM"
 }
 
 /// Builds a readable title from DICOM tags: modality+body part is most
@@ -269,7 +271,16 @@ pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
-    let imp = vault.import(&name, mime_for(path), &bytes)?;
+    // 内容嗅探:PACS / 医院光盘导出的 DICOM 常常**没有扩展名**(纯数字/不透明文件名)。
+    // 只认 .dcm 会把它们当未知文件、丢掉全部影像元信息(型别/日期/机构/StudyUID 分组)。
+    // 靠 DICOM 文件的 offset-128 处 "DICM" 魔数识别,mime 也据实定为 application/dicom
+    // (否则 source_file 会记成 octet-stream)。#53。
+    let mime = if looks_like_dicom(&bytes) {
+        "application/dicom"
+    } else {
+        mime_for(path)
+    };
+    let imp = vault.import(&name, mime, &bytes)?;
     let sid = imp.source_file.id;
 
     if imp.deduped && vault.has_document(sid)? {
@@ -281,9 +292,10 @@ pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
         });
     }
 
-    // .dcm 走独立分支(不经 parser/OCR):DICOM 自带结构化元数据,免 OCR 即可
-    // 拿到类型/日期/机构(见 docs/010_Imaging_DICOM.md)。
-    if is_dicom(path) {
+    // DICOM 走独立分支(不经 parser/OCR):DICOM 自带结构化元数据,免 OCR 即可
+    // 拿到类型/日期/机构(见 docs/010_Imaging_DICOM.md)。用嗅探后的 mime 判定,
+    // 故无扩展名的 DICOM 也能进这条分支。
+    if mime == "application/dicom" {
         return add_dicom_document(vault, sid, &name, &bytes, imp.deduped);
     }
 
@@ -497,6 +509,44 @@ mod tests {
         );
         // 无 OCR 文本
         assert_eq!(v.ocr_text(tl[0].document_id).unwrap(), "");
+    }
+
+    #[test]
+    fn looks_like_dicom_detects_magic() {
+        // DICM at offset 128.
+        let mut buf = vec![0u8; 128];
+        buf.extend_from_slice(b"DICM");
+        assert!(looks_like_dicom(&buf));
+        // 太短 / 无魔数 → 否。
+        assert!(!looks_like_dicom(b"DICM"));
+        assert!(!looks_like_dicom(&vec![0u8; 132]));
+    }
+
+    /// #53:无扩展名的 DICOM(PACS/光盘导出常见)靠 "DICM" 魔数被内容嗅探识别为
+    /// 影像,而不是当成未知文件、丢掉全部影像元信息。
+    #[test]
+    fn extensionless_dicom_is_content_sniffed() {
+        let dcm = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/demo-dataset/dicom/MR_small.dcm"
+        ))
+        .expect("read MR_small.dcm fixture");
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        // 无扩展名文件名(模拟 PACS 导出):只认 .dcm 会漏掉。
+        let p = fdir.path().join("IMG00001");
+        std::fs::write(&p, &dcm).unwrap();
+
+        let o = ingest(&v, &p).unwrap();
+        assert_eq!(
+            o.doc_type,
+            Some(core_model::DocType::ImagingReport),
+            "无扩展名 DICOM 应被嗅探为影像检查文档"
+        );
+        let tl = v.timeline().unwrap();
+        assert_eq!(tl.len(), 1);
+        assert_eq!(tl[0].doc_type, core_model::DocType::ImagingReport);
     }
 
     /// .dcm 走独立分支:元数据(非 OCR)驱动 doc_type/日期/标题,原文件+摘要
