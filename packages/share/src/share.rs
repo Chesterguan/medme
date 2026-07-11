@@ -20,6 +20,12 @@ use base64::engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD as B64URL
 use base64::Engine as _;
 use core_model::Vault;
 use rand::RngCore;
+use sha2::{Digest, Sha256};
+
+/// 对给定字节求 sha256,返回标准 base64——用于 CSP 的 `'sha256-<b64>'` 脚本哈希。
+fn sha256_b64(bytes: &[u8]) -> String {
+    B64.encode(Sha256::digest(bytes))
+}
 
 /// AES-GCM 的固定关联数据(AAD)。绑定后可抵御格式/版本混淆:任何解密端都必须传入
 /// 逐字节相同的 AAD 才能解密成功。互操作三处必须一致——Rust 加密、内嵌查看器 JS
@@ -223,14 +229,36 @@ pub fn build_encrypted_share(
     let passphrase_raw = B64URL.encode(key_bytes);
     let passphrase_grouped = group_passphrase(&passphrase_raw);
 
-    // dicom-parser 内联进 HTML(约 32KB),保证分享文件自包含、离线可用。
-    // 用 replace 在运行时注入而非写死进模板字面量,避免其内容与 Rust 原始字符串
-    // 分隔符冲突;先注入解析器,再注入 blob(解析器体量小、注入顺序无副作用)。
-    let html = VIEWER_TEMPLATE
-        .replace("/*__DICOM_PARSER__*/", DICOM_PARSER_JS)
-        .replace("__BLOB__", &blob_b64)
-        .replace("__EXPIRES__", &expires.to_rfc3339())
-        .replace("__GENERATED__", &generated.to_rfc3339());
+    // 加密 blob 放进「非执行」的 JSON 数据节点(`#share-data`),查看器运行时读取。
+    // 关键安全点:不再把任何 per-share 数据插进 <script> 里,两段内联脚本因此成为
+    // 逐字节固定的常量,可被 CSP 的 sha256 精确收录 —— 从而移除 script-src
+    // 'unsafe-inline'(GHSA-j7fx)。标准 base64 字母表不含 '<' / '"',serde 序列化
+    // 后整体也不含 '<',绝无 </script> 越界之虞 —— 仍在此显式断言以防未来改动。
+    let share_data = serde_json::json!({ "blob": blob_b64 }).to_string();
+    if share_data.contains('<') {
+        return Err("share-data 数据节点意外包含 '<'(可能 </script> 越界)".into());
+    }
+
+    // 对两段内联脚本「将写进 <script>…</script> 之间的逐字节内容」求 sha256、标准
+    // base64 后写进 CSP。哈希与下面拼接用的是同一常量,二者永不漂移。
+    let script_src = format!(
+        "'sha256-{}' 'sha256-{}'",
+        sha256_b64(DICOM_PARSER_JS.as_bytes()),
+        sha256_b64(VIEWER_JS.as_bytes()),
+    );
+    // 先内联 dicom-parser(浏览器全局 dicomParser),再内联查看器逻辑;两者顺序无
+    // 副作用。数据节点放最前,查看器在文件末尾运行时其已就位。
+    let scripts = format!(
+        "<script type=\"application/json\" id=\"share-data\">{share_data}</script>\n\
+         <script>{DICOM_PARSER_JS}</script>\n\
+         <script>{VIEWER_JS}</script>"
+    );
+    let html = format!(
+        "{}{}{}",
+        VIEWER_HEAD.replace("__CSP_SCRIPT_SRC__", &script_src),
+        scripts,
+        VIEWER_TAIL,
+    );
 
     Ok((html, passphrase_grouped, record_count))
 }
@@ -239,14 +267,15 @@ pub fn build_encrypted_share(
 /// 仓库,`include_str!` 在编译期嵌入 —— 不依赖 node_modules 即可构建。
 const DICOM_PARSER_JS: &str = include_str!("vendor/dicomParser.min.js");
 
-/// 自包含查看器模板。占位符 `__BLOB__` / `__EXPIRES__` / `__GENERATED__` 与
-/// `/*__DICOM_PARSER__*/` 用 `str::replace` 注入 —— 避免 `format!` 与内联 JS/CSS
-/// 的 `{}` 冲突。无任何外部引用,严格离线可用。
-const VIEWER_TEMPLATE: &str = r####"<!doctype html>
+/// 查看器 HTML 外壳(头部 + 口令闸门 + 空 app 容器)。生成时 `__CSP_SCRIPT_SRC__`
+/// 被替换成两段内联脚本的 `'sha256-…'` 哈希;脚本体与结尾 `</body></html>` 分别是
+/// `VIEWER_JS` / `VIEWER_TAIL` 常量,在生成时拼接 —— 保证内联脚本逐字节固定、可被
+/// CSP 哈希收录(移除 script-src 'unsafe-inline')。无任何外部引用,严格离线可用。
+const VIEWER_HEAD: &str = r####"<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src __CSP_SCRIPT_SRC__; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MedMe 加密病历分享</title>
 <style>
@@ -342,12 +371,13 @@ const VIEWER_TEMPLATE: &str = r####"<!doctype html>
   </div>
 </div>
 <div id="app" class="wrap" style="display:none"></div>
+"####;
 
-<script>
-/*__DICOM_PARSER__*/
-</script>
-<script>
-const EMBEDDED_BLOB = "__BLOB__";
+/// 查看器逻辑(纯静态,无任何 per-share 插值)。生成时以 `<script>{VIEWER_JS}</script>`
+/// 拼接,并对其逐字节求 sha256 写进 CSP —— 因此加密 blob 只能来自「非执行」的
+/// `#share-data` JSON 数据节点,绝不内联进本脚本。
+const VIEWER_JS: &str = r####"
+const EMBEDDED_BLOB = JSON.parse(document.getElementById("share-data").textContent).blob;
 
 const TYPE_LABEL = { lab_report:"化验", imaging_report:"检查", discharge_summary:"出院", prescription:"处方", clinical_note:"病历", pathology:"病理", surgery:"手术", other:"其他", unknown:"未分类" };
 // bg | color(与桌面端 TYPE_BADGE 一致)
@@ -936,7 +966,10 @@ async function submit() {
 document.getElementById("go").addEventListener("click", submit);
 pw.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
 pw.focus();
-</script>
+"####;
+
+/// 查看器结尾:闭合 `</body></html>`。与 `VIEWER_JS` 分开,便于对脚本体单独哈希。
+const VIEWER_TAIL: &str = r####"
 </body>
 </html>
 "####;
@@ -945,6 +978,16 @@ pw.focus();
 mod tests {
     use super::*;
     use aes_gcm::aead::Aead;
+
+    /// 从生成 HTML 的 `#share-data` 数据节点取出 base64 blob——与浏览器查看器同源
+    /// (`JSON.parse(#share-data).blob`),供各解密往返测试复用。
+    fn extract_blob_b64(html: &str) -> String {
+        let marker = "id=\"share-data\">";
+        let start = html.find(marker).unwrap() + marker.len();
+        let end = html[start..].find("</script>").unwrap() + start;
+        let v: serde_json::Value = serde_json::from_str(&html[start..end]).unwrap();
+        v["blob"].as_str().unwrap().to_string()
+    }
 
     #[test]
     fn build_share_produces_valid_html_and_key() {
@@ -977,7 +1020,7 @@ mod tests {
         let (html, pass, n) = build_encrypted_share(&vault, 5).unwrap();
         assert_eq!(n, 1);
         assert!(html.starts_with("<!doctype html>"));
-        assert!(html.contains("EMBEDDED_BLOB = \""));
+        assert!(html.contains("id=\"share-data\"")); // blob 移进非执行数据节点
         assert!(!html.contains("__BLOB__")); // 占位符已全部替换
         assert!(!html.contains("__EXPIRES__"));
 
@@ -987,9 +1030,7 @@ mod tests {
         assert_eq!(key.len(), 32);
 
         // 提取内嵌 blob → 用该密钥解密 → 应还原出合法 payload JSON(与浏览器查看器同路径)。
-        let start = html.find("EMBEDDED_BLOB = \"").unwrap() + "EMBEDDED_BLOB = \"".len();
-        let end = html[start..].find('"').unwrap() + start;
-        let blob = B64.decode(&html[start..end]).unwrap();
+        let blob = B64.decode(extract_blob_b64(&html)).unwrap();
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
         let pt = cipher
             .decrypt(
@@ -1005,6 +1046,98 @@ mod tests {
         assert_eq!(payload["records"][0]["doc_type"], "lab_report");
         assert_eq!(payload["patient"]["record_count"], 1);
         assert!(payload["expires"].is_string());
+    }
+
+    /// SECURITY (GHSA-j7fx): the generated viewer's CSP must no longer allow
+    /// `script-src 'unsafe-inline'` (which would let injected JS run against
+    /// DECRYPTED PHI), must pin the inline scripts by exact sha256 hash, and must
+    /// lock down navigation/forms so a would-be injection can't exfiltrate.
+    /// Also decrypt-round-trips the produced HTML to prove behavior is preserved.
+    #[test]
+    fn share_viewer_csp_hardened_and_round_trips() {
+        use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let imp = vault.import("血常规.txt", "text/plain", b"data").unwrap();
+        let doc = vault
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: Some(chrono::Utc::now()),
+                doc_date_end: None,
+                title: Some("血常规报告".into()),
+                language: Some("zh".into()),
+                page_count: 1,
+            })
+            .unwrap();
+        vault
+            .add_ocr(NewOcr {
+                document_id: doc.id,
+                page_no: 1,
+                backend: OcrBackendKind::Native,
+                model_version: "text-layer".into(),
+                text: "白细胞 10.5".into(),
+                confidence: None,
+            })
+            .unwrap();
+
+        let (html, pass, _n) = build_encrypted_share(&vault, 5).unwrap();
+
+        // 取出 CSP meta 内容。
+        let marker = "Content-Security-Policy\" content=\"";
+        let s = html.find(marker).unwrap() + marker.len();
+        let e = html[s..].find('"').unwrap() + s;
+        let csp = &html[s..e];
+
+        // 定位 script-src 段(到下一个 ';')。
+        let ss_start = csp.find("script-src ").unwrap();
+        let ss_end = csp[ss_start..].find(';').unwrap() + ss_start;
+        let script_src = &csp[ss_start..ss_end];
+
+        // script-src 不得再含 'unsafe-inline';必须以 sha256 收录内联脚本。
+        assert!(
+            !script_src.contains("'unsafe-inline'"),
+            "script-src 仍含 unsafe-inline: {script_src}"
+        );
+        assert!(
+            script_src.contains("sha256-"),
+            "script-src 缺少 sha256 哈希: {script_src}"
+        );
+        // 哈希须与实际内联脚本逐字节一致(证明生成与哈希永不漂移)。
+        assert!(script_src.contains(&format!(
+            "'sha256-{}'",
+            sha256_b64(DICOM_PARSER_JS.as_bytes())
+        )));
+        assert!(script_src.contains(&format!("'sha256-{}'", sha256_b64(VIEWER_JS.as_bytes()))));
+
+        // 导航/表单/框架锁定,阻断潜在注入的外泄路径。
+        assert!(
+            csp.contains("form-action 'none'"),
+            "缺 form-action 'none': {csp}"
+        );
+        assert!(csp.contains("base-uri 'none'"), "缺 base-uri 'none': {csp}");
+        assert!(
+            csp.contains("frame-ancestors 'none'"),
+            "缺 frame-ancestors 'none': {csp}"
+        );
+
+        // 行为保持:内嵌 blob 用口令解密应还原 payload(与浏览器查看器同路径)。
+        let stripped: String = pass.chars().filter(|c| !c.is_whitespace()).collect();
+        let key = B64URL.decode(stripped).unwrap();
+        let blob = B64.decode(extract_blob_b64(&html)).unwrap();
+        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+        let pt = cipher
+            .decrypt(
+                Nonce::from_slice(&blob[..12]),
+                Payload {
+                    msg: &blob[12..],
+                    aad: SHARE_AAD,
+                },
+            )
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&pt).unwrap();
+        assert_eq!(payload["records"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["records"][0]["doc_type"], "lab_report");
     }
 
     /// SECURITY (XSS): the share viewer must only put a data: image into `<img src>`
@@ -1087,9 +1220,7 @@ mod tests {
         // 解密 payload,确认影像以交互档内嵌了原始 DICOM 字节。
         let stripped: String = pass.chars().filter(|c| !c.is_whitespace()).collect();
         let key = B64URL.decode(stripped).unwrap();
-        let start = html.find("EMBEDDED_BLOB = \"").unwrap() + "EMBEDDED_BLOB = \"".len();
-        let end = html[start..].find('"').unwrap() + start;
-        let blob = B64.decode(&html[start..end]).unwrap();
+        let blob = B64.decode(extract_blob_b64(&html)).unwrap();
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
         let pt = cipher
             .decrypt(

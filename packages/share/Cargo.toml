@@ -16,6 +16,7 @@ pipeline = { path = "../pipeline" }
 # the mobile Android build keeps them off so the C++ decoders aren't compiled.
 dicom = { path = "../dicom", default-features = false }
 serde_json = { workspace = true }
+sha2.workspace = true
 chrono.workspace = true
 base64 = "0.22"
 aes-gcm = "0.10"
