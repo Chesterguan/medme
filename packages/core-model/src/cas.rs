@@ -66,6 +66,34 @@ impl Vault {
         Ok((hash, rel, true))
     }
 
+    /// Read a CAS object and VERIFY it: re-compute sha256 of the bytes and
+    /// require it to equal `hash`. A shared-folder attacker can swap an object's
+    /// bytes (the file is trusted only by its path/filename today); this makes
+    /// every untrusted read self-checking so poisoned/corrupt content is
+    /// rejected instead of trusted. `hash` is validated with `is_object_hash`
+    /// (64-hex) BEFORE building a path, so a forged/malformed hash can't panic
+    /// on the `[0..2]`/`[2..4]` slice or escape `objects/`.
+    ///
+    /// Errors: `Other` for a malformed hash or an integrity mismatch; `Io`
+    /// (kind `NotFound`) when the object hasn't synced in yet — callers that
+    /// tolerate a missing blob (e.g. deferred materialize) match on that.
+    pub fn read_object(&self, hash: &str) -> Result<Vec<u8>, MedmeError> {
+        if !is_object_hash(hash) {
+            return Err(MedmeError::Other(format!(
+                "refusing to read CAS object with malformed hash: {hash:?}"
+            )));
+        }
+        let rel = object_relpath(hash);
+        let bytes = std::fs::read(self.root().join(&rel))?;
+        let actual = sha256_hex(&bytes);
+        if actual != hash {
+            return Err(MedmeError::Other(format!(
+                "CAS object {hash} failed integrity check (bytes hash to {actual}) — poisoned or corrupt"
+            )));
+        }
+        Ok(bytes)
+    }
+
     /// vault 根目录的绝对路径 —— 用于展示给用户(如设置页“数据保险箱位置”)、
     /// 或引导其把该目录放进 iCloud/坚果云等云同步目录以实现多设备同步。
     pub fn root(&self) -> &Path {
@@ -138,5 +166,51 @@ mod tests {
             }
         }
         n
+    }
+
+    #[test]
+    fn read_object_returns_good_bytes_and_rejects_poisoned() {
+        use crate::MedmeError;
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let (h, _, _) = v.store_object(b"hello medme").unwrap();
+
+        // Good bytes: verified read returns them.
+        assert_eq!(v.read_object(&h).unwrap(), b"hello medme");
+
+        // Poison the object: overwrite its file with different bytes (a
+        // shared-folder attacker swapping content behind a trusted filename).
+        let obj = dir.path().join(object_relpath(&h));
+        std::fs::write(&obj, b"evil swapped bytes").unwrap();
+        match v.read_object(&h) {
+            Err(MedmeError::Other(msg)) => assert!(
+                msg.contains("integrity"),
+                "poisoned object must fail integrity, got: {msg}"
+            ),
+            other => panic!("expected integrity error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_object_rejects_malformed_hash_and_reports_missing() {
+        use crate::MedmeError;
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+
+        // Malformed / attacker-controlled hashes never touch the filesystem.
+        for bad in ["../../etc/passwd", "abc", ""] {
+            match v.read_object(bad) {
+                Err(MedmeError::Other(_)) => {}
+                other => panic!("malformed hash {bad:?} must be rejected, got {other:?}"),
+            }
+        }
+
+        // A well-formed but not-yet-synced object reports NotFound (callers
+        // treat that as "defer", distinct from an integrity failure).
+        let missing = sha256_hex(b"never stored");
+        match v.read_object(&missing) {
+            Err(MedmeError::Io(e)) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
+            other => panic!("missing object must be Io(NotFound), got {other:?}"),
+        }
     }
 }

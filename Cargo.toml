@@ -5,6 +5,7 @@ members = ["packages/core-model", "packages/parser", "packages/terminology", "pa
 [workspace.dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 sha2 = "0.10"
+hmac = "0.12"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 anyhow = "1"

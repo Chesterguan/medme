@@ -449,16 +449,33 @@ fn apply_event(tx: &Transaction, vault: &Vault, event: &Event) -> Result<ApplyOu
                 eprintln!("[materialize] skip OcrAdded: malformed text_hash");
                 return Ok(ApplyOutcome::Applied);
             }
-            let relpath = cas::object_relpath(text_hash);
-            // The CAS object may not have synced in yet (log arrives before the
-            // blob). Treat a missing object as Deferred — retried once it lands
-            // — rather than aborting the whole materialize / `Vault::open`.
-            let text = match std::fs::read_to_string(vault.root_join(&relpath)) {
-                Ok(t) => t,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Read the OCR text through the VERIFIED CAS reader so a swapped /
+            // poisoned object (bytes that don't hash to `text_hash`) is rejected
+            // rather than injected into the DB + full-text index. Three outcomes:
+            //   - missing blob (not synced yet) → Deferred, retried later;
+            //   - integrity failure (poisoned/corrupt) → quarantine (skip this
+            //     OCR row) — retrying can't help, CAS won't overwrite the path;
+            //   - other I/O error → propagate.
+            let bytes = match vault.read_object(text_hash) {
+                Ok(b) => b,
+                Err(MedmeError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(ApplyOutcome::Deferred);
                 }
-                Err(e) => return Err(e.into()),
+                Err(MedmeError::Other(msg)) => {
+                    eprintln!("[materialize] skip OcrAdded: {msg}");
+                    return Ok(ApplyOutcome::Applied);
+                }
+                Err(e) => return Err(e),
+            };
+            // Verified bytes hash to `text_hash`; legit OCR text is UTF-8.
+            // Corrupt (non-UTF-8) content that still hashed correctly is a
+            // pathological case — quarantine rather than abort the replay.
+            let text = match String::from_utf8(bytes) {
+                Ok(t) => t,
+                Err(_) => {
+                    eprintln!("[materialize] skip OcrAdded: OCR text object is not valid UTF-8");
+                    return Ok(ApplyOutcome::Applied);
+                }
             };
             tx.execute(
                 "INSERT INTO ocr_result
@@ -1264,6 +1281,131 @@ mod tests {
                 "must reject {bad:?}"
             );
         }
+    }
+
+    /// A poisoned CAS text object (bytes swapped so they no longer hash to the
+    /// event's `text_hash`) must be QUARANTINED on materialize — the OCR row is
+    /// skipped, never injected into the DB / full-text index — while the rest of
+    /// the replay (source_file, document) still applies and open succeeds.
+    #[test]
+    fn poisoned_ocr_object_is_quarantined_not_materialized() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_doc(dir.path(), "poison.txt", "PoisonObjNeedle");
+
+        // Swap the OCR text object's bytes for unrelated content at the same
+        // content-addressed path (an attacker poisoning the shared folder).
+        let text_hash = cas::sha256_hex("PoisonObjNeedle".as_bytes());
+        let obj = dir.path().join(cas::object_relpath(&text_hash));
+        std::fs::write(&obj, b"evil swapped ocr text").unwrap();
+        std::fs::remove_file(dir.path().join("medme.db")).unwrap();
+
+        // Open must not error; the poisoned object is skipped.
+        let v = Vault::open(dir.path()).unwrap();
+        assert_eq!(
+            v.debug_count("source_file"),
+            1,
+            "FileImported still applied"
+        );
+        assert_eq!(v.debug_count("document"), 1, "DocumentAdded still applied");
+        assert_eq!(
+            v.debug_count("ocr_result"),
+            0,
+            "poisoned OCR object quarantined, not injected"
+        );
+    }
+
+    /// End-to-end with an injected MAC key: import + document + OCR, then reopen
+    /// with the same key — everything materializes and searches, and the log
+    /// entries are authenticated (MAC present + valid).
+    #[test]
+    fn keyed_vault_round_trips_and_reopens() {
+        const KEY: &[u8] = &[42u8; 32];
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let v = Vault::open_with_key(dir.path(), KEY).unwrap();
+            let imp = v.import("a.txt", "text/plain", b"KeyedNeedle").unwrap();
+            let doc = v
+                .add_document(NewDocument {
+                    source_file_id: imp.source_file.id,
+                    doc_type: DocType::LabReport,
+                    doc_date: Some(chrono::Utc::now()),
+                    doc_date_end: None,
+                    title: Some("keyed".into()),
+                    language: None,
+                    page_count: 1,
+                })
+                .unwrap();
+            v.add_ocr(NewOcr {
+                document_id: doc.id,
+                page_no: 1,
+                backend: OcrBackendKind::Native,
+                model_version: "text-layer".into(),
+                text: "KeyedNeedle".into(),
+                confidence: None,
+            })
+            .unwrap();
+            // Every appended entry is MAC'd under the key.
+            for e in v.log.read_all().unwrap() {
+                assert!(e.verify_mac(KEY).unwrap(), "appended entry authenticated");
+            }
+        }
+
+        // Reopen with the key, wiping the derived db so it rebuilds from the
+        // verified log alone.
+        std::fs::remove_file(dir.path().join("medme.db")).unwrap();
+        let v = Vault::open_with_key(dir.path(), KEY).unwrap();
+        assert_eq!(v.debug_count("document"), 1);
+        assert_eq!(v.debug_count("source_file"), 1);
+        assert_eq!(v.search("KeyedNeedle", 10).unwrap().len(), 1);
+    }
+
+    /// A legacy vault (log entries with no prev_hash/mac) opened WITH a key gets
+    /// its log sealed on open, materializes cleanly, and verifies under the key.
+    /// Reopening is idempotent.
+    #[test]
+    fn legacy_vault_seals_on_keyed_open() {
+        const KEY: &[u8] = &[3u8; 32];
+        let dir = tempfile::tempdir().unwrap();
+        seed_doc(dir.path(), "legacy.txt", "LegacySealNeedle");
+
+        // Strip prev_hash/mac from every segment line → a genuine pre-change log.
+        // (seed_doc's vault is already dropped, so the files are free to edit.)
+        {
+            for entry in std::fs::read_dir(dir.path().join("log")).unwrap() {
+                let p = entry.unwrap().path();
+                if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let stripped: Vec<String> = std::fs::read_to_string(&p)
+                    .unwrap()
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| {
+                        let mut v: serde_json::Value = serde_json::from_str(l).unwrap();
+                        let o = v.as_object_mut().unwrap();
+                        o.remove("prev_hash");
+                        o.remove("mac");
+                        serde_json::to_string(&v).unwrap()
+                    })
+                    .collect();
+                std::fs::write(&p, format!("{}\n", stripped.join("\n"))).unwrap();
+            }
+        }
+        std::fs::remove_file(dir.path().join("medme.db")).unwrap();
+
+        // Open with the key: migration seals the legacy log, replay is clean.
+        let v = Vault::open_with_key(dir.path(), KEY).unwrap();
+        assert_eq!(v.debug_count("document"), 1, "legacy doc materialized");
+        assert_eq!(v.search("LegacySealNeedle", 10).unwrap().len(), 1);
+        for e in v.log.read_all().unwrap() {
+            assert!(e.verify_mac(KEY).unwrap(), "legacy entry sealed under key");
+        }
+        drop(v);
+
+        // Reopen is idempotent and still verifies.
+        let v2 = Vault::open_with_key(dir.path(), KEY).unwrap();
+        assert_eq!(v2.debug_count("document"), 1);
+        assert_eq!(v2.search("LegacySealNeedle", 10).unwrap().len(), 1);
     }
 
     #[test]
