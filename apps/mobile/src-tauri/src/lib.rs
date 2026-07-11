@@ -78,14 +78,18 @@ fn open_vault_with_fallback(
     sandbox_vault: &Path,
     device_id: &str,
 ) -> (Vault, PathBuf, PathBuf) {
-    match Vault::open_split(&truth_root, &db_path, device_id) {
+    // Resilient open: a corrupt/half-synced derived db (e.g. an iCloud-evicted
+    // or torn `medme.db`) is wiped and rebuilt from the append-only log rather
+    // than failing the open — see `Vault::open_split_resilient`.
+    match Vault::open_split_resilient(&truth_root, &db_path, device_id) {
         Ok(v) => (v, truth_root, db_path),
         Err(e) => {
             eprintln!(
                 "[vault] open at {truth_root:?} failed ({e}); falling back to local sandbox vault"
             );
             let db = sandbox_vault.join("medme.db");
-            let v = Vault::open_split(sandbox_vault, &db, device_id).expect("open local vault");
+            let v = Vault::open_split_resilient(sandbox_vault, &db, device_id)
+                .expect("open local vault");
             (v, sandbox_vault.to_path_buf(), db)
         }
     }

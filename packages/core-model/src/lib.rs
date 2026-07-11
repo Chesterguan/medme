@@ -31,6 +31,20 @@ use std::sync::atomic::{AtomicI64, Ordering};
 /// boundary rather than silently padded and treated as "authenticated".
 const MIN_MAC_KEY_LEN: usize = 32;
 
+/// The SQLite db file plus its WAL/SHM sidecars, so a corrupt-db rebuild wipes
+/// all three (a stale `-wal`/`-shm` can otherwise resurrect the corrupt state).
+fn db_sidecar_paths(db_path: &Path) -> [PathBuf; 3] {
+    let mut wal = db_path.as_os_str().to_owned();
+    wal.push("-wal");
+    let mut shm = db_path.as_os_str().to_owned();
+    shm.push("-shm");
+    [
+        db_path.to_path_buf(),
+        PathBuf::from(wal),
+        PathBuf::from(shm),
+    ]
+}
+
 /// Truth = `objects/` (CAS) + `log/` (append-only event log).
 /// `medme.db` is a derived cache, materialized by replaying the log; it can
 /// be deleted and rebuilt (see `materialize::Vault::rebuild_from_log`).
@@ -120,6 +134,65 @@ impl Vault {
         key: &[u8],
     ) -> Result<Vault, MedmeError> {
         Self::open_inner(truth_root, db_path, Some(device_id), Some(key))
+    }
+
+    /// Like [`Vault::open_split`], but tolerant of a **corrupt derived DB**.
+    ///
+    /// The SQLite db is a disposable cache fully rebuildable from the
+    /// append-only log (`objects/` + `log/` are the truth). If the first open
+    /// fails while that truth is present on disk, the db is the overwhelmingly
+    /// likely culprit — e.g. a half-written / conflicted `medme.db` left by a
+    /// cloud-sync client, or a torn write. Rather than propagating a panic all
+    /// the way up to the app's `.expect("open vault")` (which bricks the app
+    /// with no recourse — the exact scenario the Settings screen's "put your
+    /// vault in an iCloud Drive/坚果云 folder" advice makes more likely), we
+    /// delete the db (plus its `-wal`/`-shm` sidecars) and reopen once, which
+    /// recreates a fresh db and replays the whole log into it.
+    ///
+    /// The error is only returned if a **from-scratch rebuild also fails** —
+    /// i.e. the truth itself (log/objects) is unreadable, which no cache
+    /// rebuild can fix and which the caller must surface to the user. When the
+    /// truth is absent entirely (a genuinely fresh vault), the original error
+    /// is returned untouched — there is nothing to rebuild from.
+    pub fn open_split_resilient(
+        truth_root: &Path,
+        db_path: &Path,
+        device_id: &str,
+    ) -> Result<Vault, MedmeError> {
+        match Self::open_split(truth_root, db_path, device_id) {
+            Ok(v) => Ok(v),
+            Err(first) => {
+                // Only a present truth is rebuildable; a missing one means this
+                // isn't a corrupt-cache situation, so don't mask the real error.
+                let truth_present =
+                    truth_root.join("log").is_dir() || truth_root.join("objects").is_dir();
+                if !truth_present {
+                    return Err(first);
+                }
+                eprintln!(
+                    "[vault] open at {db_path:?} failed ({first}); derived db looks corrupt — \
+                     rebuilding it from the append-only log"
+                );
+                for sidecar in db_sidecar_paths(db_path) {
+                    let _ = std::fs::remove_file(&sidecar);
+                }
+                Self::open_split(truth_root, db_path, device_id).map_err(|second| {
+                    MedmeError::Other(format!(
+                        "vault open failed and rebuilding the db from the log also failed \
+                         (the log/objects themselves may be unreadable): {second}"
+                    ))
+                })
+            }
+        }
+    }
+
+    /// [`Vault::open_with_device_id`] with the corrupt-db tolerance of
+    /// [`Vault::open_split_resilient`] (db lives at `<root>/medme.db`).
+    pub fn open_with_device_id_resilient(
+        root: &Path,
+        device_id: &str,
+    ) -> Result<Vault, MedmeError> {
+        Self::open_split_resilient(root, &root.join("medme.db"), device_id)
     }
 
     /// Shared open logic for [`Vault::open`], [`Vault::open_with_device_id`] and
@@ -379,6 +452,63 @@ mod tests {
             v.search("RebuiltGlucoseNeedle", 10).unwrap().len(),
             1,
             "search index rebuilt from log + CAS"
+        );
+    }
+
+    /// (c) A CORRUPT db — not merely a deleted one, but a torn/half-synced file
+    /// a cloud client can leave behind — must not brick the vault. A plain
+    /// `open_split` errors on it; `open_split_resilient` detects that, wipes the
+    /// derived db, and rebuilds it from the truth log. This is the realistic
+    /// cloud-folder scenario behind #51 (the app otherwise `.expect()`s the open
+    /// and dies with no recourse).
+    #[test]
+    fn resilient_open_recovers_from_corrupt_db() {
+        let truth = tempfile::tempdir().unwrap();
+        let db_home = tempfile::tempdir().unwrap();
+        let db_path = db_home.path().join("medme.db");
+
+        {
+            let v = Vault::open_split(truth.path(), &db_path, "deviceX").unwrap();
+            seed_split_doc(&v, "labs.txt", "CorruptRecoveryNeedle");
+            assert_eq!(v.debug_count("document"), 1);
+        } // close the sqlite connection before scribbling on the file
+
+        // Overwrite the db with garbage; a plain open must now fail.
+        std::fs::write(&db_path, b"not a sqlite database - torn cloud-sync garbage").unwrap();
+        assert!(
+            Vault::open_split(truth.path(), &db_path, "deviceX").is_err(),
+            "sanity: a corrupt db makes the plain open fail"
+        );
+
+        // Resilient open wipes the corrupt db and rebuilds from the log alone.
+        let v = Vault::open_split_resilient(truth.path(), &db_path, "deviceX").unwrap();
+        assert_eq!(
+            v.debug_count("document"),
+            1,
+            "document rebuilt from the truth log after corrupt-db recovery"
+        );
+        assert_eq!(v.debug_count("source_file"), 1);
+        assert_eq!(
+            v.search("CorruptRecoveryNeedle", 10).unwrap().len(),
+            1,
+            "search index rebuilt after corrupt-db recovery"
+        );
+    }
+
+    /// A truly unreadable truth (no log/objects rebuild can help) is NOT masked:
+    /// with no truth present, `open_split_resilient` returns the original error
+    /// rather than pretending to recover.
+    #[test]
+    fn resilient_open_does_not_mask_absent_truth() {
+        // Point truth at a path that exists as a FILE, so create_dir_all in the
+        // open path fails and there is no log/objects dir to rebuild from.
+        let tmp = tempfile::tempdir().unwrap();
+        let not_a_dir = tmp.path().join("truth_is_a_file");
+        std::fs::write(&not_a_dir, b"x").unwrap();
+        let db_path = tmp.path().join("medme.db");
+        assert!(
+            Vault::open_split_resilient(&not_a_dir, &db_path, "deviceX").is_err(),
+            "an unreadable truth surfaces an error, not a false recovery"
         );
     }
 }
