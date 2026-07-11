@@ -88,11 +88,16 @@ fn fmt_date(d: Option<chrono::DateTime<chrono::Utc>>) -> Option<String> {
 /// 为图片/DICOM 原件生成内嵌预览块;PDF 及其他类型不内嵌(仅保留文字与文件名),
 /// 避免额外的解码/渲染成本。
 ///
-/// 影像(DICOM)导出的是“轻档 · 关键切片”(014 §4):把该检查的**锚点切片**用
-/// `dicom::render_png` 渲成 PNG 内嵌,配一句“完整序列见分享”的说明,像胶片一样能打印。
-/// 渲染务必稳健:遇到不支持的压缩(render_png 失败)或读盘失败时**降级为一行说明**,
-/// 绝不因单条影像中断整份导出。
-fn render_preview(vault: &Vault, sf: &SourceFile) -> Result<Option<String>, String> {
+/// 影像(DICOM)导出的是“轻档 · 关键切片”(014 §4):把该检查的**锚点切片**经注入式
+/// `render_dicom_png`(见 [`crate::DicomPngRenderer`])渲成 PNG 内嵌,配一句“完整序列见
+/// 分享”的说明,像胶片一样能打印。桌面把该渲染器指向隔离子进程(GHSA-24px),故本函数
+/// 在主进程内绝不解码压缩像素。渲染务必稳健:遇到不支持的压缩(渲染器返回 `None`)或读盘
+/// 失败时**降级为一行说明**,绝不因单条影像中断整份导出。
+fn render_preview(
+    vault: &Vault,
+    sf: &SourceFile,
+    render_dicom_png: crate::DicomPngRenderer,
+) -> Result<Option<String>, String> {
     if sf.mime_type.starts_with("image/") {
         let bytes = std::fs::read(vault.root_join(&sf.storage_path)).map_err(|e| e.to_string())?;
         let b64 = B64.encode(&bytes);
@@ -106,10 +111,11 @@ fn render_preview(vault: &Vault, sf: &SourceFile) -> Result<Option<String>, Stri
         )));
     }
     if sf.mime_type == "application/dicom" {
-        // 读盘或渲染失败都降级为说明,不中断导出。
+        // 读盘或渲染失败都降级为说明,不中断导出。渲染经注入器(桌面=隔离子进程,
+        // GHSA-24px),本进程不碰编解码器。
         let png = std::fs::read(vault.root_join(&sf.storage_path))
             .ok()
-            .and_then(|bytes| dicom::render_png(&bytes).ok());
+            .and_then(|bytes| render_dicom_png(&bytes));
         return Ok(Some(match png {
             Some(png) => format!(
                 "<figure class=\"imaging\"><img class=\"preview\" src=\"data:image/png;base64,{}\" alt=\"影像关键切片\"><figcaption class=\"caption\">影像:关键切片(完整序列见分享)</figcaption></figure>\n",
@@ -143,7 +149,13 @@ fn format_patient_line(p: &pipeline::PatientProfile) -> String {
 }
 
 /// 构建整条时间线的自包含导出 HTML。返回 `(html, 记录数)`。
-pub fn build_timeline_html(vault: &Vault) -> Result<(String, i64), String> {
+///
+/// `render_dicom_png` 是注入式 DICOM→PNG 渲染器(见 [`crate::DicomPngRenderer`]):
+/// 桌面必须传入子进程隔离版(GHSA-24px),使本函数在主进程内绝不解码压缩像素。
+pub fn build_timeline_html(
+    vault: &Vault,
+    render_dicom_png: crate::DicomPngRenderer,
+) -> Result<(String, i64), String> {
     let records = gather_records(vault)?;
     let profile = pipeline::patient_profile(vault).map_err(|e| e.to_string())?;
 
@@ -165,7 +177,7 @@ pub fn build_timeline_html(vault: &Vault) -> Result<(String, i64), String> {
             (None, _) => "无日期".to_string(),
         };
 
-        let preview = render_preview(vault, sf)?;
+        let preview = render_preview(vault, sf, render_dicom_png)?;
 
         body.push_str("<section class=\"record\">\n");
         body.push_str(&format!(
@@ -283,7 +295,8 @@ mod tests {
             })
             .unwrap();
 
-        let (html, count) = build_timeline_html(&vault).unwrap();
+        let (html, count) =
+            build_timeline_html(&vault, &crate::render_dicom_png_in_process).unwrap();
         assert_eq!(count, 1);
         // 转义生效:原始 <script> 标签不应逐字出现在输出里
         assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
@@ -320,11 +333,73 @@ mod tests {
             })
             .unwrap();
 
-        let (html, count) = build_timeline_html(&vault).unwrap();
+        let (html, count) =
+            build_timeline_html(&vault, &crate::render_dicom_png_in_process).unwrap();
         assert_eq!(count, 1);
         // 关键切片 PNG 已内嵌,配“完整序列见分享”说明。
         assert!(html.contains("data:image/png;base64,"));
         assert!(html.contains("关键切片"));
+    }
+
+    /// Imports a DICOM instance and files it as an imaging document. Shared by the
+    /// decoder-injection seam tests below.
+    fn vault_with_one_dicom(dir: &std::path::Path) -> Vault {
+        let vault = Vault::open(dir).unwrap();
+        let dcm = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/demo-dataset/dicom/CT_small.dcm"
+        ))
+        .unwrap();
+        let imp = vault
+            .import("CT_small.dcm", "application/dicom", &dcm)
+            .unwrap();
+        vault
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::ImagingReport,
+                doc_date: Some(chrono::Utc::now()),
+                doc_date_end: None,
+                title: Some("头颅CT".into()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        vault
+    }
+
+    #[test]
+    fn dicom_preview_comes_only_from_the_injected_renderer() {
+        // GHSA-24px seam: the export must obtain every DICOM preview PNG from the
+        // injected renderer (which desktop points at an isolated subprocess), never
+        // by calling an in-crate codec itself. Inject a sentinel renderer whose
+        // bytes could not come from a real PNG encoder; if those exact bytes land in
+        // the export, the decode went through the seam and nowhere else.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = vault_with_one_dicom(dir.path());
+        let sentinel: Vec<u8> = b"INJECTED-NOT-A-REAL-PNG".to_vec();
+        let (html, count) = build_timeline_html(&vault, &|_| Some(sentinel.clone())).unwrap();
+        assert_eq!(count, 1);
+        assert!(
+            html.contains(&format!("data:image/png;base64,{}", B64.encode(&sentinel))),
+            "the injected renderer's bytes must be what the export embeds"
+        );
+    }
+
+    #[test]
+    fn dicom_export_degrades_when_injected_renderer_returns_none() {
+        // Behavior preservation: an unsupported/failed decode (renderer → None, as a
+        // crashed/killed subprocess reports) must degrade to the existing one-line
+        // note, exactly like the pre-injection unsupported-transfer-syntax path —
+        // never abort the whole export.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = vault_with_one_dicom(dir.path());
+        let (html, count) = build_timeline_html(&vault, &|_| None).unwrap();
+        assert_eq!(count, 1);
+        assert!(!html.contains("data:image/png;base64,"), "no PNG when None");
+        assert!(
+            html.contains("不支持的压缩格式"),
+            "degrades to the text note"
+        );
     }
 
     #[test]
@@ -334,7 +409,7 @@ mod tests {
         // script.
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path()).unwrap();
-        let (html, _) = build_timeline_html(&vault).unwrap();
+        let (html, _) = build_timeline_html(&vault, &crate::render_dicom_png_in_process).unwrap();
         assert!(html.contains(
             "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'none'; form-action 'none'; base-uri 'none'\">"
         ));
@@ -357,7 +432,8 @@ mod tests {
     fn handles_empty_vault() {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path()).unwrap();
-        let (html, count) = build_timeline_html(&vault).unwrap();
+        let (html, count) =
+            build_timeline_html(&vault, &crate::render_dicom_png_in_process).unwrap();
         assert_eq!(count, 0);
         assert!(html.contains("本导出由 MedMe 生成"));
     }

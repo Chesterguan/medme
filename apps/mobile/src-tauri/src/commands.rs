@@ -439,7 +439,13 @@ pub fn create_share(
 ) -> Result<ShareResult, String> {
     let v = lock(&state)?;
     let days = expires_days.unwrap_or(5);
-    let (html, passphrase, record_count) = medme_share::share::build_encrypted_share(&v, days)?;
+    // 移动端 Android 构建把 `dicom` 的 C/C++ `codecs` 关掉,进程内解码不含 RCE 面
+    // (GHSA-24px 仅影响链接了 codecs 的桌面),故直接注入进程内渲染器。
+    let (html, passphrase, record_count) = medme_share::share::build_encrypted_share(
+        &v,
+        days,
+        &medme_share::render_dicom_png_in_process,
+    )?;
     let byte_size = html.len() as i64;
     let sha256 = core_model::cas::sha256_hex(html.as_bytes());
 

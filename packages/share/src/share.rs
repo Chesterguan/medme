@@ -77,9 +77,15 @@ fn decide_imaging_tier(study_bytes: usize, already_embedded: usize) -> ImagingTi
 }
 
 /// 构建加密分享 HTML。返回 `(html, 分组后的口令, 记录数)`。
+///
+/// `render_dicom_png` 是注入式 DICOM→PNG 渲染器(见 [`crate::DicomPngRenderer`]):
+/// 仅在影像因体积上限降级为「锚点切片 PNG」时才会被调用。桌面必须传入子进程隔离版
+/// (GHSA-24px),使本函数在主进程内绝不解码压缩像素;移动端可传
+/// [`crate::render_dicom_png_in_process`]。
 pub fn build_encrypted_share(
     v: &Vault,
     expires_days: u32,
+    render_dicom_png: crate::DicomPngRenderer,
 ) -> Result<(String, String, i64), String> {
     let records = crate::export::gather_records(v)?;
     let profile = pipeline::patient_profile(v).map_err(|e| e.to_string())?;
@@ -144,9 +150,10 @@ pub fn build_encrypted_share(
                 ImagingTier::PngFallback { by_total } => {
                     degraded.push(title.clone());
                     // 锚点切片(第一张)渲成 PNG;不支持的压缩则连 PNG 也没有,只留说明。
+                    // 经注入渲染器解码(桌面=隔离子进程,GHSA-24px),本进程不碰编解码器。
                     let png = slices
                         .first()
-                        .and_then(|b| dicom::render_png(b).ok())
+                        .and_then(|b| render_dicom_png(b))
                         .map(|p| format!("data:image/png;base64,{}", B64.encode(&p)));
                     let note = if by_total {
                         "为控制分享文件体积,本影像未内嵌完整序列(整份已达上限并降级);如需诊断级请当面出示或用托管分享(后续)。".to_string()
@@ -1017,7 +1024,8 @@ mod tests {
             })
             .unwrap();
 
-        let (html, pass, n) = build_encrypted_share(&vault, 5).unwrap();
+        let (html, pass, n) =
+            build_encrypted_share(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
         assert_eq!(n, 1);
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.contains("id=\"share-data\"")); // blob 移进非执行数据节点
@@ -1081,7 +1089,8 @@ mod tests {
             })
             .unwrap();
 
-        let (html, pass, _n) = build_encrypted_share(&vault, 5).unwrap();
+        let (html, pass, _n) =
+            build_encrypted_share(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
 
         // 取出 CSP meta 内容。
         let marker = "Content-Security-Policy\" content=\"";
@@ -1149,7 +1158,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path()).unwrap();
         vault.import("a.txt", "text/plain", b"x").unwrap();
-        let (html, _pass, _n) = build_encrypted_share(&vault, 5).unwrap();
+        let (html, _pass, _n) =
+            build_encrypted_share(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
 
         assert!(html.contains("function isDataImage"), "validator present");
         assert!(html.contains("isDataImage(img)"), "images[] sink validated");
@@ -1210,7 +1220,8 @@ mod tests {
             })
             .unwrap();
 
-        let (html, pass, n) = build_encrypted_share(&vault, 7).unwrap();
+        let (html, pass, n) =
+            build_encrypted_share(&vault, 7, &crate::render_dicom_png_in_process).unwrap();
         assert_eq!(n, 1);
         // 自包含:内联 dicom-parser + 查看器入口都在 HTML 内。
         assert!(html.contains("dicomParser") || html.contains("dicom-parser"));
