@@ -30,8 +30,6 @@ export const api = {  listTimelineGrouped: () => invoke<TimelineGroup[]>("list_t
     invoke<ArrayBuffer>("decode_dicom_frame", { sourceFileId, frameIndex }),
   getImagingInstances: (documentId: number) =>
     invoke<ImagingInstance[]>("get_imaging_instances", { documentId }),
-  exportVault: (destPath: string) =>
-    invoke<ExportSummary>("export_vault", { destPath }),
   // 安全:保存位置由 Rust 侧原生「保存」对话框选定并直接写入——路径绝不经由 webview
   // 传入(见 GHSA-gmg4)。写入后端返回含写入路径的结果;用户取消对话框返回 null。
   exportTimelineHtml: () =>

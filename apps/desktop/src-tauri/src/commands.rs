@@ -431,15 +431,10 @@ pub fn decode_dicom_frame(
     Ok(tauri::ipc::Response::new(wire))
 }
 
-#[tauri::command]
-pub fn export_vault(_state: State<AppState>, _dest_path: String) -> Result<ExportSummary, String> {
-    // C2/后续:真正打包 objects/ + JSON 清单。此处占位返回 0,避免未实现命令。
-    Ok(ExportSummary {
-        file_count: 0,
-        byte_size: 0,
-        path: String::new(),
-    })
-}
+// 注:整库备份(打包 objects/ + JSON 清单,数据可携带)尚未实现。此前这里有个
+// `export_vault` 占位命令,会**谎报成功**(返回 file_count:0 的 Ok),一旦被调用
+// 就是个「假备份」地雷。它没有接任何 UI,故直接移除入口(命令 + api 绑定),
+// 待真正设计备份/导出 UI 时再实现真打包,不留会撒谎的 stub(#62)。
 
 /// 导出 v1:把整条时间线渲染成自包含 HTML 写到用户在原生保存对话框选定的位置(见
 /// `medme_share::export::build_timeline_html`)。可在任意浏览器打开、原生渲染中文,
