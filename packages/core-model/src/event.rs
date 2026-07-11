@@ -6,8 +6,16 @@
 //! independent of any particular SQLite database.
 
 use crate::MedmeError;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// Genesis `prev_hash` for the first entry of a log segment: 64 hex zeros. A
+/// well-formed chain therefore always starts here, so a segment whose first
+/// entry's `prev_hash` is anything else has been truncated at the head.
+pub const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Stable reference to a document via its source file's content hash.
 /// v0.1 has one document per source file (`UNIQUE(source_file_id)`), so the
@@ -84,6 +92,16 @@ pub enum Event {
 
 /// One line in the append-only log: an `Event` plus the envelope needed for
 /// ordering, dedup, and (future) sync.
+///
+/// `prev_hash` + `mac` make the synced log tamper-evident and authenticated
+/// (advisory GHSA-m96x). `prev_hash` chains each entry to the previous one in
+/// the SAME segment (sha256 of the previous entry's canonical bytes; genesis =
+/// [`GENESIS_HASH`]) so insert/delete/reorder are detectable. `mac` is an
+/// HMAC-SHA256 over the entry's canonical bytes keyed by the per-vault secret,
+/// so a shared-folder writer without the key cannot forge or tamper an entry
+/// undetected. Both are `Option` and `#[serde(default)]` so legacy logs written
+/// before this change still deserialize (they migrate on open — see
+/// `log::EventLog::migrate_and_seal`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     /// sha256 of the canonical JSON of `event` alone (not this envelope) —
@@ -94,9 +112,22 @@ pub struct LogEntry {
     pub device_id: String,
     #[serde(flatten)]
     pub event: Event,
+    /// sha256 of the previous entry's canonical bytes in this segment
+    /// (`GENESIS_HASH` for the first). `None` only for a not-yet-migrated
+    /// legacy entry.
+    #[serde(default)]
+    pub prev_hash: Option<String>,
+    /// HMAC-SHA256 (hex) over this entry's canonical bytes, keyed by the
+    /// per-vault secret. `None` when written without a key (chain-only mode)
+    /// or by a legacy build.
+    #[serde(default)]
+    pub mac: Option<String>,
 }
 
 impl LogEntry {
+    /// Build an UNSEALED entry (`prev_hash`/`mac` unset). Sealing — computing
+    /// the chain link and MAC — happens at append time in
+    /// `log::EventLog::append`, which knows the segment tail and the key.
     pub fn new(seq: i64, ts: String, device_id: String, event: Event) -> Result<Self, MedmeError> {
         Ok(LogEntry {
             event_id: event_id(&event)?,
@@ -104,7 +135,77 @@ impl LogEntry {
             ts,
             device_id,
             event,
+            prev_hash: None,
+            mac: None,
         })
+    }
+
+    /// THE canonical serialization of the authenticated fields — the single
+    /// source of bytes for BOTH the chain hash and the MAC, so the two can
+    /// never drift. Serde emits `Canonical`'s fields in declaration order (the
+    /// same determinism `event_id` already relies on), giving a stable,
+    /// reproducible byte string. A missing `prev_hash` folds to `GENESIS_HASH`
+    /// so a legacy entry hashes identically before and after migration.
+    pub(crate) fn canonical_bytes(&self) -> Result<Vec<u8>, MedmeError> {
+        #[derive(Serialize)]
+        struct Canonical<'a> {
+            seq: i64,
+            ts: &'a str,
+            device_id: &'a str,
+            prev_hash: &'a str,
+            event: &'a Event,
+        }
+        let bytes = serde_json::to_vec(&Canonical {
+            seq: self.seq,
+            ts: &self.ts,
+            device_id: &self.device_id,
+            prev_hash: self.prev_hash.as_deref().unwrap_or(GENESIS_HASH),
+            event: &self.event,
+        })?;
+        Ok(bytes)
+    }
+
+    /// The chain link this entry contributes: sha256 of its canonical bytes.
+    /// The next entry in the segment stores this as its `prev_hash`.
+    pub(crate) fn chain_hash(&self) -> Result<String, MedmeError> {
+        Ok(crate::cas::sha256_hex(&self.canonical_bytes()?))
+    }
+
+    /// HMAC-SHA256 (hex) of this entry's canonical bytes under `key`.
+    pub(crate) fn compute_mac(&self, key: &[u8]) -> Result<String, MedmeError> {
+        // `new_from_slice` only errors on key lengths HMAC can't accept; HMAC
+        // accepts ANY length (it hashes/pads), so this never fails.
+        let mut mac =
+            HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts a key of any length");
+        mac.update(&self.canonical_bytes()?);
+        Ok(hex(&mac.finalize().into_bytes()))
+    }
+
+    /// Constant-time verify of `self.mac` against a freshly computed MAC over
+    /// the canonical bytes. `false` if the MAC is absent, malformed, or wrong.
+    pub(crate) fn verify_mac(&self, key: &[u8]) -> Result<bool, MedmeError> {
+        let Some(stored) = self.mac.as_deref() else {
+            return Ok(false);
+        };
+        let Some(tag) = hex_decode(stored) else {
+            return Ok(false);
+        };
+        let mut mac =
+            HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts a key of any length");
+        mac.update(&self.canonical_bytes()?);
+        Ok(mac.verify_slice(&tag).is_ok())
+    }
+
+    /// Stamp `prev_hash` and (when a key is present) `mac` onto this entry,
+    /// making it a sealed, verifiable log line. Called by `EventLog::append`
+    /// with the segment's tail hash and the vault key, and by migration.
+    pub(crate) fn seal(&mut self, prev_hash: String, key: Option<&[u8]>) -> Result<(), MedmeError> {
+        self.prev_hash = Some(prev_hash);
+        self.mac = match key {
+            Some(k) => Some(self.compute_mac(k)?),
+            None => None,
+        };
+        Ok(())
     }
 }
 
@@ -116,6 +217,26 @@ fn event_id(event: &Event) -> Result<String, MedmeError> {
     let mut h = Sha256::new();
     h.update(&bytes);
     Ok(format!("{:x}", h.finalize()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Decode a lowercase/uppercase hex string to bytes; `None` if it isn't valid
+/// even-length hex (a malformed stored MAC then simply fails verification).
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -153,5 +274,77 @@ mod tests {
         assert_eq!(back.event_id, entry.event_id);
         assert_eq!(back.seq, entry.seq);
         assert_eq!(back.event, entry.event);
+    }
+
+    /// A truly legacy line (no `prev_hash`/`mac` keys at all) still parses,
+    /// with both folding to `None` via `#[serde(default)]`.
+    #[test]
+    fn legacy_entry_without_prev_hash_or_mac_parses() {
+        let legacy = r#"{"event_id":"x","seq":1,"ts":"2024-01-01T00:00:00Z","device_id":"dev1","type":"FileImported","content_hash":"abc","original_name":"a.pdf","mime_type":"application/pdf","byte_size":3,"imported_at":"2024-01-01T00:00:00Z"}"#;
+        let e: LogEntry = serde_json::from_str(legacy).unwrap();
+        assert!(e.prev_hash.is_none());
+        assert!(e.mac.is_none());
+    }
+
+    const KEY: &[u8] = &[7u8; 32];
+
+    fn entry(seq: i64) -> LogEntry {
+        LogEntry::new(
+            seq,
+            "2024-01-01T00:00:00Z".into(),
+            "dev1".into(),
+            imported(seq),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn canonical_bytes_are_deterministic_and_prev_hash_sensitive() {
+        let mut a = entry(1);
+        a.prev_hash = Some(GENESIS_HASH.to_string());
+        let mut b = entry(1);
+        b.prev_hash = Some(GENESIS_HASH.to_string());
+        assert_eq!(a.canonical_bytes().unwrap(), b.canonical_bytes().unwrap());
+        // Changing prev_hash changes the canonical bytes (so the chain links).
+        b.prev_hash = Some("f".repeat(64));
+        assert_ne!(a.canonical_bytes().unwrap(), b.canonical_bytes().unwrap());
+        // A missing prev_hash folds to GENESIS_HASH — identical bytes.
+        let mut c = entry(1);
+        c.prev_hash = None;
+        assert_eq!(a.canonical_bytes().unwrap(), c.canonical_bytes().unwrap());
+    }
+
+    #[test]
+    fn mac_round_trips_and_detects_tamper() {
+        let mut e = entry(1);
+        e.seal(GENESIS_HASH.to_string(), Some(KEY)).unwrap();
+        assert!(e.prev_hash.is_some() && e.mac.is_some());
+        assert!(e.verify_mac(KEY).unwrap(), "fresh MAC verifies");
+
+        // Wrong key fails.
+        assert!(!e.verify_mac(&[9u8; 32]).unwrap());
+
+        // Tamper the event content → MAC no longer verifies (mac field stale).
+        let mut tampered = e.clone();
+        tampered.event = imported(999);
+        assert!(
+            !tampered.verify_mac(KEY).unwrap(),
+            "tampered content fails MAC"
+        );
+
+        // Absent / malformed stored MAC fails cleanly (no panic).
+        let mut nomac = e.clone();
+        nomac.mac = None;
+        assert!(!nomac.verify_mac(KEY).unwrap());
+        nomac.mac = Some("nothex!!".into());
+        assert!(!nomac.verify_mac(KEY).unwrap());
+    }
+
+    #[test]
+    fn seal_without_key_sets_chain_but_no_mac() {
+        let mut e = entry(1);
+        e.seal(GENESIS_HASH.to_string(), None).unwrap();
+        assert_eq!(e.prev_hash.as_deref(), Some(GENESIS_HASH));
+        assert!(e.mac.is_none(), "chain-only seal leaves MAC unset");
     }
 }

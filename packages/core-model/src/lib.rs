@@ -25,6 +25,12 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 
+/// Minimum accepted per-vault MAC key length, in bytes. HMAC-SHA256's block is
+/// 32 bytes; a key at least this long carries full-strength entropy, so shorter
+/// keys (an empty or truncated secret) are rejected at the `open_*_with_key`
+/// boundary rather than silently padded and treated as "authenticated".
+const MIN_MAC_KEY_LEN: usize = 32;
+
 /// Truth = `objects/` (CAS) + `log/` (append-only event log).
 /// `medme.db` is a derived cache, materialized by replaying the log; it can
 /// be deleted and rebuilt (see `materialize::Vault::rebuild_from_log`).
@@ -47,7 +53,7 @@ impl Vault {
     /// id and write to the SAME per-device log segment — defeating the
     /// conflict-free per-device segmentation.
     pub fn open(root: &Path) -> Result<Vault, MedmeError> {
-        Self::open_inner(root, &root.join("medme.db"), None)
+        Self::open_inner(root, &root.join("medme.db"), None, None)
     }
 
     /// Like [`Vault::open`], but forces `device_id` to the given machine-local
@@ -59,7 +65,7 @@ impl Vault {
     /// segment. Existing segments (written under whatever id) are untouched and
     /// still read back by `read_all`.
     pub fn open_with_device_id(root: &Path, device_id: &str) -> Result<Vault, MedmeError> {
-        Self::open_inner(root, &root.join("medme.db"), Some(device_id))
+        Self::open_inner(root, &root.join("medme.db"), Some(device_id), None)
     }
 
     /// Open a vault whose **truth** (`objects/` + `log/`) lives under
@@ -81,7 +87,39 @@ impl Vault {
         db_path: &Path,
         device_id: &str,
     ) -> Result<Vault, MedmeError> {
-        Self::open_inner(truth_root, db_path, Some(device_id))
+        Self::open_inner(truth_root, db_path, Some(device_id), None)
+    }
+
+    /// Like [`Vault::open`], but with the per-vault MAC `key` injected so the
+    /// append-only log is authenticated (advisory GHSA-m96x): every appended
+    /// entry gets an HMAC-SHA256 tag, legacy entries are sealed on open, and
+    /// replay quarantines forged/tampered entries. Without a key the other
+    /// constructors run in chain-only mode (structural tamper-EVIDENCE, no
+    /// authentication) so existing callers keep working during the app-layer
+    /// rollout (keychain storage + QR key distribution) that follows this PR.
+    pub fn open_with_key(root: &Path, key: &[u8]) -> Result<Vault, MedmeError> {
+        Self::open_inner(root, &root.join("medme.db"), None, Some(key))
+    }
+
+    /// [`Vault::open_with_device_id`] plus the injected MAC `key` — the shared
+    /// cloud-folder, multi-device case with an authenticated log.
+    pub fn open_with_device_id_and_key(
+        root: &Path,
+        device_id: &str,
+        key: &[u8],
+    ) -> Result<Vault, MedmeError> {
+        Self::open_inner(root, &root.join("medme.db"), Some(device_id), Some(key))
+    }
+
+    /// [`Vault::open_split`] plus the injected MAC `key` — the iOS split
+    /// (truth on iCloud, db local) case with an authenticated log.
+    pub fn open_split_with_key(
+        truth_root: &Path,
+        db_path: &Path,
+        device_id: &str,
+        key: &[u8],
+    ) -> Result<Vault, MedmeError> {
+        Self::open_inner(truth_root, db_path, Some(device_id), Some(key))
     }
 
     /// Shared open logic for [`Vault::open`], [`Vault::open_with_device_id`] and
@@ -95,7 +133,20 @@ impl Vault {
         truth_root: &Path,
         db_path: &Path,
         device_id: Option<&str>,
+        key: Option<&[u8]>,
     ) -> Result<Vault, MedmeError> {
+        // Reject a low-entropy MAC key at the boundary. HMAC accepts any key
+        // length (it pads), so an empty/short per-vault key would run the log
+        // "authenticated" with near-zero entropy — worse than an honest
+        // chain-only open. Fail loudly before touching the vault instead.
+        if let Some(k) = key {
+            if k.len() < MIN_MAC_KEY_LEN {
+                return Err(MedmeError::Other(format!(
+                    "vault MAC key too short: {} bytes (need at least {MIN_MAC_KEY_LEN}) — refusing to run authenticated with a low-entropy key",
+                    k.len()
+                )));
+            }
+        }
         std::fs::create_dir_all(truth_root.join("objects"))?;
         std::fs::write(truth_root.join("VERSION"), "1")?;
         // The db may live outside `truth_root` (split mode); make sure its
@@ -108,7 +159,10 @@ impl Vault {
         schema::migrate(&conn)?;
         schema::ensure_meta_table(&conn)?;
         schema::ensure_imaging_instance_unique_index(&conn)?;
-        let log = log::EventLog::open(truth_root)?;
+        let mut log = log::EventLog::open(truth_root)?;
+        // Inject the MAC key BEFORE any migration/replay, so legacy entries are
+        // sealed with a MAC and the first replay verifies against the key.
+        log.set_key(key.map(|k| k.to_vec()));
 
         let mut vault = Vault {
             conn,
@@ -121,6 +175,12 @@ impl Vault {
             Some(id) => id.to_string(),
             None => vault.ensure_device_id()?,
         };
+
+        // Seal legacy (pre-GHSA-m96x) entries once: add the `prev_hash` chain
+        // and, when a key is present, the `mac`. Idempotent — a no-op on an
+        // already-sealed log. Must precede materialize so the replay below reads
+        // a verified log.
+        vault.log.migrate_and_seal()?;
 
         let log_is_empty = vault.log.is_empty()?;
         let has_existing_rows: i64 =
@@ -196,6 +256,31 @@ mod tests {
         };
         assert_eq!(id1, id2);
         assert!(!id1.is_empty());
+    }
+
+    #[test]
+    fn open_with_key_rejects_short_key_accepts_32_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Empty and undersized keys (1, 31 bytes) are rejected with a clear error
+        // BEFORE the vault is touched — HMAC would otherwise pad them and run
+        // "authenticated" on near-zero entropy.
+        for bad in [vec![], vec![7u8; 1], vec![7u8; 31]] {
+            let n = bad.len();
+            match Vault::open_with_key(dir.path(), &bad) {
+                Err(MedmeError::Other(msg)) => assert!(
+                    msg.contains("key too short"),
+                    "unexpected error for {n}-byte key: {msg}"
+                ),
+                Err(other) => {
+                    panic!("a {n}-byte key must be rejected with a clear error, got {other:?}")
+                }
+                Ok(_) => panic!("a {n}-byte key must be rejected, but the vault opened"),
+            }
+        }
+
+        // A full 32-byte key is accepted and opens the vault.
+        Vault::open_with_key(dir.path(), &[7u8; 32]).unwrap();
     }
 
     // ---- split truth-root / db-path (iCloud sync: truth on iCloud, db local) --
