@@ -80,7 +80,9 @@ pub struct DocumentDetail {
     pub ocr_backend: Option<String>,
 }
 
-#[derive(Serialize)]
+// Clone 是为了把导入结果作为 Tauri 事件负载(`import-results`)从 Rust 拖放处理器
+// 发给前端 —— Emitter::emit 要求 `Serialize + Clone`。
+#[derive(Serialize, Clone)]
 pub struct ImportOutcome {
     pub name: String,
     pub source_file_id: i64,

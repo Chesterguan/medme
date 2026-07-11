@@ -15,8 +15,9 @@ export const api = {  listTimelineGrouped: () => invoke<TimelineGroup[]>("list_t
   search: (query: string, limit = 30) =>
     invoke<SearchResult[]>("search", { query, limit }),
   getDocument: (id: number) => invoke<DocumentDetail>("get_document", { id }),
-  importPaths: (paths: string[]) =>
-    invoke<ImportOutcome[]>("import_paths", { paths }),
+  // 安全:文件选择器在 Rust 侧弹出并直接导入用户所选文件——路径绝不经由 webview 传入
+  // (旧 import_paths 会信任任意前端路径,可被 XSS 用来读取任意文件)。返回逐个文件结果。
+  importViaDialog: () => invoke<ImportOutcome[]>("import_via_dialog"),
   // 一键「加载示例数据」(张建国):导入随应用打包的 demo-data/,返回处理的文件数。
   loadDemoData: () => invoke<number>("load_demo_data"),
   // 后端用 tauri::ipc::Response 返回原始字节(而非 Vec<u8> 序列化成 JSON number[]),
@@ -37,14 +38,17 @@ export const api = {  listTimelineGrouped: () => invoke<TimelineGroup[]>("list_t
     invoke<ShareResult>("create_share", { destPath, expiresDays }),
   getPatientProfile: () => invoke<PatientProfile>("get_patient_profile"),
   getInboxPath: () => invoke<string>("get_inbox_path"),
-  setInboxPath: (path: string) => invoke<void>("set_inbox_path", { path }),
+  // 收件箱文件夹由 Rust 侧原生「选择文件夹」对话框选择,返回新路径(取消则返回原路径)。
+  setInboxPath: () => invoke<string>("set_inbox_path"),
   openInbox: () => invoke<void>("open_inbox"),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   getVaultPath: () => invoke<string>("get_vault_path"),
-  // 更换保险箱位置:把现有病历搬到 newDir(指向云同步文件夹即可多设备同步),返回新路径。
-  setVaultPath: (newDir: string) => invoke<string>("set_vault_path", { newDir }),
+  // 更换保险箱位置:Rust 侧弹原生「选择文件夹」对话框,把现有病历搬到所选目录
+  //(指向云同步文件夹即可多设备同步),返回新路径(取消则返回原路径)。
+  setVaultPath: () => invoke<string>("set_vault_path"),
   getAuditLog: () => invoke<AuditEntry[]>("get_audit_log"),
-  writeTextFile: (path: string, contents: string) =>
-    invoke<void>("write_text_file", { path, contents }),
+  // 导出审计清单 CSV:内容由前端按审计条目生成,后端写入固定导出目录并返回写入路径。
+  exportAuditCsv: (contents: string) =>
+    invoke<string>("export_audit_csv", { contents }),
 };

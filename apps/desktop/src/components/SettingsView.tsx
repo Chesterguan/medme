@@ -9,7 +9,6 @@ import {
   CloudCog,
   Lock,
 } from "lucide-react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 
 export default function SettingsView({ onNav }: { onNav: (id: string) => void }) {
@@ -23,22 +22,14 @@ export default function SettingsView({ onNav }: { onNav: (id: string) => void })
     api.getInboxPath().then(setInboxPath).catch((e) => setError(String(e)));
   }, []);
 
-  // 更换保险箱位置:从原生「选择文件夹」对话框选一个目录(选云同步文件夹即可多设备同步),
-  // 后端会把现有病历整体搬过去(或在共享文件夹里与另一台设备合并),再返回新路径。
+  // 更换保险箱位置:后端(Rust)弹出原生「选择文件夹」对话框选一个目录(选云同步文件夹
+  // 即可多设备同步),把现有病历整体搬过去(或在共享文件夹里与另一台设备合并),返回新路径。
+  // 安全:路径来自后端原生对话框,不再由(可能被 XSS 污染的)webview 传入。
   async function changeLocation() {
     setError(null);
-    const picked = await open({
-      directory: true,
-      multiple: false,
-      title: "选择数据保险箱新位置",
-    }).catch((e) => {
-      setError(String(e));
-      return null;
-    });
-    if (!picked || Array.isArray(picked)) return;
     setRelocating(true);
     try {
-      const newPath = await api.setVaultPath(picked);
+      const newPath = await api.setVaultPath();
       setVaultPath(newPath);
     } catch (e) {
       setError(String(e));

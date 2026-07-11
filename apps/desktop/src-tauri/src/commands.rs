@@ -1,7 +1,10 @@
 use crate::dto::*;
 use core_model::{DocType, Document, Vault};
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 /// DocumentSummary + 影像检查切片数(imaging overhaul P1):影像 study 文档在时间线
@@ -23,6 +26,11 @@ pub struct AppState {
     /// 收件箱 notify 监听器,需要在 AppState 里存活,否则一超出作用域就会被 drop 从而
     /// 停止监听。setup() 里启动后写入;生命周期与 App 一致。
     pub inbox_watcher: Mutex<Option<notify::RecommendedWatcher>>,
+    /// SECURITY (GHSA-gmg4): allowlist of canonical file paths that MedMe itself just
+    /// wrote via a backend-driven flow (exported HTML / encrypted share / audit CSV).
+    /// `open_path` only opens the vault subtree or a path in here, so a compromised
+    /// webview can't turn `open_path` into a "launch any file/app on disk" primitive.
+    pub openable_paths: Mutex<HashSet<PathBuf>>,
 }
 
 // SECURITY/robustness: recover a poisoned lock instead of failing every command.
@@ -82,6 +90,33 @@ fn validate_dest_path(path: &str, allowed_ext: &[&str]) -> Result<std::path::Pat
         return Err(format!("拒绝:目标文件扩展名必须是 {allowed_ext:?} 之一"));
     }
     Ok(p)
+}
+
+/// SECURITY (GHSA-gmg4): record a file MedMe just wrote (export / share / audit CSV) as
+/// openable, so the corresponding "打开文件" button can hand it to `open_path` while
+/// arbitrary webview-named paths stay rejected. Stored canonicalized to match
+/// `open_path`'s canonical comparison.
+fn remember_openable(state: &State<AppState>, path: &std::path::Path) {
+    if let Ok(canon) = std::fs::canonicalize(path) {
+        let mut set = state
+            .openable_paths
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        set.insert(canon);
+    }
+}
+
+/// The app's exports directory (`<app_data_dir>/exports`), created on demand. Used as
+/// the fixed, backend-controlled destination for the audit CSV so `write`-style IPC no
+/// longer accepts a webview-supplied path.
+fn exports_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("exports");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
 }
 
 #[tauri::command]
@@ -164,33 +199,30 @@ pub fn get_document(state: State<AppState>, id: i64) -> Result<DocumentDetail, S
     })
 }
 
-#[tauri::command]
-pub fn import_paths(
-    state: State<AppState>,
-    paths: Vec<String>,
-) -> Result<Vec<ImportOutcome>, String> {
-    let v = lock(&state)?;
+/// Ingest a batch of files into the vault, one `ImportOutcome` per file (a single bad
+/// file is recorded as `failed` and never aborts the batch — same tolerance as
+/// `inbox::scan_inbox`).
+///
+/// SECURITY (GHSA-gmg4): this takes already-resolved `PathBuf`s from a TRUSTED source
+/// only — either the Rust-side native file picker (`import_via_dialog`) or the OS
+/// drag-drop event delivered to the Tauri core (`lib.rs` window handler). It is
+/// deliberately NOT a `#[tauri::command]`: the webview can no longer name an arbitrary
+/// absolute path (e.g. `~/.ssh/id_rsa`) to be read into the vault and later exfiltrated
+/// via `read_source_bytes`. The minimal `is_file()` guard rejects directories / device
+/// nodes / dangling paths before we touch them.
+pub(crate) fn ingest_files(v: &Vault, paths: &[PathBuf]) -> Vec<ImportOutcome> {
     let mut out = Vec::new();
-    for p in paths {
-        let path = std::path::Path::new(&p);
-        // SECURITY: these paths come from the native file picker / OS drag-drop, so we
-        // deliberately do NOT confine them to a directory (import-from-anywhere is the
-        // point). Minimal guard: reject anything that isn't an existing regular file
-        // before touching it, so a malicious `invoke` can't aim ingest at directories,
-        // device nodes, or dangling paths. Residual trust: whatever real file the user
-        // (or a crafted invoke) points at gets read into the vault.
+    for path in paths {
         if !path.is_file() {
             out.push(ImportOutcome {
-                name: p.clone(),
+                name: path.to_string_lossy().to_string(),
                 source_file_id: 0,
                 status: "failed".to_string(),
                 doc_type: None,
             });
             continue;
         }
-        // 单个文件失败不该拖垮整批 —— 记一条失败结果继续处理剩下的文件(与
-        // inbox.rs::scan_inbox 的容错方式一致),而不是 `?` 提前返回丢弃已成功的导入。
-        match ingest_guarded(&v, path) {
+        match ingest_guarded(v, path) {
             Ok(o) => {
                 let status = match o.status {
                     pipeline::IngestStatus::New => "new",
@@ -211,7 +243,7 @@ pub fn import_paths(
                 let name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| p.clone());
+                    .unwrap_or_else(|| path.to_string_lossy().to_string());
                 eprintln!("[import] ingest failed for {}: {e}", path.display());
                 out.push(ImportOutcome {
                     name,
@@ -222,6 +254,45 @@ pub fn import_paths(
             }
         }
     }
+    out
+}
+
+/// Import files the user picks in a native file dialog that is opened FROM RUST.
+///
+/// SECURITY (GHSA-gmg4): this replaces the old `import_paths(paths)` command, which
+/// trusted an arbitrary `Vec<String>` from the webview. In Tauri 2 any app command is
+/// invokable directly from the (potentially XSS'd) webview, so `import_paths` was an
+/// arbitrary-file-read primitive: `invoke('import_paths', { paths: ['~/.ssh/id_rsa'] })`
+/// then read the bytes back via `read_source_bytes`. Here the paths never originate in
+/// the webview — they come straight out of the OS picker into the backend, so the
+/// webview can no longer name a path to read. UX is unchanged: the user clicks "选择文件
+/// 导入" and sees the same native file picker.
+///
+/// `blocking_pick_files` must not run on the main thread; async commands run off the
+/// main thread on the async runtime, so this is safe (see the plugin docs).
+#[tauri::command]
+pub async fn import_via_dialog(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<ImportOutcome>, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("选择要导入的病历文件")
+        .add_filter(
+            "病历文件",
+            &["pdf", "png", "jpg", "jpeg", "tif", "tiff", "txt", "dcm"],
+        )
+        .blocking_pick_files();
+    let Some(files) = picked else {
+        return Ok(Vec::new()); // 用户取消对话框
+    };
+    let paths: Vec<PathBuf> = files
+        .into_iter()
+        .filter_map(|f| f.into_path().ok())
+        .collect();
+    let v = lock(&state)?;
+    let out = ingest_files(&v, &paths);
     v.rebuild_encounters().map_err(|e| e.to_string())?;
     Ok(out)
 }
@@ -384,6 +455,8 @@ pub fn export_timeline_html(
     let byte_size = html.len() as i64;
     let sha256 = core_model::cas::sha256_hex(html.as_bytes());
     std::fs::write(&dest, html).map_err(|e| e.to_string())?;
+    // 允许随后用「打开文件」按钮打开这份刚写出的导出(见 open_path 的 allowlist)。
+    remember_openable(&state, &dest);
     // 审计追踪:导出落盘成功后记入不可变事件日志(见 core-model::audit)。
     v.record_export("timeline_html", &sha256, record_count)
         .map_err(|e| e.to_string())?;
@@ -411,6 +484,8 @@ pub fn create_share(
     let byte_size = html.len() as i64;
     let sha256 = core_model::cas::sha256_hex(html.as_bytes());
     std::fs::write(&dest, html).map_err(|e| e.to_string())?;
+    // 允许随后用「打开文件」按钮打开这份刚写出的分享文件(见 open_path 的 allowlist)。
+    remember_openable(&state, &dest);
     let expires = (chrono::Utc::now() + chrono::Duration::days(days as i64)).to_rfc3339();
     // 审计追踪:分享文件落盘成功后记入不可变事件日志(见 core-model::audit)。
     v.record_share(&sha256, record_count, &expires)
@@ -447,18 +522,28 @@ pub fn get_inbox_path(app: tauri::AppHandle) -> String {
 /// 注意:不会重新定位正在运行的 notify watcher(仍监听旧目录),需重启应用才会
 /// 切到新目录监听;新路径下一次启动扫描/手动导入始终立即生效。
 #[tauri::command]
-pub fn set_inbox_path(
+pub async fn set_inbox_path(
     app: tauri::AppHandle,
-    state: State<AppState>,
-    path: String,
-) -> Result<(), String> {
-    let new_path = std::path::PathBuf::from(&path);
-    // SECURITY: the watch folder is user-chosen and can legitimately live anywhere, so
-    // we don't confine it to the vault. Minimal guard: require an absolute path and
-    // reject one that already exists as a non-directory, so a malicious invoke can't
-    // aim create_dir_all at a surprising relative/into-a-file location. Residual: this
-    // trusts the picker-driven directory choice (it only creates dirs; it does not read
-    // or clobber file contents).
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // SECURITY (GHSA-gmg4): the destination comes from a native FOLDER dialog opened
+    // from Rust, not from a webview-supplied string, so a compromised webview can no
+    // longer point `create_dir_all` / the watch folder at a surprising location.
+    let Some(folder) = app
+        .dialog()
+        .file()
+        .set_title("选择自动收件箱文件夹")
+        .blocking_pick_folder()
+    else {
+        // 用户取消:保持现状。
+        return Ok(crate::inbox::read_inbox_path(&app)
+            .to_string_lossy()
+            .to_string());
+    };
+    let new_path = folder.into_path().map_err(|e| e.to_string())?;
+    // Defense-in-depth: a native folder pick is already absolute + existing, but keep
+    // the checks so any future/non-native caller can't smuggle a relative/into-a-file
+    // path past us.
     if !new_path.is_absolute() {
         return Err("拒绝:收件箱路径必须是绝对路径".to_string());
     }
@@ -468,7 +553,7 @@ pub fn set_inbox_path(
     std::fs::create_dir_all(&new_path).map_err(|e| e.to_string())?;
     crate::inbox::write_inbox_path(&app, &new_path).map_err(|e| e.to_string())?;
     crate::inbox::scan_inbox(&app, &state);
-    Ok(())
+    Ok(new_path.to_string_lossy().to_string())
 }
 
 /// 在系统文件管理器中打开收件箱目录(不存在则先创建)。
@@ -481,17 +566,39 @@ pub fn open_inbox(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// 用系统默认程序打开任意文件/目录 —— 用于导出完成后一键在浏览器打开导出的 HTML。
+/// 用系统默认程序打开保险箱目录,或 MedMe 刚导出/分享/导出审计清单写出的文件
+/// (用于导出完成后一键在浏览器打开导出的 HTML)。
 #[tauri::command]
-pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    // SECURITY: this hands a path to the OS default handler (which can launch apps), so
-    // require it to actually exist before opening it — that removes the "blind-open an
-    // arbitrary string" primitive. Residual trust: the frontend only calls this with
-    // the vault root or a file MedMe just exported to a user-chosen save location, so we
-    // deliberately do NOT confine it to the vault (that would break "open the HTML I
-    // just saved anywhere").
-    if !std::path::Path::new(&path).exists() {
-        return Err("拒绝:目标路径不存在".to_string());
+pub fn open_path(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    path: String,
+) -> Result<(), String> {
+    // SECURITY (GHSA-gmg4): this hands a path to the OS default handler, which can launch
+    // apps / open documents — a classic confused-deputy primitive. A compromised webview
+    // must NOT be able to `invoke('open_path', { path: '/Applications/...'} )` or open
+    // an arbitrary file. So we only open (a) the vault subtree (the "打开文件夹" button)
+    // or (b) a path MedMe itself just wrote through a backend flow (export / share /
+    // audit CSV, recorded in `openable_paths`). Everything else is rejected.
+    let canonical = std::fs::canonicalize(&path).map_err(|_| "拒绝:目标路径不存在".to_string())?;
+
+    let vault_root = {
+        let v = lock(&state)?;
+        std::fs::canonicalize(v.root()).ok()
+    };
+    let in_vault = vault_root
+        .as_ref()
+        .map(|root| canonical.starts_with(root))
+        .unwrap_or(false);
+    let is_openable = {
+        let set = state
+            .openable_paths
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        set.contains(&canonical)
+    };
+    if !in_vault && !is_openable {
+        return Err("拒绝:只能打开保险箱内或本应用刚导出的文件".to_string());
     }
     app.opener()
         .open_path(path, None::<String>)
@@ -566,14 +673,25 @@ pub fn get_vault_path(state: State<AppState>) -> Result<String, String> {
 ///
 /// 搬迁 → 持久化新位置 → 换掉 AppState 里的 Vault 并重建派生库,返回新路径。
 #[tauri::command]
-pub fn set_vault_path(
+pub async fn set_vault_path(
     app: tauri::AppHandle,
-    state: State<AppState>,
-    new_dir: String,
+    state: State<'_, AppState>,
 ) -> Result<String, String> {
-    // SECURITY: new_dir 来自原生「选择文件夹」对话框,但仍做基本校验 —— 要求绝对路径、
-    // 不含 `..`,已存在则必须是目录,避免恶意 invoke 把数据搬到意外/相对位置。
-    let target = std::path::PathBuf::from(&new_dir);
+    // SECURITY (GHSA-gmg4): the new location comes from a native FOLDER dialog opened
+    // from Rust, not a webview-supplied string — a compromised webview can no longer
+    // relocate the vault to an attacker-chosen path. Cancelling leaves the vault where
+    // it is. The absolute / no-`..` / existing-dir checks stay as defense-in-depth so
+    // any non-native caller still can't smuggle a surprising path past us.
+    let Some(folder) = app
+        .dialog()
+        .file()
+        .set_title("选择数据保险箱新位置")
+        .blocking_pick_folder()
+    else {
+        let v = lock(&state)?;
+        return Ok(v.root().to_string_lossy().to_string());
+    };
+    let target = folder.into_path().map_err(|e| e.to_string())?;
     if !target.is_absolute() {
         return Err("拒绝:新位置必须是绝对路径".to_string());
     }
@@ -608,15 +726,24 @@ pub fn get_audit_log(state: State<AppState>) -> Result<Vec<AuditEntryDto>, Strin
     Ok(entries.iter().map(AuditEntryDto::from).collect())
 }
 
-/// 把文本写到用户选择的路径 —— 目前仅用于审计视图「导出审计清单」(CSV)。
+/// 导出审计清单 CSV。内容由审计视图按不可变事件日志生成(纯应用数据,不含路径),
+/// 后端把它写进固定的导出目录并返回写入路径,供随后用「打开文件」按钮打开。
 #[tauri::command]
-pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
-    // SECURITY: this is the only raw text-write IPC command and is used solely by the
-    // audit view's "export audit CSV" (via the native save dialog). Constrain the
-    // JS-supplied target to an absolute `.csv` path (see validate_dest_path) so a
-    // malicious invoke can't turn this into an arbitrary-file write primitive.
-    let dest = validate_dest_path(&path, &["csv"])?;
-    std::fs::write(&dest, contents).map_err(|e| e.to_string())
+pub fn export_audit_csv(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    contents: String,
+) -> Result<String, String> {
+    // SECURITY (GHSA-gmg4): this replaces the old `write_text_file(path, contents)`,
+    // which took a webview-supplied destination and could be turned into an
+    // arbitrary-file write. The destination is now backend-controlled (the app's exports
+    // dir) — the webview only supplies app-generated CSV text, never a path.
+    let dir = exports_dir(&app)?;
+    let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let dest = dir.join(format!("MedMe审计清单-{ts}.csv"));
+    std::fs::write(&dest, contents).map_err(|e| e.to_string())?;
+    remember_openable(&state, &dest);
+    Ok(dest.to_string_lossy().to_string())
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import type { ImportOutcome } from "../types";
@@ -138,6 +139,9 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
     }
   };
 
+  // 拖放:只用 webview 事件驱动高亮动画;实际导入由 Rust 侧的拖放处理器完成(它拿到的
+  // 是 OS 可信路径),完成后发 `import-results` 事件带回逐个文件结果。安全:webview 不再
+  // 把(可能被 XSS 伪造的)路径传给后端读取。
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     getCurrentWebview()
@@ -149,8 +153,10 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
           setDragging(false);
         } else if (p.type === "drop") {
           setDragging(false);
-          const paths = p.paths ?? [];
-          if (paths.length) doImport(paths);
+          if ((p.paths ?? []).length) {
+            setBusy(true);
+            setError(null);
+          }
         }
       })
       .then((f) => {
@@ -162,17 +168,36 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const doImport = (paths: string[]) => {
+  // Rust 拖放处理器导入完成后带回的逐个文件结果(时间线刷新由 App 层的 vault-changed 负责)。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<ImportOutcome[]>("import-results", (event) => {
+      setResults(event.payload);
+      setBusy(false);
+    }).then((f) => {
+      unlisten = f;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 「选择文件导入」:后端(Rust)弹出原生文件选择器并直接导入所选文件,返回逐个文件结果。
+  const pickAndImport = async () => {
     setBusy(true);
     setError(null);
-    api
-      .importPaths(paths)
-      .then((r) => {
+    try {
+      const r = await api.importViaDialog();
+      if (r.length) {
         setResults(r);
         onImported();
-      })
-      .catch((e) => setError(String(e)))
-      .finally(() => setBusy(false));
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -230,6 +255,16 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
           </div>
           <div className="text-xs font-mono text-slate-400 mt-2">
             PDF · 图片(PNG / JPG / TIFF)· TXT · 原始文件永久保存,自动去重
+          </div>
+          <div className="mt-5">
+            <button
+              type="button"
+              onClick={pickAndImport}
+              disabled={busy}
+              className="inline-flex items-center gap-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait rounded-xl px-4 py-2.5 transition-colors cursor-pointer"
+            >
+              <FolderOpen className="w-4 h-4" /> 选择文件导入
+            </button>
           </div>
         </div>
 
