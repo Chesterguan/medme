@@ -1,31 +1,32 @@
 //! macOS on-device OCR via Apple **Vision** (`VNRecognizeTextRequest`) —
 //! offline, no model download, strong Chinese. PRIMARY recognizer on the macOS
 //! desktop build; `recognize` falls back to oar-ocr / PP-OCRv5 if Vision yields
-//! nothing or errors. Mirrors the proven iOS `OcrVision.swift`, but pure Rust
-//! via `objc2` so the desktop crate needs no Swift toolchain / link wiring.
+//! nothing or errors. Pure Rust via `objc2` (no Swift toolchain / link wiring).
+//!
+//! Decoding goes through Vision's own `initWithData:` (ImageIO/CIImage under
+//! the hood), so it accepts **every Apple-supported format incl. HEIC/HEIF**
+//! (iPhone photos) — not just what the Rust `image` crate can decode. Mirrors
+//! the iOS `OcrVision.swift` behavior (which decodes via `CGImageSource`).
 
 use crate::OcrOutcome;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::AnyThread;
-use objc2_core_foundation::{CFData, CFRetained};
-use objc2_core_graphics::{
-    CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
-};
-use objc2_foundation::{NSArray, NSDictionary, NSString};
+use objc2_foundation::{NSArray, NSData, NSDictionary, NSString};
 use objc2_vision::{
     VNImageOption, VNImageRequestHandler, VNRecognizeTextRequest, VNRequest,
     VNRequestTextRecognitionLevel,
 };
 
-/// Recognize text in already-decoded RGBA8 pixels (tightly packed) via Apple
-/// Vision. Returns joined lines + mean observation confidence (0..1).
-pub fn recognize_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<OcrOutcome> {
-    let cg = make_cgimage(width, height, rgba)?;
-    // SAFETY: standard Vision usage — build a text request, run it synchronously
-    // on the image, read observations. objc2 ref-counts all objects.
+/// Recognize text in raw encoded image bytes (JPEG/PNG/TIFF/HEIC/…) via Apple
+/// Vision. Returns lines joined top-to-bottom + mean observation confidence.
+pub fn recognize_bytes(image_bytes: &[u8]) -> Result<OcrOutcome> {
+    // SAFETY: standard Vision usage — VNImageRequestHandler decodes the NSData
+    // with ImageIO, then we run one synchronous text request and read the
+    // observations. objc2 ref-counts every object.
     unsafe {
+        let data = NSData::with_bytes(image_bytes);
         let request = VNRecognizeTextRequest::new();
         request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
         // Simplified + Traditional Chinese + English (labels/units often EN).
@@ -38,9 +39,9 @@ pub fn recognize_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<OcrOutcome
         request.setUsesLanguageCorrection(true);
 
         let options = NSDictionary::<VNImageOption, AnyObject>::new();
-        let handler = VNImageRequestHandler::initWithCGImage_options(
+        let handler = VNImageRequestHandler::initWithData_options(
             VNImageRequestHandler::alloc(),
-            &cg,
+            &data,
             &options,
         );
 
@@ -76,42 +77,5 @@ pub fn recognize_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<OcrOutcome
                 0.0
             },
         })
-    }
-}
-
-/// Build a CGImage from tightly-packed RGBA8 pixels (bytes_per_row = width*4).
-/// CFData copies the bytes, so the borrowed slice need not outlive the call.
-fn make_cgimage(width: u32, height: u32, rgba: &[u8]) -> Result<CFRetained<CGImage>> {
-    let expected = width as usize * height as usize * 4;
-    if rgba.len() < expected {
-        return Err(anyhow!(
-            "rgba buffer too small: {} < {expected}",
-            rgba.len()
-        ));
-    }
-    // SAFETY: CFDataCreate copies `len` bytes from a valid pointer; the rest is
-    // CoreGraphics object construction from that buffer.
-    unsafe {
-        let data = CFData::new(None, rgba.as_ptr(), expected as isize)
-            .context("CFDataCreate returned null")?;
-        let provider =
-            CGDataProvider::with_cf_data(Some(&data)).context("CGDataProvider from CFData")?;
-        let space = CGColorSpace::new_device_rgb().context("CGColorSpace device RGB")?;
-        // 8 bits/component, 32 bits/pixel, non-premultiplied alpha last (RGBA).
-        let bitmap = CGBitmapInfo(CGImageAlphaInfo::Last.0);
-        CGImage::new(
-            width as usize,
-            height as usize,
-            8,
-            32,
-            width as usize * 4,
-            Some(&space),
-            bitmap,
-            Some(&provider),
-            std::ptr::null(),
-            false,
-            CGColorRenderingIntent::RenderingIntentDefault,
-        )
-        .context("CGImage::new returned null")
     }
 }

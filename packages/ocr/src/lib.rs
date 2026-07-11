@@ -357,14 +357,12 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
     })
 }
 
-/// macOS: decode the bytes then run Apple Vision on the RGBA pixels.
+/// macOS: hand the raw bytes to Apple Vision, which decodes them via ImageIO
+/// (handles HEIC/HEIF iPhone photos + every Apple format, unlike the Rust
+/// `image` crate) and recognizes the text.
 #[cfg(target_os = "macos")]
 fn recognize_vision(image_bytes: &[u8]) -> Result<OcrOutcome> {
-    let dynamic =
-        decode_image_bounded(image_bytes).context("ocr::recognize(vision): decode image")?;
-    let rgba = dynamic.to_rgba8();
-    let (w, h) = (rgba.width(), rgba.height());
-    vision_macos::recognize_rgba(w, h, rgba.as_raw())
+    vision_macos::recognize_bytes(image_bytes)
 }
 
 /// Recognize text in image bytes. **macOS**: Apple Vision is the primary
