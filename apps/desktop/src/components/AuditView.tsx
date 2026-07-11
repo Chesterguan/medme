@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { ShieldAlert, ArrowLeft, Copy, Check, FileDown } from "lucide-react";
-import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import type { AuditEntry } from "../types";
 
@@ -24,6 +23,7 @@ function shortHash(h: string | null): string {
 export default function AuditView({ onNav }: { onNav: (id: string) => void }) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [copiedSeq, setCopiedSeq] = useState<number | null>(null);
 
   useEffect(() => {
@@ -40,12 +40,11 @@ export default function AuditView({ onNav }: { onNav: (id: string) => void }) {
     }
   };
 
+  // 导出审计清单 CSV:内容在此按不可变事件日志生成,由后端写入固定的导出目录并返回
+  // 路径。安全:不再由 webview 指定写入路径(旧 write_text_file 可被滥用为任意写)。
   const exportManifest = async () => {
-    const path = await save({
-      defaultPath: "MedMe审计清单.csv",
-      filters: [{ name: "CSV", extensions: ["csv"] }],
-    }).catch(() => null);
-    if (!path) return;
+    setError(null);
+    setNotice(null);
     const header = "seq,timestamp,device_id,action,detail,sha256\n";
     const rows = entries
       .map((e) =>
@@ -54,7 +53,12 @@ export default function AuditView({ onNav }: { onNav: (id: string) => void }) {
           .join(","),
       )
       .join("\n");
-    await api.writeTextFile(path, header + rows).catch((e) => setError(String(e)));
+    try {
+      const path = await api.exportAuditCsv(header + rows);
+      setNotice(`已导出到:${path}`);
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   return (
@@ -86,6 +90,12 @@ export default function AuditView({ onNav }: { onNav: (id: string) => void }) {
 
         {error && (
           <div className="rounded-xl px-4 py-2.5 text-sm bg-rose-50 text-rose-700">{error}</div>
+        )}
+
+        {notice && (
+          <div className="rounded-xl px-4 py-2.5 text-sm bg-emerald-50 text-emerald-700 break-all">
+            {notice}
+          </div>
         )}
 
         <div className="flex justify-end">

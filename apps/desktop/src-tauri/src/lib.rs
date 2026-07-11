@@ -9,9 +9,10 @@ mod vault_loc;
 
 use commands::AppState;
 use core_model::Vault;
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// This machine's persistent device id, stored in `<app_data_dir>/device_id`
 /// (OUTSIDE the vault, which may live in a shared cloud folder). Created with a
@@ -34,11 +35,44 @@ fn machine_device_id(app_data_dir: &Path) -> String {
     id
 }
 
+/// Ingest OS-dropped files (trusted paths from the Tauri core's drag-drop event) off the
+/// main thread, then tell the frontend: `import-results` carries the per-file outcomes so
+/// the import view can show them, and `vault-changed` refreshes the timeline + banner
+/// (same event the watch folder emits). Runs on a worker thread because ingest (OCR /
+/// DICOM) must not block the UI event loop that delivered the drop event.
+fn handle_file_drop(app: &tauri::AppHandle, paths: Vec<PathBuf>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let outcomes = {
+            // Recover a poisoned lock rather than panicking the worker (see commands::lock).
+            let vault = state
+                .vault
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let out = commands::ingest_files(&vault, &paths);
+            let _ = vault.rebuild_encounters(); // 幂等,与手动导入一致
+            out
+        };
+        let _ = app.emit("import-results", outcomes);
+        let _ = app.emit("vault-changed", ());
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // SECURITY (GHSA-gmg4): handle file drag-drop in the Rust core, where the paths
+        // are delivered by the OS and are trustworthy, instead of round-tripping them
+        // through the (potentially XSS'd) webview via an `import_paths(paths)` command.
+        // The webview can no longer name an arbitrary path to be read into the vault.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                handle_file_drop(window.app_handle(), paths.clone());
+            }
+        })
         .setup(|app| {
             // Machine-local device id lives in app_data_dir (NOT the vault), so a
             // shared/cloud vault folder never leaks one machine's id to another —
@@ -54,6 +88,7 @@ pub fn run() {
             app.manage(AppState {
                 vault: Mutex::new(vault),
                 inbox_watcher: Mutex::new(None),
+                openable_paths: Mutex::new(HashSet::new()),
             });
 
             // Watch Folder(见 docs/011_Storage_Sync.md §7):确保收件箱目录存在、启动扫描
@@ -75,7 +110,7 @@ pub fn run() {
             commands::list_timeline_grouped,
             commands::search,
             commands::get_document,
-            commands::import_paths,
+            commands::import_via_dialog,
             commands::load_demo_data,
             commands::read_source_bytes,
             commands::render_dicom,
@@ -93,7 +128,7 @@ pub fn run() {
             commands::get_vault_path,
             commands::set_vault_path,
             commands::get_audit_log,
-            commands::write_text_file,
+            commands::export_audit_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
