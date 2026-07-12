@@ -145,13 +145,13 @@ pub fn scan_inbox(app: &AppHandle, state: &AppState) {
     let mut imported = 0usize;
     for path in files {
         let ingest_result = {
-            let vault = match state.vault.lock() {
-                Ok(v) => v,
-                Err(_) => {
-                    eprintln!("[inbox] vault lock poisoned, abort scan");
-                    return;
-                }
-            };
+            // 毒锁恢复而非放弃扫描:别处所有取锁点都用 into_inner 恢复(见
+            // commands::lock);保险箱的真相是 log+CAS,恢复出的 guard 是安全的。
+            // 此前这里直接 return,会让监视文件夹在本进程剩余生命里永久停摆。
+            let vault = state
+                .vault
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             // 与手动导入同一条隔离路径:catch_unwind 把解析栈里的 panic 变成 Err,
             // 绝不让它穿过持有的 Vault 锁去毒化互斥量 / 打死监听线程。
             crate::commands::ingest_guarded(&vault, &path)

@@ -24,7 +24,15 @@ fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Import { files } => {
             for f in files {
-                let o = pipeline::ingest(&vault, &f)?;
+                // 单个坏文件不中止整批(与桌面/手机的 ingest_guarded / ingest_one
+                // 一致的不变式:一份文件失败只记一行,继续下一份)。
+                let o = match pipeline::ingest(&vault, &f) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        eprintln!("failed {} ({e})", f.display());
+                        continue;
+                    }
+                };
                 let line = match o.status {
                     pipeline::IngestStatus::New => format!(
                         "import {} (id={}, type={})",
