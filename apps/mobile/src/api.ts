@@ -3,6 +3,7 @@ import type {
   TimelineGroup,
   ImportOutcome,
   ShareResult,
+  ExportResult,
   PatientProfile,
   DocumentDetail,
   IcloudStatus,
@@ -24,6 +25,9 @@ export const api = {
   getPatientProfile: () => invoke<PatientProfile>("get_patient_profile"),
   createShare: (expiresDays?: number) =>
     invoke<ShareResult>("create_share", { expiresDays }),
+  // 导出时间线:未加密、可打印的自包含 HTML,写进沙盒 shares/ 目录(与加密分享
+  // 共用同一目录,`read_share_bytes` 的 shares/ 前缀校验对它同样生效)。
+  exportTimelineHtml: () => invoke<ExportResult>("export_timeline_html"),
   loadDemoData: () => invoke<number>("load_demo_data"),
   getVaultPath: () => invoke<string>("get_vault_path"),
   resetVault: () => invoke<void>("reset_vault"),

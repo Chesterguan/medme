@@ -572,6 +572,38 @@ pub fn create_share(
     })
 }
 
+/// 导出时间线:复用 `medme_share::export::build_timeline_html`(与桌面
+/// `export_timeline_html` 同一个平台无关函数),把整条时间线渲染成未加密、可打印的
+/// 自包含 HTML 写进沙盒 `shares/` 目录(与加密分享共用同一目录 —— 都是"本机生成、
+/// 交给系统分享 sheet 的临时导出件"),前端据此调起系统「分享」sheet 或用浏览器
+/// 「打印/另存为 PDF」交给医生 / 用于报销留档。导出内容本身**不加密**(区别于
+/// `create_share`),让医生/前台无需口令即可直接打开查看。
+#[tauri::command]
+pub fn export_timeline_html(state: State<AppState>) -> Result<ExportResult, String> {
+    let v = lock(&state)?;
+    // 移动端 Android 构建把 `dicom` 的 C/C++ `codecs` 关掉,进程内解码不含 RCE 面
+    // (GHSA-24px 仅影响链接了 codecs 的桌面),故直接注入进程内渲染器(与
+    // `create_share` 同理)。
+    let (html, record_count) =
+        medme_share::export::build_timeline_html(&v, &medme_share::render_dicom_png_in_process)?;
+    let byte_size = html.len() as i64;
+    let sha256 = core_model::cas::sha256_hex(html.as_bytes());
+
+    let shares_dir = state.vault_dir.join("shares");
+    std::fs::create_dir_all(&shares_dir).map_err(|e| e.to_string())?;
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let dest = shares_dir.join(format!("medme-timeline-{stamp}.html"));
+    std::fs::write(&dest, html).map_err(|e| e.to_string())?;
+
+    v.record_export("timeline_html", &sha256, record_count)
+        .map_err(|e| e.to_string())?;
+    Ok(ExportResult {
+        record_count,
+        byte_size,
+        path: dest.to_string_lossy().to_string(),
+    })
+}
+
 /// 一键「载入示例数据」:把随应用打包的张建国示例病历(demo-data/,文本+PDF,
 /// 不含大体积 DICOM —— 详细阅片交给桌面/在线查看器)批量导入保险箱,让测试者
 /// 无需手动选文件就能看到 健康档案。按路径排序保证可复现;pipeline::ingest 去重,

@@ -7,6 +7,7 @@ import type {
   TimelineGroup,
   ImportOutcome,
   ShareResult,
+  ExportResult,
   PatientProfile,
   DocumentDetail,
   IcloudStatus,
@@ -93,6 +94,7 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [lastImport, setLastImport] = useState<ImportOutcome | null>(null);
   const [share, setShare] = useState<ShareResult | null>(null);
+  const [exported, setExported] = useState<ExportResult | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDisableIcloud, setConfirmDisableIcloud] = useState(false);
   const [version, setVersion] = useState("");
@@ -242,6 +244,21 @@ export default function App() {
       setShare(r);
     } catch (e) {
       alert(`生成分享失败:${e}`);
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  // 导出时间线:未加密的可打印 HTML(与桌面「导出」同一个平台无关渲染函数),
+  // 用于报销 / 给医生留档 —— 区别于上面的「加密分享」(那个要口令,给医生远程查看)。
+  const doExport = useCallback(async () => {
+    setLastImport(null);
+    try {
+      setBusy("正在生成导出文件…");
+      const r = await api.exportTimelineHtml();
+      setExported(r);
+    } catch (e) {
+      alert(`导出失败:${e}`);
     } finally {
       setBusy(null);
     }
@@ -427,6 +444,21 @@ export default function App() {
               <span className="rt">
                 <b>载入示例数据(张建国)</b>
                 <span>导入一份完整的示例病历,先试试看</span>
+              </span>
+              <span className="chev">›</span>
+            </button>
+            <button
+              className="row"
+              onClick={doExport}
+              disabled={!!busy || (profile?.record_count ?? 0) === 0}
+            >
+              <span className="ri"><FileTextIcon /></span>
+              <span className="rt">
+                <b>导出时间线(HTML)</b>
+                <span>
+                  导出可打印的完整时间线,浏览器打开后「打印 / 另存为 PDF」,
+                  用于报销或给医生留档
+                </span>
               </span>
               <span className="chev">›</span>
             </button>
@@ -625,6 +657,8 @@ export default function App() {
 
       {/* 加密分享结果:两步清晰动作 —— 分享文件(系统 sheet)+ 复制口令(另发)。 */}
       {share && <ShareModal share={share} onClose={() => setShare(null)} />}
+      {/* 时间线导出结果:未加密,一步「分享文件」交给系统分享 sheet。 */}
+      {exported && <ExportModal result={exported} onClose={() => setExported(null)} />}
 
       {busy && (
         <div className="toast">
@@ -763,6 +797,82 @@ function ShareModal({ share, onClose }: { share: ShareResult; onClose: () => voi
           <button className="second" onClick={doCopyPass}>
             <CopyIcon />
             {copied ? "已复制" : "复制口令"}
+          </button>
+        </div>
+
+        {msg && <div className="share-msg">{msg}</div>}
+
+        <button className="full" onClick={onClose}>
+          完成
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// 时间线导出结果:未加密的可打印 HTML(与 ShareModal 共用「分享文件」这套系统
+// 分享 sheet 逻辑,内容 File→navigator.share,不支持时回退到 openPath)。
+// 没有口令 —— 导出内容不加密,医生/前台无需口令即可直接打开、打印或另存为 PDF。
+function ExportModal({ result, onClose }: { result: ExportResult; onClose: () => void }) {
+  const [msg, setMsg] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
+
+  const filename = result.path.split("/").pop() || "medme-timeline.html";
+
+  const doShareFile = useCallback(async () => {
+    setMsg(null);
+    setSharing(true);
+    try {
+      const buf = await api.readShareBytes(result.path);
+      const file = new File([buf], filename, { type: "text/html" });
+      const nav = navigator as Navigator & {
+        canShare?: (d?: unknown) => boolean;
+        share?: (d: unknown) => Promise<void>;
+      };
+      if (nav.share) {
+        try {
+          if (!nav.canShare || nav.canShare({ files: [file] })) {
+            await nav.share({ files: [file], title: "MedMe 病历时间线导出" });
+            return;
+          }
+        } catch (e) {
+          if ((e as Error)?.name === "AbortError") return; // 用户在 sheet 里取消
+          // 否则落到下面的回退
+        }
+      }
+      // 回退:用系统默认程序打开文件(iOS 会用 Quick Look,内含「分享」按钮)。
+      const { openPath } = await import("@tauri-apps/plugin-opener");
+      await openPath(result.path);
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") return;
+      setMsg(`无法调起系统分享。文件已保存在应用内:\n${filename}\n可在「文件」App 的本应用目录中找到后发送。`);
+    } finally {
+      setSharing(false);
+    }
+  }, [result.path, filename]);
+
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="dialog share" onClick={(e) => e.stopPropagation()}>
+        <div className="share-h">
+          <span className="share-badge"><FileTextIcon /></span>
+          <div>
+            <h3>时间线已导出</h3>
+            <span className="share-sub">{result.record_count} 份记录</span>
+          </div>
+        </div>
+
+        <p className="share-tip">
+          导出的是<b>可打印的完整时间线</b>(浏览器打开该文件后选择「打印 / 另存为 PDF」),
+          用于报销或给医生留档,内容<b>未加密</b>。
+          这里的记录是<b>这台设备</b>保险箱里当前的内容(本机导入的,以及若已开启
+          iCloud 同步则包含的同步数据)。
+        </p>
+
+        <div className="share-acts">
+          <button className="primary" onClick={doShareFile} disabled={sharing}>
+            <ShareIcon />
+            {sharing ? "调起分享…" : "分享文件"}
           </button>
         </div>
 
