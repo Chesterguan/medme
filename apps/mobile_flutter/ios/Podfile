@@ -1,5 +1,5 @@
 # Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+platform :ios, '15.5'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -39,5 +39,11 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      # ML Kit 的预编译 framework 不含 arm64 模拟器切片,Apple Silicon Mac 的
+      # 模拟器是 arm64 会链接失败。对模拟器排除 arm64(改跑 x86_64/Rosetta);
+      # 真机(device/TestFlight)构建不受影响,仍用 arm64。
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
+    end
   end
 end
