@@ -31,6 +31,12 @@ target 'Runner' do
   use_frameworks!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  # ML Kit 文字识别插件默认只带 Latin。MedMe 面向中文病历,必须显式加中文识别包,
+  # 否则请求中文脚本时运行时不工作(iOS 不像安卓有 R8,构建能过但中文识别是坏的)。
+  # 日/韩/梵文用不到,不加。版本对齐插件 podspec 的 GoogleMLKit/TextRecognition ~> 9.0.0。
+  pod 'GoogleMLKit/TextRecognitionChinese', '~> 9.0.0'
+
   target 'RunnerTests' do
     inherit! :search_paths
   end
