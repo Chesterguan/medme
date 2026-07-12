@@ -212,6 +212,31 @@ fn add_text_layer_document(
     })
 }
 
+/// 「已存但暂无文本」:只按文件名元数据建 document(不建 ocr_result),状态
+/// `StoredNoText`。原件已永存、时间线可见可查看原件,留待后续 reindex 补 OCR。
+/// 图片/扫描件的 OCR 失败或空时统一走这里 —— 包括扫描 PDF(#55:失败不再冒充
+/// 成功文本层),与直接图片路径行为一致。
+fn store_no_text(vault: &Vault, sid: i64, name: &str) -> anyhow::Result<IngestOutcome> {
+    let (doc_date, doc_date_end) = parser::guess_date_range(name);
+    let doc_type = parser::classify(name);
+    vault.add_document(NewDocument {
+        source_file_id: sid,
+        doc_type: doc_type.clone(),
+        doc_date,
+        doc_date_end,
+        title: Some(name.to_string()),
+        language: None,
+        page_count: 1,
+    })?;
+    // 不建 ocr_result(暂无文本)
+    Ok(IngestOutcome {
+        source_file_id: sid,
+        name: name.to_string(),
+        status: IngestStatus::StoredNoText,
+        doc_type: Some(doc_type),
+    })
+}
+
 pub fn mime_for(path: &Path) -> &'static str {
     match path
         .extension()
@@ -328,8 +353,11 @@ pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
                         doc_type: Some(doc_type),
                     })
                 }
-                // OCR 失败/空:退回原有行为 —— 按抽取到的(近空)文本层建 document。
-                _ => add_text_layer_document(vault, sid, &name, e, imp.deduped),
+                // #55:扫描 PDF 的 OCR 失败/空时,别把 pdf-extract 找到的近空
+                // (<20 字)文本冒充成「有文本层」的成功文档(那会谎报 New/Backfilled、
+                // 让扫描件看起来已识别)。降级为 StoredNoText,如实反映「已存原件、
+                // 暂无文本」,与直接图片路径一致,留待后续 reindex 补 OCR。
+                _ => store_no_text(vault, sid, &name),
             }
         }
         Ok(e) => add_text_layer_document(vault, sid, &name, e, imp.deduped),
@@ -370,28 +398,8 @@ pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
                         doc_type: Some(doc_type),
                     })
                 }
-                _ => {
-                    // OCR 失败/空:退回文件名元数据(保持现状),原文件已永存,
-                    // 使其在时间线可见、可查看原件。
-                    let (doc_date, doc_date_end) = parser::guess_date_range(&name);
-                    let doc_type = parser::classify(&name);
-                    vault.add_document(NewDocument {
-                        source_file_id: sid,
-                        doc_type: doc_type.clone(),
-                        doc_date,
-                        doc_date_end,
-                        title: Some(name.clone()),
-                        language: None,
-                        page_count: 1,
-                    })?;
-                    // 不建 ocr_result(暂无文本)
-                    Ok(IngestOutcome {
-                        source_file_id: sid,
-                        name,
-                        status: IngestStatus::StoredNoText,
-                        doc_type: Some(doc_type),
-                    })
-                }
+                // OCR 失败/空:退回「已存但无文本」(见 `store_no_text`)。
+                _ => store_no_text(vault, sid, &name),
             }
         }
     }
@@ -496,6 +504,36 @@ mod tests {
             "2025-09-01"
         );
         // 无 OCR 文本
+        assert_eq!(v.ocr_text(tl[0].document_id).unwrap(), "");
+    }
+
+    /// #55:扫描 PDF(无文本层)且 OCR 取不到任何文本时,必须降级为
+    /// `StoredNoText`,而不是把 pdf-extract 的近空文本冒充成「有文本层」的成功
+    /// 文档(会谎报 New/Backfilled)。这里用一份合法但空白(无文本、无 DCTDecode
+    /// 图片)的 PDF:解析出空文本 → 无可 OCR 图片 → 应如实落 StoredNoText。
+    #[test]
+    fn scanned_pdf_with_no_ocrable_text_degrades_to_stored_no_text() {
+        // 合法单空白页 PDF(无文本、无图片);缺省 xref 由 lopdf 扫描重建。
+        const EMPTY_PDF: &[u8] = b"%PDF-1.4\n\
+1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n\
+3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n\
+trailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n";
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let p = fdir.path().join("2025-09-01_检验报告_扫描件.pdf");
+        std::fs::write(&p, EMPTY_PDF).unwrap();
+
+        let o = ingest(&v, &p).unwrap();
+        assert_eq!(
+            o.status,
+            IngestStatus::StoredNoText,
+            "OCR 取不到文本的扫描 PDF 应落 StoredNoText,不冒充成功文本层"
+        );
+        // 建了 document(时间线可见)但没有 OCR 文本。
+        let tl = v.timeline().unwrap();
+        assert_eq!(tl.len(), 1);
         assert_eq!(v.ocr_text(tl[0].document_id).unwrap(), "");
     }
 
