@@ -243,6 +243,9 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
           <div className="text-xs font-mono text-slate-400 mt-2">
             PDF · 图片(PNG / JPG / TIFF / HEIC)· TXT · DICOM · 原始文件永久保存,自动去重
           </div>
+          <div className="text-xs text-slate-400 mt-1">
+            也可以直接拖入一整个文件夹(例如一台 CT/MRI 的 DICOM 文件夹),里面的文件会被自动全部导入
+          </div>
           <div className="mt-5">
             <button
               type="button"
