@@ -125,6 +125,16 @@ pub struct ShareResult {
     pub path: String,
 }
 
+/// 时间线导出结果:未加密、可打印的自包含 HTML(与桌面 `ExportSummary` 同构)。
+/// 与 `ShareResult` 不同,没有口令 —— 导出内容不加密,靠系统「分享」sheet 直接
+/// 交给医生 / 存下来打印。
+#[derive(Serialize)]
+pub struct ExportResult {
+    pub record_count: i64,
+    pub byte_size: i64,
+    pub path: String,
+}
+
 #[derive(Serialize)]
 pub struct PatientProfile {
     pub name: Option<String>,

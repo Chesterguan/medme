@@ -155,6 +155,7 @@ pub fn run() {
             commands::read_share_bytes,
             commands::get_patient_profile,
             commands::create_share,
+            commands::export_timeline_html,
             commands::load_demo_data,
             commands::get_vault_path,
             commands::reset_vault,

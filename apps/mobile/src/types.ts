@@ -33,6 +33,11 @@ export interface ShareResult {
   byte_size: number;
   path: string;
 }
+export interface ExportResult {
+  record_count: number;
+  byte_size: number;
+  path: string;
+}
 export interface PatientProfile {
   name: string | null;
   gender: string | null;
