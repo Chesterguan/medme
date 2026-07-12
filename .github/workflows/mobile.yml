@@ -1,0 +1,177 @@
+name: Mobile (Flutter)
+
+# 纪律:日常开发在本地跑单平台 debug + `flutter analyze`。
+# 完整 Rust release 跨平台编译是发布流程,只在这里(CI)做,带缓存。
+# - PR:只跑轻量 analyze(不编 Rust release),堵住"移动端无 CI"的缺口。
+# - release:手动 workflow_dispatch 触发,产出安卓全 ABI + iOS archive/TestFlight。
+
+on:
+  pull_request:
+    paths:
+      - "apps/mobile_flutter/**"
+      - ".github/workflows/mobile.yml"
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "要出的包"
+        type: choice
+        options: [android, ios, both]
+        default: both
+      upload_testflight:
+        description: "iOS 是否上传 TestFlight(需已配好 secrets)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.44.6"
+  WORKDIR: apps/mobile_flutter
+
+jobs:
+  # ── 轻量门禁:每个改动移动端的 PR 都跑,只做静态分析 + 单元测试,不编 Rust release ──
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: subosito/flutter-action@v2 # TODO: 按仓库惯例改成 SHA 钉版
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: pub get
+        working-directory: ${{ env.WORKDIR }}
+        run: flutter pub get
+      - name: flutter analyze
+        working-directory: ${{ env.WORKDIR }}
+        run: flutter analyze
+      - name: dart 单元测试
+        working-directory: ${{ env.WORKDIR }}
+        run: flutter test
+
+  # ── 安卓 release:全 ABI,产出可安装 APK(debug 签名,内测侧载)+ appbundle 工件 ──
+  android-release:
+    if: github.event_name == 'workflow_dispatch' && (inputs.platform == 'android' || inputs.platform == 'both')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-java@v4 # TODO: SHA 钉版
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+      # 关键:workspaces 指向真实 Rust workspace + 真实 target,否则 cargokit 会在别处重编
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: apps/mobile_flutter/rust -> target
+          shared-key: flutter-rust-android
+      - name: pub get
+        working-directory: ${{ env.WORKDIR }}
+        run: flutter pub get
+      - name: 构建 release APK(全 ABI)
+        working-directory: ${{ env.WORKDIR }}
+        run: flutter build apk --release
+      - name: 构建 appbundle(Play 用)
+        working-directory: ${{ env.WORKDIR }}
+        run: flutter build appbundle --release
+      - uses: actions/upload-artifact@v4 # TODO: SHA 钉版
+        with:
+          name: medme-android
+          path: |
+            ${{ env.WORKDIR }}/build/app/outputs/flutter-apk/app-release.apk
+            ${{ env.WORKDIR }}/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+  # ── iOS release:archive + 导出 IPA(可选上传 TestFlight)。需配签名 secrets(见文末) ──
+  ios-release:
+    if: github.event_name == 'workflow_dispatch' && (inputs.platform == 'ios' || inputs.platform == 'both')
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: apps/mobile_flutter/rust -> target
+          shared-key: flutter-rust-ios
+      - name: 导入签名证书 + 描述文件
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.IOS_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_CERT_P12_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: |
+          CERT=$RUNNER_TEMP/cert.p12
+          PP=$RUNNER_TEMP/pp.mobileprovision
+          KC=$RUNNER_TEMP/signing.keychain-db
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERT"
+          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$PP"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          security import "$CERT" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KC"
+          security list-keychain -d user -s "$KC"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$PP" ~/Library/MobileDevice/Provisioning\ Profiles/
+      - name: 写 ExportOptions.plist
+        run: |
+          cat > $RUNNER_TEMP/ExportOptions.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>49G34P23QP</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>provisioningProfiles</key><dict>
+              <key>com.medme.mobile</key><string>MedMe App Store</string>
+            </dict>
+            <key>uploadSymbols</key><true/>
+            <key>destination</key><string>export</string>
+          </dict></plist>
+          PLIST
+      - name: pub get
+        working-directory: ${{ env.WORKDIR }}
+        run: flutter pub get
+      - name: 构建 IPA(release archive + 导出)
+        working-directory: ${{ env.WORKDIR }}
+        run: flutter build ipa --release --export-options-plist=$RUNNER_TEMP/ExportOptions.plist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: medme-ios-ipa
+          path: ${{ env.WORKDIR }}/build/ios/ipa/*.ipa
+          if-no-files-found: error
+      - name: 上传 TestFlight(可选)
+        if: inputs.upload_testflight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo -n "$ASC_API_KEY_BASE64" | base64 --decode -o ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
+          xcrun altool --upload-app --type ios \
+            -f "${{ env.WORKDIR }}"/build/ios/ipa/*.ipa \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+
+# ── iOS release 需要的 GitHub Secrets(用户在 repo Settings → Secrets → Actions 加)──
+#   IOS_CERT_P12_BASE64            Apple Distribution 证书导出的 .p12,base64(`base64 -i cert.p12`)
+#   IOS_CERT_P12_PASSWORD          导出 .p12 时设的密码
+#   IOS_PROVISIONING_PROFILE_BASE64  "MedMe App Store" 描述文件 .mobileprovision,base64
+#   IOS_KEYCHAIN_PASSWORD          任意临时钥匙串密码(CI 内自建自用)
+#   ASC_KEY_ID / ASC_ISSUER_ID     App Store Connect API key 的 Key ID / Issuer ID
+#   ASC_API_KEY_BASE64             该 API key 的 .p8 文件 base64(勿提交到仓库)
