@@ -137,7 +137,6 @@ pub fn run() {
             commands::render_dicom,
             commands::decode_dicom_frame,
             commands::get_imaging_instances,
-            commands::export_vault,
             commands::export_timeline_html,
             commands::create_share,
             commands::get_patient_profile,
