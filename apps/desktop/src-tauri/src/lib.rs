@@ -84,7 +84,27 @@ pub fn run() {
             // enables multi-device sync — see vault_loc.rs + commands::set_vault_path.
             let vault_dir = vault_loc::read_vault_location(app.handle());
             std::fs::create_dir_all(&vault_dir).ok();
-            let vault = Vault::open_with_device_id(&vault_dir, &device_id).expect("open vault");
+            // Open resiliently: the SQLite db is a disposable cache rebuildable
+            // from the append-only log, so a corrupt/half-synced `medme.db`
+            // (likely when the vault sits in a cloud-synced folder) is wiped and
+            // rebuilt instead of `.expect()`-panicking the app into an
+            // unopenable state. Only an unreadable TRUTH (log/objects) reaches
+            // the error arm — then show a human message instead of a bare crash.
+            let vault = match Vault::open_with_device_id_resilient(&vault_dir, &device_id) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("[vault] unrecoverable open failure at {vault_dir:?}: {e}");
+                    use tauri_plugin_dialog::DialogExt;
+                    app.dialog()
+                        .message(format!(
+                            "无法打开你的健康档案。\n\n位置:{}\n\n数据文件可能损坏或暂时无法访问。若它放在云盘文件夹里,请等云盘同步完成后再打开 MedMe;若问题持续,请联系支持。",
+                            vault_dir.display()
+                        ))
+                        .title("MedMe 暂时无法启动")
+                        .blocking_show();
+                    std::process::exit(1);
+                }
+            };
             app.manage(AppState {
                 vault: Mutex::new(vault),
                 inbox_watcher: Mutex::new(None),
