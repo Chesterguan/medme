@@ -4,8 +4,11 @@
 //  - 病理/影像/出院/病历/手术 → 分节 + 行内标签加粗
 // 解析不到结构就退回干净文本 —— 永不比原文更糟(见 memory: content-aware-rendering)。
 
+import { tryParseLabRun, type LabRow } from "../labTable";
+
 type Block =
   | { kind: "table"; header: string[] | null; rows: string[][] }
+  | { kind: "labtable"; rows: LabRow[] }
   | { kind: "section"; text: string }
   | { kind: "para"; text: string };
 
@@ -41,6 +44,14 @@ function parse(text: string): Block[] {
     const trimmed = lines[i].trim();
     if (!trimmed) {
       i++;
+      continue;
+    }
+    // 化验单单空格塌陷场景:先按结构尝试识别连续的化验行(见 labTable.ts),
+    // 命中则优先于下面基于"多空格分列"的通用表格解析。
+    const labRun = tryParseLabRun(lines, i);
+    if (labRun) {
+      blocks.push({ kind: "labtable", rows: labRun.rows });
+      i = labRun.next;
       continue;
     }
     if (isTableHeader(trimmed) || isDataRow(trimmed)) {
@@ -142,6 +153,42 @@ function GenericBlocks({ blocks }: { blocks: Block[] }) {
   return (
     <>
       {blocks.map((b, i) => {
+        if (b.kind === "labtable") {
+          return (
+            <div key={i} className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-500 text-xs">
+                    {["项目", "结果", "单位", "参考范围/提示"].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left font-medium px-3 py-2 border-b border-slate-200 whitespace-nowrap"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {b.rows.map((r, ri) => (
+                    <tr key={ri} className={`${ri % 2 ? "bg-slate-50/40" : ""} ${statusText(r.flag)}`}>
+                      <td className="px-3 py-1.5 border-b border-slate-100">{r.name}</td>
+                      <td className="px-3 py-1.5 font-mono border-b border-slate-100 whitespace-nowrap">
+                        {r.value}
+                      </td>
+                      <td className="px-3 py-1.5 font-mono border-b border-slate-100 whitespace-nowrap">
+                        {r.unit}
+                      </td>
+                      <td className="px-3 py-1.5 font-mono border-b border-slate-100 whitespace-nowrap">
+                        {r.range}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
         if (b.kind === "table") {
           const cols = Math.max(b.header?.length ?? 0, ...b.rows.map((r) => r.length));
           return (
