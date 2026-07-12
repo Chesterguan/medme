@@ -1,0 +1,42 @@
+# 把仓库里的托管查看器(web/hosted-viewer/index.html)自动部署到 GitHub Pages
+# 服务的 gh-pages 分支 `viewer/index.html`。此前部署是手工的,导致线上比仓库落后
+# 多个 commit(缺 CSP/XSS 加固、还留着旧的「已过期」硬拦截)—— #54。此 workflow
+# 消除漂移:凡改动 web/hosted-viewer 或本文件并合入 main,即重新部署。
+name: Deploy hosted viewer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/hosted-viewer/**"
+      - ".github/workflows/deploy-viewer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-viewer
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Sync web/hosted-viewer -> gh-pages /viewer/
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages
+          git worktree add -B gh-pages gh-pages-wt origin/gh-pages
+          install -D web/hosted-viewer/index.html gh-pages-wt/viewer/index.html
+          cd gh-pages-wt
+          git add viewer/index.html
+          if git diff --cached --quiet; then
+            echo "viewer already up to date; nothing to deploy"
+          else
+            git commit -m "deploy: sync hosted viewer from ${GITHUB_SHA::7}"
+            git push origin gh-pages
+          fi
