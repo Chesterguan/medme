@@ -3,6 +3,7 @@ import type { ChangeEvent, ReactNode } from "react";
 import "./App.css";
 import markUrl from "./assets/medme-mark.svg";
 import { api } from "./api";
+import { isLabHeaderLine, parseLabRow } from "./labTable";
 import type {
   TimelineGroup,
   ImportOutcome,
@@ -890,25 +891,8 @@ function ExportModal({ result, onClose }: { result: ExportResult; onClose: () =>
 // 规则:【…】/短标题行 → 小节标题;化验单的「项目 结果 参考范围」行 → 三列对齐
 // (值用等宽 + tabular-nums 对齐,异常↑↓染色);处方的编号药品行 → 药品条目;
 // 其余 → 正常段落(保留换行、舒适行高)。任何行解析失败都安全回退为段落。
-type LabRow = { name: string; value: string; ref: string; flag: "hi" | "lo" | "" };
-
-function parseLabRow(line: string): LabRow | null {
-  const cells = line.trim().split(/\s{2,}/).filter(Boolean);
-  if (cells.length < 2) return null;
-  const idx = cells.findIndex((c) => /^[<>]?\s*-?\d+(\.\d+)?$/.test(c.trim()));
-  if (idx <= 0) return null; // 第一格必须是名称,不能是数值
-  const name = cells.slice(0, idx).join(" ");
-  const value = cells[idx].trim();
-  const rest = cells.slice(idx + 1).join(" ");
-  const tail = line;
-  const flag: LabRow["flag"] = /↑|偏高|升高/.test(tail)
-    ? "hi"
-    : /↓|偏低|降低/.test(tail)
-      ? "lo"
-      : "";
-  const ref = rest.replace(/[↑↓]/g, "").trim();
-  return { name, value, ref, flag };
-}
+// 化验行的结构化解析在 ./labTable.ts(与桌面端同一套修复,按结构而非空白宽度切列,
+// 兼容 pdf-extract 把多空格折叠成单空格的情况)。
 
 function ClinicalText({ text, docType }: { text: string; docType: string }) {
   const raw = text.replace(/\r\n/g, "\n");
@@ -971,11 +955,16 @@ function ClinicalText({ text, docType }: { text: string; docType: string }) {
       );
       return;
     }
-    // 化验单:三列对齐行
+    // 化验单:三列对齐行(名称 | 结果 | 单位+参考范围)
     if (docType === "lab_report") {
+      if (isLabHeaderLine(t)) {
+        flushPara();
+        return; // 表头行(项目/结果/单位/参考范围/提示)—— 消费掉,不当段落展示
+      }
       const row = parseLabRow(line);
       if (row) {
         flushPara();
+        const ref = [row.unit, row.range.replace(/[↑↓]/g, "").trim()].filter(Boolean).join(" ");
         active().push(
           <div className="lab-row" key={`l${seq++}`}>
             <span className="nm">{row.name}</span>
@@ -983,7 +972,7 @@ function ClinicalText({ text, docType }: { text: string; docType: string }) {
               {row.value}
               {row.flag === "hi" ? " ↑" : row.flag === "lo" ? " ↓" : ""}
             </span>
-            <span className="ref">{row.ref}</span>
+            <span className="ref">{ref}</span>
           </div>,
         );
         return;
