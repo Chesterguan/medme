@@ -3,7 +3,9 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/dto.dart';
 import 'api/simple.dart';
+import 'api/vault.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
@@ -25,7 +27,79 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  bool dco_decode_bool(dynamic raw);
+
+  @protected
+  DocumentSummaryDto dco_decode_box_autoadd_document_summary_dto(dynamic raw);
+
+  @protected
+  EncounterSummaryDto dco_decode_box_autoadd_encounter_summary_dto(dynamic raw);
+
+  @protected
+  double dco_decode_box_autoadd_f_32(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_i_32(dynamic raw);
+
+  @protected
+  DocumentDetailDto dco_decode_document_detail_dto(dynamic raw);
+
+  @protected
+  DocumentSummaryDto dco_decode_document_summary_dto(dynamic raw);
+
+  @protected
+  EncounterSummaryDto dco_decode_encounter_summary_dto(dynamic raw);
+
+  @protected
+  ExportResultDto dco_decode_export_result_dto(dynamic raw);
+
+  @protected
+  double dco_decode_f_32(dynamic raw);
+
+  @protected
+  int dco_decode_i_32(dynamic raw);
+
+  @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  IcloudStatusDto dco_decode_icloud_status_dto(dynamic raw);
+
+  @protected
+  ImportOutcomeDto dco_decode_import_outcome_dto(dynamic raw);
+
+  @protected
+  List<DocumentSummaryDto> dco_decode_list_document_summary_dto(dynamic raw);
+
+  @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<TimelineGroupDto> dco_decode_list_timeline_group_dto(dynamic raw);
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  double? dco_decode_opt_box_autoadd_f_32(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_i_32(dynamic raw);
+
+  @protected
+  PatientProfileDto dco_decode_patient_profile_dto(dynamic raw);
+
+  @protected
+  ShareResultDto dco_decode_share_result_dto(dynamic raw);
+
+  @protected
+  SourceFileMetaDto dco_decode_source_file_meta_dto(dynamic raw);
+
+  @protected
+  TimelineGroupDto dco_decode_timeline_group_dto(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -40,19 +114,103 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  DocumentSummaryDto sse_decode_box_autoadd_document_summary_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  EncounterSummaryDto sse_decode_box_autoadd_encounter_summary_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  double sse_decode_box_autoadd_f_32(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_i_32(SseDeserializer deserializer);
+
+  @protected
+  DocumentDetailDto sse_decode_document_detail_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DocumentSummaryDto sse_decode_document_summary_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  EncounterSummaryDto sse_decode_encounter_summary_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ExportResultDto sse_decode_export_result_dto(SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  IcloudStatusDto sse_decode_icloud_status_dto(SseDeserializer deserializer);
+
+  @protected
+  ImportOutcomeDto sse_decode_import_outcome_dto(SseDeserializer deserializer);
+
+  @protected
+  List<DocumentSummaryDto> sse_decode_list_document_summary_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<TimelineGroupDto> sse_decode_list_timeline_group_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  double? sse_decode_opt_box_autoadd_f_32(SseDeserializer deserializer);
+
+  @protected
+  int? sse_decode_opt_box_autoadd_i_32(SseDeserializer deserializer);
+
+  @protected
+  PatientProfileDto sse_decode_patient_profile_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ShareResultDto sse_decode_share_result_dto(SseDeserializer deserializer);
+
+  @protected
+  SourceFileMetaDto sse_decode_source_file_meta_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TimelineGroupDto sse_decode_timeline_group_dto(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
 
   @protected
   void sse_decode_unit(SseDeserializer deserializer);
-
-  @protected
-  int sse_decode_i_32(SseDeserializer deserializer);
-
-  @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
   void sse_encode_AnyhowException(
@@ -64,8 +222,122 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_document_summary_dto(
+    DocumentSummaryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_encounter_summary_dto(
+    EncounterSummaryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_f_32(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_document_detail_dto(
+    DocumentDetailDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_document_summary_dto(
+    DocumentSummaryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_encounter_summary_dto(
+    EncounterSummaryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_export_result_dto(
+    ExportResultDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_icloud_status_dto(
+    IcloudStatusDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_import_outcome_dto(
+    ImportOutcomeDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_document_summary_dto(
+    List<DocumentSummaryDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_timeline_group_dto(
+    List<TimelineGroupDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_f_32(double? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_patient_profile_dto(
+    PatientProfileDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_share_result_dto(
+    ShareResultDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_source_file_meta_dto(
+    SourceFileMetaDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_timeline_group_dto(
+    TimelineGroupDto self,
     SseSerializer serializer,
   );
 
@@ -74,12 +346,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
 }
 
 // Section: wire_class

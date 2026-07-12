@@ -3,14 +3,35 @@ name = "rust_lib_mobile_flutter"
 version = "0.1.0"
 edition = "2021"
 
+# 这个 crate 自成一体、由 cargokit 单独构建,不属于任何上层 workspace(见根
+# Cargo.toml 的 `exclude`)。显式声明一个空 `[workspace]` 表把这一点钉死——否则
+# 当本目录被嵌套在另一个已存在的 workspace 内时(例如本仓库用 git worktree 做
+# 并行 agent 隔离,worktree checkout 落在主仓库工作树的 `.claude/worktrees/`
+# 下面,自身又是一个完整 workspace),`cargo check` 会在向上找 workspace 根时
+# 越过最近的 `[workspace]` 一路找到最外层仓库根,报
+# "current package believes it's in a workspace when it's not"。空
+# `[workspace]` 表是 Cargo 自己给出的推荐解法,彻底切断向上搜索。
+[workspace]
+
 [lib]
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 flutter_rust_bridge = "=2.12.0"
 anyhow = "1"
-# 复用现有 Rust 数据核(与桌面同一保险箱格式 → 同步互通)。P2 会接入 pipeline/share。
+chrono = "0.4"
+# 随应用二进制打包示例数据集(见 api::vault::DEMO_DATA / load_demo_data)。
+include_dir = "0.7"
+# 复用现有 Rust 数据核(与桌面同一保险箱格式 → 同步互通)。
 core-model = { path = "../../../packages/core-model" }
+pipeline = { path = "../../../packages/pipeline" }
+parser = { path = "../../../packages/parser" }
+medme-share = { path = "../../../packages/share" }
+# DICOM:iOS + 安卓两端都关掉 `codecs`(C/C++ JPEG2000/JPEG-LS 解码器),与 Tauri
+# 移动端 `apps/mobile/src-tauri/Cargo.toml` 的取舍一致——移动端不看 DICOM 像素
+# 精细阅片,免去这处内存破坏型 RCE 面(GHSA-24px),`parse_meta`/`render_png` 仍
+# 可用(仅不支持的压缩传输语法会降级)。故意不做任何 per-target 的重新启用。
+dicom = { path = "../../../packages/dicom", default-features = false }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

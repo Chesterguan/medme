@@ -38,6 +38,7 @@ dependencies:
     path: rust_builder
   flutter_rust_bridge: 2.12.0
   path_provider: ^2.1.6
+  freezed_annotation: ^3.1.0
 
 dev_dependencies:
   flutter_test:
@@ -52,6 +53,11 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   patrol: ^4.6.1
+  # FRB 给带数据的 Rust 枚举(如 TimelineGroupDto)生成 Dart sealed class 需要
+  # freezed;build_runner 跑其代码生成(见 rust/src/api/dto.rs 里的
+  # TimelineGroupDto,对应 lib/src/rust/api/dto.freezed.dart)。
+  freezed: ^3.2.5
+  build_runner: ^2.15.1
 
 # Patrol 集成测试配置(用户跑 `patrol test`;bundle/package 与当前构建一致,
 # P7 改成 com.medme.mobile 复用 App Store 描述文件时同步改这里)。
