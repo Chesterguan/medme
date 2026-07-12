@@ -14,6 +14,7 @@ import { TYPE_LABEL, TYPE_BADGE, TYPE_ICON, fmtDate, fmtBytes } from "../docmeta
 import ReportContent from "./ReportContent";
 import DicomViewer from "./DicomViewer";
 import ImageViewer from "./ImageViewer";
+import PdfViewer from "./PdfViewer";
 
 // 低置信度阈值:低于此值提示扫描可能不清晰/不可用,建议重拍或核对原件。
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
@@ -302,14 +303,10 @@ export default function DocumentView({
               )
             ) : isImage ? (
               <ImageViewer src={origUrl ?? ""} alt={sf.original_name} />
-            ) : (
-              <iframe
-                src={origUrl ?? undefined}
-                title={sf.original_name}
-                className="w-full h-full max-w-5xl bg-white rounded-lg"
-                onClick={(e) => e.stopPropagation()}
-              />
-            )}
+            ) : origUrl ? (
+              // PDF 用 PDF.js 渲染(替代 <iframe src=blob:pdf>,后者在 WKWebView 白屏)。
+              <PdfViewer url={origUrl} />
+            ) : null}
           </div>
         </div>
       )}
