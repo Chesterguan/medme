@@ -54,14 +54,21 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
       future: _open,
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.done) {
-          return const Scaffold(
+          return Scaffold(
             body: Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.health_and_safety, size: 56, color: MedMe.teal),
-                  SizedBox(height: 16),
-                  CircularProgressIndicator(color: MedMe.teal),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: Image.asset(
+                      'assets/icon/app_icon.png',
+                      width: 84,
+                      height: 84,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const CircularProgressIndicator(color: MedMe.teal),
                 ],
               ),
             ),
