@@ -6,6 +6,7 @@ import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/import_flow.dart';
+import 'package:mobile_flutter/review_state.dart';
 
 /// 底部导航一级 tab「健康档案」—— 生命时间线:就诊组 + 独立文档,按日期倒序,
 /// 点开看详情。与旧 Tauri 移动端 App.tsx 的 archive tab(phead + tl)同一观感,
@@ -113,6 +114,20 @@ String _groupDesc(TimelineGroupDto g) {
   };
 }
 
+/// 把时间线分组拍平成文档列表(就诊组内文档 + 独立文档),用于「待确认」筛选。
+List<DocumentSummaryDto> _allDocs(List<TimelineGroupDto> groups) {
+  final out = <DocumentSummaryDto>[];
+  for (final g in groups) {
+    switch (g) {
+      case TimelineGroupDto_Encounter(:final docs):
+        out.addAll(docs);
+      case TimelineGroupDto_Document(:final doc):
+        out.add(doc);
+    }
+  }
+  return out;
+}
+
 class ArchiveScreen extends StatefulWidget {
   const ArchiveScreen({super.key});
 
@@ -144,10 +159,24 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
   Future<(PatientProfileDto, List<TimelineGroupDto>)> _load() async {
     final results = await Future.wait([patientProfile(), loadArchive()]);
-    return (
-      results[0] as PatientProfileDto,
-      results[1] as List<TimelineGroupDto>,
+    final profile = results[0] as PatientProfileDto;
+    final groups = results[1] as List<TimelineGroupDto>;
+    // 首次运行把现有记录设为「已审」基线——之后的新导入才会被标「待确认」。
+    await ReviewState.instance.ensureBaseline(
+      _allDocs(groups).map((d) => d.id).toList(),
     );
+    return (profile, groups);
+  }
+
+  /// 审核通过一份文档 → 从顶部「待确认」区消失,归入正常时间线(按日期排序)。
+  Future<void> _review(int docId) async {
+    await ReviewState.instance.markReviewed(docId);
+    if (mounted) setState(() {}); // 重建 → 重算 unreviewed(数据没变,只是过滤变了)
+  }
+
+  Future<void> _reviewAll(Iterable<int> docIds) async {
+    await ReviewState.instance.markAllReviewed(docIds);
+    if (mounted) setState(() {});
   }
 
   Future<void> _refresh() async {
@@ -207,6 +236,12 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           }
 
           final (profile, groups) = snap.data!;
+          // 新导入(未审核)的文档:置顶「待确认」,新的(id 大)在前。
+          final unreviewed =
+              _allDocs(
+                  groups,
+                ).where((d) => ReviewState.instance.isNew(d.id)).toList()
+                ..sort((a, b) => b.id.compareTo(a.id));
           return RefreshIndicator(
             onRefresh: _refresh,
             color: MedMe.teal,
@@ -216,6 +251,15 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
               children: [
                 _PatientHeader(profile: profile),
                 const SizedBox(height: 20),
+                if (unreviewed.isNotEmpty) ...[
+                  _NewImportsSection(
+                    docs: unreviewed,
+                    onReview: _review,
+                    onReviewAll: () => _reviewAll(unreviewed.map((d) => d.id)),
+                    onOpen: _openDoc,
+                  ),
+                  const SizedBox(height: 20),
+                ],
                 if (groups.isEmpty)
                   const _EmptyState()
                 else
@@ -518,6 +562,100 @@ class _SubDocList extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// 顶部「待确认 · 新导入」区:新导入的文档先在这里让用户过一眼(OCR 猜的类型/日期
+/// 可能不准),点「确认」→ 归入下方正常时间线(按日期排序)、不再置顶。
+class _NewImportsSection extends StatelessWidget {
+  const _NewImportsSection({
+    required this.docs,
+    required this.onReview,
+    required this.onReviewAll,
+    required this.onOpen,
+  });
+
+  final List<DocumentSummaryDto> docs;
+  final void Function(int docId) onReview;
+  final VoidCallback onReviewAll;
+  final void Function(int docId) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: MedMe.tealSoft,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: MedMe.teal.withValues(alpha: 0.3)),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.fiber_new, color: MedMe.teal, size: 20),
+              const SizedBox(width: 6),
+              Text(
+                '待确认 · 新导入 ${docs.length} 份',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: MedMe.tealDark,
+                ),
+              ),
+              const Spacer(),
+              if (docs.length > 1)
+                TextButton(onPressed: onReviewAll, child: const Text('全部确认')),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.only(left: 26, right: 4, bottom: 4),
+            child: Text(
+              '识别的类型/日期可能不准,点开核对无误后「确认」,即归入下方时间线。',
+              style: TextStyle(fontSize: 12, color: MedMe.faint, height: 1.4),
+            ),
+          ),
+          for (final d in docs)
+            Card(
+              margin: const EdgeInsets.only(top: 8),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: _colorFor(d.docType).withValues(alpha: 0.12),
+                  child: Icon(
+                    _iconForDoc(d.docType),
+                    color: _colorFor(d.docType),
+                    size: 20,
+                  ),
+                ),
+                title: Text(
+                  d.title ?? _docLabel[d.docType] ?? '记录',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  [
+                    _docLabel[d.docType] ?? d.docType,
+                    _fmtDate(d.docDate).isNotEmpty
+                        ? _fmtDate(d.docDate)
+                        : '无日期',
+                  ].join(' · '),
+                  style: const TextStyle(color: MedMe.faint, fontSize: 12.5),
+                ),
+                trailing: FilledButton(
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: () => onReview(d.id),
+                  child: const Text('确认'),
+                ),
+                onTap: () => onOpen(d.id),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
