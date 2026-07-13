@@ -77,5 +77,19 @@
 	<!-- 只用标准/豁免加密(本机端到端分享用的是标准算法),免每次 TestFlight 问出口合规。 -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- 让 iCloud 容器的 Documents 在系统「文件」App → iCloud 云盘里以「MedMe 医我」
+	     可见 —— 用户开启同步后能眼见为实地看到病历文件夹(vault),确认数据进了 iCloud。 -->
+	<key>NSUbiquitousContainers</key>
+	<dict>
+		<key>iCloud.com.medme.mobile</key>
+		<dict>
+			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
+			<true/>
+			<key>NSUbiquitousContainerName</key>
+			<string>MedMe 医我</string>
+			<key>NSUbiquitousContainerSupportedFolderLevels</key>
+			<string>Any</string>
+		</dict>
+	</dict>
 </dict>
 </plist>
