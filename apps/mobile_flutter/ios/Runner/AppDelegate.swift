@@ -1,4 +1,5 @@
 import Flutter
+import ImageIO
 import UIKit
 import Vision
 
