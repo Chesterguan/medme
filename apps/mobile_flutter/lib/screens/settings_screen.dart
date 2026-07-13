@@ -192,7 +192,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return '请先在系统「设置」登录 iCloud 并开启 iCloud 云盘,再回来开启同步';
     }
     if (!_icloud!.enabled) return '开启后病历会同步到你其它苹果设备(实验性,建议先备份)';
-    return '已开启,病历会自动同步到你的苹果设备';
+    return '已开启 · 可在「文件」App → iCloud 云盘 → MedMe 医我 里看到已同步的病历';
   }
 
   Future<void> _toggleIcloud(bool want) async {

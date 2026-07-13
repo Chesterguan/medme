@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:mobile_flutter/src/rust/frb_generated.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
@@ -22,6 +23,14 @@ class MedMeApp extends StatelessWidget {
       title: 'MedMe 医我',
       theme: MedMe.theme(),
       debugShowCheckedModeBanner: false,
+      // 面向简体中文用户:强制中文本地化,日历选择器/所有 Material 弹窗都显示中文。
+      locale: const Locale('zh', 'CN'),
+      supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: const VaultBootstrap(),
     );
   }
