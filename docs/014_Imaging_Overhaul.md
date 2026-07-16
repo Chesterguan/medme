@@ -9,7 +9,7 @@
 ## 1. 病根(现状)
 
 - DICOM 每个 `.dcm` 存成**独立文档**;`study_uid`/`accession` 提取了但**没用来分组** → 真实 CT(几百切片)碎成几百文档,无法当一叠滚动看。
-- 查看器 dwv 基础:不能跨切片滚、无窗位预设、无测量;小样本上采样发糊。
+- 查看器仅自研 dicom-parser canvas 基础(窗宽窗位/缩放/平移):不能跨切片滚、无窗位预设、无测量;小样本上采样发糊。
 - **导出/分享里没有影像**(只文本)→ 医生看不到 CT/MR。**最致命。**
 - 普通图片(JPG)也偏糊:缩略图/灯箱未保证原分辨率呈现。
 
@@ -19,7 +19,10 @@
 - 导入**文件夹 / zip** 的一堆 `.dcm` → 一个 study(不是 N 个文档)。
 - 原始切片仍进 CAS(原件不灭);DB 加 `imaging_study` / `imaging_series` 派生表(可从事件日志重建)。时间线上一次检查 = 一张卡(可展开序列)。
 
-## 3. 本地查看器:dwv → Cornerstone3D
+## 3. 本地查看器:自研 dicom-parser canvas → Cornerstone3D
+
+> 现状澄清:**已上线的分享查看器不是 dwv**,而是内联 cornerstonejs `dicom-parser` 1.8.12 + 自研 `openDicomViewer` 画布(`web/hosted-viewer/index.html`,提供窗宽窗位 / 缩放 / 平移)。下文的 Cornerstone3D 是**将来的目标**(放射级序列滚动 / 测量 / MPR),非当前实现。
+
 
 放射级能力:**序列堆栈滚动**、**窗位预设**(脑/骨/肺/软组织/自定义)、缩放平移、**测量**(长度/角度/ROI)、反色、cine 播放;后续 MPR 三维重建、序列并排。
 - 512×512 是 CT 标准分辨率;Cornerstone3D 渲染比 dwv 锐利,配合真实切片解决"糊"。

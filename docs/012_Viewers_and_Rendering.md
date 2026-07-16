@@ -19,7 +19,7 @@
 | 格式 | mime | Viewer | 状态 |
 |---|---|---|---|
 | PDF | application/pdf | 内嵌 iframe / 全屏 | ✅ |
-| DICOM | application/dicom | **dwv**:窗宽窗位 / 缩放 / 平移 / 多帧滚动 | 🔧 |
+| DICOM | application/dicom | **自研 canvas 阅片器**(内联 cornerstonejs `dicom-parser` 1.8.12 解析 + `openDicomViewer` 画布:窗宽窗位 / 缩放 / 平移);分享查看器已上线 | ✅ 分享查看器 |
 | 图片 | image/* | 缩放/平移全屏灯箱 | ✅ |
 | 纯文本 | text/plain | 文本渲染 | ✅ |
 | DOCX | ...officedocument... | 文本抽取渲染(暂无版式) | 待 |
@@ -46,7 +46,13 @@
 ## 4. 详情页布局
 
 - **原件为附件**(缩略图/文件条 → 全屏 Viewer,维度 A)+ **结构化视图为主**(维度 B)。二者并存,按需切换。
-- 影像类:原件 Viewer(dwv)是主角;文本类:结构化视图是主角。
+- 影像类:原件 Viewer(自研 dicom-parser canvas 阅片器)是主角;文本类:结构化视图是主角。
+
+## 4a. 分享查看器(`web/hosted-viewer/index.html`)
+
+自包含加密分享页在原件列表之上还渲染**医生视图 summary**:疾病泳道时间轴 + 化验/用药趋势 + 一键复制的院外病历文本(`buildEMRFromSummary`),以及**影像检查分区**(「影像检查 · 按时间」,按部位分组,同部位跨时间看变化)。交互:浮动**「↑ 返回时间轴」**回顶按钮、**内嵌 PDF 预览**(`openPdfViewer`,CSP 仅放行 `frame-src data:`)、以及全屏图片灯箱(照片 / DICOM 关键切片 PNG,可切原始分辨率)。有 summary 时「全部原件」默认折叠,医生先看泳道 + 影像,原件按需展开、泳道证据可跳回对应原件。
+
+> 医生 summary 的数据契约与渲染规范由 [030_Clinical_Handoff](030_Clinical_Handoff.md) 拥有(此处只描述查看器如何呈现)。
 
 ## 5. 原则(定调)
 
@@ -57,5 +63,5 @@
 
 ## 6. 阶段
 
-- **现在**:补齐维度B 的 `renderByType`(处方用药清单 / 病理·影像·出院·病历·手术分节);完成维度A 的 DICOM viewer(dwv)。
+- **现在**:补齐维度B 的 `renderByType`(处方用药清单 / 病理·影像·出院·病历·手术分节);完成维度A 的 DICOM viewer(自研 dicom-parser canvas,已在分享查看器上线)。
 - 接续:化验趋势图;`source_span` 溯源高亮;DOCX 版式;结构化抽取(v0.2)驱动更准渲染。

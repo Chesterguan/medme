@@ -142,6 +142,8 @@
 - **诊断/过敏/病程**(叙述性)→ LLM 结构化抽取更稳。隐私分叉:端上小模型(纯本地/弱) vs 服务器 LLM(强/OCR 文本出设备)。
 - **务实**:混合;且 **LLM 抽取只在「生成医生分享」那一刻跑**(用户已决定分享,是可接受一次 AI 调用的时机)。平时纯本地。
 - **MVP 不引入 LLM**:先用 parser/启发式从现有 `records` 抽 用药+化验+过敏,证明管线。
+- **CJK 部首字归一化**:OCR/抽取文本在匹配前先做部首字形折叠(`packages/parser/src/lib.rs` `normalize_cjk_radicals`,在 `extract` 里应用)—— 部分 PDF 会吐出康熙/CJK 部首码位而非统一汉字(如「意⻅」),折叠回统一汉字后词典/标签才匹配得上。确定性、无 LLM。
+- **影像分组(确定性)**:影像报告按**部位+类型**聚成 `summary.imaging`,组内按时间排列,每次检查的**结论/诊断意见逐字照抄**(`packages/parser/src/handoff.rs` `imaging_impression` / `imaging_group` / `assemble_summary`)—— 只分组、只搬运原文,不做放射学解读。
 
 ## 6. 与 Prometheno 的桥
 
