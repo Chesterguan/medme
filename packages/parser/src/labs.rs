@@ -71,9 +71,7 @@ fn row_re() -> &'static Regex {
 // 的 token,单边参考(LDL/TC/eGFR)与带空格的双边参考就全丢了(quality dim 4/5)。
 fn range_two_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| {
-        Regex::new(r"(\d+(?:\.\d+)?)\s*[-~]\s*(\d+(?:\.\d+)?)").expect("range re")
-    })
+    R.get_or_init(|| Regex::new(r"(\d+(?:\.\d+)?)\s*[-~]\s*(\d+(?:\.\d+)?)").expect("range re"))
 }
 fn range_high_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();

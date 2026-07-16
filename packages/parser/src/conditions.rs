@@ -187,7 +187,8 @@ mod tests {
     fn inline_numbered_multi_diagnosis_splits() {
         // 真 corpus 出院诊断:一行内用 `1. .. 2. .. 3. ..` 串三个诊断,须拆成三条,
         // 且 term 里不含行内编号标记(`2.`/`3.`),病名内的空格保留(逐字)。
-        let obs = extract_conditions("出院诊断:1. 急性脑梗死  2. 高血压 3 级(很高危)  3. 2 型糖尿病");
+        let obs =
+            extract_conditions("出院诊断:1. 急性脑梗死  2. 高血压 3 级(很高危)  3. 2 型糖尿病");
         let terms: Vec<&str> = obs.iter().map(|o| o.raw_text.as_str()).collect();
         assert_eq!(terms, ["急性脑梗死", "高血压 3 级(很高危)", "2 型糖尿病"]);
         assert!(obs.iter().all(|o| !o.raw_text.contains(" 2.")
