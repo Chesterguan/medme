@@ -125,8 +125,8 @@ struct MergedProblem {
 /// summary stays deterministic.
 fn merge_conditions(conditions: &[AggregatedCondition]) -> Vec<MergedProblem> {
     // key → (candidate display terms, earliest onset, merged sources)
-    let mut groups: BTreeMap<String, (Vec<String>, Option<NaiveDate>, BTreeSet<usize>)> =
-        BTreeMap::new();
+    type Group = (Vec<String>, Option<NaiveDate>, BTreeSet<usize>);
+    let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     for c in conditions {
         let key = condition_key(&c.raw_text);
         let g = groups.entry(key).or_default();

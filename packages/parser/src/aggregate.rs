@@ -229,10 +229,12 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
     for doc in docs {
         let dt = doc.doc_type.as_deref();
         // --- labs (only from lab reports; see wants_labs) ---
-        for obs in wants_labs(dt)
-            .then(|| extract_labs(doc.text))
-            .unwrap_or_default()
-        {
+        let doc_labs = if wants_labs(dt) {
+            extract_labs(doc.text)
+        } else {
+            Vec::new()
+        };
+        for obs in doc_labs {
             let matched = obs.analyte_key.is_some();
             let key = match &obs.analyte_key {
                 Some(k) => GroupKey::Matched(k.clone()),
@@ -290,10 +292,12 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         }
 
         // --- meds (only from prescriptions; see wants_meds) ---
-        for obs in wants_meds(dt)
-            .then(|| extract_meds(doc.text))
-            .unwrap_or_default()
-        {
+        let doc_meds = if wants_meds(dt) {
+            extract_meds(doc.text)
+        } else {
+            Vec::new()
+        };
+        for obs in doc_meds {
             let matched = obs.drug_key.is_some();
             let key = match &obs.drug_key {
                 Some(k) => GroupKey::Matched(k.clone()),

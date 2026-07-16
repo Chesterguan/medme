@@ -105,12 +105,15 @@ fn fold_range_punct(tok: &str) -> String {
         .collect()
 }
 
+/// A located reference range: `(low, high, byte_span_in_folded)`.
+type RangeMatch = (Option<f64>, Option<f64>, (usize, usize));
+
 /// Locate the reference range anywhere in the trailing columns. Returns
 /// `(low, high, byte_span_in_folded)`: `59-104`/`3.9 - 6.1` → both bounds;
 /// `< 5.20`/`≤6.5` → high only; `> 90`/`≥130` → low only. Two-sided wins over
 /// single-sided. `None` when no range is present. `folded` must already be
 /// punctuation-folded so `＜`/`～`/`－` read as `<`/`~`/`-`.
-fn find_range(folded: &str) -> Option<(Option<f64>, Option<f64>, (usize, usize))> {
+fn find_range(folded: &str) -> Option<RangeMatch> {
     if let Some(c) = range_two_re().captures(folded) {
         let lo = c.get(1)?.as_str().parse().ok();
         let hi = c.get(2)?.as_str().parse().ok();
