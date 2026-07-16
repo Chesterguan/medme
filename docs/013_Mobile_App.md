@@ -1,5 +1,7 @@
 # 013 · Mobile App & Desktop Sync · 手机端与桌面同步规划
 
+> ⚠️ **已被取代(历史文档)**:本文是 Flutter 转型前(Tauri 时代)「手机端要薄、以采集为主」的旧规划。当前手机端设计以 [020_Flutter_Mobile_Rewrite](020_Flutter_Mobile_Rewrite.md)(2026-07-12 Flutter 转型)为准,且当前范围已改为 **1.2 = 手机端做到极致**。此文仅作沿革参考,正文不再更新。
+
 > 目标:iOS / Android 手机 App,**采集为主、查看为辅**,与桌面**共享同一套 Rust 内核与存储**,做到"一处改动、两端同步更新"。手机与桌面通过**同一个事件溯源保险箱**(放在云同步文件夹)保持数据一致,零服务器。
 
 关联:[011_Storage_Sync](011_Storage_Sync.md) · [012_Viewers_and_Rendering](012_Viewers_and_Rendering.md) · 记忆 `medme-v1-milestone-and-decisions` `medme-real-data-sources`
