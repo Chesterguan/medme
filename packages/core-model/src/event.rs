@@ -6,7 +6,7 @@
 //! independent of any particular SQLite database.
 
 use crate::MedmeError;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -224,7 +224,7 @@ fn event_id(event: &Event) -> Result<String, MedmeError> {
     let bytes = serde_json::to_vec(event)?;
     let mut h = Sha256::new();
     h.update(&bytes);
-    Ok(format!("{:x}", h.finalize()))
+    Ok(hex(&h.finalize()))
 }
 
 fn hex(bytes: &[u8]) -> String {

@@ -8,7 +8,12 @@ fn jieba() -> &'static Jieba {
 
 /// 中文分词 + 英文按原样;结果用单空格连接,供 FTS body 与 MATCH 查询共用。
 pub fn tokenize(text: &str) -> String {
-    jieba().cut(text, false).join(" ")
+    jieba()
+        .cut(text, false)
+        .iter()
+        .map(|t| t.word)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]

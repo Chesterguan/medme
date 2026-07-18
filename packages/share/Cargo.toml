@@ -20,8 +20,9 @@ serde_json = { workspace = true }
 sha2.workspace = true
 chrono.workspace = true
 base64 = "0.22"
-aes-gcm = "0.10"
-rand = "0.8"
+aes-gcm = "0.11"
+# OS 熵源:rand 0.10 移除了 OsRng,而 OsRng 本就是 getrandom 的薄封装。
+getrandom = "0.4"
 
 [dev-dependencies]
 tempfile = { workspace = true }
