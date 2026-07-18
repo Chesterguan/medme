@@ -64,7 +64,15 @@ pub(crate) fn ingest_guarded(
     v: &Vault,
     path: &std::path::Path,
 ) -> Result<pipeline::IngestOutcome, String> {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pipeline::ingest(v, path))) {
+    // DICOM 元数据解析走隔离子进程:按文件里声明的长度分配内存发生在解析期,
+    // 畸形文件可诱导数 GB 分配(模糊测试实测),隔离后崩溃只波及短命子进程,
+    // 不影响持有已打开保险箱的主进程(与像素解码同一道防线,GHSA-24px)。
+    let parse_meta = |bytes: &[u8]| -> anyhow::Result<dicom::DicomMeta> {
+        crate::dicom_subprocess::parse_meta(bytes).map_err(anyhow::Error::msg)
+    };
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pipeline::ingest_with_dicom_parser(v, path, &parse_meta)
+    })) {
         Ok(Ok(o)) => Ok(o),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err("导入时发生内部错误(已隔离),该文件已跳过".to_string()),

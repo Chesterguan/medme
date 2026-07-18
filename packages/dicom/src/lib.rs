@@ -12,7 +12,7 @@ use serde::Serialize;
 use std::io::Cursor;
 
 /// Metadata extracted from a DICOM instance's tags (no pixel decoding).
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct DicomMeta {
     /// Modality (0008,0060) — e.g. "CT", "MR", "US", "CR", "DX".
     pub modality: Option<String>,
@@ -161,6 +161,10 @@ pub fn check_bounds(dcm_bytes: &[u8]) -> anyhow::Result<()> {
 
 /// 结构性完整性前置检查:**没有任何元素能声明比文件本身还长的内容**。
 ///
+/// **本函数不分配、只前进**,因此可以安全地在主进程里跑 —— 这正是它存在的意义:
+/// 桌面端在 spawn 隔离子进程**之前**需要一道廉价预检,而 [`check_bounds`] 自身
+/// 要完整解析(即会触发本函数所防的那类分配),不适合放在主进程。
+///
 /// 上游 `dicom-object` 会按数据元素里声明的长度直接分配内存,而这发生在解析期 ——
 /// 早于我们的 [`check_decode_bounds`]。模糊测试实测:数 KB 的畸形文件即可诱导单次
 /// 数 GB 分配并 OOM(拒绝服务;文件来源包括医院光盘与他人转发的分享)。
@@ -168,7 +172,7 @@ pub fn check_bounds(dcm_bytes: &[u8]) -> anyhow::Result<()> {
 /// 这里在把字节交给上游之前先浅扫一遍顶层数据元素:遇到「声明长度 > 剩余字节」
 /// 直接判定畸形。扫描本身不分配、只前进,遇到不认识的结构就提前收手(交回上游按
 /// 原有路径处理),因此是**纯收敛**的加固,不会拒绝合法文件。
-fn reject_impossible_lengths(bytes: &[u8]) -> anyhow::Result<()> {
+pub fn prescan_lengths(bytes: &[u8]) -> anyhow::Result<()> {
     // 前导 128 字节 + "DICM";没有前导则从 0 开始(部分裸数据集)。
     let mut i = if bytes.len() > 132 && &bytes[128..132] == b"DICM" {
         132
@@ -257,7 +261,7 @@ fn reject_impossible_lengths(bytes: &[u8]) -> anyhow::Result<()> {
 /// [`check_decode_bounds`] —— 模糊测试实测:一个 4.7 KB 的畸形文件可诱导单次
 /// 约 3.7 GB 的分配而直接 OOM(拒绝服务)。停在 PixelData 之前可避开最大的那块。
 fn read_header_only(dcm_bytes: &[u8]) -> anyhow::Result<dicom_object::DefaultDicomObject> {
-    reject_impossible_lengths(dcm_bytes)?;
+    prescan_lengths(dcm_bytes)?;
     Ok(dicom_object::OpenFileOptions::new()
         .read_until(dicom_object::Tag(0x7FE0, 0x0010))
         .from_reader(Cursor::new(dcm_bytes))?)
