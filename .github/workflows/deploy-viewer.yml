@@ -9,6 +9,8 @@ on:
     branches: [main]
     paths:
       - "web/hosted-viewer/**"
+      - "packages/share/examples/gen_demo_share.rs"
+      - "apps/desktop/src-tauri/demo-data/**"
       - ".github/workflows/deploy-viewer.yml"
   workflow_dispatch:
 
@@ -24,6 +26,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Build demo share from the real sample dataset
+        run: |
+          set -euo pipefail
+          # 示例页 = 一份**真实加密分享**(同一条生产代码路径),数据换成公开演示数据集。
+          cargo run --release -p medme-share --example gen_demo_share -- \
+            "$RUNNER_TEMP/demo.html" "$RUNNER_TEMP/demo-pass.txt"
+          ls -lh "$RUNNER_TEMP/demo.html"
+
       - name: Sync web/hosted-viewer -> gh-pages /viewer/
         run: |
           set -euo pipefail
@@ -32,8 +42,20 @@ jobs:
           git fetch origin gh-pages
           git worktree add -B gh-pages gh-pages-wt origin/gh-pages
           install -D web/hosted-viewer/index.html gh-pages-wt/viewer/index.html
+          # 示例页:上一步产出的真实分享(43MB,不入库)。口令随 URL fragment 送达,
+          # 故把落地页的样例入口重写成 demo/#<口令> —— 每次部署口令都会变。
+          install -D "$RUNNER_TEMP/demo.html" gh-pages-wt/demo/index.html
+          python3 - "$RUNNER_TEMP/demo-pass.txt" gh-pages-wt/index.html <<'PY'
+          import re, sys, urllib.parse
+          pw = urllib.parse.quote(open(sys.argv[1]).read().strip())
+          p = sys.argv[2]
+          s = open(p, encoding="utf-8").read()
+          s2 = re.sub(r'href="(?:demo/[^"]*|viewer/\?demo)"', f'href="demo/#{pw}"', s)
+          open(p, "w", encoding="utf-8").write(s2)
+          print("landing demo link updated" if s2 != s else "landing demo link unchanged")
+PY
           cd gh-pages-wt
-          git add viewer/index.html
+          git add viewer/index.html demo/index.html index.html
           if git diff --cached --quiet; then
             echo "viewer already up to date; nothing to deploy"
           else
