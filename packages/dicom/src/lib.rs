@@ -81,8 +81,7 @@ fn parse_study_date(raw: &str) -> Option<String> {
 /// file meta group + data set); preamble detection is automatic so this also
 /// tolerates meta-group-only streams.
 pub fn parse_meta(dcm_bytes: &[u8]) -> anyhow::Result<DicomMeta> {
-    let obj = dicom_object::from_reader(Cursor::new(dcm_bytes))
-        .context("failed to parse DICOM object")?;
+    let obj = read_header_only(dcm_bytes).context("failed to parse DICOM object")?;
 
     Ok(DicomMeta {
         modality: tag_str(&obj, "Modality"),
@@ -156,9 +155,112 @@ fn check_decode_bounds(obj: &FileDicomObject<InMemDicomObject>) -> anyhow::Resul
 /// isolated decode subprocess (advisory GHSA-24px). Returns `Ok(())` when the
 /// declared decoded size is within [`MAX_DECODE_BYTES`].
 pub fn check_bounds(dcm_bytes: &[u8]) -> anyhow::Result<()> {
-    let obj = dicom_object::from_reader(Cursor::new(dcm_bytes))
-        .context("failed to parse DICOM object")?;
+    let obj = read_header_only(dcm_bytes).context("failed to parse DICOM object")?;
     check_decode_bounds(&obj)
+}
+
+/// 结构性完整性前置检查:**没有任何元素能声明比文件本身还长的内容**。
+///
+/// 上游 `dicom-object` 会按数据元素里声明的长度直接分配内存,而这发生在解析期 ——
+/// 早于我们的 [`check_decode_bounds`]。模糊测试实测:数 KB 的畸形文件即可诱导单次
+/// 数 GB 分配并 OOM(拒绝服务;文件来源包括医院光盘与他人转发的分享)。
+///
+/// 这里在把字节交给上游之前先浅扫一遍顶层数据元素:遇到「声明长度 > 剩余字节」
+/// 直接判定畸形。扫描本身不分配、只前进,遇到不认识的结构就提前收手(交回上游按
+/// 原有路径处理),因此是**纯收敛**的加固,不会拒绝合法文件。
+fn reject_impossible_lengths(bytes: &[u8]) -> anyhow::Result<()> {
+    // 前导 128 字节 + "DICM";没有前导则从 0 开始(部分裸数据集)。
+    let mut i = if bytes.len() > 132 && &bytes[128..132] == b"DICM" {
+        132
+    } else if bytes.starts_with(b"DICM") {
+        4
+    } else {
+        return Ok(()); // 不是 Part-10 布局,交回上游
+    };
+
+    // 文件元信息组(0002,xxxx)按规范恒为 Explicit VR Little Endian。
+    // 数据集本身的传输语法由 (0002,0010) 决定,这里只需知道它是不是 Implicit VR。
+    let mut implicit_after_meta = false;
+    let mut in_meta = true;
+
+    while i + 8 <= bytes.len() {
+        let group = u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+        if in_meta && group != 0x0002 {
+            in_meta = false;
+        }
+        let explicit = in_meta || !implicit_after_meta;
+
+        let (len, header) = if explicit {
+            let vr = &bytes[i + 4..i + 6];
+            // 这几个 VR 用 2 保留字节 + 4 字节长度,其余为 2 字节长度。
+            if matches!(
+                vr,
+                b"OB" | b"OW" | b"OF" | b"OD" | b"OL" | b"SQ" | b"UT" | b"UN" | b"UC" | b"UR"
+            ) {
+                if i + 12 > bytes.len() {
+                    return Ok(());
+                }
+                (
+                    u32::from_le_bytes([bytes[i + 8], bytes[i + 9], bytes[i + 10], bytes[i + 11]]),
+                    12usize,
+                )
+            } else {
+                (
+                    u16::from_le_bytes([bytes[i + 6], bytes[i + 7]]) as u32,
+                    8usize,
+                )
+            }
+        } else {
+            (
+                u32::from_le_bytes([bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]]),
+                8usize,
+            )
+        };
+
+        // 0xFFFFFFFF = 未定长(序列/封装像素),由分隔项界定,不参与长度校验。
+        if len != u32::MAX {
+            let remaining = bytes.len() - i - header;
+            anyhow::ensure!(
+                len as usize <= remaining,
+                "DICOM 元素声明长度 {len} 超过文件剩余 {remaining} 字节 —— 畸形文件"
+            );
+        }
+
+        // 记下数据集的传输语法:1.2.840.10008.1.2 = Implicit VR Little Endian。
+        if in_meta && group == 0x0002 {
+            let elem = u16::from_le_bytes([bytes[i + 2], bytes[i + 3]]);
+            if elem == 0x0010 && len != u32::MAX {
+                let s = &bytes[i + header..(i + header + len as usize).min(bytes.len())];
+                implicit_after_meta = s.starts_with(b"1.2.840.10008.1.2\0")
+                    || s == b"1.2.840.10008.1.2"
+                    || s == b"1.2.840.10008.1.2 ";
+            }
+        }
+
+        if len == u32::MAX {
+            return Ok(()); // 进入未定长结构,浅扫到此为止
+        }
+        i = match i
+            .checked_add(header)
+            .and_then(|x| x.checked_add(len as usize))
+        {
+            Some(next) => next,
+            None => return Ok(()),
+        };
+    }
+    Ok(())
+}
+
+/// 只读到 PixelData **之前**为止。
+///
+/// 元数据路径不需要像素,而按声明长度分配的内存**发生在解析期**,早于我们的
+/// [`check_decode_bounds`] —— 模糊测试实测:一个 4.7 KB 的畸形文件可诱导单次
+/// 约 3.7 GB 的分配而直接 OOM(拒绝服务)。停在 PixelData 之前可避开最大的那块。
+fn read_header_only(dcm_bytes: &[u8]) -> anyhow::Result<dicom_object::DefaultDicomObject> {
+    reject_impossible_lengths(dcm_bytes)?;
+    Ok(dicom_object::OpenFileOptions::new()
+        .read_until(dicom_object::Tag(0x7FE0, 0x0010))
+        .from_reader(Cursor::new(dcm_bytes))?)
 }
 
 /// Decodes the first frame's pixel data and renders it as an 8-bit,

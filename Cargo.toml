@@ -4,7 +4,8 @@ members = ["packages/core-model", "packages/parser", "packages/terminology", "pa
 # Flutter 移动端(P1+)的 FRB rust crate 自成一体、由 cargokit 为 iOS/安卓单独构建,
 # 不进桌面 workspace(否则 host `cargo build --workspace` 会去编它)。它经 path 依赖
 # 复用 packages/* 数据核。
-exclude = ["apps/mobile_flutter/rust"]
+# fuzz/ 需要 nightly + cargo-fuzz 自己的 profile,进 workspace 会污染日常构建。
+exclude = ["apps/mobile_flutter/rust", "fuzz"]
 
 [workspace.dependencies]
 rusqlite = { version = "0.40", features = ["bundled"] }
