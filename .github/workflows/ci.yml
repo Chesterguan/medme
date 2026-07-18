@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# 最小权限:本 workflow 只做 fmt/lint/test,不写仓库任何内容。
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

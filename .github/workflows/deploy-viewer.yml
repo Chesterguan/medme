@@ -14,8 +14,9 @@ on:
       - ".github/workflows/deploy-viewer.yml"
   workflow_dispatch:
 
+# 最小权限:顶层只读,写权限只给需要推 gh-pages 的那个 job。
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: deploy-viewer
@@ -24,6 +25,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 推查看器与示例页到 gh-pages 分支
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Build demo share from the real sample dataset
@@ -45,15 +48,10 @@ jobs:
           # 示例页:上一步产出的真实分享(43MB,不入库)。口令随 URL fragment 送达,
           # 故把落地页的样例入口重写成 demo/#<口令> —— 每次部署口令都会变。
           install -D "$RUNNER_TEMP/demo.html" gh-pages-wt/demo/index.html
-          python3 - "$RUNNER_TEMP/demo-pass.txt" gh-pages-wt/index.html <<'PY'
-          import re, sys, urllib.parse
-          pw = urllib.parse.quote(open(sys.argv[1]).read().strip())
-          p = sys.argv[2]
-          s = open(p, encoding="utf-8").read()
-          s2 = re.sub(r'href="(?:demo/[^"]*|viewer/\?demo)"', f'href="demo/#{pw}"', s)
-          open(p, "w", encoding="utf-8").write(s2)
-          print("landing demo link updated" if s2 != s else "landing demo link unchanged")
-PY
+          PW=$(tr -d '\n' < "$RUNNER_TEMP/demo-pass.txt" | sed 's/ /%20/g')
+          sed -i -E "s@href=\"(demo/[^\"]*|viewer/\\?demo)\"@href=\"demo/#${PW}\"@g" \
+            gh-pages-wt/index.html
+          grep -c 'href="demo/#' gh-pages-wt/index.html || echo "warn: 落地页未找到样例入口"
           cd gh-pages-wt
           git add viewer/index.html demo/index.html index.html
           if git diff --cached --quiet; then
