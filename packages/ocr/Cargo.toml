@@ -7,10 +7,10 @@ edition = "2021"
 # `download-binaries` + `simd` are oar-ocr's own defaults (we spell them out so
 # `default-features = false` here doesn't drop them). `download-binaries` is what
 # makes `ort`/ONNX Runtime a *static, self-contained* native lib fetched at BUILD
-# time (per target, including `aarch64-linux-android`) and linked into the final
-# binary -- no runtime download of the runtime. `auto-download` (fetching the OCR
-# *model* files into ~/.oar at run time) is split into its own feature below so
-# the Android build can keep the engine but ship models itself.
+# time (per target) and linked into the final binary -- no runtime download of the
+# runtime. `auto-download` (fetching the OCR *model* files into ~/.oar at run time)
+# is split into its own feature below so a packaged/offline build can supply the
+# models itself. Mobile does not build this crate at all -- see the note below.
 oar-ocr = { version = "0.8.0", default-features = false, features = [
     "download-binaries",
     "simd",

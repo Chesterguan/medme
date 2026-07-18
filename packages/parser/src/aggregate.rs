@@ -179,12 +179,39 @@ enum SecKind {
 /// bound a section so a meds/labs section ends where the next section begins.
 fn header_kind(line: &str) -> Option<SecKind> {
     let l = line.trim_start();
-    const MEDS: &[&str] = &["出院医嘱", "出院带药", "带药", "用药医嘱", "用药", "医嘱", "Rp"];
+    const MEDS: &[&str] = &[
+        "出院医嘱",
+        "出院带药",
+        "带药",
+        "用药医嘱",
+        "用药",
+        "医嘱",
+        "Rp",
+    ];
     const LABS: &[&str] = &["检验项目", "检验结果", "化验", "生化检验", "检验报告"];
     const OTHER: &[&str] = &[
-        "出院诊断", "入院诊断", "初步诊断", "主要诊断", "临床诊断", "病理诊断", "诊断",
-        "影像所见", "超声所见", "检查所见", "诊断意见", "印象", "结论", "主诉", "现病史",
-        "既往史", "住院经过", "查体", "处理意见", "处方", "建议", "小结",
+        "出院诊断",
+        "入院诊断",
+        "初步诊断",
+        "主要诊断",
+        "临床诊断",
+        "病理诊断",
+        "诊断",
+        "影像所见",
+        "超声所见",
+        "检查所见",
+        "诊断意见",
+        "印象",
+        "结论",
+        "主诉",
+        "现病史",
+        "既往史",
+        "住院经过",
+        "查体",
+        "处理意见",
+        "处方",
+        "建议",
+        "小结",
     ];
     if MEDS.iter().any(|h| l.starts_with(h)) {
         Some(SecKind::Meds)
@@ -532,10 +559,17 @@ mod tests {
             text: "出院诊断:急性脑梗死\n出院医嘱:低盐低脂饮食;继续口服阿司匹林 100mg qd、阿托伐他汀 20mg qn、氨氯地平 5mg qd、二甲双胍 0.5g bid;门诊随访。",
         }];
         let agg = aggregate(&docs);
-        let keys: Vec<&str> = agg.meds.iter().filter_map(|m| m.drug_key.as_deref()).collect();
+        let keys: Vec<&str> = agg
+            .meds
+            .iter()
+            .filter_map(|m| m.drug_key.as_deref())
+            .collect();
         for want in ["aspirin", "atorvastatin", "amlodipine", "metformin"] {
-            assert!(keys.contains(&want), "缺药 {want};实际 keys={keys:?} names={:?}",
-                agg.meds.iter().map(|m| &m.name).collect::<Vec<_>>());
+            assert!(
+                keys.contains(&want),
+                "缺药 {want};实际 keys={keys:?} names={:?}",
+                agg.meds.iter().map(|m| &m.name).collect::<Vec<_>>()
+            );
         }
     }
 

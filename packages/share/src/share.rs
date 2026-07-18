@@ -811,7 +811,10 @@ mod tests {
         let (html, pass, _n) =
             build_encrypted_share(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
         let payload = decrypt_payload(&html, &pass);
-        assert!(payload["summary"].is_object(), "只有影像时 summary 也应挂上");
+        assert!(
+            payload["summary"].is_object(),
+            "只有影像时 summary 也应挂上"
+        );
         assert!(
             payload["summary"]["imaging"]
                 .as_array()

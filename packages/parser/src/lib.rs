@@ -312,7 +312,8 @@ pub fn classify(text: &str) -> DocType {
         || has("operative")
     {
         DocType::Surgery
-    } else if has("病理科") || has("病理诊断报告") || has("病理报告") || has("pathology") {
+    } else if has("病理科") || has("病理诊断报告") || has("病理报告") || has("pathology")
+    {
         // 病理报告的**报告级**标记(科室名 / 报告标题)优先于正文里顺带的「检验 /
         // 化验 / 影像」字样,免得含这些词的病理报告被抢先分到 LabReport/Imaging。
         // 弱标记 `病理`(可能只是别的文档正文顺带提到)仍留在后面兜底。
