@@ -33,6 +33,8 @@ fn main() {
     // Parent/test role.
     valid_dicom_renders_to_png();
     valid_frame_decodes_to_ipc_bytes();
+    valid_dicom_parses_meta();
+    oom_bomb_is_rejected_before_spawn();
     child_decode_failure_degrades();
     bogus_bytes_degrade();
     println!("dicom_subprocess_roundtrip: all checks passed");
@@ -58,6 +60,31 @@ fn valid_frame_decodes_to_ipc_bytes() {
         wire.len() > 4 + hlen,
         "IPC buffer must carry pixels after its header"
     );
+}
+
+/// 元数据解析也走子进程(按声明长度分配发生在解析期,畸形文件可诱导数 GB 分配)。
+/// 合法文件必须原样拿到元数据 —— 隔离不能改变功能。
+fn valid_dicom_parses_meta() {
+    let meta = desktop_lib::dicom_subprocess::parse_meta(&sample("CT_small.dcm"))
+        .expect("valid DICOM should parse via the subprocess");
+    let in_process = dicom::parse_meta(&sample("CT_small.dcm")).expect("in-process parse");
+    assert_eq!(meta, in_process, "隔离解析结果必须与进程内逐字段一致");
+    assert_eq!(meta.modality.as_deref(), Some("CT"));
+}
+
+/// 声明长度远超文件本身的畸形文件:必须在**主进程 spawn 之前**就被浅扫拒绝,
+/// 而不是进到解析里去分配数 GB(模糊测试发现的拒绝服务路径)。
+fn oom_bomb_is_rejected_before_spawn() {
+    // 128 字节前导 + "DICM" + 一个声明 4GB 长度的 OB 元素,文件本身只有几十字节。
+    let mut bomb = vec![0u8; 128];
+    bomb.extend_from_slice(b"DICM");
+    bomb.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]); // tag (0002,0000)
+    bomb.extend_from_slice(b"OB");
+    bomb.extend_from_slice(&[0x00, 0x00]); // reserved
+    bomb.extend_from_slice(&0xFFFF_FF00u32.to_le_bytes()); // 声明 ~4GB
+    let err = desktop_lib::dicom_subprocess::parse_meta(&bomb)
+        .expect_err("声明长度超过文件本身必须被拒绝");
+    assert!(err.contains("超过文件剩余"), "应由浅扫守卫拒绝,实际: {err}");
 }
 
 /// A valid header but an out-of-range frame index passes the parent's

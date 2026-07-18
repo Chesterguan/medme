@@ -26,3 +26,8 @@ examples/**/*.pdf
 
 # 示例查看器 payload:由 CI 从示例数据集现生成(33MB,不入库)
 web/hosted-viewer/demo-payload.json
+
+# cargo-fuzz 产出:语料会长大、复现样本是崩溃输入,都不该入库
+fuzz/target/
+fuzz/corpus/*/[0-9a-f]*
+fuzz/artifacts/

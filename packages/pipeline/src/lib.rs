@@ -83,8 +83,9 @@ fn add_dicom_document(
     name: &str,
     bytes: &[u8],
     deduped: bool,
+    parse_dicom_meta: DicomMetaParser<'_>,
 ) -> anyhow::Result<IngestOutcome> {
-    let meta = dicom::parse_meta(bytes)?;
+    let meta = parse_dicom_meta(bytes)?;
 
     // 去重:同一张切片(非 study 锚点、无自己的 document)再次导入时,靠
     // imaging_instance 判定已入库,避免重复挂载。锚点切片的再导入由上游
@@ -290,7 +291,26 @@ pub struct IngestOutcome {
 
 /// 导入一个文件:存 CAS(去重)→ 若尚无 document 则抽文本层并建 document/ocr。
 /// 抽取失败(如扫描图片)不致命 → StoredNoText(原文件已永存,留待后续 OCR 补索引)。
+/// 可注入的 DICOM 元数据解析器。桌面端注入**隔离子进程**版本:按文件里声明的
+/// 长度分配内存发生在解析期,畸形文件可诱导数 GB 分配(模糊测试实测),隔离后
+/// 崩溃只波及短命子进程,不影响持有保险箱的主进程。
+///
+/// 不注入时用进程内解析 —— 适用于 CLI(调试工具)与移动端(其文件选择器不接受
+/// `.dcm`,这条路不可达)。
+pub type DicomMetaParser<'a> = &'a dyn Fn(&[u8]) -> anyhow::Result<dicom::DicomMeta>;
+
+/// 导入一个文件(进程内解析 DICOM 元数据)。桌面端请用
+/// [`ingest_with_dicom_parser`] 注入隔离解析器。
 pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
+    ingest_with_dicom_parser(vault, path, &dicom::parse_meta)
+}
+
+/// 同 [`ingest`],但由调用方提供 DICOM 元数据解析器(见 [`DicomMetaParser`])。
+pub fn ingest_with_dicom_parser(
+    vault: &Vault,
+    path: &Path,
+    parse_dicom_meta: DicomMetaParser<'_>,
+) -> anyhow::Result<IngestOutcome> {
     // 体积闸门:先看元数据里的文件大小,超上限就拒绝 —— 绝不 slurp 一份不可信的
     // 超大文件进内存(那会在解析前就 OOM)。用 metadata().len() 而非读入后再判。
     let len = std::fs::metadata(path)?.len();
@@ -320,7 +340,7 @@ pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
     // .dcm 走独立分支(不经 parser/OCR):DICOM 自带结构化元数据,免 OCR 即可
     // 拿到类型/日期/机构(见 docs/010_Imaging_DICOM.md)。
     if is_dicom(path) {
-        return add_dicom_document(vault, sid, &name, &bytes, imp.deduped);
+        return add_dicom_document(vault, sid, &name, &bytes, imp.deduped, parse_dicom_meta);
     }
 
     // 无文本层的判定阈值:去空白后 < 20 字符视为"实际没有文本层"(扫描图 PDF 常见,

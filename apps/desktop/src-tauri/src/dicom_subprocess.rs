@@ -37,6 +37,9 @@ const MODE_RENDER: &str = "render";
 /// Child mode: stdout = one frame's IPC bytes (`dicom::decode_frame` →
 /// `into_ipc_bytes`: 4-byte header length + JSON header + raw pixels).
 const MODE_FRAME: &str = "frame";
+/// Child mode: stdout = `dicom::parse_meta` 的 JSON。解析同样按文件里声明的长度
+/// 分配内存,畸形文件可诱导数 GB 分配 —— 故元数据解析也移进子进程。
+const MODE_META: &str = "meta";
 
 /// Kill the child if it hasn't finished within this budget — a malicious
 /// codestream can wedge the C/C++ decoder in a long-running loop.
@@ -135,9 +138,11 @@ fn spawn_and_pipe(
 /// [`DECODE_FLAG`] + `mode_args`), feed it `dcm_bytes` on stdin, and return its
 /// stdout.
 fn run_parent(mode_args: &[&str], dcm_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    // Cheap, pure-Rust header guard in the MAIN process: reject decode/
-    // decompression bombs before we even spawn the codec child.
-    dicom::check_bounds(dcm_bytes).map_err(|e| e.to_string())?;
+    // 主进程里只做**不分配**的浅扫:任何元素声明长度超过文件剩余字节即判畸形。
+    // 注意不能在这里调 `check_bounds` —— 它自身要完整解析,而按声明长度分配正是
+    // 模糊测试发现的内存耗尽路径(数 KB 文件可诱导数 GB 分配)。完整的
+    // `check_bounds` 已在子进程里跑(见 `run_child`),崩了也只崩子进程。
+    dicom::prescan_lengths(dcm_bytes).map_err(|e| e.to_string())?;
 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut cmd = Command::new(exe);
@@ -149,6 +154,13 @@ fn run_parent(mode_args: &[&str], dcm_bytes: &[u8]) -> Result<Vec<u8>, String> {
 /// replacement for the old in-process `dicom::render_png`.
 pub fn render_png(dcm_bytes: &[u8]) -> Result<Vec<u8>, String> {
     run_parent(&[MODE_RENDER], dcm_bytes)
+}
+
+/// 在隔离子进程里解析 DICOM 元数据。`dicom::parse_meta` 的替代品:畸形文件诱导的
+/// 内存耗尽会随子进程一起被系统回收,主进程(持有已打开的保险箱)不受影响。
+pub fn parse_meta(dcm_bytes: &[u8]) -> Result<dicom::DicomMeta, String> {
+    let out = run_parent(&[MODE_META], dcm_bytes)?;
+    serde_json::from_slice(&out).map_err(|e| format!("DICOM 元数据解析失败(已隔离):{e}"))
 }
 
 /// Decode one DICOM frame to IPC bytes (header + raw pixels) in an isolated
@@ -179,6 +191,13 @@ pub fn run_child(args: &[String]) -> i32 {
             let idx: u32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
             dicom::decode_frame(&input, idx).and_then(|f| f.into_ipc_bytes())
         }
+        Some(MODE_META) => match dicom::parse_meta(&input) {
+            Ok(m) => match serde_json::to_vec(&m) {
+                Ok(v) => Ok(v),
+                Err(_) => return 3,
+            },
+            Err(e) => Err(e),
+        },
         _ => return 2,
     };
 

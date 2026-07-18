@@ -8,6 +8,7 @@
 [![CI](https://github.com/Chesterguan/medme/actions/workflows/ci.yml/badge.svg)](https://github.com/Chesterguan/medme/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Chesterguan/medme/actions/workflows/codeql.yml/badge.svg)](https://github.com/Chesterguan/medme/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Chesterguan/medme/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Chesterguan/medme)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13658/badge)](https://www.bestpractices.dev/projects/13658)
 [![Platform](https://img.shields.io/badge/desktop-macOS_%C2%B7_Windows-lightgrey.svg)](https://chesterguan.github.io/medme/)
 [![Mobile](https://img.shields.io/badge/mobile-iOS_%C2%B7_Android-lightgrey.svg)](https://github.com/Chesterguan/medme/releases)
 [![Made with Tauri + Rust](https://img.shields.io/badge/built_with-Tauri_v2_%C2%B7_Rust_%C2%B7_React-orange.svg)](#技术架构--architecture)

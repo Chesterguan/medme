@@ -1,0 +1,43 @@
+# 模糊测试:MedMe 的解析器天天吃**陌生人给的文件** —— 医院光盘里的 DICOM、微信转来的
+# PDF、别人发给医生的分享文件。畸形输入若能让解码器越界读写,就是远程代码执行
+# (GHSA-24px 正是这一类,所以桌面端把 DICOM 解码关进了子进程)。
+#
+# 本目录不在 workspace 里:cargo-fuzz 需要 nightly + 自己的 profile,混进主 workspace
+# 会污染日常构建。
+[package]
+name = "medme-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+dicom = { path = "../packages/dicom", default-features = false }
+parser = { path = "../packages/parser" }
+
+[[bin]]
+name = "dicom_parse"
+path = "fuzz_targets/dicom_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parser_text"
+path = "fuzz_targets/parser_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "summary_assemble"
+path = "fuzz_targets/summary_assemble.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
