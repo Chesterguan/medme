@@ -19,7 +19,6 @@ use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use base64::engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD as B64URL};
 use base64::Engine as _;
 use core_model::Vault;
-use rand::RngCore;
 
 /// 唯一查看器源:自包含分享文件与托管查看器共用同一份 HTML(去重,见 #55)。
 /// index.html 已内联 dicom-parser + 查看器 JS + CSP(script-src 的 sha256 已在其中固化),
@@ -253,12 +252,12 @@ pub fn build_encrypted_share(
 
     // ── AES-256-GCM 加密 ──
     let mut key_bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut key_bytes);
+    getrandom::fill(&mut key_bytes).map_err(|e| format!("OS RNG unavailable: {e}"))?;
     let mut nonce_bytes = [0u8; 12];
-    rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+    getrandom::fill(&mut nonce_bytes).map_err(|e| format!("OS RNG unavailable: {e}"))?;
 
     let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| format!("init cipher: {e}"))?;
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce: &Nonce<_> = (&nonce_bytes).into();
     let ciphertext = cipher
         .encrypt(
             nonce,
@@ -362,7 +361,7 @@ mod tests {
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
         let pt = cipher
             .decrypt(
-                Nonce::from_slice(&blob[..12]),
+                (&blob[..12]).try_into().expect("已按 12 字节切片"),
                 Payload {
                     msg: &blob[12..],
                     aad: SHARE_AAD,
@@ -453,7 +452,7 @@ mod tests {
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
         let pt = cipher
             .decrypt(
-                Nonce::from_slice(&blob[..12]),
+                (&blob[..12]).try_into().expect("已按 12 字节切片"),
                 Payload {
                     msg: &blob[12..],
                     aad: SHARE_AAD,
@@ -551,7 +550,7 @@ mod tests {
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
         let pt = cipher
             .decrypt(
-                Nonce::from_slice(&blob[..12]),
+                (&blob[..12]).try_into().expect("已按 12 字节切片"),
                 Payload {
                     msg: &blob[12..],
                     aad: SHARE_AAD,
@@ -574,12 +573,12 @@ mod tests {
         // 加密一段已知 payload,再用同 key/nonce 在 Rust 侧解密,验证往返 + tag 布局。
         let plaintext = r#"{"hello":"世界","n":42}"#.as_bytes();
         let mut key_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut key_bytes);
+        getrandom::fill(&mut key_bytes).expect("OS RNG");
         let mut nonce_bytes = [0u8; 12];
-        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        getrandom::fill(&mut nonce_bytes).expect("OS RNG");
 
         let cipher = Aes256Gcm::new_from_slice(&key_bytes).unwrap();
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce: &Nonce<_> = (&nonce_bytes).into();
         let ct = cipher.encrypt(nonce, plaintext.as_ref()).unwrap();
 
         // blob = nonce || ct(含 tag)
@@ -591,14 +590,14 @@ mod tests {
         let iv = &blob[..12];
         let data = &blob[12..];
         let cipher2 = Aes256Gcm::new_from_slice(&key_bytes).unwrap();
-        let out = cipher2.decrypt(Nonce::from_slice(iv), data).unwrap();
+        let out = cipher2.decrypt(iv.try_into().expect("12 字节 iv"), data).unwrap();
         assert_eq!(out, plaintext);
 
         // 错误密钥应解密失败
         let mut wrong = key_bytes;
         wrong[0] ^= 0xff;
         let bad = Aes256Gcm::new_from_slice(&wrong).unwrap();
-        assert!(bad.decrypt(Nonce::from_slice(iv), data).is_err());
+        assert!(bad.decrypt(iv.try_into().expect("12 字节 iv"), data).is_err());
     }
 
     #[test]
@@ -607,11 +606,11 @@ mod tests {
         // 这钉住了三处解密端(Rust + 两个 JS 查看器)必须传入相同的 SHARE_AAD。
         let plaintext = br#"{"records":[]}"#;
         let mut key_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut key_bytes);
+        getrandom::fill(&mut key_bytes).expect("OS RNG");
         let mut nonce_bytes = [0u8; 12];
-        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        getrandom::fill(&mut nonce_bytes).expect("OS RNG");
         let cipher = Aes256Gcm::new_from_slice(&key_bytes).unwrap();
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce: &Nonce<_> = (&nonce_bytes).into();
 
         let ct = cipher
             .encrypt(
@@ -716,7 +715,7 @@ mod tests {
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
         let pt = cipher
             .decrypt(
-                Nonce::from_slice(&blob[..12]),
+                (&blob[..12]).try_into().expect("已按 12 字节切片"),
                 Payload {
                     msg: &blob[12..],
                     aad: SHARE_AAD,

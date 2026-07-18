@@ -318,7 +318,8 @@ pub fn generate_device_id() -> String {
         .unwrap_or(0);
     h.update(nanos.to_le_bytes());
     h.update(std::process::id().to_le_bytes());
-    format!("{:x}", h.finalize())
+    // sha2 0.11:finalize() 的 Array 不再实现 LowerHex,手写小写两位十六进制(输出与旧版逐字节一致)。
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Normalize a `mime_type` to a strict media-type shape (`type/subtype`, no spaces,
