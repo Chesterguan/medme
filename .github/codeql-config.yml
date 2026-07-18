@@ -1,0 +1,16 @@
+# CodeQL 扫描范围。排除的都不是我们写的代码:
+#   * vendor/ 下的第三方压缩包(dicom-parser),完整性由 SHA-256 钉版保证
+#     (GHSA-79jh / #36)—— 改动它反而会破坏钉版。
+#   * Gradle / Flutter 构建产物不该进仓库,更不该被当成源码扫描。
+# 我们自己的查看器逻辑、桌面前端仍在扫描范围内。
+#
+# 注意:查看器 web/hosted-viewer/index.html 里**内联**了同一个 dicom-parser,与我们
+# 的代码同处一文件,无法按路径排除 —— 它贡献的 5 条 js/useless-assignment-to-local
+# 属代码质量提示、非安全级别,保留可见。
+name: MedMe CodeQL config
+
+paths-ignore:
+  - "**/build/reports/**"
+  - "**/.dart_tool/**"
+  - "**/gen/apple/**"
+  - "packages/share/src/vendor/**"

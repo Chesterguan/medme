@@ -25,8 +25,9 @@ on:
       - "v*"
 
 # Least-privilege by default; the release step needs write access to create releases.
+# 最小权限:顶层只读,写权限只给需要发布产物的 job。
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: desktop-build-${{ github.ref }}
@@ -38,6 +39,8 @@ env:
 
 jobs:
   build:
+    permissions:
+      contents: write # 发布桌面产物到 GitHub Release(softprops/action-gh-release)
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
