@@ -9,6 +9,7 @@
 //! - [`share`]:全部病历打包成**自包含加密 HTML**(AES-256-GCM + 内联查看器)。
 
 pub mod export;
+pub mod qr;
 pub mod share;
 
 /// 注入式 DICOM→PNG 渲染器:给定一份 DICOM 实例的原始字节,返回其锚点切片的 PNG;

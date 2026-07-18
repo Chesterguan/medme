@@ -20,6 +20,9 @@ serde_json = { workspace = true }
 sha2.workspace = true
 chrono.workspace = true
 base64 = "0.22"
+# 二维码分享:载荷先 gzip 再加密(中文 JSON 压缩率约 65%),查看器侧用浏览器
+# 原生 DecompressionStream 解压,无需额外前端库。
+flate2 = "1"
 aes-gcm = "0.11"
 # OS 熵源:rand 0.10 移除了 OsRng,而 OsRng 本就是 getrandom 的薄封装。
 getrandom = "0.4"
