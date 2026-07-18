@@ -29,7 +29,17 @@
     margin-bottom:16px;box-shadow:0 1px 3px rgba(15,23,42,.04)}
   .topic .q{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;color:var(--blue);
     background:var(--blue-50);border:1px solid #c8ebf1;border-radius:999px;padding:2px 11px;margin-bottom:11px}
-  .topic h2{font-size:20px;letter-spacing:-.01em;line-height:1.35;margin-bottom:10px}
+  .topic h2{font-size:20px;letter-spacing:-.01em;line-height:1.35;margin-bottom:0}
+  .topic summary{list-style:none;cursor:pointer;position:relative;padding-right:30px}
+  .topic summary::-webkit-details-marker{display:none}
+  .topic summary::after{content:"";position:absolute;right:4px;top:calc(50% - 3px);
+    width:9px;height:9px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);
+    transform:rotate(45deg);transition:transform .2s}
+  .topic details[open] summary::after{transform:rotate(-135deg)}
+  .topic summary:hover h2{color:var(--blue)}
+  .topic details[open] summary{margin-bottom:14px}
+  .topic .body{animation:fade .2s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
   .topic .why{font-size:14.5px;color:#334155;margin-bottom:6px}
   .topic .why b{color:var(--ink);font-weight:650}
   /* 卡内时间线 */
@@ -72,8 +82,8 @@
   <!-- ── 专题 1:OCR ────────────────────────────────────────── -->
   <section class="topic">
     <div lang="zh">
-      <span class="q">用户在意的:我拍的照片,它能读对吗</span>
-      <h2>让手机读准一张拍歪的化验单</h2>
+      <details><summary><span class="q">用户在意的:我拍的照片,它能读对吗</span>
+      <h2>让手机读准一张拍歪的化验单</h2></summary><div class="body">
       <p class="why">MedMe 的识别和整理都在你自己的设备上完成,照片和 PDF 不会被传到我们这儿 —— 我们也没有存它们的服务器。代价是<b>没有一个通用的「认字」引擎可以用</b>:每个系统只肯借你它自己那套 OCR,好用程度还不一样。这张卡片记的就是我们怎么在五个平台上,拼出一条尽量能把中文病历读准的路。</p>
 
       <ul class="tl">
@@ -97,12 +107,12 @@
 
       <p class="why" style="margin-top:18px">
         <b>两件我们不打算藏着的事。</b>第一,我们试过让视觉大模型直接「看」中文化验单的照片,在我们试的那几张上,它<b>编出了根本不存在的化验项目名</b>,还编得挺像真的。这种错放在病历里风险太高,所以这条路我们先放下了,老老实实走 OCR → 文字 → 抽取。第二,同一批手机实拍的照片,Apple Vision 给出的识别置信度落在 0.36–0.41,PP-OCRv5 落在 0.69–0.95;43.60、4.35 这几个数字,PP-OCRv5 读对了、Apple Vision 读错了。<b>得说明的是</b>,两个引擎的置信度是各算各的,数值之间不能直接比高低,能比的是「读出来的字对不对」——我们看的是后者。可惜 PP-OCRv5 目前只在桌面上跑,手机用不了,所以手机端认得准不准,到今天仍是我们没解决好的一块,还在找路子。
-      </p>
+      </p></div></details>
     </div>
 
     <div lang="en">
-      <span class="q">What you actually care about: will it read my photo correctly?</span>
-      <h2>Getting a phone to read a crooked photo of a lab report</h2>
+      <details><summary><span class="q">What you actually care about: will it read my photo correctly?</span>
+      <h2>Getting a phone to read a crooked photo of a lab report</h2></summary><div class="body">
       <p class="why">Recognition and organizing both happen on your own device — your photos and PDFs don't come to us, and we don't run servers that store them. The price: <b>there is no single OCR engine available to us</b>. Each OS only lends you its own, and they are not equally good. This card tracks how we assembled a path across five platforms that reads Chinese medical records as accurately as we can manage.</p>
 
       <ul class="tl">
@@ -126,15 +136,15 @@
 
       <p class="why" style="margin-top:18px">
         <b>Two things we're not hiding.</b> First: pointed at photos of Chinese lab reports, a vision-language model <b>invented test names that weren't there</b> — convincingly — on the samples we tried. That kind of error is too risky to carry into medical records, so we've set the approach aside for now and stick to OCR → text → extraction. Second: on the same set of real phone photos, Apple Vision reported confidence in the 0.36–0.41 range against 0.69–0.95 for PP-OCRv5, and PP-OCRv5 read values like 43.60 and 4.35 correctly where Apple Vision didn't. <b>Worth noting:</b> the two engines compute confidence differently, so the numbers aren't directly comparable — what is comparable is whether the characters came out right, and that's what we went by. PP-OCRv5 is desktop-only today, so mobile accuracy remains unsolved for us, and we're still looking.
-      </p>
+      </p></div></details>
     </div>
   </section>
 
   <!-- ── 专题 2:抽取与术语 ──────────────────────────────── -->
   <section class="topic">
     <div lang="zh">
-      <span class="q">用户在意的:它会不会看错、会不会瞎编</span>
-      <h2>认出「这是一种药、那是一项指标」,而且不许猜</h2>
+      <details><summary><span class="q">用户在意的:它会不会看错、会不会瞎编</span>
+      <h2>认出「这是一种药、那是一项指标」,而且不许猜</h2></summary><div class="body">
       <p class="why">读出字只是第一步。一份出院小结里,「二甲双胍 0.5g 每日两次」是用药,「谷丙转氨酶 43.60 U/L」是化验,「2 型糖尿病」是诊断 —— 得先分得清,才谈得上按时间给你理成一条线。难点不在认出常见词,在于<b>同一个东西有十几种写法</b>(缩写、商品名、中英混排、单位不统一),而且<b>宁可漏,也不能编</b>。</p>
 
       <ul class="tl">
@@ -162,12 +172,12 @@
 
       <p class="why" style="margin-top:18px">
         <b>最难的一块是化验项目的同义词。</b>同一个指标,不同医院能写成完全不同的样子:全称、英文缩写、旧称、加不加括号里的方法学。药名还能靠剥壳和单位证据收敛,化验项目的写法空间要大得多 —— 所以术语字典这层要一直扩下去,单靠规则收不干净。<b>「直接换个更大的模型就行了」也不成立</b>:我们试过现成的医疗大模型,它在这类中文病历文本上并不比规则可靠,还会把没有的东西说得很确定。我们的方向是规则打底,再把散文段交给自己微调的小模型。我们现在的方向是:规则打底,把散文段落交给一个我们自己微调的小模型,而不是让通用大模型自由发挥。
-      </p>
+      </p></div></details>
     </div>
 
     <div lang="en">
-      <span class="q">What you actually care about: will it misread things, or make them up?</span>
-      <h2>Telling "this is a drug" from "that is a lab value" — without guessing</h2>
+      <details><summary><span class="q">What you actually care about: will it misread things, or make them up?</span>
+      <h2>Telling "this is a drug" from "that is a lab value" — without guessing</h2></summary><div class="body">
       <p class="why">Reading the characters is only step one. In one discharge summary, "metformin 0.5g twice daily" is a medication, "ALT 43.60 U/L" is a lab result, and "type 2 diabetes" is a diagnosis. You have to tell them apart before you can lay anything out on a timeline. The hard part isn't the common words — it's that <b>the same thing gets written a dozen ways</b> (abbreviations, brand names, mixed Chinese/English, inconsistent units), and that <b>missing something is acceptable while inventing something is not</b>.</p>
 
       <ul class="tl">
@@ -195,15 +205,15 @@
 
       <p class="why" style="margin-top:18px">
         <b>The hardest part is synonyms among lab items.</b> The same measurement gets written completely differently across hospitals: full name, English abbreviation, legacy term, with or without the assay method in parentheses. Drug names can be pulled together by stripping and by unit evidence; the space of lab spellings is far larger — which is why the terminology dictionary has to keep growing, and why rules alone won't close it. <b>"Just swap in a bigger model" doesn't hold either</b>: we tried an off-the-shelf medical LLM and it wasn't more dependable on this kind of Chinese record text, while stating things that weren't there with full confidence. Our direction is rules as the floor, with prose sections handed to a small model we fine-tune ourselves. Our direction: rules as the floor, with prose sections handed to a small model we fine-tune ourselves, rather than letting a general-purpose LLM improvise.
-      </p>
+      </p></div></details>
     </div>
   </section>
 
   <!-- ── 专题 3:数据存在哪 ──────────────────────────────── -->
   <section class="topic">
     <div lang="zh">
-      <span class="q">用户在意的:这些东西会不会泄露、会不会丢</span>
-      <h2>把最私密的一批数据,放在一个没有服务器的地方</h2>
+      <details><summary><span class="q">用户在意的:这些东西会不会泄露、会不会丢</span>
+      <h2>把最私密的一批数据,放在一个没有服务器的地方</h2></summary><div class="body">
       <p class="why">病历大概是普通人手里最敏感的数据。我们的选择是<b>干脆不建存它的服务器</b> —— 没有账号、没有云端库,东西就在你自己的设备上。这样一来,就不存在一个装着所有人病历、可以被一次性拖走的库;代价是数据的完整、备份、损坏恢复,全得我们自己在本地做对。</p>
 
       <ul class="tl">
@@ -227,12 +237,12 @@
 
       <p class="why" style="margin-top:18px">
         <b>需要说明白的一点:</b>「没有服务器」不等于「绝对安全」。设备丢了、系统自带的云备份被别人拿到,这些风险依然在,所以我们才在 <a href="https://github.com/Chesterguan/medme/pull/39" target="_blank" rel="noopener">#39</a> 里把云同步不是端到端加密这件事直说。分享给医生的那个文件是端到端加密的(AES-256-GCM):它是一个自带解密逻辑的独立 HTML,解密全在对方浏览器里完成,口令不会传给我们。两点如实交代:我们确实托管着一个查看器页面(GitHub Pages 上那份),只是你的病历不经过它;还有,那串「口令」就是密钥本身的编码,没有再派生一层,所以<b>文件和口令一定要分两个渠道发</b>。
-      </p>
+      </p></div></details>
     </div>
 
     <div lang="en">
-      <span class="q">What you actually care about: can this leak, and can I lose it?</span>
-      <h2>Putting your most private data somewhere with no server behind it</h2>
+      <details><summary><span class="q">What you actually care about: can this leak, and can I lose it?</span>
+      <h2>Putting your most private data somewhere with no server behind it</h2></summary><div class="body">
       <p class="why">Medical records may be the most sensitive data an ordinary person holds. Our choice was to <b>not build a server that stores them at all</b> — no accounts, no cloud database, everything sits on your own device. That means there is no single database holding everyone's records for someone to walk off with; the price is that integrity, backup and corruption recovery are all on us to get right locally.</p>
 
       <ul class="tl">
@@ -256,15 +266,15 @@
 
       <p class="why" style="margin-top:18px">
         <b>One thing to be straight about:</b> "no server" is not the same as "perfectly safe". A lost device, or someone getting at your OS cloud backup, are still real risks — which is why <a href="https://github.com/Chesterguan/medme/pull/39" target="_blank" rel="noopener">#39</a> says outright that cloud sync isn't end-to-end encrypted. The file you share with a doctor <em>is</em> end-to-end encrypted (AES-256-GCM): a self-contained HTML that decrypts itself in the recipient's browser, with the passphrase never sent to us. Two things stated plainly: we do host a viewer page (on GitHub Pages) — your records just never go through it; and that "passphrase" is the encoded key itself, with no further derivation, so <b>send the file and the passphrase through two different channels</b>.
-      </p>
+      </p></div></details>
     </div>
   </section>
 
   <!-- ── 专题 4:给医生的那一页 ──────────────────────────── -->
   <section class="topic">
     <div lang="zh">
-      <span class="q">用户在意的:到了诊室,这东西真能用吗</span>
-      <h2>把三年病历,压成医生几十秒能看完的一页</h2>
+      <details><summary><span class="q">用户在意的:到了诊室,这东西真能用吗</span>
+      <h2>把三年病历,压成医生几十秒能看完的一页</h2></summary><div class="body">
       <p class="why">门诊留给你的时间通常只有几分钟。你翻着手机找化验单的时候,医生只想知道三件事:什么病、吃什么药、指标在往哪个方向走。所以我们要做的不是"把所有资料都给他",而是<b>把最要紧的挑出来排在最前面</b>,同时让他<b>随时能点回原件核对</b> —— 医生不会信一份看不到出处的摘要。</p>
 
       <ul class="tl">
@@ -284,12 +294,12 @@
           <span class="d">2026-07-14</span>
           <div class="t"><b>疾病泳道时间轴 + 化验和用药的趋势。</b>把同一个病的就诊串成一条线,把同一个指标的历次数值连成一条趋势。这里能跨医院,是因为资料在你手上 —— 医院自己的系统通常只看得到本院的那部分。<a href="https://github.com/Chesterguan/medme/pull/132" target="_blank" rel="noopener">#132</a></div>
         </li>
-      </ul>
+      </ul></div></details>
     </div>
 
     <div lang="en">
-      <span class="q">What you actually care about: in the exam room, does this actually work?</span>
-      <h2>Compressing three years of records into a page a doctor can read in under a minute</h2>
+      <details><summary><span class="q">What you actually care about: in the exam room, does this actually work?</span>
+      <h2>Compressing three years of records into a page a doctor can read in under a minute</h2></summary><div class="body">
       <p class="why">A clinic visit gives you a few minutes. While you're scrolling your phone hunting for a lab report, the doctor wants three things: what conditions, what medications, which direction the numbers are moving. So the job isn't "hand over everything" — it's <b>putting what matters at the top</b> while keeping <b>the original one tap away</b>. No doctor trusts a summary they can't check against the source.</p>
 
       <ul class="tl">
@@ -309,15 +319,15 @@
           <span class="d">2026-07-14</span>
           <div class="t"><b>Condition swimlanes on a timeline, plus lab and medication trends.</b> Visits for one condition strung into a single line; repeated measurements of one marker joined into a trend. It can span hospitals because the records are in your hands — a hospital's own system usually only sees its own share of them. <a href="https://github.com/Chesterguan/medme/pull/132" target="_blank" rel="noopener">#132</a></div>
         </li>
-      </ul>
+      </ul></div></details>
     </div>
   </section>
 
   <!-- ── 专题 5:医生查看器 ──────────────────────────────── -->
   <section class="topic">
     <div lang="zh">
-      <span class="q">用户在意的:发给医生的那个文件,他打得开吗</span>
-      <h2>一个不用装、不用注册、不联网的查看器</h2>
+      <details><summary><span class="q">用户在意的:发给医生的那个文件,他打得开吗</span>
+      <h2>一个不用装、不用注册、不联网的查看器</h2></summary><div class="body">
       <p class="why">分享这一步的约束很硬:你没法指望医生为你装个 App、注册个账号,诊室的网也未必好使。所以我们给的不是链接,是<b>一个文件</b> —— 一份自包含的加密 HTML,记录用 AES-256-GCM 加密塞在里面,查看器本身也在里面。口令另外一个渠道告诉他。他双击打开,输口令,浏览器本地解密。<b>难的地方在于,这个文件一旦发出去就不归我们管了</b> —— 它得自己把该做的都做完,还得让医生信它。</p>
 
       <ul class="tl">
@@ -349,12 +359,12 @@
 
       <p class="why" style="margin-top:18px">
         <b>几处细节,顺手记下来。</b>这份查看器的安全策略第一行就是 <code>default-src 'none'</code>、<code>connect-src 'none'</code>,文件里没有外部引用 —— 它没地方可连,也不需要连。里面的 DICOM 阅片也是同一个思路:只用一个 dicom-parser 加浏览器自带的 canvas 画,不引 Cornerstone 那套渲染栈(只借了它家的解析器),不用 WASM、不开 worker,按需解码、缓存有上限 —— 因为它得能塞进一个单文件里跟着走。能直接画的是未压缩的和 JPEG baseline 这两类;别的压缩格式、以及大到超过体积上限的序列,会降级成关键切片加一句说明,同样不静默。还有一个很小但很容易踩的坑:口令按 4 个字符一组显示,分隔符只能用空格,不能用连字符 —— <code>-</code> 本身就是 base64url 字母表里的字符,当成分隔符删掉会把密钥改坏。
-      </p>
+      </p></div></details>
     </div>
 
     <div lang="en">
-      <span class="q">What you actually care about: can the doctor actually open the file I send?</span>
-      <h2>A viewer with nothing to install, no account, and no network</h2>
+      <details><summary><span class="q">What you actually care about: can the doctor actually open the file I send?</span>
+      <h2>A viewer with nothing to install, no account, and no network</h2></summary><div class="body">
       <p class="why">The constraints here are unforgiving: you can't count on the doctor installing an app or signing up for an account, and clinic wifi is a coin flip. So we don't hand over a link — we hand over <b>a file</b>. One self-contained encrypted HTML, with the records AES-256-GCM encrypted inside it and the viewer inside it too. The passphrase travels separately. Double-click, type the passphrase, and the browser decrypts locally. <b>The hard part is that once the file is sent, it's out of our hands</b> — it has to do everything itself, and it has to earn the doctor's trust.</p>
 
       <ul class="tl">
@@ -386,15 +396,15 @@
 
       <p class="why" style="margin-top:18px">
         <b>A few details worth writing down.</b> The viewer's security policy opens with <code>default-src 'none'</code> and <code>connect-src 'none'</code>, and the file carries no external references — there's nowhere for it to phone, and no need. DICOM reading inside it follows the same logic: just dicom-parser plus the browser's own canvas — none of the Cornerstone rendering stack (we borrowed their parser and stopped there), no WASM, no worker, decoding on demand against a bounded cache, because it has to fit inside a single file that travels. What it draws directly is uncompressed and JPEG baseline; other compressed formats, and series past the size ceiling, degrade to a key slice plus a note — again, said out loud rather than swallowed. And one small trap that's easy to fall into: the passphrase displays in groups of four, separated by spaces, never hyphens — <code>-</code> is itself a character in the base64url alphabet, so stripping it as a separator would corrupt the key.
-      </p>
+      </p></div></details>
     </div>
   </section>
 
   <!-- ── 专题 6:系统设计 ────────────────────────────────── -->
   <section class="topic">
     <div lang="zh">
-      <span class="q">用户在意的:为什么我等的那个版本还没出</span>
-      <h2>先做手机,桌面往后排 —— 以及为什么桌面还是得做</h2>
+      <details><summary><span class="q">用户在意的:为什么我等的那个版本还没出</span>
+      <h2>先做手机,桌面往后排 —— 以及为什么桌面还是得做</h2></summary><div class="body">
       <p class="why">病历是在诊室、在检查科门口、在缴费窗口排队时产生的,那个场景里你手上只有手机。<b>手机几乎人人都有 —— 我们判断它是绝大多数人的第一选择</b>,所以把它排在最前面。桌面版不是不做,而是定位不同 —— 它是<b>进阶的个人数据查看器</b>:大屏翻片子、比对多年趋势、批量整理。用得上它的人更少,但用得上的时候,手机屏幕替代不了。</p>
 
       <ul class="tl">
@@ -418,12 +428,12 @@
 
       <p class="why" style="margin-top:18px">
         <b>代价也写清楚。</b>手机优先的直接后果就是桌面端排在后面 —— 桌面版还在往前做,Linux 的构建先停着。这是排序换来的,不是忘了。
-      </p>
+      </p></div></details>
     </div>
 
     <div lang="en">
-      <span class="q">What you actually care about: why isn't the version I want out yet?</span>
-      <h2>Phone first, desktop later — and why desktop still has to happen</h2>
+      <details><summary><span class="q">What you actually care about: why isn't the version I want out yet?</span>
+      <h2>Phone first, desktop later — and why desktop still has to happen</h2></summary><div class="body">
       <p class="why">Medical records get created in the exam room, outside the imaging department, in the queue at the payment window. In those moments the only thing in your hand is a phone. <b>Almost everyone has one, and we're betting it's the first choice for most people</b>, so that's where we started. Desktop isn't cancelled — it plays a different role: <b>the power-user's data viewer</b>. Big screen for scans, multi-year trends side by side, bulk cleanup. Fewer people need that, but when they do, a phone screen won't substitute.</p>
 
       <ul class="tl">
@@ -447,7 +457,7 @@
 
       <p class="why" style="margin-top:18px">
         <b>The cost, stated plainly.</b> Putting mobile first means desktop comes later — it's still moving, while the Linux build stays paused. That's what the ordering costs, and it's a choice, not an oversight.
-      </p>
+      </p></div></details>
     </div>
   </section>
 
