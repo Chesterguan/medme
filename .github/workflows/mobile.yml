@@ -175,9 +175,35 @@ jobs:
       - name: pub get
         working-directory: ${{ env.WORKDIR }}
         run: flutter pub get
+      # 【诊断】cunning_document_scanner 2.6.0 是纯 SPM,原生代码经 Flutter 的
+      # SwiftPackage 集成注入。CI 是干净 checkout,ios/Flutter/ephemeral 不入库,
+      # 需在此确认 SPM 是否启用、插件是否被生成进 FlutterGeneratedPluginSwiftPackage。
+      - name: 【诊断】SPM 集成状态
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          echo "== flutter config =="
+          flutter config | grep -i swift-package || true
+          echo "== 生成的 SwiftPackage 是否含 cunning =="
+          find ios/Flutter -name Package.swift -exec grep -l cunning {} \; || echo "未找到含 cunning 的 Package.swift"
+          echo "== project.pbxproj 里的 SPM 引用 =="
+          grep -c "FlutterGeneratedPluginSwiftPackage\|XCSwiftPackageProductDependency" ios/Runner.xcodeproj/project.pbxproj || echo 0
+          echo "== Podfile.lock 里有没有 cunning(走 pod 那条)=="
+          grep -i cunning ios/Podfile.lock || echo "Podfile.lock 无 cunning(符合纯 SPM 预期)"
       - name: 构建 IPA(release archive + 导出)
         working-directory: ${{ env.WORKDIR }}
         run: flutter build ipa --release --export-options-plist=$RUNNER_TEMP/ExportOptions.plist
+      - name: 【诊断】构建后:插件是否被注册进原生
+        if: always()
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          echo "== GeneratedPluginRegistrant 是否注册了扫描器 =="
+          if find ios -name "GeneratedPluginRegistrant*" -exec grep -il cunning {} \; | grep -q .; then
+            echo "✅ cunning 已注册进 GeneratedPluginRegistrant"
+          else
+            echo "❌ GeneratedPluginRegistrant 未注册 cunning ← 这就是根因(原生 handler 缺失,method channel 无响应)"
+          fi
+          echo "== FlutterGeneratedPluginSwiftPackage 生成情况 =="
+          find ios/Flutter -name Package.swift -exec grep -l cunning {} \; || echo "生成的 SwiftPackage 未含 cunning"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: medme-ios-ipa

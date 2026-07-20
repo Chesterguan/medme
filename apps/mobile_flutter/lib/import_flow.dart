@@ -79,9 +79,12 @@ Future<List<PendingImport>> _pick(_ImportChoice choice) async {
       // 回整行。随手斜拍是最常见的输入,这一步质量提升值一次多余的对框操作。
       // 扫描器不可用(部分设备/权限)时回退到普通拍照,不阻断采集。
       try {
+        // 加超时:若原生侧根本没响应(如 SPM 未链接,method channel 无 handler),
+        // getPictures 会永远挂起 —— 表现就是「点了没反应」。超时后抛异常,落到
+        // 下面的回退分支走普通拍照,而不是让用户干等。
         final paths = await CunningDocumentScanner.getPictures(
           scannerSource: ScannerSource.camera,
-        );
+        ).timeout(const Duration(seconds: 12));
         if (paths == null || paths.isEmpty) return const [];
         return [
           for (final p in paths)
