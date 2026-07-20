@@ -64,6 +64,14 @@ Future<void> showImportSheet(BuildContext context) async {
   );
   if (choice == null || !context.mounted) return;
 
+  // 等 bottom sheet 的关闭动画播完再拉起原生采集器。文档扫描器
+  // (VNDocumentCameraViewController)靠 rootViewController.present 弹出;若 sheet
+  // 尚未完全消失,present 会被正在退场的 sheet 挡下、静默失败,method channel 永不
+  // 回调 —— 表现就是「点了没反应」。ImagePicker 内部自己处理了这个时序,这个扫描器
+  // 插件没有,所以在这里补一帧等待。
+  await Future<void>.delayed(const Duration(milliseconds: 350));
+  if (!context.mounted) return;
+
   final items = await _pick(choice);
   if (items.isEmpty || !context.mounted) return;
   await _runImport(context, items);
@@ -79,9 +87,11 @@ Future<List<PendingImport>> _pick(_ImportChoice choice) async {
       // 回整行。随手斜拍是最常见的输入,这一步质量提升值一次多余的对框操作。
       // 扫描器不可用(部分设备/权限)时回退到普通拍照,不阻断采集。
       try {
+        // 加超时兜底:万一原生侧仍无响应(极端时序 / 未来插件回归),挂起 12s 即抛,
+        // 落到下面回退分支走普通拍照,不让用户干等。
         final paths = await CunningDocumentScanner.getPictures(
           scannerSource: ScannerSource.camera,
-        );
+        ).timeout(const Duration(seconds: 12));
         if (paths == null || paths.isEmpty) return const [];
         return [
           for (final p in paths)
