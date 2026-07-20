@@ -9,6 +9,7 @@
 // 空壳查看器,病历数据全程只在两台手机之间。
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:screen_brightness/screen_brightness.dart';
 
 import '../src/rust/api/dto.dart';
 import '../src/rust/api/vault.dart';
@@ -28,10 +29,40 @@ class _QrShareScreenState extends State<QrShareScreen> {
   QrShareDto? _share;
   String? _error;
 
+  // 自动调亮是否成功:成功了就不用再提示患者手动调亮。失败(部分设备/权限
+  // 限制)保持 false,页面照常显示二维码,退回原来的手动提示文案。
+  bool _brightnessBoosted = false;
+
   @override
   void initState() {
     super.initState();
     _generate();
+    _boostBrightness();
+  }
+
+  @override
+  void dispose() {
+    // 只调了 app 内亮度,不影响系统亮度;离开页面时恢复,覆盖用户中途按
+    // home 键切走再回来的情况(setApplicationScreenBrightness 只在此页
+    // 生效,退到后台时插件自身也会按生命周期自动重置,双保险)。
+    // dispose 是同步的,恢复调用不 await;失败也不阻塞退出,但要接住
+    // 异常,不然是一个未处理的 Future 错误。
+    if (_brightnessBoosted) {
+      ScreenBrightness.instance
+          .resetApplicationScreenBrightness()
+          .catchError((_) {});
+    }
+    super.dispose();
+  }
+
+  Future<void> _boostBrightness() async {
+    try {
+      await ScreenBrightness.instance.setApplicationScreenBrightness(1.0);
+      if (mounted) setState(() => _brightnessBoosted = true);
+    } catch (_) {
+      // 调亮失败(部分设备/权限限制)不影响二维码本身显示,静默降级为
+      // 手动提示即可,不弹错误打断医患当面这个流程。
+    }
   }
 
   Future<void> _generate() async {
@@ -99,9 +130,10 @@ class _QrShareScreenState extends State<QrShareScreen> {
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 6),
-          const Text(
-            '把屏幕亮度调高,对着医生的手机相机',
-            style: TextStyle(fontSize: 13.5, color: MedMe.faint),
+          Text(
+            // 自动调亮成功了就别再让患者做一遍已经做了的事。
+            _brightnessBoosted ? '对着医生的手机相机' : '把屏幕亮度调高,对着医生的手机相机',
+            style: const TextStyle(fontSize: 13.5, color: MedMe.faint),
           ),
           const SizedBox(height: 20),
           // 白底 + 留白是二维码可扫性的硬要求,别加装饰。

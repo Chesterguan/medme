@@ -50,6 +50,11 @@ dependencies:
   pdfx: ^2.9.2
   share_plus: ^11.0.0
   url_launcher: ^6.3.2
+  # 出示二维码时自动调亮屏幕:只调 app 内亮度(不动系统亮度),安卓不需要
+  # WRITE_SETTINGS 权限;内置 app 生命周期自动重置,切后台/被系统回收也不会
+  # 把亮度锁死在最高。pub.dev 满分维护度、165 赞、月下载 18万+,选成熟包
+  # 而不是自己写 platform channel。
+  screen_brightness: ^2.1.11
 
 dev_dependencies:
   flutter_test:

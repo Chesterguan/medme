@@ -31,3 +31,6 @@ web/hosted-viewer/demo-payload.json
 fuzz/target/
 fuzz/corpus/*/[0-9a-f]*
 fuzz/artifacts/
+
+# 上游安全报告草稿:含未公开的漏洞细节,提交前不入库
+docs/upstream-dicom-rs-report.md
