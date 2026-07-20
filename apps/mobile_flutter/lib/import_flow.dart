@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -204,11 +205,24 @@ Future<void> _runImport(BuildContext context, List<PendingImport> items) async {
   progress.dispose();
 }
 
-/// 扫描版 PDF 补 OCR:用 `pdfx` 逐页渲染成 PNG(2× 分辨率提升识别率),走原生图片
-/// OCR([recognizeImageText],iOS Vision / 安卓 ML Kit),合并各页文本 + 平均置信度。
+/// 扫描版 PDF 补 OCR:用 `pdfx` 逐页渲染成 PNG,走原生图片 OCR
+/// ([recognizeImageText],iOS Vision / 安卓 ML Kit),合并各页文本 + 平均置信度。
 /// 任何一步失败/无文本都安全返回(空文本 → 调用方不回填,保持「仅存原件」)。
 /// 页数封顶 [_kMaxPdfOcrPages] 防超大 PDF 卡死。
 const int _kMaxPdfOcrPages = 20;
+
+/// 渲染目标解析度。pdfx 的 `page.width/height` 单位是 **point**(1/72 英寸),
+/// 所以缩放倍数 = 目标 DPI / 72。
+///
+/// 300 DPI 是中文 OCR 的通行下限 —— 笔画密的字(参考值那一列的小字号、繁体、
+/// 生僻字)在更低解析度下会糊成一团。此前用的 2×(= 144 DPI)是拍脑袋定的,
+/// 真机实测识别质量明显不足;作为对比,用手机直接拍一张 A4 约合 360 DPI,
+/// 反而比我们渲染的清晰一倍有余。
+const double _kOcrTargetDpi = 300;
+
+/// 单页渲染的像素上限。超大幅面(如拼接的 X 光报告)按 300 DPI 展开可能到几亿
+/// 像素,直接 OOM。命中上限时按比例缩回,宁可这一页识别差些,也不能让导入崩掉。
+const double _kMaxRenderPixels = 40e6;
 
 Future<OcrResult> _ocrScannedPdf(String path) async {
   final buf = StringBuffer();
@@ -224,9 +238,15 @@ Future<OcrResult> _ocrScannedPdf(String path) async {
     for (var i = 1; i <= pages; i++) {
       final page = await doc.getPage(i);
       try {
+        // 按目标 DPI 计算缩放,再按像素上限回退 —— 见 _kOcrTargetDpi / _kMaxRenderPixels。
+        var scale = _kOcrTargetDpi / 72.0;
+        final pixels = page.width * scale * page.height * scale;
+        if (pixels > _kMaxRenderPixels) {
+          scale *= math.sqrt(_kMaxRenderPixels / pixels);
+        }
         final img = await page.render(
-          width: page.width * 2,
-          height: page.height * 2,
+          width: page.width * scale,
+          height: page.height * scale,
           format: PdfPageImageFormat.png,
         );
         if (img == null) continue;
@@ -234,7 +254,10 @@ Future<OcrResult> _ocrScannedPdf(String path) async {
         await f.writeAsBytes(img.bytes);
         final ocr = await recognizeImageText(f.path);
         if (ocr.text.trim().isNotEmpty) {
-          buf.writeln(ocr.text);
+          // 页间必须空行分隔:OCR 已用 `\n\n` 分块(Layer-0),若这里只写一个
+          // 换行,上一页的末块会和下一页的首块粘成同一块,下游按段分块就错位。
+          if (buf.isNotEmpty) buf.write('\n\n');
+          buf.write(ocr.text.trim());
           confs.add(ocr.confidence);
         }
       } finally {
