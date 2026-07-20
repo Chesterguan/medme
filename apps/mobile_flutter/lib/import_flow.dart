@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -211,18 +210,16 @@ Future<void> _runImport(BuildContext context, List<PendingImport> items) async {
 /// 页数封顶 [_kMaxPdfOcrPages] 防超大 PDF 卡死。
 const int _kMaxPdfOcrPages = 20;
 
-/// 渲染目标解析度。pdfx 的 `page.width/height` 单位是 **point**(1/72 英寸),
-/// 所以缩放倍数 = 目标 DPI / 72。
+/// 渲染放大倍数的候选,从清晰到保守**逐级降档**。
 ///
-/// 300 DPI 是中文 OCR 的通行下限 —— 笔画密的字(参考值那一列的小字号、繁体、
-/// 生僻字)在更低解析度下会糊成一团。此前用的 2×(= 144 DPI)是拍脑袋定的,
-/// 真机实测识别质量明显不足;作为对比,用手机直接拍一张 A4 约合 360 DPI,
-/// 反而比我们渲染的清晰一倍有余。
-const double _kOcrTargetDpi = 300;
-
-/// 单页渲染的像素上限。超大幅面(如拼接的 X 光报告)按 300 DPI 展开可能到几亿
-/// 像素,直接 OOM。命中上限时按比例缩回,宁可这一页识别差些,也不能让导入崩掉。
-const double _kMaxRenderPixels = 40e6;
+/// 分辨率越高 OCR 越准(笔画密的字在低解析度下会糊成一团),但设备内存有限:
+/// 放大到一定程度 `render()` 会直接失败返回 null。此前写死单一倍数,一旦这台
+/// 设备渲不出来就整篇零文本 —— 真机上就是这么炸的。所以不再赌一个常量,
+/// 而是从高往低试,第一个渲得出来的就用。
+///
+/// 注意 pdfx 的 `page.width/height` 文档写明是 **像素**(不是 point),所以这里
+/// 是相对原始尺寸的倍数,不能按 DPI 直接换算。
+const List<double> _kRenderScales = [3.0, 2.0, 1.5];
 
 Future<OcrResult> _ocrScannedPdf(String path) async {
   final buf = StringBuffer();
@@ -238,18 +235,31 @@ Future<OcrResult> _ocrScannedPdf(String path) async {
     for (var i = 1; i <= pages; i++) {
       final page = await doc.getPage(i);
       try {
-        // 按目标 DPI 计算缩放,再按像素上限回退 —— 见 _kOcrTargetDpi / _kMaxRenderPixels。
-        var scale = _kOcrTargetDpi / 72.0;
-        final pixels = page.width * scale * page.height * scale;
-        if (pixels > _kMaxRenderPixels) {
-          scale *= math.sqrt(_kMaxRenderPixels / pixels);
+        // 逐级降档:清晰优先,渲不出来就退一档,别让整页变成零文本。
+        PdfPageImage? img;
+        for (final scale in _kRenderScales) {
+          try {
+            img = await page.render(
+              width: page.width * scale,
+              height: page.height * scale,
+              format: PdfPageImageFormat.png,
+              // 必须给白底。PNG 默认透明背景,黑字压在透明底上被 OCR 加载时
+              // 可能合成成黑底,变成黑字黑底、一个字都认不出。
+              backgroundColor: '#FFFFFF',
+            );
+          } catch (e) {
+            debugPrint('[import] 第 \$i 页 \$scale× 渲染异常: \$e');
+          }
+          if (img != null) {
+            debugPrint('[import] 第 \$i 页以 \$scale× 渲染成功');
+            break;
+          }
+          debugPrint('[import] 第 \$i 页 \$scale× 渲染失败,降档重试');
         }
-        final img = await page.render(
-          width: page.width * scale,
-          height: page.height * scale,
-          format: PdfPageImageFormat.png,
-        );
-        if (img == null) continue;
+        if (img == null) {
+          debugPrint('[import] 第 $i 页所有倍数均渲染失败,跳过');
+          continue;
+        }
         final f = File('${tmp.path}/p$i.png');
         await f.writeAsBytes(img.bytes);
         final ocr = await recognizeImageText(f.path);
