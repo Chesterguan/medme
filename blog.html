@@ -105,6 +105,51 @@
   <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input type="search" disabled aria-label="搜索" data-ph-zh="搜索专题、决定、技术名词" data-ph-en="Search topics, decisions, terms" /><span class="soon"><span lang="zh">即将推出</span><span lang="en">coming soon</span></span></div>
 
   <div class="topics">
+  <!-- ── 专题 7:面对面二维码分享 ────────────────────────── -->
+  <section class="topic">
+    <div lang="zh">
+      <details><summary><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="6" height="6" rx="1"/><rect x="14.5" y="3.5" width="6" height="6" rx="1"/><rect x="3.5" y="14.5" width="6" height="6" rx="1"/><path d="M14.5 14.5h3v3M20.5 17.5v3h-3"/></svg></span><span class="q">用户在意的:到了诊室,怎么把病历送到医生眼前</span>
+      <h2>不装 App、不过医院的网,让医生扫一下就看到你现在什么情况</h2></summary><div class="body">
+      <p class="why">我们本来有一份加密分享文件,医生下载下来能看整份病历。可真到门诊里,送达这一步常常卡住:文件得先传过去,医生还得找到它、打开它。我们试过微信 —— 文件能收到,<b>iOS 上没有一键打开的办法</b>。医院里那台连内网的工作站也指望不上,它和微信基本不会同时出现在一台机器上。于是换个问法:如果医生手里只有他自己那部手机,能不能让他三十秒看懂你现在什么情况?答案是一张码。而这张码有个很硬的上限。</p>
+
+      <ul class="tl">
+        <li class="now">
+          <span class="d">2026-07-19</span>
+          <div class="t"><b>端到端跑通:手机出码,医生扫码就看。</b>保险箱里装配摘要 → 裁剪 → gzip → AES-256-GCM 加密 → 塞进 URL 的 <code>#</code> 之后 → 手机屏幕上显示成二维码。医生用自带的相机扫,查看器在他浏览器里解开。<b>密钥也在 <code>#</code> 之后</b>,按 HTTP 规范这部分不会随请求发给服务器 —— 医生那边只从静态页下载一个空壳查看器,病历数据不经过我们的服务器,只在两台手机之间。两个实现上的决定:fragment 带 <code>q1.</code> 前缀,查看器据此一眼分清「这是二维码载荷」还是「这是口令」;加密的绑定串用 <code>medme-qr-v1</code>,跟整份分享的 <code>medme-share-v1</code> 刻意不同,两种载荷不会被当成对方解开。解压直接用浏览器自带的 <code>DecompressionStream</code>,不引前端库。<a href="https://github.com/Chesterguan/medme/pull/166" target="_blank" rel="noopener">#166</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-18</span>
+          <div class="t"><b>先解决容量:按构造裁剪,而不是指望它装得下。</b>二维码能装的东西有个很硬的上限:二进制模式理论上是 2953 字节,但那是最低纠错等级 —— 医生隔着桌子扫,纠错得留高些,我们用的等级只剩 2331 字节。而一份完整摘要的体积跟着病历份数长,<b>几十份之后就装不下</b>。撑破的偏偏是慢病随访的人,而那正是最需要这东西的人群。所以我们没去压缩得更狠,而是在源头上限定带什么:只带在治的病、每个指标最近几个点、在用的药,停用的略去;容量不够时先丢已经好了的病,需要关注的排前面留住。这么一改,<b>体积就跟病历总量脱钩了</b>:5 个病和 500 个病,出来的码几乎一样大。有一条回归测试专门守着这件事 —— 它要是挂了,整个方案就不成立。<a href="https://github.com/Chesterguan/medme/pull/164" target="_blank" rel="noopener">#164</a></div>
+        </li>
+      </ul>
+
+      <p class="why" style="margin-top:18px">
+        <b>这张码换来的和放弃的,都摆在界面上。</b>它只带<b>当下病情</b>:没有原件、没有影像、没有更早的记录 —— 那些要看,患者当场用自己手机翻给医生。这不是少做了一块,是这条通道本来就该只做这件事,整份病历有加密文件那条路。还有一句我们写进了出码页面:<b>这张码就是钥匙</b>。面对面出示码本身就算「在场证明」,所以不再另设口令;代价是被拍下就等于把这份摘要给了对方,没有过期,也没有撤销。<b>顺带说清一件事:</b>裁剪的那几个默认值(带几个病、每个病几条化验、几个点)现在是工程上的占位数,临床上该带多少,得等医生侧的反馈来定,到时候改几个常量就行,不用动管线。
+      </p></div></details>
+    </div>
+
+    <div lang="en">
+      <details><summary><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="6" height="6" rx="1"/><rect x="14.5" y="3.5" width="6" height="6" rx="1"/><rect x="3.5" y="14.5" width="6" height="6" rx="1"/><path d="M14.5 14.5h3v3M20.5 17.5v3h-3"/></svg></span><span class="q">What you actually care about: in the exam room, how do the records reach the doctor?</span>
+      <h2>Nothing to install, nothing through the hospital network — the doctor scans once and sees where you stand</h2></summary><div class="body">
+      <p class="why">We already had an encrypted share file: the doctor downloads it and sees the whole record. In an actual clinic, though, delivery is where it stalls. The file has to get there, and the doctor has to find it and open it. We tried WeChat — the file arrives, but <b>on iOS there's no one-tap way to open it</b>. The intranet workstation in the room is no help either; it and WeChat rarely live on the same machine. So we asked a different question: if the only thing the doctor holds is their own phone, can they understand where you stand in thirty seconds? The answer is a QR code. And a QR code has a hard ceiling.</p>
+
+      <ul class="tl">
+        <li class="now">
+          <span class="d">2026-07-19</span>
+          <div class="t"><b>End to end: the phone shows a code, the doctor scans it.</b> Assemble the summary from the vault → trim → gzip → AES-256-GCM → put it after the <code>#</code> in a URL → render that as a QR code on screen. The doctor scans with their stock camera and the viewer decrypts in their browser. <b>The key sits after the <code>#</code> too</b>, and per the HTTP spec that part isn't sent to the server — the doctor's phone only pulls an empty viewer shell from a static page, and the record data travels strictly between the two phones. Two implementation calls: the fragment carries a <code>q1.</code> prefix so the viewer can tell "QR payload" from "passphrase" at a glance; and the AEAD binding string is <code>medme-qr-v1</code>, deliberately different from <code>medme-share-v1</code> used by the full share, so neither payload can be opened as the other. Decompression uses the browser's own <code>DecompressionStream</code> — no frontend library. <a href="https://github.com/Chesterguan/medme/pull/166" target="_blank" rel="noopener">#166</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-18</span>
+          <div class="t"><b>Capacity first: trim by construction instead of hoping it fits.</b> A QR code has a hard ceiling: 2953 bytes in binary mode at the lowest error-correction level — but a doctor scanning across a desk needs more correction than that, and the level we use leaves 2331. A full summary grows with the number of records, and past a few dozen <b>it no longer fits</b>. The people who burst it are exactly the ones on long-term follow-up, who are exactly the people this is for. So rather than compressing harder, we bounded what goes in at the source: conditions under treatment, the most recent few points per marker, medications currently being taken, discontinued ones left out. When space runs short, resolved conditions drop first and the ones needing attention stay at the front. The result: <b>size decouples from how many records you have</b> — 5 conditions and 500 conditions produce codes of near-identical size. A regression test guards exactly that; if it ever fails, the whole approach stops holding. <a href="https://github.com/Chesterguan/medme/pull/164" target="_blank" rel="noopener">#164</a></div>
+        </li>
+      </ul>
+
+      <p class="why" style="margin-top:18px">
+        <b>What this code buys and what it gives up are both printed on the screen.</b> It carries <b>the current picture</b> only: no originals, no imaging, nothing from further back — for those, the patient pulls them up on their own phone right there. That isn't a missing piece; it's the job this channel is meant to do, and the full record has the encrypted-file route. One more line we put on the sharing screen: <b>the code is the key</b>. Holding it out face to face is itself the proof of presence, so there's no separate passphrase. The cost is that a photo of the code hands the summary over, with no expiry and no revocation. <b>Worth stating:</b> the trimming defaults — how many conditions, how many labs each, how many points — are engineering placeholders. What's clinically right is for doctors to tell us, and when they do it's a few constants to change, not the pipeline.
+      </p></div></details>
+    </div>
+  </section>
+
   <!-- ── 专题 1:OCR ────────────────────────────────────────── -->
   <section class="topic">
     <div lang="zh">
