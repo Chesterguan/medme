@@ -40,6 +40,10 @@ A new Flutter FFI plugin project.
     'DEFINES_MODULE' => 'YES',
     # Flutter.framework does not contain a i386 slice.
     'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
-    'OTHER_LDFLAGS' => '-force_load ${BUILT_PRODUCTS_DIR}/librust_lib_mobile_flutter.a',
+    # -lc++ / CoreML:iOS 上 Rust crate 含 PP-OCRv5(ort/ONNX Runtime + oar-ocr 的
+    # C++ 传递依赖)。ort 的 build script 发的 link-lib=c++/framework=CoreML 只在
+    # cargo 自己链接时生效;这里 Rust 编成静态库、Xcode 做最终链接,那些指令传不过来,
+    # 必须在此显式补上,否则 libc++(std::__1::*)/CoreML 符号全 undefined。
+    'OTHER_LDFLAGS' => '-force_load ${BUILT_PRODUCTS_DIR}/librust_lib_mobile_flutter.a -lc++ -framework CoreML',
   }
 end
