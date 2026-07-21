@@ -127,3 +127,32 @@ OCR 加载时可能合成成黑底,这个 v20 就存在。
   换算表。算术没错,前提是错的,而正确的算术让错误的前提显得可信。
 - **静默失败是放大器**。`if (img == null) continue;` 让一个渲染错误变成了「整篇零文本
   且无任何提示」。改动涉及真机行为时,失败路径必须有日志。
+
+---
+
+## 追记(2026-07-21):文档扫描器相机权限 —— 五版才修对,代价最大的一次
+
+拍照采集换系统文档扫描器(#177)后,真机 iOS 点拍照无反应。从 v22 到 v26 连出五版
+才修对,**根子是同一个:没验证就动手**。留痕以自戒。
+
+**错误链(每版都是猜):**
+- v22 猜渲染 DPI 不足 → 改 300 DPI,反而把单位搞错(pdfx 的 width 是像素不是 point)
+- v23 系统扫描器上线,拍照无反应
+- v24 猜 present 时序 → 加延迟。诊断构建证伪:插件已注册进 GeneratedPluginRegistrant
+- v25 猜 permission_handler 走 CocoaPods → Podfile 加宏。**实际走 SPM,宏无效,白出一版**
+- v26 **诊断实证**:permission_handler SPM 集成靠扫 Info.plist 启用权限,CI 干净环境
+  路径回溯不到 → 相机权限默认关 → .request() 直接 denied、不弹框。修法:构建步骤
+  export PERMISSION_CAMERA=1(env 优先级高于扫 plist,官方 Package.swift 代码实证)
+
+**两次转折都靠先拿数据,不靠猜:**
+1. **v25 屏幕探针** —— 读不到真机日志(工具都要 USB 有线,用户无线连),就让 App
+   把每步状态弹成 SnackBar。用户点一次,`permission_denied` 异常直接显示。一击定位。
+2. **CI 诊断构建** —— 在构建流程里打印 SPM 包位置 / Info.plist 路径回溯结果,坐实
+   「CI 扫不到 Info.plist」。
+
+**教训(已在根 CLAUDE.md / 记忆 no-invented-constraints 有,这里再钉一次):**
+- 加依赖前必须确认它在**本工程的集成路径**(CocoaPods vs SPM)下真能跑 —— v25 就栽在
+  假设了 CocoaPods。
+- 真机行为读不到日志时,**让 App 把状态显示给用户**(屏幕探针),别盲改。这一招该在
+  v22 就用,能省四版。
+- 改了配置(Podfile/env/plist)**必须验证它在目标构建环境真的生效**,别改完就假设成功。
