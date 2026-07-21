@@ -175,6 +175,27 @@ jobs:
       - name: pub get
         working-directory: ${{ env.WORKDIR }}
         run: flutter pub get
+      - name: 【诊断】SPM 权限求值路径
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          echo "== CWD =="; pwd
+          echo "== Info.plist 有没有相机 key =="
+          /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" ios/Runner/Info.plist 2>&1 | head -1
+          echo "== permission_handler_apple 的 Package.swift 在哪 =="
+          find ios -path "*permission_handler_apple*/Package.swift" 2>/dev/null
+          echo "== 从那个 Package.swift 向上 10 层,哪层同时有 pubspec.yaml + ios/Runner/Info.plist =="
+          pkg=$(find ios -path "*permission_handler_apple*/Package.swift" 2>/dev/null | head -1)
+          if [ -n "$pkg" ]; then
+            d=$(dirname "$pkg")
+            for i in $(seq 1 10); do
+              if [ -f "$d/pubspec.yaml" ] && [ -f "$d/ios/Runner/Info.plist" ]; then
+                echo "  ✅ 第 $i 层命中: $d"; break
+              fi
+              d=$(dirname "$d")
+            done
+          else
+            echo "  ❌ 没找到 permission_handler 的 Package.swift"
+          fi
       - name: 构建 IPA(release archive + 导出)
         working-directory: ${{ env.WORKDIR }}
         run: flutter build ipa --release --export-options-plist=$RUNNER_TEMP/ExportOptions.plist
