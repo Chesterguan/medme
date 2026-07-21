@@ -1,8 +1,10 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' show Rect;
 
-import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+
+import 'package:mobile_flutter/src/rust/api/vault.dart' as rust_vault;
 
 /// 一张图片的 OCR 结果:识别文本 + 平均置信度(0~1)。
 class OcrResult {
@@ -11,27 +13,26 @@ class OcrResult {
   const OcrResult(this.text, this.confidence);
 }
 
-const MethodChannel _channel = MethodChannel('medme/ocr');
-
 /// 置信度拿不到时的兜底值(空文本/引擎不给),让导入流程照常继续。
 const double _confFallback = 0.9;
 
-/// 识别一张图片里的文字。**各平台用原生最强引擎、功能一致**:
-/// - iOS:Apple Vision(`VNRecognizeTextRequest`,中文更强,原生支持 HEIC),经
-///   `medme/ocr` MethodChannel 调用(见 `ios/Runner/AppDelegate.swift`)。
-/// - 安卓/其它:ML Kit 中文文本识别。
+/// 识别一张图片里的文字。
+///
+/// **测试版路由,feat/ios-pp-ocr-test 分支 —— ADR 0005 尚未 supersede**:
+/// - iOS:PP-OCRv5(经 FRB `recognize_image_pp`,`packages/ocr` 的 `engine` 路径,
+///   走 `apps/mobile_flutter/rust/ocr-models/` 里编译进二进制的模型),**不是**
+///   生产用的 Apple Vision(`ios/Runner/AppDelegate.swift recognizeText`)——本
+///   分支暂时不经 `medme/ocr` MethodChannel,只为真机对比两个引擎的识别质量。
+/// - 安卓/其它:ML Kit 中文文本识别(不变)。
 ///
 /// 返回 [OcrResult];引擎/路径异常时降级为空文本(上层据此走「仅存原件」),不抛。
 Future<OcrResult> recognizeImageText(String path) async {
   if (Platform.isIOS) {
     try {
-      final res = await _channel.invokeMapMethod<String, dynamic>('recognize', {
-        'path': path,
-      });
-      final text = (res?['text'] as String?) ?? '';
-      final conf = (res?['confidence'] as num?)?.toDouble() ?? _confFallback;
-      return OcrResult(text, conf);
-    } on PlatformException {
+      final bytes = await File(path).readAsBytes();
+      final res = await rust_vault.recognizeImagePp(bytes: bytes);
+      return OcrResult(res.text, res.confidence);
+    } catch (_) {
       return const OcrResult('', _confFallback);
     }
   }

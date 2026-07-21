@@ -35,12 +35,19 @@ lopdf.workspace = true
 #   * `auto-download` -- fetches the PP-OCRv5 *model* files into $OAR_HOME
 #                        (~/.oar) the first time OCR runs. Needs a writable home.
 #
-# **Mobile does not use this crate at all.** iOS OCRs via Apple Vision and
-# Android via ML Kit, both in the Dart layer (see ADR 0005); the Flutter app's
-# Rust crate has no `ocr` dependency, and `pipeline` takes us with
+# **Mobile does not use this crate at all** in production. iOS OCRs via Apple
+# Vision and Android via ML Kit, both in the Dart layer (see ADR 0005); the
+# Flutter app's Rust crate has no `ocr` dependency, and `pipeline` takes us with
 # `default-features = false`, so `engine` never links on mobile. The old
 # `set_model_dir` APK-bundling story belonged to the deleted Tauri mobile app
 # (#113) and is dead -- do not resurrect it from this comment.
+#
+# **Exception, test-branch only:** `feat/ios-pp-ocr-test` adds a direct,
+# `cfg(target_os = "ios")`-gated `ocr` (`engine`) dependency to
+# `apps/mobile_flutter/rust/Cargo.toml` to let a real device compare Apple
+# Vision vs PP-OCRv5 quality -- exploratory, ADR 0005 not (yet) superseded, does
+# not touch the Android build. See that Cargo.toml + `api::vault`'s PP-OCR
+# section for the actual wiring; `set_model_dir` above is what it uses.
 # Without `engine`, `recognize`/`recognize_pdf`
 # still compile and return an error ("OCR not available"); callers already
 # treat OCR failure as non-fatal (pipeline falls back to the near-empty text

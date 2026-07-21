@@ -201,3 +201,11 @@ Future<void> enableIcloudSync({required String containerDir}) => RustLib
 /// 本地重开派生库,清标记 + 沙盒 iCloud 派生库。用 `copy_to` 只复制不删源。幂等。
 Future<void> disableIcloudSync() =>
     RustLib.instance.api.crateApiVaultDisableIcloudSync();
+
+/// 非 iOS 构建的占位实现。FRB codegen 在开发机上跑一次生成 `frb_generated.rs` +
+/// Dart 绑定,这份生成文件不按平台分叉,所以这个函数签名必须在所有 target 上都
+/// 存在;函数体在非 iOS 直接报错即可 —— `ocr` 依赖本身按
+/// `cfg(target_os = "ios")` 门控(见 `Cargo.toml`),安卓/桌面构建压根不链接
+/// oar-ocr/onnxruntime,这个分支不产生任何额外体积或依赖。
+Future<OcrPpResultDto> recognizeImagePp({required List<int> bytes}) =>
+    RustLib.instance.api.crateApiVaultRecognizeImagePp(bytes: bytes);
