@@ -72,14 +72,24 @@ Future<void> showImportSheet(BuildContext context) async {
   await Future<void>.delayed(const Duration(milliseconds: 350));
   if (!context.mounted) return;
 
-  final items = await _pick(choice);
+  // 【诊断 v25】拍照路屏幕可见探针:读不到真机日志,让 App 直接把每步说给用户看。
+  final messenger = ScaffoldMessenger.of(context);
+  void probe(String m) => messenger.showSnackBar(
+        SnackBar(content: Text(m), duration: const Duration(seconds: 3)),
+      );
+  if (choice == _ImportChoice.camera) probe('① 菜单已关,准备调扫描器');
+
+  final items = await _pick(choice, probe);
   if (items.isEmpty || !context.mounted) return;
   await _runImport(context, items);
 }
 
 enum _ImportChoice { camera, gallery, files }
 
-Future<List<PendingImport>> _pick(_ImportChoice choice) async {
+Future<List<PendingImport>> _pick(
+  _ImportChoice choice, [
+  void Function(String)? probe,
+]) async {
   switch (choice) {
     case _ImportChoice.camera:
       // 走系统文档扫描器(iOS VisionKit / 安卓 ML Kit Document Scanner):自动
@@ -87,17 +97,19 @@ Future<List<PendingImport>> _pick(_ImportChoice choice) async {
       // 回整行。随手斜拍是最常见的输入,这一步质量提升值一次多余的对框操作。
       // 扫描器不可用(部分设备/权限)时回退到普通拍照,不阻断采集。
       try {
-        // 加超时兜底:万一原生侧仍无响应(极端时序 / 未来插件回归),挂起 12s 即抛,
-        // 落到下面回退分支走普通拍照,不让用户干等。
+        probe?.call('② 正在调 getPictures…');
+        // 超时缩到 4s:挂起即抛,落回退分支走普通相机,不让用户干等。
         final paths = await CunningDocumentScanner.getPictures(
           scannerSource: ScannerSource.camera,
-        ).timeout(const Duration(seconds: 12));
+        ).timeout(const Duration(seconds: 4));
+        probe?.call('③ 扫描器返回 ${paths?.length ?? 0} 张');
         if (paths == null || paths.isEmpty) return const [];
         return [
           for (final p in paths)
             PendingImport(name: p.split('/').last, path: p, isImage: true),
         ];
       } catch (e) {
+        probe?.call('④ 扫描器异常/超时,回退普通相机:$e');
         debugPrint('[import] 文档扫描器不可用,回退普通拍照: $e');
         final file = await ImagePicker().pickImage(source: ImageSource.camera);
         if (file == null) return const [];
