@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/theme.dart';
@@ -127,13 +128,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// 切换「个人 / 医生」模式:写入持久化后,`main.dart` 的 `AppRoot` 监听同一个
+  /// notifier 自动换到另一个根界面;本屏若是被 push 进来的(医生模式下,设置没有
+  /// 自己的 tab,是从 `DoctorHomeScreen` 点进来的),顺手把导航栈弹回第一层,让
+  /// 换好的根界面露出来。个人模式下设置本来就是 tab、没有可弹的栈,`canPop()` 为
+  /// false,这一步是 no-op。
+  Future<void> _switchMode() async {
+    final current = AppMode.instance.mode.value;
+    final target = current == AppModeKind.doctor
+        ? AppModeKind.personal
+        : AppModeKind.doctor;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('切换模式?'),
+        content: Text(
+          target == AppModeKind.doctor
+              ? '切换到「医生模式」:主界面变成「为病人代拍」,你自己的病历仍在——'
+                    '随时可以再切回来查看。'
+              : '切换到「我管自己/家人的病历」模式,回到健康档案 / 导出分享 / 设置。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('切换'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await AppMode.instance.setMode(target);
+    if (mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final currentMode = AppMode.instance.mode.value;
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
+          _SectionLabel('模式'),
+          _SettingsGroup(
+            children: [
+              _SettingsRow(
+                icon: currentMode == AppModeKind.doctor
+                    ? Icons.medical_services_outlined
+                    : Icons.folder_shared_outlined,
+                title: currentMode == AppModeKind.doctor ? '医生模式' : '我管自己/家人的病历',
+                subtitle: currentMode == AppModeKind.doctor
+                    ? '点击切换到你自己的家庭档案'
+                    : '点击切换到「为病人代拍」',
+                onTap: _switchMode,
+              ),
+            ],
+          ),
           _SectionLabel('保险箱'),
           _VaultCard(profile: _profile, onChanged: () => setState(() {})),
           _SectionLabel('示例数据'),

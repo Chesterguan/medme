@@ -18,6 +18,11 @@ class MedMe {
   static const Color faint = Color(0xFF94A3B8);
   static const Color danger = Color(0xFFBE123C);
 
+  // 医生模式(代拍病人纸质材料)专属强调色:橙色,与主品牌 teal 明显区分——
+  // 任何一屏出现这个颜色就是提醒「这不是你自己的档案」。
+  static const Color proxyOrange = Color(0xFFC2570C);
+  static const Color proxyOrangeSoft = Color(0xFFFCEEE0);
+
   static ThemeData theme() {
     final scheme = ColorScheme.fromSeed(
       seedColor: teal,

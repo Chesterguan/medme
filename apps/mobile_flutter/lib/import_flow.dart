@@ -22,7 +22,7 @@ import 'package:mobile_flutter/vault_boot.dart';
 /// 采集/OCR/落库逻辑与原「导入导出」屏一致,只是进度改用模态对话框(从档案触发,
 /// 不再挂在某个屏的持久状态上)。医疗判断全在 Rust core,这里只搬字节 + 调 FFI。
 Future<void> showImportSheet(BuildContext context) async {
-  final choice = await showModalBottomSheet<_ImportChoice>(
+  final choice = await showModalBottomSheet<ImportChoice>(
     context: context,
     showDragHandle: true,
     builder: (context) => SafeArea(
@@ -43,19 +43,19 @@ Future<void> showImportSheet(BuildContext context) async {
             icon: Icons.photo_camera_outlined,
             title: '拍照',
             subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
-            choice: _ImportChoice.camera,
+            choice: ImportChoice.camera,
           ),
           _SheetTile(
             icon: Icons.photo_library_outlined,
             title: '从相册选',
             subtitle: '选一张或多张已经拍好的病历照片',
-            choice: _ImportChoice.gallery,
+            choice: ImportChoice.gallery,
           ),
           _SheetTile(
             icon: Icons.folder_open_outlined,
             title: '选择文件',
             subtitle: 'PDF、图片、TXT',
-            choice: _ImportChoice.files,
+            choice: ImportChoice.files,
           ),
           const SizedBox(height: 8),
         ],
@@ -72,16 +72,24 @@ Future<void> showImportSheet(BuildContext context) async {
   await Future<void>.delayed(const Duration(milliseconds: 350));
   if (!context.mounted) return;
 
-  final items = await _pick(choice);
+  final items = await pickImportItems(choice);
   if (items.isEmpty || !context.mounted) return;
   await _runImport(context, items);
 }
 
-enum _ImportChoice { camera, gallery, files }
+/// 采集来源:拍照(含文档扫描器)/ 从相册选 / 选择文件。`public`——除了本文件的
+/// [showImportSheet],「医生代拍」临时会话流程(`screens/doctor/proxy_intake_flow.dart`)
+/// 也复用 [pickImportItems] 拿采集入口(自己另起一个只含「拍照/选择文件」的选择
+/// 表,不复用 `showImportSheet` 的三选一 UI)。
+enum ImportChoice { camera, gallery, files }
 
-Future<List<PendingImport>> _pick(_ImportChoice choice) async {
+/// 按 [choice] 走对应的原生采集器,返回待导入项(用户取消为空列表)。**纯采集,
+/// 不碰 OCR/落库**——OCR 识别文本、往哪个保险箱落库,都由调用方在拿到
+/// [PendingImport] 列表后自己决定(见 [showImportSheet] 与
+/// `proxy_intake_flow.dart` 两个不同的下游处理)。
+Future<List<PendingImport>> pickImportItems(ImportChoice choice) async {
   switch (choice) {
-    case _ImportChoice.camera:
+    case ImportChoice.camera:
       // 走系统文档扫描器(iOS VisionKit / 安卓 ML Kit Document Scanner):自动
       // 画框 + 透视校正,拿到已拉正的图 —— 斜着拍的表格变回横平竖直,OCR 才拼得
       // 回整行。随手斜拍是最常见的输入,这一步质量提升值一次多余的对框操作。
@@ -106,13 +114,13 @@ Future<List<PendingImport>> _pick(_ImportChoice choice) async {
         if (file == null) return const [];
         return [PendingImport(name: file.name, path: file.path, isImage: true)];
       }
-    case _ImportChoice.gallery:
+    case ImportChoice.gallery:
       final files = await ImagePicker().pickMultiImage();
       return [
         for (final f in files)
           PendingImport(name: f.name, path: f.path, isImage: true),
       ];
-    case _ImportChoice.files:
+    case ImportChoice.files:
       final result = await FilePicker.platform.pickFiles(
         allowMultiple: true,
         type: FileType.custom,
@@ -408,7 +416,7 @@ class _SheetTile extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
-  final _ImportChoice choice;
+  final ImportChoice choice;
 
   @override
   Widget build(BuildContext context) {

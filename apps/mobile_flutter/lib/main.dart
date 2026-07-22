@@ -1,9 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:mobile_flutter/app_mode.dart';
+import 'package:mobile_flutter/ephemeral_session.dart';
 import 'package:mobile_flutter/src/rust/frb_generated.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
+import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
 import 'package:mobile_flutter/screens/export_screen.dart';
+import 'package:mobile_flutter/screens/mode_picker_screen.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/vault_events.dart';
@@ -11,6 +17,9 @@ import 'package:mobile_flutter/vault_events.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
+  // 清医生代拍临时会话的崩溃残留(上次进程被杀/崩溃时没机会走 `ephemeral_wipe`)。
+  // 不依赖是否曾开过会话,不阻塞启动。
+  unawaited(EphemeralSession.sweep());
   runApp(const MedMeApp());
 }
 
@@ -46,8 +55,13 @@ class VaultBootstrap extends StatefulWidget {
 }
 
 class _VaultBootstrapState extends State<VaultBootstrap> {
-  // 打开「当前成员」的保险箱(多成员见 profile_manager / vault_boot)。
-  final Future<void> _open = openCurrentProfileVault();
+  // 打开「当前成员」的保险箱(多成员见 profile_manager / vault_boot),同时把
+  // 「个人/医生」模式选择读出来(`AppRoot` 据此决定先显示哪个根界面)。两者互不
+  // 依赖,并发跑不拖慢启动。IIFE 包一层是因为 `Future.wait` 本身返回
+  // `Future<List<void>>`,与这里声明的 `Future<void>` 字段类型不兼容。
+  final Future<void> _open = (() async {
+    await Future.wait([openCurrentProfileVault(), AppMode.instance.ensureLoaded()]);
+  })();
 
   @override
   Widget build(BuildContext context) {
@@ -89,7 +103,30 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
             ),
           );
         }
-        return const HomeShell();
+        return const AppRoot();
+      },
+    );
+  }
+}
+
+/// 应用根:按 [AppMode] 决定显示哪个界面——还没选过模式 → 「你是?」选择屏;
+/// 选了「个人」→ 现有 [HomeShell](三 tab);选了「医生」→ [DoctorHomeScreen]。
+/// 用 `ValueListenableBuilder` 监听同一个 notifier:设置页「切换模式」写入新值后,
+/// 这里自动重建换到另一个根界面,不需要任何显式导航(调用方只需在切换后把导航栈
+/// popUntil 回第一层,见 `settings_screen.dart`)。
+class AppRoot extends StatelessWidget {
+  const AppRoot({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppModeKind?>(
+      valueListenable: AppMode.instance.mode,
+      builder: (context, mode, _) {
+        return switch (mode) {
+          null => const ModePickerScreen(),
+          AppModeKind.personal => const HomeShell(),
+          AppModeKind.doctor => const DoctorHomeScreen(),
+        };
       },
     );
   }

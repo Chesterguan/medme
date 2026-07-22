@@ -174,3 +174,22 @@ pub struct PatientProfileDto {
     pub age: Option<String>,
     pub record_count: i64,
 }
+
+/// 拍前同意记录(医生代拍病人纸质材料流程):病人同意的方式(手写签名 / 按住
+/// 确认)、时刻、文案版本。由 `screens/doctor/consent_screen.dart` 产出,经
+/// `api::vault_ephemeral::ephemeral_create_share` 转换成
+/// `medme_share::share::ShareConsent` 塞进加密分享包(见该函数的 `From` 实现)。
+#[derive(Debug, Clone)]
+pub struct ConsentDto {
+    /// 同意时刻(UTC RFC3339)。
+    pub utc_ts: String,
+    /// 同意告知文案的版本号(见 `consent_screen.dart` 的 `kConsentTextVersion`)。
+    pub consent_text_version: String,
+    /// 手写签名 PNG 的 base64;按住确认(无签名图像)时为 `None`。
+    pub signature_png_base64: Option<String>,
+    /// "signature" | "press_hold"。
+    pub method: String,
+    /// 本次临时会话的人类可读标识,供医生/病人事后核对「哪一次代建档」
+    /// (不是安全边界——临时会话的一次性随机 device_id 才是,见 `vault_ephemeral.rs`)。
+    pub session_id: String,
+}

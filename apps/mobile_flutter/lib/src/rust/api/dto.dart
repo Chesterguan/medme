@@ -9,7 +9,56 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+
+/// 拍前同意记录(医生代拍病人纸质材料流程):病人同意的方式(手写签名 / 按住
+/// 确认)、时刻、文案版本。由 `screens/doctor/consent_screen.dart` 产出,经
+/// `api::vault_ephemeral::ephemeral_create_share` 转换成
+/// `medme_share::share::ShareConsent` 塞进加密分享包(见该函数的 `From` 实现)。
+class ConsentDto {
+  /// 同意时刻(UTC RFC3339)。
+  final String utcTs;
+
+  /// 同意告知文案的版本号(见 `consent_screen.dart` 的 `kConsentTextVersion`)。
+  final String consentTextVersion;
+
+  /// 手写签名 PNG 的 base64;按住确认(无签名图像)时为 `None`。
+  final String? signaturePngBase64;
+
+  /// "signature" | "press_hold"。
+  final String method;
+
+  /// 本次临时会话的人类可读标识,供医生/病人事后核对「哪一次代建档」
+  /// (不是安全边界——临时会话的一次性随机 device_id 才是,见 `vault_ephemeral.rs`)。
+  final String sessionId;
+
+  const ConsentDto({
+    required this.utcTs,
+    required this.consentTextVersion,
+    this.signaturePngBase64,
+    required this.method,
+    required this.sessionId,
+  });
+
+  @override
+  int get hashCode =>
+      utcTs.hashCode ^
+      consentTextVersion.hashCode ^
+      signaturePngBase64.hashCode ^
+      method.hashCode ^
+      sessionId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ConsentDto &&
+          runtimeType == other.runtimeType &&
+          utcTs == other.utcTs &&
+          consentTextVersion == other.consentTextVersion &&
+          signaturePngBase64 == other.signaturePngBase64 &&
+          method == other.method &&
+          sessionId == other.sessionId;
+}
 
 /// 文档详情:类型/日期(在 document 里)+ 来源文件 + 识别文本。
 class DocumentDetailDto {
