@@ -482,7 +482,11 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
         a.top
             .partial_cmp(&b.top)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.left.partial_cmp(&b.left).unwrap_or(std::cmp::Ordering::Equal))
+            .then(
+                a.left
+                    .partial_cmp(&b.left)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
     });
 
     // 1) Group lines into visual rows by y (tolerance = a fraction of line height).
@@ -516,7 +520,10 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
     let mut prev_height: Option<f32> = None;
     for row in &rows {
         let row_top = row.iter().map(|l| l.top).fold(f32::INFINITY, f32::min);
-        let row_height = row.iter().map(|l| l.height).fold(f32::NEG_INFINITY, f32::max);
+        let row_height = row
+            .iter()
+            .map(|l| l.height)
+            .fold(f32::NEG_INFINITY, f32::max);
         if let Some(pt) = prev_top {
             let ref_height = prev_height.unwrap_or(row_height);
             if ref_height > 0.0 && row_top - pt > LAYOUT_BLOCK_GAP_RATIO * ref_height {
@@ -546,7 +553,11 @@ fn build_row_text(row: &[&LayoutLine], content_left: f32, content_span: f32) -> 
             .join(" ");
     }
     let mut sorted = row.to_vec();
-    sorted.sort_by(|a, b| a.left.partial_cmp(&b.left).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        a.left
+            .partial_cmp(&b.left)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut buf = String::new();
     let mut buf_len = 0usize; // char count, not byte length (CJK-safe)
     for line in sorted {
@@ -1207,7 +1218,10 @@ mod tests {
         for part in ["88", "umol/L"] {
             let idx = out.find(part).expect("field present");
             let gap = out[..idx].chars().rev().take_while(|c| *c == ' ').count();
-            assert!(gap >= 2, "expected >=2 space gap before {part:?}, got {gap} in {out:?}");
+            assert!(
+                gap >= 2,
+                "expected >=2 space gap before {part:?}, got {gap} in {out:?}"
+            );
         }
     }
 
@@ -1232,6 +1246,10 @@ mod tests {
             ll("A", 0.0, 10.0, 40.0, 20.0),
         ];
         let out = rebuild_layout_text(&lines);
-        assert_eq!(out.lines().count(), 1, "close-y boxes must merge into one row");
+        assert_eq!(
+            out.lines().count(),
+            1,
+            "close-y boxes must merge into one row"
+        );
     }
 }
