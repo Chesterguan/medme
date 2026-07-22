@@ -86,18 +86,21 @@ Future<List<PendingImport>> _pick(_ImportChoice choice) async {
       // 画框 + 透视校正,拿到已拉正的图 —— 斜着拍的表格变回横平竖直,OCR 才拼得
       // 回整行。随手斜拍是最常见的输入,这一步质量提升值一次多余的对框操作。
       // 扫描器不可用(部分设备/权限)时回退到普通拍照,不阻断采集。
+      // 不要给交互式扫描器加 wall-clock 超时:VisionKit 是多页扫描器,用户拍完一页
+      // 后靠右上角「保存」结束,合理耗时远超十几秒。之前加的 12s timeout 会在用户还
+      // 在扫时提前抛出 → 落到回退分支、在仍开着的扫描器上又叠一个普通相机 → 用户点
+      // 保存也「不往后执行」。取消由插件自身处理(返回空),不需要我们兜时间。
       try {
-        // 加超时兜底:万一原生侧仍无响应(极端时序 / 未来插件回归),挂起 12s 即抛,
-        // 落到下面回退分支走普通拍照,不让用户干等。
         final paths = await CunningDocumentScanner.getPictures(
           scannerSource: ScannerSource.camera,
-        ).timeout(const Duration(seconds: 12));
+        );
         if (paths == null || paths.isEmpty) return const [];
         return [
           for (final p in paths)
             PendingImport(name: p.split('/').last, path: p, isImage: true),
         ];
       } catch (e) {
+        // 仅在扫描器真不可用(设备不支持 VNDocumentCameraViewController 等)时回退。
         debugPrint('[import] 文档扫描器不可用,回退普通拍照: $e');
         final file = await ImagePicker().pickImage(source: ImageSource.camera);
         if (file == null) return const [];
