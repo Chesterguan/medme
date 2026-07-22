@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cunning_document_scanner/cunning_document_scanner.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -63,6 +64,14 @@ Future<void> showImportSheet(BuildContext context) async {
   );
   if (choice == null || !context.mounted) return;
 
+  // 等 bottom sheet 的关闭动画播完再拉起原生采集器。文档扫描器
+  // (VNDocumentCameraViewController)靠 rootViewController.present 弹出;若 sheet
+  // 尚未完全消失,present 会被正在退场的 sheet 挡下、静默失败,method channel 永不
+  // 回调 —— 表现就是「点了没反应」。ImagePicker 内部自己处理了这个时序,这个扫描器
+  // 插件没有,所以在这里补一帧等待。
+  await Future<void>.delayed(const Duration(milliseconds: 350));
+  if (!context.mounted) return;
+
   final items = await _pick(choice);
   if (items.isEmpty || !context.mounted) return;
   await _runImport(context, items);
@@ -73,12 +82,30 @@ enum _ImportChoice { camera, gallery, files }
 Future<List<PendingImport>> _pick(_ImportChoice choice) async {
   switch (choice) {
     case _ImportChoice.camera:
-      // 普通相机拍照(v20 起一直用、确定可用)。文档扫描器(自动纠偏)一度换进来,
-      // 但那个插件在 SPM 集成 / present 时序 / 相机权限上连环踩坑,六版未稳,已撤回。
-      // 纠偏改走更轻的路子(见 issue),不再阻塞采集。
-      final file = await ImagePicker().pickImage(source: ImageSource.camera);
-      if (file == null) return const [];
-      return [PendingImport(name: file.name, path: file.path, isImage: true)];
+      // 走系统文档扫描器(iOS VisionKit / 安卓 ML Kit Document Scanner):自动
+      // 画框 + 透视校正,拿到已拉正的图 —— 斜着拍的表格变回横平竖直,OCR 才拼得
+      // 回整行。随手斜拍是最常见的输入,这一步质量提升值一次多余的对框操作。
+      // 扫描器不可用(部分设备/权限)时回退到普通拍照,不阻断采集。
+      // 不要给交互式扫描器加 wall-clock 超时:VisionKit 是多页扫描器,用户拍完一页
+      // 后靠右上角「保存」结束,合理耗时远超十几秒。之前加的 12s timeout 会在用户还
+      // 在扫时提前抛出 → 落到回退分支、在仍开着的扫描器上又叠一个普通相机 → 用户点
+      // 保存也「不往后执行」。取消由插件自身处理(返回空),不需要我们兜时间。
+      try {
+        final paths = await CunningDocumentScanner.getPictures(
+          scannerSource: ScannerSource.camera,
+        );
+        if (paths == null || paths.isEmpty) return const [];
+        return [
+          for (final p in paths)
+            PendingImport(name: p.split('/').last, path: p, isImage: true),
+        ];
+      } catch (e) {
+        // 仅在扫描器真不可用(设备不支持 VNDocumentCameraViewController 等)时回退。
+        debugPrint('[import] 文档扫描器不可用,回退普通拍照: $e');
+        final file = await ImagePicker().pickImage(source: ImageSource.camera);
+        if (file == null) return const [];
+        return [PendingImport(name: file.name, path: file.path, isImage: true)];
+      }
     case _ImportChoice.gallery:
       final files = await ImagePicker().pickMultiImage();
       return [

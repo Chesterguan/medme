@@ -3806,6 +3806,7 @@ dependencies = [
 name = "medme-desktop"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "core-model",
  "dicom",
@@ -3831,6 +3832,7 @@ dependencies = [
  "chrono",
  "core-model",
  "dicom",
+ "flate2",
  "getrandom 0.4.3",
  "parser",
  "pipeline",

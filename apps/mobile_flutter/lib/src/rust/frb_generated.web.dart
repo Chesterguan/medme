@@ -88,6 +88,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TimelineGroupDto> dco_decode_list_timeline_group_dto(dynamic raw);
 
   @protected
+  OcrPpResultDto dco_decode_ocr_pp_result_dto(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
@@ -199,6 +202,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TimelineGroupDto> sse_decode_list_timeline_group_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  OcrPpResultDto sse_decode_ocr_pp_result_dto(SseDeserializer deserializer);
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
@@ -339,6 +345,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_timeline_group_dto(
     List<TimelineGroupDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ocr_pp_result_dto(
+    OcrPpResultDto self,
     SseSerializer serializer,
   );
 

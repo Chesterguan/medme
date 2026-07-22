@@ -130,6 +130,15 @@ pub struct ImportOutcomeDto {
     pub detected_name: Option<String>,
 }
 
+/// **iOS PP-OCRv5 测试路径**结果(feat/ios-pp-ocr-test 分支,探索性——ADR 0005
+/// 尚未 supersede)。镜像 Dart `OcrResult`(`ocr_bridge.dart`),供
+/// `recognize_image_pp` 返回,让真机能对比 Apple Vision vs PP-OCRv5 的识别质量。
+#[derive(Debug, Clone)]
+pub struct OcrPpResultDto {
+    pub text: String,
+    pub confidence: f32,
+}
+
 /// 加密分享生成结果:口令(单独告知医生)、记录数、文件字节数、分享文件路径。
 #[derive(Debug, Clone)]
 pub struct ShareResultDto {

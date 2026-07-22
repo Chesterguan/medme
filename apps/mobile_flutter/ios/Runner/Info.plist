@@ -74,6 +74,8 @@
 	     传递依赖)引用了系统定位 API 的要求(ITMS-90683);App 不会请求或使用你的位置。 -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>MedMe 不需要你的位置信息,也不会请求定位。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>MedMe 不需要你的位置信息,也不会请求定位。</string>
 	<!-- 只用标准/豁免加密(本机端到端分享用的是标准算法),免每次 TestFlight 问出口合规。 -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>

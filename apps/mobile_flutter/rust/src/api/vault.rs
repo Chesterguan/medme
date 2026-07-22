@@ -13,6 +13,18 @@ use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind, Vault};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+// 移动端图片 OCR 落库时如实标注引擎(溯源):iOS 走 PP-OCRv5(ONNX Runtime,见
+// `ocr_bridge.dart` iOS 分支的 `recognize_image_pp`),安卓走 Google ML Kit。按编译
+// 目标区分——本 crate 由 cargokit 分别为 aarch64-apple-ios / Android 交叉编译。
+#[cfg(target_os = "ios")]
+const MOBILE_OCR_BACKEND: OcrBackendKind = OcrBackendKind::Onnx;
+#[cfg(not(target_os = "ios"))]
+const MOBILE_OCR_BACKEND: OcrBackendKind = OcrBackendKind::MlKit;
+#[cfg(target_os = "ios")]
+const MOBILE_OCR_MODEL: &str = "pp-ocrv5-mobile";
+#[cfg(not(target_os = "ios"))]
+const MOBILE_OCR_MODEL: &str = "mlkit-v2-zh";
+
 /// 随应用二进制打包的示例数据(张建国示例病历,corpus/scenarios,文本+PDF,
 /// 不含大体积 DICOM——与 Tauri 移动端 `demo-data/` 同一份数据集)。
 ///
@@ -468,8 +480,8 @@ pub fn backfill_pdf_text(document_id: i64, text: String, confidence: f64) -> any
             .add_ocr(NewOcr {
                 document_id,
                 page_no: 1,
-                backend: OcrBackendKind::MlKit,
-                model_version: "mlkit-pdf".into(),
+                backend: MOBILE_OCR_BACKEND,
+                model_version: MOBILE_OCR_MODEL.into(),
                 text,
                 confidence: Some(confidence as f32),
             })
@@ -478,13 +490,12 @@ pub fn backfill_pdf_text(document_id: i64, text: String, confidence: f64) -> any
     })
 }
 
-/// 采集(图片,Flutter 端已用 ML Kit 识别好文本):原始字节先入 CAS(与
-/// `pipeline::ingest` 一致,去重同一张图);识别出文字则建 document + ocr_result
-/// (backend 固定 `OcrBackendKind::MlKit`,置信度取调用方传入值,与识别引擎无关——
-/// 只是把「MedMe 侧落库时统一打上 MlKit 标签」这件事从 Rust 端 OCR 迁到 Flutter
-/// 端 OCR,记录里如实标注来源);识别为空则退回文件名元数据(`StoredNoText`),
-/// 原件仍可见。落库语义逐字镜像 Tauri 版 `ingest_image_via_vision`/
-/// `ingest_image_via_mlkit`,只是识别文本来自参数而非本地再跑一次 OCR。
+/// 采集(图片,Flutter 端已识别好文本):原始字节先入 CAS(与 `pipeline::ingest`
+/// 一致,去重同一张图);识别出文字则建 document + ocr_result(backend 按编译目标
+/// 如实标注 `MOBILE_OCR_BACKEND`——iOS=PP-OCRv5/Onnx,安卓=ML Kit;置信度取调用方
+/// 传入值);识别为空则退回文件名元数据(`StoredNoText`),原件仍可见。落库语义逐字
+/// 镜像 Tauri 版 `ingest_image_via_vision`/`ingest_image_via_mlkit`,只是识别文本来自
+/// 参数而非本地再跑一次 OCR。
 pub fn ingest_image_with_text(
     name: String,
     bytes: Vec<u8>,
@@ -551,8 +562,8 @@ pub fn ingest_image_with_text(
                 v.add_ocr(NewOcr {
                     document_id: doc.id,
                     page_no: 1,
-                    backend: OcrBackendKind::MlKit,
-                    model_version: "mlkit".into(),
+                    backend: MOBILE_OCR_BACKEND,
+                    model_version: MOBILE_OCR_MODEL.into(),
                     text: ocr_text,
                     confidence: Some(confidence),
                 })
@@ -864,4 +875,97 @@ pub fn disable_icloud_sync() -> anyhow::Result<()> {
         let _ = std::fs::remove_file(state.data_dir.join("medme.db"));
         Ok(())
     })
+}
+
+// ============================================================================
+// **iOS PP-OCRv5 测试路径**(feat/ios-pp-ocr-test 分支,探索性 spike —— ADR 0005
+// 尚未 supersede,生产仍是「iOS = Apple Vision」)。加这一段是为了出一版能装到
+// 真机、让 `ocr_bridge.dart` 的 iOS 分支改走这里而不是 Vision MethodChannel,
+// 方便肉眼对比两个引擎的识别质量。想撤回到生产状态:删这段 + `dto.rs` 的
+// `OcrPpResultDto` + `Cargo.toml` 那条 `cfg(target_os = "ios")` 依赖 +
+// `rust/ocr-models/` 目录,不影响其它任何函数(没有别处依赖这几样)。
+// ============================================================================
+
+/// PP-OCRv5 三个模型文件(det/rec + 字典,约 20MB)编译期用 `include_bytes!` 打进
+/// 本 crate 的静态库 —— 镜像 `DEMO_DATA`(`include_dir!`)打包示例病历数据集的
+/// 做法:FRB 生成的是纯静态库,没有「应用资源目录」这个概念,编译进二进制是最
+/// 简单的打包方式,不用碰 Xcode「Copy Bundle Resources」/ Info.plist / Flutter
+/// assets 那一整套。
+///
+/// **与任务描述的原始设计不同**:原计划是模型走 Xcode bundle resources、Dart 侧
+/// 传路径给 Rust。这里改成编译期打进二进制 + 首次落盘沙盒目录,复用本文件已有的
+/// `DEMO_DATA` 精确先例,免去 Dart 侧定位 bundle 路径 + 一整套 Xcode 工程改动。
+/// 代价:换模型必须重新编译这个 crate(测试阶段可接受);二进制体积多 ~20MB。
+/// 如果不想要这个取舍(比如想不重编就能换模型),告诉我,改成 bundle resources
+/// 传路径不难。
+#[cfg(target_os = "ios")]
+const PP_DET_MODEL: &[u8] = include_bytes!("../../ocr-models/pp-ocrv5_mobile_det.onnx");
+#[cfg(target_os = "ios")]
+const PP_REC_MODEL: &[u8] = include_bytes!("../../ocr-models/pp-ocrv5_mobile_rec.onnx");
+#[cfg(target_os = "ios")]
+const PP_DICT: &[u8] = include_bytes!("../../ocr-models/ppocrv5_dict.txt");
+
+/// 进程内只落盘一次(`ocr::set_model_dir` 也是「先到先得」,重复调用无副作用,
+/// 但没必要每次识别都重新校验/写盘)。
+#[cfg(target_os = "ios")]
+static PP_MODELS_READY: OnceLock<()> = OnceLock::new();
+
+/// 把编译进二进制的模型字节落盘到 `<data_dir>/medme-ocr-pp-models/`,再调
+/// `ocr::set_model_dir` 指过去(`oar-ocr`/`ort` 从磁盘路径读模型,不接受内存字节
+/// —— 这也是必须落盘而不能只留在内存里的原因)。按文件大小判断是否已落盘过
+/// (跳过重写,不必每次 app 启动都重写 20MB);首次调用 `ocr::recognize_engine_layout`
+/// 前必须先跑通本函数(`set_model_dir` 的「必须在首次 recognize 前调用」契约)。
+#[cfg(target_os = "ios")]
+fn ensure_pp_models_ready(data_dir: &Path) -> anyhow::Result<()> {
+    if PP_MODELS_READY.get().is_some() {
+        return Ok(());
+    }
+    let dir = data_dir.join("medme-ocr-pp-models");
+    std::fs::create_dir_all(&dir)?;
+    let write_if_needed = |name: &str, bytes: &[u8]| -> anyhow::Result<()> {
+        let path = dir.join(name);
+        let already_written = std::fs::metadata(&path)
+            .map(|m| m.len() as usize == bytes.len())
+            .unwrap_or(false);
+        if !already_written {
+            std::fs::write(&path, bytes)?;
+        }
+        Ok(())
+    };
+    write_if_needed("pp-ocrv5_mobile_det.onnx", PP_DET_MODEL)?;
+    write_if_needed("pp-ocrv5_mobile_rec.onnx", PP_REC_MODEL)?;
+    write_if_needed("ppocrv5_dict.txt", PP_DICT)?;
+    ocr::set_model_dir(dir);
+    let _ = PP_MODELS_READY.set(());
+    Ok(())
+}
+
+/// 识别一张图片(PP-OCRv5 引擎,iOS 测试路径)。返回文本已按
+/// [`ocr::rebuild_layout_text`] 做过表格列对齐(与安卓 ML Kit 路径同一算法,详见
+/// 该函数文档)+ 平均置信度。要求 vault 已打开(落模型要 `data_dir`)——与
+/// Dart 侧 `recognizeImageText` 在 `import_flow.dart::_runImport` 里的调用时机
+/// 一致,导入流程走到这里 vault 必然已打开,不额外加约束。
+#[cfg(target_os = "ios")]
+pub fn recognize_image_pp(bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
+    if bytes.is_empty() {
+        anyhow::bail!("空图片字节");
+    }
+    let data_dir = with_state(|state| Ok(state.data_dir.clone()))?;
+    ensure_pp_models_ready(&data_dir)?;
+    let outcome =
+        ocr::recognize_engine_layout(&bytes).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    Ok(OcrPpResultDto {
+        text: outcome.text,
+        confidence: outcome.confidence,
+    })
+}
+
+/// 非 iOS 构建的占位实现。FRB codegen 在开发机上跑一次生成 `frb_generated.rs` +
+/// Dart 绑定,这份生成文件不按平台分叉,所以这个函数签名必须在所有 target 上都
+/// 存在;函数体在非 iOS 直接报错即可 —— `ocr` 依赖本身按
+/// `cfg(target_os = "ios")` 门控(见 `Cargo.toml`),安卓/桌面构建压根不链接
+/// oar-ocr/onnxruntime,这个分支不产生任何额外体积或依赖。
+#[cfg(not(target_os = "ios"))]
+pub fn recognize_image_pp(_bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
+    anyhow::bail!("PP-OCR 测试路径仅 iOS 构建可用(feat/ios-pp-ocr-test 分支)")
 }

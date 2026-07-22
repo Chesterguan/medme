@@ -44,12 +44,14 @@ static MODEL_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// (`pp-ocrv5_mobile_det.onnx`, `pp-ocrv5_mobile_rec.onnx`, `ppocrv5_dict.txt`).
 ///
 /// For packaging the models next to the binary instead of auto-downloading
-/// them. **Currently has no callers** -- mobile does not use this crate (ADR
-/// 0005), and desktop/CLI auto-download. Kept as the escape hatch for an
-/// offline build; delete it if that never materializes. Must be called before
-/// the first `recognize`/`recognize_pdf` call (the pipeline is built lazily on
-/// first use and cached). Idempotent: the first call wins; later calls are
-/// ignored.
+/// them. In production, has no callers -- mobile does not use this crate (ADR
+/// 0005), and desktop/CLI auto-download. **Test-branch exception:**
+/// `feat/ios-pp-ocr-test`'s `apps/mobile_flutter/rust/src/api/vault.rs`
+/// (`ensure_pp_models_ready`) calls this to point at models it writes out of
+/// its own `include_bytes!`-embedded copies -- see that function for why (no
+/// writable `$OAR_HOME` in the iOS sandbox). Must be called before the first
+/// `recognize`/`recognize_pdf` call (the pipeline is built lazily on first use
+/// and cached). Idempotent: the first call wins; later calls are ignored.
 #[cfg(feature = "engine")]
 pub fn set_model_dir(dir: PathBuf) {
     let _ = MODEL_DIR.set(dir);
@@ -344,13 +346,15 @@ fn deskew(gray: &GrayImage, angle_deg: f32) -> GrayImage {
     )
 }
 
-/// Recognize text in image bytes (png/jpg/tiff/...). Returns recognized text
-/// lines joined with "\n", plus a confidence score (mean of the recognized
-/// lines' per-line confidences; `0.0` if no lines were recognized). Lazily
-/// builds the OCR pipeline on first call (models auto-download from
-/// ModelScope on first ever run on this machine).
+/// Runs the OAROCR pipeline on decoded image bytes and returns the raw
+/// per-line [`oar_ocr::oarocr::TextRegion`]s (text + confidence + detection
+/// box), before any joining/formatting. Shared by [`recognize_engine`] (joins
+/// with "\n", the behavior every existing caller — Linux desktop/CLI primary,
+/// macOS/Windows engine fallback — already depends on, unchanged here) and
+/// [`recognize_engine_layout`] (mobile iOS PP-OCR test path, added for
+/// feat/ios-pp-ocr-test: uses the boxes to reconstruct table columns).
 #[cfg(feature = "engine")]
-fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
+fn predict_regions(image_bytes: &[u8]) -> Result<Vec<oar_ocr::oarocr::TextRegion>> {
     let ocr = pipeline()?;
     let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
     let dynamic = preprocess(dynamic);
@@ -358,16 +362,28 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
     let results = ocr
         .predict(vec![image])
         .map_err(|e| anyhow::anyhow!("OCR prediction failed: {e}"))?;
+    Ok(results
+        .into_iter()
+        .next()
+        .map(|r| r.text_regions)
+        .unwrap_or_default())
+}
+
+/// Recognize text in image bytes (png/jpg/tiff/...). Returns recognized text
+/// lines joined with "\n", plus a confidence score (mean of the recognized
+/// lines' per-line confidences; `0.0` if no lines were recognized). Lazily
+/// builds the OCR pipeline on first call (models auto-download from
+/// ModelScope on first ever run on this machine).
+#[cfg(feature = "engine")]
+fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
     let mut lines = Vec::new();
     let mut confidences = Vec::new();
-    if let Some(result) = results.into_iter().next() {
-        for region in result.text_regions {
-            if let Some(text) = region.text {
-                if !text.trim().is_empty() {
-                    lines.push(text);
-                    if let Some(c) = region.confidence {
-                        confidences.push(c);
-                    }
+    for region in predict_regions(image_bytes)? {
+        if let Some(text) = region.text {
+            if !text.trim().is_empty() {
+                lines.push(text);
+                if let Some(c) = region.confidence {
+                    confidences.push(c);
                 }
             }
         }
@@ -377,6 +393,177 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
         confidence: mean_confidence(&confidences),
         backend: OcrBackend::Onnx,
     })
+}
+
+/// Same recognition as [`recognize_engine`], but the returned text has table
+/// columns reconstructed from each line's detection box instead of being a
+/// flat "\n"-joined dump. **Mobile iOS PP-OCRv5 test path only**
+/// (feat/ios-pp-ocr-test) — every other caller keeps using [`recognize_engine`]
+/// unchanged, so this cannot regress Linux/macOS/Windows output.
+///
+/// Mirrors the algorithm the Android path already runs in Dart
+/// (`apps/mobile_flutter/lib/ocr_bridge.dart::_rebuildLayoutText`, added to fix
+/// lab-report tables collapsing into a flat dump when ML Kit splits one visual
+/// row into several `TextLine`s): group detection boxes into visual rows by y,
+/// then within a row map each box's x position to a character column and pad
+/// with spaces. PP-OCRv5's detector already produces one box per text *line*
+/// (not per character or per block), the same granularity ML Kit's
+/// `TextLine.boundingBox` is at, so [`rebuild_layout_text`] ports directly.
+#[cfg(feature = "engine")]
+pub fn recognize_engine_layout(image_bytes: &[u8]) -> Result<OcrOutcome> {
+    let regions = predict_regions(image_bytes)?;
+    let mut confidences = Vec::new();
+    let mut layout_lines = Vec::new();
+    for region in regions {
+        let Some(text) = region.text else { continue };
+        if text.trim().is_empty() {
+            continue;
+        }
+        if let Some(c) = region.confidence {
+            confidences.push(c);
+        }
+        let bb = &region.bounding_box;
+        layout_lines.push(LayoutLine {
+            text: text.to_string(),
+            left: bb.x_min(),
+            top: bb.y_min(),
+            right: bb.x_max(),
+            height: bb.y_max() - bb.y_min(),
+        });
+    }
+    Ok(OcrOutcome {
+        text: rebuild_layout_text(&layout_lines),
+        confidence: mean_confidence(&confidences),
+        backend: OcrBackend::Onnx,
+    })
+}
+
+/// A recognized text line's content plus its on-page geometry (pixel
+/// coordinates, origin top-left) — engine-agnostic, so [`rebuild_layout_text`]
+/// doesn't depend on any one OCR crate's box type. `top`/`left`/`right` are the
+/// line's bounding box edges; `height` is `bottom - top` (kept as a field
+/// rather than derived, matching the ML Kit `Rect` this ports from).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayoutLine {
+    pub text: String,
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub height: f32,
+}
+
+/// Layout-reconstruction constants — kept numerically identical to
+/// `ocr_bridge.dart`'s `_ocrTargetColumnWidth` / `_ocrRowYToleranceRatio` /
+/// `_ocrBlockGapRatio` so the two engines' table output lines up the same way.
+const LAYOUT_TARGET_COLUMN_WIDTH: usize = 90;
+const LAYOUT_ROW_Y_TOLERANCE_RATIO: f32 = 0.6;
+const LAYOUT_BLOCK_GAP_RATIO: f32 = 1.6;
+
+/// Reconstructs page layout from per-line detection boxes: lines are grouped
+/// into visual rows by y-coordinate (within a tolerance relative to line
+/// height); a row with a single line is emitted as-is (prose); a row with
+/// multiple lines (a table row split into per-cell detections) has each
+/// line's x position mapped to a character column and space-padded to align.
+/// Rows separated by a much larger vertical gap than the surrounding line
+/// height get a blank line between them (paragraph/table boundary).
+///
+/// Direct port of `ocr_bridge.dart::_rebuildLayoutText`/`_buildRowText` (see
+/// that file for the original rationale) — kept as a free function here so it
+/// can be unit-tested without the OCR engine and reused by any future
+/// box-producing recognizer, not just PP-OCRv5.
+#[cfg_attr(not(feature = "engine"), allow(dead_code))]
+pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
+    let mut lines: Vec<&LayoutLine> = lines.iter().filter(|l| !l.text.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    // Reading order: top-to-bottom, then left-to-right.
+    lines.sort_by(|a, b| {
+        a.top
+            .partial_cmp(&b.top)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.left.partial_cmp(&b.left).unwrap_or(std::cmp::Ordering::Equal))
+    });
+
+    // 1) Group lines into visual rows by y (tolerance = a fraction of line height).
+    let mut rows: Vec<Vec<&LayoutLine>> = Vec::new();
+    for line in lines.iter().copied() {
+        if let Some(last_row) = rows.last() {
+            let ref_top = last_row[0].top;
+            let tol = LAYOUT_ROW_Y_TOLERANCE_RATIO * line.height.max(last_row[0].height);
+            if (line.top - ref_top).abs() <= tol {
+                rows.last_mut().unwrap().push(line);
+                continue;
+            }
+        }
+        rows.push(vec![line]);
+    }
+
+    // 2) Content bounding box (not full image width) as the column-coordinate
+    //    reference, same reasoning as the Dart port: avoids background margin
+    //    compressing column resolution.
+    let content_left = lines.iter().map(|l| l.left).fold(f32::INFINITY, f32::min);
+    let content_right = lines
+        .iter()
+        .map(|l| l.right)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let content_span = content_right - content_left;
+
+    // 3) Emit each visual row; insert a blank line where the vertical gap to
+    //    the previous row is much larger than the line height (block break).
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut prev_top: Option<f32> = None;
+    let mut prev_height: Option<f32> = None;
+    for row in &rows {
+        let row_top = row.iter().map(|l| l.top).fold(f32::INFINITY, f32::min);
+        let row_height = row.iter().map(|l| l.height).fold(f32::NEG_INFINITY, f32::max);
+        if let Some(pt) = prev_top {
+            let ref_height = prev_height.unwrap_or(row_height);
+            if ref_height > 0.0 && row_top - pt > LAYOUT_BLOCK_GAP_RATIO * ref_height {
+                out_lines.push(String::new());
+            }
+        }
+        out_lines.push(build_row_text(row, content_left, content_span));
+        prev_top = Some(row_top);
+        prev_height = Some(row_height);
+    }
+    out_lines.join("\n")
+}
+
+/// Joins one visual row's lines into a single line of text. A single-line row
+/// (prose) is returned as-is; a multi-line row (one table row split into
+/// several detections) has each line after the first padded with spaces so
+/// its start lands at the target character column derived from its `left`
+/// position within `content_span` — at least 2 spaces, matching the viewer's
+/// `splitCells` "2+ consecutive spaces = column break" rule.
+#[cfg_attr(not(feature = "engine"), allow(dead_code))]
+fn build_row_text(row: &[&LayoutLine], content_left: f32, content_span: f32) -> String {
+    if row.len() <= 1 || content_span <= 0.0001 {
+        return row
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+    let mut sorted = row.to_vec();
+    sorted.sort_by(|a, b| a.left.partial_cmp(&b.left).unwrap_or(std::cmp::Ordering::Equal));
+    let mut buf = String::new();
+    let mut buf_len = 0usize; // char count, not byte length (CJK-safe)
+    for line in sorted {
+        if buf.is_empty() {
+            buf.push_str(&line.text);
+            buf_len = line.text.chars().count();
+            continue;
+        }
+        let col = (((line.left - content_left) / content_span) * LAYOUT_TARGET_COLUMN_WIDTH as f32)
+            .round() as i64;
+        let target_len = col.max(buf_len as i64 + 2).max(0) as usize;
+        let pad = target_len.saturating_sub(buf_len);
+        buf.push_str(&" ".repeat(pad));
+        buf.push_str(&line.text);
+        buf_len += pad + line.text.chars().count();
+    }
+    buf
 }
 
 /// macOS: hand the raw bytes to Apple Vision, which decodes them via ImageIO
@@ -976,5 +1163,75 @@ mod tests {
             "expected non-zero confidence, got {}",
             outcome.confidence
         );
+    }
+
+    fn ll(text: &str, left: f32, top: f32, right: f32, height: f32) -> LayoutLine {
+        LayoutLine {
+            text: text.to_string(),
+            left,
+            top,
+            right,
+            height,
+        }
+    }
+
+    #[test]
+    fn rebuild_layout_text_of_empty_is_empty() {
+        assert_eq!(rebuild_layout_text(&[]), "");
+    }
+
+    #[test]
+    fn rebuild_layout_text_single_line_per_row_passes_through() {
+        // Prose: one detection box per visual row -> lines emitted unchanged,
+        // in top-to-bottom order, no padding introduced.
+        let lines = vec![
+            ll("第二行", 10.0, 40.0, 100.0, 20.0),
+            ll("第一行", 10.0, 10.0, 100.0, 20.0),
+        ];
+        assert_eq!(rebuild_layout_text(&lines), "第一行\n第二行");
+    }
+
+    #[test]
+    fn rebuild_layout_text_aligns_multi_box_row_into_columns() {
+        // A lab-report row split into 3 detections at increasing x — must be
+        // joined into one line with >=2 spaces between fields (splitCells rule).
+        let lines = vec![
+            ll("肌酐", 0.0, 100.0, 40.0, 20.0),
+            ll("88", 200.0, 102.0, 230.0, 20.0),
+            ll("umol/L", 400.0, 101.0, 480.0, 20.0),
+        ];
+        let out = rebuild_layout_text(&lines);
+        assert_eq!(out.lines().count(), 1, "one visual row -> one output line");
+        assert!(out.starts_with("肌酐"));
+        // Every field after the first must be separated by >=2 spaces.
+        for part in ["88", "umol/L"] {
+            let idx = out.find(part).expect("field present");
+            let gap = out[..idx].chars().rev().take_while(|c| *c == ' ').count();
+            assert!(gap >= 2, "expected >=2 space gap before {part:?}, got {gap} in {out:?}");
+        }
+    }
+
+    #[test]
+    fn rebuild_layout_text_inserts_blank_line_at_large_vertical_gap() {
+        // Second row's top is far below the first row's line height -> treated
+        // as a block/table boundary, blank line inserted between them.
+        let lines = vec![
+            ll("段落一", 0.0, 0.0, 100.0, 20.0),
+            ll("段落二", 0.0, 200.0, 100.0, 20.0),
+        ];
+        let out = rebuild_layout_text(&lines);
+        assert_eq!(out, "段落一\n\n段落二");
+    }
+
+    #[test]
+    fn rebuild_layout_text_groups_close_y_into_same_row() {
+        // Two boxes with nearly identical `top` (within tolerance) count as
+        // the same visual row even though they were pushed in arbitrary order.
+        let lines = vec![
+            ll("B", 300.0, 12.0, 340.0, 20.0),
+            ll("A", 0.0, 10.0, 40.0, 20.0),
+        ];
+        let out = rebuild_layout_text(&lines);
+        assert_eq!(out.lines().count(), 1, "close-y boxes must merge into one row");
     }
 }

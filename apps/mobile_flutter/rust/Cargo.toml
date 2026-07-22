@@ -33,5 +33,14 @@ medme-share = { path = "../../../packages/share" }
 # 可用(仅不支持的压缩传输语法会降级)。故意不做任何 per-target 的重新启用。
 dicom = { path = "../../../packages/dicom", default-features = false }
 
+# **测试版,feat/ios-pp-ocr-test 分支专用 —— ADR 0005 尚未 supersede。** 只在 iOS
+# target 上链接(`cfg(target_os = "ios")`,而非 Cargo feature),安卓构建完全不受
+# 影响、不多链一个字节的 onnxruntime。`default-features = false` + 只留 `engine`
+# 关掉 `auto-download`(离线,模型随 app 打包,见 `api::vault` 里 PP-OCR 相关代码
+# 的模型落盘逻辑),不然沙盒里没有可写的 `$OAR_HOME` 首启会直接失败。见
+# `packages/ocr/Cargo.toml` 对 `engine`/`auto-download` 两个 feature 的说明。
+[target.'cfg(target_os = "ios")'.dependencies]
+ocr = { path = "../../../packages/ocr", default-features = false, features = ["engine"] }
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

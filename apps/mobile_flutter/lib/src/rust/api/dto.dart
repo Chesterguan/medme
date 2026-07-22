@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 文档详情:类型/日期(在 document 里)+ 来源文件 + 识别文本。
 class DocumentDetailDto {
@@ -231,6 +231,27 @@ class ImportOutcomeDto {
           docType == other.docType &&
           documentId == other.documentId &&
           detectedName == other.detectedName;
+}
+
+/// **iOS PP-OCRv5 测试路径**结果(feat/ios-pp-ocr-test 分支,探索性——ADR 0005
+/// 尚未 supersede)。镜像 Dart `OcrResult`(`ocr_bridge.dart`),供
+/// `recognize_image_pp` 返回,让真机能对比 Apple Vision vs PP-OCRv5 的识别质量。
+class OcrPpResultDto {
+  final String text;
+  final double confidence;
+
+  const OcrPpResultDto({required this.text, required this.confidence});
+
+  @override
+  int get hashCode => text.hashCode ^ confidence.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OcrPpResultDto &&
+          runtimeType == other.runtimeType &&
+          text == other.text &&
+          confidence == other.confidence;
 }
 
 class PatientProfileDto {

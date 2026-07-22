@@ -67,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1649105849;
+  int get rustContentHash => 1913789328;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -137,6 +137,10 @@ abstract class RustLibApi extends BaseApi {
   Future<PatientProfileDto> crateApiVaultPatientProfile();
 
   Future<Uint8List> crateApiVaultReadSourceBytes({required PlatformInt64 id});
+
+  Future<OcrPpResultDto> crateApiVaultRecognizeImagePp({
+    required List<int> bytes,
+  });
 
   Future<Uint8List> crateApiVaultRenderDicomPng({required PlatformInt64 id});
 
@@ -708,6 +712,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "read_source_bytes", argNames: ["id"]);
 
   @override
+  Future<OcrPpResultDto> crateApiVaultRecognizeImagePp({
+    required List<int> bytes,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 19,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_ocr_pp_result_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultRecognizeImagePpConstMeta,
+        argValues: [bytes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultRecognizeImagePpConstMeta =>
+      const TaskConstMeta(debugName: "recognize_image_pp", argNames: ["bytes"]);
+
+  @override
   Future<Uint8List> crateApiVaultRenderDicomPng({required PlatformInt64 id}) {
     return handler.executeNormal(
       NormalTask(
@@ -717,7 +751,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 19,
+            funcId: 20,
             port: port_,
           );
         },
@@ -744,7 +778,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 21,
             port: port_,
           );
         },
@@ -774,7 +808,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 22,
             port: port_,
           );
         },
@@ -982,6 +1016,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<TimelineGroupDto> dco_decode_list_timeline_group_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_timeline_group_dto).toList();
+  }
+
+  @protected
+  OcrPpResultDto dco_decode_ocr_pp_result_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return OcrPpResultDto(
+      text: dco_decode_String(arr[0]),
+      confidence: dco_decode_f_32(arr[1]),
+    );
   }
 
   @protected
@@ -1320,6 +1366,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ans_.add(sse_decode_timeline_group_dto(deserializer));
     }
     return ans_;
+  }
+
+  @protected
+  OcrPpResultDto sse_decode_ocr_pp_result_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_text = sse_decode_String(deserializer);
+    var var_confidence = sse_decode_f_32(deserializer);
+    return OcrPpResultDto(text: var_text, confidence: var_confidence);
   }
 
   @protected
@@ -1673,6 +1727,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     for (final item in self) {
       sse_encode_timeline_group_dto(item, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_ocr_pp_result_dto(
+    OcrPpResultDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.text, serializer);
+    sse_encode_f_32(self.confidence, serializer);
   }
 
   @protected
