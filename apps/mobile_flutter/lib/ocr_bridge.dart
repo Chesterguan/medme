@@ -18,16 +18,17 @@ const double _confFallback = 0.9;
 
 /// 识别一张图片里的文字。
 ///
-/// **测试版路由,feat/ios-pp-ocr-test 分支 —— ADR 0005 尚未 supersede**:
-/// - iOS:PP-OCRv5(经 FRB `recognize_image_pp`,`packages/ocr` 的 `engine` 路径,
-///   走 `apps/mobile_flutter/rust/ocr-models/` 里编译进二进制的模型),**不是**
-///   生产用的 Apple Vision(`ios/Runner/AppDelegate.swift recognizeText`)——本
-///   分支暂时不经 `medme/ocr` MethodChannel,只为真机对比两个引擎的识别质量。
-/// - 安卓/其它:ML Kit 中文文本识别(不变)。
+/// - iOS + 安卓:PP-OCRv5(经 FRB `recognize_image_pp`,`packages/ocr` 的
+///   `engine` 路径,走 `apps/mobile_flutter/rust/ocr-models/` 里编译进二进制
+///   的模型)。iOS 已合入 main(ADR 0006 采纳)。安卓侧
+///   feat/android-pp-ocr —— 用户反馈 ML Kit 中文识别质量不够,拍板换成和 iOS
+///   同引擎同模型;ML Kit 依赖(`google_mlkit_text_recognition`)仍留着做回退
+///   (见下面的 else 分支),没删,只是默认不再走它。
+/// - 其它平台(桌面等,理论上不会跑到这支 Flutter app):ML Kit 中文文本识别。
 ///
 /// 返回 [OcrResult];引擎/路径异常时降级为空文本(上层据此走「仅存原件」),不抛。
 Future<OcrResult> recognizeImageText(String path) async {
-  if (Platform.isIOS) {
+  if (Platform.isIOS || Platform.isAndroid) {
     try {
       final bytes = await File(path).readAsBytes();
       final res = await rust_vault.recognizeImagePp(bytes: bytes);
@@ -36,7 +37,7 @@ Future<OcrResult> recognizeImageText(String path) async {
       return const OcrResult('', _confFallback);
     }
   }
-  // 安卓 + 其它:ML Kit 中文
+  // 其它平台:ML Kit 中文(回退路径,iOS/安卓默认不再经过这里)
   final recognizer = TextRecognizer(script: TextRecognitionScript.chinese);
   try {
     final recognized = await recognizer.processImage(

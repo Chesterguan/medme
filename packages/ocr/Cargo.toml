@@ -10,7 +10,8 @@ edition = "2021"
 # time (per target) and linked into the final binary -- no runtime download of the
 # runtime. `auto-download` (fetching the OCR *model* files into ~/.oar at run time)
 # is split into its own feature below so a packaged/offline build can supply the
-# models itself. Mobile does not build this crate at all -- see the note below.
+# models itself. iOS (production) and Android (`feat/android-pp-ocr`, this
+# branch) both build this crate with `engine` -- see the note below.
 oar-ocr = { version = "0.8.0", default-features = false, features = [
     "download-binaries",
     "simd",
@@ -35,23 +36,27 @@ lopdf.workspace = true
 #   * `auto-download` -- fetches the PP-OCRv5 *model* files into $OAR_HOME
 #                        (~/.oar) the first time OCR runs. Needs a writable home.
 #
-# **Mobile does not use this crate at all** in production. iOS OCRs via Apple
-# Vision and Android via ML Kit, both in the Dart layer (see ADR 0005); the
-# Flutter app's Rust crate has no `ocr` dependency, and `pipeline` takes us with
-# `default-features = false`, so `engine` never links on mobile. The old
-# `set_model_dir` APK-bundling story belonged to the deleted Tauri mobile app
-# (#113) and is dead -- do not resurrect it from this comment.
+# **This crate's `default-features = false, features = ["engine"]` build does
+# now reach mobile**, contrary to the paragraph this replaces (stale as of
+# iOS's PP-OCRv5 merge to main -- ADR 0006). Current state: iOS is production
+# PP-OCRv5 via this crate (`apps/mobile_flutter/rust/Cargo.toml`'s
+# `cfg(target_os = "ios")` dependency edge, `api::vault`'s PP-OCR section).
+# Android is `feat/android-pp-ocr` (exploratory, ADR 0005 not yet
+# superseded for Android) -- same mechanism, `cfg(any(target_os = "ios",
+# target_os = "android"))`; ML Kit stays as the Dart-layer fallback (see
+# `ocr_bridge.dart`), not deleted. `pipeline` itself still takes us with
+# `default-features = false` (see `packages/pipeline/Cargo.toml`); it's the
+# Flutter app's own Rust crate that re-enables `engine` via Cargo feature
+# unification, same trick both platforms use. The old `set_model_dir`
+# APK-bundling story belonged to the deleted Tauri mobile app (#113) and is
+# dead as *that* story -- but `set_model_dir` itself is now exactly what the
+# iOS/Android PP-OCR path calls to point at the sandboxed model dir; see
+# `api::vault::ensure_pp_models_ready`.
 #
-# **Exception, test-branch only:** `feat/ios-pp-ocr-test` adds a direct,
-# `cfg(target_os = "ios")`-gated `ocr` (`engine`) dependency to
-# `apps/mobile_flutter/rust/Cargo.toml` to let a real device compare Apple
-# Vision vs PP-OCRv5 quality -- exploratory, ADR 0005 not (yet) superseded, does
-# not touch the Android build. See that Cargo.toml + `api::vault`'s PP-OCR
-# section for the actual wiring; `set_model_dir` above is what it uses.
-# Without `engine`, `recognize`/`recognize_pdf`
-# still compile and return an error ("OCR not available"); callers already
-# treat OCR failure as non-fatal (pipeline falls back to the near-empty text
-# layer / stores the file with no extracted text).
+# Without `engine`, `recognize`/`recognize_pdf` still compile and return an
+# error ("OCR not available"); callers already treat OCR failure as non-fatal
+# (pipeline falls back to the near-empty text layer / stores the file with no
+# extracted text).
 default = ["engine", "auto-download"]
 engine = ["dep:oar-ocr"]
 auto-download = ["oar-ocr?/auto-download"]

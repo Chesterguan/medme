@@ -33,13 +33,27 @@ medme-share = { path = "../../../packages/share" }
 # 可用(仅不支持的压缩传输语法会降级)。故意不做任何 per-target 的重新启用。
 dicom = { path = "../../../packages/dicom", default-features = false }
 
-# **测试版,feat/ios-pp-ocr-test 分支专用 —— ADR 0005 尚未 supersede。** 只在 iOS
-# target 上链接(`cfg(target_os = "ios")`,而非 Cargo feature),安卓构建完全不受
-# 影响、不多链一个字节的 onnxruntime。`default-features = false` + 只留 `engine`
-# 关掉 `auto-download`(离线,模型随 app 打包,见 `api::vault` 里 PP-OCR 相关代码
-# 的模型落盘逻辑),不然沙盒里没有可写的 `$OAR_HOME` 首启会直接失败。见
-# `packages/ocr/Cargo.toml` 对 `engine`/`auto-download` 两个 feature 的说明。
-[target.'cfg(target_os = "ios")'.dependencies]
+# **测试版,feat/android-pp-ocr 分支 —— ADR 0005 尚未 supersede。** iOS 侧已合入
+# main(见 ADR 0006);本分支把安卓也接到同一 PP-OCRv5 引擎(用户反馈安卓 ML Kit
+# 识别质量不够,拍板换成和 iOS 同引擎同模型)。只在 iOS/安卓 target 上链接
+# (`cfg(any(target_os = "ios", target_os = "android"))`,而非 Cargo feature),
+# 桌面/CLI 构建完全不受影响、不多链一个字节的 onnxruntime。`default-features =
+# false` + 只留 `engine` 关掉 `auto-download`(离线,模型随 app 打包,见
+# `api::vault` 里 PP-OCR 相关代码的模型落盘逻辑),不然沙盒里没有可写的
+# `$OAR_HOME` 首启会直接失败。见 `packages/ocr/Cargo.toml` 对 `engine`/
+# `auto-download` 两个 feature 的说明。安卓侧 `ort`(经 `oar-ocr` 的
+# `download-binaries`)在 build 时为 `aarch64-linux-android` 下载预编译静态
+# onnxruntime(`libonnxruntime.a`,~108MB 未剥离)并静态链接,另外动态链接
+# NDK 的 `libc++_shared.so`(C++ 标准库,NDK 推荐做法——多个 .so 共享同一份
+# libc++ 而非各自静态内嵌一份)。**待办,真机测前必做**:cargokit 的 Gradle
+# 插件只把我们自己编译出的 `lib*.so` 拷进 APK 的 jniLibs(见
+# `rust_builder/cargokit/build_tool/lib/src/artifacts_provider.dart`
+# `getArtifactNames`),不会自动带上这个 NDK 系统库——首次真机跑会在
+# `dlopen` 我们的 `.so` 时因为它依赖的 `libc++_shared.so` 缺失而
+# `UnsatisfiedLinkError`。还没接这块(需要往 `rust_builder/android/`
+# 加一个 Gradle 任务或直接把 NDK 的 `libc++_shared.so` 拷进
+# jniLibs,两种做法都没试过、没验证,留给真机测那一步一起解决)。
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 ocr = { path = "../../../packages/ocr", default-features = false, features = ["engine"] }
 
 [lints.rust]
