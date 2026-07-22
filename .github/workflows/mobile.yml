@@ -79,24 +79,34 @@ jobs:
       - name: pub get
         working-directory: ${{ env.WORKDIR }}
         run: flutter pub get
-      - name: 构建 release APK(全 ABI)
+      - name: 构建 release APK
         working-directory: ${{ env.WORKDIR }}
-        run: flutter build apk --release
-      - name: 构建 appbundle(Play 用)
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            flutter build apk --release
+          else
+            # 非 main(测试分支):PP-OCR 引擎(oar-ocr/ort)目前只验证了 arm64-v8a
+            # (ort 预编译 + libc++_shared.so 打包都只做了 arm64),其它 ABI 会失败或崩,
+            # 只出 arm64 供真机测。
+            flutter build apk --release --target-platform android-arm64
+          fi
+      - name: 构建 appbundle(Play 用,仅 main)
+        if: github.ref == 'refs/heads/main'
         working-directory: ${{ env.WORKDIR }}
         run: flutter build appbundle --release
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 # TODO: SHA 钉版
         with:
           name: medme-android
-          path: |
-            ${{ env.WORKDIR }}/build/app/outputs/flutter-apk/app-release.apk
-            ${{ env.WORKDIR }}/build/app/outputs/bundle/release/app-release.aab
+          path: ${{ env.WORKDIR }}/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
       # ── 关键:把 APK 发布到 GitHub Release,资产名与落地页链接一致(MedMe-Android.apk)。──
       # 落地页指向 releases/latest/download/MedMe-Android.apk,所以只要每次构建都更新 latest
       # release 的这个资产,公开下载就永远是最新版 —— 堵住"官网下到旧版"的系统性缺口。
       # 用 gh CLI(runner 自带),不引第三方 action;仅 workflow_dispatch 触发,PR 不发布。
-      - name: 发布 APK 到 GitHub Release(落地页取 latest)
+      - name: 发布 APK 到 GitHub Release(落地页取 latest,仅 main)
+        # 只有 main 才发布到公开 Release(落地页 releases/latest 指向它)。测试分支
+        # 只上传 artifact 供内部真机测,绝不把未验收的测试包推给公开下载。
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
