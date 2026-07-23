@@ -34,7 +34,7 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0 # TODO: 按仓库惯例改成 SHA 钉版
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -57,7 +57,7 @@ jobs:
     permissions:
       contents: write # 发布 APK 到 GitHub Release(落地页指向 releases/latest,防公开下载停在旧版)
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin
@@ -118,7 +118,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.platform == 'ios' || inputs.platform == 'both')
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: 选最新 Xcode(App Store Connect 要求 iOS 26 SDK / Xcode 26+)
         run: |
           XC=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
