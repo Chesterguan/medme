@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' show Rect;
 
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 import 'package:mobile_flutter/src/rust/api/vault.dart' as rust_vault;
@@ -16,20 +18,29 @@ class OcrResult {
 /// 置信度拿不到时的兜底值(空文本/引擎不给),让导入流程照常继续。
 const double _confFallback = 0.9;
 
+/// iOS 原生文档预处理 channel(`medme/ocr` 的 `rectifyDocument`,见
+/// `ios/Runner/AppDelegate.swift`)。复用「recognize」同一个 channel 名——两者
+/// 都是 iOS-only 的 Vision/Core Image 原生桥,不是识别文字,只处理画面。
+const MethodChannel _iosOcrChannel = MethodChannel('medme/ocr');
+
 /// 识别一张图片里的文字。
 ///
 /// **测试版路由,feat/ios-pp-ocr-test 分支 —— ADR 0005 尚未 supersede**:
 /// - iOS:PP-OCRv5(经 FRB `recognize_image_pp`,`packages/ocr` 的 `engine` 路径,
 ///   走 `apps/mobile_flutter/rust/ocr-models/` 里编译进二进制的模型),**不是**
 ///   生产用的 Apple Vision(`ios/Runner/AppDelegate.swift recognizeText`)——本
-///   分支暂时不经 `medme/ocr` MethodChannel,只为真机对比两个引擎的识别质量。
+///   分支暂时不经 `medme/ocr` MethodChannel 的「recognize」case,只为真机对比两个
+///   引擎的识别质量。喂 PP 之前会先经 `medme/ocr` 的「rectifyDocument」case 做一遍
+///   原生文档检测+拉正+裁(见 [_rectifyDocument]),这一步只处理画面、不识别文字,
+///   与上面「不经 medme/ocr 识别文字」的说法不冲突。
 /// - 安卓/其它:ML Kit 中文文本识别(不变)。
 ///
 /// 返回 [OcrResult];引擎/路径异常时降级为空文本(上层据此走「仅存原件」),不抛。
 Future<OcrResult> recognizeImageText(String path) async {
   if (Platform.isIOS) {
     try {
-      final bytes = await File(path).readAsBytes();
+      final original = await File(path).readAsBytes();
+      final bytes = await _rectifyDocument(path, original);
       final res = await rust_vault.recognizeImagePp(bytes: bytes);
       return OcrResult(res.text, res.confidence);
     } catch (_) {
@@ -56,6 +67,26 @@ Future<OcrResult> recognizeImageText(String path) async {
     return const OcrResult('', _confFallback);
   } finally {
     await recognizer.close();
+  }
+}
+
+/// 导入图在喂 PP-OCR 之前先过原生文档检测+透视拉正+裁+轻度增强(和相机走的系统
+/// 文档扫描器同源,`VNDetectDocumentSegmentationRequest` + `CIPerspectiveCorrection`,
+/// 见 `AppDelegate.swift` 的 `rectifyDocument(atPath:)`)。拍照本身走文档扫描器
+/// 所以识别好;导入的原图没有这一步,直接喂 PP 识别差——这里把两条路径拉齐。
+///
+/// 原生侧检测不到文档/失败时已经回退返回原图字节;这里再兜一层——channel 调用本身
+/// 失败(如返回 null/空字节)也回退到调用方已经读到的 [original] 字节,绝不让识别
+/// 效果比现在差。
+Future<Uint8List> _rectifyDocument(String path, Uint8List original) async {
+  try {
+    final result = await _iosOcrChannel.invokeMethod<Uint8List>(
+      'rectifyDocument',
+      {'path': path},
+    );
+    return (result != null && result.isNotEmpty) ? result : original;
+  } catch (_) {
+    return original;
   }
 }
 

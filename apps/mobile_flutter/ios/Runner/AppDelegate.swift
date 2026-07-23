@@ -1,3 +1,4 @@
+import CoreImage.CIFilterBuiltins
 import Flutter
 import ImageIO
 import UIKit
@@ -93,7 +94,9 @@ import Vision
   // Dart 的 `ocr_bridge.dart` 在 iOS 走此 channel 调原生 Vision(中文识别更强、
   // 原生支持 HEIC),安卓侧走 ML Kit——功能一致、各用平台最强引擎。`recognize`
   // 收一个图片文件路径,返回 { text, confidence(0~1) }。识别失败降级为空文本
-  // (上层据此走「仅存原件」),不抛。
+  // (上层据此走「仅存原件」),不抛。`rectifyDocument` 收一个图片文件路径,返回
+  // 文档检测+透视拉正+裁+轻度增强后的 JPEG 字节(见 `rectifyDocument(atPath:)`)——
+  // 导入图在喂 PP-OCR 之前的原生预处理,不识别文字,只处理画面。
   private func registerOcrChannel(_ registry: FlutterPluginRegistry) {
     guard let registrar = registry.registrar(forPlugin: "MedMeOCR") else { return }
     let channel = FlutterMethodChannel(
@@ -111,6 +114,20 @@ import Vision
         DispatchQueue.global(qos: .userInitiated).async {
           let out = AppDelegate.recognizeText(atPath: path)
           DispatchQueue.main.async { result(out) }
+        }
+      case "rectifyDocument":
+        guard let args = call.arguments as? [String: Any],
+          let path = args["path"] as? String
+        else {
+          result(FlutterError(code: "bad_args", message: "missing path", details: nil))
+          return
+        }
+        // 文档检测 + 透视拉正同样是 CPU/GPU 密集(Vision + Core Image),切后台线程。
+        DispatchQueue.global(qos: .userInitiated).async {
+          let data = AppDelegate.rectifyDocument(atPath: path)
+          DispatchQueue.main.async {
+            result(data.map { FlutterStandardTypedData(bytes: $0) })
+          }
         }
       default:
         result(FlutterMethodNotImplemented)
@@ -236,6 +253,83 @@ import Vision
       out += line.text
     }
     return out
+  }
+
+  /// 文档矩形检测置信度门槛:低于此值当「没检测到」处理,回退原图(绝不比现在差)。
+  /// Vision 文档分割通常要么给出高置信度的矩形、要么直接空结果,这个阈值只是兜底,
+  /// 保守取值。
+  private static let documentMinConfidence: Float = 0.3
+
+  /// `rectifyDocument` 复用的 Core Image 渲染上下文;GPU/Metal 资源较重,进程内共享
+  /// 一份,不必每次调用都新建。
+  private static let ciContext = CIContext()
+
+  /// 导入图在喂 PP-OCR 之前的原生文档预处理:`VNDetectDocumentSegmentationRequest`
+  /// 检测文档四角(和相机走的系统文档扫描器同源、iOS 15+ 静态图可用)→
+  /// `CIPerspectiveCorrection` 按四角拉正+裁 → 轻度 `CIDocumentEnhancer` 增强(去阴影
+  /// /提亮背景,不做力度更大的调色,避免伤识别)→ 渲成 JPEG 字节。
+  ///
+  /// 拍照本身走文档扫描器(自动裁+拉正+增强)所以识别好;导入的原图没有这一步,直接
+  /// 喂 PP 识别差。这里把导入路径补齐到和拍照同质,发生在喂 PP **之前**、原生 Swift
+  /// 层,不进 Rust `ocr` crate、不碰 PP 引擎本身(见 `ocr_bridge.dart` 的接线)。
+  ///
+  /// 任何一步失败/没检测到文档/结果置信度过低 → 返回原图字节;只有连原图都读不到
+  /// 才返回 `nil`(上层已经单独读过原始字节,可以自己兜底)——绝不让识别效果比
+  /// 现在差。相机拍的照片本就来自文档扫描器(已经裁正),这里再跑一遍近似恒等
+  /// (整幅即文档),无害。
+  private static func rectifyDocument(atPath path: String) -> Data? {
+    guard let original = FileManager.default.contents(atPath: path) else { return nil }
+    guard let uiImage = UIImage(contentsOfFile: path), let cg = uiImage.cgImage else {
+      return original
+    }
+    // 先把 EXIF 方向烘焙进画面(复用 `recognizeText` 同一个 `cgOrientation`),后续
+    // Vision 检测结果的归一化坐标、Core Image 裁切坐标就都在同一套「正向」坐标系里,
+    // 不必分别处理方向。
+    let oriented = CIImage(cgImage: cg).oriented(cgOrientation(uiImage.imageOrientation))
+
+    let request = VNDetectDocumentSegmentationRequest()
+    let handler = VNImageRequestHandler(ciImage: oriented, options: [:])
+    do {
+      try handler.perform([request])
+    } catch {
+      return original
+    }
+    guard let rect = request.results?.first, rect.confidence >= documentMinConfidence else {
+      return original
+    }
+
+    // Vision 的四角是归一化坐标(原点左下);Core Image 透视校正要的是画面像素坐标
+    // (同样原点左下——`oriented` 之后的 `extent` 就是这套坐标系),按 extent 换算。
+    let extent = oriented.extent
+    func toPixel(_ p: CGPoint) -> CGPoint {
+      CGPoint(x: extent.origin.x + p.x * extent.width, y: extent.origin.y + p.y * extent.height)
+    }
+
+    let perspective = CIFilter.perspectiveCorrection()
+    perspective.inputImage = oriented
+    perspective.topLeft = toPixel(rect.topLeft)
+    perspective.topRight = toPixel(rect.topRight)
+    perspective.bottomLeft = toPixel(rect.bottomLeft)
+    perspective.bottomRight = toPixel(rect.bottomRight)
+    perspective.crop = true
+    guard var corrected = perspective.outputImage else { return original }
+
+    // 轻度增强:去阴影、提亮背景,不做更大力度的调色。拿不到输出就跳过增强这一步
+    // (不影响已经拉正+裁好的 `corrected`),不为了增强单独失败整个流程。
+    let enhancer = CIFilter.documentEnhancer()
+    enhancer.inputImage = corrected
+    enhancer.amount = 1.0
+    if let enhanced = enhancer.outputImage {
+      corrected = enhanced
+    }
+
+    guard
+      let jpeg = ciContext.jpegRepresentation(
+        of: corrected, colorSpace: CGColorSpaceCreateDeviceRGB(), options: [:])
+    else {
+      return original
+    }
+    return jpeg
   }
 
   /// UIImage 的 EXIF 方向 → Vision 需要的 CGImagePropertyOrientation
