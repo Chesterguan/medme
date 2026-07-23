@@ -357,27 +357,138 @@ fn deskew(gray: &GrayImage, angle_deg: f32) -> GrayImage {
     )
 }
 
-/// Runs the OAROCR pipeline on decoded image bytes and returns the raw
-/// per-line [`oar_ocr::oarocr::TextRegion`]s (text + confidence + detection
-/// box), before any joining/formatting. Shared by [`recognize_engine`] (joins
-/// with "\n", the behavior every existing caller — Linux desktop/CLI primary,
-/// macOS/Windows engine fallback — already depends on, unchanged here) and
-/// [`recognize_engine_layout`] (mobile iOS PP-OCR test path, added for
-/// feat/ios-pp-ocr-test: uses the boxes to reconstruct table columns).
+/// Vertical banding for tall images. PP-OCRv5's detector rescales each input so
+/// its longer side is at most ~960px (`limit_side_len` default in oar-ocr) before
+/// it looks for text lines. A tall screenshot (long side 2000+) therefore gets
+/// shrunk >2x, and its dense small text drops below the detector's resolution —
+/// whole sections (e.g. a report's 「诊断及建议」body) go undetected while larger
+/// headings survive. Rather than tune that budget to a magic number (which just
+/// moves the cliff to a taller image), we split tall pages into bands short
+/// enough that the detector's rescale stays mild, so small text survives
+/// regardless of total page height — add a band, not a bigger guess.
+///
+/// `TILE_CORE_H` is the height each band *owns*; `TILE_OVERLAP` is how far a band
+/// physically extends past its core on each inner side, so a text line straddling
+/// a core boundary is still captured whole by the band that owns its center.
+/// Both are OCR-quality knobs (smaller core = milder rescale = better recall on
+/// dense text, at more predict passes); tune on real tall reports.
 #[cfg(feature = "engine")]
-fn predict_regions(image_bytes: &[u8]) -> Result<Vec<oar_ocr::oarocr::TextRegion>> {
+const TILE_CORE_H: u32 = 1100;
+#[cfg(feature = "engine")]
+const TILE_OVERLAP: u32 = 120;
+
+/// One recognized text line in full-image pixel coordinates (origin top-left),
+/// engine-neutral so the banding/merge logic below doesn't depend on oar-ocr's
+/// box type. `bottom - top` is the line height [`LayoutLine`] wants.
+#[cfg(feature = "engine")]
+struct OcrLine {
+    text: String,
+    confidence: Option<f32>,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+}
+
+/// A band owns a recognized line iff the line's vertical center falls in the
+/// band's core range `[core_top, core_bot)` — the last band owns everything down
+/// to the image bottom. Cores tile the page with no gaps and no overlap, so each
+/// line is emitted by exactly one band even though physical bands overlap. Pure
+/// (no engine) so the dedup rule is unit-testable on its own.
+#[cfg(feature = "engine")]
+fn band_owns(center_y: f32, core_top: f32, core_bot: f32, is_last: bool) -> bool {
+    center_y >= core_top && (center_y < core_bot || is_last)
+}
+
+/// Maps one band's [`oar_ocr::oarocr::TextRegion`]s into full-image [`OcrLine`]s,
+/// offsetting y by the band's top and (when `core` is set) dropping lines this
+/// band doesn't own so overlap regions aren't emitted twice.
+#[cfg(feature = "engine")]
+fn push_band_lines(
+    regions: Vec<oar_ocr::oarocr::TextRegion>,
+    y_off: f32,
+    core: Option<(f32, f32, bool)>,
+    out: &mut Vec<OcrLine>,
+) {
+    for region in regions {
+        let Some(text) = region.text else { continue };
+        if text.trim().is_empty() {
+            continue;
+        }
+        let bb = &region.bounding_box;
+        let top = bb.y_min() + y_off;
+        let bottom = bb.y_max() + y_off;
+        if let Some((core_top, core_bot, is_last)) = core {
+            if !band_owns((top + bottom) * 0.5, core_top, core_bot, is_last) {
+                continue;
+            }
+        }
+        out.push(OcrLine {
+            text: text.to_string(),
+            confidence: region.confidence,
+            left: bb.x_min(),
+            top,
+            right: bb.x_max(),
+            bottom,
+        });
+    }
+}
+
+/// Decode + preprocess the image once, then run detection+recognition and return
+/// the recognized lines in full-image coordinates. Short images
+/// (`height <= TILE_CORE_H`) run as a single `predict` over the whole frame —
+/// byte-identical to the pre-banding path, so existing Linux desktop/CLI and
+/// macOS/Windows fallback output can't regress. Taller images are recognized in
+/// overlapping vertical bands (see [`TILE_CORE_H`]) and merged. Lines come back
+/// in band order (top-to-bottom); within a band the detector's own order is
+/// preserved. Shared by [`recognize_engine`] (joins with "\n") and
+/// [`recognize_engine_layout`] (rebuilds table columns from the boxes).
+#[cfg(feature = "engine")]
+fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
     let ocr = pipeline()?;
     let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
     let dynamic = preprocess(dynamic);
-    let image = dynamic_to_rgb(dynamic);
-    let results = ocr
-        .predict(vec![image])
-        .map_err(|e| anyhow::anyhow!("OCR prediction failed: {e}"))?;
-    Ok(results
-        .into_iter()
-        .next()
-        .map(|r| r.text_regions)
-        .unwrap_or_default())
+    let (w, h) = (dynamic.width(), dynamic.height());
+    let mut out: Vec<OcrLine> = Vec::new();
+
+    let predict_band = |img: image::RgbImage| -> Result<Vec<oar_ocr::oarocr::TextRegion>> {
+        Ok(ocr
+            .predict(vec![img])
+            .map_err(|e| anyhow::anyhow!("OCR prediction failed: {e}"))?
+            .into_iter()
+            .next()
+            .map(|r| r.text_regions)
+            .unwrap_or_default())
+    };
+
+    // Short image: single pass over the whole frame (no crop, no dedup) — this
+    // path must stay byte-identical to the pre-banding behavior.
+    if h <= TILE_CORE_H {
+        let regions = predict_band(dynamic_to_rgb(dynamic))?;
+        push_band_lines(regions, 0.0, None, &mut out);
+        return Ok(out);
+    }
+
+    // Tall image: recognize in overlapping vertical bands so the detector's
+    // internal rescale stays mild and dense small text survives.
+    let n_bands = h.div_ceil(TILE_CORE_H);
+    for i in 0..n_bands {
+        let core_top = i * TILE_CORE_H;
+        let core_bot = ((i + 1) * TILE_CORE_H).min(h);
+        let is_last = i + 1 == n_bands;
+        // Physical band extends past its core by TILE_OVERLAP on each inner side.
+        let band_top = if i == 0 { 0 } else { core_top - TILE_OVERLAP };
+        let band_bot = if is_last { h } else { (core_bot + TILE_OVERLAP).min(h) };
+        let band = dynamic.crop_imm(0, band_top, w, band_bot - band_top);
+        let regions = predict_band(dynamic_to_rgb(band))?;
+        push_band_lines(
+            regions,
+            band_top as f32,
+            Some((core_top as f32, core_bot as f32, is_last)),
+            &mut out,
+        );
+    }
+    Ok(out)
 }
 
 /// Recognize text in image bytes (png/jpg/tiff/...). Returns recognized text
@@ -389,15 +500,13 @@ fn predict_regions(image_bytes: &[u8]) -> Result<Vec<oar_ocr::oarocr::TextRegion
 fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
     let mut lines = Vec::new();
     let mut confidences = Vec::new();
-    for region in predict_regions(image_bytes)? {
-        if let Some(text) = region.text {
-            if !text.trim().is_empty() {
-                lines.push(text);
-                if let Some(c) = region.confidence {
-                    confidences.push(c);
-                }
-            }
+    // predict_lines already drops empty text and returns lines in reading order
+    // (top-to-bottom across bands), so a plain "\n" join matches the old output.
+    for line in predict_lines(image_bytes)? {
+        if let Some(c) = line.confidence {
+            confidences.push(c);
         }
+        lines.push(line.text);
     }
     Ok(OcrOutcome {
         text: lines.join("\n"),
@@ -422,24 +531,18 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
 /// `TextLine.boundingBox` is at, so [`rebuild_layout_text`] ports directly.
 #[cfg(feature = "engine")]
 pub fn recognize_engine_layout(image_bytes: &[u8]) -> Result<OcrOutcome> {
-    let regions = predict_regions(image_bytes)?;
     let mut confidences = Vec::new();
     let mut layout_lines = Vec::new();
-    for region in regions {
-        let Some(text) = region.text else { continue };
-        if text.trim().is_empty() {
-            continue;
-        }
-        if let Some(c) = region.confidence {
+    for line in predict_lines(image_bytes)? {
+        if let Some(c) = line.confidence {
             confidences.push(c);
         }
-        let bb = &region.bounding_box;
         layout_lines.push(LayoutLine {
-            text: text.to_string(),
-            left: bb.x_min(),
-            top: bb.y_min(),
-            right: bb.x_max(),
-            height: bb.y_max() - bb.y_min(),
+            text: line.text,
+            left: line.left,
+            top: line.top,
+            right: line.right,
+            height: line.bottom - line.top,
         });
     }
     Ok(OcrOutcome {
@@ -812,6 +915,87 @@ fn extract_dct_images(doc: &Document, page_id: lopdf::ObjectId) -> Vec<Vec<u8>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The banding dedup rule must tile the page with no gaps and no double-counts:
+    /// every vertical position is owned by exactly one band's core. Cores here are
+    /// [0,1100), [1100,2200), [2200, end] with the last band open-ended.
+    #[cfg(feature = "engine")]
+    #[test]
+    fn band_owns_tiles_page_without_gaps_or_overlap() {
+        let cores = [(0.0, 1100.0, false), (1100.0, 2200.0, false), (2200.0, 3000.0, true)];
+        // A line's center is owned by exactly one band, across the whole page and
+        // past the last core (a line hanging below 3000 still belongs to the last).
+        for center in [0.0, 549.0, 1099.9, 1100.0, 2199.9, 2200.0, 2999.0, 3200.0] {
+            let owners = cores
+                .iter()
+                .filter(|(t, b, last)| band_owns(center, *t, *b, *last))
+                .count();
+            assert_eq!(owners, 1, "center {center} should be owned by exactly one band");
+        }
+        // Seam is half-open: 1100.0 goes to the upper band, not the lower one.
+        assert!(!band_owns(1100.0, 0.0, 1100.0, false));
+        assert!(band_owns(1100.0, 1100.0, 2200.0, false));
+    }
+
+    /// Empirical before/after of the banding fix. Stacks a real dense lab-report
+    /// photo 2x vertically into a 960x2560 tall page — long side 2560, which the
+    /// PP detector rescales to ~960 (0.375x), the same severe shrink that made a
+    /// tall screenshot lose its dense small text. Compares RAW detection counts
+    /// (like-for-like): single whole-image predict vs the new banded path.
+    /// Banding keeps each half near-native, so it should detect materially more
+    /// lines. `#[ignore]` (needs models + the demo asset): run with
+    /// `cargo test -p ocr --features engine -- --ignored --nocapture banding_recovers`.
+    #[cfg(feature = "engine")]
+    #[test]
+    #[ignore]
+    fn banding_recovers_more_lines_than_single_pass() {
+        use std::io::Cursor;
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/demo-dataset/real/血常规报告1.jpg"
+        );
+        let bytes = std::fs::read(path).expect("demo report photo present");
+
+        // Build the tall synthetic page: the report stacked on itself.
+        let base = decode_image_bounded(&bytes).expect("decode").to_rgb8();
+        let (w, h) = base.dimensions();
+        let mut tall = image::RgbImage::new(w, h * 2);
+        image::imageops::replace(&mut tall, &base, 0, 0);
+        image::imageops::replace(&mut tall, &base, 0, h as i64);
+        let mut tall_png = Vec::new();
+        image::DynamicImage::ImageRgb8(tall)
+            .write_to(&mut Cursor::new(&mut tall_png), image::ImageFormat::Png)
+            .expect("encode tall png");
+
+        let nonempty = |regions: &[oar_ocr::oarocr::TextRegion]| {
+            regions
+                .iter()
+                .filter(|r| r.text.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false))
+                .count()
+        };
+
+        // Old behavior: single whole-image predict on the 2560-tall page.
+        let ocr = pipeline().expect("pipeline");
+        let dynamic = preprocess(decode_image_bounded(&tall_png).expect("decode tall"));
+        let single = ocr
+            .predict(vec![dynamic_to_rgb(dynamic)])
+            .expect("single predict")
+            .into_iter()
+            .next()
+            .map(|r| r.text_regions)
+            .unwrap_or_default();
+        let single_raw = nonempty(&single);
+
+        // New behavior: banded path — count raw lines it keeps after dedup.
+        let banded_raw = predict_lines(&tall_png).expect("banded predict").len();
+
+        eprintln!("tall page 960x2560 — single-pass raw lines = {single_raw}");
+        eprintln!("tall page 960x2560 — banded      raw lines = {banded_raw}");
+        assert!(
+            banded_raw > single_raw,
+            "banding should recover more lines on a tall page: single={single_raw} banded={banded_raw}"
+        );
+    }
 
     /// Minimal IEEE CRC-32 (used to forge a valid PNG IHDR chunk below).
     fn crc32(bytes: &[u8]) -> u32 {
