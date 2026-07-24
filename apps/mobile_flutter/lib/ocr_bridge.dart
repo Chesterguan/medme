@@ -25,29 +25,34 @@ const MethodChannel _iosOcrChannel = MethodChannel('medme/ocr');
 
 /// 识别一张图片里的文字。
 ///
-/// **测试版路由,feat/ios-pp-ocr-test 分支 —— ADR 0005 尚未 supersede**:
-/// - iOS:PP-OCRv5(经 FRB `recognize_image_pp`,`packages/ocr` 的 `engine` 路径,
-///   走 `apps/mobile_flutter/rust/ocr-models/` 里编译进二进制的模型),**不是**
-///   生产用的 Apple Vision(`ios/Runner/AppDelegate.swift recognizeText`)——本
-///   分支暂时不经 `medme/ocr` MethodChannel 的「recognize」case,只为真机对比两个
-///   引擎的识别质量。喂 PP 之前会先经 `medme/ocr` 的「rectifyDocument」case 做一遍
-///   原生文档检测+拉正+裁(见 [_rectifyDocument]),这一步只处理画面、不识别文字,
-///   与上面「不经 medme/ocr 识别文字」的说法不冲突。
-/// - 安卓/其它:ML Kit 中文文本识别(不变)。
+/// **iOS + 安卓都走 PP-OCRv5**(经 FRB `recognize_image_pp`,`packages/ocr` 的
+/// `engine` 路径,走 `apps/mobile_flutter/rust/ocr-models/` 里编译进二进制的模型;
+/// 高图纵向切片见 `packages/ocr` 的 `predict_lines`)。iOS 已合入 main(ADR 0006
+/// 采纳);安卓侧 feat/android-pp-ocr —— 用户反馈 ML Kit 中文识别质量不够,拍板
+/// 换成和 iOS 同引擎同模型。
+/// - **iOS**:喂 PP 之前先经 `medme/ocr` 的「rectifyDocument」case 做一遍原生文档
+///   检测+拉正+裁(见 [_rectifyDocument],`VNDetectDocumentSegmentation`,iOS-only)。
+/// - **安卓**:没有那个原生 channel,跳过 rectify 直接喂 PP(相机采集本身走系统
+///   文档扫描器已拉正;导入图不经 rectify)。
+/// - **其它平台**(桌面等,理论上不会跑到这支 Flutter app):ML Kit 中文文本识别
+///   (回退路径,`google_mlkit_text_recognition` 仍留着没删)。
 ///
 /// 返回 [OcrResult];引擎/路径异常时降级为空文本(上层据此走「仅存原件」),不抛。
 Future<OcrResult> recognizeImageText(String path) async {
-  if (Platform.isIOS) {
+  if (Platform.isIOS || Platform.isAndroid) {
     try {
       final original = await File(path).readAsBytes();
-      final bytes = await _rectifyDocument(path, original);
+      // rectify 是 iOS 原生 Vision/Core Image 桥,安卓没有这个 channel,跳过。
+      final bytes = Platform.isIOS
+          ? await _rectifyDocument(path, original)
+          : original;
       final res = await rust_vault.recognizeImagePp(bytes: bytes);
       return OcrResult(res.text, res.confidence);
     } catch (_) {
       return const OcrResult('', _confFallback);
     }
   }
-  // 安卓 + 其它:ML Kit 中文
+  // 其它平台:ML Kit 中文(回退路径,iOS/安卓默认不再经过这里)
   final recognizer = TextRecognizer(script: TextRecognitionScript.chinese);
   try {
     final recognized = await recognizer.processImage(
