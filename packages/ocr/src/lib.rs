@@ -959,6 +959,27 @@ mod tests {
     /// comes out in readable horizontal rows instead of vertical columns. Prints
     /// the text to eyeball. `#[ignore]` (needs models + asset):
     /// `cargo test -p ocr --features engine -- --ignored --nocapture orientation_uprights`.
+    /// Replicates the MOBILE condition: explicit model dir (like
+    /// `ensure_pp_models_ready` + `set_model_dir`) + auto-download OFF. If this
+    /// leaves the 90° report vertical while the auto-download variant uprights it,
+    /// the bug is in how the orientation model is loaded via explicit path (not
+    /// Android-specific). Run: `cargo test -p ocr --no-default-features
+    /// --features engine -- --ignored --nocapture orientation_explicit_path`.
+    #[cfg(feature = "engine")]
+    #[test]
+    #[ignore]
+    fn orientation_explicit_path_like_mobile() {
+        let oar = format!("{}/.oar", std::env::var("HOME").unwrap());
+        set_model_dir(std::path::PathBuf::from(&oar));
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/demo-dataset/real/血常规报告1.jpg"
+        );
+        let bytes = std::fs::read(path).expect("demo report photo present");
+        let out = recognize_engine_layout(&bytes).expect("OCR");
+        eprintln!("----- 显式路径(模拟手机)识别文本 -----\n{}", out.text);
+    }
+
     #[cfg(feature = "engine")]
     #[test]
     #[ignore]
