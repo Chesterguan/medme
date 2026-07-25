@@ -334,18 +334,25 @@ class _GenericTableView extends StatelessWidget {
       for (final r in rows) r.length,
     ].reduce((a, b) => a > b ? a : b);
 
-    return _TableFrame(
-      child: Table(
-        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-        children: [
-          if (header != null)
-            _headerRow([
-              for (var c = 0; c < cols; c++)
-                c < header!.length ? header![c] : '',
-            ]),
-          for (var i = 0; i < rows.length; i++) _dataRow(i, rows[i], cols),
-        ],
-      ),
+    // 通用表格的列数由 OCR 文本里「≥2 空格」切出,躺倒转正后的横向报告会切出很多列。
+    // 用 FlexColumnWidth 均分会把每列挤到 ~1 字宽 → 中文按字竖排,看着像「行列颠倒」。
+    // 改成:列宽按内容自适应(IntrinsicColumnWidth,不换行),整表放进横向滚动 —— 宽了
+    // 用户左右滑,和桌面查看器一致,绝不再把中文挤成竖条。
+    final table = Table(
+      defaultColumnWidth: const IntrinsicColumnWidth(),
+      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      children: [
+        if (header != null)
+          _headerRow([
+            for (var c = 0; c < cols; c++)
+              c < header!.length ? header![c] : '',
+          ]),
+        for (var i = 0; i < rows.length; i++) _dataRow(i, rows[i], cols),
+      ],
+    );
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: _TableFrame(child: table),
     );
   }
 
