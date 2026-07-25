@@ -19,10 +19,6 @@ image = "0.25"
 imageproc = "0.27"
 anyhow.workspace = true
 lopdf.workspace = true
-# Lightweight logging facade. Emits nothing unless a logger is installed; the
-# mobile app installs `android_logger` (→ logcat) so on-device OCR internals
-# (orientation decision etc.) are visible. Desktop/CLI leave it uninstalled.
-log = "0.4"
 
 [dev-dependencies]
 

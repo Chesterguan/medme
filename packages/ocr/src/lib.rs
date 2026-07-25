@@ -505,6 +505,10 @@ const ORIENT_TALL_RATIO: f32 = 1.3;
 /// sideways (rotated 90°/270°) and try to upright it.
 #[cfg(feature = "engine")]
 const ORIENT_TALL_THRESHOLD: f32 = 0.5;
+/// Minimum in-plane skew (degrees) worth a deskew + re-OCR pass. Below this the
+/// tilt doesn't meaningfully hurt row grouping and isn't worth the resample.
+#[cfg(feature = "engine")]
+const ORIENT_MIN_DESKEW_DEG: f32 = 1.0;
 
 /// Fraction of non-empty lines whose detection box is taller than wide (by
 /// [`ORIENT_TALL_RATIO`]). Near 0 for an upright document (text lines are wide and
@@ -557,62 +561,56 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
     let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
     let dynamic = preprocess(dynamic);
 
+    // 1) Orientation. OCR once; if the page reads sideways (predominantly tall line
+    //    boxes), OCR the 90°/270° rotations too and keep the upright one (horizontal
+    //    + highest recognition confidence — upright reads cleanly, upside-down is
+    //    garbage). We track the winning *image*, not just its lines, so the deskew
+    //    step below runs on the correctly-oriented frame. Upright pages (the common
+    //    case) skip the rotations entirely.
     let lines0 = predict_lines_core(&dynamic)?;
-    let tall0 = tall_fraction(&lines0);
-    log::warn!(
-        "[medme-ocr] orient: dim={}x{} lines0={} tall0={:.2} conf0={:.2}",
-        dynamic.width(),
-        dynamic.height(),
-        lines0.len(),
-        tall0,
-        mean_line_confidence(&lines0),
-    );
-    if tall0 <= ORIENT_TALL_THRESHOLD {
-        return Ok(lines0); // upright (or too few lines to tell) — no extra OCR
-    }
-
-    // Sideways page (text lines came back predominantly tall). Rotate 90° and 270°
-    // and re-OCR. Both make the text horizontal again, but one is upright and the
-    // other upside-down — `tall_fraction` can't tell those apart, so pick by mean
-    // recognition confidence: upright text reads cleanly (high confidence), an
-    // upside-down page yields garbage (low confidence). We don't know if the page
-    // was turned CW or CCW, so try both directions.
-    let mut best = lines0;
-    let mut best_conf = mean_line_confidence(&best); // sideways original scores low
-    for rotated in [
-        DynamicImage::ImageRgba8(image::imageops::rotate90(&dynamic)),
-        DynamicImage::ImageRgba8(image::imageops::rotate270(&dynamic)),
-    ] {
-        if let Ok(cand) = predict_lines_core(&rotated) {
-            let ct = tall_fraction(&cand);
-            let cc = mean_line_confidence(&cand);
-            log::warn!(
-                "[medme-ocr] orient cand: lines={} tall={:.2} conf={:.2} meanW={:.0} meanH={:.0} (best_conf={:.2})",
-                cand.len(),
-                ct,
-                cc,
-                cand.iter().map(|l| l.right - l.left).sum::<f32>() / cand.len().max(1) as f32,
-                cand.iter().map(|l| l.bottom - l.top).sum::<f32>() / cand.len().max(1) as f32,
-                best_conf,
-            );
-            for l in cand.iter().take(5) {
-                log::warn!(
-                    "[medme-ocr]   box cx={:.0} cy={:.0} w={:.0} h={:.0} | {}",
-                    (l.left + l.right) * 0.5,
-                    (l.top + l.bottom) * 0.5,
-                    l.right - l.left,
-                    l.bottom - l.top,
-                    l.text.chars().take(12).collect::<String>()
-                );
-            }
-            // Only consider a rotation that actually made the page horizontal.
-            if ct <= ORIENT_TALL_THRESHOLD && cc > best_conf {
-                best_conf = cc;
-                best = cand;
+    let mut best_img = dynamic;
+    let mut best_lines = lines0;
+    let mut best_conf = mean_line_confidence(&best_lines);
+    if tall_fraction(&best_lines) > ORIENT_TALL_THRESHOLD {
+        for rotated in [
+            DynamicImage::ImageRgba8(image::imageops::rotate90(&best_img)),
+            DynamicImage::ImageRgba8(image::imageops::rotate270(&best_img)),
+        ] {
+            if let Ok(cand) = predict_lines_core(&rotated) {
+                let cc = mean_line_confidence(&cand);
+                if tall_fraction(&cand) <= ORIENT_TALL_THRESHOLD && cc > best_conf {
+                    best_conf = cc;
+                    best_lines = cand;
+                    best_img = rotated;
+                }
             }
         }
     }
-    Ok(best)
+
+    // 2) Deskew (in-plane tilt). A tilted photo leaves text rows slanted even once
+    //    upright; the detector then merges/mis-groups cells (the "mashed, hard to
+    //    read" layout). If the chosen upright image has a meaningful in-plane skew,
+    //    rotate it flat (reusing the projection-profile [`estimate_skew_deg`] +
+    //    [`deskew`] already used in [`preprocess`]) and re-OCR so rows come back
+    //    horizontal. `preprocess` already deskewed upright inputs, so this only fires
+    //    for pages that were *rotated first* (their skew survives the rotation).
+    //    **Failure-safe**: accept the deskewed result only if it kept ~all its lines
+    //    and didn't make the page look more sideways — otherwise keep the pre-deskew
+    //    result. A bad warp is worse than none.
+    let gray = best_img.to_luma8();
+    if let Some(angle) = estimate_skew_deg(&gray) {
+        if angle.is_finite() && angle.abs() >= ORIENT_MIN_DESKEW_DEG {
+            let deskewed = DynamicImage::ImageLuma8(deskew(&gray, angle));
+            if let Ok(dl) = predict_lines_core(&deskewed) {
+                let kept_lines = dl.len() * 10 >= best_lines.len() * 8;
+                let not_worse = tall_fraction(&dl) <= tall_fraction(&best_lines) + 0.05;
+                if kept_lines && not_worse {
+                    return Ok(dl);
+                }
+            }
+        }
+    }
+    Ok(best_lines)
 }
 
 /// Recognize text in image bytes (png/jpg/tiff/...). Returns recognized text
