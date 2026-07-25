@@ -461,7 +461,7 @@ class _ProxyBanner extends StatelessWidget {
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              '为他人代建档 · 用完即焚 · 不会存入你的档案',
+              '为病人代建档 · 本机最多留 12 小时 · 不进你自己的档案',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 13,
