@@ -587,12 +587,24 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
             let ct = tall_fraction(&cand);
             let cc = mean_line_confidence(&cand);
             log::warn!(
-                "[medme-ocr] orient cand: lines={} tall={:.2} conf={:.2} (best_conf={:.2})",
+                "[medme-ocr] orient cand: lines={} tall={:.2} conf={:.2} meanW={:.0} meanH={:.0} (best_conf={:.2})",
                 cand.len(),
                 ct,
                 cc,
+                cand.iter().map(|l| l.right - l.left).sum::<f32>() / cand.len().max(1) as f32,
+                cand.iter().map(|l| l.bottom - l.top).sum::<f32>() / cand.len().max(1) as f32,
                 best_conf,
             );
+            for l in cand.iter().take(5) {
+                log::warn!(
+                    "[medme-ocr]   box cx={:.0} cy={:.0} w={:.0} h={:.0} | {}",
+                    (l.left + l.right) * 0.5,
+                    (l.top + l.bottom) * 0.5,
+                    l.right - l.left,
+                    l.bottom - l.top,
+                    l.text.chars().take(12).collect::<String>()
+                );
+            }
             // Only consider a rotation that actually made the page horizontal.
             if ct <= ORIENT_TALL_THRESHOLD && cc > best_conf {
                 best_conf = cc;
