@@ -79,21 +79,14 @@ jobs:
       - name: pub get
         working-directory: ${{ env.WORKDIR }}
         run: flutter pub get
-      - name: 构建 release APK
+      - name: 构建 release APK(仅 arm64-v8a)
         working-directory: ${{ env.WORKDIR }}
-        run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            flutter build apk --release
-          else
-            # 非 main(测试分支):PP-OCR 引擎(oar-ocr/ort)目前只验证了 arm64-v8a
-            # (ort 预编译 + libc++_shared.so 打包都只做了 arm64),其它 ABI 会失败或崩,
-            # 只出 arm64 供真机测。
-            flutter build apk --release --target-platform android-arm64
-          fi
-      - name: 构建 appbundle(Play 用,仅 main)
-        if: github.ref == 'refs/heads/main'
-        working-directory: ${{ env.WORKDIR }}
-        run: flutter build appbundle --release
+        # PP-OCR 引擎(oar-ocr/ort)+ 打包的 libc++_shared.so 目前只支持 arm64-v8a
+        # (ort 预编译 + libc++ 都只做了 arm64),其它 ABI 会构建失败或真机崩溃 ——
+        # 所以 **main 公开发布也只出 arm64-v8a**,与测试分支一致(落地页已注明
+        # 「需 64 位手机 arm64」)。补 armeabi-v7a/x86_64 需给每个 ABI 备 ort 预编译
+        # + libc++,另做。appbundle(Play 用)需全 ABI,故 Play 上架前不产出。
+        run: flutter build apk --release --target-platform android-arm64
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 # TODO: SHA 钉版
         with:
           name: medme-android
@@ -112,14 +105,13 @@ jobs:
         run: |
           set -euo pipefail
           cp "${WORKDIR}/build/app/outputs/flutter-apk/app-release.apk" MedMe-Android.apk
-          cp "${WORKDIR}/build/app/outputs/bundle/release/app-release.aab" MedMe-Android.aab
           VER="$(grep '^version:' "${WORKDIR}/pubspec.yaml" | sed 's/version:[[:space:]]*//; s/+.*//')"
           TAG="v${VER}"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --title "MedMe 医我 ${VER}" \
-              --notes "自动发布(workflow_dispatch)· 安卓 APK/AAB。桌面/iOS 见各自渠道。" --latest
+              --notes "自动发布(workflow_dispatch)· 安卓 APK(arm64-v8a)。桌面/iOS 见各自渠道。" --latest
           fi
-          gh release upload "$TAG" MedMe-Android.apk MedMe-Android.aab --clobber
+          gh release upload "$TAG" MedMe-Android.apk --clobber
           gh release edit "$TAG" --latest
           echo "已发布 $TAG:MedMe-Android.apk(落地页 releases/latest 即刻指向本包)"
 
