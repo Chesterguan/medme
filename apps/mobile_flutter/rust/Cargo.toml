@@ -51,6 +51,12 @@ dicom = { path = "../../../packages/dicom", default-features = false }
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 ocr = { path = "../../../packages/ocr", default-features = false, features = ["engine"] }
 
+# 诊断:把 Rust `log` 输出接到 Android logcat,看设备侧 OCR 内部(朝向判定等)。
+# 只安卓 target;init 在 `recognize_image_pp` 里 `Once` 调一次。
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.14"
+log = "0.4"
+
 [dev-dependencies]
 # `api::vault_ephemeral` 的单测用临时目录(会话根/沙盒 `cache_dir`)。
 tempfile = "3"

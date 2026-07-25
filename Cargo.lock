@@ -4601,6 +4601,7 @@ dependencies = [
  "anyhow",
  "image",
  "imageproc",
+ "log",
  "lopdf 0.44.0",
  "oar-ocr",
  "objc2",

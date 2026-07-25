@@ -957,6 +957,17 @@ fn ensure_pp_models_ready(data_dir: &Path) -> anyhow::Result<()> {
 /// 必然已打开,不额外加约束。
 #[cfg(any(target_os = "ios", target_os = "android"))]
 pub fn recognize_image_pp(bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
+    // 诊断:首次调用装 android_logger,让 `packages/ocr` 的 log::warn 进 logcat
+    // (tag `medme-ocr` 之类)。只安卓,`Once` 保证只装一次。
+    #[cfg(target_os = "android")]
+    {
+        static LOGGER_INIT: std::sync::Once = std::sync::Once::new();
+        LOGGER_INIT.call_once(|| {
+            android_logger::init_once(
+                android_logger::Config::default().with_max_level(log::LevelFilter::Warn),
+            );
+        });
+    }
     if bytes.is_empty() {
         anyhow::bail!("空图片字节");
     }

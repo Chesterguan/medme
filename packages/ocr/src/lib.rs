@@ -558,7 +558,16 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
     let dynamic = preprocess(dynamic);
 
     let lines0 = predict_lines_core(&dynamic)?;
-    if tall_fraction(&lines0) <= ORIENT_TALL_THRESHOLD {
+    let tall0 = tall_fraction(&lines0);
+    log::warn!(
+        "[medme-ocr] orient: dim={}x{} lines0={} tall0={:.2} conf0={:.2}",
+        dynamic.width(),
+        dynamic.height(),
+        lines0.len(),
+        tall0,
+        mean_line_confidence(&lines0),
+    );
+    if tall0 <= ORIENT_TALL_THRESHOLD {
         return Ok(lines0); // upright (or too few lines to tell) — no extra OCR
     }
 
@@ -575,13 +584,19 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
         DynamicImage::ImageRgba8(image::imageops::rotate270(&dynamic)),
     ] {
         if let Ok(cand) = predict_lines_core(&rotated) {
+            let ct = tall_fraction(&cand);
+            let cc = mean_line_confidence(&cand);
+            log::warn!(
+                "[medme-ocr] orient cand: lines={} tall={:.2} conf={:.2} (best_conf={:.2})",
+                cand.len(),
+                ct,
+                cc,
+                best_conf,
+            );
             // Only consider a rotation that actually made the page horizontal.
-            if tall_fraction(&cand) <= ORIENT_TALL_THRESHOLD {
-                let conf = mean_line_confidence(&cand);
-                if conf > best_conf {
-                    best_conf = conf;
-                    best = cand;
-                }
+            if ct <= ORIENT_TALL_THRESHOLD && cc > best_conf {
+                best_conf = cc;
+                best = cand;
             }
         }
     }
@@ -1054,6 +1069,37 @@ mod tests {
     /// the bug is in how the orientation model is loaded via explicit path (not
     /// Android-specific). Run: `cargo test -p ocr --no-default-features
     /// --features engine -- --ignored --nocapture orientation_explicit_path`.
+    /// Diagnostic: dump each recognized line's box (top/left/right/height) + text
+    /// for a real report, to see WHY the rendered layout is jumbled — is it skew
+    /// (rows slanted → y-grouping mis-groups), 2-column interleaving, or both?
+    /// `cargo test -p ocr --features engine -- --ignored --nocapture dump_boxes`.
+    #[cfg(feature = "engine")]
+    #[test]
+    #[ignore]
+    fn dump_boxes_for_layout_diagnosis() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/demo-dataset/real/血常规报告1.jpg"
+        );
+        let bytes = std::fs::read(path).expect("photo present");
+        // predict_lines already applies geometric orientation, so boxes are in the
+        // uprighted frame — the same frame rebuild_layout_text groups.
+        let mut lines = predict_lines(&bytes).expect("ocr");
+        lines.sort_by(|a, b| a.top.partial_cmp(&b.top).unwrap());
+        eprintln!("total lines = {}", lines.len());
+        for l in &lines {
+            eprintln!(
+                "top={:6.0} left={:6.0} right={:6.0} h={:4.0} w={:4.0} | {}",
+                l.top,
+                l.left,
+                l.right,
+                l.bottom - l.top,
+                l.right - l.left,
+                l.text.chars().take(24).collect::<String>()
+            );
+        }
+    }
+
     #[cfg(feature = "engine")]
     #[test]
     #[ignore]
