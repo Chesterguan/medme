@@ -102,27 +102,27 @@ fn pipeline() -> Result<&'static OAROCR> {
     // (for builds with `auto-download` off, where bare names wouldn't resolve).
     // Without it -- every build we ship today -- the bare names go through
     // `auto-download`'s `$OAR_HOME` resolution unchanged.
-    // `doc_ori` = PP-LCNet_x1_0_doc_ori (~6.8MB), classifies whole-page rotation
-    // 0/90/180/270 and rotates upright BEFORE detection. Fixes sideways/rotated
-    // captures (a 90°-turned report photo) that perspective correction alone can't
-    // straighten — the "躺倒渲染塌" case. Runs in the same oar-ocr pipeline both
-    // mobile platforms share (ADR 0007), so one integration fixes iOS + Android.
-    let (det, rec, dict, doc_ori) = match MODEL_DIR.get() {
+    // NOTE: page orientation (0/90/180/270) is handled geometrically in
+    // `predict_lines` (see `orient_upright`), NOT by oar-ocr's doc-ori ONNX model.
+    // The doc-ori model classified correctly on desktop but returned 0° (no
+    // rotation) under Android's onnxruntime for the same model+input, AND it runs
+    // per-band inside `predict` (wrong granularity for a whole-page decision). The
+    // geometric approach uses the det boxes we already compute — a sideways page's
+    // text lines come back taller-than-wide — so it's deterministic, cross-platform,
+    // and free of that ort quirk. See ADR 0007.
+    let (det, rec, dict) = match MODEL_DIR.get() {
         Some(dir) => (
             dir.join("pp-ocrv5_mobile_det.onnx"),
             dir.join("pp-ocrv5_mobile_rec.onnx"),
             dir.join("ppocrv5_dict.txt"),
-            dir.join("pp-lcnet_x1_0_doc_ori.onnx"),
         ),
         None => (
             PathBuf::from("pp-ocrv5_mobile_det.onnx"),
             PathBuf::from("pp-ocrv5_mobile_rec.onnx"),
             PathBuf::from("ppocrv5_dict.txt"),
-            PathBuf::from("pp-lcnet_x1_0_doc_ori.onnx"),
         ),
     };
     let built = OAROCRBuilder::new(det, rec, dict)
-        .with_document_image_orientation_classification(doc_ori)
         .build()
         .map_err(|e| anyhow::anyhow!("failed to build OAROCR pipeline: {e}"))?;
     Ok(PIPELINE.get_or_init(|| built))
@@ -452,10 +452,8 @@ fn push_band_lines(
 /// preserved. Shared by [`recognize_engine`] (joins with "\n") and
 /// [`recognize_engine_layout`] (rebuilds table columns from the boxes).
 #[cfg(feature = "engine")]
-fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
+fn predict_lines_core(dynamic: &DynamicImage) -> Result<Vec<OcrLine>> {
     let ocr = pipeline()?;
-    let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
-    let dynamic = preprocess(dynamic);
     let (w, h) = (dynamic.width(), dynamic.height());
     let mut out: Vec<OcrLine> = Vec::new();
 
@@ -472,7 +470,7 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
     // Short image: single pass over the whole frame (no crop, no dedup) — this
     // path must stay byte-identical to the pre-banding behavior.
     if h <= TILE_CORE_H {
-        let regions = predict_band(dynamic_to_rgb(dynamic))?;
+        let regions = predict_band(dynamic_to_rgb(dynamic.clone()))?;
         push_band_lines(regions, 0.0, None, &mut out);
         return Ok(out);
     }
@@ -497,6 +495,97 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
         );
     }
     Ok(out)
+}
+
+/// A line's box counts as "tall" (rotated text) when its height exceeds its width
+/// by this factor.
+#[cfg(feature = "engine")]
+const ORIENT_TALL_RATIO: f32 = 1.3;
+/// If more than this fraction of a page's lines are "tall", treat the page as
+/// sideways (rotated 90°/270°) and try to upright it.
+#[cfg(feature = "engine")]
+const ORIENT_TALL_THRESHOLD: f32 = 0.5;
+
+/// Fraction of non-empty lines whose detection box is taller than wide (by
+/// [`ORIENT_TALL_RATIO`]). Near 0 for an upright document (text lines are wide and
+/// short); high for a 90°/270°-rotated page (each line becomes a tall narrow
+/// strip). Empty input → 0.
+#[cfg(feature = "engine")]
+fn tall_fraction(lines: &[OcrLine]) -> f32 {
+    let considered = lines.iter().filter(|l| !l.text.trim().is_empty()).count();
+    if considered == 0 {
+        return 0.0;
+    }
+    let tall = lines
+        .iter()
+        .filter(|l| !l.text.trim().is_empty())
+        .filter(|l| {
+            let lw = (l.right - l.left).max(1.0);
+            let lh = (l.bottom - l.top).max(1.0);
+            lh > ORIENT_TALL_RATIO * lw
+        })
+        .count();
+    tall as f32 / considered as f32
+}
+
+/// Mean recognition confidence over a page's non-empty lines (0 if none). Higher
+/// when the page reads cleanly (upright) than when it's garbage (upside-down) —
+/// the discriminator [`predict_lines`] uses to pick between the two 90° rotations.
+#[cfg(feature = "engine")]
+fn mean_line_confidence(lines: &[OcrLine]) -> f32 {
+    let confs: Vec<f32> = lines
+        .iter()
+        .filter(|l| !l.text.trim().is_empty())
+        .filter_map(|l| l.confidence)
+        .collect();
+    mean_confidence(&confs)
+}
+
+/// Decode + preprocess, then recognize with automatic **page-orientation
+/// correction done geometrically** (no doc-orientation ONNX model — see
+/// [`pipeline`] for why). Most text lines in an upright document are wider than
+/// tall; a 90°/270°-rotated page makes them taller than wide. So: OCR once; if the
+/// lines come back predominantly tall (page is sideways), OCR the image rotated
+/// 90° and 270° too and keep whichever orientation yields the most horizontal
+/// lines (lowest [`tall_fraction`]). Deterministic and cross-platform (reuses the
+/// det model, which works everywhere). Upright pages — the common case — pay only
+/// one cheap tall-fraction check and never re-OCR. Returned line coordinates are
+/// in the chosen (uprighted) frame, which is all [`rebuild_layout_text`] and the
+/// "\n"-join need. Shared by [`recognize_engine`] and [`recognize_engine_layout`].
+#[cfg(feature = "engine")]
+fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
+    let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
+    let dynamic = preprocess(dynamic);
+
+    let lines0 = predict_lines_core(&dynamic)?;
+    if tall_fraction(&lines0) <= ORIENT_TALL_THRESHOLD {
+        return Ok(lines0); // upright (or too few lines to tell) — no extra OCR
+    }
+
+    // Sideways page (text lines came back predominantly tall). Rotate 90° and 270°
+    // and re-OCR. Both make the text horizontal again, but one is upright and the
+    // other upside-down — `tall_fraction` can't tell those apart, so pick by mean
+    // recognition confidence: upright text reads cleanly (high confidence), an
+    // upside-down page yields garbage (low confidence). We don't know if the page
+    // was turned CW or CCW, so try both directions.
+    let mut best = lines0;
+    let mut best_conf = mean_line_confidence(&best); // sideways original scores low
+    for rotated in [
+        DynamicImage::ImageRgba8(image::imageops::rotate90(&dynamic)),
+        DynamicImage::ImageRgba8(image::imageops::rotate270(&dynamic)),
+    ] {
+        if let Ok(cand) = predict_lines_core(&rotated) {
+            // Only consider a rotation that actually made the page horizontal.
+            if tall_fraction(&cand) <= ORIENT_TALL_THRESHOLD {
+                let conf = mean_line_confidence(&cand);
+                if conf > best_conf {
+                    best_conf = conf;
+                    best = cand;
+                }
+            }
+        }
+    }
+    Ok(best)
 }
 
 /// Recognize text in image bytes (png/jpg/tiff/...). Returns recognized text

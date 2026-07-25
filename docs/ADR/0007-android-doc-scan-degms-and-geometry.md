@@ -19,7 +19,7 @@ Status: Accepted · Date: 2026-07-25 · 承接 [0006](0006-ios-ocr-pp-ocrv5.md);
 **采集期文档几何处理,按「能共享的进 Rust 核、iOS 已有原生的不重建」分层:**
 
 - **无 GMS 拍照(相机打不开)= 只安卓修。** iOS 用苹果原生 VisionKit(`VNDocumentCameraViewController`),不依赖 GMS、本来就好,**不动**。安卓改为**不依赖 GMS 的采集**:自建相机 + 文档几何在 Rust 核做(边缘检测→最大四边形→透视拉正),或先用免-GMS 方案过渡。保留 cunning 手动裁剪作兜底。
-- **90° 朝向自动转正 = iOS 安卓都修。** 用 `PP-LCNet_x1_0_doc_ori`(7MB ONNX)接进 `packages/ocr` 的 pipeline(oar-ocr `with_document_image_orientation_classification`)。**两端都走 `recognize_image_pp` → 一处改动两端受益**,同时修「躺倒渲染塌」。
+- **90° 朝向自动转正 = iOS 安卓都修,用几何法(非 ONNX 模型)。** 先试过 `PP-LCNet_x1_0_doc_ori`(oar-ocr `with_document_image_orientation_classification`):**桌面对、华为真机不转**——同模型同图,Android 的 onnxruntime 跑 doc-ori 返回 0°(不转),而且它在 oar-ocr 里是**逐切片跑**(整页决策的错粒度)。**改为确定性几何法**(`packages/ocr::predict_lines`):整页躺倒时 det 检测框会**竖高**(高>宽),据此判定 sideways;再旋转 90°/270° 重识别、按**识别置信度**挑正向(正着读置信高、倒着是乱码)。复用已在两端跑通的 det 模型,**跨平台、无 ort 黑箱依赖、无额外模型体积**。两端都走 `recognize_image_pp` → 一处改动两端受益。桌面实测:血常规1(90°)→ 正着可读。
 - **边缘/透视校正**:安卓新建(相机+导入都缺),实现放 Rust 核(纯 Rust `imageproc`/裁剪版 OpenCV,先 spike 选一),**跨平台可复用**;**iOS 保持原生 rectify 不动**(不重建能用的东西)。以后想统一再评估。
 - **去弯曲(UVDoc,30MB)先不做**:等真实病历(折叠出院小结)证明透视校正不够再加 —— 体积对「精简出包」目标是真代价,不提前塞。
 - **绝不走云**:文档几何全端上(与 [ocr 第一版决定] 一致,云 OCR/处理是原则性禁区)。

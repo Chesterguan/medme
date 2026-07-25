@@ -909,11 +909,6 @@ const PP_DET_MODEL: &[u8] = include_bytes!("../../ocr-models/pp-ocrv5_mobile_det
 const PP_REC_MODEL: &[u8] = include_bytes!("../../ocr-models/pp-ocrv5_mobile_rec.onnx");
 #[cfg(any(target_os = "ios", target_os = "android"))]
 const PP_DICT: &[u8] = include_bytes!("../../ocr-models/ppocrv5_dict.txt");
-/// 文档方向分类模型(PP-LCNet_x1_0_doc_ori,~6.8MB):OCR 前判整页 0/90/180/270
-/// 并转正,修「躺倒/横拍的图识别文本竖排塌」(ADR 0007)。与上面三个一样内嵌 +
-/// 落盘;`packages/ocr` 的 `pipeline()` 从 `set_model_dir` 目录取它。
-#[cfg(any(target_os = "ios", target_os = "android"))]
-const PP_DOC_ORI_MODEL: &[u8] = include_bytes!("../../ocr-models/pp-lcnet_x1_0_doc_ori.onnx");
 
 /// 进程内只落盘一次(`ocr::set_model_dir` 也是「先到先得」,重复调用无副作用,
 /// 但没必要每次识别都重新校验/写盘)。
@@ -948,7 +943,6 @@ fn ensure_pp_models_ready(data_dir: &Path) -> anyhow::Result<()> {
     write_if_needed("pp-ocrv5_mobile_det.onnx", PP_DET_MODEL)?;
     write_if_needed("pp-ocrv5_mobile_rec.onnx", PP_REC_MODEL)?;
     write_if_needed("ppocrv5_dict.txt", PP_DICT)?;
-    write_if_needed("pp-lcnet_x1_0_doc_ori.onnx", PP_DOC_ORI_MODEL)?;
     ocr::set_model_dir(dir);
     let _ = PP_MODELS_READY.set(());
     Ok(())
