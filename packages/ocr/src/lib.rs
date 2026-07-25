@@ -102,19 +102,27 @@ fn pipeline() -> Result<&'static OAROCR> {
     // (for builds with `auto-download` off, where bare names wouldn't resolve).
     // Without it -- every build we ship today -- the bare names go through
     // `auto-download`'s `$OAR_HOME` resolution unchanged.
-    let (det, rec, dict) = match MODEL_DIR.get() {
+    // `doc_ori` = PP-LCNet_x1_0_doc_ori (~6.8MB), classifies whole-page rotation
+    // 0/90/180/270 and rotates upright BEFORE detection. Fixes sideways/rotated
+    // captures (a 90°-turned report photo) that perspective correction alone can't
+    // straighten — the "躺倒渲染塌" case. Runs in the same oar-ocr pipeline both
+    // mobile platforms share (ADR 0007), so one integration fixes iOS + Android.
+    let (det, rec, dict, doc_ori) = match MODEL_DIR.get() {
         Some(dir) => (
             dir.join("pp-ocrv5_mobile_det.onnx"),
             dir.join("pp-ocrv5_mobile_rec.onnx"),
             dir.join("ppocrv5_dict.txt"),
+            dir.join("pp-lcnet_x1_0_doc_ori.onnx"),
         ),
         None => (
             PathBuf::from("pp-ocrv5_mobile_det.onnx"),
             PathBuf::from("pp-ocrv5_mobile_rec.onnx"),
             PathBuf::from("ppocrv5_dict.txt"),
+            PathBuf::from("pp-lcnet_x1_0_doc_ori.onnx"),
         ),
     };
     let built = OAROCRBuilder::new(det, rec, dict)
+        .with_document_image_orientation_classification(doc_ori)
         .build()
         .map_err(|e| anyhow::anyhow!("failed to build OAROCR pipeline: {e}"))?;
     Ok(PIPELINE.get_or_init(|| built))
@@ -945,6 +953,30 @@ mod tests {
     /// Banding keeps each half near-native, so it should detect materially more
     /// lines. `#[ignore]` (needs models + the demo asset): run with
     /// `cargo test -p ocr --features engine -- --ignored --nocapture banding_recovers`.
+    /// Orientation fix: OCR a 90°-rotated real report photo (血常规报告1.jpg — the
+    /// original is physically sideways). With the doc-ori model wired into the
+    /// pipeline, oar-ocr rotates it upright before detection, so the layout text
+    /// comes out in readable horizontal rows instead of vertical columns. Prints
+    /// the text to eyeball. `#[ignore]` (needs models + asset):
+    /// `cargo test -p ocr --features engine -- --ignored --nocapture orientation_uprights`.
+    #[cfg(feature = "engine")]
+    #[test]
+    #[ignore]
+    fn orientation_uprights_sideways_report() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/demo-dataset/real/血常规报告1.jpg"
+        );
+        let bytes = std::fs::read(path).expect("demo report photo present");
+        let out = recognize_engine_layout(&bytes).expect("OCR");
+        eprintln!("----- 血常规报告1(原件 90° 躺倒)识别文本 -----\n{}", out.text);
+        assert!(
+            out.text.contains("白细胞") || out.text.contains("红细胞"),
+            "expected lab terms, got: {}",
+            out.text
+        );
+    }
+
     #[cfg(feature = "engine")]
     #[test]
     #[ignore]
