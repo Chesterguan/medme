@@ -102,6 +102,14 @@ fn pipeline() -> Result<&'static OAROCR> {
     // (for builds with `auto-download` off, where bare names wouldn't resolve).
     // Without it -- every build we ship today -- the bare names go through
     // `auto-download`'s `$OAR_HOME` resolution unchanged.
+    // NOTE: page orientation (0/90/180/270) is handled geometrically in
+    // `predict_lines` (see `orient_upright`), NOT by oar-ocr's doc-ori ONNX model.
+    // The doc-ori model classified correctly on desktop but returned 0° (no
+    // rotation) under Android's onnxruntime for the same model+input, AND it runs
+    // per-band inside `predict` (wrong granularity for a whole-page decision). The
+    // geometric approach uses the det boxes we already compute — a sideways page's
+    // text lines come back taller-than-wide — so it's deterministic, cross-platform,
+    // and free of that ort quirk. See ADR 0007.
     let (det, rec, dict) = match MODEL_DIR.get() {
         Some(dir) => (
             dir.join("pp-ocrv5_mobile_det.onnx"),
@@ -444,10 +452,8 @@ fn push_band_lines(
 /// preserved. Shared by [`recognize_engine`] (joins with "\n") and
 /// [`recognize_engine_layout`] (rebuilds table columns from the boxes).
 #[cfg(feature = "engine")]
-fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
+fn predict_lines_core(dynamic: &DynamicImage) -> Result<Vec<OcrLine>> {
     let ocr = pipeline()?;
-    let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
-    let dynamic = preprocess(dynamic);
     let (w, h) = (dynamic.width(), dynamic.height());
     let mut out: Vec<OcrLine> = Vec::new();
 
@@ -464,7 +470,7 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
     // Short image: single pass over the whole frame (no crop, no dedup) — this
     // path must stay byte-identical to the pre-banding behavior.
     if h <= TILE_CORE_H {
-        let regions = predict_band(dynamic_to_rgb(dynamic))?;
+        let regions = predict_band(dynamic_to_rgb(dynamic.clone()))?;
         push_band_lines(regions, 0.0, None, &mut out);
         return Ok(out);
     }
@@ -489,6 +495,122 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
         );
     }
     Ok(out)
+}
+
+/// A line's box counts as "tall" (rotated text) when its height exceeds its width
+/// by this factor.
+#[cfg(feature = "engine")]
+const ORIENT_TALL_RATIO: f32 = 1.3;
+/// If more than this fraction of a page's lines are "tall", treat the page as
+/// sideways (rotated 90°/270°) and try to upright it.
+#[cfg(feature = "engine")]
+const ORIENT_TALL_THRESHOLD: f32 = 0.5;
+/// Minimum in-plane skew (degrees) worth a deskew + re-OCR pass. Below this the
+/// tilt doesn't meaningfully hurt row grouping and isn't worth the resample.
+#[cfg(feature = "engine")]
+const ORIENT_MIN_DESKEW_DEG: f32 = 1.0;
+
+/// Fraction of non-empty lines whose detection box is taller than wide (by
+/// [`ORIENT_TALL_RATIO`]). Near 0 for an upright document (text lines are wide and
+/// short); high for a 90°/270°-rotated page (each line becomes a tall narrow
+/// strip). Empty input → 0.
+#[cfg(feature = "engine")]
+fn tall_fraction(lines: &[OcrLine]) -> f32 {
+    let considered = lines.iter().filter(|l| !l.text.trim().is_empty()).count();
+    if considered == 0 {
+        return 0.0;
+    }
+    let tall = lines
+        .iter()
+        .filter(|l| !l.text.trim().is_empty())
+        .filter(|l| {
+            let lw = (l.right - l.left).max(1.0);
+            let lh = (l.bottom - l.top).max(1.0);
+            lh > ORIENT_TALL_RATIO * lw
+        })
+        .count();
+    tall as f32 / considered as f32
+}
+
+/// Mean recognition confidence over a page's non-empty lines (0 if none). Higher
+/// when the page reads cleanly (upright) than when it's garbage (upside-down) —
+/// the discriminator [`predict_lines`] uses to pick between the two 90° rotations.
+#[cfg(feature = "engine")]
+fn mean_line_confidence(lines: &[OcrLine]) -> f32 {
+    let confs: Vec<f32> = lines
+        .iter()
+        .filter(|l| !l.text.trim().is_empty())
+        .filter_map(|l| l.confidence)
+        .collect();
+    mean_confidence(&confs)
+}
+
+/// Decode + preprocess, then recognize with automatic **page-orientation
+/// correction done geometrically** (no doc-orientation ONNX model — see
+/// [`pipeline`] for why). Most text lines in an upright document are wider than
+/// tall; a 90°/270°-rotated page makes them taller than wide. So: OCR once; if the
+/// lines come back predominantly tall (page is sideways), OCR the image rotated
+/// 90° and 270° too and keep whichever orientation yields the most horizontal
+/// lines (lowest [`tall_fraction`]). Deterministic and cross-platform (reuses the
+/// det model, which works everywhere). Upright pages — the common case — pay only
+/// one cheap tall-fraction check and never re-OCR. Returned line coordinates are
+/// in the chosen (uprighted) frame, which is all [`rebuild_layout_text`] and the
+/// "\n"-join need. Shared by [`recognize_engine`] and [`recognize_engine_layout`].
+#[cfg(feature = "engine")]
+fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
+    let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
+    let dynamic = preprocess(dynamic);
+
+    // 1) Orientation. OCR once; if the page reads sideways (predominantly tall line
+    //    boxes), OCR the 90°/270° rotations too and keep the upright one (horizontal
+    //    + highest recognition confidence — upright reads cleanly, upside-down is
+    //    garbage). We track the winning *image*, not just its lines, so the deskew
+    //    step below runs on the correctly-oriented frame. Upright pages (the common
+    //    case) skip the rotations entirely.
+    let lines0 = predict_lines_core(&dynamic)?;
+    let mut best_img = dynamic;
+    let mut best_lines = lines0;
+    let mut best_conf = mean_line_confidence(&best_lines);
+    if tall_fraction(&best_lines) > ORIENT_TALL_THRESHOLD {
+        for rotated in [
+            DynamicImage::ImageRgba8(image::imageops::rotate90(&best_img)),
+            DynamicImage::ImageRgba8(image::imageops::rotate270(&best_img)),
+        ] {
+            if let Ok(cand) = predict_lines_core(&rotated) {
+                let cc = mean_line_confidence(&cand);
+                if tall_fraction(&cand) <= ORIENT_TALL_THRESHOLD && cc > best_conf {
+                    best_conf = cc;
+                    best_lines = cand;
+                    best_img = rotated;
+                }
+            }
+        }
+    }
+
+    // 2) Deskew (in-plane tilt). A tilted photo leaves text rows slanted even once
+    //    upright; the detector then merges/mis-groups cells (the "mashed, hard to
+    //    read" layout). If the chosen upright image has a meaningful in-plane skew,
+    //    rotate it flat (reusing the projection-profile [`estimate_skew_deg`] +
+    //    [`deskew`] already used in [`preprocess`]) and re-OCR so rows come back
+    //    horizontal. `preprocess` already deskewed upright inputs, so this only fires
+    //    for pages that were *rotated first* (their skew survives the rotation).
+    //    **Failure-safe**: accept the deskewed result only if it kept ~all its lines
+    //    and didn't make the page look more sideways — otherwise keep the pre-deskew
+    //    result. A bad warp is worse than none.
+    let gray = best_img.to_luma8();
+    if let Some(angle) = estimate_skew_deg(&gray) {
+        if angle.is_finite() && angle.abs() >= ORIENT_MIN_DESKEW_DEG {
+            let deskewed = DynamicImage::ImageLuma8(deskew(&gray, angle));
+            if let Ok(dl) = predict_lines_core(&deskewed) {
+                let kept_lines = dl.len() * 10 >= best_lines.len() * 8;
+                let not_worse = tall_fraction(&dl) <= tall_fraction(&best_lines) + 0.05;
+                if kept_lines && not_worse {
+                    return Ok(dl);
+                }
+            }
+        }
+    }
+    Ok(best_lines)
 }
 
 /// Recognize text in image bytes (png/jpg/tiff/...). Returns recognized text
@@ -945,6 +1067,82 @@ mod tests {
     /// Banding keeps each half near-native, so it should detect materially more
     /// lines. `#[ignore]` (needs models + the demo asset): run with
     /// `cargo test -p ocr --features engine -- --ignored --nocapture banding_recovers`.
+    /// Orientation fix: OCR a 90°-rotated real report photo (血常规报告1.jpg — the
+    /// original is physically sideways). With the doc-ori model wired into the
+    /// pipeline, oar-ocr rotates it upright before detection, so the layout text
+    /// comes out in readable horizontal rows instead of vertical columns. Prints
+    /// the text to eyeball. `#[ignore]` (needs models + asset):
+    /// `cargo test -p ocr --features engine -- --ignored --nocapture orientation_uprights`.
+    /// Replicates the MOBILE condition: explicit model dir (like
+    /// `ensure_pp_models_ready` + `set_model_dir`) + auto-download OFF. If this
+    /// leaves the 90° report vertical while the auto-download variant uprights it,
+    /// the bug is in how the orientation model is loaded via explicit path (not
+    /// Android-specific). Run: `cargo test -p ocr --no-default-features
+    /// --features engine -- --ignored --nocapture orientation_explicit_path`.
+    /// Diagnostic: dump each recognized line's box (top/left/right/height) + text
+    /// for a real report, to see WHY the rendered layout is jumbled — is it skew
+    /// (rows slanted → y-grouping mis-groups), 2-column interleaving, or both?
+    /// `cargo test -p ocr --features engine -- --ignored --nocapture dump_boxes`.
+    #[cfg(feature = "engine")]
+    #[test]
+    #[ignore]
+    fn dump_boxes_for_layout_diagnosis() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/demo-dataset/real/血常规报告1.jpg"
+        );
+        let bytes = std::fs::read(path).expect("photo present");
+        // predict_lines already applies geometric orientation, so boxes are in the
+        // uprighted frame — the same frame rebuild_layout_text groups.
+        let mut lines = predict_lines(&bytes).expect("ocr");
+        lines.sort_by(|a, b| a.top.partial_cmp(&b.top).unwrap());
+        eprintln!("total lines = {}", lines.len());
+        for l in &lines {
+            eprintln!(
+                "top={:6.0} left={:6.0} right={:6.0} h={:4.0} w={:4.0} | {}",
+                l.top,
+                l.left,
+                l.right,
+                l.bottom - l.top,
+                l.right - l.left,
+                l.text.chars().take(24).collect::<String>()
+            );
+        }
+    }
+
+    #[cfg(feature = "engine")]
+    #[test]
+    #[ignore]
+    fn orientation_explicit_path_like_mobile() {
+        let oar = format!("{}/.oar", std::env::var("HOME").unwrap());
+        set_model_dir(std::path::PathBuf::from(&oar));
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/demo-dataset/real/血常规报告1.jpg"
+        );
+        let bytes = std::fs::read(path).expect("demo report photo present");
+        let out = recognize_engine_layout(&bytes).expect("OCR");
+        eprintln!("----- 显式路径(模拟手机)识别文本 -----\n{}", out.text);
+    }
+
+    #[cfg(feature = "engine")]
+    #[test]
+    #[ignore]
+    fn orientation_uprights_sideways_report() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/demo-dataset/real/血常规报告1.jpg"
+        );
+        let bytes = std::fs::read(path).expect("demo report photo present");
+        let out = recognize_engine_layout(&bytes).expect("OCR");
+        eprintln!("----- 血常规报告1(原件 90° 躺倒)识别文本 -----\n{}", out.text);
+        assert!(
+            out.text.contains("白细胞") || out.text.contains("红细胞"),
+            "expected lab terms, got: {}",
+            out.text
+        );
+    }
+
     #[cfg(feature = "engine")]
     #[test]
     #[ignore]

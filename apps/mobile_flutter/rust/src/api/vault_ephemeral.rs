@@ -406,20 +406,20 @@ pub fn ephemeral_delete_document(document_id: i64) -> anyhow::Result<()> {
 /// (镜像 `medme_share::export::GatheredRecord`,但那是 `pub(crate)`、不同 crate 不可见,
 /// 故只能重取——见文件顶部「零共享代码」说明;这里只取 summary 装配需要的四个字段,
 /// 不像 `GatheredRecord` 还带 `source_file`)。
-struct EphemeralSourceDoc {
+pub(crate) struct EphemeralSourceDoc {
     /// 供 [`ephemeral_summary`] 按 confirmed map 过滤(未确认的文档不进摘要装配)。
-    document_id: i64,
-    date: Option<chrono::NaiveDate>,
-    text: String,
-    doc_type: Option<String>,
-    title: Option<String>,
+    pub(crate) document_id: i64,
+    pub(crate) date: Option<chrono::NaiveDate>,
+    pub(crate) text: String,
+    pub(crate) doc_type: Option<String>,
+    pub(crate) title: Option<String>,
 }
 
 /// 按病程正序(旧→新,无日期最后)遍历临时会话箱,取出每份文档的识别文本 ——
 /// 与 `medme_share::share::build_encrypted_share_inner` 装配 `parser::SourceDoc` 前
 /// 的取法同构(`v.timeline()` 倒序翻正 + 无日期挪到末尾),让审阅屏这里跑的是与
 /// 「生成分享」完全一致的 `assemble_summary` 输入顺序,不是另一套排序。
-fn gather_ephemeral_docs(v: &Vault) -> anyhow::Result<Vec<EphemeralSourceDoc>> {
+pub(crate) fn gather_ephemeral_docs(v: &Vault) -> anyhow::Result<Vec<EphemeralSourceDoc>> {
     let mut entries = v.timeline().map_err(|e| anyhow::anyhow!(e.to_string()))?;
     entries.reverse();
     let (mut dated, undated): (Vec<_>, Vec<_>) =
@@ -528,7 +528,7 @@ fn proxy_med_from_json(v: &Value) -> ProxyMedDto {
 /// 识别内容」区块摊开原文,不丢信息)。**保留「其他」桶**(未挂上具体疾病的化验/
 /// 用药落这里)而不是过滤掉——它仍是一条有名字有内容的 `problems[]` 项,过滤会在没
 /// 人要求的前提下丢数据。
-fn proxy_summary_from_json(summary: &Value) -> ProxySummaryDto {
+pub(crate) fn proxy_summary_from_json(summary: &Value) -> ProxySummaryDto {
     let problems = summary
         .get("problems")
         .and_then(|p| p.as_array())

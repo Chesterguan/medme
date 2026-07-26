@@ -3,8 +3,9 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
-import 'package:mobile_flutter/ephemeral_session.dart';
+import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart' show kDocTypeLabel;
+import 'package:mobile_flutter/src/rust/api/vault.dart' as vault;
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
@@ -17,24 +18,28 @@ import 'package:mobile_flutter/widgets/report_content.dart';
 enum ProxyDetailResult { none, changed, retake }
 
 /// 待确认列表「点进一份」的详情屏(医生代拍流程专用)——**与 `document_detail.dart`
-/// 是独立副本,不是共享组件**:数据来自临时会话箱([EphemeralSession])而不是医生
-/// 自己的档案([EphemeralSession] 全程只碰独立的 Rust `vault_ephemeral` cell,与
-/// `document_detail.dart` 读的 `api::vault` 完全平行、互不可见)。宁可这份代码与
-/// `document_detail.dart` 重复大半,也不去改那个文件抽公共组件——保持「不碰普通人
-/// 模式一行代码」这条硬规矩在这两个文件上都显而易见成立。
+/// 是独立副本,不是共享组件**。读的是同一套 `api::vault`,但此刻进程里打开的是**这
+/// 个代拍病人的箱子**(见 `openProxyPatientVault`),不是医生自己的档案。宁可这份
+/// 代码与 `document_detail.dart` 重复大半,也不去改那个文件抽公共组件——保持「不碰
+/// 普通人模式一行代码」这条硬规矩在这两个文件上都显而易见成立。
 ///
 /// 布局复用 `document_detail.dart` 的呈现方式:原件图/PDF + 识别文本(`ReportContent`)。
 /// 底部按钮换成本流程要的三个动作:确认这一份 / 删除 / 重拍。
 class ProxyDocumentDetailScreen extends StatefulWidget {
   const ProxyDocumentDetailScreen({
     super.key,
+    required this.patientId,
     required this.docId,
     required this.initiallyConfirmed,
   });
 
+  /// 这一份属于哪个代拍病人——「确认这一份」落在 [ProxyPatientManager] 的这个病人
+  /// 名下(要跨 12 小时保留窗口和 app 重启存活,所以落盘,不放 Rust 进程内存)。
+  final String patientId;
+
   final int docId;
-  /// 打开详情页那一刻,列表屏已知的确认状态(列表屏已经拉过一次
-  /// `EphemeralSession.confirmedMap()`,这里不必再多一次 FFI 往返去问同一件事)。
+  /// 打开详情页那一刻,列表屏已知的确认状态(列表屏已经从
+  /// [ProxyPatientManager] 读过一次,这里不必再问一遍)。
   final bool initiallyConfirmed;
 
   @override
@@ -44,8 +49,8 @@ class ProxyDocumentDetailScreen extends StatefulWidget {
 
 class _ProxyDocumentDetailScreenState
     extends State<ProxyDocumentDetailScreen> {
-  late final Future<DocumentDetailDto> _future = EphemeralSession.getDocument(
-    widget.docId,
+  late final Future<DocumentDetailDto> _future = vault.getDocument(
+    id: widget.docId,
   );
   late final bool _confirmed = widget.initiallyConfirmed;
   bool _busy = false;
@@ -73,7 +78,19 @@ class _ProxyDocumentDetailScreenState
     if (ok != true || !mounted) return;
     setState(() => _busy = true);
     try {
-      await EphemeralSession.deleteDocument(widget.docId);
+      await vault.deleteDocument(documentId: widget.docId);
+      // 顺手撤掉这一份的「已确认」标记:文档没了,id 不该继续留在 confirmedIds 里
+      // (否则会被当成已确认喂给 `createProxyShare`/`proxySummary`)。
+      await ProxyPatientManager.instance.setConfirmed(
+        widget.patientId,
+        widget.docId,
+        false,
+      );
+      await ProxyPatientManager.instance.setMismatch(
+        widget.patientId,
+        widget.docId,
+        null,
+      );
       if (mounted) Navigator.of(context).pop(ProxyDetailResult.changed);
     } catch (e) {
       if (!mounted) return;
@@ -104,7 +121,19 @@ class _ProxyDocumentDetailScreenState
     if (ok != true || !mounted) return;
     setState(() => _busy = true);
     try {
-      await EphemeralSession.deleteDocument(widget.docId);
+      await vault.deleteDocument(documentId: widget.docId);
+      // 顺手撤掉这一份的「已确认」标记:文档没了,id 不该继续留在 confirmedIds 里
+      // (否则会被当成已确认喂给 `createProxyShare`/`proxySummary`)。
+      await ProxyPatientManager.instance.setConfirmed(
+        widget.patientId,
+        widget.docId,
+        false,
+      );
+      await ProxyPatientManager.instance.setMismatch(
+        widget.patientId,
+        widget.docId,
+        null,
+      );
       if (mounted) Navigator.of(context).pop(ProxyDetailResult.retake);
     } catch (e) {
       if (!mounted) return;
@@ -117,9 +146,10 @@ class _ProxyDocumentDetailScreenState
   Future<void> _confirm() async {
     setState(() => _busy = true);
     try {
-      await EphemeralSession.setConfirmed(
-        documentId: widget.docId,
-        confirmed: true,
+      await ProxyPatientManager.instance.setConfirmed(
+        widget.patientId,
+        widget.docId,
+        true,
       );
       if (mounted) Navigator.of(context).pop(ProxyDetailResult.changed);
     } catch (e) {
@@ -380,7 +410,7 @@ String _fmtDate(String? iso) {
   return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }
 
-/// 图片原件全屏查看(可缩放),字节来自 `EphemeralSession.readSourceBytes`(临时
+/// 图片原件全屏查看(可缩放),字节来自 `vault.readSourceBytes`(此刻打开的是代拍病人的
 /// 会话箱,不经 iCloud 物化)。
 class _ProxyImageViewerScreen extends StatelessWidget {
   final int sourceFileId;
@@ -396,7 +426,7 @@ class _ProxyImageViewerScreen extends StatelessWidget {
         title: const Text('原件'),
       ),
       body: FutureBuilder<Uint8List>(
-        future: EphemeralSession.readSourceBytes(sourceFileId),
+        future: vault.readSourceBytes(id: sourceFileId),
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
             return const Center(
@@ -416,7 +446,7 @@ class _ProxyImageViewerScreen extends StatelessWidget {
   }
 }
 
-/// PDF 原件全屏查看(可翻页),字节来自 `EphemeralSession.readSourceBytes`。
+/// PDF 原件全屏查看(可翻页),字节来自 `vault.readSourceBytes`。
 class _ProxyPdfViewerScreen extends StatefulWidget {
   final int sourceFileId;
   const _ProxyPdfViewerScreen({required this.sourceFileId});
@@ -437,9 +467,7 @@ class _ProxyPdfViewerScreenState extends State<_ProxyPdfViewerScreen> {
 
   Future<void> _load() async {
     try {
-      final bytes = await EphemeralSession.readSourceBytes(
-        widget.sourceFileId,
-      );
+      final bytes = await vault.readSourceBytes(id: widget.sourceFileId);
       if (!mounted) return;
       setState(() {
         _controller = PdfController(document: PdfDocument.openData(bytes));
@@ -486,7 +514,7 @@ class _ProxyDicomViewerScreen extends StatelessWidget {
         title: const Text('影像原件'),
       ),
       body: FutureBuilder<Uint8List>(
-        future: EphemeralSession.renderDicomPng(sourceFileId),
+        future: vault.renderDicomPng(id: sourceFileId),
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
             return const Center(

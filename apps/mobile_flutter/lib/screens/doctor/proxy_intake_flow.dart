@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
+
 import 'package:flutter/material.dart';
 
-import 'package:mobile_flutter/ephemeral_session.dart';
 import 'package:mobile_flutter/import_flow.dart' show ImportChoice, pickImportItems;
 import 'package:mobile_flutter/ocr_bridge.dart';
+import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/doctor/consent_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_delivery_count.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_share_result_dialog.dart';
@@ -13,28 +15,46 @@ import 'package:mobile_flutter/screens/doctor/proxy_document_detail.dart';
 import 'package:mobile_flutter/screens/doctor/proxy_summary_card.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
+import 'package:mobile_flutter/src/rust/api/vault.dart' as vault;
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/vault_boot.dart'
+    show ensureProxyVaultOpen, openCurrentProfileVault, openProxyPatientVault;
 
-/// 代建档分享文件的有效期(天)。这台设备本身用完即焚,这个天数只约束「病人手里
-/// 那份加密文件的口令还能用多久」——给病人留足取回/打开的时间,与正常导出分享的
+/// 代建档分享文件的有效期(天)。与本机那 12 小时保留是两回事:这个天数只约束「病人
+/// 手里那份加密文件的口令还能用多久」——给病人留足取回/打开的时间,与正常导出分享的
 /// 「7/30/90 天」选项同量级,取中间档,不额外弹一轮选择打断诊室现场的节奏。
 const int kProxyShareExpiresDays = 30;
 
 enum _ProxyPhase { consent, capture, preview, delivering }
 
 /// 「为病人代建档」全屏流程(医生/护士专用,Phase 1:本地交付,不含云)。
-/// 同意(签名/按住确认)→ 临时会话(即焚)→ 采集(拍照/相册/文件,可多轮混合来源
-/// 累加)→ **待确认列表**(每份一行,点进去核对原件+识别内容、逐份点「确认这一份」;
-/// 可随时「继续采集」再累加更多)→ 生成加密文件交付给病人(摘要只统计已确认的
-/// 文档,未确认的原件仍全部进分享包并标注待确认)→ 即焚退出。全程只碰独立的 Rust
-/// `vault_ephemeral` cell([EphemeralSession]),绝不写入医生自己的档案——橙色
-/// chrome + 顶部常驻横幅是每一屏都在的信号,提醒「这不是我的箱」。
+/// 同意(签名/按住确认)→ 为这个病人建一个**独立保险箱** → 采集(拍照/相册/文件,
+/// 可多轮混合来源累加)→ **待确认列表**(每份一行,点进去核对原件+识别内容、逐份点
+/// 「确认这一份」;可随时「继续采集」再累加更多)→ 生成加密文件交付给病人(摘要只
+/// 统计已确认的文档,未确认的原件仍全部进分享包并标注待确认)。
 ///
-/// **采集本身走现有 `recognizeImageText`(`ocr_bridge.dart`,iOS/安卓各自原生
-/// OCR)——本文件不碰、不重写任何 OCR 逻辑**,只是把识别结果落进临时会话箱而不是
-/// 医生自己的保险箱(见 [_ingest] 与 `EphemeralSession.ingestImageWithText`)。
+/// **交付后不即焚**:病人留在本机最多 12 小时(医生通常要几小时内写完病历,期间可
+/// 回来补拍/重发),到点由 [ProxyPatientManager] 自动删——与同意告知里那句话对齐。
+/// 病人数据落在 [ProxyPatientManager] 的独立命名空间,**绝不写入医生自己的档案**;
+/// 橙色 chrome + 顶部常驻横幅是每一屏都在的信号,提醒「这不是我的箱」。
+///
+/// [patientId] 为 null = 新病人(从同意屏开始);非 null = 从主页「今日病历表」点回
+/// 一个已建档的病人(同意已签过,直接进待确认列表继续核对/交付)。
+///
+/// 打开代拍病人的箱子会**顶掉进程级 vault**(医生自己的档案)。这件事不靠调用顺序的
+/// 约定来保证正确:所有开箱走 `vault_boot` 的 FIFO 队列(先发出先生效),并且每次落库
+/// /交付前都过 `ensureProxyVaultOpen` 硬校验(开着的不是这个病人的箱子就重开,重开还
+/// 不对就中止写入)。[dispose] 里换回医生自己的档案因此可以安全地不 await。
+///
+/// **采集走与患者模式完全相同的那条链路**:`pickImportItems` + `recognizeImageText`
+/// (`ocr_bridge.dart`,iOS/安卓各自原生 OCR)+ `vault.ingestImageWithText` —— 本文件
+/// 不重写任何 OCR/入库逻辑,唯一差别是此刻进程里打开的是这个病人的箱子(见
+/// `openProxyPatientVault`)。
 class ProxyIntakeFlow extends StatefulWidget {
-  const ProxyIntakeFlow({super.key});
+  const ProxyIntakeFlow({super.key, this.patientId});
+
+  /// 续拍已有病人时传其 id;新病人传 null。
+  final String? patientId;
 
   @override
   State<ProxyIntakeFlow> createState() => _ProxyIntakeFlowState();
@@ -42,27 +62,71 @@ class ProxyIntakeFlow extends StatefulWidget {
 
 class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   _ProxyPhase _phase = _ProxyPhase.consent;
-  bool _sessionStarted = false;
-  bool _delivered = false;
+  String? _patientId;
+  // 这一屏是否顶掉过进程级 vault。与 `_patientId` 分开记:放弃一个空病人时
+  // `_patientId` 会被清成 null,但箱子已经开过了,dispose 仍必须换回医生自己的档案
+  // (否则进程会攥着一个刚被删掉的目录,切回个人模式就读不到自己的病历)。
+  bool _openedProxyVault = false;
   ConsentDto? _consent;
+  // 报告上姓名与本病人不一致的文档(docId → 报告上的名字),这一屏的快照。等价于患者
+  // 模式档案屏那条「姓名不匹配」红条,但**不走 `ReviewState`** —— 那套状态以
+  // `ProfileManager.current` 为键,是患者模式的命名空间,代拍不该往里写。真相落在
+  // `ProxyPatientManager`(跨重启保留,12 小时里重进 app 还看得见这条提醒)。
+  Map<int, String> _mismatch = const {};
   List<TimelineGroupDto> _preview = const [];
   ProxySummaryDto? _summary;
-  // 文档 id → 是否已确认(用户拍板的最终流程:待确认列表用它渲染「待确认/已确认」
-  // 标签)。查不到的 id 一律按「待确认」处理,与 Rust 侧 `ephemeral_confirmed_map`
-  // 的默认值语义一致。
+  // 文档 id → 是否已确认(待确认列表用它渲染「待确认/已确认」标签)。真相在
+  // `ProxyPatientManager`(落盘),这里只是这一屏的快照;查不到的 id 按「待确认」处理。
   Map<int, bool> _confirmedMap = const {};
   int _capturedCount = 0;
   bool _busy = false;
   String? _progress;
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.patientId != null) unawaited(_resume(widget.patientId!));
+  }
+
+  @override
   void dispose() {
-    // 兜底双保险:任何退出路径(系统返回手势、异常)都确保即焚。幂等——已交付
-    // 或从未开始过会话时是 no-op(见 `EphemeralSession.wipe`)。
-    if (_sessionStarted && !_delivered) {
-      unawaited(EphemeralSession.wipe());
-    }
+    // 把进程级 vault 换回医生自己的档案。不 await 也安全:开箱都排在 `vault_boot` 的
+    // FIFO 队列里,这次「换回」先发出就一定先生效;万一仍有意外,写入前的
+    // `ensureProxyVaultOpen` 还会再挡一道。
+    if (_openedProxyVault) unawaited(openCurrentProfileVault());
     super.dispose();
+  }
+
+  /// 从主页点回一个已建档的病人:开它的箱子,直接进待确认列表(同意早签过了)。
+  Future<void> _resume(String id) async {
+    setState(() {
+      _busy = true;
+      _progress = '正在打开…';
+    });
+    try {
+      await ProxyPatientManager.instance.ensureLoaded();
+      final p = ProxyPatientManager.instance.byId(id);
+      if (p == null) {
+        // 12 小时到了、在主页点进来之前刚被清掉:直接退出,别开一个空箱子。
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+      // 先记 id 再开箱:开箱这段 await 里若用户退出了,主页那边靠「push 返回后一定
+      // 换回医生自己的档案」兜底,状态必须已经是「进过代拍」。
+      _patientId = id;
+      _openedProxyVault = true;
+      await openProxyPatientVault(id);
+      _consent = p.consent;
+      if (!mounted) return;
+      await _goToPreview();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _progress = null;
+      });
+      await _showError('打开病人档案失败', '$e');
+    }
   }
 
   /// 系统分享面板(尤其 iPad)需要非零锚点矩形,与 `export_screen.dart` 同一理由。
@@ -80,17 +144,15 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       _progress = '正在准备…';
     });
     try {
-      await EphemeralSession.begin();
-      // 标记必须紧跟在 begin() 成功之后、任何 `mounted` 检查之前:若用户在
-      // begin() 这一小段 await 期间就退出了,dispose() 会在那一刻检查
-      // `_sessionStarted`,必须已经能看到「会话已开始」才会触发即焚——否则磁盘上
-      // 的会话目录 + Rust 侧 cell 会一直留到下次启动 sweep。
-      _sessionStarted = true;
+      final id = await ProxyPatientManager.instance.create();
+      _patientId = id;
+      _openedProxyVault = true;
+      await openProxyPatientVault(id);
       _consent = consent;
+      await ProxyPatientManager.instance.setConsent(id, consent);
       if (!mounted) {
-        // 组件已在这段 await 期间被卸载(用户退出了):这里兜底即焚,不能指望
-        // 已经跑过的 dispose() 再补一次(那时 _sessionStarted 还是 false)。
-        await EphemeralSession.wipe();
+        // 组件已在这段 await 期间被卸载:这个病人一份都没采集,不该留在今日病历表里。
+        await ProxyPatientManager.instance.remove(id);
         return;
       }
       setState(() {
@@ -104,27 +166,34 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _busy = false;
         _progress = null;
       });
-      await _showError('开始会话失败', '$e');
+      await _showError('新建病人档案失败', '$e');
     }
   }
 
-  /// 取消/退出:即焚(若已开始过会话)后关闭整个全屏路由。同意屏底部「不同意」
-  /// (还没采集任何东西,不必二次确认)、AppBar 返回箭头确认后(见 [_confirmExit])、
-  /// 系统返回手势(`PopScope` 兜底,见 [build])都走这条路径。
+  /// 退出这一屏。**不删数据**——已采集的病人留在今日病历表里(12 小时内可回来续拍
+  /// /交付),这正是「不再用完即焚」的意思。一份都没采集的空病人不留(不然主页会
+  /// 攒一堆空条目)。进程级 vault 由主页在本路由返回后换回(见类注释)。
   Future<void> _cancelAndExit() async {
-    if (_sessionStarted) await EphemeralSession.wipe();
-    _delivered = true; // 挡住 dispose 里再 wipe 一次(已经手动 wipe 过)
+    final id = _patientId;
+    if (id != null && _capturedCount == 0) {
+      await ProxyPatientManager.instance.remove(id);
+      _patientId = null;
+    }
     if (mounted) Navigator.of(context).pop();
   }
 
-  /// AppBar 返回箭头点了先确认再退出——即焚会清掉这次代拍已采集的一切,不能像
-  /// 系统返回手势那样悄悄发生。确认了才走 [_cancelAndExit]。
+  /// AppBar 返回箭头点了先确认再退出。已经采集过东西的:退出**不会**丢数据(病人
+  /// 留在今日病历表),所以不必吓唬人;一份都没拍的:退出就是放弃这个病人。
   Future<void> _confirmExit() async {
+    if (_capturedCount == 0) {
+      await _cancelAndExit();
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('退出代拍?'),
-        content: const Text('退出会清除这次代拍的数据,确定?'),
+        title: const Text('先退出?'),
+        content: const Text('已经拍好的会留在「今日病历表」里,12 小时内可以随时回来继续。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -132,7 +201,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('确定退出'),
+            child: const Text('退出'),
           ),
         ],
       ),
@@ -212,13 +281,25 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     await _ingest(items);
   }
 
-  /// 采集落库——**独立实现,不复用 `import_flow.dart` 的 `_runImport`**(那条链路
-  /// 落的是医生自己的保险箱)。OCR 识别本身仍是同一个未改动的 [recognizeImageText]
-  /// (`ocr_bridge.dart`,iOS/安卓各自原生引擎);唯一差异是落库目的地换成
-  /// [EphemeralSession] 的临时会话箱。Phase 1 范围内不做扫描版 PDF 的 OCR 回填
-  /// (仅存原件),与「先把核心闭环做对」的取舍一致,不在诊室现场为个别扫描版
-  /// PDF 多等一轮渲染。
+  /// 采集落库——走**与患者模式同一条**链路(`vault.ingestImageWithText` /
+  /// `vault.ingestBytes`),此刻进程里打开的是这个病人的箱子,所以东西落进他自己的
+  /// vault。OCR 仍是未改动的 [recognizeImageText](`ocr_bridge.dart`,iOS/安卓各自
+  /// 原生引擎)。Phase 1 范围内不做扫描版 PDF 的 OCR 回填(仅存原件),不在诊室现场
+  /// 为个别扫描版 PDF 多等一轮渲染。
+  ///
+  /// 顺手拿 Rust 回传的 `detectedName`:第一份识别到姓名就给这个病人命名(主页
+  /// 「今日病历表」按名字列);之后再识别到**别的**名字就记进 [_mismatch],在待确认
+  /// 列表顶上提醒「可能拍到了别人的单子」。
   Future<void> _ingest(List<PendingImport> items) async {
+    final patientId = _patientId;
+    if (patientId == null) return;
+    try {
+      // 动手前确认此刻开着的确实是这个病人的箱子(见 `ensureProxyVaultOpen`)。
+      await ensureProxyVaultOpen(patientId);
+    } catch (e) {
+      if (mounted) await _showError('采集已中止', '$e');
+      return;
+    }
     setState(() {
       _busy = true;
       _progress = '正在处理 1/${items.length}…';
@@ -230,10 +311,11 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         setState(() => _progress = '正在处理 ${i + 1}/${items.length}…');
       }
       try {
+        final ImportOutcomeDto outcome;
         if (item.isImage) {
           final ocr = await recognizeImageText(item.path);
           final bytes = await File(item.path).readAsBytes();
-          await EphemeralSession.ingestImageWithText(
+          outcome = await vault.ingestImageWithText(
             name: item.name,
             bytes: bytes,
             ocrText: ocr.text,
@@ -241,8 +323,9 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
           );
         } else {
           final bytes = await File(item.path).readAsBytes();
-          await EphemeralSession.ingestBytes(filename: item.name, data: bytes);
+          outcome = await vault.ingestBytes(filename: item.name, data: bytes);
         }
+        await _noteDetectedName(patientId, outcome);
         _capturedCount++;
       } catch (e) {
         debugPrint('[doctor-proxy] ${item.name} 采集失败: $e');
@@ -266,33 +349,61 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     }
   }
 
+  /// 记下这份文档识别到的患者姓名:病人还没名字就用它命名;与已有名字不同则记进
+  /// [_mismatch](等价患者模式的「姓名不匹配」红条,提醒别把两个人的单子拍进一份)。
+  Future<void> _noteDetectedName(String patientId, ImportOutcomeDto outcome) async {
+    final detected = outcome.detectedName?.trim() ?? '';
+    if (detected.isEmpty) return;
+    final current = ProxyPatientManager.instance.byId(patientId)?.name;
+    if (current == null || current.isEmpty) {
+      await ProxyPatientManager.instance.autoName(patientId, detected);
+    } else if (current != detected) {
+      if (outcome.documentId case final id?) {
+        await ProxyPatientManager.instance.setMismatch(patientId, id, detected);
+      }
+    }
+  }
+
   /// 加载/刷新待确认列表:就诊时间线(铺平成文档清单)+ 病情摘要卡(只统计已确认
   /// 文档)+ 每份文档的确认状态。采集完成后、以及每次从详情页返回(确认/删除/重拍)
   /// 后都调这个来刷新——单一数据源,不另维护一套局部更新逻辑。`_capturedCount`
   /// 顺带用这次拿到的真实文档数覆盖,不再靠调用方手动加减去维持同步。
+  ///
+  /// 确认状态来自 [ProxyPatientManager](落盘,跨 12 小时保留窗口存活),不再是 Rust
+  /// 侧的进程内存 map。
   Future<void> _goToPreview() async {
     setState(() {
       _busy = true;
       _progress = '正在整理…';
     });
     try {
-      final groups = await EphemeralSession.loadPreview();
+      final p = ProxyPatientManager.instance.byId(_patientId ?? '');
+      final confirmed = p?.confirmedIds ?? const <int>{};
+      final groups = await vault.loadArchive();
       final docs = _PendingListStep.flatten(groups);
-      final summary = await EphemeralSession.summary();
-      final confirmedList = await EphemeralSession.confirmedMap();
-      final confirmedMap = <int, bool>{
-        for (final c in confirmedList) c.documentId: c.confirmed,
-      };
+      final summary = await vault.proxySummary(
+        confirmedIds: Int64List.fromList(confirmed.toList()),
+      );
+      final confirmedMap = <int, bool>{for (final id in confirmed) id: true};
       if (!mounted) return;
       setState(() {
         _preview = groups;
         _summary = summary;
         _confirmedMap = confirmedMap;
+        // 只留还存在的文档:删掉的那份不该继续在顶上报警。
+        _mismatch = {
+          for (final e in (p?.mismatch ?? const <int, String>{}).entries)
+            if (docs.any((d) => d.id == e.key)) e.key: e.value,
+        };
         _capturedCount = docs.length;
         _busy = false;
         _progress = null;
         _phase = _ProxyPhase.preview;
       });
+      // 回填份数,主页「今日病历表」列表直接读它,不必为了数数把每个箱子都开一遍。
+      if (_patientId case final id?) {
+        await ProxyPatientManager.instance.setDocCount(id, docs.length);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -308,9 +419,12 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   /// 有变化(确认或删除)就刷新列表;是「重拍」则刷新后紧接着重新弹采集入口——
   /// 复用现有的 [_pickCaptureSource]/[_ingest] 链路,不在详情页重复一遍采集逻辑。
   Future<void> _openDocument(DocumentSummaryDto doc) async {
+    final patientId = _patientId;
+    if (patientId == null) return;
     final result = await Navigator.of(context).push<ProxyDetailResult>(
       MaterialPageRoute(
         builder: (_) => ProxyDocumentDetailScreen(
+          patientId: patientId,
           docId: doc.id,
           initiallyConfirmed: _confirmedMap[doc.id] ?? false,
         ),
@@ -334,9 +448,15 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       _phase = _ProxyPhase.delivering;
     });
     try {
-      final result = await EphemeralSession.createShare(
+      // 交付读的也是这个箱子(而且会往里写一份 share 记录):同样先校验再动手。
+      if (_patientId case final id?) await ensureProxyVaultOpen(id);
+      final confirmed =
+          ProxyPatientManager.instance.byId(_patientId ?? '')?.confirmedIds ??
+          const <int>{};
+      final result = await vault.createProxyShare(
         expiresDays: kProxyShareExpiresDays,
         consent: consent,
+        confirmedIds: Int64List.fromList(confirmed.toList()),
       );
       if (!mounted) return;
       setState(() {
@@ -349,8 +469,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       if (!mounted) return;
       await showDoctorShareResultDialog(context, result, shareOrigin: _shareOrigin);
       if (!mounted) return;
-      _delivered = true;
-      await EphemeralSession.wipe();
+      // **交付后不删**:病人留在今日病历表里,12 小时内医生可以回来补拍/重发,到点
+      // 由 `ProxyPatientManager` 自动清(与同意告知里的口径一致)。
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
@@ -428,6 +548,10 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
           groups: _preview,
           summary: _summary,
           confirmedMap: _confirmedMap,
+          patientName:
+              ProxyPatientManager.instance.byId(_patientId ?? '')?.displayName ??
+              ProxyPatientManager.unnamed,
+          mismatch: _mismatch,
           busy: _busy,
           progress: _progress,
           onCaptureMore: _pickCaptureSource,
@@ -461,7 +585,7 @@ class _ProxyBanner extends StatelessWidget {
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              '为他人代建档 · 用完即焚 · 不会存入你的档案',
+              '为病人代建档 · 本机最多留 12 小时 · 不进你自己的档案',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 13,
@@ -581,6 +705,8 @@ class _PendingListStep extends StatelessWidget {
     required this.groups,
     required this.summary,
     required this.confirmedMap,
+    required this.patientName,
+    required this.mismatch,
     required this.busy,
     required this.progress,
     required this.onCaptureMore,
@@ -591,6 +717,12 @@ class _PendingListStep extends StatelessWidget {
   final List<TimelineGroupDto> groups;
   final ProxySummaryDto? summary;
   final Map<int, bool> confirmedMap;
+
+  /// 这个代拍病人的名字(从报告识别;还没识别到是占位名)。
+  final String patientName;
+
+  /// 报告上姓名与本病人不一致的文档(docId → 报告上的名字),见 [_MismatchBanner]。
+  final Map<int, String> mismatch;
   final bool busy;
   final String? progress;
   final VoidCallback onCaptureMore;
@@ -644,6 +776,11 @@ class _PendingListStep extends StatelessWidget {
                         // (尚无文档被确认,或全是原始未分类图片)时组件自身收起为
                         // 零高度,不占地方。
                         if (s != null) ProxySummaryCard(summary: s),
+                        if (mismatch.isNotEmpty)
+                          _MismatchBanner(
+                            patientName: patientName,
+                            others: mismatch.values.toSet(),
+                          ),
                         const Padding(
                           padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
                           child: Text(
@@ -800,6 +937,43 @@ class _PendingRow extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 「这份单子上的名字不是这个病人」提醒。等价于患者模式档案屏那条橙色红条
+/// (`archive_screen.dart` 的 `_MismatchBanner`,同一配色与语气),只是这里的对照
+/// 对象是代拍病人而不是家庭成员 —— 诊室里一叠单子容易混进隔壁病人的,这条就是防它。
+/// 只提醒、不自动移动任何东西:该删哪份由医生点进详情自己判断。
+class _MismatchBanner extends StatelessWidget {
+  const _MismatchBanner({required this.patientName, required this.others});
+
+  final String patientName;
+  final Set<String> others;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: MedMe.proxyOrange.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.warning_amber_rounded, size: 18, color: MedMe.proxyOrange),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '有单子上的姓名是「${others.join('、')}」,与本病人「$patientName」不一致,'
+              '请核对是不是拍到了别人的材料。',
+              style: const TextStyle(fontSize: 12.5, height: 1.45),
+            ),
+          ),
+        ],
       ),
     );
   }

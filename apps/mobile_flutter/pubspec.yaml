@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.3.0+38
+version: 1.3.1+46
 
 environment:
   sdk: ^3.12.2
@@ -47,6 +47,10 @@ dependencies:
   cunning_document_scanner: ^2.6.0
   file_picker: ^8.0.0
   google_mlkit_text_recognition: ^0.16.0
+  # 检测 Google Play 服务是否可用:无 GMS 的国产机上 ML Kit 文档扫描器起不来,
+  # 据此决定拍照走 ML Kit 扫描器(有 GMS)还是普通系统相机(无 GMS)。Baseflow
+  # 成熟包,只查可用性、不引额外 GMS 依赖(cunning/mlkit 已带 play-services-base)。
+  google_api_availability: ^5.0.0
   photo_view: ^0.15.0
   # 面对面二维码分享:把「当下病情」编成码给医生扫(纯本地绘制,不联网)
   qr_flutter: ^4.1.0
