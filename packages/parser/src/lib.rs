@@ -263,14 +263,22 @@ pub struct Demographics {
 
 pub fn extract_demographics(text: &str) -> Demographics {
     static NAME: OnceLock<Regex> = OnceLock::new();
+    static NAME_LOOSE: OnceLock<Regex> = OnceLock::new();
     static GENDER: OnceLock<Regex> = OnceLock::new();
     static AGE: OnceLock<Regex> = OnceLock::new();
     static BIRTH: OnceLock<Regex> = OnceLock::new();
     let name = NAME.get_or_init(|| {
         Regex::new(r"(?:姓名|名字)[:：]\s*([^\s，,;；、\d]{1,10})").expect("name regex")
     });
-    let gender = GENDER.get_or_init(|| Regex::new(r"性别[:：]\s*([男女])").expect("gender regex"));
-    let age = AGE.get_or_init(|| Regex::new(r"年龄[:：]\s*(\d{1,3})").expect("age regex"));
+    // 无冒号的兜底:纸质报告里「姓名 / 性别 / 年龄」是靠**表格对齐**排的,拍照 OCR
+    // 之后冒号往往根本不存在(实测华西/独墅湖等报告单,识别出来是「姓名孟丁 性别男」)。
+    // 只认「2-4 个汉字 + 紧跟空白或行尾」这一种形态:没有分隔符就整体不匹配,
+    // 所以「姓名孟丁性别男」这种粘连的情况宁可提不出,也不会把「孟丁性别」当成名字。
+    let name_loose = NAME_LOOSE.get_or_init(|| {
+        Regex::new(r"(?:姓名|名字)\s*([\u{4e00}-\u{9fa5}]{2,4})(?:\s|$)").expect("loose name regex")
+    });
+    let gender = GENDER.get_or_init(|| Regex::new(r"性别[:：]?\s*([男女])").expect("gender regex"));
+    let age = AGE.get_or_init(|| Regex::new(r"年龄[:：]?\s*(\d{1,3})").expect("age regex"));
     let birth = BIRTH.get_or_init(|| {
         Regex::new(r"(?:出生日期|出生|生日)[:：]\s*(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})")
             .expect("birth regex")
@@ -284,7 +292,8 @@ pub fn extract_demographics(text: &str) -> Demographics {
         .captures(text)
         .map(|c| format!("{}-{:0>2}-{:0>2}", &c[1], &c[2], &c[3]));
     Demographics {
-        name: cap1(name),
+        // 带冒号的优先;提不出再用无冒号兜底(拍照 OCR 的表格式报告)。
+        name: cap1(name).or_else(|| cap1(name_loose)),
         gender: cap1(gender),
         birth_date,
         age: cap1(age),
@@ -619,6 +628,26 @@ mod tests {
         // 无 demographic 的文本 → 全 None
         let e = extract_demographics("超声所见:肝脏形态正常。");
         assert!(e.name.is_none() && e.gender.is_none() && e.age.is_none());
+    }
+
+    /// 拍照 OCR 的表格式报告单:字段和值靠**表格对齐**排,识别出来没有冒号。
+    /// 医生代拍拿到的绝大多数是这一类(实测独墅湖科教创新区医院化验报告单)。
+    #[test]
+    fn extract_demographics_without_colon_from_photo_ocr() {
+        let d = extract_demographics(
+            "独墅湖科教创新区医院化验报告单\n年龄2岁 样本类型血液\n姓名孟丁 性别男\n门诊号90051065 科室儿科",
+        );
+        assert_eq!(d.name.as_deref(), Some("孟丁"));
+        assert_eq!(d.gender.as_deref(), Some("男"));
+        assert_eq!(d.age.as_deref(), Some("2"));
+
+        // 粘连无分隔时宁可提不出,也不能把「孟丁性别」当成名字。
+        let stuck = extract_demographics("姓名孟丁性别男门诊号90051065");
+        assert_eq!(stuck.name, None);
+
+        // 带冒号的旧形态仍优先,且不被宽松规则改写。
+        let colon = extract_demographics("姓名:张建国  性别:男");
+        assert_eq!(colon.name.as_deref(), Some("张建国"));
     }
 
     #[test]

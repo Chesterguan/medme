@@ -146,6 +146,39 @@ Future<QrShareDto> buildQrShareUrl({required String baseUrl}) =>
 Future<ShareResultDto> createShare({required PlatformInt64 expiresDays}) =>
     RustLib.instance.api.crateApiVaultCreateShare(expiresDays: expiresDays);
 
+/// 当前进程里打开的是哪个保险箱(真相根目录的绝对路径)。
+///
+/// 存在的理由是**医生代拍**:开一个代拍病人的箱子会顶掉进程级 vault,写入类调用
+/// (ingest / create_proxy_share)必须能在动手前确认「此刻开着的确实是这个病人的
+/// 箱子」——把「谁先 await 谁后 await」这种靠不住的约定,换成一次可验证的比对。
+/// 见 Dart 侧 `ensureProxyVaultOpen`。
+Future<String> currentVaultRoot() =>
+    RustLib.instance.api.crateApiVaultCurrentVaultRoot();
+
+/// 代拍(医生模式)专用的加密分享:与 [`create_share`] 只差两点 —— **把拍前同意
+/// 记录打进加密包**、且只打包医生逐份确认过的文档。底下与临时会话版
+/// `ephemeral_create_share` 调**同一个** `build_encrypted_share_with_consent_and_confirmed`,
+/// 产出格式同构。
+///
+/// 确认状态由调用方(Dart 侧 `ProxyPatientManager`)传入而不是像临时会话那样存在
+/// Rust 进程内存里:代拍病人要在本机保留 12 小时、跨 app 重启存活,内存 map 活不了
+/// 那么久。Rust 侧不落盘确认状态 = 不动保险箱格式(不新增事件类型)。
+Future<ShareResultDto> createProxyShare({
+  required PlatformInt64 expiresDays,
+  required ConsentDto consent,
+  required Int64List confirmedIds,
+}) => RustLib.instance.api.crateApiVaultCreateProxyShare(
+  expiresDays: expiresDays,
+  consent: consent,
+  confirmedIds: confirmedIds,
+);
+
+/// 代拍审阅屏的「病情摘要卡」:对**当前打开的**保险箱(= 某个代拍病人的箱子)跑
+/// 与 `ephemeral_summary` 同一套装配,只把 `confirmed_ids` 里的文档喂进去。
+/// 复用 `vault_ephemeral` 的取文档/映射两个 helper,不另写一套排序与字段映射。
+Future<ProxySummaryDto> proxySummary({required Int64List confirmedIds}) =>
+    RustLib.instance.api.crateApiVaultProxySummary(confirmedIds: confirmedIds);
+
 /// 导出时间线:复用 `medme_share::export::build_timeline_html_ranged`,把时间线
 /// 渲染成未加密、可打印的自包含 HTML 写进保险箱 `shares/` 目录(与加密分享共用
 /// 同一目录——都是本机生成、交给系统分享 sheet 的临时导出件)。
@@ -201,10 +234,11 @@ Future<void> enableIcloudSync({required String containerDir}) => RustLib
 Future<void> disableIcloudSync() =>
     RustLib.instance.api.crateApiVaultDisableIcloudSync();
 
-/// 非 iOS 构建的占位实现。FRB codegen 在开发机上跑一次生成 `frb_generated.rs` +
-/// Dart 绑定,这份生成文件不按平台分叉,所以这个函数签名必须在所有 target 上都
-/// 存在;函数体在非 iOS 直接报错即可 —— `ocr` 依赖本身按
-/// `cfg(target_os = "ios")` 门控(见 `Cargo.toml`),安卓/桌面构建压根不链接
-/// oar-ocr/onnxruntime,这个分支不产生任何额外体积或依赖。
+/// 非 iOS/安卓构建(桌面/CLI)的占位实现。FRB codegen 在开发机上跑一次生成
+/// `frb_generated.rs` + Dart 绑定,这份生成文件不按平台分叉,所以这个函数签名
+/// 必须在所有 target 上都存在;函数体在非 iOS/安卓直接报错即可 —— `ocr` 依赖
+/// 本身按 `cfg(any(target_os = "ios", target_os = "android"))` 门控(见
+/// `Cargo.toml`),桌面/CLI 构建压根不链接 oar-ocr/onnxruntime,这个分支不产生
+/// 任何额外体积或依赖。
 Future<OcrPpResultDto> recognizeImagePp({required List<int> bytes}) =>
     RustLib.instance.api.crateApiVaultRecognizeImagePp(bytes: bytes);

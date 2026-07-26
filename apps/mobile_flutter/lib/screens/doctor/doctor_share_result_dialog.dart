@@ -33,7 +33,10 @@ Future<void> showDoctorShareResultDialog(
           const SizedBox(height: 10),
           const Text(
             '请把这份文件交给病人本人保管,口令请当面口头告知或用不同渠道另发;'
-            '对方打开文件、输入口令即可查看,数据始终端到端加密。这台设备不会留底。',
+            // 口径必须与拍前告知一致:现在是「本机留 12 小时后自动删」,不是「不留底」。
+            // 说了留 12 小时却写「不会留底」= 对病人失信,红线(见 ProxyPatientManager)。
+            '对方打开文件、输入口令即可查看,数据始终端到端加密。'
+            '这台设备上的材料最多留 12 小时,到时间自动删。',
             style: TextStyle(fontSize: 13.5, color: MedMe.faint, height: 1.5),
           ),
           const SizedBox(height: 14),

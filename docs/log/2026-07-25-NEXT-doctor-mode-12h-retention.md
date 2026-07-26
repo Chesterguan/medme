@@ -1,3 +1,6 @@
+> **✅ 已执行完毕(2026-07-26),本文件仅存档。** 实现结果、与本规范的三处偏离、真机验证数据见
+> [2026-07-26 log](2026-07-26-doctor-12h-retention-and-delivery-gap.md)。别再照这份做。
+
 # 2026-07-25 · 【下次任务】医生代拍模式:阅后即焚 → 12 小时本地保留
 
 > **给下个 session 的交接。** 开头先读根 `CLAUDE.md` → 本文件 → memory `doctor-mode-12h-retention-next`。
