@@ -1,5 +1,6 @@
 # 2026-07-26 · 医生代拍:阅后即焚 → 12 小时本地保留(已实现并真机验过)+ 发现交付通道断点
 
+> 架构决策见 [ADR 0008](../ADR/0008-doctor-proxy-patient-vaults-12h-retention.md)。
 > 执行的是 [2026-07-25 交接文档](2026-07-25-NEXT-doctor-mode-12h-retention.md) 里的规范。
 > 分支 `feat/doc-geometry`(仍未合 main)。真机:华为 Mate 9 / MHA-L29 / Android 8.0(API 26),release 包。
 
