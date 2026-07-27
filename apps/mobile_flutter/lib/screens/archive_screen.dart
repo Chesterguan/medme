@@ -342,7 +342,13 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
   Future<void> _refresh() async {
     final next = _load();
-    setState(() => _future = next);
+    // 必须用**语句块**而不是箭头:`() => _future = next` 会把赋值结果(一个 Future)
+    // 当返回值交给 setState,Flutter 判定「在 setState 里做异步」直接抛。这个异常会
+    // 从 `bumpVaultRevision()` 的调用点冒出去,把调用方的后续步骤一起中断掉 ——
+    // 「载入示例数据」就是这么坏的:建完成员触发刷新、异常打断,真正的载入没跑到。
+    setState(() {
+      _future = next;
+    });
     await next;
   }
 
