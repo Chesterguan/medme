@@ -155,12 +155,28 @@
     <div lang="zh">
       <details><summary><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l1.5-2h7L17 7h3v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span><span class="q">用户在意的:我拍的照片,它能读对吗</span>
       <h2>让手机读准一张拍歪的化验单</h2></summary><div class="body">
-      <p class="why">MedMe 的识别和整理都在你自己的设备上完成,照片和 PDF 不会被传到我们这儿 —— 我们也没有存它们的服务器。代价是<b>没有一个通用的「认字」引擎可以用</b>:每个系统只肯借你它自己那套 OCR,好用程度还不一样。这张卡片记的就是我们怎么在五个平台上,拼出一条尽量能把中文病历读准的路。</p>
+      <p class="why">MedMe 的识别和整理都在你自己的设备上完成,照片和 PDF 不会被传到我们这儿 —— 我们也没有存它们的服务器。代价是<b>没有一套现成的引擎可以直接拿来用</b>:每个系统只肯借你它自己那套 OCR,好用程度还不一样。后来我们在手机上把系统引擎换掉、自己带一套进去,起因很具体 —— 它把化验单上的数字读错了,下面那条写了是哪几个数。这张卡片记的就是我们怎么在五个平台上一步步把这条路拼出来,包括中途推翻自己的那次。</p>
 
       <ul class="tl">
         <li class="now">
-          <span class="d">2026-07-18</span><span class="wip">开发中</span>
-          <div class="t"><b>手机能读扫描版 PDF 了。</b>医院打出来的 PDF 很多其实就是一张图,没有文字层,直接读只能读到空。桌面上有 OCR 兜底,手机上没有。现在的做法是:发现没有文字层,就把每页渲染成图,交给系统自带的 OCR,再把认出来的字填回这份文档。顺手还修了一个坑:<b>安卓上识别失败,会把照片原件一起丢掉。</b>现在识别失败不再连累原件,只告诉你这张没认出来 —— 在我们看来,原件比识别结果更值得保住。</div>
+          <span class="d">2026-07-24</span>
+          <div class="t"><b>安卓也换成 PP-OCRv5,和 iOS 同一个引擎、同一套模型。</b>原本安卓走 ML Kit。换过去之后,两台手机跑的是同一份 Rust 代码、同一批模型文件,以后修一处两端都受益 —— 后面那张「一张照片会在哪几个环节坏掉」的卡片,能一处改动两端落地,靠的就是这一步。安卓这边还得把 <code>libc++_shared.so</code> 一起打进包里,不然 PP 在真机上会崩。<a href="https://github.com/Chesterguan/medme/commit/b7cc3e96b84fecc6a30c01958e5811f4a3b7a50c" target="_blank" rel="noopener">b7cc3e9</a> · <a href="https://github.com/Chesterguan/medme/commit/5ca2910ce04fb4101751cfe5d4a2012d76b3e73b" target="_blank" rel="noopener">5ca2910</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-22</span>
+          <div class="t"><b>iOS 从 Apple Vision 改用 PP-OCRv5 —— 推翻的是下面 7 月 13 日我们自己写的那条。</b>真实的中文化验单照片上,Apple Vision 把数字读少了一位:红细胞计数 4.35 读成 <b>1.35</b>、红细胞平均体积 90.1 读成 <b>50.1</b>、红细胞压积 39.2 读成 <b>19.2</b>、中性粒细胞百分比 43.60 读成 <b>4.60</b>。同一批图,PP-OCRv5 读出来的是原值。少一位数,正常就成了异常,这种错不能留在病历里。代价我们也写进了决策文档:iOS 安装包从 59MB 涨到 88MB(约 +29MB),CPU 推理比 Vision 走神经引擎慢 2–3 倍。模型(检测 + 识别 + 字典,约 20MB)用 <code>include_bytes!</code> 编进 Rust 静态库,第一次用到时落进沙盒 —— iOS 沙盒里没有可写的模型目录,所以联网下载那条路在手机上是关掉的。<a href="https://github.com/Chesterguan/medme/commit/505c23c0a813d5930e988efbe0f380e03172edac" target="_blank" rel="noopener">505c23c</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-22</span>
+          <div class="t"><b>把 PP-OCRv5 链进 iOS 的那块硬骨头。</b>pyke 预编译的 <code>libonnxruntime.a</code> 里有 28 个自相冲突的重复对象。平时按需链接没事 —— 链接器每个符号取第一个定义。但 cargokit 默认给整个 Rust 静态库上 <code>-force_load</code>(为了不让 Dart 运行时靠 dlsym 找的入口被死代码消除掉),<code>-force_load</code> 会把每个对象都拉进来,于是 757 个重复符号;删掉任意一份,又缺符号。这个库没法整库 force_load。改法是换个思路保住入口:不再 force_load,让 onnxruntime 按需链接,再用 <code>-Wl,-u</code> 把桥接运行时那 14 个固定符号钉成链接根 —— 单个 dispatcher 静态引用了所有 wire 函数,保住它,整条闭包(wire → ocr → ort → onnxruntime)就会被按需拉进来。另外补 <code>-lc++ -framework CoreML</code>:ort 的构建脚本发出的链接指令只在 cargo 自己链接时算数,Xcode 做最终链接时传不过去。<a href="https://github.com/Chesterguan/medme/commit/505c23c0a813d5930e988efbe0f380e03172edac" target="_blank" rel="noopener">505c23c</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-20</span>
+          <div class="t"><b>扫描版 PDF:改错两次才改对。</b>手机上把没有文字层的 PDF 渲染成图再识别,渲染倍数原本写死 <code>page.width * 2</code>。我们把 pdfx 的 width 当成了 point,据此换算出 144 DPI,觉得低于中文 OCR 通行的 300 DPI 下限,于是提到 4.17 倍。查一眼文档就知道错了:pdfx 写明 <code>page.width</code> 是<b>像素</b>,不是 point。放大倍数远超预期,<code>render()</code> 在真机上返回 null,而那行 <code>if (img == null) continue;</code> <b>一声不吭地跳过整页</b> —— 问题从「识别不准」变成「一个字都没有」。第二次改法不再赌一个常量:渲染倍数逐级降档 3× → 2× → 1.5×,第一个渲得出来的就用,每一档失败都打日志。顺手补了白底 —— <code>render()</code> 出来的 PNG 默认透明背景,黑字压在透明底上,被 OCR 加载时可能合成成黑底。当时日志里那两句留着:<b>算术没错,前提是错的,而正确的算术让错误的前提显得可信</b>;<b>静默失败是放大器</b>。<a href="https://github.com/Chesterguan/medme/pull/173" target="_blank" rel="noopener">#173</a> · <a href="https://github.com/Chesterguan/medme/pull/175" target="_blank" rel="noopener">#175</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-18</span>
+          <div class="t"><b>手机能读扫描版 PDF 了。</b>医院打出来的 PDF 很多其实就是一张图,没有文字层,直接读只能读到空。桌面上有 OCR 兜底,手机上没有。现在的做法是:发现没有文字层,就把每页渲染成图,交给识别引擎,再把认出来的字填回这份文档。顺手还修了一个坑:<b>安卓上识别失败,会把照片原件一起丢掉。</b>现在识别失败不再连累原件,只告诉你这张没认出来 —— 在我们看来,原件比识别结果更值得保住。<a href="https://github.com/Chesterguan/medme/pull/160" target="_blank" rel="noopener">#160</a></div>
         </li>
         <li>
           <span class="d">2026-07-13</span>
@@ -172,24 +188,40 @@
         </li>
         <li>
           <span class="d">2026-07-11</span>
-          <div class="t"><b>五个平台、四套引擎,凑齐了。</b>macOS 优先用 Apple Vision(读不出来再退回 PP-OCRv5),Windows 用 <code>Windows.Media.Ocr</code>,Linux 用 PP-OCRv5,安卓用 ML Kit,再补上 HEIC 解码。挑的基本都是系统自带的能力,因为它们本地就能跑完。<b>一处要说清楚:</b>PP-OCRv5 不是系统自带的,它的模型文件会在第一次用到时联网下载一次 —— 这只发生在电脑上,手机端不用它。下载的是模型,不是你的病历,但这确实是一次联网,不该含糊过去。<a href="https://github.com/Chesterguan/medme/pull/42" target="_blank" rel="noopener">#42</a> · <a href="https://github.com/Chesterguan/medme/pull/50" target="_blank" rel="noopener">#50</a></div>
+          <div class="t"><b>五个平台、四套引擎,凑齐了。</b>macOS 优先用 Apple Vision(读不出来再退回 PP-OCRv5),Windows 用 <code>Windows.Media.Ocr</code>,Linux 用 PP-OCRv5,安卓用 ML Kit,再补上 HEIC 解码。挑的基本都是系统自带的能力,因为它们本地就能跑完。<b>一处要说清楚:</b>PP-OCRv5 不是系统自带的,它的模型文件会在第一次用到时联网下载一次。下载的是模型,不是你的病历,但这确实是一次联网,不该含糊过去。<b>这条后来只对电脑成立</b>:手机端从 7 月下旬起也用 PP-OCRv5,但模型是编进 app 里一起发的,联网下载那条路在手机上关着(见上面 7 月 22 日那条)。<a href="https://github.com/Chesterguan/medme/pull/42" target="_blank" rel="noopener">#42</a> · <a href="https://github.com/Chesterguan/medme/pull/50" target="_blank" rel="noopener">#50</a></div>
         </li>
       </ul>
 
       <p class="why" style="margin-top:18px">
-        <b>两件我们不打算藏着的事。</b>第一,我们试过让视觉大模型直接「看」中文化验单的照片,在我们试的那几张上,它<b>编出了根本不存在的化验项目名</b>,还编得挺像真的。这种错放在病历里风险太高,所以这条路我们先放下了,老老实实走 OCR → 文字 → 抽取。第二,同一批手机实拍的照片,Apple Vision 给出的识别置信度落在 0.36–0.41,PP-OCRv5 落在 0.69–0.95;43.60、4.35 这几个数字,PP-OCRv5 读对了、Apple Vision 读错了。<b>得说明的是</b>,两个引擎的置信度是各算各的,数值之间不能直接比高低,能比的是「读出来的字对不对」——我们看的是后者。可惜 PP-OCRv5 目前只在桌面上跑,手机用不了,所以手机端认得准不准,到今天仍是我们没解决好的一块,还在找路子。
+        <b>两件我们不打算藏着的事。</b>第一,我们试过让视觉大模型直接「看」中文化验单的照片,在我们试的那几张上,它<b>编出了根本不存在的化验项目名</b>,还编得挺像真的。这种错放在病历里风险太高,所以这条路我们先放下了,老老实实走 OCR → 文字 → 抽取。第二,同一批手机实拍的照片,Apple Vision 给出的识别置信度落在 0.36–0.41,PP-OCRv5 落在 0.69–0.95;43.60、4.35 这几个数字,PP-OCRv5 读对了、Apple Vision 读错了。<b>得说明的是</b>,两个引擎的置信度是各算各的,数值之间不能直接比高低,能比的是「读出来的字对不对」——我们看的是后者。这段话最早写下来的时候还带着一句「可惜 PP-OCRv5 目前只在桌面上跑,手机用不了」;现在不是了 —— iOS 在 7 月 22 日、安卓在 7 月 24 日都换了过去,两端跑的是同一个引擎、同一套模型,过程在上面那两条里。<b>一句边界说清楚:</b>PP 依赖的 ONNX Runtime 只有 arm64 安卓的预编译库,别的 ABI 构建不出来;我们发布的安卓安装包也只出 arm64-v8a,落地页上写了「需 64 位手机」。
       </p></div></details>
     </div>
 
     <div lang="en">
       <details><summary><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l1.5-2h7L17 7h3v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span><span class="q">What you actually care about: will it read my photo correctly?</span>
       <h2>Getting a phone to read a crooked photo of a lab report</h2></summary><div class="body">
-      <p class="why">Recognition and organizing both happen on your own device — your photos and PDFs don't come to us, and we don't run servers that store them. The price: <b>there is no single OCR engine available to us</b>. Each OS only lends you its own, and they are not equally good. This card tracks how we assembled a path across five platforms that reads Chinese medical records as accurately as we can manage.</p>
+      <p class="why">Recognition and organizing both happen on your own device — your photos and PDFs don't come to us, and we don't run servers that store them. The price: <b>there is no ready-made engine we can just pick up</b>. Each OS only lends you its own OCR, and they are not equally good. We later replaced the system engine on phones and shipped our own, for a specific reason — it was getting digits on lab reports wrong, and the entry below names them. This card tracks how we assembled that path across five platforms, including the day we overturned our own earlier call.</p>
 
       <ul class="tl">
         <li class="now">
-          <span class="d">2026-07-18</span><span class="wip">in progress</span>
-          <div class="t"><b>Phones can read scanned PDFs now.</b> Many hospital PDFs are really just images — no text layer, so reading them yields an empty string. Desktop had an OCR fallback; mobile didn't. The fix: detect the missing text layer → render each page to an image → hand it to the platform's native OCR → backfill the recognized text. Shipped alongside: <b>Android used to drop the original photo when recognition failed</b>. OCR failure no longer takes the original down with it — we just tell you that page wasn't recognized. We think the original is worth more than the extraction.</div>
+          <span class="d">2026-07-24</span>
+          <div class="t"><b>Android moved to PP-OCRv5 too — same engine, same models as iOS.</b> Android had been on ML Kit. After the switch, both phones run the same Rust code against the same model files, so one fix lands on both. That's what makes the next card — the four places a photo can break — a single change instead of two. Android also needs <code>libc++_shared.so</code> packaged in, or PP crashes on device. <a href="https://github.com/Chesterguan/medme/commit/b7cc3e96b84fecc6a30c01958e5811f4a3b7a50c" target="_blank" rel="noopener">b7cc3e9</a> · <a href="https://github.com/Chesterguan/medme/commit/5ca2910ce04fb4101751cfe5d4a2012d76b3e73b" target="_blank" rel="noopener">5ca2910</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-22</span>
+          <div class="t"><b>iOS switched from Apple Vision to PP-OCRv5 — overturning what we wrote ourselves on July 13, below.</b> On real photos of Chinese lab reports, Apple Vision dropped a digit: red blood cell count 4.35 read as <b>1.35</b>, mean corpuscular volume 90.1 as <b>50.1</b>, hematocrit 39.2 as <b>19.2</b>, neutrophil percentage 43.60 as <b>4.60</b>. On the same images PP-OCRv5 returned the printed values. One digit turns normal into abnormal; that error can't live in a medical record. The cost went into the decision record too: the iOS package grew from 59MB to 88MB (about +29MB), and CPU inference runs 2–3× slower than Vision on the neural engine. The models (detection + recognition + dictionary, ~20MB) are compiled into the Rust static library with <code>include_bytes!</code> and dropped into the sandbox on first use — there's no writable model directory in an iOS sandbox, so the download path is switched off on phones. <a href="https://github.com/Chesterguan/medme/commit/505c23c0a813d5930e988efbe0f380e03172edac" target="_blank" rel="noopener">505c23c</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-22</span>
+          <div class="t"><b>The hard part of linking PP-OCRv5 into iOS.</b> pyke's prebuilt <code>libonnxruntime.a</code> contains 28 duplicate objects that conflict with each other. Ordinary on-demand linking doesn't care — the linker takes the first definition of each symbol. But cargokit puts <code>-force_load</code> on the whole Rust static library by default, so that the entry points the Dart runtime finds via dlsym don't get stripped as dead code — and <code>-force_load</code> pulls in every object, which produced 757 duplicate symbols. Drop either copy and symbols go missing instead. This library can't be force-loaded whole. So we kept the entry points a different way: no force_load, let onnxruntime link on demand, and use <code>-Wl,-u</code> to pin the bridge runtime's 14 fixed symbols as link roots — one dispatcher statically references every wire function, so keeping it drags in the whole closure (wire → ocr → ort → onnxruntime) on demand. Plus <code>-lc++ -framework CoreML</code>: the link directives ort's build script emits only count when cargo does the linking, and don't survive to Xcode's final link. <a href="https://github.com/Chesterguan/medme/commit/505c23c0a813d5930e988efbe0f380e03172edac" target="_blank" rel="noopener">505c23c</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-20</span>
+          <div class="t"><b>Scanned PDFs: wrong twice before right.</b> On phones, a PDF with no text layer gets rendered to images and recognized. The render scale was hardcoded at <code>page.width * 2</code>. We took pdfx's width to be in points, converted that to 144 DPI, decided it was under the 300 DPI floor people use for Chinese OCR, and raised it to 4.17×. One look at the docs would have shown the mistake: pdfx states <code>page.width</code> is in <b>pixels</b>, not points. The scale went far past what was intended, <code>render()</code> returned null on device, and the line <code>if (img == null) continue;</code> <b>skipped the whole page without a word</b> — turning "recognition is off" into "not a single character". The second fix stopped betting on one constant: try render scales 3× → 2× → 1.5× and take the first that comes back, logging every rung that fails. A white background went in at the same time — <code>render()</code>'s PNG is transparent by default, and black text over transparency can composite onto black when OCR loads it. Two lines from that day's log are worth keeping: <b>the arithmetic was fine, the premise was wrong, and correct arithmetic makes a wrong premise look credible</b>; and <b>silent failure is an amplifier</b>. <a href="https://github.com/Chesterguan/medme/pull/173" target="_blank" rel="noopener">#173</a> · <a href="https://github.com/Chesterguan/medme/pull/175" target="_blank" rel="noopener">#175</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-18</span>
+          <div class="t"><b>Phones can read scanned PDFs now.</b> Many hospital PDFs are really just images — no text layer, so reading them yields an empty string. Desktop had an OCR fallback; mobile didn't. The fix: detect the missing text layer → render each page to an image → hand it to the recognition engine → backfill the recognized text. Shipped alongside: <b>Android used to drop the original photo when recognition failed</b>. OCR failure no longer takes the original down with it — we just tell you that page wasn't recognized. We think the original is worth more than the extraction. <a href="https://github.com/Chesterguan/medme/pull/160" target="_blank" rel="noopener">#160</a></div>
         </li>
         <li>
           <span class="d">2026-07-13</span>
@@ -201,12 +233,73 @@
         </li>
         <li>
           <span class="d">2026-07-11</span>
-          <div class="t"><b>Five platforms, four engines, all wired up.</b> macOS prefers Apple Vision and falls back to PP-OCRv5 when Vision comes up empty; Windows uses <code>Windows.Media.Ocr</code>, Linux uses PP-OCRv5, Android uses ML Kit, plus HEIC decoding. We picked OS-provided engines wherever we could, because they run start to finish locally. <b>One thing to be clear about:</b> PP-OCRv5 isn't one of them — its model files are downloaded once, over the network, the first time they're needed. That only happens on the desktop; phones don't use it. What gets downloaded is the model, not your records, but it is a network call and we shouldn't gloss over it. <a href="https://github.com/Chesterguan/medme/pull/42" target="_blank" rel="noopener">#42</a> · <a href="https://github.com/Chesterguan/medme/pull/50" target="_blank" rel="noopener">#50</a></div>
+          <div class="t"><b>Five platforms, four engines, all wired up.</b> macOS prefers Apple Vision and falls back to PP-OCRv5 when Vision comes up empty; Windows uses <code>Windows.Media.Ocr</code>, Linux uses PP-OCRv5, Android uses ML Kit, plus HEIC decoding. We picked OS-provided engines wherever we could, because they run start to finish locally. <b>One thing to be clear about:</b> PP-OCRv5 isn't one of them — its model files are downloaded once, over the network, the first time they're needed. What gets downloaded is the model, not your records, but it is a network call and we shouldn't gloss over it. <b>That line later became desktop-only</b>: phones run PP-OCRv5 too since late July, but the models ship inside the app and the download path is switched off there (see the July 22 entry above). <a href="https://github.com/Chesterguan/medme/pull/42" target="_blank" rel="noopener">#42</a> · <a href="https://github.com/Chesterguan/medme/pull/50" target="_blank" rel="noopener">#50</a></div>
         </li>
       </ul>
 
       <p class="why" style="margin-top:18px">
-        <b>Two things we're not hiding.</b> First: pointed at photos of Chinese lab reports, a vision-language model <b>invented test names that weren't there</b> — convincingly — on the samples we tried. That kind of error is too risky to carry into medical records, so we've set the approach aside for now and stick to OCR → text → extraction. Second: on the same set of real phone photos, Apple Vision reported confidence in the 0.36–0.41 range against 0.69–0.95 for PP-OCRv5, and PP-OCRv5 read values like 43.60 and 4.35 correctly where Apple Vision didn't. <b>Worth noting:</b> the two engines compute confidence differently, so the numbers aren't directly comparable — what is comparable is whether the characters came out right, and that's what we went by. PP-OCRv5 is desktop-only today, so mobile accuracy remains unsolved for us, and we're still looking.
+        <b>Two things we're not hiding.</b> First: pointed at photos of Chinese lab reports, a vision-language model <b>invented test names that weren't there</b> — convincingly — on the samples we tried. That kind of error is too risky to carry into medical records, so we've set the approach aside for now and stick to OCR → text → extraction. Second: on the same set of real phone photos, Apple Vision reported confidence in the 0.36–0.41 range against 0.69–0.95 for PP-OCRv5, and PP-OCRv5 read values like 43.60 and 4.35 correctly where Apple Vision didn't. <b>Worth noting:</b> the two engines compute confidence differently, so the numbers aren't directly comparable — what is comparable is whether the characters came out right, and that's what we went by. When this paragraph was first written it ended with "PP-OCRv5 is desktop-only today" — that's no longer the case. iOS moved on July 22, Android on July 24; both phones now run the same engine against the same models, and the two entries above tell how. <b>One boundary worth stating:</b> ONNX Runtime, which PP depends on, ships prebuilt libraries for arm64 Android only and other ABIs don't build — and the Android package we publish is arm64-v8a only, which the download page states as "64-bit phone required".
+      </p></div></details>
+    </div>
+  </section>
+
+  <!-- ── 专题 8:一张照片会在哪几个环节坏掉 ──────────────── -->
+  <section class="topic">
+    <div lang="zh">
+      <details><summary><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8"/><path d="M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16"/><path d="M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M7.5 12h9"/></svg></span><span class="q">用户在意的:同样一张照片,为什么有时候读得好,有时候一团糟</span>
+      <h2>一张照片从按下快门到变成一张表,中间有四道坎</h2></summary><div class="body">
+      <p class="why">「它没读出来」听着像一个问题,拆开是四个,而且不在同一层:相机可能压根打不开;字可能没被<b>找到</b>(不是认错,是没走到认字那一步);整页可能是躺着的;甚至每个字都认对了,屏幕上还是一团乱。这四种毛病到了用户嘴里是同一句话。所以我们把顺序固定下来:先弄清坏在哪一层,再动那一层。</p>
+
+      <ul class="tl">
+        <li class="now">
+          <span class="d">2026-07-26</span>
+          <div class="t"><b>渲染:看着像行列颠倒,字其实没认错。</b>手机上的表格像是行和列换了个个儿。先出了一版什么都不修的改动:把设备上每个检测框的中心、宽高和识别出的文字都打印出来,和桌面逐个比。结果一致 —— 文字、坐标、朝向都对。问题在最后一层:整页转正之后是一张横过来的报告,按「≥2 个连续空格」切出来的列特别多,而 Flutter 的 <code>Table</code> 用 <code>FlexColumnWidth</code> 把宽度平均分,窄屏上每列只剩下一个字左右的宽度,中文就顺着竖下去了,看起来就像行列颠倒。改成 <code>IntrinsicColumnWidth</code>(按内容自适应、不换行)加横向滚动,和桌面查看器一致。<b>先看再改,这一步没跳过</b> —— 那版诊断提交自己什么都没修,可要是没有它,我们会一路去调 OCR,而 OCR 从头到尾是对的。<a href="https://github.com/Chesterguan/medme/commit/23b78a16d6d48248509a5c7a28927a7d8d41c5d6" target="_blank" rel="noopener">23b78a1</a> · <a href="https://github.com/Chesterguan/medme/commit/8634aa957185d88ef131aaa8dd32519b990e2cbd" target="_blank" rel="noopener">8634aa9</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-26</span>
+          <div class="t"><b>朝向:把一个模型打进包里,又把它删掉。</b>整页躺 90° 的照片,两端都不会自动转正 —— 透视校正纠的是斜,不管朝向。先接的是 PP 家现成的文档方向分类模型(<code>PP-LCNet_x1_0_doc_ori</code>),6.8MB 打进手机包。桌面上转得好好的,华为那台真机就是不转。补了一版走显式模型路径的诊断,把范围缩到「Android 上的 onnxruntime 跑这个模型,输出和桌面不一致」;而且它在 oar-ocr 里是逐切片跑的,对「整页朝哪边」这个判断来说,粒度本来就不对。于是换个想法:判断整页朝向不需要黑箱。文档正着放,文字行的检测框普遍是扁的(宽 > 高);整页躺倒,每一行就变成一根竖条。竖框占比过半就当它躺倒,把图转 90° 和 270° 各重识别一遍,按识别置信度挑正的那个 —— 正着读置信度高,倒着是乱码。确定性、两端共用一套、复用已经跑通的检测模型,包里也不用多带一个模型;doc-ori 和那 6.8MB 一起删了。后面还补了一步:转正之后再按文字方向去一次斜,不然斜着拍的行仍旧是塌的。<a href="https://github.com/Chesterguan/medme/commit/ce5f59fe3ac274f08304f247cc6df747e070522a" target="_blank" rel="noopener">ce5f59f</a> · <a href="https://github.com/Chesterguan/medme/commit/ada00aaec3621a7e918e8ec7900e7daf6fb4cb6f" target="_blank" rel="noopener">ada00aa</a> · <a href="https://github.com/Chesterguan/medme/commit/74c34dfcedbc6ba6a2df10f43350bcf753e8fca1" target="_blank" rel="noopener">74c34df</a> · <a href="https://github.com/Chesterguan/medme/commit/10ff5cfb635e207190b5ac609fee8502449e469f" target="_blank" rel="noopener">10ff5cf</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-26</span>
+          <div class="t"><b>采集:没有 Google 服务的手机,相机打不开。</b>拍照走的是文档扫描器 —— 自动画框、透视拉正,斜着拍也能拉回横平竖直。安卓这边它背后是 ML Kit 的文档扫描器,而按 Google 官方文档,<b>这个 API 只由 Google Play 服务交付,没有内置的离线版本</b>(ML Kit 的文字识别有内置版,文档扫描器没有):模型、界面、逻辑都靠 GMS 按需下载。纯 HMS 的国产机上,或者连不上 Google 的网络环境里,这个模块下不来。更麻烦的是它<b>不抛异常</b>:插件自己转去兜底的手动裁剪器,而那个用设备相机、要 CAMERA 权限 —— 我们没声明。于是用户点「拍照」,相机直接打不开,我们外面套的 try/catch 什么也接不到。<b>「出了事我能接住」是个假设,不是事实。</b>改法是开拍前先问一句系统里有没有 Google 服务:有,就用扫描器(自动拉正,不为了兼容把好机器一起降级);没有,就退回系统自带的相机 app —— 走 intent,不需要我们声明 CAMERA 权限,也不依赖 Google 服务。退回普通相机就没有自动画框和透视拉正了:整页躺倒和倾斜由下游的转正和去斜接手,四角透视那一层安卓还没做,记在待做里。iOS 用的是苹果自己的 VisionKit,跟 GMS 无关,不动。<a href="https://github.com/Chesterguan/medme/commit/0f398868f54d2d8e84bf8d1c08c0da85fd467ed5" target="_blank" rel="noopener">0f39886</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-23</span>
+          <div class="t"><b>检测:整段读不出来,不是认错字,是压根没被找到。</b>用户反馈:两张存在小程序里的高截图(超声、MR),报告标题识别了,正文整段是空的。查 oar-ocr 的检测配置查到原因:PP 的检测模型默认 <code>limit_side_len=960</code>,不管原图多大,先把长边压到 960px 再检测。一张长边两千多的高截图被压成 0.375 倍,密集的小字就掉到检测分辨率以下 —— 没走到认字那一步;标题字大,活了下来。改法是纵向切片:按 1100px 一带、相邻两带上下各留 120px 重叠,把长图切开,每带用接近原生的分辨率单独跑,再按「这一行的中心落在哪一带的核心区」归属去重,合回整图坐标。下游拿到的仍然是整图坐标,零改动;图不够高就走单次识别,和以前逐字节一样。<b>为了在桌面上复现,我们另拿一份真实报告堆成 960×2560、压到同样的 0.375 倍:单次整图检出 126 行,切片之后 199 行。</b>(这是两种做法在同一张构造图上的差,不是产品的识别指标;用户那两张截图没在桌面上跑过。)与其把 960 调大 —— 那只是把悬崖挪到更高的图上 —— 不如多加一条带。<a href="https://github.com/Chesterguan/medme/commit/04a602fa71ef71e660c104070dc08eb062581972" target="_blank" rel="noopener">04a602f</a></div>
+        </li>
+      </ul>
+
+      <p class="why" style="margin-top:18px">
+        <b>四道坎里有三道的症状是一样的。</b>相机打不开是明的,剩下三道在用户那儿都长成同一句「它没读出来」。所以现在的顺序是:先把中间产物打印出来看 —— 框在哪、多大、认出来什么字 —— 再决定动哪一层。<b>还有一件事想说清楚:</b>这四条里安卓和 iOS 的活儿不对称,起点就不一样。iOS 的采集走苹果自己的 VisionKit,导入的图还有原生的文档检测和拉正,那套现成好用,我们没理由再造一遍;安卓没有对应的原生件,所以采集那一条只修了安卓,四角透视也还没做,在待做里。朝向反过来 —— 它做在两端共用的 Rust 里,改一次两边都拿到。
+      </p></div></details>
+    </div>
+
+    <div lang="en">
+      <details><summary><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8"/><path d="M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16"/><path d="M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M7.5 12h9"/></svg></span><span class="q">What you actually care about: same photo — why is it clean sometimes and a mess other times?</span>
+      <h2>Four places a photo can break between the shutter and the table on your screen</h2></summary><div class="body">
+      <p class="why">"It didn't read" sounds like one problem. It's four, and they sit on different layers. The camera may not open at all. The characters may never be <b>found</b> — not misread; they simply don't reach the recognizer. The page may be lying on its side. And even with every character correct, the screen can still be a mess. All four reach us as the same sentence. So we fixed the order of operations: work out which layer broke before touching anything.</p>
+
+      <ul class="tl">
+        <li class="now">
+          <span class="d">2026-07-26</span>
+          <div class="t"><b>Rendering: it looked transposed; the characters were fine.</b> Tables on the phone looked transposed. The first change fixed nothing on purpose: dump every detection box from the device — center, width, height, recognized text — and compare it box by box against desktop. Identical. Text, coordinates, orientation all correct. The break was in the last layer: once uprighted, the report is landscape, splitting on "two or more spaces" yields a lot of columns, and Flutter's <code>Table</code> with <code>FlexColumnWidth</code> divides the width evenly — on a narrow screen each column ends up about one character wide, so Chinese stacks vertically and reads like a transposed table. Switched to <code>IntrinsicColumnWidth</code> (sized to content, no wrapping) plus horizontal scrolling, matching the desktop viewer. <b>We looked before we changed anything</b> — that diagnostic commit fixed nothing by itself, but without it we'd have gone off tuning OCR, and OCR was right the whole time. <a href="https://github.com/Chesterguan/medme/commit/23b78a16d6d48248509a5c7a28927a7d8d41c5d6" target="_blank" rel="noopener">23b78a1</a> · <a href="https://github.com/Chesterguan/medme/commit/8634aa957185d88ef131aaa8dd32519b990e2cbd" target="_blank" rel="noopener">8634aa9</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-26</span>
+          <div class="t"><b>Orientation: we shipped a model into the app, then took it back out.</b> A page photographed 90° over doesn't right itself on either platform — perspective correction fixes tilt, not orientation. First attempt: PP's off-the-shelf document-orientation classifier (<code>PP-LCNet_x1_0_doc_ori</code>), 6.8MB compiled into the phone package. It worked on desktop; on a Huawei device it didn't rotate. A diagnostic pass with an explicit model path narrowed it to "Android's onnxruntime produces different output from desktop for this model" — and in oar-ocr the classifier runs per slice anyway, which is the wrong granularity for a decision about the whole page. So we changed the question: deciding which way up a page is doesn't need a black box. In an upright document, text-line detection boxes are wide and short; rotate the page and every line becomes a tall narrow strip. If more than half the boxes are tall, treat the page as sideways, re-run recognition on the 90° and 270° rotations, and keep the one with the higher recognition confidence — upright reads cleanly, upside-down comes back as garbage. Deterministic, one implementation for both platforms, reusing the detection model that already runs on both platforms, and no extra model in the package. The classifier and its 6.8MB came out. A follow-up step went in after: once uprighted, deskew along the text direction, or rows from a tilted shot still collapse. <a href="https://github.com/Chesterguan/medme/commit/ce5f59fe3ac274f08304f247cc6df747e070522a" target="_blank" rel="noopener">ce5f59f</a> · <a href="https://github.com/Chesterguan/medme/commit/ada00aaec3621a7e918e8ec7900e7daf6fb4cb6f" target="_blank" rel="noopener">ada00aa</a> · <a href="https://github.com/Chesterguan/medme/commit/74c34dfcedbc6ba6a2df10f43350bcf753e8fca1" target="_blank" rel="noopener">74c34df</a> · <a href="https://github.com/Chesterguan/medme/commit/10ff5cfb635e207190b5ac609fee8502449e469f" target="_blank" rel="noopener">10ff5cf</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-26</span>
+          <div class="t"><b>Capture: on a phone without Google services, the camera doesn't open.</b> Taking a photo goes through a document scanner — automatic edge detection and perspective correction, so a shot taken at an angle comes back square. On Android that scanner is ML Kit's, and per Google's own documentation <b>this API is delivered through Google Play services only, with no bundled offline version</b> (ML Kit text recognition has one; the document scanner doesn't): model, UI and logic are downloaded by GMS on demand. On a Huawei-style HMS-only device, or on a network that can't reach Google, that module never arrives. Worse, it <b>doesn't throw</b>: the plugin quietly falls back to its own manual cropper, which uses the device camera and needs the CAMERA permission — which we hadn't declared. So the user taps "take photo" and the camera simply doesn't open, while our try/catch never sees a thing. <b>"An exception will reach me" was an assumption, not a fact.</b> The fix: ask whether Google services are present before starting. If yes, use the scanner — no reason to degrade good devices for the sake of the others. If no, fall back to the system camera app via intent, which needs no CAMERA declaration from us and no Google services. Falling back to the plain camera means no automatic edge finding and no perspective correction: a page lying on its side or tilted is picked up downstream by uprighting and deskewing, while four-corner perspective correction on Android is still on the list. iOS uses Apple's own VisionKit, which has nothing to do with GMS, and stays as it is. <a href="https://github.com/Chesterguan/medme/commit/0f398868f54d2d8e84bf8d1c08c0da85fd467ed5" target="_blank" rel="noopener">0f39886</a></div>
+        </li>
+        <li>
+          <span class="d">2026-07-23</span>
+          <div class="t"><b>Detection: a whole section came back empty — not misread, never found.</b> A user reported two tall screenshots saved from a mini-program — an ultrasound and an MR: the report headings were recognized, the bodies were blank. The reason turned up in oar-ocr's detection config: PP's detector defaults to <code>limit_side_len=960</code>, shrinking the long edge to 960px before detection no matter how large the source is. A screenshot over 2000px tall gets scaled to 0.375×, and its dense small type falls below the detector's resolution — it never reaches the recognizer at all. Headings are large, so they survive. The fix is vertical banding: cut the tall page into 1100px bands with 120px of overlap on each inner side, run each band near native resolution, then deduplicate by which band's core a line's center falls into and merge back into full-image coordinates. Everything downstream still receives full-image coordinates and needed no changes; pages that aren't tall take the single-pass path, byte-for-byte as before. <b>To reproduce it on desktop we stacked a different real report into a 960×2560 page and squeezed it by the same 0.375×: 126 lines detected in a single pass, 199 after banding.</b> (That is the gap between two methods on one constructed page, not a product accuracy figure; the user's two screenshots were never run on desktop.) Raising 960 would only move the cliff to a taller image; adding a band doesn't. <a href="https://github.com/Chesterguan/medme/commit/04a602fa71ef71e660c104070dc08eb062581972" target="_blank" rel="noopener">04a602f</a></div>
+        </li>
+      </ul>
+
+      <p class="why" style="margin-top:18px">
+        <b>Three of the four look identical from outside.</b> A camera that won't open is obvious; the other three all arrive as the same sentence — "it didn't read". Hence the order we now follow: print the intermediate artifacts first — where the boxes are, how big, what text came out — then decide which layer to touch. <b>One more thing worth saying:</b> the work here is asymmetric between Android and iOS, because the starting points were. iOS captures through Apple's VisionKit and already has native document detection and rectification for imported images; that works, and rebuilding it would buy nothing. Android has no equivalent, so the capture entry above is Android-only, and four-corner perspective correction there is still on the list. Orientation runs the other way — it lives in the Rust both platforms share, so one change lands on both.
       </p></div></details>
     </div>
   </section>
@@ -220,8 +313,8 @@
 
       <ul class="tl">
         <li class="now">
-          <span class="d">2026-07-18</span><span class="wip">开发中</span>
-          <div class="t"><b>先分段,再抽取。</b>以前是拿整份文档从头扫到尾,结果出院小结里夹着的用药段常常被漏掉。现在先按「出院医嘱 / 出院带药 / 检验结果」这类小标题把文档切成段,再按段的类型决定用哪套规则。出院小结里夹着的那段出院医嘱,以前会被整段丢掉,现在能抽出来。</div>
+          <span class="d">2026-07-18</span>
+          <div class="t"><b>先分段,再抽取。</b>以前是拿整份文档从头扫到尾,结果出院小结里夹着的用药段常常被漏掉。现在先按「出院医嘱 / 出院带药 / 检验结果」这类小标题把文档切成段,再按段的类型决定用哪套规则。出院小结里夹着的那段出院医嘱,以前会被整段丢掉,现在能抽出来。<a href="https://github.com/Chesterguan/medme/pull/160" target="_blank" rel="noopener">#160</a></div>
         </li>
         <li>
           <span class="d">2026-07-16</span>
@@ -242,7 +335,7 @@
       </ul>
 
       <p class="why" style="margin-top:18px">
-        <b>最难的一块是化验项目的同义词。</b>同一个指标,不同医院能写成完全不同的样子:全称、英文缩写、旧称、加不加括号里的方法学。药名还能靠剥壳和单位证据收敛,化验项目的写法空间要大得多 —— 所以术语字典这层要一直扩下去,单靠规则收不干净。<b>「直接换个更大的模型就行了」也不成立</b>:我们试过现成的医疗大模型,它在这类中文病历文本上并不比规则可靠,还会把没有的东西说得很确定。我们的方向是规则打底,再把散文段交给自己微调的小模型。我们现在的方向是:规则打底,把散文段落交给一个我们自己微调的小模型,而不是让通用大模型自由发挥。
+        <b>最难的一块是化验项目的同义词。</b>同一个指标,不同医院能写成完全不同的样子:全称、英文缩写、旧称、加不加括号里的方法学。药名还能靠剥壳和单位证据收敛,化验项目的写法空间要大得多 —— 所以术语字典这层要一直扩下去,单靠规则收不干净。<b>「直接换个更大的模型就行了」也不成立</b>:我们试过现成的医疗大模型,它在这类中文病历文本上并不比规则可靠,还会把没有的东西说得很确定。我们现在的方向是:规则打底,把散文段落交给一个我们自己微调的小模型,而不是让通用大模型自由发挥。
       </p></div></details>
     </div>
 
@@ -253,8 +346,8 @@
 
       <ul class="tl">
         <li class="now">
-          <span class="d">2026-07-18</span><span class="wip">in progress</span>
-          <div class="t"><b>Split into sections first, then extract.</b> We used to scan each document end to end, which meant medication lists buried inside a discharge summary were often missed. Now we cut the document at headings like "discharge orders / discharge medications / lab results" and pick the rule set per section type. The discharge-order line buried inside a summary used to be dropped wholesale; now its medications come through.</div>
+          <span class="d">2026-07-18</span>
+          <div class="t"><b>Split into sections first, then extract.</b> We used to scan each document end to end, which meant medication lists buried inside a discharge summary were often missed. Now we cut the document at headings like "discharge orders / discharge medications / lab results" and pick the rule set per section type. The discharge-order line buried inside a summary used to be dropped wholesale; now its medications come through. <a href="https://github.com/Chesterguan/medme/pull/160" target="_blank" rel="noopener">#160</a></div>
         </li>
         <li>
           <span class="d">2026-07-16</span>
@@ -275,7 +368,7 @@
       </ul>
 
       <p class="why" style="margin-top:18px">
-        <b>The hardest part is synonyms among lab items.</b> The same measurement gets written completely differently across hospitals: full name, English abbreviation, legacy term, with or without the assay method in parentheses. Drug names can be pulled together by stripping and by unit evidence; the space of lab spellings is far larger — which is why the terminology dictionary has to keep growing, and why rules alone won't close it. <b>"Just swap in a bigger model" doesn't hold either</b>: we tried an off-the-shelf medical LLM and it wasn't more dependable on this kind of Chinese record text, while stating things that weren't there with full confidence. Our direction is rules as the floor, with prose sections handed to a small model we fine-tune ourselves. Our direction: rules as the floor, with prose sections handed to a small model we fine-tune ourselves, rather than letting a general-purpose LLM improvise.
+        <b>The hardest part is synonyms among lab items.</b> The same measurement gets written completely differently across hospitals: full name, English abbreviation, legacy term, with or without the assay method in parentheses. Drug names can be pulled together by stripping and by unit evidence; the space of lab spellings is far larger — which is why the terminology dictionary has to keep growing, and why rules alone won't close it. <b>"Just swap in a bigger model" doesn't hold either</b>: we tried an off-the-shelf medical LLM and it wasn't more dependable on this kind of Chinese record text, while stating things that weren't there with full confidence. Our direction: rules as the floor, with prose sections handed to a small model we fine-tune ourselves, rather than letting a general-purpose LLM improvise.
       </p></div></details>
     </div>
   </section>
@@ -350,8 +443,8 @@
 
       <ul class="tl">
         <li class="now">
-          <span class="d">2026-07-18</span><span class="wip">开发中</span>
-          <div class="t"><b>摘要不该动不动就是空的。</b>以前只有识别出「诊断」才生成摘要,于是一堆只有化验或影像的分享打开是空白。现在诊断、趋势、影像、病理、过敏,任意一项有内容就生成。同时补上了病理结论的展示 —— 以及一个存在很久的 bug:复制出来的病历文本里,影像和病理那两栏一直是空的,因为代码读错了字段名。</div>
+          <span class="d">2026-07-18</span>
+          <div class="t"><b>摘要不该动不动就是空的。</b>以前只有识别出「诊断」才生成摘要,于是一堆只有化验或影像的分享打开是空白。现在诊断、趋势、影像、病理、过敏,任意一项有内容就生成。同时补上了病理结论的展示 —— 以及一个存在很久的 bug:复制出来的病历文本里,影像和病理那两栏一直是空的,因为代码读错了字段名。<a href="https://github.com/Chesterguan/medme/pull/160" target="_blank" rel="noopener">#160</a></div>
         </li>
         <li>
           <span class="d">2026-07-15</span>
@@ -375,8 +468,8 @@
 
       <ul class="tl">
         <li class="now">
-          <span class="d">2026-07-18</span><span class="wip">in progress</span>
-          <div class="t"><b>The summary shouldn't keep coming up empty.</b> It used to require a recognized diagnosis, so shares containing only labs or imaging opened blank. Now any of diagnoses, trends, imaging, pathology or allergies is enough. Pathology conclusions are now displayed too — along with a long-standing bug: in the copied record text, the imaging and pathology fields were always empty because the code read the wrong field names.</div>
+          <span class="d">2026-07-18</span>
+          <div class="t"><b>The summary shouldn't keep coming up empty.</b> It used to require a recognized diagnosis, so shares containing only labs or imaging opened blank. Now any of diagnoses, trends, imaging, pathology or allergies is enough. Pathology conclusions are now displayed too — along with a long-standing bug: in the copied record text, the imaging and pathology fields were empty because the code read the wrong field names. <a href="https://github.com/Chesterguan/medme/pull/160" target="_blank" rel="noopener">#160</a></div>
         </li>
         <li>
           <span class="d">2026-07-15</span>
@@ -493,7 +586,7 @@
         </li>
         <li>
           <span class="d">2026-07-12</span>
-          <div class="t"><b>换成 Flutter,但内核不动。</b>结构化、加密、事件溯源、保险箱格式这些核心都在一份 Rust 代码里,手机和桌面共用;换的只是界面层。识别不在其中 —— 那部分用的是各平台系统自带的能力(见第一张卡片)。所以「重写手机端」没有把前面几个月的东西推倒重来。<a href="https://github.com/Chesterguan/medme/pull/89" target="_blank" rel="noopener">#89</a> · <a href="https://github.com/Chesterguan/medme/pull/93" target="_blank" rel="noopener">#93</a></div>
+          <div class="t"><b>换成 Flutter,但内核不动。</b>结构化、加密、事件溯源、保险箱格式这些核心都在一份 Rust 代码里,手机和桌面共用;换的只是界面层。识别当时不在其中 —— 那部分用的是各平台系统自带的能力;后来手机端的识别也搬进了这份共用的 Rust 代码(见「让手机读准一张拍歪的化验单」那张卡片)。所以「重写手机端」没有把前面几个月的东西推倒重来。<a href="https://github.com/Chesterguan/medme/pull/89" target="_blank" rel="noopener">#89</a> · <a href="https://github.com/Chesterguan/medme/pull/93" target="_blank" rel="noopener">#93</a></div>
         </li>
       </ul>
 
@@ -522,7 +615,7 @@
         </li>
         <li>
           <span class="d">2026-07-12</span>
-          <div class="t"><b>Switched to Flutter without touching the core.</b> Structuring, encryption, event sourcing and the vault format all live in one Rust codebase shared by phone and desktop; only the UI layer changed. Recognition is the exception — that runs on each platform's own OCR (see the first card). So "rewriting the mobile app" didn't throw away the previous months of work. <a href="https://github.com/Chesterguan/medme/pull/89" target="_blank" rel="noopener">#89</a> · <a href="https://github.com/Chesterguan/medme/pull/93" target="_blank" rel="noopener">#93</a></div>
+          <div class="t"><b>Switched to Flutter without touching the core.</b> Structuring, encryption, event sourcing and the vault format all live in one Rust codebase shared by phone and desktop; only the UI layer changed. Recognition was the exception at the time — it ran on each platform's own OCR; it has since moved into that shared Rust code on mobile as well (see "Getting a phone to read a crooked photo of a lab report"). So "rewriting the mobile app" didn't throw away the previous months of work. <a href="https://github.com/Chesterguan/medme/pull/89" target="_blank" rel="noopener">#89</a> · <a href="https://github.com/Chesterguan/medme/pull/93" target="_blank" rel="noopener">#93</a></div>
         </li>
       </ul>
 
