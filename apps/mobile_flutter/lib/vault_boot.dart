@@ -81,9 +81,9 @@ Future<void> ensureProxyVaultOpen(String patientId) async {
   }
 }
 
-/// 切换到某成员并重开其保险箱,然后通知各屏刷新。
-Future<void> switchProfileAndReopen(String name) async {
-  await ProfileManager.instance.switchTo(name);
+/// 切换到某成员(按 id)并重开其保险箱,然后通知各屏刷新。
+Future<void> switchProfileAndReopen(String id) async {
+  await ProfileManager.instance.switchTo(id);
   await openCurrentProfileVault();
   bumpVaultRevision();
 }
@@ -129,13 +129,11 @@ Future<void> wipeAllData() async {
   bumpVaultRevision();
 }
 
-/// 用报告里识别到的患者姓名,给还没定过名的默认档案自动命名(迁移其待确认/标红键)。
-/// 导入、载入示例、档案加载等任一有患者姓名的地方都可调,幂等:只在首次未命名时生效。
+/// 用报告里识别到的患者姓名,给还没定过名的默认档案自动命名。幂等:只在首次未命名时
+/// 生效。**不再需要迁移任何状态** —— 目录与 ReviewState 的键都认 id,改名只是换标签。
 Future<void> autoNameCurrentProfileFrom(String? detectedName) async {
   if (detectedName == null || detectedName.trim().isEmpty) return;
-  final old = ProfileManager.instance.current;
-  final renamed = await ProfileManager.instance.maybeAutoNameRoot(detectedName);
-  if (renamed != null) await ReviewState.instance.renameMember(old, renamed);
+  await ProfileManager.instance.maybeAutoNameCurrent(detectedName);
 }
 
 /// 删除一个成员:成员表移除 + **本机与 iCloud 容器两处**的数据目录都删掉,再重开
@@ -145,20 +143,19 @@ Future<void> autoNameCurrentProfileFrom(String? detectedName) async {
 /// 只删活跃那处的话,数据还在容器里躺着,再开 iCloud 会被 adopt 回来 —— 用户以为
 /// 删干净了,过一阵又冒出来。
 ///
-/// 第一个成员删不了(见 [ProfileManager.canRemove] 的路径说明),这里再挡一道:
-/// `remove` 返回 false 就直接返回,绝不去删任何目录。
-Future<bool> removeProfileAndReopen(String name) async {
+/// 删到只剩一个时不给删(见 [ProfileManager.canRemove]),这里再挡一道:`remove`
+/// 返回 false 就直接返回,绝不去删任何目录。
+Future<bool> removeProfileAndReopen(String id) async {
   await ProfileManager.instance.ensureLoaded();
-  if (!ProfileManager.instance.canRemove(name)) return false;
+  if (!ProfileManager.instance.canRemove(id)) return false;
 
   final docsRoot = (await getApplicationDocumentsDirectory()).path;
   final containerRoot = await IcloudBridge.containerPath();
-  // 路径必须在把成员从表里摘掉**之前**算好:`localBaseOf` 依赖成员表判断谁是第一个。
-  final localBase = ProfileManager.instance.localBaseOf(docsRoot, name);
-  final cloudBase = ProfileManager.instance.containerBaseOf(containerRoot, name);
+  final localBase = ProfileManager.instance.localBaseOf(docsRoot, id);
+  final cloudBase = ProfileManager.instance.containerBaseOf(containerRoot, id);
 
-  if (!await ProfileManager.instance.remove(name)) return false;
-  await ReviewState.instance.removeMember(name);
+  if (!await ProfileManager.instance.remove(id)) return false;
+  await ReviewState.instance.removeMember(id);
 
   for (final base in [localBase, ?cloudBase]) {
     final d = Directory(base);
@@ -172,8 +169,9 @@ Future<bool> removeProfileAndReopen(String name) async {
 
 /// 新建成员(空库)并切过去、重开、刷新。[userManaged] 见
 /// [ProfileManager.create] —— 载入示例数据建的那个成员要传 false。
-Future<void> createProfileAndReopen(String name, {bool userManaged = true}) async {
-  await ProfileManager.instance.create(name, userManaged: userManaged);
+Future<String?> createProfileAndReopen(String name, {bool userManaged = true}) async {
+  final id = await ProfileManager.instance.create(name, userManaged: userManaged);
   await openCurrentProfileVault();
   bumpVaultRevision();
+  return id;
 }

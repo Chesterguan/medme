@@ -194,7 +194,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     await autoNameCurrentProfileFrom(profile.name);
     // 回填当前成员记录数,设置页据此展示每人多少份(不必逐个开库去数)。
     await ProfileManager.instance.setCount(
-      ProfileManager.instance.current,
+      ProfileManager.instance.currentId.value,
       profile.recordCount,
     );
     return (profile, groups);
@@ -246,8 +246,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   /// 顶部 banner 点击:弹出成员切换器(家庭多成员)。
   Future<void> _showProfileSwitcher() async {
     await ProfileManager.instance.ensureLoaded();
-    final members = ProfileManager.instance.members;
-    final current = ProfileManager.instance.current;
+    final members = ProfileManager.instance.profiles;
+    final currentId = ProfileManager.instance.currentId.value;
     if (!mounted) return;
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -271,7 +271,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 leading: CircleAvatar(
                   backgroundColor: MedMe.tealSoft,
                   child: Text(
-                    m.isNotEmpty ? m[0] : '?',
+                    m.name.isNotEmpty ? m.name[0] : '?',
                     style: const TextStyle(
                       color: MedMe.teal,
                       fontWeight: FontWeight.w700,
@@ -279,13 +279,13 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   ),
                 ),
                 title: Text(
-                  m,
+                  m.name,
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
-                trailing: m == current
+                trailing: m.id == currentId
                     ? const Icon(Icons.check, color: MedMe.teal)
                     : null,
-                onTap: () => Navigator.of(context).pop('member:$m'),
+                onTap: () => Navigator.of(context).pop('member:${m.id}'),
               ),
             const Divider(height: 1),
             ListTile(
@@ -302,9 +302,10 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     if (action == 'add') {
       await _addMember();
     } else if (action.startsWith('member:')) {
-      final name = action.substring('member:'.length);
-      if (name != current) {
-        await switchProfileAndReopen(name);
+      // action 里带的是**成员 id**,不是名字 —— 名字可改、可重复,不能拿来寻址。
+      final id = action.substring('member:'.length);
+      if (id != currentId) {
+        await switchProfileAndReopen(id);
         if (mounted) setState(() {});
       }
     }
@@ -319,7 +320,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: '输入姓名(家庭内唯一即可)'),
+          decoration: const InputDecoration(hintText: '输入姓名'),
           onSubmitted: (v) => Navigator.of(context).pop(v),
         ),
         actions: [

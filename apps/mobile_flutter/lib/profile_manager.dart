@@ -4,17 +4,19 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// 家庭多成员管理:每个成员一个独立保险箱(子文件夹),用**名字**区分(不设别名)。
-/// 成员表持久化到沙盒 `<support>/profiles.json`,与 Apple ID 无关——纯本地 + 子文件夹。
+/// 家庭多成员管理:每个成员一个独立保险箱(子文件夹)。成员表持久化到沙盒
+/// `<support>/profiles.json`,与 Apple ID 无关——纯本地 + 子文件夹。
 ///
-/// 路径策略(零迁移):**有一个成员用原有位置** `<docs>/vault`(以及 iCloud
-/// `<container>/Documents/vault`),让升级上来的老用户数据原地不动;其余成员用
-/// `<docs>/profiles/<名字>/vault`(iCloud `<container>/Documents/profiles/<名字>/vault`)。
+/// **成员一律平等**:没有权限差别、没有特殊的那一个,路径规则只有一条 ——
+/// 每个成员在 `<docs>/profiles/<id>/vault`(iCloud 则是
+/// `<container>/Documents/profiles/<id>/vault`)。
 ///
-/// **是谁占着那个原始位置,由 [_rootMember] 显式记名,不由「排第几」推断。** 早先是按
-/// `members.first` 推的,后果是删掉第一个成员会让第二个递补并**继承那个位置** —— 它的
-/// 病历还躺在 `profiles/<名字>/` 却再也找不到。成员本该各自独立、删也独立,所以把身份
-/// 记死。老的 `profiles.json` 没有这个字段,加载时取首位补上,向后兼容。
+/// **目录用 [Profile.id],不用名字。** 名字是给人看的标签,随时可改(报告里识别到真名
+/// 会自动改,以后也可能让用户手改);拿会变的东西给文件夹命名,改一次名就等于搬一次
+/// 数据,搬到一半失败就是丢病历。id 一旦生成永不变,于是改名只动标签、删除只影响
+/// 自己、谁也不依赖谁的位置 —— 那些「删了第一个别人会不会出事」的保护逻辑因此全部
+/// 不需要存在。
+///
 /// iCloud 是全局开关(在设置),开了后每个成员按自己的子路径同步进容器,天然覆盖全部成员。
 class ProfileManager {
   ProfileManager._();
@@ -23,36 +25,51 @@ class ProfileManager {
   /// 保险箱默认名字(不用「我」这种身份词)。用户可在设置里改成「我家」「张建国的病历」等。
   static const defaultVaultName = '我的医疗档案';
 
-  /// 当前成员变化时通知各屏重载(切换成员 = 重开保险箱)。
-  final ValueNotifier<String> currentMember = ValueNotifier<String>(
-    defaultVaultName,
-  );
+  /// 存储格式版本。产品尚未正式发布,没有需要迁移的存量安装 —— 读到旧格式(按**名字**
+  /// 建目录的那版)直接当作全新开始,不做半迁移,免得留下「表里有人、目录对不上」的
+  /// 中间状态。
+  static const _storageVersion = 2;
 
-  List<String> _members = const [defaultVaultName];
-  // 占着原始位置 `<docs>/vault` 的那个成员的名字;它被删掉后置 null(那个位置随之
-  // 空出,不再有人用),其余成员的路径不受任何影响。
-  String? _rootMember = defaultVaultName;
+  /// 初始成员的 id。固定值,让全新安装是确定的。
+  static const _bootstrapId = 'p-1';
+
+  /// 当前成员 **id** 变化时通知各屏重载(切换成员 = 重开保险箱)。用 id 而不是名字:
+  /// 改名不该触发重开,换人才该。
+  final ValueNotifier<String> currentId = ValueNotifier<String>(_bootstrapId);
+
+  List<Profile> _profiles = const [
+    Profile(id: _bootstrapId, name: defaultVaultName),
+  ];
   // 整个保险箱的名字(家庭/个人层面,与「成员」是两回事);设置页展示 + 可改。
   String _vaultName = defaultVaultName;
-  // 成员 → 最近一次已知记录数(档案屏加载时回填);设置页展示每人多少份,不必开各自库去数。
+  // 成员 id → 最近一次已知记录数(档案屏加载时回填);设置页展示每人多少份,不必开各自库去数。
   final Map<String, int> _counts = {};
-  // 首个成员的名字是否仍是占位默认(未被用户/自动识别定过)。为 true 时,首次导入
-  // 若从报告里识别到患者姓名,就把默认档案自动改成那个名字(见 [maybeAutoNameRoot])。
-  bool _rootAutoNamed = true;
+  // 初始成员的名字是否仍是占位默认(未被用户/自动识别定过)。为 true 时,首次导入
+  // 若从报告里识别到患者姓名,就把它改成那个名字(见 [maybeAutoNameCurrent])。
+  bool _autoNamePending = true;
   bool _loaded = false;
   File? _file;
 
-  List<String> get members => List.unmodifiable(_members);
-  String get current => currentMember.value;
+  List<Profile> get profiles => List.unmodifiable(_profiles);
   String get vaultName => _vaultName;
+
+  /// 当前成员。成员表永不为空(删到只剩一个就不给删),所以这里总有值。
+  Profile get current => byId(currentId.value) ?? _profiles.first;
+
+  Profile? byId(String id) {
+    for (final p in _profiles) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
 
   /// 档案屏顶部展示名:只有一个、且还没被数据/用户命过名的默认成员时,显示保险箱名
   /// (不把占位名露出来,彻底避开「我」);否则显示当前成员真名。
   String get displayName =>
-      (_members.length == 1 && _rootAutoNamed) ? _vaultName : current;
+      (_profiles.length == 1 && _autoNamePending) ? _vaultName : current.name;
 
   /// 某成员最近已知记录数(没加载过为 null)。
-  int? countFor(String member) => _counts[member];
+  int? countFor(String id) => _counts[id];
 
   Future<File> _stateFile() async {
     if (_file != null) return _file!;
@@ -66,29 +83,27 @@ class ProfileManager {
       final f = await _stateFile();
       if (await f.exists()) {
         final json = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
-        final list = (json['members'] as List?)
-            ?.map((e) => e as String)
-            .toList();
-        if (list != null && list.isNotEmpty) _members = list;
-        final cur = json['current'] as String?;
-        currentMember.value = (cur != null && _members.contains(cur))
-            ? cur
-            : _members.first;
-        // 老版本没有 rootMember 字段:那时「第一个成员」就是占着原始位置的那个。
-        final storedRoot = json['rootMember'] as String?;
-        _rootMember = (storedRoot != null && _members.contains(storedRoot))
-            ? storedRoot
-            : (json.containsKey('rootMember') ? null : _members.first);
-        _rootAutoNamed = json['rootAutoNamed'] as bool? ?? false;
-        _vaultName = json['vaultName'] as String? ?? defaultVaultName;
-        final counts = json['counts'] as Map<String, dynamic>?;
-        if (counts != null) {
-          _counts.clear();
-          counts.forEach((k, v) => _counts[k] = v as int);
+        // 旧格式(无 version,目录按名字建)忽略,当全新开始。
+        if (json['version'] == _storageVersion) {
+          final list = (json['profiles'] as List?)
+              ?.map((e) => Profile.fromJson(e as Map<String, dynamic>))
+              .toList();
+          if (list != null && list.isNotEmpty) _profiles = list;
+          final cur = json['currentId'] as String?;
+          currentId.value = (cur != null && byId(cur) != null)
+              ? cur
+              : _profiles.first.id;
+          _autoNamePending = json['autoNamePending'] as bool? ?? false;
+          _vaultName = json['vaultName'] as String? ?? defaultVaultName;
+          final counts = json['counts'] as Map<String, dynamic>?;
+          if (counts != null) {
+            _counts.clear();
+            counts.forEach((k, v) => _counts[k] = v as int);
+          }
         }
       }
     } catch (_) {
-      // 读坏了不致命:退回单成员「我」。
+      // 读坏了不致命:退回单成员默认档案。
     }
     _loaded = true;
   }
@@ -98,10 +113,10 @@ class ProfileManager {
       final f = await _stateFile();
       await f.writeAsString(
         jsonEncode({
-          'members': _members,
-          'rootMember': _rootMember,
-          'current': current,
-          'rootAutoNamed': _rootAutoNamed,
+          'version': _storageVersion,
+          'profiles': _profiles.map((p) => p.toJson()).toList(),
+          'currentId': currentId.value,
+          'autoNamePending': _autoNamePending,
           'vaultName': _vaultName,
           'counts': _counts,
         }),
@@ -110,87 +125,84 @@ class ProfileManager {
   }
 
   /// 切到某成员(需已存在)。调用方随后重开保险箱(见 `openCurrentProfileVault`)。
-  Future<void> switchTo(String name) async {
+  Future<void> switchTo(String id) async {
     await ensureLoaded();
-    if (!_members.contains(name)) return;
-    if (currentMember.value == name) return;
-    currentMember.value = name;
+    if (byId(id) == null || currentId.value == id) return;
+    currentId.value = id;
     await _save();
   }
 
-  /// 新增一个成员并切过去。名字为空或重名则忽略/直接切过去。
+  /// 新增一个成员并切过去,返回它的 id(名字为空则返回 null)。**同名不去重** ——
+  /// 名字只是标签,家里有两个「张伟」很正常,他们各有各的 id 和目录。
   ///
   /// [userManaged] 为 true(默认)表示这是**用户自己**在管理成员,于是关掉「首次导入
-  /// 自动命名默认档案」——他既然会自己建成员,就别再替他改名。载入示例数据也会建一个
-  /// 成员,但那不是用户在管理档案,必须传 false:否则「先看示例、再导入自己的病历」
-  /// 这条最常见的路径上,他的档案会永远停在占位名「我的医疗档案」。
-  Future<void> create(String name, {bool userManaged = true}) async {
+  /// 自动命名」——他既然会自己建成员,就别再替他改名。载入示例数据也建成员,但那不是
+  /// 用户在管理档案,必须传 false:否则「先看示例、再导入自己的病历」这条最常见的
+  /// 路径上,他的档案会永远停在占位名。
+  Future<String?> create(String name, {bool userManaged = true}) async {
+    await ensureLoaded();
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return null;
+    final p = Profile(id: _newId(), name: trimmed);
+    _profiles = [..._profiles, p];
+    if (userManaged) _autoNamePending = false;
+    currentId.value = p.id;
+    await _save();
+    return p.id;
+  }
+
+  String _newId() =>
+      'p-${DateTime.now().millisecondsSinceEpoch}-${_profiles.length}';
+
+  /// 改名。**只动标签,不动任何文件** —— 这正是拿 id 建目录换来的:目录若按名字拼,
+  /// 改名就得搬数据,搬到一半失败就丢病历,所以那时干脆不敢做这个功能。
+  Future<void> rename(String id, String name) async {
     await ensureLoaded();
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
-    if (!_members.contains(trimmed)) {
-      _members = [..._members, trimmed];
+    var changed = false;
+    _profiles = _profiles.map((p) {
+      if (p.id != id || p.name == trimmed) return p;
+      changed = true;
+      return Profile(id: p.id, name: trimmed);
+    }).toList();
+    if (changed) {
+      _autoNamePending = false;
+      await _save();
     }
-    if (userManaged) _rootAutoNamed = false;
-    currentMember.value = trimmed;
-    await _save();
   }
 
-  /// 能不能删这个成员。成员各自独立,**谁都能删,与排第几无关**(路径由 [_rootMember]
-  /// 记名,不随顺序漂移)。唯一的限制是**不能删到一个不剩** —— 那等于清空整个保险箱,
-  /// 该走设置里「清空所有数据 · 重置保险箱」那条更明确的路,而不是从成员列表里悄悄清光。
-  bool canRemove(String name) => _members.length > 1 && _members.contains(name);
+  /// 能不能删这个成员。成员一律平等,**谁都能删**;删任何一个都只影响它自己
+  /// (每人一个独立目录,没有谁的路径依赖别人)。唯一的限制是**不能删到一个不剩** ——
+  /// 那等于清空整个保险箱,该走设置里「清空所有数据 · 重置保险箱」那条更明确的路。
+  bool canRemove(String id) => _profiles.length > 1 && byId(id) != null;
 
-  /// 删除一个成员(仅从成员表移除;**磁盘上的 vault 目录由调用方删**,见
+  /// 删除一个成员(仅从成员表移除;**磁盘上的目录由调用方删**,见
   /// `vault_boot.removeProfileAndReopen` —— 那里才知道 iCloud 容器路径)。
-  /// 删的是当前成员时,自动切回第一个成员。返回是否真的删了。
-  Future<bool> remove(String name) async {
+  /// 删的是当前成员时自动切到剩下的第一个。返回是否真的删了。
+  Future<bool> remove(String id) async {
     await ensureLoaded();
-    if (!canRemove(name)) return false;
-    _members = _members.where((m) => m != name).toList();
-    _counts.remove(name);
-    // 删的正好是占着原始位置的那个:位置空出来,不转交给任何人 —— 转交就意味着
-    // 要搬目录,而其余成员本来在自己的 `profiles/<名字>/` 里待得好好的。
-    if (_rootMember == name) _rootMember = null;
-    if (currentMember.value == name) currentMember.value = _members.first;
+    if (!canRemove(id)) return false;
+    _profiles = _profiles.where((p) => p.id != id).toList();
+    _counts.remove(id);
+    if (currentId.value == id) currentId.value = _profiles.first.id;
     await _save();
     return true;
   }
 
-  /// 某成员的本机基目录(其下有 `vault/`)。与 [localBase] 同一套拼法,但可以问
-  /// **任意**成员而不只是当前成员 —— 删除时需要拿到「即将被删的那个」的路径。
-  String localBaseOf(String docsRoot, String name) =>
-      _isRoot(name) ? docsRoot : '$docsRoot/profiles/${_safe(name)}';
-
-  /// 某成员的 iCloud 目录基;容器不可用返回 null。同 [containerBase],但可指定成员。
-  String? containerBaseOf(String? containerRoot, String name) {
-    if (containerRoot == null) return null;
-    return _isRoot(name)
-        ? '$containerRoot/Documents'
-        : '$containerRoot/Documents/profiles/${_safe(name)}';
-  }
-
-  /// 首个(唯一)成员仍是占位默认时,用报告里识别到的患者姓名自动命名它。
-  /// 返回被改成的新名字(发生了重命名)或 null(未改)。根成员路径与名字无关
-  /// (见 [localBase]),重命名只是换标签,无需迁移文件/重开保险箱。
-  Future<String?> maybeAutoNameRoot(String detectedName) async {
+  /// 当前成员仍是占位默认名时,用报告里识别到的患者姓名给它命名。返回新名字或 null
+  /// (未改)。只是换标签,不迁移文件 —— 目录认的是 id。
+  Future<String?> maybeAutoNameCurrent(String detectedName) async {
     await ensureLoaded();
     final name = detectedName.trim();
-    if (!_rootAutoNamed || _members.length != 1 || name.isEmpty) return null;
-    if (_members.first == name) {
-      _rootAutoNamed = false;
+    if (!_autoNamePending || _profiles.length != 1 || name.isEmpty) return null;
+    final cur = current;
+    if (cur.name == name) {
+      _autoNamePending = false;
       await _save();
       return null;
     }
-    final old = _members.first;
-    if (_counts.remove(old) case final n?) _counts[name] = n;
-    _members = [name];
-    // 路径认的是名字,改名必须同步搬身份,否则这个成员会从 `<docs>/vault` 漂到
-    // `profiles/<新名字>/`,数据当场找不到。
-    if (_rootMember == old) _rootMember = name;
-    _rootAutoNamed = false;
-    currentMember.value = name;
-    await _save();
+    await rename(cur.id, name); // rename 内部关掉 _autoNamePending 并落盘
     return name;
   }
 
@@ -204,40 +216,50 @@ class ProfileManager {
   }
 
   /// 回填某成员的记录数(档案屏加载时调),供设置页展示每人多少份。
-  Future<void> setCount(String member, int n) async {
+  Future<void> setCount(String id, int n) async {
     await ensureLoaded();
-    if (_counts[member] == n) return;
-    _counts[member] = n;
+    if (_counts[id] == n) return;
+    _counts[id] = n;
     await _save();
   }
 
-  /// 恢复出厂:成员表清回单一默认(root)、清份数缓存、保险箱名回默认、允许自动命名。
-  /// 「清空所有数据」调它(配合删各 profile 的 vault 目录),而不是只清当前 profile。
+  /// 恢复出厂:成员表清回单一默认、清份数缓存、保险箱名回默认、允许自动命名。
+  /// 「清空所有数据」调它(配合删各成员目录),而不是只清当前成员。
   Future<void> factoryReset() async {
-    _members = const [defaultVaultName];
-    _rootMember = defaultVaultName;
+    _profiles = const [Profile(id: _bootstrapId, name: defaultVaultName)];
     _vaultName = defaultVaultName;
     _counts.clear();
-    _rootAutoNamed = true;
-    currentMember.value = defaultVaultName;
+    _autoNamePending = true;
+    currentId.value = _bootstrapId;
     await _save();
   }
 
-  // ---- 路径组合(第一个成员用原位置,其余用子文件夹)----
+  // ---- 路径组合:一条规则,人人相同,按 id ----
 
-  bool _isRoot(String name) => _rootMember != null && name == _rootMember;
+  /// 某成员的本机基目录(其下有 `vault/`)。
+  String localBaseOf(String docsRoot, String id) => '$docsRoot/profiles/$id';
 
-  String _safe(String name) => name.replaceAll('/', '_');
+  /// 某成员的 iCloud 目录基;容器不可用返回 null。
+  String? containerBaseOf(String? containerRoot, String id) =>
+      containerRoot == null ? null : '$containerRoot/Documents/profiles/$id';
 
-  /// 当前成员的本机保险箱基目录(其下有 `vault/`)。
-  String localBase(String docsRoot) =>
-      _isRoot(current) ? docsRoot : '$docsRoot/profiles/${_safe(current)}';
+  /// 当前成员的本机基目录。
+  String localBase(String docsRoot) => localBaseOf(docsRoot, currentId.value);
 
-  /// 当前成员的 iCloud 目录基(其下有 `vault/`);容器不可用返回 null。
-  String? containerBase(String? containerRoot) {
-    if (containerRoot == null) return null;
-    return _isRoot(current)
-        ? '$containerRoot/Documents'
-        : '$containerRoot/Documents/profiles/${_safe(current)}';
-  }
+  /// 当前成员的 iCloud 目录基;容器不可用返回 null。
+  String? containerBase(String? containerRoot) =>
+      containerBaseOf(containerRoot, currentId.value);
+}
+
+/// 一个成员:[id] 是主键与目录名(生成后永不变),[name] 只是给人看的标签(随时可改)。
+class Profile {
+  const Profile({required this.id, required this.name});
+
+  final String id;
+  final String name;
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name};
+
+  static Profile fromJson(Map<String, dynamic> j) =>
+      Profile(id: j['id'] as String, name: j['name'] as String);
 }

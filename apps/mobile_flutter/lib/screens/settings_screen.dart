@@ -93,10 +93,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final pm = ProfileManager.instance;
       await pm.ensureLoaded();
-      if (!pm.members.contains(_demoMember)) {
+      // 按名字找已存在的示例成员:名字本来可重复,但这个是我们自己建的、用户改不到,
+      // 拿它认一下就够,免得再存一个 id。找不到就新建。
+      final existing = pm.profiles.where((p) => p.name == _demoMember).firstOrNull;
+      if (existing == null) {
         await createProfileAndReopen(_demoMember, userManaged: false);
-      } else if (pm.current != _demoMember) {
-        await switchProfileAndReopen(_demoMember);
+      } else if (pm.currentId.value != existing.id) {
+        await switchProfileAndReopen(existing.id);
       }
       final n = await loadDemoData();
       bumpVaultRevision(); // 通知「健康档案」屏自动重载(并按识别姓名自动命名档案)
@@ -353,16 +356,17 @@ class _VaultCard extends StatelessWidget {
   final VoidCallback onChanged;
 
   /// 当前成员用刚查到的最新记录数,其余成员用缓存(没加载过为 null)。
-  int? _countOf(String member) {
+  int? _countOf(String id) {
     final pm = ProfileManager.instance;
-    if (member == pm.current && profile != null) return profile!.recordCount;
-    return pm.countFor(member);
+    if (id == pm.currentId.value && profile != null) return profile!.recordCount;
+    return pm.countFor(id);
   }
 
   /// 移除一个成员:连同他的全部病历一起删,不可撤销。当前成员被删时会自动切回
   /// 第一个成员(`ProfileManager.remove` 负责),各屏随 `bumpVaultRevision` 刷新。
-  Future<void> _confirmRemove(BuildContext context, String name) async {
-    final n = _countOf(name);
+  Future<void> _confirmRemove(BuildContext context, Profile p) async {
+    final name = p.name;
+    final n = _countOf(p.id);
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -416,7 +420,7 @@ class _VaultCard extends StatelessWidget {
       ),
     );
     if (ok != true) return;
-    final removed = await removeProfileAndReopen(name);
+    final removed = await removeProfileAndReopen(p.id);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(removed ? '已移除「$name」' : '无法移除该成员')),
@@ -457,7 +461,7 @@ class _VaultCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pm = ProfileManager.instance;
-    final members = pm.members;
+    final members = pm.profiles;
     final multi = members.length > 1;
     return Card(
       child: Column(
@@ -475,7 +479,7 @@ class _VaultCard extends StatelessWidget {
             subtitle: Text(
               multi
                   ? '${members.length} 位成员'
-                  : '${_countOf(pm.current) ?? 0} 份记录',
+                  : '${_countOf(pm.currentId.value) ?? 0} 份记录',
               style: const TextStyle(color: MedMe.faint),
             ),
             trailing: IconButton(
@@ -488,23 +492,23 @@ class _VaultCard extends StatelessWidget {
             const Divider(height: 1, color: MedMe.line),
             for (final m in members)
               Padding(
-                padding: EdgeInsets.fromLTRB(20, 8, pm.canRemove(m) ? 8 : 20, 8),
+                padding: EdgeInsets.fromLTRB(20, 8, pm.canRemove(m.id) ? 8 : 20, 8),
                 child: Row(
                   children: [
                     Expanded(
-                      child: Text(m, style: const TextStyle(fontSize: 14)),
+                      child: Text(m.name, style: const TextStyle(fontSize: 14)),
                     ),
                     Text(
-                      _countOf(m) == null ? '—' : '${_countOf(m)} 份',
+                      _countOf(m.id) == null ? '—' : '${_countOf(m.id)} 份',
                       style: const TextStyle(color: MedMe.faint, fontSize: 13),
                     ),
                     // 只剩一个成员时不给删:那等于清空整个保险箱,该走「清空所有
                     // 数据」那条更明确的路(见 `ProfileManager.canRemove`)。
-                    if (pm.canRemove(m))
+                    if (pm.canRemove(m.id))
                       IconButton(
                         icon: const Icon(Icons.delete_outline, size: 20),
                         color: MedMe.faint,
-                        tooltip: '移除「$m」',
+                        tooltip: '移除「${m.name}」',
                         onPressed: () => _confirmRemove(context, m),
                       ),
                   ],
