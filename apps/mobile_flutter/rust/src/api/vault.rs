@@ -19,13 +19,13 @@ use std::sync::{Mutex, OnceLock};
 // cargokit 分别为 aarch64-apple-ios / Android 交叉编译;ML Kit 依赖还留着
 // (`recognizeImageText` 的 else 分支,`google_mlkit_text_recognition` 未删),
 // 万一某些安卓机型上 PP 表现不好可以退回,但默认走 PP。
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(pp_ocr)]
 const MOBILE_OCR_BACKEND: OcrBackendKind = OcrBackendKind::Onnx;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[cfg(not(pp_ocr))]
 const MOBILE_OCR_BACKEND: OcrBackendKind = OcrBackendKind::MlKit;
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(pp_ocr)]
 const MOBILE_OCR_MODEL: &str = "pp-ocrv5-mobile";
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[cfg(not(pp_ocr))]
 const MOBILE_OCR_MODEL: &str = "mlkit-v2-zh";
 
 /// 随应用二进制打包的示例数据(张建国示例病历,corpus/scenarios,文本+PDF,
@@ -989,16 +989,16 @@ pub fn disable_icloud_sync() -> anyhow::Result<()> {
 /// 代价:换模型必须重新编译这个 crate(测试阶段可接受);二进制体积多 ~20MB。
 /// 如果不想要这个取舍(比如想不重编就能换模型),告诉我,改成 bundle resources
 /// 传路径不难。
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(pp_ocr)]
 const PP_DET_MODEL: &[u8] = include_bytes!("../../ocr-models/pp-ocrv5_mobile_det.onnx");
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(pp_ocr)]
 const PP_REC_MODEL: &[u8] = include_bytes!("../../ocr-models/pp-ocrv5_mobile_rec.onnx");
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(pp_ocr)]
 const PP_DICT: &[u8] = include_bytes!("../../ocr-models/ppocrv5_dict.txt");
 
 /// 进程内只落盘一次(`ocr::set_model_dir` 也是「先到先得」,重复调用无副作用,
 /// 但没必要每次识别都重新校验/写盘)。
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(pp_ocr)]
 static PP_MODELS_READY: OnceLock<()> = OnceLock::new();
 
 /// 把编译进二进制的模型字节落盘到 `<data_dir>/medme-ocr-pp-models/`,再调
@@ -1009,7 +1009,7 @@ static PP_MODELS_READY: OnceLock<()> = OnceLock::new();
 /// `data_dir` 在安卓上是 app 私有可写目录(与 iOS 沙盒同一抽象,`with_state`
 /// 拿到的 `state.data_dir` 两端走同一套 `resolve_vault_paths` 逻辑,非
 /// iOS/安卓专属代码),落盘逻辑不用按平台分叉。
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(pp_ocr)]
 fn ensure_pp_models_ready(data_dir: &Path) -> anyhow::Result<()> {
     if PP_MODELS_READY.get().is_some() {
         return Ok(());
@@ -1041,7 +1041,7 @@ fn ensure_pp_models_ready(data_dir: &Path) -> anyhow::Result<()> {
 /// vault 已打开(落模型要 `data_dir`)——与 Dart 侧 `recognizeImageText` 在
 /// `import_flow.dart::_runImport` 里的调用时机一致,导入流程走到这里 vault
 /// 必然已打开,不额外加约束。
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(pp_ocr)]
 pub fn recognize_image_pp(bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
     if bytes.is_empty() {
         anyhow::bail!("空图片字节");
@@ -1059,10 +1059,10 @@ pub fn recognize_image_pp(bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
 /// 非 iOS/安卓构建(桌面/CLI)的占位实现。FRB codegen 在开发机上跑一次生成
 /// `frb_generated.rs` + Dart 绑定,这份生成文件不按平台分叉,所以这个函数签名
 /// 必须在所有 target 上都存在;函数体在非 iOS/安卓直接报错即可 —— `ocr` 依赖
-/// 本身按 `cfg(any(target_os = "ios", target_os = "android"))` 门控(见
+/// 本身按 `cfg(pp_ocr)` 门控(见 `build.rs` 的规则与
 /// `Cargo.toml`),桌面/CLI 构建压根不链接 oar-ocr/onnxruntime,这个分支不产生
 /// 任何额外体积或依赖。
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[cfg(not(pp_ocr))]
 pub fn recognize_image_pp(_bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
     anyhow::bail!("PP-OCR 路径仅 iOS/安卓构建可用")
 }

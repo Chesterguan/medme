@@ -48,7 +48,13 @@ dicom = { path = "../../../packages/dicom", default-features = false }
 # `auto-download` 两个 feature 的说明。安卓侧 ort 静态链接 arm64 预编译
 # onnxruntime + 动态链 NDK 的 `libc++_shared.so`(见 rust_builder/android/
 # JNILIBS_NOTES.md,只打包了 arm64-v8a)。
-[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+#
+# **安卓这里必须连 arch 一起限死**:`ort` 只提供 arm64 安卓的预编译 onnxruntime,
+# 没有 `i686-linux-android`;而 x86 安卓的 `target_os` 同样是 `android`,只按 OS
+# 门控会让 debug 构建(cargokit 会顺带编模拟器 ABI)去链一个不存在的库而失败。
+# 我们也只发 arm64-v8a。同一条规则在 `build.rs` 里表达为 `pp_ocr` cfg 供 `src/`
+# 使用 —— Cargo 的 target 依赖表读不到 build.rs 产出的 cfg,故此处写全谓词。
+[target.'cfg(any(target_os = "ios", all(target_os = "android", target_arch = "aarch64")))'.dependencies]
 ocr = { path = "../../../packages/ocr", default-features = false, features = ["engine"] }
 
 [dev-dependencies]
@@ -56,4 +62,6 @@ ocr = { path = "../../../packages/ocr", default-features = false, features = ["e
 tempfile = "3"
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+# `pp_ocr` 由 build.rs 按目标平台产出(见那里的说明);声明出来,免得
+# `unexpected_cfgs` 把它当成拼错的 cfg 报警。
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(pp_ocr)'] }
