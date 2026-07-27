@@ -170,9 +170,10 @@ Future<bool> removeProfileAndReopen(String name) async {
   return true;
 }
 
-/// 新建成员(空库)并切过去、重开、刷新。
-Future<void> createProfileAndReopen(String name) async {
-  await ProfileManager.instance.create(name);
+/// 新建成员(空库)并切过去、重开、刷新。[userManaged] 见
+/// [ProfileManager.create] —— 载入示例数据建的那个成员要传 false。
+Future<void> createProfileAndReopen(String name, {bool userManaged = true}) async {
+  await ProfileManager.instance.create(name, userManaged: userManaged);
   await openCurrentProfileVault();
   bumpVaultRevision();
 }

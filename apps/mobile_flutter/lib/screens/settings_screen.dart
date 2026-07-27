@@ -83,14 +83,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!ok) _showSnack('无法打开主页,请稍后重试');
   }
 
+  /// 示例数据落进**它自己的成员**,不混进你的档案 —— 于是看完可以直接在「保险箱」
+  /// 里把这个成员整个移除,你自己导入的东西一份不动。(早先是灌进当前成员,再被
+  /// 自动命名成「张建国」,想清掉就只能动用「清空所有数据」那颗核弹。)
+  static const _demoMember = '张建国(示例)';
+
   Future<void> _loadDemoData() async {
     setState(() => _busy = true);
     try {
+      final pm = ProfileManager.instance;
+      await pm.ensureLoaded();
+      if (!pm.members.contains(_demoMember)) {
+        await createProfileAndReopen(_demoMember, userManaged: false);
+      } else if (pm.current != _demoMember) {
+        await switchProfileAndReopen(_demoMember);
+      }
       final n = await loadDemoData();
       bumpVaultRevision(); // 通知「健康档案」屏自动重载(并按识别姓名自动命名档案)
       await _refresh();
       goToArchive(); // 载入完直接跳到「健康档案」,不用用户再手点
-      _showSnack('已载入 $n 份示例病历');
+      _showSnack('已载入 $n 份示例病历(在「$_demoMember」里,可随时整个移除)');
     } catch (e) {
       _showSnack('载入示例数据失败:$e');
     } finally {
@@ -204,7 +216,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SettingsRow(
                 icon: Icons.download_outlined,
                 title: '载入示例数据(张建国)',
-                subtitle: '一键导入一份完整的示例病历,方便你先看看效果、再决定怎么用',
+                subtitle: '单独放一个成员里,不和你的病历混在一起;看完可在上面「保险箱」里整个移除',
                 onTap: _busy ? null : _loadDemoData,
               ),
             ],
@@ -354,21 +366,51 @@ class _VaultCard extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('移除成员「$name」?'),
-        content: Text(
-          n == null || n == 0
-              ? '将删除该成员的档案。此操作不可撤销。'
-              : '该成员的 $n 份病历会被一并删除,包括原件。此操作不可撤销。',
+        icon: const Icon(Icons.warning_amber_rounded, color: MedMe.danger, size: 44),
+        title: Text(
+          '删除「$name」的全部病历?',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (n != null && n > 0)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: MedMe.danger.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$n 份病历',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: MedMe.danger,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 14),
+            const Text(
+              '连同拍摄的原件一起,从这台手机上彻底删除。\n'
+              '删除后无法恢复,我们也帮不了你。',
+              textAlign: TextAlign.center,
+              style: TextStyle(height: 1.5),
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             child: const Text('取消'),
           ),
-          TextButton(
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: MedMe.danger),
             onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
-            child: const Text('移除'),
+            child: const Text('确认删除'),
           ),
         ],
       ),
@@ -456,8 +498,8 @@ class _VaultCard extends StatelessWidget {
                       _countOf(m) == null ? '—' : '${_countOf(m)} 份',
                       style: const TextStyle(color: MedMe.faint, fontSize: 13),
                     ),
-                    // 第一个成员没有删除按钮:它用的是保险箱的原始位置,删了会让
-                    // 递补成员的数据路径漂移(见 `ProfileManager.canRemove`)。
+                    // 只剩一个成员时不给删:那等于清空整个保险箱,该走「清空所有
+                    // 数据」那条更明确的路(见 `ProfileManager.canRemove`)。
                     if (pm.canRemove(m))
                       IconButton(
                         icon: const Icon(Icons.delete_outline, size: 20),

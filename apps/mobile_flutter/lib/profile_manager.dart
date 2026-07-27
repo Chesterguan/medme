@@ -7,9 +7,14 @@ import 'package:path_provider/path_provider.dart';
 /// 家庭多成员管理:每个成员一个独立保险箱(子文件夹),用**名字**区分(不设别名)。
 /// 成员表持久化到沙盒 `<support>/profiles.json`,与 Apple ID 无关——纯本地 + 子文件夹。
 ///
-/// 路径策略(零迁移):**第一个成员(默认「我」)用原有位置** `<docs>/vault`
-/// (以及 iCloud `<container>/Documents/vault`),已有数据原地不动;新增成员用
+/// 路径策略(零迁移):**有一个成员用原有位置** `<docs>/vault`(以及 iCloud
+/// `<container>/Documents/vault`),让升级上来的老用户数据原地不动;其余成员用
 /// `<docs>/profiles/<名字>/vault`(iCloud `<container>/Documents/profiles/<名字>/vault`)。
+///
+/// **是谁占着那个原始位置,由 [_rootMember] 显式记名,不由「排第几」推断。** 早先是按
+/// `members.first` 推的,后果是删掉第一个成员会让第二个递补并**继承那个位置** —— 它的
+/// 病历还躺在 `profiles/<名字>/` 却再也找不到。成员本该各自独立、删也独立,所以把身份
+/// 记死。老的 `profiles.json` 没有这个字段,加载时取首位补上,向后兼容。
 /// iCloud 是全局开关(在设置),开了后每个成员按自己的子路径同步进容器,天然覆盖全部成员。
 class ProfileManager {
   ProfileManager._();
@@ -24,6 +29,9 @@ class ProfileManager {
   );
 
   List<String> _members = const [defaultVaultName];
+  // 占着原始位置 `<docs>/vault` 的那个成员的名字;它被删掉后置 null(那个位置随之
+  // 空出,不再有人用),其余成员的路径不受任何影响。
+  String? _rootMember = defaultVaultName;
   // 整个保险箱的名字(家庭/个人层面,与「成员」是两回事);设置页展示 + 可改。
   String _vaultName = defaultVaultName;
   // 成员 → 最近一次已知记录数(档案屏加载时回填);设置页展示每人多少份,不必开各自库去数。
@@ -66,6 +74,11 @@ class ProfileManager {
         currentMember.value = (cur != null && _members.contains(cur))
             ? cur
             : _members.first;
+        // 老版本没有 rootMember 字段:那时「第一个成员」就是占着原始位置的那个。
+        final storedRoot = json['rootMember'] as String?;
+        _rootMember = (storedRoot != null && _members.contains(storedRoot))
+            ? storedRoot
+            : (json.containsKey('rootMember') ? null : _members.first);
         _rootAutoNamed = json['rootAutoNamed'] as bool? ?? false;
         _vaultName = json['vaultName'] as String? ?? defaultVaultName;
         final counts = json['counts'] as Map<String, dynamic>?;
@@ -86,6 +99,7 @@ class ProfileManager {
       await f.writeAsString(
         jsonEncode({
           'members': _members,
+          'rootMember': _rootMember,
           'current': current,
           'rootAutoNamed': _rootAutoNamed,
           'vaultName': _vaultName,
@@ -105,26 +119,27 @@ class ProfileManager {
   }
 
   /// 新增一个成员并切过去。名字为空或重名则忽略/直接切过去。
-  Future<void> create(String name) async {
+  ///
+  /// [userManaged] 为 true(默认)表示这是**用户自己**在管理成员,于是关掉「首次导入
+  /// 自动命名默认档案」——他既然会自己建成员,就别再替他改名。载入示例数据也会建一个
+  /// 成员,但那不是用户在管理档案,必须传 false:否则「先看示例、再导入自己的病历」
+  /// 这条最常见的路径上,他的档案会永远停在占位名「我的医疗档案」。
+  Future<void> create(String name, {bool userManaged = true}) async {
     await ensureLoaded();
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
     if (!_members.contains(trimmed)) {
       _members = [..._members, trimmed];
     }
-    _rootAutoNamed = false; // 用户已主动管理成员,别再自动改默认档案名
+    if (userManaged) _rootAutoNamed = false;
     currentMember.value = trimmed;
     await _save();
   }
 
-  /// 能不能删这个成员。**第一个成员永远不能删** —— 见 [localBase]:第一个成员用的是
-  /// 原始位置 `<docs>/vault`,其余在 `<docs>/profiles/<名字>/`。删掉第一个会让第二个
-  /// 递补成「第一个」,它的数据路径随之从 `profiles/X` 漂到 `<docs>`,于是**它的病历
-  /// 还在磁盘上却再也找不到**。这不是保守,是那套零迁移路径策略的直接推论。
-  ///
-  /// (真要支持删第一个,得先把递补成员的目录搬到原始位置再改表,那是另一件事。)
-  bool canRemove(String name) =>
-      _members.length > 1 && _members.isNotEmpty && name != _members.first;
+  /// 能不能删这个成员。成员各自独立,**谁都能删,与排第几无关**(路径由 [_rootMember]
+  /// 记名,不随顺序漂移)。唯一的限制是**不能删到一个不剩** —— 那等于清空整个保险箱,
+  /// 该走设置里「清空所有数据 · 重置保险箱」那条更明确的路,而不是从成员列表里悄悄清光。
+  bool canRemove(String name) => _members.length > 1 && _members.contains(name);
 
   /// 删除一个成员(仅从成员表移除;**磁盘上的 vault 目录由调用方删**,见
   /// `vault_boot.removeProfileAndReopen` —— 那里才知道 iCloud 容器路径)。
@@ -134,6 +149,9 @@ class ProfileManager {
     if (!canRemove(name)) return false;
     _members = _members.where((m) => m != name).toList();
     _counts.remove(name);
+    // 删的正好是占着原始位置的那个:位置空出来,不转交给任何人 —— 转交就意味着
+    // 要搬目录,而其余成员本来在自己的 `profiles/<名字>/` 里待得好好的。
+    if (_rootMember == name) _rootMember = null;
     if (currentMember.value == name) currentMember.value = _members.first;
     await _save();
     return true;
@@ -167,6 +185,9 @@ class ProfileManager {
     final old = _members.first;
     if (_counts.remove(old) case final n?) _counts[name] = n;
     _members = [name];
+    // 路径认的是名字,改名必须同步搬身份,否则这个成员会从 `<docs>/vault` 漂到
+    // `profiles/<新名字>/`,数据当场找不到。
+    if (_rootMember == old) _rootMember = name;
     _rootAutoNamed = false;
     currentMember.value = name;
     await _save();
@@ -194,6 +215,7 @@ class ProfileManager {
   /// 「清空所有数据」调它(配合删各 profile 的 vault 目录),而不是只清当前 profile。
   Future<void> factoryReset() async {
     _members = const [defaultVaultName];
+    _rootMember = defaultVaultName;
     _vaultName = defaultVaultName;
     _counts.clear();
     _rootAutoNamed = true;
@@ -203,7 +225,7 @@ class ProfileManager {
 
   // ---- 路径组合(第一个成员用原位置,其余用子文件夹)----
 
-  bool _isRoot(String name) => _members.isNotEmpty && name == _members.first;
+  bool _isRoot(String name) => _rootMember != null && name == _rootMember;
 
   String _safe(String name) => name.replaceAll('/', '_');
 
