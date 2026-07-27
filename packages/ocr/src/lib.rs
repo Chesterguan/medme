@@ -176,8 +176,7 @@ fn decode_image_bounded(image_bytes: &[u8]) -> Result<DynamicImage> {
     let orientation = decoder
         .orientation()
         .unwrap_or(image::metadata::Orientation::NoTransforms);
-    let mut img =
-        DynamicImage::from_decoder(decoder).context("ocr: decode image within limits")?;
+    let mut img = DynamicImage::from_decoder(decoder).context("ocr: decode image within limits")?;
     img.apply_orientation(orientation);
     Ok(img)
 }
@@ -484,7 +483,11 @@ fn predict_lines_core(dynamic: &DynamicImage) -> Result<Vec<OcrLine>> {
         let is_last = i + 1 == n_bands;
         // Physical band extends past its core by TILE_OVERLAP on each inner side.
         let band_top = if i == 0 { 0 } else { core_top - TILE_OVERLAP };
-        let band_bot = if is_last { h } else { (core_bot + TILE_OVERLAP).min(h) };
+        let band_bot = if is_last {
+            h
+        } else {
+            (core_bot + TILE_OVERLAP).min(h)
+        };
         let band = dynamic.crop_imm(0, band_top, w, band_bot - band_top);
         let regions = predict_band(dynamic_to_rgb(band))?;
         push_band_lines(
@@ -1044,7 +1047,11 @@ mod tests {
     #[cfg(feature = "engine")]
     #[test]
     fn band_owns_tiles_page_without_gaps_or_overlap() {
-        let cores = [(0.0, 1100.0, false), (1100.0, 2200.0, false), (2200.0, 3000.0, true)];
+        let cores = [
+            (0.0, 1100.0, false),
+            (1100.0, 2200.0, false),
+            (2200.0, 3000.0, true),
+        ];
         // A line's center is owned by exactly one band, across the whole page and
         // past the last core (a line hanging below 3000 still belongs to the last).
         for center in [0.0, 549.0, 1099.9, 1100.0, 2199.9, 2200.0, 2999.0, 3200.0] {
@@ -1052,7 +1059,10 @@ mod tests {
                 .iter()
                 .filter(|(t, b, last)| band_owns(center, *t, *b, *last))
                 .count();
-            assert_eq!(owners, 1, "center {center} should be owned by exactly one band");
+            assert_eq!(
+                owners, 1,
+                "center {center} should be owned by exactly one band"
+            );
         }
         // Seam is half-open: 1100.0 goes to the upper band, not the lower one.
         assert!(!band_owns(1100.0, 0.0, 1100.0, false));
@@ -1135,7 +1145,10 @@ mod tests {
         );
         let bytes = std::fs::read(path).expect("demo report photo present");
         let out = recognize_engine_layout(&bytes).expect("OCR");
-        eprintln!("----- 血常规报告1(原件 90° 躺倒)识别文本 -----\n{}", out.text);
+        eprintln!(
+            "----- 血常规报告1(原件 90° 躺倒)识别文本 -----\n{}",
+            out.text
+        );
         assert!(
             out.text.contains("白细胞") || out.text.contains("红细胞"),
             "expected lab terms, got: {}",
@@ -1168,7 +1181,12 @@ mod tests {
         let nonempty = |regions: &[oar_ocr::oarocr::TextRegion]| {
             regions
                 .iter()
-                .filter(|r| r.text.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false))
+                .filter(|r| {
+                    r.text
+                        .as_ref()
+                        .map(|t| !t.trim().is_empty())
+                        .unwrap_or(false)
+                })
                 .count()
         };
 
