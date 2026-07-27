@@ -212,13 +212,32 @@
   .trust-oneline .accent{color:var(--blue)}
   @media(max-width:760px){.trust-grid{grid-template-columns:1fr}.trust-band{padding:32px 24px}}
   /* voices (honest empty state) */
-  .voices{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;max-width:960px;margin:0 auto}
-  .voice{background:var(--bg);border:1.5px dashed #cbd5e1;border-radius:16px;padding:24px;
-    display:flex;flex-direction:column;gap:12px;min-height:168px}
-  .voice .qm{font-size:34px;line-height:.5;color:#cbd5e1;font-weight:800}
-  .voice p{color:#94a3b8;font-size:15px;font-style:italic;flex:1}
-  .voice .who{display:flex;align-items:center;gap:10px;color:#94a3b8;font-size:13px}
-  .voice .who .av{width:30px;height:30px;border-radius:50%;background:#f1f5f9;border:1px dashed #cbd5e1;flex:0 0 auto}
+  /* 「它为什么长成这样」——因果两段式:上白(说了什么)/ 下蓝(因此改了什么),
+     中间一枚「因此」徽章骑在接缝上,把因和果缝在一起。横向扫一行:上排是抱怨,下排是改动。 */
+  /* subgrid:让所有卡的「说了什么 / 因此」在同一条水平线上切分——横向能扫成两条带,
+     因果关系才读得出来;卡内容长短不一时不至于让接缝高低错落。 */
+  .voices{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:1040px;margin:0 auto;
+    align-items:stretch;grid-template-rows:auto auto}
+  .voice{display:grid;grid-template-rows:subgrid;grid-row:span 2;align-content:stretch}
+  @supports not (grid-template-rows:subgrid){.voice{display:flex;flex-direction:column}}
+  .voice{background:var(--card);border:1px solid var(--line);border-radius:18px;
+    overflow:hidden;text-align:left;transition:border-color .18s,box-shadow .18s}
+  .voice:hover{border-color:#a8dfe8;box-shadow:0 6px 20px rgba(23,137,193,.10)}
+  .said{padding:26px 26px 24px;display:flex;flex-direction:column;gap:14px;min-height:0}
+  .said q{quotes:none;color:var(--ink);font-size:16.5px;line-height:1.68;display:block}
+  .said q + q{margin-top:-2px}
+  /* 署名:一条 2px 蓝竖线,不用假头像 */
+  .said .by{border-left:2px solid var(--blue-50);padding-left:11px;margin-top:auto;
+    color:var(--muted);font-size:12.5px;line-height:1.55;padding-top:2px}
+  /* 下半段 + 骑缝徽章 */
+  .did{position:relative;background:linear-gradient(180deg,var(--blue-50),#f4fbfd);
+    border-top:1px solid #d3edf4;padding:26px 26px 22px;font-size:14px;line-height:1.62;color:var(--ink)}
+  .did .tag{position:absolute;top:-11px;left:26px;background:var(--blue);color:#fff;
+    font-size:11.5px;font-weight:800;letter-spacing:.08em;padding:3px 11px;border-radius:999px;
+    box-shadow:0 3px 10px rgba(23,137,193,.30)}
+  .did a{font-weight:700;white-space:nowrap}
+  @media(max-width:980px){.voices{grid-template-columns:1fr;max-width:520px}}
+  @media(prefers-reduced-motion:reduce){.voice{transition:none}}
   .voice-cta{text-align:center;margin-top:34px;display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
   /* footer */
   footer{background:#0f172a;color:#cbd5e1;padding:44px 0;text-align:center;font-size:14px}
@@ -477,13 +496,32 @@
 <!-- ===== 口碑(诚实空态) ===== -->
 <section class="alt" id="voices">
   <div class="wrap">
-    <h2>口碑,来自使用它的人</h2>
-    <p class="section-lead">现在还是早期测试阶段。MedMe 没有大机构背书,靠的是真实用户的口碑一点点成长——你的每一句反馈和推荐,都在塑造它。</p>
+    <h2>它为什么长成这样</h2>
+    <p class="section-lead">MedMe 不是先画好设计再去找用户。下面是最早用它的人说过的原话——每一句都改掉了产品的一部分,改动都在公开仓库里。</p>
     <div class="voices">
-      <div class="voice"><span class="qm">&ldquo;</span><p>期待第一条评价,来自你。</p><div class="who"><span class="av"></span><span>虚位以待</span></div></div>
-      <div class="voice"><span class="qm">&ldquo;</span><p>用得顺手?哪里别扭?说给我们听。</p><div class="who"><span class="av"></span><span>虚位以待</span></div></div>
-      <div class="voice"><span class="qm">&ldquo;</span><p>你的一句推荐,也许能帮到下一个正为病历发愁的人。</p><div class="who"><span class="av"></span><span>虚位以待</span></div></div>
+      <div class="voice">
+        <div class="said">
+          <q>载入示例之后,还得自己去点「病历」那一页才看得到。年纪大的人不会这么绕。</q>
+          <div class="by">一位六十多岁的家人<br>自己管着一抽屉纸质报告</div>
+        </div>
+        <div class="did"><span class="tag">因此</span>载入示例后直接跳进病历页,不用再手点。</div>
+      </div>
+      <div class="voice">
+        <div class="said">
+          <q>很多老人根本不会用手机,病历都是子女在管;婴儿更是从第一天起就得别人管。</q>
+          <div class="by">几位帮我们试用的长辈与家属</div>
+        </div>
+        <div class="did"><span class="tag">因此</span>一个人可以同时管自己、父母、孩子的档案,各自独立、随时切换——代管是常态,不是例外。</div>
+      </div>
+      <div class="voice">
+        <div class="said">
+          <q>几百页 PDF,我一页页看下来又累又看不明白。要是机器能整理好,还能只看某一个病、某一项指标,就有的放矢了。</q>
+          <div class="by">一位大学研究员<br>曾在家人生病时手工整理资料</div>
+        </div>
+        <div class="did"><span class="tag">因此</span>自动按疾病归类、把同一项指标的历次结果连成时间线。<a href="blog.html">怎么做到的 →</a></div>
+      </div>
     </div>
+    <p class="section-lead" style="margin-top:30px">你的反馈也会这样进到产品里。</p>
     <div class="voice-cta">
       <a class="btn primary" href="https://github.com/Chesterguan/medme/issues" target="_blank" rel="noopener">留下反馈 · 提建议 →</a>
       <a class="btn ghost" href="mailto:chesterfield199512@gmail.com?subject=MedMe%20%E5%8F%8D%E9%A6%88">发邮件告诉我们</a>
