@@ -117,6 +117,41 @@ class ProfileManager {
     await _save();
   }
 
+  /// 能不能删这个成员。**第一个成员永远不能删** —— 见 [localBase]:第一个成员用的是
+  /// 原始位置 `<docs>/vault`,其余在 `<docs>/profiles/<名字>/`。删掉第一个会让第二个
+  /// 递补成「第一个」,它的数据路径随之从 `profiles/X` 漂到 `<docs>`,于是**它的病历
+  /// 还在磁盘上却再也找不到**。这不是保守,是那套零迁移路径策略的直接推论。
+  ///
+  /// (真要支持删第一个,得先把递补成员的目录搬到原始位置再改表,那是另一件事。)
+  bool canRemove(String name) =>
+      _members.length > 1 && _members.isNotEmpty && name != _members.first;
+
+  /// 删除一个成员(仅从成员表移除;**磁盘上的 vault 目录由调用方删**,见
+  /// `vault_boot.removeProfileAndReopen` —— 那里才知道 iCloud 容器路径)。
+  /// 删的是当前成员时,自动切回第一个成员。返回是否真的删了。
+  Future<bool> remove(String name) async {
+    await ensureLoaded();
+    if (!canRemove(name)) return false;
+    _members = _members.where((m) => m != name).toList();
+    _counts.remove(name);
+    if (currentMember.value == name) currentMember.value = _members.first;
+    await _save();
+    return true;
+  }
+
+  /// 某成员的本机基目录(其下有 `vault/`)。与 [localBase] 同一套拼法,但可以问
+  /// **任意**成员而不只是当前成员 —— 删除时需要拿到「即将被删的那个」的路径。
+  String localBaseOf(String docsRoot, String name) =>
+      _isRoot(name) ? docsRoot : '$docsRoot/profiles/${_safe(name)}';
+
+  /// 某成员的 iCloud 目录基;容器不可用返回 null。同 [containerBase],但可指定成员。
+  String? containerBaseOf(String? containerRoot, String name) {
+    if (containerRoot == null) return null;
+    return _isRoot(name)
+        ? '$containerRoot/Documents'
+        : '$containerRoot/Documents/profiles/${_safe(name)}';
+  }
+
   /// 首个(唯一)成员仍是占位默认时,用报告里识别到的患者姓名自动命名它。
   /// 返回被改成的新名字(发生了重命名)或 null(未改)。根成员路径与名字无关
   /// (见 [localBase]),重命名只是换标签,无需迁移文件/重开保险箱。

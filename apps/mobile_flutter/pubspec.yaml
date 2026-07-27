@@ -46,7 +46,6 @@ dependencies:
   # 与透视校正,与 CamScanner 同级)。拍照采集走它,拿到已拉正的图 → OCR 行拼得回来。
   cunning_document_scanner: ^2.6.0
   file_picker: ^8.0.0
-  google_mlkit_text_recognition: ^0.16.0
   # 检测 Google Play 服务是否可用:无 GMS 的国产机上 ML Kit 文档扫描器起不来,
   # 据此决定拍照走 ML Kit 扫描器(有 GMS)还是普通系统相机(无 GMS)。Baseflow
   # 成熟包,只查可用性、不引额外 GMS 依赖(cunning/mlkit 已带 play-services-base)。

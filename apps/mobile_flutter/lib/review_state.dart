@@ -140,4 +140,13 @@ class ReviewState {
     if (fl != null) (_flagged[to] ??= <int, String>{}).addAll(fl);
     if (p != null || fl != null) await _save();
   }
+
+  /// 成员被删除时清掉它的待确认/标红。不清的话,日后新建一个同名成员会**继承**上一个
+  /// 的这些标记 —— 文档 id 早就对不上了,表现为凭空多出的红点和标红。
+  Future<void> removeMember(String name) async {
+    await ensureLoaded();
+    final hadPending = _byMember.remove(name) != null;
+    final hadFlagged = _flagged.remove(name) != null;
+    if (hadPending || hadFlagged) await _save();
+  }
 }

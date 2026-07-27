@@ -16,7 +16,13 @@ import 'package:url_launcher/url_launcher.dart';
 /// 版本号本来就只在“关于”里给人看,不参与任何业务逻辑。
 const _appVersion = '1.2.0';
 
-/// 底部导航一级 tab「设置」—— 载入示例数据 / 清空重置 / iCloud 同步占位 / 关于。
+/// 底部导航一级 tab「设置」—— 保险箱/成员 / 载入示例数据 / 清空重置 / 关于。
+///
+/// 同步(iCloud)入口当前收起,见 [_showIcloudSync]。
+
+/// 是否在设置里露出「iCloud 同步」入口。当前 false —— 全力做手机端本体,跨设备
+/// 同步先不投入。底层能力未删,改回 true 即恢复。
+const bool _showIcloudSync = false;
 /// 分组卡片列表,视觉还原自 `apps/mobile/src/App.tsx` 的设置区(sect + group + row)。
 /// 保险箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。
 class SettingsScreen extends StatefulWidget {
@@ -215,10 +221,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
-          // iCloud 同步是 iOS 原生能力(苹果设备间同步),安卓无 iCloud——不显示这一节,
-          // 否则安卓用户会看到一个永远开不了、还叫他「去系统设置登录 iCloud」的死开关。
-          // 与 OCR 一样,属于「各平台用自己的原生方案」的有意差异(安卓云同步见路线图 1.3)。
-          if (Platform.isIOS) ...[
+          // **同步整条线暂时收起**(2026-07-27):现阶段全力做手机端本体,跨设备同步
+          // 先不投入。iCloud 只覆盖 iOS,安卓另有一套,做一半反而给用户一个半成品开关。
+          // Rust/原生那一侧的能力**没有删**(`icloudStatus`/`enableIcloudSync` 都还在,
+          // 已开启同步的老用户不受影响),只是不在设置里露出入口 —— 想恢复把这个常量
+          // 改回 true 即可。
+          //
+          // 原来的注释保留备查:iCloud 同步是 iOS 原生能力,安卓无 iCloud,所以这一节
+          // 本来就只对 iOS 显示,否则安卓用户会看到一个永远开不了的死开关。
+          if (_showIcloudSync && Platform.isIOS) ...[
             _SectionLabel('iCloud 同步(实验性)'),
             _SettingsGroup(
               children: [
@@ -336,6 +347,41 @@ class _VaultCard extends StatelessWidget {
     return pm.countFor(member);
   }
 
+  /// 移除一个成员:连同他的全部病历一起删,不可撤销。当前成员被删时会自动切回
+  /// 第一个成员(`ProfileManager.remove` 负责),各屏随 `bumpVaultRevision` 刷新。
+  Future<void> _confirmRemove(BuildContext context, String name) async {
+    final n = _countOf(name);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('移除成员「$name」?'),
+        content: Text(
+          n == null || n == 0
+              ? '将删除该成员的档案。此操作不可撤销。'
+              : '该成员的 $n 份病历会被一并删除,包括原件。此操作不可撤销。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            child: const Text('移除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final removed = await removeProfileAndReopen(name);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(removed ? '已移除「$name」' : '无法移除该成员')),
+    );
+    onChanged();
+  }
+
   Future<void> _rename(BuildContext context) async {
     final pm = ProfileManager.instance;
     final controller = TextEditingController(text: pm.vaultName);
@@ -400,7 +446,7 @@ class _VaultCard extends StatelessWidget {
             const Divider(height: 1, color: MedMe.line),
             for (final m in members)
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+                padding: EdgeInsets.fromLTRB(20, 8, pm.canRemove(m) ? 8 : 20, 8),
                 child: Row(
                   children: [
                     Expanded(
@@ -410,6 +456,15 @@ class _VaultCard extends StatelessWidget {
                       _countOf(m) == null ? '—' : '${_countOf(m)} 份',
                       style: const TextStyle(color: MedMe.faint, fontSize: 13),
                     ),
+                    // 第一个成员没有删除按钮:它用的是保险箱的原始位置,删了会让
+                    // 递补成员的数据路径漂移(见 `ProfileManager.canRemove`)。
+                    if (pm.canRemove(m))
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        color: MedMe.faint,
+                        tooltip: '移除「$m」',
+                        onPressed: () => _confirmRemove(context, m),
+                      ),
                   ],
                 ),
               ),

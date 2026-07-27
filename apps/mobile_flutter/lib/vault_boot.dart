@@ -138,6 +138,38 @@ Future<void> autoNameCurrentProfileFrom(String? detectedName) async {
   if (renamed != null) await ReviewState.instance.renameMember(old, renamed);
 }
 
+/// 删除一个成员:成员表移除 + **本机与 iCloud 容器两处**的数据目录都删掉,再重开
+/// (删的若是当前成员,`remove` 已把 current 切回第一个)并刷新各屏。
+///
+/// 两处都删的理由与 [wipeAllData] 第 4 步同源:关掉 iCloud 时容器副本会被保留,
+/// 只删活跃那处的话,数据还在容器里躺着,再开 iCloud 会被 adopt 回来 —— 用户以为
+/// 删干净了,过一阵又冒出来。
+///
+/// 第一个成员删不了(见 [ProfileManager.canRemove] 的路径说明),这里再挡一道:
+/// `remove` 返回 false 就直接返回,绝不去删任何目录。
+Future<bool> removeProfileAndReopen(String name) async {
+  await ProfileManager.instance.ensureLoaded();
+  if (!ProfileManager.instance.canRemove(name)) return false;
+
+  final docsRoot = (await getApplicationDocumentsDirectory()).path;
+  final containerRoot = await IcloudBridge.containerPath();
+  // 路径必须在把成员从表里摘掉**之前**算好:`localBaseOf` 依赖成员表判断谁是第一个。
+  final localBase = ProfileManager.instance.localBaseOf(docsRoot, name);
+  final cloudBase = ProfileManager.instance.containerBaseOf(containerRoot, name);
+
+  if (!await ProfileManager.instance.remove(name)) return false;
+  await ReviewState.instance.removeMember(name);
+
+  for (final base in [localBase, ?cloudBase]) {
+    final d = Directory(base);
+    if (await d.exists()) await d.delete(recursive: true);
+  }
+
+  await openCurrentProfileVault();
+  bumpVaultRevision();
+  return true;
+}
+
 /// 新建成员(空库)并切过去、重开、刷新。
 Future<void> createProfileAndReopen(String name) async {
   await ProfileManager.instance.create(name);
