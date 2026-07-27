@@ -53,7 +53,7 @@ class ModePickerScreen extends StatelessWidget {
                 icon: Icons.medical_services_outlined,
                 accentColor: MedMe.proxyOrange,
                 accentSoft: MedMe.proxyOrangeSoft,
-                title: '我是医生,帮病人建档',
+                title: '医生,帮病人建档',
                 subtitle: '当面为病人拍摄纸质病历材料,生成加密文件交给病人',
                 onTap: () => AppMode.instance.chooseMode(AppModeKind.doctor),
               ),
