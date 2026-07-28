@@ -193,8 +193,8 @@ class _ExportScreenState extends State<ExportScreen> {
               _ActionCard(
                 icon: Icons.qr_code_2,
                 title: '当面给医生看',
-                subtitle: '生成二维码,医生用自己手机扫一下就能看到在治疾病、'
-                    '关键指标趋势与在用药物。不含原件,需要时你再当场翻给他。',
+                subtitle: '生成二维码,医生用自己手机扫一下就能看到你的完整病历 —— '
+                    '在治疾病、指标趋势、在用药物,以及每一份原件。',
                 buttonLabel: '出示二维码',
                 onPressed: _busy
                     ? null

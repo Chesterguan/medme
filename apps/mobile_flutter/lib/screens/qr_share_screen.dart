@@ -82,7 +82,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
         _stage = '正在准备病历…';
         _progress = null;
       });
-      final (blob, keyB64, recordCount) = await qrShareBlob(expiresDays: 1);
+      final (blob, keyB64, recordCount) = await qrShareBlob(expiresDays: 15);
 
       if (!mounted) return;
       setState(() {
@@ -246,7 +246,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
                 SizedBox(height: 10),
                 Text(
                   '这张码就是钥匙:被拍下就等于把这份病历给了对方,看完收起手机即可。'
-                  '内容已加密临时存放,一天后自动删除 —— 密钥只在这张码里,我们解不开。',
+                  '内容已加密临时存放,保留期结束后自动删除 —— 密钥只在这张码里,我们解不开。',
                   style: TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.faint),
                 ),
               ],
