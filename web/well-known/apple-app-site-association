@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["49G34P23QP.com.medme.mobile"],
+        "components": [
+          {
+            "/": "/claim/*",
+            "comment": "认领链接:病人点开就直接进 App 存病历"
+          }
+        ]
+      }
+    ]
+  }
+}

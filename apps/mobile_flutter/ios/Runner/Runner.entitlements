@@ -14,5 +14,13 @@
 	<array>
 		<string>iCloud.com.medme.mobile</string>
 	</array>
+	<!-- Universal Links:病人在微信里点认领链接直接进 App,不必先过浏览器。
+	     只认领 /claim/*(见 web/well-known/apple-app-site-association)—— **不能认领
+	     /viewer/**,那是医生扫码看病历的地方,他要的是浏览器;把它一起认领了,装了
+	     MedMe 的医生扫码会被弹进 App。 -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:medmenow.com</string>
+	</array>
 </dict>
 </plist>

@@ -124,7 +124,7 @@ Rust 工作区 crate 名(供 `cargo -p` 使用):`core-model`、`parser`、`pipel
 
 ## 有问题?/ Questions?
 
-- 用法 / 找不到入口:先看官网 <https://chesterguan.github.io/medme/> 与
+- 用法 / 找不到入口:先看官网 <https://medmenow.com/> 与
   [README](README.md)、[TESTING.md](TESTING.md)。
 - 功能建议 / bug:开一个 [issue](https://github.com/Chesterguan/medme/issues)
   (用对应模板)。

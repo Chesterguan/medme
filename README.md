@@ -19,9 +19,9 @@
 
 `本地优先` · `原件永存` · `端到端加密分享` · `零服务器` · `中文优先`
 
-[官网 / Landing](https://chesterguan.github.io/medme/) ·
-[医生视图样例 / Live demo](https://chesterguan.github.io/medme/demo/) ·
-[加密分享查看器 / Share viewer](https://chesterguan.github.io/medme/viewer/) ·
+[官网 / Landing](https://medmenow.com/) ·
+[医生视图样例 / Live demo](https://medmenow.com/demo/) ·
+[加密分享查看器 / Share viewer](https://medmenow.com/viewer/) ·
 [下载 / Releases](https://github.com/Chesterguan/medme/releases)
 
 </div>
@@ -54,8 +54,8 @@
 
 ## 截图 / 演示 · Screenshots & demo
 
-先到 [官网](https://chesterguan.github.io/medme/) 看产品截图与介绍;
-想不安装就体验:打开 [**医生视图样例**](https://chesterguan.github.io/medme/demo/) —— 那是一份
+先到 [官网](https://medmenow.com/) 看产品截图与介绍;
+想不安装就体验:打开 [**医生视图样例**](https://medmenow.com/demo/) —— 那是一份
 **真实的加密分享**(与患者发给医生的完全同一条代码路径),数据换成公开演示数据集:疾病泳道
 时间轴、化验趋势、12 层可滚轮翻层的 CT 阅片、PDF 原件核对。
 
@@ -70,7 +70,7 @@
 ## 安装 · Install
 
 - **推荐(无需开发环境)**:到 [Releases](https://github.com/Chesterguan/medme/releases)
-  或 [官网](https://chesterguan.github.io/medme/) 下载 `.dmg`(Apple Silicon /
+  或 [官网](https://medmenow.com/) 下载 `.dmg`(Apple Silicon /
   Intel),拖进「应用程序」即可。
 - **测试版未签名**:首次打开会被 macOS 拦住(正常)。在访达里**右键 MedMe → 打开**,
   或终端执行 `xattr -cr /Applications/MedMe.app` 后再打开。正式版将签名 + 公证。

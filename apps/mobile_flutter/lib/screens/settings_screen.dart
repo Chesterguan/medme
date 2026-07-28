@@ -78,7 +78,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openHomepage() async {
-    final uri = Uri.parse('https://chesterguan.github.io/medme/');
+    final uri = Uri.parse('https://medmenow.com/');
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok) _showSnack('无法打开主页,请稍后重试');
   }
