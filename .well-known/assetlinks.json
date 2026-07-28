@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.medme.mobile",
+      "sha256_cert_fingerprints": [
+        "85:45:23:AF:1A:CA:E8:63:D0:24:45:3D:23:41:0B:1F:6A:D0:F9:29:53:20:67:73:AB:AA:99:C2:53:A1:C0:C6"
+      ]
+    }
+  }
+]
