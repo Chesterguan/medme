@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_flutter/app_mode.dart';
+import 'package:mobile_flutter/claim_link.dart';
 import 'package:mobile_flutter/ephemeral_session.dart';
+import 'package:mobile_flutter/screens/claim_screen.dart';
 import 'package:mobile_flutter/src/rust/frb_generated.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
@@ -23,12 +25,57 @@ Future<void> main() async {
   runApp(const MedMeApp());
 }
 
-class MedMeApp extends StatelessWidget {
+/// 深链投递需要一个跨界面可用的导航器 —— 认领链接可能在任何界面(甚至冷启动)到达。
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
+
+class MedMeApp extends StatefulWidget {
   const MedMeApp({super.key});
+  @override
+  State<MedMeApp> createState() => _MedMeAppState();
+}
+
+class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // 冷启动:App 是被链接拉起来的,初始路由就是那条 URI。热启动走
+    // didPushRouteInformation。两条路都收敛到 handleIncomingUri。
+    final initial = WidgetsBinding.instance.platformDispatcher.defaultRouteName;
+    if (initial != '/') _dispatch(initial);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// App 已在运行时,系统把链接送到这里(自定义 scheme / 将来的 Universal Links)。
+  @override
+  Future<bool> didPushRouteInformation(RouteInformation info) async {
+    return _dispatch(info.uri.toString());
+  }
+
+  bool _dispatch(String raw) {
+    final uri = Uri.tryParse(raw);
+    if (uri == null) return false;
+    final link = ClaimLink.tryParse(uri);
+    if (link == null) return false;
+    // 保险箱可能还没打开完(冷启动),推迟到下一帧再导航。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      appNavigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => ClaimScreen(link: link)),
+      );
+    });
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'MedMe 医我',
+      navigatorKey: appNavigatorKey,
       theme: MedMe.theme(),
       debugShowCheckedModeBanner: false,
       // 面向简体中文用户:强制中文本地化,日历选择器/所有 Material 弹窗都显示中文。

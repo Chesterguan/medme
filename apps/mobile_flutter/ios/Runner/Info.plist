@@ -93,5 +93,26 @@
 			<string>Any</string>
 		</dict>
 	</dict>
+	<!-- 认领链接:病人在浏览器里看完医生代拍的病历,点「存进我的 MedMe」时由这条
+	     scheme 把 fragment 交给 App(见 lib/claim_link.dart)。用自定义 scheme 而不是
+	     Universal Links,是因为后者要求校验文件放在域名根目录,而站点现在是 GitHub
+	     项目页,根目录不归我们管。买了自有域名后可以再补 Universal Links。 -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.medme.mobile.claim</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>medme</string>
+			</array>
+		</dict>
+	</array>
+	<!-- 让 Flutter 引擎把进来的 URL 直接送进 Dart 的路由回调
+	     (didPushRouteInformation),省掉一个深链插件。 -->
+	<key>FlutterDeepLinkingEnabled</key>
+	<true/>
 </dict>
 </plist>

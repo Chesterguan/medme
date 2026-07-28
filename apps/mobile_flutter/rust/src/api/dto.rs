@@ -139,6 +139,18 @@ pub struct OcrPpResultDto {
     pub confidence: f32,
 }
 
+/// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
+///
+/// `deduped` 不是错误 —— 病人重复点同一条认领链接是常事,内容哈希会挡住,
+/// UI 该说「已经在你的档案里了」而不是报错。`text_only` 则要如实告诉用户:
+/// 这几份只还原了文字,原件没跟过来。
+#[derive(Debug, Clone)]
+pub struct ClaimResultDto {
+    pub imported: i64,
+    pub deduped: i64,
+    pub text_only: i64,
+}
+
 /// 加密分享生成结果:口令(单独告知医生)、记录数、文件字节数、分享文件路径。
 #[derive(Debug, Clone)]
 pub struct ShareResultDto {

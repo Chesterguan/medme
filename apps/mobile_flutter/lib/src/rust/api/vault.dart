@@ -155,6 +155,35 @@ Future<ShareResultDto> createShare({required PlatformInt64 expiresDays}) =>
 Future<String> currentVaultRoot() =>
     RustLib.instance.api.crateApiVaultCurrentVaultRoot();
 
+/// 出码用的密文:整份病历(含原件),交给 Dart 传上瞬时云。
+///
+/// 返回 `(密文, base64url 密钥, 记录数)`。拿到对象 id 后二维码内容是
+/// `<查看器>/#q2.<id>.<密钥>` —— 八十来个字符,格子稀疏、隔着桌子好扫。
+///
+/// **密钥不上传**,只进二维码的 `#` 之后。云上那份我们自己也解不开。
+Future<(Uint8List, String, PlatformInt64)> qrShareBlob({
+  required PlatformInt64 expiresDays,
+}) => RustLib.instance.api.crateApiVaultQrShareBlob(expiresDays: expiresDays);
+
+/// 认领:把医生代拍的加密包还原进**当前打开的**保险箱。
+///
+/// `blob` 是从瞬时云取回的密文,`key_b64` 是认领链接 `#` 后面那把钥匙 —— 两者都由
+/// Dart 侧拿到后传进来,Rust 不联网(取密文是 Dart 的事,这里只管解密与落盘)。
+///
+/// 写的是「当前打开的箱子」,所以调用前必须已经切到病人自己要存进去的那个成员。
+Future<ClaimResultDto> claimImport({
+  required List<int> blob,
+  required String keyB64,
+}) => RustLib.instance.api.crateApiVaultClaimImport(blob: blob, keyB64: keyB64);
+
+/// 只解密、不落盘:让病人在「存进哪个成员」之前先看到这包里有几份、是谁的。
+/// 返回 `(记录数, 患者姓名)`;姓名解析不出时为空串。
+Future<(PlatformInt64, String)> claimPreview({
+  required List<int> blob,
+  required String keyB64,
+}) =>
+    RustLib.instance.api.crateApiVaultClaimPreview(blob: blob, keyB64: keyB64);
+
 /// 代拍(医生模式)专用的加密分享:与 [`create_share`] 只差两点 —— **把拍前同意
 /// 记录打进加密包**、且只打包医生逐份确认过的文档。底下与临时会话版
 /// `ephemeral_create_share` 调**同一个** `build_encrypted_share_with_consent_and_confirmed`,
@@ -237,7 +266,7 @@ Future<void> disableIcloudSync() =>
 /// 非 iOS/安卓构建(桌面/CLI)的占位实现。FRB codegen 在开发机上跑一次生成
 /// `frb_generated.rs` + Dart 绑定,这份生成文件不按平台分叉,所以这个函数签名
 /// 必须在所有 target 上都存在;函数体在非 iOS/安卓直接报错即可 —— `ocr` 依赖
-/// 本身按 `cfg(any(target_os = "ios", target_os = "android"))` 门控(见
+/// 本身按 `cfg(pp_ocr)` 门控(见 `build.rs` 的规则与
 /// `Cargo.toml`),桌面/CLI 构建压根不链接 oar-ocr/onnxruntime,这个分支不产生
 /// 任何额外体积或依赖。
 Future<OcrPpResultDto> recognizeImagePp({required List<int> bytes}) =>

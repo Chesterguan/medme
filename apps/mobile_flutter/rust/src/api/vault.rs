@@ -683,6 +683,54 @@ pub fn current_vault_root() -> anyhow::Result<String> {
     with_state(|state| Ok(state.truth_root.to_string_lossy().to_string()))
 }
 
+/// 出码用的密文:整份病历(含原件),交给 Dart 传上瞬时云。
+///
+/// 返回 `(密文, base64url 密钥, 记录数)`。拿到对象 id 后二维码内容是
+/// `<查看器>/#q2.<id>.<密钥>` —— 八十来个字符,格子稀疏、隔着桌子好扫。
+///
+/// **密钥不上传**,只进二维码的 `#` 之后。云上那份我们自己也解不开。
+pub fn qr_share_blob(expires_days: i64) -> anyhow::Result<(Vec<u8>, String, i64)> {
+    let days: u32 = expires_days
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("expires_days 取值无效:{expires_days}"))?;
+    with_state(|state| {
+        medme_share::share::build_own_share_blob(
+            &state.vault,
+            days,
+            &medme_share::render_dicom_png_in_process,
+        )
+        .map_err(|e| anyhow::anyhow!(e))
+    })
+}
+
+/// 认领:把医生代拍的加密包还原进**当前打开的**保险箱。
+///
+/// `blob` 是从瞬时云取回的密文,`key_b64` 是认领链接 `#` 后面那把钥匙 —— 两者都由
+/// Dart 侧拿到后传进来,Rust 不联网(取密文是 Dart 的事,这里只管解密与落盘)。
+///
+/// 写的是「当前打开的箱子」,所以调用前必须已经切到病人自己要存进去的那个成员。
+pub fn claim_import(blob: Vec<u8>, key_b64: String) -> anyhow::Result<ClaimResultDto> {
+    with_state(|state| {
+        let out = medme_share::claim::import_claim(&state.vault, &blob, &key_b64)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        Ok(ClaimResultDto {
+            imported: out.imported,
+            deduped: out.deduped,
+            text_only: out.text_only,
+        })
+    })
+}
+
+/// 只解密、不落盘:让病人在「存进哪个成员」之前先看到这包里有几份、是谁的。
+/// 返回 `(记录数, 患者姓名)`;姓名解析不出时为空串。
+pub fn claim_preview(blob: Vec<u8>, key_b64: String) -> anyhow::Result<(i64, String)> {
+    let payload = medme_share::claim::decrypt_claim(&blob, &key_b64)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let n = payload["records"].as_array().map(|a| a.len()).unwrap_or(0) as i64;
+    let name = payload["patient"]["name"].as_str().unwrap_or("").to_string();
+    Ok((n, name))
+}
+
 /// 代拍(医生模式)专用的加密分享:与 [`create_share`] 只差两点 —— **把拍前同意
 /// 记录打进加密包**、且只打包医生逐份确认过的文档。底下与临时会话版
 /// `ephemeral_create_share` 调**同一个** `build_encrypted_share_with_consent_and_confirmed`,

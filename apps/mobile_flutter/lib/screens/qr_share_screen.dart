@@ -11,12 +11,12 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 
-import '../src/rust/api/dto.dart';
+import '../claim_storage.dart';
 import '../src/rust/api/vault.dart';
 import '../theme.dart';
 
 /// 医生扫码后打开的查看器地址。数据在 `#` 之后,不会随请求上行。
-const _viewerBase = 'https://chesterguan.github.io/medme/viewer/';
+const _viewerBase = 'https://medmenow.com/viewer/';
 
 class QrShareScreen extends StatefulWidget {
   const QrShareScreen({super.key});
@@ -26,8 +26,11 @@ class QrShareScreen extends StatefulWidget {
 }
 
 class _QrShareScreenState extends State<QrShareScreen> {
-  QrShareDto? _share;
+  String? _url;
+  int _recordCount = 0;
   String? _error;
+  String? _stage;      // 当前在干嘛(准备 / 上传)
+  double? _progress;   // 0.0–1.0,只在上传阶段有值
 
   // 自动调亮是否成功:成功了就不用再提示患者手动调亮。失败(部分设备/权限
   // 限制)保持 false,页面照常显示二维码,退回原来的手动提示文案。
@@ -65,14 +68,55 @@ class _QrShareScreenState extends State<QrShareScreen> {
     }
   }
 
+  /// 出码 = 先把完整病历(含原件)加密传上瞬时云,再把 `q2.<id>.<密钥>` 编成码。
+  ///
+  /// 上传要花几秒到几十秒,取决于原件多少 —— 这段时间医患本来就在说话,进度条是
+  /// 为了让病人知道还要多久,而不是干等一个转圈。
+  ///
+  /// **失败就是失败,不给一个残缺的码。** 医生扫到一个打不开的码,比病人当场知道
+  /// 「没传上、再试一次」糟糕得多 —— 前者浪费的是诊室里那几分钟。
   Future<void> _generate() async {
     try {
-      final s = await buildQrShareUrl(baseUrl: _viewerBase);
-      if (mounted) setState(() => _share = s);
+      setState(() {
+        _error = null;
+        _stage = '正在准备病历…';
+        _progress = null;
+      });
+      final (blob, keyB64, recordCount) = await qrShareBlob(expiresDays: 1);
+
+      if (!mounted) return;
+      setState(() {
+        _stage = '正在上传(${_mb(blob.length)})…';
+        _progress = 0;
+      });
+      final id = await ClaimStorage().upload(
+        blob,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _stage = null;
+        _progress = null;
+        _url = '$_viewerBase#q2.$id.$keyB64';
+        _recordCount = recordCount.toInt();
+      });
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) {
+        setState(() {
+          _stage = null;
+          _progress = null;
+          _error = '$e';
+        });
+      }
     }
   }
+
+  static String _mb(int bytes) => bytes < 1024 * 1024
+      ? '${(bytes / 1024).round()} KB'
+      : '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
 
   @override
   Widget build(BuildContext context) {
@@ -109,15 +153,38 @@ class _QrShareScreenState extends State<QrShareScreen> {
         ),
       );
     }
-    final s = _share;
-    if (s == null) {
-      return const Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CircularProgressIndicator(),
-          SizedBox(height: 14),
-          Text('正在整理当下病情…', style: TextStyle(color: MedMe.faint, fontSize: 13)),
-        ],
+    final url = _url;
+    if (url == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 上传阶段给确定进度(病人在等,该知道还要多久);准备阶段给不定式转圈。
+            if (_progress != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: _progress,
+                  minHeight: 7,
+                  backgroundColor: MedMe.tealSoft,
+                ),
+              )
+            else
+              const CircularProgressIndicator(),
+            const SizedBox(height: 14),
+            Text(
+              _stage ?? '正在准备…',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: MedMe.faint, fontSize: 13),
+            ),
+            if (_progress != null) ...[
+              const SizedBox(height: 6),
+              Text('${(_progress! * 100).round()}%',
+                  style: const TextStyle(color: MedMe.faint, fontSize: 12)),
+            ],
+          ],
+        ),
       );
     }
 
@@ -145,7 +212,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
               border: Border.all(color: MedMe.line),
             ),
             child: QrImageView(
-              data: s.url,
+              data: url,
               version: QrVersions.auto,
               size: 280,
               backgroundColor: Colors.white,
@@ -156,7 +223,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
             ),
           ),
           const SizedBox(height: 18),
-          _summaryChip(s),
+          _summaryChip(),
           const SizedBox(height: 20),
           Container(
             padding: const EdgeInsets.all(14),
@@ -173,14 +240,13 @@ class _QrShareScreenState extends State<QrShareScreen> {
                 ),
                 SizedBox(height: 6),
                 Text(
-                  '在治的疾病、关键化验的近期趋势、正在吃的药。'
-                  '不含原件、影像和更早的记录 —— 那些需要时你在自己手机上给他看。',
+                  '你的完整病历:在治的疾病、化验趋势、正在吃的药,以及每一份原件。',
                   style: TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.ink),
                 ),
                 SizedBox(height: 10),
                 Text(
-                  '这张码就是钥匙:被拍下就等于把这份摘要给了对方,'
-                  '看完收起手机即可,不必额外「撤回」。',
+                  '这张码就是钥匙:被拍下就等于把这份病历给了对方,看完收起手机即可。'
+                  '内容已加密临时存放,一天后自动删除 —— 密钥只在这张码里,我们解不开。',
                   style: TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.faint),
                 ),
               ],
@@ -191,10 +257,8 @@ class _QrShareScreenState extends State<QrShareScreen> {
     );
   }
 
-  Widget _summaryChip(QrShareDto s) {
-    final text = s.problemCount > 0
-        ? '本码含 ${s.problemCount} 个在治问题'
-        : '暂未识别到在治问题,医生仍可看到用药与近期变化';
+  Widget _summaryChip() {
+    final text = '本码含 $_recordCount 份病历,含原件';
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [

@@ -24,7 +24,23 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- 认领链接:病人在浏览器里看完医生代拍的病历,点「存进我的 MedMe」时
+                 由这条 scheme 把 fragment 交给 App(见 lib/claim_link.dart)。
+                 用自定义 scheme 而不是 App Links,是因为后者要求校验文件放在域名
+                 根目录,而站点现在是 GitHub 项目页,根目录不归我们管。买了自有域名
+                 后可以再补 App Links —— 那时这条仍然保留(旧链接不该失效)。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="medme"/>
+            </intent-filter>
         </activity>
+        <!-- 让 Flutter 引擎把上面 VIEW intent 的 URI 直接送进 Dart 的路由回调
+             (didPushRouteInformation),省掉一个深链插件。 -->
+        <meta-data
+            android:name="flutter_deeplinking_enabled"
+            android:value="true" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

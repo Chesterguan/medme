@@ -9,7 +9,36 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+
+/// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
+///
+/// `deduped` 不是错误 —— 病人重复点同一条认领链接是常事,内容哈希会挡住,
+/// UI 该说「已经在你的档案里了」而不是报错。`text_only` 则要如实告诉用户:
+/// 这几份只还原了文字,原件没跟过来。
+class ClaimResultDto {
+  final PlatformInt64 imported;
+  final PlatformInt64 deduped;
+  final PlatformInt64 textOnly;
+
+  const ClaimResultDto({
+    required this.imported,
+    required this.deduped,
+    required this.textOnly,
+  });
+
+  @override
+  int get hashCode => imported.hashCode ^ deduped.hashCode ^ textOnly.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ClaimResultDto &&
+          runtimeType == other.runtimeType &&
+          imported == other.imported &&
+          deduped == other.deduped &&
+          textOnly == other.textOnly;
+}
 
 /// 一份文档当前的「已确认」状态(医生代拍待确认列表)。**不**塞进共享的
 /// `DocumentSummaryDto`(`vault.rs` 的正常病人档案列表也用它,这个状态只对医生

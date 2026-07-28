@@ -51,6 +51,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
+  ClaimResultDto dco_decode_claim_result_dto(dynamic raw);
+
+  @protected
   ConfirmedStatusDto dco_decode_confirmed_status_dto(dynamic raw);
 
   @protected
@@ -156,6 +159,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   QrShareDto dco_decode_qr_share_dto(dynamic raw);
 
   @protected
+  (PlatformInt64, String) dco_decode_record_i_64_string(dynamic raw);
+
+  @protected
+  (Uint8List, String, PlatformInt64)
+  dco_decode_record_list_prim_u_8_strict_string_i_64(dynamic raw);
+
+  @protected
   ShareResultDto dco_decode_share_result_dto(dynamic raw);
 
   @protected
@@ -203,6 +213,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  ClaimResultDto sse_decode_claim_result_dto(SseDeserializer deserializer);
 
   @protected
   ConfirmedStatusDto sse_decode_confirmed_status_dto(
@@ -330,6 +343,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   QrShareDto sse_decode_qr_share_dto(SseDeserializer deserializer);
 
   @protected
+  (PlatformInt64, String) sse_decode_record_i_64_string(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  (Uint8List, String, PlatformInt64)
+  sse_decode_record_list_prim_u_8_strict_string_i_64(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ShareResultDto sse_decode_share_result_dto(SseDeserializer deserializer);
 
   @protected
@@ -388,6 +412,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_i_64(
     PlatformInt64 self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_claim_result_dto(
+    ClaimResultDto self,
     SseSerializer serializer,
   );
 
@@ -561,6 +591,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_qr_share_dto(QrShareDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_record_i_64_string(
+    (PlatformInt64, String) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_record_list_prim_u_8_strict_string_i_64(
+    (Uint8List, String, PlatformInt64) self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_share_result_dto(
