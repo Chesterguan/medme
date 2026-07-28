@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:share_plus/share_plus.dart';
 
-import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/theme.dart';
 
 import 'qr_share_screen.dart';
 
-/// 底部导航一级 tab「导出·分享」—— 把病历导出成可打印文件(可按日期区间筛选),或
-/// 端到端加密分享给医生。手机端只做「轻」的导出/筛选;全文搜索、趋势等「重」功能在
-/// 桌面端与医生查看器。导出/加密全在 Rust core(`medme_share`),这里只调 FFI + 分享。
+/// 底部导航一级 tab「导出·分享」—— 当面出示二维码给医生,或把病历导出成可打印文件
+/// (可按日期区间筛选)。手机端只做「轻」的导出/筛选;全文搜索、趋势等「重」功能在
+/// 桌面端与医生查看器。导出全在 Rust core(`medme_share`),这里只调 FFI + 分享。
 class ExportScreen extends StatefulWidget {
   const ExportScreen({super.key});
 
@@ -160,170 +158,13 @@ class _ExportScreenState extends State<ExportScreen> {
     }
   }
 
-  Future<void> _startEncryptedShare() async {
-    var selectedDays = 7;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('加密分享给医生'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '生成一份端到端加密文件和一串口令;对方需要口令才能打开,全程不经过任何服务器。',
-                style: TextStyle(
-                  fontSize: 13.5,
-                  color: MedMe.faint,
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '有效期',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment(value: 7, label: Text('7 天')),
-                  ButtonSegment(value: 30, label: Text('30 天')),
-                  ButtonSegment(value: 90, label: Text('90 天')),
-                ],
-                selected: {selectedDays},
-                onSelectionChanged: (s) =>
-                    setDialogState(() => selectedDays = s.first),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('生成分享'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed != true) return;
-
-    setState(() {
-      _busy = true;
-      _progress = '正在生成端到端加密分享…';
-    });
-    try {
-      final result = await createShare(expiresDays: selectedDays);
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _progress = null;
-      });
-      await _showShareResult(result);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _progress = null;
-      });
-      await _showError('生成分享失败', '$e');
-    }
-  }
-
-  Future<void> _showShareResult(ShareResultDto result) async {
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('加密分享已生成'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '共 ${result.recordCount} 份记录,已打包为端到端加密文件。',
-              style: const TextStyle(fontSize: 13.5, color: MedMe.faint),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              '把文件发给医生,口令请用不同渠道另发(比如短信、电话告知);'
-              '对方打开文件、输入口令即可查看,数据始终端到端加密。',
-              style: TextStyle(fontSize: 13.5, color: MedMe.faint, height: 1.5),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: MedMe.bg,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: MedMe.line),
-              ),
-              child: Row(
-                children: [
-                  const Text(
-                    '口令',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: MedMe.faint,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      result.passphrase,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '复制口令',
-                    icon: const Icon(Icons.copy, size: 18),
-                    onPressed: () async {
-                      await Clipboard.setData(
-                        ClipboardData(text: result.passphrase),
-                      );
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(
-                          context,
-                        ).showSnackBar(const SnackBar(content: Text('口令已复制')));
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('关闭'),
-          ),
-          FilledButton.icon(
-            icon: const Icon(Icons.ios_share),
-            label: const Text('分享文件'),
-            onPressed: () async {
-              await SharePlus.instance.share(
-                ShareParams(
-                  files: [XFile(result.path)],
-                  subject: 'MedMe 加密病历',
-                  sharePositionOrigin: _shareOrigin(),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
+  // 注:「加密分享给医生」(自包含加密 HTML + 口令)**只撤了移动端入口**,能力全留着 ——
+  // 二维码扩展到完整数据与原件之后,它与二维码抢同一个心智位,所以先拿掉;这块位置
+  // 以后可能改成别的功能。
+  //
+  // 不要顺手删底层:桌面端仍在用 `create_share`,认领密文与它共用同一段装配代码
+  // (`build_share_blob_inner`),而且**已经发出去的分享文件必须仍能用查看器的口令模式
+  // 打开** —— 删了就等于让别人手里的文件变成死文件。
 
   Future<void> _showError(String title, String message) => showDialog<void>(
     context: context,
@@ -370,14 +211,6 @@ class _ExportScreenState extends State<ExportScreen> {
                 subtitle: '导出可打印文件(HTML),可按日期区间筛选;适合报销、留档或给医生。',
                 buttonLabel: '选择范围并导出',
                 onPressed: _busy ? null : _exportTimeline,
-              ),
-              const SizedBox(height: 14),
-              _ActionCard(
-                icon: Icons.lock_outline,
-                title: '加密分享给医生',
-                subtitle: '生成端到端加密文件 + 口令,对方需口令才能打开,全程不经服务器。',
-                buttonLabel: '生成加密分享',
-                onPressed: _busy ? null : _startEncryptedShare,
               ),
             ],
           ),
