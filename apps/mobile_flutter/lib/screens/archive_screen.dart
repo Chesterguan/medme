@@ -243,7 +243,14 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     if (await _confirmDelete(label)) await _delete(docId);
   }
 
-  /// 顶部 banner 点击:弹出成员切换器(家庭多成员)。
+  /// 切到某成员(tab 条与弹出式共用)。已经是当前成员则不做事,避免白重开保险箱。
+  Future<void> _switchTo(String id) async {
+    if (id == ProfileManager.instance.currentId.value) return;
+    await switchProfileAndReopen(id);
+    if (mounted) setState(() {});
+  }
+
+  /// 顶部 banner 点击:弹出成员切换器(成员多于 kMemberTabsMax 时用)。
   Future<void> _showProfileSwitcher() async {
     await ProfileManager.instance.ensureLoaded();
     final members = ProfileManager.instance.profiles;
@@ -418,10 +425,27 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
               children: [
+                // 成员不多时(≤ kMemberTabsMax)用常驻 tab 条:点谁是谁,一步到位。
+                // 超过就退回弹出式列表——横滑的 tab 条会把当前选中的推到屏幕外,
+                // 而且人一多,列表本来就比 tab 好扫。
+                if (ProfileManager.instance.profiles.length <= kMemberTabsMax)
+                  _MemberTabs(
+                    profiles: ProfileManager.instance.profiles,
+                    currentId: ProfileManager.instance.currentId.value,
+                    onPick: _switchTo,
+                    onAdd: _addMember,
+                  ),
+                if (ProfileManager.instance.profiles.length <= kMemberTabsMax)
+                  const SizedBox(height: 12),
                 _PatientHeader(
                   profile: profile,
                   memberName: ProfileManager.instance.displayName,
-                  onTap: _showProfileSwitcher,
+                  // tab 条已经在管「选谁」,身份卡就不再兼职切换入口;
+                  // 人多退回弹出式时,它仍是唯一的切换入口。
+                  showName: ProfileManager.instance.profiles.length > kMemberTabsMax,
+                  onTap: ProfileManager.instance.profiles.length > kMemberTabsMax
+                      ? _showProfileSwitcher
+                      : null,
                 ),
                 const SizedBox(height: 20),
                 // 待确认:红框卡片,点开进详情核对 + 确认;左滑删除。
@@ -490,13 +514,106 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 }
 
 /// 患者头卡:姓名 / 性别·年龄 / 记录数,字段可空一律优雅缺省。
+/// 常驻成员 tab 条的人数上限。超过就退回弹出式列表:横滑的 tab 会把当前选中的
+/// 推到屏幕外(选中项看不见,是 tab 最糟的失败方式);而人一多,列表本来就更好扫。
+/// 5 是按「一个家庭通常管几个人」定的——自己 + 父母 + 孩子,再多属于少数情况。
+const int kMemberTabsMax = 5;
+
+/// 成员选择器:点谁是谁,一步到位。
+///
+/// **只负责选人,不负责管人。** 改名与删除留在设置页的「保险箱」卡片里——它们低频、
+/// 需要确认、误触代价高(一下就是几十份病历),不该和高频的切换动作挤在同一排。
+/// tab 条上唯一的管理入口是末尾的「+」,因为「用着用着发现要再加一个人」是高频场景。
+class _MemberTabs extends StatelessWidget {
+  const _MemberTabs({
+    required this.profiles,
+    required this.currentId,
+    required this.onPick,
+    required this.onAdd,
+  });
+
+  final List<Profile> profiles;
+  final String currentId;
+  final ValueChanged<String> onPick;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 38,
+      child: Row(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: profiles.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, i) {
+                final p = profiles[i];
+                final on = p.id == currentId;
+                return Material(
+                  color: on ? MedMe.teal : MedMe.panel,
+                  borderRadius: BorderRadius.circular(19),
+                  child: InkWell(
+                    onTap: on ? null : () => onPick(p.id),
+                    borderRadius: BorderRadius.circular(19),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(19),
+                        border: Border.all(color: on ? MedMe.teal : MedMe.line),
+                      ),
+                      child: Text(
+                        p.name,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+                          color: on ? Colors.white : MedMe.ink,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Material(
+            color: MedMe.panel,
+            borderRadius: BorderRadius.circular(19),
+            child: InkWell(
+              onTap: onAdd,
+              borderRadius: BorderRadius.circular(19),
+              child: Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(19),
+                  border: Border.all(color: MedMe.line),
+                ),
+                child: const Icon(Icons.add, size: 20, color: MedMe.teal),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PatientHeader extends StatelessWidget {
   final PatientProfileDto profile;
   final String memberName;
-  final VoidCallback onTap;
+  /// 是否在卡片里显示姓名。有 tab 条时传 false —— 姓名由 tab 条负责,
+  /// 卡片只讲这个人的档案信息,免得同一个名字在屏幕上出现两次。
+  final bool showName;
+  final VoidCallback? onTap;
   const _PatientHeader({
     required this.profile,
     required this.memberName,
+    required this.showName,
     required this.onTap,
   });
 
@@ -540,34 +657,37 @@ class _PatientHeader extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            memberName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w800,
-                              color: MedMe.ink,
+                    if (showName) ...[
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              memberName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w800,
+                                color: MedMe.ink,
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 4),
-                        const Icon(
-                          Icons.unfold_more,
-                          size: 18,
-                          color: MedMe.faint,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
+                          const SizedBox(width: 4),
+                          const Icon(
+                            Icons.unfold_more,
+                            size: 18,
+                            color: MedMe.faint,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                    ],
                     Text(
                       subParts.join(' · '),
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: MedMe.faint,
+                      style: TextStyle(
+                        fontSize: showName ? 12.5 : 14,
+                        fontWeight: showName ? FontWeight.w400 : FontWeight.w600,
+                        color: showName ? MedMe.faint : MedMe.ink,
                       ),
                     ),
                   ],

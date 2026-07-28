@@ -698,6 +698,24 @@ const LAYOUT_TARGET_COLUMN_WIDTH: usize = 90;
 const LAYOUT_ROW_Y_TOLERANCE_RATIO: f32 = 0.6;
 const LAYOUT_BLOCK_GAP_RATIO: f32 = 1.6;
 
+/// A side-by-side dual-table page (e.g. a lab report with 22 items laid out
+/// as two 11-item columns) needs at least this many visual rows agreeing on
+/// the same gutter position before we believe it, so a single coincidental
+/// gap (a demographics line like "科室：肺病科    床号：16" happens to have a
+/// wide space at roughly the same x as the real gutter) can't manufacture a
+/// split on its own.
+const DUAL_COLUMN_MIN_SUPPORT_ROWS: usize = 4;
+/// ...and that support must also be a healthy fraction of every row on the
+/// page that even has >=2 boxes (not just an absolute count), so a handful
+/// of stray multi-box rows scattered through an otherwise prose-only page
+/// can't reach the floor above by sheer page length.
+const DUAL_COLUMN_MIN_SUPPORT_FRACTION: f32 = 0.34;
+/// Gaps whose horizontal midpoints land within this fraction of the page's
+/// content width of each other are treated as "the same" candidate seam when
+/// clustering. Expressed as a ratio of `content_span` (rather than an
+/// absolute pixel count) so it scales with image resolution.
+const DUAL_COLUMN_CLUSTER_RATIO: f32 = 0.02;
+
 /// Reconstructs page layout from per-line detection boxes: lines are grouped
 /// into visual rows by y-coordinate (within a tolerance relative to line
 /// height); a row with a single line is emitted as-is (prose); a row with
@@ -705,6 +723,19 @@ const LAYOUT_BLOCK_GAP_RATIO: f32 = 1.6;
 /// line's x position mapped to a character column and space-padded to align.
 /// Rows separated by a much larger vertical gap than the surrounding line
 /// height get a blank line between them (paragraph/table boundary).
+///
+/// A page can also be laid out as **two side-by-side tables** (a lab report
+/// splitting its item list into a left and a right half to save vertical
+/// space) — in detection-box terms, that's a visual row whose boxes actually
+/// belong to *two* unrelated records, with a stable vertical whitespace band
+/// (a "gutter") running down most of the page between them. Left unhandled,
+/// each such row gets joined into a single flat line carrying both records,
+/// and every downstream consumer that assumes "one row = one record" (the
+/// regex-based lab-value extractor, table rendering, ...) silently drops the
+/// second half. [`find_dual_column_band`] looks for that recurring gutter
+/// across the whole page first (conservatively — see its doc), and only if
+/// one is found does [`split_row_at_gutter`] break individual qualifying rows
+/// into their left/right halves before column alignment.
 ///
 /// Direct port of `ocr_bridge.dart::_rebuildLayoutText`/`_buildRowText` (see
 /// that file for the original rationale) — kept as a free function here so it
@@ -752,8 +783,15 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
         .fold(f32::NEG_INFINITY, f32::max);
     let content_span = content_right - content_left;
 
+    // 2b) Does this page have a two-table-side-by-side layout? Detected once
+    //     over all rows (not per-row) — see `find_dual_column_band` doc.
+    let dual_column_band = find_dual_column_band(&rows, content_span);
+
     // 3) Emit each visual row; insert a blank line where the vertical gap to
     //    the previous row is much larger than the line height (block break).
+    //    A row that straddles the detected gutter with enough boxes on each
+    //    side is emitted as two lines (left record, right record) instead of
+    //    one flattened line.
     let mut out_lines: Vec<String> = Vec::new();
     let mut prev_top: Option<f32> = None;
     let mut prev_height: Option<f32> = None;
@@ -769,11 +807,179 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
                 out_lines.push(String::new());
             }
         }
-        out_lines.push(build_row_text(row, content_left, content_span));
+        match dual_column_band.and_then(|(gl, gr)| split_row_at_gutter(row, gl, gr)) {
+            Some((left, right)) => {
+                out_lines.push(build_row_text(&left, content_left, content_span));
+                out_lines.push(build_row_text(&right, content_left, content_span));
+            }
+            None => out_lines.push(build_row_text(row, content_left, content_span)),
+        }
         prev_top = Some(row_top);
         prev_height = Some(row_height);
     }
     out_lines.join("\n")
+}
+
+/// One recurring gap between adjacent boxes on some visual row — the raw
+/// material [`find_dual_column_band`] clusters to find the page's gutter.
+struct RowGap {
+    /// Index into the candidate-row list this gap came from (only used to
+    /// count *distinct rows* supporting a cluster, not raw gap count).
+    row: usize,
+    start: f32,
+    end: f32,
+    mid: f32,
+}
+
+/// Looks for a vertical whitespace band that recurs at (roughly) the same
+/// x-position across many of the page's visual rows — the seam between a
+/// left table and a right table on a side-by-side dual-table page. Returns
+/// `(band_left, band_right)` in the same pixel coordinates as `LayoutLine`,
+/// or `None` if no such band clears the conservative bar below.
+///
+/// Why this can't just take "the widest gap in each row": within a single
+/// table half, the gap before a fixed-x column (e.g. a right-aligned label
+/// column followed by a result column that always starts at the same x) is
+/// often *wider* than the actual left/right seam, because label lengths
+/// vary but the seam itself is a fixed, narrow band of unused page margin.
+/// So instead this collects *every* adjacent-box gap on *every* multi-box
+/// row, clusters them by x-position, and picks the cluster that (a) is
+/// backed by enough distinct rows to rule out coincidence, and (b) — among
+/// clusters that clear that bar — has the largest gap width, since the real
+/// seam is the one whitespace band wide enough to separate two independent
+/// tables, whereas same-support internal-column gaps (e.g. value -> its
+/// reference range) tend to be narrow.
+///
+/// Conservative by construction: a prose page (one detection box per visual
+/// row) has zero multi-box rows, so this returns `None` immediately — see
+/// `rebuild_layout_text_single_line_per_row_passes_through` and
+/// `rebuild_layout_text_dual_column_leaves_single_column_page_untouched`.
+fn find_dual_column_band(rows: &[Vec<&LayoutLine>], content_span: f32) -> Option<(f32, f32)> {
+    if content_span <= 0.0 {
+        return None;
+    }
+    let candidate_rows: Vec<&Vec<&LayoutLine>> = rows.iter().filter(|r| r.len() >= 2).collect();
+    if candidate_rows.len() < DUAL_COLUMN_MIN_SUPPORT_ROWS {
+        return None;
+    }
+
+    let mut gaps: Vec<RowGap> = Vec::new();
+    for (row_idx, row) in candidate_rows.iter().enumerate() {
+        let mut sorted: Vec<&LayoutLine> = (*row).clone();
+        sorted.sort_by(|a, b| {
+            a.left
+                .partial_cmp(&b.left)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for pair in sorted.windows(2) {
+            let (start, end) = (pair[0].right, pair[1].left);
+            if end > start {
+                gaps.push(RowGap {
+                    row: row_idx,
+                    start,
+                    end,
+                    mid: (start + end) / 2.0,
+                });
+            }
+        }
+    }
+
+    // Cluster gaps by x-position: sort by midpoint, then greedily group
+    // consecutive gaps that stay within `DUAL_COLUMN_CLUSTER_RATIO` of the
+    // *first* gap in the current cluster (anchoring to the first element
+    // rather than the previous one bounds each cluster's total span instead
+    // of letting it drift indefinitely across a dense run of gaps).
+    gaps.sort_by(|a, b| {
+        a.mid
+            .partial_cmp(&b.mid)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let tolerance = content_span * DUAL_COLUMN_CLUSTER_RATIO;
+    let mut clusters: Vec<Vec<&RowGap>> = Vec::new();
+    for gap in &gaps {
+        let joined = clusters
+            .last_mut()
+            .filter(|cluster: &&mut Vec<&RowGap>| (gap.mid - cluster[0].mid).abs() <= tolerance)
+            .map(|cluster| cluster.push(gap));
+        if joined.is_none() {
+            clusters.push(vec![gap]);
+        }
+    }
+
+    let total_rows = candidate_rows.len() as f32;
+    let mut best: Option<(f32, f32, f32)> = None; // (width, band_left, band_right)
+    for cluster in &clusters {
+        let support = cluster
+            .iter()
+            .map(|g| g.row)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        if support < DUAL_COLUMN_MIN_SUPPORT_ROWS
+            || (support as f32) < DUAL_COLUMN_MIN_SUPPORT_FRACTION * total_rows
+        {
+            continue;
+        }
+        // The band reported for this cluster must be a sub-interval of
+        // *every* contributing row's own gap (not e.g. each coordinate's
+        // median independently, which can land just outside a narrower
+        // row's gap by a hair) -- so `split_row_at_gutter`'s "gap contains
+        // the gutter midpoint" check is guaranteed to hold for every row
+        // that voted for this cluster. That's exactly the intersection of
+        // all the cluster's [start, end] intervals.
+        let band_left = cluster
+            .iter()
+            .map(|g| g.start)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let band_right = cluster.iter().map(|g| g.end).fold(f32::INFINITY, f32::min);
+        let width = band_right - band_left;
+        if width <= 0.0 {
+            continue; // this cluster's gaps don't all actually overlap -- not a real seam.
+        }
+        if best.is_none_or(|(best_width, _, _)| width > best_width) {
+            best = Some((width, band_left, band_right));
+        }
+    }
+    best.map(|(_, l, r)| (l, r))
+}
+
+/// If `row` has a genuine left/right split at the gutter `[gutter_left,
+/// gutter_right]` — a gap between two of its boxes containing the gutter's
+/// midpoint, with at least 2 boxes on each side — returns the row split into
+/// its left and right halves. Requiring >=2 boxes per side (not just >=1)
+/// is what keeps this from splitting e.g. a demographics row's incidental
+/// "label: value    label: value" gap into two 1-box halves: such a row
+/// still contributes to `find_dual_column_band`'s vote count (harmless —
+/// real dual-table rows vastly outnumber it there) but never actually gets
+/// split. Returns `None` (row emitted unchanged) if no gap contains the
+/// gutter midpoint at all — the case for a full-width title/header/footer
+/// line, where a single box spans straight across the gutter position.
+fn split_row_at_gutter<'a>(
+    row: &[&'a LayoutLine],
+    gutter_left: f32,
+    gutter_right: f32,
+) -> Option<(Vec<&'a LayoutLine>, Vec<&'a LayoutLine>)> {
+    if row.len() < 4 {
+        return None;
+    }
+    let mut sorted: Vec<&LayoutLine> = row.to_vec();
+    sorted.sort_by(|a, b| {
+        a.left
+            .partial_cmp(&b.left)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let gutter_mid = (gutter_left + gutter_right) / 2.0;
+    for i in 0..sorted.len() - 1 {
+        if sorted[i].right <= gutter_mid && gutter_mid <= sorted[i + 1].left {
+            let left = sorted[..=i].to_vec();
+            let right = sorted[i + 1..].to_vec();
+            return if left.len() >= 2 && right.len() >= 2 {
+                Some((left, right))
+            } else {
+                None
+            };
+        }
+    }
+    None
 }
 
 /// Joins one visual row's lines into a single line of text. A single-line row
@@ -1661,6 +1867,145 @@ mod tests {
             out.lines().count(),
             1,
             "close-y boxes must merge into one row"
+        );
+    }
+
+    /// Builds one synthetic dual-table row: a left record (serial + value at
+    /// fixed x) and, past a wide fixed gutter, a right record (serial +
+    /// value at fixed x) -- the same shape as a lab report that splits its
+    /// item list into a left half and a right half to save vertical space
+    /// (see the real 22-item repro this was written against, #ocr build 46).
+    fn dual_row(
+        top: f32,
+        serial_l: &str,
+        val_l: &str,
+        serial_r: &str,
+        val_r: &str,
+    ) -> Vec<LayoutLine> {
+        vec![
+            ll(serial_l, 0.0, top, 20.0, 20.0),
+            ll(val_l, 100.0, top, 160.0, 20.0),
+            // Gutter: a wide, fixed (160 -> 400) gap present on every row --
+            // clearly wider than either side's own internal serial->value
+            // gap (80px), so it wins cluster selection on width.
+            ll(serial_r, 400.0, top, 420.0, 20.0),
+            ll(val_r, 500.0, top, 560.0, 20.0),
+        ]
+    }
+
+    #[test]
+    fn rebuild_layout_text_splits_dual_column_table_rows() {
+        // 5 rows sharing the same left/right column anchors -- enough
+        // support (>= DUAL_COLUMN_MIN_SUPPORT_ROWS) for the recurring
+        // 160->400 gutter to be recognized, so each row's left and right
+        // records land on their own line instead of one flattened line
+        // carrying both (the bug: parser::extract_labs only sees "one
+        // record per line", so the right half was silently dropped).
+        let mut lines = Vec::new();
+        for i in 0..5 {
+            let top = i as f32 * 25.0;
+            lines.extend(dual_row(
+                top,
+                &format!("{i}L"),
+                &format!("valL{i}"),
+                &format!("{i}R"),
+                &format!("valR{i}"),
+            ));
+        }
+        let out = rebuild_layout_text(&lines);
+        let out_lines: Vec<&str> = out.lines().collect();
+        assert_eq!(
+            out_lines.len(),
+            10,
+            "5 dual-record rows must become 10 single-record lines, got: {out:?}"
+        );
+        for (i, line) in out_lines.iter().enumerate() {
+            if i % 2 == 0 {
+                let row = i / 2;
+                assert!(line.contains(&format!("{row}L")) && line.contains(&format!("valL{row}")));
+                assert!(
+                    !line.contains(&format!("{row}R")),
+                    "left half must not carry the right record's fields: {line:?}"
+                );
+            } else {
+                let row = i / 2;
+                assert!(line.contains(&format!("{row}R")) && line.contains(&format!("valR{row}")));
+                assert!(
+                    !line.contains(&format!("valL{row}")),
+                    "right half must not carry the left record's fields: {line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rebuild_layout_text_dual_column_leaves_single_column_page_untouched() {
+        // Only 2 rows share the coincidental left/right gap -- below
+        // DUAL_COLUMN_MIN_SUPPORT_ROWS (4), same as e.g. a demographics
+        // line ("科室：肺病科    床号：16") landing near the real gutter's x
+        // by chance on an otherwise single-column page. Must NOT be treated
+        // as a dual-table page: every row stays a single flattened line,
+        // byte-for-byte the same as `rebuild_layout_text` produced before
+        // dual-column detection existed.
+        let mut lines = Vec::new();
+        lines.extend(dual_row(0.0, "0L", "valL0", "0R", "valR0"));
+        lines.extend(dual_row(25.0, "1L", "valL1", "1R", "valR1"));
+        // Plain single-box prose rows right after, as on a real page (kept
+        // close enough vertically to stay in the same block -- no blank
+        // line from the unrelated large-vertical-gap rule).
+        lines.push(ll("这是一段普通正文", 0.0, 50.0, 300.0, 20.0));
+        lines.push(ll("第二段正文内容", 0.0, 75.0, 300.0, 20.0));
+
+        let out = rebuild_layout_text(&lines);
+        let out_lines: Vec<&str> = out.lines().collect();
+        // 2 rows (still joined, not split) + 2 prose lines = 4 lines total.
+        assert_eq!(
+            out_lines.len(),
+            4,
+            "below the support floor, rows must stay unsplit: {out:?}"
+        );
+        assert!(out_lines[0].contains("0L") && out_lines[0].contains("0R"));
+        assert!(out_lines[1].contains("1L") && out_lines[1].contains("1R"));
+    }
+
+    #[test]
+    fn rebuild_layout_text_dual_column_does_not_split_full_width_row() {
+        // A genuine dual-table page (5 rows, same shape as the "splits"
+        // test above) also contains one full-width row -- a title/banner
+        // whose single wide box happens to straddle the detected gutter's
+        // x-range, the same shape as "涟水县中医院检验报告单" spanning across
+        // where the lab table's gutter sits a few rows below. It must be
+        // emitted unchanged: no gap in that row contains the gutter's
+        // midpoint (a box covers that whole span), so there's nothing to
+        // split on -- title/header/footer rows survive verbatim.
+        let mut lines = Vec::new();
+        lines.extend(dual_row(0.0, "0L", "valL0", "0R", "valR0"));
+        lines.extend(dual_row(25.0, "1L", "valL1", "1R", "valR1"));
+        lines.extend(dual_row(50.0, "2L", "valL2", "2R", "valR2"));
+        lines.extend(dual_row(75.0, "3L", "valL3", "3R", "valR3"));
+        // Banner row: 4 boxes (same box count as a data row) but the 2nd
+        // box straddles the gutter (160..400) instead of leaving it free.
+        lines.push(ll("边A", 0.0, 100.0, 30.0, 20.0));
+        lines.push(ll("标题横跨整行", 50.0, 100.0, 450.0, 20.0));
+        lines.push(ll("边C", 470.0, 100.0, 510.0, 20.0));
+        lines.push(ll("边D", 520.0, 100.0, 560.0, 20.0));
+
+        let out = rebuild_layout_text(&lines);
+        let out_lines: Vec<&str> = out.lines().collect();
+        // 4 dual-record rows -> 8 lines, + the banner row unsplit -> 1 line.
+        assert_eq!(
+            out_lines.len(),
+            9,
+            "banner row must stay a single unsplit line: {out:?}"
+        );
+        let banner_line = out_lines
+            .iter()
+            .find(|l| l.contains("标题横跨整行"))
+            .expect("banner text present");
+        assert!(
+            banner_line.contains("边A")
+                && banner_line.contains("边C")
+                && banner_line.contains("边D")
         );
     }
 }

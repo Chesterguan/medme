@@ -84,18 +84,11 @@ impl Vault {
     pub fn materialize(&self) -> Result<(), MedmeError> {
         let map = self.applied_seq_map()?;
         let entries = self.log.read_all()?;
-        // 墓碑集:从**全部**事件(不只本次 pending)收集被删文档的锚点 hash。用它抑制
-        // 对应的 DocumentAdded/OcrAdded/ImagingInstanceAdded —— 这样即便删除事件因时钟偏移
-        // 排在 add 之前(多设备/NTP 回退),重放也不会把已删文档复活(评审 Important)。
-        let tombstones: HashSet<String> = entries
-            .iter()
-            .filter_map(|e| match &e.event {
-                Event::DocumentDeleted {
-                    source_file_hash, ..
-                } => Some(source_file_hash.clone()),
-                _ => None,
-            })
-            .collect();
+        // 从**全部**事件(不只本次 pending)算出需要抑制的具体条目(见
+        // `compute_delete_suppressions` 的设计说明)—— 既挡得住删除因时钟偏移排在
+        // 它自己的 add 之前(评审 Important),又不会让「删除后重新导入同一份文件」
+        // 永久失效。
+        let suppressed = compute_delete_suppressions(&entries);
         let pending: Vec<&LogEntry> = entries
             .iter()
             .filter(|e| e.seq > map.get(&e.device_id).copied().unwrap_or(0))
@@ -112,7 +105,7 @@ impl Vault {
             if stopped.contains(&entry.device_id) {
                 continue;
             }
-            match apply_event(&tx, self, &entry.event, &tombstones)? {
+            match apply_event(&tx, self, entry, &suppressed)? {
                 ApplyOutcome::Applied => {
                     let cur = new_map.entry(entry.device_id.clone()).or_insert(0);
                     if entry.seq > *cur {
@@ -340,13 +333,104 @@ fn sanitize_mime_type(mime: &str) -> String {
     }
 }
 
+/// One hash's replay state while walking events in the SAME deterministic
+/// global order `EventLog::read_all` already establishes (`(ts, device_id,
+/// seq)`): `live` is whether a document currently exists for this hash;
+/// `pending_deletes` counts `DocumentDeleted`s that arrived with no live
+/// document to remove.
+struct HashReplayState {
+    live: bool,
+    pending_deletes: u32,
+}
+
+/// Decide, per LOG ENTRY (keyed by its unique `(device_id, seq)` — never
+/// reused within one device's segment), which `DocumentAdded` / `OcrAdded` /
+/// `ImagingInstanceAdded` events must be suppressed on replay.
+///
+/// This replaces a permanent per-hash tombstone (any hash ever deleted, ever,
+/// stayed suppressed forever — see `git log -S tombstones` on this file,
+/// #127). That rule was guarding a real hazard: a `DocumentDeleted` can sort
+/// BEFORE its own `DocumentAdded` in the global `(ts, device_id, seq)` merge
+/// when a device's clock regresses (NTP step / manual set), and naively
+/// replaying delete-then-add would resurrect a document the user deleted. But
+/// "ever deleted" is not the same fact as "reordered" — the old rule also
+/// discarded a perfectly ordinary re-import of the same bytes after a delete,
+/// permanently: `add_document`'s post-materialize lookup then found nothing
+/// (`document missing after materialize`).
+///
+/// Fix: walk the events in that same global order and track, per hash,
+/// whether a document is currently "live". A `DocumentDeleted` while live
+/// clears it — the normal case. A `DocumentDeleted` while NOT live has no
+/// document to remove; since a delete is only ever semantically valid AFTER
+/// some add, it can't be a stray no-op — it must be the clock-skew case,
+/// whose real partner is the NEXT `DocumentAdded` for this hash. So it's
+/// banked as `pending_deletes` and charged against that next add instead of
+/// applied on the spot, however many rounds of add/delete repeat for the same
+/// hash. `OcrAdded` / `ImagingInstanceAdded` piggyback on the same liveness
+/// (their `document_ref.source_file_hash`): suppressed exactly while their
+/// document isn't live, so once a hash is re-added their own re-imported
+/// OCR/imaging events land normally again too.
+fn compute_delete_suppressions(entries: &[LogEntry]) -> HashSet<(String, i64)> {
+    let mut states: HashMap<&str, HashReplayState> = HashMap::new();
+    let mut suppressed: HashSet<(String, i64)> = HashSet::new();
+
+    for entry in entries {
+        match &entry.event {
+            Event::DocumentAdded {
+                source_file_hash, ..
+            } => {
+                let st = states
+                    .entry(source_file_hash.as_str())
+                    .or_insert(HashReplayState {
+                        live: false,
+                        pending_deletes: 0,
+                    });
+                if st.pending_deletes > 0 {
+                    // Cancelled by a delete that sorted earlier but really
+                    // belongs to this add (clock skew) — stays not-live.
+                    st.pending_deletes -= 1;
+                    suppressed.insert((entry.device_id.clone(), entry.seq));
+                } else {
+                    st.live = true;
+                }
+            }
+            Event::DocumentDeleted {
+                source_file_hash, ..
+            } => {
+                let st = states
+                    .entry(source_file_hash.as_str())
+                    .or_insert(HashReplayState {
+                        live: false,
+                        pending_deletes: 0,
+                    });
+                if st.live {
+                    st.live = false;
+                } else {
+                    st.pending_deletes += 1;
+                }
+            }
+            Event::OcrAdded { document_ref, .. }
+            | Event::ImagingInstanceAdded { document_ref, .. } => {
+                let live = states
+                    .get(document_ref.source_file_hash.as_str())
+                    .is_some_and(|s| s.live);
+                if !live {
+                    suppressed.insert((entry.device_id.clone(), entry.seq));
+                }
+            }
+            _ => {}
+        }
+    }
+    suppressed
+}
+
 fn apply_event(
     tx: &Transaction,
     vault: &Vault,
-    event: &Event,
-    tombstones: &HashSet<String>,
+    entry: &LogEntry,
+    suppressed: &HashSet<(String, i64)>,
 ) -> Result<ApplyOutcome, MedmeError> {
-    match event {
+    match &entry.event {
         Event::FileImported {
             content_hash,
             original_name,
@@ -396,8 +480,10 @@ fn apply_event(
             page_count,
             created_at,
         } => {
-            // 被墓碑标记的文档不投影(哪怕删除事件因时钟偏移排在本 add 之前)。
-            if tombstones.contains(source_file_hash) {
+            // 本 add 被判定为「属于某条排序在前但其实晚到的删除」时不投影
+            // (`compute_delete_suppressions`);其余情况——包括删除之后的重新
+            // 导入——正常走下面的投影逻辑。
+            if suppressed.contains(&(entry.device_id.clone(), entry.seq)) {
                 return Ok(ApplyOutcome::Applied);
             }
             // A forged event — or a legitimately not-yet-synced FileImported — may
@@ -435,8 +521,10 @@ fn apply_event(
             confidence,
             created_at,
         } => {
-            // 文档被墓碑标记 → 跳过(不 defer,否则会永远等一个不会出现的文档、卡住该设备段)。
-            if tombstones.contains(&document_ref.source_file_hash) {
+            // 锚点文档此刻不 live(尚未 add、或已删且还没被重新导入)→ 跳过(不
+            // defer,否则会永远等一个当下不会出现的文档、卡住该设备段)。一旦同一
+            // 哈希被重新导入(重新 live),后续的 OcrAdded 正常投影。
+            if suppressed.contains(&(entry.device_id.clone(), entry.seq)) {
                 return Ok(ApplyOutcome::Applied);
             }
             // Defer (not abort) when the referenced document isn't materialized yet —
@@ -541,8 +629,9 @@ fn apply_event(
             instance_number,
             created_at: _,
         } => {
-            // study 文档被墓碑标记 → 跳过(同 OcrAdded,别 defer 卡段)。
-            if tombstones.contains(&document_ref.source_file_hash) {
+            // study 文档此刻不 live → 跳过(同 OcrAdded,别 defer 卡段;重新导入
+            // 后同一哈希的影像实例照样能正常落地)。
+            if suppressed.contains(&(entry.device_id.clone(), entry.seq)) {
                 return Ok(ApplyOutcome::Applied);
             }
             // Defer (not abort) when either referenced row isn't materialized yet —
@@ -1198,6 +1287,252 @@ mod tests {
             "被墓碑标记的文档不能因 add 排在 delete 后而复活"
         );
         assert_eq!(v.debug_count("source_file"), 1, "原始 source_file 保留");
+    }
+
+    /// Regression for the永久丢数据 bug: `add_document` on a hash that was
+    /// PREVIOUSLY deleted must succeed — not throw `document missing after
+    /// materialize` forever. Delete a doc, then re-import the SAME bytes
+    /// (dedups to the existing `source_file` — Raw Never Dies) and re-add it:
+    /// the document, its OCR, and search must all come back, through the
+    /// public API exactly as a real re-import would exercise it.
+    #[test]
+    fn delete_then_reimport_same_hash_materializes_document_and_ocr() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+
+        let imp = v
+            .import("photo.jpg", "image/jpeg", b"ReimportSameHashNeedle")
+            .unwrap();
+        let doc1 = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("first pass".into()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        v.add_ocr(NewOcr {
+            document_id: doc1.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "text-layer".into(),
+            text: "first ocr text".into(),
+            confidence: None,
+        })
+        .unwrap();
+        v.delete_document(doc1.id).unwrap();
+        assert_eq!(v.debug_count("document"), 0, "deleted");
+
+        // Re-import the identical bytes: dedups to the SAME source_file (its
+        // content_hash — and CAS bytes — never went away).
+        let reimp = v
+            .import("photo.jpg", "image/jpeg", b"ReimportSameHashNeedle")
+            .unwrap();
+        assert!(reimp.deduped, "same bytes hit the existing source_file");
+        assert_eq!(reimp.source_file.id, imp.source_file.id);
+
+        // Under the bug, this raised `document missing after materialize`.
+        let doc2 = v
+            .add_document(NewDocument {
+                source_file_id: reimp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("second pass".into()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        assert_eq!(v.debug_count("document"), 1, "document exists after re-add");
+
+        v.add_ocr(NewOcr {
+            document_id: doc2.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "text-layer".into(),
+            text: "second ocr text".into(),
+            confidence: None,
+        })
+        .unwrap();
+        assert_eq!(
+            v.ocr_text(doc2.id).unwrap(),
+            "second ocr text",
+            "OCR for the re-imported doc also lands, not permanently suppressed"
+        );
+
+        // Survives a full rebuild-from-log too (not an artifact of the cache).
+        v.rebuild_from_log().unwrap();
+        assert_eq!(v.debug_count("document"), 1);
+        assert_eq!(
+            v.debug_count("source_file"),
+            1,
+            "still one source_file (CAS)"
+        );
+        assert_eq!(v.ocr_text(doc2.id).unwrap(), "second ocr text");
+    }
+
+    /// Same fix, multiple rounds: add→delete→add→delete→add on the SAME
+    /// content hash must land in the "document exists" state after the final
+    /// (odd-numbered) add — the suppression bookkeeping must not get stuck
+    /// after the first round.
+    #[test]
+    fn multiple_add_delete_rounds_on_same_hash_end_up_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let imp = v
+            .import("rounds.jpg", "image/jpeg", b"MultiRoundNeedle")
+            .unwrap();
+
+        let mut last_doc_id = 0;
+        for round in 0..3 {
+            let sf = v
+                .import("rounds.jpg", "image/jpeg", b"MultiRoundNeedle")
+                .unwrap()
+                .source_file;
+            assert_eq!(sf.id, imp.source_file.id, "round {round}: same source_file");
+            let doc = v
+                .add_document(NewDocument {
+                    source_file_id: sf.id,
+                    doc_type: DocType::LabReport,
+                    doc_date: None,
+                    doc_date_end: None,
+                    title: Some(format!("round {round}")),
+                    language: None,
+                    page_count: 1,
+                })
+                .unwrap();
+            assert_eq!(v.debug_count("document"), 1, "round {round}: document live");
+            last_doc_id = doc.id;
+            v.delete_document(doc.id).unwrap();
+            assert_eq!(v.debug_count("document"), 0, "round {round}: deleted again");
+        }
+        // Final re-add after the 3rd delete: the document must come back live.
+        let sf = v
+            .import("rounds.jpg", "image/jpeg", b"MultiRoundNeedle")
+            .unwrap()
+            .source_file;
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: sf.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("final".into()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        // (`document.id` may legitimately be reused here: SQLite's plain
+        // INTEGER PRIMARY KEY rowid isn't AUTOINCREMENT, so once the table is
+        // emptied by the 3rd delete the next insert can reuse the same id —
+        // not evidence of anything wrong, so this doesn't assert `doc.id`
+        // against `last_doc_id`.)
+        let _ = last_doc_id;
+        assert_eq!(v.debug_count("document"), 1, "final add is live");
+        assert_eq!(
+            v.debug_count("source_file"),
+            1,
+            "one source_file throughout"
+        );
+        let title: String = v
+            .conn()
+            .query_row("SELECT title FROM document WHERE id = ?1", [doc.id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "final", "the final re-add's own row landed");
+
+        // A rebuild-from-log must land on the identical (live) end state.
+        v.rebuild_from_log().unwrap();
+        assert_eq!(v.debug_count("document"), 1);
+    }
+
+    /// The reordering protection (regression test above) must still hold when
+    /// a genuine re-import follows the reordered pair: seq order is
+    /// FileImported(1), Delete(2, ts sorts BEFORE its add), Add(3), then a
+    /// SECOND, later, properly-ordered Add(4) for the same hash — simulating
+    /// "clock-skewed delete cancels the first add, then the user really does
+    /// re-import it afterwards". The suppressed first add must stay gone, but
+    /// the later genuine add must land.
+    #[test]
+    fn reordered_delete_cancels_only_its_own_add_not_a_later_reimport() {
+        use crate::event::{Event, LogEntry};
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let dev = v.device_id.clone();
+        let sfh = cas::sha256_hex(b"anchor-reorder-then-reimport");
+        let append = |seq: i64, ts: &str, ev: Event| {
+            v.log
+                .append(&LogEntry::new(seq, ts.into(), dev.clone(), ev).unwrap())
+                .unwrap();
+        };
+        append(
+            1,
+            "2024-01-01T00:00:10Z",
+            Event::FileImported {
+                content_hash: sfh.clone(),
+                original_name: "a.txt".into(),
+                mime_type: "text/plain".into(),
+                byte_size: 6,
+                imported_at: "2024-01-01T00:00:10Z".into(),
+            },
+        );
+        // Delete's ts (:11) sorts before the add it's really cancelling (:12).
+        append(
+            2,
+            "2024-01-01T00:00:11Z",
+            Event::DocumentDeleted {
+                source_file_hash: sfh.clone(),
+                deleted_at: "2024-01-01T00:00:11Z".into(),
+            },
+        );
+        append(
+            3,
+            "2024-01-01T00:00:12Z",
+            Event::DocumentAdded {
+                source_file_hash: sfh.clone(),
+                doc_type: "lab_report".into(),
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("cancelled".into()),
+                language: None,
+                page_count: 1,
+                created_at: "2024-01-01T00:00:12Z".into(),
+            },
+        );
+        // A later, genuine re-import — well after the reordered pair.
+        append(
+            4,
+            "2024-01-01T00:00:20Z",
+            Event::DocumentAdded {
+                source_file_hash: sfh.clone(),
+                doc_type: "lab_report".into(),
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("real reimport".into()),
+                language: None,
+                page_count: 1,
+                created_at: "2024-01-01T00:00:20Z".into(),
+            },
+        );
+
+        v.rebuild_from_log().unwrap();
+        assert_eq!(
+            v.debug_count("document"),
+            1,
+            "the later genuine re-import must materialize"
+        );
+        let title: String = v
+            .conn()
+            .query_row("SELECT title FROM document LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            title, "real reimport",
+            "the cancelled (reordered) add must not be the one that landed"
+        );
     }
 
     // ---- hardening: forged / dangling references + malformed hashes ---------
