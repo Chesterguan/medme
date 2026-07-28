@@ -59,8 +59,6 @@
 **真实的加密分享**(与患者发给医生的完全同一条代码路径),数据换成公开演示数据集:疾病泳道
 时间轴、化验趋势、12 层可滚轮翻层的 CT 阅片、PDF 原件核对。
 
-> 📸 _演示 GIF / 视频待补充(placeholder — a demo GIF/video will go here)._
-
 ## 功能 · Features(v1.0)
 
 - **采集 · OCR**:拖拽导入 PDF / 图片 / 文本,自动去重、原件永久保存;**自动收件箱**(手机拍照云同步到指定文件夹即自动入库);**OCR 按平台选引擎**(桌面 macOS Apple Vision · Windows Windows.Media.Ocr;**移动端 iOS + Android 统一走 PP-OCRv5**,模型编进 app 不联网下载;Linux 与兜底同样是 PP-OCRv5,含去阴影 / 纠偏预处理)识别中文报告照片与扫描件,显示识别置信度、低置信主动警告。
