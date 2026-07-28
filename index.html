@@ -331,6 +331,13 @@
           <div><b>安卓 App</b><span>下载后允许"未知来源"安装 · 需 64 位手机(arm64,近十年的安卓机基本都是)</span></div>
           <span class="st ready">下载 .apk</span>
         </a>
+        <!-- 本次换了正式签名 keystore(此前内测包是 debug 签名),安卓不允许用不同
+             签名覆盖安装,所以装过旧版的人必须先卸载。首次安装不受影响。
+             等内测用户都换过一轮之后,这条可以删掉。 -->
+        <p style="margin:10px 2px 0;font-size:12.5px;line-height:1.7;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px">
+          <b>装过旧版的测试用户请先卸载再安装。</b>本次更换了应用签名,新版无法覆盖安装。
+          卸载会清空 App 内的病历 —— 有要留的资料,请先在「导出分享」里导出。首次安装不受影响。
+        </p>
         <div class="dl-item disabled">
           <div><b>Windows 版</b><span>正在打磨,稍后开放下载</span></div>
           <span class="st soon">即将推出</span>
