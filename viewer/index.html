@@ -5,6 +5,9 @@
 <!-- SECURITY (GHSA-j7fx): 本页只运行两段固定的内联脚本(内联 dicom-parser + 查看器逻辑),
      故 script-src 用它们的 sha256 精确收录,移除 'unsafe-inline';并加 form-action/base-uri/
      frame-ancestors 'none' 锁死导航/表单/框架,断掉潜在注入外泄 DECRYPTED PHI 的路径。
+     connect-src 只放行认领密文所在的那一个源(CLAIM_BASE):托管查看器要按 id 取回医生
+     代拍的密文,别的地方一概连不上,解密后的 PHI 仍无处可外泄。**离线分享文件不吃这条**
+     —— share.rs 组装自包含 HTML 时会把它改回 'none'(见 CLAIM_CONNECT_SRC)。
      维护提示:改动任一内联脚本块后必须更新下面对应的 'sha256-…',否则脚本会被 CSP 拦下不执行。
      重算(在本文件同目录运行,按出现顺序打印两段脚本体的哈希):
        python3 -c "import hashlib,base64;d=open('index.html').read();o='<'+'script>';c='</'+'script>';i=0
@@ -12,7 +15,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-27prsER3bOkVFEn3ViBFd04FplwSJPqo42mUyY/N8go='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-GRf5XQRJD8FzNij0PPdLMjRxHcLl87gidvP1YRKDA/s='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MedMe 加密分享查看器</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%201024%201024%22%3E%0A%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%232bc0d2%22%2F%3E%3Cstop%20offset%3D%220.52%22%20stop-color%3D%22%231789c1%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%231560a8%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%0A%3Crect%20width%3D%221024%22%20height%3D%221024%22%20rx%3D%22232%22%20fill%3D%22url%28%23g%29%22%2F%3E%0A%3Cpath%20transform%3D%22translate%2885.76%2C804.70%29%20scale%280.82760%2C-0.82760%29%22%20d%3D%22M326%20640C320%20672%20323%20688%20335%20688C431%20690%20535%20708%20650%20741C668%20748%20687%20734%20704%20699C720%20664%20716%20650%20691%20658C672%20666%20641%20663%20600%20651C557%20639%20509%20631%20458%20627C405%20623%20371%20615%20355%20605C342%20596%20332%20606%20326%20640ZM212%20393C226%20508%20234%20570%20236%20582C234%20600%20241%20605%20259%20600C274%20594%20292%20586%20310%20578C325%20568%20326%20555%20314%20537C283%20459%20266%20368%20260%20267C252%20165%20254%20101%20266%2075C271%2062%20321%2063%20413%2079C503%2095%20582%20104%20650%20106C717%20108%20757%20111%20772%20115C777%20117%20786%20110%20796%2095C804%2078%20813%2065%20822%2057C830%2047%20832%2034%20829%2020C825%204%20814%200%20798%2010C698%2035%20597%2043%20494%2033C391%2023%20324%2013%20296%203C267%20-6%20246%20-9%20234%20-4C229%20-1%20226%203%20226%2011C226%2018%20220%2040%20210%2077C196%20172%20196%20277%20212%20393ZM567%20292C558%20302%20561%20306%20578%20306C639%20287%20691%20265%20736%20237C740%20234%20741%20219%20737%20189C731%20160%20724%20144%20716%20140C706%20136%20699%20138%20695%20146C689%20154%20683%20165%20675%20179C628%20228%20593%20265%20567%20292ZM761%20328C702%20338%20636%20336%20561%20323C555%20322%20550%20321%20546%20321C538%20294%20525%20267%20509%20240C497%20216%20483%20198%20468%20188C450%20176%20444%20165%20449%20157C451%20149%20434%20142%20397%20135C358%20126%20331%20126%20315%20134C298%20142%20300%20148%20322%20154C324%20154%20335%20159%20355%20169C372%20178%20393%20190%20414%20208C434%20225%20453%20249%20471%20281C473%20291%20476%20300%20480%20309C429%20297%20387%20284%20355%20271C348%20266%20335%20274%20319%20298C302%20321%20310%20330%20342%20324C385%20338%20436%20352%20494%20367C498%20395%20499%20419%20497%20440C489%20438%20480%20435%20471%20431C457%20424%20450%20429%20449%20444C447%20454%20444%20463%20441%20473C422%20448%20400%20427%20377%20408C357%20396%20344%20391%20336%20393C326%20395%20329%20403%20346%20419C385%20473%20409%20513%20421%20540C433%20566%20438%20584%20439%20594C441%20611%20452%20613%20472%20601C489%20587%20502%20577%20511%20571C519%20565%20517%20559%20505%20552C497%20548%20490%20541%20484%20531C480%20525%20475%20517%20467%20507C504%20511%20537%20518%20566%20527C596%20537%20620%20543%20640%20546C649%20547%20656%20538%20660%20520C662%20500%20658%20488%20648%20485C619%20473%20592%20461%20568%20450C564%20449%20563%20448%20562%20447C558%20430%20555%20407%20554%20382C554%20382%20556%20382%20559%20383C598%20391%20635%20396%20671%20402C706%20406%20728%20409%20734%20413C740%20416%20745%20413%20750%20403C754%20394%20760%20387%20768%20383C773%20379%20777%20367%20778%20348C778%20328%20772%20321%20761%20328Z%22%20fill%3D%22%23ffffff%22%2F%3E%0A%3C%2Fsvg%3E">
@@ -1163,6 +1166,29 @@ async function decryptAndRender(passphrase) {
 // 徒增摩擦。代价是截屏即等于拿到钥匙 —— 与患者把屏幕给别人看是同一量级的风险。
 const QR_PREFIX = "q1.";
 
+// 二维码 v2:`q2.<对象id>.<密钥>`。载荷在云上,码本身只有八十来个字符 —— 扫得又快
+// 又稳(v1 把载荷内嵌进码里,1800+ 字符,密集的码从手机屏上更难扫;而且「内嵌所以
+// 离线可用」是假的:扫码打开的是网址,页面本身就要联网下载)。
+//
+// **扫完直接就是完整病历含原件**,不分档、不设按钮。医生要看的就是原件。
+const QR2_PREFIX = "q2.";
+
+async function renderQrFull(fragment) {
+  const [id, keyB64] = fragment.slice(QR2_PREFIX.length).split(".");
+  if (!id || !keyB64) throw new Error("二维码内容不完整");
+  const app = document.getElementById("app");
+  app.innerHTML =
+    '<div class="notice" style="margin:12px 0">正在取回完整病历与原件…</div>';
+  render(await fetchClaimPayload(id, keyB64));
+  const note = document.createElement("div");
+  note.className = "notice";
+  note.style.cssText = "margin:12px 0";
+  note.textContent =
+    "完整病历(含原件)。由患者手机加密后临时上传,保留期一到即删,我们无法解密。";
+  app.insertBefore(note, app.firstChild ? app.firstChild.nextSibling : null);
+}
+
+// ── 二维码 v1(载荷内嵌在码里)。保留只为兼容已经截屏/打印出去的旧码。 ──
 async function renderQrSummary(fragment) {
   const [blobB64, keyB64] = fragment.slice(QR_PREFIX.length).split(".");
   if (!blobB64 || !keyB64) throw new Error("二维码内容不完整");
@@ -1178,13 +1204,98 @@ async function renderQrSummary(fragment) {
   const stream = new Blob([gz]).stream().pipeThrough(new DecompressionStream("gzip"));
   const payload = JSON.parse(await new Response(stream).text());
   render(payload);
-  // 明示这是「当下病情」而非完整病历,免得医生以为看到了全部。
   const note = document.createElement("div");
   note.className = "notice";
   note.style.cssText = "margin:12px 0";
   note.textContent =
     "本页来自患者当面出示的二维码,只包含当前在治的问题、关键指标与在用药物 —— "
     + "不是完整病历。需要看原件、影像或更早的记录,请让患者在手机上出示。";
+  const app = document.getElementById("app");
+  app.insertBefore(note, app.firstChild ? app.firstChild.nextSibling : null);
+}
+
+// ── 认领链接(医生代拍 → 病人)──────────────────────────────────────────
+// fragment 形如 `#c1.<对象id>.<base64url(密钥)>`。与二维码分享的差别只有一处:
+// 载荷太大塞不进 URL,于是密文单独存在瞬时云上,这里按 id 取回来。**密钥仍只在
+// `#` 之后**,不会发给任何服务器 —— 云上那份我们自己也解不开。
+//
+// 密文格式与「整份加密分享」逐字节相同(nonce(12)‖AES-256-GCM 密文,AAD =
+// medme-share-v1),因此下面复用的就是 decryptAndRender 那套;Rust 侧由
+// build_claim_blob / build_encrypted_share 共用同一段装配代码保证。
+const CLAIM_PREFIX = "c1.";
+// 瞬时云的对象前缀。**换存储只改这一行**(同时要改上面 CSP 的 connect-src)。
+// 用 OSS 自带的默认域名 = 不需要备案;强制下载头只影响浏览器导航,对 fetch 无效。
+const CLAIM_BASE = "https://medme-claim.oss-cn-hangzhou.aliyuncs.com/c/";
+
+// id 只允许不透明字符,且**只能拼到固定前缀后面** —— 绝不让 fragment 决定去哪个
+// 主机取数据,否则一条伪造链接就能把查看器指向攻击者的服务器。
+const CLAIM_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
+
+/// 从瞬时云取回密文并解密成 payload。认领链接与二维码取原件共用这一段 —— 两者
+/// 拿的本来就是同一种东西(整份分享格式的密文),只是入口不同。
+/// 按 id 从瞬时云取回一份密文的原始字节。认领、二维码摘要、二维码原件三处共用。
+async function fetchBlob(id) {
+  if (!CLAIM_ID_RE.test(id)) throw new Error("链接不完整");
+  let res;
+  try {
+    res = await fetch(CLAIM_BASE + id, { cache: "no-store" });
+  } catch (e) {
+    throw new Error("网络连不上,换个网络再试一次。");
+  }
+  // 认领成功即删、到期即删 —— 取不到多半不是坏了,而是这两种正常情况。而其中
+  // **最可能的一种是「他已经存过了」**,所以文案先指向那个真相,而不是让人去找谁重发。
+  if (res.status === 404 || res.status === 403 || res.status === 410) {
+    throw new Error("这个链接已经用过了,或者过了保留期。如果你之前已经存进 MedMe,打开 App 就能看到。");
+  }
+  if (!res.ok) throw new Error("取病历失败(" + res.status + "),请稍后再试。");
+  const blob = new Uint8Array(await res.arrayBuffer());
+  if (blob.length < 13) throw new Error("病历数据不完整");
+  return blob;
+}
+
+/// 取回并解密成完整病历 payload(整份分享格式)。认领链接与二维码取原件共用 ——
+/// 两者拿的本来就是同一种东西,只是入口不同。
+async function fetchClaimPayload(id, keyB64) {
+  const blob = await fetchBlob(id);
+  const key = await crypto.subtle.importKey(
+    "raw", b64urlToBytes(keyB64), { name: "AES-GCM" }, false, ["decrypt"]);
+  const aad = new TextEncoder().encode("medme-share-v1");
+  const pt = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: blob.slice(0, 12), additionalData: aad }, key, blob.slice(12));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+async function renderClaim(fragment) {
+  const [id, keyB64] = fragment.slice(CLAIM_PREFIX.length).split(".");
+  if (!id || !keyB64) throw new Error("链接不完整");
+  render(await fetchClaimPayload(id, keyB64));
+
+  // 病人此刻是在浏览器里看,数据还没进他自己的保险箱。这一块是唯一的下一步:
+  // 按钮用自定义 scheme 把**同一个 fragment**交给 App —— 装了就直接开,没装则什么
+  // 都不会发生,所以下面还留一句「没反应就是还没装」和下载入口。
+  const note = document.createElement("div");
+  note.className = "notice";
+  note.style.cssText = "margin:12px 0";
+  const line = document.createElement("div");
+  line.textContent =
+    "这是医生刚为你建的病历,现在只是临时放着给你看。存进 MedMe 后它就只在你自己手机上。";
+  note.appendChild(line);
+
+  const btn = document.createElement("a");
+  btn.href = "medme://claim#" + fragment;
+  btn.textContent = "存进我的 MedMe";
+  btn.style.cssText =
+    "display:inline-block;margin:10px 8px 0 0;padding:9px 16px;border-radius:10px;"
+    + "background:#1789c1;color:#fff;font-weight:600;font-size:14px;text-decoration:none";
+  note.appendChild(btn);
+
+  const hint = document.createElement("div");
+  hint.style.cssText = "margin-top:8px;font-size:12px;color:#64748b;line-height:1.6";
+  hint.textContent =
+    "点了没反应,说明这台手机还没装 MedMe。装好之后回到这条链接再点一次即可存入 —— "
+    + "链接就在医生发给你的那条消息里。";
+  note.appendChild(hint);
+
   const app = document.getElementById("app");
   app.insertBefore(note, app.firstChild ? app.firstChild.nextSibling : null);
 }
@@ -1278,12 +1389,39 @@ document.getElementById("go").addEventListener("click", submit);
     if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   };
   // 二维码载荷:数据与密钥都在 fragment 里,不需要内嵌分享文件。
+  // 二维码 v2:载荷在云上,码里只有两个 id 和密钥。
+  if (h.startsWith(QR2_PREFIX)) {
+    addEventListener("load", clearHashNow);
+    setTimeout(clearHashNow, 60);
+    renderQrFull(h)
+      .catch((e) => {
+        errEl.textContent = (e && e.message) || "二维码内容无法解析,请让患者重新出示。";
+      })
+      .finally(clearHashNow);
+    return;
+  }
   if (h.startsWith(QR_PREFIX)) {
     addEventListener("load", clearHashNow);
     setTimeout(clearHashNow, 60);
     renderQrSummary(h)
       .catch(() => {
         errEl.textContent = "二维码内容无法解析,请让患者重新出示。";
+      })
+      .finally(clearHashNow);
+    return;
+  }
+  // 认领链接:密文在云上、密钥在 fragment。与二维码同样地址栏即刻清 hash ——
+  // 密钥不该留在浏览历史里;病人要再看一次就回微信里点那条链接。
+  if (h.startsWith(CLAIM_PREFIX)) {
+    addEventListener("load", clearHashNow);
+    setTimeout(clearHashNow, 60);
+    renderClaim(h)
+      .catch((e) => {
+        // renderClaim 对「已领走/已过期/网络不通」给的是可执行的话,原样透出;
+        // 其余(解密失败等)统一兜底,不把内部错误摊给病人看。
+        errEl.textContent = (e && e.message && /[。,]$/.test(e.message))
+          ? e.message
+          : "这条链接打不开,请让医生重新发一次。";
       })
       .finally(clearHashNow);
     return;
