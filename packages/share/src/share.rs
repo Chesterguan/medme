@@ -26,11 +26,16 @@ use std::collections::HashSet;
 /// 并自检 #share-data 切换自包含/托管模式。生成分享文件 = 取此 HTML + 注入 blob 数据节点。
 const CANONICAL_VIEWER: &str = include_str!("../../../web/hosted-viewer/index.html");
 
+/// 托管查看器 CSP 里为「认领链接」放行的那一个源,原样照抄自 `web/hosted-viewer/index.html`。
+/// 自包含分享文件不需要联网,组装时会把它换回 `connect-src 'none'`;换存储时两处要一起改,
+/// 漏改则 [`build_encrypted_share`] 直接报错,不会静默产出联网能力过宽的分享文件。
+const CLAIM_CONNECT_SRC: &str = "connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com";
+
 /// AES-GCM 的固定关联数据(AAD)。绑定后可抵御格式/版本混淆:任何解密端都必须传入
 /// 逐字节相同的 AAD 才能解密成功。互操作三处必须一致——Rust 加密、内嵌查看器 JS
 /// 解密、`web/hosted-viewer` JS 解密——JS 侧以 `new TextEncoder().encode("medme-share-v1")`
 /// 得到相同字节。改动此常量将使旧分享无法解密。
-const SHARE_AAD: &[u8] = b"medme-share-v1";
+pub(crate) const SHARE_AAD: &[u8] = b"medme-share-v1";
 
 /// 把无填充 base64url 口令按 4 字符分组、空格连接,便于口述/抄写。
 /// 查看器解码前会 `replace(/[\s-]/g,'')` 还原,因此分组仅影响显示。
@@ -144,13 +149,19 @@ pub fn build_encrypted_share_with_consent_and_confirmed(
     )
 }
 
-fn build_encrypted_share_inner(
+/// 装配 payload 并加密,返回 `(blob, 密钥原始字节, 记录数)`。
+///
+/// 从 [`build_encrypted_share_inner`] 里拆出来的原因是**认领链接**(医生代拍→病人):
+/// 那条路要把同一份密文单独传上瞬时云、密钥留在 URL fragment 里,而不是包成一个
+/// 自带查看器的 HTML 文件。两条路共用这里,保证密文格式(nonce‖密文、`SHARE_AAD`)
+/// 只有一处定义 —— 查看器的解密分支因此可以原样复用。见 [`build_claim_blob`]。
+fn build_share_blob_inner(
     v: &Vault,
     expires_days: u32,
     render_dicom_png: crate::DicomPngRenderer,
     consent: Option<ShareConsent>,
     confirmed_document_ids: Option<&HashSet<i64>>,
-) -> Result<(String, String, i64), String> {
+) -> Result<(Vec<u8>, [u8; 32], i64), String> {
     let records = crate::export::gather_records(v)?;
     let profile = pipeline::patient_profile(v).map_err(|e| e.to_string())?;
 
@@ -368,10 +379,67 @@ fn build_encrypted_share_inner(
         )
         .map_err(|e| format!("encrypt: {e}"))?; // 密文尾部含 16 字节 tag
 
-    // blob = nonce(12) || ciphertext_with_tag,整体标准 base64。
+    // blob = nonce(12) || ciphertext_with_tag。
     let mut blob = Vec::with_capacity(12 + ciphertext.len());
     blob.extend_from_slice(&nonce_bytes);
     blob.extend_from_slice(&ciphertext);
+
+    Ok((blob, key_bytes, record_count))
+}
+
+/// 认领链接用的密文:与整份加密分享**同一格式、同一份装配代码**,只是不包 HTML。
+///
+/// 返回 `(blob, base64url 密钥, 记录数)`。调用方把 blob 传上瞬时云拿到一个对象 id,
+/// 再拼出 `<查看器>/#c1.<id>.<密钥>` —— 密钥在 `#` 之后,按 HTTP 规范不会发给服务器,
+/// 所以云上只有一份我们自己也解不开的密文。
+///
+/// 口令**不分组**(不同于 [`build_encrypted_share`] 给人手输的那个):这把密钥只进
+/// URL,分组的空格反而要额外处理。
+/// 病人自己出码时用的密文:整份病历、无同意书、不做确认筛选。
+///
+/// 返回 `(blob, base64url 密钥, 记录数)`,与 [`build_claim_blob`] 同格式 —— 医生扫码
+/// 看到的和病人认领拿到的是同一种东西,查看器只有一套解密与渲染逻辑。
+pub fn build_own_share_blob(
+    v: &Vault,
+    expires_days: u32,
+    render_dicom_png: crate::DicomPngRenderer,
+) -> Result<(Vec<u8>, String, i64), String> {
+    let (blob, key_bytes, record_count) =
+        build_share_blob_inner(v, expires_days, render_dicom_png, None, None)?;
+    Ok((blob, B64URL.encode(key_bytes), record_count))
+}
+
+pub fn build_claim_blob(
+    v: &Vault,
+    expires_days: u32,
+    render_dicom_png: crate::DicomPngRenderer,
+    consent: ShareConsent,
+    confirmed_document_ids: &HashSet<i64>,
+) -> Result<(Vec<u8>, String, i64), String> {
+    let (blob, key_bytes, record_count) = build_share_blob_inner(
+        v,
+        expires_days,
+        render_dicom_png,
+        Some(consent),
+        Some(confirmed_document_ids),
+    )?;
+    Ok((blob, B64URL.encode(key_bytes), record_count))
+}
+
+fn build_encrypted_share_inner(
+    v: &Vault,
+    expires_days: u32,
+    render_dicom_png: crate::DicomPngRenderer,
+    consent: Option<ShareConsent>,
+    confirmed_document_ids: Option<&HashSet<i64>>,
+) -> Result<(String, String, i64), String> {
+    let (blob, key_bytes, record_count) = build_share_blob_inner(
+        v,
+        expires_days,
+        render_dicom_png,
+        consent,
+        confirmed_document_ids,
+    )?;
     let blob_b64 = B64.encode(&blob);
 
     // 口令 = 密钥的 url-safe base64(无填充);显示时分组。
@@ -397,6 +465,14 @@ fn build_encrypted_share_inner(
     }
     let html = CANONICAL_VIEWER.replacen(marker, &data_node, 1);
 
+    // 托管查看器要按 id 去瞬时云取「认领链接」的密文,故它的 CSP 放行了那一个源。
+    // **自包含分享文件没有这个需求**:它的密文就在文件里,一个网络请求都不该发得出去。
+    // 这里把 connect-src 收回 'none',把「离线分享绝不联网」这条性质留在最强的位置。
+    if !html.contains(CLAIM_CONNECT_SRC) {
+        return Err("查看器 CSP 里找不到 connect-src(认领源常量已漂移?)".into());
+    }
+    let html = html.replacen(CLAIM_CONNECT_SRC, "connect-src 'none'", 1);
+
     Ok((html, passphrase_grouped, record_count))
 }
 
@@ -413,6 +489,116 @@ mod tests {
         let end = html[start..].find("</script>").unwrap() + start;
         let v: serde_json::Value = serde_json::from_str(&html[start..end]).unwrap();
         v["blob"].as_str().unwrap().to_string()
+    }
+
+    /// 自包含分享文件必须**一个网络请求都发不出去**。托管查看器为了取认领密文放行了
+    /// 一个源,这条钉住那个放行不会顺着模板漏进离线分享 —— 那是它最该守住的性质。
+    #[test]
+    fn self_contained_share_keeps_connect_src_none() {
+        // 模板(托管查看器)确实为认领放行了那一个源……
+        assert!(
+            CANONICAL_VIEWER.contains(CLAIM_CONNECT_SRC),
+            "托管查看器 CSP 未放行认领源,renderClaim 的 fetch 会被拦下"
+        );
+
+        use core_model::{DocType, NewDocument};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let imp = vault.import("a.txt", "text/plain", b"x").unwrap();
+        vault
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: Some(chrono::Utc::now()),
+                doc_date_end: None,
+                title: Some("t".into()),
+                language: Some("zh".into()),
+                page_count: 1,
+            })
+            .unwrap();
+        let (html, _, _) =
+            build_encrypted_share(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
+
+        // ……但产出的离线分享把它收回了 'none'。
+        assert!(
+            html.contains("connect-src 'none'"),
+            "离线分享的 CSP 未收回 connect-src 'none'"
+        );
+        assert!(
+            !html.contains(CLAIM_CONNECT_SRC),
+            "离线分享不该带上认领源:它没有任何联网的理由"
+        );
+    }
+
+    /// 认领链接的密文必须与整份分享**逐字节同格式**(nonce‖密文、`SHARE_AAD`),
+    /// 因为查看器的认领分支就是复用整份分享那段解密代码。这条钉住这个共用关系:
+    /// 一旦有人给某一条路单独改了 AAD 或 blob 布局,这里就会红。
+    #[test]
+    fn claim_blob_decrypts_with_the_same_format_as_a_full_share() {
+        use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let imp = vault.import("血常规.txt", "text/plain", b"data").unwrap();
+        let doc = vault
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: Some(chrono::Utc::now()),
+                doc_date_end: None,
+                title: Some("血常规报告".into()),
+                language: Some("zh".into()),
+                page_count: 1,
+            })
+            .unwrap();
+        vault
+            .add_ocr(NewOcr {
+                document_id: doc.id,
+                page_no: 1,
+                backend: OcrBackendKind::Native,
+                model_version: "text-layer".into(),
+                text: "白细胞 10.5".into(),
+                confidence: None,
+            })
+            .unwrap();
+
+        let consent = ShareConsent {
+            utc_ts: "2026-07-28T00:00:00Z".into(),
+            consent_text_version: "v1".into(),
+            signature_png_base64: None,
+            method: "press_hold".into(),
+            session_id: "s-1".into(),
+        };
+        let confirmed: HashSet<i64> = [doc.id].into_iter().collect();
+        let (blob, key_b64, n) = build_claim_blob(
+            &vault,
+            15,
+            &crate::render_dicom_png_in_process,
+            consent,
+            &confirmed,
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+
+        // 密钥直接进 URL,故**不分组**——不含空白,拿来就能用。
+        assert!(!key_b64.contains(' '), "认领密钥不该分组");
+        let key = B64URL.decode(&key_b64).unwrap();
+        assert_eq!(key.len(), 32);
+
+        // 用与整份分享完全相同的方式解开(nonce 在前 12 字节,AAD = SHARE_AAD)。
+        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+        let pt = cipher
+            .decrypt(
+                (&blob[..12]).try_into().expect("已按 12 字节切片"),
+                Payload {
+                    msg: &blob[12..],
+                    aad: SHARE_AAD,
+                },
+            )
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&pt).unwrap();
+        assert_eq!(payload["records"].as_array().unwrap().len(), 1);
+        // 拍前同意记录随密文走(代拍流程的举证材料),没有掉在 HTML 包装那一层。
+        assert_eq!(payload["consent"]["session_id"], "s-1");
     }
 
     #[test]

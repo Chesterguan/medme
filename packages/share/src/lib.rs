@@ -8,6 +8,7 @@
 //! - [`export`]:整条时间线渲染成自包含 HTML(浏览器「打印 / 另存为 PDF」)。
 //! - [`share`]:全部病历打包成**自包含加密 HTML**(AES-256-GCM + 内联查看器)。
 
+pub mod claim;
 pub mod export;
 pub mod qr;
 pub mod share;

@@ -353,7 +353,7 @@ mod tests {
     /// 一定会撑破二维码(实测未裁剪时约 80–100 份就超)。
     #[test]
     fn payload_fits_a_qr_code_regardless_of_history_size() {
-        const PREFIX: &str = "https://chesterguan.github.io/medme/v";
+        const PREFIX: &str = "https://medmenow.com/v";
         let lim = QrLimits::default();
         let mut sizes = Vec::new();
         for n in [5usize, 20, 60, 200, 500] {
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     #[ignore = "度量用,cargo test -- --ignored --nocapture 查看"]
     fn print_sizes() {
-        const PREFIX: &str = "https://chesterguan.github.io/medme/v";
+        const PREFIX: &str = "https://medmenow.com/v";
         println!(
             "二维码容量上限 {QR_BINARY_CAPACITY} 字节,URL 前缀占 {}",
             PREFIX.len()
