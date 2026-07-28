@@ -15,7 +15,7 @@ pub use aggregate::{
 };
 pub use conditions::{extract_conditions, ConditionMention};
 pub use handoff::{assemble_summary, match_disease};
-pub use labs::{extract_labs, LabObservation};
+pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};
 
 pub struct Extracted {

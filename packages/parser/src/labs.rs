@@ -66,6 +66,19 @@ pub struct LabObservation {
     pub confidence: f32,
 }
 
+/// A lab-report line whose result couldn't be read with confidence — kept and
+/// surfaced (never guessed, never silently dropped) so a person can check it
+/// against the original document during per-document review. Never mixed into
+/// `Vec<LabObservation>`; see `extract_labs_with_unreadable`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadableRow {
+    /// The original OCR text line, verbatim — for cross-checking the source.
+    pub raw_line: String,
+    /// Why it couldn't be read, phrased for the person reviewing it (a
+    /// patient/doctor), not a developer — plain Chinese, not an error code.
+    pub reason: String,
+}
+
 /// `name  value  rest`. Name is non-greedy so `value` is the FIRST number after
 /// the first separator run (space/tab/colon) — i.e. the result column.
 /// `sep2` (the gap between value and rest) is captured, not just skipped, so
@@ -151,6 +164,15 @@ fn glued_name_value_re() -> &'static Regex {
     })
 }
 
+/// User-facing reason (Chinese, for the person reviewing the row — not a
+/// developer) for the two ambiguous-glue shapes below. Shared by both the
+/// name↔value glue check (`fix_name_value_glue`) and the post-parse value↔range
+/// glue check (`value_glued_to_next_number`), since they're the same
+/// underlying phenomenon caught at two different points in the pipeline.
+const REASON_VALUE_GLUED_TO_RANGE: &str = "数值和参考范围粘在一起,读不准,请核对原件";
+const REASON_MULTIPLE_GLUE_POINTS: &str =
+    "这一行有多处数字和名称粘在一起,分不清对应关系,读不准,请核对原件";
+
 /// Result of scanning a raw line for the name↔value glue.
 enum GlueFix {
     /// No glue point found — line is used as-is.
@@ -160,8 +182,10 @@ enum GlueFix {
     Fixed(String),
     /// Glue found but not safely resolvable — 2+ candidate glue points (can't
     /// tell which is the real name/value boundary), or the glued number is
-    /// itself glued to yet another number. Row is dropped, not guessed.
-    Ambiguous,
+    /// itself glued to yet another number. Row is kept as an `UnreadableRow`
+    /// (see module doc), not guessed — the carried string is the user-facing
+    /// reason.
+    Ambiguous(&'static str),
 }
 
 /// True when the text right after `pos` starts with a decimal number glued
@@ -193,12 +217,12 @@ fn fix_name_value_glue(line: &str) -> GlueFix {
         return GlueFix::Clean;
     };
     if caps_iter.next().is_some() {
-        return GlueFix::Ambiguous;
+        return GlueFix::Ambiguous(REASON_MULTIPLE_GLUE_POINTS);
     }
     let whole = caps.get(0).expect("group 0 always present");
     let digits = caps.get(1).expect("digit group always present");
     if starts_with_glued_number(&line[whole.end()..]) {
-        return GlueFix::Ambiguous;
+        return GlueFix::Ambiguous(REASON_VALUE_GLUED_TO_RANGE);
     }
     let insert_at = digits.start();
     let mut corrected = String::with_capacity(line.len() + 1);
@@ -323,12 +347,28 @@ fn parse_rest(rest: &str) -> (Option<String>, Option<f64>, Option<f64>, Option<S
 
 /// Extract normalized lab observations from a report's text. Unknown analytes
 /// are kept (analyte_key = None, confidence 0.0), never dropped.
+///
+/// This is the stable, existing signature (`aggregate.rs` depends on it) — it
+/// silently discards lines that can't be read at all. To also see those lines
+/// (surfaced for human review instead of thrown away), use
+/// `extract_labs_with_unreadable`.
 pub fn extract_labs(text: &str) -> Vec<LabObservation> {
+    extract_labs_with_unreadable(text).0
+}
+
+/// Same extraction as `extract_labs`, plus the lines that couldn't be read
+/// with confidence (ambiguous number gluing — see module doc "Name↔value
+/// glue"), returned as `UnreadableRow`s instead of being thrown away. Per
+/// "宁可漏,不能编": these rows are never guessed into a `LabObservation`, only
+/// kept verbatim for a human to check against the original document.
+pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<UnreadableRow>) {
     let mut out = Vec::new();
+    let mut unreadable = Vec::new();
     for raw_line in text.lines() {
         // Un-glue a name directly fused to its value (`含量*26.3`) before
         // row_re ever sees the line — see fix_name_value_glue doc. An
-        // ambiguous glue (can't tell where name ends) drops the row outright.
+        // ambiguous glue (can't tell where name ends) surfaces the row as
+        // unreadable rather than guessing.
         let owned_line;
         let line: &str = match fix_name_value_glue(raw_line) {
             GlueFix::Clean => raw_line,
@@ -336,7 +376,13 @@ pub fn extract_labs(text: &str) -> Vec<LabObservation> {
                 owned_line = s;
                 &owned_line
             }
-            GlueFix::Ambiguous => continue,
+            GlueFix::Ambiguous(reason) => {
+                unreadable.push(UnreadableRow {
+                    raw_line: raw_line.to_string(),
+                    reason: reason.to_string(),
+                });
+                continue;
+            }
         };
         let Some(caps) = row_re().captures(line) else {
             continue;
@@ -373,10 +419,14 @@ pub fn extract_labs(text: &str) -> Vec<LabObservation> {
         let rest = caps.name("rest").expect("rest group").as_str();
         // Value glued with zero separator straight into another number (its
         // own reference range's low bound, typically) — no reliable split
-        // point exists (see value_glued_to_next_number doc). Drop the row
-        // rather than report a value we can't actually justify.
+        // point exists (see value_glued_to_next_number doc). Surface it as
+        // unreadable rather than report a value we can't actually justify.
         let sep2_is_empty = caps.name("sep2").expect("sep2 group").as_str().is_empty();
         if value_glued_to_next_number(sep2_is_empty, rest) {
+            unreadable.push(UnreadableRow {
+                raw_line: raw_line.to_string(),
+                reason: REASON_VALUE_GLUED_TO_RANGE.to_string(),
+            });
             continue;
         }
         let (unit_raw, ref_low, ref_high, explicit_flag) = parse_rest(rest);
@@ -434,7 +484,7 @@ pub fn extract_labs(text: &str) -> Vec<LabObservation> {
             confidence: m.as_ref().map_or(0.0, |m| m.confidence),
         });
     }
-    out
+    (out, unreadable)
 }
 
 #[cfg(test)]
@@ -668,7 +718,7 @@ GLU        空腹血糖 Glucose       7.1      mmol/L      3.9 - 6.1       ↑
     }
 
     #[test]
-    fn value_glued_directly_to_reference_range_is_dropped_not_guessed() {
+    fn value_glued_directly_to_reference_range_is_marked_unreadable_not_guessed() {
         // Real repro, same report: the result and the reference range's low
         // bound are glued together with no separator at all — `2.353.5~5.5` is
         // literally `2.35` (result) + `3.5~5.5` (range) printed back to back.
@@ -677,31 +727,92 @@ GLU        空腹血糖 Glucose       7.1      mmol/L      3.9 - 6.1       ↑
         // numbers. Before the fix this silently produced value_num=2.353 and
         // ref_low=5.0 (nonsense, and 2.35 vs the true range 3.5~5.5 is LOW,
         // not the "L" the old code happened to compute from bad numbers by
-        // coincidence). Per "宁可漏,不能编" this row must be dropped, not
-        // guessed.
+        // coincidence). Per "宁可漏,不能编" this row must never be guessed —
+        // but per the later UX call ("mark, don't discard"), it must also not
+        // vanish silently: it's surfaced as an UnreadableRow for the user to
+        // check against the original document.
         let text = "12红细胞*                                                            2.353.5~5.5      10^12/L\n";
+        // Old, stable signature: still never yields a (possibly wrong) observation.
         let obs = extract_labs(text);
-        assert_eq!(obs.len(), 0, "must drop the ambiguous row, got {:?}", obs);
+        assert_eq!(obs.len(), 0, "must not guess a value, got {:?}", obs);
+        // New signature: the row is kept, verbatim, with a plain-language reason.
+        let (obs2, unreadable) = extract_labs_with_unreadable(text);
+        assert_eq!(obs2.len(), 0);
+        assert_eq!(unreadable.len(), 1, "got {:?}", unreadable);
+        assert_eq!(unreadable[0].raw_line, text.trim_end_matches('\n'));
+        assert_eq!(
+            unreadable[0].reason,
+            "数值和参考范围粘在一起,读不准,请核对原件"
+        );
     }
 
     #[test]
-    fn value_glued_to_range_without_a_flag_marker_is_also_dropped() {
+    fn value_glued_to_range_without_a_flag_marker_is_also_marked_unreadable() {
         // Same ambiguous-glue shape, no arrow this time: `0.2910.108~0.282` is
         // `0.291` (result) + `0.108~0.282` (range) with zero separator. Before
         // the fix this produced ref_low=108.0 (a plain reference-range digit
-        // run misread as 108, off by 3 orders of magnitude) — dropped instead.
+        // run misread as 108, off by 3 orders of magnitude) — now surfaced as
+        // unreadable instead of guessed or silently dropped.
         let text = "21                                                血小板压积           0.2910.108~0.282\n";
         let obs = extract_labs(text);
-        assert_eq!(obs.len(), 0, "must drop the ambiguous row, got {:?}", obs);
+        assert_eq!(obs.len(), 0, "must not guess a value, got {:?}", obs);
+        let (obs2, unreadable) = extract_labs_with_unreadable(text);
+        assert_eq!(obs2.len(), 0);
+        assert_eq!(unreadable.len(), 1, "got {:?}", unreadable);
+        assert_eq!(unreadable[0].raw_line, text.trim_end_matches('\n'));
+        assert_eq!(
+            unreadable[0].reason,
+            "数值和参考范围粘在一起,读不准,请核对原件"
+        );
     }
 
     #[test]
-    fn multiple_glue_candidates_on_one_line_are_dropped_not_picked() {
+    fn multiple_glue_candidates_on_one_line_are_marked_unreadable_not_picked() {
         // Two independent name/value glue points on the same line — no basis to
-        // prefer one boundary over the other, so the row is dropped rather than
-        // arbitrarily picking the first (or last) match.
-        let obs = extract_labs("指标甲*12.3  单位乙*45.6  mg/L");
+        // prefer one boundary over the other, so the row is surfaced as
+        // unreadable rather than arbitrarily picking the first (or last) match.
+        let text = "指标甲*12.3  单位乙*45.6  mg/L";
+        let obs = extract_labs(text);
         assert_eq!(obs.len(), 0, "got {:?}", obs);
+        let (obs2, unreadable) = extract_labs_with_unreadable(text);
+        assert_eq!(obs2.len(), 0);
+        assert_eq!(unreadable.len(), 1, "got {:?}", unreadable);
+        assert_eq!(unreadable[0].raw_line, text);
+        assert_eq!(
+            unreadable[0].reason,
+            "这一行有多处数字和名称粘在一起,分不清对应关系,读不准,请核对原件"
+        );
+    }
+
+    #[test]
+    fn normal_rows_never_end_up_in_unreadable() {
+        // Counter-example: ordinary, unambiguous rows must produce zero
+        // unreadable entries — the new tracking must not over-fire on clean data.
+        let text = "\
+肌酐            88      μmol/L      59-104
+低密度脂蛋白胆固醇  3.6  mmol/L  <3.4  ↑
+";
+        let (obs, unreadable) = extract_labs_with_unreadable(text);
+        assert_eq!(obs.len(), 2, "got {:?}", obs);
+        assert!(
+            unreadable.is_empty(),
+            "clean rows must not be marked unreadable, got {:?}",
+            unreadable
+        );
+    }
+
+    #[test]
+    fn extract_labs_signature_and_behavior_are_unchanged() {
+        // aggregate.rs depends on this exact signature/behavior — the new
+        // tracking must be purely additive, never surfacing unreadable rows
+        // through the old function.
+        let text = "\
+肌酐            88      μmol/L      59-104
+12红细胞*                                                            2.353.5~5.5      10^12/L
+";
+        let obs = extract_labs(text);
+        assert_eq!(obs.len(), 1, "got {:?}", obs);
+        assert_eq!(obs[0].raw_name, "肌酐");
     }
 
     #[test]
