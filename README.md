@@ -4,7 +4,7 @@
 
 **个人医疗数据保险箱**
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![CI](https://github.com/Chesterguan/medme/actions/workflows/ci.yml/badge.svg)](https://github.com/Chesterguan/medme/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Chesterguan/medme/actions/workflows/codeql.yml/badge.svg)](https://github.com/Chesterguan/medme/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Chesterguan/medme/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Chesterguan/medme)
@@ -186,7 +186,10 @@ MedMe 为个人医疗数据整理与保存工具,**非医疗器械,不提供任�
 
 ## 许可证 · License
 
-[Apache-2.0](LICENSE) © 2026 MedMe Team.
+[AGPL-3.0](LICENSE) © 2026 MedMe Team.
+
+选 AGPL 而不是宽松许可证,是因为这个产品的价值主张是「数据只在你自己手上」——
+任何人拿它改成一个替用户保管病历的服务,都必须把改动开源。
 
 ---
 

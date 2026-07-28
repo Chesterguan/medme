@@ -3,7 +3,7 @@
 > MedMe(医我)—— 你终身的医疗数据保险库。
 > Own your medical history.
 
-Version: v0.1 · Status: Design · License: Apache-2.0 (Tentative)
+Version: v0.1 · Status: Design · License: AGPL-3.0
 
 ---
 

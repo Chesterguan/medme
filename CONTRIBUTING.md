@@ -130,4 +130,4 @@ Rust 工作区 crate 名(供 `cargo -p` 使用):`core-model`、`parser`、`pipel
   (用对应模板)。
 - 安全问题:**私下**邮件 `chesterfield199512@gmail.com`(见 [SECURITY.md](SECURITY.md))。
 
-本项目以 [Apache-2.0](LICENSE) 授权;提交贡献即表示你同意以该许可证发布你的贡献。
+本项目以 [AGPL-3.0](LICENSE) 授权;提交贡献即表示你同意以该许可证发布你的贡献。
