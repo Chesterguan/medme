@@ -53,6 +53,8 @@ jobs:
           # Universal Links 校验文件,必须在站点根的 /.well-known/ 下。
           install -D web/well-known/apple-app-site-association \
             gh-pages-wt/.well-known/apple-app-site-association
+          install -D web/well-known/assetlinks.json \
+            gh-pages-wt/.well-known/assetlinks.json
           # 示例页:上一步产出的真实分享(43MB,不入库)。口令随 URL fragment 送达,
           # 故把落地页的样例入口重写成 demo/#<口令> —— 每次部署口令都会变。
           install -D "$RUNNER_TEMP/demo.html" gh-pages-wt/demo/index.html
@@ -62,7 +64,7 @@ jobs:
           grep -c 'href="demo/#' gh-pages-wt/index.html || echo "warn: 落地页未找到样例入口"
           cd gh-pages-wt
           git add viewer/index.html claim/index.html index.html demo/index.html \
-            .well-known/apple-app-site-association
+            .well-known/apple-app-site-association .well-known/assetlinks.json
           if git diff --cached --quiet; then
             echo "viewer already up to date; nothing to deploy"
           else

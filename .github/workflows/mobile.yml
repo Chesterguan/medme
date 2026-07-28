@@ -81,6 +81,28 @@ jobs:
         run: flutter pub get
       - name: 构建 release APK(仅 arm64-v8a)
         working-directory: ${{ env.WORKDIR }}
+      # 正式签名。keystore 以 base64 存在 Secrets 里,现写成文件;两个 Secret 缺任
+      # 何一个就跳过,build.gradle.kts 会自动退回 debug 签名(本地开发同理)。
+      # **安卓 App Links 只认正式签名的指纹**,debug 签的包深链不会直接唤起。
+      - name: Write release keystore
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$WORKDIR/android/app/medme-release.jks"
+          # 注:.properties 里 '#' 只有行首才是注释,值后面不能跟内联注释。
+          # storeFile 相对 android/app/(Gradle 模块目录),不是 android/。
+          cat > "$WORKDIR/android/key.properties" <<EOF
+          storeFile=medme-release.jks
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEYSTORE_PASSWORD
+          EOF
+          echo "release keystore written"
+
         # PP-OCR 引擎(oar-ocr/ort)+ 打包的 libc++_shared.so 目前只支持 arm64-v8a
         # (ort 预编译 + libc++ 都只做了 arm64),其它 ABI 会构建失败或真机崩溃 ——
         # 所以 **main 公开发布也只出 arm64-v8a**,与测试分支一致(落地页已注明

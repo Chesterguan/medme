@@ -1,7 +1,20 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// 正式签名凭证。`android/key.properties` 已被 .gitignore 挡住,**绝不入库**;CI 由
+// workflow 从 Secrets 现写一份。文件不存在时 release 退回 debug 签名(见 buildTypes)
+// —— 本地开发不必持有正式 keystore 也能出包。
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        FileInputStream(keystorePropertiesFile).use { load(it) }
+    }
 }
 
 android {
@@ -25,10 +38,28 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // 内测阶段先用 debug 签名(CI 出可侧载 APK);正式上架前换正式 keystore。
-            signingConfig = signingConfigs.getByName("debug")
+            // 有正式 keystore 就用它,否则退回 debug 签名 —— 本地开发不必持有正式
+            // 私钥也能出 release 包。**安卓 App Links 只认正式签名的指纹**
+            // (web/well-known/assetlinks.json 里那串),debug 签的包深链会退回
+            // 「选择打开方式」,不是坏了。
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
 
             // **只打包 arm64-v8a。** CI 的 `--target-platform android-arm64` 只过滤
             // Flutter 自己的产物(libflutter/libapp/librust_*),**管不到 AAR 带进来的

@@ -35,6 +35,19 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="medme"/>
             </intent-filter>
+            <!-- App Links:病人在微信里点认领链接直接进 App,不必先过浏览器。
+                 **只认领 /claim/,不能连 /viewer/ 一起认** —— 那是医生扫码看病历的
+                 地方,他要的是浏览器;一起认了,装了 MedMe 的医生扫码会被弹进 App。
+                 autoVerify 让系统开机时去 https://medmenow.com/.well-known/assetlinks.json
+                 校验签名指纹,对得上才允许直接唤起(对不上就退回「选择打开方式」)。 -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"
+                      android:host="medmenow.com"
+                      android:pathPrefix="/claim/"/>
+            </intent-filter>
         </activity>
         <!-- 让 Flutter 引擎把上面 VIEW intent 的 URI 直接送进 Dart 的路由回调
              (didPushRouteInformation),省掉一个深链插件。 -->
