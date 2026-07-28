@@ -9,6 +9,9 @@ on:
     branches: [main]
     paths:
       - "web/hosted-viewer/**"
+      # 深链校验文件(AASA / assetlinks.json)也由本 workflow 投到站点根,
+      # 漏了这条会「改了却没部署」——它们改动不频繁,更容易被忽略。
+      - "web/well-known/**"
       - "packages/share/examples/gen_demo_share.rs"
       - "apps/desktop/src-tauri/demo-data/**"
       - ".github/workflows/deploy-viewer.yml"
