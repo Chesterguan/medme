@@ -9,8 +9,8 @@
 [![CodeQL](https://github.com/Chesterguan/medme/actions/workflows/codeql.yml/badge.svg)](https://github.com/Chesterguan/medme/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Chesterguan/medme/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Chesterguan/medme)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13658/badge)](https://www.bestpractices.dev/projects/13658)
-[![Platform](https://img.shields.io/badge/desktop-macOS_%C2%B7_Windows-lightgrey.svg)](https://chesterguan.github.io/medme/)
-[![Mobile](https://img.shields.io/badge/mobile-iOS_%C2%B7_Android-lightgrey.svg)](https://github.com/Chesterguan/medme/releases)
+[![Mobile](https://img.shields.io/badge/mobile-iOS_%C2%B7_Android-brightgreen.svg)](https://github.com/Chesterguan/medme/releases)
+[![Desktop](https://img.shields.io/badge/desktop-macOS_%C2%B7_Windows_%C2%B7_%E6%BA%90%E7%A0%81%E6%9E%84%E5%BB%BA-lightgrey.svg)](#从源码构建--build-from-source)
 [![zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat-square&color=00b0aa&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQuOTYxNTYgMS42MDAxSDIuMjQxNTZDMS44ODgxIDEuNjAwMSAxLjYwMTU2IDEuODg2NjQgMS42MDE1NiAyLjI0MDFWNC45NjAxQzEuNjAxNTYgNS4zMTM1NiAxLjg4ODEgNS42MDAxIDIuMjQxNTYgNS42MDAxSDQuOTYxNTZDNS4zMTUwMiA1LjYwMDEgNS42MDE1NiA1LjMxMzU2IDUuNjAxNTYgNC45NjAxVjIuMjQwMUM1LjYwMTU2IDEuODg2NjQgNS4zMTUwMiAxLjYwMDEgNC45NjE1NiAxLjYwMDFaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00Ljk2MTU2IDEwLjM5OTlIMi4yNDE1NkMxLjg4ODEgMTAuMzk5OSAxLjYwMTU2IDEwLjY4NjQgMS42MDE1NiAxMS4wMzk5VjEzLjc1OTlDMS42MDE1NiAxNC4xMTM0IDEuODg4MSAxNC4zOTk5IDIuMjQxNTYgMTQuMzk5OUg0Ljk2MTU2QzUuMzE1MDIgMTQuMzk5OSA1LjYwMTU2IDE0LjExMzQgNS42MDE1NiAxMy43NTk5VjExLjAzOTlDNS42MDE1NiAxMC42ODY0IDUuMzE1MDIgMTAuMzk5OSA0Ljk2MTU2IDEwLjM5OTlaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik0xMy43NTg0IDEuNjAwMUgxMS4wMzg0QzEwLjY4NSAxLjYwMDEgMTAuMzk4NCAxLjg4NjY0IDEwLjM5ODQgMi4yNDAxVjQuOTYwMUMxMC4zOTg0IDUuMzEzNTYgMTAuNjg1IDUuNjAwMSAxMS4wMzg0IDUuNjAwMUgxMy43NTg0QzE0LjExMTkgNS42MDAxIDE0LjM5ODQgNS4zMTM1NiAxNC4zOTg0IDQuOTYwMVYyLjI0MDFDMTQuMzk4NCAxLjg4NjY0IDE0LjExMTkgMS42MDAxIDEzLjc1ODQgMS42MDAxWiIgZmlsbD0iI2ZmZiIvPgo8cGF0aCBkPSJNNCAxMkwxMiA0TDQgMTJaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00IDEyTDEyIDQiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K&logoColor=ffffff)](https://zread.ai/Chesterguan/medme)
 [![Made with Tauri + Rust](https://img.shields.io/badge/built_with-Tauri_v2_%C2%B7_Rust_%C2%B7_React-orange.svg)](#技术架构--architecture)
 
@@ -35,8 +35,10 @@
 > time-ordered **health archive**. It renders each record professionally (lab
 > tables, an interactive DICOM viewer) and lets you share an
 > **end-to-end-encrypted, self-contained web page** with a doctor — decryptable
-> in any browser with a password, no server involved. Desktop is **Tauri v2
-> (Rust + React)**; an iOS capture app is in progress. Chinese-first product;
+> in any browser with a password, no server involved. **Mobile (Flutter, iOS +
+> Android) is where the product ships today**; the desktop app (Tauri v2, Rust +
+> React) shares the same Rust core and vault format but has no public build yet.
+> Chinese-first product;
 > privacy and trust are the whole point. **Not a medical device — no diagnosis
 > or advice; the original documents are always authoritative.**
 
@@ -61,7 +63,7 @@
 
 ## 功能 · Features(v1.0)
 
-- **采集 · OCR**:拖拽导入 PDF / 图片 / 文本,自动去重、原件永久保存;**自动收件箱**(手机拍照云同步到指定文件夹即自动入库);**OCR 用各平台系统自带引擎**(macOS Apple Vision · Windows Windows.Media.Ocr · iOS Apple Vision · Android ML Kit;Linux 与兜底走 PP-OCRv5,含去阴影 / 纠偏预处理)识别中文报告照片与扫描件,显示识别置信度、低置信主动警告。
+- **采集 · OCR**:拖拽导入 PDF / 图片 / 文本,自动去重、原件永久保存;**自动收件箱**(手机拍照云同步到指定文件夹即自动入库);**OCR 按平台选引擎**(桌面 macOS Apple Vision · Windows Windows.Media.Ocr;**移动端 iOS + Android 统一走 PP-OCRv5**,模型编进 app 不联网下载;Linux 与兜底同样是 PP-OCRv5,含去阴影 / 纠偏预处理)识别中文报告照片与扫描件,显示识别置信度、低置信主动警告。
 - **健康档案时间线**:按就诊 / 住院 / 转院 / 手术自动聚合(时间为主键);智能日期提取、病人信息栏、中文全文搜索。
 - **专业渲染 + DICOM 阅片**:按类型富渲染(化验→表格并 ↑↓ 着色、处方→用药清单、病理 / 影像 / 出院→分节);原件查看器(图片灯箱 · PDF 内嵌 · **交互式 DICOM 阅片**:窗宽窗位 / 缩放 / 多帧,支持 JPEG2000 / JPEG-LS 压缩格式)。
 - **端到端加密分享**:AES-256-GCM 加密成一个自包含网页,凭口令在**任意浏览器本地解密**查看,**零服务器**。分享时可写一个建议复阅期限 —— 它是**给医生的提醒,不是访问控制**:文件在对方手里,过期后仍可打开(我们不假装能撤回)。也可一键导出自包含 HTML 交给医生打印。
@@ -130,7 +132,7 @@ flutter run                 # 接一台真机/模拟器即可,debug 构建
   | `core-model` | 事件日志、CAS、物化、审计、查询 |
   | `parser` | 文档分类、日期提取、结构化 |
   | `pipeline` | 导入编排(去重、OCR 调度、入库) |
-  | `ocr` | 按平台 OCR:macOS Apple Vision · Windows Windows.Media.Ocr · Linux/兜底 PP-OCRv5(去阴影 / 纠偏预处理)。移动端图片 OCR 另在 Flutter/Dart 层:iOS Apple Vision · Android ML Kit |
+  | `ocr` | 按平台 OCR:macOS Apple Vision · Windows Windows.Media.Ocr · Linux/兜底 PP-OCRv5(去阴影 / 纠偏预处理)。**移动端(iOS + arm64 安卓)走同一份 Rust PP-OCRv5**,模型编进二进制、首启落盘,不联网 |
   | `dicom` | DICOM 解析与渲染(JPEG2000 / JPEG-LS 解码) |
   | `medme-share` | 端到端加密分享导出 |
 
@@ -144,9 +146,11 @@ flutter run                 # 接一台真机/模拟器即可,debug 构建
 
 - ✅ **v1.0(已完成)**:影像 / DICOM 管线与阅片、端到端加密分享 + 在线预览器、
   事件溯源存储、示例数据。
-- 🚧 **手机端(进行中)**:Flutter 应用,iOS + Android 双端,与桌面共享同一份 Rust 内核
-  与保险箱格式。安卓构建已发布到 [Releases](https://github.com/Chesterguan/medme/releases);
-  iOS 走 TestFlight(见 [`docs/013_Mobile_App.md`](docs/013_Mobile_App.md))。
+- ✅ **手机端(已发布,当前主力)**:Flutter 应用,iOS + Android 双端,与桌面共享同一份
+  Rust 内核与保险箱格式。安卓 APK 在 [Releases](https://github.com/Chesterguan/medme/releases)
+  公开下载;iOS 走 TestFlight(见 [`docs/013_Mobile_App.md`](docs/013_Mobile_App.md))。
+- 🚧 **桌面端(暂缓)**:功能上是最早成型的一端(影像阅片、批量整理都在这),但**目前没有
+  公开安装包** —— 精力集中在手机端本体上,桌面打包与分发之后再补。要用可自行 `tauri build`。
 - 🔭 **计划中**:AI 健康洞察(在本地、可溯源回原件的前提下辅助理解)· 导出按时间范围
   选择 · 可选口令加密(适配 iCloud 之外的第三方云)· FHIR / OMOP 导出。
 
