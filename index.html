@@ -272,7 +272,7 @@
   .doc-quote q{quotes:none;display:block;font-size:16px;line-height:1.68;color:var(--ink)}
   .doc-quote .by{margin-top:9px;color:var(--muted);font-size:12.5px}
   /* 三步用编号,因为它真的是顺序 —— 同意在拍之前,不是装饰 */
-  .steps{display:flex;flex-direction:column;gap:14px}
+  .doc-steps{display:flex;flex-direction:column;gap:14px}
   .step-d{display:flex;gap:14px;align-items:flex-start;background:#fff;border:1px solid #f0d9c4;
     border-radius:14px;padding:16px 18px}
   .step-d .n{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--doc);color:#fff;
@@ -409,11 +409,11 @@
         </div>
         <div class="doc-note">
           病人材料<b>不进医生的档案</b>,单独存放、<b>本机最多留 12 小时</b>后自动删除,医生也可随时手动清空。
-          拍摄前的告知与签字会一并封进那份加密文件里。
+          拍摄前的告知与病人的确认会一并封进那份加密文件里。
         </div>
       </div>
-      <div class="steps">
-        <div class="step-d"><span class="n">1</span><div><b>当面告知、签字同意</b><span>拍什么、做什么用、交给谁、存多久、谁能打开 —— 五句话说清,病人签字确认。</span></div></div>
+      <div class="doc-steps">
+        <div class="step-d"><span class="n">1</span><div><b>当面告知、签字同意</b><span>拍什么、做什么用、交给谁、存多久、谁能打开 —— 五句话说清,病人手写签名或按住确认。</span></div></div>
         <div class="step-d"><span class="n">2</span><div><b>当场拍</b><span>化验单、处方、检查报告都行,可以分多次拍;拍完医生逐份核对一遍。</span></div></div>
         <div class="step-d"><span class="n">3</span><div><b>加密文件交给病人</b><span>连同口令当面交付。没有那串口令,医生和我们都打不开。</span></div></div>
       </div>

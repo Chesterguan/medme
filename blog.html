@@ -132,7 +132,7 @@
       </ul>
 
       <p class="why" style="margin-top:18px">
-        <b>需要说明白的一点:</b>「没有服务器」不等于「绝对安全」。设备丢了、系统自带的云备份被别人拿到,这些风险依然在,所以我们才在 <a href="https://github.com/Chesterguan/medme/pull/39" target="_blank" rel="noopener">#39</a> 里把云同步不是端到端加密这件事直说。分享给医生的那个文件是端到端加密的(AES-256-GCM):它是一个自带解密逻辑的独立 HTML,解密全在对方浏览器里完成,口令不会传给我们。两点如实交代:我们确实托管着一个查看器页面(medmenow.com 上那份)。密文可能经过它,<b>明文永远不会</b> —— 密钥只在 <code>#</code> 之后,按规范不随请求上行;还有,那串「口令」就是密钥本身的编码,没有再派生一层,所以<b>文件和口令一定要分两个渠道发</b>。
+        <b>需要说明白的一点:</b>「本地优先」不等于「绝对安全」。设备丢了、系统自带的云备份被别人拿到,这些风险依然在,所以我们才在 <a href="https://github.com/Chesterguan/medme/pull/39" target="_blank" rel="noopener">#39</a> 里把云同步不是端到端加密这件事直说。分享给医生的那个文件是端到端加密的(AES-256-GCM):它是一个自带解密逻辑的独立 HTML,解密全在对方浏览器里完成,口令不会传给我们。两点如实交代:我们确实托管着一个查看器页面(medmenow.com 上那份)。密文可能经过它,<b>明文永远不会</b> —— 密钥只在 <code>#</code> 之后,按规范不随请求上行;还有,那串「口令」就是密钥本身的编码,没有再派生一层,所以<b>文件和口令一定要分两个渠道发</b>。
       </p></div></details>
     </div>
 
@@ -590,7 +590,7 @@
       <ul class="tl">
         <li class="now">
           <span class="d">2026-07-28</span>
-          <div class="t"><b>推翻上面那条:码里不再放载荷,改放取件号。</b>把摘要内嵌进码里的理由是「不联网也能看」——<b>那是错的</b>:医生扫码打开的是一个网址,页面本身就要从网上下载,没网连页面都出不来。内嵌买不到任何东西,只把码从 63 字符撑到 1838(41×41 格 → 161×161 格),而密集的码从反光的手机屏上更难扫。现在码里只有 <code>q2.&lt;取件号&gt;.&lt;密钥&gt;</code>,完整病历<b>连同每一份原件</b>加密后临时存在瞬时云上,<b>密钥只在码里、从不上行</b>,保留期一到自动删除。医生扫完直接看到全部,不用再问患者要原件。
+          <div class="t"><b>推翻上面那条:码里不再放载荷,改放取件号。</b>把摘要内嵌进码里的理由是「不联网也能看」——<b>那是错的</b>:医生扫码打开的是一个网址,页面本身就要从网上下载,没网连页面都出不来。内嵌买不到任何东西,只把码从 92 字符撑到 1866(41×41 格 → 161×161 格),而密集的码从反光的手机屏上更难扫。现在码里只有 <code>q2.&lt;取件号&gt;.&lt;密钥&gt;</code>,完整病历<b>连同每一份原件</b>加密后临时存在瞬时云上,<b>密钥只在码里、从不上行</b>,保留期一到自动删除。医生扫完直接看到全部,不用再问患者要原件。</div>
         </li>
         <li>
           <span class="d">2026-07-19</span>
@@ -615,7 +615,7 @@
       <ul class="tl">
         <li class="now">
           <span class="d">2026-07-28</span>
-          <div class="t"><b>Overturning the entry below: the code now carries a claim ticket, not the payload.</b> We embedded the summary in the code so it would "work offline" — <b>that reasoning was wrong</b>: scanning opens a URL, so the page itself has to be fetched over the network. Embedding bought nothing and pushed the code from 63 characters to 1838 (41×41 modules → 161×161), and a dense code is harder to scan off a glossy phone screen. The code now holds only <code>q2.&lt;id&gt;.&lt;key&gt;</code>; the full record — <b>every original included</b> — is encrypted and parked in transient storage. <b>The key lives only in the code and never goes upstream</b>, and the object is deleted when its retention window ends. The doctor scans once and sees everything.
+          <div class="t"><b>Overturning the entry below: the code now carries a claim ticket, not the payload.</b> We embedded the summary in the code so it would "work offline" — <b>that reasoning was wrong</b>: scanning opens a URL, so the page itself has to be fetched over the network. Embedding bought nothing and pushed the code from 92 characters to 1866 (41×41 modules → 161×161), and a dense code is harder to scan off a glossy phone screen. The code now holds only <code>q2.&lt;id&gt;.&lt;key&gt;</code>; the full record — <b>every original included</b> — is encrypted and parked in transient storage. <b>The key lives only in the code and never goes upstream</b>, and the object is deleted when its retention window ends. The doctor scans once and sees everything.</div>
         </li>
         <li>
           <span class="d">2026-07-19</span>
@@ -628,7 +628,7 @@
       </ul>
 
       <p class="why" style="margin-top:18px">
-        <b>What this code buys and what it gives up are both printed on the screen.</b> It now carries <b>the full record, every original included</b> — the 2026-07-28 entry above overturned that trade-off. The cost is that it <b>needs a network</b> — for those, the patient pulls them up on their own phone right there. That isn't a missing piece; it's the job this channel is meant to do, and the full record has the encrypted-file route. One more line we put on the sharing screen: <b>the code is the key</b>. Holding it out face to face is itself the proof of presence, so there's no separate passphrase. The cost is that a photo of the code hands the summary over, with no expiry and no revocation. <b>Worth stating:</b> the trimming defaults — how many conditions, how many labs each, how many points — are engineering placeholders. What's clinically right is for doctors to tell us, and when they do it's a few constants to change, not the pipeline.
+        <b>What this code buys and what it gives up are both printed on the screen.</b> It now carries <b>the full record, every original included</b> — the 2026-07-28 entry above overturned that trade-off. The cost is that it <b>needs a network</b>: the ciphertext has to go up first and come back down when the doctor scans, instead of riding along inside the code the way it used to. One more line we put on the sharing screen: <b>the code is the key</b>. Holding it out face to face is itself the proof of presence, so there's no separate passphrase. The cost is that a photo of the code hands the summary over, with no expiry and no revocation. <b>Worth stating:</b> the trimming defaults — how many conditions, how many labs each, how many points — are engineering placeholders. What's clinically right is for doctors to tell us, and when they do it's a few constants to change, not the pipeline.
       </p></div></details>
     </div>
   </section>
