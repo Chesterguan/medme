@@ -35,7 +35,10 @@ class ClaimStorage {
   /// **手机不持 AccessKey** —— 那东西进了 App 就能被反编译扒出来,而账号是实名主体的。
   /// 所以每次上传先问它要一个限时的预签名 PUT 地址。空串表示未配置:那时退回裸 PUT,
   /// 只有本地模拟桶会接受,真桶会 403 → 出码降级为简版码(见 qr_share_screen)。
-  static const signerUrl = String.fromEnvironment('MEDME_SIGNER_URL');
+  static const signerUrl = String.fromEnvironment(
+    'MEDME_SIGNER_URL',
+    defaultValue: 'https://claim-signer-rujxaehppb.cn-hangzhou.fcapp.run/sign',
+  );
 
   final String base;
 
