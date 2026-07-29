@@ -15,7 +15,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-UnnkyEE9LiLA9/0D0I5SxlkM37+MjQzRVu+MlTsRcfM='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-vvSnnsj6kCt+JzxygGwsD5nf+HMr4v6v6YByF67GFrg='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>html.payload #gate{display:none}</style>
 <script>
@@ -1408,6 +1408,12 @@ document.getElementById("go").addEventListener("click", submit);
 // 口令可随 URL fragment 送达:`#<口令>`。`#` 之后的内容按 HTTP 规范**不会**发给
 // 服务器,因此链接/二维码分享时,密钥始终只存在于收件人浏览器本地。到达即自动解密,
 // 免去手输;随后清掉 hash,避免口令留在地址栏与浏览历史里。
+// 载荷路径失败时,把首屏防闪藏起来的口令屏放回来 —— 错误信息(#err)长在它里面,
+// 不放回来就是一片白屏。防闪只该管「正常路径不要闪」,不该把出错时的唯一出口也藏掉。
+function revealGateForError() {
+  document.documentElement.classList.remove("payload");
+}
+
 (function fromHash() {
   const h = decodeURIComponent(location.hash.replace(/^#/, "")).trim();
   if (!h) return;
@@ -1421,6 +1427,7 @@ document.getElementById("go").addEventListener("click", submit);
     setTimeout(clearHashNow, 60);
     renderQrFull(h)
       .catch((e) => {
+        revealGateForError();
         errEl.textContent = (e && e.message) || "二维码内容无法解析,请让患者重新出示。";
       })
       .finally(clearHashNow);
@@ -1431,6 +1438,7 @@ document.getElementById("go").addEventListener("click", submit);
     setTimeout(clearHashNow, 60);
     renderQrSummary(h)
       .catch(() => {
+        revealGateForError();
         errEl.textContent = "二维码内容无法解析,请让患者重新出示。";
       })
       .finally(clearHashNow);
@@ -1443,6 +1451,7 @@ document.getElementById("go").addEventListener("click", submit);
     setTimeout(clearHashNow, 60);
     renderClaim(h)
       .catch((e) => {
+        revealGateForError();
         // renderClaim 对「已领走/已过期/网络不通」给的是可执行的话,原样透出;
         // 其余(解密失败等)统一兜底,不把内部错误摊给病人看。
         errEl.textContent = (e && e.message && /[。,]$/.test(e.message))
