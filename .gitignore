@@ -37,3 +37,7 @@ docs/upstream-dicom-rs-report.md
 
 # 真机测试素材:3 个无文本层扫描 PDF,用于验证移动端 OCR 回填(体积小但属测试数据)
 scratch_test_pdfs/
+
+# Python 编译缓存(签名端点本地跑自检时产生)
+__pycache__/
+*.pyc
