@@ -11,7 +11,10 @@ MedMe(医我):**on-device、E2E 加密**的个人病历保险箱。导入照片/
 **技术(设计/架构/测试/决策)→ git(ADR + log);商业/roadmap/产品 → Notion(除非用户关心)。** 公开 build-in-public blog 从 `docs/log/` 提炼(见最新 log)。
 
 ## 易忘、易记混的事实(读代码为准)
-- **OCR 是各平台原生,不是单一引擎**:桌面 mac=Apple Vision / Win=Windows.Media.Ocr / Linux=PP-OCRv5;移动 iOS=Vision、Android=ML Kit(Dart 层,不走 Rust ocr crate)。见 [ADR 0005](docs/ADR/0005-ocr-per-platform-native.md)。**PP-OCRv5 ≠ 移动端引擎。**
+- **OCR 分两套,别混**:
+  - **移动端(iOS + Android)统一走 PP-OCRv5** —— 模型编译进二进制,经 FRB `recognize_image_pp`,见 `ocr_bridge.dart:25`。iOS 在喂 PP 之前多一步 Apple Vision 的**画面拉正**(只处理画面、不识别);Android 的「拍照」用系统文档扫描器(GMS 提供)。**ML Kit 中文识别那条回退路径已随依赖删除**(质量不够)。见 [ADR 0006](docs/ADR/0006-ios-ocr-pp-ocrv5.md) 与 [ADR 0007](docs/ADR/0007-android-doc-scan-degms-and-geometry.md)。
+  - **桌面**才是各平台原生:mac=Apple Vision / Win=Windows.Media.Ocr / Linux=PP-OCRv5。见 [ADR 0005](docs/ADR/0005-ocr-per-platform-native.md)(其中「移动 iOS=Vision / Android=ML Kit」两行**已被 ADR 0006/0007 supersede**)。
+  - ⚠️ 这一条曾长期写错(写成移动端=Vision/ML Kit),并直接导致隐私政策里对外声明了错误的处理技术。**以此处为准,拿不准读 `ocr_bridge.dart`。**
 - **抽取当前是正则**(`parser::assemble_summary`,分享时跑);MedGemma 只探索过、**0 集成**(#150/#157)。
 - 存储是**事件溯源**(core-model:append_event + materialize + CAS);vault 格式须与桌面逐字节兼容——加事件类型 = 动格式,慎。
 - 移动端 build 纪律见 `apps/mobile_flutter/CLAUDE.md`(不日常跑 release/全 ABI)。
