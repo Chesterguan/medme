@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/theme.dart';
@@ -192,6 +193,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     await ReviewState.instance.ensureLoaded();
     // 兜底自动命名:示例数据等不走导入流程的路径,也能把默认档案改成识别到的姓名。
     await autoNameCurrentProfileFrom(profile.name);
+    // 埋点的库存来源就是这里 —— **不为埋点额外读一次库**,用本来就要读的这次。
+    // 上传的只有分桶(0 / 1 / 2-5 / …),精确份数不出设备。
+    Analytics.setLibrarySize(profile.recordCount);
     // 回填当前成员记录数,设置页据此展示每人多少份(不必逐个开库去数)。
     await ProfileManager.instance.setCount(
       ProfileManager.instance.currentId.value,
@@ -360,6 +364,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   }
 
   void _openDoc(int id) {
+    // 埋点:**只报「打开了一份」,不带 id、不带任何内容**。回答的是「档案是被看的
+    // 还是被堆的」——导入了从不打开,说明这是个垃圾桶而不是助手。
+    Analytics.track(AnalyticsEvent.docOpened);
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => DocumentDetailScreen(docId: id)));

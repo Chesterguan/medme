@@ -5,6 +5,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
 
 import 'package:flutter/material.dart';
 
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/import_flow.dart' show ImportChoice, pickImportItems;
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
@@ -82,9 +83,19 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   bool _busy = false;
   String? _progress;
 
+  /// 这次代拍从什么时候开始 —— 交付时用来算「一次代拍要多久」。
+  /// **医生愿不愿意有第二次,基本由这个数决定。**
+  late final DateTime _sessionStartedAt;
+
   @override
   void initState() {
     super.initState();
+    _sessionStartedAt = DateTime.now();
+    // 代拍是赌注最大的功能,此前一个事件都没有 —— 用没用、在哪一步掉、要多久,
+    // 全是盲的。`resumed` 区分「新病人」和「回到 12 小时内的旧病人补拍」。
+    Analytics.track(AnalyticsEvent.proxySessionStarted, {
+      'resumed': widget.patientId != null,
+    });
     if (widget.patientId != null) unawaited(_resume(widget.patientId!));
   }
 
@@ -139,6 +150,10 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   }
 
   Future<void> _onConsentGiven(ConsentDto consent) async {
+    // 同意书是这条流程里最可能的流失点。单独埋一条,`proxy_session_started` 与它
+    // 的差就是「病人在同意环节走掉了」——不拆开就只知道掉了、不知道掉在哪。
+    // **不带同意书里的任何内容**(签名、姓名都在加密包里,不出设备)。
+    Analytics.track(AnalyticsEvent.proxyConsentSigned);
     setState(() {
       _busy = true;
       _progress = '正在准备…';
@@ -304,16 +319,33 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       _busy = true;
       _progress = '正在处理 1/${items.length}…';
     });
+    // 埋点:代拍的采集**也走 doc_import_***。早先只有患者模式的导入有埋点,于是
+    // 「拍纸质件的 OCR 要多久」——最需要这个数的那条路——反而完全测不到。
+    // `source: proxy` 把两条路分开,好知道拍纸和导入截图的耗时差多少。
+    final startedAt = DateTime.now();
+    Analytics.track(AnalyticsEvent.docImportStarted, {
+      'source': 'proxy',
+      'count_bucket': Bucket.count(items.length),
+    });
+    var okElapsedMs = 0;
+    var okCount = 0;
+    String? failStage;
+    ImportFailReason? failReason;
+
     var failed = 0;
     for (var i = 0; i < items.length; i++) {
       final item = items[i];
       if (mounted) {
         setState(() => _progress = '正在处理 ${i + 1}/${items.length}…');
       }
+      var stage = 'capture';
+      final itemStartedAt = DateTime.now();
       try {
         final ImportOutcomeDto outcome;
         if (item.isImage) {
+          stage = 'ocr';
           final ocr = await recognizeImageText(item.path);
+          stage = 'save';
           final bytes = await File(item.path).readAsBytes();
           outcome = await vault.ingestImageWithText(
             name: item.name,
@@ -322,16 +354,41 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
             confidence: ocr.confidence,
           );
         } else {
+          stage = 'save';
           final bytes = await File(item.path).readAsBytes();
           outcome = await vault.ingestBytes(filename: item.name, data: bytes);
         }
         await _noteDetectedName(patientId, outcome);
         _capturedCount++;
+        okElapsedMs += DateTime.now().difference(itemStartedAt).inMilliseconds;
+        okCount++;
       } catch (e) {
         debugPrint('[doctor-proxy] ${item.name} 采集失败: $e');
         failed++;
+        // 只记步骤和原因码,**绝不记 `e`** —— 异常文本里常带文件名和路径。
+        failStage ??= stage;
+        failReason ??= ImportFailReason.of(e);
       }
     }
+
+    final allFailed = failed == items.length;
+    Analytics.track(
+      allFailed ? AnalyticsEvent.docImportFailed : AnalyticsEvent.docImportCompleted,
+      {
+        'source': 'proxy',
+        'count_bucket': Bucket.count(items.length),
+        'failed_bucket': Bucket.count(failed),
+        'duration_bucket': Bucket.duration(DateTime.now().difference(startedAt)),
+        if (okCount > 0)
+          'per_doc_duration_bucket': Bucket.perDoc(
+            Duration(milliseconds: okElapsedMs ~/ okCount),
+          ),
+        if (allFailed) ...{
+          'stage': failStage ?? 'capture',
+          'reason_code': (failReason ?? ImportFailReason.unknown).name,
+        },
+      },
+    );
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -458,6 +515,20 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         consent: consent,
         confirmedIds: Int64List.fromList(confirmed.toList()),
       );
+      // 交付成功。份数分桶 + 整场耗时 —— 一次代拍要五分钟就不会有第二次。
+      //
+      // ⚠️ 份数取 `result.recordCount`(**实际打进包里的**),不是
+      // `confirmed.length`。早先用后者,于是医生没逐份点「确认」就交付时(常态),
+      // 明明交了 1 份却上报 `count_bucket: 0` —— 真机实测就是这么错的。
+      // 「确认了几份」是另一个问题,要测得单独一个属性。
+      Analytics.track(AnalyticsEvent.proxyShareShown, {
+        'count_bucket': Bucket.count(result.recordCount.toInt()),
+        'confirmed_bucket': Bucket.count(confirmed.length),
+        'size_bucket': Bucket.bytes(result.byteSize.toInt()),
+        'duration_bucket': Bucket.duration(
+          DateTime.now().difference(_sessionStartedAt),
+        ),
+      });
       if (!mounted) return;
       setState(() {
         _busy = false;

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/theme.dart';
 
@@ -136,6 +137,12 @@ class _ExportScreenState extends State<ExportScreen> {
         fromDate: from == null ? null : _ymd(from!),
         toDate: to == null ? null : _ymd(to!),
       );
+      // 「导出完成」= 文件已生成。之后的系统分享面板用户可能取消,那是另一回事,
+      // 也拿不到可靠回调 —— 与代拍交付同一条口径(文件生成即算数)。
+      // `ranged` 只报「用没用日期筛选」这个布尔,**不报是哪段日期**(那是就诊时间)。
+      Analytics.track(AnalyticsEvent.exportCompleted, {
+        'ranged': from != null || to != null,
+      });
       if (!mounted) return;
       setState(() {
         _busy = false;

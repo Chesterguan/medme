@@ -76,7 +76,7 @@ Future<void> showImportSheet(BuildContext context) async {
 
   final items = await pickImportItems(choice);
   if (items.isEmpty || !context.mounted) return;
-  await _runImport(context, items);
+  await _runImport(context, items, choice);
 }
 
 /// 采集来源:拍照(含文档扫描器)/ 从相册选 / 选择文件。`public`——除了本文件的
@@ -152,10 +152,18 @@ Future<List<PendingImport>> pickImportItems(ImportChoice choice) async {
   }
 }
 
-Future<void> _runImport(BuildContext context, List<PendingImport> items) async {
-  // 埋点:只报「开始了、几份」——**份数分桶**,不报文件名、不报内容。
+Future<void> _runImport(
+  BuildContext context,
+  List<PendingImport> items,
+  ImportChoice source,
+) async {
+  // 埋点:只报「从哪来、开始了、几份」——**份数分桶**,不报文件名、不报内容。
   final startedAt = DateTime.now();
+  // 导入前的库存:0 就是首次导入。**首次导入成功率是最重要的一个数**,而它端上
+  // 就能判断,不需要任何 ID。读不到(冷启动早期)就不报,绝不猜。
+  final sizeBefore = Analytics.librarySize;
   Analytics.track(AnalyticsEvent.docImportStarted, {
+    'source': source.name,
     'count_bucket': Bucket.count(items.length),
   });
   final progress = ValueNotifier<String>('正在导入 1/${items.length}…');
@@ -187,15 +195,28 @@ Future<void> _runImport(BuildContext context, List<PendingImport> items) async {
   // 本次新建文档 id → 报告里识别到的患者姓名(识别不到为 null),进「待确认」队列;
   // 姓名与当前成员不符者会被标红,识别到的姓名还用来自动命名默认档案。
   final newDocs = <int, String?>{};
+  // 埋点用:整批里**第一次**失败发生在哪一步、归到哪个原因码。只留第一条 ——
+  // 一次批量导入报一条事件,报第一个失败足以定位;报全部会把事件量和基数都吹起来。
+  String? failStage;
+  ImportFailReason? failReason;
+  // 每份耗时的累计(仅成功的份),用来算单份平均 —— 那才是引擎质量指标。
+  var okElapsedMs = 0;
+  var okCount = 0;
+
   for (var i = 0; i < items.length; i++) {
     final item = items[i];
     progress.value = '正在导入 ${i + 1}/${items.length}…';
+    // 每份从「采集完、待处理」开始;下面逐步推进,失败时它就是失败所在的步骤。
+    var stage = 'capture';
+    final itemStartedAt = DateTime.now();
     try {
       final ImportOutcomeDto outcome;
       var pdfBackfilled = false;
       if (item.isImage) {
         // 各平台原生最强 OCR:iOS Apple Vision / 安卓 ML Kit(见 ocr_bridge.dart)。
+        stage = 'ocr';
         final ocr = await recognizeImageText(item.path);
+        stage = 'save';
         final bytes = await File(item.path).readAsBytes();
         outcome = await ingestImageWithText(
           name: item.name,
@@ -204,6 +225,7 @@ Future<void> _runImport(BuildContext context, List<PendingImport> items) async {
           confidence: ocr.confidence,
         );
       } else {
+        stage = 'save';
         final bytes = await File(item.path).readAsBytes();
         outcome = await ingestBytes(filename: item.name, data: bytes);
         // 扫描版 PDF(无文本层 → 仅存原件):移动端未链接 Rust OCR 引擎,改用 pdfx
@@ -232,10 +254,15 @@ Future<void> _runImport(BuildContext context, List<PendingImport> items) async {
               )
             : rowFromOutcome(outcome),
       );
+      okElapsedMs += DateTime.now().difference(itemStartedAt).inMilliseconds;
+      okCount++;
     } catch (e) {
       // 原始错误留日志给开发者;用户看到的是 rowFromError 里的简单提示。
       debugPrint('[import] ${item.name} 导入失败: $e');
       rows.add(rowFromError(item.name, e));
+      // ⚠️ 只记步骤和**原因码**,绝不记 `e` 本身 —— 异常文本里常带文件名和路径。
+      failStage ??= stage;
+      failReason ??= ImportFailReason.of(e);
     }
   }
 
@@ -257,14 +284,27 @@ Future<void> _runImport(BuildContext context, List<PendingImport> items) async {
   // 埋点:成功几份、失败几份、总共花了多久。**耗时是判断要不要优化 OCR 引擎的唯一
   // 客观依据**;失败只报计数,不报任何异常消息(那里面常有文件名和路径)。
   final failedCount = rows.where((r) => r.kind == ImportRowKind.failed).length;
+  final allFailed = failedCount == rows.length;
   Analytics.track(
-    failedCount == rows.length
-        ? AnalyticsEvent.docImportFailed
-        : AnalyticsEvent.docImportCompleted,
+    allFailed ? AnalyticsEvent.docImportFailed : AnalyticsEvent.docImportCompleted,
     {
+      'source': source.name,
       'count_bucket': Bucket.count(rows.length),
       'failed_bucket': Bucket.count(failedCount),
+      // 总时长 = 用户要等多久(决定要不要做后台导入)。
       'duration_bucket': Bucket.duration(DateTime.now().difference(startedAt)),
+      // 单份平均 = 引擎快不快(决定换不换 OCR)。两个数回答两个不同的决定,
+      // 只报总时长的话前一个问题根本答不出来 —— 它被份数主导了。
+      if (okCount > 0)
+        'per_doc_duration_bucket': Bucket.perDoc(
+          Duration(milliseconds: okElapsedMs ~/ okCount),
+        ),
+      // 首次导入成功率。库存读不到时**不报**,不猜。
+      if (sizeBefore != null) 'is_first': sizeBefore == 0,
+      if (allFailed) ...{
+        'stage': failStage ?? 'capture',
+        'reason_code': (failReason ?? ImportFailReason.unknown).name,
+      },
     },
   );
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/claim_link.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
@@ -10,8 +11,11 @@ import 'package:mobile_flutter/vault_events.dart';
 /// 病人是从浏览器点「存进我的 MedMe」过来的,此刻他**已经看过这份病历了** ——
 /// 所以这一屏不再重复展示内容,只回答一个问题:存进谁的档案。存完给一句人话的结果。
 class ClaimScreen extends StatefulWidget {
-  const ClaimScreen({super.key, required this.link});
+  const ClaimScreen({super.key, required this.link, this.cold = false});
   final ClaimLink link;
+
+  /// App 是被这条链接拉起来的(冷启动),而不是已在运行时收到。只用于埋点。
+  final bool cold;
 
   @override
   State<ClaimScreen> createState() => _ClaimScreenState();
@@ -26,7 +30,29 @@ class _ClaimScreenState extends State<ClaimScreen> {
   @override
   void initState() {
     super.initState();
-    _preview = widget.link.preview();
+    // ⚠️ 认领与出码是**两台手机**,没有持久 ID 就没法逐条关联。只看总量比
+    // (claim_imported / proxy_share_shown),不做 per-link 关联 —— 那需要把
+    // 认领 id 的哈希带上,而先看总量够不够用。
+    Analytics.track(AnalyticsEvent.claimOpened, {
+      'entry': widget.cold ? 'cold' : 'warm',
+    });
+    _preview = widget.link.preview().catchError((Object e) {
+      // 取回阶段就失败(过期/断网)—— 这条比认领本身的失败更常见,必须单独看见。
+      _trackFailure(e);
+      throw e;
+    });
+  }
+
+  /// 失败只报**原因码**,绝不报异常文本(里面有对象 id 和网址)。
+  void _trackFailure(Object e) {
+    Analytics.track(AnalyticsEvent.claimFailed, {
+      'reason': switch (e) {
+        ClaimGone() => 'gone',
+        ClaimFailed(message: final m) when m.contains('网络') => 'network',
+        ClaimFailed() => 'failed',
+        _ => 'unknown',
+      },
+    });
   }
 
   Future<void> _claim() async {
@@ -38,8 +64,15 @@ class _ClaimScreenState extends State<ClaimScreen> {
       final r = await widget.link.claim();
       // 档案页在监听这个:存完立刻能看见,不用手动刷新。
       bumpVaultRevision();
+      // 认领成功。份数分桶;`deduped`/`text_only` 只报有没有,不报几份。
+      Analytics.track(AnalyticsEvent.claimImported, {
+        'count_bucket': Bucket.count(r.imported),
+        'deduped': r.deduped > 0,
+        'text_only': r.textOnly > 0,
+      });
       if (mounted) setState(() => _done = r);
     } catch (e) {
+      _trackFailure(e);
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _busy = false);

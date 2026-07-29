@@ -41,3 +41,8 @@ scratch_test_pdfs/
 # Python 编译缓存(签名端点本地跑自检时产生)
 __pycache__/
 *.pyc
+
+# 本机密钥,绝不进库(PostHog Personal API Key 等)
+.posthog_key
+*.key
+.*.swp

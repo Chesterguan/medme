@@ -79,10 +79,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  Future<void> _openHomepage() async {
-    final uri = Uri.parse('https://medmenow.com/');
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok) _showSnack('无法打开主页,请稍后重试');
+  Future<void> _openHomepage() => _openWeb('https://medmenow.com/', '主页');
+
+  /// 隐私政策与用户协议:苹果与各应用商店都要求 App 内可达,不能只挂在官网上。
+  Future<void> _openWeb(String url, String label) async {
+    final ok = await launchUrl(
+      Uri.parse(url),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!ok) _showSnack('无法打开$label,请稍后重试');
   }
 
   /// 示例数据落进**它自己的成员**,不混进你的档案 —— 于是看完可以直接在「保险箱」
@@ -189,6 +194,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (confirmed != true) return;
+    // `where: settings` —— 事后切换。它和首屏那次选择数量上的比,直接说明
+    // 「你是?」那一屏问得清不清楚。
+    Analytics.track(AnalyticsEvent.modeSelected, {
+      'mode': target.name,
+      'where': 'settings',
+    });
+    Analytics.setContext({'mode': target.name});
     await AppMode.instance.setMode(target);
     if (mounted && Navigator.of(context).canPop()) {
       Navigator.of(context).popUntil((route) => route.isFirst);
@@ -301,6 +313,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: 'MedMe 主页',
                 subtitle: '了解更多、下载其它平台版本',
                 onTap: _openHomepage,
+              ),
+              _SettingsRow(
+                icon: Icons.privacy_tip_outlined,
+                title: '隐私政策',
+                subtitle: '我们收集什么、什么情况下数据会离开你的手机',
+                onTap: () =>
+                    _openWeb('https://medmenow.com/privacy.html', '隐私政策'),
+              ),
+              _SettingsRow(
+                icon: Icons.description_outlined,
+                title: '用户协议',
+                subtitle: '工具定位、责任边界与开源许可',
+                onTap: () => _openWeb('https://medmenow.com/terms.html', '用户协议'),
               ),
               _InfoRow(
                 title: 'MedMe 医我',

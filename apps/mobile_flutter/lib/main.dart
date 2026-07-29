@@ -12,6 +12,7 @@ import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
 import 'package:mobile_flutter/screens/export_screen.dart';
+import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/screens/mode_picker_screen.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -24,7 +25,9 @@ Future<void> main() async {
   // 不依赖是否曾开过会话,不阻塞启动。
   unawaited(EphemeralSession.sweep());
   // 行为分析:**不 await** —— 它绝不能挡在启动路径上。没配 Key 时整个不启动。
-  unawaited(Analytics.init().then((_) => Analytics.track(AnalyticsEvent.appOpen)));
+  // `app_open` 不在这里发:它要带上模式、库存、开箱成功与否,那些得等开箱完
+  // (见 `VaultBootstrap`)。init 会缓存自己的 Future,那边直接 await 同一个。
+  unawaited(Analytics.init());
   runApp(const MedMeApp());
 }
 
@@ -45,7 +48,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
     // 冷启动:App 是被链接拉起来的,初始路由就是那条 URI。热启动走
     // didPushRouteInformation。两条路都收敛到 handleIncomingUri。
     final initial = WidgetsBinding.instance.platformDispatcher.defaultRouteName;
-    if (initial != '/') _dispatch(initial);
+    if (initial != '/') _dispatch(initial, cold: true);
   }
 
   @override
@@ -60,7 +63,9 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
     return _dispatch(info.uri.toString());
   }
 
-  bool _dispatch(String raw) {
+  /// [cold] = App 是被这条链接**拉起来的**(而不是已在运行时收到)。这个区分是
+  /// 认领转化里最关键的一维:冷启动基本意味着「刚装完就来认领」。
+  bool _dispatch(String raw, {bool cold = false}) {
     final uri = Uri.tryParse(raw);
     if (uri == null) return false;
     final link = ClaimLink.tryParse(uri);
@@ -68,7 +73,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
     // 保险箱可能还没打开完(冷启动),推迟到下一帧再导航。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       appNavigatorKey.currentState?.push(
-        MaterialPageRoute(builder: (_) => ClaimScreen(link: link)),
+        MaterialPageRoute(builder: (_) => ClaimScreen(link: link, cold: cold)),
       );
     });
     return true;
@@ -110,7 +115,21 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
   // 依赖,并发跑不拖慢启动。IIFE 包一层是因为 `Future.wait` 本身返回
   // `Future<List<void>>`,与这里声明的 `Future<void>` 字段类型不兼容。
   final Future<void> _open = (() async {
-    await Future.wait([openCurrentProfileVault(), AppMode.instance.ensureLoaded()]);
+    var ok = true;
+    try {
+      await Future.wait([openCurrentProfileVault(), AppMode.instance.ensureLoaded()]);
+    } catch (_) {
+      ok = false;
+      rethrow; // 错误界面照旧显示,埋点只是搭个便车
+    } finally {
+      // `app_open` 发在这里而不是 `main()`:要带上模式和「箱子开没开成」。
+      // **开箱失败此前是完全不可见的** —— 用户只看到一句红字,我们什么都不知道。
+      await Analytics.init(); // 已在 main 里跑着,这里只是等同一个 Future
+      Analytics.setContext({
+        'mode': AppMode.instance.mode.value?.name ?? 'unset',
+      });
+      Analytics.track(AnalyticsEvent.appOpen, {'vault_ok': ok});
+    }
   })();
 
   @override
@@ -164,11 +183,38 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
 /// 用 `ValueListenableBuilder` 监听同一个 notifier:设置页「切换模式」写入新值后,
 /// 这里自动重建换到另一个根界面,不需要任何显式导航(调用方只需在切换后把导航栈
 /// popUntil 回第一层,见 `settings_screen.dart`)。
-class AppRoot extends StatelessWidget {
+class AppRoot extends StatefulWidget {
   const AppRoot({super.key});
+  @override
+  State<AppRoot> createState() => _AppRootState();
+}
+
+class _AppRootState extends State<AppRoot> {
+  /// 首启告知与同意 —— **挡在一切之前**。带「医」字的 App 在用户交出任何病历之前
+  /// 必须先把「是什么/不是什么/数据去哪」说清楚,这是合规要求不是引导流程。
+  late final Future<bool> _agreed = FirstRunConsent.hasAgreed();
+  bool _justAgreed = false;
 
   @override
   Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _agreed,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          // 一次 SharedPreferences 读,瞬时;上一屏的 loading 还没撤,不闪。
+          return const Scaffold(backgroundColor: MedMe.bg, body: SizedBox.shrink());
+        }
+        if (!(snap.data ?? false) && !_justAgreed) {
+          return FirstRunConsentScreen(
+            onAgreed: () => setState(() => _justAgreed = true),
+          );
+        }
+        return _modeRoot();
+      },
+    );
+  }
+
+  Widget _modeRoot() {
     return ValueListenableBuilder<AppModeKind?>(
       valueListenable: AppMode.instance.mode,
       builder: (context, mode, _) {

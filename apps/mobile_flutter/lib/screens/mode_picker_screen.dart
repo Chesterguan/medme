@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/theme.dart';
 
@@ -8,6 +9,17 @@ import 'package:mobile_flutter/theme.dart';
 /// notifier 自动切进对应模式的主界面,本屏无需自己导航。
 class ModePickerScreen extends StatelessWidget {
   const ModePickerScreen({super.key});
+
+  /// 首次选身份。埋点带 `where: first`,与设置页的事后切换区分开 —— 事后切换意味着
+  /// 第一次选错了,那是这一屏文案的问题,不是功能问题。
+  Future<void> _choose(AppModeKind kind) async {
+    Analytics.track(AnalyticsEvent.modeSelected, {
+      'mode': kind.name,
+      'where': 'first',
+    });
+    Analytics.setContext({'mode': kind.name});
+    await AppMode.instance.chooseMode(kind);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +58,7 @@ class ModePickerScreen extends StatelessWidget {
                 accentSoft: MedMe.tealSoft,
                 title: '自己/家人的病历',
                 subtitle: '整理、查看、加密分享自己和家人的病历',
-                onTap: () => AppMode.instance.chooseMode(AppModeKind.personal),
+                onTap: () => _choose(AppModeKind.personal),
               ),
               const SizedBox(height: 16),
               _ModeCard(
@@ -55,7 +67,7 @@ class ModePickerScreen extends StatelessWidget {
                 accentSoft: MedMe.proxyOrangeSoft,
                 title: '医生,帮病人建档',
                 subtitle: '当面为病人拍摄纸质病历材料,生成加密文件交给病人',
-                onTap: () => AppMode.instance.chooseMode(AppModeKind.doctor),
+                onTap: () => _choose(AppModeKind.doctor),
               ),
             ],
           ),

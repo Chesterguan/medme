@@ -111,7 +111,12 @@ jobs:
         # 所以 **main 公开发布也只出 arm64-v8a**,与测试分支一致(落地页已注明
         # 「需 64 位手机 arm64」)。补 armeabi-v7a/x86_64 需给每个 ABI 备 ort 预编译
         # + libc++,另做。appbundle(Play 用)需全 ABI,故 Play 上架前不产出。
-        run: flutter build apk --release --target-platform android-arm64
+        # 行为分析的 Key 从 secrets 注入。**没配 secret 时 dart-define 传空串,
+        # App 里 `Analytics.isConfigured` 为 false,SDK 整个不启动** —— 所以
+        # 这一行在没有 secret 的 fork/PR 构建里也安全,不会失败。
+        run: >-
+          flutter build apk --release --target-platform android-arm64
+          --dart-define=POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 # TODO: SHA 钉版
         with:
           name: medme-android
@@ -211,7 +216,11 @@ jobs:
         env:
           PERMISSION_CAMERA: "1"
           PERMISSION_PHOTOS: "1"
-        run: flutter build ipa --release --export-options-plist=$RUNNER_TEMP/ExportOptions.plist
+        # `--dart-define` 见安卓那步的说明:没配 secret 就传空串,分析整个不启动。
+        run: >-
+          flutter build ipa --release
+          --export-options-plist=$RUNNER_TEMP/ExportOptions.plist
+          --dart-define=POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: medme-ios-ipa
