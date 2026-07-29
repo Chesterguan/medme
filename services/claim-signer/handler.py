@@ -106,10 +106,10 @@ def _json_response(start_response, status: str, payload: dict):
 
 def handler(environ, start_response):
     """FC 3.0 Python HTTP 函数入口(WSGI)。"""
-    ak = os.environ.get("OSS_ACCESS_KEY_ID", "")
-    sk = os.environ.get("OSS_ACCESS_KEY_SECRET", "")
-    bucket = os.environ.get("OSS_BUCKET", "")
-    endpoint = os.environ.get("OSS_ENDPOINT", "")
+    ak = os.environ.get("OSS_ACCESS_KEY_ID", "").strip()
+    sk = os.environ.get("OSS_ACCESS_KEY_SECRET", "").strip()
+    bucket = os.environ.get("OSS_BUCKET", "").strip()
+    endpoint = os.environ.get("OSS_ENDPOINT", "").strip()
     if not (ak and sk and bucket and endpoint):
         # 配置缺失是部署问题,不是调用方的问题 —— 明确报 500,别伪装成签名失败。
         return _json_response(
@@ -118,7 +118,7 @@ def handler(environ, start_response):
 
     # 可选的共享口令。它挡不住反编译(口令也在 App 里),但能挡住扫互联网的脚本 ——
     # 把「谁都能拿到上传地址」抬高到「得先拆包」。
-    expected_token = os.environ.get("MEDME_UPLOAD_TOKEN", "")
+    expected_token = os.environ.get("MEDME_UPLOAD_TOKEN", "").strip()
     if expected_token:
         got = environ.get("HTTP_X_MEDME_TOKEN", "")
         # 定长比较,别让响应时间泄漏口令前缀。

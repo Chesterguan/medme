@@ -38,16 +38,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.rstrip("/") in ("", "/health"):
             return self._json(200, {"ok": True})
 
-        ak = os.environ.get("OSS_ACCESS_KEY_ID", "")
-        sk = os.environ.get("OSS_ACCESS_KEY_SECRET", "")
-        bucket = os.environ.get("OSS_BUCKET", "")
-        endpoint = os.environ.get("OSS_ENDPOINT", "")
+        ak = os.environ.get("OSS_ACCESS_KEY_ID", "").strip()
+        sk = os.environ.get("OSS_ACCESS_KEY_SECRET", "").strip()
+        bucket = os.environ.get("OSS_BUCKET", "").strip()
+        endpoint = os.environ.get("OSS_ENDPOINT", "").strip()
         if not (ak and sk and bucket and endpoint):
             # 配置缺失是部署问题,不是调用方的问题——明确报 500,别伪装成签名失败。
             return self._json(500, {"error": "server_not_configured"})
 
         # 可选共享口令:挡不住反编译(口令也在 App 里),但能挡住扫互联网的脚本。
-        expected = os.environ.get("MEDME_UPLOAD_TOKEN", "")
+        expected = os.environ.get("MEDME_UPLOAD_TOKEN", "").strip()
         if expected:
             import hmac
 
