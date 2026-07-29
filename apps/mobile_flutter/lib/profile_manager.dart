@@ -22,8 +22,16 @@ class ProfileManager {
   ProfileManager._();
   static final ProfileManager instance = ProfileManager._();
 
-  /// 保险箱默认名字(不用「我」这种身份词)。用户可在设置里改成「我家」「张建国的病历」等。
+  /// 保险箱默认名字(家庭/个人层面)。用户可在设置里改成「我家」「张建国的病历」等。
   static const defaultVaultName = '我的医疗档案';
+
+  /// 初始成员的默认名字。**必须与 [defaultVaultName] 不同** —— 两者曾经用同一个字符串,
+  /// 于是设置页会显示成「保险箱:我的医疗档案 → 成员:我的医疗档案」,同一个名字在两个
+  /// 层级上各出现一次,用户看不懂谁包含谁。
+  ///
+  /// 而且成员名会进档案屏顶部那条**常驻 tab**(横向排列,见 `_MemberTabs`):六个字的名字
+  /// 一个人就占掉半行,五人上限形同虚设。一个字的「我」让 tab 条真的能放下几个人。
+  static const defaultMemberName = '我';
 
   /// 存储格式版本。产品尚未正式发布,没有需要迁移的存量安装 —— 读到旧格式(按**名字**
   /// 建目录的那版)直接当作全新开始,不做半迁移,免得留下「表里有人、目录对不上」的
@@ -38,7 +46,7 @@ class ProfileManager {
   final ValueNotifier<String> currentId = ValueNotifier<String>(_bootstrapId);
 
   List<Profile> _profiles = const [
-    Profile(id: _bootstrapId, name: defaultVaultName),
+    Profile(id: _bootstrapId, name: defaultMemberName),
   ];
   // 整个保险箱的名字(家庭/个人层面,与「成员」是两回事);设置页展示 + 可改。
   String _vaultName = defaultVaultName;
@@ -226,7 +234,7 @@ class ProfileManager {
   /// 恢复出厂:成员表清回单一默认、清份数缓存、保险箱名回默认、允许自动命名。
   /// 「清空所有数据」调它(配合删各成员目录),而不是只清当前成员。
   Future<void> factoryReset() async {
-    _profiles = const [Profile(id: _bootstrapId, name: defaultVaultName)];
+    _profiles = const [Profile(id: _bootstrapId, name: defaultMemberName)];
     _vaultName = defaultVaultName;
     _counts.clear();
     _autoNamePending = true;

@@ -349,7 +349,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
 /// 保险箱卡:展示 + 可改**保险箱名字**(整个箱子的名字,不是某个人),多成员时列出
 /// 每位成员各有多少份档案。切换成员/导入/加成员都在「健康档案」页,这里不重复那些
-/// 功能——只做「这是哪个箱子、里面各人多少份」。名字默认「我的医疗档案」,不用「我」。
+/// 功能——只做「这是哪个箱子、里面各人多少份」。
+///
+/// **箱子名与成员名必须不同**:箱子默认「我的医疗档案」(家庭/个人层面),初始成员默认
+/// 「我」。两者曾用同一个字符串,导致这里显示成「我的医疗档案 → 我的医疗档案」,层级
+/// 读不出来。
 class _VaultCard extends StatelessWidget {
   const _VaultCard({required this.profile, required this.onChanged});
   final PatientProfileDto? profile;

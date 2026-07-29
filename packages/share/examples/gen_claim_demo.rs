@@ -132,7 +132,8 @@ fn rehash_csp(html: &str) -> String {
         ));
         i = end;
     }
-    assert_eq!(hashes.len(), 2, "查看器应恰有两段内联脚本");
+    // 首屏防闪脚本(head 里那段)、内联 dicom-parser、查看器逻辑 —— 三段。
+    assert_eq!(hashes.len(), 3, "查看器应恰有三段内联脚本");
 
     // 替换 script-src 后面直到分号的整段。**必须先定位到 CSP meta 标签**:头部维护
     // 注释里也出现「script-src」字样,直接 find 会改到注释上,CSP 原封不动 —— 于是
