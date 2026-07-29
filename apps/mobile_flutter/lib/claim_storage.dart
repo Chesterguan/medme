@@ -30,14 +30,46 @@ class ClaimStorage {
     defaultValue: 'https://medme-claim.oss-cn-hangzhou.aliyuncs.com/c/',
   );
 
+  /// 上传许可证的签发地址(阿里云函数计算,见 services/claim-signer/)。
+  ///
+  /// **手机不持 AccessKey** —— 那东西进了 App 就能被反编译扒出来,而账号是实名主体的。
+  /// 所以每次上传先问它要一个限时的预签名 PUT 地址。空串表示未配置:那时退回裸 PUT,
+  /// 只有本地模拟桶会接受,真桶会 403 → 出码降级为简版码(见 qr_share_screen)。
+  static const signerUrl = String.fromEnvironment('MEDME_SIGNER_URL');
+
   final String base;
 
   /// 对象 id:96 位随机,不可枚举。安全性建立在两条上 —— 猜不到这个 id,以及密钥
   /// 从不上服务器。桶上不开放 ListObjects,所以也没法遍历。
+  ///
+  /// 走签名端点时 id 由**服务端**生成(客户端无权指定,否则能覆盖别人的对象);
+  /// 这个本地实现只在没配签名端点的本地模拟桶场景下用。
   static String newId() {
     final r = Random.secure();
     final b = Uint8List.fromList(List.generate(12, (_) => r.nextInt(256)));
     return base64Url.encode(b).replaceAll('=', '');
+  }
+
+  /// 向签名端点要一份上传许可证,回 `(对象id, 上传地址)`。
+  Future<(String, Uri)> _requestPermit() async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+    try {
+      final req = await client.getUrl(Uri.parse(signerUrl));
+      final res = await req.close();
+      final body = await res.transform(utf8.decoder).join();
+      if (res.statusCode != 200) {
+        throw ClaimUploadFailed('取上传许可失败(${res.statusCode})');
+      }
+      final j = jsonDecode(body) as Map<String, dynamic>;
+      final id = j['id'] as String?;
+      final url = j['uploadUrl'] as String?;
+      if (id == null || url == null) throw const ClaimUploadFailed('上传许可格式不对');
+      return (id, Uri.parse(url));
+    } on SocketException {
+      throw const ClaimUploadFailed('网络连不上,请检查网络后重试。');
+    } finally {
+      client.close();
+    }
   }
 
   /// 上传一份密文,回对象 id。`onProgress` 给 0.0–1.0,用于进度条 —— 病人在诊室里
@@ -51,10 +83,20 @@ class ClaimStorage {
     Uint8List bytes, {
     void Function(double)? onProgress,
   }) async {
-    final id = newId();
+    // 配了签名端点就走「先要许可证」;没配则裸 PUT(仅本地模拟桶可用)。
+    final String id;
+    final Uri target;
+    if (signerUrl.isNotEmpty) {
+      (id, target) = await _requestPermit();
+    } else {
+      id = newId();
+      target = Uri.parse('$base$id');
+    }
+
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
     try {
-      final req = await client.putUrl(Uri.parse('$base$id'));
+      final req = await client.putUrl(target);
+      // **必须与签名端点里的 CONTENT_TYPE 逐字一致** —— 它进签名串,对不上 OSS 拒收。
       req.headers.contentType = ContentType.binary;
       req.contentLength = bytes.length;
 
