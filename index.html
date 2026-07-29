@@ -256,6 +256,33 @@
     .steps{grid-template-columns:1fr;gap:18px;margin-top:36px}
     .voices{grid-template-columns:1fr}
   }
+  /* ── 医生模式(代拍)专区 ──────────────────────────────────────────
+     橙色取自 App 内 theme.dart 的 proxyOrange / proxyOrangeSoft:整页蓝白里
+     唯一的橙色地带,靠色彩断层取得突出,不靠更大的字号。 */
+  :root{ --doc:#c2570c; --doc-50:#fceee0; }
+  .docband{background:linear-gradient(180deg,var(--doc-50),#fff);
+    border-top:1px solid #f0d9c4;border-bottom:1px solid #f0d9c4}
+  .docband .kicker{color:var(--doc)}
+  .doc-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center}
+  .doc-h{font-size:32px;line-height:1.3;letter-spacing:-.5px;margin-bottom:16px;text-align:left}
+  .doc-h .accent{color:var(--doc)}
+  .doc-p{color:var(--muted);font-size:16.5px;max-width:46ch;margin-bottom:22px}
+  /* 医生原话:橙色左栏,与下方「它为什么长成这样」的署名竖线同一手法 */
+  .doc-quote{border-left:3px solid var(--doc);padding:2px 0 2px 16px;margin-bottom:22px}
+  .doc-quote q{quotes:none;display:block;font-size:16px;line-height:1.68;color:var(--ink)}
+  .doc-quote .by{margin-top:9px;color:var(--muted);font-size:12.5px}
+  /* 三步用编号,因为它真的是顺序 —— 同意在拍之前,不是装饰 */
+  .steps{display:flex;flex-direction:column;gap:14px}
+  .step-d{display:flex;gap:14px;align-items:flex-start;background:#fff;border:1px solid #f0d9c4;
+    border-radius:14px;padding:16px 18px}
+  .step-d .n{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--doc);color:#fff;
+    font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .step-d b{display:block;font-size:15px;margin-bottom:3px}
+  .step-d span{color:var(--muted);font-size:13.5px;line-height:1.6}
+  .doc-note{margin-top:18px;font-size:13px;color:var(--muted);line-height:1.7}
+  .doc-note b{color:var(--doc)}
+  @media(max-width:900px){.doc-grid{grid-template-columns:1fr;gap:30px}
+    .doc-h{font-size:27px;max-width:none}}
 </style>
 </head>
 <body>
@@ -268,6 +295,7 @@
     </a>
     <div class="links">
       <a class="hide-sm" href="#how">怎么帮你</a>
+      <a class="hide-sm" href="#doctor">医生</a>
       <a class="hide-sm" href="#start">下载</a>
       <a class="hide-sm" href="blog.html">开发日志</a>
       <a class="hide-sm" href="about.html">关于</a>
@@ -302,7 +330,7 @@
 <section id="start" class="alt">
   <div class="wrap">
     <h2>开始使用</h2>
-    <p class="section-lead">选择你的设备下载整理自己的档案;医生无需安装,扫病人出示的码、或打开他发来的链接即可。</p>
+    <p class="section-lead">选择你的设备下载整理自己的档案;医生无需安装,扫病人出示的二维码即可。</p>
     <div style="text-align:center;margin:-26px 0 30px;font-size:13px;font-weight:700;letter-spacing:.02em;color:var(--muted)">当前版本 <span id="cur-ver">加载中…</span> · <a href="changelog.html" style="color:var(--blue);font-weight:700;text-decoration:none">更新日志 →</a></div>
     <div class="dl">
       <div class="dl-col">
@@ -348,7 +376,7 @@
       <div class="dv-card">
         <div class="dv-head">
           <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/></svg></span>
-          <div><b>在线查看器 · 医生无需安装</b><span>扫病人出示的码,或打开他发来的链接,看到的不是一堆文件 ——</span></div>
+          <div><b>在线查看器 · 医生无需安装</b><span>扫病人出示的二维码,看到的不是一堆文件 ——</span></div>
         </div>
         <ul class="dv-list">
           <li>病程时间轴 + 在治疾病 / 用药一目了然</li>
@@ -361,6 +389,33 @@
           <a class="btn ghost" href="viewer/" target="_blank" rel="noopener">打开在线查看器</a>
         </div>
         <p style="font-size:12.5px;color:var(--muted);margin-top:9px">样例用虚构患者数据,不含任何真实病历。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== 医生模式(代拍) ===== -->
+<section class="docband" id="doctor">
+  <div class="wrap" style="padding-top:64px;padding-bottom:64px">
+    <div class="doc-grid">
+      <div>
+        <span class="kicker">医生模式</span>
+        <h2 class="doc-h">病人抱着一摞纸来,<br><span class="accent">几分钟内变成一份电子病历</span>。</h2>
+        <p class="doc-p">跨院看病的人,材料常常是一叠复印件和化验单。医生当面征得同意后拍下来,当场生成一份加密文件交给病人本人 —— 从此这些资料跟着病人走,下一家医院也读得懂。</p>
+        <div class="doc-quote">
+          <q>很多跨院治疗的人,来的时候带了一堆纸质材料,本身就诊时间就短,问起来很多人回答得比较啰嗦。</q>
+          <div class="by">一位出门诊的医生</div>
+        </div>
+        <div class="doc-note">
+          病人材料<b>不进医生的档案</b>,单独存放、<b>本机最多留 12 小时</b>后自动删除,医生也可随时手动清空。
+          拍摄前的告知与签字会一并封进那份加密文件里。
+        </div>
+      </div>
+      <div class="steps">
+        <div class="step-d"><span class="n">1</span><div><b>当面告知、签字同意</b><span>拍什么、做什么用、交给谁、存多久、谁能打开 —— 五句话说清,病人签字确认。</span></div></div>
+        <div class="step-d"><span class="n">2</span><div><b>当场拍</b><span>化验单、处方、检查报告都行,可以分多次拍;拍完医生逐份核对一遍。</span></div></div>
+        <div class="step-d"><span class="n">3</span><div><b>加密文件交给病人</b><span>连同口令当面交付。没有那串口令,医生和我们都打不开。</span></div></div>
       </div>
     </div>
   </div>
@@ -434,9 +489,9 @@
     </div>
 
     <div class="steps">
-      <div class="step"><span class="num">1</span><div><b>拍照或拖进来</b><p>纸质报告、CT 片子、相册里的照片,统统丢进来,不用分类、不用改名。</p><span class="tech">支持 PDF · 图片 · 文本 · CT/MRI 影像</span></div></div>
+      <div class="step"><span class="num">1</span><div><b>拍照或拖进来</b><p>纸质报告、CT 片子、相册里的照片,统统丢进来,不用分类、不用改名。</p><span class="tech">支持 PDF · 图片 · 文本</span></div></div>
       <div class="step"><span class="num">2</span><div><b>自动认字、理清顺序</b><p>它把照片里的字认出来,按看病的时间排好,变成上面这样一条清清楚楚的记录。</p><span class="tech">中文 OCR + 按时间自动归类</span></div></div>
-      <div class="step"><span class="num">3</span><div><b>需要时一键拿出来</b><p>复诊、换院、去急诊,出示二维码让医生扫,或导出一份可打印的资料。</p><span class="tech">扫码即看完整病历 · 一键导出 PDF</span></div></div>
+      <div class="step"><span class="num">3</span><div><b>需要时一键拿出来</b><p>复诊、换院、去急诊,出示二维码让医生扫,或导出一份可打印的资料。</p><span class="tech">扫码即看完整病历 · 导出可打印文件</span></div></div>
     </div>
   </div>
 </section>
@@ -458,7 +513,7 @@
       </div>
       <div class="persona">
         <div class="who"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg></span>帮父母管健康</div>
-        <div class="desc">替不太会用手机的老人把报告整理好,人在外地,也能随时远程调取。</div>
+        <div class="desc">替不太会用手机的老人把报告整理好,复诊时一次拿全,不怕漏带。</div>
       </div>
       <div class="persona">
         <div class="who"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M2 20a7 7 0 0 1 14 0"/><path d="M18 8v6M15 11h6"/></svg></span>有娃家庭</div>
@@ -526,6 +581,13 @@
           <div class="by">一位大学研究员<br>曾在家人生病时手工整理资料</div>
         </div>
         <div class="did"><span class="tag">因此</span>自动按疾病归类、把同一项指标的历次结果连成时间线。<a href="blog.html">怎么做到的 →</a></div>
+      </div>
+      <div class="voice">
+        <div class="said">
+          <q>有了代拍,能在很短时间里帮病人整理出电子病历,也看得到指标随时间的变化。</q>
+          <div class="by">一位出门诊的医生</div>
+        </div>
+        <div class="did"><span class="tag">因此</span>做了医生模式:当面同意、当场拍、加密文件交给病人本人。<a href="#doctor">怎么用 →</a></div>
       </div>
     </div>
     <p class="section-lead" style="margin-top:30px">你的反馈也会这样进到产品里。</p>
