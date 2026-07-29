@@ -28,6 +28,10 @@ class QrShareScreen extends StatefulWidget {
 class _QrShareScreenState extends State<QrShareScreen> {
   String? _url;
   int _recordCount = 0;
+  int _problemCount = 0;
+  /// 上传没成功,退回了「只带摘要」的旧码。**必须在界面上说出来** —— 病人得知道
+  /// 医生这次看不到原件,否则他会以为都给了。
+  bool _degraded = false;
   String? _error;
   String? _stage;      // 当前在干嘛(准备 / 上传)
   double? _progress;   // 0.0–1.0,只在上传阶段有值
@@ -79,6 +83,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
     try {
       setState(() {
         _error = null;
+        _degraded = false;
         _stage = '正在准备病历…';
         _progress = null;
       });
@@ -89,12 +94,34 @@ class _QrShareScreenState extends State<QrShareScreen> {
         _stage = '正在上传(${_mb(blob.length)})…';
         _progress = 0;
       });
-      final id = await ClaimStorage().upload(
-        blob,
-        onProgress: (p) {
-          if (mounted) setState(() => _progress = p);
-        },
-      );
+
+      String? id;
+      try {
+        id = await ClaimStorage().upload(
+          blob,
+          onProgress: (p) {
+            if (mounted) setState(() => _progress = p);
+          },
+        );
+      } catch (_) {
+        // **传不上去也要给码。** 医院信号差、桶抽风、欠费——任何一样都会让病人
+        // 在医生面前拿不出东西。退回「只带摘要」的旧码(载荷内嵌、不需要联网),
+        // 并在界面上如实说明这次没带原件。正常路径一个字不改。
+        id = null;
+      }
+
+      if (id == null) {
+        final fallback = await buildQrShareUrl(baseUrl: _viewerBase);
+        if (!mounted) return;
+        setState(() {
+          _stage = null;
+          _progress = null;
+          _degraded = true;
+          _url = fallback.url;
+          _problemCount = fallback.problemCount;
+        });
+        return;
+      }
 
       if (!mounted) return;
       setState(() {
@@ -231,7 +258,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
               color: MedMe.tealSoft,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
@@ -240,14 +267,20 @@ class _QrShareScreenState extends State<QrShareScreen> {
                 ),
                 SizedBox(height: 6),
                 Text(
-                  '你的完整病历:在治的疾病、化验趋势、正在吃的药,以及每一份原件。',
-                  style: TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.ink),
+                  _degraded
+                      ? '当前在治的疾病、关键指标趋势、正在吃的药。'
+                      '这次没能上传,所以不含原件 —— 医生要看原件,请当场用手机翻给他。'
+                      : '你的完整病历:在治的疾病、化验趋势、正在吃的药,以及每一份原件。',
+                  style: const TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.ink),
                 ),
-                SizedBox(height: 10),
+                const SizedBox(height: 10),
                 Text(
-                  '这张码就是钥匙:被拍下就等于把这份病历给了对方,看完收起手机即可。'
-                  '内容已加密临时存放,保留期结束后自动删除 —— 密钥只在这张码里,我们解不开。',
-                  style: TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.faint),
+                  _degraded
+                      ? '这张码就是钥匙:被拍下就等于把这份摘要给了对方,看完收起手机即可。'
+                      '这次的内容全在码里,没有上传到任何地方。'
+                      : '这张码就是钥匙:被拍下就等于把这份病历给了对方,看完收起手机即可。'
+                      '内容已加密临时存放,保留期结束后自动删除 —— 密钥只在这张码里,我们解不开。',
+                  style: const TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.faint),
                 ),
               ],
             ),
@@ -258,7 +291,10 @@ class _QrShareScreenState extends State<QrShareScreen> {
   }
 
   Widget _summaryChip() {
-    final text = '本码含 $_recordCount 份病历,含原件';
+    // 降级时必须说出来:病人得知道医生这次看不到原件,否则他会以为都给了。
+    final text = _degraded
+        ? '本码含 $_problemCount 个在治问题 · 这次没能带上原件'
+        : '本码含 $_recordCount 份病历,含原件';
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
