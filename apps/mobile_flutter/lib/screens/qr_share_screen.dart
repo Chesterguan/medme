@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 
+import '../analytics.dart';
 import '../claim_upload.dart';
 import '../src/rust/api/vault.dart';
 import '../theme.dart';
@@ -142,6 +143,11 @@ class _QrShareScreenState extends State<QrShareScreen> {
         _url = '$_viewerBase#q2.$id.$keyB64';
         _recordCount = recordCount;
       });
+      // 出码成功。份数与体积都分桶 —— 体积分布决定要不要担心大档案的上传时间。
+      Analytics.track(AnalyticsEvent.shareQrShown, {
+        'record_count_bucket': Bucket.count(recordCount),
+        'size_bucket': Bucket.bytes(_totalBytes),
+      });
     } on ClaimUploadCancelled {
       if (mounted) Navigator.of(context).pop();  // 取消不是错误,直接退回上一屏
     } catch (e) {
@@ -153,11 +159,19 @@ class _QrShareScreenState extends State<QrShareScreen> {
           _resumable = '$e';
         });
       }
+      // 上传中断了。**这条是回答「断连有多常见」的唯一数据** —— 但只报「断在几成」,
+      // 不报错误详情(异常消息可能带 URL 和对象 id)。
+      Analytics.track(AnalyticsEvent.shareUploadRetry, {
+        'choice': 'interrupted',
+        'progress_bucket': Bucket.count(((_progress ?? 0) * 10).round()),
+      });
     }
   }
 
   /// 用户选了「就用简版码」:退回内嵌载荷的旧码(只带摘要、不需要联网)。
   Future<void> _useFallback() async {
+    // 用户选了简版码 = 云那条路这次没走通。与 retry 的比例能看出他们更愿意等还是更急。
+    Analytics.track(AnalyticsEvent.shareQrDegraded, {'choice': 'fallback'});
     setState(() {
       _resumable = null;
       _stage = '正在生成简版码…';
@@ -185,6 +199,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
 
   /// 重试 = 继续传。已成功的分片由 [ResumableUpload] 跳过。
   Future<void> _retry() async {
+    Analytics.track(AnalyticsEvent.shareUploadRetry, {'choice': 'retry'});
     final s = _pendingShare;
     if (s != null) await _runUpload(s.$1, s.$2);
   }

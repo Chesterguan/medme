@@ -64,6 +64,8 @@ dependencies:
   # 医生代拍病人流程:拍前同意的手写签名捕获。成熟稳定包(6.x 系列,非
   # bleeding-edge),`CustomPainter` 手绘签名板 + 导出 PNG,不引入原生依赖。
   signature: ^6.3.0
+  posthog_flutter: ^5.33.4
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/claim_link.dart';
 import 'package:mobile_flutter/ephemeral_session.dart';
@@ -22,6 +23,8 @@ Future<void> main() async {
   // 清医生代拍临时会话的崩溃残留(上次进程被杀/崩溃时没机会走 `ephemeral_wipe`)。
   // 不依赖是否曾开过会话,不阻塞启动。
   unawaited(EphemeralSession.sweep());
+  // 行为分析:**不 await** —— 它绝不能挡在启动路径上。没配 Key 时整个不启动。
+  unawaited(Analytics.init().then((_) => Analytics.track(AnalyticsEvent.appOpen)));
   runApp(const MedMeApp());
 }
 

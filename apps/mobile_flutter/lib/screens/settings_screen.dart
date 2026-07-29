@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
@@ -42,6 +43,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// 用户反馈过「载入示例后清空点了没反应」,这里确保按钮忙时不可再点,
   /// 而不是悄悄丢弃点击)。
   bool _busy = false;
+  bool _analyticsOn = Analytics.isEnabled;
 
   @override
   void initState() {
@@ -111,6 +113,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _setAnalytics(bool on) async {
+    setState(() => _analyticsOn = on);
+    await Analytics.setEnabled(on);
   }
 
   Future<void> _confirmAndResetVault() async {
@@ -224,6 +231,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
+          // 分析开关只在配了 Key 的构建里出现 —— 没配就整个 SDK 都不启动,
+          // 露一个永远无效的开关只会让人困惑。
+          if (Analytics.isConfigured) ...[
+            const _SectionLabel('使用情况'),
+            _SettingsGroup(
+              children: [
+                SwitchListTile(
+                  value: _analyticsOn,
+                  onChanged: _busy ? null : _setAnalytics,
+                  title: const Text('帮助改进 MedMe'),
+                  subtitle: const Text(
+                    '只上报「导入了几份、用了多久、成没成」这类计数,'
+                    '不含任何病历内容 —— 文字、文件名、药名、化验值一个字都不会离开这台手机。'
+                    '也不会给你分配可追踪的标识。',
+                    style: TextStyle(fontSize: 12.5, height: 1.5),
+                  ),
+                  isThreeLine: true,
+                  activeThumbColor: MedMe.teal,
+                ),
+              ],
+            ),
+          ],
           _SectionLabel('数据管理'),
           _SettingsGroup(
             children: [

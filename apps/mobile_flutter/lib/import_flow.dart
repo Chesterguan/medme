@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:cunning_document_scanner/cunning_document_scanner.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:google_api_availability/google_api_availability.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -152,6 +153,11 @@ Future<List<PendingImport>> pickImportItems(ImportChoice choice) async {
 }
 
 Future<void> _runImport(BuildContext context, List<PendingImport> items) async {
+  // 埋点:只报「开始了、几份」——**份数分桶**,不报文件名、不报内容。
+  final startedAt = DateTime.now();
+  Analytics.track(AnalyticsEvent.docImportStarted, {
+    'count_bucket': Bucket.count(items.length),
+  });
   final progress = ValueNotifier<String>('正在导入 1/${items.length}…');
   // 模态进度对话框(不可点走);导入结束后由本函数关闭。
   showDialog<void>(
@@ -247,6 +253,20 @@ Future<void> _runImport(BuildContext context, List<PendingImport> items) async {
   if (rows.any((r) => r.kind != ImportRowKind.failed)) {
     bumpVaultRevision();
   }
+
+  // 埋点:成功几份、失败几份、总共花了多久。**耗时是判断要不要优化 OCR 引擎的唯一
+  // 客观依据**;失败只报计数,不报任何异常消息(那里面常有文件名和路径)。
+  final failedCount = rows.where((r) => r.kind == ImportRowKind.failed).length;
+  Analytics.track(
+    failedCount == rows.length
+        ? AnalyticsEvent.docImportFailed
+        : AnalyticsEvent.docImportCompleted,
+    {
+      'count_bucket': Bucket.count(rows.length),
+      'failed_bucket': Bucket.count(failedCount),
+      'duration_bucket': Bucket.duration(DateTime.now().difference(startedAt)),
+    },
+  );
 
   if (!context.mounted) return;
   Navigator.of(context).pop(); // 关进度对话框
