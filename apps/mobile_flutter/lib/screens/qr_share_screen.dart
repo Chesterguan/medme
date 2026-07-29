@@ -11,7 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 
-import '../claim_storage.dart';
+import '../claim_upload.dart';
 import '../src/rust/api/vault.dart';
 import '../theme.dart';
 
@@ -35,6 +35,15 @@ class _QrShareScreenState extends State<QrShareScreen> {
   String? _error;
   String? _stage;      // 当前在干嘛(准备 / 上传)
   double? _progress;   // 0.0–1.0,只在上传阶段有值
+  int _uploadedBytes = 0;
+  int _totalBytes = 0;
+  /// 当前这次上传。**留着它才能续传** —— 失败后重试会跳过已成功的分片。
+  ResumableUpload? _upload;
+  /// 重试时要用的 (密钥, 记录数) —— 加密只做一次,重试不重新加密。
+  (String, int)? _pendingShare;
+  /// 失败了但可以续传:此时给「继续上传 / 就用简版码」两个选择,而不是直接降级 ——
+  /// 用户可能知道「再等一下就好,医生不急」,那不该由我们替他决定。
+  String? _resumable;
 
   // 自动调亮是否成功:成功了就不用再提示患者手动调亮。失败(部分设备/权限
   // 限制)保持 false,页面照常显示二维码,退回原来的手动提示文案。
@@ -88,48 +97,11 @@ class _QrShareScreenState extends State<QrShareScreen> {
         _progress = null;
       });
       final (blob, keyB64, recordCount) = await qrShareBlob(expiresDays: 15);
-
-      if (!mounted) return;
-      setState(() {
-        _stage = '正在上传(${_mb(blob.length)})…';
-        _progress = 0;
-      });
-
-      String? id;
-      try {
-        id = await ClaimStorage().upload(
-          blob,
-          onProgress: (p) {
-            if (mounted) setState(() => _progress = p);
-          },
-        );
-      } catch (_) {
-        // **传不上去也要给码。** 医院信号差、桶抽风、欠费——任何一样都会让病人
-        // 在医生面前拿不出东西。退回「只带摘要」的旧码(载荷内嵌、不需要联网),
-        // 并在界面上如实说明这次没带原件。正常路径一个字不改。
-        id = null;
-      }
-
-      if (id == null) {
-        final fallback = await buildQrShareUrl(baseUrl: _viewerBase);
-        if (!mounted) return;
-        setState(() {
-          _stage = null;
-          _progress = null;
-          _degraded = true;
-          _url = fallback.url;
-          _problemCount = fallback.problemCount;
-        });
-        return;
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _stage = null;
-        _progress = null;
-        _url = '$_viewerBase#q2.$id.$keyB64';
-        _recordCount = recordCount.toInt();
-      });
+      _upload = ResumableUpload(blob);
+      _totalBytes = blob.length;
+      _pendingShare = (keyB64, recordCount.toInt());
+      await _runUpload(keyB64, recordCount.toInt());
+      return;
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -139,6 +111,82 @@ class _QrShareScreenState extends State<QrShareScreen> {
         });
       }
     }
+  }
+
+  /// 跑(或继续跑)上传。可重复调用 —— 已成功的分片不会重传。
+  Future<void> _runUpload(String keyB64, int recordCount) async {
+    final up = _upload;
+    if (up == null) return;
+    setState(() {
+      _resumable = null;
+      _error = null;
+      _stage = '正在上传(${_mb(_totalBytes)})…';
+      _progress = up.progress;
+      _uploadedBytes = up.uploadedBytes;
+    });
+    try {
+      final id = await up.run(
+        onProgress: (p) {
+          if (mounted) {
+            setState(() {
+              _progress = p;
+              _uploadedBytes = up.uploadedBytes;
+            });
+          }
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _stage = null;
+        _progress = null;
+        _url = '$_viewerBase#q2.$id.$keyB64';
+        _recordCount = recordCount;
+      });
+    } on ClaimUploadCancelled {
+      if (mounted) Navigator.of(context).pop();  // 取消不是错误,直接退回上一屏
+    } catch (e) {
+      // **不直接降级。** 已经传上去的分片还在,重试能接着传 —— 让用户自己选。
+      if (mounted) {
+        setState(() {
+          _stage = null;
+          _progress = null;
+          _resumable = '$e';
+        });
+      }
+    }
+  }
+
+  /// 用户选了「就用简版码」:退回内嵌载荷的旧码(只带摘要、不需要联网)。
+  Future<void> _useFallback() async {
+    setState(() {
+      _resumable = null;
+      _stage = '正在生成简版码…';
+    });
+    try {
+      final fallback = await buildQrShareUrl(baseUrl: _viewerBase);
+      if (!mounted) return;
+      setState(() {
+        _stage = null;
+        _degraded = true;
+        _url = fallback.url;
+        _problemCount = fallback.problemCount;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _stage = null;
+          _error = '$e';
+        });
+      }
+    }
+  }
+
+  static String _pct(double p) => '${(p * 100).round()}%';
+
+  /// 重试 = 继续传。已成功的分片由 [ResumableUpload] 跳过。
+  Future<void> _retry() async {
+    final s = _pendingShare;
+    if (s != null) await _runUpload(s.$1, s.$2);
   }
 
   static String _mb(int bytes) => bytes < 1024 * 1024
@@ -180,6 +228,41 @@ class _QrShareScreenState extends State<QrShareScreen> {
         ),
       );
     }
+    // 传失败但还能接着传:给两个选择。用户可能知道「再等一下就好」,不该由我们
+    // 替他判断;也可能急着给医生看,那就用简版码。已传的分片都还在,续传不重来。
+    final resumable = _resumable;
+    if (resumable != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off, size: 40, color: MedMe.faint),
+            const SizedBox(height: 14),
+            Text(resumable,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, height: 1.6)),
+            const SizedBox(height: 6),
+            Text('已传 ${_pct(_progress ?? 0)},继续会接着传,不用从头来。',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12.5, color: MedMe.faint, height: 1.6)),
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: _retry,
+              style: FilledButton.styleFrom(
+                  backgroundColor: MedMe.teal,
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 13)),
+              child: const Text('继续上传'),
+            ),
+            TextButton(
+              onPressed: _useFallback,
+              child: const Text('就用简版码(不含原件)'),
+            ),
+          ],
+        ),
+      );
+    }
+
     final url = _url;
     if (url == null) {
       return Padding(
@@ -207,8 +290,15 @@ class _QrShareScreenState extends State<QrShareScreen> {
             ),
             if (_progress != null) ...[
               const SizedBox(height: 6),
-              Text('${(_progress! * 100).round()}%',
+              // 只给百分比不够 —— 病人在诊室里等,得能判断「还要多久」。
+              Text('${_pct(_progress!)} · ${_mb(_uploadedBytes)} / ${_mb(_totalBytes)}',
                   style: const TextStyle(color: MedMe.faint, fontSize: 12)),
+              const SizedBox(height: 14),
+              // 没有取消按钮的话,慢的时候只能退出页面,而退出等于白传。
+              TextButton(
+                onPressed: () => _upload?.cancel(),
+                child: const Text('取消'),
+              ),
             ],
           ],
         ),

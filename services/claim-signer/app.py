@@ -16,7 +16,12 @@ import os
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from handler import PRESIGN_TTL_SECONDS, build_presigned_put, new_object_key
+from handler import (
+    PRESIGN_TTL_SECONDS,
+    build_presigned_put,
+    initiate_multipart,
+    new_object_key,
+)
 
 PORT = int(os.environ.get("PORT", "9000"))
 
@@ -54,6 +59,28 @@ class Handler(BaseHTTPRequestHandler):
             got = self.headers.get("X-MedMe-Token", "")
             if not hmac.compare_digest(got, expected):
                 return self._json(403, {"error": "forbidden"})
+
+        # /multipart?size=N —— 分片上传(可续传)。断网重连时已成功的片不必重传,
+        # 这是「上传不该断」这条要求的地基。简单 PUT 留着给小载荷和兜底。
+        if self.path.split("?")[0].rstrip("/").endswith("/multipart"):
+            from urllib.parse import parse_qs, urlparse
+
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                size = int(q.get("size", ["0"])[0])
+            except ValueError:
+                size = 0
+            if size <= 0:
+                return self._json(400, {"error": "size_required"})
+            try:
+                out = initiate_multipart(
+                    access_key_id=ak, access_key_secret=sk,
+                    bucket=bucket, endpoint=endpoint,
+                    key=new_object_key(), size=size,
+                )
+            except Exception as e:  # 发起失败要如实报,别让客户端以为拿到了可用的地址
+                return self._json(502, {"error": "initiate_failed", "detail": str(e)[:200]})
+            return self._json(200, out)
 
         key = new_object_key()
         expires_at = int(time.time()) + PRESIGN_TTL_SECONDS
