@@ -180,6 +180,19 @@ class Analytics {
 
   /// 上报一个事件。**fire-and-forget** —— 不 await、不抛错、不阻塞调用方。
   static void track(AnalyticsEvent event, [Map<String, Object>? props]) {
+    // 调用点发了 [AnalyticsEvent.props] 里没有的键 = 目录必然漂。只在 debug/测试里
+    // 炸(assert 在 release 被剥掉),线上永远不因埋点崩。
+    assert(() {
+      final extra = (props ?? const {}).keys.toSet().difference(event.props);
+      if (extra.isNotEmpty) {
+        throw StateError(
+          '${event.name} 发了未声明的属性 $extra —— '
+          '要么改调用点,要么把它加进 AnalyticsEvent.$event 的 props 并同步 '
+          'docs/analytics-catalog.md(会话上下文那几个键由 setContext 统一加,不在这里报)',
+        );
+      }
+      return true;
+    }());
     if (!_started || !_enabled) return;
     unawaited(_send(event, props ?? const {}));
   }
@@ -216,10 +229,10 @@ class Analytics {
 enum AnalyticsEvent {
   /// 打开 App。DAU 基线。注意:**不靠 SDK 的生命周期自动采集**(那个 beforeSend
   /// 拦不住,已关掉),而是我们自己在启动时发一条。
-  appOpen('app_open'),
+  appOpen('app_open', {'vault_ok'}),
 
   /// 导入开始。属性:`source`(camera/gallery/files)、`count_bucket`。
-  docImportStarted('doc_import_started'),
+  docImportStarted('doc_import_started', {'source', 'count_bucket'}),
 
   /// 导入完成(至少一份成功)。属性:`source`、`count_bucket`、`failed_bucket`、
   /// `duration_bucket`、`per_doc_duration_bucket`、`is_first`。
@@ -227,30 +240,49 @@ enum AnalyticsEvent {
   /// **最核心的一条。** 注意是两个耗时:总时长被份数主导,只能回答「用户要等多久」;
   /// 单份时长才是引擎质量,是「换不换 OCR」的依据。当初只报总时长,等于这个问题
   /// 根本答不出来。
-  docImportCompleted('doc_import_completed'),
+  docImportCompleted('doc_import_completed', {
+    'source',
+    'count_bucket',
+    'failed_bucket',
+    'duration_bucket',
+    'per_doc_duration_bucket',
+    'is_first',
+  }),
 
   /// 导入失败(整批全败)。属性:`source`、`count_bucket`、`stage`、`reason_code`。
   /// ⚠️ `reason_code` **必须是预定义枚举**([ImportFailReason])—— 异常消息常带
   /// 文件名和路径,绝不能上报。
-  docImportFailed('doc_import_failed'),
+  docImportFailed('doc_import_failed', {
+    'source',
+    'count_bucket',
+    'failed_bucket',
+    'duration_bucket',
+    'per_doc_duration_bucket',
+    'is_first',
+    'stage',
+    'reason_code',
+  }),
 
   /// 打开了一份病历。**没有任何内容属性,只有「发生了」。**
   /// 回答的决定:档案是被**看**的还是被**堆**的 —— 如果导入了从不打开,
   /// 这就是个垃圾桶,不是助手。
-  docOpened('doc_opened'),
+  docOpened('doc_opened', {}),
 
   /// 出示了二维码(密文已上传、码已显示)。属性:`record_count_bucket`、`size_bucket`。
-  shareQrShown('share_qr_shown'),
+  shareQrShown('share_qr_shown', {'record_count_bucket', 'size_bucket'}),
 
-  /// 上传失败后用户的选择:`choice`(retry / fallback)。
-  /// 这条能回答「断连到底有多常见、用户愿不愿意等」。
-  shareUploadRetry('share_upload_retry'),
+  /// 上传中断相关。`choice`:`interrupted`(传到一半断了,自动发)/ `retry`(用户点了重试)。
+  /// **降级到简版码记在 [shareQrDegraded] 上,不是这里** —— 目录里一度把两者混成
+  /// 一个 `retry/fallback`。另带 `progress_bucket`:断在进度的哪一段。
+  /// ⚠️ `progress_bucket` 是把「进度 × 10」喂给 `Bucket.count`,所以桶名读作
+  /// `0/1/2-5/6-20`,语义别扭 —— 是「断在一成以内 / 二到五成 / 六成以上」。
+  shareUploadRetry('share_upload_retry', {'choice', 'progress_bucket'}),
 
   /// 降级成简版码(不含原件)。说明云那条路没走通。
-  shareQrDegraded('share_qr_degraded'),
+  shareQrDegraded('share_qr_degraded', {'choice'}),
 
   /// 导出可打印文件。属性:`ranged`(是否用了日期筛选)。
-  exportCompleted('export_completed'),
+  exportCompleted('export_completed', {'ranged'}),
 
   // ── 医生代拍 ──────────────────────────────────────────────────────────────
   // 这是最新、最不确定、赌注最大的功能,却曾经**一个事件都没有**。没有这四条,
@@ -258,18 +290,24 @@ enum AnalyticsEvent {
 
   /// 选了身份。属性:`mode`(personal/doctor)、`where`(first=首屏首次选 /
   /// settings=事后在设置里切)。`where` 值钱在于:事后切换说明第一次选错了。
-  modeSelected('mode_selected'),
+  modeSelected('mode_selected', {'mode', 'where'}),
 
   /// 医生开始了一次代拍(进入代拍流程屏)。属性:`resumed`(是否是回到已建档的病人)。
-  proxySessionStarted('proxy_session_started'),
+  proxySessionStarted('proxy_session_started', {'resumed'}),
 
   /// 病人签了知情同意。**同意书是这条流程里最可能的流失点**,不单独埋就只知道
   /// 「掉了」不知道「掉在哪」。started 与它之间的差 = 同意环节流失。
-  proxyConsentSigned('proxy_consent_signed'),
+  proxyConsentSigned('proxy_consent_signed', {}),
 
-  /// 代拍交付成功(加密包已生成)。属性:`count_bucket`、`duration_bucket`。
+  /// 代拍交付成功(认领链接已生成)。属性:`count_bucket`(交付几份)、
+  /// `confirmed_bucket`(医生确认过几份)、`size_bucket`、`duration_bucket`。
   /// 耗时决定医生愿不愿意再来 —— 一次代拍要五分钟,就没有第二次。
-  proxyShareShown('proxy_share_shown'),
+  proxyShareShown('proxy_share_shown', {
+    'count_bucket',
+    'confirmed_bucket',
+    'size_bucket',
+    'duration_bucket',
+  }),
 
   // ── 认领 ─────────────────────────────────────────────────────────────────
   // ⚠️ 与出码是**两台手机**,没有持久 ID 就无法逐条关联。只看总量比
@@ -277,21 +315,34 @@ enum AnalyticsEvent {
 
   /// 认领页打开。属性:`entry`(cold=App 被链接拉起 / warm=App 已在运行)。
   /// cold 基本意味着「刚装完就来认领」,是最关键的一条转化路径。
-  claimOpened('claim_opened'),
+  claimOpened('claim_opened', {'entry'}),
 
   /// 认领成功。属性:`count_bucket`、`deduped`、`text_only`。
-  claimImported('claim_imported'),
+  claimImported('claim_imported', {'count_bucket', 'deduped', 'text_only'}),
 
-  /// 认领失败。属性:`reason`(gone/network/unknown)。
+  /// 认领失败。属性:`reason`(gone / network / failed / unknown,见
+  /// `claim_screen.dart` 的 `_trackFailure`)。
   /// `gone` 尤其值钱:有人扫了已过期的码,说明 12 小时太短或流程太慢 ——
   /// 每一条都代表一次白做的代拍。
-  claimFailed('claim_failed'),
+  claimFailed('claim_failed', {'reason'}),
 
   /// 用户关掉了分析。**最后一条上报**,发完即停。
-  analyticsOptOut('analytics_opt_out');
+  analyticsOptOut('analytics_opt_out', {});
 
-  const AnalyticsEvent(this.name);
+  const AnalyticsEvent(this.name, this.props);
   final String name;
+
+  /// 这个事件**可能**携带的属性名全集(有些是条件带上的,所以是上界不是等号)。
+  ///
+  /// 为什么要在代码里写一遍:目录 `docs/analytics-catalog.md` 是双清单和隐私政策的
+  /// 底稿,而它此前只被「事件名」钉住 —— 属性漂了 CI 不会红。实际就漂过:
+  /// `share_upload_retry` 的取值在目录里写成 `retry/fallback`(真实是
+  /// `interrupted`/`retry`,`fallback` 记在 `share_qr_degraded` 上),
+  /// `proxy_share_shown` 漏了两个属性。
+  ///
+  /// 现在两头都钉:[Analytics.track] 里 assert 调用点不许发这里没有的键;
+  /// `test/analytics_catalog_test.dart` 校验目录第四节的属性列与这里逐字一致。
+  final Set<String> props;
 }
 
 /// 数值一律分桶再上报 —— 精确值(几份病历、多少字节、多少毫秒)组合起来可能指认到人。

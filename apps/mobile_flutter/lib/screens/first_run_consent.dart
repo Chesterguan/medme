@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/vault_boot.dart' show vaultOpenedOkThisLaunch;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -58,7 +59,13 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
       await Analytics.markAsked();
       // 补一条 `app_open`:本次启动的那条发在同意门之前,那时统计还是关的,被丢了。
       // 不补的话**首次运行永远看不到**,而那恰恰是最想看的一次(装完到第一次用)。
-      Analytics.track(AnalyticsEvent.appOpen, {'vault_ok': true});
+      //
+      // ⚠️ `vault_ok` 必须读本次启动的真实结果。这里曾硬编码 `true` ——
+      // 于是首启开箱失败在数据里也是「好的」,而 `app_open × vault_ok` 那张图正是
+      // 为了看见开箱失败才建的,首启这一档因此永远偏乐观。
+      Analytics.track(AnalyticsEvent.appOpen, {
+        'vault_ok': vaultOpenedOkThisLaunch,
+      });
     }
     widget.onAgreed();
   }

@@ -122,6 +122,7 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
       ok = false;
       rethrow; // 错误界面照旧显示,埋点只是搭个便车
     } finally {
+      vaultOpenedOkThisLaunch = ok; // 首启同意页补发 app_open 时要读(见 vault_boot.dart)
       // `app_open` 发在这里而不是 `main()`:要带上模式和「箱子开没开成」。
       // **开箱失败此前是完全不可见的** —— 用户只看到一句红字,我们什么都不知道。
       await Analytics.init(); // 已在 main 里跑着,这里只是等同一个 Future

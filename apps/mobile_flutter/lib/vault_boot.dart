@@ -18,6 +18,14 @@ import 'package:mobile_flutter/vault_events.dart';
 /// 这是顺序保证;写入前还有一道内容校验,见 [ensureProxyVaultOpen]。
 Future<void> _vaultQueue = Future<void>.value();
 
+/// 本次启动开箱成没成(由 `main.dart` 的 `VaultBootstrap` 在开箱后写入)。
+///
+/// 存在的唯一原因:**首启同意页要补发一条 `app_open`**(本次启动那条发在同意门
+/// 之前、统计还关着,被丢了),而它得带上真实的 `vault_ok`。那里曾硬编码 `true`,
+/// 于是「首次运行开箱失败」在数据里永远是好的 —— 而 `app_open × vault_ok` 那张图
+/// 正是为了看见开箱失败才建的。见 `screens/first_run_consent.dart`。
+bool vaultOpenedOkThisLaunch = true;
+
 Future<void> _serializedOpen(Future<void> Function() open) {
   final done = _vaultQueue.then((_) => open());
   // 队列本身吞掉异常(否则一次开箱失败会毒死后面所有开箱);异常照常抛给调用方。

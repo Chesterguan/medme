@@ -58,20 +58,24 @@
 
 每条对应**一个决定**。答不出决定的事件不该存在。
 
+> **「触发点」只写文件,不写行号。** 行号必然漂(实测一轮下来 8 条全错),而漂了没人会去
+> 更新,于是整列变成误导。要找就 grep 事件名。属性列则由
+> `test/analytics_catalog_test.dart` 与 `AnalyticsEvent.props` 逐字对钉,漂了 CI 会红。
+
 ### 基线
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `app_open` | `vault_ok` | `main.dart:130` | 有人用吗。`vault_ok=false` = **开箱失败**,此前完全不可见,用户只看到一句红字 |
+| `app_open` | `vault_ok` | `main.dart`、`screens/first_run_consent.dart` | 有人用吗。`vault_ok=false` = **开箱失败**,此前完全不可见,用户只看到一句红字 |
 
 ### 导入
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `doc_import_started` | `source`, `count_bucket` | `import_flow.dart:165` | 三个采集入口(拍照/相册/文件)谁在被用 |
-| `doc_import_completed` | `source`, `count_bucket`, `failed_bucket`, `duration_bucket`, `per_doc_duration_bucket`, `is_first` | `import_flow.dart:288` | **换不换 OCR 引擎**(看 `per_doc`);**要不要做后台导入**(看 `duration`);**首次导入成功率**(看 `is_first`) |
-| `doc_import_failed` | 同上 + `stage`, `reason_code` | `import_flow.dart:288` | 失败集中在哪一步、哪个原因 |
-| `doc_opened` | 无 | `archive_screen.dart:369` | **档案是被看的还是被堆的。** 导入了从不打开 = 垃圾桶不是助手 |
+| `doc_import_started` | `source`, `count_bucket` | `import_flow.dart`、`screens/doctor/proxy_intake_flow.dart` | 三个采集入口(拍照/相册/文件)谁在被用 |
+| `doc_import_completed` | `source`, `count_bucket`, `failed_bucket`, `duration_bucket`, `per_doc_duration_bucket`, `is_first` | `import_flow.dart`、`screens/doctor/proxy_intake_flow.dart` | **换不换 OCR 引擎**(看 `per_doc`);**要不要做后台导入**(看 `duration`);**首次导入成功率**(看 `is_first`) |
+| `doc_import_failed` | `source`, `count_bucket`, `failed_bucket`, `duration_bucket`, `per_doc_duration_bucket`, `is_first`, `stage`, `reason_code` | `import_flow.dart`、`screens/doctor/proxy_intake_flow.dart` | 失败集中在哪一步、哪个原因 |
+| `doc_opened` | 无 | `screens/archive_screen.dart` | **档案是被看的还是被堆的。** 导入了从不打开 = 垃圾桶不是助手 |
 
 **两个耗时不是重复。** 总时长被份数主导,只能回答「用户要等多久」;单份时长才是引擎质量 —— 5 份各 2 秒,总时长报 `3-10s` 像是慢,单份报 `1-3s` 其实正常。当初只报总时长,等于把批量冒充成了引擎问题。
 
@@ -87,10 +91,10 @@
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `export_completed` | `ranged` | `export_screen.dart:143` | 导出有没有人用;用不用日期筛选(**不报是哪段日期** —— 那是就诊时间) |
-| `share_qr_shown` | `record_count_bucket`, `size_bucket` | `qr_share_screen.dart:147` | 出码这条路走通了几次、载荷多大 |
-| `share_upload_retry` | `choice`(retry/fallback) | `qr_share_screen.dart:164, 202` | **断连有多常见、用户愿不愿意等** |
-| `share_qr_degraded` | `choice` | `qr_share_screen.dart:174` | 云那条路没走通的比例 |
+| `export_completed` | `ranged` | `screens/export_screen.dart` | 导出有没有人用;用不用日期筛选(**不报是哪段日期** —— 那是就诊时间) |
+| `share_qr_shown` | `record_count_bucket`, `size_bucket` | `screens/qr_share_screen.dart` | 出码这条路走通了几次、载荷多大 |
+| `share_upload_retry` | `choice`(**interrupted**=传到一半断了,自动发 / **retry**=用户点了重试), `progress_bucket` | `screens/qr_share_screen.dart` | **断连有多常见、用户愿不愿意等**;`progress_bucket` 看断在进度哪一段 |
+| `share_qr_degraded` | `choice`(恒为 `fallback`) | `screens/qr_share_screen.dart` | 云那条路没走通的比例。**「降级」记在这里,不在 `share_upload_retry`** —— 目录一度把两者混成一个 `retry/fallback` |
 
 「导出完成」= **文件已生成**。之后的系统分享面板用户可能取消,拿不到可靠回调 —— 与代拍交付同一口径。
 
@@ -100,10 +104,10 @@
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `mode_selected` | `mode`, `where`(first/settings) | `mode_picker_screen.dart:16`, `settings_screen.dart:194` | 几成用户是医生。**`where=settings` 占比高 = 「你是?」那一屏问得不清楚** |
-| `proxy_session_started` | `resumed` | `proxy_intake_flow.dart:96` | 代拍到底有没有人用。`resumed=true` = 12 小时内回来补拍 |
-| `proxy_consent_signed` | 无 | `proxy_intake_flow.dart:156` | **同意书是最可能的流失点。** started 与它的差 = 病人在同意环节走掉了 |
-| `proxy_share_shown` | `count_bucket`, `duration_bucket` | `proxy_intake_flow.dart:477` | **一次代拍要多久。** 要五分钟就不会有第二次 |
+| `mode_selected` | `mode`, `where`(first/settings) | `screens/mode_picker_screen.dart`、`screens/settings_screen.dart` | 几成用户是医生。**`where=settings` 占比高 = 「你是?」那一屏问得不清楚** |
+| `proxy_session_started` | `resumed` | `screens/doctor/proxy_intake_flow.dart` | 代拍到底有没有人用。`resumed=true` = 12 小时内回来补拍 |
+| `proxy_consent_signed` | 无 | `screens/doctor/proxy_intake_flow.dart` | **同意书是最可能的流失点。** started 与它的差 = 病人在同意环节走掉了 |
+| `proxy_share_shown` | `count_bucket`, `confirmed_bucket`, `size_bucket`, `duration_bucket` | `screens/doctor/proxy_intake_flow.dart` | **一次代拍要多久**(要五分钟就不会有第二次);`confirmed_bucket` 与 `count_bucket` 的差 = 医生确认了却没交付的份数 |
 
 `proxy_consent_signed` **不带同意书里的任何内容** —— 签名和姓名都在加密包里,不出设备。
 
@@ -111,9 +115,9 @@
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `claim_opened` | `entry`(cold/warm) | `claim_screen.dart:36` | **`cold` = App 被链接拉起来的**,基本意味着「刚装完就来认领」——最关键的转化路径 |
-| `claim_imported` | `count_bucket`, `deduped`, `text_only` | `claim_screen.dart:68` | 认领闭环成不成立 |
-| `claim_failed` | `reason`(gone/network/failed/unknown) | `claim_screen.dart:48` | **`gone` 每一条都代表一次白做的代拍** —— 说明 12 小时太短或流程太慢 |
+| `claim_opened` | `entry`(cold/warm) | `screens/claim_screen.dart` | **`cold` = App 被链接拉起来的**,基本意味着「刚装完就来认领」——最关键的转化路径 |
+| `claim_imported` | `count_bucket`, `deduped`, `text_only` | `screens/claim_screen.dart` | 认领闭环成不成立 |
+| `claim_failed` | `reason`(gone/network/failed/unknown) | `screens/claim_screen.dart` | **`gone` 每一条都代表一次白做的代拍** —— 说明 12 小时太短或流程太慢 |
 
 ⚠️ **出码和认领是两台手机。** 没有持久 ID 就无法逐条关联。只看**总量比**(`claim_imported` / `proxy_share_shown`),不做 per-link 关联。要精确到每条链接得带认领 id 的加盐哈希 —— 先看总量够不够用。
 
@@ -121,7 +125,7 @@
 
 | 事件 | 触发点 | 回答什么 |
 |---|---|---|
-| `analytics_opt_out` | `analytics.dart` `setEnabled(false)` | 有多少人关掉了。**这是最后一条上报**,发完即停 |
+| `analytics_opt_out` | 无 | `analytics.dart` | 有多少人关掉了。**这是最后一条上报**,发完即停 |
 
 > 分母会随时间失真:关掉的人之后连 `app_open` 都不发了。接受。
 

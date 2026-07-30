@@ -140,9 +140,22 @@ void main() {
     // 关键:即使没初始化,调用 track 也必须安全 —— 它散布在导入/出码等主流程里,
     // 抛错就等于分析拖垮了功能,那是明令禁止的。
     expect(
-      () => Analytics.track(AnalyticsEvent.appOpen, {'count_bucket': '1'}),
+      () => Analytics.track(AnalyticsEvent.appOpen, {'vault_ok': true}),
       returnsNormally,
     );
     expect(() => Analytics.track(AnalyticsEvent.docImportFailed), returnsNormally);
+  });
+
+  test('发了未声明的属性 → debug 下立刻炸(release 会被剥掉,线上不受影响)', () {
+    // 这是 `AnalyticsEvent.props` 那张表的执行者。属性漂了在后台是**看不出来**的:
+    // 图照样画,只是画的东西不对;而目录 `docs/analytics-catalog.md` 是隐私政策与
+    // 双清单的底稿,漂了就是对外声明与事实不符。所以宁可在开发期吵一次。
+    //
+    // ⚠️ 这条与上一条不矛盾:上一条保的是「线上绝不因埋点崩」——assert 在 release
+    // 构建里整个被剥掉,所以那个保证依然成立。这里炸的只有开发者自己。
+    expect(
+      () => Analytics.track(AnalyticsEvent.appOpen, {'count_bucket': '1'}),
+      throwsA(isA<StateError>()),
+    );
   });
 }
