@@ -68,7 +68,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1410953937;
+  int get rustContentHash => 1943098302;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -209,6 +209,12 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<PatientProfileDto> crateApiVaultPatientProfile();
+
+  Future<(Uint8List, String, PlatformInt64)> crateApiVaultProxyClaimBlob({
+    required PlatformInt64 expiresDays,
+    required ConsentDto consent,
+    required Int64List confirmedIds,
+  });
 
   Future<ProxySummaryDto> crateApiVaultProxySummary({
     required Int64List confirmedIds,
@@ -1377,6 +1383,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "patient_profile", argNames: []);
 
   @override
+  Future<(Uint8List, String, PlatformInt64)> crateApiVaultProxyClaimBlob({
+    required PlatformInt64 expiresDays,
+    required ConsentDto consent,
+    required Int64List confirmedIds,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_i_64(expiresDays, serializer);
+          sse_encode_box_autoadd_consent_dto(consent, serializer);
+          sse_encode_list_prim_i_64_strict(confirmedIds, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 37,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_record_list_prim_u_8_strict_string_i_64,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProxyClaimBlobConstMeta,
+        argValues: [expiresDays, consent, confirmedIds],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProxyClaimBlobConstMeta =>
+      const TaskConstMeta(
+        debugName: "proxy_claim_blob",
+        argNames: ["expiresDays", "consent", "confirmedIds"],
+      );
+
+  @override
   Future<ProxySummaryDto> crateApiVaultProxySummary({
     required Int64List confirmedIds,
   }) {
@@ -1388,7 +1431,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 37,
+            funcId: 38,
             port: port_,
           );
         },
@@ -1420,7 +1463,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 38,
+            funcId: 39,
             port: port_,
           );
         },
@@ -1450,7 +1493,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 40,
             port: port_,
           );
         },
@@ -1480,7 +1523,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 41,
             port: port_,
           );
         },
@@ -1508,7 +1551,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 41,
+            funcId: 42,
             port: port_,
           );
         },
@@ -1535,7 +1578,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 42,
+            funcId: 43,
             port: port_,
           );
         },
@@ -1565,7 +1608,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 43,
+            funcId: 44,
             port: port_,
           );
         },

@@ -11,6 +11,9 @@ import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/doctor/consent_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_delivery_count.dart';
+import 'package:mobile_flutter/claim_link.dart';
+import 'package:mobile_flutter/claim_upload.dart';
+import 'package:mobile_flutter/screens/doctor/doctor_claim_link_dialog.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_share_result_dialog.dart';
 import 'package:mobile_flutter/screens/doctor/proxy_document_detail.dart';
 import 'package:mobile_flutter/screens/doctor/proxy_summary_card.dart';
@@ -21,10 +24,13 @@ import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_boot.dart'
     show ensureProxyVaultOpen, openCurrentProfileVault, openProxyPatientVault;
 
-/// 代建档分享文件的有效期(天)。与本机那 12 小时保留是两回事:这个天数只约束「病人
-/// 手里那份加密文件的口令还能用多久」——给病人留足取回/打开的时间,与正常导出分享的
-/// 「7/30/90 天」选项同量级,取中间档,不额外弹一轮选择打断诊室现场的节奏。
-const int kProxyShareExpiresDays = 30;
+/// 代拍交付的有效期(天)。与本机那 12 小时保留是两回事:这个天数约束「病人手里那条
+/// 认领链接还能用多久」。
+///
+/// **必须与桶上 `c/` 前缀的生命周期规则一致(15 天)** —— 早先写的是 30,而云端对象
+/// 15 天就被删了,于是链接第 16 天起就是死的,载荷里却还写着「建议 30 天内复阅」。
+/// 改这个数就要同时改那条桶规则(见 `services/claim-signer/handler.py:42`)。
+const int kProxyShareExpiresDays = 15;
 
 enum _ProxyPhase { consent, capture, preview, delivering }
 
@@ -510,6 +516,31 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       final confirmed =
           ProxyPatientManager.instance.byId(_patientId ?? '')?.confirmedIds ??
           const <int>{};
+      // **先走链接**:密文上瞬时云,把 `#c1.<id>.<key>` 交给病人。
+      // 为什么不再直接发文件:代拍面对的病人常常没微信、加不上好友、也不会收文件 ——
+      // 发文件要求两台手机当场能建起一条传输通道,而那正是这些病人不具备的。
+      // 一条码,他用任何相机拍走就行。
+      final linkUrl = await _deliverAsLink(consent, confirmed);
+      if (linkUrl != null) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _progress = null;
+        });
+        await DoctorDeliveryCount.instance.increment();
+        if (!mounted) return;
+        await showDoctorClaimLinkDialog(
+          context,
+          linkUrl.$1,
+          linkUrl.$2,
+          shareOrigin: _shareOrigin,
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+      // 上传没成功(网络/云端出问题)。**不让医生空手** —— 退回原来的本地加密文件 +
+      // 口令那条路,它不依赖网络,一定交得出去。
+      setState(() => _progress = '网络不畅,改为生成加密文件…');
       final result = await vault.createProxyShare(
         expiresDays: kProxyShareExpiresDays,
         consent: consent,
@@ -551,6 +582,42 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _phase = _ProxyPhase.preview;
       });
       await _showError('生成分享失败', '$e');
+    }
+  }
+
+  /// 把这次代拍打成密文传上瞬时云,返回 `(认领链接, 记录数)`;传不上去返回 null。
+  ///
+  /// **密钥不上传** —— 它只进链接 `#` 之后那一段,云上那份我们自己也解不开。
+  /// 用的是与病人出码同一条上传通道([ResumableUpload],断了能续),同一种密文格式,
+  /// 查看器那边也只有一套解密逻辑。
+  Future<(String, int)?> _deliverAsLink(
+    ConsentDto consent,
+    Set<int> confirmed,
+  ) async {
+    try {
+      setState(() => _progress = '正在加密…');
+      final (blob, keyB64, recordCount) = await vault.proxyClaimBlob(
+        expiresDays: kProxyShareExpiresDays,
+        consent: consent,
+        confirmedIds: Int64List.fromList(confirmed.toList()),
+      );
+      final up = ResumableUpload(blob);
+      final total = blob.length;
+      if (mounted) {
+        setState(() => _progress = '正在上传(${(total / 1048576).toStringAsFixed(1)} MB)…');
+      }
+      final id = await up.run(
+        onProgress: (p) {
+          if (mounted) {
+            setState(() => _progress = '正在上传… ${(p * 100).toStringAsFixed(0)}%');
+          }
+        },
+      );
+      return ('${ClaimLink.pageUrl}#c1.$id.$keyB64', recordCount.toInt());
+    } catch (e) {
+      // 传不上去不是错误路径的终点 —— 调用方会退回本地文件。这里只记日志。
+      debugPrint('[doctor-proxy] 认领链接生成失败,将退回本地文件: $e');
+      return null;
     }
   }
 

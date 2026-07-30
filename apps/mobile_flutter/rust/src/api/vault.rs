@@ -703,6 +703,37 @@ pub fn qr_share_blob(expires_days: i64) -> anyhow::Result<(Vec<u8>, String, i64)
     })
 }
 
+/// 代拍交付用的密文:**带同意书**、按已确认份数筛选摘要,交给 Dart 传上瞬时云。
+///
+/// 与 [`qr_share_blob`] 是同一种产物、同一套查看器解密逻辑,差别只有两处:这里带
+/// 病人签过字的同意书,并且摘要只统计医生逐份确认过的那些(未确认的原件仍全在包里
+/// 并标注待确认)。
+///
+/// 返回 `(密文, base64url 密钥, 记录数)`。拿到对象 id 后认领链接是
+/// `https://medmenow.com/claim/#c1.<id>.<密钥>` —— 病人点开先在浏览器看,再决定存不存。
+///
+/// **密钥不上传**,只进链接的 `#` 之后。云上那份我们自己也解不开。
+pub fn proxy_claim_blob(
+    expires_days: i64,
+    consent: ConsentDto,
+    confirmed_ids: Vec<i64>,
+) -> anyhow::Result<(Vec<u8>, String, i64)> {
+    let days: u32 = expires_days
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("expires_days 取值无效:{expires_days}"))?;
+    let confirmed: std::collections::HashSet<i64> = confirmed_ids.into_iter().collect();
+    with_state(|state| {
+        medme_share::share::build_claim_blob(
+            &state.vault,
+            days,
+            &medme_share::render_dicom_png_in_process,
+            consent.into(),
+            &confirmed,
+        )
+        .map_err(|e| anyhow::anyhow!(e))
+    })
+}
+
 /// 认领:把医生代拍的加密包还原进**当前打开的**保险箱。
 ///
 /// `blob` 是从瞬时云取回的密文,`key_b64` 是认领链接 `#` 后面那把钥匙 —— 两者都由

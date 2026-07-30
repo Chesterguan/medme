@@ -15,7 +15,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-tgMYYCcSnW98CKBcMaf3qOuf4b5ehzoIw0ofjlCikho='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ZAk0kcPy47iKXFNPlZCqxJ1tkh7B5iqUGu76LNsuzoI='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -480,8 +480,13 @@ function dcmReadGray(fm) {
   const frameLength = pxCount * bytesPerPixel;
   const absStart = byteArray.byteOffset + pd.dataOffset + fm.frameIndex * frameLength;
   const buf = byteArray.buffer.slice(absStart, absStart + frameLength); // 对齐副本
-  const slope = dcmFloat(ds, "x00281053") ?? 1;
-  const intercept = dcmFloat(ds, "x00281052") ?? 0;
+  // ⚠️ **不要用可选链或空值合并运算符** —— 查看器必须能在老浏览器上解析(实测华为
+  // Mate 9 的 Chrome 70 直接 `Uncaught SyntaxError: Unexpected token`,整个脚本不
+  // 执行,页面永远停在「正在取回病历…」)。代拍面向的病人恰恰常用老手机。
+  // `nz` 只把 null/undefined 换成默认值,保留对 0 的语义(用 `||` 会把 0 也换掉)。
+  const nz = function (v, d) { return (v === null || v === undefined) ? d : v; };
+  const slope = nz(dcmFloat(ds, "x00281053"), 1);
+  const intercept = nz(dcmFloat(ds, "x00281052"), 0);
   const out = new Float32Array(pxCount);
   if (bytesPerPixel === 1) {
     const raw = new Uint8Array(buf);

@@ -666,6 +666,45 @@ mod tests {
     /// DECRYPTED PHI), must pin the inline scripts by exact sha256 hash, and must
     /// lock down navigation/forms so a would-be injection can't exfiltrate.
     /// Also decrypt-round-trips the produced HTML to prove behavior is preserved.
+    /// 查看器必须能在**老浏览器**上解析。
+    ///
+    /// 实测:华为 Mate 9 的 Chrome 70(2018 年)遇到 `??` 直接
+    /// `Uncaught SyntaxError: Unexpected token ?` —— **整个主脚本不执行**,页面永远停在
+    /// 「正在取回病历…」,而且没有任何错误提示(转圈那层是 head 里另一个小脚本画的)。
+    ///
+    /// 这条路上的用户恰恰最可能用老手机:代拍面向的是自己整理不了病历的病人。
+    /// 所以这不是「兼容性洁癖」,是这个功能的可达性本身。
+    ///
+    /// 语法要求按 **ES2018 / Chrome 70** 划线:可选链、空值合并、`replaceAll`、
+    /// `Array.at`、逻辑赋值 都不能用。要默认值就自己写三元。
+    #[test]
+    fn viewer_script_parses_on_old_browsers() {
+        // 只查会导致**解析失败**的语法(解析失败 = 整份脚本作废,最致命)。
+        for (pat, why) in [
+            ("??", "空值合并(Chrome 80+)"),
+            ("?.", "可选链(Chrome 80+)"),
+            ("||=", "逻辑赋值(Chrome 85+)"),
+            ("&&=", "逻辑赋值(Chrome 85+)"),
+        ] {
+            assert!(
+                !CANONICAL_VIEWER.contains(pat),
+                "查看器里出现了 `{pat}`({why})—— Chrome 70 会整份脚本解析失败,\
+                 页面永远转圈。改成三元或显式判断。"
+            );
+        }
+        // 运行时方法:不会让脚本作废,但会在老机上抛错。
+        for (pat, why) in [
+            (".replaceAll(", "String.replaceAll(Chrome 85+)"),
+            ("structuredClone(", "structuredClone(Chrome 98+)"),
+            ("Object.hasOwn(", "Object.hasOwn(Chrome 93+)"),
+        ] {
+            assert!(
+                !CANONICAL_VIEWER.contains(pat),
+                "查看器里出现了 `{pat}`({why})—— 老机上会抛错。"
+            );
+        }
+    }
+
     #[test]
     fn share_viewer_csp_hardened_and_round_trips() {
         use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind};

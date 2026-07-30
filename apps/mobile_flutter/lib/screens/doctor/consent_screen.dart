@@ -141,7 +141,7 @@ class _ConsentScreenState extends State<ConsentScreen>
               const _ConsentPoint(
                 icon: Icons.person_outline,
                 title: '交给谁',
-                body: '生成一份加密文件和一串口令,只交给您本人;不会自动发给别人。',
+                body: '当场给您一个码,您用手机拍下来带走;只交给您本人,不会自动发给别人。',
               ),
               const _ConsentPoint(
                 icon: Icons.schedule_outlined,
@@ -151,7 +151,8 @@ class _ConsentScreenState extends State<ConsentScreen>
               const _ConsentPoint(
                 icon: Icons.lock_outline,
                 title: '谁能打开',
-                body: '文件是加密的。没有您那串口令,医生和我们都打不开、看不到。',
+                body: '只有拿到这个码的人能打开。医生和我们都看不到里面的内容。'
+                    '这个码 15 天后自动失效。',
               ),
               const SizedBox(height: 22),
               const Divider(height: 1, color: MedMe.line),

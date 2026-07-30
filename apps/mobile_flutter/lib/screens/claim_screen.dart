@@ -4,6 +4,7 @@ import 'package:mobile_flutter/claim_link.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/vault_boot.dart' show openCurrentProfileVault;
 import 'package:mobile_flutter/vault_events.dart';
 
 /// 认领屏:医生代拍的病历存进病人自己的保险箱。
@@ -61,6 +62,11 @@ class _ClaimScreenState extends State<ClaimScreen> {
       _error = null;
     });
     try {
+      // `claimImport` 写的是「当前打开的箱子」。正常路径下这台手机就是个人模式,
+      // 打开的本来就是个人保险箱;这一行只是把它钉死 —— 万一进程里攥着的是别的箱子
+      // (例如同一台设备刚用过代拍),写错地方是**静默**的,而代拍那个箱子 12 小时
+      // 后就没了。一行的代价,换掉一类查不出来的丢数据。
+      await openCurrentProfileVault();
       final r = await widget.link.claim();
       // 档案页在监听这个:存完立刻能看见,不用手动刷新。
       bumpVaultRevision();

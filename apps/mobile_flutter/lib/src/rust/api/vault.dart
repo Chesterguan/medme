@@ -165,6 +165,26 @@ Future<(Uint8List, String, PlatformInt64)> qrShareBlob({
   required PlatformInt64 expiresDays,
 }) => RustLib.instance.api.crateApiVaultQrShareBlob(expiresDays: expiresDays);
 
+/// 代拍交付用的密文:**带同意书**、按已确认份数筛选摘要,交给 Dart 传上瞬时云。
+///
+/// 与 [`qr_share_blob`] 是同一种产物、同一套查看器解密逻辑,差别只有两处:这里带
+/// 病人签过字的同意书,并且摘要只统计医生逐份确认过的那些(未确认的原件仍全在包里
+/// 并标注待确认)。
+///
+/// 返回 `(密文, base64url 密钥, 记录数)`。拿到对象 id 后认领链接是
+/// `https://medmenow.com/claim/#c1.<id>.<密钥>` —— 病人点开先在浏览器看,再决定存不存。
+///
+/// **密钥不上传**,只进链接的 `#` 之后。云上那份我们自己也解不开。
+Future<(Uint8List, String, PlatformInt64)> proxyClaimBlob({
+  required PlatformInt64 expiresDays,
+  required ConsentDto consent,
+  required Int64List confirmedIds,
+}) => RustLib.instance.api.crateApiVaultProxyClaimBlob(
+  expiresDays: expiresDays,
+  consent: consent,
+  confirmedIds: confirmedIds,
+);
+
 /// 认领:把医生代拍的加密包还原进**当前打开的**保险箱。
 ///
 /// `blob` 是从瞬时云取回的密文,`key_b64` 是认领链接 `#` 后面那把钥匙 —— 两者都由

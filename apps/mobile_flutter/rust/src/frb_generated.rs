@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1410953937;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1943098302;
 
 // Section: executor
 
@@ -1355,6 +1355,47 @@ fn wire__crate__api__vault__patient_profile_impl(
         },
     )
 }
+fn wire__crate__api__vault__proxy_claim_blob_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "proxy_claim_blob",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_expires_days = <i64>::sse_decode(&mut deserializer);
+            let api_consent = <crate::api::dto::ConsentDto>::sse_decode(&mut deserializer);
+            let api_confirmed_ids = <Vec<i64>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault::proxy_claim_blob(
+                            api_expires_days,
+                            api_consent,
+                            api_confirmed_ids,
+                        )?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__vault__proxy_summary_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2312,13 +2353,14 @@ fn pde_ffi_dispatcher_primary_impl(
         34 => wire__crate__api__vault__load_demo_data_impl(port, ptr, rust_vec_len, data_len),
         35 => wire__crate__api__vault__open_vault_impl(port, ptr, rust_vec_len, data_len),
         36 => wire__crate__api__vault__patient_profile_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__vault__proxy_summary_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__vault__qr_share_blob_impl(port, ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__vault__read_source_bytes_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__vault__recognize_image_pp_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__vault__render_dicom_png_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__vault__reset_vault_impl(port, ptr, rust_vec_len, data_len),
-        43 => {
+        37 => wire__crate__api__vault__proxy_claim_blob_impl(port, ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__vault__proxy_summary_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__vault__qr_share_blob_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__vault__read_source_bytes_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__vault__recognize_image_pp_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__vault__render_dicom_png_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__vault__reset_vault_impl(port, ptr, rust_vec_len, data_len),
+        44 => {
             wire__crate__api__vault__source_file_object_path_impl(port, ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
