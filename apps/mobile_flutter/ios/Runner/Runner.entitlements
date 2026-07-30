@@ -14,7 +14,20 @@
 	<array>
 		<string>iCloud.com.medme.mobile</string>
 	</array>
-	<!-- Universal Links:病人在微信里点认领链接直接进 App,不必先过浏览器。
+	<!-- ⚠️ **Universal Links 目前不生效,这是有意不修的。**(2026-07-30 决定)
+	     AASA 文件由 GitHub Pages 托管,Content-Type 是 `application/octet-stream`,
+	     苹果要 `application/json`,而 GitHub Pages 不让自定义响应头。用 Cloudflare
+	     Worker 或 Transform Rule 可以修(域名已在 Cloudflare 后面),但**不值得**:
+	       · 认领链接的收件人**本来就是还没装 App 的病人** —— 他必须先去装,
+	         那一跳省不掉,Universal Links 帮不到他;
+	       · 只对「已经装了 App、又收到认领链接」的少数情形省一次点击;
+	       · 回退路径(浏览器页 → 点按钮 → 自定义 scheme 拉起 App)真机验过,通的。
+	     entitlement 留着不删:哪天 AASA 修好了它自动生效,删了反而要再动一次描述文件
+	     (这个 entitlement 需要 App ID 开 Associated Domains 能力,见 2026-07-30 的
+	     提审记录)。
+
+	     以下为原意图说明:
+	     Universal Links:病人在微信里点认领链接直接进 App,不必先过浏览器。
 	     只认领 /claim/*(见 web/well-known/apple-app-site-association)—— **不能认领
 	     /viewer/**,那是医生扫码看病历的地方,他要的是浏览器;把它一起认领了,装了
 	     MedMe 的医生扫码会被弹进 App。 -->
