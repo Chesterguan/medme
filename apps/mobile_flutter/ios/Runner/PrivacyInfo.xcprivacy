@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  应用级隐私清单(苹果自 2024-05-01 起要求)。
+
+  **这份文件必须与三处保持一致,任何一处改了都要回来改这里:**
+    1. `docs/analytics-catalog.md` —— 实际采了什么(唯一权威清单)
+    2. `https://medmenow.com/privacy.html` —— 对用户的说法
+    3. App Store Connect 的 App Privacy(隐私营养标签)问卷
+
+  三方对不上就是自相矛盾,比缺文件更糟。
+
+  第三方 SDK(PostHog / shared_preferences / ML Kit / GoogleUtilities 等)各自带
+  清单,不需要在这里重复声明它们的部分。这里只声明**本 App 自己**的行为。
+-->
+<plist version="1.0">
+<dict>
+  <!-- 不做跨 App/网站追踪。没有 IDFA、没有 ATT 弹窗、没有广告 SDK。 -->
+  <key>NSPrivacyTracking</key>
+  <false/>
+
+  <!-- 无追踪域名。 -->
+  <key>NSPrivacyTrackingDomains</key>
+  <array/>
+
+  <key>NSPrivacyCollectedDataTypes</key>
+  <array>
+    <dict>
+      <!-- 只采「产品交互」:导入了几份、成没成、用了多久(全部分桶)。
+           病历内容、姓名、文件名、位置一律不采,故此处只有这一项。 -->
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeProductInteraction</string>
+      <!-- 不与身份关联:每次启动 `Posthog().reset()`,没有跨会话持久 ID。 -->
+      <key>NSPrivacyCollectedDataTypeLinked</key>
+      <false/>
+      <!-- 不用于追踪。 -->
+      <key>NSPrivacyCollectedDataTypeTracking</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+      </array>
+    </dict>
+  </array>
+
+  <key>NSPrivacyAccessedAPITypes</key>
+  <array>
+    <dict>
+      <!-- UserDefaults:存本机偏好(是否同意告知、统计开关、设备任期计数)。
+           CA92.1 = 仅用于本 App 自身的数据存取。 -->
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>CA92.1</string>
+      </array>
+    </dict>
+    <dict>
+      <!-- 文件时间戳:保险箱在 App 容器(及 iCloud 容器)内读写病历与派生库,
+           会读到文件元数据。C617.1 = 仅访问 App 容器/群组容器/CloudKit 容器内的文件。 -->
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>C617.1</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

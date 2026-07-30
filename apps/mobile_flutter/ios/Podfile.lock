@@ -1,84 +1,17 @@
 PODS:
   - CocoaAsyncSocket (7.6.5)
   - Flutter (1.0.0)
-  - google_mlkit_commons (0.12.0):
-    - Flutter
-    - MLKitVision (~> 10.0.0)
-  - google_mlkit_text_recognition (0.16.0):
-    - Flutter
-    - google_mlkit_commons
-    - GoogleMLKit/TextRecognition (~> 9.0.0)
-  - GoogleDataTransport (10.1.0):
-    - nanopb (~> 3.30910.0)
-    - PromisesObjC (~> 2.4)
-  - GoogleMLKit/MLKitCore (9.0.0):
-    - MLKitCommon (~> 14.0.0)
-  - GoogleMLKit/TextRecognition (9.0.0):
-    - GoogleMLKit/MLKitCore
-    - MLKitTextRecognition (~> 7.0.0)
-  - GoogleMLKit/TextRecognitionChinese (9.0.0):
-    - GoogleMLKit/MLKitCore
-    - MLKitTextRecognitionChinese (~> 6.0.0)
-  - GoogleToolboxForMac/Defines (4.2.1)
-  - GoogleToolboxForMac/Logger (4.2.1):
-    - GoogleToolboxForMac/Defines (= 4.2.1)
-  - "GoogleToolboxForMac/NSData+zlib (4.2.1)":
-    - GoogleToolboxForMac/Defines (= 4.2.1)
-  - GoogleUtilities/Environment (8.1.2):
-    - GoogleUtilities/Privacy
-  - GoogleUtilities/Logger (8.1.2):
-    - GoogleUtilities/Environment
-    - GoogleUtilities/Privacy
-  - GoogleUtilities/Privacy (8.1.2)
-  - GoogleUtilities/UserDefaults (8.1.2):
-    - GoogleUtilities/Logger
-    - GoogleUtilities/Privacy
-  - GTMSessionFetcher/Core (3.5.0)
-  - MLImage (1.0.0-beta8)
-  - MLKitCommon (14.0.0):
-    - GoogleDataTransport (~> 10.0)
-    - GoogleToolboxForMac/Logger (< 5.0, >= 4.2.1)
-    - "GoogleToolboxForMac/NSData+zlib (< 5.0, >= 4.2.1)"
-    - GoogleUtilities/Logger (~> 8.0)
-    - GoogleUtilities/UserDefaults (~> 8.0)
-    - GTMSessionFetcher/Core (< 4.0, >= 3.3.2)
-  - MLKitTextRecognition (7.0.0):
-    - MLKitCommon (~> 14.0)
-    - MLKitTextRecognitionCommon (= 6.0.0)
-    - MLKitVision (~> 10.0)
-  - MLKitTextRecognitionChinese (6.0.0):
-    - MLKitCommon (~> 14.0)
-    - MLKitTextRecognitionCommon (= 6.0.0)
-    - MLKitVision (~> 10.0)
-  - MLKitTextRecognitionCommon (6.0.0):
-    - MLKitCommon (~> 14.0)
-    - MLKitVision (~> 10.0)
-  - MLKitVision (10.0.0):
-    - GoogleToolboxForMac/Logger (< 5.0, >= 4.2.1)
-    - "GoogleToolboxForMac/NSData+zlib (< 5.0, >= 4.2.1)"
-    - GTMSessionFetcher/Core (< 4.0, >= 3.3.2)
-    - MLImage (= 1.0.0-beta8)
-    - MLKitCommon (~> 14.0)
-  - nanopb (3.30910.0):
-    - nanopb/decode (= 3.30910.0)
-    - nanopb/encode (= 3.30910.0)
-  - nanopb/decode (3.30910.0)
-  - nanopb/encode (3.30910.0)
   - patrol (0.0.1):
     - CocoaAsyncSocket (~> 7.6)
     - Flutter
     - FlutterMacOS
   - pdfx (1.0.0):
     - Flutter
-  - PromisesObjC (2.4.1)
   - rust_lib_mobile_flutter (0.0.1):
     - Flutter
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
-  - google_mlkit_commons (from `.symlinks/plugins/google_mlkit_commons/ios`)
-  - google_mlkit_text_recognition (from `.symlinks/plugins/google_mlkit_text_recognition/ios`)
-  - GoogleMLKit/TextRecognitionChinese (~> 9.0.0)
   - patrol (from `.symlinks/plugins/patrol/darwin`)
   - pdfx (from `.symlinks/plugins/pdfx/ios`)
   - rust_lib_mobile_flutter (from `.symlinks/plugins/rust_lib_mobile_flutter/ios`)
@@ -86,27 +19,10 @@ DEPENDENCIES:
 SPEC REPOS:
   trunk:
     - CocoaAsyncSocket
-    - GoogleDataTransport
-    - GoogleMLKit
-    - GoogleToolboxForMac
-    - GoogleUtilities
-    - GTMSessionFetcher
-    - MLImage
-    - MLKitCommon
-    - MLKitTextRecognition
-    - MLKitTextRecognitionChinese
-    - MLKitTextRecognitionCommon
-    - MLKitVision
-    - nanopb
-    - PromisesObjC
 
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
-  google_mlkit_commons:
-    :path: ".symlinks/plugins/google_mlkit_commons/ios"
-  google_mlkit_text_recognition:
-    :path: ".symlinks/plugins/google_mlkit_text_recognition/ios"
   patrol:
     :path: ".symlinks/plugins/patrol/darwin"
   pdfx:
@@ -117,25 +33,10 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   CocoaAsyncSocket: 065fd1e645c7abab64f7a6a2007a48038fdc6a99
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  google_mlkit_commons: b4dfe2f6ae4cbf24010dc6640a28984d01343c86
-  google_mlkit_text_recognition: 9b164471713e3afdb4c129cabe6d1d64fef7e817
-  GoogleDataTransport: aae35b7ea0c09004c3797d53c8c41f66f219d6a7
-  GoogleMLKit: b1eee21a41c57704fe72483b15c85cb2c0cd7444
-  GoogleToolboxForMac: d1a2cbf009c453f4d6ded37c105e2f67a32206d8
-  GoogleUtilities: 766ace00c6b10d8148408f329d10c4f051931850
-  GTMSessionFetcher: 5aea5ba6bd522a239e236100971f10cb71b96ab6
-  MLImage: 0de5c6c2bf9e93b80ef752e2797f0836f03b58c0
-  MLKitCommon: 47d47b50a031d00db62f1b0efe5a1d8b09a3b2e6
-  MLKitTextRecognition: c0ad24510481dfc8893ad15dfcb8a5f05ed9e826
-  MLKitTextRecognitionChinese: b69210723ed8cc9bc7b2e7847001880b0dcbb7f8
-  MLKitTextRecognitionCommon: 234ceb1cfdfb5fceb4fd664943046609a2961cc2
-  MLKitVision: 39a5a812db83c4a0794445088e567f3631c11961
-  nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   patrol: cea8074f183a2a4232d0ebd10569ae05149ada42
   pdfx: 77f4dddc48361fbb01486fa2bdee4532cbb97ef3
-  PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
-  rust_lib_mobile_flutter: c422aa60c38fe81c2ee1ca588bdf71d99fd2152b
+  rust_lib_mobile_flutter: 2fdf063e6b93c144f4104119733a3420b921c739
 
-PODFILE CHECKSUM: b21603d66ffc8b853b9aad41ffbc2d1c1fd17735
+PODFILE CHECKSUM: 3d1eba09fad8dd00b529290ebedd4cc49b9d9db9
 
 COCOAPODS: 1.17.0
