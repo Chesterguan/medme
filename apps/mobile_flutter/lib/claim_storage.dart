@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+
+import 'package:mobile_flutter/net.dart';
 
 /// 瞬时云:把一份密文从这台设备搬到那台设备,然后消失。
 ///
@@ -55,25 +58,29 @@ class ClaimStorage {
 
   /// 向签名端点要一份上传许可证,回 `(对象id, 上传地址)`。
   Future<(String, Uri)> _requestPermit() async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
     try {
-      final req = await client.getUrl(Uri.parse(signerUrl));
-      final res = await req.close();
-      final body = await res.transform(utf8.decoder).join();
-      if (res.statusCode != 200) {
-        throw ClaimUploadFailed('取上传许可失败(${res.statusCode})');
-      }
-      final j = jsonDecode(body) as Map<String, dynamic>;
-      final id = j['id'] as String?;
-      final url = j['uploadUrl'] as String?;
-      if (id == null || url == null) throw const ClaimUploadFailed('上传许可格式不对');
-      return (id, Uri.parse(url));
+      // GET 幂等,可以重试:签名端点是函数计算,冷启动抖一下很正常。
+      return await Net.retry(_requestPermitOnce);
+    } on TimeoutException {
+      throw const ClaimUploadFailed('网络太慢,没能取到上传许可。请重试。');
     } on SocketException {
       throw const ClaimUploadFailed('网络连不上,请检查网络后重试。');
-    } finally {
-      client.close();
     }
   }
+
+  Future<(String, Uri)> _requestPermitOnce() => Net.run((client) async {
+    final req = await client.getUrl(Uri.parse(signerUrl));
+    final res = await Net.send(req);
+    final body = await Net.text(res);
+    if (res.statusCode != 200) {
+      throw ClaimUploadFailed('取上传许可失败(${res.statusCode})');
+    }
+    final j = jsonDecode(body) as Map<String, dynamic>;
+    final id = j['id'] as String?;
+    final url = j['uploadUrl'] as String?;
+    if (id == null || url == null) throw const ClaimUploadFailed('上传许可格式不对');
+    return (id, Uri.parse(url));
+  });
 
   /// 上传一份密文,回对象 id。`onProgress` 给 0.0–1.0,用于进度条 —— 病人在诊室里
   /// 盯着屏幕等,不能只给一个转圈。
@@ -96,35 +103,39 @@ class ClaimStorage {
       target = Uri.parse('$base$id');
     }
 
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
-    try {
-      final req = await client.putUrl(target);
-      // **必须与签名端点里的 CONTENT_TYPE 逐字一致** —— 它进签名串,对不上 OSS 拒收。
-      req.headers.contentType = ContentType.binary;
-      req.contentLength = bytes.length;
+    return Net.run((client) async {
+      try {
+        final req = await client.putUrl(target);
+        // **必须与签名端点里的 CONTENT_TYPE 逐字一致** —— 它进签名串,对不上 OSS 拒收。
+        req.headers.contentType = ContentType.binary;
+        req.contentLength = bytes.length;
 
-      // 分块写并汇报进度。块太小会拖慢吞吐,太大则进度条一跳一跳 —— 64KB 是个
-      // 在几 MB 到几十 MB 之间都不难看的折中。
-      const chunk = 64 * 1024;
-      for (var off = 0; off < bytes.length; off += chunk) {
-        final end = (off + chunk).clamp(0, bytes.length);
-        req.add(bytes.sublist(off, end));
-        await req.flush();
-        onProgress?.call(end / bytes.length);
+        // 分块写并汇报进度。块太小会拖慢吞吐,太大则进度条一跳一跳 —— 64KB 是个
+        // 在几 MB 到几十 MB 之间都不难看的折中。
+        const chunk = 64 * 1024;
+        for (var off = 0; off < bytes.length; off += chunk) {
+          final end = (off + chunk).clamp(0, bytes.length);
+          req.add(bytes.sublist(off, end));
+          // 写也会卡住:对端不读 → TCP 窗口满 → flush 永远不返回。
+          await Net.flush(req);
+          onProgress?.call(end / bytes.length);
+        }
+        final res = await Net.send(req);
+        await Net.drain(res);
+        // OSS PUT 成功回 200。其余一律当失败 —— 出码流程会据此降级。
+        if (res.statusCode != 200 &&
+            res.statusCode != 201 &&
+            res.statusCode != 204) {
+          throw ClaimUploadFailed('上传失败(${res.statusCode})');
+        }
+        return id;
+      } on TimeoutException {
+        // PUT 不幂等,不自动重试 —— 交给用户按「重试」,那时会重新要一份许可证。
+        throw const ClaimUploadFailed('上传超时,请重试。');
+      } on SocketException {
+        throw const ClaimUploadFailed('网络连不上,请检查网络后重试。');
       }
-      final res = await req.close();
-      // OSS PUT 成功回 200。其余一律当失败 —— 出码流程会据此降级。
-      if (res.statusCode != 200 && res.statusCode != 201 && res.statusCode != 204) {
-        await res.drain<void>();
-        throw ClaimUploadFailed('上传失败(${res.statusCode})');
-      }
-      await res.drain<void>();
-      return id;
-    } on SocketException {
-      throw const ClaimUploadFailed('网络连不上,请检查网络后重试。');
-    } finally {
-      client.close();
-    }
+    });
   }
 }
 

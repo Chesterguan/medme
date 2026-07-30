@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/claim_link.dart';
+import 'package:mobile_flutter/claim_target.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/theme.dart';
-import 'package:mobile_flutter/vault_boot.dart' show openCurrentProfileVault;
+import 'package:mobile_flutter/vault_boot.dart'
+    show createProfileAndReopen, openCurrentProfileVault, switchProfileAndReopen;
 import 'package:mobile_flutter/vault_events.dart';
 
 /// 认领屏:医生代拍的病历存进病人自己的保险箱。
@@ -22,8 +24,10 @@ class ClaimScreen extends StatefulWidget {
   State<ClaimScreen> createState() => _ClaimScreenState();
 }
 
+typedef _Preview = ({int count, String name, ClaimTarget target});
+
 class _ClaimScreenState extends State<ClaimScreen> {
-  late Future<(int, String)> _preview;
+  late Future<_Preview> _preview;
   ClaimResultDto? _done;
   String? _error;
   bool _busy = false;
@@ -37,11 +41,27 @@ class _ClaimScreenState extends State<ClaimScreen> {
     Analytics.track(AnalyticsEvent.claimOpened, {
       'entry': widget.cold ? 'cold' : 'warm',
     });
-    _preview = widget.link.preview().catchError((Object e) {
+    _preview = _load().catchError((Object e) {
       // 取回阶段就失败(过期/断网)—— 这条比认领本身的失败更常见,必须单独看见。
       _trackFailure(e);
       throw e;
     });
+  }
+
+  Future<_Preview> _load() async {
+    final (n, name) = await widget.link.preview();
+    await ProfileManager.instance.ensureLoaded();
+    return (count: n, name: name, target: _resolve(name));
+  }
+
+  ClaimTarget _resolve(String raw) {
+    final pm = ProfileManager.instance;
+    return resolveClaimTarget(
+      patientName: raw,
+      profiles: pm.profiles,
+      current: pm.current,
+      isUnnamedPlaceholder: pm.isUnnamedPlaceholder,
+    );
   }
 
   /// 失败只报**原因码**,绝不报异常文本(里面有对象 id 和网址)。
@@ -56,17 +76,26 @@ class _ClaimScreenState extends State<ClaimScreen> {
     });
   }
 
-  Future<void> _claim() async {
+  Future<void> _claim(ClaimTarget t) async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      // `claimImport` 写的是「当前打开的箱子」。正常路径下这台手机就是个人模式,
-      // 打开的本来就是个人保险箱;这一行只是把它钉死 —— 万一进程里攥着的是别的箱子
-      // (例如同一台设备刚用过代拍),写错地方是**静默**的,而代拍那个箱子 12 小时
-      // 后就没了。一行的代价,换掉一类查不出来的丢数据。
-      await openCurrentProfileVault();
+      // `claimImport` 写的是**当前打开的那个箱子**,所以「存进谁」这件事必须在这里
+      // 落定 —— 每条分支最后都保证目标成员的箱子已经开着。写错地方是静默的,查不出来。
+      switch (t.how) {
+        case ClaimHow.merge:
+          await switchProfileAndReopen(t.id!);
+        case ClaimHow.rename:
+          // 只换标签,箱子还是同一个(目录按 id 建),所以照常开当前成员即可。
+          await ProfileManager.instance.rename(t.id!, t.name);
+          await openCurrentProfileVault();
+        case ClaimHow.create:
+          await createProfileAndReopen(t.name);
+        case ClaimHow.current:
+          await openCurrentProfileVault();
+      }
       final r = await widget.link.claim();
       // 档案页在监听这个:存完立刻能看见,不用手动刷新。
       bumpVaultRevision();
@@ -95,7 +124,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
           padding: const EdgeInsets.all(20),
           child: _done != null
               ? _result(_done!)
-              : FutureBuilder<(int, String)>(
+              : FutureBuilder<_Preview>(
                   future: _preview,
                   builder: (context, snap) {
                     if (snap.connectionState != ConnectionState.done) {
@@ -104,8 +133,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
                       );
                     }
                     if (snap.hasError) return _fatal(snap.error.toString());
-                    final (n, name) = snap.data!;
-                    return _confirm(n, name);
+                    return _confirm(snap.data!);
                   },
                 ),
         ),
@@ -113,8 +141,8 @@ class _ClaimScreenState extends State<ClaimScreen> {
     );
   }
 
-  Widget _confirm(int n, String name) {
-    final target = ProfileManager.instance.current;
+  Widget _confirm(_Preview p) {
+    final (n, name, t) = (p.count, p.name, p.target);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -137,6 +165,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
             borderRadius: BorderRadius.circular(14),
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Icon(Icons.person_outline, color: MedMe.teal),
               const SizedBox(width: 12),
@@ -146,16 +175,20 @@ class _ClaimScreenState extends State<ClaimScreen> {
                   children: [
                     const Text('存进', style: TextStyle(color: MedMe.faint, fontSize: 12)),
                     Text(
-                      target.name,
+                      t.name,
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      t.note,
+                      style: const TextStyle(
+                        color: MedMe.faint,
+                        fontSize: 12.5,
+                        height: 1.4,
+                      ),
                     ),
                   ],
                 ),
-              ),
-              // 存错人比存错位置麻烦得多 —— 给一条明确的退路,而不是让他事后去挪。
-              TextButton(
-                onPressed: _busy ? null : () => Navigator.of(context).pop(),
-                child: const Text('换一个'),
               ),
             ],
           ),
@@ -171,7 +204,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
         ],
         const Spacer(),
         FilledButton(
-          onPressed: _busy ? null : _claim,
+          onPressed: _busy ? null : () => _claim(t),
           style: FilledButton.styleFrom(
             backgroundColor: MedMe.teal,
             padding: const EdgeInsets.symmetric(vertical: 16),

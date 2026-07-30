@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:mobile_flutter/claim_storage.dart';
+import 'package:mobile_flutter/net.dart';
 
 /// 可续传的分片上传。
 ///
@@ -73,80 +74,88 @@ class ResumableUpload {
   }
 
   Future<_Plan> _initiate() async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
     try {
-      final uri = Uri.parse('$signerBase/multipart?size=${bytes.length}');
-      final res = await (await client.getUrl(uri)).close();
-      final body = await res.transform(utf8.decoder).join();
-      if (res.statusCode != 200) {
-        throw ClaimUploadFailed('取上传许可失败(${res.statusCode})');
-      }
-      return _Plan.fromJson(jsonDecode(body) as Map<String, dynamic>, bytes.length);
+      return await Net.retry(_initiateOnce); // GET,幂等
+    } on TimeoutException {
+      throw const ClaimUploadFailed('网络太慢,没能取到上传许可。请重试。');
     } on SocketException {
       throw const ClaimUploadFailed('网络连不上,请检查网络后重试。');
-    } finally {
-      client.close();
     }
   }
 
-  Future<String> _putPart(_Plan plan, _Part part) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
-    try {
-      final start = (part.number - 1) * plan.partSize;
-      final end = (start + plan.partSize).clamp(0, bytes.length);
-      final chunk = Uint8List.sublistView(bytes, start, end);
-
-      final req = await client.putUrl(part.url);
-      // **必须与签名端点里的 CONTENT_TYPE 逐字一致** —— 它进签名串,对不上 OSS 拒收。
-      req.headers.contentType = ContentType.binary;
-      req.contentLength = chunk.length;
-      req.add(chunk);
-      final res = await req.close().timeout(partTimeout);
-      await res.drain<void>();
-      if (res.statusCode != 200) {
-        throw ClaimUploadFailed('第 ${part.number} 片上传失败(${res.statusCode})');
-      }
-      final etag = res.headers.value('etag');
-      if (etag == null) throw const ClaimUploadFailed('OSS 未返回分片校验值');
-      return etag;
-    } on TimeoutException {
-      // 超时**不丢已成功的片** —— 调用方重试时会从这一片接着传。
-      throw ClaimUploadFailed('第 ${part.number} 片超时,可以重试继续');
-    } on SocketException {
-      throw const ClaimUploadFailed('网络中断,可以重试继续');
-    } finally {
-      client.close();
+  Future<_Plan> _initiateOnce() => Net.run((client) async {
+    final uri = Uri.parse('$signerBase/multipart?size=${bytes.length}');
+    final res = await Net.send(await client.getUrl(uri));
+    final body = await Net.text(res);
+    if (res.statusCode != 200) {
+      throw ClaimUploadFailed('取上传许可失败(${res.statusCode})');
     }
+    return _Plan.fromJson(
+      jsonDecode(body) as Map<String, dynamic>,
+      bytes.length,
+    );
+  });
+
+  Future<String> _putPart(_Plan plan, _Part part) async {
+    return Net.run((client) async {
+      try {
+        final start = (part.number - 1) * plan.partSize;
+        final end = (start + plan.partSize).clamp(0, bytes.length);
+        final chunk = Uint8List.sublistView(bytes, start, end);
+
+        final req = await client.putUrl(part.url);
+        // **必须与签名端点里的 CONTENT_TYPE 逐字一致** —— 它进签名串,对不上 OSS 拒收。
+        req.headers.contentType = ContentType.binary;
+        req.contentLength = chunk.length;
+        req.add(chunk);
+        await Net.flush(req, timeout: partTimeout);
+        final res = await Net.send(req, timeout: partTimeout);
+        await Net.drain(res);
+        if (res.statusCode != 200) {
+          throw ClaimUploadFailed('第 ${part.number} 片上传失败(${res.statusCode})');
+        }
+        final etag = res.headers.value('etag');
+        if (etag == null) throw const ClaimUploadFailed('OSS 未返回分片校验值');
+        return etag;
+      } on TimeoutException {
+        // 超时**不丢已成功的片** —— 调用方重试时会从这一片接着传。
+        throw ClaimUploadFailed('第 ${part.number} 片超时,可以重试继续');
+      } on SocketException {
+        throw const ClaimUploadFailed('网络中断,可以重试继续');
+      }
+    });
   }
 
   Future<void> _complete(_Plan plan) async {
     final nums = _done.keys.toList()..sort();
     final xml = StringBuffer('<CompleteMultipartUpload>');
     for (final n in nums) {
-      xml.write('<Part><PartNumber>$n</PartNumber><ETag>${_done[n]}</ETag></Part>');
+      xml.write(
+        '<Part><PartNumber>$n</PartNumber><ETag>${_done[n]}</ETag></Part>',
+      );
     }
     xml.write('</CompleteMultipartUpload>');
 
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
-    try {
-      final req = await client.postUrl(plan.completeUrl);
-      // 合并请求的 Content-Type 也进签名串,必须与端点签的那个一致(application/xml)。
-      req.headers.contentType = ContentType('application', 'xml');
-      final body = utf8.encode(xml.toString());
-      req.contentLength = body.length;
-      req.add(body);
-      final res = await req.close().timeout(partTimeout);
-      await res.drain<void>();
-      if (res.statusCode != 200) {
-        throw ClaimUploadFailed('合并分片失败(${res.statusCode})');
+    return Net.run((client) async {
+      try {
+        final req = await client.postUrl(plan.completeUrl);
+        // 合并请求的 Content-Type 也进签名串,必须与端点签的那个一致(application/xml)。
+        req.headers.contentType = ContentType('application', 'xml');
+        final body = utf8.encode(xml.toString());
+        req.contentLength = body.length;
+        req.add(body);
+        await Net.flush(req, timeout: partTimeout);
+        final res = await Net.send(req, timeout: partTimeout);
+        await Net.drain(res);
+        if (res.statusCode != 200) {
+          throw ClaimUploadFailed('合并分片失败(${res.statusCode})');
+        }
+      } on TimeoutException {
+        throw const ClaimUploadFailed('合并超时,可以重试');
+      } on SocketException {
+        throw const ClaimUploadFailed('网络中断,可以重试');
       }
-    } on TimeoutException {
-      throw const ClaimUploadFailed('合并超时,可以重试');
-    } on SocketException {
-      throw const ClaimUploadFailed('网络中断,可以重试');
-    } finally {
-      client.close();
-    }
+    });
   }
 }
 

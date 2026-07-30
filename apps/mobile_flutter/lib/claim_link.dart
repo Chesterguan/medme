@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:mobile_flutter/claim_storage.dart';
+import 'package:mobile_flutter/net.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart' as rust;
 
@@ -75,32 +77,35 @@ class ClaimLink {
     return (n.toInt(), name);
   }
 
+  /// 取密文。GET 是幂等的,所以外面套了重试 —— 病人多半在路上点开这条链接,换基站、
+  /// 出电梯这半分钟的抖动不该让他从头再来。「已经没了」不重试,那不是抖动。
   Future<Uint8List> _fetch() async {
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 20);
     try {
-      final req = await client.getUrl(Uri.parse('$base$objectId'));
-      final res = await req.close();
-      // 认领成功即删、到期即删 —— 取不到多半不是坏了,而是这两种正常情况。
-      if (res.statusCode == 404 ||
-          res.statusCode == 403 ||
-          res.statusCode == 410) {
-        throw const ClaimGone();
-      }
-      if (res.statusCode != 200) {
-        throw ClaimFailed('取病历失败(${res.statusCode})');
-      }
-      final chunks = <int>[];
-      await for (final c in res) {
-        chunks.addAll(c);
-      }
-      return Uint8List.fromList(chunks);
+      // ⚠️ 翻译必须在**重试外面**:一旦在里面把 TimeoutException 翻成 ClaimFailed,
+      // `retryIf` 就再也认不出它是网络抖动,重试等于没接。
+      return await Net.retry(_fetchOnce);
+    } on TimeoutException {
+      // 连上了但对面不吐数据 —— 这条以前是「永远转圈」,没有错误、没有埋点。
+      throw const ClaimFailed('网络太慢,没能取回病历。换个网络再试一次。');
     } on SocketException {
       throw const ClaimFailed('网络连不上,换个网络再试一次。');
-    } finally {
-      client.close();
     }
   }
+
+  Future<Uint8List> _fetchOnce() => Net.run((client) async {
+    final req = await client.getUrl(Uri.parse('$base$objectId'));
+    final res = await Net.send(req);
+    // 认领成功即删、到期即删 —— 取不到多半不是坏了,而是这两种正常情况。
+    if (res.statusCode == 404 ||
+        res.statusCode == 403 ||
+        res.statusCode == 410) {
+      throw const ClaimGone();
+    }
+    if (res.statusCode != 200) {
+      throw ClaimFailed('取病历失败(${res.statusCode})');
+    }
+    return Net.bytes(res);
+  });
 }
 
 /// 密文已经不在了:被领走过,或过了保留期。这是**正常结局**,不是故障。

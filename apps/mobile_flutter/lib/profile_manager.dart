@@ -79,6 +79,11 @@ class ProfileManager {
   /// 某成员最近已知记录数(没加载过为 null)。
   int? countFor(String id) => _counts[id];
 
+  /// 全新安装的样子:只有一个成员,名字还是占位的「我」(没被用户改过、也没被报告里
+  /// 识别到的姓名命过)。认领时用它决定「给这个占位成员改名」还是「另建一个」——
+  /// 否则病人装完 App 第一件事就是认领,结果档案里多出一个空的「我」杵在旁边。
+  bool get isUnnamedPlaceholder => _profiles.length == 1 && _autoNamePending;
+
   Future<File> _stateFile() async {
     if (_file != null) return _file!;
     final dir = await getApplicationSupportDirectory();
