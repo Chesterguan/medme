@@ -42,11 +42,38 @@ def main() -> int:
         print("✗ 一段内联脚本都没找到 —— 正则是不是漂了?")
         return 1
 
-    csp_re = re.compile(r"(script-src )([^;]*)(;)")
-    m = csp_re.search(html)
-    if not m:
-        print("✗ CSP 里找不到 script-src")
+    # ⚠️ **必须锚在 `<meta http-equiv="Content-Security-Policy">` 内部。**
+    # 早先只写 `script-src ([^;]*)`,结果匹配到了文件开头**注释里**那段解释 CSP 的
+    # 文字,于是脚本一直在改注释、真正的 meta 纹丝不动 —— 线上页面的 CSP 与脚本
+    # 长期对不上,表现是查看器永远转圈(主脚本被浏览器拒绝执行),而 `--check`
+    # 还报「一致」。这是这个脚本存在的全部意义所在,不能再错。
+    meta_re = re.compile(
+        r'(<meta[^>]*http-equiv="Content-Security-Policy"[^>]*content=")([^"]*)(")',
+        re.I,
+    )
+    meta = meta_re.search(html)
+    if not meta:
+        print("✗ 找不到 Content-Security-Policy 的 meta 标签")
         return 1
+    csp_re = re.compile(r"(script-src )([^;]*)(;)")
+    m = csp_re.search(meta.group(2))
+    if not m:
+        print("✗ meta 的 CSP 里找不到 script-src")
+        return 1
+    # 把相对 meta 内容的偏移换算成相对整篇 HTML 的偏移
+    off = meta.start(2)
+
+    class _M:
+        def __init__(self, mm, o):
+            self._m, self._o = mm, o
+        def group(self, i):
+            return self._m.group(i)
+        def start(self, i):
+            return self._m.start(i) + self._o
+        def end(self, i):
+            return self._m.end(i) + self._o
+
+    m = _M(m, off)
 
     have = re.findall(r"sha256-[A-Za-z0-9+/=]+", m.group(2))
     if have == want:
