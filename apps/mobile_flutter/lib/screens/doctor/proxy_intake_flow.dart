@@ -507,7 +507,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     if (consent == null) return;
     setState(() {
       _busy = true;
-      _progress = '正在生成端到端加密文件…';
+      _progress = '正在生成认领链接…';
       _phase = _ProxyPhase.delivering;
     });
     try {
@@ -958,7 +958,7 @@ class _PendingListStep extends StatelessWidget {
                     child: FilledButton(
                       style: FilledButton.styleFrom(backgroundColor: MedMe.proxyOrange),
                       onPressed: busy || docs.isEmpty ? null : onDeliver,
-                      child: const Text('生成加密文件,交给病人'),
+                      child: const Text('生成认领码,交给病人'),
                     ),
                   ),
                 ],

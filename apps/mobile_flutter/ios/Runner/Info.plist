@@ -77,11 +77,18 @@
 	     所以不声明就是 ITMS-90683。
 	     曾经这里有两条(连 `NSLocationAlwaysAndWhenInUse`),删 ML Kit 时被一并删掉 ——
 	     当时误判两条都来自 ML Kit 的传递依赖,build 49 因此中了警告。
-	     只留 WhenInUse 一条:实测 49 的产物里 `requestAlwaysAuthorization` 引用数为 0。
+	     **两条都要留。** 曾经按 build 49 的实测(`requestAlwaysAuthorization` 引用数为 0)
+	     只补了 WhenInUse 一条,结果 build 50 的产物里那个符号又出现了 —— 源码一个字没改,
+	     只改了本文件和版本号。根因是 `ios/Podfile.lock` **不完整**(只锁了 4 个 pod,
+	     `file_picker` 拉进来的 DKImagePickerController 一个都没锁),CI 每次 `pod install`
+	     都可能解析到不同版本,于是符号集会变。在锁文件补全之前,**别再按某一次产物的
+	     实测去删声明** —— 那个实测只对那一次构建成立。
 	     核查方法(别再凭印象):解开 ipa 后
 	       strings -a Payload/Runner.app/**Runner** | grep -c requestWhenInUseAuthorization
 	     注意可执行文件叫 `Runner`,不叫 `mobile_flutter` —— 扫错文件会得到「零引用」的假结论。 -->
 	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>MedMe 不获取你的位置,也不会请求定位权限。这条声明是因为导入文件用的系统相册组件引用了定位接口。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>MedMe 不获取你的位置,也不会请求定位权限。这条声明是因为导入文件用的系统相册组件引用了定位接口。</string>
 	<!-- 只用标准/豁免加密(本机端到端分享用的是标准算法),免每次 TestFlight 问出口合规。 -->
 	<key>ITSAppUsesNonExemptEncryption</key>

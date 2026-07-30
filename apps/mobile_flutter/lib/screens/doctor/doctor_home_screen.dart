@@ -144,8 +144,8 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    '当面征得同意后拍摄病人的纸质病历材料,生成一份加密文件当场交给病人;'
-                    '本机最多留 12 小时,到时间自动删。',
+                    '当面征得同意后拍摄病人的纸质病历材料,拍完生成一个认领码让病人当场扫走;'
+                    '网络不畅时退回加密文件+口令。本机最多留 12 小时,到时间自动删。',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 13, color: MedMe.faint, height: 1.5),
                   ),
