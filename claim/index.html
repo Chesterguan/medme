@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- SECURITY (GHSA-j7fx): 本页只运行三段固定的内联脚本(首屏防闪 + 内联 dicom-parser + 查看器逻辑),
-     故 script-src 用它们的 sha256 精确收录,移除 'unsafe-inline';并加 form-action/base-uri/
+     故 script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-tgMYYCcSnW98CKBcMaf3qOuf4b5ehzoIw0ofjlCikho=';并加 form-action/base-uri/
      frame-ancestors 'none' 锁死导航/表单/框架,断掉潜在注入外泄 DECRYPTED PHI 的路径。
      connect-src 只放行认领密文所在的那一个源(CLAIM_BASE):托管查看器要按 id 取回医生
      代拍的密文,别的地方一概连不上,解密后的 PHI 仍无处可外泄。**离线分享文件不吃这条**
@@ -1266,6 +1266,14 @@ const CLAIM_PREFIX = "c1.";
 // 用 OSS 自带的默认域名 = 不需要备案;强制下载头只影响浏览器导航,对 fetch 无效。
 const CLAIM_BASE = "https://medme-claim.oss-cn-hangzhou.aliyuncs.com/c/";
 
+// 认领页的下载入口。**病人多半还没装 App**,所以这几个地址是认领能不能走通的关键。
+// iOS 还没上 App Store(TestFlight 内测),换成正式商店链接时改这一行。
+// 注:这些只是 `<a href>`,不发请求,不受 CSP 的 connect-src 约束。
+const IOS_INSTALL = "https://testflight.apple.com/join/zWTycKV8";
+const ANDROID_APK =
+  "https://github.com/Chesterguan/medme/releases/latest/download/MedMe-Android.apk";
+const SITE_HOME = "https://medmenow.com/";
+
 // id 只允许不透明字符,且**只能拼到固定前缀后面** —— 绝不让 fragment 决定去哪个
 // 主机取数据,否则一条伪造链接就能把查看器指向攻击者的服务器。
 const CLAIM_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
@@ -1321,19 +1329,40 @@ async function renderClaim(fragment) {
     "这是医生刚为你建的病历,现在只是临时放着给你看。存进 MedMe 后它就只在你自己手机上。";
   note.appendChild(line);
 
+  // **按「多数人还没装 App」来排顺序。** 早先只有一个「存进我的 MedMe」按钮 + 一行
+  // 灰字,没装的人点下去**什么都不会发生**(自定义 scheme 打不开就是静默失败),而且
+  // 那行灰字让他自己去找 App —— 页面上根本没有下载入口。认领是代拍闭环的终点,
+  // 在那里静默失败等于把人丢了。
+  //
+  // 现在明写两步:先装、再存。已经装了的人直接点第二个,一样快。
+  const ua = navigator.userAgent || "";
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const isAndroid = /Android/i.test(ua);
+  const dl = document.createElement("a");
+  dl.href = isIOS ? IOS_INSTALL : (isAndroid ? ANDROID_APK : SITE_HOME);
+  dl.textContent = isIOS
+    ? "① 安装 MedMe(iPhone · TestFlight 内测)"
+    : (isAndroid ? "① 下载 MedMe(安卓)" : "① 去下载 MedMe");
+  dl.rel = "noopener";
+  dl.style.cssText =
+    "display:inline-block;margin:12px 8px 0 0;padding:10px 18px;border-radius:10px;"
+    + "background:#1789c1;color:#fff;font-weight:700;font-size:14px;text-decoration:none";
+  note.appendChild(dl);
+
   const btn = document.createElement("a");
   btn.href = "medme://claim#" + fragment;
-  btn.textContent = "存进我的 MedMe";
+  btn.textContent = "② 装好后,点这里存入";
   btn.style.cssText =
-    "display:inline-block;margin:10px 8px 0 0;padding:9px 16px;border-radius:10px;"
-    + "background:#1789c1;color:#fff;font-weight:600;font-size:14px;text-decoration:none";
+    "display:inline-block;margin:12px 8px 0 0;padding:10px 18px;border-radius:10px;"
+    + "background:#fff;color:#1789c1;border:1.5px solid #1789c1;font-weight:600;"
+    + "font-size:14px;text-decoration:none";
   note.appendChild(btn);
 
   const hint = document.createElement("div");
-  hint.style.cssText = "margin-top:8px;font-size:12px;color:#64748b;line-height:1.6";
+  hint.style.cssText = "margin-top:10px;font-size:12px;color:#64748b;line-height:1.7";
   hint.textContent =
-    "点了没反应,说明这台手机还没装 MedMe。装好之后回到这条链接再点一次即可存入 —— "
-    + "链接就在医生发给你的那条消息里。";
+    "已经装了 MedMe?直接点 ②。 "
+    + "这条链接随时可以再打开 —— 它就在医生发给你的那条消息里,不用担心现在存不进去。";
   note.appendChild(hint);
 
   const app = document.getElementById("app");
