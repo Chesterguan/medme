@@ -46,3 +46,6 @@ __pycache__/
 .posthog_key
 *.key
 .*.swp
+
+# 上传口令(签名端点用)——与 .posthog_key 同类,绝不进仓库
+.medme_upload_token

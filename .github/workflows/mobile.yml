@@ -117,6 +117,7 @@ jobs:
         run: >-
           flutter build apk --release --target-platform android-arm64
           --dart-define=POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
+          --dart-define=MEDME_UPLOAD_TOKEN=${{ secrets.MEDME_UPLOAD_TOKEN }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 # TODO: SHA 钉版
         with:
           name: medme-android
@@ -221,6 +222,7 @@ jobs:
           flutter build ipa --release
           --export-options-plist=$RUNNER_TEMP/ExportOptions.plist
           --dart-define=POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
+          --dart-define=MEDME_UPLOAD_TOKEN=${{ secrets.MEDME_UPLOAD_TOKEN }}
       # ⚠️ **依赖漂移哨兵。** iOS 插件走 Swift Package Manager(不是 CocoaPods ——
       # Podfile.lock 里只有 5 个 pod 是对的,别再以为它「不完整」)。而 `file_picker`
       # 的 Package.swift 把 DKImagePickerController 依赖成 **branch** 而非 tag,

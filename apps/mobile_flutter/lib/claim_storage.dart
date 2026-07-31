@@ -43,6 +43,17 @@ class ClaimStorage {
     defaultValue: 'https://claim-signer-rujxaehppb.cn-hangzhou.fcapp.run/sign',
   );
 
+  /// 上传口令。**它挡不住反编译**(口令也在包里),挡的是「扫互联网的脚本随手拿到
+  /// 一个能往我们桶里写文件的预签名地址」—— 把门槛从「谁都能」抬到「得先拆包」。
+  ///
+  /// 端点侧的校验早就写好了(`services/claim-signer/app.py:55`,同时覆盖 `/sign`
+  /// 与 `/multipart`),只是环境变量没配。⚠️ **打开的顺序不能反**:先让客户端带上、
+  /// 发新包、等用户都换了,才能去 FC 里设 `MEDME_UPLOAD_TOKEN` —— 否则老版本拿不到
+  /// 上传许可,出码会降级成简版码、代拍会退回文件+口令。
+  ///
+  /// 空串 = 不带这个头,与端点未配置时的行为一致。
+  static const uploadToken = String.fromEnvironment('MEDME_UPLOAD_TOKEN');
+
   final String base;
 
   /// 对象 id:96 位随机,不可枚举。安全性建立在两条上 —— 猜不到这个 id,以及密钥
@@ -70,6 +81,7 @@ class ClaimStorage {
 
   Future<(String, Uri)> _requestPermitOnce() => Net.run((client) async {
     final req = await client.getUrl(Uri.parse(signerUrl));
+    if (uploadToken.isNotEmpty) req.headers.set('X-MedMe-Token', uploadToken);
     final res = await Net.send(req);
     final body = await Net.text(res);
     if (res.statusCode != 200) {

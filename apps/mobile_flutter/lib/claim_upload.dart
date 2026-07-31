@@ -85,7 +85,13 @@ class ResumableUpload {
 
   Future<_Plan> _initiateOnce() => Net.run((client) async {
     final uri = Uri.parse('$signerBase/multipart?size=${bytes.length}');
-    final res = await Net.send(await client.getUrl(uri));
+    final req = await client.getUrl(uri);
+    // 与 `/sign` 同一把口令,见 `ClaimStorage.uploadToken`。分片本身的 PUT 直接打 OSS
+    // (预签名地址已经是凭据),不需要也不该带这个头。
+    if (ClaimStorage.uploadToken.isNotEmpty) {
+      req.headers.set('X-MedMe-Token', ClaimStorage.uploadToken);
+    }
+    final res = await Net.send(req);
     final body = await Net.text(res);
     if (res.statusCode != 200) {
       throw ClaimUploadFailed('取上传许可失败(${res.statusCode})');
