@@ -125,7 +125,13 @@
     letter-spacing:.06em;color:#1560a8;background:rgba(255,255,255,.75);
     border:1px solid #c8ebf1;padding:4px 10px;border-radius:999px}
   /* product demo: phone(自动循环)+ desktop(点击播放) */
-  .demo-wrap{display:flex;gap:30px;align-items:center;justify-content:center;flex-wrap:wrap;max-width:920px;margin:0 auto}
+  .shots{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;max-width:920px;margin:0 auto 40px}
+.shot{margin:0}
+.shot img{width:100%;height:auto;display:block;border-radius:14px;border:1px solid var(--line);background:#fff}
+.shot b{display:block;margin:16px 0 5px;font-size:16.5px;line-height:1.5;color:var(--ink)}
+.shot span{display:block;color:var(--muted);font-size:14px;line-height:1.75}
+@media(max-width:760px){.shots{grid-template-columns:1fr;gap:34px;margin-bottom:34px}}
+.demo-wrap{display:flex;gap:30px;align-items:center;justify-content:center;flex-wrap:wrap;max-width:920px;margin:0 auto}
   .demo-wrap figure{margin:0;text-align:center}
   .demo-wrap figcaption{margin-top:12px;font-weight:600;color:#1560a8;font-size:15px}
   .demo-wrap figcaption small{display:block;font-weight:400;color:#64748b;font-size:13px;margin-top:2px}
@@ -425,13 +431,28 @@
 <section id="how">
   <div class="wrap">
     <!-- 产品演示:手机(自动循环)+ 桌面(点击播放)。视频在 demo/,相对路径。 -->
-    <div class="demo-wrap">
-      <figure class="demo-phone">
-        <div class="phone-frame">
-          <video src="demo/phone.mp4" autoplay muted loop playsinline preload="metadata" poster="demo/phone-poster.jpg" aria-label="手机拍照识别演示"></video>
-        </div>
-        <figcaption>手机随手一拍,自动认字归档<small>化验单 / 病历,OCR 当场识别</small></figcaption>
+    <!-- 三张真机截图,各打一个差异点。**不用自动播放视频**:autoplay 在低电量模式、
+         省流量模式、微信内置浏览器里会被系统拒绝,那块就一直黑着(用户实测撞到过);
+         而且 4.8MB 在弱网上是白等。截图任何环境都渲染,三张加起来 330KB。 -->
+    <div class="shots">
+      <figure class="shot">
+        <img src="demo/shot-cross.png" width="540" height="792" alt="健康档案时间轴:北京协和医院、浙江大学医学院、上海交通大学等多家医院的就诊记录按时间排在一起">
+        <b>换了几家医院,记录还是一条线</b>
+        <span>协和、浙大、上海交大…… 谁家看的都在这儿,不用再翻微信找照片。</span>
       </figure>
+      <figure class="shot">
+        <img src="demo/shot-original.png" width="540" height="876" alt="文档详情:顶部「查看原件」按钮,下面是识别出的检验报告文字与化验值表格,肌酐 112 标为偏高">
+        <b>认出来的字,和原件都留着</b>
+        <span>偏高偏低自己标出来;拿不准的地方,一键翻回那张原始报告。</span>
+      </figure>
+      <figure class="shot">
+        <img src="demo/shot-qr.png" width="540" height="876" alt="给医生看:一个二维码,下面写着本码含 22 份病历、含原件">
+        <b>医生扫一下就看到</b>
+        <span>对方不用装 App、不用加好友,浏览器里直接打开你的整段病史。</span>
+      </figure>
+    </div>
+
+    <div class="demo-wrap">
       <figure class="demo-desktop">
         <video src="demo/desktop.mp4" controls preload="metadata" poster="demo/desktop-poster.jpg" aria-label="桌面完整演示"></video>
         <figcaption>桌面大屏,管理你的健康档案<small>完整演示 · 点击播放</small></figcaption>
