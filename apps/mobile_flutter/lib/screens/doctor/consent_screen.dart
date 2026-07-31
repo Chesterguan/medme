@@ -146,7 +146,7 @@ class _ConsentScreenState extends State<ConsentScreen>
               const _ConsentPoint(
                 icon: Icons.schedule_outlined,
                 title: '在这台手机上存多久',
-                body: '最多存 12 小时,方便医生给您写病历;到时间自动删掉。',
+                body: '最多存 12 小时,方便医生给您写病历;超时后医生下次打开 App 时清掉。',
               ),
               const _ConsentPoint(
                 icon: Icons.lock_outline,

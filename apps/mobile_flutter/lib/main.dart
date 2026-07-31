@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/claim_link.dart';
+import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/ephemeral_session.dart';
 import 'package:mobile_flutter/screens/claim_screen.dart';
 import 'package:mobile_flutter/src/rust/frb_generated.dart';
@@ -77,6 +78,20 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   @override
   Future<bool> didPushRouteInformation(RouteInformation info) async {
     return _dispatch(info.uri.toString());
+  }
+
+  /// 回到前台时跑一次代拍材料的 12 小时清理。
+  ///
+  /// 没有后台定时器是刻意的(app 不在前台时不该跑),所以「到时间自动删」能兑现的
+  /// 最早时机就是这里。只靠 `ensureLoaded` 不够 —— 医生早上代拍完把手机揣兜里,
+  /// 一整天不再进那个流程,材料就一直在。而这句承诺印在病人签字的同意书上。
+  ///
+  /// 个人模式下没有代拍病人,`_purgeExpired` 扫一眼空目录就返回,代价可以忽略。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ProxyPatientManager.instance.ensureLoaded());
+    }
   }
 
   /// [cold] = App 是被这条链接**拉起来的**(而不是已在运行时收到)。这个区分是

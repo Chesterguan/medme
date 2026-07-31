@@ -15,7 +15,7 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 ///
 /// **12 小时保留**(不是「用完即焚」):医生需要几小时内把病历写完,期间可回来补拍/
 /// 核对/重发。超过 [retention] 的病人在 [ensureLoaded] 时连目录一起删掉——这就是同意
-/// 告知里「最多存 12 小时,到时间自动删掉」那句话的执行者。
+/// 告知里「最多存 12 小时,超时后医生下次打开 App 时清掉」那句话的执行者。
 ///
 /// 落在 `<applicationSupport>` 而不是系统临时目录:临时目录系统随时可清,撑不住 12
 /// 小时的承诺。也不进 iCloud —— 代拍病人的数据是别人的隐私,不上医生的云备份
@@ -56,23 +56,33 @@ class ProxyPatientManager {
   /// device id、导入临时文件)。删这一棵 = 这个病人在本机彻底消失。
   Future<String> baseDir(String id) async => '${await _support()}/proxy-patients/$id';
 
-  /// 加载病人表,并**顺手执行 12 小时 TTL**:超时的连目录一起删。每次进医生主页/
-  /// 开始代拍都会走到这里,不需要后台定时器(app 不在前台时本来也不该跑定时器)。
+  /// 加载病人表,并**每次都执行 12 小时 TTL**:超时的连目录一起删。
+  ///
+  /// ⚠️ 这里曾经是 `if (_loaded) return;` 打头 —— 于是清理**每个进程只跑一次**,
+  /// 上面那句「每次进医生主页/开始代拍都会走到这里」被它自己否掉了。医生的 App
+  /// 只要一直在内存里,病人材料就一直躺着。而「最多存 12 小时,到时间自动删掉」
+  /// 这句话印在**病人要签字的知情同意书**上(`screens/doctor/consent_screen.dart`),
+  /// 不兑现的性质与营销页不同。
+  ///
+  /// 现在:读表仍然只做一次(它不会变),**清理每次都做**。没有后台定时器是刻意的
+  /// (app 不在前台时不该跑定时器),所以能保证的上限就是「下次回到前台/进这个流程
+  /// 时清掉」—— 对外文案必须照这个口径写,别写成「到点自动消失」。
   Future<void> ensureLoaded() async {
-    if (_loaded) return;
-    try {
-      final f = await _stateFile();
-      if (await f.exists()) {
-        final json = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
-        _patients = (json['patients'] as List? ?? [])
-            .map((e) => ProxyPatient.fromJson(e as Map<String, dynamic>))
-            .toList();
+    if (!_loaded) {
+      try {
+        final f = await _stateFile();
+        if (await f.exists()) {
+          final json = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+          _patients = (json['patients'] as List? ?? [])
+              .map((e) => ProxyPatient.fromJson(e as Map<String, dynamic>))
+              .toList();
+        }
+      } catch (_) {
+        // 读坏了不致命:当成空表(目录清理下面照跑,不留孤儿数据)。
+        _patients = [];
       }
-    } catch (_) {
-      // 读坏了不致命:当成空表(目录清理下面照跑,不留孤儿数据)。
-      _patients = [];
+      _loaded = true;
     }
-    _loaded = true;
     await _purgeExpired();
   }
 
