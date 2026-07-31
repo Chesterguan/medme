@@ -40,6 +40,22 @@ class MedMeApp extends StatefulWidget {
   State<MedMeApp> createState() => _MedMeAppState();
 }
 
+/// 同意门之前到达的认领链接。**不是缓存,是一次性交接**:取走即清空。
+(ClaimLink, bool)? _pendingClaim;
+
+/// 取走待处理的认领链接(取过就没了)。
+(ClaimLink, bool)? takePendingClaim() {
+  final p = _pendingClaim;
+  _pendingClaim = null;
+  return p;
+}
+
+void pushClaimScreen(ClaimLink link, {required bool cold}) {
+  appNavigatorKey.currentState?.push(
+    MaterialPageRoute(builder: (_) => ClaimScreen(link: link, cold: cold)),
+  );
+}
+
 class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   @override
   void initState() {
@@ -71,10 +87,17 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
     final link = ClaimLink.tryParse(uri);
     if (link == null) return false;
     // 保险箱可能还没打开完(冷启动),推迟到下一帧再导航。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      appNavigatorKey.currentState?.push(
-        MaterialPageRoute(builder: (_) => ClaimScreen(link: link, cold: cold)),
-      );
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // ⚠️ **没同意过就先别推。** 冷启动时认领屏会被推到告知页**上面** —— 那等于
+      // 病人在没看过任何告知、没同意过任何条款的情况下,第一屏就是「存进我的档案」,
+      // 存完才可能看到告知页。而认领恰恰是最典型的首次使用(装完 App 第一件事)。
+      // 首启告知门是合规要求不是引导流程,不能被一条深链绕过去。
+      // 存着,等 `_AppRootState` 过了同意门再补推(见 [takePendingClaim])。
+      if (!await FirstRunConsent.hasAgreed()) {
+        _pendingClaim = (link, cold);
+        return;
+      }
+      pushClaimScreen(link, cold: cold);
     });
     return true;
   }
@@ -210,6 +233,14 @@ class _AppRootState extends State<AppRoot> {
             onAgreed: () => setState(() => _justAgreed = true),
           );
         }
+        // 同意门已过。若有一条认领链接在门外等着(冷启动时链接比同意门先到),
+        // 现在补推 —— 病人不用回去重点一次链接,那条链接他多半已经关掉了。
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final pending = takePendingClaim();
+          if (pending != null) {
+            pushClaimScreen(pending.$1, cold: pending.$2);
+          }
+        });
         return _modeRoot();
       },
     );

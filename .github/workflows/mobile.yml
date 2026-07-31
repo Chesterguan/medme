@@ -221,6 +221,27 @@ jobs:
           flutter build ipa --release
           --export-options-plist=$RUNNER_TEMP/ExportOptions.plist
           --dart-define=POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
+      # ⚠️ **依赖漂移哨兵。** iOS 插件走 Swift Package Manager(不是 CocoaPods ——
+      # Podfile.lock 里只有 5 个 pod 是对的,别再以为它「不完整」)。而 `file_picker`
+      # 的 Package.swift 把 DKImagePickerController 依赖成 **branch** 而非 tag,
+      # DKCamera / DKPhotoGallery 更是直接钉在 `master` 上。SPM 对 branch 型 pin 会在
+      # 每次解析时回远端重新校验 —— 于是**对方推一次 commit,我们的二进制就变,而我们
+      # 这边一个字都没改**。
+      #
+      # 实证:build 49 与 50 源码只差 Info.plist 和版本号,50 的 Runner 却多引用了
+      # `requestAlwaysAuthorization`,苹果因此回了 ITMS-90683。
+      #
+      # 治本要么给 xcodebuild 传 `-disableAutomaticPackageResolution`(flutter build ipa
+      # 没有透传口子),要么把 file_picker 换掉/固定住。在那之前**至少让它可见**:
+      # 构建后 Package.resolved 变了就红,逼一次人工判断,而不是悄悄换个二进制发出去。
+      - name: 核对 SPM 依赖没有在构建中漂移
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          if ! git diff --exit-code -- ios/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved; then
+            echo "::error::构建过程中 SPM 重新解析了依赖(上方 diff)。这次的产物与上一次不是同一组第三方代码——先确认改了什么、再决定要不要提交新的 Package.resolved。"
+            exit 1
+          fi
+          echo "✓ Package.resolved 与提交时一致"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: medme-ios-ipa
