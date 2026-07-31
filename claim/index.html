@@ -15,7 +15,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ZAk0kcPy47iKXFNPlZCqxJ1tkh7B5iqUGu76LNsuzoI='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-sIG6+gSeY71fwXfz6OoUZwTtsv35G3WdkGSocb9bJyw='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -1279,6 +1279,18 @@ const ANDROID_APK =
   "https://github.com/Chesterguan/medme/releases/latest/download/MedMe-Android.apk";
 const SITE_HOME = "https://medmenow.com/";
 
+// 微信内置浏览器。**它拦掉了认领的每一条出路**:自定义 scheme(`medme://`)静默失败、
+// `.apk` 下不动、TestFlight 链接跳不过去。唯一的逃生通道是「右上角 ··· → 在浏览器中打开」。
+//
+// ⚠️ 而那一跳带走的是**地址栏里此刻的 URL** —— 所以在微信里**绝不能清 hash**。
+// 2026-07-31 用户实测:微信里能正常看到病历,点「在浏览器中打开」之后却落到一个
+// 要输口令的空页面 —— 因为密钥在 60ms 后就被我们自己 replaceState 抹掉了。
+// 出路被我们自己堵死,比被微信拦掉更冤。
+//
+// 代价:密钥会留在微信的地址栏与它的浏览历史里。两害相权 —— 流程通不了的代价更大,
+// 而且病人本来就得靠「再点一次那条消息」重看,链接本身就在他的聊天记录里。
+const IS_WECHAT = /MicroMessenger/i.test(navigator.userAgent || "");
+
 // id 只允许不透明字符,且**只能拼到固定前缀后面** —— 绝不让 fragment 决定去哪个
 // 主机取数据,否则一条伪造链接就能把查看器指向攻击者的服务器。
 const CLAIM_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
@@ -1354,20 +1366,41 @@ async function renderClaim(fragment) {
     + "background:#1789c1;color:#fff;font-weight:700;font-size:14px;text-decoration:none";
   note.appendChild(dl);
 
-  const btn = document.createElement("a");
-  btn.href = "medme://claim#" + fragment;
-  btn.textContent = "② 装好后,点这里存入";
-  btn.style.cssText =
-    "display:inline-block;margin:12px 8px 0 0;padding:10px 18px;border-radius:10px;"
-    + "background:#fff;color:#1789c1;border:1.5px solid #1789c1;font-weight:600;"
-    + "font-size:14px;text-decoration:none";
-  note.appendChild(btn);
+  // 微信里 `medme://` 是**静默失败**的:点了什么都不发生,病人只会以为坏了。
+  // 与其给他一个必然踩空的按钮,不如直接告诉他那一步要在浏览器里做。
+  // 「看」这件事微信里是好的,所以只挡「存」,不挡阅读。
+  if (IS_WECHAT) {
+    const wx = document.createElement("div");
+    wx.style.cssText =
+      "margin:12px 0 0;padding:11px 13px;border-radius:10px;background:#fff8f0;"
+      + "border:1px solid #f0c9a0;color:#7a4a12;font-size:13.5px;line-height:1.8";
+    const wt = document.createElement("div");
+    wt.style.cssText = "font-weight:700";
+    wt.textContent = "要存进 App,得先用浏览器打开这一页";
+    const wb = document.createElement("div");
+    wb.textContent =
+      "微信里存不进去(这是微信的限制,不是出错了)。点右上角的 ··· ,选「在浏览器中打开」,"
+      + "再回到这一页点「存入」。病历现在就能看,不着急存。";
+    wx.appendChild(wt);
+    wx.appendChild(wb);
+    note.appendChild(wx);
+  } else {
+    const btn = document.createElement("a");
+    btn.href = "medme://claim#" + fragment;
+    btn.textContent = "② 装好后,点这里存入";
+    btn.style.cssText =
+      "display:inline-block;margin:12px 8px 0 0;padding:10px 18px;border-radius:10px;"
+      + "background:#fff;color:#1789c1;border:1.5px solid #1789c1;font-weight:600;"
+      + "font-size:14px;text-decoration:none";
+    note.appendChild(btn);
+  }
 
   const hint = document.createElement("div");
   hint.style.cssText = "margin-top:10px;font-size:12px;color:#64748b;line-height:1.7";
-  hint.textContent =
-    "已经装了 MedMe?直接点 ②。 "
-    + "这条链接随时可以再打开 —— 它就在医生发给你的那条消息里,不用担心现在存不进去。";
+  hint.textContent = IS_WECHAT
+    ? "这条链接随时可以再打开 —— 它就在医生发给你的那条消息里,不用担心现在存不进去。"
+    : "已经装了 MedMe?直接点 ②。 "
+      + "这条链接随时可以再打开 —— 它就在医生发给你的那条消息里,不用担心现在存不进去。";
   note.appendChild(hint);
 
   const app = document.getElementById("app");
@@ -1464,8 +1497,33 @@ function revealGateForError() {
 
 (function fromHash() {
   const h = decodeURIComponent(location.hash.replace(/^#/, "")).trim();
-  if (!h) return;
+  if (!h) {
+    // 认领链接掉了 fragment(最常见的成因:微信「在浏览器中打开」带走的是已被清过
+    // hash 的地址)。此时默认那屏是「拖入分享文件 + 输入口令」—— 对病人是**死胡同**:
+    // 他手上既没有文件也没有口令,只有医生给的那条链接。给一句能照做的话,并把
+    // 那套他用不上的表单收起来。
+    if (location.pathname.indexOf("/claim") === 0 || /\/claim\/?$/.test(location.pathname)) {
+      const card = document.querySelector(".gate-card");
+      if (card) {
+        ["drop", "fileInput", "pw", "go"].forEach(function (id) {
+          const el = document.getElementById(id);
+          if (el) el.style.display = "none";
+        });
+        const lab = card.querySelector('label[for="pw"]');
+        if (lab) lab.style.display = "none";
+        const intro = card.querySelector("p");
+        if (intro) {
+          intro.textContent =
+            "这条链接不完整 —— 后面那一段(病历的钥匙)丢了,所以打不开。"
+            + "请回到医生发给你的那条原始链接,重新点开一次。";
+        }
+      }
+    }
+    return;
+  }
   const clearHashNow = () => {
+    // 微信里保留 hash —— 否则「在浏览器中打开」会把密钥丢掉,见 IS_WECHAT 处的说明。
+    if (IS_WECHAT) return;
     if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   };
   // 二维码载荷:数据与密钥都在 fragment 里,不需要内嵌分享文件。
