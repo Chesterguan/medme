@@ -169,6 +169,36 @@ fn glued_name_value_re() -> &'static Regex {
 /// name↔value glue check (`fix_name_value_glue`) and the post-parse value↔range
 /// glue check (`value_glued_to_next_number`), since they're the same
 /// underlying phenomenon caught at two different points in the pipeline.
+/// Labels that only ever appear in a report's letterhead / specimen block, never
+/// in an analyte name. A row whose "name" contains one of these is page
+/// furniture that happened to end in a number (`… 年龄：58岁 门诊号：20230615-1046`
+/// → value 58, reference range 20230615–1046), and charting it puts a fabricated
+/// trend line next to a real one in the doctor's view.
+///
+/// Deliberately a *name* list, not a punctuation heuristic — see the call site.
+/// Keep it to words that cannot be part of a measured quantity; `血压` and
+/// `体温` are vitals, not furniture, and must never appear here.
+const PAGE_FURNITURE: &[&str] = &[
+    "姓名",
+    "性别",
+    "年龄",
+    "门诊号",
+    "住院号",
+    "病案号",
+    "床号",
+    "科室",
+    "样本类型",
+    "标本类型",
+    "采集时间",
+    "送检时间",
+    "报告时间",
+    "审核时间",
+    "检验者",
+    "审核者",
+    "送检医生",
+    "申请医生",
+];
+
 const REASON_VALUE_GLUED_TO_RANGE: &str = "数值和参考范围粘在一起,读不准,请核对原件";
 const REASON_MULTIPLE_GLUE_POINTS: &str =
     "这一行有多处数字和名称粘在一起,分不清对应关系,读不准,请核对原件";
@@ -406,6 +436,22 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
             .chars()
             .any(|c| matches!(c, '，' | ',' | '。' | '；' | ';' | '、'))
         {
+            continue;
+        }
+        // Demographics / specimen headers (`姓名：张建国  性别：男  年龄：58岁
+        // 门诊号：20230615-1046`) parse as a lab row because the trailing field is
+        // numeric: name = `姓名：张建国  性别：男  年龄`, value = 58, and the 门诊号
+        // digits get read as a reference range. The viewer then charts that as a
+        // trend line and flags it red, next to a real creatinine curve.
+        //
+        // Identified by NAMING the furniture, not by guessing from punctuation.
+        // The obvious punctuation rule — "a colon inside the name means it is
+        // really several `label：value` fields" — reads well and is wrong: it
+        // discards `生化:钾 4.2 mmol/L 3.5-5.3`, `甲功三项:TSH …`, `PT:INR …` and
+        // `白球比值(A:G) 1.52 1.20-2.40` (which resolves to a real dictionary
+        // entry). The dictionary itself curates `皮质醇(8:00)` and friends, so a
+        // colon in an analyte name is expressly normal in this domain.
+        if PAGE_FURNITURE.iter().any(|w| raw_name.contains(w)) {
             continue;
         }
         let Ok(value_num) = caps

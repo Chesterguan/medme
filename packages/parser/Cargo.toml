@@ -16,3 +16,6 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+# tests/corpus_summary.rs decides "which diseases *should* have matched" from the
+# corpus text itself, which means normalizing it the same way the matcher does.
+terminology = { path = "../terminology" }

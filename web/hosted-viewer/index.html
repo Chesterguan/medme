@@ -15,7 +15,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-sIG6+gSeY71fwXfz6OoUZwTtsv35G3WdkGSocb9bJyw='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-PutkAHzpKHe3+AT6q2Xaj4hjO3QcWYET1fOGKKKoDhk='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -869,10 +869,16 @@ function renderSummary(sm, asOf, patient) {
     if (acute) {
       db = '<div style="font-size:13px;color:#94a3b8;padding:12px 0 2px">一次性急性事件,已痊愈。无长期随访指标或维持用药。</div>';
     } else {
-      if ((pr.labs || []).length) {
+      // Gate the heading on *renderable* rows, not on labs.length. A series with
+      // no dated points draws nothing (every row reads `pts`), so keying off the
+      // raw array length emits a bare 相关化验 heading with empty space under it.
+      // handoff.rs drops such series upstream now; this keeps the renderer honest
+      // on its own terms rather than trusting the payload.
+      const shownLabs = (pr.labs || []).filter(L => (L.pts || []).length);
+      if (shownLabs.length) {
         db += '<div class="bh">相关化验</div>';
-        pr.labs.forEach(L => {
-          const pts = L.pts || []; if (!pts.length) return; const last = pts[pts.length - 1], bad = sumFlag(last[1], L.refLow, L.refHigh);
+        shownLabs.forEach(L => {
+          const pts = L.pts; const last = pts[pts.length - 1], bad = sumFlag(last[1], L.refLow, L.refHigh);
           const refTxt = L.refLow != null ? "≥" + L.refLow : (L.refHigh != null ? "<" + L.refHigh : "");
           db += '<div class="lr2"><div style="flex:1;min-width:0"><div class="rn">' + esc(L.name) + '</div><div class="rf">参考 ' + esc(refTxt) + ' ' + esc(L.unit || "") + '</div></div>'
             + sparkSVG(L)
@@ -885,6 +891,20 @@ function renderSummary(sm, asOf, patient) {
           db += '<div class="med2"><span class="md ' + (m.on ? "on" : "off") + '"></span><span class="mn ' + (m.on ? "" : "off") + '">' + esc(m.name) + '</span>'
             + '<span class="mmv">' + esc((m.dose || "") + (m.span ? " · " + m.span : "")) + '</span>' + evChip(m.evidence) + '<span class="mt2 ' + (m.on ? "on" : "off") + '">' + (m.on ? "在用" : "已停") + '</span></div>';
         });
+      }
+      // A problem with nothing to show must SAY so — a blank box reads as "this
+      // patient has no labs for this", which is a clinical falsehood.
+      //
+      // The wording states only what we observed, never what MedMe covers. An
+      // empty lane has two causes that look identical from here: the diagnosis
+      // is outside our curated set (脑梗死, 胆囊结石), or it IS curated and simply
+      // nothing matched in these records. A sentence like "尚未为该疾病建立随访
+      // 指标" is false in the second case — 糖尿病肾病(早期) hits it while the map
+      // does carry 慢性肾脏病(CKD) with eGFR/UACR, and this patient's eGFR sits
+      // one lane above. Claim the observation, not the capability.
+      if (!db) {
+        db = '<div style="font-size:13px;color:#94a3b8;padding:12px 0 2px">'
+          + '未能从这些记录中关联到该疾病的随访指标或用药,不代表没有相关检查 —— 请查看下方「查看全部原件」核对。</div>';
       }
     }
     lanes += '<div class="det2' + (pr.open ? " open" : "") + '">' + db + '</div>';
