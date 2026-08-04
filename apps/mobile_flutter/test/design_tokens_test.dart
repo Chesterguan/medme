@@ -4,8 +4,12 @@
 // 的每个色值 / 字号 / 圆角 / 间距在这里逐一断言一遍,将来谁随手改一个色值,红的
 // 是这里,而不是三个月后有人发现手机和查看器的「偏高」不是同一个橙。
 //
-// 最后一组是**迁移的回归护栏**:直接把化验表渲染出来,断言异常行的文字颜色确实
+// 倒数第二组是**迁移的回归护栏**:直接把化验表渲染出来,断言异常行的文字颜色确实
 // 是令牌值 —— 也就是迁移前那两个硬编码的同一个值,视觉零变化。
+//
+// 最后一组守**医生模式主色**(`proxy`)。它是规范正本之外唯一的增补,所以不能像上面
+// 那样「抄规范」来验;改为验它必须满足的那几条**约束**:不撞任何一档化验状态色、
+// 不是绿、与个人模式主色一眼可辨、老年用户读得清。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
@@ -79,6 +83,22 @@ TC 总胆固醇 Cholesterol 6.05 mmol/L < 5.20 ↑
 HDL-C 高密度脂蛋白胆固醇 0.98 mmol/L > 1.04 ↓
 Cr 肌酐 Creatinine 95 umol/L 57 - 97 正常
 ''';
+
+/// WCAG 对比度。两色亮度之比,`(亮+0.05)/(暗+0.05)`。
+double contrast(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  final hi = la > lb ? la : lb;
+  final lo = la > lb ? lb : la;
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/// 两个色相在色环上的最短夹角(度)。
+double hueGap(Color a, Color b) {
+  final d =
+      (HSLColor.fromColor(a).hue - HSLColor.fromColor(b).hue).abs() % 360;
+  return d > 180 ? 360 - d : d;
+}
 
 void main() {
   group('颜色令牌与规范逐一对齐', () {
@@ -283,6 +303,32 @@ void main() {
       expect(find.text('正常'), findsNothing);
     });
 
+    testWidgets('化验表里不出现医生模式主色 —— 同一份化验值两个模式必须长一样', (tester) async {
+      await pumpLab(tester);
+      // `widgets/report_content.dart` 被两个模式共用。它一旦消费了 `proxy`,
+      // 同一张化验单在医生模式下就会变个样子,「偏高」这类结论也就有了两副面孔。
+      final banned = {
+        MedColors.light.proxy.toARGB32(),
+        MedColors.light.proxyInk.toARGB32(),
+        MedColors.light.proxyWash.toARGB32(),
+      };
+      for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
+        rich.text.visitChildren((span) {
+          final color = span.style?.color;
+          if (color != null) {
+            expect(
+              banned.contains(color.toARGB32()),
+              isFalse,
+              reason:
+                  '「${span.toPlainText()}」用了医生模式主色 —— 化验表是两个模式共用的,'
+                  '不能带模式色',
+            );
+          }
+          return true;
+        });
+      }
+    });
+
     testWidgets('化验表里没有任何字号低于 12px —— 007 §2.5「字号可放大,不可砍」', (
       tester,
     ) async {
@@ -300,6 +346,127 @@ void main() {
           return true;
         });
       }
+    });
+  });
+
+  group('医生模式主色 proxy', () {
+    test('色值钉死', () {
+      expect(MedColors.light.proxy.toARGB32(), 0xFF7C4096);
+      expect(MedColors.light.proxyInk.toARGB32(), 0xFF57296B);
+      expect(MedColors.light.proxyWash.toARGB32(), 0xFFF4ECF8);
+      expect(MedColors.dark.proxy.toARGB32(), 0xFFC289DE);
+      expect(MedColors.dark.proxyInk.toARGB32(), 0xFFDBAAF0);
+      expect(MedColors.dark.proxyWash.toARGB32(), 0xFF2B1936);
+    });
+
+    // 借用化验状态色当 chrome = 稀释语义。`feat/mobile-visual` 正是因为这个删掉了
+    // 整张文档类型配色表;旧的医生模式橙 #C2570C 与 `high` #B45309 相差 1° 色相,
+    // 就是这条规矩的现行反例,它已被换掉。
+    test('不撞任何一档化验状态色,也不撞个人模式主色', () {
+      for (final c in [MedColors.light, MedColors.dark]) {
+        for (final other in [c.low, c.high, c.critical, c.seal, c.sealInk]) {
+          expect(
+            c.proxy.toARGB32(),
+            isNot(other.toARGB32()),
+            reason: 'proxy 与另一个有语义的令牌撞了色值',
+          );
+        }
+        // 只不相等还不够 —— 相差 1° 的两个橙也「不相等」。要色相上真的分得开。
+        expect(
+          hueGap(c.proxy, c.low),
+          greaterThanOrEqualTo(45),
+          reason: 'proxy 离「偏低」太近,小色块上会被读成化验状态',
+        );
+        expect(
+          hueGap(c.proxy, c.high),
+          greaterThanOrEqualTo(45),
+          reason: 'proxy 离「偏高」太近 —— 旧的医生模式橙就是栽在这里',
+        );
+        expect(
+          hueGap(c.proxy, c.critical),
+          greaterThanOrEqualTo(45),
+          reason: 'proxy 离「危急值」太近',
+        );
+      }
+    });
+
+    test('一眼可辨于个人模式主色,但不是换了个 app', () {
+      for (final c in [MedColors.light, MedColors.dark]) {
+        expect(
+          hueGap(c.proxy, c.seal),
+          greaterThanOrEqualTo(60),
+          reason: '两个模式的主色要一眼分得开 —— 这是安全设计,不是装饰',
+        );
+        // 同属一个体系:饱和度不高于个人模式主色。医生模式该更冷静,不更花哨。
+        expect(
+          HSLColor.fromColor(c.proxy).saturation,
+          lessThanOrEqualTo(HSLColor.fromColor(c.seal).saturation),
+          reason: 'proxy 比 seal 还艳 —— 医生模式不该是更吵的那个',
+        );
+      }
+    });
+
+    test('不是绿 —— 色板刻意没有绿(「正常值不上色」)', () {
+      for (final c in [MedColors.light, MedColors.dark]) {
+        final hue = HSLColor.fromColor(c.proxy).hue;
+        expect(
+          hue > 70 && hue < 170,
+          isFalse,
+          reason: '色相 $hue 落在绿区。绿 = 安全,正是规范 §二 拒绝做的暗示',
+        );
+      }
+    });
+
+    test('对比度够老年用户 —— 主按钮文字、淡底块文字都 ≥ 4.5:1', () {
+      // 浅色一套的主色是**深**紫,按钮文字压白;深色一套的主色是**浅**紫,按钮文字
+      // 压深墨 —— 与 `seal` 在两套里的处理完全一致(深色的 seal #4FB3DF 上压白字
+      // 只有 2.0:1,深色主题的按钮从来不是白字)。所以两套各按各的文字色验。
+      const white = Color(0xFFFFFFFF);
+      expect(
+        contrast(white, MedColors.light.proxy),
+        greaterThanOrEqualTo(4.5),
+        reason: '浅色一套:主按钮上的白字读不清',
+      );
+      expect(
+        contrast(MedColors.dark.paper, MedColors.dark.proxy),
+        greaterThanOrEqualTo(4.5),
+        reason: '深色一套:主按钮上的深色字读不清',
+      );
+      // 顺带钉住「医生模式的主按钮不比个人模式难读」—— 这是换色带来的实际收益,
+      // 掉回去应该红。
+      expect(
+        contrast(white, MedColors.light.proxy),
+        greaterThan(contrast(white, MedColors.light.seal)),
+      );
+
+      for (final c in [MedColors.light, MedColors.dark]) {
+        // 「已确认」这类淡底块:proxyInk 压在 proxyWash 上。
+        expect(
+          contrast(c.proxyInk, c.proxyWash),
+          greaterThanOrEqualTo(4.5),
+          reason: '淡底块上的文字读不清',
+        );
+        // 浅底上的图标 / 边框:proxy 压在页面底色上(非文字,按 3:1 这一档)。
+        expect(
+          contrast(c.proxy, c.paper),
+          greaterThanOrEqualTo(3.0),
+          reason: '页面底色上的主色图标读不清',
+        );
+      }
+    });
+
+    test('lerp / copyWith 带上了三个新字段', () {
+      final tweaked = MedColors.light.copyWith(
+        proxy: const Color(0xFF000000),
+      );
+      expect(tweaked.proxy.toARGB32(), 0xFF000000);
+      expect(tweaked.proxyInk, MedColors.light.proxyInk);
+      expect(tweaked.seal, MedColors.light.seal);
+      // lerp 全字段:两端相等已由上面「lerp 不丢字段」覆盖,这里只确认中点会动 ——
+      // 漏掉的字段在中点会停在 `this` 的值上。
+      final mid = MedColors.light.lerp(MedColors.dark, 0.5);
+      expect(mid.proxy, isNot(MedColors.light.proxy));
+      expect(mid.proxyWash, isNot(MedColors.light.proxyWash));
     });
   });
 }

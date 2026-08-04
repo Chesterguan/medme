@@ -24,20 +24,22 @@ class MedMe {
   static const Color faint = Color(0xFF94A3B8);
   static const Color danger = Color(0xFFBE123C);
 
-  // 医生模式(代拍病人纸质材料)专属强调色:橙色,与主品牌 teal 明显区分——
-  // 任何一屏出现这个颜色就是提醒「这不是你自己的档案」。
-  static const Color proxyOrange = Color(0xFFC2570C);
-  static const Color proxyOrangeSoft = Color(0xFFFCEEE0);
+  // 医生模式(代拍病人纸质材料)专属强调色曾经是橙 `#C2570C` —— **已删**。
+  // 它离化验「偏高」的琥珀 `#B45309` 太近(色相差 1°),同一个 app 里一个橙点既
+  // 可能是「这不是你的档案」也可能是「这项指标偏高」,语义被稀释。现在医生模式的
+  // 主色是令牌 `MedColors.proxy`(紫 #7C4096),取在色板里唯一没被语义占用的色相
+  // 空档上,见 `design_tokens.dart` 的字段文档。
 
   /// 全 app 主题。**设计系统 v1 的落点**:底色/边框/字阶/圆角一律取自
   /// `MedColors.light` / `MedType` / `MedShape`,不再从上面那些旧常量取。
   ///
-  /// 上面的 `MedMe.*` 常量仍被医生模式各屏引用,故保留;个人模式主链路的各屏已改
-  /// 走 `MedColors.of(context)`。两套中性色有细微差(旧 ink #1E293B 偏蓝、faint
-  /// #94A3B8 偏浅),收敛医生模式是独立一件事。
+  /// 上面的 `MedMe.*` 常量仍被若干未迁移的屏(设置、导出、认领、首启同意、出码)
+  /// 引用,故保留;个人模式主链路与**医生模式全部各屏**已改走
+  /// `MedColors.of(context)`。旧常量与令牌的中性色有细微差(旧 ink #1E293B 偏蓝、
+  /// faint #94A3B8 偏浅),剩下那几屏的收敛是独立一件事。
   ///
-  /// **深色主题刻意没挂。** `MedColors.dark` 已备好,但挂上 `darkTheme:` 会立刻
-  /// 改动每一屏 —— 包括本次没动、仍在读旧常量的医生模式各屏,那会得到一个半深不
+  /// **深色主题刻意没挂。** `MedColors.dark` 已备好(含医生模式的深色主色),但挂上
+  /// `darkTheme:` 会立刻改动每一屏 —— 包括仍在读旧常量的那几屏,那会得到一个半深不
   /// 浅的 app。挂它是独立一件事。
   static ThemeData theme() {
     const c = MedColors.light;
@@ -82,11 +84,7 @@ class MedMe {
         // 层次靠边框不靠阴影:底栏与内容之间用一道 `line`,不用投影。
         labelTextStyle: WidgetStatePropertyAll(MedType.caption),
       ),
-      dividerTheme: DividerThemeData(
-        color: c.line,
-        thickness: 1,
-        space: 1,
-      ),
+      dividerTheme: DividerThemeData(color: c.line, thickness: 1, space: 1),
       cardTheme: CardThemeData(
         color: c.surface,
         elevation: 0,
@@ -129,13 +127,22 @@ class MedMe {
       // 三级按钮(规范 §六):主 = seal 纯色**不用渐变**,一屏只允许一个;
       // 次 = seal-wash 底 + seal-ink 字;三 = 透明底 + line 描边。
       filledButtonTheme: FilledButtonThemeData(
-        style: ButtonStyle(shape: WidgetStatePropertyAll(controlShape), textStyle: buttonLabel),
+        style: ButtonStyle(
+          shape: WidgetStatePropertyAll(controlShape),
+          textStyle: buttonLabel,
+        ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
-        style: ButtonStyle(shape: WidgetStatePropertyAll(controlShape), textStyle: buttonLabel),
+        style: ButtonStyle(
+          shape: WidgetStatePropertyAll(controlShape),
+          textStyle: buttonLabel,
+        ),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: ButtonStyle(shape: WidgetStatePropertyAll(controlShape), textStyle: buttonLabel),
+        style: ButtonStyle(
+          shape: WidgetStatePropertyAll(controlShape),
+          textStyle: buttonLabel,
+        ),
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(color: c.seal),
       inputDecorationTheme: InputDecorationTheme(

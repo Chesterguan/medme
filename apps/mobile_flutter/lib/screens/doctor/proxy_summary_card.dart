@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
-import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 /// 「病情摘要卡」(审阅屏选项 b 的核心):在治的病 + 关键化验 + 在用药,三十秒看懂
 /// 这次代拍收上来的大局。数据来自 `EphemeralSession.summary()`(`ProxySummaryDto`,
@@ -13,6 +13,13 @@ import 'package:mobile_flutter/theme.dart';
 /// 干净的原生卡片:每个问题一块,内嵌它的化验(项目/最近值/趋势箭头)与在用药
 /// (chips),不做图表——「清楚够用就行」。没有任何结构化问题时不占地方(原文仍在
 /// 审阅屏下方「逐份识别内容」区块完整展开,不丢信息)。
+///
+/// **整张卡不带医生模式的紫。** 卡里全是**病人的数据**(疾病、化验、用药),不是
+/// 界面 chrome —— 同一份数据在哪个模式下都该长一样,所以这里只用中性色与化验状态
+/// 色。紫色留给「这是代拍」那类关于**当前模式**的信号(横幅、主按钮、图标底)。
+///
+/// **不带骑缝线**:这是从若干份已确认文档算出来的汇总,背后没有「某一张纸」可点
+/// 进去(规范 §五)。
 class ProxySummaryCard extends StatelessWidget {
   const ProxySummaryCard({super.key, required this.summary});
 
@@ -21,32 +28,34 @@ class ProxySummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (summary.problems.isEmpty) return const SizedBox.shrink();
+    final c = MedColors.of(context);
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: MedMe.panel,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: MedMe.line),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        MedShape.s3,
+        0,
+        MedShape.s3,
+        MedShape.s2,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '病情摘要',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+      child: MedCard(
+        child: Padding(
+          padding: const EdgeInsets.all(MedShape.s3),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('病情摘要', style: MedType.subtitle.copyWith(color: c.ink)),
+              const SizedBox(height: 2),
+              Text(
+                '在治的病、关键化验、正在吃的药 —— 给医生三十秒看懂大局',
+                style: MedType.secondary.copyWith(color: c.ink3),
+              ),
+              for (final p in summary.problems) ...[
+                const SizedBox(height: MedShape.s2),
+                _ProblemBlock(problem: p),
+              ],
+            ],
           ),
-          const SizedBox(height: 2),
-          const Text(
-            '在治的病、关键化验、正在吃的药 —— 给医生三十秒看懂大局',
-            style: TextStyle(fontSize: 12, color: MedMe.faint),
-          ),
-          for (final p in summary.problems) ...[
-            const SizedBox(height: 14),
-            _ProblemBlock(problem: p),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -62,13 +71,17 @@ class _ProblemBlock extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _StatusChip(term: problem.term, status: problem.status, warn: problem.warn),
+        _StatusChip(
+          term: problem.term,
+          status: problem.status,
+          warn: problem.warn,
+        ),
         if (problem.labs.isNotEmpty) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: MedShape.s1),
           for (final l in problem.labs) _LabRow(lab: l),
         ],
         if (problem.meds.isNotEmpty) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: MedShape.s1),
           Wrap(
             spacing: 6,
             runSpacing: 6,
@@ -80,8 +93,18 @@ class _ProblemBlock extends StatelessWidget {
   }
 }
 
+/// 一个「在治的问题」的名牌:病名 + 状态。
+///
+/// **只有 `warn` 才上色(危急红),不 warn 的一律中性** —— 与「正常不上色」同一条
+/// 道理(规范 §二):一个病人常有 4–6 条问题,若条条都染成主色,真正在报警的那条
+/// 就被淹没了。原先不 warn 走 teal(= 个人模式主色),在医生模式里既错色又稀释
+/// 语义;原先 warn 那个 `#FDECEF` 也是裸色值,现在归位到令牌 `criticalWash`。
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.term, required this.status, required this.warn});
+  const _StatusChip({
+    required this.term,
+    required this.status,
+    required this.warn,
+  });
 
   final String term;
   final String status;
@@ -89,23 +112,28 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color fg = warn ? MedMe.danger : MedMe.tealDark;
-    final Color bg = warn ? const Color(0xFFFDECEF) : MedMe.tealSoft;
+    final c = MedColors.of(context);
+    final Color fg = warn ? c.critical : c.ink;
+    final Color bg = warn ? c.criticalWash : c.line2;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
+      padding: const EdgeInsets.symmetric(horizontal: MedShape.s1, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(MedShape.radiusPill),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             term,
-            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: fg),
+            style: MedType.body.copyWith(
+              fontWeight: FontWeight.w600,
+              color: fg,
+            ),
           ),
           const SizedBox(width: 6),
-          Text(
-            status,
-            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg),
-          ),
+          // 状态提到 12(规范下限),原先 11 低于下限。
+          Text(status, style: MedType.caption.copyWith(color: fg)),
         ],
       ),
     );
@@ -115,6 +143,9 @@ class _StatusChip extends StatelessWidget {
 // 化验行:项目 最近值 单位 ↑/↓/→。异常配色统一走设计系统 v1 令牌
 // (`MedColors.high` / `MedColors.low`),与 `widgets/report_content.dart` 同源 ——
 // 这两个色值不再在任何屏里复述,改一处全 app 生效。
+//
+// **医生模式不碰这里的任何一个颜色。** 同一份化验值在个人模式和医生模式下必须
+// 长得一模一样,否则「偏高」就成了两个意思。
 
 class _LabRow extends StatelessWidget {
   const _LabRow({required this.lab});
@@ -131,7 +162,7 @@ class _LabRow extends StatelessWidget {
         ? tokens.high
         : abnormalLow
         ? tokens.low
-        : MedMe.ink;
+        : tokens.ink;
     final value = _fmtValue(lab.latestValue);
     final unit = lab.unit ?? '';
     final arrow = switch (lab.trend) {
@@ -147,17 +178,28 @@ class _LabRow extends StatelessWidget {
           Expanded(
             child: Text(
               lab.name,
-              style: const TextStyle(fontSize: 13, color: MedMe.ink),
+              style: MedType.secondary.copyWith(color: tokens.ink),
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          // 等宽表格数字:一列化验值的小数点必须对齐(规范 §三)。
           Text(
             '$value$unit',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+            style: MedType.secondary.copyWith(
+              fontWeight: FontWeight.w600,
+              fontFeatures: MedType.tabular,
+              color: color,
+            ),
           ),
           if (arrow.isNotEmpty) ...[
             const SizedBox(width: 4),
-            Text(arrow, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+            Text(
+              arrow,
+              style: MedType.secondary.copyWith(
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
           ],
         ],
       ),
@@ -170,6 +212,12 @@ String _fmtValue(double v) {
   return v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
 }
 
+/// 一味药的 chip。**在用 = 满墨色实边,停用 = 三级墨色淡边**,不用颜色区分。
+///
+/// 原先在用是 emerald 绿(`#ECFDF5`/`#D1FAE5`/`#047857`)—— 绿不在规范色板里,而且
+/// 「绿 = 安全」正是规范 §二 刻意不做的暗示(一味在吃的药并不因此就是安全的)。
+/// `widgets/report_content.dart` 的 `_MedItemCard` 已经因为同一条理由去掉了这套绿,
+/// 这里跟上,两个模式的用药清单不再一个绿一个不绿。
 class _MedChip extends StatelessWidget {
   const _MedChip({required this.med});
 
@@ -177,20 +225,20 @@ class _MedChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     final label = med.dose != null ? '${med.name} ${med.dose}' : med.name;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: MedShape.s1, vertical: 5),
       decoration: BoxDecoration(
-        color: med.active ? const Color(0xFFECFDF5) : MedMe.bg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: med.active ? const Color(0xFFD1FAE5) : MedMe.line),
+        color: c.paper,
+        borderRadius: BorderRadius.circular(MedShape.radiusControl),
+        border: Border.all(color: med.active ? c.line : c.line2),
       ),
       child: Text(
         label,
-        style: TextStyle(
-          fontSize: 12.5,
-          fontWeight: FontWeight.w600,
-          color: med.active ? const Color(0xFF047857) : MedMe.faint,
+        style: MedType.secondary.copyWith(
+          fontWeight: med.active ? FontWeight.w600 : FontWeight.w400,
+          color: med.active ? c.ink : c.ink3,
         ),
       ),
     );

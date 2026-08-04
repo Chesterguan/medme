@@ -11,6 +11,11 @@ import 'package:flutter/material.dart';
 /// 与 `theme.dart` 里既有的 `MedMe` 常量的关系:`MedMe` 仍被各屏大量引用,本次
 /// **不动它**(动了就是全 app 重新配色,视觉回归没法评审)。令牌层先建立、化验
 /// 状态色先接过来,其余常量按屏逐步迁移。
+///
+/// **规范之外唯一的增补是 `proxy` / `proxyInk` / `proxyWash`** —— 医生代拍模式的
+/// 主色。规范正本只有个人模式那一套(`seal`),而代拍是「当面替别人拍」,两个模式
+/// 必须一眼可辨。除主色外,医生模式与个人模式共用**同一套**中性色、字阶、圆角、
+/// 阴影,尤其共用**同一套化验状态色**:同一份化验值在哪个模式下都长一样。
 @immutable
 class MedColors extends ThemeExtension<MedColors> {
   const MedColors({
@@ -24,6 +29,9 @@ class MedColors extends ThemeExtension<MedColors> {
     required this.seal,
     required this.sealInk,
     required this.sealWash,
+    required this.proxy,
+    required this.proxyInk,
+    required this.proxyWash,
     required this.low,
     required this.lowWash,
     required this.high,
@@ -63,6 +71,25 @@ class MedColors extends ThemeExtension<MedColors> {
 
   /// 主色的极浅底,用于次级按钮 / 选中态。
   final Color sealWash;
+
+  /// **医生代拍模式**的主色「经手」。与 [seal] 同一层用途(主按钮、图标底、顶部
+  /// 横幅),但换一个色相 —— 代拍是「当面替别人拍」,最危险的失误是拍到别人的单子、
+  /// 或者在错的模式下动手。两个模式一眼可辨是**安全设计**,不是装饰。
+  ///
+  /// 色相选在 282°:色板里 [low](224°)与 [critical](345°)之间那段**唯一没被
+  /// 语义占用**的空档,离两边各约 60°,不会被读成任何一档化验状态;离 [seal]
+  /// (200°)80°,一眼是另一个颜色。饱和度刻意压到 40(seal 是 79)——医生模式
+  /// 该更冷静,不是更花哨。
+  ///
+  /// 不能用 [low] / [high] / [critical]:它们是化验状态专用,借来当 chrome 就会
+  /// 稀释语义。也不能用绿:色板刻意没有绿(「正常值不上色」)。
+  final Color proxy;
+
+  /// 医生模式主色的深调,用于浅底上的文字(对比度需要)。
+  final Color proxyInk;
+
+  /// 医生模式主色的极浅底,用于图标底块 / 次级强调。
+  final Color proxyWash;
 
   /// 化验「偏低」前景色。
   final Color low;
@@ -108,6 +135,9 @@ class MedColors extends ThemeExtension<MedColors> {
     seal: Color(0xFF1789C1),
     sealInk: Color(0xFF0E6285),
     sealWash: Color(0xFFEAF5FA),
+    proxy: Color(0xFF7C4096),
+    proxyInk: Color(0xFF57296B),
+    proxyWash: Color(0xFFF4ECF8),
     low: Color(0xFF1D4ED8),
     lowWash: Color(0xFFE8EEFC),
     high: Color(0xFFB45309),
@@ -130,6 +160,9 @@ class MedColors extends ThemeExtension<MedColors> {
     seal: Color(0xFF4FB3DF),
     sealInk: Color(0xFF8FD3F0),
     sealWash: Color(0xFF13303D),
+    proxy: Color(0xFFC289DE),
+    proxyInk: Color(0xFFDBAAF0),
+    proxyWash: Color(0xFF2B1936),
     low: Color(0xFF7BA3F5),
     lowWash: Color(0xFF17233D),
     high: Color(0xFFE0A45C),
@@ -156,6 +189,9 @@ class MedColors extends ThemeExtension<MedColors> {
     Color? seal,
     Color? sealInk,
     Color? sealWash,
+    Color? proxy,
+    Color? proxyInk,
+    Color? proxyWash,
     Color? low,
     Color? lowWash,
     Color? high,
@@ -175,6 +211,9 @@ class MedColors extends ThemeExtension<MedColors> {
       seal: seal ?? this.seal,
       sealInk: sealInk ?? this.sealInk,
       sealWash: sealWash ?? this.sealWash,
+      proxy: proxy ?? this.proxy,
+      proxyInk: proxyInk ?? this.proxyInk,
+      proxyWash: proxyWash ?? this.proxyWash,
       low: low ?? this.low,
       lowWash: lowWash ?? this.lowWash,
       high: high ?? this.high,
@@ -199,6 +238,9 @@ class MedColors extends ThemeExtension<MedColors> {
       seal: Color.lerp(seal, other.seal, t)!,
       sealInk: Color.lerp(sealInk, other.sealInk, t)!,
       sealWash: Color.lerp(sealWash, other.sealWash, t)!,
+      proxy: Color.lerp(proxy, other.proxy, t)!,
+      proxyInk: Color.lerp(proxyInk, other.proxyInk, t)!,
+      proxyWash: Color.lerp(proxyWash, other.proxyWash, t)!,
       low: Color.lerp(low, other.low, t)!,
       lowWash: Color.lerp(lowWash, other.lowWash, t)!,
       high: Color.lerp(high, other.high, t)!,
@@ -224,6 +266,9 @@ class MedColors extends ThemeExtension<MedColors> {
           seal == other.seal &&
           sealInk == other.sealInk &&
           sealWash == other.sealWash &&
+          proxy == other.proxy &&
+          proxyInk == other.proxyInk &&
+          proxyWash == other.proxyWash &&
           low == other.low &&
           lowWash == other.lowWash &&
           high == other.high &&
@@ -244,6 +289,9 @@ class MedColors extends ThemeExtension<MedColors> {
     seal,
     sealInk,
     sealWash,
+    proxy,
+    proxyInk,
+    proxyWash,
     low,
     lowWash,
     high,

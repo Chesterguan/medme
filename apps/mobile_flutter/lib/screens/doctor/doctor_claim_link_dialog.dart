@@ -3,7 +3,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 
 /// 代拍交付成功后的结果:**一条认领链接,直接显示成二维码**。
 ///
@@ -22,77 +22,81 @@ Future<void> showDoctorClaimLinkDialog(
   if (!context.mounted) return;
   await showDialog<void>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('好了,请病人扫这个码'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              '共 $recordCount 份记录。请病人本人(或家属)用手机相机拍下这个码,'
-              '带走后随时能看。',
-              style: const TextStyle(fontSize: 13.5, color: MedMe.faint, height: 1.5),
-            ),
-            const SizedBox(height: 14),
-            Center(
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: MedMe.line),
-                ),
-                child: QrImageView(
-                  data: url,
-                  version: QrVersions.auto,
-                  size: 220,
-                  backgroundColor: Colors.white,
-                  errorCorrectionLevel: QrErrorCorrectLevel.M,
+    builder: (context) {
+      final c = MedColors.of(context);
+      return AlertDialog(
+        title: const Text('好了,请病人扫这个码'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '共 $recordCount 份记录。请病人本人(或家属)用手机相机拍下这个码,'
+                '带走后随时能看。',
+                style: MedType.body.copyWith(color: c.ink2, height: 1.5),
+              ),
+              const SizedBox(height: MedShape.s2),
+              Center(
+                child: Container(
+                  // 码本身**不上主题**:白底黑码是相机能扫的前提,深色主题也不能动。
+                  padding: const EdgeInsets.all(MedShape.s1),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+                    border: Border.all(color: c.line),
+                  ),
+                  child: QrImageView(
+                    data: url,
+                    version: QrVersions.auto,
+                    size: 220,
+                    backgroundColor: Colors.white,
+                    errorCorrectionLevel: QrErrorCorrectLevel.M,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '只有拿到这个码的人能打开,医生和我们都看不到里面的内容。'
-              '15 天后自动失效。',
-              style: TextStyle(fontSize: 12.5, color: MedMe.faint, height: 1.5),
-            ),
-            const SizedBox(height: 14),
-            // 能用微信/短信的病人走这条:复制链接直接发。
-            OutlinedButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: url));
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('链接已复制,可以发给病人')),
-                  );
-                }
-              },
-              icon: const Icon(Icons.link, size: 18),
-              label: const Text('复制链接'),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
-        ),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(backgroundColor: MedMe.proxyOrange),
-          onPressed: () => SharePlus.instance.share(
-            ShareParams(
-              text: url,
-              subject: '你的病历',
-              sharePositionOrigin: shareOrigin(),
-            ),
+              const SizedBox(height: MedShape.s2),
+              Text(
+                '只有拿到这个码的人能打开,医生和我们都看不到里面的内容。'
+                '15 天后自动失效。',
+                style: MedType.secondary.copyWith(color: c.ink3, height: 1.5),
+              ),
+              const SizedBox(height: MedShape.s2),
+              // 能用微信/短信的病人走这条:复制链接直接发。
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: url));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('链接已复制,可以发给病人')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.link, size: 18),
+                label: const Text('复制链接'),
+              ),
+            ],
           ),
-          icon: const Icon(Icons.ios_share, size: 18),
-          label: const Text('发给病人'),
         ),
-      ],
-    ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: c.proxy),
+            onPressed: () => SharePlus.instance.share(
+              ShareParams(
+                text: url,
+                subject: '你的病历',
+                sharePositionOrigin: shareOrigin(),
+              ),
+            ),
+            icon: const Icon(Icons.ios_share, size: 18),
+            label: const Text('发给病人'),
+          ),
+        ],
+      );
+    },
   );
 }

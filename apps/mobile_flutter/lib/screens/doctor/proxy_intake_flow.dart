@@ -6,7 +6,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
-import 'package:mobile_flutter/import_flow.dart' show ImportChoice, pickImportItems;
+import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/import_flow.dart'
+    show ImportChoice, pickImportItems;
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/doctor/consent_screen.dart';
@@ -20,9 +22,9 @@ import 'package:mobile_flutter/screens/doctor/proxy_summary_card.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart' as vault;
-import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_boot.dart'
     show ensureProxyVaultOpen, openCurrentProfileVault, openProxyPatientVault;
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 /// 代拍交付的有效期(天)。与本机那 12 小时保留是两回事:这个天数约束「病人手里那条
 /// 认领链接还能用多久」。
@@ -43,7 +45,10 @@ enum _ProxyPhase { consent, capture, preview, delivering }
 /// **交付后不即焚**:病人留在本机最多 12 小时(医生通常要几小时内写完病历,期间可
 /// 回来补拍/重发),到点由 [ProxyPatientManager] 自动删——与同意告知里那句话对齐。
 /// 病人数据落在 [ProxyPatientManager] 的独立命名空间,**绝不写入医生自己的档案**;
-/// 橙色 chrome + 顶部常驻横幅是每一屏都在的信号,提醒「这不是我的箱」。
+/// **紫色 chrome**(令牌 `MedColors.proxy`)+ 顶部常驻横幅是每一屏都在的信号,提醒
+/// 「这不是我的箱」。紫是医生模式专属:个人模式主色是蓝(`seal`),两个模式一眼
+/// 可辨 —— 代拍最危险的失误是拍到别人的单子、或在错的模式下动手,让两者长得不一样
+/// 是**安全设计**,不是装饰。
 ///
 /// [patientId] 为 null = 新病人(从同意屏开始);非 null = 从主页「今日病历表」点回
 /// 一个已建档的病人(同意已签过,直接进待确认列表继续核对/交付)。
@@ -231,6 +236,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   }
 
   Future<void> _pickCaptureSource() async {
+    final c = MedColors.of(context);
     final choice = await showModalBottomSheet<ImportChoice>(
       context: context,
       showDragHandle: true,
@@ -238,53 +244,79 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                MedShape.s4,
+                4,
+                MedShape.s4,
+                MedShape.s1,
+              ),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
                   '拍摄病历材料',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  style: MedType.subtitle.copyWith(color: c.ink),
                 ),
               ),
             ),
             ListTile(
-              leading: const Icon(
+              leading: Icon(
                 Icons.photo_camera_outlined,
-                color: MedMe.proxyOrange,
+                color: c.proxy,
                 size: 28,
               ),
-              title: const Text('拍照', style: TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: const Text(
+              title: Text(
+                '拍照',
+                style: MedType.body.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: c.ink,
+                ),
+              ),
+              subtitle: Text(
                 '对着化验单、处方拍一张,自动识别上面的文字',
-                style: TextStyle(color: MedMe.faint),
+                style: MedType.secondary.copyWith(color: c.ink2),
               ),
               onTap: () => Navigator.of(context).pop(ImportChoice.camera),
             ),
             ListTile(
-              leading: const Icon(
+              leading: Icon(
                 Icons.photo_library_outlined,
-                color: MedMe.proxyOrange,
+                color: c.proxy,
                 size: 28,
               ),
-              title: const Text('从相册选', style: TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: const Text(
+              title: Text(
+                '从相册选',
+                style: MedType.body.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: c.ink,
+                ),
+              ),
+              subtitle: Text(
                 '选一张或多张已经拍好的病历照片',
-                style: TextStyle(color: MedMe.faint),
+                style: MedType.secondary.copyWith(color: c.ink2),
               ),
               onTap: () => Navigator.of(context).pop(ImportChoice.gallery),
             ),
             ListTile(
-              leading: const Icon(
+              leading: Icon(
                 Icons.folder_open_outlined,
-                color: MedMe.proxyOrange,
+                color: c.proxy,
                 size: 28,
               ),
-              title: const Text('选择文件', style: TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: const Text('已有的 PDF、图片', style: TextStyle(color: MedMe.faint)),
+              title: Text(
+                '选择文件',
+                style: MedType.body.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: c.ink,
+                ),
+              ),
+              subtitle: Text(
+                '已有的 PDF、图片',
+                style: MedType.secondary.copyWith(color: c.ink2),
+              ),
               onTap: () => Navigator.of(context).pop(ImportChoice.files),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: MedShape.s1),
           ],
         ),
       ),
@@ -379,12 +411,16 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
 
     final allFailed = failed == items.length;
     Analytics.track(
-      allFailed ? AnalyticsEvent.docImportFailed : AnalyticsEvent.docImportCompleted,
+      allFailed
+          ? AnalyticsEvent.docImportFailed
+          : AnalyticsEvent.docImportCompleted,
       {
         'source': 'proxy',
         'count_bucket': Bucket.count(items.length),
         'failed_bucket': Bucket.count(failed),
-        'duration_bucket': Bucket.duration(DateTime.now().difference(startedAt)),
+        'duration_bucket': Bucket.duration(
+          DateTime.now().difference(startedAt),
+        ),
         if (okCount > 0)
           'per_doc_duration_bucket': Bucket.perDoc(
             Duration(milliseconds: okElapsedMs ~/ okCount),
@@ -414,7 +450,10 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
 
   /// 记下这份文档识别到的患者姓名:病人还没名字就用它命名;与已有名字不同则记进
   /// [_mismatch](等价患者模式的「姓名不匹配」红条,提醒别把两个人的单子拍进一份)。
-  Future<void> _noteDetectedName(String patientId, ImportOutcomeDto outcome) async {
+  Future<void> _noteDetectedName(
+    String patientId,
+    ImportOutcomeDto outcome,
+  ) async {
     final detected = outcome.detectedName?.trim() ?? '';
     if (detected.isEmpty) return;
     final current = ProxyPatientManager.instance.byId(patientId)?.name;
@@ -569,7 +608,11 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       // 生成即算「交付」,不管用户接下来是否还留在这一屏,计数都该 +1。
       await DoctorDeliveryCount.instance.increment();
       if (!mounted) return;
-      await showDoctorShareResultDialog(context, result, shareOrigin: _shareOrigin);
+      await showDoctorShareResultDialog(
+        context,
+        result,
+        shareOrigin: _shareOrigin,
+      );
       if (!mounted) return;
       // **交付后不删**:病人留在今日病历表里,12 小时内医生可以回来补拍/重发,到点
       // 由 `ProxyPatientManager` 自动清(与同意告知里的口径一致)。
@@ -604,12 +647,16 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       final up = ResumableUpload(blob);
       final total = blob.length;
       if (mounted) {
-        setState(() => _progress = '正在上传(${(total / 1048576).toStringAsFixed(1)} MB)…');
+        setState(
+          () => _progress = '正在上传(${(total / 1048576).toStringAsFixed(1)} MB)…',
+        );
       }
       final id = await up.run(
         onProgress: (p) {
           if (mounted) {
-            setState(() => _progress = '正在上传… ${(p * 100).toStringAsFixed(0)}%');
+            setState(
+              () => _progress = '正在上传… ${(p * 100).toStringAsFixed(0)}%',
+            );
           }
         },
       );
@@ -644,7 +691,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         await _cancelAndExit();
       },
       child: Scaffold(
-        backgroundColor: MedMe.bg,
+        backgroundColor: MedColors.of(context).paper,
         // 退出入口:左上返回箭头,点了弹确认(见 `_confirmExit`)。横幅不再兼职
         // 退出按钮(见 `_ProxyBanner`),避免「看个声明顺手关掉」误触跳回首页。
         appBar: AppBar(
@@ -672,7 +719,10 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   Widget _buildBody(BuildContext context) {
     switch (_phase) {
       case _ProxyPhase.consent:
-        return ConsentScreen(onAgreed: _onConsentGiven, onCancel: _cancelAndExit);
+        return ConsentScreen(
+          onAgreed: _onConsentGiven,
+          onCancel: _cancelAndExit,
+        );
       case _ProxyPhase.capture:
         return _CaptureStep(
           busy: _busy,
@@ -687,7 +737,9 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
           summary: _summary,
           confirmedMap: _confirmedMap,
           patientName:
-              ProxyPatientManager.instance.byId(_patientId ?? '')?.displayName ??
+              ProxyPatientManager.instance
+                  .byId(_patientId ?? '')
+                  ?.displayName ??
               ProxyPatientManager.unnamed,
           mismatch: _mismatch,
           busy: _busy,
@@ -697,8 +749,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
           onOpenDocument: _openDocument,
         );
       case _ProxyPhase.delivering:
-        return const Center(
-          child: CircularProgressIndicator(color: MedMe.proxyOrange),
+        return Center(
+          child: CircularProgressIndicator(color: MedColors.of(context).proxy),
         );
     }
   }
@@ -713,21 +765,25 @@ class _ProxyBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 白字压在 `proxy` 紫上,对比度 6.9:1 —— 医生模式里最常出现的一块颜色,
+    // 诊室灯光下也要读得清(个人模式的 seal 蓝在同样搭配下只有 3.9:1)。
     return Container(
       width: double.infinity,
-      color: MedMe.proxyOrange,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: const Row(
+      color: MedColors.of(context).proxy,
+      padding: const EdgeInsets.symmetric(
+        horizontal: MedShape.s3,
+        vertical: MedShape.s1,
+      ),
+      child: Row(
         children: [
-          Icon(Icons.info_outline, color: Colors.white, size: 18),
-          SizedBox(width: 8),
+          const Icon(Icons.info_outline, color: Colors.white, size: 18),
+          const SizedBox(width: MedShape.s1),
           Expanded(
             child: Text(
               '为病人代建档 · 本机最多留 12 小时 · 不进你自己的档案',
-              style: TextStyle(
+              style: MedType.secondary.copyWith(
                 color: Colors.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -754,43 +810,43 @@ class _CaptureStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Stack(
       children: [
         Center(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
+            padding: const EdgeInsets.symmetric(horizontal: MedShape.s5),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
-                  Icons.document_scanner_outlined,
-                  color: MedMe.proxyOrange,
-                  size: 56,
-                ),
-                const SizedBox(height: 16),
+                Icon(Icons.document_scanner_outlined, color: c.proxy, size: 56),
+                const SizedBox(height: MedShape.s3),
                 Text(
                   capturedCount == 0 ? '拍下病人的纸质病历' : '已拍 $capturedCount 份',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  style: MedType.title.copyWith(
+                    color: c.ink,
+                    fontFeatures: MedType.tabular,
+                  ),
                 ),
-                const SizedBox(height: 8),
-                const Text(
+                const SizedBox(height: MedShape.s1),
+                Text(
                   '化验单、处方、检查报告都可以,可以分多次拍摄',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: MedMe.faint),
+                  style: MedType.body.copyWith(color: c.ink2),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: MedShape.s5),
                 SizedBox(
                   width: double.infinity,
                   height: 50,
                   child: FilledButton.icon(
-                    style: FilledButton.styleFrom(backgroundColor: MedMe.proxyOrange),
+                    style: FilledButton.styleFrom(backgroundColor: c.proxy),
                     onPressed: busy ? null : onCapture,
                     icon: const Icon(Icons.camera_alt_outlined),
                     label: Text(capturedCount == 0 ? '开始拍摄' : '继续拍摄'),
                   ),
                 ),
                 if (onDone != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: MedShape.s2),
                   SizedBox(
                     width: double.infinity,
                     height: 50,
@@ -809,19 +865,26 @@ class _CaptureStep extends StatelessWidget {
             child: ColoredBox(
               color: Colors.black26,
               child: Center(
-                child: Card(
+                child: MedCard(
                   child: Padding(
-                    padding: const EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(MedShape.s4),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const SizedBox(
+                        SizedBox(
                           width: 22,
                           height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                          // 转圈也要是紫的:主题里的默认值是个人模式的 seal 蓝。
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: c.proxy,
+                          ),
                         ),
-                        const SizedBox(width: 16),
-                        Text(progress ?? '处理中…'),
+                        const SizedBox(width: MedShape.s3),
+                        Text(
+                          progress ?? '处理中…',
+                          style: MedType.body.copyWith(color: c.ink),
+                        ),
                       ],
                     ),
                   ),
@@ -884,30 +947,45 @@ class _PendingListStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     final docs = flatten(groups);
-    final confirmedCount = docs.where((d) => confirmedMap[d.id] ?? false).length;
+    final confirmedCount = docs
+        .where((d) => confirmedMap[d.id] ?? false)
+        .length;
     final s = summary;
     return Stack(
       children: [
         Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              padding: const EdgeInsets.fromLTRB(
+                MedShape.s3,
+                MedShape.s3,
+                MedShape.s3,
+                MedShape.s1,
+              ),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
                   '共 ${docs.length} 份 · 已确认 $confirmedCount 份',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  // 两个数字会一直变,等宽才不会左右跳。
+                  style: MedType.subtitle.copyWith(
+                    color: c.ink,
+                    fontFeatures: MedType.tabular,
+                  ),
                 ),
               ),
             ),
             Expanded(
               child: docs.isEmpty
-                  ? const Center(
-                      child: Text('还没有拍摄任何内容', style: TextStyle(color: MedMe.faint)),
+                  ? Center(
+                      child: Text(
+                        '还没有拍摄任何内容',
+                        style: MedType.body.copyWith(color: c.ink2),
+                      ),
                     )
                   : ListView(
-                      padding: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.only(bottom: MedShape.s3),
                       children: [
                         // 病情摘要卡:在治的病/关键化验/在用药,只统计「已确认」的
                         // 文档(见 `EphemeralSession.summary`)。没有任何结构化问题
@@ -919,20 +997,26 @@ class _PendingListStep extends StatelessWidget {
                             patientName: patientName,
                             others: mismatch.values.toSet(),
                           ),
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                            MedShape.s3,
+                            4,
+                            MedShape.s3,
+                            MedShape.s1,
+                          ),
                           child: Text(
                             '逐份核对',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: MedMe.faint,
-                            ),
+                            style: MedType.caption.copyWith(color: c.ink3),
                           ),
                         ),
                         for (final d in docs)
                           Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            padding: const EdgeInsets.fromLTRB(
+                              MedShape.s3,
+                              0,
+                              MedShape.s3,
+                              MedShape.s1,
+                            ),
                             child: _PendingRow(
                               doc: d,
                               confirmed: confirmedMap[d.id] ?? false,
@@ -943,20 +1027,35 @@ class _PendingListStep extends StatelessWidget {
                     ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              padding: const EdgeInsets.fromLTRB(
+                MedShape.s3,
+                MedShape.s1,
+                MedShape.s3,
+                MedShape.s3,
+              ),
               child: Row(
                 children: [
                   Expanded(
+                    // 三级按钮:透明底 + line 描边(规范 §六 btn-3)。
                     child: OutlinedButton(
                       onPressed: busy ? null : onCaptureMore,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: c.ink2,
+                        side: BorderSide(color: c.line),
+                        minimumSize: const Size.fromHeight(48),
+                      ),
                       child: const Text('继续采集'),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: MedShape.s2),
                   Expanded(
                     flex: 2,
+                    // 一屏唯一的主按钮。
                     child: FilledButton(
-                      style: FilledButton.styleFrom(backgroundColor: MedMe.proxyOrange),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: c.proxy,
+                        minimumSize: const Size.fromHeight(48),
+                      ),
                       onPressed: busy || docs.isEmpty ? null : onDeliver,
                       child: const Text('生成认领码,交给病人'),
                     ),
@@ -971,19 +1070,26 @@ class _PendingListStep extends StatelessWidget {
             child: ColoredBox(
               color: Colors.black26,
               child: Center(
-                child: Card(
+                child: MedCard(
                   child: Padding(
-                    padding: const EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(MedShape.s4),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const SizedBox(
+                        SizedBox(
                           width: 22,
                           height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                          // 转圈也要是紫的:主题里的默认值是个人模式的 seal 蓝。
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: c.proxy,
+                          ),
                         ),
-                        const SizedBox(width: 16),
-                        Text(progress ?? '处理中…'),
+                        const SizedBox(width: MedShape.s3),
+                        Text(
+                          progress ?? '处理中…',
+                          style: MedType.body.copyWith(color: c.ink),
+                        ),
                       ],
                     ),
                   ),
@@ -997,9 +1103,15 @@ class _PendingListStep extends StatelessWidget {
 }
 
 /// 待确认列表一行:类型图标 + 标题/日期/类型 + 「待确认/已确认」状态标签。样式
-/// 参照 `archive_screen.dart` 的时间线行(图标底色块 + 标题/副标题两行),状态标签
-/// 配色沿用该文件 `_PendingCard`(待确认=danger 红)与 `document_detail.dart`
-/// `_ConfBadge` 高档(已确认=绿,`#047857`/`#ECFDF5`)的既有色值,不另发明一套。
+/// 参照 `archive_screen.dart` 的时间线行(图标底色块 + 标题/副标题两行)。
+///
+/// **带骑缝线**:每一行背后就是刚拍下的那一张纸,点进去就是原件(规范 §五)。
+///
+/// **状态两级的配色跟着个人模式走,不另发明一套**:待确认 = 琥珀(`high`),
+/// 与 `archive_screen.dart` 的 `_PendingCard` 同一处理 —— 「刚拍完还没核对」是常态
+/// 不是事故,红色天天出现就会被学会忽略;真正该报红的是下面那条姓名不符。
+/// 已确认 = 医生模式主色的淡底版(`proxyWash`/`proxyInk`),与详情屏底栏那块
+/// 「已确认」同色同分量,点进去点回来不会觉得换了个东西。
 class _PendingRow extends StatelessWidget {
   const _PendingRow({
     required this.doc,
@@ -1013,66 +1125,65 @@ class _PendingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     final label = kDocTypeLabel[doc.docType] ?? doc.docType;
     final date = _fmtDate(doc.docDate);
-    return Material(
-      color: MedMe.panel,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: confirmed ? MedMe.line : MedMe.danger.withValues(alpha: 0.5),
-            ),
-          ),
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: MedMe.proxyOrangeSoft,
-                  borderRadius: BorderRadius.circular(10),
+    return MedCard(
+      perforated: true,
+      // 还没核对的整卡描琥珀边(加粗到 1.5),核对过的回到普通 line 边。
+      borderColor: confirmed ? c.line : c.high,
+      borderWidth: confirmed ? 1 : 1.5,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(MedShape.s2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: c.proxyWash,
+                    borderRadius: BorderRadius.circular(MedShape.radiusControl),
+                  ),
+                  child: Icon(
+                    Icons.description_outlined,
+                    size: 19,
+                    color: c.proxy,
+                  ),
                 ),
-                child: const Icon(
-                  Icons.description_outlined,
-                  size: 19,
-                  color: MedMe.proxyOrange,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      doc.title ?? label,
-                      style: const TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w700,
+                const SizedBox(width: MedShape.s2),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        doc.title ?? label,
+                        style: MedType.subtitle.copyWith(color: c.ink),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      date.isEmpty ? label : '$label · $date',
-                      style: const TextStyle(fontSize: 12.5, color: MedMe.faint),
-                    ),
-                  ],
+                      const SizedBox(height: 3),
+                      Text(
+                        date.isEmpty ? label : '$label · $date',
+                        style: MedType.secondary.copyWith(
+                          color: c.ink2,
+                          fontFeatures: MedType.tabular,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              _StatusBadge(confirmed: confirmed),
-              const SizedBox(width: 4),
-              const Icon(Icons.chevron_right, size: 20, color: MedMe.faint),
-            ],
+                const SizedBox(width: MedShape.s1),
+                _StatusBadge(confirmed: confirmed),
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right, size: 20, color: c.ink3),
+              ],
+            ),
           ),
         ),
       ),
@@ -1080,10 +1191,15 @@ class _PendingRow extends StatelessWidget {
   }
 }
 
-/// 「这份单子上的名字不是这个病人」提醒。等价于患者模式档案屏那条橙色红条
-/// (`archive_screen.dart` 的 `_MismatchBanner`,同一配色与语气),只是这里的对照
-/// 对象是代拍病人而不是家庭成员 —— 诊室里一叠单子容易混进隔壁病人的,这条就是防它。
-/// 只提醒、不自动移动任何东西:该删哪份由医生点进详情自己判断。
+/// 「这份单子上的名字不是这个病人」提醒。等价于患者模式档案屏那条红条
+/// (`archive_screen.dart` 的 `_MismatchBanner`,同一配色、同一语气、同一样式),
+/// 只是这里的对照对象是代拍病人而不是家庭成员 —— 诊室里一叠单子容易混进隔壁病人
+/// 的,这条就是防它。只提醒、不自动移动任何东西:该删哪份由医生点进详情自己判断。
+///
+/// **配色从「主色 10% 淡底」改成 `critical` 红 + 左侧三像素竖条**,与个人模式逐处
+/// 对齐。原先它用的是医生模式主色 —— 而主色在这一屏满屏都是(横幅、图标底、主
+/// 按钮),用它报警等于没报警。这是全 app 最高一级的提醒:**可能拍到了别人的病历**,
+/// 它必须和「代拍中」这个常态信号长得完全不一样。
 class _MismatchBanner extends StatelessWidget {
   const _MismatchBanner({required this.patientName, required this.others});
 
@@ -1092,23 +1208,35 @@ class _MismatchBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.fromLTRB(
+        MedShape.s3,
+        0,
+        MedShape.s3,
+        MedShape.s1,
+      ),
+      padding: const EdgeInsets.symmetric(
+        horizontal: MedShape.s2,
+        vertical: MedShape.s1,
+      ),
       decoration: BoxDecoration(
-        color: MedMe.proxyOrange.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
+        color: c.criticalWash,
+        borderRadius: const BorderRadius.horizontal(
+          right: Radius.circular(MedShape.radiusBlock),
+        ),
+        border: Border(left: BorderSide(color: c.critical, width: 3)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.warning_amber_rounded, size: 18, color: MedMe.proxyOrange),
-          const SizedBox(width: 8),
+          Icon(Icons.warning_amber_rounded, size: 18, color: c.critical),
+          const SizedBox(width: MedShape.s1),
           Expanded(
             child: Text(
               '有单子上的姓名是「${others.join('、')}」,与本病人「$patientName」不一致,'
               '请核对是不是拍到了别人的材料。',
-              style: const TextStyle(fontSize: 12.5, height: 1.45),
+              style: MedType.secondary.copyWith(color: c.ink, height: 1.5),
             ),
           ),
         ],
@@ -1124,17 +1252,12 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (bg, fg, text) = confirmed
-        ? (const Color(0xFFECFDF5), const Color(0xFF047857), '已确认')
-        : (MedMe.danger.withValues(alpha: 0.1), MedMe.danger, '待确认');
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
-      child: Text(
-        text,
-        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: fg),
-      ),
-    );
+    final c = MedColors.of(context);
+    // 走共用的 `MedPill`(圆角 999、caption 12·600):字号从 11 提到 12(规范下限),
+    // 圆角从 6 提到 pill 那一档,与个人模式的状态标签同一个外壳。
+    return confirmed
+        ? MedPill(text: '已确认', foreground: c.proxyInk, background: c.proxyWash)
+        : MedPill(text: '待确认', foreground: c.high, background: c.highWash);
   }
 }
 
