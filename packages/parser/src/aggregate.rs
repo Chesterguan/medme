@@ -634,8 +634,8 @@ mod tests {
         for header in [
             "出院医嘱:",
             "出院\u{3000}医嘱:", // ideographic space
-            "出 院 医 嘱:",       // OCR split
-            "ＲＰ:",              // full-width Rp
+            "出 院 医 嘱:",      // OCR split
+            "ＲＰ:",             // full-width Rp
         ] {
             let text =
                 format!("出院记录\n\n{header}\n1.二甲双胍 0.5g 每日两次\n2.阿托伐他汀 20mg 每晚");
@@ -671,7 +671,8 @@ mod tests {
     #[test]
     fn ordinary_content_does_not_become_a_section_header() {
         let base = "血红蛋白 96 g/L 130-175 ↓\n肌酐 145 umol/L 57-97 ↑\n血钾 4.1 mmol/L 3.5-5.3\n";
-        for intruder in ["RPR 阴性", "用 药 后 患者症状缓解", "建 议 复查肝功能"] {
+        for intruder in ["RPR 阴性", "用 药 后 患者症状缓解", "建 议 复查肝功能"]
+        {
             let text = format!("出院记录\n\n检验结果:\n血红蛋白 96 g/L 130-175 ↓\n{intruder}\n肌酐 145 umol/L 57-97 ↑\n血钾 4.1 mmol/L 3.5-5.3\n");
             let mk = |t: &str| {
                 let docs = vec![SourceDoc {
@@ -682,8 +683,7 @@ mod tests {
                     text: t,
                 }];
                 let agg = aggregate(&docs);
-                let mut n: Vec<String> =
-                    agg.labs.iter().map(|s| s.group_name.clone()).collect();
+                let mut n: Vec<String> = agg.labs.iter().map(|s| s.group_name.clone()).collect();
                 n.sort();
                 n
             };

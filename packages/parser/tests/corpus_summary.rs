@@ -187,9 +187,9 @@ fn diseases_named_in_the_documents_get_a_lane_with_content() {
     for (disease, whence) in NAMED_AND_SERVED {
         match lane_for(disease) {
             None => failures.push(format!("`{disease}` has no lane — named in {whence}")),
-            Some((term, 0, 0)) => {
-                failures.push(format!("lane `{term}` is empty — `{disease}` named in {whence}"))
-            }
+            Some((term, 0, 0)) => failures.push(format!(
+                "lane `{term}` is empty — `{disease}` named in {whence}"
+            )),
             Some(_) => {}
         }
     }
@@ -222,7 +222,12 @@ fn no_lab_series_is_announced_without_a_drawable_point() {
     let sm = summary();
     let mut bad = Vec::new();
     for p in problems(&sm) {
-        for l in p.get("labs").and_then(Value::as_array).into_iter().flatten() {
+        for l in p
+            .get("labs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let pts = l.get("pts").and_then(Value::as_array).map_or(0, Vec::len);
             if pts == 0 {
                 bad.push(format!(
@@ -251,7 +256,12 @@ fn no_page_furniture_is_reported_as_an_analyte() {
 
     let mut bad: Vec<String> = Vec::new();
     for p in problems(&sm) {
-        for l in p.get("labs").and_then(Value::as_array).into_iter().flatten() {
+        for l in p
+            .get("labs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let name = l.get("name").and_then(Value::as_str).unwrap_or("");
             if FURNITURE.iter().any(|f| name.contains(f)) {
                 bad.push(format!("{} → {}", term_of(p), name));

@@ -109,13 +109,10 @@ fn match_disease_exact(condition_raw: &str) -> Option<&'static str> {
     if c.is_empty() || is_negated(&c) {
         return None;
     }
-    problem_map()
-        .iter()
-        .map(|e| e.disease.as_str())
-        .find(|d| {
-            let dn = terminology::normalize_term(d);
-            c.contains(&dn) || dn.contains(&c)
-        })
+    problem_map().iter().map(|e| e.disease.as_str()).find(|d| {
+        let dn = terminology::normalize_term(d);
+        c.contains(&dn) || dn.contains(&c)
+    })
 }
 
 pub fn match_disease(condition_raw: &str) -> Option<&'static str> {
@@ -194,7 +191,12 @@ fn disease_aliases(disease: &str) -> &'static [String] {
                 }
                 // Longest first: a note naming the fuller form should match on it.
                 let mut v: Vec<String> = set.into_iter().collect();
-                v.sort_by(|a, b| b.chars().count().cmp(&a.chars().count()).then_with(|| a.cmp(b)));
+                v.sort_by(|a, b| {
+                    b.chars()
+                        .count()
+                        .cmp(&a.chars().count())
+                        .then_with(|| a.cmp(b))
+                });
                 (e.disease.clone(), v)
             })
             .collect()
@@ -1022,10 +1024,7 @@ mod tests {
         assert_eq!(match_disease("既往无痛风"), None);
         assert_eq!(match_disease("否认高脂血症"), None);
         // …but a real diagnosis that merely begins with 无 must survive.
-        assert_eq!(
-            match_disease("无症状性高尿酸血症"),
-            Some("痛风/高尿酸血症")
-        );
+        assert_eq!(match_disease("无症状性高尿酸血症"), Some("痛风/高尿酸血症"));
     }
 
     /// Merging is lossy — `merge_conditions` shows the **shortest** mention in a
@@ -1035,10 +1034,7 @@ mod tests {
     /// the progression to dialysis vanished from the problem list.
     #[test]
     fn disease_stages_stay_separate_lanes() {
-        let texts = [
-            "出院诊断:慢性肾脏病3期",
-            "出院诊断:慢性肾脏病5期(尿毒症期)",
-        ];
+        let texts = ["出院诊断:慢性肾脏病3期", "出院诊断:慢性肾脏病5期(尿毒症期)"];
         let docs: Vec<SourceDoc<'_>> = texts
             .iter()
             .enumerate()
@@ -1103,10 +1099,10 @@ mod tests {
             );
         }
         // …while the letterhead still goes.
-        assert!(crate::extract_labs(
-            "姓名:张建国    性别:男    年龄:58岁    门诊号:20230615-1046"
-        )
-        .is_empty());
+        assert!(
+            crate::extract_labs("姓名:张建国    性别:男    年龄:58岁    门诊号:20230615-1046")
+                .is_empty()
+        );
     }
 
     /// One diagnosis, several typesettings, one lane. The mapped path was fixed
