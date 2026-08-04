@@ -484,7 +484,7 @@ Future<void> _showImportSummary(
           FilledButton(
             onPressed: () => Navigator.of(context).pop(),
             style: FilledButton.styleFrom(
-              backgroundColor: c.seal,
+              backgroundColor: c.sealInk,
               foregroundColor: c.surface,
             ),
             child: const Text('知道了'),

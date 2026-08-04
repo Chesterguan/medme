@@ -43,7 +43,9 @@ class MedMe {
     const c = MedColors.light;
     final scheme = ColorScheme.fromSeed(
       seedColor: c.seal,
-      primary: c.seal,
+      // 白字压 seal(#1789C1) 只有 3.90:1,低于 WCAG AA 的 4.5 —— 目标用户含老年人,
+      // 填充按钮一律用 sealInk(6.76:1)。seal 保留给图标/描边/大标题(非文本门槛 3:1)。
+      primary: c.sealInk,
       surface: c.surface,
     );
     final base = ThemeData(

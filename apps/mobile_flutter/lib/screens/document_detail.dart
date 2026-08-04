@@ -156,7 +156,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                     icon: const Icon(Icons.check),
                     label: const Text('确认无误,归入档案'),
                     style: FilledButton.styleFrom(
-                      backgroundColor: c.seal,
+                      backgroundColor: c.sealInk,
                       foregroundColor: c.surface,
                       minimumSize: const Size.fromHeight(48),
                     ),

@@ -584,7 +584,7 @@ class _MemberTabs extends StatelessWidget {
                 final p = profiles[i];
                 final on = p.id == currentId;
                 return Material(
-                  color: on ? c.seal : c.surface,
+                  color: on ? c.sealInk : c.surface,
                   borderRadius: radius,
                   child: InkWell(
                     onTap: on ? null : () => onPick(p.id),
@@ -596,7 +596,7 @@ class _MemberTabs extends StatelessWidget {
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         borderRadius: radius,
-                        border: Border.all(color: on ? c.seal : c.line),
+                        border: Border.all(color: on ? c.sealInk : c.line),
                       ),
                       child: Text(
                         p.name,
