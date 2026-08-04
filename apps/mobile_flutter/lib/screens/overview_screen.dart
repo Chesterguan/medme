@@ -5,6 +5,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
@@ -82,12 +83,11 @@ class _OverviewScreenState extends State<OverviewScreen> {
 
   Future<void> _import(ImportChoice? choice) async {
     final messenger = ScaffoldMessenger.of(context);
+    ImportRunResult? result;
     try {
-      if (choice == null) {
-        await showImportSheet(context);
-      } else {
-        await runImport(context, choice);
-      }
+      result = choice == null
+          ? await showImportSheet(context)
+          : await runImport(context, choice);
     } catch (e) {
       // 与档案屏同一条兜底:导入流程里漏网的异常若不接住,只会掉进 zone,
       // 屏上一片安静 —— 那就是「点了没反应」的最后一段。
@@ -99,7 +99,35 @@ class _OverviewScreenState extends State<OverviewScreen> {
           duration: const Duration(seconds: 8),
         ),
       );
+      return;
     }
+    _goReviewNewDocs(result);
+  }
+
+  /// 导入成功后带用户去核对新东西 —— 「待确认」是这个产品最重要的一道质量闸门
+  /// (抽取质量是已知短板,见 `review_state.dart`),但它靠用户自己走到档案屏
+  /// 才看得见。此前从概览发起的导入只是原地刷新,从没带用户过去 —— 这道闸门
+  /// 对所有从首页导入的人完全不可见,不是跳转缺失,是一整套写好的机制在这条
+  /// 路径上静默失效。档案屏自己触发导入时不需要这个 —— 人已经在那儿,置顶的
+  /// 待确认节就在眼前。
+  ///
+  /// 只在真的有新文档落库时才跳([dispatchImportReview] / [reviewDestinationFor]
+  /// 判断);取消、全部失败、全部重复都不跳 —— 跳到一个空的待确认列表比不跳更糟。
+  ///
+  /// 单份直接进那一份的详情,复核动作就在详情页里;多份进档案屏,置顶的
+  /// 「待确认」节已经把它们聚好了,不用本屏自己再拼一份列表。两条路都是
+  /// `Navigator.push`,不碰底部 tab 状态 —— 系统返回键原样弹回本屏,不会把人
+  /// 困在别的 tab,也不会让 tab 高亮和实际内容对不上(与 `goToArchive()` 那种
+  /// 切 tab 的跳转是两回事,那种不进返回栈)。
+  void _goReviewNewDocs(ImportRunResult? result) {
+    if (!mounted) return;
+    dispatchImportReview(
+      result,
+      openSingleDocument: _openDoc,
+      openArchive: () => Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const ArchiveScreen())),
+    );
   }
 
   @override
