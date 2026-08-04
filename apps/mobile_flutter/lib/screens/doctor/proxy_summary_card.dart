@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/theme.dart';
 
@@ -111,11 +112,9 @@ class _StatusChip extends StatelessWidget {
   }
 }
 
-// 化验行:项目 最近值 单位 ↑/↓/→。异常沿用 `widgets/report_content.dart` 同一套
-// H=amber-700/L=blue-700 配色(未导出为公共 API,故在此复述这两个色值,不改那个
-// 文件)——保持全 app 化验异常配色一致,不另发明一套颜色语义。
-const _labHighColor = Color(0xFFB45309);
-const _labLowColor = Color(0xFF1D4ED8);
+// 化验行:项目 最近值 单位 ↑/↓/→。异常配色统一走设计系统 v1 令牌
+// (`MedColors.high` / `MedColors.low`),与 `widgets/report_content.dart` 同源 ——
+// 这两个色值不再在任何屏里复述,改一处全 app 生效。
 
 class _LabRow extends StatelessWidget {
   const _LabRow({required this.lab});
@@ -124,12 +123,14 @@ class _LabRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = MedColors.of(context);
     final abnormalHigh = lab.refHigh != null && lab.latestValue > lab.refHigh!;
     final abnormalLow = lab.refLow != null && lab.latestValue < lab.refLow!;
+    // 正常不上色,继承正文墨色。
     final color = abnormalHigh
-        ? _labHighColor
+        ? tokens.high
         : abnormalLow
-        ? _labLowColor
+        ? tokens.low
         : MedMe.ink;
     final value = _fmtValue(lab.latestValue);
     final unit = lab.unit ?? '';

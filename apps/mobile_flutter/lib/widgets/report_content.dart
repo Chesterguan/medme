@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design_tokens.dart';
 import '../report_content.dart' show LabFlag, LabRow, tryParseLabRun;
 import '../theme.dart';
 
@@ -168,9 +169,13 @@ LabFlag? _rowStatus(List<String> cells) {
   return null;
 }
 
-Color _flagColor(LabFlag? flag) {
-  if (flag == LabFlag.high) return const Color(0xFFB45309); // amber-700
-  if (flag == LabFlag.low) return const Color(0xFF1D4ED8); // blue-700
+/// 化验状态 → 前景色。色值来自设计系统 v1 令牌(`MedColors`),不在这里写死。
+/// 正常与无标记**不上色**,继承正文墨色 —— 一份血常规 22 项通常只有 1–2 项异常,
+/// 给正常配色会把异常淹没。
+Color _flagColor(BuildContext context, LabFlag? flag) {
+  final c = MedColors.of(context);
+  if (flag == LabFlag.high) return c.high;
+  if (flag == LabFlag.low) return c.low;
   return MedMe.ink;
 }
 
@@ -302,14 +307,14 @@ class _LabTableView extends StatelessWidget {
         defaultVerticalAlignment: TableCellVerticalAlignment.middle,
         children: [
           _headerRow(_headers),
-          for (var i = 0; i < rows.length; i++) _dataRow(i, rows[i]),
+          for (var i = 0; i < rows.length; i++) _dataRow(context, i, rows[i]),
         ],
       ),
     );
   }
 
-  TableRow _dataRow(int index, LabRow r) {
-    final color = _flagColor(r.flag);
+  TableRow _dataRow(BuildContext context, int index, LabRow r) {
+    final color = _flagColor(context, r.flag);
     return TableRow(
       decoration: _zebra(index),
       children: [
@@ -347,7 +352,8 @@ class _GenericTableView extends StatelessWidget {
             for (var c = 0; c < cols; c++)
               c < header!.length ? header![c] : '',
           ]),
-        for (var i = 0; i < rows.length; i++) _dataRow(i, rows[i], cols),
+        for (var i = 0; i < rows.length; i++)
+          _dataRow(context, i, rows[i], cols),
       ],
     );
     return SingleChildScrollView(
@@ -356,8 +362,13 @@ class _GenericTableView extends StatelessWidget {
     );
   }
 
-  TableRow _dataRow(int index, List<String> r, int cols) {
-    final color = _flagColor(_rowStatus(r));
+  TableRow _dataRow(
+    BuildContext context,
+    int index,
+    List<String> r,
+    int cols,
+  ) {
+    final color = _flagColor(context, _rowStatus(r));
     return TableRow(
       decoration: _zebra(index),
       children: [

@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
 
+import 'design_tokens.dart';
+
 /// MedMe 医我 设计令牌 —— 与桌面 / 现有移动端(App.css)一致:teal 品牌色、
 /// 柔和背景、圆角卡片。P3 各屏统一从这里取样式,别散落硬编码。
+///
+/// 设计系统 v1 的规范化令牌在 `design_tokens.dart`(`MedColors` / `MedType` /
+/// `MedShape`),已作为 `ThemeExtension` 挂进下面的主题。本类的常量仍被各屏引用,
+/// 保留不动;新代码用 `MedColors.of(context)`。
 class MedMe {
   MedMe._();
 
@@ -32,6 +38,8 @@ class MedMe {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
+      // 设计系统 v1 令牌。挂上去只是让各屏取得到,本身不改任何现有配色。
+      extensions: const <ThemeExtension<dynamic>>[MedColors.light],
       scaffoldBackgroundColor: bg,
       fontFamily: 'PingFang SC',
       appBarTheme: const AppBarTheme(

@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* 设计系统 v1 语义令牌(颜色/圆角/间距/阴影)。与下面的 blue-* 品牌重映射并存,
+ * 不覆盖它 —— 见 tokens.css 顶部说明。 */
+@import "./tokens.css";
 
 /*
  * Brand accent override — remaps Tailwind's default `blue-*` palette to the
