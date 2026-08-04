@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/claim_link.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/ephemeral_session.dart';
 import 'package:mobile_flutter/screens/claim_screen.dart';
@@ -183,29 +184,48 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
+                    // 圆角取卡片这一档(20),与进到主界面后满屏的卡一致 ——
+                    // 启动图是用户看到的第一个圆角,不该和后面对不上。
+                    borderRadius: BorderRadius.circular(MedShape.radiusCard),
                     child: Image.asset(
                       'assets/icon/app_icon.png',
                       width: 84,
                       height: 84,
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  const CircularProgressIndicator(color: MedMe.teal),
+                  const SizedBox(height: MedShape.s4),
+                  const CircularProgressIndicator(),
                 ],
               ),
             ),
           );
         }
         if (snap.hasError) {
+          final c = MedColors.of(context);
           return Scaffold(
             body: Center(
               child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  '无法打开你的健康档案:\n${snap.error}\n\n请重启 App 再试。',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 15),
+                padding: const EdgeInsets.all(MedShape.s5),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.folder_off_outlined, size: 40, color: c.ink3),
+                    const SizedBox(height: MedShape.s3),
+                    // 文案一字未改,只是把标题和技术细节分成两档字级 ——
+                    // 原先四行挤在同一个 15px 里,最要紧的那句读不出来。
+                    // ⚠️ 这里**不加**任何「你的记录没有丢」之类的安慰:箱子都没
+                    // 打开,我们并不知道里面怎么样,不能替它打包票。
+                    Text(
+                      '无法打开你的健康档案',
+                      style: MedType.subtitle.copyWith(color: c.ink),
+                    ),
+                    const SizedBox(height: MedShape.s1),
+                    Text(
+                      '${snap.error}\n\n请重启 App 再试。',
+                      textAlign: TextAlign.center,
+                      style: MedType.body.copyWith(color: c.ink2, height: 1.6),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -241,7 +261,8 @@ class _AppRootState extends State<AppRoot> {
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.done) {
           // 一次 SharedPreferences 读,瞬时;上一屏的 loading 还没撤,不闪。
-          return const Scaffold(backgroundColor: MedMe.bg, body: SizedBox.shrink());
+          // 底色不再指定 —— 主题的 scaffoldBackgroundColor 已经是 `paper`。
+          return const Scaffold(body: SizedBox.shrink());
         }
         if (!(snap.data ?? false) && !_justAgreed) {
           return FirstRunConsentScreen(
@@ -313,27 +334,34 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(index: _index, children: _screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        // 统一走 selectedTab:手点和程序化跳转(设置载入示例后)同一条路径。
-        onDestinationSelected: (i) => selectedTab.value = i,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.folder_outlined),
-            selectedIcon: Icon(Icons.folder),
-            label: '健康档案',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.ios_share_outlined),
-            selectedIcon: Icon(Icons.ios_share),
-            label: '导出分享',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: '设置',
-          ),
-        ],
+      // 底栏与内容之间一道 `line`。原先靠 elevation:3 的投影分层 —— 规范 §四
+      // 「层次靠边框不靠阴影,阴影只有一档」,那一档已经花在卡片上了。
+      bottomNavigationBar: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: MedColors.of(context).line)),
+        ),
+        child: NavigationBar(
+          selectedIndex: _index,
+          // 统一走 selectedTab:手点和程序化跳转(设置载入示例后)同一条路径。
+          onDestinationSelected: (i) => selectedTab.value = i,
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.folder_outlined),
+              selectedIcon: Icon(Icons.folder),
+              label: '健康档案',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.ios_share_outlined),
+              selectedIcon: Icon(Icons.ios_share),
+              label: '导出分享',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.settings_outlined),
+              selectedIcon: Icon(Icons.settings),
+              label: '设置',
+            ),
+          ],
+        ),
       ),
     );
   }

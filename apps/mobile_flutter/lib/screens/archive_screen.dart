@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/import_flow.dart';
@@ -34,8 +35,16 @@ const Map<String, String> _kindLabel = {
   'exam': '检查',
 };
 
-// 文档类型/就诊类型 → 图标 + 配色(与旧 App.css 的 t-* 徽标一致,只是用 Material
-// 图标替代内联 SVG)。
+// 文档类型/就诊类型 → 图标。
+//
+// **配色表整张删掉了。** 原先每种文档类型一个颜色(化验蓝 #1D4ED8、影像橙
+// #B45309、病理红 #BE123C、处方绿、出院靛、手术紫……九色),问题不是花,是
+// **撞语义**:那三个色值正是设计系统里「偏低 / 偏高 / 危急值」的化验状态色。
+// 一枚 #1D4ED8 的「化验」徽标和一行 #1D4ED8 的「偏低」在同一屏上,颜色在讲
+// 两件毫不相干的事 —— 而这一屏的用户正在学「蓝=偏低」。
+//
+// 现在类型只靠**图标形状**区分,底色统一用主色 `seal` 的极浅底。三个状态色
+// 从此在个人模式里只有一个含义:化验值不正常。
 const Map<String, IconData> _docIcon = {
   'lab_report': Icons.science_outlined,
   'imaging_report': Icons.document_scanner_outlined,
@@ -51,21 +60,6 @@ const Map<String, IconData> _kindIcon = {
   'outpatient': Icons.medical_services_outlined,
   'inpatient': Icons.bed_outlined,
 };
-const Map<String, Color> _typeColor = {
-  'lab_report': Color(0xFF1D4ED8),
-  'imaging_report': Color(0xFFB45309),
-  'prescription': Color(0xFF047857),
-  'discharge_summary': Color(0xFF4338CA),
-  'clinical_note': Color(0xFF0369A1),
-  'pathology': Color(0xFFBE123C),
-  'surgery': Color(0xFF7E22CE),
-  'other': Color(0xFF475569),
-  'unknown': Color(0xFF475569),
-  'enc': Color(0xFF1D4ED8), // 就诊组统一用蓝(旧 App.css .t-enc)
-};
-
-Color _colorFor(String key) => _typeColor[key] ?? _typeColor['other']!;
-
 IconData _iconForDoc(String docType) =>
     _docIcon[docType] ?? Icons.description_outlined;
 
@@ -217,7 +211,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
             child: const Text('取消'),
           ),
           TextButton(
-            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            style: TextButton.styleFrom(
+              foregroundColor: MedColors.of(context).critical,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('删除'),
           ),
@@ -263,51 +259,59 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '切换成员',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      builder: (context) {
+        final c = MedColors.of(context);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  MedShape.s4,
+                  4,
+                  MedShape.s4,
+                  MedShape.s1,
                 ),
-              ),
-            ),
-            for (final m in members)
-              ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: MedMe.tealSoft,
+                child: Align(
+                  alignment: Alignment.centerLeft,
                   child: Text(
-                    m.name.isNotEmpty ? m.name[0] : '?',
-                    style: const TextStyle(
-                      color: MedMe.teal,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    '切换成员',
+                    style: MedType.title.copyWith(color: c.ink),
                   ),
                 ),
-                title: Text(
-                  m.name,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                trailing: m.id == currentId
-                    ? const Icon(Icons.check, color: MedMe.teal)
-                    : null,
-                onTap: () => Navigator.of(context).pop('member:${m.id}'),
               ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.person_add_alt, color: MedMe.teal),
-              title: const Text('添加成员'),
-              onTap: () => Navigator.of(context).pop('add'),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+              for (final m in members)
+                ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: c.sealWash,
+                    child: Text(
+                      m.name.isNotEmpty ? m.name[0] : '?',
+                      style: MedType.subtitle.copyWith(color: c.sealInk),
+                    ),
+                  ),
+                  title: Text(
+                    m.name,
+                    style: MedType.subtitle.copyWith(color: c.ink),
+                  ),
+                  trailing: m.id == currentId
+                      ? Icon(Icons.check, color: c.seal)
+                      : null,
+                  onTap: () => Navigator.of(context).pop('member:${m.id}'),
+                ),
+              const Divider(),
+              ListTile(
+                leading: Icon(Icons.person_add_alt, color: c.seal),
+                title: Text(
+                  '添加成员',
+                  style: MedType.subtitle.copyWith(color: c.ink),
+                ),
+                onTap: () => Navigator.of(context).pop('add'),
+              ),
+              const SizedBox(height: MedShape.s1),
+            ],
+          ),
+        );
+      },
     );
     if (action == null || !mounted) return;
     if (action == 'add') {
@@ -374,13 +378,19 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('健康档案'),
+        // 顶栏与内容之间一道 `line` —— 层次靠边框不靠阴影(规范 §四)。
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: c.line),
+        ),
         actions: [
           // 右上角「导入」:弹三选一(拍照/相册/选文件),导入后本屏经 vaultRevision 自动刷新。
           Padding(
-            padding: const EdgeInsets.only(right: 8),
+            padding: const EdgeInsets.only(right: MedShape.s1),
             child: TextButton.icon(
               onPressed: () => showImportSheet(context),
               icon: const Icon(Icons.add, size: 20),
@@ -393,9 +403,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(
-              child: CircularProgressIndicator(color: MedMe.teal),
-            );
+            return const Center(child: CircularProgressIndicator());
           }
           if (snap.hasError) {
             return RefreshIndicator(
@@ -404,11 +412,11 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 children: [
                   Padding(
-                    padding: const EdgeInsets.all(32),
+                    padding: const EdgeInsets.all(MedShape.s6),
                     child: Text(
                       '加载健康档案失败:\n${snap.error}\n\n下拉可重试。',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: MedMe.faint),
+                      style: MedType.body.copyWith(color: c.ink2, height: 1.6),
                     ),
                   ),
                 ],
@@ -427,10 +435,15 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           final confirmed = _confirmedOnly(groups);
           return RefreshIndicator(
             onRefresh: _refresh,
-            color: MedMe.teal,
+            color: c.seal,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              padding: const EdgeInsets.fromLTRB(
+                MedShape.s3,
+                MedShape.s3,
+                MedShape.s3,
+                MedShape.s6,
+              ),
               children: [
                 // 成员不多时(≤ kMemberTabsMax)用常驻 tab 条:点谁是谁,一步到位。
                 // 超过就退回弹出式列表——横滑的 tab 条会把当前选中的推到屏幕外,
@@ -443,7 +456,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                     onAdd: _addMember,
                   ),
                 if (ProfileManager.instance.profiles.length <= kMemberTabsMax)
-                  const SizedBox(height: 12),
+                  const SizedBox(height: MedShape.s2),
                 _PatientHeader(
                   profile: profile,
                   memberName: ProfileManager.instance.displayName,
@@ -454,8 +467,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                       ? _showProfileSwitcher
                       : null,
                 ),
-                const SizedBox(height: 20),
-                // 待确认:红框卡片,点开进详情核对 + 确认;左滑删除。
+                const SizedBox(height: MedShape.s4),
+                // 待确认:琥珀框卡片,点开进详情核对 + 确认;左滑删除。
                 for (final d in pending) ...[
                   _PendingCard(
                     doc: d,
@@ -463,30 +476,32 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                     onOpen: _openDoc,
                     onDelete: _confirmAndDelete,
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: MedShape.s2),
                 ],
                 if (pending.isNotEmpty && confirmed.isNotEmpty) ...[
-                  const SizedBox(height: 6),
+                  const SizedBox(height: MedShape.s1),
                   Row(
                     children: [
-                      const Expanded(child: Divider(color: MedMe.line)),
+                      const Expanded(child: Divider()),
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: MedShape.s2,
+                        ),
                         child: Text(
                           '以下为已确认',
-                          style: TextStyle(fontSize: 12, color: MedMe.faint),
+                          style: MedType.caption.copyWith(color: c.ink3),
                         ),
                       ),
-                      const Expanded(child: Divider(color: MedMe.line)),
+                      const Expanded(child: Divider()),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: MedShape.s2),
                 ],
                 if (pending.isEmpty && confirmed.isEmpty)
                   const _EmptyState()
                 else
                   for (var i = 0; i < confirmed.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 10),
+                    if (i > 0) const SizedBox(height: MedShape.s2),
                     _TimelineItem(
                       group: confirmed[i],
                       // 按就诊组 id 记展开态(不用列表下标)——删除/导入后下标会错位到别的组。
@@ -546,37 +561,48 @@ class _MemberTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    // 横滑列表必须有确定高度,但**不能写死** —— 写死的 38 在系统字号放大后会把
+    // 名字裁掉一截(007 §2.5「字号可放大,不可砍」)。按当前 textScaler 下的
+    // body 实际行高 + 上下各 12 内边距 + 边框算出来,放大到多少都装得下。
+    final labelHeight = MediaQuery.textScalerOf(
+      context,
+    ).scale(MedType.body.fontSize!);
+    final tabHeight = labelHeight + MedShape.s2 * 2 + 2;
+    // pill:圆角 999(规范 §四)。用 StadiumBorder 语义的半高圆角即可。
+    final radius = BorderRadius.circular(MedShape.radiusPill);
     return SizedBox(
-      height: 38,
+      height: tabHeight,
       child: Row(
         children: [
           Expanded(
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: profiles.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              separatorBuilder: (_, _) => const SizedBox(width: MedShape.s1),
               itemBuilder: (context, i) {
                 final p = profiles[i];
                 final on = p.id == currentId;
                 return Material(
-                  color: on ? MedMe.teal : MedMe.panel,
-                  borderRadius: BorderRadius.circular(19),
+                  color: on ? c.seal : c.surface,
+                  borderRadius: radius,
                   child: InkWell(
                     onTap: on ? null : () => onPick(p.id),
-                    borderRadius: BorderRadius.circular(19),
+                    borderRadius: radius,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: MedShape.s3,
+                      ),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(19),
-                        border: Border.all(color: on ? MedMe.teal : MedMe.line),
+                        borderRadius: radius,
+                        border: Border.all(color: on ? c.seal : c.line),
                       ),
                       child: Text(
                         p.name,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: on ? FontWeight.w700 : FontWeight.w500,
-                          color: on ? Colors.white : MedMe.ink,
+                        style: MedType.body.copyWith(
+                          fontWeight: on ? FontWeight.w600 : FontWeight.w400,
+                          color: on ? c.surface : c.ink,
                         ),
                       ),
                     ),
@@ -585,22 +611,22 @@ class _MemberTabs extends StatelessWidget {
               },
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: MedShape.s1),
           Material(
-            color: MedMe.panel,
-            borderRadius: BorderRadius.circular(19),
+            color: c.surface,
+            borderRadius: radius,
             child: InkWell(
               onTap: onAdd,
-              borderRadius: BorderRadius.circular(19),
+              borderRadius: radius,
               child: Container(
-                width: 38,
-                height: 38,
+                width: tabHeight,
+                height: tabHeight,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(19),
-                  border: Border.all(color: MedMe.line),
+                  borderRadius: radius,
+                  border: Border.all(color: c.line),
                 ),
-                child: const Icon(Icons.add, size: 20, color: MedMe.teal),
+                child: Icon(Icons.add, size: 20, color: c.seal),
               ),
             ),
           ),
@@ -626,6 +652,7 @@ class _PatientHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     final initial = memberName.isNotEmpty ? memberName[0] : '我';
     final subParts = [
       profile.gender,
@@ -633,74 +660,62 @@ class _PatientHeader extends StatelessWidget {
     ].whereType<String>().where((s) => s.isNotEmpty).toList();
     subParts.add('${profile.recordCount} 份记录');
 
-    return Material(
-      color: MedMe.panel,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap, // 点顶部切换成员(家庭多成员)
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: MedMe.line),
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 26,
-                backgroundColor: MedMe.tealSoft,
-                child: Text(
-                  initial,
-                  style: const TextStyle(
-                    color: MedMe.teal,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 18,
+    // **不带骑缝线。** 这是一张派生卡:姓名/性别/年龄/份数都是从许多份原件里
+    // 算出来的汇总,背后没有「某一张纸」可点进去。骑缝线只给点得进原件的卡
+    // (规范 §五)—— 给它画一道,就是拿签名元素说了句假话。
+    return MedCard(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap, // 点顶部切换成员(家庭多成员)
+          child: Padding(
+            padding: const EdgeInsets.all(MedShape.s4),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 26,
+                  backgroundColor: c.sealWash,
+                  child: Text(
+                    initial,
+                    style: MedType.title.copyWith(color: c.sealInk),
                   ),
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (showName) ...[
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              memberName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w800,
-                                color: MedMe.ink,
+                const SizedBox(width: MedShape.s3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (showName) ...[
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                memberName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: MedType.subtitle.copyWith(color: c.ink),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(
-                            Icons.unfold_more,
-                            size: 18,
-                            color: MedMe.faint,
-                          ),
-                        ],
+                            const SizedBox(width: 4),
+                            Icon(Icons.unfold_more, size: 18, color: c.ink3),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                      ],
+                      Text(
+                        subParts.join(' · '),
+                        // 份数是数字 —— 等宽表格数字,换个成员不会左右跳。
+                        style:
+                            (showName
+                                    ? MedType.secondary.copyWith(color: c.ink2)
+                                    : MedType.subtitle.copyWith(color: c.ink))
+                                .copyWith(fontFeatures: MedType.tabular),
                       ),
-                      const SizedBox(height: 2),
                     ],
-                    Text(
-                      subParts.join(' · '),
-                      style: TextStyle(
-                        fontSize: showName ? 12.5 : 14,
-                        fontWeight: showName ? FontWeight.w400 : FontWeight.w600,
-                        color: showName ? MedMe.faint : MedMe.ink,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -714,27 +729,28 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    // 空态用虚线框(规范 §六):留白等于说「你没有相关检查」,那是临床上的假话;
+    // 框起来 + 明说下一步该点哪,才是「给出路」。
+    //
+    // 规范的空态样例里还有一颗按钮。这里**刻意没加** —— 加一颗按钮就是新增一个
+    // 交互入口,本次是纯视觉改版。出路由文案给:右上角那颗「导入」一直在。
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 56),
-      child: Column(
-        children: [
-          const Icon(Icons.folder_outlined, size: 48, color: MedMe.faint),
-          const SizedBox(height: 14),
-          const Text(
-            '还没有病历',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: MedMe.ink,
+      padding: const EdgeInsets.symmetric(vertical: MedShape.s6),
+      child: DottedBorderBox(
+        child: Column(
+          children: [
+            Icon(Icons.folder_outlined, size: 48, color: c.ink3),
+            const SizedBox(height: MedShape.s2),
+            Text('还没有病历', style: MedType.subtitle.copyWith(color: c.ink)),
+            const SizedBox(height: MedShape.s1),
+            Text(
+              '点右上角「导入」拍照或选择文件添加,\n或在「设置」里载入示例数据试试看',
+              textAlign: TextAlign.center,
+              style: MedType.body.copyWith(color: c.ink2, height: 1.6),
             ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            '点右上角「导入」拍照或选择文件添加,\n或在「设置」里载入示例数据试试看',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: MedMe.faint, height: 1.6),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -742,12 +758,14 @@ class _EmptyState extends StatelessWidget {
 
 /// 时间线一项:就诊组(可展开子文档)或独立文档。
 /// 时间线/待确认项左滑删除时的红底背景(靠右露出删除图标),Outlook 邮件式。
-Widget swipeDeleteBackground() => Container(
+/// 圆角必须与卡片同档(20),否则滑动过程中会露出一圈错位的直角。
+Widget swipeDeleteBackground(BuildContext context) => Container(
   alignment: Alignment.centerRight,
-  padding: const EdgeInsets.symmetric(horizontal: 20),
+  padding: const EdgeInsets.symmetric(horizontal: MedShape.s4),
   decoration: BoxDecoration(
-    color: MedMe.danger,
-    borderRadius: BorderRadius.circular(14),
+    // 删除是销毁性动作 —— `critical` 在个人模式里只用在这里和危急值上。
+    color: MedColors.of(context).critical,
+    borderRadius: BorderRadius.circular(MedShape.radiusCard),
   ),
   child: const Icon(Icons.delete_outline, color: Colors.white),
 );
@@ -769,12 +787,8 @@ class _TimelineItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     final isEncounter = group is TimelineGroupDto_Encounter;
-    final colorKey = switch (group) {
-      TimelineGroupDto_Encounter() => 'enc',
-      TimelineGroupDto_Document(:final doc) => doc.docType,
-    };
-    final color = _colorFor(colorKey);
     final icon = switch (group) {
       TimelineGroupDto_Encounter(:final encounter) => _iconForKind(
         encounter.kind,
@@ -782,90 +796,94 @@ class _TimelineItem extends StatelessWidget {
       TimelineGroupDto_Document(:final doc) => _iconForDoc(doc.docType),
     };
 
-    final Widget card = Container(
-      decoration: BoxDecoration(
-        color: MedMe.panel,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: MedMe.line),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          InkWell(
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
+    final Widget card = MedCard(
+      // 骑缝线 = 「背后有一份原件、点得进去」(规范 §五)。
+      //  · 独立文档卡 → 点了就是那一份原件的详情 → **画**。
+      //  · 就诊组卡 → 点了是展开一个分组;这个组本身是按日期/机构算出来的,
+      //    背后没有「一张纸」叫做「门诊·某某医院」→ **不画**。组里每一份文档
+      //    展开后各自可点开,那是下一层的事。
+      perforated: !isEncounter,
+      child: Material(
+        color: Colors.transparent,
+        child: Column(
+          children: [
+            InkWell(
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.all(MedShape.s2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: c.sealWash,
+                        borderRadius: BorderRadius.circular(
+                          MedShape.radiusControl,
+                        ),
+                      ),
+                      child: Icon(icon, size: 20, color: c.seal),
                     ),
-                    child: Icon(icon, size: 19, color: color),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _groupTitle(group),
-                                style: const TextStyle(
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w700,
+                    const SizedBox(width: MedShape.s2),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.baseline,
+                            textBaseline: TextBaseline.alphabetic,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _groupTitle(group),
+                                  style: MedType.subtitle.copyWith(
+                                    color: c.ink,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _groupDate(group),
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: MedMe.faint,
+                              const SizedBox(width: MedShape.s1),
+                              Text(
+                                _groupDate(group),
+                                // 日期是数字,等宽 —— 一列日期才对得齐。
+                                style: MedType.secondary.copyWith(
+                                  color: c.ink3,
+                                  fontFeatures: MedType.tabular,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          _groupDesc(group),
-                          style: const TextStyle(
-                            fontSize: 12.5,
-                            color: MedMe.faint,
+                            ],
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 3),
+                          Text(
+                            _groupDesc(group),
+                            style: MedType.secondary.copyWith(color: c.ink2),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  if (isEncounter)
-                    Icon(
-                      expanded ? Icons.expand_less : Icons.expand_more,
-                      size: 20,
-                      color: MedMe.faint,
-                    ),
-                ],
+                    if (isEncounter)
+                      Icon(
+                        expanded ? Icons.expand_less : Icons.expand_more,
+                        size: 20,
+                        color: c.ink3,
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (expanded)
-            switch (group) {
-              TimelineGroupDto_Encounter(:final docs) => _SubDocList(
-                docs: docs,
-                onOpenSubDoc: onOpenSubDoc,
-                onDelete: onDelete,
-              ),
-              TimelineGroupDto_Document() => const SizedBox.shrink(),
-            },
-        ],
+            if (expanded)
+              switch (group) {
+                TimelineGroupDto_Encounter(:final docs) => _SubDocList(
+                  docs: docs,
+                  onOpenSubDoc: onOpenSubDoc,
+                  onDelete: onDelete,
+                ),
+                TimelineGroupDto_Document() => const SizedBox.shrink(),
+              },
+          ],
+        ),
       ),
     );
 
@@ -874,7 +892,7 @@ class _TimelineItem extends StatelessWidget {
       return Dismissible(
         key: ValueKey('tl-doc-${doc.id}'),
         direction: DismissDirection.endToStart,
-        background: swipeDeleteBackground(),
+        background: swipeDeleteBackground(context),
         confirmDismiss: (_) async {
           await onDelete(doc.id, _groupTitle(group));
           return false; // 由数据重载移除,避免与 Dismissible 自身移除冲突
@@ -899,63 +917,69 @@ class _SubDocList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Column(
       children: [
         for (final d in docs)
           Dismissible(
             key: ValueKey('sub-doc-${d.id}'),
             direction: DismissDirection.endToStart,
-            background: swipeDeleteBackground(),
+            background: swipeDeleteBackground(context),
             confirmDismiss: (_) async {
               await onDelete(d.id, d.title ?? _docLabel[d.docType] ?? '记录');
               return false;
             },
             child: Container(
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: MedMe.line)),
-            ),
-            child: InkWell(
-              onTap: () => onOpenSubDoc(d.id),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 26,
-                      height: 26,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: _colorFor(d.docType).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
+              // 卡内行间用二级分隔线 `line-2`,比卡片外框浅一档 —— 嵌套层次靠
+              // 边框的深浅递减来分,不叠第二层阴影。
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: c.line2)),
+              ),
+              child: InkWell(
+                onTap: () => onOpenSubDoc(d.id),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: MedShape.s2,
+                    vertical: MedShape.s2,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 28,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: c.sealWash,
+                          borderRadius: BorderRadius.circular(MedShape.s1),
+                        ),
+                        child: Icon(
+                          _iconForDoc(d.docType),
+                          size: 15,
+                          color: c.seal,
+                        ),
                       ),
-                      child: Icon(
-                        _iconForDoc(d.docType),
-                        size: 14,
-                        color: _colorFor(d.docType),
+                      const SizedBox(width: MedShape.s2),
+                      Expanded(
+                        child: Text(
+                          d.title ?? _docLabel[d.docType] ?? '记录',
+                          style: MedType.body.copyWith(color: c.ink),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        d.title ?? _docLabel[d.docType] ?? '记录',
-                        style: const TextStyle(fontSize: 13),
-                        overflow: TextOverflow.ellipsis,
+                      const SizedBox(width: MedShape.s1),
+                      Text(
+                        _fmtDate(d.docDate),
+                        style: MedType.caption.copyWith(
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: 0,
+                          fontFeatures: MedType.tabular,
+                          color: c.ink3,
+                        ),
                       ),
-                    ),
-                    Text(
-                      _fmtDate(d.docDate),
-                      style: const TextStyle(
-                        fontSize: 11.5,
-                        color: MedMe.faint,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
             ),
           ),
       ],
@@ -963,9 +987,15 @@ class _SubDocList extends StatelessWidget {
   }
 }
 
-/// 待确认(新导入)卡片:红框 + 「待确认」标签,点开进**详情页**核对并确认(确认按钮
-/// 在详情页,不在这里)。左滑删除。识别姓名与当前档案不符时下方红色警告。确认后本卡
-/// 消失,该文档以标准样式进入下方时间线。
+/// 待确认(新导入)卡片:琥珀框 + 「待确认」pill,点开进**详情页**核对并确认
+/// (确认按钮在详情页,不在这里)。左滑删除。识别姓名与当前档案不符时下方警告。
+/// 确认后本卡消失,该文档以标准样式进入下方时间线。
+///
+/// **框色从红(`critical`)降到琥珀(`high`),同时把姓名不符的警告从橙升到红。**
+/// 原先每一份刚导入的文档都顶着一圈红框 —— 而「刚导入、还没核对」是导入成功后的
+/// 常态,不是事故;红色天天出现就会被学会忽略。真正该报红的是它下面那条「这张单
+/// 子上的名字不是你」——那才是可能把别人的病历归进你档案的一步。两级现在分开了:
+/// 琥珀 = 请你看一眼,红 = 可能导错人。
 class _PendingCard extends StatelessWidget {
   const _PendingCard({
     required this.doc,
@@ -981,110 +1011,94 @@ class _PendingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     final label = doc.title ?? _docLabel[doc.docType] ?? '记录';
-    final card = Container(
-      decoration: BoxDecoration(
-        color: MedMe.panel,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: MedMe.danger, width: 1.5),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          InkWell(
-            onTap: () => onOpen(doc.id),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: _colorFor(doc.docType).withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
+    final card = MedCard(
+      // 这张卡背后就是刚导入的那份原件,点开即达 → 画骑缝线。
+      perforated: true,
+      borderColor: c.high,
+      borderWidth: 1.5,
+      child: Material(
+        color: Colors.transparent,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            InkWell(
+              onTap: () => onOpen(doc.id),
+              child: Padding(
+                padding: const EdgeInsets.all(MedShape.s2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: c.highWash,
+                        borderRadius: BorderRadius.circular(
+                          MedShape.radiusControl,
+                        ),
+                      ),
+                      child: Icon(
+                        _iconForDoc(doc.docType),
+                        size: 20,
+                        color: c.high,
+                      ),
                     ),
-                    child: Icon(
-                      _iconForDoc(doc.docType),
-                      size: 19,
-                      color: _colorFor(doc.docType),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 2,
+                    const SizedBox(width: MedShape.s2),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 标题行会挤:pill + 标题 + 日期。用 Wrap 让它在窄屏
+                          // 或大字号下自然折行,而不是把标题省略成两个字。
+                          Wrap(
+                            spacing: MedShape.s1,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              MedPill(
+                                text: '待确认',
+                                foreground: c.high,
+                                background: c.highWash,
                               ),
-                              decoration: BoxDecoration(
-                                color: MedMe.danger.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Text(
-                                '待确认',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: MedMe.danger,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
+                              Text(
                                 label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w700,
+                                style: MedType.subtitle.copyWith(color: c.ink),
+                              ),
+                              Text(
+                                _fmtDate(doc.docDate),
+                                style: MedType.secondary.copyWith(
+                                  color: c.ink3,
+                                  fontFeatures: MedType.tabular,
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _fmtDate(doc.docDate),
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: MedMe.faint,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          [_docLabel[doc.docType] ?? doc.docType, '点开核对并确认']
-                              .join(' · '),
-                          style: const TextStyle(
-                            fontSize: 12.5,
-                            color: MedMe.faint,
+                            ],
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 3),
+                          Text(
+                            [_docLabel[doc.docType] ?? doc.docType, '点开核对并确认']
+                                .join(' · '),
+                            style: MedType.secondary.copyWith(color: c.ink2),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const Icon(Icons.chevron_right, size: 20, color: MedMe.faint),
-                ],
+                    Icon(Icons.chevron_right, size: 20, color: c.ink3),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (mismatchName case final who?) _MismatchBanner(who: who),
-        ],
+            if (mismatchName case final who?) _MismatchBanner(who: who),
+          ],
+        ),
       ),
     );
     return Dismissible(
       key: ValueKey('pending-${doc.id}'),
       direction: DismissDirection.endToStart,
-      background: swipeDeleteBackground(),
+      background: swipeDeleteBackground(context),
       confirmDismiss: (_) async {
         await onDelete(doc.id, label);
         return false;
@@ -1096,6 +1110,11 @@ class _PendingCard extends StatelessWidget {
 
 /// 这份报告识别到的患者姓名和当前档案不一致 → 醒目提示,可能导错了人。
 /// 只警告不自动搬(用户可自行处理);点开核对无误后「确认」即可归档。
+///
+/// 用 `critical` 红:这是本屏最高一级的提醒。原先是 Material 调色板里的
+/// `Colors.orange` + 一个裸的 `#B25E00` 文字色 —— 两个都不在规范色板里,而且
+/// 和外层「待确认」框同为橙,一眼分不出哪个更要紧。现在外框琥珀、这条红,
+/// 层级立住了。左侧三像素竖条是规范 §warn 的样式。
 class _MismatchBanner extends StatelessWidget {
   const _MismatchBanner({required this.who});
 
@@ -1103,33 +1122,36 @@ class _MismatchBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      margin: const EdgeInsets.fromLTRB(
+        MedShape.s2,
+        0,
+        MedShape.s2,
+        MedShape.s2,
+      ),
+      padding: const EdgeInsets.symmetric(
+        horizontal: MedShape.s2,
+        vertical: MedShape.s1,
+      ),
       decoration: BoxDecoration(
-        color: Colors.orange.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+        color: c.criticalWash,
+        borderRadius: const BorderRadius.horizontal(
+          right: Radius.circular(MedShape.radiusBlock),
+        ),
+        border: Border(left: BorderSide(color: c.critical, width: 3)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.warning_amber_rounded,
-            color: Colors.orange,
-            size: 18,
-          ),
-          const SizedBox(width: 6),
+          Icon(Icons.warning_amber_rounded, color: c.critical, size: 18),
+          const SizedBox(width: MedShape.s1),
           Expanded(
             child: Text(
               '报告上的姓名是「$who」,与当前档案「${ProfileManager.instance.current}」不一致,'
               '请核对是否导错了人。',
-              style: const TextStyle(
-                fontSize: 12,
-                height: 1.4,
-                color: Color(0xFFB25E00),
-              ),
+              style: MedType.secondary.copyWith(color: c.ink, height: 1.5),
             ),
           ),
         ],

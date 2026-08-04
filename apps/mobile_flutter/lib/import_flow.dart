@@ -8,11 +8,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:pdfx/pdfx.dart';
 
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -31,13 +31,18 @@ Future<void> showImportSheet(BuildContext context) async {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              MedShape.s4,
+              4,
+              MedShape.s4,
+              MedShape.s1,
+            ),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 '添加病历',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                style: MedType.title.copyWith(color: MedColors.of(context).ink),
               ),
             ),
           ),
@@ -179,11 +184,18 @@ Future<void> _runImport(
             height: 22,
             child: CircularProgressIndicator(strokeWidth: 2.5),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: MedShape.s3),
           Expanded(
             child: ValueListenableBuilder<String>(
               valueListenable: progress,
-              builder: (context, text, _) => Text(text),
+              // 「3/12」这类进度数字用等宽 —— 否则每换一份文字宽度都在抖。
+              builder: (context, text, _) => Text(
+                text,
+                style: MedType.body.copyWith(
+                  color: MedColors.of(context).ink,
+                  fontFeatures: MedType.tabular,
+                ),
+              ),
             ),
           ),
         ],
@@ -414,63 +426,95 @@ Future<void> _showImportSummary(
   if (!context.mounted) return;
   await showDialog<void>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: Text(failed == rows.length ? '导入未成功' : '导入完成'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (success > 0)
-              _summaryLine(Icons.check_circle, MedMe.teal, '成功识别入库 $success 份'),
-            if (duplicate > 0)
-              _summaryLine(
-                Icons.content_copy,
-                MedMe.faint,
-                '重复,已跳过 $duplicate 份',
-              ),
-            if (storedNoText > 0)
-              _summaryLine(
-                Icons.warning_amber_rounded,
-                Colors.orange,
-                '仅存原件(未识别到文字)$storedNoText 份',
-              ),
-            if (failed > 0)
-              _summaryLine(Icons.error_outline, MedMe.danger, '未能处理 $failed 份'),
-            const SizedBox(height: 12),
-            const Divider(height: 1, color: MedMe.line),
-            const SizedBox(height: 8),
-            for (final row in rows)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Text(
-                  '${row.name} —— ${row.statusLabel}',
-                  style: const TextStyle(fontSize: 12.5, color: MedMe.faint),
+    builder: (context) {
+      final c = MedColors.of(context);
+      return AlertDialog(
+        title: Text(failed == rows.length ? '导入未成功' : '导入完成'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 四条汇总各占一档语义色:成功=主色,去重=三级墨(不是问题,
+              // 只是没事发生),仅存原件=`high`(要你回头补一张),失败=`critical`。
+              // 原先「仅存原件」用的是 Material 的 `Colors.orange`,不在色板里。
+              if (success > 0)
+                _summaryLine(
+                  context,
+                  Icons.check_circle,
+                  c.seal,
+                  '成功识别入库 $success 份',
                 ),
-              ),
-          ],
+              if (duplicate > 0)
+                _summaryLine(
+                  context,
+                  Icons.content_copy,
+                  c.ink3,
+                  '重复,已跳过 $duplicate 份',
+                ),
+              if (storedNoText > 0)
+                _summaryLine(
+                  context,
+                  Icons.warning_amber_rounded,
+                  c.high,
+                  '仅存原件(未识别到文字)$storedNoText 份',
+                ),
+              if (failed > 0)
+                _summaryLine(
+                  context,
+                  Icons.error_outline,
+                  c.critical,
+                  '未能处理 $failed 份',
+                ),
+              const SizedBox(height: MedShape.s2),
+              const Divider(),
+              const SizedBox(height: MedShape.s1),
+              for (final row in rows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Text(
+                    '${row.name} —— ${row.statusLabel}',
+                    style: MedType.secondary.copyWith(color: c.ink2),
+                  ),
+                ),
+            ],
+          ),
         ),
-      ),
-      actions: [
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('知道了'),
-        ),
-      ],
-    ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            style: FilledButton.styleFrom(
+              backgroundColor: c.seal,
+              foregroundColor: c.surface,
+            ),
+            child: const Text('知道了'),
+          ),
+        ],
+      );
+    },
   );
 }
 
-Widget _summaryLine(IconData icon, Color color, String text) => Padding(
+Widget _summaryLine(
+  BuildContext context,
+  IconData icon,
+  Color color,
+  String text,
+) => Padding(
   padding: const EdgeInsets.symmetric(vertical: 4),
   child: Row(
     children: [
       Icon(icon, color: color, size: 20),
-      const SizedBox(width: 8),
+      const SizedBox(width: MedShape.s1),
       Expanded(
         child: Text(
           text,
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          // 份数是数字 —— 等宽,四行汇总的数字才在同一列上。
+          style: MedType.body.copyWith(
+            fontWeight: FontWeight.w600,
+            color: MedColors.of(context).ink,
+            fontFeatures: MedType.tabular,
+          ),
         ),
       ),
     ],
@@ -492,10 +536,25 @@ class _SheetTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return ListTile(
-      leading: Icon(icon, color: MedMe.teal, size: 28),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(subtitle, style: const TextStyle(color: MedMe.faint)),
+      // 图标装进 seal-wash 方块,与档案时间线上的类型徽标同一形状语言 ——
+      // 圆角取控件这一档 10,比卡片(20)和分块(14)都小,层级不同级。
+      leading: Container(
+        width: 40,
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: c.sealWash,
+          borderRadius: BorderRadius.circular(MedShape.radiusControl),
+        ),
+        child: Icon(icon, color: c.seal, size: 22),
+      ),
+      title: Text(title, style: MedType.subtitle.copyWith(color: c.ink)),
+      subtitle: Text(
+        subtitle,
+        style: MedType.secondary.copyWith(color: c.ink2),
+      ),
       onTap: () => Navigator.of(context).pop(choice),
     );
   }

@@ -222,28 +222,84 @@ void main() {
     });
   });
 
-  group('化验状态配色迁移后的实渲染(视觉零变化护栏)', () {
-    testWidgets('偏高 = --high #B45309,偏低 = --low #1D4ED8,正常不上色', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: MedMe.theme(),
-          home: const Scaffold(
-            body: SingleChildScrollView(
-              child: ReportContent(text: labText, docType: 'lab_report'),
-            ),
+  group('化验状态在实渲染上的落地', () {
+    /// 化验值现在和单位同处一个 `Text.rich`(「6.05 mmol/L」),所以按整行富文本
+    /// 定位,再取出数值那一段的颜色。
+    Color valueColor(WidgetTester tester, String whole, String value) {
+      final rich = tester.widget<RichText>(
+        find.text(whole, findRichText: true).first,
+      );
+      Color? found;
+      rich.text.visitChildren((span) {
+        if (span is TextSpan && span.text == value) {
+          found = span.style?.color;
+          return false;
+        }
+        return true;
+      });
+      expect(found, isNotNull, reason: '在「$whole」里没找到数值段「$value」');
+      return found!;
+    }
+
+    Future<void> pumpLab(WidgetTester tester) => tester.pumpWidget(
+      MaterialApp(
+        theme: MedMe.theme(),
+        home: const Scaffold(
+          body: SingleChildScrollView(
+            child: ReportContent(text: labText, docType: 'lab_report'),
           ),
         ),
+      ),
+    );
+
+    testWidgets('偏高 = --high #B45309,偏低 = --low #1D4ED8,正常不上色', (tester) async {
+      await pumpLab(tester);
+
+      expect(
+        valueColor(tester, '6.05 mmol/L', '6.05').toARGB32(),
+        MedColors.light.high.toARGB32(),
       );
+      expect(valueColor(tester, '6.05 mmol/L', '6.05').toARGB32(), 0xFFB45309);
+      expect(
+        valueColor(tester, '0.98 mmol/L', '0.98').toARGB32(),
+        MedColors.light.low.toARGB32(),
+      );
+      expect(valueColor(tester, '0.98 mmol/L', '0.98').toARGB32(), 0xFF1D4ED8);
+      // 正常行继承正文墨色(令牌 `ink`),不走任何状态色 —— 规范 §二 的
+      // 「正常不上色」:22 项里 1–2 项异常,给正常配色会把异常淹没。
+      expect(
+        valueColor(tester, '95 umol/L', '95').toARGB32(),
+        MedColors.light.ink.toARGB32(),
+      );
+    });
 
-      Color colorOf(String value) =>
-          tester.widget<Text>(find.text(value).first).style!.color!;
+    testWidgets('状态同时给文字 pill —— 色盲用户靠它读语义,不能只有色条', (tester) async {
+      await pumpLab(tester);
+      // 样本三行:6.05 偏高、0.98 偏低、95 正常。
+      expect(find.text('偏高'), findsOneWidget);
+      expect(find.text('偏低'), findsOneWidget);
+      // 正常行不给 pill —— pill 本身也是一种上色。参考区间那格里的
+      // 「57 - 97 正常」是原件抄下来的文本,不是 pill,精确匹配不会命中。
+      expect(find.text('正常'), findsNothing);
+    });
 
-      expect(colorOf('6.05').toARGB32(), MedColors.light.high.toARGB32());
-      expect(colorOf('6.05').toARGB32(), 0xFFB45309); // 迁移前的硬编码值
-      expect(colorOf('0.98').toARGB32(), MedColors.light.low.toARGB32());
-      expect(colorOf('0.98').toARGB32(), 0xFF1D4ED8); // 迁移前的硬编码值
-      // 正常行继承正文墨色,不走状态色。
-      expect(colorOf('95'), MedMe.ink);
+    testWidgets('化验表里没有任何字号低于 12px —— 007 §2.5「字号可放大,不可砍」', (
+      tester,
+    ) async {
+      await pumpLab(tester);
+      for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
+        rich.text.visitChildren((span) {
+          final size = span.style?.fontSize;
+          if (size != null) {
+            expect(
+              size,
+              greaterThanOrEqualTo(MedType.minFontSize),
+              reason: '「${span.toPlainText()}」用了 ${size}px,低于 12px 下限',
+            );
+          }
+          return true;
+        });
+      }
     });
   });
 }
