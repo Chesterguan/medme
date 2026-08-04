@@ -1,6 +1,6 @@
 # 埋点目录(Analytics Catalog)
 
-**最后更新:2026-07-29**
+**最后更新:2026-08-04**
 
 这份文档是「我们到底采了什么」的唯一权威清单。三个用途:
 
@@ -54,7 +54,7 @@
 
 ---
 
-## 四、事件全集(17 条)
+## 四、事件全集(19 条)
 
 每条对应**一个决定**。答不出决定的事件不该存在。
 
@@ -75,6 +75,8 @@
 | `doc_import_started` | `source`, `count_bucket` | `import_flow.dart`、`screens/doctor/proxy_intake_flow.dart` | 三个采集入口(拍照/相册/文件)谁在被用 |
 | `doc_import_completed` | `source`, `count_bucket`, `failed_bucket`, `duration_bucket`, `per_doc_duration_bucket`, `is_first` | `import_flow.dart`、`screens/doctor/proxy_intake_flow.dart` | **换不换 OCR 引擎**(看 `per_doc`);**要不要做后台导入**(看 `duration`);**首次导入成功率**(看 `is_first`) |
 | `doc_import_failed` | `source`, `count_bucket`, `failed_bucket`, `duration_bucket`, `per_doc_duration_bucket`, `is_first`, `stage`, `reason_code` | `import_flow.dart`、`screens/doctor/proxy_intake_flow.dart` | 失败集中在哪一步、哪个原因 |
+| `doc_capture_degraded` | `source`, `reason` | `import_flow.dart` | **「点拍照没反应」到底是哪一种病因。** 采集器没起来、已降级到普通相机 —— 是 GMS 检测自己炸了、扫描器抛异常、还是扫描器永久挂起 |
+| `doc_capture_aborted` | `source`, `reason` | `import_flow.dart` | **用户主动取消 vs 采集器静默返回空。** 这两者在屏上完全一样,不分开就永远算不出「没反应」的真实占比 |
 | `doc_opened` | 无 | `screens/archive_screen.dart` | **档案是被看的还是被堆的。** 导入了从不打开 = 垃圾桶不是助手 |
 
 **两个耗时不是重复。** 总时长被份数主导,只能回答「用户要等多久」;单份时长才是引擎质量 —— 5 份各 2 秒,总时长报 `3-10s` 像是慢,单份报 `1-3s` 其实正常。当初只报总时长,等于把批量冒充成了引擎问题。
@@ -86,6 +88,40 @@
 `reason_code`:`unsupported` / `corrupt` / `ocrEmpty` / `storage` / `permission` / `unknown`(枚举 `ImportFailReason`)
 
 > ⚠️ `reason_code` 由错误串粗分类得到,不是 core 返回的类型化错误。**如果 `unknown` 在数据里占了大头,就是该让 Rust 侧返回错误码的信号。**
+
+#### 采集环节(`doc_capture_*`)
+
+`doc_import_*` 要**拿着文件**才发,所以在它之前的整个采集环节此前是彻底的盲区:
+抛异常 / 永久挂起 / 返回空列表 —— 三种病因在 UI 上渲染成字节级相同的症状(什么都没
+发生),在数据里也一样都是零。这两条事件就是把那三种分开。
+
+`source`:`camera` / `gallery` / `files` —— 是**哪个采集器**坏了。
+⚠️ 与 `doc_import_*` 的 `source` **口径不同**:那里代拍统一报 `proxy`,这里永远报具体采集器。
+个人模式与代拍由会话上下文的 `mode` 切开,不占这个字段。
+
+`reason`(枚举 `ImportCaptureIssue`,`lib/analytics.dart`)。归属事件写在枚举上,调用点只管说出原因:
+
+**`doc_capture_degraded`(采集器没起来,已落到普通相机,后面可能还是成功的)**
+
+- `gmsCheckThrew` —— Google Play 服务可用性检测本身抛异常,按「无 GMS」处置
+- `scannerStalled` —— 启动看门狗触发:5 秒没结果且 App 仍在前台 `resumed` → 扫描器根本没起来
+- `scannerThrew` —— 文档扫描器抛异常(设备不支持、权限被拒)
+
+**`doc_capture_aborted`(这一轮一份都没拿到)**
+
+- `userCancelled` —— 用户主动取消。**正常,不是 bug** —— 但它是上面那些的分母
+- `emptyResult` —— 采集器返回了结果却什么都没有。用户没取消,东西却没了 = bug。哪一种看 `source`:`camera` = 扫描器回了 0 页;`files` = 选中的文件在本机取不到(云盘上没下载完)
+- `pickerThrew` —— 系统相机 / 相册 / 文件选择器抛异常
+- `unknown` —— 外层兜底 catch。占比一高说明还有没枚举到的分支
+
+> **`scannerStalled` 是这两条事件存在的首要理由。** 已知病因:设备有 GMS 但被门控
+> (用户报错「Google Play 无法连接到互联网」),ML Kit 文档扫描模块下载不到 →
+> `getStartScanIntent` 的 Task 既不 success 也不 failure → method channel 永不回调 →
+> future 永久 pending。它在屏上与「用户取消」完全无法区分。
+
+⚠️ **`reason` 之外的一切不上报。** 异常字符串**只显示在屏上**(屏上探针,见
+`docs/log/2026-07-18-qr-share-security-and-community-prep.md` 的 07-21 追记),
+因为异常文本里常带文件名和绝对路径 —— 那是病历内容。
 
 ### 导出与出码
 

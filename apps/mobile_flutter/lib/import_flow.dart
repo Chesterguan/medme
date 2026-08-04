@@ -74,7 +74,21 @@ Future<void> showImportSheet(BuildContext context) async {
   await Future<void>.delayed(const Duration(milliseconds: 350));
   if (!context.mounted) return;
 
-  final items = await pickImportItems(choice);
+  // 屏上探针的出口。**在任何 await 之前同步取出**,之后就不再碰 context ——
+  // 采集期间用户可能把这一屏推走,而 `ScaffoldMessengerState` 自己知道有没有 mounted。
+  final probe = ScaffoldMessenger.of(context);
+
+  final List<PendingImport> items;
+  try {
+    items = await pickImportItems(choice, probe: probe);
+  } catch (e) {
+    // 兜底。[pickImportItems] 内部每个分支都已自己 catch,所以这里理论上不可达 ——
+    // 但「理论上不可达」正是前五版每次都栽的地方:一个漏网的异常从这里飘走,
+    // 上面 `await` 的调用方什么都不做,屏上就是「点了没反应」。
+    debugPrint('[import] 采集环节未捕获异常: $e');
+    _report(probe, choice, ImportCaptureIssue.unknown, '采集没能开始:$e');
+    return;
+  }
   if (items.isEmpty || !context.mounted) return;
   await _runImport(context, items, choice);
 }
@@ -89,7 +103,15 @@ enum ImportChoice { camera, gallery, files }
 /// 不碰 OCR/落库**——OCR 识别文本、往哪个保险箱落库,都由调用方在拿到
 /// [PendingImport] 列表后自己决定(见 [showImportSheet] 与
 /// `proxy_intake_flow.dart` 两个不同的下游处理)。
-Future<List<PendingImport>> pickImportItems(ImportChoice choice) async {
+///
+/// **本函数不再向外抛异常。** 每个采集分支都自己 catch,失败一律「屏上说清 + 分类
+/// 埋点 + 返回空」——因为这条链路上的每一种失败,在 UI 上都长得一模一样(什么都没
+/// 发生),不主动说就只能靠猜。[probe] 是屏上探针的出口(`ScaffoldMessenger`),
+/// 调用方在进入本函数**之前**同步取好;不传就只剩埋点和 `debugPrint`。
+Future<List<PendingImport>> pickImportItems(
+  ImportChoice choice, {
+  ScaffoldMessengerState? probe,
+}) async {
   switch (choice) {
     case ImportChoice.camera:
       // 文档扫描器(iOS VisionKit / 安卓 ML Kit Document Scanner)自动画框 + 透视
@@ -102,54 +124,238 @@ Future<List<PendingImport>> pickImportItems(ImportChoice choice) async {
       // 拉正,体验好);无 → 退普通系统相机(image_picker 走系统相机 app 的 intent,
       // 不需要 CAMERA 权限,任何机器都能开)。歪拍质量由下游 OCR 的整页转正 + 切片
       // 兜底,拍照本身不再被 GMS 卡死。iOS 恒用 VisionKit(不涉及 GMS)。
-      final useScanner = !Platform.isAndroid ||
-          (await GoogleApiAvailability.instance
+      //
+      // ⚠️ 这个检测此前是**裸 await**:`google_api_availability` 走 method channel,
+      // 在 GMS 被裁掉/被停用的机器上它自己就可能抛 PlatformException,而异常从这里
+      // 一路飘到调用方的 `await`,屏上什么都不显示 —— 又是一个「点了没反应」。
+      // 现在检测失败**当作没有 GMS 处置**(与「检测到没有」同一条路),并在屏上说明。
+      var useScanner = !Platform.isAndroid;
+      if (Platform.isAndroid) {
+        try {
+          useScanner = (await GoogleApiAvailability.instance
                   .checkGooglePlayServicesAvailability()) ==
               GooglePlayServicesAvailability.success;
+        } catch (e) {
+          debugPrint('[import] GMS 检测失败,按无 GMS 处理: $e');
+          _report(
+            probe,
+            choice,
+            ImportCaptureIssue.gmsCheckThrew,
+            '检测 Google Play 服务时出错,已改用普通相机:$e',
+          );
+          useScanner = false;
+        }
+      }
       if (useScanner) {
         // 不要给交互式扫描器加 wall-clock 超时:VisionKit 是多页扫描器,用户拍完一页
         // 后靠右上角「保存」结束,合理耗时远超十几秒(踩过:12s timeout 会在用户还在
         // 扫时提前抛出 → 落回退分支叠一个相机 → 点保存「不往后执行」)。取消由插件
         // 返回空处理。扫描器真抛异常(设备不支持等)也落到下面的普通相机。
+        //
+        // 这条教训仍然成立,**下面那个看门狗没有违反它**:它守的不是「扫完」,是
+        // 「扫描器起没起来」,而且判据不是钟表 —— 见 [_scannerFailedToLaunch]。
         try {
-          final paths = await CunningDocumentScanner.getPictures(
+          final scan = CunningDocumentScanner.getPictures(
             scannerSource: ScannerSource.camera,
           );
-          if (paths == null || paths.isEmpty) return const [];
-          return [
-            for (final p in paths)
-              PendingImport(name: p.split('/').last, path: p, isImage: true),
-          ];
+          if (await _scannerFailedToLaunch(scan)) {
+            // 扫描器根本没起来。降级到普通相机 —— 注意这里**没有 return**,直接落到
+            // 下面那段,与「检测到无 GMS」走同一条路。
+            debugPrint('[import] 文档扫描器 ${_kScannerLaunchWatchdog.inSeconds}s 未启动,回退普通拍照');
+            _report(
+              probe,
+              choice,
+              ImportCaptureIssue.scannerStalled,
+              '文档扫描器 ${_kScannerLaunchWatchdog.inSeconds} 秒没有打开'
+              '(常见原因:Google Play 服务下载不到扫描模块),已改用普通相机',
+            );
+          } else {
+            // 走到这里说明扫描器要么已经返回了,要么已经把自己的界面顶到了前台
+            // (用户正在扫)—— 后者**不设任何时限**,老老实实等。
+            final paths = await scan;
+            if (paths == null || paths.isEmpty) {
+              // ⚠️ 「用户取消」与「静默失败」在这里分家。插件的返回语义**两个平台
+              // 恰好是反的**(2.6.0 源码实证):
+              //   安卓 `RESULT_CANCELED` → `success(emptyList())` → 空列表 = 取消;
+              //         ML Kit 回了结果但 `pages` 为 null → null = 一页都没有 = 静默失败。
+              //   iOS  `documentCameraViewControllerDidCancel` → `nil` → null = 取消;
+              //         扫完 0 页 → `processSelectedImages([])` → 空列表 = 静默失败。
+              // 此前两者一律 `return const []`,于是「点拍照没反应」的分子分母糊在
+              // 一起,永远算不出真实占比。
+              final cancelled = Platform.isAndroid ? paths != null : paths == null;
+              _report(
+                probe,
+                choice,
+                cancelled
+                    ? ImportCaptureIssue.userCancelled
+                    : ImportCaptureIssue.emptyResult,
+                // 取消是正常操作,**不打扰用户**;静默失败才是要说出来的那一种。
+                cancelled ? null : '扫描器没有返回任何一页(既不是取消,也没有报错)',
+              );
+              return const [];
+            }
+            return [
+              for (final p in paths)
+                PendingImport(name: p.split('/').last, path: p, isImage: true),
+            ];
+          }
         } catch (e) {
           debugPrint('[import] 文档扫描器不可用,回退普通拍照: $e');
+          _report(
+            probe,
+            choice,
+            ImportCaptureIssue.scannerThrew,
+            '文档扫描器不可用,已改用普通相机:$e',
+          );
         }
       }
-      final file = await ImagePicker().pickImage(source: ImageSource.camera);
-      if (file == null) return const [];
-      return [PendingImport(name: file.name, path: file.path, isImage: true)];
+      try {
+        final file = await ImagePicker().pickImage(source: ImageSource.camera);
+        if (file == null) {
+          // image_picker 的语义比扫描器干净:取消恒为 null,失败恒是抛异常。
+          _report(probe, choice, ImportCaptureIssue.userCancelled, null);
+          return const [];
+        }
+        return [PendingImport(name: file.name, path: file.path, isImage: true)];
+      } catch (e) {
+        // 此前也是**裸 await**。相机权限被拒、系统相机 app 被禁用都从这里抛
+        // PlatformException —— 而这正是最可能真实发生的那一类,却完全不可见。
+        debugPrint('[import] 普通相机打不开: $e');
+        _report(probe, choice, ImportCaptureIssue.pickerThrew, '打不开相机:$e');
+        return const [];
+      }
     case ImportChoice.gallery:
-      final files = await ImagePicker().pickMultiImage();
-      return [
-        for (final f in files)
-          PendingImport(name: f.name, path: f.path, isImage: true),
-      ];
+      try {
+        final files = await ImagePicker().pickMultiImage();
+        if (files.isEmpty) {
+          _report(probe, choice, ImportCaptureIssue.userCancelled, null);
+          return const [];
+        }
+        return [
+          for (final f in files)
+            PendingImport(name: f.name, path: f.path, isImage: true),
+        ];
+      } catch (e) {
+        debugPrint('[import] 相册打不开: $e');
+        _report(probe, choice, ImportCaptureIssue.pickerThrew, '打不开相册:$e');
+        return const [];
+      }
     case ImportChoice.files:
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        type: FileType.custom,
-        allowedExtensions: ['pdf', 'txt', 'png', 'jpg', 'jpeg', 'tiff', 'heic'],
-      );
-      if (result == null) return const [];
-      return [
-        for (final f in result.files)
-          if (f.path != null)
-            PendingImport(
-              name: f.name,
-              path: f.path!,
-              isImage: isImageName(f.name),
-            ),
-      ];
+      try {
+        final result = await FilePicker.platform.pickFiles(
+          allowMultiple: true,
+          type: FileType.custom,
+          allowedExtensions: [
+            'pdf', 'txt', 'png', 'jpg', 'jpeg', 'tiff', 'heic',
+          ],
+        );
+        if (result == null) {
+          _report(probe, choice, ImportCaptureIssue.userCancelled, null);
+          return const [];
+        }
+        final picked = [
+          for (final f in result.files)
+            if (f.path != null)
+              PendingImport(
+                name: f.name,
+                path: f.path!,
+                isImage: isImageName(f.name),
+              ),
+        ];
+        // 选了文件却一个 path 都没拿到(云盘上没下载下来的文件就是这样)——
+        // 用户明明选了东西,屏上却毫无反应。这是静默失败,不是取消。
+        if (picked.isEmpty && result.files.isNotEmpty) {
+          _report(
+            probe,
+            choice,
+            ImportCaptureIssue.emptyResult,
+            '选中的文件在本机上取不到(可能还没从云端下载完)',
+          );
+        }
+        return picked;
+      } catch (e) {
+        debugPrint('[import] 文件选择器打不开: $e');
+        _report(probe, choice, ImportCaptureIssue.pickerThrew, '打不开文件选择器:$e');
+        return const [];
+      }
   }
+}
+
+/// 「启动到扫描器界面出现」这一段的看门狗时限。**只管启动,不管扫描。**
+const Duration _kScannerLaunchWatchdog = Duration(seconds: 5);
+
+/// 扫描器**是不是压根没起来**。`true` = 该降级了。
+///
+/// ## 为什么这不是 v24 那个 12 秒 wall-clock
+///
+/// v24 的错在于用「过了多久」推断「出没出事」,于是用户还在多页扫描时被提前打断
+/// (→ 落回退分支叠一个相机 → 点保存不往后执行)。这里的判据**不是钟表,是
+/// 应用生命周期**:
+///
+///   安卓的 ML Kit 扫描器是**另一个 Activity**(`startIntentSenderForResult`)。
+///   它只要真的起来了,本 Activity 必然离开 `resumed`。所以「5 秒了,结果还没回来,
+///   而 App 还稳稳停在前台 resumed」——这只可能意味着**没有任何原生界面被拉起来**,
+///   不可能是「用户正在扫」(用户正在扫时,前台根本不是我们)。
+///
+/// 这正好覆盖已知的那个病因:GMS 在场但被门控,`getStartScanIntent` 返回的 Task
+/// 既不 success 也不 failure → 两个 listener 都不触发 → method channel 永不回调
+/// → future 永久 pending。此前唯一的兜底(build 29 的 12s 超时)在 `b6a9757` 被删掉,
+/// 于是它变回了一个纯粹的静默挂起。
+///
+/// ## 只在安卓武装
+///
+/// iOS 的 VisionKit 是**同进程内 present 的 view controller**,前台一直是我们自己,
+/// `resumed` 不会变 —— 这个判据在 iOS 上恒为「没起来」,会误伤。而 iOS 也根本没有
+/// 模块下载这回事(VisionKit 是系统内置)。所以 iOS 上一秒都不等,行为一字不变。
+Future<bool> _scannerFailedToLaunch(Future<List<String>?> scan) {
+  if (!Platform.isAndroid) return Future<bool>.value(false);
+  return Future.any<bool>([
+    // 扫描器先返回(成功/取消/抛错)→ 没卡住。**成功路径不会因此多等一毫秒。**
+    scan.then<bool>((_) => false, onError: (_) => false),
+    Future<void>.delayed(_kScannerLaunchWatchdog).then((_) {
+      // `lifecycleState` 在极早期可能是 null。读不到就**不判它有罪** ——
+      // 宁可维持现状(继续等),也不能凭猜测把用户的扫描打断。
+      return WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    }),
+  ]);
+}
+
+/// 屏上探针 + 分类埋点。**一个失败分支一行调用**,这是本次改动的全部产出形式。
+///
+/// 「屏上探针」是 2026-07-21 那次(相机权限,五版才修对)唯一奏效的手法:真机读不到
+/// 日志(工具都要 USB 有线,用户无线连),于是让 App 把状态弹成 SnackBar,用户点一次
+/// 就一击定位。见 `docs/log/2026-07-18-qr-share-security-and-community-prep.md` 的追记。
+/// 这里把那一招从「临时诊断构建」固化成常驻能力。
+///
+/// ## 两条数据走两条路,绝不混
+///
+/// - [detail] 是**给人看的**,含异常字符串,只进 SnackBar 和 `debugPrint`,**不出设备**。
+///   异常文本里常带文件名和绝对路径,那是病历内容。传 `null` 表示这一类不值得打扰用户
+///   (例如用户主动取消)。
+/// - [issue] 是**给后台看的**,只有枚举名一个词,进埋点。
+void _report(
+  ScaffoldMessengerState? probe,
+  ImportChoice source,
+  ImportCaptureIssue issue,
+  String? detail,
+) {
+  Analytics.track(issue.event, {
+    // 注意:这里的 `source` 是**采集器**(camera/gallery/files),与 `doc_import_*`
+    // 的 `source`(那里代拍会报 `proxy`)口径不同 —— 坏掉的是哪个采集器才是这条
+    // 事件要回答的。个人模式 vs 代拍由会话上下文的 `mode` 切开,不占这个字段。
+    'source': source.name,
+    'reason': issue.name,
+  });
+  if (detail == null) return;
+  // 分析失败绝不影响功能,屏上探针同理:messenger 已经不在树上就安静放弃。
+  if (probe == null || !probe.mounted) return;
+  probe.showSnackBar(
+    SnackBar(
+      content: Text(detail),
+      duration: const Duration(seconds: 8),
+      behavior: SnackBarBehavior.floating,
+    ),
+  );
 }
 
 Future<void> _runImport(

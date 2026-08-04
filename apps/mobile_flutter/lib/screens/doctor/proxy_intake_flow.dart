@@ -297,7 +297,19 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     await Future<void>.delayed(const Duration(milliseconds: 350));
     if (!mounted) return;
 
-    final items = await pickImportItems(choice);
+    // 屏上探针的出口,在 await 之前同步取好(与 `import_flow.showImportSheet` 同一手法)。
+    final probe = ScaffoldMessenger.of(context);
+
+    final List<PendingImport> items;
+    try {
+      items = await pickImportItems(choice, probe: probe);
+    } catch (e) {
+      // 兜底:[pickImportItems] 内部每个分支都已自己 catch,这里理论上不可达。
+      // 但诊室里「点了没反应」比在家更贵 —— 医生当着病人的面无从判断,只能重来。
+      debugPrint('[proxy] 采集环节未捕获异常: $e');
+      if (mounted) await _showError('采集没能开始', '$e');
+      return;
+    }
     if (items.isEmpty || !mounted) return;
     await _ingest(items);
   }

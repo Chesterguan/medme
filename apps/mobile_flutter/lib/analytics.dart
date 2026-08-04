@@ -263,6 +263,24 @@ enum AnalyticsEvent {
     'reason_code',
   }),
 
+  /// 采集器**没起来**,已降级到备用路径(普通系统相机)。属性:`source`、`reason`。
+  ///
+  /// 回答的决定:安卓「点拍照没反应」到底是哪一种病因 —— GMS 检测自己炸了、扫描器
+  /// 抛异常、还是 `getStartScanIntent` 的 Task 既不 success 也不 failure(模块下不
+  /// 下来)导致 method channel 永不回调。这三种在 UI 上是**字节级相同**的症状,
+  /// 五版没修对就是因为在数据里也一样是零 —— [docImportStarted] 要等到拿着文件了
+  /// 才发,整个采集环节此前是彻底的盲区。
+  ///
+  /// ⚠️ `reason` 必须是预定义枚举([ImportCaptureIssue]);异常文本**只上屏,不上报**。
+  docCaptureDegraded('doc_capture_degraded', {'source', 'reason'}),
+
+  /// 采集这一轮结束,但**一份都没拿到**。属性:`source`、`reason`。
+  ///
+  /// 回答的决定:「点了没反应」里有多少是**用户自己取消**(正常,不用修)、多少是
+  /// 采集器**静默返回空**(bug,要修)。这两者在屏上完全一样,此前一律
+  /// `return const []`,连分子分母都分不开。
+  docCaptureAborted('doc_capture_aborted', {'source', 'reason'}),
+
   /// 打开了一份病历。**没有任何内容属性,只有「发生了」。**
   /// 回答的决定:档案是被**看**的还是被**堆**的 —— 如果导入了从不打开,
   /// 这就是个垃圾桶,不是助手。
@@ -454,4 +472,48 @@ enum ImportFailReason {
     }
     return unknown;
   }
+}
+
+/// 采集环节(拍照 / 相册 / 选文件,`import_flow.dart` 的 `pickImportItems`)出了
+/// 什么事。**与 [ImportFailReason] 分工明确**:那个说的是「拿到文件之后处理失败」,
+/// 这个说的是「压根没拿到文件」。
+///
+/// 存在的理由:抛异常 / 永久挂起 / 返回空列表 —— 三种完全不同的病因,在 UI 上渲染成
+/// 字节级相同的症状(什么都没发生)。不把它们分开命名,就只能靠猜。
+///
+/// ⚠️ 上报的永远是**这个枚举的名字**,绝不是异常文本 —— 异常里常带文件名和路径。
+/// 异常文本可以显示在屏上(屏上探针),但不出设备。
+enum ImportCaptureIssue {
+  // ── 降级类:采集器没起来,已落到备用路径,后面可能还是成功的 ──────────────
+  /// GMS 可用性检测本身抛了异常。**此前是裸 await**,炸了整个流程直接消失。
+  gmsCheckThrew(AnalyticsEvent.docCaptureDegraded),
+
+  /// 启动看门狗触发:扫描器迟迟没起来,而 App 还停在前台 —— 说明没有任何原生
+  /// 界面被拉起来,不是「用户正在扫」。详见 `import_flow.dart` 的判据说明。
+  scannerStalled(AnalyticsEvent.docCaptureDegraded),
+
+  /// 扫描器抛异常(设备不支持、权限被拒等),已回退普通相机。
+  scannerThrew(AnalyticsEvent.docCaptureDegraded),
+
+  // ── 中止类:这一轮采集一份都没拿到 ────────────────────────────────────────
+  /// 用户主动取消。**正常,不是 bug** —— 但必须和下面那条分开,否则
+  /// 「点拍照没反应」永远算不出真实占比。
+  userCancelled(AnalyticsEvent.docCaptureAborted),
+
+  /// 采集器**返回了结果,但里面什么都没有**。用户没取消,东西却没了 —— 这是 bug。
+  /// 具体是哪一种由同事件的 `source` 区分:`camera` = 扫描器回了 0 页;
+  /// `files` = 选中的文件在本机取不到(云盘上还没下载完的文件就是这样)。
+  emptyResult(AnalyticsEvent.docCaptureAborted),
+
+  /// 系统相册 / 相机 / 文件选择器抛异常。
+  pickerThrew(AnalyticsEvent.docCaptureAborted),
+
+  /// 没归上类(采集函数外层的兜底 catch)。占比一高就说明还有没枚举到的分支。
+  unknown(AnalyticsEvent.docCaptureAborted);
+
+  const ImportCaptureIssue(this.event);
+
+  /// 这条原因归哪个事件。写在枚举上而不是调用点,是为了让「降级 vs 中止」的归属
+  /// 只有一处定义 —— 调用点只管说出原因,不用记得它该发哪条事件。
+  final AnalyticsEvent event;
 }
