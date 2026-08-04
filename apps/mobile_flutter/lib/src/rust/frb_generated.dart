@@ -6,6 +6,7 @@
 import 'api/dto.dart';
 import 'api/vault.dart';
 import 'api/vault_ephemeral.dart';
+import 'api/vault_projections.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -68,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1943098302;
+  int get rustContentHash => -2100584594;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -235,6 +236,12 @@ abstract class RustLibApi extends BaseApi {
   Future<void> crateApiVaultResetVault();
 
   Future<String> crateApiVaultSourceFileObjectPath({required PlatformInt64 id});
+
+  Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard();
+
+  Future<List<TrendSeriesDto>> crateApiVaultProjectionsViewTrends();
+
+  Future<VisitSummaryDto> crateApiVaultProjectionsViewVisitSummary();
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -1629,6 +1636,87 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argNames: ["id"],
       );
 
+  @override
+  Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 45,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_emergency_card_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProjectionsViewEmergencyCardConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProjectionsViewEmergencyCardConstMeta =>
+      const TaskConstMeta(debugName: "view_emergency_card", argNames: []);
+
+  @override
+  Future<List<TrendSeriesDto>> crateApiVaultProjectionsViewTrends() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 46,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_trend_series_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProjectionsViewTrendsConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProjectionsViewTrendsConstMeta =>
+      const TaskConstMeta(debugName: "view_trends", argNames: []);
+
+  @override
+  Future<VisitSummaryDto> crateApiVaultProjectionsViewVisitSummary() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 47,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_visit_summary_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProjectionsViewVisitSummaryConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProjectionsViewVisitSummaryConstMeta =>
+      const TaskConstMeta(debugName: "view_visit_summary", argNames: []);
+
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -1639,6 +1727,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as String;
+  }
+
+  @protected
+  ActiveMedDto dco_decode_active_med_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return ActiveMedDto(
+      name: dco_decode_String(arr[0]),
+      atc: dco_decode_opt_String(arr[1]),
+      dose: dco_decode_opt_String(arr[2]),
+      since: dco_decode_opt_String(arr[3]),
+      until: dco_decode_opt_String(arr[4]),
+      documentIds: dco_decode_list_prim_i_64_strict(arr[5]),
+    );
+  }
+
+  @protected
+  AllergyItemDto dco_decode_allergy_item_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return AllergyItemDto(
+      substance: dco_decode_String(arr[0]),
+      reaction: dco_decode_String(arr[1]),
+      documentIds: dco_decode_list_prim_i_64_strict(arr[2]),
+    );
   }
 
   @protected
@@ -1689,6 +1806,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_i_64(raw);
+  }
+
+  @protected
+  ChronicConditionDto dco_decode_chronic_condition_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return ChronicConditionDto(
+      term: dco_decode_String(arr[0]),
+      onset: dco_decode_opt_String(arr[1]),
+      icdCode: dco_decode_opt_String(arr[2]),
+      documentIds: dco_decode_list_prim_i_64_strict(arr[3]),
+    );
   }
 
   @protected
@@ -1760,6 +1891,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       title: dco_decode_opt_String(arr[4]),
       pageCount: dco_decode_i_32(arr[5]),
       sliceCount: dco_decode_opt_box_autoadd_i_32(arr[6]),
+    );
+  }
+
+  @protected
+  EmergencyCardDto dco_decode_emergency_card_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return EmergencyCardDto(
+      bloodType: dco_decode_opt_String(arr[0]),
+      allergies: dco_decode_list_allergy_item_dto(arr[1]),
+      activeMeds: dco_decode_list_active_med_dto(arr[2]),
+      conditions: dco_decode_list_chronic_condition_dto(arr[3]),
     );
   }
 
@@ -1847,6 +1992,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ActiveMedDto> dco_decode_list_active_med_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_active_med_dto).toList();
+  }
+
+  @protected
+  List<AllergyItemDto> dco_decode_list_allergy_item_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_allergy_item_dto).toList();
+  }
+
+  @protected
+  List<ChronicConditionDto> dco_decode_list_chronic_condition_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_chronic_condition_dto)
+        .toList();
+  }
+
+  @protected
   List<ConfirmedStatusDto> dco_decode_list_confirmed_status_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_confirmed_status_dto).toList();
@@ -1904,6 +2069,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<TimelineGroupDto> dco_decode_list_timeline_group_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_timeline_group_dto).toList();
+  }
+
+  @protected
+  List<TrendPointDto> dco_decode_list_trend_point_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_trend_point_dto).toList();
+  }
+
+  @protected
+  List<TrendSeriesDto> dco_decode_list_trend_series_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_trend_series_dto).toList();
+  }
+
+  @protected
+  List<VisitLabDto> dco_decode_list_visit_lab_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_visit_lab_dto).toList();
+  }
+
+  @protected
+  List<VisitRecordDto> dco_decode_list_visit_record_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_visit_record_dto).toList();
   }
 
   @protected
@@ -2115,6 +2304,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TrendPointDto dco_decode_trend_point_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return TrendPointDto(
+      date: dco_decode_opt_String(arr[0]),
+      value: dco_decode_f_64(arr[1]),
+      unit: dco_decode_opt_String(arr[2]),
+      flag: dco_decode_opt_String(arr[3]),
+      documentId: dco_decode_i_64(arr[4]),
+    );
+  }
+
+  @protected
+  TrendSeriesDto dco_decode_trend_series_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    return TrendSeriesDto(
+      name: dco_decode_String(arr[0]),
+      analyteKey: dco_decode_opt_String(arr[1]),
+      loinc: dco_decode_opt_String(arr[2]),
+      unit: dco_decode_opt_String(arr[3]),
+      refLow: dco_decode_opt_box_autoadd_f_64(arr[4]),
+      refHigh: dco_decode_opt_box_autoadd_f_64(arr[5]),
+      anyAbnormal: dco_decode_bool(arr[6]),
+      points: dco_decode_list_trend_point_dto(arr[7]),
+    );
+  }
+
+  @protected
   int dco_decode_u_8(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
@@ -2124,6 +2346,54 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void dco_decode_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return;
+  }
+
+  @protected
+  VisitLabDto dco_decode_visit_lab_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    return VisitLabDto(
+      name: dco_decode_String(arr[0]),
+      date: dco_decode_String(arr[1]),
+      value: dco_decode_f_64(arr[2]),
+      unit: dco_decode_opt_String(arr[3]),
+      flag: dco_decode_opt_String(arr[4]),
+      refLow: dco_decode_opt_box_autoadd_f_64(arr[5]),
+      refHigh: dco_decode_opt_box_autoadd_f_64(arr[6]),
+      documentId: dco_decode_i_64(arr[7]),
+    );
+  }
+
+  @protected
+  VisitRecordDto dco_decode_visit_record_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return VisitRecordDto(
+      title: dco_decode_opt_String(arr[0]),
+      kind: dco_decode_String(arr[1]),
+      date: dco_decode_opt_String(arr[2]),
+      documentIds: dco_decode_list_prim_i_64_strict(arr[3]),
+    );
+  }
+
+  @protected
+  VisitSummaryDto dco_decode_visit_summary_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return VisitSummaryDto(
+      patient: dco_decode_patient_profile_dto(arr[0]),
+      allergies: dco_decode_list_allergy_item_dto(arr[1]),
+      activeMeds: dco_decode_list_active_med_dto(arr[2]),
+      recentLabs: dco_decode_list_visit_lab_dto(arr[3]),
+      recentVisits: dco_decode_list_visit_record_dto(arr[4]),
+      plainText: dco_decode_String(arr[5]),
+    );
   }
 
   @protected
@@ -2138,6 +2408,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
     return utf8.decoder.convert(inner);
+  }
+
+  @protected
+  ActiveMedDto sse_decode_active_med_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_name = sse_decode_String(deserializer);
+    var var_atc = sse_decode_opt_String(deserializer);
+    var var_dose = sse_decode_opt_String(deserializer);
+    var var_since = sse_decode_opt_String(deserializer);
+    var var_until = sse_decode_opt_String(deserializer);
+    var var_documentIds = sse_decode_list_prim_i_64_strict(deserializer);
+    return ActiveMedDto(
+      name: var_name,
+      atc: var_atc,
+      dose: var_dose,
+      since: var_since,
+      until: var_until,
+      documentIds: var_documentIds,
+    );
+  }
+
+  @protected
+  AllergyItemDto sse_decode_allergy_item_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_substance = sse_decode_String(deserializer);
+    var var_reaction = sse_decode_String(deserializer);
+    var var_documentIds = sse_decode_list_prim_i_64_strict(deserializer);
+    return AllergyItemDto(
+      substance: var_substance,
+      reaction: var_reaction,
+      documentIds: var_documentIds,
+    );
   }
 
   @protected
@@ -2190,6 +2492,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_i_64(deserializer));
+  }
+
+  @protected
+  ChronicConditionDto sse_decode_chronic_condition_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_term = sse_decode_String(deserializer);
+    var var_onset = sse_decode_opt_String(deserializer);
+    var var_icdCode = sse_decode_opt_String(deserializer);
+    var var_documentIds = sse_decode_list_prim_i_64_strict(deserializer);
+    return ChronicConditionDto(
+      term: var_term,
+      onset: var_onset,
+      icdCode: var_icdCode,
+      documentIds: var_documentIds,
+    );
   }
 
   @protected
@@ -2274,6 +2593,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       title: var_title,
       pageCount: var_pageCount,
       sliceCount: var_sliceCount,
+    );
+  }
+
+  @protected
+  EmergencyCardDto sse_decode_emergency_card_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_bloodType = sse_decode_opt_String(deserializer);
+    var var_allergies = sse_decode_list_allergy_item_dto(deserializer);
+    var var_activeMeds = sse_decode_list_active_med_dto(deserializer);
+    var var_conditions = sse_decode_list_chronic_condition_dto(deserializer);
+    return EmergencyCardDto(
+      bloodType: var_bloodType,
+      allergies: var_allergies,
+      activeMeds: var_activeMeds,
+      conditions: var_conditions,
     );
   }
 
@@ -2364,6 +2698,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       documentId: var_documentId,
       detectedName: var_detectedName,
     );
+  }
+
+  @protected
+  List<ActiveMedDto> sse_decode_list_active_med_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ActiveMedDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_active_med_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<AllergyItemDto> sse_decode_list_allergy_item_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <AllergyItemDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_allergy_item_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ChronicConditionDto> sse_decode_list_chronic_condition_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ChronicConditionDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_chronic_condition_dto(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -2481,6 +2857,62 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <TimelineGroupDto>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_timeline_group_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<TrendPointDto> sse_decode_list_trend_point_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TrendPointDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_trend_point_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<TrendSeriesDto> sse_decode_list_trend_series_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TrendSeriesDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_trend_series_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<VisitLabDto> sse_decode_list_visit_lab_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <VisitLabDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_visit_lab_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<VisitRecordDto> sse_decode_list_visit_record_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <VisitRecordDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_visit_record_dto(deserializer));
     }
     return ans_;
   }
@@ -2724,6 +3156,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TrendPointDto sse_decode_trend_point_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_date = sse_decode_opt_String(deserializer);
+    var var_value = sse_decode_f_64(deserializer);
+    var var_unit = sse_decode_opt_String(deserializer);
+    var var_flag = sse_decode_opt_String(deserializer);
+    var var_documentId = sse_decode_i_64(deserializer);
+    return TrendPointDto(
+      date: var_date,
+      value: var_value,
+      unit: var_unit,
+      flag: var_flag,
+      documentId: var_documentId,
+    );
+  }
+
+  @protected
+  TrendSeriesDto sse_decode_trend_series_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_name = sse_decode_String(deserializer);
+    var var_analyteKey = sse_decode_opt_String(deserializer);
+    var var_loinc = sse_decode_opt_String(deserializer);
+    var var_unit = sse_decode_opt_String(deserializer);
+    var var_refLow = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_refHigh = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_anyAbnormal = sse_decode_bool(deserializer);
+    var var_points = sse_decode_list_trend_point_dto(deserializer);
+    return TrendSeriesDto(
+      name: var_name,
+      analyteKey: var_analyteKey,
+      loinc: var_loinc,
+      unit: var_unit,
+      refLow: var_refLow,
+      refHigh: var_refHigh,
+      anyAbnormal: var_anyAbnormal,
+      points: var_points,
+    );
+  }
+
+  @protected
   int sse_decode_u_8(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8();
@@ -2732,6 +3204,63 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_decode_unit(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+  }
+
+  @protected
+  VisitLabDto sse_decode_visit_lab_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_name = sse_decode_String(deserializer);
+    var var_date = sse_decode_String(deserializer);
+    var var_value = sse_decode_f_64(deserializer);
+    var var_unit = sse_decode_opt_String(deserializer);
+    var var_flag = sse_decode_opt_String(deserializer);
+    var var_refLow = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_refHigh = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_documentId = sse_decode_i_64(deserializer);
+    return VisitLabDto(
+      name: var_name,
+      date: var_date,
+      value: var_value,
+      unit: var_unit,
+      flag: var_flag,
+      refLow: var_refLow,
+      refHigh: var_refHigh,
+      documentId: var_documentId,
+    );
+  }
+
+  @protected
+  VisitRecordDto sse_decode_visit_record_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_title = sse_decode_opt_String(deserializer);
+    var var_kind = sse_decode_String(deserializer);
+    var var_date = sse_decode_opt_String(deserializer);
+    var var_documentIds = sse_decode_list_prim_i_64_strict(deserializer);
+    return VisitRecordDto(
+      title: var_title,
+      kind: var_kind,
+      date: var_date,
+      documentIds: var_documentIds,
+    );
+  }
+
+  @protected
+  VisitSummaryDto sse_decode_visit_summary_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_patient = sse_decode_patient_profile_dto(deserializer);
+    var var_allergies = sse_decode_list_allergy_item_dto(deserializer);
+    var var_activeMeds = sse_decode_list_active_med_dto(deserializer);
+    var var_recentLabs = sse_decode_list_visit_lab_dto(deserializer);
+    var var_recentVisits = sse_decode_list_visit_record_dto(deserializer);
+    var var_plainText = sse_decode_String(deserializer);
+    return VisitSummaryDto(
+      patient: var_patient,
+      allergies: var_allergies,
+      activeMeds: var_activeMeds,
+      recentLabs: var_recentLabs,
+      recentVisits: var_recentVisits,
+      plainText: var_plainText,
+    );
   }
 
   @protected
@@ -2747,6 +3276,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
+  }
+
+  @protected
+  void sse_encode_active_med_dto(ActiveMedDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.name, serializer);
+    sse_encode_opt_String(self.atc, serializer);
+    sse_encode_opt_String(self.dose, serializer);
+    sse_encode_opt_String(self.since, serializer);
+    sse_encode_opt_String(self.until, serializer);
+    sse_encode_list_prim_i_64_strict(self.documentIds, serializer);
+  }
+
+  @protected
+  void sse_encode_allergy_item_dto(
+    AllergyItemDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.substance, serializer);
+    sse_encode_String(self.reaction, serializer);
+    sse_encode_list_prim_i_64_strict(self.documentIds, serializer);
   }
 
   @protected
@@ -2810,6 +3361,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_chronic_condition_dto(
+    ChronicConditionDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.term, serializer);
+    sse_encode_opt_String(self.onset, serializer);
+    sse_encode_opt_String(self.icdCode, serializer);
+    sse_encode_list_prim_i_64_strict(self.documentIds, serializer);
+  }
+
+  @protected
   void sse_encode_claim_result_dto(
     ClaimResultDto self,
     SseSerializer serializer,
@@ -2866,6 +3429,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.title, serializer);
     sse_encode_i_32(self.pageCount, serializer);
     sse_encode_opt_box_autoadd_i_32(self.sliceCount, serializer);
+  }
+
+  @protected
+  void sse_encode_emergency_card_dto(
+    EmergencyCardDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_String(self.bloodType, serializer);
+    sse_encode_list_allergy_item_dto(self.allergies, serializer);
+    sse_encode_list_active_med_dto(self.activeMeds, serializer);
+    sse_encode_list_chronic_condition_dto(self.conditions, serializer);
   }
 
   @protected
@@ -2941,6 +3516,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.docType, serializer);
     sse_encode_opt_box_autoadd_i_64(self.documentId, serializer);
     sse_encode_opt_String(self.detectedName, serializer);
+  }
+
+  @protected
+  void sse_encode_list_active_med_dto(
+    List<ActiveMedDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_active_med_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_allergy_item_dto(
+    List<AllergyItemDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_allergy_item_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_chronic_condition_dto(
+    List<ChronicConditionDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_chronic_condition_dto(item, serializer);
+    }
   }
 
   @protected
@@ -3056,6 +3667,54 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_timeline_group_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_trend_point_dto(
+    List<TrendPointDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_trend_point_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_trend_series_dto(
+    List<TrendSeriesDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_trend_series_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_visit_lab_dto(
+    List<VisitLabDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_visit_lab_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_visit_record_dto(
+    List<VisitRecordDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_visit_record_dto(item, serializer);
     }
   }
 
@@ -3262,6 +3921,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_trend_point_dto(
+    TrendPointDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_String(self.date, serializer);
+    sse_encode_f_64(self.value, serializer);
+    sse_encode_opt_String(self.unit, serializer);
+    sse_encode_opt_String(self.flag, serializer);
+    sse_encode_i_64(self.documentId, serializer);
+  }
+
+  @protected
+  void sse_encode_trend_series_dto(
+    TrendSeriesDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.name, serializer);
+    sse_encode_opt_String(self.analyteKey, serializer);
+    sse_encode_opt_String(self.loinc, serializer);
+    sse_encode_opt_String(self.unit, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.refLow, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.refHigh, serializer);
+    sse_encode_bool(self.anyAbnormal, serializer);
+    sse_encode_list_trend_point_dto(self.points, serializer);
+  }
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self);
@@ -3270,5 +3958,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+  }
+
+  @protected
+  void sse_encode_visit_lab_dto(VisitLabDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.name, serializer);
+    sse_encode_String(self.date, serializer);
+    sse_encode_f_64(self.value, serializer);
+    sse_encode_opt_String(self.unit, serializer);
+    sse_encode_opt_String(self.flag, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.refLow, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.refHigh, serializer);
+    sse_encode_i_64(self.documentId, serializer);
+  }
+
+  @protected
+  void sse_encode_visit_record_dto(
+    VisitRecordDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_String(self.title, serializer);
+    sse_encode_String(self.kind, serializer);
+    sse_encode_opt_String(self.date, serializer);
+    sse_encode_list_prim_i_64_strict(self.documentIds, serializer);
+  }
+
+  @protected
+  void sse_encode_visit_summary_dto(
+    VisitSummaryDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_patient_profile_dto(self.patient, serializer);
+    sse_encode_list_allergy_item_dto(self.allergies, serializer);
+    sse_encode_list_active_med_dto(self.activeMeds, serializer);
+    sse_encode_list_visit_lab_dto(self.recentLabs, serializer);
+    sse_encode_list_visit_record_dto(self.recentVisits, serializer);
+    sse_encode_String(self.plainText, serializer);
   }
 }
