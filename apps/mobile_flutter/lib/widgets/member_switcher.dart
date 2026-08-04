@@ -11,7 +11,8 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 
-/// 弹出成员切换器:列出全部成员(点即切换)+ 末尾「添加成员」。
+/// 弹出成员切换器:列出全部成员,点即切换。**不含「添加成员」** —— 新建成员
+/// 只在档案屏那颗「+」一个入口,见下方注释。
 ///
 /// [onChanged] 供调用方在异步重开完成前先做一次同步 UI 反馈(比如 tab 条的
 /// 高亮),不是必需的——各屏本就监听 `vaultRevision`,重开完成后会自动刷新;
@@ -63,15 +64,10 @@ Future<void> showMemberSwitcherSheet(
                     : null,
                 onTap: () => Navigator.of(context).pop('member:${m.id}'),
               ),
-            const Divider(),
-            ListTile(
-              leading: Icon(Icons.person_add_alt, color: c.seal),
-              title: Text(
-                '添加成员',
-                style: MedType.subtitle.copyWith(color: c.ink),
-              ),
-              onTap: () => Navigator.of(context).pop('add'),
-            ),
+            // **这里不放「添加成员」。** 新建成员是低频、一次性、且要输名字的动作,
+            // 它只该有一个入口 —— 档案屏成员条末尾那颗「+」。切换器里再放一个,
+            // 等于同一件事有两条路,用户下次找不到自己上回是从哪儿进的。
+            // 切换器只做一件事:切换。
             const SizedBox(height: MedShape.s1),
           ],
         ),
@@ -79,9 +75,7 @@ Future<void> showMemberSwitcherSheet(
     },
   );
   if (action == null || !context.mounted) return;
-  if (action == 'add') {
-    await promptAddMember(context, onChanged: onChanged);
-  } else if (action.startsWith('member:')) {
+  if (action.startsWith('member:')) {
     // action 里带的是**成员 id**,不是名字——名字可改、可重复,不能拿来寻址。
     final id = action.substring('member:'.length);
     if (id != currentId) {

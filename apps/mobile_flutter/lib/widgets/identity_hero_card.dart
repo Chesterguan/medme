@@ -106,6 +106,12 @@ class IdentityHeroCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(MedShape.radiusCard),
             child: Ink(
               decoration: BoxDecoration(
+                // 圆角必须写在 `Ink` 自己的 decoration 上,**外面那层 `ClipRRect` 裁不住它**。
+                // `Ink` 的装饰是交给祖先 `Material` 在它自己的画布上画的,那块画布在
+                // `ClipRRect` 之外 —— 于是渐变按方角铺满,卡片看上去没有圆角。这是
+                // `Ink` + `ClipRRect` 的经典坑。`ClipRRect` 仍要保留:它负责裁住 Stack
+                // 里那团故意画到边界外的光晕。
+                borderRadius: BorderRadius.circular(MedShape.radiusCard),
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,

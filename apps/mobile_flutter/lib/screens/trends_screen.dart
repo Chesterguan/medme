@@ -68,6 +68,25 @@ class _TrendsScreenState extends State<TrendsScreen> {
   final _queryCtl = TextEditingController();
   String _query = '';
 
+  /// 搜索栏是否展开。**默认收起,标题栏上一颗放大镜。**
+  ///
+  /// 分类 chip 上线后,检索的主路径是点 tag —— 手机上打「嗜酸性粒细胞百分比」比
+  /// 滚一遍还慢。但搜索仍有一件 tag 干不了的事:**你不知道某个指标归在哪个方向**
+  /// (血红蛋白同时在「贫血相关」和「肾功能」里,两个都想不到)。所以它留着,只是
+  /// 不再每次进页面都占掉近 90px 把第一张图挤出屏幕。
+  bool _searchOpen = false;
+
+  void _toggleSearch() {
+    setState(() {
+      _searchOpen = !_searchOpen;
+      if (!_searchOpen) {
+        // 收起就清空 —— 留一个看不见却仍在生效的过滤条件,是「怎么少了一半」的来源。
+        _queryCtl.clear();
+        _query = '';
+      }
+    });
+  }
+
   /// 选中的分组 chip。`null` = 「全部」(不筛)。**选中时 [_abnormalOnly] 同样
   /// 让位** —— 与搜索同一条理由(见 [_query] 的文档):点开一个分类是「我要看这个
   /// 方向下都查过什么」,不是「我要看这个方向里出过问题的那两条」。默认过滤是在
@@ -114,7 +133,29 @@ class _TrendsScreenState extends State<TrendsScreen> {
     final c = MedColors.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('趋势'),
+        title: _searchOpen
+            ? TextField(
+                controller: _queryCtl,
+                autofocus: true,
+                onChanged: (v) => setState(() => _query = v.trim()),
+                textInputAction: TextInputAction.search,
+                style: MedType.subtitle.copyWith(color: c.ink),
+                decoration: InputDecoration(
+                  hintText: '搜指标名,如「肌酐」「血红蛋白」',
+                  hintStyle: MedType.subtitle.copyWith(color: c.ink3),
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+              )
+            : const Text('趋势'),
+        actions: [
+          IconButton(
+            icon: Icon(_searchOpen ? Icons.close : Icons.search),
+            color: c.ink2,
+            tooltip: _searchOpen ? '关闭搜索' : '按名字搜指标',
+            onPressed: _toggleSearch,
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
@@ -386,46 +427,7 @@ class _Preamble extends StatelessWidget {
           style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
         ),
         const SizedBox(height: MedShape.s2),
-        TextField(
-          controller: controller,
-          onChanged: onQuery,
-          textInputAction: TextInputAction.search,
-          style: MedType.body.copyWith(color: c.ink),
-          decoration: InputDecoration(
-            hintText: '搜指标名,如「肌酐」「血红蛋白」',
-            hintStyle: MedType.body.copyWith(color: c.ink3),
-            prefixIcon: Icon(Icons.search, size: 20, color: c.ink3),
-            suffixIcon: searching
-                ? IconButton(
-                    icon: const Icon(Icons.close, size: 20),
-                    color: c.ink2,
-                    tooltip: '清空搜索',
-                    onPressed: () {
-                      controller.clear();
-                      onQuery('');
-                    },
-                  )
-                : null,
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: MedShape.s2,
-              vertical: MedShape.s2,
-            ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(MedShape.radiusControl),
-              borderSide: BorderSide(color: c.line),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(MedShape.radiusControl),
-              borderSide: BorderSide(color: c.line),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(MedShape.radiusControl),
-              borderSide: BorderSide(color: c.sealInk),
-            ),
-          ),
-        ),
-        // 搜索框保留(明确的「我要找 X」),这一排是另一条检索路径:浏览
+        // 这一排是**检索的主路径**。搜索收进了标题栏的放大镜(见 `_searchOpen`):浏览
         // 「和这个方向相关的检查有哪些」。少于两颗(只有恒在的「全部」)时不画
         // 这一排 —— 一整排只能点「全部」等于什么都点不了,是纯噪音。
         if (groupChips.length > 1) ...[
