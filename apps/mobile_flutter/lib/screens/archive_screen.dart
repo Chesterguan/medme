@@ -13,6 +13,7 @@ import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
+import 'package:mobile_flutter/widgets/member_switcher.dart';
 
 /// 底部导航一级 tab「档案」—— 生命时间线:就诊组 + 独立文档,按日期倒序,
 /// 点开看详情。与旧 Tauri 移动端 App.tsx 的 archive tab(phead + tl)同一观感,
@@ -203,109 +204,22 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   }
 
   /// 顶部 banner 点击:弹出成员切换器(成员多于 kMemberTabsMax 时用)。
-  Future<void> _showProfileSwitcher() async {
-    await ProfileManager.instance.ensureLoaded();
-    final members = ProfileManager.instance.profiles;
-    final currentId = ProfileManager.instance.currentId.value;
-    if (!mounted) return;
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        final c = MedColors.of(context);
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  MedShape.s4,
-                  4,
-                  MedShape.s4,
-                  MedShape.s1,
-                ),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '切换成员',
-                    style: MedType.title.copyWith(color: c.ink),
-                  ),
-                ),
-              ),
-              for (final m in members)
-                ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: c.sealWash,
-                    child: Text(
-                      m.name.isNotEmpty ? m.name[0] : '?',
-                      style: MedType.subtitle.copyWith(color: c.sealInk),
-                    ),
-                  ),
-                  title: Text(
-                    m.name,
-                    style: MedType.subtitle.copyWith(color: c.ink),
-                  ),
-                  trailing: m.id == currentId
-                      ? Icon(Icons.check, color: c.seal)
-                      : null,
-                  onTap: () => Navigator.of(context).pop('member:${m.id}'),
-                ),
-              const Divider(),
-              ListTile(
-                leading: Icon(Icons.person_add_alt, color: c.seal),
-                title: Text(
-                  '添加成员',
-                  style: MedType.subtitle.copyWith(color: c.ink),
-                ),
-                onTap: () => Navigator.of(context).pop('add'),
-              ),
-              const SizedBox(height: MedShape.s1),
-            ],
-          ),
-        );
-      },
-    );
-    if (action == null || !mounted) return;
-    if (action == 'add') {
-      await _addMember();
-    } else if (action.startsWith('member:')) {
-      // action 里带的是**成员 id**,不是名字 —— 名字可改、可重复,不能拿来寻址。
-      final id = action.substring('member:'.length);
-      if (id != currentId) {
-        await switchProfileAndReopen(id);
-        if (mounted) setState(() {});
-      }
-    }
-  }
+  ///
+  /// UI 与状态更新路径和概览屏的 hero 卡**共用同一份**(`widgets/member_switcher.dart`)
+  /// —— 真相只有 `ProfileManager.instance.currentId` 一处,不是两屏各存一份。
+  Future<void> _showProfileSwitcher() => showMemberSwitcherSheet(
+    context,
+    onChanged: () {
+      if (mounted) setState(() {});
+    },
+  );
 
-  Future<void> _addMember() async {
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('添加成员'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '输入姓名'),
-          onSubmitted: (v) => Navigator.of(context).pop(v),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('创建'),
-          ),
-        ],
-      ),
-    );
-    if (name == null || name.trim().isEmpty || !mounted) return;
-    await createProfileAndReopen(name.trim());
-    if (mounted) setState(() {});
-  }
+  Future<void> _addMember() => promptAddMember(
+    context,
+    onChanged: () {
+      if (mounted) setState(() {});
+    },
+  );
 
   Future<void> _refresh() async {
     final next = _load();
@@ -1128,7 +1042,7 @@ class _MismatchBanner extends StatelessWidget {
           const SizedBox(width: MedShape.s1),
           Expanded(
             child: Text(
-              '报告上的姓名是「$who」,与当前档案「${ProfileManager.instance.current}」不一致,'
+              '报告上的姓名是「$who」,与当前档案「${ProfileManager.instance.current.name}」不一致,'
               '请核对是否导错了人。',
               style: MedType.secondary.copyWith(color: c.ink, height: 1.5),
             ),

@@ -7,18 +7,21 @@ import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
-import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/identity_hero_card.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/member_switcher.dart';
 
 /// 底部导航一级 tab「概览」—— 使用时刻:**日常打开,看一眼「我现在怎么样」**
 /// (设计系统 §八)。
 ///
 /// 一屏讲完三件事,顺序就是这三句话:
 ///
-/// 1. **你是谁** —— 身份卡(姓名 / 性别年龄 / 多少份记录);
+/// 1. **你是谁** —— 顶部深色 hero 身份卡(姓名 / 性别年龄 / 多少份记录 /
+///    最近一次就诊),整卡可点,弹出成员切换器——家庭多成员时,切完是谁一眼
+///    可辨,不会把家人的病历当自己的给医生看;
 /// 2. **你怎么样** —— 最近的关键化验,带状态色条与 pill;
 /// 3. **东西在哪** —— 最近归档的几份,一点就进原件。
 ///
@@ -148,7 +151,26 @@ class _OverviewScreenState extends State<OverviewScreen> {
                 MedShape.s6,
               ),
               children: [
-                _IdentityCard(profile: s.patient),
+                IdentityHeroCard(
+                  // 显示名取当前成员(用户自己给档案起的名),不取报告里抽出来的
+                  // `profile.name` —— 后者可能因为某一张单子上印着别人而漂。
+                  // 与档案屏同一取法。
+                  name: ProfileManager.instance.displayName,
+                  gender: s.patient.gender,
+                  age: s.patient.age,
+                  recordCount: s.patient.recordCount.toInt(),
+                  // 与下方「最近归档」同一份数据,取最新一条的日期——不是本卡
+                  // 单独算出来的数字。列表为空或那条记录没识别到日期都算「没有」。
+                  recentVisitDate: s.recentVisits.isNotEmpty
+                      ? s.recentVisits.first.date
+                      : null,
+                  onSwitchMember: () => showMemberSwitcherSheet(
+                    context,
+                    onChanged: () {
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                ),
                 const SizedBox(height: MedShape.s3),
                 _QuickActions(
                   onPhoto: () => _import(ImportChoice.camera),
@@ -172,70 +194,6 @@ class _OverviewScreenState extends State<OverviewScreen> {
             ),
           );
         },
-      ),
-    );
-  }
-}
-
-/// 身份卡:你是谁。
-///
-/// **不带骑缝线。** 姓名/性别/年龄/份数都是从许多份原件里算出来的汇总,背后没有
-/// 「某一张纸」可点进去;给它画一道,就是拿签名元素说了句假话(规范 §五)。
-class _IdentityCard extends StatelessWidget {
-  const _IdentityCard({required this.profile});
-
-  final PatientProfileDto profile;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    // 显示名取当前成员(用户自己给档案起的名),不取报告里抽出来的 `profile.name`
-    // —— 后者可能因为某一张单子上印着别人而漂。与档案屏同一取法。
-    final who = ProfileManager.instance.displayName;
-    final initial = who.isNotEmpty ? who[0] : '我';
-    final sub = [
-      ...[profile.gender, profile.age].whereType<String>().where((x) => x.isNotEmpty),
-      '${profile.recordCount} 份记录',
-    ].join(' · ');
-
-    return MedCard(
-      child: Padding(
-        padding: const EdgeInsets.all(MedShape.s4),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 26,
-              backgroundColor: c.sealWash,
-              child: Text(
-                initial,
-                style: MedType.title.copyWith(color: c.sealInk),
-              ),
-            ),
-            const SizedBox(width: MedShape.s3),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    who,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: MedType.subtitle.copyWith(color: c.ink),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    sub,
-                    // 份数与年龄是数字 —— 等宽表格数字,换个成员不会左右跳。
-                    style: MedType.secondary.copyWith(
-                      color: c.ink2,
-                      fontFeatures: MedType.tabular,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
