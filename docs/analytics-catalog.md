@@ -106,6 +106,8 @@
 - `gmsCheckThrew` —— Google Play 服务可用性检测本身抛异常,按「无 GMS」处置
 - `scannerStalled` —— 启动看门狗触发:5 秒没结果且 App 仍在前台 `resumed` → 扫描器根本没起来
 - `scannerThrew` —— 文档扫描器抛异常(设备不支持、权限被拒)
+- `scannerModuleUnavailable` —— 扫描器回了空、用户在补救提示里点了「用普通相机」= 这台机器拉不到 ML Kit 文档扫描模块(GMS 在场但下载不到 `mlkit.docscan.ui`)。**插件把它和「用户取消」返回成同一个空列表,这一下点击是唯一的分流信号**
+- `scannerSkippedUnavailable` —— 记住上一条之后,本次拍照**直接跳过扫描器**、静默走普通相机。占比 = 「装了 GMS 却用不了扫描器」的机器有多少
 
 **`doc_capture_aborted`(这一轮一份都没拿到)**
 
@@ -114,10 +116,21 @@
 - `pickerThrew` —— 系统相机 / 相册 / 文件选择器抛异常
 - `unknown` —— 外层兜底 catch。占比一高说明还有没枚举到的分支
 
-> **`scannerStalled` 是这两条事件存在的首要理由。** 已知病因:设备有 GMS 但被门控
-> (用户报错「Google Play 无法连接到互联网」),ML Kit 文档扫描模块下载不到 →
-> `getStartScanIntent` 的 Task 既不 success 也不 failure → method channel 永不回调 →
-> future 永久 pending。它在屏上与「用户取消」完全无法区分。
+> **⚠️ 这段曾经写错,2026-08-04 用可复现环境更正。** 原文说病因是
+> 「`getStartScanIntent` 的 Task 既不 success 也不 failure → future 永久 pending」,
+> 并把 `scannerStalled` 当作这两条事件存在的首要理由。AVD 实测(Pixel_7 /
+> Android 17 / google_apis 无 Play 商店 / docscan 模块从未缓存)证明**不是挂起**:
+>
+> 1. `getStartScanIntent` **成功**,scanner Activity 也真的被拉起(所以插件自带的
+>    `addOnFailureListener` → 备用裁剪器从未触发);
+> 2. 失败在 GMS 内部 —— `No registered Chimera impl` + `Zapp module request failed`;
+> 3. **GMS 自己**弹英文报错页(`ModuleDownloadActivity`)占前台 20 秒以上;
+> 4. 用户点 Cancel → `RESULT_CANCELED` → 插件 `success(emptyList())` → 空列表。
+>
+> 所以 `scannerStalled` **盖不住这个病因**:第 3 步里前台是 GMS、App 不是 `resumed`,
+> 看门狗判定「正常」,一次都不触发。真正接住它的是 `scannerModuleUnavailable`
+> (补救入口)+ `scannerSkippedUnavailable`(记住后跳过)。`scannerStalled` 降级为
+> 纯兜底 —— 它若还有非零占比,说明存在第三种、目前没见过的失败形态。
 
 ⚠️ **`reason` 之外的一切不上报。** 异常字符串**只显示在屏上**(屏上探针,见
 `docs/log/2026-07-18-qr-share-security-and-community-prep.md` 的 07-21 追记),

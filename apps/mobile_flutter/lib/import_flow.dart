@@ -7,6 +7,7 @@ import 'package:google_api_availability/google_api_availability.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:pdfx/pdfx.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
@@ -146,6 +147,30 @@ Future<List<PendingImport>> pickImportItems(
           useScanner = false;
         }
       }
+      // ⚠️ **GMS 在场 ≠ 文档扫描模块在场。** 上面那个检测只回答「这台机器有没有
+      // Google Play 服务」,而 ML Kit 文档扫描器的界面(`mlkit.docscan.ui`)是 GMS
+      // 用 Chimera **按需下载**的动态模块 —— 检测通过、模块却拉不到,是国内最常见的
+      // 那一种(GMS 装着,连不上 Google 的分发服务器)。
+      //
+      // 2026-08-04 在 Pixel_7 AVD(Android 17,google_apis 镜像、无 Play 商店、
+      // docscan 模块从未缓存)实测复现,logcat 铁证:
+      //   W/ChimeraProxyRslvr: No registered Chimera impl for …DocumentScanningActivity
+      //   E/DynamicModuleDownloader: Zapp module request failed: null
+      // 此时 GMS **自己**弹一页英文的 “Something went wrong / Try again later”,
+      // 占据前台 20 秒以上,用户点 Cancel 后我们才拿到结果。
+      //
+      // 这一段就是为了**不让用户第二次看见那一页**:一旦我们确认过这台机器上的
+      // 扫描模块拉不到([_ScannerAvailability]),以后拍照直接走普通系统相机。
+      //
+      // `Platform.isAndroid` 是**必要的**,不只是省一次读盘:iOS 的 VisionKit 是系统
+      // 内置的,没有模块下载这回事,这条路在 iOS 上一步都不该走。
+      if (Platform.isAndroid &&
+          useScanner &&
+          await _ScannerAvailability.isKnownUnavailable()) {
+        useScanner = false;
+        // 不打扰用户(detail 为 null):这是**静默走通**的一条路,不是故障。
+        _report(probe, choice, ImportCaptureIssue.scannerSkippedUnavailable, null);
+      }
       if (useScanner) {
         // 不要给交互式扫描器加 wall-clock 超时:VisionKit 是多页扫描器,用户拍完一页
         // 后靠右上角「保存」结束,合理耗时远超十几秒(踩过:12s timeout 会在用户还在
@@ -183,21 +208,49 @@ Future<List<PendingImport>> pickImportItems(
               // 此前两者一律 `return const []`,于是「点拍照没反应」的分子分母糊在
               // 一起,永远算不出真实占比。
               final cancelled = Platform.isAndroid ? paths != null : paths == null;
+              // ⚠️⚠️ **安卓上「用户取消」和「模块拉不到」是同一个返回值。**
+              //
+              // 2026-08-04 实测(见上文 AVD 复现)插件源码路径已经走通对齐:
+              //   GMS 的英文报错页 → 用户点 Cancel → `RESULT_CANCELED`
+              //   → 插件 `success(emptyList())` → 这里拿到**空列表**。
+              // 而用户在真扫描器里按返回,走的是**一模一样**的那三步。
+              // 也就是说:事后无法区分。此前这里把两者都算作「取消」→ 不打扰用户
+              // → 屏上零提示 → 就是用户报的「回到主界面,什么都没发生」。
+              //
+              // 区分不了就别装作能区分。给一个**不打扰的补救入口**,让用户的选择
+              // 来分流:真取消的人不会去点「用普通相机」,点了的人就是没拍成的人。
+              // 这一下点击同时也是我们唯一拿得到的「模块不可用」信号 —— 据此记住
+              // 这台机器,下次连那页英文都不再出现。
+              final recover = Platform.isAndroid &&
+                  cancelled &&
+                  await _offerPlainCamera(probe);
+              if (!recover) {
+                _report(
+                  probe,
+                  choice,
+                  cancelled
+                      ? ImportCaptureIssue.userCancelled
+                      : ImportCaptureIssue.emptyResult,
+                  // 取消是正常操作,**不打扰用户**;静默失败才是要说出来的那一种。
+                  cancelled ? null : '扫描器没有返回任何一页(既不是取消,也没有报错)',
+                );
+                return const [];
+              }
+              await _ScannerAvailability.markUnavailable();
               _report(
                 probe,
                 choice,
-                cancelled
-                    ? ImportCaptureIssue.userCancelled
-                    : ImportCaptureIssue.emptyResult,
-                // 取消是正常操作,**不打扰用户**;静默失败才是要说出来的那一种。
-                cancelled ? null : '扫描器没有返回任何一页(既不是取消,也没有报错)',
+                ImportCaptureIssue.scannerModuleUnavailable,
+                null, // 用户刚点过按钮,知道自己在干什么,不用再弹一条。
               );
-              return const [];
+              // **这里没有 return** —— 直接落到下面的普通相机,与「检测到无 GMS」
+              // 走同一条路。
+            } else {
+              return [
+                for (final p in paths)
+                  PendingImport(name: p.split('/').last, path: p, isImage: true),
+              ];
             }
-            return [
-              for (final p in paths)
-                PendingImport(name: p.split('/').last, path: p, isImage: true),
-            ];
           }
         } catch (e) {
           debugPrint('[import] 文档扫描器不可用,回退普通拍照: $e');
@@ -297,10 +350,25 @@ const Duration _kScannerLaunchWatchdog = Duration(seconds: 5);
 ///   而 App 还稳稳停在前台 resumed」——这只可能意味着**没有任何原生界面被拉起来**,
 ///   不可能是「用户正在扫」(用户正在扫时,前台根本不是我们)。
 ///
-/// 这正好覆盖已知的那个病因:GMS 在场但被门控,`getStartScanIntent` 返回的 Task
-/// 既不 success 也不 failure → 两个 listener 都不触发 → method channel 永不回调
-/// → future 永久 pending。此前唯一的兜底(build 29 的 12s 超时)在 `b6a9757` 被删掉,
-/// 于是它变回了一个纯粹的静默挂起。
+/// ## ⚠️ 它**盖不住**用户报的那个病因 —— 别再指望它
+///
+/// 这个看门狗当初是按「`getStartScanIntent` 的 Task 永不回调 → future 永久挂起」
+/// 设计的。2026-08-04 在 AVD 上实测,那个前提**是错的**:
+///
+///   1. `getStartScanIntent` **成功**了,`startIntentSenderForResult` 也真的把
+///      `com.google.android.gms/.mlkit.docscan.ui.DocumentScanningActivity` 拉了起来
+///      (所以插件自己的 `addOnFailureListener` → 备用裁剪器**从来没有触发过**);
+///   2. 失败发生在 GMS **内部**:Chimera 找不到该 Activity 的实现、模块又下载不到;
+///   3. 于是 **GMS 的 `ModuleDownloadActivity` 顶在前台**弹英文报错页,20 秒以上;
+///   4. 用户点 Cancel → `RESULT_CANCELED` → 空列表。全程**没有任何挂起**。
+///
+/// 第 3 步正好打死这个判据:那 5 秒里前台是 GMS,**我们不是 `resumed`** → 本函数
+/// 返回 `false`(「一切正常,继续等」)→ 一次都不会触发。原推理漏了第三种状态:
+/// 起来的不是扫描器,是 GMS 的错误页。
+///
+/// 真正接住这个病因的是**空结果那一段**(补救入口 + [_ScannerAvailability] 记忆),
+/// 不是这里。保留本函数只作最后兜底:万一真有设备卡在「什么原生界面都没起来」,
+/// 它还能救一次;而它的判据本身没有误伤风险,留着不亏。
 ///
 /// ## 只在安卓武装
 ///
@@ -318,6 +386,63 @@ Future<bool> _scannerFailedToLaunch(Future<List<String>?> scan) {
       return WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     }),
   ]);
+}
+
+/// 扫描器回了空之后的**补救入口**:屏上问一句,愿不愿意改用普通相机。
+/// 返回 `true` = 用户点了那个按钮。
+///
+/// 为什么是 SnackBar 而不是对话框:安卓上「用户主动取消」也会走到这里(两者返回值
+/// 完全相同,见调用点),而**取消是正常操作,不该被一个模态框拦住**。SnackBar 不挡
+/// 操作、8 秒自己消失,真取消的人可以完全无视它。
+///
+/// 用户这一下点击是我们唯一能拿到的「扫描器没打开」信号 —— 插件 API 给不出来。
+Future<bool> _offerPlainCamera(ScaffoldMessengerState? probe) async {
+  if (probe == null || !probe.mounted) return false;
+  // 前面可能还挂着别的探针提示,先收掉,否则这条要排队等它,用户早走了。
+  probe.hideCurrentSnackBar();
+  final controller = probe.showSnackBar(
+    SnackBar(
+      content: const Text('没有拍到照片。如果刚才扫描器没能打开,可以改用普通相机。'),
+      duration: const Duration(seconds: 8),
+      behavior: SnackBarBehavior.floating,
+      // 点击动作本身不做事,分流靠下面的 `closed` 原因判断。
+      action: SnackBarAction(label: '用普通相机', onPressed: () {}),
+    ),
+  );
+  return await controller.closed == SnackBarClosedReason.action;
+}
+
+/// 「这台机器上的 ML Kit 文档扫描模块拉不拉得到」的**记忆**。
+///
+/// 存在的唯一理由:让用户**最多只看见一次** GMS 那页英文报错。模块拉不到是设备/
+/// 网络环境决定的(国内连不上 Google 的模块分发),不是偶发 —— 确认过一次,以后
+/// 每次拍照都该直接走普通系统相机。
+///
+/// **只写不删**:没有自动复位。写入只发生在用户亲手点了「用普通相机」之后,代价是
+/// 万一某天 GMS 恢复了,这台机器也不会自己切回自动裁边的扫描器 —— 换来的是那页
+/// 英文再也不会出现。对拿它当病历工具的人来说,这笔买卖划算:自动拉正只是锦上添花
+/// (歪拍由下游 OCR 的整页转正 + 切片兜底),拍不成照片才是致命的。
+abstract final class _ScannerAvailability {
+  static const _key = 'scanner_mlkit_module_unavailable';
+
+  static Future<bool> isKnownUnavailable() async {
+    try {
+      return (await SharedPreferences.getInstance()).getBool(_key) ?? false;
+    } catch (e) {
+      // 存储读不到就**当作可用**(维持现状),绝不因为一次读盘失败就把好体验砍掉。
+      debugPrint('[import] 读扫描器可用性记忆失败,按可用处理: $e');
+      return false;
+    }
+  }
+
+  static Future<void> markUnavailable() async {
+    try {
+      await (await SharedPreferences.getInstance()).setBool(_key, true);
+    } catch (e) {
+      // 记不住只是下次再看一遍那页英文,不影响这一次的拍照,安静放弃。
+      debugPrint('[import] 记录扫描器不可用失败: $e');
+    }
+  }
 }
 
 /// 屏上探针 + 分类埋点。**一个失败分支一行调用**,这是本次改动的全部产出形式。

@@ -495,6 +495,17 @@ enum ImportCaptureIssue {
   /// 扫描器抛异常(设备不支持、权限被拒等),已回退普通相机。
   scannerThrew(AnalyticsEvent.docCaptureDegraded),
 
+  /// 扫描器回了空,用户在补救提示里点了「用普通相机」——**这台机器的 ML Kit 文档
+  /// 扫描模块拉不到**(GMS 在场但下载不到 `mlkit.docscan.ui`,国内最常见)。
+  /// 这是我们唯一拿得到的「模块不可用」信号:插件把它和「用户取消」返回成同一个
+  /// 空列表,只能靠用户这一下点击分流。记住之后,下次直接走普通相机。
+  scannerModuleUnavailable(AnalyticsEvent.docCaptureDegraded),
+
+  /// 上一条记住之后,**这次拍照直接跳过了扫描器**,静默走普通相机。
+  /// 它是 [scannerModuleUnavailable] 的下游:占比越高,说明「装了 GMS 却用不了
+  /// 扫描器」的机器越多 —— 这正是判断要不要换掉整个扫描方案的那个数。
+  scannerSkippedUnavailable(AnalyticsEvent.docCaptureDegraded),
+
   // ── 中止类:这一轮采集一份都没拿到 ────────────────────────────────────────
   /// 用户主动取消。**正常,不是 bug** —— 但必须和下面那条分开,否则
   /// 「点拍照没反应」永远算不出真实占比。
