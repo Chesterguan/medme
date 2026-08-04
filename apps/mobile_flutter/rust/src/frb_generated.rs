@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -2100584594;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -168768830;
 
 // Section: executor
 
@@ -1674,6 +1674,40 @@ fn wire__crate__api__vault_projections__view_emergency_card_impl(
         },
     )
 }
+fn wire__crate__api__vault_projections__view_trend_group_catalog_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "view_trend_group_catalog",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok(
+                        crate::api::vault_projections::view_trend_group_catalog(),
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__vault_projections__view_trends_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2016,6 +2050,18 @@ impl SseDecode for crate::api::dto::ImportOutcomeDto {
             document_id: var_documentId,
             detected_name: var_detectedName,
         };
+    }
+}
+
+impl SseDecode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<String>::sse_decode(deserializer));
+        }
+        return ans_;
     }
 }
 
@@ -2516,6 +2562,7 @@ impl SseDecode for crate::api::vault_projections::TrendSeriesDto {
         let mut var_refLow = <Option<f64>>::sse_decode(deserializer);
         let mut var_refHigh = <Option<f64>>::sse_decode(deserializer);
         let mut var_anyAbnormal = <bool>::sse_decode(deserializer);
+        let mut var_problemGroups = <Vec<String>>::sse_decode(deserializer);
         let mut var_points =
             <Vec<crate::api::vault_projections::TrendPointDto>>::sse_decode(deserializer);
         return crate::api::vault_projections::TrendSeriesDto {
@@ -2526,6 +2573,7 @@ impl SseDecode for crate::api::vault_projections::TrendSeriesDto {
             ref_low: var_refLow,
             ref_high: var_refHigh,
             any_abnormal: var_anyAbnormal,
+            problem_groups: var_problemGroups,
             points: var_points,
         };
     }
@@ -2745,10 +2793,16 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        46 => {
+        46 => wire__crate__api__vault_projections__view_trend_group_catalog_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        47 => {
             wire__crate__api__vault_projections__view_trends_impl(port, ptr, rust_vec_len, data_len)
         }
-        47 => wire__crate__api__vault_projections__view_visit_summary_impl(
+        48 => wire__crate__api__vault_projections__view_visit_summary_impl(
             port,
             ptr,
             rust_vec_len,
@@ -3354,6 +3408,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::TrendSerie
             self.ref_low.into_into_dart().into_dart(),
             self.ref_high.into_into_dart().into_dart(),
             self.any_abnormal.into_into_dart().into_dart(),
+            self.problem_groups.into_into_dart().into_dart(),
             self.points.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -3637,6 +3692,16 @@ impl SseEncode for crate::api::dto::ImportOutcomeDto {
         <Option<String>>::sse_encode(self.doc_type, serializer);
         <Option<i64>>::sse_encode(self.document_id, serializer);
         <Option<String>>::sse_encode(self.detected_name, serializer);
+    }
+}
+
+impl SseEncode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <String>::sse_encode(item, serializer);
+        }
     }
 }
 
@@ -4005,6 +4070,7 @@ impl SseEncode for crate::api::vault_projections::TrendSeriesDto {
         <Option<f64>>::sse_encode(self.ref_low, serializer);
         <Option<f64>>::sse_encode(self.ref_high, serializer);
         <bool>::sse_encode(self.any_abnormal, serializer);
+        <Vec<String>>::sse_encode(self.problem_groups, serializer);
         <Vec<crate::api::vault_projections::TrendPointDto>>::sse_encode(self.points, serializer);
     }
 }

@@ -50,6 +50,8 @@ use crate::api::dto::PatientProfileDto;
 use crate::api::dto::TimelineGroupDto;
 use chrono::NaiveDate;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::sync::OnceLock;
 
 /// 就诊摘要单「最近关键化验」最多列几条(一屏能看完;完整序列去趋势页)。
 const VISIT_SUMMARY_MAX_LABS: usize = 8;
@@ -78,6 +80,11 @@ pub struct TrendSeriesDto {
     pub ref_high: Option<f64>,
     /// 任一点被标记 H/L(`parser::AnalyteSeries::any_abnormal`)。
     pub any_abnormal: bool,
+    /// 这条序列按 LOINC 落在哪些「关注方向」分组下(见 [`problem_groups_for`]),
+    /// 顺序固定、与 [`view_trend_group_catalog`] 一致;一条序列可以属于多个分组
+    /// (如 LDL 同时在糖尿病相关/血脂/冠心病相关里),**不去重合并**。空表示这条
+    /// 序列没有 LOINC 或 LOINC 不在任何一条泳道里 —— UI 把它归入「其他」。
+    pub problem_groups: Vec<String>,
     /// **全部**观测点,按时间升序(无日期的排最后)。不做任何数量裁剪。
     pub points: Vec<TrendPointDto>,
 }
@@ -336,6 +343,149 @@ fn is_renderable(s: &parser::AnalyteSeries) -> bool {
     s.points.iter().any(|p| p.date.is_some())
 }
 
+// ─────────────────────── 关注方向分组(泳道 chip) ───────────────────────
+//
+// 产品问题:手机上的搜索框对「找和这个病相关的检查」没用 —— 打「嗜酸性粒细胞
+// 百分比」比滚一屏还慢。这里给的是分类入口:点一个方向,看这个方向下的全部序列。
+//
+// **数据驱动,不是诊断驱动。** 故意不复用 `packages/parser/src/handoff.rs` 的
+// `match_disease`(诊断名匹配,`assemble_summary` 的泳道逻辑)—— 那条路要求病历里
+// 抽出对应诊断才会出现泳道,诊断抽取本身有已知缺口,靠它当分类入口会造成「诊断没
+// 抽出来 → 一个分类都没有」,比现在的搜索框更差。这里改成只要用户记录里有该泳道
+// 任一化验(不问诊断),分组就出现 —— 数据驱动永远有得用。
+//
+// **只认 LOINC,没有名字兜底。** LOINC 是干净的等价判据;名字匹配是猜,而且
+// `problem_map.json` 里同一名字在不同医院可能有多种写法(见 `trends_screen.dart`
+// 顶部关于「肌酐/血肌酐/Cr」断线的说明),用名字子串去凑等于在数据里编关系。没有
+// LOINC 的序列(实测占比不低,terminology 未映射的那部分)如实降级进 UI 的「其他」
+// 桶,而不是被硬凑进某条泳道。
+//
+// **chip 文案是中性的 —— 描述化验,不描述人。** `problem_map.json` 的 `disease`
+// 字段是「糖尿病」「高血压」这种诊断名,直接拿来当 chip 会让只查过一次血糖的人误
+// 以为 app 认为他有糖尿病。这里的 [`group_label`] 统一转成「关注方向」措辞:多数
+// 加「相关」后缀(「糖尿病相关」「高血压相关」),两条更适合按方向翻译(CKD → 「肾
+// 功能」、血脂异常 → 「血脂」,读起来更像检查类别而不是诊断)。取舍逐条写在
+// [`group_label`] 里,不是统一规则。
+//
+// 甲减/甲亢两条泳道的化验高度重叠(TSH/FT4/FT3/TPOAb 四项共有)但**不合并**:同一
+// 个 TSH 异常既可能是甲减也可能是甲亢,分组入口不该替用户下这个判断,两个 chip
+// 同时出现是诚实的表达,不是重复。
+
+/// LOINC 匹配用的一条「关注方向」:chip 文案 + 该方向下的 LOINC 集合。
+struct ProblemGroupEntry {
+    label: &'static str,
+    loincs: BTreeSet<String>,
+}
+
+/// `problem_map.json` 每条慢病对应的 chip 文案。**必须覆盖 JSON 里出现的每一个
+/// `disease`**——覆盖不到时 panic,而不是默默漏掉一条泳道:那样的失败要在开发期
+/// 炸出来,不能悄悄让某条泳道从分类入口里消失(与本文件其它「宁可少一条也不编」
+/// 的准则方向相反,这里选择「宁可炸也不漏」,因为漏的后果是分类入口悄悄变窄,
+/// 没有任何信号能让人发现)。
+///
+/// 取舍(逐条):
+/// - 「2型糖尿病」→「糖尿病相关」、「高血压」→「高血压相关」、「冠心病」→
+///   「冠心病相关」、「贫血」→「贫血相关」:disease 名本身就是最自然的检查类别
+///   描述,加「相关」把断言从「你有这个病」改成「这组检查跟这个方向有关」。
+/// - 「慢性肾脏病(CKD)」→「肾功能」:泳道里的化验(eGFR/UACR/肌酐/血钾/钙磷/
+///   血红蛋白)本质是「肾功能」这个器官功能维度,比「CKD相关」更像一句检查分类。
+/// - 「高脂血症(血脂异常)」→「血脂」:泳道里四项(LDL/TC/HDL/TG)本身就是「血脂」
+///   这份检查的全部内容,「血脂异常相关」反而绕。
+/// - 「甲状腺功能减退症」→「甲减相关」、「甲状腺功能亢进症」→「甲亢相关」:两条
+///   保留诊断名的常用简称(「甲减」「甲亢」和「糖尿病」一样是中文里的日常说法,
+///   不是生僻术语),因为「甲状腺功能」一个方向盖不住二者化验成分的差异(甲减比
+///   甲亢多一项 TgAb)。
+/// - 「痛风/高尿酸血症」→「尿酸相关」:泳道核心是尿酸(诊断切点、治疗目标都围
+///   绕它),肌酐/eGFR 是给药前的肾功能校核,已经在「肾功能」泳道里重复覆盖了,
+///   chip 文案抓大放小。
+/// - 「代谢相关(非酒精性)脂肪性肝病」→「肝功能相关」:泳道以肝酶(ALT/AST/GGT)
+///   为主,「肝功能」是这组检查最自然的方向名。
+fn group_label(disease: &str) -> &'static str {
+    match disease {
+        "2型糖尿病" => "糖尿病相关",
+        "高血压" => "高血压相关",
+        "高脂血症(血脂异常)" => "血脂",
+        "冠心病" => "冠心病相关",
+        "慢性肾脏病(CKD)" => "肾功能",
+        "甲状腺功能减退症" => "甲减相关",
+        "甲状腺功能亢进症" => "甲亢相关",
+        "贫血" => "贫血相关",
+        "痛风/高尿酸血症" => "尿酸相关",
+        "代谢相关(非酒精性)脂肪性肝病" => "肝功能相关",
+        other => panic!(
+            "problem_map.json 新增了一条本文件还没配 chip 文案的泳道:{other} \
+             —— 去 group_label() 补一条,别让分类入口悄悄漏掉它"
+        ),
+    }
+}
+
+/// 解析一遍 `problem_map.json`,只取分组要用的两个字段(`disease` 与
+/// `labs[].loinc`);其余字段(icd10/药物/来源引用)与本文件无关。
+///
+/// 直接用 `serde_json::Value` 而不是派生 `Deserialize` 的结构体:本 crate 没有
+/// 直接依赖 `serde`(只有 `serde_json`),为两个字段新增一条 derive 依赖不值得。
+///
+/// 顺序沿用 JSON 数组顺序 —— `problem_map.json` 本身就是人工按临床优先级策展的,
+/// 这份顺序也是 chip 的展示顺序([`view_trend_group_catalog`])。
+fn problem_group_table() -> &'static [ProblemGroupEntry] {
+    static T: OnceLock<Vec<ProblemGroupEntry>> = OnceLock::new();
+    T.get_or_init(|| {
+        let raw: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../packages/parser/data/problem_map.json"
+        ))
+        .expect("problem_map.json is valid JSON");
+        raw.as_array()
+            .expect("problem_map.json is a JSON array")
+            .iter()
+            .map(|entry| {
+                let disease = entry["disease"]
+                    .as_str()
+                    .expect("problem_map.json entry has a `disease` string");
+                let loincs = entry["labs"]
+                    .as_array()
+                    .expect("problem_map.json entry has a `labs` array")
+                    .iter()
+                    .filter_map(|lab| lab["loinc"].as_str().map(str::to_string))
+                    .collect();
+                ProblemGroupEntry {
+                    label: group_label(disease),
+                    loincs,
+                }
+            })
+            .collect()
+    })
+}
+
+/// 一条序列(按 LOINC)属于哪些「关注方向」分组,按 [`problem_group_table`] 的
+/// 顺序,一条序列可以属于多个分组(如 LDL 同时在糖尿病相关/血脂/冠心病相关里)。
+///
+/// `loinc: None`(序列没能归一化出 LOINC)一律返回空表 —— 这是诚实的降级,不用
+/// 名字子串去硬凑;UI 把空表的序列归入「其他」。
+fn problem_groups_for(loinc: Option<&str>) -> Vec<String> {
+    let Some(loinc) = loinc else {
+        return Vec::new();
+    };
+    problem_group_table()
+        .iter()
+        .filter(|g| g.loincs.contains(loinc))
+        .map(|g| g.label.to_string())
+        .collect()
+}
+
+/// 分组 chip 的完整目录,固定顺序,与每条 [`TrendSeriesDto::problem_groups`] 用的
+/// 是同一份表。**只回答「有哪些分组、先后顺序是什么」**——UI 不应该自己另定一份
+/// 顺序(比如按"数据里第一次出现的顺序"排),否则两端顺序会漂移,同一个人重新打开
+/// 页面 chip 顺序都可能不一样。
+///
+/// 不含「全部」「其他」—— 那两个是 UI 侧的兜底 sentinel,不是从 LOINC 匹配算出来
+/// 的分组,不该跟着这份表的「怎么算」走。
+pub fn view_trend_group_catalog() -> Vec<String> {
+    problem_group_table()
+        .iter()
+        .map(|g| g.label.to_string())
+        .collect()
+}
+
 // ─────────────────────────── 过敏史 ───────────────────────────
 //
 // `handoff::extract_allergies_pairs` / `parse_allergy_item` 都是 private,且
@@ -455,6 +605,7 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
         name: s.group_name.clone(),
         analyte_key: s.analyte_key.clone(),
         loinc: s.loinc.clone(),
+        problem_groups: problem_groups_for(s.loinc.as_deref()),
         unit: s.points.last().and_then(|p| p.unit.clone()),
         ref_low: s.ref_low,
         ref_high: s.ref_high,
@@ -724,6 +875,83 @@ mod tests {
                 title: None,
             })
             .collect()
+    }
+
+    /// LDL(22748-8)在 `problem_map.json` 里同时挂在糖尿病(index 0)、高脂血症
+    /// (index 2)、冠心病(index 3)三条泳道下 —— 分组**不去重**,一条序列可以进
+    /// 多个 chip,顺序沿用 `problem_group_table` 的表顺序(即 JSON 数组顺序)。
+    #[test]
+    fn problem_groups_for_multi_membership_loinc_is_not_deduped() {
+        assert_eq!(
+            problem_groups_for(Some("22748-8")),
+            vec!["糖尿病相关", "血脂", "冠心病相关"]
+        );
+    }
+
+    /// 肌酐(14682-9)挂在高血压(index 1)、CKD(index 4)、痛风/高尿酸血症
+    /// (index 8)三条泳道 —— 覆盖另一组多归属组合,且顺序仍是表顺序而不是
+    /// 数值大小或字母序。
+    #[test]
+    fn problem_groups_for_creatinine_spans_hypertension_ckd_and_gout() {
+        assert_eq!(
+            problem_groups_for(Some("14682-9")),
+            vec!["高血压相关", "肾功能", "尿酸相关"]
+        );
+    }
+
+    /// 没有 LOINC、或 LOINC 不在任何一条泳道里,都返回空表 —— 这是 UI「其他」
+    /// 桶的判据(空表示不属于任何分组),不是 panic 或猜测。
+    #[test]
+    fn problem_groups_for_missing_or_unmapped_loinc_is_empty() {
+        assert_eq!(problem_groups_for(None), Vec::<String>::new());
+        // 这个编号不是任何真实 LOINC(纯构造,确认「查不到」时如实返回空,而不是
+        // 名字兜底猜一个分组进去)。
+        assert_eq!(problem_groups_for(Some("00000-0")), Vec::<String>::new());
+    }
+
+    /// 目录:10 条泳道,每条文案唯一(chip 靠文案本身当 key,不能撞名),顺序与
+    /// `problem_map.json` 的数组顺序一致。
+    #[test]
+    fn view_trend_group_catalog_has_ten_distinct_labels_in_source_order() {
+        let catalog = view_trend_group_catalog();
+        assert_eq!(catalog.len(), 10, "实际={catalog:?}");
+        let uniq: BTreeSet<&String> = catalog.iter().collect();
+        assert_eq!(uniq.len(), catalog.len(), "chip 文案不能撞名:{catalog:?}");
+        assert_eq!(
+            catalog,
+            vec![
+                "糖尿病相关",
+                "高血压相关",
+                "血脂",
+                "冠心病相关",
+                "肾功能",
+                "甲减相关",
+                "甲亢相关",
+                "贫血相关",
+                "尿酸相关",
+                "肝功能相关",
+            ]
+        );
+    }
+
+    /// `trend_series` 把 `problem_groups_for` 的结果原样接到 DTO 上 —— 端到端
+    /// 钉一次装配路径本身没有再插一层去重/改序。
+    #[test]
+    fn trend_series_dto_carries_problem_groups_from_loinc() {
+        let docs = docs_from(&[(
+            "生化检验报告单\n低密度脂蛋白胆固醇 3.6 mmol/L 0-3.4\n",
+            Some("2024-06-01"),
+            "lab_report",
+        )]);
+        let src = source_docs(&docs);
+        let clinical = parser::aggregate(&src);
+        let ldl = clinical
+            .labs
+            .iter()
+            .find(|s| s.loinc.as_deref() == Some("22748-8"))
+            .expect("LDL series should resolve to its LOINC via the terminology dictionary");
+        let dto = trend_series(&docs, ldl);
+        assert_eq!(dto.problem_groups, vec!["糖尿病相关", "血脂", "冠心病相关"]);
     }
 
     #[test]
