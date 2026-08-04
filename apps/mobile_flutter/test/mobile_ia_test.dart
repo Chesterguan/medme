@@ -57,7 +57,7 @@ TrendSeriesDto series(List<TrendPointDto> points, {double? lo, double? hi}) =>
       refLow: lo,
       refHigh: hi,
       anyAbnormal: points.any((p) => p.flag != null),
-      problemGroups: const [],
+      panel: null,
       points: points,
     );
 
@@ -219,17 +219,14 @@ void main() {
 
   // ───────────────────────────────────────────────────────────────────────────
   group('趋势:搜索与「只看非正常项」', () {
-    TrendSeriesDto s(
-      String name, {
-      required bool abnormal,
-      List<String> groups = const [],
-    }) => TrendSeriesDto(
-      name: name,
-      unit: 'umol/L',
-      anyAbnormal: abnormal,
-      problemGroups: groups,
-      points: [pt('2024-03-01', 1)],
-    );
+    TrendSeriesDto s(String name, {required bool abnormal, String? panel}) =>
+        TrendSeriesDto(
+          name: name,
+          unit: 'umol/L',
+          anyAbnormal: abnormal,
+          panel: panel,
+          points: [pt('2024-03-01', 1)],
+        );
 
     final all = [
       s('肌酐', abnormal: false),
@@ -263,118 +260,114 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 分类入口(chip):产品判断是搜索框在手机上不够用,要能直接点「和这个病相关的
-  // 检查」。分组匹配(哪条序列属于哪条泳道)在 Rust 侧按 LOINC 算完、通过
-  // `TrendSeriesDto.problemGroups` 下发 —— 这里只测 UI 拿到这份结果之后怎么用,
+  // 分类入口(chip):产品判断是搜索框在手机上不够用,要能直接点「这类检查有哪
+  // 些」。大类匹配(哪条序列属于哪个 panel)在 Rust 侧按 analyteKey 查词典算完、
+  // 通过 `TrendSeriesDto.panel` 下发 —— 这里只测 UI 拿到这份结果之后怎么用,
   // **不重新猜一遍匹配**(那是 Rust 单测的事,`vault_projections.rs` 里有)。
-  group('趋势:分组 chip', () {
-    TrendSeriesDto s(
-      String name, {
-      List<String> groups = const [],
-      bool abnormal = false,
-    }) => TrendSeriesDto(
-      name: name,
-      unit: 'umol/L',
-      anyAbnormal: abnormal,
-      problemGroups: groups,
-      points: [pt('2024-03-01', 1)],
-    );
+  group('趋势:检验大类 chip', () {
+    TrendSeriesDto s(String name, {String? panel, bool abnormal = false}) =>
+        TrendSeriesDto(
+          name: name,
+          unit: 'umol/L',
+          anyAbnormal: abnormal,
+          panel: panel,
+          points: [pt('2024-03-01', 1)],
+        );
 
-    test('「其他」桶:兜底不漏项 —— 没有 LOINC(problemGroups 为空)的序列必须能'
+    test('「其他」桶:兜底不漏项 —— 没能归一化(panel 为 null)的序列必须能'
         '被「其他」选中', () {
       // 血常规里一大类计数项(嗜酸性粒细胞、血小板分布宽度……)现实中经常没能
-      // 归一化出 LOINC,`problemGroups` 因此是空表 —— 这条序列就是那种情况的
+      // 归一化出 analyteKey,`panel` 因此是 null —— 这条序列就是那种情况的
       // 构造版本。没有「其他」兜底,它会从分类入口里彻底消失(需求原文)。
-      final unmapped = s('嗜酸性粒细胞百分比', groups: const []);
-      expect(trendGroupMatches(unmapped, kOtherTrendGroup), isTrue);
-      expect(trendGroupMatches(unmapped, null), isTrue, reason: '「全部」不筛');
-      expect(trendGroupMatches(unmapped, '肾功能'), isFalse);
+      final unmapped = s('嗜酸性粒细胞百分比', panel: null);
+      expect(trendPanelMatches(unmapped, kOtherTrendPanel), isTrue);
+      expect(trendPanelMatches(unmapped, null), isTrue, reason: '「全部」不筛');
+      expect(trendPanelMatches(unmapped, '肾功能'), isFalse);
 
-      final all = [unmapped, s('肌酐', groups: const ['肾功能'])];
-      final chips = trendGroupChips(all, catalog: const ['肾功能']);
-      final other = chips.singleWhere((c) => c.group == kOtherTrendGroup);
+      final all = [unmapped, s('肌酐', panel: '肾功能')];
+      final chips = trendPanelChips(all, catalog: const ['肾功能']);
+      final other = chips.singleWhere((c) => c.panel == kOtherTrendPanel);
       expect(other.label, '其他');
       expect(other.count, 1);
       expect(
-        trendVisible(all, query: '', abnormalOnly: false, group: kOtherTrendGroup)
-            .map((e) => e.name),
+        trendVisible(
+          all,
+          query: '',
+          abnormalOnly: false,
+          panel: kOtherTrendPanel,
+        ).map((e) => e.name),
         ['嗜酸性粒细胞百分比'],
       );
     });
 
-    test('「全部」不筛,选中具体分组精确匹配 problemGroups', () {
+    test('「全部」不筛,选中具体大类精确匹配 panel', () {
       final all = [
-        s('低密度脂蛋白胆固醇', groups: const ['糖尿病相关', '血脂', '冠心病相关']),
-        s('促甲状腺激素', groups: const ['甲减相关', '甲亢相关']),
+        s('低密度脂蛋白胆固醇', panel: '血脂'),
+        s('促甲状腺激素', panel: '甲状腺功能'),
       ];
       expect(
-        trendVisible(all, query: '', abnormalOnly: false, group: null).length,
+        trendVisible(all, query: '', abnormalOnly: false, panel: null).length,
         2,
         reason: '全部 = 不筛',
       );
       expect(
-        trendVisible(all, query: '', abnormalOnly: false, group: '血脂')
+        trendVisible(all, query: '', abnormalOnly: false, panel: '血脂')
             .map((e) => e.name),
         ['低密度脂蛋白胆固醇'],
       );
-      // 一条序列可以同时属于多个分组,选中其中任意一个都要能找到它 —— 不去重
-      // 合并是产品明确要求的(LDL 不能只算进一个分类)。
       expect(
-        trendVisible(all, query: '', abnormalOnly: false, group: '冠心病相关')
+        trendVisible(all, query: '', abnormalOnly: false, panel: '甲状腺功能')
             .map((e) => e.name),
-        ['低密度脂蛋白胆固醇'],
+        ['促甲状腺激素'],
       );
     });
 
-    test('选中分组时「只看非正常项」让位,与搜索同一条理由', () {
+    test('选中大类时「只看非正常项」让位,与搜索同一条理由', () {
       final all = [
-        s('肌酐', groups: const ['肾功能'], abnormal: false),
-        s('estimated 肾小球滤过率', groups: const ['肾功能'], abnormal: false),
+        s('肌酐', panel: '肾功能', abnormal: false),
+        s('estimated 肾小球滤过率', panel: '肾功能', abnormal: false),
       ];
-      // 两条都正常;若分组选中时仍叠加 abnormalOnly,会把刚打开的分类过滤成空。
+      // 两条都正常;若选中大类时仍叠加 abnormalOnly,会把刚打开的大类过滤成空。
       final shown = trendVisible(
         all,
         query: '',
         abnormalOnly: true,
-        group: '肾功能',
+        panel: '肾功能',
       );
-      expect(shown.length, 2, reason: '选中分组后不该再被「只看非正常项」清空');
+      expect(shown.length, 2, reason: '选中大类后不该再被「只看非正常项」清空');
     });
 
-    test('分组与搜索可以叠加:先按分组筛,再按名字筛', () {
+    test('大类与搜索可以叠加:先按大类筛,再按名字筛', () {
       final all = [
-        s('肌酐', groups: const ['肾功能']),
-        s('估算肾小球滤过率', groups: const ['肾功能']),
-        s('尿酸', groups: const ['尿酸相关']),
+        s('肌酐', panel: '肾功能'),
+        s('估算肾小球滤过率', panel: '肾功能'),
+        s('尿酸', panel: '肾功能'),
       ];
       final shown = trendVisible(
         all,
         query: '肌酐',
         abnormalOnly: false,
-        group: '肾功能',
+        panel: '肾功能',
       );
       expect(shown.map((e) => e.name), ['肌酐']);
     });
 
-    test('chip 目录:计数为 0 的分组不出现,「全部」恒在最前', () {
-      final all = [
-        s('肌酐', groups: const ['肾功能']),
-        s('未分组指标', groups: const []),
-      ];
-      final chips = trendGroupChips(
+    test('chip 目录:计数为 0 的大类不出现,「全部」恒在最前', () {
+      final all = [s('肌酐', panel: '肾功能'), s('未归类指标', panel: null)];
+      final chips = trendPanelChips(
         all,
-        catalog: const ['糖尿病相关', '肾功能', '血脂'],
+        catalog: const ['血常规', '肾功能', '血脂'],
       );
       expect(chips.first.label, '全部');
       expect(chips.first.count, 2);
-      // 「糖尿病相关」「血脂」在这批数据里计数为 0,不该出现。
+      // 「血常规」「血脂」在这批数据里计数为 0,不该出现。
       expect(chips.map((c) => c.label), ['全部', '肾功能', '其他']);
       expect(chips.firstWhere((c) => c.label == '肾功能').count, 1);
     });
 
-    test('目录为空、只有未分组序列时,只剩「全部」+「其他」两颗兜底 chip', () {
-      final all = [s('未分组指标A'), s('未分组指标B')];
-      final chips = trendGroupChips(all, catalog: const []);
+    test('目录为空、只有未归类序列时,只剩「全部」+「其他」两颗兜底 chip', () {
+      final all = [s('未归类指标A'), s('未归类指标B')];
+      final chips = trendPanelChips(all, catalog: const []);
       expect(chips.map((c) => c.label), ['全部', '其他']);
       expect(chips.last.count, 2);
     });

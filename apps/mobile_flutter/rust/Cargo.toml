@@ -33,6 +33,10 @@ core-model = { path = "../../../packages/core-model" }
 pipeline = { path = "../../../packages/pipeline" }
 parser = { path = "../../../packages/parser" }
 medme-share = { path = "../../../packages/share" }
+# 趋势页 panel chip(`api::vault_projections::panel_for` 包一层)直接查词典的
+# `panel` 字段。`parser` 已经依赖 `terminology`,但不重新导出它,同一条理由与
+# 上面 `serde_json` 的注释一致:要 `use` 就得是直接依赖。
+terminology = { path = "../../../packages/terminology" }
 # DICOM:iOS + 安卓两端都关掉 `codecs`(C/C++ JPEG2000/JPEG-LS 解码器),与 Tauri
 # 移动端 `apps/mobile/src-tauri/Cargo.toml` 的取舍一致——移动端不看 DICOM 像素
 # 精细阅片,免去这处内存破坏型 RCE 面(GHSA-24px),`parse_meta`/`render_png` 仍

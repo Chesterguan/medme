@@ -72,6 +72,16 @@ pub struct Entry {
     /// collapsing (design §6 red line 2). `None` for drugs.
     #[serde(default)]
     pub system: Option<String>,
+    /// 检验大类(化验报告单印刷惯例,不是临床判断) —— 血常规/肝功能/肾功能等,
+    /// 见 `panel_methodology.md`。与 `system`(标本类型)是两个独立维度:
+    /// `system` 太粗(181 条同为 `serum/plasma`,肝肾血脂血糖全混在一起)。
+    /// `None` 表示这条没能干净地归进策展的 ~14 类里,老实留空,消费方(手机端
+    /// 趋势页)落进「其他」兜底,不强凑。只有 `category == Lab` 的条目会有值;
+    /// vital/drug 恒为 `None`——这是化验报告单的项目组表头,体征/药物没有这个
+    /// 概念。**只给一个**(不像 `problem_map.json` 的疾病泳道允许多重归属):
+    /// 一项化验在真实报告单上物理上只印在一个项目组表头下。
+    #[serde(default)]
+    pub panel: Option<String>,
     pub codes: Codes,
     /// Canonical unit (UCUM). `None` for drugs.
     #[serde(default)]
@@ -634,6 +644,41 @@ pub fn normalize_drug(raw_term: &str) -> Option<Match> {
 /// to enumerate concepts (e.g. entity search auto-complete).
 pub fn dictionary_entries() -> &'static [Entry] {
     &index().entries
+}
+
+/// Fixed display order for the lab-panel catalog (检验大类:血常规/肝功能/…) —
+/// mirrors a Chinese lab report's project-group headers, curated in
+/// `panel_methodology.md`. A test below asserts this exactly matches the set of
+/// distinct `panel` values actually present in `dictionary.json`, so a typo or
+/// a forgotten/renamed panel can't silently drift the two apart.
+pub const PANEL_CATALOG: &[&str] = &[
+    "血常规",
+    "尿液",
+    "肝功能",
+    "肾功能",
+    "血糖",
+    "血脂",
+    "电解质",
+    "甲状腺功能",
+    "凝血",
+    "心肌标志物",
+    "炎症/感染",
+    "肿瘤标志物",
+    "风湿免疫",
+    "性激素",
+];
+
+/// Which lab panel a normalized analyte `key` belongs to (e.g.
+/// `panel_for("creatinine") == Some("肾功能")`). `None` when `key` doesn't
+/// resolve to a dictionary entry, or when the entry has no `panel` — most
+/// commonly a specialty/low-frequency lab that doesn't cleanly fit one of the
+/// curated panels (see `panel_methodology.md`'s "留空" section). Callers should
+/// treat `None` as "uncategorized", not as an error.
+pub fn panel_for(key: &str) -> Option<&'static str> {
+    dictionary_entries()
+        .iter()
+        .find(|e| e.key == key)
+        .and_then(|e| e.panel.as_deref())
 }
 
 #[cfg(test)]
@@ -1226,5 +1271,59 @@ mod tests {
             normalize_drug("琥珀酸亚铁片").unwrap().canonical_name,
             "琥珀酸亚铁"
         );
+    }
+
+    #[test]
+    fn panel_for_known_and_unknown_keys() {
+        // 常见项各归其类(印刷惯例,见 panel_methodology.md)。
+        assert_eq!(panel_for("creatinine"), Some("肾功能"));
+        assert_eq!(panel_for("alt"), Some("肝功能"));
+        assert_eq!(panel_for("wbc"), Some("血常规"));
+        assert_eq!(panel_for("hgb"), Some("血常规"));
+        assert_eq!(panel_for("plt"), Some("血常规"));
+        // 血红蛋白只给一个 panel(血常规),即使它在 problem_map.json 里同时挂在
+        // 「贫血相关」「肾功能」两条疾病泳道下 —— panel 是印刷分组,不是关注方向,
+        // 两个维度不该互相渗透。
+        // 不存在的 key、以及词典里确实没配 panel 的条目,都老实返回 None。
+        assert_eq!(panel_for("完全不是术语"), None);
+        assert_eq!(
+            panel_for("cortisol"),
+            None,
+            "皮质醇节律没有稳定印刷惯例,留空"
+        );
+    }
+
+    #[test]
+    fn panel_catalog_matches_dictionary_distinct_panels() {
+        // PANEL_CATALOG 是人工维护的展示顺序;这里钉住它与词典里实际出现的 panel
+        // 值**完全一致**(不多不少) —— 漏了会让某个大类的 chip 永远不出现在目录
+        // 里(即使有条目落在它下面),多了会在目录里挂一个查无条目的空 chip。
+        let mut from_dict: Vec<&str> = dictionary_entries()
+            .iter()
+            .filter_map(|e| e.panel.as_deref())
+            .collect();
+        from_dict.sort_unstable();
+        from_dict.dedup();
+        let mut from_catalog: Vec<&str> = PANEL_CATALOG.to_vec();
+        from_catalog.sort_unstable();
+        assert_eq!(
+            from_dict, from_catalog,
+            "PANEL_CATALOG 与 dictionary.json 里实际出现的 panel 集合不一致"
+        );
+    }
+
+    #[test]
+    fn panel_only_set_on_lab_entries() {
+        // panel 是化验报告单的项目组表头概念,vital/drug 没有这个概念,恒为 None。
+        for e in dictionary_entries() {
+            if e.category != Category::Lab {
+                assert!(
+                    e.panel.is_none(),
+                    "{} is not a lab but has a panel: {:?}",
+                    e.key,
+                    e.panel
+                );
+            }
+        }
     }
 }
