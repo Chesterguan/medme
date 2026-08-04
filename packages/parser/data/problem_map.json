@@ -43,6 +43,7 @@
       {"class": "ARB+利尿剂固定复方", "atc": "C09DA", "source": "ATC C09DA — Angiotensin II receptor blockers (ARBs) and diuretics (如氯沙坦钾氢氯噻嗪 C09DA01、缬沙坦氢氯噻嗪 C09DA03)"},
       {"class": "ARB+钙通道阻滞剂固定复方", "atc": "C09DB", "source": "ATC C09DB — Angiotensin II receptor blockers (ARBs) and calcium channel blockers (如缬沙坦氨氯地平 C09DB01、替米沙坦氨氯地平 C09DB04)"},
       {"class": "二氢吡啶类钙通道阻滞剂", "atc": "C08CA", "source": "ATC C08CA — Dihydropyridine derivatives (C08 Calcium channel blockers)"},
+      {"class": "含二氢吡啶类CCB的固定复方(氨氯地平阿托伐他汀)", "atc": "C10BX03", "source": "ATC C10BX03 — Amlodipine and atorvastatin; 其降压成分为氨氯地平(C08CA01), 属《中国高血压防治指南(2024年修订版)》五大类降压药之钙通道阻滞剂。此处收录整码而非 C10B 前缀: C10BA (Combinations of various lipid modifying agents) 为调脂药相互组合, 不含降压成分, 挂前缀会错挂"},
       {"class": "β受体阻滞剂", "atc": "C07A", "source": "ATC C07A — Beta blocking agents (C07)"},
       {"class": "噻嗪类利尿剂", "atc": "C03A", "source": "ATC C03A — Low-ceiling diuretics, thiazides (C03 Diuretics; 氢氯噻嗪 C03AA03)"},
       {"class": "噻嗪样利尿剂", "atc": "C03BA", "source": "ATC C03BA — Sulfonamides, plain (C03B Low-ceiling diuretics excl. thiazides); 吲达帕胺 C03BA11、氯噻酮 C03BA04 —《中国高血压防治指南(2024年修订版)》五大类降压药之利尿剂, 与噻嗪类同列一线"},
@@ -63,7 +64,7 @@
       {"class": "胆固醇吸收抑制剂", "atc": "C10AX09", "source": "ATC C10AX09 — Ezetimibe (依折麦布)"},
       {"class": "PCSK9抑制剂", "atc": "C10AX", "source": "ATC C10AX13/C10AX14 — Evolocumab/Alirocumab (PCSK9单抗)"},
       {"class": "贝特类", "atc": "C10AB", "source": "ATC C10AB — Fibrates (以高甘油三酯血症为主)"},
-      {"class": "调脂药固定复方(含他汀)", "atc": "C10B", "source": "ATC C10B — Lipid modifying agents, combinations (C10BA 他汀+依折麦布, C10BX 他汀+非调脂药; 如氨氯地平阿托伐他汀 C10BX03) — C10B 各亚类按定义均含调脂成分"}
+      {"class": "调脂药固定复方", "atc": "C10B", "source": "ATC C10B — Lipid modifying agents, combinations (C10BA Combinations of various lipid modifying agents, 即调脂药相互组合, 如辛伐他汀依折麦布 C10BA02、贝派地酸依折麦布 C10BA10; C10BX Lipid modifying agents in combination with other drugs, 即调脂药与非调脂药组合, 如氨氯地平阿托伐他汀 C10BX03) — 按 WHOCC 定义两个亚类均以调脂成分为基础, 但不限于他汀(C10BA10 不含他汀)"}
     ]
   },
   {
@@ -79,7 +80,7 @@
     "drugs": [
       {"class": "抗血小板药", "atc": "B01AC", "source": "ATC B01AC — Platelet aggregation inhibitors excl. heparin (阿司匹林/氯吡格雷/替格瑞洛)"},
       {"class": "他汀类", "atc": "C10AA", "source": "ATC C10AA — HMG CoA reductase inhibitors (ASCVD二级预防)"},
-      {"class": "调脂药固定复方(含他汀)", "atc": "C10B", "source": "ATC C10B — Lipid modifying agents, combinations (含他汀的固定复方, 如氨氯地平阿托伐他汀 C10BX03; ASCVD二级预防的他汀暴露)"},
+      {"class": "调脂药固定复方", "atc": "C10B", "source": "ATC C10B — Lipid modifying agents, combinations (C10BA 调脂药相互组合, C10BX 调脂药与非调脂药组合; 如氨氯地平阿托伐他汀 C10BX03、贝派地酸依折麦布 C10BA10) — ASCVD二级预防的降脂药暴露, 按 WHOCC 定义不限于他汀"},
       {"class": "β受体阻滞剂", "atc": "C07A", "source": "ATC C07A — Beta blocking agents"},
       {"class": "ACEI/ARB", "atc": "C09", "source": "ATC C09 — Agents acting on the renin-angiotensin system"},
       {"class": "硝酸酯类", "atc": "C01DA", "source": "ATC C01DA — Organic nitrates (抗心绞痛)"}
