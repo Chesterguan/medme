@@ -25,6 +25,7 @@
 
 use crate::{extract_conditions, extract_labs, extract_meds, MedObservation};
 use chrono::NaiveDate;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 
@@ -178,21 +179,53 @@ enum SecKind {
     Other,
 }
 
-/// The section kind a header line starts, or `None` if it isn't a header. `Other`
-/// headers (诊断/病史/…) aren't mined but still bound a section so a meds/labs
-/// section ends where the next section begins.
+/// Does `line` start with one of `heads`?
 ///
 /// Prefix match **after [`terminology::normalize_term`]** on both sides. Comparing
 /// the raw line only worked when the report typeset the header exactly the way
-/// this list spells it: `出院　医嘱:` (ideographic space U+3000, ordinary in
+/// these lists spell it: `出院　医嘱:` (ideographic space U+3000, ordinary in
 /// Chinese typesetting) and `出 院 医 嘱:` (OCR splitting CJK) both failed the
 /// prefix test, the section went unrecognized, and every discharge medication in
 /// the document silently disappeared from the summary. Same defect that emptied
 /// the diabetes lane — one comparison of Chinese text against a curated literal
 /// without normalizing first.
-fn header_kind(line: &str) -> Option<SecKind> {
+///
+/// Two ways to be a header, and the split matters — both halves were learned the
+/// hard way.
+///
+/// 1. The **raw** prefix, exactly as before. Real headers trail all sorts of
+///    things: `出院医嘱如下:`, `出院带药(共2种):`, `带药如下`, `出院医嘱 1.`,
+///    `用药医嘱 -`. An earlier attempt demanded a delimiter right after the
+///    prefix and lost every one of them — worse than the bug it was fixing.
+///
+/// 2. The **normalized** prefix, but only when what follows is a delimiter or
+///    the line ends. Normalization exists here for `出 院 医 嘱:` (OCR splits
+///    CJK) and `ＲＰ:` (full-width) — but it also lowercases and deletes all
+///    internal whitespace, so an unguarded prefix test on the normalized line
+///    reads ordinary content as a header. `RPR 阴性` (routine syphilis screen)
+///    matched the lowercased `Rp`; `用 药 后 患者症状缓解` matched `用药`. And a
+///    false header is much worse than a missed one: `sections_text` treats
+///    headers as boundaries, so it truncates the block and everything below it
+///    vanishes — one RPR row deleted 肌酐 and 血钾 from a real summary.
+///
+/// Together: never less than the raw rule recognized, plus the despaced and
+/// full-width spellings, and nothing that merely happens to start with a
+/// header word.
+fn starts_with_header(line: &str, heads: &[&str]) -> bool {
     let raw = line.trim_start();
     let folded = terminology::normalize_term(line);
+    heads.iter().any(|h| {
+        raw.starts_with(h)
+            || folded
+                .strip_prefix(terminology::normalize_term(h).as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with([':', '.', '、']))
+    })
+}
+
+/// The section kind a header line starts, or `None` if it isn't a header. `Other`
+/// headers (诊断/病史/…) aren't mined but still bound a section so a meds/labs
+/// section ends where the next section begins.
+fn header_kind(line: &str) -> Option<SecKind> {
     const MEDS: &[&str] = &[
         "出院医嘱",
         "出院带药",
@@ -227,35 +260,7 @@ fn header_kind(line: &str) -> Option<SecKind> {
         "建议",
         "小结",
     ];
-    // Two ways to be a header, and the split matters — both halves were learned
-    // the hard way.
-    //
-    // 1. The **raw** prefix, exactly as before. Real headers trail all sorts of
-    //    things: `出院医嘱如下:`, `出院带药(共2种):`, `带药如下`, `出院医嘱 1.`,
-    //    `用药医嘱 -`. An earlier attempt demanded a delimiter right after the
-    //    prefix and lost every one of them — worse than the bug it was fixing.
-    //
-    // 2. The **normalized** prefix, but only when what follows is a delimiter or
-    //    the line ends. Normalization exists here for `出 院 医 嘱:` (OCR splits
-    //    CJK) and `ＲＰ:` (full-width) — but it also lowercases and deletes all
-    //    internal whitespace, so an unguarded prefix test on the normalized line
-    //    reads ordinary content as a header. `RPR 阴性` (routine syphilis screen)
-    //    matched the lowercased `Rp`; `用 药 后 患者症状缓解` matched `用药`. And a
-    //    false header is much worse than a missed one: `sections_text` treats
-    //    headers as boundaries, so it truncates the block and everything below it
-    //    vanishes — one RPR row deleted 肌酐 and 血钾 from a real summary.
-    //
-    // Together: never less than the raw rule recognized, plus the despaced and
-    // full-width spellings, and nothing that merely happens to start with a
-    // header word.
-    let hit = |hs: &[&str]| {
-        hs.iter().any(|h| {
-            raw.starts_with(h)
-                || folded
-                    .strip_prefix(terminology::normalize_term(h).as_str())
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with([':', '.', '、']))
-        })
-    };
+    let hit = |hs: &[&str]| starts_with_header(line, hs);
     if hit(MEDS) {
         Some(SecKind::Meds)
     } else if hit(LABS) {
@@ -294,6 +299,61 @@ fn sections_text(text: &str, want: SecKind) -> Vec<String> {
         }
     }
     out
+}
+
+/// Medication-block headers used to **mask** text out of whole-document lab
+/// mining. Deliberately a strict subset of [`header_kind`]'s `MEDS`: the bare
+/// `用药` / `医嘱` entries are left out on purpose, because as raw prefixes they
+/// also match ordinary lab-report furniture — `医嘱号:12345` and `用药指导:…` are
+/// printed fields on real Chinese 检验报告单. In `header_kind` a false positive
+/// costs a truncated section; here it would DELETE lab rows from a genuine lab
+/// report, so this list carries only spellings that cannot be anything but the
+/// head of a drug list. Cost of the omission: a drug list introduced by a bare
+/// `医嘱:` inside a lab-classified document still leaks (see the masking doc) —
+/// under-masking is the safe direction.
+const MEDS_BLOCK_HEADERS: &[&str] = &["出院医嘱", "出院带药", "带药", "用药医嘱", "Rp"];
+
+/// Blank out the lines of every medication block in `text`, leaving every other
+/// line byte-identical (line count included — `extract_labs` reads line by line
+/// and ignores blanks, so nothing else about the parse shifts).
+///
+/// Why this is needed: [`wants_labs`] is a **whole-document** verdict, and when
+/// it says yes the document's ENTIRE text goes to `extract_labs` — the 出院医嘱
+/// list included. `二甲双胍 0.5g bid` then parses as a lab row (value `0.5`,
+/// unit `g`) and the trend chart grows a curve for a drug.
+///
+/// Classification cannot be relied on to prevent that. Drop the `出院记录` title
+/// from a discharge summary — routine when the source is a phone photo — and
+/// `classify` falls through to `LabReport`, because the keyword chain then only
+/// sees the 检验 section that is genuinely in the document. The document's own
+/// section structure survives that OCR loss where the title does not, so the fix
+/// keys on structure: with the mask, the titled and untitled copies of the same
+/// discharge summary yield the same labs, and the drug stays a drug (the meds
+/// path reads it from the very same block via [`sections_text`]).
+///
+/// A block runs from its header to the next header of ANY kind (or end of text).
+/// The start boundary is conservative (see [`MEDS_BLOCK_HEADERS`]) and the end
+/// boundary liberal, because ending a mask early only ever keeps more text: both
+/// choices err toward mining too much rather than silently deleting a real row.
+fn mask_meds_blocks(text: &str) -> Cow<'_, str> {
+    if !text
+        .lines()
+        .any(|l| starts_with_header(l, MEDS_BLOCK_HEADERS))
+    {
+        return Cow::Borrowed(text);
+    }
+    let mut masking = false;
+    let mut out: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if starts_with_header(line, MEDS_BLOCK_HEADERS) {
+            masking = true;
+        } else if masking && header_kind(line).is_some() {
+            // Any other section header ends the drug list; keep that line.
+            masking = false;
+        }
+        out.push(if masking { "" } else { line });
+    }
+    Cow::Owned(out.join("\n"))
 }
 
 /// Render a mention's dose + frequency, e.g. "0.5g bid". `None` if the mention
@@ -360,9 +420,12 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
     for doc in docs {
         let dt = doc.doc_type.as_deref();
         // --- labs: whole-doc for lab reports; else only from embedded 化验 sections
-        // (section-scoped, so a discharge summary's prose 血压 stays out) —— #148. ---
+        // (section-scoped, so a discharge summary's prose 血压 stays out) —— #148.
+        // Even on the whole-doc path the document's 出院医嘱/带药 block is masked
+        // out first: a drug line reads as a lab row, and `wants_labs` can say yes
+        // to a discharge summary whose title OCR dropped — see mask_meds_blocks. ---
         let doc_labs = if wants_labs(dt) {
-            extract_labs(doc.text)
+            extract_labs(&mask_meds_blocks(doc.text))
         } else {
             sections_text(doc.text, SecKind::Labs)
                 .iter()
@@ -728,6 +791,171 @@ mod tests {
             assert!(
                 keys.contains(&"metformin"),
                 "header {header:?} lost the medication block; got {keys:?}"
+            );
+        }
+    }
+
+    /// Classify `text` the way the real callers do (`DocType::as_str()`
+    /// lowercased), aggregate it as a single document, and report what came out.
+    fn parse_as_classified(text: &str) -> (Vec<String>, Vec<String>) {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some(crate::classify(text).as_str().to_lowercase()),
+            title: None,
+            date: d(2026, 5, 1),
+            text,
+        }];
+        let agg = aggregate(&docs);
+        (
+            agg.labs.iter().map(|s| s.group_name.clone()).collect(),
+            agg.meds.iter().map(|m| m.name.clone()).collect(),
+        )
+    }
+
+    /// The reported defect, end to end through `classify` + `aggregate`.
+    ///
+    /// A discharge summary parses correctly only as long as OCR preserves its
+    /// `出院记录` title: that keyword is what puts `classify` on the
+    /// `DischargeSummary` branch, which makes `wants_labs` false, which routes
+    /// lab mining through the 检验 section only. Lose the title — routine on a
+    /// phone photo, where the measured extraction rate is about 55% — and the
+    /// keyword chain sees only the 检验 section that really is there, answers
+    /// `LabReport`, and `wants_labs` hands the WHOLE document to `extract_labs`.
+    /// `二甲双胍 0.5g bid` then comes back as an analyte (value 0.5, unit g) and
+    /// the trend chart draws a lab curve for a drug.
+    ///
+    /// The assertion is deliberately "both spellings agree" rather than a fixed
+    /// expected `DocType`: what has to hold is that the extraction stops
+    /// depending on a title surviving OCR. If `classify` is later improved, this
+    /// test keeps passing for the right reason.
+    #[test]
+    fn losing_the_title_does_not_turn_a_discharge_drug_into_a_lab_curve() {
+        const BODY: &str = "检验结果:\n血红蛋白 122 g/L 120-160\n出院医嘱:\n二甲双胍 0.5g bid\n";
+        let (titled_labs, titled_meds) = parse_as_classified(&format!("出院记录\n{BODY}"));
+        let (untitled_labs, untitled_meds) = parse_as_classified(BODY);
+
+        assert_eq!(
+            titled_labs,
+            vec!["血红蛋白".to_string()],
+            "titled discharge summary must yield exactly the one real analyte"
+        );
+        assert_eq!(
+            untitled_labs, titled_labs,
+            "dropping the 出院记录 title changed which analytes are charted — \
+             二甲双胍 leaks in as a lab when classify falls through to LabReport"
+        );
+        // …and the drug is still a drug on both paths, not merely deleted.
+        for meds in [&titled_meds, &untitled_meds] {
+            assert!(
+                meds.iter().any(|m| m.contains("二甲双胍")),
+                "the masked 出院医嘱 block must still be mined for meds; got {meds:?}"
+            );
+        }
+    }
+
+    /// The mirror-image risk of the mask, and the one that would actually hurt a
+    /// patient: masking must never eat rows out of a genuine lab report.
+    ///
+    /// Every line below is real 检验报告单 furniture that *starts with* a
+    /// medication keyword. `医嘱号` / `医嘱医生` are printed fields on Chinese lab
+    /// forms and begin with `医嘱`; `用药指导` begins with `用药`; `RPR`
+    /// (梅毒快速血浆反应素) begins with the letters of the `Rp` marker once case is
+    /// folded. If any of them opened a mask, every row after it would silently
+    /// vanish from the chart — strictly worse than the leak being fixed.
+    #[test]
+    fn lab_report_furniture_never_masks_real_rows() {
+        let rows = "血红蛋白 122 g/L 120-160\n肌酐 145 umol/L 57-97 ↑\n血钾 4.1 mmol/L 3.5-5.3";
+        let control = parse_as_classified(&format!("检验报告单\n{rows}")).0;
+        assert_eq!(control.len(), 3, "control must find all three analytes");
+        for intruder in [
+            "医嘱号:12345",
+            "医嘱医生:王医生",
+            "用药指导:空腹采血",
+            "RPR 阴性",
+            "用 药 后 患者症状缓解",
+        ] {
+            let got = parse_as_classified(&format!("检验报告单\n{intruder}\n{rows}")).0;
+            assert_eq!(
+                got, control,
+                "line {intruder:?} was read as a drug block and deleted lab rows"
+            );
+        }
+    }
+
+    /// A masked drug block ends where the next section begins — the 检验 rows
+    /// printed *after* an 出院医嘱 list are still charted. Getting this wrong
+    /// (masking to end of document) would trade the leak for lost data.
+    #[test]
+    fn masking_stops_at_the_next_section_header() {
+        let text = "检验结果:\n血红蛋白 122 g/L 120-160\n\
+                    出院医嘱:\n二甲双胍 0.5g bid\n\
+                    检验项目:\n肌酐 145 umol/L 57-97\n\
+                    出院诊断:2型糖尿病\n";
+        let (labs, _) = parse_as_classified(text);
+        assert_eq!(labs, vec!["肌酐".to_string(), "血红蛋白".to_string()]);
+    }
+
+    /// Callers that don't classify at all (`doc_type: None`) take the same
+    /// permissive whole-document path, so they used to hit the identical trap.
+    /// The mask is on that path too, which is why `wants_labs`'s deliberate
+    /// permissiveness for `None` could be left alone.
+    #[test]
+    fn untyped_documents_are_protected_too() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: None,
+            title: None,
+            date: d(2026, 5, 1),
+            text: "血红蛋白 122 g/L 120-160\n出院带药:\n二甲双胍 0.5g bid\n",
+        }];
+        let agg = aggregate(&docs);
+        let labs: Vec<&str> = agg.labs.iter().map(|s| s.group_name.as_str()).collect();
+        assert_eq!(labs, vec!["血红蛋白"]);
+    }
+
+    /// A document with no drug block must come out of the mask untouched — the
+    /// guard is not allowed to cost anything on the common case. `二甲双胍` here
+    /// sits in bare prose with no 医嘱 header, so it is NOT in scope for this fix
+    /// and is expected to be read exactly as before (see also
+    /// `output_vectors_are_in_deterministic_order`).
+    #[test]
+    fn documents_without_a_drug_block_are_unchanged() {
+        assert!(matches!(
+            mask_meds_blocks("检验结果:\n血红蛋白 122 g/L 120-160\n二甲双胍 0.5g bid\n"),
+            Cow::Borrowed(_)
+        ));
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            date: d(2026, 5, 1),
+            text: "检验报告单\n血红蛋白 122 g/L 120-160\n肌酐 145 umol/L 57-97",
+        }];
+        let agg = aggregate(&docs);
+        let labs: Vec<&str> = agg.labs.iter().map(|s| s.group_name.as_str()).collect();
+        assert_eq!(labs, vec!["肌酐", "血红蛋白"]);
+    }
+
+    /// The typeset/OCR spellings the sibling meds tests rely on must open a mask
+    /// too — otherwise a `出院　医嘱` block leaks into the chart while the very
+    /// same block is correctly mined for meds.
+    #[test]
+    fn mask_accepts_the_same_header_spellings_as_the_meds_path() {
+        for header in [
+            "出院医嘱:",
+            "出院\u{3000}医嘱:", // ideographic space
+            "出 院 医 嘱:",      // OCR split
+            "出院医嘱如下:",
+            "出院带药(共2种):",
+            "带药如下",
+            "ＲＰ:", // full-width Rp
+        ] {
+            let text = format!("检验结果:\n血红蛋白 122 g/L 120-160\n{header}\n二甲双胍 0.5g bid");
+            let (labs, _) = parse_as_classified(&text);
+            assert_eq!(
+                labs,
+                vec!["血红蛋白".to_string()],
+                "header {header:?} did not mask its drug block; got {labs:?}"
             );
         }
     }
