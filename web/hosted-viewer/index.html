@@ -820,7 +820,6 @@ function buildEMRFromSummary(sm, patient) {
   let s2 = "近期" + (lastDate ? "(" + lastDate + ")" : "") + "复查";
   if (labStr) s2 += ":" + labStr;
   s2 += "。目前系" + status + "状态";
-  if (onMeds.length) s2 += ",现规律服用" + onMeds.join("、") + "治疗";
   if (sm.effect) s2 += ",效果" + sm.effect;
   s2 += "。患者为" + reason + "来我院就诊。";
   L.push(s2);
@@ -919,7 +918,7 @@ function renderSummary(sm, asOf, patient) {
 
   let h = '<div class="sum"><div class="sum-top"><div class="sum-card">';
   if (diseases) h += '<div class="sum-row"><span class="sum-lab">在治疾病</span><span>' + diseases + '</span></div>';
-  if (onMeds.length || offMeds.length) h += '<div class="sum-row"><span class="sum-lab">当前用药</span><span>' + medsLine + '</span></div>';
+  if (onMeds.length || offMeds.length) h += '<div class="sum-row"><span class="sum-lab">病历中的用药</span><span>' + medsLine + '</span></div>';
   if (allerg) h += '<div class="sum-row"><span class="sum-lab">过敏史</span><span class="sum-bad">' + allerg + '</span></div>';
   h += '<button class="sum-copy" type="button">📋 复制为病历文本(可直接粘进你的病历)</button>'
     + '<details class="sum-emr"><summary>预览要复制的文本 ▾</summary><pre id="sum-emr-text">' + esc(emrText) + '</pre></details></div>';
@@ -1272,7 +1271,7 @@ async function renderQrSummary(fragment) {
   note.className = "notice";
   note.style.cssText = "margin:12px 0";
   note.textContent =
-    "本页来自患者当面出示的二维码,只包含当前在治的问题、关键指标与在用药物 —— "
+    "本页来自患者当面出示的二维码,只包含记录里的问题、关键指标与用过的药 —— "
     + "不是完整病历。需要看原件、影像或更早的记录,请让患者在手机上出示。";
   const app = document.getElementById("app");
   app.insertBefore(note, app.firstChild ? app.firstChild.nextSibling : null);
