@@ -1,12 +1,13 @@
 {
-  "version": "2026-07-14.1",
-  "note": "Clinical terminology normalization dictionary for MedMe (docs/015 §3.5). Codes pulled from the local OMOP vocab (LOINC / RxNorm / ATC + OMOP standard concept_id). Conversions are affine: canonical_value = slope * source_value + intercept. LOINC property/scale is chosen to agree with canonical_unit (molar LOINC for SI molar canonicals). See docs/superpowers/specs/2026-07-10-terminology-normalization-layer-design.md.",
+  "version": "2026-08-04.1",
+  "note": "Clinical terminology normalization dictionary for MedMe (docs/015 §3.5). Codes pulled from the local OMOP vocab (LOINC / RxNorm / ATC + OMOP standard concept_id). Conversions are affine: canonical_value = slope * source_value + intercept. LOINC property/scale is chosen to agree with canonical_unit (molar LOINC for SI molar canonicals). See docs/superpowers/specs/2026-07-10-terminology-normalization-layer-design.md. Lab entries additionally carry an optional `panel`: the 检验大类 (specimen-report print grouping, e.g. 血常规/肝功能/肾功能) a lab is printed under on a Chinese lab report — a curation of print convention, not a clinical/disease judgment (that's `packages/parser/data/problem_map.json`, a separate axis for the doctor viewer). Absent for entries that don't cleanly fit one of the ~14 curated panels. See packages/terminology/panel_methodology.md.",
   "entries": [
     {
       "key": "creatinine",
       "canonical_name": "肌酐",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肾功能",
       "codes": {
         "loinc": "14682-9",
         "omop_concept_id": 3020564
@@ -45,6 +46,7 @@
       "canonical_name": "估算肾小球滤过率",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肾功能",
       "codes": {
         "loinc": "33914-3",
         "omop_concept_id": 3030354
@@ -72,6 +74,7 @@
       "canonical_name": "尿素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肾功能",
       "codes": {
         "loinc": "22664-7",
         "omop_concept_id": 3020779
@@ -107,6 +110,7 @@
       "canonical_name": "尿酸",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肾功能",
       "codes": {
         "loinc": "14933-6",
         "omop_concept_id": 3026493
@@ -139,6 +143,7 @@
       "canonical_name": "血糖",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血糖",
       "codes": {
         "loinc": "14749-6",
         "omop_concept_id": 3013826
@@ -174,6 +179,7 @@
       "canonical_name": "糖化血红蛋白",
       "category": "lab",
       "system": "blood",
+      "panel": "血糖",
       "codes": {
         "loinc": "4548-4",
         "omop_concept_id": 3004410
@@ -206,6 +212,7 @@
       "canonical_name": "总胆固醇",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "14647-2",
         "omop_concept_id": 3019900
@@ -239,6 +246,7 @@
       "canonical_name": "低密度脂蛋白胆固醇",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "22748-8",
         "omop_concept_id": 3001308
@@ -271,6 +279,7 @@
       "canonical_name": "高密度脂蛋白胆固醇",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "14646-4",
         "omop_concept_id": 3023602
@@ -303,6 +312,7 @@
       "canonical_name": "甘油三酯",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "14927-8",
         "omop_concept_id": 3025839
@@ -338,6 +348,7 @@
       "canonical_name": "谷丙转氨酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "1742-6",
         "omop_concept_id": 3006923
@@ -371,6 +382,7 @@
       "canonical_name": "谷草转氨酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "1920-8",
         "omop_concept_id": 3013721
@@ -404,6 +416,7 @@
       "canonical_name": "总胆红素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "14631-6",
         "omop_concept_id": 3006140
@@ -436,6 +449,7 @@
       "canonical_name": "白蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "1751-7",
         "omop_concept_id": 3024561
@@ -467,6 +481,7 @@
       "canonical_name": "白细胞",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "6690-2",
         "omop_concept_id": 3000905
@@ -498,6 +513,7 @@
       "canonical_name": "血红蛋白",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "718-7",
         "omop_concept_id": 3000963
@@ -531,6 +547,7 @@
       "canonical_name": "血小板",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "777-3",
         "omop_concept_id": 3024929
@@ -562,6 +579,7 @@
       "canonical_name": "中性粒细胞百分比",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "770-8",
         "omop_concept_id": 3008342
@@ -590,6 +608,7 @@
       "canonical_name": "促甲状腺激素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "甲状腺功能",
       "codes": {
         "loinc": "3016-3",
         "omop_concept_id": 3009201
@@ -1342,6 +1361,7 @@
       "canonical_name": "钾",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "电解质",
       "codes": {
         "loinc": "2823-3",
         "omop_concept_id": 3023103
@@ -1377,6 +1397,7 @@
       "canonical_name": "钠",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "电解质",
       "codes": {
         "loinc": "2951-2",
         "omop_concept_id": 3019550
@@ -1412,6 +1433,7 @@
       "canonical_name": "氯",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "电解质",
       "codes": {
         "loinc": "2075-0",
         "omop_concept_id": 3014576
@@ -1447,6 +1469,7 @@
       "canonical_name": "钙",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "电解质",
       "codes": {
         "loinc": "2000-8",
         "omop_concept_id": 3015377
@@ -1482,6 +1505,7 @@
       "canonical_name": "无机磷",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "电解质",
       "codes": {
         "loinc": "14879-1",
         "omop_concept_id": 3003458
@@ -1518,6 +1542,7 @@
       "canonical_name": "镁",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "电解质",
       "codes": {
         "loinc": "2601-3",
         "omop_concept_id": 3012095
@@ -1552,6 +1577,7 @@
       "canonical_name": "碳酸氢盐",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "电解质",
       "codes": {
         "loinc": "1963-8",
         "omop_concept_id": 3016293
@@ -1590,6 +1616,7 @@
       "canonical_name": "胱抑素C",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肾功能",
       "codes": {
         "loinc": "33863-2",
         "omop_concept_id": 3030366
@@ -1618,6 +1645,7 @@
       "canonical_name": "尿微量白蛋白",
       "category": "lab",
       "system": "urine",
+      "panel": "肾功能",
       "codes": {
         "loinc": "14957-5",
         "omop_concept_id": 3000034
@@ -1648,6 +1676,7 @@
       "canonical_name": "尿白蛋白肌酐比",
       "category": "lab",
       "system": "urine",
+      "panel": "肾功能",
       "codes": {
         "loinc": "14959-1",
         "omop_concept_id": 3001802
@@ -1678,6 +1707,7 @@
       "canonical_name": "直接胆红素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "14629-0",
         "omop_concept_id": 3028638
@@ -1711,6 +1741,7 @@
       "canonical_name": "间接胆红素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "14630-8",
         "omop_concept_id": 3007242
@@ -1744,6 +1775,7 @@
       "canonical_name": "γ-谷氨酰转肽酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "2324-2",
         "omop_concept_id": 3026910
@@ -1778,6 +1810,7 @@
       "canonical_name": "碱性磷酸酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "6768-6",
         "omop_concept_id": 3035995
@@ -1809,6 +1842,7 @@
       "canonical_name": "总蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "2885-2",
         "omop_concept_id": 3020630
@@ -1841,6 +1875,7 @@
       "canonical_name": "球蛋白",
       "category": "lab",
       "system": "serum",
+      "panel": "肝功能",
       "codes": {
         "loinc": "2336-6",
         "omop_concept_id": 3021886
@@ -1873,6 +1908,7 @@
       "canonical_name": "白球比",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "1759-0",
         "omop_concept_id": 3020509
@@ -1903,6 +1939,7 @@
       "canonical_name": "红细胞计数",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "789-8",
         "omop_concept_id": 3020416
@@ -1934,6 +1971,7 @@
       "canonical_name": "红细胞压积",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "4544-3",
         "omop_concept_id": 3023314
@@ -1968,6 +2006,7 @@
       "canonical_name": "平均红细胞体积",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "787-2",
         "omop_concept_id": 3023599
@@ -1992,6 +2031,7 @@
       "canonical_name": "平均红细胞血红蛋白量",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "785-6",
         "omop_concept_id": 3012030
@@ -2017,6 +2057,7 @@
       "canonical_name": "平均红细胞血红蛋白浓度",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "786-4",
         "omop_concept_id": 3009744
@@ -2047,6 +2088,7 @@
       "canonical_name": "红细胞分布宽度",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "788-0",
         "omop_concept_id": 3019897
@@ -2074,6 +2116,7 @@
       "canonical_name": "淋巴细胞百分比",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "736-9",
         "omop_concept_id": 3037511
@@ -2101,6 +2144,7 @@
       "canonical_name": "单核细胞百分比",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "5905-5",
         "omop_concept_id": 3011948
@@ -2128,6 +2172,7 @@
       "canonical_name": "嗜酸性粒细胞百分比",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "713-8",
         "omop_concept_id": 3010457
@@ -2154,6 +2199,7 @@
       "canonical_name": "嗜碱性粒细胞百分比",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "706-2",
         "omop_concept_id": 3013869
@@ -2181,6 +2227,7 @@
       "canonical_name": "中性粒细胞绝对值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "751-8",
         "omop_concept_id": 3013650
@@ -2214,6 +2261,7 @@
       "canonical_name": "淋巴细胞绝对值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "731-0",
         "omop_concept_id": 3004327
@@ -2246,6 +2294,7 @@
       "canonical_name": "红细胞沉降率",
       "category": "lab",
       "system": "blood",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "30341-2",
         "omop_concept_id": 3015183
@@ -2272,6 +2321,7 @@
       "canonical_name": "凝血酶原时间",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {
         "loinc": "5902-2",
         "omop_concept_id": 3034426
@@ -2297,6 +2347,7 @@
       "canonical_name": "国际标准化比值",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {
         "loinc": "6301-6",
         "omop_concept_id": 3022217
@@ -2322,6 +2373,7 @@
       "canonical_name": "活化部分凝血活酶时间",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {
         "loinc": "14979-9",
         "omop_concept_id": 3018677
@@ -2347,6 +2399,7 @@
       "canonical_name": "纤维蛋白原",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {
         "loinc": "3255-7",
         "omop_concept_id": 3016407
@@ -2376,6 +2429,7 @@
       "canonical_name": "D-二聚体",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {
         "loinc": "48065-7",
         "omop_concept_id": 3051714
@@ -2413,6 +2467,7 @@
       "canonical_name": "游离三碘甲状腺原氨酸",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "甲状腺功能",
       "codes": {
         "loinc": "14928-6",
         "omop_concept_id": 3026989
@@ -2440,6 +2495,7 @@
       "canonical_name": "游离甲状腺素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "甲状腺功能",
       "codes": {
         "loinc": "14920-3",
         "omop_concept_id": 3008486
@@ -2468,6 +2524,7 @@
       "canonical_name": "总三碘甲状腺原氨酸",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "甲状腺功能",
       "codes": {
         "loinc": "14930-2",
         "omop_concept_id": 3008304
@@ -2496,6 +2553,7 @@
       "canonical_name": "总甲状腺素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "甲状腺功能",
       "codes": {
         "loinc": "14921-1",
         "omop_concept_id": 3014620
@@ -2525,6 +2583,7 @@
       "canonical_name": "甲状腺过氧化物酶抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "甲状腺功能",
       "codes": {
         "loinc": "8099-4",
         "omop_concept_id": 3027238
@@ -2559,6 +2618,7 @@
       "canonical_name": "甲状腺球蛋白抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "甲状腺功能",
       "codes": {
         "loinc": "8098-6",
         "omop_concept_id": 3025547
@@ -2592,6 +2652,7 @@
       "canonical_name": "胰岛素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血糖",
       "codes": {
         "loinc": "20448-7",
         "omop_concept_id": 3016244
@@ -2631,6 +2692,7 @@
       "canonical_name": "C肽",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血糖",
       "codes": {
         "loinc": "1986-9",
         "omop_concept_id": 3010084
@@ -2669,6 +2731,7 @@
       "canonical_name": "餐后2小时血糖",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血糖",
       "codes": {
         "loinc": "14761-1",
         "omop_concept_id": 3012413
@@ -2706,6 +2769,7 @@
       "canonical_name": "氨基末端脑钠肽前体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "33762-6",
         "omop_concept_id": 3029187
@@ -2741,6 +2805,7 @@
       "canonical_name": "脑钠肽",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "30934-4",
         "omop_concept_id": 3011960
@@ -2774,6 +2839,7 @@
       "canonical_name": "超敏C反应蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "30522-7",
         "omop_concept_id": 3010156
@@ -2806,6 +2872,7 @@
       "canonical_name": "C反应蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "1988-5",
         "omop_concept_id": 3020460
@@ -2864,6 +2931,7 @@
       "canonical_name": "肌酸激酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "2157-6",
         "omop_concept_id": 3007220
@@ -2896,6 +2964,7 @@
       "canonical_name": "肌酸激酶同工酶MB",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "32673-6",
         "omop_concept_id": 3029790
@@ -2929,6 +2998,7 @@
       "canonical_name": "乳酸脱氢酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "2532-0",
         "omop_concept_id": 3016436
@@ -2961,6 +3031,7 @@
       "canonical_name": "肌钙蛋白I",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "10839-9",
         "omop_concept_id": 3021337
@@ -2994,6 +3065,7 @@
       "canonical_name": "肌钙蛋白T",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "6598-7",
         "omop_concept_id": 3019800
@@ -3027,6 +3099,7 @@
       "canonical_name": "尿蛋白",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "20454-5",
         "omop_concept_id": 3014051
@@ -3051,6 +3124,7 @@
       "canonical_name": "尿糖",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "25428-4",
         "omop_concept_id": 3009261
@@ -3074,6 +3148,7 @@
       "canonical_name": "尿隐血",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "5794-3",
         "omop_concept_id": 3011397
@@ -3099,6 +3174,7 @@
       "canonical_name": "尿酮体",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "2514-8",
         "omop_concept_id": 3035350
@@ -3123,6 +3199,7 @@
       "canonical_name": "尿白细胞",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "5799-2",
         "omop_concept_id": 3000348
@@ -3147,6 +3224,7 @@
       "canonical_name": "尿亚硝酸盐",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "5802-4",
         "omop_concept_id": 3021601
@@ -3171,6 +3249,7 @@
       "canonical_name": "尿比重",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "5811-5",
         "omop_concept_id": 3000330
@@ -3200,6 +3279,7 @@
       "canonical_name": "尿酸碱度",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "5803-2",
         "omop_concept_id": 3022621
@@ -3223,6 +3303,7 @@
       "canonical_name": "甲胎蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "1834-1",
         "omop_concept_id": 3009306
@@ -3256,6 +3337,7 @@
       "canonical_name": "癌胚抗原",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "2039-6",
         "omop_concept_id": 3003785
@@ -3287,6 +3369,7 @@
       "canonical_name": "糖类抗原19-9",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "24108-3",
         "omop_concept_id": 3022914
@@ -3321,6 +3404,7 @@
       "canonical_name": "糖类抗原125",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "10334-1",
         "omop_concept_id": 3037551
@@ -3354,6 +3438,7 @@
       "canonical_name": "糖类抗原15-3",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "6875-9",
         "omop_concept_id": 3006588
@@ -3388,6 +3473,7 @@
       "canonical_name": "前列腺特异性抗原",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "2857-1",
         "omop_concept_id": 3013603
@@ -4946,6 +5032,7 @@
       "canonical_name": "红细胞分布宽度标准差",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "21000-5",
         "omop_concept_id": 3015182
@@ -4972,6 +5059,7 @@
       "canonical_name": "平均血小板体积",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "32623-1",
         "omop_concept_id": 3043111
@@ -4997,6 +5085,7 @@
       "canonical_name": "血小板分布宽度",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "32207-3",
         "omop_concept_id": 3002736
@@ -5022,6 +5111,7 @@
       "canonical_name": "血小板压积",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "51637-7",
         "omop_concept_id": 3039312
@@ -5048,6 +5138,7 @@
       "canonical_name": "大血小板比率",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {},
       "canonical_unit": "%",
       "units": [
@@ -5072,6 +5163,7 @@
       "canonical_name": "单核细胞绝对值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "26484-6",
         "omop_concept_id": 3001604
@@ -5105,6 +5197,7 @@
       "canonical_name": "嗜酸性粒细胞绝对值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "26449-9",
         "omop_concept_id": 3013115
@@ -5137,6 +5230,7 @@
       "canonical_name": "嗜碱性粒细胞绝对值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "26444-0",
         "omop_concept_id": 3006315
@@ -5169,6 +5263,7 @@
       "canonical_name": "网织红细胞百分比",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "17849-1",
         "omop_concept_id": 3007124
@@ -5197,6 +5292,7 @@
       "canonical_name": "网织红细胞绝对值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "60474-4",
         "omop_concept_id": 40763528
@@ -5228,6 +5324,7 @@
       "canonical_name": "有核红细胞绝对值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "771-6",
         "omop_concept_id": 3007238
@@ -5257,6 +5354,7 @@
       "canonical_name": "有核红细胞百分比",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "58413-6",
         "omop_concept_id": 40761514
@@ -5282,6 +5380,7 @@
       "canonical_name": "幼稚粒细胞百分比",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "71695-1",
         "omop_concept_id": 42869452
@@ -5307,6 +5406,7 @@
       "canonical_name": "幼稚粒细胞绝对值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {
         "loinc": "53115-2",
         "omop_concept_id": 3041084
@@ -5491,6 +5591,7 @@
       "canonical_name": "凝血酶原活动度",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {
         "loinc": "3289-6",
         "omop_concept_id": 3005353
@@ -5518,6 +5619,7 @@
       "canonical_name": "凝血酶原时间比值",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {
         "loinc": "5894-1",
         "omop_concept_id": 3033658
@@ -5544,6 +5646,7 @@
       "canonical_name": "凝血酶时间",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {
         "loinc": "3243-3",
         "omop_concept_id": 3036489
@@ -5570,6 +5673,7 @@
       "canonical_name": "纤维蛋白降解产物",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {},
       "canonical_unit": "mg/L",
       "units": [
@@ -5599,6 +5703,7 @@
       "canonical_name": "抗凝血酶III",
       "category": "lab",
       "system": "plasma",
+      "panel": "凝血",
       "codes": {
         "loinc": "27811-9",
         "omop_concept_id": 3000515
@@ -5736,6 +5841,7 @@
       "canonical_name": "总胆汁酸",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "14628-2",
         "omop_concept_id": 3028110
@@ -5766,6 +5872,7 @@
       "canonical_name": "前白蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "14338-8",
         "omop_concept_id": 3013742
@@ -5807,6 +5914,7 @@
       "canonical_name": "胆碱酯酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "2098-2",
         "omop_concept_id": 3010866
@@ -5842,6 +5950,7 @@
       "canonical_name": "腺苷脱氨酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "47826-3",
         "omop_concept_id": 3052649
@@ -5869,6 +5978,7 @@
       "canonical_name": "AST/ALT比值",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "1916-6",
         "omop_concept_id": 3022893
@@ -5898,6 +6008,7 @@
       "canonical_name": "β2-微球蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肾功能",
       "codes": {
         "loinc": "1952-1",
         "omop_concept_id": 3013201
@@ -5979,6 +6090,7 @@
       "canonical_name": "尿肌酐",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "14683-7",
         "omop_concept_id": 3009508
@@ -6019,6 +6131,7 @@
       "canonical_name": "24小时尿肌酐",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "14684-5",
         "omop_concept_id": 3014724
@@ -6057,6 +6170,7 @@
       "canonical_name": "24小时尿蛋白定量",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "2889-4",
         "omop_concept_id": 3020876
@@ -6092,6 +6206,7 @@
       "canonical_name": "24小时尿尿酸",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "14935-1",
         "omop_concept_id": 3028714
@@ -6125,6 +6240,7 @@
       "canonical_name": "载脂蛋白A1",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "1869-7",
         "omop_concept_id": 3008364
@@ -6164,6 +6280,7 @@
       "canonical_name": "载脂蛋白B",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "1884-6",
         "omop_concept_id": 3014791
@@ -6202,6 +6319,7 @@
       "canonical_name": "脂蛋白(a)",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "10835-7",
         "omop_concept_id": 3013861
@@ -6241,6 +6359,7 @@
       "canonical_name": "小而密低密度脂蛋白胆固醇",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "96959-2",
         "omop_concept_id": 1617569
@@ -6276,6 +6395,7 @@
       "canonical_name": "游离脂肪酸",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "15066-4",
         "omop_concept_id": 3009471
@@ -6310,6 +6430,7 @@
       "canonical_name": "非高密度脂蛋白胆固醇",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "70204-3",
         "omop_concept_id": 42868678
@@ -6343,6 +6464,7 @@
       "canonical_name": "糖化白蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血糖",
       "codes": {
         "loinc": "13873-5",
         "omop_concept_id": 3034826
@@ -6371,6 +6493,7 @@
       "canonical_name": "餐后2小时C肽",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血糖",
       "codes": {
         "loinc": "58686-7",
         "omop_concept_id": 40761786
@@ -6410,6 +6533,7 @@
       "canonical_name": "餐后2小时胰岛素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血糖",
       "codes": {
         "loinc": "47659-8",
         "omop_concept_id": 3049164
@@ -6448,6 +6572,7 @@
       "canonical_name": "胰岛素抵抗指数",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血糖",
       "codes": {
         "loinc": "47214-2",
         "omop_concept_id": 3049718
@@ -6475,6 +6600,7 @@
       "canonical_name": "阴离子间隙",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "电解质",
       "codes": {
         "loinc": "10466-1",
         "omop_concept_id": 3021391
@@ -7391,6 +7517,7 @@
       "canonical_name": "甲状腺球蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "甲状腺功能",
       "codes": {
         "loinc": "3013-0",
         "omop_concept_id": 3036535
@@ -7423,6 +7550,7 @@
       "canonical_name": "促甲状腺激素受体抗体",
       "category": "lab",
       "system": "serum",
+      "panel": "甲状腺功能",
       "codes": {
         "loinc": "5385-0",
         "omop_concept_id": 3017044
@@ -7464,6 +7592,7 @@
       "canonical_name": "卵泡刺激素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "性激素",
       "codes": {
         "loinc": "15067-2",
         "omop_concept_id": 3023323
@@ -7503,6 +7632,7 @@
       "canonical_name": "黄体生成素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "性激素",
       "codes": {
         "loinc": "10501-5",
         "omop_concept_id": 3009214
@@ -7542,6 +7672,7 @@
       "canonical_name": "雌二醇",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "性激素",
       "codes": {
         "loinc": "2243-4",
         "omop_concept_id": 3025285
@@ -7579,6 +7710,7 @@
       "canonical_name": "孕酮",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "性激素",
       "codes": {
         "loinc": "2839-9",
         "omop_concept_id": 3027144
@@ -7617,6 +7749,7 @@
       "canonical_name": "睾酮",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "性激素",
       "codes": {
         "loinc": "2986-8",
         "omop_concept_id": 3008893
@@ -7662,6 +7795,7 @@
       "canonical_name": "催乳素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "性激素",
       "codes": {
         "loinc": "2842-3",
         "omop_concept_id": 3004722
@@ -7694,6 +7828,7 @@
       "canonical_name": "性激素结合球蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "性激素",
       "codes": {
         "loinc": "13967-5",
         "omop_concept_id": 3004248
@@ -7720,6 +7855,7 @@
       "canonical_name": "抗苗勒管激素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "性激素",
       "codes": {
         "loinc": "38476-8",
         "omop_concept_id": 3047826
@@ -8091,6 +8227,7 @@
       "canonical_name": "肌酸激酶同工酶质量",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "13969-1",
         "omop_concept_id": 3005785
@@ -8124,6 +8261,7 @@
       "canonical_name": "肌红蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "2639-3",
         "omop_concept_id": 3005895
@@ -8158,6 +8296,7 @@
       "canonical_name": "α-羟丁酸脱氢酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "1677-4",
         "omop_concept_id": 3026076
@@ -8192,6 +8331,7 @@
       "canonical_name": "高敏肌钙蛋白T",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "67151-1",
         "omop_concept_id": 40769783
@@ -8237,6 +8377,7 @@
       "canonical_name": "高敏肌钙蛋白I",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "89579-7",
         "omop_concept_id": 36306105
@@ -8282,6 +8423,7 @@
       "canonical_name": "降钙素原",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "33959-8",
         "omop_concept_id": 3046279
@@ -8313,6 +8455,7 @@
       "canonical_name": "白细胞介素-6",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "26881-3",
         "omop_concept_id": 3023091
@@ -8348,6 +8491,7 @@
       "canonical_name": "血清淀粉样蛋白A",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "48498-0",
         "omop_concept_id": 3049126
@@ -8380,6 +8524,7 @@
       "canonical_name": "内毒素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "炎症/感染",
       "codes": {},
       "canonical_unit": "pg/mL",
       "units": [
@@ -8412,6 +8557,7 @@
       "canonical_name": "1,3-β-D葡聚糖",
       "category": "lab",
       "system": "serum",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "42176-8",
         "omop_concept_id": 3034360
@@ -8450,6 +8596,7 @@
       "canonical_name": "半乳甘露聚糖",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "炎症/感染",
       "codes": {},
       "canonical_unit": null,
       "units": [],
@@ -8471,6 +8618,7 @@
       "canonical_name": "抗链球菌溶血素O",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "5370-2",
         "omop_concept_id": 3021236
@@ -8501,6 +8649,7 @@
       "canonical_name": "肥达试验",
       "category": "lab",
       "system": "serum",
+      "panel": "炎症/感染",
       "codes": {},
       "canonical_unit": null,
       "units": [],
@@ -8520,6 +8669,7 @@
       "canonical_name": "结核感染T细胞检测",
       "category": "lab",
       "system": "whole blood",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "71773-6",
         "omop_concept_id": 42869528
@@ -8866,6 +9016,7 @@
       "canonical_name": "类风湿因子",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "11572-5",
         "omop_concept_id": 3021614
@@ -8901,6 +9052,7 @@
       "canonical_name": "抗环瓜氨酸肽抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "53027-9",
         "omop_concept_id": 3041942
@@ -8931,6 +9083,7 @@
       "canonical_name": "抗核抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "8061-4",
         "omop_concept_id": 3004616
@@ -8953,6 +9106,7 @@
       "canonical_name": "抗双链DNA抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "5130-0",
         "omop_concept_id": 3023420
@@ -8989,6 +9143,7 @@
       "canonical_name": "抗Sm抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "31627-3",
         "omop_concept_id": 3023428
@@ -9011,6 +9166,7 @@
       "canonical_name": "抗SSA抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "8093-7",
         "omop_concept_id": 3015154
@@ -9036,6 +9192,7 @@
       "canonical_name": "抗SSB抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "8094-5",
         "omop_concept_id": 3008914
@@ -9061,6 +9218,7 @@
       "canonical_name": "抗RNP抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "8091-1",
         "omop_concept_id": 3008025
@@ -9086,6 +9244,7 @@
       "canonical_name": "抗Scl-70抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "8092-9",
         "omop_concept_id": 3014568
@@ -9110,6 +9269,7 @@
       "canonical_name": "抗Jo-1抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "8076-2",
         "omop_concept_id": 3013023
@@ -9133,6 +9293,7 @@
       "canonical_name": "补体C3",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "4485-9",
         "omop_concept_id": 3000620
@@ -9171,6 +9332,7 @@
       "canonical_name": "补体C4",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "4498-2",
         "omop_concept_id": 3017766
@@ -9209,6 +9371,7 @@
       "canonical_name": "免疫球蛋白G",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "2465-3",
         "omop_concept_id": 3005719
@@ -9246,6 +9409,7 @@
       "canonical_name": "免疫球蛋白A",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "2458-8",
         "omop_concept_id": 3007164
@@ -9283,6 +9447,7 @@
       "canonical_name": "免疫球蛋白M",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "2472-9",
         "omop_concept_id": 3028026
@@ -9320,6 +9485,7 @@
       "canonical_name": "免疫球蛋白E",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "19113-0",
         "omop_concept_id": 3005322
@@ -9359,6 +9525,7 @@
       "canonical_name": "核周型抗中性粒细胞胞浆抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "30539-1",
         "omop_concept_id": 3036588
@@ -9381,6 +9548,7 @@
       "canonical_name": "胞浆型抗中性粒细胞胞浆抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "30538-3",
         "omop_concept_id": 3036073
@@ -9405,6 +9573,7 @@
       "canonical_name": "抗髓过氧化物酶抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "6969-0",
         "omop_concept_id": 3023150
@@ -9434,6 +9603,7 @@
       "canonical_name": "抗蛋白酶3抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "6968-2",
         "omop_concept_id": 3009445
@@ -9463,6 +9633,7 @@
       "canonical_name": "抗心磷脂抗体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "29860-4",
         "omop_concept_id": 3021583
@@ -9487,6 +9658,7 @@
       "canonical_name": "HLA-B27",
       "category": "lab",
       "system": "whole blood",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "4821-5",
         "omop_concept_id": 3008898
@@ -9509,6 +9681,7 @@
       "canonical_name": "糖类抗原72-4",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "17843-4",
         "omop_concept_id": 3018731
@@ -9543,6 +9716,7 @@
       "canonical_name": "糖类抗原50",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "34256-8",
         "omop_concept_id": 3044042
@@ -9577,6 +9751,7 @@
       "canonical_name": "神经元特异性烯醇化酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "15060-7",
         "omop_concept_id": 3028531
@@ -9609,6 +9784,7 @@
       "canonical_name": "细胞角蛋白19片段",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "25390-6",
         "omop_concept_id": 3000659
@@ -9644,6 +9820,7 @@
       "canonical_name": "鳞状细胞癌抗原",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "9679-2",
         "omop_concept_id": 3005411
@@ -9678,6 +9855,7 @@
       "canonical_name": "胃泌素释放肽前体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {},
       "canonical_unit": "pg/mL",
       "units": [
@@ -9708,6 +9886,7 @@
       "canonical_name": "游离前列腺特异性抗原",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "10886-0",
         "omop_concept_id": 3005013
@@ -9742,6 +9921,7 @@
       "canonical_name": "游离前列腺特异性抗原比值",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "72576-2",
         "omop_concept_id": 43055410
@@ -9772,6 +9952,7 @@
       "canonical_name": "甲胎蛋白异质体",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "42332-7",
         "omop_concept_id": 3031987
@@ -9801,6 +9982,7 @@
       "canonical_name": "异常凝血酶原",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {},
       "canonical_unit": "mAU/mL",
       "units": [
@@ -9832,6 +10014,7 @@
       "canonical_name": "人绒毛膜促性腺激素",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "19080-1",
         "omop_concept_id": 3018171
@@ -9871,6 +10054,7 @@
       "canonical_name": "人绒毛膜促性腺激素β亚基",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "21198-7",
         "omop_concept_id": 3038136
@@ -9905,6 +10089,7 @@
       "canonical_name": "游离人绒毛膜促性腺激素β亚基",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肿瘤标志物",
       "codes": {
         "loinc": "19180-9",
         "omop_concept_id": 3011465
@@ -9938,6 +10123,7 @@
       "canonical_name": "尿胆原",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "5818-0",
         "omop_concept_id": 3037426
@@ -9961,6 +10147,7 @@
       "canonical_name": "尿胆红素",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "5770-3",
         "omop_concept_id": 3018834
@@ -9984,6 +10171,7 @@
       "canonical_name": "尿维生素C",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "1904-2",
         "omop_concept_id": 3010909
@@ -10004,6 +10192,7 @@
       "canonical_name": "尿色",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "5778-6",
         "omop_concept_id": 3027162
@@ -10026,6 +10215,7 @@
       "canonical_name": "尿透明度",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "5767-9",
         "omop_concept_id": 3007876
@@ -10050,6 +10240,7 @@
       "canonical_name": "尿红细胞计数",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "30391-7",
         "omop_concept_id": 3002582
@@ -10084,6 +10275,7 @@
       "canonical_name": "尿白细胞计数",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "30405-5",
         "omop_concept_id": 3018095
@@ -10117,6 +10309,7 @@
       "canonical_name": "尿上皮细胞",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "30383-4",
         "omop_concept_id": 3000850
@@ -10151,6 +10344,7 @@
       "canonical_name": "尿管型",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "51483-6",
         "omop_concept_id": 3030467
@@ -10185,6 +10379,7 @@
       "canonical_name": "尿细菌计数",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "105907-0",
         "omop_concept_id": 1091200
@@ -10219,6 +10414,7 @@
       "canonical_name": "尿结晶",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "87828-0",
         "omop_concept_id": 36303858
@@ -10241,6 +10437,7 @@
       "canonical_name": "24小时尿量",
       "category": "lab",
       "system": "urine",
+      "panel": "尿液",
       "codes": {
         "loinc": "3167-4",
         "omop_concept_id": 3012565
@@ -14123,6 +14320,7 @@
       "canonical_name": "极低密度脂蛋白胆固醇",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血脂",
       "codes": {
         "loinc": "25371-6",
         "omop_concept_id": 3022487
@@ -14157,6 +14355,7 @@
       "canonical_name": "中性粒细胞淋巴细胞比值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {},
       "canonical_unit": "1",
       "units": [
@@ -14184,6 +14383,7 @@
       "canonical_name": "血小板淋巴细胞比值",
       "category": "lab",
       "system": "blood",
+      "panel": "血常规",
       "codes": {},
       "canonical_unit": "1",
       "units": [
@@ -14209,6 +14409,7 @@
       "canonical_name": "5'-核苷酸酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "1690-7",
         "omop_concept_id": 3013614
@@ -14249,6 +14450,7 @@
       "canonical_name": "α-L-岩藻糖苷酶",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "24045-7",
         "omop_concept_id": 3003805
@@ -14286,6 +14488,7 @@
       "canonical_name": "乳酸脱氢酶同工酶LDH-1",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "2536-1",
         "omop_concept_id": 3006898
@@ -14316,6 +14519,7 @@
       "canonical_name": "乳酸脱氢酶同工酶LDH-2",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "2539-5",
         "omop_concept_id": 3023919
@@ -14346,6 +14550,7 @@
       "canonical_name": "乳酸脱氢酶同工酶LDH-3",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "2542-9",
         "omop_concept_id": 3007858
@@ -14376,6 +14581,7 @@
       "canonical_name": "乳酸脱氢酶同工酶LDH-4",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "2545-2",
         "omop_concept_id": 3024830
@@ -14406,6 +14612,7 @@
       "canonical_name": "乳酸脱氢酶同工酶LDH-5",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "心肌标志物",
       "codes": {
         "loinc": "2548-6",
         "omop_concept_id": 3012481
@@ -14436,6 +14643,7 @@
       "canonical_name": "尿α1-微球蛋白",
       "category": "lab",
       "system": "urine",
+      "panel": "肾功能",
       "codes": {
         "loinc": "46723-3",
         "omop_concept_id": 3052318
@@ -14470,6 +14678,7 @@
       "canonical_name": "尿N-乙酰-β-D-氨基葡萄糖苷酶",
       "category": "lab",
       "system": "urine",
+      "panel": "肾功能",
       "codes": {
         "loinc": "33354-2",
         "omop_concept_id": 3046044
@@ -14507,6 +14716,7 @@
       "canonical_name": "随机血糖",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "血糖",
       "codes": {
         "loinc": "14749-6",
         "omop_concept_id": 3013826
@@ -14543,6 +14753,7 @@
       "canonical_name": "尿转铁蛋白",
       "category": "lab",
       "system": "urine",
+      "panel": "肾功能",
       "codes": {
         "loinc": "3035-3",
         "omop_concept_id": 3007886
@@ -14571,6 +14782,7 @@
       "canonical_name": "尿免疫球蛋白G",
       "category": "lab",
       "system": "urine",
+      "panel": "肾功能",
       "codes": {
         "loinc": "33415-1",
         "omop_concept_id": 3047185
@@ -14598,6 +14810,7 @@
       "canonical_name": "透明质酸",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "12736-5",
         "omop_concept_id": 3009931
@@ -14632,6 +14845,7 @@
       "canonical_name": "层粘连蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {},
       "canonical_unit": "ng/mL",
       "units": [
@@ -14661,6 +14875,7 @@
       "canonical_name": "III型前胶原",
       "category": "lab",
       "system": "serum",
+      "panel": "肝功能",
       "codes": {
         "loinc": "56627-3",
         "omop_concept_id": 40759746
@@ -14700,6 +14915,7 @@
       "canonical_name": "IV型胶原",
       "category": "lab",
       "system": "serum",
+      "panel": "肝功能",
       "codes": {},
       "canonical_unit": "ng/mL",
       "units": [
@@ -14765,6 +14981,7 @@
       "canonical_name": "铜蓝蛋白",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "肝功能",
       "codes": {
         "loinc": "2064-4",
         "omop_concept_id": 3022756
@@ -14927,6 +15144,7 @@
       "canonical_name": "尿素呼气试验(幽门螺杆菌)",
       "category": "lab",
       "system": "breath",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "29891-9",
         "omop_concept_id": 3011630
@@ -14957,6 +15175,7 @@
       "canonical_name": "肺炎支原体抗体",
       "category": "lab",
       "system": "serum",
+      "panel": "炎症/感染",
       "codes": {
         "loinc": "17302-1",
         "omop_concept_id": 3035420
@@ -15045,6 +15264,7 @@
       "canonical_name": "免疫球蛋白G4",
       "category": "lab",
       "system": "serum",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "2469-5",
         "omop_concept_id": 3024980
@@ -15083,6 +15303,7 @@
       "canonical_name": "抗磷脂酶A2受体抗体",
       "category": "lab",
       "system": "serum",
+      "panel": "风湿免疫",
       "codes": {
         "loinc": "73737-9",
         "omop_concept_id": 43533761
@@ -15157,6 +15378,7 @@
       "canonical_name": "内生肌酐清除率",
       "category": "lab",
       "system": "urine and serum/plasma",
+      "panel": "肾功能",
       "codes": {
         "loinc": "2164-2",
         "omop_concept_id": 3005770
@@ -15903,6 +16125,7 @@
       "canonical_name": "反三碘甲状腺原氨酸",
       "category": "lab",
       "system": "serum/plasma",
+      "panel": "甲状腺功能",
       "codes": {},
       "canonical_unit": "ng/mL",
       "units": [

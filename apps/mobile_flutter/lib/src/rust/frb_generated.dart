@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -168768830;
+  int get rustContentHash => 318939732;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -239,7 +239,7 @@ abstract class RustLibApi extends BaseApi {
 
   Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard();
 
-  Future<List<String>> crateApiVaultProjectionsViewTrendGroupCatalog();
+  Future<List<String>> crateApiVaultProjectionsViewTrendPanelCatalog();
 
   Future<List<TrendSeriesDto>> crateApiVaultProjectionsViewTrends();
 
@@ -1666,7 +1666,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "view_emergency_card", argNames: []);
 
   @override
-  Future<List<String>> crateApiVaultProjectionsViewTrendGroupCatalog() {
+  Future<List<String>> crateApiVaultProjectionsViewTrendPanelCatalog() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -1682,15 +1682,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_list_String,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiVaultProjectionsViewTrendGroupCatalogConstMeta,
+        constMeta: kCrateApiVaultProjectionsViewTrendPanelCatalogConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiVaultProjectionsViewTrendGroupCatalogConstMeta =>
-      const TaskConstMeta(debugName: "view_trend_group_catalog", argNames: []);
+  TaskConstMeta get kCrateApiVaultProjectionsViewTrendPanelCatalogConstMeta =>
+      const TaskConstMeta(debugName: "view_trend_panel_catalog", argNames: []);
 
   @override
   Future<List<TrendSeriesDto>> crateApiVaultProjectionsViewTrends() {
@@ -2367,7 +2367,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       refLow: dco_decode_opt_box_autoadd_f_64(arr[4]),
       refHigh: dco_decode_opt_box_autoadd_f_64(arr[5]),
       anyAbnormal: dco_decode_bool(arr[6]),
-      problemGroups: dco_decode_list_String(arr[7]),
+      panel: dco_decode_opt_String(arr[7]),
       points: dco_decode_list_trend_point_dto(arr[8]),
     );
   }
@@ -3230,7 +3230,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_refLow = sse_decode_opt_box_autoadd_f_64(deserializer);
     var var_refHigh = sse_decode_opt_box_autoadd_f_64(deserializer);
     var var_anyAbnormal = sse_decode_bool(deserializer);
-    var var_problemGroups = sse_decode_list_String(deserializer);
+    var var_panel = sse_decode_opt_String(deserializer);
     var var_points = sse_decode_list_trend_point_dto(deserializer);
     return TrendSeriesDto(
       name: var_name,
@@ -3240,7 +3240,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       refLow: var_refLow,
       refHigh: var_refHigh,
       anyAbnormal: var_anyAbnormal,
-      problemGroups: var_problemGroups,
+      panel: var_panel,
       points: var_points,
     );
   }
@@ -4005,7 +4005,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_f_64(self.refLow, serializer);
     sse_encode_opt_box_autoadd_f_64(self.refHigh, serializer);
     sse_encode_bool(self.anyAbnormal, serializer);
-    sse_encode_list_String(self.problemGroups, serializer);
+    sse_encode_opt_String(self.panel, serializer);
     sse_encode_list_trend_point_dto(self.points, serializer);
   }
 

@@ -7,19 +7,19 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `document_ids_for`, `extract_allergies_pairs`, `fmt_date`, `fmt_num`, `gather`, `group_label`, `is_renderable`, `parse_allergy_item`, `parse_rfc3339_date`, `problem_group_table`, `problem_groups_for`, `render_plain_text`, `source_docs`, `trend_series`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ProblemGroupEntry`, `ProjectionDoc`, `VaultProjection`
+// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `document_ids_for`, `extract_allergies_pairs`, `fmt_date`, `fmt_num`, `gather`, `is_renderable`, `parse_allergy_item`, `parse_rfc3339_date`, `render_plain_text`, `source_docs`, `trend_series`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ProjectionDoc`, `VaultProjection`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
-/// 分组 chip 的完整目录,固定顺序,与每条 [`TrendSeriesDto::problem_groups`] 用的
-/// 是同一份表。**只回答「有哪些分组、先后顺序是什么」**——UI 不应该自己另定一份
-/// 顺序(比如按"数据里第一次出现的顺序"排),否则两端顺序会漂移,同一个人重新打开
-/// 页面 chip 顺序都可能不一样。
+/// 分组 chip 的完整目录,固定顺序(策展在 `terminology::PANEL_CATALOG`,与每条
+/// [`TrendSeriesDto::panel`] 用的是同一份表)。**只回答「有哪些大类、先后顺序是
+/// 什么」**——UI 不应该自己另定一份顺序(比如按"数据里第一次出现的顺序"排),
+/// 否则两端顺序会漂移,同一个人重新打开页面 chip 顺序都可能不一样。
 ///
-/// 不含「全部」「其他」—— 那两个是 UI 侧的兜底 sentinel,不是从 LOINC 匹配算出来
-/// 的分组,不该跟着这份表的「怎么算」走。
-Future<List<String>> viewTrendGroupCatalog() =>
-    RustLib.instance.api.crateApiVaultProjectionsViewTrendGroupCatalog();
+/// 不含「全部」「其他」—— 那两个是 UI 侧的兜底 sentinel,不是词典策展出来的大类,
+/// 不该跟着这份表的「怎么算」走。
+Future<List<String>> viewTrendPanelCatalog() =>
+    RustLib.instance.api.crateApiVaultProjectionsViewTrendPanelCatalog();
 
 /// **趋势图**:病人保险箱里每一条可渲染的化验序列,全保真。
 ///
@@ -257,11 +257,14 @@ class TrendSeriesDto {
   /// 任一点被标记 H/L(`parser::AnalyteSeries::any_abnormal`)。
   final bool anyAbnormal;
 
-  /// 这条序列按 LOINC 落在哪些「关注方向」分组下(见 [`problem_groups_for`]),
-  /// 顺序固定、与 [`view_trend_group_catalog`] 一致;一条序列可以属于多个分组
-  /// (如 LDL 同时在糖尿病相关/血脂/冠心病相关里),**不去重合并**。空表示这条
-  /// 序列没有 LOINC 或 LOINC 不在任何一条泳道里 —— UI 把它归入「其他」。
-  final List<String> problemGroups;
+  /// 这条序列所属的**检验大类**(化验单项目组表头,如「血常规」「肝功能」——
+  /// 见 `terminology::panel_for` / `packages/terminology/panel_methodology.md`),
+  /// 是 [`view_trend_panel_catalog`] 目录里的一个值,或 `None`。**只给一个**
+  /// (不像疾病泳道允许多重归属:一项化验在真实报告单上只印在一个项目组表头
+  /// 下)。`None` 表示这条序列没能归一化出 `analyte_key`,或归一化到的条目在
+  /// 词典里没配 panel(专科/低频检验,如实留空而不是硬凑)—— 两种情况 UI 都
+  /// 归入「其他」。
+  final String? panel;
 
   /// **全部**观测点,按时间升序(无日期的排最后)。不做任何数量裁剪。
   final List<TrendPointDto> points;
@@ -274,7 +277,7 @@ class TrendSeriesDto {
     this.refLow,
     this.refHigh,
     required this.anyAbnormal,
-    required this.problemGroups,
+    this.panel,
     required this.points,
   });
 
@@ -287,7 +290,7 @@ class TrendSeriesDto {
       refLow.hashCode ^
       refHigh.hashCode ^
       anyAbnormal.hashCode ^
-      problemGroups.hashCode ^
+      panel.hashCode ^
       points.hashCode;
 
   @override
@@ -302,7 +305,7 @@ class TrendSeriesDto {
           refLow == other.refLow &&
           refHigh == other.refHigh &&
           anyAbnormal == other.anyAbnormal &&
-          problemGroups == other.problemGroups &&
+          panel == other.panel &&
           points == other.points;
 }
 

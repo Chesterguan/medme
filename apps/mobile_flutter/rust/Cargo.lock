@@ -3706,6 +3706,7 @@ dependencies = [
  "pipeline",
  "serde_json",
  "tempfile",
+ "terminology",
 ]
 
 [[package]]
