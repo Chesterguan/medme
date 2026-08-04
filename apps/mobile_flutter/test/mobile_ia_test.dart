@@ -217,7 +217,7 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  group('趋势:搜索与 H/L 过滤', () {
+  group('趋势:搜索与「只看非正常项」', () {
     TrendSeriesDto s(String name, {required bool abnormal}) => TrendSeriesDto(
       name: name,
       unit: 'umol/L',
@@ -231,7 +231,7 @@ void main() {
       s('Cr 血肌酐', abnormal: false),
     ];
 
-    test('默认只列被标过 H/L 的', () {
+    test('默认只列非正常项', () {
       final v = trendVisible(all, query: '', abnormalOnly: true);
       expect(v.map((e) => e.name), ['血红蛋白']);
     });
@@ -241,10 +241,10 @@ void main() {
     });
 
     // 这条是整个特性最容易写错的地方:叠加会让「搜正常项」永远搜不到。
-    test('搜索时绕过 H/L 过滤 —— 正常的也要找得到', () {
+    test('搜索时绕过「只看非正常项」—— 正常的也要找得到', () {
       final v = trendVisible(all, query: '肌酐', abnormalOnly: true);
       expect(v.map((e) => e.name), ['肌酐', 'Cr 血肌酐'],
-          reason: '两条都正常,若与 H/L 叠加就会一条都搜不到');
+          reason: '两条都正常,若与非正常过滤叠加就会一条都搜不到');
     });
 
     test('大小写无关', () {

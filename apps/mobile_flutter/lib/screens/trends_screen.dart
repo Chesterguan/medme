@@ -36,20 +36,25 @@ class TrendsScreen extends StatefulWidget {
 class _TrendsScreenState extends State<TrendsScreen> {
   late Future<List<TrendSeriesDto>> _future = viewTrends();
 
-  /// 「只看被标过 H/L 的」。**默认开。**
+  /// 「只看非正常项」。**默认开。**
   ///
   /// 一份血常规就是 22 条序列,真实用户几年下来上百条 —— 全列出来要滚很久,而「复诊
   /// 前看一眼」的人多半冲着被标过的那两条来。默认过滤确实是在替用户排序,所以代价
   /// 必须付清:被隐藏了多少条**始终写在开关旁边**,一眼看得见、一下关得掉。
   ///
-  /// 判据是 Rust 给的 `anyAbnormal`,**不是** UI 拿参考区间算的。措辞也照此:说的是
-  /// 「被标过 H/L 的」,不是「有问题的」—— 化验单没印箭头的项目不等于正常,只等于
-  /// 这张纸没给结论。
+  /// 判据是 Rust 给的 `anyAbnormal`,**不是** UI 自己拿参考区间算的。
+  ///
+  /// 措辞用「非正常项」而不是「被标过 H/L 的」:`flag` 的定义是「有 ↑/↓/H/L 标记就
+  /// 用标记,没有就拿值和参考区间比」(`labs.rs:63`)—— 一大半 flag 是算出来的,化验
+  /// 单上根本没印箭头。说「被标过 H/L」把这半边排除在外了,不准确。
+  ///
+  /// 被隐藏的那些是「正常或判断不了」两类合一(没有参考区间就得不出结论),所以计数
+  /// 文案照实说,不写成「N 条正常」。
   bool _abnormalOnly = true;
 
   /// 搜索词。**非空时 [_abnormalOnly] 让位。**
   ///
-  /// 搜索是一次明确的「我要找 X」。若此时仍按 H/L 过滤,用户搜「肌酐」而肌酐正常,
+  /// 搜索是一次明确的「我要找 X」。若此时仍按非正常过滤,用户搜「肌酐」而肌酐正常,
   /// 得到的是一片空白 —— 他会以为自己从没查过肌酐。找得到比过滤干净重要。
   final _queryCtl = TextEditingController();
   String _query = '';
@@ -175,7 +180,7 @@ class _TrendsScreenState extends State<TrendsScreen> {
                             // 可能是同一个指标印成了别的名字(见顶部说明)。
                             ? '这些记录里没有名字含「$_query」的指标。\n'
                                   '换个叫法试试 —— 同一项在不同医院可能印成「肌酐」「血肌酐」「Cr」。'
-                            : '这些记录里没有任何一条被化验单标过 H/L。',
+                            : '这些记录里没有非正常项。',
                         textAlign: TextAlign.center,
                         style: MedType.body.copyWith(color: c.ink2, height: 1.6),
                       ),
@@ -198,7 +203,7 @@ class _TrendsScreenState extends State<TrendsScreen> {
 bool trendNameMatches(String name, String query) =>
     name.toLowerCase().contains(query.toLowerCase());
 
-/// 该显示哪些序列。**搜索优先于 H/L 过滤,不是叠加。**
+/// 该显示哪些序列。**搜索优先于「只看非正常项」,不是叠加。**
 ///
 /// 叠加是想当然的写法,但结果是用户搜「肌酐」而肌酐一直正常时得到一片空白 ——
 /// 他会得出「我从没查过肌酐」这个错误结论,而真相是查过而且都正常。搜索是一次明确
@@ -214,7 +219,7 @@ List<TrendSeriesDto> trendVisible(
   return abnormalOnly ? all.where((s) => s.anyAbnormal).toList() : all;
 }
 
-/// 列表顶上的说明 + 搜索框 + 「只看被标过 H/L 的」开关。
+/// 列表顶上的说明 + 搜索框 + 「只看非正常项」开关。
 ///
 /// 那句说明不是客套。用户会问「我明明查过五次肌酐,这里怎么只有两个点」——
 /// 答案是术语没归一化,另外三次被分到了另一条名字不同的序列里。与其让他自己猜,
@@ -294,7 +299,7 @@ class _Preamble extends StatelessWidget {
         // 搜索时开关整个让位。留一颗按不动的开关在那儿,只会让人以为是它没生效。
         if (searching)
           Text(
-            '搜索时不按 H/L 过滤 —— 正常的也一起找。',
+            '搜索时不过滤 —— 正常项也一起找。',
             style: MedType.secondary.copyWith(color: c.ink3),
           )
         else
@@ -305,8 +310,8 @@ class _Preamble extends StatelessWidget {
                   // 隐藏了多少条**必须**一直写着:默认开过滤是在替用户排序,
                   // 代价就是让他随时看得见自己没在看什么。
                   abnormalOnly && hiddenByFilter > 0
-                      ? '只看被标过 H/L 的 · 另有 $hiddenByFilter 条没被标记'
-                      : '只看被标过 H/L 的',
+                      ? '只看非正常项 · 另有 $hiddenByFilter 条正常或判断不了'
+                      : '只看非正常项',
                   style: MedType.body.copyWith(color: c.ink),
                 ),
               ),
