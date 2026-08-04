@@ -1,5 +1,17 @@
 <!doctype html>
-<html lang="en">
+<!--
+  data-theme="light" 是**故意钉死**的,不是漏了开关。
+
+  在这次改版之前,tokens.css 虽然写了整套深色令牌,但没有任何界面消费它 ——
+  所以系统切深色时 app 纹丝不动。改版后主界面全部走令牌了,若放任
+  `prefers-color-scheme: dark` 生效,会变成:主界面翻深色,而范围外的
+  DocumentView / ReportContent / docmeta.ts 的类型徽标仍然写死浅色
+  (bg-blue-50 + text-blue-700 之类)—— 深底上的浅底浅字,化验值读不出来。
+
+  在一个躺在医院走廊里被人用的产品上,这是不能接受的。等那几处也迁完、
+  深色稿评审过了,把这行删掉即可,tokens.css 已经备好深色那一套。
+-->
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />

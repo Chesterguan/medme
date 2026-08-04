@@ -3,10 +3,13 @@ import { ShieldAlert, ArrowLeft, Copy, Check, FileDown } from "lucide-react";
 import { api } from "../api";
 import type { AuditEntry } from "../types";
 
+// 改版前是 emerald / blue / amber 三族。收敛进色板:进保险箱是常态(中性),
+// 出保险箱用主色,分享给外人是**数据离开过设备**、审计时最该一眼看见的一行,
+// 给「注意」那一档(见 App.css 里关于 high/critical 推广用法的说明)。
 const ACTION_BADGE: Record<string, string> = {
-  导入: "bg-emerald-50 text-emerald-700",
-  导出: "bg-blue-50 text-blue-700",
-  分享: "bg-amber-50 text-amber-700",
+  导入: "bg-line-2 text-ink-2",
+  导出: "bg-seal-wash text-seal-ink",
+  分享: "bg-high-wash text-high",
 };
 
 function fmtTs(ts: string): string {
@@ -62,38 +65,42 @@ export default function AuditView({ onNav }: { onNav: (id: string) => void }) {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-10">
+    <div className="flex-1 overflow-y-auto bg-paper p-6 md:p-10">
       <div className="max-w-4xl mx-auto space-y-5">
         <button
           type="button"
           onClick={() => onNav("timeline")}
-          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 cursor-pointer"
+          className="med-focusable flex items-center gap-1.5 rounded-ctl text-body text-ink-2 hover:text-seal cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" /> 返回时间线
         </button>
 
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 border border-amber-100">
+          <div className="w-11 h-11 rounded-block bg-high-wash flex items-center justify-center text-high border border-line shrink-0">
             <ShieldAlert className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">审计追踪</h1>
-            <span className="text-[11px] font-mono text-slate-400 tracking-widest uppercase">
+            <h1 className="text-display font-bold text-ink">审计追踪</h1>
+            {/* 改版前 text-[11px],低于 12px 下限 */}
+            <span className="text-caption font-mono text-ink-3 uppercase">
               Audit Trail · Hidden
             </span>
           </div>
         </div>
 
-        <div className="rounded-xl px-4 py-3 text-sm bg-amber-50 text-amber-800 leading-relaxed">
+        {/* 这是说明不是警告 → 收成中性分块,不再整条刷成琥珀色 */}
+        <div className="med-block px-4 py-3 text-body text-ink-2">
           审计追踪:所有导入/导出/分享均由不可变事件日志记录(含内容哈希 sha256),可核验、防篡改。
         </div>
 
         {error && (
-          <div className="rounded-xl px-4 py-2.5 text-sm bg-rose-50 text-rose-700">{error}</div>
+          <div className="rounded-block px-4 py-2.5 text-body bg-critical-wash text-critical">
+            {error}
+          </div>
         )}
 
         {notice && (
-          <div className="rounded-xl px-4 py-2.5 text-sm bg-emerald-50 text-emerald-700 break-all">
+          <div className="rounded-block px-4 py-2.5 text-body bg-seal-wash text-seal-ink break-all">
             {notice}
           </div>
         )}
@@ -103,39 +110,37 @@ export default function AuditView({ onNav }: { onNav: (id: string) => void }) {
             type="button"
             onClick={exportManifest}
             disabled={entries.length === 0}
-            className="flex items-center gap-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 rounded-xl px-4 py-2 transition-colors cursor-pointer"
+            className="med-btn med-btn-3 med-focusable disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FileDown className="w-4 h-4" /> 导出审计清单
           </button>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+        <div className="med-card overflow-hidden">
+          <table className="w-full text-body">
+            {/* 表头按规范的 caption 一档:12 · 600 · 0.05em · 纸底 */}
+            <thead className="bg-paper text-caption text-ink-3 uppercase">
               <tr>
-                <th className="text-left font-medium px-4 py-2.5">时间</th>
-                <th className="text-left font-medium px-4 py-2.5">动作</th>
-                <th className="text-left font-medium px-4 py-2.5">文件/详情</th>
-                <th className="text-left font-medium px-4 py-2.5">哈希</th>
-                <th className="text-left font-medium px-4 py-2.5">设备</th>
+                <th className="text-left px-4 py-2.5 border-b border-line">时间</th>
+                <th className="text-left px-4 py-2.5 border-b border-line">动作</th>
+                <th className="text-left px-4 py-2.5 border-b border-line">文件/详情</th>
+                <th className="text-left px-4 py-2.5 border-b border-line">哈希</th>
+                <th className="text-left px-4 py-2.5 border-b border-line">设备</th>
               </tr>
             </thead>
             <tbody>
               {entries.map((e) => (
-                <tr key={e.seq} className="border-t border-slate-100">
-                  <td className="px-4 py-2.5 text-xs font-mono text-slate-500 whitespace-nowrap">
+                // 时间戳 / 哈希 / 设备号成列,必须等宽才对得齐
+                <tr key={e.seq} className="border-t border-line-2">
+                  <td className="px-4 py-2.5 text-secondary font-mono tabular-nums text-ink-2 whitespace-nowrap">
                     {fmtTs(e.timestamp)}
                   </td>
                   <td className="px-4 py-2.5">
-                    <span
-                      className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                        ACTION_BADGE[e.action] ?? "bg-slate-100 text-slate-600"
-                      }`}
-                    >
+                    <span className={`med-pill ${ACTION_BADGE[e.action] ?? "bg-line-2 text-ink-2"}`}>
                       {e.action}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-slate-700 max-w-xs truncate" title={e.detail}>
+                  <td className="px-4 py-2.5 text-ink max-w-xs truncate" title={e.detail}>
                     {e.detail}
                   </td>
                   <td className="px-4 py-2.5">
@@ -144,28 +149,28 @@ export default function AuditView({ onNav }: { onNav: (id: string) => void }) {
                         type="button"
                         onClick={() => copyHash(e.seq, e.sha256 as string)}
                         title={e.sha256}
-                        className="flex items-center gap-1.5 text-xs font-mono text-slate-500 hover:text-blue-600 cursor-pointer"
+                        className="med-focusable flex items-center gap-1.5 rounded-ctl text-secondary font-mono tabular-nums text-ink-2 hover:text-seal cursor-pointer"
                       >
                         {copiedSeq === e.seq ? (
-                          <Check className="w-3 h-3" />
+                          <Check className="w-3.5 h-3.5" />
                         ) : (
-                          <Copy className="w-3 h-3" />
+                          <Copy className="w-3.5 h-3.5" />
                         )}
                         {shortHash(e.sha256)}
                       </button>
                     ) : (
-                      <span className="text-xs text-slate-300">—</span>
+                      <span className="text-secondary text-ink-3">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-xs font-mono text-slate-400 whitespace-nowrap">
+                  <td className="px-4 py-2.5 text-secondary font-mono tabular-nums text-ink-3 whitespace-nowrap">
                     {e.device_id.slice(0, 8)}
                   </td>
                 </tr>
               ))}
               {entries.length === 0 && !error && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-400">
-                    暂无记录
+                  <td colSpan={5} className="px-4 py-8 text-center text-body text-ink-3">
+                    暂无记录 —— 导入、导出或分享后,这里会逐条记下来。
                   </td>
                 </tr>
               )}

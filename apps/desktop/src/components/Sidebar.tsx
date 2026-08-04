@@ -30,10 +30,10 @@ export default function Sidebar({
     <div
       className={`${
         collapsed ? "w-16" : "w-60"
-      } bg-white border-r border-slate-200 flex flex-col h-screen text-slate-600 select-none shrink-0 transition-[width] duration-200`}
+      } bg-surface border-r border-line flex flex-col h-screen text-ink-2 select-none shrink-0 transition-[width] duration-200`}
     >
       {/* Brand */}
-      <div className={`${collapsed ? "px-2 py-4" : "p-5"} border-b border-slate-200`}>
+      <div className={`${collapsed ? "px-2 py-4" : "p-5"} border-b border-line`}>
         <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"}`}>
           <svg
             className="w-8 h-8 shrink-0"
@@ -58,13 +58,14 @@ export default function Sidebar({
           {!collapsed && (
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <span className="font-bold text-lg text-blue-600 tracking-tight">MedMe</span>
-                <span className="font-bold text-lg text-slate-950">医我</span>
+                {/* 品牌字样保留 blue-* 重映射(品牌基调),不换成界面语义色 */}
+                <span className="font-bold text-subtitle text-blue-600 tracking-tight">MedMe</span>
+                <span className="font-bold text-subtitle text-ink">医我</span>
               </div>
-              <span className="text-[10px] font-mono text-slate-400 tracking-widest uppercase block mt-0.5">
-                Health Vault
-              </span>
-              <span className="text-[10px] text-slate-400 block mt-0.5">个人医疗数据保险箱</span>
+              {/* 改版前这里叠了两行副标题(英文 "Health Vault" + 中文),都是 10px。
+                  字号提到 12px 下限以上后两行会把品牌区撑得很高,且英文那行与紧
+                  贴其下的中文同义 —— 留中文一行,是减噪不是减信息。 */}
+              <span className="text-secondary text-ink-3 block mt-0.5">个人医疗数据保险箱</span>
             </div>
           )}
         </div>
@@ -80,23 +81,19 @@ export default function Sidebar({
               key={item.id}
               onClick={() => onNav(item.id)}
               title={collapsed ? item.label : undefined}
-              className={`w-full flex items-center ${
+              className={`med-focusable w-full flex items-center ${
                 collapsed ? "justify-center p-2.5" : "justify-between p-3"
-              } rounded-xl transition-all cursor-pointer text-left ${
+              } rounded-ctl transition-colors cursor-pointer text-left ${
                 active
-                  ? "bg-blue-50 text-blue-700 border border-blue-100/40"
-                  : "border border-transparent hover:bg-slate-50"
+                  ? "bg-seal-wash text-seal-ink border border-line"
+                  : "border border-transparent hover:bg-paper"
               }`}
             >
               <div className={`flex items-center ${collapsed ? "" : "gap-3"} min-w-0`}>
-                <Icon
-                  className={`w-5 h-5 shrink-0 ${active ? "text-blue-600" : "text-slate-400"}`}
-                />
+                <Icon className={`w-5 h-5 shrink-0 ${active ? "text-seal" : "text-ink-3"}`} />
                 {!collapsed && (
                   <span
-                    className={`text-sm font-medium ${
-                      active ? "text-blue-900" : "text-slate-700"
-                    }`}
+                    className={`text-body font-medium ${active ? "text-seal-ink" : "text-ink"}`}
                   >
                     {item.label}
                   </span>
@@ -104,8 +101,8 @@ export default function Sidebar({
               </div>
               {!collapsed && item.id === "timeline" && (
                 <span
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold font-mono ${
-                    active ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
+                  className={`med-pill font-mono ${
+                    active ? "bg-seal text-white" : "bg-line-2 text-ink-2"
                   }`}
                 >
                   {count}
@@ -117,29 +114,29 @@ export default function Sidebar({
       </nav>
 
       {/* Footer */}
-      <div className="p-2 border-t border-slate-200">
+      <div className="p-2 border-t border-line">
         <div className={`flex ${collapsed ? "flex-col gap-1" : "gap-1"}`}>
           <button
             onClick={() => onNav("about")}
             title={collapsed ? "关于 · 声明" : undefined}
-            className={`flex-1 flex items-center ${
+            className={`med-focusable flex-1 flex items-center ${
               collapsed ? "justify-center" : "gap-2"
-            } p-2.5 rounded-xl cursor-pointer transition-colors ${
+            } p-2.5 rounded-ctl cursor-pointer transition-colors ${
               activeTab === "about"
-                ? "bg-blue-50 text-blue-700"
-                : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+                ? "bg-seal-wash text-seal-ink"
+                : "text-ink-3 hover:bg-paper hover:text-ink-2"
             }`}
           >
             <Info className="w-5 h-5 shrink-0" />
-            {!collapsed && <span className="text-xs font-medium">关于 · 声明</span>}
+            {!collapsed && <span className="text-secondary font-medium">关于 · 声明</span>}
           </button>
           <button
             onClick={() => onNav("settings")}
             title="设置"
-            className={`flex items-center justify-center p-2.5 rounded-xl cursor-pointer transition-colors shrink-0 ${
+            className={`med-focusable flex items-center justify-center p-2.5 rounded-ctl cursor-pointer transition-colors shrink-0 ${
               activeTab === "settings"
-                ? "bg-blue-50 text-blue-700"
-                : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+                ? "bg-seal-wash text-seal-ink"
+                : "text-ink-3 hover:bg-paper hover:text-ink-2"
             }`}
           >
             <Settings className="w-5 h-5 shrink-0" />
@@ -148,21 +145,21 @@ export default function Sidebar({
         <button
           onClick={() => setCollapsed((c) => !c)}
           title={collapsed ? "展开" : "收起"}
-          className={`w-full flex items-center ${
+          className={`med-focusable w-full flex items-center ${
             collapsed ? "justify-center" : "gap-2"
-          } p-2.5 rounded-xl text-slate-400 hover:bg-slate-50 hover:text-slate-600 cursor-pointer transition-colors`}
+          } p-2.5 rounded-ctl text-ink-3 hover:bg-paper hover:text-ink-2 cursor-pointer transition-colors`}
         >
           {collapsed ? (
             <PanelLeftOpen className="w-5 h-5" />
           ) : (
             <>
               <PanelLeftClose className="w-5 h-5" />
-              <span className="text-xs font-mono">收起侧栏</span>
+              <span className="text-secondary">收起侧栏</span>
             </>
           )}
         </button>
         {!collapsed && (
-          <div className="px-2 pt-2 text-[10px] font-mono text-slate-400 flex justify-between">
+          <div className="px-2 pt-2 text-caption font-mono text-ink-3 flex justify-between tabular-nums">
             <span>© MedMe 2026</span>
             <span>v1.0</span>
           </div>
