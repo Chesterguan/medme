@@ -18,13 +18,82 @@ import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 
+/// 一次导入运行的结果,供调用方判断要不要、往哪儿带用户去核对新东西。
+///
+/// 「待确认」是这个产品最重要的一道质量闸门(抽取质量是已知短板,见
+/// `review_state.dart`)——但它要用户自己走到档案屏才看得见。从概览发起的导入
+/// 若原地刷新、不带用户过去,这道闸门在那条路径上对所有人都不可见:不是 UI
+/// 疏漏,是一整套写好的核对机制在这条路上悄悄失效。这个结果类型就是让调用方
+/// 接住「这次是不是真的有新东西要核对」,自己决定带不带用户过去、去哪儿。
+class ImportRunResult {
+  const ImportRunResult(this.newDocumentIds);
+
+  /// 本次真正新入库的文档 id——与 [ReviewState.markPending] 标记的是同一批
+  /// (见下方 `_runImport` 里的 `newDocs`)。去重、失败的文档不落库,不在这里面;
+  /// 空列表 = 没有新东西要核对,用户取消、全部失败、全部是重复都落在这里。
+  final List<int> newDocumentIds;
+
+  bool get hasNewDocs => newDocumentIds.isNotEmpty;
+}
+
+/// 导入结果该不该带用户去复核、去哪复核——纯判断,不碰 `Navigator`/`BuildContext`,
+/// 方便直接单测(见 `test/import_review_navigation_test.dart`)。实际跳转由调用方
+/// (概览屏)按这个结果自己决定怎么导航,这里不管 UI。
+enum ImportReviewDestination {
+  /// 没有新文档——原地不动。跳到一个空的待确认列表比不跳更糟。
+  none,
+
+  /// 恰好一份新文档——直接进它的详情最直接,复核动作就在那儿。
+  singleDocument,
+
+  /// 多份新文档——档案屏置顶的「待确认」节已经把它们聚好了,不用另拼一份列表。
+  archive,
+}
+
+/// [result] 为 `null` 覆盖「用户在选择表/原生选择器里取消」与「context 在采集
+/// 过程中失效」两种情况(`runImport` / `showImportSheet` 在这些分支上返回
+/// `null`)——语义上与「有结果但没有新文档」一样:都不该跳。
+ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
+  if (result == null || !result.hasNewDocs) return ImportReviewDestination.none;
+  return result.newDocumentIds.length == 1
+      ? ImportReviewDestination.singleDocument
+      : ImportReviewDestination.archive;
+}
+
+/// 按 [reviewDestinationFor] 的判断,把用户带去复核入口 —— 只在真的有新文档
+/// 落库时才调用其中一个回调,取消/全部失败/全部重复都不调用任何一个。
+///
+/// 只管「该不该调、调哪个」,不碰 `Navigator`——具体怎么导航(`push` 什么、
+/// 会不会动底部 tab 状态)完全由调用方通过回调自己决定。这样测试可以直接断言
+/// 「哪种结果触发了哪个回调」,不需要真正拉起一整个 `OverviewScreen`(它的
+/// `FutureBuilder` 依赖 Rust FFI,在纯 dart test 环境里起不来)。
+void dispatchImportReview(
+  ImportRunResult? result, {
+  required void Function(int docId) openSingleDocument,
+  required VoidCallback openArchive,
+}) {
+  switch (reviewDestinationFor(result)) {
+    case ImportReviewDestination.none:
+      return;
+    case ImportReviewDestination.singleDocument:
+      openSingleDocument(result!.newDocumentIds.first);
+      return;
+    case ImportReviewDestination.archive:
+      openArchive();
+      return;
+  }
+}
+
 /// 「健康档案」右上角「+ 导入」触发的采集流程:弹三选一(拍照 / 相册 / 选文件),
 /// 选定后逐个采集→(图片先 ML Kit 中文 OCR)→落库,期间显示进度对话框,结束弹汇总,
 /// 并 [bumpVaultRevision] 通知档案自动刷新看到新记录。
 ///
 /// 采集/OCR/落库逻辑与原「导入导出」屏一致,只是进度改用模态对话框(从档案触发,
 /// 不再挂在某个屏的持久状态上)。医疗判断全在 Rust core,这里只搬字节 + 调 FFI。
-Future<void> showImportSheet(BuildContext context) async {
+///
+/// 返回值见 [ImportRunResult]:取消/未选文件返回 `null`,否则是这次运行的结果
+/// (可能没有新文档——全部失败或全部重复)。
+Future<ImportRunResult?> showImportSheet(BuildContext context) async {
   final choice = await showModalBottomSheet<ImportChoice>(
     context: context,
     showDragHandle: true,
@@ -70,8 +139,8 @@ Future<void> showImportSheet(BuildContext context) async {
       ),
     ),
   );
-  if (choice == null || !context.mounted) return;
-  await runImport(context, choice);
+  if (choice == null || !context.mounted) return null;
+  return runImport(context, choice);
 }
 
 /// 跳过三选一,**直接**走某一种采集来源。
@@ -83,14 +152,20 @@ Future<void> showImportSheet(BuildContext context) async {
 ///
 /// 前面那 350ms 的等待对直接调用**同样必要**:调用方多半也是从一个 bottom sheet
 /// 或菜单里点过来的,原生扫描器一样会被正在退场的浮层挡下。
-Future<void> runImport(BuildContext context, ImportChoice choice) async {
+///
+/// 返回值见 [ImportRunResult]:取消/未选到任何文件返回 `null`,否则是这次运行
+/// 的结果(可能没有新文档——全部失败或全部重复)。
+Future<ImportRunResult?> runImport(
+  BuildContext context,
+  ImportChoice choice,
+) async {
   // 等 bottom sheet 的关闭动画播完再拉起原生采集器。文档扫描器
   // (VNDocumentCameraViewController)靠 rootViewController.present 弹出;若 sheet
   // 尚未完全消失,present 会被正在退场的 sheet 挡下、静默失败,method channel 永不
   // 回调 —— 表现就是「点了没反应」。ImagePicker 内部自己处理了这个时序,这个扫描器
   // 插件没有,所以在这里补一帧等待。
   await Future<void>.delayed(const Duration(milliseconds: 350));
-  if (!context.mounted) return;
+  if (!context.mounted) return null;
 
   // 屏上探针的出口。**在任何 await 之前同步取出**,之后就不再碰 context ——
   // 采集期间用户可能把这一屏推走,而 `ScaffoldMessengerState` 自己知道有没有 mounted。
@@ -105,10 +180,10 @@ Future<void> runImport(BuildContext context, ImportChoice choice) async {
     // 上面 `await` 的调用方什么都不做,屏上就是「点了没反应」。
     debugPrint('[import] 采集环节未捕获异常: $e');
     _report(probe, choice, ImportCaptureIssue.unknown, '采集没能开始:$e');
-    return;
+    return null;
   }
-  if (items.isEmpty || !context.mounted) return;
-  await _runImport(context, items, choice);
+  if (items.isEmpty || !context.mounted) return null;
+  return _runImport(context, items, choice);
 }
 
 /// 采集来源:拍照(含文档扫描器)/ 从相册选 / 选择文件。`public`——除了本文件的
@@ -500,7 +575,7 @@ void _report(
   );
 }
 
-Future<void> _runImport(
+Future<ImportRunResult> _runImport(
   BuildContext context,
   List<PendingImport> items,
   ImportChoice source,
@@ -663,10 +738,14 @@ Future<void> _runImport(
     },
   );
 
-  if (!context.mounted) return;
+  // newDocs 的 key 就是 ImportRunResult 要交出去的东西——早前几行已经把它喂给
+  // ReviewState.markPending,这里不重算,只是把同一份数据也交给调用方。
+  final result = ImportRunResult(newDocs.keys.toList());
+  if (!context.mounted) return result;
   Navigator.of(context).pop(); // 关进度对话框
   await _showImportSummary(context, rows);
   progress.dispose();
+  return result;
 }
 
 /// 扫描版 PDF 补 OCR:用 `pdfx` 逐页渲染成 PNG,走原生图片 OCR
