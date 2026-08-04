@@ -784,9 +784,21 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
         .fold(f32::NEG_INFINITY, f32::max);
     let content_span = content_right - content_left;
 
-    // 2b) Does this page have a two-table-side-by-side layout? Detected once
+    // 2b) Can a cell's *content* be trusted to say which record it belongs to?
+    //     Only on a page whose text lines run level. Photographed reports are
+    //     often tilted, and step 1 groups boxes into rows by raw `top`, so once
+    //     the tilt carries a line further than the very tolerance that grouping
+    //     uses, one visual row silently mixes cells from neighbouring records
+    //     — the item name from one row, the reference range from the next.
+    //     Reasoning about such a row's cells is then unsound, so
+    //     `find_dual_column_band` is told not to.
+    let median_height = median_line_height(&lines);
+    let tilt_drift = estimate_tilt(&lines, median_height).abs() * content_span;
+    let trust_cell_content = tilt_drift <= LAYOUT_ROW_Y_TOLERANCE_RATIO * median_height;
+
+    // 2c) Does this page have a two-table-side-by-side layout? Detected once
     //     over all rows (not per-row) — see `find_dual_column_band` doc.
-    let dual_column_band = find_dual_column_band(&rows, content_span);
+    let dual_column_band = find_dual_column_band(&rows, content_span, trust_cell_content);
 
     // 3) Emit each visual row; insert a blank line where the vertical gap to
     //    the previous row is much larger than the line height (block break).
@@ -819,6 +831,53 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
         prev_height = Some(row_height);
     }
     out_lines.join("\n")
+}
+
+/// How far either side of level [`estimate_tilt`] searches, and how finely.
+/// These bound the search, they don't calibrate the decision — the threshold
+/// the tilt is compared against is [`LAYOUT_ROW_Y_TOLERANCE_RATIO`], the same
+/// tolerance row grouping already uses. 0.25 is ~14 degrees, well past what a
+/// legible hand-held photo of a report survives.
+const TILT_SEARCH_LIMIT: f32 = 0.25;
+const TILT_SEARCH_STEP: f32 = 0.002;
+
+/// Median detection-box height — the page's line height, used as the unit
+/// tilt is judged in. Median rather than mean so a banner or a stamp doesn't
+/// drag it.
+fn median_line_height(lines: &[&LayoutLine]) -> f32 {
+    let mut heights: Vec<f32> = lines.iter().map(|l| l.height).collect();
+    heights.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    heights.get(heights.len() / 2).copied().unwrap_or(0.0)
+}
+
+/// Estimates the page's tilt as the slope (dy/dx) whose horizontal projection
+/// of the detection boxes is most sharply peaked. This is the textbook skew
+/// estimate: at the true tilt every text line's boxes land in one bin, so the
+/// profile is a comb of tall spikes; away from it neighbouring lines smear
+/// into each other and flatten it. Sum of squared bin mass scores that
+/// peakiness, and boxes are weighted by width so a long line of body text
+/// counts for more than a stray tick mark.
+fn estimate_tilt(lines: &[&LayoutLine], median_height: f32) -> f32 {
+    if median_height <= 0.0 || lines.is_empty() {
+        return 0.0;
+    }
+    let bin = (median_height / 4.0).max(1.0);
+    let mut best = (0.0f32, f32::NEG_INFINITY);
+    let mut slope = -TILT_SEARCH_LIMIT;
+    while slope <= TILT_SEARCH_LIMIT {
+        let mut hist: std::collections::HashMap<i64, f32> = std::collections::HashMap::new();
+        for line in lines {
+            let x_centre = (line.left + line.right) / 2.0;
+            let key = ((line.top - slope * x_centre) / bin).floor() as i64;
+            *hist.entry(key).or_insert(0.0) += line.right - line.left;
+        }
+        let peakiness: f32 = hist.values().map(|mass| mass * mass).sum();
+        if peakiness > best.1 {
+            best = (slope, peakiness);
+        }
+        slope += TILT_SEARCH_STEP;
+    }
+    best.0
 }
 
 /// One candidate row's horizontal occupancy, as [`find_dual_column_band`]'s
@@ -895,7 +954,11 @@ impl RowSpans {
 /// returns `None` for any row that doesn't straddle the seam, which is
 /// already the correct per-row degradation (that row is emitted unsplit).
 /// Requiring it up front only let one narrow row suppress the entire page.
-fn find_dual_column_band(rows: &[Vec<&LayoutLine>], content_span: f32) -> Option<(f32, f32)> {
+fn find_dual_column_band(
+    rows: &[Vec<&LayoutLine>],
+    content_span: f32,
+    trust_cell_content: bool,
+) -> Option<(f32, f32)> {
     if content_span <= 0.0 {
         return None;
     }
@@ -1016,7 +1079,16 @@ fn find_dual_column_band(rows: &[Vec<&LayoutLine>], content_span: f32) -> Option
                 }
             }
         }
-        if splits >= DUAL_COLUMN_MIN_SUPPORT_ROWS && name_heads > value_heads {
+        // On a tilted page the head cell may simply belong to a different
+        // record than the rest of its half, so the name-vs-measurement test
+        // means nothing and is skipped. Skipping it splits more eagerly, which
+        // is the safe direction downstream: an over-split row leaves a value
+        // stranded without a reference range and the extractor drops it,
+        // whereas leaving the row joined hands that value the *neighbouring*
+        // record's range and produces a confidently wrong result.
+        if splits >= DUAL_COLUMN_MIN_SUPPORT_ROWS
+            && (!trust_cell_content || name_heads > value_heads)
+        {
             return Some((l, r));
         }
     }
@@ -2117,6 +2189,46 @@ mod tests {
             banner_line.contains("边A")
                 && banner_line.contains("边C")
                 && banner_line.contains("边D")
+        );
+    }
+
+    #[test]
+    fn estimate_tilt_recovers_known_page_rotation() {
+        // Lay a level page out, then rotate it: every box's top gains
+        // `slope * x_centre`. The projection profile is sharpest at exactly
+        // that slope, so the estimate must find it back.
+        let slope = 0.10_f32;
+        let mut owned = Vec::new();
+        for row in 0..10 {
+            for col in 0..5 {
+                let left = col as f32 * 200.0;
+                let right = left + 150.0;
+                let x_centre = (left + right) / 2.0;
+                let top = row as f32 * 40.0 + slope * x_centre;
+                owned.push(ll("x", left, top, right, 20.0));
+            }
+        }
+        let refs: Vec<&LayoutLine> = owned.iter().collect();
+        let estimated = estimate_tilt(&refs, median_line_height(&refs));
+        assert!(
+            (estimated - slope).abs() <= 2.0 * TILT_SEARCH_STEP,
+            "expected tilt ~{slope}, got {estimated}"
+        );
+
+        // ...and a level page must read as level, or every page would be
+        // treated as untrustworthy.
+        let mut level = Vec::new();
+        for row in 0..10 {
+            for col in 0..5 {
+                let left = col as f32 * 200.0;
+                level.push(ll("x", left, row as f32 * 40.0, left + 150.0, 20.0));
+            }
+        }
+        let level_refs: Vec<&LayoutLine> = level.iter().collect();
+        let flat = estimate_tilt(&level_refs, median_line_height(&level_refs));
+        assert!(
+            flat.abs() <= 2.0 * TILT_SEARCH_STEP,
+            "level page read as {flat}"
         );
     }
 
