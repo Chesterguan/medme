@@ -710,11 +710,12 @@ const DUAL_COLUMN_MIN_SUPPORT_ROWS: usize = 4;
 /// of stray multi-box rows scattered through an otherwise prose-only page
 /// can't reach the floor above by sheer page length.
 const DUAL_COLUMN_MIN_SUPPORT_FRACTION: f32 = 0.34;
-/// Gaps whose horizontal midpoints land within this fraction of the page's
-/// content width of each other are treated as "the same" candidate seam when
-/// clustering. Expressed as a ratio of `content_span` (rather than an
-/// absolute pixel count) so it scales with image resolution.
-const DUAL_COLUMN_CLUSTER_RATIO: f32 = 0.02;
+// There is deliberately no "how close must two rows' gaps be to count as the
+// same seam" constant here any more. The previous implementation had one --
+// gaps had to cluster within 2% of `content_span` and the reported band was
+// the *intersection* of every contributing row's gap -- and it never found a
+// real lab report's gutter: see `find_dual_column_band` for why that
+// calibration describes a geometry that does not occur in practice.
 
 /// Reconstructs page layout from per-line detection boxes: lines are grouped
 /// into visual rows by y-coordinate (within a tolerance relative to line
@@ -783,9 +784,21 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
         .fold(f32::NEG_INFINITY, f32::max);
     let content_span = content_right - content_left;
 
-    // 2b) Does this page have a two-table-side-by-side layout? Detected once
+    // 2b) Can a cell's *content* be trusted to say which record it belongs to?
+    //     Only on a page whose text lines run level. Photographed reports are
+    //     often tilted, and step 1 groups boxes into rows by raw `top`, so once
+    //     the tilt carries a line further than the very tolerance that grouping
+    //     uses, one visual row silently mixes cells from neighbouring records
+    //     — the item name from one row, the reference range from the next.
+    //     Reasoning about such a row's cells is then unsound, so
+    //     `find_dual_column_band` is told not to.
+    let median_height = median_line_height(&lines);
+    let tilt_drift = estimate_tilt(&lines, median_height).abs() * content_span;
+    let trust_cell_content = tilt_drift <= LAYOUT_ROW_Y_TOLERANCE_RATIO * median_height;
+
+    // 2c) Does this page have a two-table-side-by-side layout? Detected once
     //     over all rows (not per-row) — see `find_dual_column_band` doc.
-    let dual_column_band = find_dual_column_band(&rows, content_span);
+    let dual_column_band = find_dual_column_band(&rows, content_span, trust_cell_content);
 
     // 3) Emit each visual row; insert a blank line where the vertical gap to
     //    the previous row is much larger than the line height (block break).
@@ -820,15 +833,69 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
     out_lines.join("\n")
 }
 
-/// One recurring gap between adjacent boxes on some visual row — the raw
-/// material [`find_dual_column_band`] clusters to find the page's gutter.
-struct RowGap {
-    /// Index into the candidate-row list this gap came from (only used to
-    /// count *distinct rows* supporting a cluster, not raw gap count).
-    row: usize,
-    start: f32,
-    end: f32,
-    mid: f32,
+/// How far either side of level [`estimate_tilt`] searches, and how finely.
+/// These bound the search, they don't calibrate the decision — the threshold
+/// the tilt is compared against is [`LAYOUT_ROW_Y_TOLERANCE_RATIO`], the same
+/// tolerance row grouping already uses. 0.25 is ~14 degrees, well past what a
+/// legible hand-held photo of a report survives.
+const TILT_SEARCH_LIMIT: f32 = 0.25;
+const TILT_SEARCH_STEP: f32 = 0.002;
+
+/// Median detection-box height — the page's line height, used as the unit
+/// tilt is judged in. Median rather than mean so a banner or a stamp doesn't
+/// drag it.
+fn median_line_height(lines: &[&LayoutLine]) -> f32 {
+    let mut heights: Vec<f32> = lines.iter().map(|l| l.height).collect();
+    heights.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    heights.get(heights.len() / 2).copied().unwrap_or(0.0)
+}
+
+/// Estimates the page's tilt as the slope (dy/dx) whose horizontal projection
+/// of the detection boxes is most sharply peaked. This is the textbook skew
+/// estimate: at the true tilt every text line's boxes land in one bin, so the
+/// profile is a comb of tall spikes; away from it neighbouring lines smear
+/// into each other and flatten it. Sum of squared bin mass scores that
+/// peakiness, and boxes are weighted by width so a long line of body text
+/// counts for more than a stray tick mark.
+fn estimate_tilt(lines: &[&LayoutLine], median_height: f32) -> f32 {
+    if median_height <= 0.0 || lines.is_empty() {
+        return 0.0;
+    }
+    let bin = (median_height / 4.0).max(1.0);
+    let mut best = (0.0f32, f32::NEG_INFINITY);
+    let mut slope = -TILT_SEARCH_LIMIT;
+    while slope <= TILT_SEARCH_LIMIT {
+        let mut hist: std::collections::HashMap<i64, f32> = std::collections::HashMap::new();
+        for line in lines {
+            let x_centre = (line.left + line.right) / 2.0;
+            let key = ((line.top - slope * x_centre) / bin).floor() as i64;
+            *hist.entry(key).or_insert(0.0) += line.right - line.left;
+        }
+        let peakiness: f32 = hist.values().map(|mass| mass * mass).sum();
+        if peakiness > best.1 {
+            best = (slope, peakiness);
+        }
+        slope += TILT_SEARCH_STEP;
+    }
+    best.0
+}
+
+/// One candidate row's horizontal occupancy, as [`find_dual_column_band`]'s
+/// projection profile consumes it: the row's own extent (leftmost box edge to
+/// rightmost) plus every box interval within it.
+struct RowSpans {
+    extent: (f32, f32),
+    boxes: Vec<(f32, f32)>,
+}
+
+impl RowSpans {
+    /// Does this row leave the column at `x` blank? Only true *strictly
+    /// inside* the row's own extent: the whitespace past a short row's last
+    /// box is the page margin, not a gutter, and letting it vote would let a
+    /// page of ragged-right prose manufacture a seam out of its own margin.
+    fn is_blank_at(&self, x: f32) -> bool {
+        x > self.extent.0 && x < self.extent.1 && !self.boxes.iter().any(|(l, r)| x > *l && x < *r)
+    }
 }
 
 /// Looks for a vertical whitespace band that recurs at (roughly) the same
@@ -854,7 +921,44 @@ struct RowGap {
 /// row) has zero multi-box rows, so this returns `None` immediately — see
 /// `rebuild_layout_text_single_line_per_row_passes_through` and
 /// `rebuild_layout_text_dual_column_leaves_single_column_page_untouched`.
-fn find_dual_column_band(rows: &[Vec<&LayoutLine>], content_span: f32) -> Option<(f32, f32)> {
+///
+/// # Why this is a projection profile and not a clustering of per-row gaps
+///
+/// The original implementation collected each row's adjacent-box gaps,
+/// clustered them by midpoint within a fixed 2%-of-content-width tolerance,
+/// and reported the *intersection* of every contributing row's gap. On real
+/// lab photos it never fired once. Both halves of that calibration assume the
+/// left table's right edge is essentially constant down the page, and it
+/// simply isn't: item names differ in length (`1白细胞计数` vs
+/// `5嗜酸性粒细胞计数`) and the recognizer frequently glues a value onto the
+/// name (`5嗜酸性粒细胞计数0.17`), so the left half's right edge swings far
+/// wider than 2% — which both scatters the gaps across several clusters and
+/// collapses the intersection to nothing (`width <= 0.0`, cluster discarded).
+/// One row with an unusually wide left half could veto the whole page.
+///
+/// So instead of asking "do the rows' gaps agree closely enough", this asks
+/// the question document layout analysis normally asks: **for each x, how
+/// many rows leave that column blank?** That profile's high plateau *is* the
+/// gutter, and its edges fall out of the data — there is no tolerance
+/// constant to calibrate, so a ragged left edge costs support only at the x
+/// values it actually reaches, instead of invalidating the seam entirely.
+/// The band is then the widest run of x that clears the same support bar the
+/// old code used ([`DUAL_COLUMN_MIN_SUPPORT_ROWS`] /
+/// [`DUAL_COLUMN_MIN_SUPPORT_FRACTION`], both unchanged), and what's returned
+/// is that run's best-supported core, so the midpoint `split_row_at_gutter`
+/// tests sits where the most rows are blank.
+///
+/// Dropping the intersection loses the old guarantee that every voting row's
+/// gap contains the returned midpoint — deliberately. That guarantee was
+/// never needed: [`split_row_at_gutter`] re-checks each row on its own and
+/// returns `None` for any row that doesn't straddle the seam, which is
+/// already the correct per-row degradation (that row is emitted unsplit).
+/// Requiring it up front only let one narrow row suppress the entire page.
+fn find_dual_column_band(
+    rows: &[Vec<&LayoutLine>],
+    content_span: f32,
+    trust_cell_content: bool,
+) -> Option<(f32, f32)> {
     if content_span <= 0.0 {
         return None;
     }
@@ -863,83 +967,162 @@ fn find_dual_column_band(rows: &[Vec<&LayoutLine>], content_span: f32) -> Option
         return None;
     }
 
-    let mut gaps: Vec<RowGap> = Vec::new();
-    for (row_idx, row) in candidate_rows.iter().enumerate() {
-        let mut sorted: Vec<&LayoutLine> = (*row).clone();
-        sorted.sort_by(|a, b| {
-            a.left
-                .partial_cmp(&b.left)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        for pair in sorted.windows(2) {
-            let (start, end) = (pair[0].right, pair[1].left);
-            if end > start {
-                gaps.push(RowGap {
-                    row: row_idx,
-                    start,
-                    end,
-                    mid: (start + end) / 2.0,
-                });
-            }
-        }
+    let spans: Vec<RowSpans> = candidate_rows
+        .iter()
+        .map(|row| RowSpans {
+            extent: (
+                row.iter().map(|l| l.left).fold(f32::INFINITY, f32::min),
+                row.iter()
+                    .map(|l| l.right)
+                    .fold(f32::NEG_INFINITY, f32::max),
+            ),
+            boxes: row.iter().map(|l| (l.left, l.right)).collect(),
+        })
+        .collect();
+
+    // The profile can only change value at a box edge, so it is piecewise
+    // constant between consecutive edges. Sweeping the sorted edges evaluates
+    // it exactly, with no bin count / resolution constant to pick.
+    let mut edges: Vec<f32> = spans
+        .iter()
+        .flat_map(|s| s.boxes.iter().flat_map(|(l, r)| [*l, *r]))
+        .collect();
+    edges.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    edges.dedup();
+    if edges.len() < 2 {
+        return None;
     }
 
-    // Cluster gaps by x-position: sort by midpoint, then greedily group
-    // consecutive gaps that stay within `DUAL_COLUMN_CLUSTER_RATIO` of the
-    // *first* gap in the current cluster (anchoring to the first element
-    // rather than the previous one bounds each cluster's total span instead
-    // of letting it drift indefinitely across a dense run of gaps).
-    gaps.sort_by(|a, b| {
-        a.mid
-            .partial_cmp(&b.mid)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let tolerance = content_span * DUAL_COLUMN_CLUSTER_RATIO;
-    let mut clusters: Vec<Vec<&RowGap>> = Vec::new();
-    for gap in &gaps {
-        let joined = clusters
-            .last_mut()
-            .filter(|cluster: &&mut Vec<&RowGap>| (gap.mid - cluster[0].mid).abs() <= tolerance)
-            .map(|cluster| cluster.push(gap));
-        if joined.is_none() {
-            clusters.push(vec![gap]);
-        }
-    }
+    // Same bar as before: an absolute row floor *and* a healthy fraction of
+    // the page's multi-box rows.
+    let min_support = DUAL_COLUMN_MIN_SUPPORT_ROWS
+        .max((DUAL_COLUMN_MIN_SUPPORT_FRACTION * candidate_rows.len() as f32).ceil() as usize);
 
-    let total_rows = candidate_rows.len() as f32;
-    let mut best: Option<(f32, f32, f32)> = None; // (width, band_left, band_right)
-    for cluster in &clusters {
-        let support = cluster
-            .iter()
-            .map(|g| g.row)
-            .collect::<std::collections::HashSet<_>>()
-            .len();
-        if support < DUAL_COLUMN_MIN_SUPPORT_ROWS
-            || (support as f32) < DUAL_COLUMN_MIN_SUPPORT_FRACTION * total_rows
-        {
+    // (left, right, how many rows are blank across this whole slice)
+    let cells: Vec<(f32, f32, usize)> = edges
+        .windows(2)
+        .map(|w| {
+            let mid = (w[0] + w[1]) / 2.0;
+            let support = spans.iter().filter(|s| s.is_blank_at(mid)).count();
+            (w[0], w[1], support)
+        })
+        .collect();
+
+    let mut candidates: Vec<(f32, f32, f32)> = Vec::new(); // (core width, left, right)
+    let mut i = 0;
+    while i < cells.len() {
+        if cells[i].2 < min_support {
+            i += 1;
             continue;
         }
-        // The band reported for this cluster must be a sub-interval of
-        // *every* contributing row's own gap (not e.g. each coordinate's
-        // median independently, which can land just outside a narrower
-        // row's gap by a hair) -- so `split_row_at_gutter`'s "gap contains
-        // the gutter midpoint" check is guaranteed to hold for every row
-        // that voted for this cluster. That's exactly the intersection of
-        // all the cluster's [start, end] intervals.
-        let band_left = cluster
-            .iter()
-            .map(|g| g.start)
-            .fold(f32::NEG_INFINITY, f32::max);
-        let band_right = cluster.iter().map(|g| g.end).fold(f32::INFINITY, f32::min);
-        let width = band_right - band_left;
-        if width <= 0.0 {
-            continue; // this cluster's gaps don't all actually overlap -- not a real seam.
+        let start = i;
+        while i < cells.len() && cells[i].2 >= min_support {
+            i += 1;
         }
-        if best.is_none_or(|(best_width, _, _)| width > best_width) {
-            best = Some((width, band_left, band_right));
+        // Within this qualifying run, keep the widest stretch at the run's
+        // peak support: the sub-band the largest number of rows agree is
+        // blank, so the midpoint handed to `split_row_at_gutter` is the one
+        // most rows can actually act on. Ranking candidate seams by that
+        // core's width preserves the previous policy of preferring the
+        // widest band -- an internal column gap (value -> its reference
+        // range) is narrow, whereas the seam between two independent tables
+        // is the one whitespace band wide enough to separate them.
+        let run = &cells[start..i];
+        let peak = run.iter().map(|c| c.2).max().unwrap_or(0);
+        let mut core: Option<(f32, f32)> = None;
+        let mut j = 0;
+        while j < run.len() {
+            if run[j].2 != peak {
+                j += 1;
+                continue;
+            }
+            let s = j;
+            while j < run.len() && run[j].2 == peak {
+                j += 1;
+            }
+            let (l, r) = (run[s].0, run[j - 1].1);
+            if core.is_none_or(|(cl, cr)| r - l > cr - cl) {
+                core = Some((l, r));
+            }
+        }
+        if let Some((l, r)) = core {
+            candidates.push((r - l, l, r));
         }
     }
-    best.map(|(_, l, r)| (l, r))
+
+    // Geometry alone cannot finish the job: a single-column 4-field table
+    // ("Hemoglobin | 12 | 11.0-16.0 | g/dL", every row identical) projects
+    // exactly the same profile as two side-by-side 2-field tables -- a clean,
+    // fully-supported whitespace band with two boxes either side, widest in
+    // the middle. Splitting there would tear one record in half, which is
+    // strictly worse than leaving two records joined, so the widest band is
+    // only *proposed* here; each candidate must then show it behaves like a
+    // seam before it is believed.
+    //
+    // The tell is what starts the right-hand half. A record begins with an
+    // item *name*; the cell after a mere column break begins with the value,
+    // range or unit that belongs to the record still in progress on the left.
+    // So a candidate is accepted only if it actually splits enough rows and
+    // most of those right halves open with something name-like.
+    candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_, l, r) in candidates {
+        let (mut splits, mut name_heads, mut value_heads) = (0usize, 0usize, 0usize);
+        for row in &candidate_rows {
+            if let Some((_, right)) = split_row_at_gutter(row, l, r) {
+                splits += 1;
+                // `split_row_at_gutter` returns the right half sorted by
+                // `left`, so `right[0]` is the cell the record would open on.
+                if looks_like_measurement(&right[0].text) {
+                    value_heads += 1;
+                } else {
+                    name_heads += 1;
+                }
+            }
+        }
+        // On a tilted page the head cell may simply belong to a different
+        // record than the rest of its half, so the name-vs-measurement test
+        // means nothing and is skipped. Skipping it splits more eagerly, which
+        // is the safe direction downstream: an over-split row leaves a value
+        // stranded without a reference range and the extractor drops it,
+        // whereas leaving the row joined hands that value the *neighbouring*
+        // record's range and produces a confidently wrong result.
+        if splits >= DUAL_COLUMN_MIN_SUPPORT_ROWS
+            && (!trust_cell_content || name_heads > value_heads)
+        {
+            return Some((l, r));
+        }
+    }
+    None
+}
+
+/// Does this cell read as a measurement — a figure, a range, a unit — rather
+/// than the start of a new record? Used by [`find_dual_column_band`] to reject
+/// a single-column table's internal column break, which is geometrically
+/// indistinguishable from a real dual-table seam, so only the content of the
+/// cell the right-hand record would open on can tell them apart.
+///
+/// Three shapes count as a measurement, all of them things that continue the
+/// record already in progress rather than starting a new one:
+///   * no letters at all (`char::is_alphabetic` covers CJK item names as well
+///     as Latin ones) — `11.0 - 16.0`, `120~160`, `3.86`;
+///   * a solidus anywhere — `mmol/L`, `g/dL`, `10^9/L` are units, and a unit
+///     never opens a record;
+///   * a leading comparison — `<5.20`, `>1.04` is a reference bound.
+///
+/// Erring toward "measurement" is the safe direction: it can only suppress a
+/// split (two records left on one line, which the extractor already survives),
+/// never manufacture one that tears a record in half. The known cost is a
+/// Chinese item name that genuinely contains a solidus, e.g. `A/G比值` — a
+/// page whose right-hand column starts with one of those simply won't split.
+fn looks_like_measurement(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    !trimmed.chars().any(char::is_alphabetic)
+        || trimmed.contains('/')
+        || trimmed.starts_with('<')
+        || trimmed.starts_with('>')
 }
 
 /// If `row` has a genuine left/right split at the gutter `[gutter_left,
@@ -2007,5 +2190,145 @@ mod tests {
                 && banner_line.contains("边C")
                 && banner_line.contains("边D")
         );
+    }
+
+    #[test]
+    fn estimate_tilt_recovers_known_page_rotation() {
+        // Lay a level page out, then rotate it: every box's top gains
+        // `slope * x_centre`. The projection profile is sharpest at exactly
+        // that slope, so the estimate must find it back.
+        let slope = 0.10_f32;
+        let mut owned = Vec::new();
+        for row in 0..10 {
+            for col in 0..5 {
+                let left = col as f32 * 200.0;
+                let right = left + 150.0;
+                let x_centre = (left + right) / 2.0;
+                let top = row as f32 * 40.0 + slope * x_centre;
+                owned.push(ll("x", left, top, right, 20.0));
+            }
+        }
+        let refs: Vec<&LayoutLine> = owned.iter().collect();
+        let estimated = estimate_tilt(&refs, median_line_height(&refs));
+        assert!(
+            (estimated - slope).abs() <= 2.0 * TILT_SEARCH_STEP,
+            "expected tilt ~{slope}, got {estimated}"
+        );
+
+        // ...and a level page must read as level, or every page would be
+        // treated as untrustworthy.
+        let mut level = Vec::new();
+        for row in 0..10 {
+            for col in 0..5 {
+                let left = col as f32 * 200.0;
+                level.push(ll("x", left, row as f32 * 40.0, left + 150.0, 20.0));
+            }
+        }
+        let level_refs: Vec<&LayoutLine> = level.iter().collect();
+        let flat = estimate_tilt(&level_refs, median_line_height(&level_refs));
+        assert!(
+            flat.abs() <= 2.0 * TILT_SEARCH_STEP,
+            "level page read as {flat}"
+        );
+    }
+
+    #[test]
+    fn rebuild_layout_text_dual_column_splits_despite_ragged_left_edge() {
+        // The bug this rewrite exists for. Every row here is a genuine
+        // two-record row, but the left half's right edge moves around by ~70px
+        // between rows -- exactly what real lab photos do, because item names
+        // differ in length and the recognizer often glues the value onto the
+        // name (`5嗜酸性粒细胞计数0.17`). The previous detector demanded the
+        // rows' gaps cluster within 2% of the content width *and* that all of
+        // them overlap, so a page like this scattered into several clusters
+        // whose intersections were empty, and it split nothing at all.
+        let names = [
+            "1白细胞计数",
+            "2中性粒细胞计数",
+            "3淋巴细胞计数",
+            "4单核细胞计数",
+            "5嗜酸性粒细胞计数0.17",
+            "6嗜碱性粒细胞计数0.04",
+        ];
+        let right_names = [
+            "14红细胞压积",
+            "15红细胞平均体积",
+            "16平均血红蛋白",
+            "17平均血红蛋白浓度",
+            "18红细胞分布宽度",
+            "19血小板计数",
+        ];
+        // Ragged: the left half ends anywhere in 430..=500.
+        let left_edges = [430.0, 470.0, 445.0, 455.0, 500.0, 495.0];
+        let mut lines = Vec::new();
+        for i in 0..6 {
+            let top = i as f32 * 40.0;
+            let edge: f32 = left_edges[i];
+            lines.push(ll(names[i], 40.0, top, edge - 120.0, 24.0));
+            lines.push(ll("4.00~10.00", edge - 110.0, top, edge, 24.0));
+            // Right half starts at a stable x, as the second table does.
+            lines.push(ll(right_names[i], 560.0, top, 700.0, 24.0));
+            lines.push(ll("39.2", 720.0, top, 780.0, 24.0));
+            lines.push(ll("42.0~49.0", 800.0, top, 920.0, 24.0));
+        }
+
+        let out = rebuild_layout_text(&lines);
+        for (i, right) in right_names.iter().enumerate() {
+            let offender = out
+                .lines()
+                .find(|l| l.contains(names[i]) && l.contains(right));
+            assert!(
+                offender.is_none(),
+                "left record {:?} and right record {right:?} must not share a line, got {offender:?}",
+                names[i]
+            );
+        }
+    }
+
+    #[test]
+    fn rebuild_layout_text_dual_column_keeps_single_table_record_whole() {
+        // A single-column 4-field table -- name | result | range | unit, every
+        // row on the same four x anchors. Geometrically this is *identical* to
+        // two side-by-side 2-field tables: a clean, fully-supported whitespace
+        // band with two boxes either side, widest in the middle. Only the
+        // content says otherwise: each candidate seam's right half would open
+        // on a value (`12`), a range (`11.0 - 16.0`) or a unit (`g/dL`), never
+        // on an item name, so none of them is a record boundary. Splitting one
+        // would tear a record in half and leave the extractor a value with no
+        // name -- strictly worse than leaving two records on one line.
+        // Regression fixture: the real `GNU_Health_lab_report_sample.png`.
+        let rows = [
+            ("Hemoglobin", "12", "11.0 - 16.0", "g/dL"),
+            ("RBC", "3.3", "3.5-5.50", "10^6/uL"),
+            ("HCT", "36", "37.0-50.0", "%"),
+            ("MCV", "83", "82-95", "fL"),
+            ("MCH", "28", "27-31", "pg"),
+            ("WBC", "6.7", "4.5-11", "10^3/uL"),
+        ];
+        let mut lines = Vec::new();
+        for (i, (name, result, range, unit)) in rows.iter().enumerate() {
+            let top = i as f32 * 30.0;
+            lines.push(ll(name, 0.0, top, 100.0, 20.0));
+            lines.push(ll(result, 200.0, top, 230.0, 20.0));
+            lines.push(ll(range, 300.0, top, 380.0, 20.0));
+            lines.push(ll(unit, 450.0, top, 500.0, 20.0));
+        }
+
+        let out = rebuild_layout_text(&lines);
+        assert_eq!(
+            out.lines().count(),
+            rows.len(),
+            "single-column table must stay one line per record: {out:?}"
+        );
+        for (name, result, range, unit) in rows {
+            let line = out
+                .lines()
+                .find(|l| l.contains(name))
+                .unwrap_or_else(|| panic!("record {name:?} present in {out:?}"));
+            assert!(
+                line.contains(result) && line.contains(range) && line.contains(unit),
+                "record {name:?} must keep its value, range and unit on one line, got {line:?}"
+            );
+        }
     }
 }
