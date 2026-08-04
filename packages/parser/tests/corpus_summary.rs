@@ -114,80 +114,99 @@ fn diabetes_lane_is_not_empty() {
     );
 }
 
-/// Generalization of the above. Getting this one right matters more than it
-/// looks, because the obvious phrasing is **vacuous**:
+/// What the documents name, the doctor must be served — with the reading of the
+/// documents done by a person, not by the code under test.
 ///
-/// ```ignore
-/// problems.filter(|p| match_disease(p.term).is_some())   // ← WRONG
-///         .assert(|p| !p.labs.is_empty())
-/// ```
+/// Two wrong versions of this test shipped before this one, both green, both
+/// useless:
 ///
-/// That filter asks the matcher which lanes should have matched — so the exact
-/// failure we are guarding against (the matcher not firing) removes the lane
-/// from the test's own scope and the assertion passes on an empty set. Verified
-/// by reverting the fix: this test stayed green while `diabetes_lane_is_not_empty`
-/// went red. It is the same tautology that let the original bug ship.
+/// 1. `problems.filter(|p| match_disease(p.term).is_some())` — asks the matcher
+///    which lanes should have matched, so a matcher that fires on nothing empties
+///    the test's own scope and the assertion passes on an empty set.
+/// 2. Gating on `corpus_line.contains(raw_map_name)` — the map's `disease` field
+///    carries editorial furniture (`慢性肾脏病(CKD)`, `痛风/高尿酸血症`) that no
+///    report prints, so the gate reproduced, inside the test, the exact defect
+///    `disease_aliases` exists to remove. It put 2 of 10 diseases in scope and
+///    stayed green when the alias expansion was reverted.
 ///
-/// So "should have matched" is decided from the **documents**, not the matcher:
-/// if a curated disease name appears in the corpus text, a lane for it must
-/// exist and must carry something. Diagnoses outside the curated map are exempt
-/// — that is a coverage gap, tracked separately, not a silent failure.
+/// Both failed the same way: the gate consulted logic that the bug had broken.
+/// So the gate is now **data** — a list written by reading the 20 fixtures, each
+/// entry citing the file and line it came from. It cannot be emptied by a
+/// regression in the code it guards.
+///
+/// Known gaps are listed too, and asserted **as gaps**. A gap that is silently
+/// filtered out is indistinguishable from a gap that has been fixed; asserting
+/// it means this test also tells us the day it starts working.
 #[test]
 fn diseases_named_in_the_documents_get_a_lane_with_content() {
-    let map: Value = serde_json::from_str(include_str!("../data/problem_map.json"))
-        .expect("problem_map.json parses");
-    let diseases: Vec<String> = map
-        .as_array()
-        .expect("problem_map is an array")
-        .iter()
-        .filter_map(|e| e.get("disease")?.as_str().map(str::to_string))
-        .collect();
-    assert!(!diseases.is_empty(), "problem map is empty — wrong shape?");
+    // (disease named in a document, where it is written)
+    const NAMED_AND_SERVED: &[(&str, &str)] = &[
+        (
+            "2型糖尿病",
+            "2023-04-24_出院记录_脑梗死.txt — `出院诊断:… 3. 2 型糖尿病`",
+        ),
+        (
+            "高血压",
+            "2023-04-24_出院记录_脑梗死.txt — `出院诊断:… 2. 高血压 3 级(很高危)`",
+        ),
+    ];
 
-    // Normalize per line, not per document: `normalize_term` drops newlines too,
-    // so a whole-file blob can "contain" a disease name glued together out of
-    // two unrelated lines — the gate would then demand a lane for a disease no
-    // document actually names.
-    let raw = corpus();
-    let corpus_lines: Vec<String> = raw
-        .iter()
-        .flat_map(|(_, t)| t.lines())
-        .map(terminology::normalize_term)
-        .collect();
+    // Named by a document, still not served. Each needs a fix elsewhere; until
+    // then the assertion below pins the *current* behaviour so the day it changes
+    // is visible.
+    const NAMED_BUT_MISSING: &[(&str, &str)] = &[
+        (
+            "高尿酸血症",
+            "2026-06-20_处方_内分泌科.txt:4 — the line reads \
+             `处方日期:2026-06-20    临床诊断:2 型糖尿病、糖尿病肾病(早期)、高尿酸血症`. \
+             conditions.rs `section_re` is `^`-anchored, so a 诊断 label sitting \
+             mid-line takes the whole line's diagnoses down with it.",
+        ),
+        (
+            "脂肪肝",
+            "2024-03-22_腹部超声_脂肪肝.txt:13 — `1. 脂肪肝(中度)。` under 提示, \
+             which is not a diagnosis-section label; and 脂肪肝 is a synonym of \
+             代谢相关(非酒精性)脂肪性肝病 rather than a spelling of it, which the \
+             mechanical alias expansion deliberately does not invent.",
+        ),
+    ];
 
     let sm = summary();
     let lanes: Vec<(&str, usize, usize)> = problems(&sm)
         .into_iter()
         .map(|p| (term_of(p), count(p, "labs"), count(p, "meds")))
         .collect();
-
-    let mut missing = Vec::new();
-    let mut hollow = Vec::new();
-    for d in &diseases {
-        // Does any document line actually say this disease? (Normalized, so
-        // typeset spacing in the report doesn't decide the answer.)
-        let dn = terminology::normalize_term(d);
-        if !corpus_lines.iter().any(|l| l.contains(&dn)) {
-            continue;
-        }
-        match lanes
+    let lane_for = |disease: &str| {
+        lanes
             .iter()
-            .find(|(term, _, _)| parser::match_disease(term) == Some(d.as_str()))
-        {
-            None => missing.push(d.clone()),
-            Some((term, labs, meds)) if *labs == 0 && *meds == 0 => {
-                hollow.push((*term).to_string())
+            .find(|(term, _, _)| parser::match_disease(term) == Some(disease))
+            .copied()
+    };
+
+    let mut failures = Vec::new();
+    for (disease, whence) in NAMED_AND_SERVED {
+        match lane_for(disease) {
+            None => failures.push(format!("`{disease}` has no lane — named in {whence}")),
+            Some((term, 0, 0)) => {
+                failures.push(format!("lane `{term}` is empty — `{disease}` named in {whence}"))
             }
             Some(_) => {}
         }
     }
-
     assert!(
-        missing.is_empty() && hollow.is_empty(),
-        "diseases the documents name but the viewer fails to serve:\n  \
-         no lane at all: {missing:?}\n  lane present but empty: {hollow:?}\n  \
-         (lanes assembled: {lanes:?})"
+        failures.is_empty(),
+        "diseases the documents name but the viewer fails to serve:\n  {}\n\
+         (lanes assembled: {lanes:?})",
+        failures.join("\n  ")
     );
+
+    for (disease, why) in NAMED_BUT_MISSING {
+        assert!(
+            lane_for(disease).is_none(),
+            "`{disease}` now gets a lane — good news, but this test still lists it \
+             as a known gap. Move it to NAMED_AND_SERVED. Context: {why}"
+        );
+    }
 }
 
 /// A lab series the viewer cannot draw must not be announced. Every renderer

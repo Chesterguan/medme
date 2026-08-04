@@ -74,15 +74,67 @@ fn problem_map() -> &'static [MapEntry] {
 /// spaces (`2 型糖尿病`, `高血压 3 级`), and comparing raw strings silently
 /// dropped every lab and drug off the diabetes lane in the doctor's viewer.
 /// Never compare a term against the table without normalizing first.
+/// Diagnoses that *contain* a mapped disease's alias but are a different disease.
+/// Substring matching cannot tell them apart, and inheriting the wrong lane hands
+/// a doctor the wrong analytes and the wrong drug classes. Kept to cases that are
+/// genuinely distinct entities, not to stage/severity variants.
+const NOT_THESE: &[&str] = &[
+    // 焦磷酸钙沉积病 — contains 痛风, unrelated to urate.
+    "假性痛风",
+];
+
+/// Unambiguous negations. `否认冠心病史` and `无痛风病史` are the *absence* of a
+/// disease, and substring matching reads them as the disease — handing a doctor
+/// a lane of urate labs for a patient the note says does not have gout. Only
+/// forms with no second reading are listed: bare `无` is excluded on purpose,
+/// because `无症状性高尿酸血症` is a real diagnosis. General negation handling is
+/// out of scope (see `conditions.rs`), this only closes the clearest holes.
+const NEGATIONS: &[&str] = &["否认", "未见", "既往无", "无既往"];
+
+/// Does the text negate the disease rather than assert it?
+fn is_negated(normalized: &str) -> bool {
+    NEGATIONS
+        .iter()
+        .any(|n| normalized.contains(&terminology::normalize_term(n)))
+        // `无…病史` / `无…史` — the trailing 史 is what disambiguates it from
+        // 无症状性… and friends.
+        || (normalized.starts_with('无') && normalized.ends_with('史'))
+}
+
+/// The **strict** identity test: does the note name this mapped disease itself,
+/// without going through the alias expansion? Used where a match means "these
+/// two mentions are the same problem", which merging makes lossy.
+fn match_disease_exact(condition_raw: &str) -> Option<&'static str> {
+    let c = terminology::normalize_term(condition_raw);
+    if c.is_empty() || is_negated(&c) {
+        return None;
+    }
+    problem_map()
+        .iter()
+        .map(|e| e.disease.as_str())
+        .find(|d| {
+            let dn = terminology::normalize_term(d);
+            c.contains(&dn) || dn.contains(&c)
+        })
+}
+
 pub fn match_disease(condition_raw: &str) -> Option<&'static str> {
     let c = terminology::normalize_term(condition_raw);
-    if c.is_empty() {
+    if c.is_empty() || is_negated(&c) {
+        return None;
+    }
+    if NOT_THESE
+        .iter()
+        .any(|x| c.contains(&terminology::normalize_term(x)))
+    {
         return None;
     }
     for e in problem_map() {
         let d = e.disease.as_str();
-        let dn = terminology::normalize_term(d);
-        if c.contains(&dn) || dn.contains(&c) {
+        if disease_aliases(d)
+            .iter()
+            .any(|dn| c.contains(dn.as_str()) || dn.contains(&c))
+        {
             return Some(d);
         }
     }
@@ -91,6 +143,63 @@ pub fn match_disease(condition_raw: &str) -> Option<&'static str> {
 
 fn entry_for(disease: &str) -> Option<&'static MapEntry> {
     problem_map().iter().find(|e| e.disease == disease)
+}
+
+/// The normalized forms a mapped disease may be written as, longest first.
+///
+/// The map's `disease` field doubles as a display label, so four of the ten
+/// entries carry editorial furniture a report never prints: an abbreviation in
+/// brackets (`慢性肾脏病(CKD)`, `高脂血症(血脂异常)`), an inline parenthetical
+/// (`代谢相关(非酒精性)脂肪性肝病`), or a slash meaning "or" (`痛风/高尿酸血症`).
+/// Matching required the note to contain that string verbatim, so the most
+/// ordinary Chinese spellings missed entirely — `慢性肾脏病3期` (CKD is always
+/// staged), `痛风性关节炎`, `混合性高脂血症` all returned `None`, taking their
+/// whole lane's labs and drugs with them. Same failure as the diabetes lane,
+/// living in the data instead of the code.
+///
+/// Expansion is mechanical and conservative: split on the slash, drop bracketed
+/// runs, keep the original. Verified against the current table to introduce no
+/// alias that is a substring of another entry's alias, i.e. no new cross-disease
+/// false positive. It does **not** invent synonyms — `脂肪肝` still misses
+/// `代谢相关脂肪性肝病`, because deciding those are the same disease is curation
+/// with a citation attached, not string surgery.
+fn disease_aliases(disease: &str) -> &'static [String] {
+    static A: OnceLock<BTreeMap<String, Vec<String>>> = OnceLock::new();
+    let map = A.get_or_init(|| {
+        problem_map()
+            .iter()
+            .map(|e| {
+                let mut set: BTreeSet<String> = BTreeSet::new();
+                for part in e.disease.split(['/', '／']) {
+                    let part = part.trim();
+                    if part.is_empty() {
+                        continue;
+                    }
+                    set.insert(terminology::normalize_term(part));
+                    // Same part with any bracketed run removed.
+                    let mut stripped = String::new();
+                    let mut depth = 0usize;
+                    for ch in part.chars() {
+                        match ch {
+                            '(' | '（' | '[' | '【' => depth += 1,
+                            ')' | '）' | ']' | '】' => depth = depth.saturating_sub(1),
+                            _ if depth == 0 => stripped.push(ch),
+                            _ => {}
+                        }
+                    }
+                    let stripped = terminology::normalize_term(&stripped);
+                    if !stripped.is_empty() {
+                        set.insert(stripped);
+                    }
+                }
+                // Longest first: a note naming the fuller form should match on it.
+                let mut v: Vec<String> = set.into_iter().collect();
+                v.sort_by(|a, b| b.chars().count().cmp(&a.chars().count()).then_with(|| a.cmp(b)));
+                (e.disease.clone(), v)
+            })
+            .collect()
+    });
+    map.get(disease).map_or(&[], Vec::as_slice)
 }
 
 /// Curated disease **stems** for merging clinical variants the mapped-disease table
@@ -105,7 +214,18 @@ const DISEASE_STEMS: &[&str] = &["脑梗死", "脑梗塞", "脑出血", "脑卒�
 /// (很高危)` / `高血压` → `高血压`); otherwise a known stem; otherwise the cleaned
 /// raw text (distinct problems stay distinct). Deterministic, no fuzzy matching.
 fn condition_key(raw: &str) -> String {
-    if let Some(d) = match_disease(raw) {
+    // Deliberately the **narrow** matcher, not [`match_disease`]. Merging is
+    // lossy: `merge_conditions` displays the shortest mention in a group, so
+    // folding two diagnoses together deletes the longer one from the problem
+    // list. With alias expansion in the key, `慢性肾脏病3期` (2023) and
+    // `慢性肾脏病5期(尿毒症期)` (2026) collapsed into one lane labelled
+    // `慢性肾脏病3期` — a patient's progression to dialysis simply gone. Same
+    // for `高脂血症` + `高脂血症性胰腺炎`.
+    //
+    // Aliases are for deciding **which labs and drugs to attach**, where being
+    // generous costs nothing. Identity is a different question and needs the
+    // stricter test: the note has to name the mapped disease itself.
+    if let Some(d) = match_disease_exact(raw) {
         return d.to_string();
     }
     // Same rule as match_disease: normalize before comparing, so a typeset
@@ -859,6 +979,109 @@ mod tests {
         assert_eq!(match_disease("高 血 压"), Some("高血压"));
         // Still no false positives.
         assert_eq!(match_disease("社区获得性肺炎"), None);
+    }
+
+    /// The map's `disease` field carries editorial furniture no report prints —
+    /// bracketed abbreviations, an inline parenthetical, a slash meaning "or".
+    /// Requiring the note to contain that verbatim made the most ordinary Chinese
+    /// spellings miss, silently emptying those lanes.
+    #[test]
+    fn map_disease_names_match_through_their_editorial_furniture() {
+        // 慢性肾脏病(CKD) — Chinese notes always stage it.
+        assert_eq!(match_disease("慢性肾脏病3期"), Some("慢性肾脏病(CKD)"));
+        assert_eq!(match_disease("慢性肾脏病5期"), Some("慢性肾脏病(CKD)"));
+        // 痛风/高尿酸血症 — the slash means either name alone should hit.
+        assert_eq!(match_disease("痛风性关节炎"), Some("痛风/高尿酸血症"));
+        assert_eq!(match_disease("高尿酸血症"), Some("痛风/高尿酸血症"));
+        // 高脂血症(血脂异常)
+        assert_eq!(match_disease("混合性高脂血症"), Some("高脂血症(血脂异常)"));
+        // 代谢相关(非酒精性)脂肪性肝病 — the inline parenthetical comes out…
+        assert_eq!(
+            match_disease("代谢相关脂肪性肝病"),
+            Some("代谢相关(非酒精性)脂肪性肝病")
+        );
+        // …but `脂肪肝` is a *synonym*, not a spelling of this string, and this
+        // expansion deliberately does not invent synonyms. Asserted so the gap is
+        // visible rather than assumed fixed; deciding these name one disease is
+        // curation with a citation, and belongs in the map's data.
+        assert_eq!(match_disease("脂肪肝"), None);
+        assert_eq!(match_disease("非酒精性脂肪性肝病"), None);
+        // No new cross-disease false positive from the shorter aliases.
+        assert_eq!(match_disease("社区获得性肺炎"), None);
+        assert_eq!(match_disease("肺炎"), None);
+        // 假性痛风 is 焦磷酸钙沉积病 — a different disease that merely contains
+        // the 2-character alias. Inheriting the gout lane would hand a doctor
+        // urate labs and urate-lowering drug classes for a condition neither
+        // applies to.
+        assert_eq!(match_disease("假性痛风"), None);
+        assert_eq!(match_disease("焦磷酸钙沉积病(假性痛风)"), None);
+        // Negations assert the absence of the disease. Reading them as the
+        // disease hands a doctor that lane's labs and drug classes for a
+        // patient the note says does not have it.
+        assert_eq!(match_disease("无痛风病史"), None);
+        assert_eq!(match_disease("既往无痛风"), None);
+        assert_eq!(match_disease("否认高脂血症"), None);
+        // …but a real diagnosis that merely begins with 无 must survive.
+        assert_eq!(
+            match_disease("无症状性高尿酸血症"),
+            Some("痛风/高尿酸血症")
+        );
+    }
+
+    /// Merging is lossy — `merge_conditions` shows the **shortest** mention in a
+    /// group — so lane identity must be stricter than lab attachment. When the
+    /// alias expansion was used as the merge key, a patient's CKD stage 3 (2023)
+    /// and stage 5 (2026) collapsed into one lane labelled `慢性肾脏病3期`, and
+    /// the progression to dialysis vanished from the problem list.
+    #[test]
+    fn disease_stages_stay_separate_lanes() {
+        let texts = [
+            "出院诊断:慢性肾脏病3期",
+            "出院诊断:慢性肾脏病5期(尿毒症期)",
+        ];
+        let docs: Vec<SourceDoc<'_>> = texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| SourceDoc {
+                index: i,
+                date: None,
+                text: t,
+                doc_type: Some("discharge_summary".into()),
+                title: None,
+            })
+            .collect();
+        let sm = assemble_summary(&docs);
+        let terms: Vec<&str> = sm["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .filter_map(|p| p["term"].as_str())
+            .collect();
+        assert!(
+            terms.iter().any(|t| t.contains("5期")),
+            "the later, worse diagnosis was swallowed by the earlier one: {terms:?}"
+        );
+        // …while a pure typesetting variant of ONE diagnosis still merges.
+        let same = ["出院诊断:2 型糖尿病", "出院诊断:2型糖尿病"];
+        let docs2: Vec<SourceDoc<'_>> = same
+            .iter()
+            .enumerate()
+            .map(|(i, t)| SourceDoc {
+                index: i,
+                date: None,
+                text: t,
+                doc_type: Some("discharge_summary".into()),
+                title: None,
+            })
+            .collect();
+        let sm2 = assemble_summary(&docs2);
+        let n = sm2["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .filter(|p| p["term"].as_str().unwrap_or("").contains("糖尿病"))
+            .count();
+        assert_eq!(n, 1, "one diagnosis, two typesettings, should be one lane");
     }
 
     /// The furniture filter must not take real results with it. Every line here

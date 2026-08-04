@@ -178,11 +178,21 @@ enum SecKind {
     Other,
 }
 
-/// The section kind a header line starts, or `None` if it isn't a header. Prefix
-/// match on the trimmed line. `Other` headers (诊断/病史/…) aren't mined but still
-/// bound a section so a meds/labs section ends where the next section begins.
+/// The section kind a header line starts, or `None` if it isn't a header. `Other`
+/// headers (诊断/病史/…) aren't mined but still bound a section so a meds/labs
+/// section ends where the next section begins.
+///
+/// Prefix match **after [`terminology::normalize_term`]** on both sides. Comparing
+/// the raw line only worked when the report typeset the header exactly the way
+/// this list spells it: `出院　医嘱:` (ideographic space U+3000, ordinary in
+/// Chinese typesetting) and `出 院 医 嘱:` (OCR splitting CJK) both failed the
+/// prefix test, the section went unrecognized, and every discharge medication in
+/// the document silently disappeared from the summary. Same defect that emptied
+/// the diabetes lane — one comparison of Chinese text against a curated literal
+/// without normalizing first.
 fn header_kind(line: &str) -> Option<SecKind> {
-    let l = line.trim_start();
+    let raw = line.trim_start();
+    let folded = terminology::normalize_term(line);
     const MEDS: &[&str] = &[
         "出院医嘱",
         "出院带药",
@@ -217,11 +227,40 @@ fn header_kind(line: &str) -> Option<SecKind> {
         "建议",
         "小结",
     ];
-    if MEDS.iter().any(|h| l.starts_with(h)) {
+    // Two ways to be a header, and the split matters — both halves were learned
+    // the hard way.
+    //
+    // 1. The **raw** prefix, exactly as before. Real headers trail all sorts of
+    //    things: `出院医嘱如下:`, `出院带药(共2种):`, `带药如下`, `出院医嘱 1.`,
+    //    `用药医嘱 -`. An earlier attempt demanded a delimiter right after the
+    //    prefix and lost every one of them — worse than the bug it was fixing.
+    //
+    // 2. The **normalized** prefix, but only when what follows is a delimiter or
+    //    the line ends. Normalization exists here for `出 院 医 嘱:` (OCR splits
+    //    CJK) and `ＲＰ:` (full-width) — but it also lowercases and deletes all
+    //    internal whitespace, so an unguarded prefix test on the normalized line
+    //    reads ordinary content as a header. `RPR 阴性` (routine syphilis screen)
+    //    matched the lowercased `Rp`; `用 药 后 患者症状缓解` matched `用药`. And a
+    //    false header is much worse than a missed one: `sections_text` treats
+    //    headers as boundaries, so it truncates the block and everything below it
+    //    vanishes — one RPR row deleted 肌酐 and 血钾 from a real summary.
+    //
+    // Together: never less than the raw rule recognized, plus the despaced and
+    // full-width spellings, and nothing that merely happens to start with a
+    // header word.
+    let hit = |hs: &[&str]| {
+        hs.iter().any(|h| {
+            raw.starts_with(h)
+                || folded
+                    .strip_prefix(terminology::normalize_term(h).as_str())
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with([':', '.', '、']))
+        })
+    };
+    if hit(MEDS) {
         Some(SecKind::Meds)
-    } else if LABS.iter().any(|h| l.starts_with(h)) {
+    } else if hit(LABS) {
         Some(SecKind::Labs)
-    } else if OTHER.iter().any(|h| l.starts_with(h)) {
+    } else if hit(OTHER) {
         Some(SecKind::Other)
     } else {
         None
@@ -580,6 +619,115 @@ mod tests {
                 keys.contains(&want),
                 "缺药 {want};实际 keys={keys:?} names={:?}",
                 agg.meds.iter().map(|m| &m.name).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The section header decides whether a whole block of the document is read
+    /// at all, so a header spelled with ordinary Chinese typesetting must still
+    /// be recognized. `出院　医嘱` (ideographic space, common in printed forms)
+    /// and `出 院 医 嘱` (OCR splitting CJK) used to fail the prefix test, and
+    /// every discharge medication in the document vanished from the summary
+    /// without a trace — no warning, no partial result.
+    #[test]
+    fn section_header_survives_typeset_spacing_and_fullwidth() {
+        for header in [
+            "出院医嘱:",
+            "出院\u{3000}医嘱:", // ideographic space
+            "出 院 医 嘱:",       // OCR split
+            "ＲＰ:",              // full-width Rp
+        ] {
+            let text =
+                format!("出院记录\n\n{header}\n1.二甲双胍 0.5g 每日两次\n2.阿托伐他汀 20mg 每晚");
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some("discharge_summary".into()),
+                title: None,
+                date: d(2023, 5, 1),
+                text: &text,
+            }];
+            let agg = aggregate(&docs);
+            let keys: Vec<&str> = agg
+                .meds
+                .iter()
+                .filter_map(|m| m.drug_key.as_deref())
+                .collect();
+            assert!(
+                keys.contains(&"metformin") && keys.contains(&"atorvastatin"),
+                "header {header:?} lost the whole medication block; got {keys:?}"
+            );
+        }
+    }
+
+    /// The mirror-image failure, and the more dangerous one: a line that is *not*
+    /// a header must not become one. Headers bound sections, so a false positive
+    /// truncates the block and silently deletes everything after it.
+    ///
+    /// Both cases below are real report content, not adversarial strings. `RPR`
+    /// (梅毒快速血浆反应素) is a routine row on Chinese admission and pre-op
+    /// panels and begins with the letters of the `Rp` prescription marker once
+    /// case is folded; the prose line is what OCR produces when it splits CJK,
+    /// which is the same phenomenon the sibling test above relies on.
+    #[test]
+    fn ordinary_content_does_not_become_a_section_header() {
+        let base = "血红蛋白 96 g/L 130-175 ↓\n肌酐 145 umol/L 57-97 ↑\n血钾 4.1 mmol/L 3.5-5.3\n";
+        for intruder in ["RPR 阴性", "用 药 后 患者症状缓解", "建 议 复查肝功能"] {
+            let text = format!("出院记录\n\n检验结果:\n血红蛋白 96 g/L 130-175 ↓\n{intruder}\n肌酐 145 umol/L 57-97 ↑\n血钾 4.1 mmol/L 3.5-5.3\n");
+            let mk = |t: &str| {
+                let docs = vec![SourceDoc {
+                    index: 0,
+                    doc_type: Some("discharge_summary".into()),
+                    title: None,
+                    date: d(2026, 5, 1),
+                    text: t,
+                }];
+                let agg = aggregate(&docs);
+                let mut n: Vec<String> =
+                    agg.labs.iter().map(|s| s.group_name.clone()).collect();
+                n.sort();
+                n
+            };
+            let control = mk(&format!("出院记录\n\n检验结果:\n{base}"));
+            assert_eq!(
+                mk(&text),
+                control,
+                "line {intruder:?} was read as a section header and truncated the block"
+            );
+        }
+    }
+
+    /// …and the guard against false headers must not cost real ones. Requiring a
+    /// delimiter right after the prefix looked tidy and silently dropped every
+    /// one of these — each an ordinary way a Chinese discharge summary heads its
+    /// medication block, and each recognized before the change.
+    #[test]
+    fn header_prefix_tolerates_the_usual_trailing_text() {
+        for header in [
+            "出院医嘱如下:",
+            "出院带药(共2种):",
+            "出院医嘱(2种)",
+            "带药如下",
+            "出院医嘱 1.",
+            "用药医嘱 -",
+        ] {
+            let text =
+                format!("出院记录\n\n{header}\n1.二甲双胍 0.5g 每日两次\n2.阿托伐他汀 20mg 每晚");
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some("discharge_summary".into()),
+                title: None,
+                date: d(2023, 5, 1),
+                text: &text,
+            }];
+            let agg = aggregate(&docs);
+            let keys: Vec<&str> = agg
+                .meds
+                .iter()
+                .filter_map(|m| m.drug_key.as_deref())
+                .collect();
+            assert!(
+                keys.contains(&"metformin"),
+                "header {header:?} lost the medication block; got {keys:?}"
             );
         }
     }

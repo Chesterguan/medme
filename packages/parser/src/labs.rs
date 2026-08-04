@@ -351,11 +351,30 @@ fn parse_rest(rest: &str) -> (Option<String>, Option<f64>, Option<f64>, Option<S
             continue;
         }
         // Explicit flag markers (arrows may be glued to another token).
-        if raw.contains('↑') || tok == "H" || tok == "高" || tok == "偏高" {
+        //
+        // Normalized, so a full-width `Ｈ` or a lowercase `h` reads the same as
+        // `H` — Chinese printouts use all three for the same column.
+        //
+        // The vocabulary stays limited to **flag-column** tokens on purpose.
+        // `升高` / `降低` / `减低` were tried here, on the grounds that the JS and
+        // Dart renderers accept them; measurement said otherwise. In reports
+        // those words are prose, not a column, and an explicit marker overrides
+        // the range-derived flag — so `白蛋白 42 g/L 40-55 无 降低` came out `L`
+        // and `血红蛋白 140 g/L 130-175 未见 减低` came out `L`, i.e. the parser
+        // asserting the opposite of what the report says, on values sitting
+        // inside their own reference range. The renderers do have those words,
+        // via substring regex, and therefore have the same false positive:
+        // matching them here would have been copying a bug, not fixing a gap.
+        // Case-SENSITIVE on purpose: the full-width `Ｈ`/`Ｌ` are the same column
+        // as `H`/`L`, but the lowercase letters are not — `h` and `l` are unit
+        // fragments. Folding case turned `血沉 15 mm / h 0-20` into a high flag
+        // and `血钾 4.1 mmol / l 3.5-5.3` into a low one, both on values inside
+        // their printed range, whenever OCR put spaces around the slash.
+        if raw.contains('↑') || matches!(tok, "H" | "Ｈ" | "高" | "偏高") {
             flag = Some("H".to_string());
             continue;
         }
-        if raw.contains('↓') || tok == "L" || tok == "低" || tok == "偏低" {
+        if raw.contains('↓') || matches!(tok, "L" | "Ｌ" | "低" | "偏低") {
             flag = Some("L".to_string());
             continue;
         }
@@ -629,6 +648,62 @@ GLU        空腹血糖 Glucose       7.1      mmol/L      3.9 - 6.1       ↑
         assert_eq!(hb.unit_canonical.as_deref(), Some("g/L"));
         assert_eq!(hb.value_canonical, Some(109.0));
         assert_eq!(hb.flag.as_deref(), Some("L"));
+    }
+
+    /// The abnormal marker vocabulary has to be complete, not merely plausible.
+    /// `flag` feeds `any_abnormal`, which feeds a lane's `warn`, which is the red
+    /// 需关注 badge a doctor scans the timeline for — so a marker we cannot read
+    /// does not degrade to "unknown", it degrades to "稳定". The JS and Dart
+    /// renderers accepted 升高/降低/减低 while this parser did not, meaning the
+    /// same report could read stable in the app and abnormal in the viewer.
+    #[test]
+    fn abnormal_markers_cover_the_forms_reports_actually_print() {
+        let flag_of = |marker: &str| {
+            extract_labs(&format!("肌酐 112 umol/L {marker}"))
+                .first()
+                .and_then(|o| o.flag.clone())
+        };
+        for m in ["↑", "H", "Ｈ", "高", "偏高"] {
+            assert_eq!(flag_of(m).as_deref(), Some("H"), "missed high marker {m:?}");
+        }
+        for m in ["↓", "L", "Ｌ", "低", "偏低"] {
+            assert_eq!(flag_of(m).as_deref(), Some("L"), "missed low marker {m:?}");
+        }
+        // A normal row must stay unflagged — the list must not be greedy.
+        assert_eq!(flag_of("正常"), None);
+        // Lowercase `h`/`l` are unit fragments, not flag letters. Folding case
+        // made `血沉 15 mm / h 0-20` read as high on an in-range value.
+        assert_eq!(flag_of("h"), None);
+        assert_eq!(flag_of("l"), None);
+        assert_eq!(
+            extract_labs("血沉 15 mm / h 0-20")
+                .first()
+                .and_then(|o| o.flag.clone())
+                .as_deref(),
+            Some("N"),
+            "a spaced unit turned into a flag"
+        );
+    }
+
+    /// Comparative prose is not a flag column. An explicit marker overrides the
+    /// range-derived flag, so accepting 升高/降低/减低 made the parser contradict
+    /// the report on values sitting inside their own reference range — including
+    /// the negated forms, where `未见减低` came out as "low". The JS and Dart
+    /// renderers do match these words (by substring regex) and carry the same
+    /// false positive; parity with them is not a reason to reproduce it.
+    #[test]
+    fn comparative_prose_does_not_flag_an_in_range_value() {
+        for line in [
+            "白蛋白 42 g/L 40 - 55 无 降低",
+            "血红蛋白 140 g/L 130 - 175 未见 减低",
+            "总胆固醇 4.5 mmol/L < 5.2 无 明显 升高",
+            "血糖 5.6 mmol/L 3.9 - 6.1 较前 降低",
+        ] {
+            let obs = extract_labs(line);
+            let flag = obs.first().and_then(|o| o.flag.clone());
+            assert_ne!(flag.as_deref(), Some("L"), "prose flagged low: {line}");
+            assert_ne!(flag.as_deref(), Some("H"), "prose flagged high: {line}");
+        }
     }
 
     #[test]
