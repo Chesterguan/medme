@@ -103,6 +103,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ImportOutcomeDto dco_decode_import_outcome_dto(dynamic raw);
 
   @protected
+  List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
   List<ActiveMedDto> dco_decode_list_active_med_dto(dynamic raw);
 
   @protected
@@ -323,6 +326,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ImportOutcomeDto sse_decode_import_outcome_dto(SseDeserializer deserializer);
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
   List<ActiveMedDto> sse_decode_list_active_med_dto(
@@ -609,6 +615,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     ImportOutcomeDto self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_active_med_dto(

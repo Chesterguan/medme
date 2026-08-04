@@ -33,8 +33,17 @@ class TrendsScreen extends StatefulWidget {
   State<TrendsScreen> createState() => _TrendsScreenState();
 }
 
+/// 这一屏一次要用到的两样东西:全部趋势序列 + 分组 chip 的目录(顺序、文案)。
+/// 与 `emergency_card_screen.dart` 的 `_CardData` 同一手法。
+typedef _TrendsData = (List<TrendSeriesDto>, List<String>);
+
 class _TrendsScreenState extends State<TrendsScreen> {
-  late Future<List<TrendSeriesDto>> _future = viewTrends();
+  late Future<_TrendsData> _future = _load();
+
+  Future<_TrendsData> _load() async {
+    final r = await Future.wait([viewTrends(), viewTrendGroupCatalog()]);
+    return (r[0] as List<TrendSeriesDto>, r[1] as List<String>);
+  }
 
   /// 「只看非正常项」。**默认开。**
   ///
@@ -59,6 +68,15 @@ class _TrendsScreenState extends State<TrendsScreen> {
   final _queryCtl = TextEditingController();
   String _query = '';
 
+  /// 选中的分组 chip。`null` = 「全部」(不筛)。**选中时 [_abnormalOnly] 同样
+  /// 让位** —— 与搜索同一条理由(见 [_query] 的文档):点开一个分类是「我要看这个
+  /// 方向下都查过什么」,不是「我要看这个方向里出过问题的那两条」。默认过滤是在
+  /// 替用户排序,而分组本身已经是一次明确的缩小范围,不该再叠一层。
+  ///
+  /// 取值:一个来自 [viewTrendGroupCatalog] 的分组文案,或 [kOtherTrendGroup]
+  /// (「其他」桶)。与搜索不冲突,可以同时生效(先按分组筛,再按搜索词筛)。
+  String? _selectedGroup;
+
   @override
   void initState() {
     super.initState();
@@ -77,7 +95,7 @@ class _TrendsScreenState extends State<TrendsScreen> {
   }
 
   Future<void> _refresh() async {
-    final next = viewTrends();
+    final next = _load();
     setState(() {
       _future = next;
     });
@@ -102,7 +120,7 @@ class _TrendsScreenState extends State<TrendsScreen> {
           child: Container(height: 1, color: c.line),
         ),
       ),
-      body: FutureBuilder<List<TrendSeriesDto>>(
+      body: FutureBuilder<_TrendsData>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
@@ -131,14 +149,22 @@ class _TrendsScreenState extends State<TrendsScreen> {
           // (handoff.rs:369)已经把「全部点都无日期」的序列挡掉了,这里仍然独立
           // 判一次 —— 渲染器该自己知道自己画不了什么,而不是相信下发的数据。
           // 查看器在同一处留了同样的注释。
-          final all = snap.data!.where(trendSeriesIsRenderable).toList();
+          final (series, catalog) = snap.data!;
+          final all = series.where(trendSeriesIsRenderable).toList();
           final searching = _query.isNotEmpty;
+          final groupSelected = _selectedGroup != null;
+          final chips = trendGroupChips(all, catalog: catalog);
           final shown = trendVisible(
             all,
             query: _query,
             abnormalOnly: _abnormalOnly,
+            group: _selectedGroup,
           );
-          final hiddenByFilter = searching ? 0 : all.length - shown.length;
+          // 分组和搜索一样让「只看非正常项」让位(理由见 [_selectedGroup] 的文档),
+          // 此时谈不上「被过滤隐藏了多少条」,这句提示本身就不会显示。
+          final hiddenByFilter = (searching || groupSelected)
+              ? 0
+              : all.length - shown.length;
 
           return RefreshIndicator(
             onRefresh: _refresh,
@@ -161,8 +187,11 @@ class _TrendsScreenState extends State<TrendsScreen> {
                     searching: searching,
                     abnormalOnly: _abnormalOnly,
                     hiddenByFilter: hiddenByFilter,
+                    groupChips: chips,
+                    selectedGroup: _selectedGroup,
                     onQuery: (v) => setState(() => _query = v.trim()),
                     onToggle: (v) => setState(() => _abnormalOnly = v),
+                    onSelectGroup: (g) => setState(() => _selectedGroup = g),
                   ),
                   const SizedBox(height: MedShape.s3),
                   for (var i = 0; i < shown.length; i++) ...[
@@ -175,12 +204,20 @@ class _TrendsScreenState extends State<TrendsScreen> {
                         vertical: MedShape.s5,
                       ),
                       child: Text(
+                        // 说的是「这些记录里没有」,不是「你没查过」—— 没搜到很可能
+                        // 是同一个指标印成了别的名字(见顶部说明)。
                         searching
-                            // 说的是「这些记录里没有」,不是「你没查过」—— 没搜到很
-                            // 可能是同一个指标印成了别的名字(见顶部说明)。
-                            ? '这些记录里没有名字含「$_query」的指标。\n'
-                                  '换个叫法试试 —— 同一项在不同医院可能印成「肌酐」「血肌酐」「Cr」。'
-                            : '这些记录里没有非正常项。',
+                            ? (groupSelected
+                                  ? '「${_groupChipLabel(_selectedGroup)}」里没有名字含'
+                                        '「$_query」的指标。\n清空搜索可以看这个分类下的全部。'
+                                  : '这些记录里没有名字含「$_query」的指标。\n'
+                                        '换个叫法试试 —— 同一项在不同医院可能印成「肌酐」「血肌酐」「Cr」。')
+                            // chip 只在分组下至少有一条可渲染序列时才出现(见
+                            // `trendGroupChips`),选中后过滤为空理论上到不了这里;
+                            // 留一句兜底文案而不是让页面崩掉或空白一片。
+                            : (groupSelected
+                                  ? '这个分类下没有可显示的指标。'
+                                  : '这些记录里没有非正常项。'),
                         textAlign: TextAlign.center,
                         style: MedType.body.copyWith(color: c.ink2, height: 1.6),
                       ),
@@ -203,23 +240,109 @@ class _TrendsScreenState extends State<TrendsScreen> {
 bool trendNameMatches(String name, String query) =>
     name.toLowerCase().contains(query.toLowerCase());
 
-/// 该显示哪些序列。**搜索优先于「只看非正常项」,不是叠加。**
+/// 「其他」分类 chip 的选中态取值。**不是** Rust 目录里的真实分组文案 —— 那些
+/// 都是人话短语(「肾功能」「血脂」…),不会撞上这个哨兵。
 ///
-/// 叠加是想当然的写法,但结果是用户搜「肌酐」而肌酐一直正常时得到一片空白 ——
-/// 他会得出「我从没查过肌酐」这个错误结论,而真相是查过而且都正常。搜索是一次明确
-/// 的「我要找 X」,找得到比过滤干净重要。
+/// 「其他」本身不是算出来的第 11 条泳道,是补集:一条序列的 `problemGroups`
+/// 是空的(没有 LOINC,或者 LOINC 不在任何一条泳道里),它就落进这里 —— 判定
+/// 逻辑见 [trendGroupMatches]。分组匹配本身(哪条序列属于哪条泳道)已经在 Rust
+/// 侧按 LOINC 算完(`vault_projections.rs` 的 `problem_groups_for`),这里只是
+/// 读 `problemGroups` 判个「空不空」,不是又拿名字/LOINC 猜一遍(007 §2.5)。
+const kOtherTrendGroup = '__other__';
+
+/// 一条序列是否命中选中的分组 chip。
+///
+/// - `null`(「全部」)—— 不筛,全部命中。
+/// - [kOtherTrendGroup](「其他」)—— `problemGroups` 为空才命中。
+/// - 其余 —— 精确等于 Rust 目录给的分组文案(`problemGroups.contains`)。
+bool trendGroupMatches(TrendSeriesDto s, String? group) {
+  if (group == null) return true;
+  if (group == kOtherTrendGroup) return s.problemGroups.isEmpty;
+  return s.problemGroups.contains(group);
+}
+
+/// 该显示哪些序列。**搜索、分组都优先于「只看非正常项」,不是叠加在它上面
+/// —— 但搜索和分组彼此叠加(先按分组筛,再按搜索词筛)。**
+///
+/// 「只看非正常项」让位的理由对搜索和分组是同一条:两者都是用户一次明确的
+/// 「我要看 X」——搜「肌酐」却因为肌酐一直正常被过滤成空白,他会得出「我从没
+/// 查过肌酐」这个错误结论;点开「肾功能」chip 却因为默认过滤只看到里面被标过的
+/// 那两条,他会以为这个方向平时没怎么查。找得到 / 看得全比过滤干净重要。
+///
+/// 搜索和分组不是同一件事(浏览 vs. 输入),所以彼此不互斥、可以同时生效:
+/// 选中「肾功能」后再搜「肌酐」,是在肾功能这个方向里再精确定位。
 List<TrendSeriesDto> trendVisible(
   List<TrendSeriesDto> all, {
   required String query,
   required bool abnormalOnly,
+  String? group,
 }) {
+  final byGroup = group == null
+      ? all
+      : all.where((s) => trendGroupMatches(s, group)).toList();
   if (query.isNotEmpty) {
-    return all.where((s) => trendNameMatches(s.name, query)).toList();
+    return byGroup.where((s) => trendNameMatches(s.name, query)).toList();
   }
-  return abnormalOnly ? all.where((s) => s.anyAbnormal).toList() : all;
+  if (abnormalOnly && group == null) {
+    return byGroup.where((s) => s.anyAbnormal).toList();
+  }
+  return byGroup;
 }
 
-/// 列表顶上的说明 + 搜索框 + 「只看非正常项」开关。
+/// 一颗分组 chip 要展示的数据:选中态要喂给 [trendGroupMatches] 的 `group`
+/// 值、chip 上的文字、chip 上的计数。
+class TrendGroupChipData {
+  const TrendGroupChipData({
+    required this.group,
+    required this.label,
+    required this.count,
+  });
+
+  /// 喂给 [trendVisible]/[trendGroupMatches] 的 `group`:`null` = 全部,
+  /// [kOtherTrendGroup] = 其他,其余是 Rust 目录给的分组文案。
+  final String? group;
+  final String label;
+  final int count;
+}
+
+/// 组装要渲染的分组 chip 列表:「全部」恒在最前,固定分组按 [catalog](Rust
+/// 给的目录顺序,即临床优先级)排列,「其他」殿后。
+///
+/// **计数为 0 的分组 chip 一律不出现**——一个点开什么都没有的 chip 是纯噪音
+/// (需求原文)。计数口径是 `all` 里这条序列的数量,不受当前搜索词/「只看非
+/// 正常项」影响:chip 要稳定地告诉用户「这个方向总共有几条」,不能随手指输入
+/// 抖动。
+///
+/// 「全部」和「其他」是产品定的两个**兜底** chip,不是从 LOINC 算出来的第 11/12
+/// 条泳道:真实数据里血常规一大类计数项(中性粒细胞、血小板分布宽度……)十条
+/// 慢病泳道一条都不覆盖,没有「其他」兜底,这些指标会从分类入口里彻底消失。
+List<TrendGroupChipData> trendGroupChips(
+  List<TrendSeriesDto> all, {
+  required List<String> catalog,
+}) {
+  final chips = <TrendGroupChipData>[
+    TrendGroupChipData(group: null, label: '全部', count: all.length),
+  ];
+  for (final label in catalog) {
+    final n = all.where((s) => s.problemGroups.contains(label)).length;
+    if (n > 0) {
+      chips.add(TrendGroupChipData(group: label, label: label, count: n));
+    }
+  }
+  final otherCount = all.where((s) => s.problemGroups.isEmpty).length;
+  if (otherCount > 0) {
+    chips.add(
+      TrendGroupChipData(group: kOtherTrendGroup, label: '其他', count: otherCount),
+    );
+  }
+  return chips;
+}
+
+/// 选中态 `group` 值 → 人话文案,给空态提示用。
+String _groupChipLabel(String? group) =>
+    group == kOtherTrendGroup ? '其他' : (group ?? '全部');
+
+/// 列表顶上的说明 + 搜索框 + 分组 chip + 「只看非正常项」开关。
 ///
 /// 那句说明不是客套。用户会问「我明明查过五次肌酐,这里怎么只有两个点」——
 /// 答案是术语没归一化,另外三次被分到了另一条名字不同的序列里。与其让他自己猜,
@@ -231,8 +354,11 @@ class _Preamble extends StatelessWidget {
     required this.searching,
     required this.abnormalOnly,
     required this.hiddenByFilter,
+    required this.groupChips,
+    required this.selectedGroup,
     required this.onQuery,
     required this.onToggle,
+    required this.onSelectGroup,
   });
 
   final int total;
@@ -240,12 +366,16 @@ class _Preamble extends StatelessWidget {
   final bool searching;
   final bool abnormalOnly;
   final int hiddenByFilter;
+  final List<TrendGroupChipData> groupChips;
+  final String? selectedGroup;
   final ValueChanged<String> onQuery;
   final ValueChanged<bool> onToggle;
+  final ValueChanged<String?> onSelectGroup;
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
+    final groupSelected = selectedGroup != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -295,11 +425,39 @@ class _Preamble extends StatelessWidget {
             ),
           ),
         ),
+        // 搜索框保留(明确的「我要找 X」),这一排是另一条检索路径:浏览
+        // 「和这个方向相关的检查有哪些」。少于两颗(只有恒在的「全部」)时不画
+        // 这一排 —— 一整排只能点「全部」等于什么都点不了,是纯噪音。
+        if (groupChips.length > 1) ...[
+          const SizedBox(height: MedShape.s2),
+          SizedBox(
+            height: 36,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: groupChips.length,
+              separatorBuilder: (_, _) => const SizedBox(width: MedShape.s1),
+              itemBuilder: (context, i) {
+                final chip = groupChips[i];
+                return _GroupChip(
+                  label: chip.label,
+                  count: chip.count,
+                  selected: chip.group == selectedGroup,
+                  onTap: () => onSelectGroup(
+                    chip.group == selectedGroup ? null : chip.group,
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
         const SizedBox(height: MedShape.s2),
-        // 搜索时开关整个让位。留一颗按不动的开关在那儿,只会让人以为是它没生效。
-        if (searching)
+        // 搜索或选中分组时开关整个让位(理由见 `trendVisible` 的文档)。留一颗
+        // 按不动的开关在那儿,只会让人以为是它没生效。
+        if (searching || groupSelected)
           Text(
-            '搜索时不过滤 —— 正常项也一起找。',
+            searching
+                ? '搜索时不过滤 —— 正常项也一起找。'
+                : '「${_groupChipLabel(selectedGroup)}」下不过滤 —— 这个方向查过的都在这。',
             style: MedType.secondary.copyWith(color: c.ink3),
           )
         else
@@ -319,6 +477,49 @@ class _Preamble extends StatelessWidget {
             ],
           ),
       ],
+    );
+  }
+}
+
+/// 一颗分组 chip:未选中是描边,选中是印章色实底(与 `labStatusPill` 系的
+/// 「前景+浅底」不同 —— 这里要表达的是「可点选的一个开关」,不是化验状态)。
+class _GroupChip extends StatelessWidget {
+  const _GroupChip({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(MedShape.radiusPill),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: MedShape.s2),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? c.sealWash : c.surface,
+          borderRadius: BorderRadius.circular(MedShape.radiusPill),
+          border: Border.all(color: selected ? c.sealInk : c.line),
+        ),
+        child: Text(
+          // 计数直接跟在文案后面(「肾功能 6」),不用括号 —— 与卡头「最新值 +
+          // 单位」同一套「数字紧挨着它描述的东西」的排法。
+          '$label $count',
+          style: MedType.body.copyWith(
+            color: selected ? c.sealInk : c.ink2,
+            fontFeatures: MedType.tabular,
+          ),
+        ),
+      ),
     );
   }
 }

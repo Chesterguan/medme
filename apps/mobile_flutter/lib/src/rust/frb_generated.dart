@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -2100584594;
+  int get rustContentHash => -168768830;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -238,6 +238,8 @@ abstract class RustLibApi extends BaseApi {
   Future<String> crateApiVaultSourceFileObjectPath({required PlatformInt64 id});
 
   Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard();
+
+  Future<List<String>> crateApiVaultProjectionsViewTrendGroupCatalog();
 
   Future<List<TrendSeriesDto>> crateApiVaultProjectionsViewTrends();
 
@@ -1664,7 +1666,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "view_emergency_card", argNames: []);
 
   @override
-  Future<List<TrendSeriesDto>> crateApiVaultProjectionsViewTrends() {
+  Future<List<String>> crateApiVaultProjectionsViewTrendGroupCatalog() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -1673,6 +1675,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             generalizedFrbRustBinding,
             serializer,
             funcId: 46,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiVaultProjectionsViewTrendGroupCatalogConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProjectionsViewTrendGroupCatalogConstMeta =>
+      const TaskConstMeta(debugName: "view_trend_group_catalog", argNames: []);
+
+  @override
+  Future<List<TrendSeriesDto>> crateApiVaultProjectionsViewTrends() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 47,
             port: port_,
           );
         },
@@ -1699,7 +1728,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 47,
+            funcId: 48,
             port: port_,
           );
         },
@@ -1989,6 +2018,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       documentId: dco_decode_opt_box_autoadd_i_64(arr[4]),
       detectedName: dco_decode_opt_String(arr[5]),
     );
+  }
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_String).toList();
   }
 
   @protected
@@ -2322,8 +2357,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TrendSeriesDto dco_decode_trend_series_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 8)
-      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return TrendSeriesDto(
       name: dco_decode_String(arr[0]),
       analyteKey: dco_decode_opt_String(arr[1]),
@@ -2332,7 +2367,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       refLow: dco_decode_opt_box_autoadd_f_64(arr[4]),
       refHigh: dco_decode_opt_box_autoadd_f_64(arr[5]),
       anyAbnormal: dco_decode_bool(arr[6]),
-      points: dco_decode_list_trend_point_dto(arr[7]),
+      problemGroups: dco_decode_list_String(arr[7]),
+      points: dco_decode_list_trend_point_dto(arr[8]),
     );
   }
 
@@ -2698,6 +2734,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       documentId: var_documentId,
       detectedName: var_detectedName,
     );
+  }
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <String>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -3182,6 +3230,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_refLow = sse_decode_opt_box_autoadd_f_64(deserializer);
     var var_refHigh = sse_decode_opt_box_autoadd_f_64(deserializer);
     var var_anyAbnormal = sse_decode_bool(deserializer);
+    var var_problemGroups = sse_decode_list_String(deserializer);
     var var_points = sse_decode_list_trend_point_dto(deserializer);
     return TrendSeriesDto(
       name: var_name,
@@ -3191,6 +3240,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       refLow: var_refLow,
       refHigh: var_refHigh,
       anyAbnormal: var_anyAbnormal,
+      problemGroups: var_problemGroups,
       points: var_points,
     );
   }
@@ -3516,6 +3566,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.docType, serializer);
     sse_encode_opt_box_autoadd_i_64(self.documentId, serializer);
     sse_encode_opt_String(self.detectedName, serializer);
+  }
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_String(item, serializer);
+    }
   }
 
   @protected
@@ -3946,6 +4005,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_f_64(self.refLow, serializer);
     sse_encode_opt_box_autoadd_f_64(self.refHigh, serializer);
     sse_encode_bool(self.anyAbnormal, serializer);
+    sse_encode_list_String(self.problemGroups, serializer);
     sse_encode_list_trend_point_dto(self.points, serializer);
   }
 
