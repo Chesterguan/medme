@@ -142,7 +142,17 @@ struct Index {
 /// insensitive to case, full-width forms, and internal whitespace (OCR often
 /// splits CJK, e.g. `肌 酐` -> `肌酐`). This is the single shared helper the
 /// design mandates.
-fn normalize_term(raw: &str) -> String {
+///
+/// **Public on purpose, and mandatory.** Any comparison of a Chinese medical
+/// term against a curated table — anywhere in the workspace, not just in this
+/// crate — must run both sides through this function first. Comparing raw
+/// strings is a bug even when it happens to work on the samples at hand:
+/// `parser::handoff::match_disease` used to do `contains` on untrimmed text and
+/// silently failed on `2 型糖尿病` (typeset with a space) vs the table's
+/// `2型糖尿病`, which emptied the diabetes lane in the doctor's viewer while
+/// every unit test stayed green — because the tests fed the table's own
+/// spelling, not what real documents print.
+pub fn normalize_term(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for ch in raw.chars() {
         let ch = to_halfwidth(ch);

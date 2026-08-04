@@ -169,6 +169,36 @@ fn glued_name_value_re() -> &'static Regex {
 /// name↔value glue check (`fix_name_value_glue`) and the post-parse value↔range
 /// glue check (`value_glued_to_next_number`), since they're the same
 /// underlying phenomenon caught at two different points in the pipeline.
+/// Labels that only ever appear in a report's letterhead / specimen block, never
+/// in an analyte name. A row whose "name" contains one of these is page
+/// furniture that happened to end in a number (`… 年龄：58岁 门诊号：20230615-1046`
+/// → value 58, reference range 20230615–1046), and charting it puts a fabricated
+/// trend line next to a real one in the doctor's view.
+///
+/// Deliberately a *name* list, not a punctuation heuristic — see the call site.
+/// Keep it to words that cannot be part of a measured quantity; `血压` and
+/// `体温` are vitals, not furniture, and must never appear here.
+const PAGE_FURNITURE: &[&str] = &[
+    "姓名",
+    "性别",
+    "年龄",
+    "门诊号",
+    "住院号",
+    "病案号",
+    "床号",
+    "科室",
+    "样本类型",
+    "标本类型",
+    "采集时间",
+    "送检时间",
+    "报告时间",
+    "审核时间",
+    "检验者",
+    "审核者",
+    "送检医生",
+    "申请医生",
+];
+
 const REASON_VALUE_GLUED_TO_RANGE: &str = "数值和参考范围粘在一起,读不准,请核对原件";
 const REASON_MULTIPLE_GLUE_POINTS: &str =
     "这一行有多处数字和名称粘在一起,分不清对应关系,读不准,请核对原件";
@@ -321,11 +351,30 @@ fn parse_rest(rest: &str) -> (Option<String>, Option<f64>, Option<f64>, Option<S
             continue;
         }
         // Explicit flag markers (arrows may be glued to another token).
-        if raw.contains('↑') || tok == "H" || tok == "高" || tok == "偏高" {
+        //
+        // Normalized, so a full-width `Ｈ` or a lowercase `h` reads the same as
+        // `H` — Chinese printouts use all three for the same column.
+        //
+        // The vocabulary stays limited to **flag-column** tokens on purpose.
+        // `升高` / `降低` / `减低` were tried here, on the grounds that the JS and
+        // Dart renderers accept them; measurement said otherwise. In reports
+        // those words are prose, not a column, and an explicit marker overrides
+        // the range-derived flag — so `白蛋白 42 g/L 40-55 无 降低` came out `L`
+        // and `血红蛋白 140 g/L 130-175 未见 减低` came out `L`, i.e. the parser
+        // asserting the opposite of what the report says, on values sitting
+        // inside their own reference range. The renderers do have those words,
+        // via substring regex, and therefore have the same false positive:
+        // matching them here would have been copying a bug, not fixing a gap.
+        // Case-SENSITIVE on purpose: the full-width `Ｈ`/`Ｌ` are the same column
+        // as `H`/`L`, but the lowercase letters are not — `h` and `l` are unit
+        // fragments. Folding case turned `血沉 15 mm / h 0-20` into a high flag
+        // and `血钾 4.1 mmol / l 3.5-5.3` into a low one, both on values inside
+        // their printed range, whenever OCR put spaces around the slash.
+        if raw.contains('↑') || matches!(tok, "H" | "Ｈ" | "高" | "偏高") {
             flag = Some("H".to_string());
             continue;
         }
-        if raw.contains('↓') || tok == "L" || tok == "低" || tok == "偏低" {
+        if raw.contains('↓') || matches!(tok, "L" | "Ｌ" | "低" | "偏低") {
             flag = Some("L".to_string());
             continue;
         }
@@ -406,6 +455,22 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
             .chars()
             .any(|c| matches!(c, '，' | ',' | '。' | '；' | ';' | '、'))
         {
+            continue;
+        }
+        // Demographics / specimen headers (`姓名：张建国  性别：男  年龄：58岁
+        // 门诊号：20230615-1046`) parse as a lab row because the trailing field is
+        // numeric: name = `姓名：张建国  性别：男  年龄`, value = 58, and the 门诊号
+        // digits get read as a reference range. The viewer then charts that as a
+        // trend line and flags it red, next to a real creatinine curve.
+        //
+        // Identified by NAMING the furniture, not by guessing from punctuation.
+        // The obvious punctuation rule — "a colon inside the name means it is
+        // really several `label：value` fields" — reads well and is wrong: it
+        // discards `生化:钾 4.2 mmol/L 3.5-5.3`, `甲功三项:TSH …`, `PT:INR …` and
+        // `白球比值(A:G) 1.52 1.20-2.40` (which resolves to a real dictionary
+        // entry). The dictionary itself curates `皮质醇(8:00)` and friends, so a
+        // colon in an analyte name is expressly normal in this domain.
+        if PAGE_FURNITURE.iter().any(|w| raw_name.contains(w)) {
             continue;
         }
         let Ok(value_num) = caps
@@ -583,6 +648,62 @@ GLU        空腹血糖 Glucose       7.1      mmol/L      3.9 - 6.1       ↑
         assert_eq!(hb.unit_canonical.as_deref(), Some("g/L"));
         assert_eq!(hb.value_canonical, Some(109.0));
         assert_eq!(hb.flag.as_deref(), Some("L"));
+    }
+
+    /// The abnormal marker vocabulary has to be complete, not merely plausible.
+    /// `flag` feeds `any_abnormal`, which feeds a lane's `warn`, which is the red
+    /// 需关注 badge a doctor scans the timeline for — so a marker we cannot read
+    /// does not degrade to "unknown", it degrades to "稳定". The JS and Dart
+    /// renderers accepted 升高/降低/减低 while this parser did not, meaning the
+    /// same report could read stable in the app and abnormal in the viewer.
+    #[test]
+    fn abnormal_markers_cover_the_forms_reports_actually_print() {
+        let flag_of = |marker: &str| {
+            extract_labs(&format!("肌酐 112 umol/L {marker}"))
+                .first()
+                .and_then(|o| o.flag.clone())
+        };
+        for m in ["↑", "H", "Ｈ", "高", "偏高"] {
+            assert_eq!(flag_of(m).as_deref(), Some("H"), "missed high marker {m:?}");
+        }
+        for m in ["↓", "L", "Ｌ", "低", "偏低"] {
+            assert_eq!(flag_of(m).as_deref(), Some("L"), "missed low marker {m:?}");
+        }
+        // A normal row must stay unflagged — the list must not be greedy.
+        assert_eq!(flag_of("正常"), None);
+        // Lowercase `h`/`l` are unit fragments, not flag letters. Folding case
+        // made `血沉 15 mm / h 0-20` read as high on an in-range value.
+        assert_eq!(flag_of("h"), None);
+        assert_eq!(flag_of("l"), None);
+        assert_eq!(
+            extract_labs("血沉 15 mm / h 0-20")
+                .first()
+                .and_then(|o| o.flag.clone())
+                .as_deref(),
+            Some("N"),
+            "a spaced unit turned into a flag"
+        );
+    }
+
+    /// Comparative prose is not a flag column. An explicit marker overrides the
+    /// range-derived flag, so accepting 升高/降低/减低 made the parser contradict
+    /// the report on values sitting inside their own reference range — including
+    /// the negated forms, where `未见减低` came out as "low". The JS and Dart
+    /// renderers do match these words (by substring regex) and carry the same
+    /// false positive; parity with them is not a reason to reproduce it.
+    #[test]
+    fn comparative_prose_does_not_flag_an_in_range_value() {
+        for line in [
+            "白蛋白 42 g/L 40 - 55 无 降低",
+            "血红蛋白 140 g/L 130 - 175 未见 减低",
+            "总胆固醇 4.5 mmol/L < 5.2 无 明显 升高",
+            "血糖 5.6 mmol/L 3.9 - 6.1 较前 降低",
+        ] {
+            let obs = extract_labs(line);
+            let flag = obs.first().and_then(|o| o.flag.clone());
+            assert_ne!(flag.as_deref(), Some("L"), "prose flagged low: {line}");
+            assert_ne!(flag.as_deref(), Some("H"), "prose flagged high: {line}");
+        }
     }
 
     #[test]
