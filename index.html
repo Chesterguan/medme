@@ -209,11 +209,15 @@
     background:#fff;border:3px solid var(--blue)}
   .tl-row1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
   .tl-date{font-size:14px;color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
-  .tag{font-size:14px;font-weight:700;padding:3px 8px;border-radius:999px}
-  .tag.lab{background:#e6f6fa;color:#1560a8}
-  .tag.stay{background:#fef3c7;color:#92400e}
-  .tag.img{background:#f3e8ff;color:#6b21a8}
-  .tag.vax{background:#dcfce7;color:#166534}
+  /* 类型标签一套中性样式,**不按类型配色**(设计系统 v1.1)。
+     原来是四色表:化验蓝 / 出院琥珀 / 影像紫 / 疫苗绿。两个问题:
+     ① 出院那支 #92400e 色相 22.7°,和 App 的「偏高」#B45309(26.0°)只差 3.3° ——
+        用户在 App 里学会「琥珀=偏高」,到这里琥珀成了「出院」。医生模式那个橙
+        当初就是因为「和偏高差 1 度」被删掉的,同一条理由。
+     ② 疫苗那支是绿的(色相 142.8°),规范明令无绿;而且它是死代码,时间线里从没用过。
+     颜色在这个产品里只编码严重度,不编码类型。 */
+  .tag{font-size:14px;font-weight:700;padding:3px 8px;border-radius:999px;
+    background:var(--line);color:var(--muted)}
   .tl-title{font-size:14px;font-weight:600;margin-top:4px}
   .tl-detail{font-size:14px;color:var(--muted);margin-top:2px}
   /* steps row */
