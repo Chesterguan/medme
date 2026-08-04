@@ -24,6 +24,7 @@ import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
+import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
@@ -212,6 +213,46 @@ void main() {
     test('单点无区间:跨度为 0 也不除零', () {
       final (lo, hi) = trendYDomain([5.0]);
       expect(hi - lo, greaterThan(0));
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  group('趋势:搜索与 H/L 过滤', () {
+    TrendSeriesDto s(String name, {required bool abnormal}) => TrendSeriesDto(
+      name: name,
+      unit: 'umol/L',
+      anyAbnormal: abnormal,
+      points: [pt('2024-03-01', 1)],
+    );
+
+    final all = [
+      s('肌酐', abnormal: false),
+      s('血红蛋白', abnormal: true),
+      s('Cr 血肌酐', abnormal: false),
+    ];
+
+    test('默认只列被标过 H/L 的', () {
+      final v = trendVisible(all, query: '', abnormalOnly: true);
+      expect(v.map((e) => e.name), ['血红蛋白']);
+    });
+
+    test('关掉开关就全列', () {
+      expect(trendVisible(all, query: '', abnormalOnly: false).length, 3);
+    });
+
+    // 这条是整个特性最容易写错的地方:叠加会让「搜正常项」永远搜不到。
+    test('搜索时绕过 H/L 过滤 —— 正常的也要找得到', () {
+      final v = trendVisible(all, query: '肌酐', abnormalOnly: true);
+      expect(v.map((e) => e.name), ['肌酐', 'Cr 血肌酐'],
+          reason: '两条都正常,若与 H/L 叠加就会一条都搜不到');
+    });
+
+    test('大小写无关', () {
+      expect(trendVisible(all, query: 'cr', abnormalOnly: true).length, 1);
+    });
+
+    test('不做模糊匹配 —— 没查过的项目不许冒出来', () {
+      expect(trendVisible(all, query: '肌钙蛋白', abnormalOnly: false), isEmpty);
     });
   });
 

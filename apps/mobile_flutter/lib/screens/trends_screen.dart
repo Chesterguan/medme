@@ -36,12 +36,23 @@ class TrendsScreen extends StatefulWidget {
 class _TrendsScreenState extends State<TrendsScreen> {
   late Future<List<TrendSeriesDto>> _future = viewTrends();
 
-  /// 「只看有异常的」。默认关 —— 默认过滤掉正常序列等于替用户决定什么值得看。
+  /// 「只看被标过 H/L 的」。**默认开。**
   ///
-  /// 但这颗开关是必要的:一份血常规就是 22 条序列,全列出来要滚很久,而「复诊前
-  /// 看一眼」的人多半冲着被标过 H/L 的那两条来。判据是 Rust 给的 `anyAbnormal`,
-  /// **不是** UI 拿参考区间算的。
-  bool _abnormalOnly = false;
+  /// 一份血常规就是 22 条序列,真实用户几年下来上百条 —— 全列出来要滚很久,而「复诊
+  /// 前看一眼」的人多半冲着被标过的那两条来。默认过滤确实是在替用户排序,所以代价
+  /// 必须付清:被隐藏了多少条**始终写在开关旁边**,一眼看得见、一下关得掉。
+  ///
+  /// 判据是 Rust 给的 `anyAbnormal`,**不是** UI 拿参考区间算的。措辞也照此:说的是
+  /// 「被标过 H/L 的」,不是「有问题的」—— 化验单没印箭头的项目不等于正常,只等于
+  /// 这张纸没给结论。
+  bool _abnormalOnly = true;
+
+  /// 搜索词。**非空时 [_abnormalOnly] 让位。**
+  ///
+  /// 搜索是一次明确的「我要找 X」。若此时仍按 H/L 过滤,用户搜「肌酐」而肌酐正常,
+  /// 得到的是一片空白 —— 他会以为自己从没查过肌酐。找得到比过滤干净重要。
+  final _queryCtl = TextEditingController();
+  String _query = '';
 
   @override
   void initState() {
@@ -51,6 +62,7 @@ class _TrendsScreenState extends State<TrendsScreen> {
 
   @override
   void dispose() {
+    _queryCtl.dispose();
     vaultRevision.removeListener(_onVaultChanged);
     super.dispose();
   }
@@ -115,10 +127,13 @@ class _TrendsScreenState extends State<TrendsScreen> {
           // 判一次 —— 渲染器该自己知道自己画不了什么,而不是相信下发的数据。
           // 查看器在同一处留了同样的注释。
           final all = snap.data!.where(trendSeriesIsRenderable).toList();
-          final shown = _abnormalOnly
-              ? all.where((s) => s.anyAbnormal).toList()
-              : all;
-          final hiddenByFilter = all.length - shown.length;
+          final searching = _query.isNotEmpty;
+          final shown = trendVisible(
+            all,
+            query: _query,
+            abnormalOnly: _abnormalOnly,
+          );
+          final hiddenByFilter = searching ? 0 : all.length - shown.length;
 
           return RefreshIndicator(
             onRefresh: _refresh,
@@ -137,8 +152,11 @@ class _TrendsScreenState extends State<TrendsScreen> {
                 else ...[
                   _Preamble(
                     total: all.length,
+                    controller: _queryCtl,
+                    searching: searching,
                     abnormalOnly: _abnormalOnly,
                     hiddenByFilter: hiddenByFilter,
+                    onQuery: (v) => setState(() => _query = v.trim()),
                     onToggle: (v) => setState(() => _abnormalOnly = v),
                   ),
                   const SizedBox(height: MedShape.s3),
@@ -152,9 +170,14 @@ class _TrendsScreenState extends State<TrendsScreen> {
                         vertical: MedShape.s5,
                       ),
                       child: Text(
-                        '这些记录里没有任何一条被化验单标过 H/L。',
+                        searching
+                            // 说的是「这些记录里没有」,不是「你没查过」—— 没搜到很
+                            // 可能是同一个指标印成了别的名字(见顶部说明)。
+                            ? '这些记录里没有名字含「$_query」的指标。\n'
+                                  '换个叫法试试 —— 同一项在不同医院可能印成「肌酐」「血肌酐」「Cr」。'
+                            : '这些记录里没有任何一条被化验单标过 H/L。',
                         textAlign: TextAlign.center,
-                        style: MedType.body.copyWith(color: c.ink2),
+                        style: MedType.body.copyWith(color: c.ink2, height: 1.6),
                       ),
                     ),
                 ],
@@ -167,7 +190,31 @@ class _TrendsScreenState extends State<TrendsScreen> {
   }
 }
 
-/// 列表顶上的说明 + 「只看有异常的」开关。
+/// 指标名是否命中搜索词:大小写无关的子串匹配。
+///
+/// **刻意只匹配显示名。** 不碰 `analyteKey`(那是 `creatinine` 这种内部键,中文用户
+/// 不会去输),更不做模糊匹配 —— 把「肌酐」模糊到「肌钙蛋白」上,用户会以为自己查过
+/// 一个从没查过的项目。找不到时那句空态提示会告诉他换个叫法,那比替他猜要诚实。
+bool trendNameMatches(String name, String query) =>
+    name.toLowerCase().contains(query.toLowerCase());
+
+/// 该显示哪些序列。**搜索优先于 H/L 过滤,不是叠加。**
+///
+/// 叠加是想当然的写法,但结果是用户搜「肌酐」而肌酐一直正常时得到一片空白 ——
+/// 他会得出「我从没查过肌酐」这个错误结论,而真相是查过而且都正常。搜索是一次明确
+/// 的「我要找 X」,找得到比过滤干净重要。
+List<TrendSeriesDto> trendVisible(
+  List<TrendSeriesDto> all, {
+  required String query,
+  required bool abnormalOnly,
+}) {
+  if (query.isNotEmpty) {
+    return all.where((s) => trendNameMatches(s.name, query)).toList();
+  }
+  return abnormalOnly ? all.where((s) => s.anyAbnormal).toList() : all;
+}
+
+/// 列表顶上的说明 + 搜索框 + 「只看被标过 H/L 的」开关。
 ///
 /// 那句说明不是客套。用户会问「我明明查过五次肌酐,这里怎么只有两个点」——
 /// 答案是术语没归一化,另外三次被分到了另一条名字不同的序列里。与其让他自己猜,
@@ -175,14 +222,20 @@ class _TrendsScreenState extends State<TrendsScreen> {
 class _Preamble extends StatelessWidget {
   const _Preamble({
     required this.total,
+    required this.controller,
+    required this.searching,
     required this.abnormalOnly,
     required this.hiddenByFilter,
+    required this.onQuery,
     required this.onToggle,
   });
 
   final int total;
+  final TextEditingController controller;
+  final bool searching;
   final bool abnormalOnly;
   final int hiddenByFilter;
+  final ValueChanged<String> onQuery;
   final ValueChanged<bool> onToggle;
 
   @override
@@ -198,19 +251,68 @@ class _Preamble extends StatelessWidget {
           style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
         ),
         const SizedBox(height: MedShape.s2),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                abnormalOnly && hiddenByFilter > 0
-                    ? '只看被标过 H/L 的 · 已隐藏 $hiddenByFilter 条'
-                    : '只看被标过 H/L 的',
-                style: MedType.body.copyWith(color: c.ink),
-              ),
+        TextField(
+          controller: controller,
+          onChanged: onQuery,
+          textInputAction: TextInputAction.search,
+          style: MedType.body.copyWith(color: c.ink),
+          decoration: InputDecoration(
+            hintText: '搜指标名,如「肌酐」「血红蛋白」',
+            hintStyle: MedType.body.copyWith(color: c.ink3),
+            prefixIcon: Icon(Icons.search, size: 20, color: c.ink3),
+            suffixIcon: searching
+                ? IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    color: c.ink2,
+                    tooltip: '清空搜索',
+                    onPressed: () {
+                      controller.clear();
+                      onQuery('');
+                    },
+                  )
+                : null,
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: MedShape.s2,
+              vertical: MedShape.s2,
             ),
-            Switch(value: abnormalOnly, onChanged: onToggle),
-          ],
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(MedShape.radiusControl),
+              borderSide: BorderSide(color: c.line),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(MedShape.radiusControl),
+              borderSide: BorderSide(color: c.line),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(MedShape.radiusControl),
+              borderSide: BorderSide(color: c.sealInk),
+            ),
+          ),
         ),
+        const SizedBox(height: MedShape.s2),
+        // 搜索时开关整个让位。留一颗按不动的开关在那儿,只会让人以为是它没生效。
+        if (searching)
+          Text(
+            '搜索时不按 H/L 过滤 —— 正常的也一起找。',
+            style: MedType.secondary.copyWith(color: c.ink3),
+          )
+        else
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  // 隐藏了多少条**必须**一直写着:默认开过滤是在替用户排序,
+                  // 代价就是让他随时看得见自己没在看什么。
+                  abnormalOnly && hiddenByFilter > 0
+                      ? '只看被标过 H/L 的 · 另有 $hiddenByFilter 条没被标记'
+                      : '只看被标过 H/L 的',
+                  style: MedType.body.copyWith(color: c.ink),
+                ),
+              ),
+              Switch(value: abnormalOnly, onChanged: onToggle),
+            ],
+          ),
       ],
     );
   }
