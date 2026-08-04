@@ -215,8 +215,10 @@ html {
     outline: 2px solid var(--seal);
     outline-offset: 2px;
   }
+  /* 白字压 seal(#1789C1) 只有 3.90:1,低于 WCAG AA 的 4.5 —— 用户含老年人。
+     填充按钮改用 seal-ink(6.76:1);seal 保留给图标/描边/大标题(非文本门槛 3:1)。 */
   .med-btn-1 {
-    background-color: var(--seal);
+    background-color: var(--seal-ink);
     color: #fff;
   }
   .med-btn-2 {
