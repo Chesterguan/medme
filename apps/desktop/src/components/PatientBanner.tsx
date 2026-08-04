@@ -15,33 +15,31 @@ export default function PatientBanner({ reloadKey = 0 }: { reloadKey?: number })
   if (!p) return null;
 
   return (
-    <div className="px-6 md:px-10 py-4 border-b border-slate-200 bg-white flex items-center gap-4 shrink-0">
-      <div className="w-12 h-12 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0">
+    // 这条 banner **刻意不带骑缝线** —— 姓名/性别/年龄是从各记录里归纳出来的派生
+    // 数据,背后没有某一张可点开的原件。骑缝线只留给「点得进去」的卡。
+    <div className="px-6 md:px-10 py-4 border-b border-line bg-surface flex items-center gap-4 shrink-0">
+      <div className="w-12 h-12 rounded-full bg-seal-wash border border-line flex items-center justify-center text-seal shrink-0">
         <UserRound className="w-7 h-7" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2.5 flex-wrap">
-          <span className="text-lg font-bold text-slate-900">{p.name ?? "未识别姓名"}</span>
-          {p.gender && (
-            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-              {p.gender}
-            </span>
-          )}
+          <span className="text-title font-bold text-ink">{p.name ?? "未识别姓名"}</span>
+          {p.gender && <span className="med-pill bg-line-2 text-ink-2">{p.gender}</span>}
           {p.age && (
-            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-              约 {p.age} 岁
-            </span>
+            <span className="med-pill font-mono bg-line-2 text-ink-2">约 {p.age} 岁</span>
           )}
           {p.birth_date && (
-            <span className="text-xs font-mono text-slate-400">生于 {p.birth_date}</span>
+            <span className="text-secondary font-mono tabular-nums text-ink-3">
+              生于 {p.birth_date}
+            </span>
           )}
         </div>
-        <span className="text-[11px] font-mono text-slate-400 tracking-wide">
+        <span className="text-secondary text-ink-3">
           个人健康数据保险箱 · 身份信息由各记录自动归纳
         </span>
       </div>
-      <div className="flex items-center gap-1.5 text-slate-400 text-sm font-mono shrink-0">
-        <FileText className="w-4 h-4" /> {p.record_count} 份记录
+      <div className="flex items-center gap-1.5 text-ink-2 text-secondary font-mono tabular-nums shrink-0">
+        <FileText className="w-4 h-4 text-ink-3" /> {p.record_count} 份记录
       </div>
     </div>
   );

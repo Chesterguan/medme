@@ -77,12 +77,13 @@ export default function App() {
   }, []);
 
   return (
-    <div className="w-screen h-screen flex bg-slate-50 overflow-hidden text-slate-800">
+    <div className="w-screen h-screen flex bg-paper overflow-hidden text-ink">
       <Sidebar activeTab={tab} onNav={nav} count={totalDocs} />
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         <PatientBanner reloadKey={reloadKey} />
         {error && (
-          <div className="px-6 py-3 text-rose-700 text-sm bg-rose-50 border-b border-rose-100">
+          // 加载失败用 critical 一档(化验危急值同源) —— 全 app 的「出事了」是同一个红。
+          <div className="px-6 py-3 text-body text-critical bg-critical-wash border-b border-line">
             加载失败:{error}
           </div>
         )}
@@ -109,7 +110,7 @@ export default function App() {
               />
             )}
             {detail && (
-              <div className="absolute inset-0 z-10 bg-slate-50 flex flex-col">
+              <div className="absolute inset-0 z-10 bg-paper flex flex-col">
                 <DocumentView detail={detail} onBack={() => setDetail(null)} />
               </div>
             )}

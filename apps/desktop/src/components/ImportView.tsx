@@ -17,13 +17,16 @@ import { listen } from "@tauri-apps/api/event";
 import { api } from "../api";
 import type { ImportOutcome } from "../types";
 
+// 导入结果的状态色。改版前用了 emerald / slate / amber / sky / rose 五族;设计系统
+// 的色板是封闭的,这里收敛到三档:成功=主色、无需处理=中性、要你看一眼=high /
+// critical。区分靠**标签文字**,不靠颜色 —— 这是规范里「色盲用户靠 pill」那条。
 const STATUS_META: Record<string, { label: string; cls: string }> = {
-  new: { label: "新增并索引", cls: "text-emerald-700 bg-emerald-50" },
-  backfilled: { label: "补充索引", cls: "text-emerald-700 bg-emerald-50" },
-  deduped: { label: "已存在 · 去重", cls: "text-slate-600 bg-slate-100" },
-  stored_no_text: { label: "已保存 · 未识别到文字", cls: "text-amber-700 bg-amber-50" },
-  instance_attached: { label: "已并入检查", cls: "text-sky-700 bg-sky-50" },
-  failed: { label: "导入失败", cls: "text-rose-700 bg-rose-50" },
+  new: { label: "新增并索引", cls: "text-seal-ink bg-seal-wash" },
+  backfilled: { label: "补充索引", cls: "text-seal-ink bg-seal-wash" },
+  deduped: { label: "已存在 · 去重", cls: "text-ink-2 bg-line-2" },
+  stored_no_text: { label: "已保存 · 未识别到文字", cls: "text-high bg-high-wash" },
+  instance_attached: { label: "已并入检查", cls: "text-seal-ink bg-seal-wash" },
+  failed: { label: "导入失败", cls: "text-critical bg-critical-wash" },
 };
 
 export default function ImportView({ onImported }: { onImported: () => void }) {
@@ -188,20 +191,22 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-10">
+    <div className="flex-1 overflow-y-auto bg-paper p-6 md:p-10">
       <div className="max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">导入 · 导出</h1>
+        <h1 className="text-display font-bold text-ink mb-6">导入 · 导出</h1>
 
-        {/* 一键试用:免找文件,直接加载内置的张建国示例数据集 */}
-        <div className="rounded-2xl border border-violet-200 bg-violet-50/50 p-5 mb-5">
-          <div className="flex items-center gap-2 text-violet-800 font-medium mb-2">
-            <Sparkles className="w-5 h-5" /> 一键试用
+        {/* 一键试用:免找文件,直接加载内置的张建国示例数据集。
+            改版前整块是紫色(violet,不在色板里),按钮也是紫色实心 —— 和下面
+            的蓝、绿按钮抢主次。现在退成普通卡 + 次级按钮。 */}
+        <div className="med-card p-5 mb-5">
+          <div className="flex items-center gap-2 text-subtitle font-semibold text-ink mb-2">
+            <Sparkles className="w-5 h-5 text-seal" /> 一键试用
           </div>
-          <div className="text-sm text-slate-600 leading-relaxed mb-3">
-            还没有自己的病历?加载内置的<b className="text-slate-800">张建国</b>示例数据集
+          <div className="text-body text-ink-2 mb-3">
+            还没有自己的病历?加载内置的<b className="text-ink">张建国</b>示例数据集
             (含检验报告、门诊病历、处方、影像检查等),立即体验完整的生命时间线。
             <br />
-            <span className="text-xs text-slate-400">
+            <span className="text-secondary text-ink-3">
               示例数据,可随时到「设置 → 清空保险箱」删除重来。
             </span>
           </div>
@@ -209,7 +214,7 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
             type="button"
             onClick={doLoadDemo}
             disabled={demoLoading}
-            className="flex items-center gap-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-wait rounded-xl px-4 py-2.5 transition-colors cursor-pointer"
+            className="med-btn med-btn-2 med-focusable"
           >
             {demoLoading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -220,10 +225,10 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
           </button>
           {demoMsg && (
             <div
-              className={`mt-3 rounded-xl px-4 py-2.5 text-sm leading-relaxed break-all ${
+              className={`mt-3 rounded-block px-4 py-2.5 text-body break-all ${
                 demoMsg.kind === "ok"
-                  ? "bg-emerald-50 text-emerald-700"
-                  : "bg-rose-50 text-rose-700"
+                  ? "bg-seal-wash text-seal-ink"
+                  : "bg-critical-wash text-critical"
               }`}
             >
               {demoMsg.text}
@@ -232,28 +237,29 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
         </div>
 
         <div
-          className={`rounded-2xl border-2 border-dashed p-12 text-center transition-all ${
-            dragging ? "border-blue-400 bg-blue-50" : "border-slate-300 bg-white"
+          className={`rounded-card border-2 border-dashed p-12 text-center transition-colors ${
+            dragging ? "border-seal bg-seal-wash" : "border-line bg-surface"
           }`}
         >
           <UploadCloud
-            className={`w-12 h-12 mx-auto mb-4 ${dragging ? "text-blue-500" : "text-slate-400"}`}
+            className={`w-12 h-12 mx-auto mb-4 ${dragging ? "text-seal" : "text-ink-3"}`}
           />
-          <div className="text-slate-700 font-medium">
+          <div className="text-subtitle font-semibold text-ink">
             {busy ? "正在导入…" : dragging ? "松开以导入" : "把病历文件拖到这里"}
           </div>
-          <div className="text-xs font-mono text-slate-400 mt-2">
+          <div className="text-secondary text-ink-3 mt-2">
             PDF · 图片(PNG / JPG / TIFF / HEIC)· TXT · DICOM · 原始文件永久保存,自动去重
           </div>
-          <div className="text-xs text-slate-400 mt-1">
+          <div className="text-secondary text-ink-3 mt-1">
             也可以直接拖入一整个文件夹(例如一台 CT/MRI 的 DICOM 文件夹),里面的文件会被自动全部导入
           </div>
           <div className="mt-5">
+            {/* 这一屏唯一的主按钮:导入才是这个页面存在的理由 */}
             <button
               type="button"
               onClick={pickAndImport}
               disabled={busy}
-              className="inline-flex items-center gap-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait rounded-xl px-4 py-2.5 transition-colors cursor-pointer"
+              className="med-btn med-btn-1 med-focusable"
             >
               <FolderOpen className="w-4 h-4" /> 选择文件导入
             </button>
@@ -261,21 +267,22 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
         </div>
 
         {/* 自动收件箱(Watch Folder):手机拍照云同步到这里即自动入库 */}
-        <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-5">
-          <div className="flex items-center gap-2 text-slate-800 font-medium mb-2">
-            <Inbox className="w-5 h-5 text-blue-500" /> 自动收件箱
+        <div className="med-card mt-5 p-5">
+          <div className="flex items-center gap-2 text-subtitle font-semibold text-ink mb-2">
+            <Inbox className="w-5 h-5 text-seal" /> 自动收件箱
           </div>
-          <div className="text-sm text-slate-500 leading-relaxed mb-3">
+          <div className="text-body text-ink-2 mb-3">
             手机拍照存到这里(或其云同步目录)即自动入库,无需手动导入。
           </div>
-          <div className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5">
-            <span className="text-xs font-mono text-slate-600 truncate">
+          {/* 卡内分块 → 14px 圆角(比卡片的 20px 小一档) */}
+          <div className="med-block flex items-center justify-between gap-3 px-4 py-2.5">
+            <span className="text-secondary font-mono text-ink-2 truncate">
               {inboxPath ?? "加载中…"}
             </span>
             <button
               type="button"
               onClick={() => api.openInbox().catch((e) => setError(String(e)))}
-              className="shrink-0 flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg px-3 py-1.5 transition-colors"
+              className="med-focusable shrink-0 flex items-center gap-1.5 text-secondary font-medium text-seal-ink bg-seal-wash hover:brightness-95 rounded-ctl px-3 py-1.5 transition-[filter] cursor-pointer"
             >
               <FolderOpen className="w-3.5 h-3.5" /> 打开收件箱文件夹
             </button>
@@ -283,40 +290,40 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
         </div>
 
         {/* 用户引导:怎样获得最准的识别 */}
-        <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/50 p-5">
-          <div className="flex items-center gap-2 text-blue-800 font-medium mb-3">
-            <ScanLine className="w-5 h-5" /> 怎样识别最准
+        <div className="med-card mt-5 p-5">
+          <div className="flex items-center gap-2 text-subtitle font-semibold text-ink mb-3">
+            <ScanLine className="w-5 h-5 text-seal" /> 怎样识别最准
           </div>
-          <ul className="space-y-2.5 text-sm text-slate-600 leading-relaxed">
+          <ul className="space-y-2.5 text-body text-ink-2">
             <li className="flex gap-2">
-              <span className="text-blue-500 font-bold shrink-0">①</span>
+              <span className="text-seal font-bold shrink-0 tabular-nums">①</span>
               <span>
-                <b className="text-slate-800">优先用扫描 App</b>:扫描全能王 · 微信「扫一扫」文档模式 ·
+                <b className="text-ink">优先用扫描 App</b>:扫描全能王 · 微信「扫一扫」文档模式 ·
                 iOS 备忘录/文件扫描 —— 自动纠偏去阴影,识别最准,导出 PDF/图片后拖进来即可。
               </span>
             </li>
             <li className="flex gap-2">
-              <span className="text-blue-500 font-bold shrink-0">②</span>
+              <span className="text-seal font-bold shrink-0 tabular-nums">②</span>
               <span>
-                <b className="text-slate-800">直接拍照也行</b>:报告平铺填满画面、光线均匀、避免阴影反光、对焦清晰。
+                <b className="text-ink">直接拍照也行</b>:报告平铺填满画面、光线均匀、避免阴影反光、对焦清晰。
               </span>
             </li>
             <li className="flex gap-2">
-              <span className="text-blue-500 font-bold shrink-0">③</span>
+              <span className="text-seal font-bold shrink-0 tabular-nums">③</span>
               <span>
-                支持 <b className="text-slate-800">PDF · 图片 · 文本</b>;
-                <b className="text-slate-800">原件永久保存、自动去重</b>,内容由 OCR 自动识别并归类到时间线。
+                支持 <b className="text-ink">PDF · 图片 · 文本</b>;
+                <b className="text-ink">原件永久保存、自动去重</b>,内容由 OCR 自动识别并归类到时间线。
               </span>
             </li>
           </ul>
         </div>
 
         {/* 导出(与导入同区,功能分开):全量时间线 → 自包含 HTML,浏览器打印/另存 PDF 交给医生 */}
-        <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-5">
-          <div className="flex items-center gap-2 text-slate-800 font-medium mb-2">
-            <FileDown className="w-5 h-5 text-blue-500" /> 导出给医生
+        <div className="med-card mt-5 p-5">
+          <div className="flex items-center gap-2 text-subtitle font-semibold text-ink mb-2">
+            <FileDown className="w-5 h-5 text-seal" /> 导出给医生
           </div>
-          <div className="text-sm text-slate-500 leading-relaxed mb-3">
+          <div className="text-body text-ink-2 mb-3">
             把全部病历按时间导出为一个自包含 HTML 文件,任意浏览器可打开、原生中文显示,
             再「打印 / 另存为 PDF」交给医生或用于报销。
           </div>
@@ -324,16 +331,16 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
             type="button"
             onClick={doExport}
             disabled={exporting}
-            className="flex items-center gap-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait rounded-xl px-4 py-2.5 transition-colors cursor-pointer"
+            className="med-btn med-btn-2 med-focusable"
           >
             <Download className="w-4 h-4" /> {exporting ? "导出中…" : "导出全部病历"}
           </button>
           {exportMsg && (
             <div
-              className={`mt-3 rounded-xl px-4 py-2.5 text-sm leading-relaxed break-all ${
+              className={`mt-3 rounded-block px-4 py-2.5 text-body break-all ${
                 exportMsg.kind === "ok"
-                  ? "bg-emerald-50 text-emerald-700"
-                  : "bg-rose-50 text-rose-700"
+                  ? "bg-seal-wash text-seal-ink"
+                  : "bg-critical-wash text-critical"
               }`}
             >
               <div>{exportMsg.text}</div>
@@ -344,7 +351,7 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
                       .openPath(exportMsg.path)
                       .catch((e) => setExportMsg({ kind: "err", text: `打开失败:${String(e)}` }))
                   }
-                  className="mt-1 font-medium text-blue-700 hover:underline cursor-pointer"
+                  className="med-focusable mt-1 rounded-ctl font-semibold text-seal-ink hover:underline cursor-pointer"
                 >
                   打开文件
                 </button>
@@ -354,65 +361,70 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
         </div>
 
         {/* 加密分享给医生:端到端加密、零服务器,需口令打开 */}
-        <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-5">
-          <div className="flex items-center gap-2 text-slate-800 font-medium mb-2">
-            <ShieldCheck className="w-5 h-5 text-emerald-600" /> 加密分享给医生
+        {/* 改版前这一块整体是绿色(emerald):卡边、按钮、口令框、说明字。设计系统
+            的色板里**没有绿** —— 绿被刻意排除掉了(正常值不上色)。安全感交给
+            ShieldCheck 图标和文案,配色收回主色。 */}
+        <div className="med-card mt-5 p-5">
+          <div className="flex items-center gap-2 text-subtitle font-semibold text-ink mb-2">
+            <ShieldCheck className="w-5 h-5 text-seal" /> 加密分享给医生
           </div>
-          <div className="text-sm text-slate-500 leading-relaxed mb-3">
-            生成一个<b className="text-slate-700">端到端加密</b>的 HTML 文件(含浏览器内查看器):
-            <b className="text-slate-700">零服务器</b>,医生用任意浏览器打开、输入<b className="text-slate-700">口令</b>即在本地解密查看,数据不上传任何服务器。
+          <div className="text-body text-ink-2 mb-3">
+            生成一个<b className="text-ink">端到端加密</b>的 HTML 文件(含浏览器内查看器):
+            <b className="text-ink">零服务器</b>,医生用任意浏览器打开、输入<b className="text-ink">口令</b>即在本地解密查看,数据不上传任何服务器。
           </div>
           <div className="flex items-center gap-3 mb-1.5">
-            <label className="text-sm text-slate-600">建议复阅期限</label>
+            <label className="text-body text-ink-2">建议复阅期限</label>
             <input
               type="number"
               min={1}
               max={36500}
               value={shareDays}
               onChange={(e) => setShareDays(Number(e.target.value))}
-              className="w-24 text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500"
+              className="w-24 text-body tabular-nums text-ink border border-line bg-surface rounded-ctl px-3 py-1.5 focus:outline-none focus:border-seal focus:ring-2 focus:ring-seal-wash"
             />
-            <span className="text-sm text-slate-500">天</span>
+            <span className="text-body text-ink-2">天</span>
           </div>
-          <div className="text-xs text-slate-400 mb-3">
-            仅作为给医生的复阅提醒,<b className="text-slate-500">并非强制</b>——文件本身不会到期失效,持有文件与口令者始终可解密查看。长期分享可设很大值(如 36500 天 ≈ 100 年)。
+          <div className="text-secondary text-ink-3 mb-3">
+            仅作为给医生的复阅提醒,<b className="text-ink-2">并非强制</b>——文件本身不会到期失效,持有文件与口令者始终可解密查看。长期分享可设很大值(如 36500 天 ≈ 100 年)。
           </div>
           <button
             type="button"
             onClick={doShare}
             disabled={sharing}
-            className="flex items-center gap-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-wait rounded-xl px-4 py-2.5 transition-colors cursor-pointer"
+            className="med-btn med-btn-2 med-focusable"
           >
             <ShieldCheck className="w-4 h-4" /> {sharing ? "生成中…" : "生成加密分享文件"}
           </button>
 
           {shareResult && shareResult.kind === "err" && (
-            <div className="mt-3 rounded-xl px-4 py-2.5 text-sm bg-rose-50 text-rose-700 break-all">
+            <div className="mt-3 rounded-block px-4 py-2.5 text-body bg-critical-wash text-critical break-all">
               {shareResult.text}
             </div>
           )}
           {shareResult && shareResult.kind === "ok" && (
-            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-              <div className="text-[11px] font-mono text-emerald-700 uppercase tracking-widest mb-1">
+            <div className="med-block mt-4 p-4">
+              <div className="text-caption font-mono text-ink-3 uppercase mb-1">
                 口令(请务必单独告知医生)
               </div>
               <div className="flex items-center gap-2">
-                <code className="flex-1 text-base font-mono font-semibold text-slate-900 bg-white border border-emerald-200 rounded-lg px-3 py-2 break-all select-all">
+                {/* 口令要一个字一个字念给医生听 → 等宽 + value 一档字号,别再用正文大小 */}
+                <code className="flex-1 text-value font-mono tabular-nums font-semibold text-ink bg-surface border border-line rounded-ctl px-3 py-2 break-all select-all">
                   {shareResult.passphrase}
                 </code>
                 <button
                   type="button"
                   onClick={() => copyPass(shareResult.passphrase)}
-                  className="shrink-0 flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-white border border-emerald-200 hover:bg-emerald-50 rounded-lg px-3 py-2 transition-colors cursor-pointer"
+                  className="med-focusable shrink-0 self-stretch flex items-center gap-1.5 text-secondary font-medium text-ink-2 bg-surface border border-line hover:bg-paper rounded-ctl px-3 transition-colors cursor-pointer"
                 >
                   {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   {copied ? "已复制" : "复制"}
                 </button>
               </div>
-              <div className="mt-3 text-sm text-slate-600 leading-relaxed">
-                已生成 {shareResult.count} 份记录。把文件发给医生(或存到你的云盘发链接),
-                <b className="text-slate-800">口令请另行单独告知,切勿和文件放一起</b>。
-                医生用任意浏览器打开 → 输口令 → 查看。建议复阅期限 {shareResult.days} 天(仅为提醒,非强制,文件不会自动失效)。
+              <div className="mt-3 text-body text-ink-2">
+                已生成 <span className="tabular-nums">{shareResult.count}</span> 份记录。把文件发给医生(或存到你的云盘发链接),
+                <b className="text-ink">口令请另行单独告知,切勿和文件放一起</b>。
+                医生用任意浏览器打开 → 输口令 → 查看。建议复阅期限{" "}
+                <span className="tabular-nums">{shareResult.days}</span> 天(仅为提醒,非强制,文件不会自动失效)。
               </div>
               <button
                 type="button"
@@ -421,7 +433,7 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
                     .openPath(shareResult.path)
                     .catch((e) => setShareResult({ kind: "err", text: `打开失败:${String(e)}` }))
                 }
-                className="mt-2 text-sm font-medium text-emerald-700 hover:underline cursor-pointer"
+                className="med-focusable mt-2 rounded-ctl text-body font-semibold text-seal-ink hover:underline cursor-pointer"
               >
                 打开文件
               </button>
@@ -429,29 +441,26 @@ export default function ImportView({ onImported }: { onImported: () => void }) {
           )}
         </div>
 
-        {error && <div className="mt-4 text-sm text-rose-600">导入失败:{error}</div>}
+        {error && <div className="mt-4 text-body text-critical">导入失败:{error}</div>}
 
         {results.length > 0 && (
           <div className="mt-6 space-y-2">
-            <div className="text-[11px] font-mono text-slate-400 uppercase tracking-widest">
+            {/* 改版前 text-[11px],低于 12px 下限 */}
+            <div className="text-caption font-mono tabular-nums text-ink-3 uppercase">
               本次结果 · {results.length} 个文件
             </div>
             {results.map((r, i) => {
               const m = STATUS_META[r.status] ?? {
                 label: r.status,
-                cls: "text-slate-600 bg-slate-100",
+                cls: "text-ink-2 bg-line-2",
               };
               return (
                 <div
                   key={i}
-                  className="flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-2.5"
+                  className="flex items-center justify-between bg-surface border border-line rounded-block px-4 py-2.5"
                 >
-                  <span className="text-sm text-slate-700 truncate">{r.name}</span>
-                  <span
-                    className={`text-xs font-mono px-2 py-0.5 rounded-full shrink-0 ml-3 ${m.cls}`}
-                  >
-                    {m.label}
-                  </span>
+                  <span className="text-body text-ink truncate">{r.name}</span>
+                  <span className={`med-pill shrink-0 ml-3 ${m.cls}`}>{m.label}</span>
                 </div>
               );
             })}

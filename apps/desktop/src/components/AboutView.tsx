@@ -88,36 +88,34 @@ export default function AboutView({ onNav }: { onNav: (id: string) => void }) {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-10">
+    <div className="flex-1 overflow-y-auto bg-paper p-6 md:p-10">
       <div className="max-w-2xl mx-auto space-y-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 border border-blue-100">
+            <div className="w-11 h-11 rounded-block bg-seal-wash flex items-center justify-center text-seal border border-line shrink-0">
               <ShieldCheck className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">
+              <h1 className="text-display font-bold text-ink">
                 {lang === "zh" ? "关于 · 用户声明与免责条款" : "About · Statement & Disclaimer"}
               </h1>
-              <span className="text-[11px] font-mono text-slate-400 tracking-widest uppercase">
-                MedMe 医我
-              </span>
+              <span className="text-caption font-mono text-ink-3 uppercase">MedMe 医我</span>
             </div>
           </div>
           {/* 语言切换:默认中文,点 English 才显示英文 */}
-          <div className="flex items-center rounded-lg border border-slate-200 bg-white overflow-hidden text-sm shrink-0">
+          <div className="flex items-center rounded-ctl border border-line bg-surface overflow-hidden shrink-0">
             <button
               onClick={() => setLang("zh")}
-              className={`px-3 py-1.5 cursor-pointer transition-colors ${
-                lang === "zh" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"
+              className={`med-focusable px-3 py-1.5 text-body font-medium cursor-pointer transition-colors ${
+                lang === "zh" ? "bg-seal text-white" : "text-ink-2 hover:bg-paper"
               }`}
             >
               中文
             </button>
             <button
               onClick={() => setLang("en")}
-              className={`px-3 py-1.5 cursor-pointer transition-colors ${
-                lang === "en" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"
+              className={`med-focusable px-3 py-1.5 text-body font-medium cursor-pointer transition-colors ${
+                lang === "en" ? "bg-seal text-white" : "text-ink-2 hover:bg-paper"
               }`}
             >
               English
@@ -126,36 +124,37 @@ export default function AboutView({ onNav }: { onNav: (id: string) => void }) {
         </div>
 
         {lang === "zh" && (
-          <div className="text-sm text-slate-500 leading-relaxed">
+          <div className="text-body text-ink-2">
             欢迎使用 MedMe(医我)。请在使用前仔细阅读以下声明。
           </div>
         )}
 
-        <div className="space-y-4">
+        {/* 法律条文是文本,不是「背后有原件」的数据 → 这些卡不带骑缝线 */}
+        <div className="space-y-3">
           {sections.map((s, i) => (
-            <div key={i} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-              <div className="text-slate-900 font-semibold mb-2">{s.t}</div>
-              <p className="text-[15px] leading-relaxed text-slate-600">{s.b}</p>
+            <div key={i} className="med-card p-5">
+              <div className="text-subtitle font-semibold text-ink mb-2">{s.t}</div>
+              <p className="text-body text-ink-2">{s.b}</p>
             </div>
           ))}
         </div>
 
-        <div className="flex items-center justify-center gap-5 text-sm">
+        <div className="flex items-center justify-center gap-5">
           <button
             onClick={() => api.openUrl(HOMEPAGE_URL).catch(() => {})}
-            className="flex items-center gap-1.5 text-slate-500 hover:text-blue-600 cursor-pointer transition-colors"
+            className="med-focusable flex items-center gap-1.5 rounded-ctl px-2 py-1 text-body text-ink-2 hover:text-seal cursor-pointer transition-colors"
           >
             <Globe className="w-4 h-4" /> 项目主页
           </button>
           <button
             onClick={() => api.openUrl(REPO_URL).catch(() => {})}
-            className="flex items-center gap-1.5 text-slate-500 hover:text-blue-600 cursor-pointer transition-colors"
+            className="med-focusable flex items-center gap-1.5 rounded-ctl px-2 py-1 text-body text-ink-2 hover:text-seal cursor-pointer transition-colors"
           >
             <Code2 className="w-4 h-4" /> 源代码
           </button>
         </div>
 
-        <div className="text-xs font-mono text-slate-400 text-center">
+        <div className="text-caption font-mono tabular-nums text-ink-3 text-center">
           © MedMe Team 2026 ·{" "}
           <span
             onClick={onVersionClick}
