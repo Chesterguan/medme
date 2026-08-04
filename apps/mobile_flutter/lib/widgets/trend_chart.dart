@@ -62,6 +62,32 @@ double? _dayOf(String? iso) {
   return d.millisecondsSinceEpoch / Duration.millisecondsPerDay;
 }
 
+/// Y 轴值域:`(lo, hi)`,已含上下各 20% 余量。数据点**和**参考区间的两个界值都必须
+/// 装得进去。
+///
+/// 每个界值都要**双向**撑开值域,不能只往一个方向撑。sparkSVG(`index.html:765`)写的是
+/// `lo = min(...vs, refLow)` / `hi = max(...vs, refHigh)` —— 各自只往外推一侧。于是遇到
+/// eGFR「参考 ≥ 90」而实测 63/71/78 时,90 落在 `hi` 之上、画布之外:参考带塌成零高度,
+/// 那条虚线被画在**图的顶边**。用户看到「参考区间 ≥ 90」加一条虚线,只会认为虚线就是
+/// 90、自己刚好差一点 —— 而真实情况是差得远。位置错了的基准线比没有基准线更糟,因为
+/// 它看起来像个结论。查看器有同一处缺陷,已单独记录。
+(double, double) trendYDomain(
+  Iterable<double> values, {
+  double? refLow,
+  double? refHigh,
+}) {
+  var lo = values.reduce(math.min);
+  var hi = values.reduce(math.max);
+  for (final b in [refLow, refHigh]) {
+    if (b == null) continue;
+    lo = math.min(lo, b);
+    hi = math.max(hi, b);
+  }
+  // 全部点等值且没有参考区间时跨度为 0 —— 退回 1,免得除零把点画到无穷远。
+  final pad = (hi - lo) * 0.2 == 0 ? 1.0 : (hi - lo) * 0.2;
+  return (lo - pad, hi + pad);
+}
+
 /// 一条序列的折线图。高度固定,宽度随卡片。
 ///
 /// 高度不随 `textScaler` 变,是因为**画布里一个字都没有** —— 项目名、数值、参考
@@ -87,7 +113,6 @@ class TrendChart extends StatelessWidget {
           points: pts,
           refLow: series.refLow,
           refHigh: series.refHigh,
-          grid: c.line2,
           band: c.sealWash,
           bandEdge: c.ink3,
           line: c.seal,
@@ -106,7 +131,6 @@ class _TrendPainter extends CustomPainter {
     required this.points,
     required this.refLow,
     required this.refHigh,
-    required this.grid,
     required this.band,
     required this.bandEdge,
     required this.line,
@@ -119,7 +143,6 @@ class _TrendPainter extends CustomPainter {
   final List<TrendPointDto> points;
   final double? refLow;
   final double? refHigh;
-  final Color grid;
   final Color band;
   final Color bandEdge;
   final Color line;
@@ -148,15 +171,11 @@ class _TrendPainter extends CustomPainter {
     if (plotW <= 0 || plotH <= 0) return;
 
     // ── Y 值域:数据与参考区间都要装得下,再上下各留 20% 余量(同 sparkSVG)──
-    final values = points.map((p) => p.value);
-    var lo = values.reduce(math.min);
-    var hi = values.reduce(math.max);
-    if (refLow != null) lo = math.min(lo, refLow!);
-    if (refHigh != null) hi = math.max(hi, refHigh!);
-    // 全部点等值且没有参考区间时跨度为 0 —— 退回 1,免得除零把点画到无穷远。
-    final pad = (hi - lo) * 0.2 == 0 ? 1.0 : (hi - lo) * 0.2;
-    lo -= pad;
-    hi += pad;
+    final (lo, hi) = trendYDomain(
+      points.map((p) => p.value),
+      refLow: refLow,
+      refHigh: refHigh,
+    );
     final yr = hi - lo;
     double y(double v) => _padT + plotH - (v - lo) / yr * plotH;
 
@@ -171,19 +190,16 @@ class _TrendPainter extends CustomPainter {
         ? _padL + plotW / 2
         : _padL + (days[i] - x0) / xSpan * plotW;
 
-    // ── 横向网格 ──
-    // 只画横向,**Y 轴不画轴线**(规范)。这三条线不带刻度值,所以它们不承诺任何
-    // 数值 —— 只是让眼睛判断相对高低时有个参照。真正有数值语义的是下面那条参考带。
-    final gridPaint = Paint()
-      ..color = grid
-      ..strokeWidth = 1;
-    for (var i = 0; i <= 2; i++) {
-      final gy = _padT + plotH * i / 2;
-      canvas.drawLine(Offset(_padL, gy), Offset(size.width - _padR, gy), gridPaint);
-    }
-
     // ── 参考带 ──
-    if (refLow != null || refHigh != null) {
+    // **不画网格线。** 查看器的 `sparkSVG`(index.html:760-781)一条也不画,规范 §七
+    // 要求三端画出来的同一条序列是同一个形状。而且不带刻度值的横线不承诺任何数值,
+    // 却长得像刻度 —— 装饰而已。图里唯一有数值语义的横向元素就是这条参考带。
+    //
+    // 区间颠倒(refLow > refHigh)时整个带不画。OCR 在偏斜的并排双表上会把相邻记录
+    // 的区间错配过来,产出 refLow=50 / refHigh=10 这种无意义区间(见 openmed 的
+    // A/B 实测)。画一条位置无意义的边,比什么都不画更容易被当成结论。
+    final bandOk = refLow == null || refHigh == null || refLow! <= refHigh!;
+    if ((refLow != null || refHigh != null) && bandOk) {
       final top = y(refHigh ?? hi);
       final bottom = y(refLow ?? lo);
       final rect = Rect.fromLTRB(

@@ -188,6 +188,34 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
+  group('趋势:参考区间必须落在画布内', () {
+    // 「参考 ≥ 90」而实测全在 90 以下 —— eGFR 的常态。若值域只让 refLow 往下撑,
+    // 90 会跑到画布之上,参考带塌成零高度,虚线画在图的顶边而不是 90 处。
+    test('单侧下限高于所有实测值时,下限仍在值域内', () {
+      final (lo, hi) = trendYDomain([63.0, 71.0, 78.0], refLow: 90);
+      expect(lo, lessThan(63));
+      expect(hi, greaterThan(90), reason: '90 必须在画布内,否则虚线位置是假的');
+    });
+
+    test('单侧上限低于所有实测值时,上限仍在值域内', () {
+      final (lo, hi) = trendYDomain([9.1, 9.8], refHigh: 5.2);
+      expect(lo, lessThan(5.2), reason: '5.2 必须在画布内');
+      expect(hi, greaterThan(9.8));
+    });
+
+    test('区间把点包在中间时照常成立', () {
+      final (lo, hi) = trendYDomain([4.85], refLow: 3.1, refHigh: 8.0);
+      expect(lo, lessThan(3.1));
+      expect(hi, greaterThan(8.0));
+    });
+
+    test('单点无区间:跨度为 0 也不除零', () {
+      final (lo, hi) = trendYDomain([5.0]);
+      expect(hi - lo, greaterThan(0));
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
   group('应急卡', () {
     final emptyCard = const EmergencyCardDto(
       allergies: [],
