@@ -392,7 +392,26 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           Padding(
             padding: const EdgeInsets.only(right: MedShape.s1),
             child: TextButton.icon(
-              onPressed: () => showImportSheet(context),
+              // ⚠️ 这里曾是 `() => showImportSheet(context)` —— 一个**没人 await、
+              // 没有 catchError 的 Future**。里面抛出的任何异常都只会掉进 zone,
+              // 屏上一片安静,这就是「点导入没反应」的最后一段。现在 await 起来,
+              // 兜底 catch 至少把话说出来。
+              onPressed: () async {
+                // messenger 在 await 之前同步取好,免得跨 async gap 用 context。
+                final messenger = ScaffoldMessenger.of(context);
+                try {
+                  await showImportSheet(context);
+                } catch (e) {
+                  debugPrint('[archive] 导入流程未捕获异常: $e');
+                  if (!messenger.mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('导入没能开始:$e'),
+                      duration: const Duration(seconds: 8),
+                    ),
+                  );
+                }
+              },
               icon: const Icon(Icons.add, size: 20),
               label: const Text('导入'),
             ),
