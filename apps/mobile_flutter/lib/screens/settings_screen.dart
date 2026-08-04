@@ -5,6 +5,7 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -237,6 +238,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _SectionLabel('保险箱'),
           _VaultCard(profile: _profile, onChanged: () => setState(() {})),
+          // ⚠️ 「导出·分享」原本是一个一级 tab。五 tab 信息架构(设计系统 §八)按
+          // 「使用时刻」重排之后,它没有属于自己的时刻:它不是「日常打开」、不是
+          // 「复诊前」、不是「找单子」、更不是急诊室。它是**低频、正式、要联网**的
+          // 一次交付动作,心智恰好落在这个 tab 的定义上 ——「数据主权:我的数据往
+          // 哪去」,和下面的「清空所有数据」是同一件事的两个方向。
+          //
+          // 它没有并进「就诊单」,因为那是两个场景:就诊单是本地的、离线的、一页
+          // 纸、三十秒;这里是端到端加密、把**完整病历含原件**交出去。
+          //
+          // 诊室现场那条最高频的路没有变长:就诊单浮层底部直接就有「医生要看原件 ·
+          // 出示二维码」,一步到同一个界面(见 `visit_summary_sheet.dart`)。
+          _SectionLabel('数据出口'),
+          _SettingsGroup(
+            children: [
+              _SettingsRow(
+                icon: Icons.ios_share_outlined,
+                title: '导出 · 分享',
+                subtitle: '当面出示二维码给医生,或导出可打印文件用于报销、留档',
+                onTap: _busy
+                    ? null
+                    : () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const ExportScreen(),
+                        ),
+                      ),
+              ),
+            ],
+          ),
           _SectionLabel('示例数据'),
           _SettingsGroup(
             children: [

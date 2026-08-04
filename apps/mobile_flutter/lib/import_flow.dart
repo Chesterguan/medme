@@ -71,7 +71,19 @@ Future<void> showImportSheet(BuildContext context) async {
     ),
   );
   if (choice == null || !context.mounted) return;
+  await runImport(context, choice);
+}
 
+/// 跳过三选一,**直接**走某一种采集来源。
+///
+/// 从 [showImportSheet] 里原样切出来的后半段(逻辑一字未改),为的是让「概览」页
+/// 的快捷操作能有一颗真正的「拍照」—— 那一屏的使用时刻是「日常打开」,而拍一张
+/// 化验单是这个时刻里最高频的动作;让它先弹一张三选一的表,等于在最短的路上多设
+/// 一道门。「存档」那颗仍然走 [showImportSheet](相册 / 文件在那里选)。
+///
+/// 前面那 350ms 的等待对直接调用**同样必要**:调用方多半也是从一个 bottom sheet
+/// 或菜单里点过来的,原生扫描器一样会被正在退场的浮层挡下。
+Future<void> runImport(BuildContext context, ImportChoice choice) async {
   // 等 bottom sheet 的关闭动画播完再拉起原生采集器。文档扫描器
   // (VNDocumentCameraViewController)靠 rootViewController.present 弹出;若 sheet
   // 尚未完全消失,present 会被正在退场的 sheet 挡下、静默失败,method channel 永不

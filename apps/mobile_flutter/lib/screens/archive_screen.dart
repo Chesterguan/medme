@@ -2,94 +2,46 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
+import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 
-/// 底部导航一级 tab「健康档案」—— 生命时间线:就诊组 + 独立文档,按日期倒序,
+/// 底部导航一级 tab「档案」—— 生命时间线:就诊组 + 独立文档,按日期倒序,
 /// 点开看详情。与旧 Tauri 移动端 App.tsx 的 archive tab(phead + tl)同一观感,
 /// 数据来自 FFI `loadArchive` / `patientProfile`(见 lib/src/rust/api/vault.dart)。
-
-// doc_type / encounter kind → 中文标签(与 core-model types.rs、旧 App.tsx 一致)。
-const Map<String, String> _docLabel = {
-  'lab_report': '化验',
-  'imaging_report': '影像',
-  'discharge_summary': '出院小结',
-  'prescription': '处方',
-  'clinical_note': '病历',
-  'pathology': '病理',
-  'surgery': '手术',
-  'other': '其他',
-  'unknown': '待归类',
-};
-const Map<String, String> _kindLabel = {
-  'inpatient': '住院',
-  'outpatient': '门诊',
-  'emergency': '急诊',
-  'exam': '检查',
-};
-
-// 文档类型/就诊类型 → 图标。
-//
-// **配色表整张删掉了。** 原先每种文档类型一个颜色(化验蓝 #1D4ED8、影像橙
-// #B45309、病理红 #BE123C、处方绿、出院靛、手术紫……九色),问题不是花,是
-// **撞语义**:那三个色值正是设计系统里「偏低 / 偏高 / 危急值」的化验状态色。
-// 一枚 #1D4ED8 的「化验」徽标和一行 #1D4ED8 的「偏低」在同一屏上,颜色在讲
-// 两件毫不相干的事 —— 而这一屏的用户正在学「蓝=偏低」。
-//
-// 现在类型只靠**图标形状**区分,底色统一用主色 `seal` 的极浅底。三个状态色
-// 从此在个人模式里只有一个含义:化验值不正常。
-const Map<String, IconData> _docIcon = {
-  'lab_report': Icons.science_outlined,
-  'imaging_report': Icons.document_scanner_outlined,
-  'prescription': Icons.medication_outlined,
-  'discharge_summary': Icons.bed_outlined,
-  'clinical_note': Icons.medical_services_outlined,
-  'pathology': Icons.biotech_outlined,
-  'surgery': Icons.content_cut,
-  'other': Icons.description_outlined,
-  'unknown': Icons.help_outline,
-};
-const Map<String, IconData> _kindIcon = {
-  'outpatient': Icons.medical_services_outlined,
-  'inpatient': Icons.bed_outlined,
-};
-IconData _iconForDoc(String docType) =>
-    _docIcon[docType] ?? Icons.description_outlined;
-
-IconData _iconForKind(String kind) =>
-    _kindIcon[kind] ?? Icons.local_hospital_outlined;
-
-String _fmtDate(String? iso) {
-  if (iso == null || iso.isEmpty) return '';
-  final d = DateTime.tryParse(iso);
-  if (d == null) return '';
-  return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-}
+///
+/// 五 tab 信息架构(设计系统 §八)里,这一屏对应的使用时刻是**「找某一张单子」**。
+/// 「我现在怎么样」搬去了概览,「这两年怎么变的」搬去了趋势 —— 这一屏专心做检索,
+/// 不再兼职做首页。顶部因此多了一颗「就诊单」:找单子的人下一步常常就是要进诊室。
+///
+/// 文档类型标签与图标已挪到 `lib/doc_labels.dart`(四个屏共用,免得同一份病历在
+/// 两个 tab 上叫两个名字)。
 
 String _groupTitle(TimelineGroupDto g) {
   return switch (g) {
     TimelineGroupDto_Encounter(:final encounter) =>
       encounter.provider != null
-          ? '${_kindLabel[encounter.kind] ?? encounter.kind} · ${encounter.provider}'
-          : (_kindLabel[encounter.kind] ?? encounter.kind),
+          ? '${kindLabel[encounter.kind] ?? encounter.kind} · ${encounter.provider}'
+          : (kindLabel[encounter.kind] ?? encounter.kind),
     TimelineGroupDto_Document(:final doc) =>
-      doc.title ?? _docLabel[doc.docType] ?? '记录',
+      doc.title ?? docLabel[doc.docType] ?? '记录',
   };
 }
 
 String _groupDate(TimelineGroupDto g) {
   return switch (g) {
-    TimelineGroupDto_Encounter(:final encounter) => _fmtDate(
+    TimelineGroupDto_Encounter(:final encounter) => fmtDate(
       encounter.startDate,
     ),
-    TimelineGroupDto_Document(:final doc) => _fmtDate(doc.docDate),
+    TimelineGroupDto_Document(:final doc) => fmtDate(doc.docDate),
   };
 }
 
@@ -98,7 +50,7 @@ String _groupDesc(TimelineGroupDto g) {
     TimelineGroupDto_Encounter(:final encounter, :final docs) => () {
       final kinds = <String>{};
       for (final d in docs) {
-        kinds.add(_docLabel[d.docType] ?? d.docType);
+        kinds.add(docLabel[d.docType] ?? d.docType);
       }
       // 用实际 docs.length —— 待确认剔除后 `_confirmedOnly` 会重建只含已确认文档的组,
       // 此时 encounter.docCount(FFI 按全量算)会 stale,显示条数与展开数量对不上。
@@ -107,7 +59,7 @@ String _groupDesc(TimelineGroupDto g) {
       return parts.join(' · ');
     }(),
     TimelineGroupDto_Document(:final doc) => [
-      _docLabel[doc.docType] ?? doc.docType,
+      docLabel[doc.docType] ?? doc.docType,
       if (doc.sliceCount != null) '影像 ${doc.sliceCount} 张',
     ].join(' · '),
   };
@@ -381,13 +333,21 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     final c = MedColors.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('健康档案'),
+        title: const Text('档案'),
         // 顶栏与内容之间一道 `line` —— 层次靠边框不靠阴影(规范 §四)。
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
         ),
         actions: [
+          // 「就诊单」的第二个入口(另一个在概览的快捷操作)。它刻意不是 tab ——
+          // 是诊室里那 30 秒的动作,不是一个常驻浏览的空间(设计系统 §八)。
+          // 放在档案顶栏是因为:翻单子的人下一步常常就是要进诊室。
+          IconButton(
+            onPressed: () => showVisitSummarySheet(context),
+            icon: const Icon(Icons.assignment_outlined),
+            tooltip: '就诊单',
+          ),
           // 右上角「导入」:弹三选一(拍照/相册/选文件),导入后本屏经 vaultRevision 自动刷新。
           Padding(
             padding: const EdgeInsets.only(right: MedShape.s1),
@@ -809,10 +769,10 @@ class _TimelineItem extends StatelessWidget {
     final c = MedColors.of(context);
     final isEncounter = group is TimelineGroupDto_Encounter;
     final icon = switch (group) {
-      TimelineGroupDto_Encounter(:final encounter) => _iconForKind(
+      TimelineGroupDto_Encounter(:final encounter) => iconForKind(
         encounter.kind,
       ),
-      TimelineGroupDto_Document(:final doc) => _iconForDoc(doc.docType),
+      TimelineGroupDto_Document(:final doc) => iconForDoc(doc.docType),
     };
 
     final Widget card = MedCard(
@@ -945,7 +905,7 @@ class _SubDocList extends StatelessWidget {
             direction: DismissDirection.endToStart,
             background: swipeDeleteBackground(context),
             confirmDismiss: (_) async {
-              await onDelete(d.id, d.title ?? _docLabel[d.docType] ?? '记录');
+              await onDelete(d.id, d.title ?? docLabel[d.docType] ?? '记录');
               return false;
             },
             child: Container(
@@ -972,7 +932,7 @@ class _SubDocList extends StatelessWidget {
                           borderRadius: BorderRadius.circular(MedShape.s1),
                         ),
                         child: Icon(
-                          _iconForDoc(d.docType),
+                          iconForDoc(d.docType),
                           size: 15,
                           color: c.seal,
                         ),
@@ -980,14 +940,14 @@ class _SubDocList extends StatelessWidget {
                       const SizedBox(width: MedShape.s2),
                       Expanded(
                         child: Text(
-                          d.title ?? _docLabel[d.docType] ?? '记录',
+                          d.title ?? docLabel[d.docType] ?? '记录',
                           style: MedType.body.copyWith(color: c.ink),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const SizedBox(width: MedShape.s1),
                       Text(
-                        _fmtDate(d.docDate),
+                        fmtDate(d.docDate),
                         style: MedType.caption.copyWith(
                           fontWeight: FontWeight.w400,
                           letterSpacing: 0,
@@ -1031,7 +991,7 @@ class _PendingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final label = doc.title ?? _docLabel[doc.docType] ?? '记录';
+    final label = doc.title ?? docLabel[doc.docType] ?? '记录';
     final card = MedCard(
       // 这张卡背后就是刚导入的那份原件,点开即达 → 画骑缝线。
       perforated: true,
@@ -1060,7 +1020,7 @@ class _PendingCard extends StatelessWidget {
                         ),
                       ),
                       child: Icon(
-                        _iconForDoc(doc.docType),
+                        iconForDoc(doc.docType),
                         size: 20,
                         color: c.high,
                       ),
@@ -1087,7 +1047,7 @@ class _PendingCard extends StatelessWidget {
                                 style: MedType.subtitle.copyWith(color: c.ink),
                               ),
                               Text(
-                                _fmtDate(doc.docDate),
+                                fmtDate(doc.docDate),
                                 style: MedType.secondary.copyWith(
                                   color: c.ink3,
                                   fontFeatures: MedType.tabular,
@@ -1097,7 +1057,7 @@ class _PendingCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            [_docLabel[doc.docType] ?? doc.docType, '点开核对并确认']
+                            [docLabel[doc.docType] ?? doc.docType, '点开核对并确认']
                                 .join(' · '),
                             style: MedType.secondary.copyWith(color: c.ink2),
                           ),

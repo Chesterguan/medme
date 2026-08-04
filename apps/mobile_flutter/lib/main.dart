@@ -13,10 +13,12 @@ import 'package:mobile_flutter/src/rust/frb_generated.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
-import 'package:mobile_flutter/screens/export_screen.dart';
+import 'package:mobile_flutter/screens/emergency_card_screen.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/screens/mode_picker_screen.dart';
+import 'package:mobile_flutter/screens/overview_screen.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
+import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/vault_events.dart';
 
@@ -238,7 +240,7 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
 }
 
 /// 应用根:按 [AppMode] 决定显示哪个界面——还没选过模式 → 「你是?」选择屏;
-/// 选了「个人」→ 现有 [HomeShell](三 tab);选了「医生」→ [DoctorHomeScreen]。
+/// 选了「个人」→ [HomeShell](五 tab);选了「医生」→ [DoctorHomeScreen]。
 /// 用 `ValueListenableBuilder` 监听同一个 notifier:设置页「切换模式」写入新值后,
 /// 这里自动重建换到另一个根界面,不需要任何显式导航(调用方只需在切换后把导航栈
 /// popUntil 回第一层,见 `settings_screen.dart`)。
@@ -296,20 +298,86 @@ class _AppRootState extends State<AppRoot> {
   }
 }
 
-/// 底部导航壳:三个一级 tab —— 健康档案 / 导出分享 / 设置。
-/// 导入入口在「健康档案」页右上角「导入」按钮(不是独立 tab);导出/分享独立成一级 tab。
+/// 底部导航壳:**五个一级 tab,按「使用时刻」划分**(设计系统 §八)。
+///
+/// | tab | 使用时刻 |
+/// |---|---|
+/// | 概览 | 日常打开,看一眼「我现在怎么样」 |
+/// | 趋势 | 复诊前自己看「这两年怎么变的」 |
+/// | 档案 | 找某一张单子 |
+/// | 应急卡 | 急诊室,**别人**拿着你的手机 |
+/// | 设置 | 数据主权 |
+///
+/// 划分依据是**时刻**不是数据类型。旧的三 tab(健康档案 / 导出分享 / 设置)是按
+/// 功能分的,于是「我现在怎么样」和「这两年怎么变的」被一起压进了「健康档案」,
+/// 而它们是两个完全不同的时刻 —— 一个是每天早上三十秒,一个是复诊前坐下来看十分钟。
+///
+/// ## 两处刻意的缺席
+///
+/// **「就诊单」不是 tab。** 它是诊室里那 30 秒的动作,从概览的快捷操作与档案的顶栏
+/// 两处以浮层唤起(`screens/visit_summary_sheet.dart`)。做成 tab 就是给一个一年用
+/// 十次的动作一个常驻席位,而把它挤掉的会是应急卡。
+///
+/// **「导出·分享」不再是 tab,收进了设置。** 它承载的是 E2E 加密分享与可打印导出:
+/// 重、正式、要联网、低频。它和就诊单不是一回事(那个是本地的、离线的、一页纸),
+/// 所以不能并进就诊单;而它的心智恰好就是设置这个 tab 的定义 ——「数据主权:我的
+/// 数据往哪去」,和备份、清空是同一件事的三个方向。
+/// 诊室现场那条最高频的路没有变长:就诊单浮层底部直接有「医生要看原件 · 出示二维码」。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
+
+  /// 五个 tab 的页面,顺序必须与 [HomeTab] 的常量逐一对应 —— `IndexedStack` 按
+  /// 下标取,错一位就是点「应急卡」进了「设置」。
+  ///
+  /// 与 [tabDestinations] 一起公开是为了让 `test/home_shell_test.dart` 能钉住
+  /// 「页面数 == 底栏项数 == [HomeTab.count]」。这三个数字散在两处 const 列表和
+  /// 一组常量里,加一个 tab 时最容易漏掉的就是其中一处,而漏掉的表现是**运行时
+  /// 越界或错位**,不是编译错误。
+  static const List<Widget> tabScreens = [
+    OverviewScreen(),
+    TrendsScreen(),
+    ArchiveScreen(),
+    EmergencyCardScreen(),
+    SettingsScreen(),
+  ];
+
+  /// 底栏五项,顺序同 [tabScreens]。
+  static const List<NavigationDestination> tabDestinations = [
+    NavigationDestination(
+      icon: Icon(Icons.dashboard_outlined),
+      selectedIcon: Icon(Icons.dashboard),
+      label: '概览',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.show_chart_outlined),
+      selectedIcon: Icon(Icons.show_chart),
+      label: '趋势',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.folder_outlined),
+      selectedIcon: Icon(Icons.folder),
+      label: '档案',
+    ),
+    // 应急卡用 Material 的 `emergency`(那个六角星医疗符号),不用心形或十字 ——
+    // 心形在健康 app 里普遍是「收藏」,十字是「新增」。
+    NavigationDestination(
+      icon: Icon(Icons.emergency_outlined),
+      selectedIcon: Icon(Icons.emergency),
+      label: '应急卡',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.settings_outlined),
+      selectedIcon: Icon(Icons.settings),
+      label: '设置',
+    ),
+  ];
+
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _index = 0;
-
-  // 健康档案(看 + 右上角导入)· 导出分享 · 设置。导入并进「健康档案」,
-  // 导出/分享独立成 tab —— 手机端「轻」定位:采集 + 看 + 分享,搜索/趋势在桌面/查看器。
-  static const _screens = [ArchiveScreen(), ExportScreen(), SettingsScreen()];
+  int _index = HomeTab.overview;
 
   @override
   void initState() {
@@ -333,7 +401,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _index, children: _screens),
+      body: IndexedStack(index: _index, children: HomeShell.tabScreens),
       // 底栏与内容之间一道 `line`。原先靠 elevation:3 的投影分层 —— 规范 §四
       // 「层次靠边框不靠阴影,阴影只有一档」,那一档已经花在卡片上了。
       bottomNavigationBar: DecoratedBox(
@@ -344,23 +412,7 @@ class _HomeShellState extends State<HomeShell> {
           selectedIndex: _index,
           // 统一走 selectedTab:手点和程序化跳转(设置载入示例后)同一条路径。
           onDestinationSelected: (i) => selectedTab.value = i,
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.folder_outlined),
-              selectedIcon: Icon(Icons.folder),
-              label: '健康档案',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.ios_share_outlined),
-              selectedIcon: Icon(Icons.ios_share),
-              label: '导出分享',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.settings_outlined),
-              selectedIcon: Icon(Icons.settings),
-              label: '设置',
-            ),
-          ],
+          destinations: HomeShell.tabDestinations,
         ),
       ),
     );
