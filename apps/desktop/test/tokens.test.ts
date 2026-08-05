@@ -44,7 +44,7 @@ function varsIn(selector: string): Record<string, string> {
 const SPEC_LIGHT: Record<string, string> = {
   "--ink": "#101a23",
   "--ink-2": "#3a4a57",
-  "--ink-3": "#6b7c89",
+  "--ink-3": "#657581",
   "--paper": "#f6f8fa",
   "--surface": "#ffffff",
   "--line": "#e3e9ee",
@@ -54,7 +54,7 @@ const SPEC_LIGHT: Record<string, string> = {
   "--seal-wash": "#eaf5fa",
   "--low": "#1d4ed8",
   "--low-wash": "#e8eefc",
-  "--high": "#b45309",
+  "--high": "#ab4e08",
   "--high-wash": "#fbf1e4",
   "--critical": "#be123c",
   "--critical-wash": "#fceaef",
