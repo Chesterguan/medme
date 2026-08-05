@@ -62,19 +62,10 @@ Future<void> resetEverything() async {
   await ensureRust();
   await AppMode.instance.chooseMode(AppModeKind.personal);
   await wipeAllData();
-  // ⚠️ **这一句是在绕开 BUG-3,不是常规收尾。**
-  //
-  // `wipeAllData()` 的最后一步是 `rmDir('<docs>/profiles')` —— 而它前面第 2 步
-  // 刚刚 `openCurrentProfileVault()` 把进程级 vault 开在 `<docs>/profiles/p-1/vault`。
-  // 于是清空结束时,进程里开着的那个箱子的目录已经被删掉了,后续任何写入都是
-  // `io: No such file or directory (os error 2)`。
-  //
-  // App 里 `_confirmAndResetVault` 清完只 `bumpVaultRevision()`,**没有重开**,
-  // 所以真机上清空之后到重启之前一条都存不进去。见
-  // `journey_known_defects_test.dart` 的 BUG-3。
-  //
-  // 测试里补开一次,免得每条用例都被这个缺陷带塌;BUG-3 由它自己的用例钉住。
-  await openCurrentProfileVault();
+  // `wipeAllData()` 自己就保证「清完之后进程里开着一个真实存在的空箱子」
+  // (顺序契约见 `vault_boot.dart` 的 `runWipeSequence`)。这里**不再补一次
+  // `openCurrentProfileVault()`** —— 那一句原本是在绕开 BUG-3,而 BUG-3 已修。
+  // 补回去会把这条契约重新藏起来:真机上清空之后写不进东西,测试里却看不见。
   selectedTab.value = HomeTab.overview;
 }
 
@@ -269,48 +260,52 @@ class OverflowWatch {
   }
 }
 
-/// ── 已知缺陷的全局挡板 ──────────────────────────────────────────────
+/// ── 曾经的「已知缺陷挡板」,现在是一道守卫 ────────────────────────────
 ///
-/// **BUG-1(未修,只报告)**:`emergency_card_screen.dart:58` 的
-/// `setState(() => _future = _load())` 是箭头函数,返回的是一个 `Future` ——
-/// 概览/趋势/档案三屏都为这件事专门写成语句块并留了注释,只有应急卡漏了。
-/// 五个 tab 全部由 `IndexedStack` 一次性挂载,所以这个监听器从冷启动第一帧就活着:
-/// **任何一次 `bumpVaultRevision()`(录一条、导入、清空、载入示例)都会踩到它。**
+/// 这里原本挡着 BUG-1(`emergency_card_screen.dart` 的
+/// `setState(() => _future = _load())` —— 箭头体,返回的是一个 `Future`)。五个
+/// tab 全部由 `IndexedStack` 一次性挂载,那个监听器从冷启动第一帧就活着,于是
+/// **任何一次 `bumpVaultRevision()`(录一条、导入、清空、载入示例)都会踩到它**,
+/// 不挡就会把每一条「存了东西之后再断言」的用例都染红。
 ///
-/// 后果见 `journey_known_defects_test.dart` 里那条专门的用例。这里之所以要挡:
-/// 不挡的话它会把每一条「存了东西之后再断言」的用例都染红,真正想测的东西反而
-/// 看不见。**挡住 ≠ 修好** —— 每次命中都会打印出来。
+/// BUG-1 与 BUG-4 都已修(两屏各自改成语句块 setState),所以名单**清空了**,
+/// 这段代码的角色随之反转:它不再吞任何东西,而是**数**这类签名还出不出现。
+/// [assertNoKnownDefects] 一旦非零就说明它回来了 —— 挡板变守卫,签名一条都不删,
+/// 因为「这类异常曾经在这里发生过」正是要守住的知识。
 const kKnownDefects = <String>[
   'setState() callback argument returned a Future',
 ];
 
 int knownDefectHits = 0;
+final knownDefectSeen = <String>[];
 FlutterExceptionHandler? _knownDefectPrev;
 
-/// 安装已知缺陷挡板(`bootApp` 自动调)。
+/// 安装守卫(`bootApp` 自动调)。
 ///
-/// ⚠️ **只挡「框架内部报上来的」那一路,绝不挡测试框架自己的失败上报。**
+/// ⚠️ **只看「框架内部报上来的」那一路,绝不碰测试框架自己的失败上报。**
 /// `ChangeNotifier.notifyListeners` 会把监听器抛的异常包成
 /// `FlutterErrorDetails(library: 'widgets library')` 交给 `FlutterError.onError`
-/// —— BUG-1 走的是这条,挡掉它才不会污染每一条用例。
+/// —— BUG-1 当初走的就是这条。
 ///
 /// 但 `flutter_test` 判定用例失败时**也**走 `FlutterError.reportError`,只是
 /// `library` 是 `'Flutter test framework'`。第一版没区分,把它也吞了,于是
 /// `handleUncaughtError` 发现 `_pendingExceptionDetails` 还是 null,直接断言炸
 /// 并把整个 run 卡死 —— 真正的错误一个字看不到。按 `library` 分流。
+///
+/// 现在**只记不吞**:记完照样往下传,该红的用例照红。
 void installKnownDefectFilter() {
   if (_knownDefectPrev != null) return;
+  knownDefectHits = 0;
+  knownDefectSeen.clear();
   _knownDefectPrev = FlutterError.onError;
   FlutterError.onError = (details) {
     final s = details.exceptionAsString();
-    final fromTestFramework = details.library == 'Flutter test framework';
-    if (!fromTestFramework) {
+    if (details.library != 'Flutter test framework') {
       for (final sig in kKnownDefects) {
         if (s.contains(sig)) {
           knownDefectHits++;
-          debugPrint(
-              '[已知缺陷 #$knownDefectHits] $sig(见 harness.dart kKnownDefects)');
-          return;
+          knownDefectSeen.add(sig);
+          debugPrint('[已修缺陷复发 #$knownDefectHits] $sig');
         }
       }
     }
@@ -322,6 +317,17 @@ void removeKnownDefectFilter() {
   if (_knownDefectPrev == null) return;
   FlutterError.onError = _knownDefectPrev;
   _knownDefectPrev = null;
+}
+
+/// 本条用例跑下来,没有一条已修缺陷的签名再出现过。
+void assertNoKnownDefects() {
+  expect(
+    knownDefectHits,
+    0,
+    reason: '已修缺陷复发:${knownDefectSeen.toSet().join('、')}\n'
+        '见 `vault_boot.dart` / 两屏 `_refresh()` 的注释,以及 '
+        '`test/known_defect_setstate_future_test.dart`。',
+  );
 }
 
 /// 在指定系统字号倍数下跑一段操作。用 `TestPlatformDispatcher` 的

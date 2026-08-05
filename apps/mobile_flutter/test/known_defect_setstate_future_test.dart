@@ -1,29 +1,28 @@
-// 源码级回归钉:**`setState(() => …)` 的箭头体不许返回 `Future`。**
+// 源码级守卫:**`setState(() => …)` 的箭头体不许返回 `Future`。**
 //
 // ## 为什么是扫源码,而不是渲染断言
 //
-// 这个写法的后果只在 debug 断言开着时才出现,而它出现的方式恰好让测试抓不住:
+// 这个写法的后果只在 debug 断言开着时才出现,而它出现的方式恰好让测试难抓:
 //
-//   · `emergency_card_screen.dart:58` 抛在 `ChangeNotifier.notifyListeners` 的
-//     try/catch 里 → 只走 `FlutterError.onError`,能抓,已由
-//     `integration_test/journey_known_defects_test.dart` 的 BUG-1 钉住;
-//   · `visit_summary_sheet.dart:98` 抛在一个 `async` 方法里、由 `VoidCallback`
-//     调起 → **未捕获的 zone 错误** → `flutter_test` 收到就把用例的 completer
-//     以错误完成,测试体当场终止,`tester.takeException()` 那行执行不到,还会把
-//     `LiveTestWidgetsFlutterBinding.postTest` 的 `_pendingFrame == null` 一起
-//     带塌、污染同文件后面的用例。
+//   · 应急卡那处抛在 `ChangeNotifier.notifyListeners` 的 try/catch 里 → 只走
+//     `FlutterError.onError`,`tester.takeException()` 接不到;
+//   · 「看病带这个」那处抛在一个 `async` 方法里、由 `VoidCallback` 调起 →
+//     **未捕获的 zone 错误** → `flutter_test` 收到就把用例的 completer 以错误
+//     完成,测试体当场终止,后面的断言一行都执行不到。
 //
-// 也就是说:**驱动它就等于让用例必红**,可它又确实是个必须被记住的缺陷。所以
-// 改成扫源码 —— 判据和根因是同一个东西(写法本身),不依赖任何运行时行为。
+// 两处各自的**行为**回归已经分别由 `test/emergency_card_refresh_test.dart` 与
+// `test/visit_summary_sheet_test.dart`(「存完笔记要当场刷新」那一组)钉住 —— 那两条
+// 断言的是「屏上真的变了」。这条不同:它守的是**写法本身**,判据与根因是同一个东西,
+// 不依赖任何运行时行为,也因此能拦住**任何一处新出现的**同款写法,包括还没有人为它
+// 写过行为测试的那些屏。
 //
-// ## 这条测试现在是「记录现状」,不是「守住现状」
+// ## 名单是空的 —— 这条现在是纯粹的守卫
 //
-// 下面的 [kKnownBadSites] 列的是**已知有问题、本轮只报告不修**的两处。
-// 修好其中任何一处,这条用例会红 —— 那正是提醒:把修好的那一行从名单里删掉。
-// 名单空了之后,这条用例就退化成一条纯粹的守卫(任何新出现的站点都会红)。
+// [kKnownBadSites] 曾经列着两处「已知有问题、那一轮只报告不修」的站点。两处都修好
+// 之后名单清空,这条用例的角色随之反转:任何**新**出现的站点都会让它红。
 //
-// 后果(两处相同):`State.setState` 先执行回调(赋值**已经发生**),再在断言里
-// 发现返回了 `Future` 并抛出 —— 抛在 `markNeedsBuild()` **之前**。于是
+// 那两处当时的后果(相同):`State.setState` 先执行回调(赋值**已经发生**),再在
+// 断言里发现返回了 `Future` 并抛出 —— 抛在 `markNeedsBuild()` **之前**。于是
 // `_future` 换成了新的,却没有任何一次重建被调度。
 //   · 应急卡:五个 tab 全在 `IndexedStack` 里、`tabScreens` 是 `const` 列表,
 //     切 tab 也不会让它重建 → 内容停在冷启动那一刻,直到 App 重启;
@@ -32,7 +31,7 @@
 // release 构建里断言被剥掉,`markNeedsBuild()` 照常执行 → 不受影响;
 // **debug / profile 必现**,而团队自己装的正是带 `.dev` 后缀的 debug 包。
 //
-// 正确写法(概览/趋势/档案三屏都是这么写的,还各自留了注释):
+// 正确写法(概览/趋势/档案三屏一直是这么写的,现在应急卡与「看病带这个」也是):
 //
 //     Future<void> _refresh() async {
 //       final next = _load();
@@ -46,13 +45,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// 已知有问题的站点:`相对 lib/ 的路径` → `那一行的原文片段`。
 ///
-/// **修好一处就从这里删一行。**
-const kKnownBadSites = <String, String>{
-  'screens/emergency_card_screen.dart':
-      'setState(() => _future = _load())',
-  'screens/visit_summary_sheet.dart':
-      'setState(() => _future = viewVisitSummary())',
-};
+/// **空的,而且应该一直是空的。** 这里曾经有两行:
+///
+///     'screens/emergency_card_screen.dart': 'setState(() => _future = _load())',
+///     'screens/visit_summary_sheet.dart':   'setState(() => _future = viewVisitSummary())',
+///
+/// 两处都已改成语句块 `_refresh()`。留着这个常量而不是把它删掉,是为了让「暂时容忍
+/// 某一处」有一个明确的、要写理由的落点 —— 而不是给这条用例加 `skip`。
+const kKnownBadSites = <String, String>{};
 
 /// `setState(() => <赋值>);` —— 贪婪吃到行尾那个 `)`,不能用 `[^)]*`:
 /// 右边本来就常带括号(`_load()`),截断之后判据全歪。
@@ -78,7 +78,7 @@ bool _looksLikeFuture(String assignment) {
 void main() {
   final libDir = Directory('lib');
 
-  test('setState 的箭头体不许返回 Future —— 已知两处,修好即改名单', () {
+  test('setState 的箭头体不许返回 Future —— 全仓一处都不许有', () {
     expect(libDir.existsSync(), isTrue,
         reason: '这条测试要从仓库根的 apps/mobile_flutter 目录跑');
 
@@ -100,26 +100,26 @@ void main() {
       }
     }
 
-    // ① 已知的两处都还在 —— 少了说明修好了,来改这份名单。
+    // ① 名单里的站点(现在一个都没有)确实还在 —— 少了说明有人修好了却没更新名单。
     for (final entry in kKnownBadSites.entries) {
       expect(
         found.containsKey(entry.key),
         isTrue,
-        reason: '「${entry.key}」的 setState-返回-Future 已经修好了(或文件挪了位置)。\n'
-            '请把它从 kKnownBadSites 里删掉;两处都删干净之后,这条用例就变成一条'
-            '纯粹的守卫。\n当前扫到的站点:$found',
+        reason: '「${entry.key}」的 setState-返回-Future 已经修好了(或文件挪了位置),'
+            '请把它从 kKnownBadSites 里删掉。\n当前扫到的站点:$found',
       );
-      expect(found[entry.key], contains('setState(() => _future ='),
-          reason: '「${entry.key}」那一行变了,请重新核对:${found[entry.key]}');
     }
 
-    // ② 没有**新增**的站点。
+    // ② 名单之外一处都不许有。名单是空的,所以这一条等于「全仓干净」。
     final extras = found.keys.where((k) => !kKnownBadSites.containsKey(k));
     expect(
       extras,
       isEmpty,
-      reason: '新出现了 setState-返回-Future 的写法(它会让那一屏静默不重建):\n'
-          '${extras.map((k) => '  · $k: ${found[k]}').join('\n')}',
+      reason: '出现了 setState-返回-Future 的写法 —— 它会让那一屏静默不重建\n'
+          '(赋值发生了,断言在 markNeedsBuild() 之前抛,于是没有任何一次重建被调度;\n'
+          ' release 里断言被剥掉看不出来,debug/profile 必现):\n'
+          '${extras.map((k) => '  · $k: ${found[k]}').join('\n')}\n'
+          '改成语句块:final next = _load(); setState(() { _future = next; }); await next;',
     );
   });
 }
