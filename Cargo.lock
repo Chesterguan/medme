@@ -1089,6 +1089,7 @@ dependencies = [
  "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.19",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -4831,7 +4832,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "terminology",
- "unicode-normalization",
 ]
 
 [[package]]

@@ -1,9 +1,12 @@
 use chrono::{DateTime, TimeZone, Utc};
 use core_model::DocType;
+// 部首折叠的**唯一**实现在 `core_model::text` —— 抽 provider 走的是
+// `ocr::recognize_pdf_mixed` 那条路,不经过本函数,两边必须用同一张表(曾经各存
+// 一份,`⺠` 只在其中一份被漏掉)。
+use core_model::normalize_cjk_radicals;
 use regex::Regex;
 use std::path::Path;
 use std::sync::OnceLock;
-use unicode_normalization::UnicodeNormalization;
 
 mod aggregate;
 mod conditions;
@@ -80,45 +83,6 @@ pub fn extract(path: &Path) -> anyhow::Result<Extracted> {
         text,
         page_count,
     })
-}
-
-/// Fold CJK radical glyphs back to their unified ideographs.
-///
-/// Some PDFs (incl. our generated corpus) carry a font whose ToUnicode CMap maps
-/// common characters to *radical* codepoints, so `pdf-extract` yields e.g. `意⻅`
-/// for `意见`, `⾎糖` for `血糖`. That silently breaks every downstream matcher
-/// (labels, lab names, drug/condition dictionaries). NFKC handles the Kangxi
-/// Radicals block (U+2F00–2FD5 → unified); the CJK Radicals Supplement
-/// (U+2E80–2EF3) has *no* decomposition, so we map the ones seen in practice.
-/// Only radical-range codepoints are touched — ordinary text (units, full-width
-/// forms, Latin) is left byte-for-byte unchanged.
-///
-/// ponytail: supplement map covers the radicals observed in the corpus; add more
-/// if a new one shows up (they render as a stray radical, never as wrong text).
-fn normalize_cjk_radicals(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '⻄' => out.push('西'),
-            '⻅' => out.push('见'),
-            '⻆' => out.push('角'),
-            '⻓' => out.push('长'),
-            '⻔' => out.push('门'),
-            '⻛' => out.push('风'),
-            '⻝' => out.push('食'),
-            '⻩' => out.push('黄'),
-            '⻬' => out.push('齐'),
-            _ if ('\u{2E80}'..='\u{2FDF}').contains(&c) => {
-                // Kangxi radical (and any unmapped supplement char) → NFKC.
-                // NFKC of a Kangxi radical is its single unified ideograph;
-                // an unmapped supplement char has no decomposition and passes
-                // through unchanged.
-                out.extend(c.to_string().nfkc());
-            }
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 pub fn detect_language(text: &str) -> Option<String> {
