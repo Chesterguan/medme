@@ -32,15 +32,13 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex-1 h-full w-full flex flex-col items-center justify-center gap-4 bg-slate-50 text-center px-6">
-          <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
+        <div className="flex-1 h-full w-full flex flex-col items-center justify-center gap-4 bg-paper text-center px-6">
+          {/* 出了错 → critical 一档(化验危急值同源),与 App.tsx 里加载失败的红同一个红。 */}
+          <div className="w-12 h-12 rounded-block bg-critical-wash text-critical flex items-center justify-center border border-line">
             <AlertTriangle className="w-6 h-6" />
           </div>
-          <div className="text-slate-700 font-medium">出了点问题,请重试</div>
-          <button
-            onClick={this.handleReload}
-            className="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-xl px-4 py-2 transition-colors cursor-pointer"
-          >
+          <div className="text-body font-medium text-ink">出了点问题,请重试</div>
+          <button onClick={this.handleReload} className="med-btn med-btn-1 med-focusable">
             <RotateCcw className="w-4 h-4" /> 重新加载
           </button>
         </div>

@@ -60,7 +60,7 @@ export default function ImageViewer({ src, alt }: { src: string; alt: string }) 
   };
 
   const btn =
-    "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors";
+    "med-focusable flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-ctl bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors";
 
   return (
     <div className="flex flex-col h-full w-full" onClick={(e) => e.stopPropagation()}>

@@ -35,7 +35,7 @@ export default function PdfViewer({ url }: { url: string }) {
           const canvas = document.createElement("canvas");
           canvas.width = viewport.width;
           canvas.height = viewport.height;
-          canvas.className = "block mx-auto mb-3 bg-white rounded shadow max-w-full h-auto";
+          canvas.className = "block mx-auto mb-3 bg-white rounded-ctl max-w-full h-auto";
           const ctx = canvas.getContext("2d");
           if (!ctx) continue;
           await page.render({ canvasContext: ctx, viewport }).promise;

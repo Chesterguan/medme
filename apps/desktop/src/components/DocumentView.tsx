@@ -18,18 +18,10 @@ import PdfViewer from "./PdfViewer";
 
 // 低置信度阈值:低于此值提示扫描可能不清晰/不可用,建议重拍或核对原件。
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
-// 高置信度阈值:达到此值展示为“可信”的低调绿色徽标。
-const HIGH_CONFIDENCE_THRESHOLD = 0.85;
-
-function confidenceBadgeClass(ratio: number): string {
-  if (ratio < LOW_CONFIDENCE_THRESHOLD) {
-    return "bg-amber-50 text-amber-700 border border-amber-200";
-  }
-  if (ratio >= HIGH_CONFIDENCE_THRESHOLD) {
-    return "bg-emerald-50 text-emerald-700 border border-emerald-200";
-  }
-  return "bg-slate-100 text-slate-600 border border-slate-200";
-}
+// 改版前置信度徽标分三档(amber/emerald/slate),中/高两档都上色。设计系统的色板
+// 没有绿(见 ReportContent.tsx 头注释),而且中/高置信度是"符合预期"的常态 ——
+// 和化验表"正常不上色"同一条道理:值得一眼看见的只有"低置信度,建议核对原件"
+// 这一档(high token,与 ImportView 的"未识别到文字"同源),其余收成中性小字。
 
 // 内容(识别文本)为主,原件作为附件:缩略图/文件条,点击全屏查看。
 // OCR 已把内容读出来 → 阅读用文本,原图只在需要出示时全屏打开。
@@ -134,39 +126,35 @@ export default function DocumentView({
   const TypeIcon = TYPE_ICON[doc.doc_type] ?? FileQuestion;
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-50">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-paper">
       {/* header */}
-      <div className="px-6 md:px-10 py-5 border-b border-slate-200 bg-white/80 backdrop-blur shrink-0">
+      <div className="px-6 md:px-10 py-5 border-b border-line bg-surface/80 backdrop-blur shrink-0">
         <button
           onClick={onBack}
-          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 mb-3 cursor-pointer"
+          className="med-focusable flex items-center gap-1.5 rounded-ctl text-body text-ink-2 hover:text-seal mb-3 cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" /> 返回
         </button>
         <div className="flex items-center gap-3 flex-wrap">
           <div
-            className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
-              TYPE_BADGE[doc.doc_type] ?? "bg-slate-100 text-slate-600"
+            className={`w-11 h-11 rounded-block flex items-center justify-center shrink-0 ${
+              TYPE_BADGE[doc.doc_type] ?? "bg-line-2 text-ink-2"
             }`}
           >
             <TypeIcon className="w-5 h-5" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">{doc.title ?? "(无标题)"}</h1>
-          <span
-            className={`text-xs font-mono px-2.5 py-1 rounded-full ${
-              TYPE_BADGE[doc.doc_type] ?? "bg-slate-100 text-slate-600"
-            }`}
-          >
+          <h1 className="text-display font-bold text-ink">{doc.title ?? "(无标题)"}</h1>
+          <span className={`med-pill font-mono ${TYPE_BADGE[doc.doc_type] ?? "bg-line-2 text-ink-2"}`}>
             {TYPE_LABEL[doc.doc_type] ?? doc.doc_type}
           </span>
-          <span className="text-sm font-mono text-slate-500">{dateStr}</span>
+          <span className="text-secondary font-mono tabular-nums text-ink-3">{dateStr}</span>
           {doc.slice_count && doc.slice_count > 1 && (
-            <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-sky-50 text-sky-700">
-              {doc.slice_count} 张切片
+            <span className="text-secondary font-mono tabular-nums text-ink-3">
+              · {doc.slice_count} 张切片
             </span>
           )}
         </div>
-        <div className="mt-2 text-xs font-mono text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
+        <div className="mt-2 text-caption font-mono text-ink-3 flex flex-wrap gap-x-4 gap-y-1">
           <span>原始文件:{sf.original_name}</span>
           <span>{sf.mime_type}</span>
           <span>{fmtBytes(sf.byte_size)}</span>
@@ -180,44 +168,42 @@ export default function DocumentView({
           {/* 原件 · 附件 */}
           {hasOriginal && (
             <div>
-              <div className="text-[11px] font-mono text-slate-400 uppercase tracking-widest mb-2">
-                原件 · 附件
-              </div>
+              <div className="text-caption font-mono text-ink-3 uppercase mb-2">原件 · 附件</div>
               {showAsImage ? (
                 origUrl ? (
                   <button
                     onClick={() => setLightbox(true)}
-                    className="group relative block rounded-xl overflow-hidden border border-slate-200 shadow-sm hover:shadow-md transition-all cursor-zoom-in bg-white"
+                    className="med-focusable group relative block rounded-block overflow-hidden border border-line hover:border-seal transition-colors cursor-zoom-in bg-surface"
                   >
                     <img
                       src={origUrl}
                       alt={sf.original_name}
                       className="max-h-80 w-auto mx-auto"
                     />
-                    <div className="absolute top-2 right-2 bg-black/50 text-white rounded-lg px-2 py-1 text-xs flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="absolute top-2 right-2 bg-black/50 text-white rounded-ctl px-2 py-1 text-xs flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Maximize2 className="w-3.5 h-3.5" /> 查看大图
                     </div>
                   </button>
                 ) : (
-                  <div className="text-slate-400 text-sm">加载原件…</div>
+                  <div className="text-ink-3 text-body">加载原件…</div>
                 )
               ) : (
                 <button
                   onClick={() => setLightbox(true)}
-                  className="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm hover:shadow-md transition-all cursor-pointer w-full text-left"
+                  className="med-focusable flex items-center gap-3 bg-surface border border-line rounded-block px-4 py-3 hover:border-seal transition-colors cursor-pointer w-full text-left"
                 >
-                  <div className="w-10 h-10 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                  <div className="w-10 h-10 rounded-ctl bg-line-2 text-ink-2 flex items-center justify-center shrink-0">
                     <FileType2 className="w-5 h-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-slate-800 truncate">
+                    <div className="text-body font-medium text-ink truncate">
                       {sf.original_name}
                     </div>
-                    <div className="text-xs font-mono text-slate-400">
+                    <div className="text-caption font-mono text-ink-3">
                       PDF · {fmtBytes(sf.byte_size)} · 点击全屏查看
                     </div>
                   </div>
-                  <Maximize2 className="w-4 h-4 text-slate-400 shrink-0" />
+                  <Maximize2 className="w-4 h-4 text-ink-3 shrink-0" />
                 </button>
               )}
             </div>
@@ -225,7 +211,7 @@ export default function DocumentView({
 
           {/* 识别文本 / 文档内容(主) */}
           <div>
-            <div className="text-[11px] font-mono text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5 flex-wrap">
+            <div className="text-caption font-mono text-ink-3 uppercase mb-2 flex items-center gap-1.5 flex-wrap">
               {hasOriginal ? (
                 <>
                   <ImageIcon className="w-3.5 h-3.5" /> 识别文本 · 可溯源
@@ -235,19 +221,21 @@ export default function DocumentView({
               )}
               {isOcrDocument && confidencePct != null && (
                 <span
-                  className={`normal-case tracking-normal font-sans px-2 py-0.5 rounded-full text-[11px] font-medium ${confidenceBadgeClass(
-                    ocr_confidence as number
-                  )}`}
+                  className={
+                    isLowConfidence
+                      ? "med-pill normal-case tracking-normal font-sans bg-high-wash text-high"
+                      : "normal-case tracking-normal font-sans text-ink-3"
+                  }
                 >
                   识别置信度 {confidencePct}%
                 </span>
               )}
             </div>
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <div className="med-card p-6">
               {isLowConfidence && (
-                <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+                <div className="mb-4 flex items-start gap-2.5 rounded-block bg-high-wash px-4 py-3 text-high">
                   <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-                  <div className="text-sm leading-relaxed">
+                  <div className="text-body leading-relaxed">
                     识别置信度较低({confidencePct}%),扫描可能不清晰或不可用 ——
                     建议重新拍摄,或以上方原件为准。
                   </div>
@@ -256,7 +244,7 @@ export default function DocumentView({
               {ocr_text.trim() ? (
                 <ReportContent text={ocr_text} docType={doc.doc_type} />
               ) : (
-                <div className="text-slate-400 text-sm leading-relaxed">
+                <div className="text-ink-3 text-body">
                   {hasOriginal
                     ? "此文件尚未识别出文字。原始文件已完整保存(见上方附件),可直接出示给医生。"
                     : `此文件尚未识别出文字,且此格式(${sf.mime_type})无法在应用内预览。原始文件已完整、原样保存在保险箱里,可导出后用对应软件打开。`}
@@ -267,14 +255,16 @@ export default function DocumentView({
         </div>
       </div>
 
-      {/* 全屏查看 lightbox */}
+      {/* 全屏查看 lightbox —— 刻意常驻纯黑背景,不跟随应用的浅色/深色主题:看图/看片
+          要的是最大对比度,不是和外层 UI 统一色调(与 DicomViewer/PdfViewer/ImageViewer
+          的查看器工具条同一取向)。 */}
       {lightbox && (isDicom || origUrl) && (
         <div className="fixed inset-0 z-50 bg-black/85 flex flex-col" onClick={() => setLightbox(false)}>
           <div className="relative z-10 flex justify-between items-center px-5 py-3 text-white/90 shrink-0">
             <span className="text-sm font-mono truncate">{sf.original_name}</span>
             <button
               onClick={() => setLightbox(false)}
-              className="flex items-center gap-1.5 text-sm font-medium text-white bg-white/15 hover:bg-white/25 rounded-full pl-4 pr-3 py-1.5 cursor-pointer transition-colors"
+              className="med-focusable flex items-center gap-1.5 text-sm font-medium text-white bg-white/15 hover:bg-white/25 rounded-full pl-4 pr-3 py-1.5 cursor-pointer transition-colors"
             >
               关闭 · ESC <X className="w-4 h-4" />
             </button>
