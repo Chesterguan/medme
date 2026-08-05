@@ -687,12 +687,16 @@ Future<ImportRunResult> _runImport(
         outcome = await ingestBytes(filename: item.name, data: bytes);
       }
 
-      // `pagesWithoutText` 点名了哪些 PDF 页缺文本层(移动端未链接 Rust OCR
-      // 引擎,pipeline 落库时没能替这些页拿到文字)——可能是全篇扫描,也可能是
-      // 混合页(如出院小结第 1 页打印、后面几页附检验报告扫描件,只有那几页
-      // 需要补)。不再像旧版那样只在 status=='stored_no_text' 时才补、且不问
-      // 页数盲扫前 20 页:现在按页码精确补,补不完的(超出单次上限/渲染或 OCR
-      // 失败)如实计入 `stillMissingPages`,绝不悄悄吞掉。
+      // `pagesWithoutText` 点名了哪些 PDF 页 pipeline 落库时没能拿到文字——可能
+      // 是全篇扫描,也可能是混合页(如出院小结第 1 页打印、后面几页附检验报告
+      // 扫描件,只有那几页需要补)。不再像旧版那样只在 status=='stored_no_text'
+      // 时才补、且不问页数盲扫前 20 页:现在按页码精确补,补不完的(超出单次
+      // 上限/渲染或 OCR 失败)如实计入 `stillMissingPages`,绝不悄悄吞掉。
+      //
+      // 注:Rust 侧在 iOS/arm64 安卓上**是**链接了 PP-OCRv5 的,只是它只能 OCR
+      // PDF 里内嵌的 DCTDecode(JPEG)图,且模型要等 `recognizeImageText` 跑过
+      // 一次才落盘。所以这条回填路径既兜「非 JPEG 编码的扫描页」,也兜「本次
+      // 会话第一份就是 PDF」。
       var stillMissingPages = 0;
       if (outcome.pagesWithoutText.isNotEmpty && outcome.documentId != null) {
         stage = 'ocr';
@@ -796,9 +800,9 @@ const int _kMaxPdfOcrPagesPerImport = 20;
 const List<double> _kRenderScales = [3.0, 2.0, 1.5];
 
 /// 对 `pageNumbers`(1-based,由 `pipeline::ingest_pdf` 通过
-/// `ImportOutcomeDto.pagesWithoutText` 点名——缺文本层、移动端没能在落库时
-/// OCR 的那些页)逐页渲染成 PNG、走原生图片 OCR([recognizeImageText],iOS
-/// Vision / 安卓 ML Kit),返回 page_no → 识别结果,而不是像旧版那样不管页数
+/// `ImportOutcomeDto.pagesWithoutText` 点名——落库时既没有文本层、Rust 侧也没能
+/// OCR 出文字的那些页)逐页渲染成 PNG、走 [recognizeImageText](PP-OCRv5,
+/// iOS/安卓同引擎),返回 page_no → 识别结果,而不是像旧版那样不管页数
 /// 一律从第 1 页盲扫、合并成一整块文本再整份回填。这样才能:(1)只处理真正
 /// 缺文本层的页,混合页 PDF 不用把已有文本层的页也重跑一遍;(2)每页独立回填
 /// (`page_no` 对应真实页码),某页失败不连累其它页。

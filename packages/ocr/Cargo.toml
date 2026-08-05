@@ -40,23 +40,31 @@ pdf-extract.workspace = true
 #   * `auto-download` -- fetches the PP-OCRv5 *model* files into $OAR_HOME
 #                        (~/.oar) the first time OCR runs. Needs a writable home.
 #
-# **Mobile does not use this crate at all** in production. iOS OCRs via Apple
-# Vision and Android via ML Kit, both in the Dart layer (see ADR 0005); the
-# Flutter app's Rust crate has no `ocr` dependency, and `pipeline` takes us with
-# `default-features = false`, so `engine` never links on mobile. The old
-# `set_model_dir` APK-bundling story belonged to the deleted Tauri mobile app
-# (#113) and is dead -- do not resurrect it from this comment.
+# **Mobile DOES use this crate** (this paragraph used to say the opposite --
+# it predates ADR 0006 / the Android PP-OCR switch and misled at least one
+# verification round; read the two Cargo.tomls, not this history).
+# `apps/mobile_flutter/rust/Cargo.toml` declares a direct
+# `cfg(any(target_os = "ios", all(target_os = "android", target_arch =
+# "aarch64")))` dependency on us with `default-features = false, features =
+# ["engine"]`, i.e. PP-OCRv5 links into the shipped iOS + arm64-Android
+# binaries; `auto-download` stays off and the models are packaged and pointed
+# at via `set_model_dir` (`api::vault::ensure_pp_models_ready`).
 #
-# **Exception, test-branch only:** `feat/ios-pp-ocr-test` adds a direct,
-# `cfg(target_os = "ios")`-gated `ocr` (`engine`) dependency to
-# `apps/mobile_flutter/rust/Cargo.toml` to let a real device compare Apple
-# Vision vs PP-OCRv5 quality -- exploratory, ADR 0005 not (yet) superseded, does
-# not touch the Android build. See that Cargo.toml + `api::vault`'s PP-OCR
-# section for the actual wiring; `set_model_dir` above is what it uses.
-# Without `engine`, `recognize`/`recognize_pdf`
-# still compile and return an error ("OCR not available"); callers already
-# treat OCR failure as non-fatal (pipeline falls back to the near-empty text
-# layer / stores the file with no extracted text).
+# Two consequences worth spelling out, because both bite:
+#   * Cargo unifies features per crate, so `pipeline`'s
+#     `default-features = false` dep on us does NOT keep `engine` out of the
+#     mobile build -- `pipeline::ingest_pdf` -> `ocr::recognize_pdf_mixed` ->
+#     `recognize_platform_best` really does reach the ONNX recognizer there.
+#   * `set_model_dir` is first-come-first-served and must run before the first
+#     recognize call; whoever calls the engine first decides.
+#
+# Desktop/CLI keep `default = ["engine", "auto-download"]` (models out of
+# $OAR_HOME) and pick their platform-native primary engine by `target_os`
+# (macOS = Apple Vision, Windows = Windows.Media.Ocr) -- see
+# `recognize_platform_best`. Without `engine`,
+# `recognize_platform_best`/`recognize_pdf_platform_best` still compile and
+# return an error ("OCR not available"); callers already treat OCR failure as
+# non-fatal (pipeline stores the file with no extracted text).
 default = ["engine", "auto-download"]
 engine = ["dep:oar-ocr"]
 auto-download = ["oar-ocr?/auto-download"]
