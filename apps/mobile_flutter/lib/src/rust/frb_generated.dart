@@ -212,7 +212,7 @@ abstract class RustLibApi extends BaseApi {
 
   Future<List<TimelineGroupDto>> crateApiVaultLoadArchive();
 
-  Future<PlatformInt64> crateApiVaultLoadDemoData();
+  Stream<DemoLoadProgressDto> crateApiVaultLoadDemoData();
 
   Future<void> crateApiVaultOpenVault({
     required String docsDir,
@@ -1388,31 +1388,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "load_archive", argNames: []);
 
   @override
-  Future<PlatformInt64> crateApiVaultLoadDemoData() {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 36,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_64,
-          decodeErrorData: sse_decode_AnyhowException,
+  Stream<DemoLoadProgressDto> crateApiVaultLoadDemoData() {
+    final progress = RustStreamSink<DemoLoadProgressDto>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_StreamSink_demo_load_progress_dto_Sse(
+              progress,
+              serializer,
+            );
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 36,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_AnyhowException,
+          ),
+          constMeta: kCrateApiVaultLoadDemoDataConstMeta,
+          argValues: [progress],
+          apiImpl: this,
         ),
-        constMeta: kCrateApiVaultLoadDemoDataConstMeta,
-        argValues: [],
-        apiImpl: this,
       ),
     );
+    return progress.stream;
   }
 
   TaskConstMeta get kCrateApiVaultLoadDemoDataConstMeta =>
-      const TaskConstMeta(debugName: "load_demo_data", argNames: []);
+      const TaskConstMeta(debugName: "load_demo_data", argNames: ["progress"]);
 
   @override
   Future<void> crateApiVaultOpenVault({
@@ -1872,6 +1880,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustStreamSink<DemoLoadProgressDto>
+  dco_decode_StreamSink_demo_load_progress_dto_Sse(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError();
+  }
+
+  @protected
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as String;
@@ -2007,6 +2022,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       signaturePngBase64: dco_decode_opt_String(arr[2]),
       method: dco_decode_String(arr[3]),
       sessionId: dco_decode_String(arr[4]),
+    );
+  }
+
+  @protected
+  DemoLoadProgressDto dco_decode_demo_load_progress_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return DemoLoadProgressDto(
+      loaded: dco_decode_i_64(arr[0]),
+      total: dco_decode_i_64(arr[1]),
+      succeeded: dco_decode_i_64(arr[2]),
+      error: dco_decode_opt_String(arr[3]),
     );
   }
 
@@ -2591,6 +2620,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustStreamSink<DemoLoadProgressDto>
+  sse_decode_StreamSink_demo_load_progress_dto_Sse(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    throw UnimplementedError('Unreachable ()');
+  }
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
@@ -2738,6 +2776,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       signaturePngBase64: var_signaturePngBase64,
       method: var_method,
       sessionId: var_sessionId,
+    );
+  }
+
+  @protected
+  DemoLoadProgressDto sse_decode_demo_load_progress_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_loaded = sse_decode_i_64(deserializer);
+    var var_total = sse_decode_i_64(deserializer);
+    var var_succeeded = sse_decode_i_64(deserializer);
+    var var_error = sse_decode_opt_String(deserializer);
+    return DemoLoadProgressDto(
+      loaded: var_loaded,
+      total: var_total,
+      succeeded: var_succeeded,
+      error: var_error,
     );
   }
 
@@ -3516,6 +3571,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_StreamSink_demo_load_progress_dto_Sse(
+    RustStreamSink<DemoLoadProgressDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(
+      self.setupAndSerialize(
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_demo_load_progress_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+      ),
+      serializer,
+    );
+  }
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
@@ -3644,6 +3716,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.signaturePngBase64, serializer);
     sse_encode_String(self.method, serializer);
     sse_encode_String(self.sessionId, serializer);
+  }
+
+  @protected
+  void sse_encode_demo_load_progress_dto(
+    DemoLoadProgressDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.loaded, serializer);
+    sse_encode_i_64(self.total, serializer);
+    sse_encode_i_64(self.succeeded, serializer);
+    sse_encode_opt_String(self.error, serializer);
   }
 
   @protected

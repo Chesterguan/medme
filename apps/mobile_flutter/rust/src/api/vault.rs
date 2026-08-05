@@ -9,6 +9,11 @@
 //! 使用 —— 语义与 Tauri 版的 `AppState`/`VaultPaths` 一致(真相根/派生库路径/
 //! 设备 id 一起存,重置/迁移时一并替换)。
 use crate::api::dto::*;
+use crate::diagnostics::warn as log_warn;
+// `StreamSink` 不是 `flutter_rust_bridge` crate 本身导出的类型——codegen 按
+// `frb_generated_stream_sink!` 宏把它生成进 `frb_generated.rs`,API 侧照官方
+// 约定从那里 `use`(见 `load_demo_data` 的进度回报,`DemoLoadProgressDto`)。
+use crate::frb_generated::StreamSink;
 use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind, Vault};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -399,7 +404,7 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            eprintln!("[ingest] failed for {}: {e}", path.display());
+            log_warn(&format!("[ingest] failed for {}: {e}", path.display()));
             ImportOutcomeDto {
                 name,
                 source_file_id: 0,
@@ -1202,17 +1207,26 @@ fn collect_demo_files<'a>(dir: &'a include_dir::Dir<'a>, out: &mut Vec<&'a inclu
 /// 运行时用 `resource_dir()` 定位;这里没有「应用资源目录」,数据集直接编译进
 /// 二进制(`DEMO_DATA`),运行时落一份到 `data_dir` 下的临时目录再喂给
 /// `pipeline::ingest`(它按路径操作,不接受内存字节),用完即删。
-pub fn load_demo_data() -> anyhow::Result<i64> {
-    with_state(|state| {
+///
+/// `progress` 每处理完一份(不论成败)推一条 [DemoLoadProgressDto]——华为 Mate 9
+/// 真机实测 22 份 11 秒零反馈,用户以为没点上又点了第二次。这颗 sink 让设置屏能画
+/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。
+///
+/// **本函数恒返回 `Ok(())`,成败一律走 `progress` 的 `error` 字段**——见
+/// [DemoLoadProgressDto] 顶部文档:带 `StreamSink` 参数的 FRB 函数,Dart 侧没有
+/// 任何代码 `await` 这个函数自身的返回值,真返回 `Err` 会在这里悄悄丢失。
+pub fn load_demo_data(progress: StreamSink<DemoLoadProgressDto>) -> anyhow::Result<()> {
+    let result = with_state(|state| {
         let v = &state.vault;
         let mut files: Vec<&include_dir::File<'_>> = Vec::new();
         collect_demo_files(&DEMO_DATA, &mut files);
         files.sort_by_key(|f| f.path().to_path_buf());
+        let total = files.len() as i64;
 
         let tmp_root = state.data_dir.join("medme-demo-data");
         std::fs::create_dir_all(&tmp_root)?;
         let mut count = 0i64;
-        for f in &files {
+        for (i, f) in files.iter().enumerate() {
             let tmp_path = tmp_root.join(f.path());
             if let Some(parent) = tmp_path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -1225,20 +1239,41 @@ pub fn load_demo_data() -> anyhow::Result<i64> {
             }));
             match result {
                 Ok(Ok(_)) => count += 1,
-                Ok(Err(e)) => {
-                    eprintln!("[demo-data] ingest failed for {}: {e}", tmp_path.display())
-                }
-                Err(_) => eprintln!(
+                Ok(Err(e)) => log_warn(&format!(
+                    "[demo-data] ingest failed for {}: {e}",
+                    tmp_path.display()
+                )),
+                Err(_) => log_warn(&format!(
                     "[demo-data] ingest panicked (isolated) for {}",
                     tmp_path.display()
-                ),
+                )),
             }
+            // 忽略发送失败:监听端已断开不该打断导入本身(单向 UI 反馈,不是
+            // 导入流程的一部分)。
+            let _ = progress.add(DemoLoadProgressDto {
+                loaded: i as i64 + 1,
+                total,
+                succeeded: count,
+                error: None,
+            });
         }
         let _ = std::fs::remove_dir_all(&tmp_root); // 尽力清理,失败无妨
         v.rebuild_encounters()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(count)
-    })
+    });
+    if let Err(e) = result {
+        // 整段操作失败——可能一份都没来得及处理(如「保险箱尚未打开」),也可能
+        // 半途 I/O 出错。不管哪种,都得经流报出来,否则等于这个工单要修的
+        // 「安卓上失败静默不可见」在另一个地方原样复发。
+        let _ = progress.add(DemoLoadProgressDto {
+            loaded: 0,
+            total: 0,
+            succeeded: 0,
+            error: Some(e.to_string()),
+        });
+    }
+    Ok(())
 }
 
 /// 「清空保险箱 · 重置」:删掉当前真相目录(`truth_root`)+ 派生库

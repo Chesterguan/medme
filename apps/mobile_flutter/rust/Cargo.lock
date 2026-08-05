@@ -3695,12 +3695,14 @@ dependencies = [
 name = "rust_lib_mobile_flutter"
 version = "0.1.0"
 dependencies = [
+ "android_logger",
  "anyhow",
  "chrono",
  "core-model",
  "dicom",
  "flutter_rust_bridge",
  "include_dir",
+ "log",
  "medme-share",
  "ocr",
  "parser",

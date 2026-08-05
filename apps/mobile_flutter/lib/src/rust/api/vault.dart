@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
+// These functions are ignored because they are not marked as `pub`: `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `format_plausibility_violation`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -308,7 +308,15 @@ Future<ExportResultDto> exportTimelineHtml({
 /// 运行时用 `resource_dir()` 定位;这里没有「应用资源目录」,数据集直接编译进
 /// 二进制(`DEMO_DATA`),运行时落一份到 `data_dir` 下的临时目录再喂给
 /// `pipeline::ingest`(它按路径操作,不接受内存字节),用完即删。
-Future<PlatformInt64> loadDemoData() =>
+///
+/// `progress` 每处理完一份(不论成败)推一条 [DemoLoadProgressDto]——华为 Mate 9
+/// 真机实测 22 份 11 秒零反馈,用户以为没点上又点了第二次。这颗 sink 让设置屏能画
+/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。
+///
+/// **本函数恒返回 `Ok(())`,成败一律走 `progress` 的 `error` 字段**——见
+/// [DemoLoadProgressDto] 顶部文档:带 `StreamSink` 参数的 FRB 函数,Dart 侧没有
+/// 任何代码 `await` 这个函数自身的返回值,真返回 `Err` 会在这里悄悄丢失。
+Stream<DemoLoadProgressDto> loadDemoData() =>
     RustLib.instance.api.crateApiVaultLoadDemoData();
 
 /// 「清空保险箱 · 重置」:删掉当前真相目录(`truth_root`)+ 派生库
