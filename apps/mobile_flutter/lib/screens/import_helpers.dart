@@ -143,6 +143,54 @@ ImportResultRow rowForOutcome(
   );
 }
 
+/// 「这一批没收全」的提示文案 —— **唯一来源**。
+///
+/// 患者模式的导入汇总弹窗(`import_flow.dart::_showImportSummary`)和医生代拍
+/// 采集完的提示条(`proxy_intake_flow.dart::_ingest`)都从这里取字符串。这个项目
+/// 有一条硬约束:同一件事在不同屏上不能长成两个略微不同的意思 —— 「有几页没识别
+/// 出来」在患者那儿叫「部分页未能识别」,在医生那儿就不许改口叫别的。要改文案,
+/// 改这里一处,两屏一起变。
+abstract final class ImportIncompleteNotice {
+  /// 整份一个字都没识别出来(`ImportRowKind.storedNoText`)。
+  static String storedNoText(int count) => '仅存原件(未识别到文字)$count 份';
+
+  /// 识别到了内容,但还有页没拿到文字(`ImportRowKind.partial`)。
+  static String partialPages(int count) => '部分页未能识别 $count 份';
+}
+
+/// 把一批结果行汇总成「没收全」的提示行,没有任何一份不完整时返回**空列表**。
+///
+/// 行序与患者模式汇总弹窗里的一致(先「仅存原件」后「部分页未能识别」),用的也是
+/// [ImportIncompleteNotice] 里同一份字符串。失败份数**不在这里**:那是另一回事
+/// (根本没落库,不是「落了但漏页」),各屏本来就各有自己的报法。
+List<String> incompleteNoticesFor(Iterable<ImportResultRow> rows) {
+  final storedNoText = rows
+      .where((r) => r.kind == ImportRowKind.storedNoText)
+      .length;
+  final partial = rows.where((r) => r.kind == ImportRowKind.partial).length;
+  return [
+    if (storedNoText > 0) ImportIncompleteNotice.storedNoText(storedNoText),
+    if (partial > 0) ImportIncompleteNotice.partialPages(partial),
+  ];
+}
+
+/// 医生代拍采集完那一条提示条的全文;没有任何要说的事时返回 `null`(不弹)。
+///
+/// 代拍不弹患者模式那种汇总弹窗(诊室里多一次「知道了」是多一次点击),但
+/// **「没收全」必须说出来**:医生当场拍完以为收全了,病人一走就再也补不上。
+/// 「没能处理」(压根没落库)和「落库了但有页没识别」是两件事,分行各说各的,
+/// 后者的措辞直接取自 [incompleteNoticesFor] —— 与患者模式同一份字符串。
+String? proxyIntakeNotice({
+  required Iterable<ImportResultRow> rows,
+  required int failed,
+}) {
+  final lines = [
+    if (failed > 0) '有 $failed 份未能处理,可重拍',
+    ...incompleteNoticesFor(rows),
+  ];
+  return lines.isEmpty ? null : lines.join('\n');
+}
+
 /// 单份文件处理过程中直接抛异常(读文件失败、FFI 报错等),同样归入失败展示行,
 /// 不让一份文件的问题中断整个批次。
 ImportResultRow rowFromError(String name, Object error) => ImportResultRow(
