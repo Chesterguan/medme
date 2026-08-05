@@ -2811,4 +2811,189 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn rebuild_layout_text_report1_tilt_does_not_misattribute_reference_ranges() {
+        // Real detection-box geometry captured from
+        // `examples/demo-dataset/real/血常规报告1.jpg` (~7° page tilt -- the
+        // reproduction case for fix/banded-tilt-rows). Every `ll(...)` below
+        // is the exact (text, left, top, right, height) PP-OCRv5 detection
+        // output for this image, dumped once so this fixture doesn't need
+        // the OCR engine or model weights to run.
+        //
+        // This round investigated grouping rows by a *banded* (per-region)
+        // tilt-compensated top (`top - s*x`, with `s` estimated locally
+        // instead of page-wide) to fix the failure this image demonstrates:
+        // name "3淋巴细胞计数" (value 1.48, true ref 1.00~3.30) sits ~44px
+        // above its own reference range at this image's ~0.13 local slope --
+        // past the row-grouping tolerance (`0.6 * height` ≈ 33-36px here) --
+        // so raw-top grouping lands the *previous* item's reference range
+        // ("1.80~6.40") on the same visual row as this item's name instead.
+        // That is a real failure mode. It is just not the one this fixture
+        // is red on, which is the point of this test:
+        //
+        // The over-merged row that raw-top grouping actually produces here
+        // (see the row-by-row simulation in the commit message) is *already*
+        // broken apart correctly -- but for an unrelated reason. This page
+        // also legitimately lays out two tables side by side (items 1-13
+        // left, 14-22 right), so `find_dual_column_band`'s gutter split
+        // (present before this round, unrelated to tilt) cuts the
+        // over-merged row at the same x position that happens to separate
+        // "name + own value" (left column) from "next item's misattributed
+        // range" (right column). Verified against the actual `origin/main`
+        // binary with this exact image: the two required criteria
+        // (`3淋巴细胞计数` must not carry ref_low=1.8; `9单核细胞百分比`
+        // must not carry ref[18.0,40.0]) already hold there, with zero code
+        // changes -- there was no red state for this round to turn green.
+        //
+        // Banded tilt correction was not added on top of that, because it
+        // would not fix the actual near-miss in this photo: under the
+        // previous round's leveled-top reconstruction (fix/tilt-aware-rows,
+        // commit 741d165, not merged), item 1's own value and item 2's name
+        // land within ~2.2px of the reference range that decides which one
+        // it belongs to -- this page's table row pitch (~43px) and its tilt
+        // drift (~44px) are nearly equal, so no single slope, global or
+        // local-to-the-table-band, can safely resolve that boundary. A
+        // banded estimate for this image's table region works out to
+        // approximately the same ~0.13 slope the previous round already
+        // measured (see 741d165's commit message: local ≈ global for this
+        // image), so banding does not change that near-tie.
+        //
+        // Confirmed independently that the dual-column rescue is
+        // coincidental, not a general fix: `血常规报告4.jpg` (whose
+        // extraction results this round's acceptance bar explicitly freezes
+        // unchanged) exhibits this exact failure mode *unprotected* today --
+        // `3淋巴细胞计数` extracts with ref[0.0,0.5], `9单核细胞百分比`
+        // with ref[3.5,10.0]. Touching row-grouping broadly enough to help
+        // report1 in a principled way risks changing report4's (already
+        // wrong) output too, which the acceptance bar forbids.
+        //
+        // This test pins the current, correct-by-luck output so a future
+        // change (e.g. reviving banded tilt) can't silently regress it
+        // without a test failing here first.
+        let lines = vec![
+            ll("独墅湖科教创新区医院化验报告单", 369.0, 0.0, 919.0, 107.0),
+            ll("名孟丁", 192.0, 36.0, 315.0, 48.0),
+            ll("建", 139.0, 39.0, 167.0, 20.0),
+            ll("2016-08-24", 1009.0, 55.0, 1135.0, 50.0),
+            ll("门诊号90051065", 126.0, 57.0, 348.0, 62.0),
+            ll("性别男", 462.0, 67.0, 565.0, 52.0),
+            ll("No: 20160824XXS0025", 872.0, 96.0, 1117.0, 68.0),
+            ll("检验项目", 128.0, 98.0, 245.0, 52.0),
+            ll("科室儿科", 458.0, 98.0, 578.0, 54.0),
+            ll("年龄", 692.0, 101.0, 784.0, 50.0),
+            ll("2岁", 765.0, 110.0, 832.0, 47.0),
+            ll("结果", 323.0, 123.0, 425.0, 52.0),
+            ll("样本类型血液", 860.0, 125.0, 1021.0, 55.0),
+            ll("参考范围", 447.0, 139.0, 570.0, 56.0),
+            ll("1白细胞计数", 111.0, 141.0, 271.0, 55.0),
+            ll("标本状态正常", 856.0, 153.0, 1020.0, 58.0),
+            ll("单位", 582.0, 158.0, 653.0, 48.0),
+            ll("3.86", 320.0, 168.0, 391.0, 44.0),
+            ll("检验项目", 667.0, 169.0, 781.0, 54.0),
+            ll("2中性粒细胞计数", 107.0, 184.0, 319.0, 60.0),
+            ll("4.00~10.00", 440.0, 185.0, 587.0, 52.0),
+            ll("↓", 403.0, 186.0, 429.0, 24.0),
+            ll("结果", 852.0, 193.0, 957.0, 53.0),
+            ll("10^9/14红细胞压积", 572.0, 200.0, 804.0, 67.0),
+            ll("参考范围", 975.0, 209.0, 1094.0, 53.0),
+            ll("1.68", 319.0, 212.0, 385.0, 40.0),
+            ll("单位", 1072.0, 219.0, 1162.0, 54.0),
+            ll("3淋巴细胞计数", 105.0, 226.0, 292.0, 57.0),
+            ll("1.80~6.40", 436.0, 227.0, 571.0, 50.0),
+            ll("↓", 406.0, 229.0, 423.0, 21.0),
+            ll("39.2", 849.0, 238.0, 915.0, 43.0),
+            ll("10^9/L15红细胞平均体积90.1", 570.0, 243.0, 907.0, 79.0),
+            ll("4", 912.0, 248.0, 959.0, 35.0),
+            ll("42.0~49.0", 947.0, 252.0, 1093.0, 49.0),
+            ll("1.48", 316.0, 253.0, 383.0, 42.0),
+            ll("4单核细胞计数", 105.0, 267.0, 293.0, 57.0),
+            ll("1.00~3.30", 435.0, 269.0, 566.0, 49.0),
+            ll("L/L", 1088.0, 270.0, 1146.0, 39.0),
+            ll("10~9/116平均血红蛋白28.0", 564.0, 284.0, 900.0, 77.0),
+            ll("82.0~95.0f1", 956.0, 290.0, 1129.0, 59.0),
+            ll("0.49", 311.0, 293.0, 380.0, 42.0),
+            ll("5嗜酸性粒细胞计数0.17", 104.0, 307.0, 378.0, 68.0),
+            ll("0.20~1.00", 430.0, 310.0, 562.0, 47.0),
+            ll("109/L17平均血红蛋白浓度311", 560.0, 326.0, 880.0, 72.0),
+            ll("27.0~33.0 pg", 945.0, 329.0, 1122.0, 63.0),
+            ll("6嗜碱性粒细胞计数0.04", 103.0, 348.0, 375.0, 66.0),
+            ll("0.00~0.50", 428.0, 350.0, 559.0, 47.0),
+            ll("10~9/L18红细胞分布宽度13.4", 541.0, 363.0, 884.0, 75.0),
+            ll("320~360", 950.0, 374.0, 1061.0, 45.0),
+            ll("4", 911.0, 378.0, 925.0, 19.0),
+            ll("0.02~0.10109/119血小板计数", 422.0, 386.0, 772.0, 78.0),
+            ll("7中性粒细胞百分比43.60", 100.0, 387.0, 380.0, 67.0),
+            ll("0 g/1", 1038.0, 387.0, 1120.0, 41.0),
+            ll("10.6~15.0%", 934.0, 409.0, 1099.0, 57.0),
+            ll("40.00~75.00%", 411.0, 426.0, 581.0, 53.0),
+            ll("8淋巴细胞百分比38.3", 96.0, 428.0, 371.0, 66.0),
+            ll("171", 813.0, 437.0, 867.0, 37.0),
+            ll("20血小板压积", 618.0, 449.0, 768.0, 54.0),
+            ll("100~300", 938.0, 451.0, 1049.0, 46.0),
+            ll("109/L", 1051.0, 465.0, 1139.0, 43.0),
+            ll("18.0~40.0 %", 416.0, 466.0, 576.0, 52.0),
+            ll("9单核细胞百分比12.70", 91.0, 468.0, 373.0, 67.0),
+            ll("0.20", 808.0, 476.0, 872.0, 38.0),
+            ll(
+                "21血小板分布宽度13.7↓ 15.1~18.1%",
+                613.0,
+                489.0,
+                1082.0,
+                91.0,
+            ),
+            ll("0.11~0.28", 921.0, 489.0, 1050.0, 46.0),
+            ll("3.50~10.00 %", 407.0, 506.0, 571.0, 50.0),
+            ll("l/l", 1047.0, 507.0, 1097.0, 32.0),
+            ll("10嗜酸性粒细胞百分4.40", 91.0, 509.0, 355.0, 64.0),
+            ll("+", 377.0, 509.0, 397.0, 17.0),
+            ll("22平均血小板体积 11.70", 610.0, 529.0, 875.0, 65.0),
+            ll("0.00~5.00%", 404.0, 544.0, 569.0, 53.0),
+            ll("11嗜碱性粒细胞百分1.00", 85.0, 548.0, 350.0, 65.0),
+            ll("6.00~14.00 fL", 910.0, 565.0, 1083.0, 54.0),
+            ll("0.00~1.50 %", 397.0, 583.0, 565.0, 56.0),
+            ll("12红细胞计数", 81.0, 588.0, 233.0, 51.0),
+            ll("4.35", 282.0, 611.0, 346.0, 41.0),
+            ll("4.00~5.50", 396.0, 624.0, 527.0, 45.0),
+            ll("13血红蛋白", 76.0, 626.0, 206.0, 50.0),
+            ll("1012/", 505.0, 636.0, 603.0, 42.0),
+            ll("122", 280.0, 653.0, 328.0, 34.0),
+            ll("120~160", 403.0, 664.0, 511.0, 43.0),
+            ll("g/1", 511.0, 678.0, 569.0, 35.0),
+            ll("送检医生董薇", 77.0, 704.0, 240.0, 52.0),
+            ll("接收时间2016-08-2411:07", 72.0, 730.0, 371.0, 67.0),
+            ll("检验者29028", 405.0, 739.0, 576.0, 53.0),
+            ll("本报告仪对所接收样本负责！", 64.0, 758.0, 380.0, 68.0),
+            ll("检验时间2016-08-2411:08", 402.0, 766.0, 694.0, 65.0),
+            ll("审核者樊笋", 726.0, 774.0, 905.0, 56.0),
+            ll("打印时间2016-08-2411:08", 722.0, 801.0, 1013.0, 69.0),
+            ll("发票号码01425472", 798.0, 838.0, 997.0, 59.0),
+        ];
+
+        let out = rebuild_layout_text(&lines);
+
+        let item3_line = out
+            .lines()
+            .find(|l| l.contains("3淋巴细胞计数"))
+            .expect("3淋巴细胞计数 line present");
+        assert!(
+            !item3_line.contains("1.80~6.40"),
+            "item 2's reference range must not land on item 3's name/value line: {item3_line:?}"
+        );
+
+        let item9_line = out
+            .lines()
+            .find(|l| l.contains("9单核细胞百分比"))
+            .expect("9单核细胞百分比 line present");
+        assert!(
+            item9_line.contains("21血小板分布宽度"),
+            "item 9 must stay glued to the unrelated content next to it -- if it \
+             ever comes out clean (name, value, ref alone), that is new behavior, \
+             not this fixture's current accidental safety net, and the reference \
+             range must be checked by hand against the original photo before \
+             trusting it (18.0~40.0 in this row is item 9's own printed range,  \
+             but arrives glued to item 21's row -- confirm parser-side handling \
+             separately): {item9_line:?}"
+        );
+    }
 }
