@@ -23,6 +23,7 @@ import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
@@ -80,6 +81,55 @@ void main() {
       expect(labStatusOf(null), isNull);
       expect(labStatusOf(''), isNull);
       expect(labStatusOf('  '), isNull);
+    });
+
+    test('「N」是 Rust 明确判定的正常 —— 与「没有标记」同样什么都不画', () {
+      // Rust 侧 flag 的取值域是 `"H" | "L" | "N" | null`(`labs.rs` 的
+      // `LabObservation::flag`、`aggregate.rs` 的自测值同一套):有参考区间且值落在
+      // 区间内 → `"N"`,没有区间可判 → `null`。这里曾经只认 H/L,`"N"` 掉进
+      // `unknown`,于是一个**内部编码**被当成印刷体印给用户:22 项血常规里 20 项
+      // 各挂一个灰色「N」pill。
+      expect(labStatusOf('N'), isNull);
+      expect(labStatusOf('n'), isNull, reason: '大小写不敏感,与 H/L 一致');
+      expect(labStatusOf(' N '), isNull, reason: '两头的空白不该改变判定');
+    });
+
+    testWidgets('flag = N 的行:没有 pill、正文墨色、色条透明', (tester) async {
+      // 上面那条纯函数断言的用户可见兑现 —— 「正常不上色」这条规则(设计系统 §二)
+      // 对「明确正常」和「没有标记」必须给出同一个结果,否则一份血常规里 1–2 项真正
+      // 的异常会被二十个 N 淹没。
+      await tester.pumpWidget(
+        wrap(
+          const LabLine(
+            name: '血小板计数',
+            value: 210,
+            unit: '10^9/L',
+            flag: 'N',
+            refLow: 125,
+            refHigh: 350,
+          ),
+        ),
+      );
+      expect(find.text('N'), findsNothing, reason: '内部编码不许出现在界面上');
+      expect(find.byType(MedPill), findsNothing, reason: '正常不给 pill');
+      final ctx = tester.element(find.byType(LabLine));
+      expect(
+        tester.widget<Text>(find.text('210 10^9/L')).style?.color,
+        MedColors.of(ctx).ink,
+        reason: '正常值用正文墨色,不上高/低色',
+      );
+      // 参考区间照常显示 —— 显示与判定是两件事。
+      expect(find.textContaining('参考 125–350'), findsOneWidget);
+    });
+
+    testWidgets('「HH」「危」仍然原样透出 —— 认 N 不许把真读不懂的记号一起吞掉', (
+      tester,
+    ) async {
+      // 这才是 BUG-2 最危险的那一半:N 泛滥的时候,「HH」跟例行正常值长得一模一样。
+      await tester.pumpWidget(
+        wrap(const LabLine(name: '血钾', value: 7.1, unit: 'mmol/L', flag: 'HH')),
+      );
+      expect(find.text('HH'), findsOneWidget);
     });
 
     test('认不出的标记不吞掉,原样成为 unknown', () {

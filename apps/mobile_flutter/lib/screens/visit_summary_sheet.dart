@@ -55,19 +55,32 @@ Future<void> showVisitSummarySheet(BuildContext context) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    builder: (_) => const _VisitSummarySheet(),
+    builder: (_) => const VisitSummarySheet(),
   );
 }
 
-class _VisitSummarySheet extends StatefulWidget {
-  const _VisitSummarySheet();
+/// 浮层本体。生产只由 [showVisitSummarySheet] 用默认构造建;两个可注入的钩子存在的
+/// 唯一理由是**测试**:这一屏的数据源与「加一条」都要走 Rust FFI,而 `flutter test`
+/// 不加载原生库(见 `test/visit_summary_sheet_test.dart` 顶部同一条限制)。注入之后
+/// 「存完笔记要重新拉一次数据」才能被钉成一条不依赖设备的回归。
+class VisitSummarySheet extends StatefulWidget {
+  const VisitSummarySheet({super.key, this.load, this.onRequestAddNote});
+
+  /// 数据源。null → [viewVisitSummary](FFI)。
+  final Future<VisitSummaryDto> Function()? load;
+
+  /// 「加一条」按下时走的动作,返回「是否真的存了一条」。null → 开录入弹层(FFI)。
+  final Future<bool?> Function(BuildContext context)? onRequestAddNote;
 
   @override
-  State<_VisitSummarySheet> createState() => _VisitSummarySheetState();
+  State<VisitSummarySheet> createState() => _VisitSummarySheetState();
 }
 
-class _VisitSummarySheetState extends State<_VisitSummarySheet> {
-  late Future<VisitSummaryDto> _future = viewVisitSummary();
+class _VisitSummarySheetState extends State<VisitSummarySheet> {
+  late Future<VisitSummaryDto> _future = _load();
+
+  Future<VisitSummaryDto> _load() =>
+      widget.load?.call() ?? viewVisitSummary();
 
   void _openDoc(int id) {
     // 与档案屏同一条埋点:只报「打开了一份」,不带 id、不带任何内容。
@@ -90,13 +103,32 @@ class _VisitSummarySheetState extends State<_VisitSummarySheet> {
   /// 这一屏的数据,不需要用户自己关掉浮层再重开——参见 `overview_screen.dart` 的
   /// `_openManualEntry` 同一条理由:存完立刻看见结果,不是靠额外的 SnackBar 交代。
   Future<void> _addNote() async {
-    final saved = await showManualEntrySheet(
-      context,
-      initialKind: ManualEntryKind.note,
-    );
-    if (saved == true && mounted) {
-      setState(() => _future = viewVisitSummary());
-    }
+    final add = widget.onRequestAddNote;
+    final saved = add != null
+        ? await add(context)
+        : await showManualEntrySheet(
+            context,
+            initialKind: ManualEntryKind.note,
+          );
+    if (saved == true && mounted) await _refresh();
+  }
+
+  /// 重新拉一次数据并**真的重建这一屏**。
+  ///
+  /// 与概览 / 趋势 / 档案三屏同一个写法,理由也同一条:`setState(() => _future = …)`
+  /// 的**箭头体**会把赋值结果(一个 `Future`)当成 setState 的返回值交出去,
+  /// `State.setState` 在断言里发现它是 Future 就抛 —— 而那一抛发生在
+  /// `markNeedsBuild()` **之前**。于是 `_future` 换成了新的,却没有任何一次重建被
+  /// 调度:用户看着自己刚写的笔记没出现,自然会再写一遍。这一处还更狠 —— 它在一个
+  /// `async` 方法里、由 `VoidCallback` 调起,异常直接逃成未捕获的 zone 错误,连控制台
+  /// 上都只是一条与现象对不上的噪音。release 里断言被剥掉看不出来,debug/profile 必现。
+  /// **所以必须是语句块,不是箭头。**
+  Future<void> _refresh() async {
+    final next = _load();
+    setState(() {
+      _future = next;
+    });
+    await next;
   }
 
   @override

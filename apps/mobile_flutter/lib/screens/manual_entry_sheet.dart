@@ -698,20 +698,52 @@ class _WhenRow extends StatelessWidget {
       borderRadius: BorderRadius.circular(MedShape.radiusControl),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
-        child: Row(
+        // 这一行曾经是一个 `Row`:`[图标][「测量时间」][Spacer][日期时间][箭头]`,
+        // 两个 `Text` 都是**非 flex 子项**。`RenderFlex` 给非 flex 子项的主轴约束
+        // 是**无穷大**,于是它们各自按固有宽度铺开,谁也不会折行 —— 系统字号 ×2.0
+        // 时 `Spacer` 先被挤成 0,还差 31px,直接横向溢出(×1.0/1.3/1.5 都干净,
+        // 只有 ×2.0 露出来)。007 §2.5「字号可放大,不可砍」:不能截断日期、不能
+        // 缩字号,只能让它换行。
+        //
+        // 改成 `Wrap` —— 与同屏 `QuickActions` 同一条处理。两组([图标+文字] 与
+        // [日期+箭头])各自 `MainAxisSize.min`:放得下时同一行,`spaceBetween` 把
+        // 日期推到最右边,与原来的观感一模一样;放不下时日期整组落到第二行,而不是
+        // 溢出。两处文字再各套一层 `Flexible`,因为 ×2.0 时单是日期那一组就可能宽
+        // 过一整行(十六个字符),那时它得自己折行。
+        child: Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: MedShape.s2,
+          runSpacing: MedShape.s1,
           children: [
-            Icon(Icons.schedule, size: 18, color: c.ink3),
-            const SizedBox(width: MedShape.s1),
-            Text('测量时间', style: MedType.body.copyWith(color: c.ink2)),
-            const Spacer(),
-            Text(
-              label,
-              style: MedType.body.copyWith(
-                color: c.sealInk,
-                fontFeatures: MedType.tabular,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.schedule, size: 18, color: c.ink3),
+                const SizedBox(width: MedShape.s1),
+                Flexible(
+                  child: Text(
+                    '测量时间',
+                    style: MedType.body.copyWith(color: c.ink2),
+                  ),
+                ),
+              ],
             ),
-            Icon(Icons.chevron_right, size: 18, color: c.ink3),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    label,
+                    style: MedType.body.copyWith(
+                      color: c.sealInk,
+                      fontFeatures: MedType.tabular,
+                    ),
+                  ),
+                ),
+                Icon(Icons.chevron_right, size: 18, color: c.ink3),
+              ],
+            ),
           ],
         ),
       ),
