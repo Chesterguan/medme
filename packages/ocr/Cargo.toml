@@ -68,6 +68,11 @@ pdf-extract.workspace = true
 default = ["engine", "auto-download"]
 engine = ["dep:oar-ocr"]
 auto-download = ["oar-ocr?/auto-download"]
+# Exposes `ocr::testing`'s multi-page-TIFF fixture builders to *other* crates'
+# tests (`pipeline` enables it from `[dev-dependencies]`). Off by default, and
+# `#[cfg(any(test, feature = "testing"))]` on the module itself keeps the
+# builders out of every shipping build.
+testing = []
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"

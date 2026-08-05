@@ -525,6 +525,14 @@ pub fn backfill_pdf_text(
 /// 传入值);识别为空则退回文件名元数据(`StoredNoText`),原件仍可见。落库语义逐字
 /// 镜像 Tauri 版 `ingest_image_via_vision`/`ingest_image_via_mlkit`,只是识别文本来自
 /// 参数而非本地再跑一次 OCR。
+///
+/// **多页原件(多页 TIFF)**:Dart 侧把**文件路径**交给 Apple Vision / ML Kit,
+/// 两者都只识别第一帧,所以 `ocr_text` 里永远只有第 1 页。这条路径过去把
+/// `page_count` 写死 1、`pages_without_text` 写死空,于是第 2 页起整页丢失而
+/// UI 报「已识别入库」——与 `pipeline::ingest_image` 修的是同一个缺陷,只是发生
+/// 在移动端这条**不经 `pipeline::ingest`** 的独立路径上(移动端的 `.tiff` 由
+/// `isImageName` 判为图片,走的就是这里,不是 `ingest_bytes`)。现在如实带出真实
+/// 页数与没读到的页码;调用方 `import_flow.dart` 据此报「N 页未能识别文字」。
 pub fn ingest_image_with_text(
     name: String,
     bytes: Vec<u8>,
@@ -550,6 +558,18 @@ pub fn ingest_image_with_text(
         base.to_string()
     } else {
         format!("{base}.jpg")
+    };
+
+    // 原件真实页数(多页 TIFF>1,其余一律 1)。`ocr_text` 只可能是第 1 页的,
+    // 故 2..=n 是「没读到的页」;一页文字都没识别出来时 1..=n 全都没读到。
+    // 单页图片(绝大多数)两者都退化成 1 页 / 空表,行为与旧版逐字节相同。
+    let page_count = pipeline::image_page_count(&bytes) as i32;
+    let unread_from = |first: i32| -> Vec<i32> {
+        if page_count > 1 {
+            (first..=page_count).collect()
+        } else {
+            Vec::new()
+        }
     };
 
     with_state(|state| {
@@ -586,7 +606,7 @@ pub fn ingest_image_with_text(
                         doc_date_end,
                         title: Some(safe_name.clone()),
                         language: parser::detect_language(&text),
-                        page_count: 1,
+                        page_count,
                     })
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 v.add_ocr(NewOcr {
@@ -606,7 +626,8 @@ pub fn ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: parser::extract_demographics(&text).name,
-                    pages_without_text: Vec::new(),
+                    // 第 1 页有文字,2..=n 没读到。
+                    pages_without_text: unread_from(2),
                 }
             } else {
                 let (doc_date, doc_date_end) = parser::guess_date_range(&safe_name);
@@ -619,7 +640,7 @@ pub fn ingest_image_with_text(
                         doc_date_end,
                         title: Some(safe_name.clone()),
                         language: None,
-                        page_count: 1,
+                        page_count,
                     })
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 ImportOutcomeDto {
@@ -629,7 +650,8 @@ pub fn ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: None, // 无文本,识别不到名字
-                    pages_without_text: Vec::new(),
+                    // 一页文字都没有,1..=n 全都没读到。
+                    pages_without_text: unread_from(1),
                 }
             }
         };

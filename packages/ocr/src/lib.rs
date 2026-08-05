@@ -192,6 +192,157 @@ fn decode_image_bounded(image_bytes: &[u8]) -> Result<DynamicImage> {
     Ok(img)
 }
 
+/// Hard cap on the IFD-chain walk in [`image_page_count`]. Each step is a
+/// handful of bounds-checked slice reads -- no allocation, no pixel decoding --
+/// so this exists purely so a malformed/hostile file whose IFDs form a cycle
+/// can't spin forever. Saturating here can only ever *under*-report pages,
+/// never over-report, so honesty degrades gracefully.
+const MAX_IMAGE_PAGES: u32 = 4_096;
+
+/// How many pages the image file in `image_bytes` actually holds.
+///
+/// **Why this exists.** Every recognizer in this app reads exactly *one* frame
+/// out of an image file: [`decode_image_bounded`] (`DynamicImage::from_decoder`)
+/// decodes the first frame only, Apple Vision / `Windows.Media.Ocr` are handed
+/// raw bytes and recognize the primary image, and the mobile Dart layer hands a
+/// file path to Apple Vision / ML Kit, which do the same. Of the file types
+/// this app accepts (`pipeline::mime_for`: png/jpeg/tiff/heic) **TIFF can hold
+/// more than one page**, and a multi-page TIFF's pages 2..n were therefore
+/// dropped *without any signal at all* -- the document came back
+/// `IngestStatus::New`, `page_count == 1`, and the UI said "已识别入库".
+///
+/// This does not fix that (nothing here decodes frame 2); it makes the loss
+/// *reportable*, which is what `IngestOutcome::pages_without_text` needs. See
+/// `pipeline::ingest_image`.
+///
+/// Returns `1` for single-page images, for non-TIFF formats, and for anything
+/// it cannot make sense of -- i.e. it never claims pages it isn't sure about,
+/// so a parse failure degrades to exactly the pre-existing assumption rather
+/// than to a false alarm. Never panics and never allocates: the whole walk is
+/// `slice::get` reads over untrusted bytes with an iteration cap.
+pub fn image_page_count(image_bytes: &[u8]) -> u32 {
+    tiff_page_count(image_bytes).unwrap_or(0).max(1)
+}
+
+/// Byte-order-aware, bounds-checked scalar reads over a TIFF's raw bytes.
+/// Every accessor returns `None` rather than panicking when the offset a
+/// (possibly malformed) file points at is out of range.
+struct TiffReader<'a> {
+    bytes: &'a [u8],
+    big_endian: bool,
+}
+
+impl TiffReader<'_> {
+    fn u16(&self, at: usize) -> Option<u16> {
+        let raw: [u8; 2] = self.bytes.get(at..at.checked_add(2)?)?.try_into().ok()?;
+        Some(if self.big_endian {
+            u16::from_be_bytes(raw)
+        } else {
+            u16::from_le_bytes(raw)
+        })
+    }
+
+    fn u32(&self, at: usize) -> Option<u32> {
+        let raw: [u8; 4] = self.bytes.get(at..at.checked_add(4)?)?.try_into().ok()?;
+        Some(if self.big_endian {
+            u32::from_be_bytes(raw)
+        } else {
+            u32::from_le_bytes(raw)
+        })
+    }
+
+    fn u64(&self, at: usize) -> Option<u64> {
+        let raw: [u8; 8] = self.bytes.get(at..at.checked_add(8)?)?.try_into().ok()?;
+        Some(if self.big_endian {
+            u64::from_be_bytes(raw)
+        } else {
+            u64::from_le_bytes(raw)
+        })
+    }
+}
+
+/// Count the pages of a TIFF by walking its IFD chain (classic and BigTIFF),
+/// reading only the directory structure -- never any pixel data. `None` means
+/// "not a TIFF, or malformed enough that no honest count can be given".
+fn tiff_page_count(bytes: &[u8]) -> Option<u32> {
+    let r = TiffReader {
+        bytes,
+        big_endian: match bytes.get(..2)? {
+            b"II" => false,
+            b"MM" => true,
+            _ => return None,
+        },
+    };
+    // Magic 42 = classic TIFF (u32 offsets, 12-byte entries); 43 = BigTIFF
+    // (u64 offsets, 20-byte entries, and a u64 entry count per IFD).
+    let (bigtiff, mut next_ifd) = match r.u16(2)? {
+        42 => (false, u64::from(r.u32(4)?)),
+        43 => {
+            // BigTIFF header: offset size (always 8) then a constant 0.
+            if r.u16(4)? != 8 || r.u16(6)? != 0 {
+                return None;
+            }
+            (true, r.u64(8)?)
+        }
+        _ => return None,
+    };
+    let (entry_size, value_off) = if bigtiff {
+        (20usize, 12usize)
+    } else {
+        (12usize, 8usize)
+    };
+
+    let mut pages = 0u32;
+    while next_ifd != 0 && pages < MAX_IMAGE_PAGES {
+        let ifd = usize::try_from(next_ifd).ok()?;
+        let (entries, first_entry) = if bigtiff {
+            (usize::try_from(r.u64(ifd)?).ok()?, ifd.checked_add(8)?)
+        } else {
+            (usize::from(r.u16(ifd)?), ifd.checked_add(2)?)
+        };
+        let after_entries = first_entry.checked_add(entries.checked_mul(entry_size)?)?;
+        // Every entry must actually be present. A declared count that runs off
+        // the end of the file is malformed -> no honest count, bail out.
+        bytes.get(first_entry..after_entries)?;
+        if !is_thumbnail_ifd(&r, first_entry, after_entries, entry_size, value_off) {
+            pages += 1;
+        }
+        next_ifd = if bigtiff {
+            r.u64(after_entries)?
+        } else {
+            u64::from(r.u32(after_entries)?)
+        };
+    }
+    Some(pages)
+}
+
+/// True when this IFD describes a reduced-resolution *thumbnail* of another
+/// image rather than a page of its own (TIFF 6.0 `NewSubfileType` bit 0, or the
+/// deprecated `SubfileType == 2`).
+///
+/// Scanner-produced multi-page TIFFs never set this on their pages, but some
+/// writers append a thumbnail IFD to an otherwise single-page file -- counting
+/// that as page 2 would raise a "1 page could not be read" alarm on a file
+/// nothing was ever lost from. Both tags hold a single inline SHORT/LONG, so no
+/// out-of-line value ever has to be followed.
+fn is_thumbnail_ifd(
+    r: &TiffReader,
+    first_entry: usize,
+    after_entries: usize,
+    entry_size: usize,
+    value_off: usize,
+) -> bool {
+    (first_entry..after_entries)
+        .step_by(entry_size)
+        .any(|entry| match r.u16(entry) {
+            // NewSubfileType: LONG bitfield, bit 0 = "reduced resolution".
+            Some(254) => r.u32(entry + value_off).is_some_and(|v| v & 1 != 0),
+            // SubfileType (deprecated): SHORT, 2 = reduced-resolution image.
+            Some(255) => r.u16(entry + value_off) == Some(2),
+            _ => false,
+        })
+}
+
 /// Downscale `img` (preserving aspect ratio) so neither dimension exceeds
 /// [`OCR_MAX_WORKING_DIM`], returning it unchanged when it already fits. This
 /// caps the transient `f32` buffers `preprocess` allocates on very large
@@ -1709,9 +1860,240 @@ pub fn recognize_pdf_mixed(pdf_bytes: &[u8]) -> Result<MixedPdfOutcome> {
     Ok(MixedPdfOutcome { pages })
 }
 
+/// Test-only builders for real, decodable multi-page TIFFs, so the multi-page
+/// regression tests here *and* in `pipeline` need no checked-in binary fixture
+/// -- the bytes are the spec, right there in the test.
+///
+/// Compiled only for this crate's own tests and for consumers that ask for the
+/// `testing` feature from a `[dev-dependencies]` entry (`pipeline` does); it is
+/// never part of a shipping build.
+#[cfg(any(test, feature = "testing"))]
+#[doc(hidden)]
+pub mod testing {
+    /// Every page is 8x8, so its uncompressed 8-bit grayscale strip is 64 bytes.
+    const DIM: u32 = 8;
+    const STRIP_LEN: u32 = DIM * DIM;
+    /// ImageWidth, ImageLength, BitsPerSample, Compression, Photometric,
+    /// StripOffsets, SamplesPerPixel, RowsPerStrip, StripByteCounts (+ an
+    /// optional leading NewSubfileType).
+    const BASE_TAGS: u32 = 9;
+
+    fn ifd_len(tags: u32) -> u32 {
+        2 + 12 * tags + 4
+    }
+
+    /// One 12-byte IFD entry. SHORT (type 3) count 1 is left-justified in the
+    /// 4-byte value field on a little-endian TIFF and LONG (type 4) fills it,
+    /// so writing `value` as a u32 is correct for both.
+    fn entry(out: &mut Vec<u8>, tag: u16, ty: u16, value: u32) {
+        out.extend_from_slice(&tag.to_le_bytes());
+        out.extend_from_slice(&ty.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    /// A genuine classic little-endian TIFF with one page per entry of
+    /// `pages`. Each entry is `(gray_fill, is_reduced_resolution_thumbnail)`;
+    /// thumbnail pages carry `NewSubfileType` bit 0, which is how a writer
+    /// marks an IFD that is *not* a page of its own.
+    pub fn multipage_tiff(pages: &[(u8, bool)]) -> Vec<u8> {
+        // Lay every page out as [IFD][64-byte strip] so all offsets are known
+        // up front. Thumbnail pages carry one extra tag, hence the running sum.
+        let mut page_at = Vec::with_capacity(pages.len());
+        let mut cursor = 8u32; // right after the 8-byte header
+        for (_, thumb) in pages {
+            page_at.push(cursor);
+            cursor += ifd_len(BASE_TAGS + u32::from(*thumb)) + STRIP_LEN;
+        }
+
+        let mut out = Vec::with_capacity(cursor as usize);
+        out.extend_from_slice(b"II");
+        out.extend_from_slice(&42u16.to_le_bytes());
+        out.extend_from_slice(&page_at[0].to_le_bytes());
+
+        for (i, (fill, thumb)) in pages.iter().enumerate() {
+            let tags = BASE_TAGS + u32::from(*thumb);
+            let strip_at = page_at[i] + ifd_len(tags);
+            out.extend_from_slice(&(tags as u16).to_le_bytes());
+            // Entries must be sorted by tag; 254 (if present) comes first.
+            if *thumb {
+                entry(&mut out, 254, 4, 1); // NewSubfileType: reduced resolution
+            }
+            entry(&mut out, 256, 4, DIM); // ImageWidth
+            entry(&mut out, 257, 4, DIM); // ImageLength
+            entry(&mut out, 258, 3, 8); // BitsPerSample
+            entry(&mut out, 259, 3, 1); // Compression = none
+            entry(&mut out, 262, 3, 1); // Photometric = BlackIsZero
+            entry(&mut out, 273, 4, strip_at); // StripOffsets
+            entry(&mut out, 277, 3, 1); // SamplesPerPixel
+            entry(&mut out, 278, 4, DIM); // RowsPerStrip
+            entry(&mut out, 279, 4, STRIP_LEN); // StripByteCounts
+            let next = page_at.get(i + 1).copied().unwrap_or(0);
+            out.extend_from_slice(&next.to_le_bytes());
+            out.extend_from_slice(&vec![*fill; STRIP_LEN as usize]);
+        }
+        out
+    }
+
+    /// Shorthand: `n` ordinary (non-thumbnail) pages, each a different gray.
+    pub fn plain_multipage_tiff(n: usize) -> Vec<u8> {
+        let pages: Vec<(u8, bool)> = (0..n).map(|i| ((i as u8) * 40, false)).collect();
+        multipage_tiff(&pages)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::testing::{multipage_tiff, plain_multipage_tiff};
     use super::*;
+
+    /// The fixture builder must produce a TIFF the `image` crate really
+    /// decodes -- otherwise the page-count tests below would be asserting
+    /// against bytes no decoder agrees are a TIFF, and the "only frame 1 is
+    /// read" claim would be unfounded.
+    #[test]
+    fn multipage_tiff_fixture_is_a_real_decodable_tiff() {
+        let bytes = plain_multipage_tiff(2);
+        let img = decode_image_bounded(&bytes).expect("fixture must decode as a TIFF");
+        assert_eq!(img.dimensions(), (8, 8));
+        // The whole defect in one assertion: the decoder hands back a single
+        // frame and offers no hint that a second page exists.
+        assert_eq!(img.to_luma8().get_pixel(0, 0).0[0], 0, "must be page 1");
+    }
+
+    #[test]
+    fn image_page_count_counts_every_page_of_a_multipage_tiff() {
+        for n in 1..=5 {
+            assert_eq!(
+                image_page_count(&plain_multipage_tiff(n)),
+                n as u32,
+                "{n}-page TIFF"
+            );
+        }
+    }
+
+    /// A reduced-resolution thumbnail IFD is not a page. Counting it would
+    /// raise a false "1 page could not be read" alarm on a single-page file
+    /// nothing was ever lost from.
+    #[test]
+    fn image_page_count_ignores_reduced_resolution_thumbnail_ifds() {
+        let with_thumb = multipage_tiff(&[(10, false), (200, true)]);
+        assert_eq!(image_page_count(&with_thumb), 1);
+        // ...but a real second page next to a thumbnail still counts.
+        let two_plus_thumb = multipage_tiff(&[(10, false), (200, true), (90, false)]);
+        assert_eq!(image_page_count(&two_plus_thumb), 2);
+    }
+
+    /// Non-TIFF and unparseable inputs must degrade to exactly the
+    /// pre-existing assumption (1 page), never to a false alarm and never to
+    /// a panic -- these bytes come straight from an untrusted file.
+    #[test]
+    fn image_page_count_is_one_for_non_tiff_and_never_panics_on_garbage() {
+        use std::io::Cursor;
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageLuma8(GrayImage::new(4, 4))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encode png");
+        assert_eq!(image_page_count(png.get_ref()), 1, "PNG");
+        assert_eq!(image_page_count(b""), 1, "empty");
+        assert_eq!(image_page_count(b"II"), 1, "truncated header");
+        assert_eq!(image_page_count(b"not an image at all"), 1, "garbage");
+        // Well-formed header pointing at an IFD past EOF.
+        let mut dangling = b"II\x2a\x00".to_vec();
+        dangling.extend_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+        assert_eq!(image_page_count(&dangling), 1, "IFD offset past EOF");
+        // Truncate a real 3-page TIFF mid-way: the surviving prefix must still
+        // yield a sane answer rather than a panic or a bogus huge count.
+        let full = plain_multipage_tiff(3);
+        for cut in [9, 20, 60, 150, full.len() - 1] {
+            let n = image_page_count(&full[..cut]);
+            assert!((1..=3).contains(&n), "truncated at {cut} gave {n}");
+        }
+    }
+
+    /// A crafted TIFF whose IFD chain loops back on itself must terminate.
+    /// The walk is capped, so the worst case is an under-count, never a hang.
+    #[test]
+    fn image_page_count_terminates_on_a_cyclic_ifd_chain() {
+        let mut bytes = plain_multipage_tiff(2);
+        // Point page 2's "next IFD" back at page 1's IFD (offset 8).
+        let page2_ifd = 8 + (2 + 12 * 9 + 4) + 64;
+        let next_field = page2_ifd + 2 + 12 * 9;
+        bytes[next_field..next_field + 4].copy_from_slice(&8u32.to_le_bytes());
+        let n = image_page_count(&bytes);
+        assert_eq!(n, MAX_IMAGE_PAGES, "must saturate at the cap, not spin");
+    }
+
+    /// A bare IFD chain -- header plus `pages` directories of one dummy entry
+    /// each, no pixel data. `tiff_page_count` never decodes pixels, so this is
+    /// all it needs, and it lets the big-endian and BigTIFF header variants be
+    /// covered without teaching the full fixture builder three more layouts.
+    fn structural_tiff(big_endian: bool, bigtiff: bool, pages: usize) -> Vec<u8> {
+        // Widths, in bytes, of: one IFD entry / an IFD's entry-count field / an
+        // IFD offset / an entry's `count` field / an entry's value field.
+        let (entry_size, dir_count, off_size, tag_count, value_size) = if bigtiff {
+            (20usize, 8usize, 8usize, 8usize, 8usize)
+        } else {
+            (12usize, 2usize, 4usize, 4usize, 4usize)
+        };
+        let header = if bigtiff { 16usize } else { 8usize };
+        let ifd_len = dir_count + entry_size + off_size; // exactly one entry
+        let put = |out: &mut Vec<u8>, v: u64, width: usize| {
+            let be = v.to_be_bytes();
+            let le = v.to_le_bytes();
+            if big_endian {
+                out.extend_from_slice(&be[8 - width..]);
+            } else {
+                out.extend_from_slice(&le[..width]);
+            }
+        };
+
+        let mut out = Vec::new();
+        out.extend_from_slice(if big_endian { b"MM" } else { b"II" });
+        put(&mut out, if bigtiff { 43 } else { 42 }, 2);
+        if bigtiff {
+            put(&mut out, 8, 2); // offset size
+            put(&mut out, 0, 2); // constant zero
+        }
+        put(&mut out, header as u64, off_size); // first IFD sits right after
+        for i in 0..pages {
+            put(&mut out, 1, dir_count); // this IFD has one entry
+            put(&mut out, 256, 2); // tag ImageWidth -- not a subfile-type tag
+            put(&mut out, 4, 2); // type LONG
+            put(&mut out, 1, tag_count);
+            put(&mut out, 8, value_size);
+            let next = if i + 1 < pages {
+                (header + (i + 1) * ifd_len) as u64
+            } else {
+                0
+            };
+            put(&mut out, next, off_size);
+        }
+        out
+    }
+
+    /// The three header layouts the walker claims to handle must actually be
+    /// handled. Big-endian ("MM") and BigTIFF (magic 43, u64 offsets, 20-byte
+    /// entries) are separate code paths from the little-endian classic case the
+    /// tests above exercise -- untested branches in a parser reading untrusted
+    /// bytes are exactly where a silent wrong answer hides.
+    #[test]
+    fn image_page_count_handles_big_endian_and_bigtiff_layouts() {
+        for (be, big, label) in [
+            (false, false, "LE classic"),
+            (true, false, "BE classic"),
+            (false, true, "LE BigTIFF"),
+            (true, true, "BE BigTIFF"),
+        ] {
+            for n in [1usize, 3] {
+                assert_eq!(
+                    image_page_count(&structural_tiff(be, big, n)),
+                    n as u32,
+                    "{label}, {n} page(s)"
+                );
+            }
+        }
+    }
 
     /// The banding dedup rule must tile the page with no gaps and no double-counts:
     /// every vertical position is owned by exactly one band's core. Cores here are

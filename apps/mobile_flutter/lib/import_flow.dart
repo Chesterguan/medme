@@ -818,6 +818,16 @@ Future<void> _defaultBackfill({
 /// 报 `'ocr'`,开始回填时报 `'save'` —— 与抽取前患者模式内联写法逐字一致。没有
 /// 任何页要补时**一次都不回调**,`stage` 保持调用方原样(落库后就是 `'save'`)。
 ///
+/// **只有 PDF 补得回来。** `pagesWithoutText` 现在还会点名多页图片(多页 TIFF)
+/// 里第 2 页起那些页 —— 原生识别器(`recognizeImageText`)拿到的是整个文件、
+/// 只认第一帧,那些页根本没被读过(见 `pipeline::ingest_image` 与
+/// `api::vault::ingest_image_with_text` 的文档注释)。它们**端上无从补救**:
+/// 不是 PDF,`_ocrScannedPdfPages` 拿去 `PdfDocument.openFile` 只会白跑一趟
+/// (那里 catch 住返回空表,不崩,但也毫无意义)。所以对图片直接把点名的页数
+/// 原样计回返回值 —— 补不了就照实说「N 页未能识别文字」,绝不因为「补救函数
+/// 返回了空表」就把它混成一次失败的补救。判据用的是 [isImageName],与调用方
+/// 当初把这份文件判成图片(`PendingImport.isImage`)时是同一个谓词、同一个文件。
+///
 /// [ocrPages] / [backfill] 只为测试注入替身:真实实现要碰 `pdfx` 渲染和 Rust
 /// FFI,在 `flutter test` 的纯 dart 进程里都跑不起来。生产调用一律用默认值。
 Future<int> backfillPagesWithoutText(
@@ -828,6 +838,8 @@ Future<int> backfillPagesWithoutText(
   PdfTextBackfill backfill = _defaultBackfill,
 }) async {
   if (outcome.pagesWithoutText.isEmpty || outcome.documentId == null) return 0;
+  // 多页图片:没得补,如实全部计入「仍未识别」,不动 `stage`(没进渲染/回填)。
+  if (isImageName(path)) return outcome.pagesWithoutText.length;
   onStage?.call('ocr');
   final targetPages = outcome.pagesWithoutText.toList();
   final scan = await ocrPages(path, targetPages);

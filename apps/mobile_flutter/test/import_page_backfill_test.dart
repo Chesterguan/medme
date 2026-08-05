@@ -201,6 +201,56 @@ void main() {
     });
   });
 
+  group('多页图片(多页 TIFF)—— 点名的页端上补不回来,必须照实报', () {
+    // 原生识别器只认第一帧,所以 pipeline / ingest_image_with_text 会点名第 2 页
+    // 起的所有页。它们不是 PDF,渲染补救这条路根本走不通。
+    test('图片路径不去渲染 PDF,直接把点名的页数原样报回来', () async {
+      final rec = _Recorder();
+      final missing = await backfillPagesWithoutText(
+        _outcome(pagesWithoutText: [2, 3]),
+        '/tmp/两页化验单.tiff',
+        onStage: rec.stages.add,
+        ocrPages: rec.ocrReturning(const {2: OcrResult('绝不该被用上', 0.9)}),
+        backfill: rec.backfill,
+      );
+      expect(missing, 2, reason: '一页都补不回来,不许因为补救函数返回了东西就少报');
+      expect(
+        rec.ocrCalls,
+        isEmpty,
+        reason: '把 TIFF 交给 PdfDocument.openFile 是白跑一趟,不该发生',
+      );
+      expect(rec.backfills, isEmpty, reason: '没有任何新文本,不该回填');
+      expect(rec.stages, isEmpty, reason: '没进渲染/回填,stage 不该被推进');
+    });
+
+    test('照实报出来的页数走 rowForOutcome 就是 partial —— 不是「已识别入库」', () {
+      final outcome = _outcome(pagesWithoutText: [2]);
+      final row = rowForOutcome(outcome, stillMissingPages: 1);
+      expect(
+        row.kind,
+        ImportRowKind.partial,
+        reason: '两页 TIFF 第 1 页认出来了、第 2 页整页没读 —— 用户必须看得见',
+      );
+      expect(row.statusLabel, contains('1 页未能识别文字'));
+    });
+
+    test('PDF 一如既往地走渲染补救 —— 图片这条岔路不许波及它', () async {
+      final rec = _Recorder();
+      final missing = await backfillPagesWithoutText(
+        _outcome(pagesWithoutText: [2]),
+        '/tmp/a.pdf',
+        onStage: rec.stages.add,
+        ocrPages: rec.ocrReturning(const {2: OcrResult('第二页', 0.9)}),
+        backfill: rec.backfill,
+      );
+      expect(missing, 0);
+      expect(rec.ocrCalls, [
+        [2],
+      ]);
+      expect(rec.stages, ['ocr', 'save']);
+    });
+  });
+
   group('「没收全」的措辞只有一份 —— 两屏不许各说各的', () {
     test('incompleteNoticesFor 用的就是 ImportIncompleteNotice 的字符串', () {
       final rows = [

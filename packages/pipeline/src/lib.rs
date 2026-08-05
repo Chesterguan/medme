@@ -3,6 +3,13 @@ use core_model::{DocType, NewDocument, NewImagingInstance, NewOcr, OcrBackendKin
 use std::collections::HashMap;
 use std::path::Path;
 
+/// 原件真实页数(多页 TIFF → >1,其余一律 1)。转出给移动端 crate 用:它在
+/// 宿主/安卓构建下并**不**直接依赖 `ocr`(见 `apps/mobile_flutter/rust/Cargo.toml`
+/// 里 `ocr` 的 target 门控),但它自己那条图片入库路径
+/// (`api::vault::ingest_image_with_text`,Dart 侧已经 OCR 完再落库)同样需要
+/// 知道原件有几页才能不撒谎。语义见 `ocr::image_page_count`。
+pub use ocr::image_page_count;
+
 /// 单个文件导入体积上限(字节)。超过即拒绝,**在把整份文件读进内存之前**就返回
 /// 错误 —— 否则一份几个 GB 的文件/畸形附件会在任何解析器跑起来之前就把进程 OOM。
 /// 200MB 足以覆盖高分辨率照片、扫描 PDF 与常见单张 DICOM;超大 DICOM 序列本就按
@@ -302,17 +309,34 @@ pub struct IngestOutcome {
     pub name: String,
     pub status: IngestStatus,
     pub doc_type: Option<DocType>,
-    /// 1-based page numbers (PDF only; always empty for every other file
-    /// type) that neither had a usable text layer nor could be OCR'd --
-    /// no embedded image to OCR, OCR found nothing, or the per-document OCR
-    /// cap was hit. **Must not be discarded by callers.** The whole point of
+    /// 1-based page numbers **of the original file** whose text never made it
+    /// into the vault. **Must not be discarded by callers.** The whole point of
     /// this field is that a document can come back `status: New` (real,
     /// useful, in the timeline) while still being incomplete -- callers
     /// (mobile: attempt targeted OCR backfill on exactly these pages, then
     /// tell the user what's still missing; desktop/CLI: at minimum log it)
     /// must surface a non-empty list rather than let the user believe every
-    /// page was captured. See `ingest_pdf`'s doc comment for the defect this
-    /// closes.
+    /// page was captured.
+    ///
+    /// **Which multi-page originals populate it** -- this is deliberately
+    /// *not* "PDF only" any more (it was, and that is exactly why the second
+    /// defect below went unnoticed for so long: the image path had no way to
+    /// even express "I dropped a page"):
+    ///
+    /// * **PDF** (`ingest_pdf`): pages that had neither a usable text layer
+    ///   nor OCR-able content -- no embedded image, OCR found nothing, or the
+    ///   per-document OCR cap was hit.
+    /// * **Multi-page images, i.e. multi-page TIFF** (`ingest_image`): pages
+    ///   `2..=n`, because every recognizer this app has reads frame 1 only
+    ///   (see `ocr::image_page_count`). Their content is *not* in the vault
+    ///   and, unlike a PDF page, cannot be recovered on-device by rendering.
+    /// * Everything else (single-page images, txt, DICOM) leaves it empty --
+    ///   nothing was skipped, so there is nothing to report.
+    ///
+    /// A page named here means "this page's content is missing", nothing more;
+    /// **it is not an instruction to render the original as a PDF.** The mobile
+    /// backfill in `import_flow.dart` only applies to the PDF case and gates on
+    /// that; see the comment there.
     pub pages_without_text: Vec<i32>,
 }
 
@@ -379,48 +403,96 @@ pub fn ingest_with_dicom_parser(
 
     match parser::extract(path) {
         Ok(e) => add_text_layer_document(vault, sid, &name, e, imp.deduped),
-        Err(_) => {
-            // 无文本层(图片/扫描件):先尝试 OCR。
-            match ocr::recognize_platform_best(&bytes) {
-                Ok(outcome) if !outcome.text.trim().is_empty() => {
-                    // OCR 成功:像文本文档一样处理(分类/日期取自识别文本)
-                    let (backend, model_version) = ocr_provenance(outcome.backend);
-                    let text = outcome.text;
-                    let doc_type = parser::classify(&text);
-                    let (doc_date, doc_date_end) = parser::guess_date_range(&text);
-                    let doc = vault.add_document(NewDocument {
-                        source_file_id: sid,
-                        doc_type: doc_type.clone(),
-                        doc_date,
-                        doc_date_end,
-                        title: Some(name.clone()),
-                        language: parser::detect_language(&text),
-                        page_count: 1,
-                    })?;
-                    vault.add_ocr(NewOcr {
-                        document_id: doc.id,
-                        page_no: 1,
-                        backend,
-                        model_version: model_version.into(),
-                        text,
-                        confidence: Some(outcome.confidence),
-                    })?;
-                    let status = if imp.deduped {
-                        IngestStatus::Backfilled
-                    } else {
-                        IngestStatus::New
-                    };
-                    Ok(IngestOutcome {
-                        source_file_id: sid,
-                        name,
-                        status,
-                        doc_type: Some(doc_type),
-                        pages_without_text: Vec::new(),
-                    })
-                }
-                // OCR 失败/空:退回「已存但无文本」(见 `store_no_text`)。
-                _ => store_no_text(vault, sid, &name, 1),
+        // 无文本层(图片/扫描件):走图片分支 OCR。
+        Err(_) => ingest_image(vault, sid, &name, &bytes, imp.deduped),
+    }
+}
+
+/// 图片专用导入分支(无文本层的 png/jpg/tiff/heic):OCR 第一页,并**如实点名
+/// 没被读到的页**。
+///
+/// **修的缺陷(#63 关早了,实测仍复现)**:这个应用里所有识别器都只读一帧 ——
+/// `ocr::decode_image_bounded` 的 `DynamicImage::from_decoder` 只解第一帧,
+/// Apple Vision / `Windows.Media.Ocr` 拿到整份字节也只认主图。而 **TIFF 可以是
+/// 多页的**(桌面文件选择器与移动端 `kImageExtensions` 都接受 `.tiff`)。于是一份
+/// 两页 TIFF 导入后:`page_count == 1`、只有 page_no=1 一条 `ocr_result`、状态
+/// `New`、UI 报「已识别入库」—— 第 2 页整页人间蒸发,**任何一层都产不出「漏了页」
+/// 这个信号**,因为 `pages_without_text` 当时是 PDF 专属字段。
+///
+/// 现在:先数原件真实页数(`ocr::image_page_count`,只走 TIFF 的 IFD 链,不解像素),
+/// 页数如实落进 `page_count`(不再一律 1),没被识别的页码进
+/// `pages_without_text`。**这里没有真的去识别第 2 页** —— 逐帧识别是另一件事
+/// (要引入多帧解码 + 每页一条 `ocr_result` 的写入路径);本分支只保证不再撒谎。
+///
+/// 单页图片(绝大多数:照片、单页扫描)行为**逐字节不变**:`page_count` 仍是 1,
+/// `pages_without_text` 仍是空 —— 整份原件都被看过了,没有可报的遗漏。
+fn ingest_image(
+    vault: &Vault,
+    sid: i64,
+    name: &str,
+    bytes: &[u8],
+    deduped: bool,
+) -> anyhow::Result<IngestOutcome> {
+    let page_count = ocr::image_page_count(bytes) as i32;
+    // 只有多页原件才有「漏了页」可报;单页图片留空,与旧行为一致。
+    let unread_pages: Vec<i32> = if page_count > 1 {
+        (2..=page_count).collect()
+    } else {
+        Vec::new()
+    };
+    if !unread_pages.is_empty() {
+        eprintln!(
+            "ingest_image: {name}: multi-page image ({page_count} pages) -- only page 1 is \
+             recognized by any available engine; {} page(s) were NOT read: {unread_pages:?}",
+            unread_pages.len()
+        );
+    }
+    match ocr::recognize_platform_best(bytes) {
+        Ok(outcome) if !outcome.text.trim().is_empty() => {
+            // OCR 成功:像文本文档一样处理(分类/日期取自识别文本)
+            let (backend, model_version) = ocr_provenance(outcome.backend);
+            let text = outcome.text;
+            let doc_type = parser::classify(&text);
+            let (doc_date, doc_date_end) = parser::guess_date_range(&text);
+            let doc = vault.add_document(NewDocument {
+                source_file_id: sid,
+                doc_type: doc_type.clone(),
+                doc_date,
+                doc_date_end,
+                title: Some(name.to_string()),
+                language: parser::detect_language(&text),
+                page_count,
+            })?;
+            vault.add_ocr(NewOcr {
+                document_id: doc.id,
+                page_no: 1,
+                backend,
+                model_version: model_version.into(),
+                text,
+                confidence: Some(outcome.confidence),
+            })?;
+            let status = if deduped {
+                IngestStatus::Backfilled
+            } else {
+                IngestStatus::New
+            };
+            Ok(IngestOutcome {
+                source_file_id: sid,
+                name: name.to_string(),
+                status,
+                doc_type: Some(doc_type),
+                pages_without_text: unread_pages,
+            })
+        }
+        // OCR 失败/空:退回「已存但无文本」(见 `store_no_text`)。多页原件此时
+        // 一页文本都没拿到,故全部页码都进 `pages_without_text`(与 `ingest_pdf`
+        // 的全篇扫描 PDF 分支同口径);单页仍留空。
+        _ => {
+            let mut outcome = store_no_text(vault, sid, name, page_count)?;
+            if page_count > 1 {
+                outcome.pages_without_text = (1..=page_count).collect();
             }
+            Ok(outcome)
         }
     }
 }
@@ -778,6 +850,82 @@ trailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n";
         assert!(
             text.contains("Discharge summary"),
             "page 1 text missing: {text}"
+        );
+    }
+
+    /// **Reproduces the multi-page-image silent-data-loss defect `ingest_image`
+    /// fixes** (the image twin of the mixed-page-PDF case above; GitHub #63 was
+    /// closed while this still reproduced).
+    ///
+    /// A two-page TIFF -- accepted by the desktop file picker and by mobile's
+    /// `kImageExtensions` alike -- used to come back with `page_count == 1`,
+    /// one `ocr_result` row for page 1, and `pages_without_text` empty, because
+    /// that field was PDF-only. Page 2 vanished with **no signal at any layer**
+    /// while the UI reported success.
+    ///
+    /// Deliberately asserts nothing about recognized *text*: no OCR engine runs
+    /// in CI (and on macOS `recognize_platform_best` is Apple Vision, a
+    /// different engine from the phones'), so this pins only what is
+    /// engine-independent -- the page count and the named missing pages. On
+    /// pre-fix code it fails on both regardless of which recognizer is present.
+    #[test]
+    fn multi_page_tiff_reports_the_pages_it_never_read_instead_of_dropping_them() {
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let p = fdir.path().join("2026-03-11_化验单_两页.tiff");
+        std::fs::write(&p, ocr::testing::plain_multipage_tiff(2)).unwrap();
+
+        let o = ingest(&v, &p).unwrap();
+        // The crux of the fix: page 2 was never looked at by any recognizer, so
+        // it must be named. Whether page 1 yielded text depends on the engine
+        // available on this machine, so accept either page set -- but never an
+        // empty one, which is precisely the silent loss.
+        assert!(
+            o.pages_without_text == vec![2] || o.pages_without_text == vec![1, 2],
+            "page 2 of a 2-page TIFF is never read -- it must be reported, not \
+             silently dropped; got {:?} (status {:?})",
+            o.pages_without_text,
+            o.status
+        );
+
+        let tl = v.timeline().unwrap();
+        assert_eq!(tl.len(), 1);
+        let doc = v.document_by_id(tl[0].document_id).unwrap().unwrap();
+        assert_eq!(
+            doc.page_count, 2,
+            "page count must reflect the original's real page count, not the \
+             image path's hardcoded 1"
+        );
+    }
+
+    /// The counterweight to the test above: an ordinary single-page image must
+    /// behave exactly as before -- `page_count` 1 and **nothing** reported as
+    /// missing. Widening `pages_without_text` beyond PDFs must not start
+    /// flagging the overwhelmingly common case (a photo / one-page scan), which
+    /// would turn a real signal into noise users learn to ignore.
+    #[test]
+    fn single_page_image_reports_no_missing_pages() {
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let p = fdir.path().join("2026-03-11_化验单_单页.tiff");
+        std::fs::write(&p, ocr::testing::plain_multipage_tiff(1)).unwrap();
+
+        let o = ingest(&v, &p).unwrap();
+        assert!(
+            o.pages_without_text.is_empty(),
+            "nothing was skipped in a single-page image; got {:?}",
+            o.pages_without_text
+        );
+        let tl = v.timeline().unwrap();
+        assert_eq!(tl.len(), 1);
+        assert_eq!(
+            v.document_by_id(tl[0].document_id)
+                .unwrap()
+                .unwrap()
+                .page_count,
+            1
         );
     }
 
