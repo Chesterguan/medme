@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
 ///
@@ -567,6 +567,38 @@ class QrShareDto {
           url == other.url &&
           problemCount == other.problemCount &&
           fitsQr == other.fitsQr;
+}
+
+/// 一次「记录」(手动录入)里的一个数值 —— 血压一次记录有两个(收缩压+舒张压,
+/// 共享同一份文档/`measuredAt`,见 `add_self_measurement` 的文档),其余四项各
+/// 一个。`analyteKey`/`unit` 都是 `terminology` 词典里现成的规范键/单位
+/// (`bp_systolic`/`bp_diastolic`/`heart_rate`/`body_weight`/`body_temperature`/
+/// `glucose`,单位分别是 mmHg/mmHg/`/min`/kg/Cel/mmol/L)——Dart 侧只从封闭的
+/// 五选一录入界面产出这个结构,不接受任意字符串(硬约束:不做手打化验值)。
+/// 与 `parser::SelfMeasuredValue` 逐字段镜像,只是换成 FRB 能生成绑定的 plain
+/// struct(见本文件头的取舍)。
+class SelfMeasuredValueDto {
+  final String analyteKey;
+  final double value;
+  final String unit;
+
+  const SelfMeasuredValueDto({
+    required this.analyteKey,
+    required this.value,
+    required this.unit,
+  });
+
+  @override
+  int get hashCode => analyteKey.hashCode ^ value.hashCode ^ unit.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SelfMeasuredValueDto &&
+          runtimeType == other.runtimeType &&
+          analyteKey == other.analyteKey &&
+          value == other.value &&
+          unit == other.unit;
 }
 
 /// 加密分享生成结果:口令(单独告知医生)、记录数、文件字节数、分享文件路径。

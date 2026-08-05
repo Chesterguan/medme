@@ -64,6 +64,15 @@ pub struct LabObservation {
     pub flag: Option<String>,
     /// 0.0 if unmatched; else the terminology `Match.confidence`.
     pub confidence: f32,
+    /// Always `false` here — this extractor only ever reads OCR'd report text.
+    /// `true` is set exclusively by `aggregate()`'s self-measurement branch
+    /// (`self_entry::parse_self_measurement_payload`), which builds
+    /// `LabObservation`s directly rather than through this function. Carried on
+    /// the struct (not a separate parallel type) so `aggregate()`'s per-document
+    /// dispatch can treat both sources uniformly — see `aggregate.rs`'s
+    /// `GroupKey::SelfMeasured` for why this field, not `analyte_key`, decides
+    /// grouping.
+    pub self_measured: bool,
 }
 
 /// A lab-report line whose result couldn't be read with confidence — kept and
@@ -547,6 +556,7 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
             ref_high,
             flag,
             confidence: m.as_ref().map_or(0.0, |m| m.confidence),
+            self_measured: false,
         });
     }
     (out, unreadable)

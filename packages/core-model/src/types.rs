@@ -11,6 +11,12 @@ pub enum DocType {
     ClinicalNote,
     Pathology,
     Surgery,
+    /// 手动录入的自测数值(血压/血糖/体重/体温/心率)。没有原件 —— 合成文本本身
+    /// 当"文件"过一遍 `Vault::import`,与 DICOM 摘要同一手法(见
+    /// `pipeline::add_text_layer_document` 的先例)。见 MANUAL-ENTRY-DESIGN.md。
+    SelfMeasurement,
+    /// 手动录入的纯文本笔记。原文即内容,不解析、不关联到具体用药/诊断。
+    Note,
     Other,
     Unknown,
 }
@@ -24,6 +30,8 @@ impl DocType {
             DocType::ClinicalNote => "clinical_note",
             DocType::Pathology => "pathology",
             DocType::Surgery => "surgery",
+            DocType::SelfMeasurement => "self_measurement",
+            DocType::Note => "note",
             DocType::Other => "other",
             DocType::Unknown => "unknown",
         }
@@ -38,6 +46,8 @@ impl DocType {
             "clinical_note" => DocType::ClinicalNote,
             "pathology" => DocType::Pathology,
             "surgery" => DocType::Surgery,
+            "self_measurement" => DocType::SelfMeasurement,
+            "note" => DocType::Note,
             "other" => DocType::Other,
             _ => DocType::Unknown,
         }

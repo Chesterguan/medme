@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_demo_files`, `detected_name_for`, `doc_summary`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `resolve_vault_paths`, `vault_cell`, `with_state_mut`, `with_state`
+// These functions are ignored because they are not marked as `pub`: `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -126,6 +126,56 @@ Future<ImportOutcomeDto> ingestImageWithText({
   ocrText: ocrText,
   confidence: confidence,
 );
+
+/// 写一条自测记录(结构化,append-only)。血压两个值(收缩压+舒张压)共享
+/// 同一份文档/同一个 `measured_at` —— 一次测量是最小操作单元,一起删一起改
+/// (MANUAL-ENTRY-DESIGN.md §5.3);其余四项(心率/体重/体温/血糖)各自单独一条
+/// 记录一份文档。`measured_at` 缺省(`None`)= 写入时刻,否则调用方传用户选择
+/// 的测量时间(RFC3339)。
+///
+/// 与 DICOM/txt 导入同构(见 `pipeline::add_text_layer_document`/
+/// `pipeline::dicom_summary` 的先例):没有原件,把合成文本本身当"文件"过一遍
+/// `vault.import`,再走 `add_document`+`add_ocr`。`doc_type` 固定
+/// `SelfMeasurement`,不经 `parser::classify` 猜 —— 这条录入路径的类型是
+/// 确定的,不需要也不该走给不确定文本猜类型的那条推断。
+///
+/// 硬约束(设计文档反复强调):**不支持任意化验项**——`values` 里的
+/// `analyte_key` 由 Dart 侧封闭五选一界面产出,这里不做白名单校验(校验属于
+/// UI 层拒绝非法输入的职责),但也不会因为一个陌生 key 而崩:未知 key 落进
+/// `parser::home_ref_range` 的 `_ => None` 分支,裸值显示、不出 flag。
+Future<PlatformInt64> addSelfMeasurement({
+  required List<SelfMeasuredValueDto> values,
+  String? measuredAt,
+}) => RustLib.instance.api.crateApiVaultAddSelfMeasurement(
+  values: values,
+  measuredAt: measuredAt,
+);
+
+/// 读回一份 `self_measurement` 文档的结构化值 —— 供「编辑」预填表单用(编辑=
+/// 删除旧文档+重新走一遍 `add_self_measurement`,见 MANUAL-ENTRY-DESIGN.md
+/// §3.6:没有专门的编辑 API,复用现成的 `delete_document`+新增)。
+///
+/// 读不出结构化载荷(文档不是这个类型 / 载荷损坏)→ 空列表,调用方按「没有可
+/// 编辑的值」处理,不猜(与 `parser::parse_self_measurement_payload` 同一条
+/// "读不出就是没有,不半猜"的规矩)。
+Future<List<SelfMeasuredValueDto>> selfMeasurementValues({
+  required PlatformInt64 documentId,
+}) => RustLib.instance.api.crateApiVaultSelfMeasurementValues(
+  documentId: documentId,
+);
+
+/// 写一条笔记(纯文本自由文字)。原文即内容 —— 不需要 `self_entry` 那层结构化
+/// 载荷编码(那是给数值用的),`ocr_result.text` 直接是用户输入的原文,读回来
+/// 就是它本身。`doc_type` 固定 `Note`,不解析、不关联到具体用药/诊断
+/// (`aggregate()` 对 `note` 类型文档显式跳过 meds/conditions 抽取)。
+///
+/// 与 [`add_self_measurement`] 同构:没有原件,把这段文字本身当"文件"过一遍
+/// `vault.import`。`measured_at` 缺省 = 写入时刻。
+Future<PlatformInt64> addNote({required String text, String? measuredAt}) =>
+    RustLib.instance.api.crateApiVaultAddNote(
+      text: text,
+      measuredAt: measuredAt,
+    );
 
 /// 端到端加密分享:复用 `medme_share::share::build_encrypted_share`,把全部病历
 /// 面对面二维码分享:把「当下病情」压成一条 URL,由手机端渲染成二维码给医生扫。

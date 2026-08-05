@@ -10,6 +10,7 @@ mod conditions;
 mod handoff;
 mod labs;
 mod meds;
+mod self_entry;
 pub use aggregate::{
     aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedSpan, SourceDoc,
 };
@@ -17,6 +18,10 @@ pub use conditions::{extract_conditions, ConditionMention};
 pub use handoff::{assemble_summary, match_disease};
 pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};
+pub use self_entry::{
+    home_ref_range, parse_self_measurement_payload, render_self_measurement_text, HomeRefRange,
+    SelfMeasuredValue, SELF_MEASUREMENT_MARKER,
+};
 
 pub struct Extracted {
     pub text: String,

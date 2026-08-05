@@ -121,6 +121,12 @@ Future<ImportRunResult?> showImportSheet(BuildContext context) async {
             title: '拍照',
             subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
             choice: ImportChoice.camera,
+            // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
+            // 改版后那颗快捷操作让位给了「记录」(见 overview_screen.dart 的
+            // `_QuickActions` 文档),拍照要多经一次这个选择表才能到达。视觉上
+            // 做成主选项(填色图标块 + 加粗标题)抵消这多出来的一次点击——它
+            // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
+            primary: true,
           ),
           _SheetTile(
             icon: Icons.photo_library_outlined,
@@ -949,6 +955,7 @@ class _SheetTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.choice,
+    this.primary = false,
   });
 
   final IconData icon;
@@ -956,23 +963,34 @@ class _SheetTile extends StatelessWidget {
   final String subtitle;
   final ImportChoice choice;
 
+  /// 视觉主选项:图标块填实色(而不是浅底描边),标题加粗。**不改变点击行为**,
+  /// 只是这一屏三个选项里最推荐的那个多一点视觉重量。
+  final bool primary;
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     return ListTile(
       // 图标装进 seal-wash 方块,与档案时间线上的类型徽标同一形状语言 ——
       // 圆角取控件这一档 10,比卡片(20)和分块(14)都小,层级不同级。
+      // 主选项换成填实色块 + 反白图标,一眼比另外两个「重」。
       leading: Container(
         width: 40,
         height: 40,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: c.sealWash,
+          color: primary ? c.sealInk : c.sealWash,
           borderRadius: BorderRadius.circular(MedShape.radiusControl),
         ),
-        child: Icon(icon, color: c.seal, size: 22),
+        child: Icon(icon, color: primary ? c.surface : c.seal, size: 22),
       ),
-      title: Text(title, style: MedType.subtitle.copyWith(color: c.ink)),
+      title: Text(
+        title,
+        style: MedType.subtitle.copyWith(
+          color: c.ink,
+          fontWeight: primary ? FontWeight.w700 : null,
+        ),
+      ),
       subtitle: Text(
         subtitle,
         style: MedType.secondary.copyWith(color: c.ink2),

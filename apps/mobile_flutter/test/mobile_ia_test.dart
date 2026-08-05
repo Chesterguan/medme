@@ -59,6 +59,7 @@ TrendSeriesDto series(List<TrendPointDto> points, {double? lo, double? hi}) =>
       anyAbnormal: points.any((p) => p.flag != null),
       problemGroups: const [],
       points: points,
+      selfMeasured: false,
     );
 
 void main() {
@@ -229,6 +230,7 @@ void main() {
       anyAbnormal: abnormal,
       problemGroups: groups,
       points: [pt('2024-03-01', 1)],
+      selfMeasured: false,
     );
 
     final all = [
@@ -278,6 +280,7 @@ void main() {
       anyAbnormal: abnormal,
       problemGroups: groups,
       points: [pt('2024-03-01', 1)],
+      selfMeasured: false,
     );
 
     test('「其他」桶:兜底不漏项 —— 没有 LOINC(problemGroups 为空)的序列必须能'

@@ -23,7 +23,9 @@
 //! - Unmatched analytes/drugs are kept separate from matched ones (grouped by
 //!   raw name) and never merged into a coded series — honest about what resolved.
 
-use crate::{extract_conditions, extract_labs, extract_meds, MedObservation};
+use crate::{
+    extract_conditions, extract_labs, extract_meds, self_entry, LabObservation, MedObservation,
+};
 use chrono::NaiveDate;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
@@ -74,6 +76,12 @@ pub struct AnalyteSeries {
     pub points: Vec<LabPoint>,
     /// True if any point is flagged "H" or "L".
     pub any_abnormal: bool,
+    /// True for a series built from manually-entered self-measurements (blood
+    /// pressure/glucose/weight/temperature/heart rate recorded via "记录", never
+    /// from an OCR'd report). Homogeneous within the series by construction —
+    /// see `GroupKey::SelfMeasured`, which keeps self-measured points out of any
+    /// group that also holds hospital-sourced points for the same analyte.
+    pub self_measured: bool,
 }
 
 /// A medication's span across all documents that mention it.
@@ -118,11 +126,21 @@ pub struct AggregatedClinical {
     pub conditions: Vec<AggregatedCondition>,
 }
 
-/// Grouping key. `Matched`/`Raw` live in separate namespaces so a resolved item
-/// never merges with an unmatched one that happens to share a display string.
+/// Grouping key. `Matched`/`Raw`/`SelfMeasured` live in separate namespaces so a
+/// resolved item never merges with an unmatched one that happens to share a
+/// display string — and, per `MANUAL-ENTRY-DESIGN.md` §1/§3.4, a self-measured
+/// analyte never merges with a hospital-sourced one that resolves to the same
+/// `analyte_key`. A self-measured blood pressure reading and a diagnosed
+/// diastolic/systolic reading from a report both resolve to `"bp_systolic"` /
+/// `"bp_diastolic"`, but they were taken in different settings with different
+/// reference ranges (home vs. clinic) and must never be drawn as one line.
 #[derive(PartialEq, Eq, Hash, Clone)]
 enum GroupKey {
     Matched(String),
+    /// Same `analyte_key` namespace as `Matched`, but a structurally separate
+    /// bucket — a self-measured `"bp_systolic"` and a hospital `"bp_systolic"`
+    /// hash to different keys even though the string inside is identical.
+    SelfMeasured(String),
     Raw(String),
 }
 
@@ -328,6 +346,10 @@ struct LabBuilder {
     has_ref: bool,
     points: Vec<LabPoint>,
     any_abnormal: bool,
+    /// Set once from the first observation's `self_measured` and never
+    /// changed — `GroupKey::SelfMeasured` guarantees every observation folded
+    /// into this builder agrees (see the struct-level doc on `AnalyteSeries`).
+    self_measured: bool,
 }
 
 struct MedBuilder {
@@ -351,6 +373,57 @@ struct CondBuilder {
     sources: BTreeSet<usize>,
 }
 
+/// Build a [`LabObservation`] from one structured self-measured value
+/// (`MANUAL-ENTRY-DESIGN.md` §3.4). Unlike [`extract_labs`], this never touches
+/// the document's printed text for the reference range — the synthetic text has
+/// no printed range to read, and even if it did, the home/clinic distinction
+/// means the report's own words would be the wrong range to trust. The range
+/// (and whether there is one at all) comes exclusively from
+/// [`self_entry::home_ref_range`], so an analyte with no defensible home range
+/// (temperature/weight/glucose — see that function's doc) always gets `flag:
+/// None` here, never a value-vs-clinic-range guess.
+fn build_self_measured_observation(v: &self_entry::SelfMeasuredValue) -> LabObservation {
+    let entry = terminology::dictionary_entries()
+        .iter()
+        .find(|e| e.key == v.analyte_key);
+    let range = self_entry::home_ref_range(&v.analyte_key);
+    let ref_low = range.as_ref().and_then(|r| r.low);
+    let ref_high = range.as_ref().and_then(|r| r.high);
+    let flag = range.as_ref().and_then(|r| {
+        if r.high.is_some_and(|h| v.value > h) {
+            Some("H".to_string())
+        } else if r.low.is_some_and(|l| v.value < l) {
+            Some("L".to_string())
+        } else if r.low.is_some() || r.high.is_some() {
+            Some("N".to_string())
+        } else {
+            None
+        }
+    });
+    LabObservation {
+        raw_name: entry
+            .map(|e| e.canonical_name.clone())
+            .unwrap_or_else(|| v.analyte_key.clone()),
+        analyte_key: Some(v.analyte_key.clone()),
+        canonical_name: entry.map(|e| e.canonical_name.clone()),
+        loinc: entry.and_then(|e| e.codes.loinc.clone()),
+        value_num: v.value,
+        // 写入方(移动端 FFI)恒发规范单位(见 SelfMeasuredValue 的文档),此处
+        // 不做换算 —— 与 value_num 相同,只是走了 value_canonical 这条通路,
+        // 使下游(aggregate 的 point.value)与 extract_labs 的产物同构。
+        value_canonical: Some(v.value),
+        unit_raw: Some(v.unit.clone()),
+        unit_canonical: Some(v.unit.clone()),
+        ref_low,
+        ref_high,
+        flag,
+        // 不是术语模糊匹配出来的置信度(那个字段的原意),而是"这是用户在封闭
+        // 五选一里选的项,结构上精确无歧义" —— 满置信度是如实的,不是编的。
+        confidence: 1.0,
+        self_measured: true,
+    }
+}
+
 /// Aggregate per-document extractions across `docs` into the derived layer.
 pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
     let mut labs: HashMap<GroupKey, LabBuilder> = HashMap::new();
@@ -359,9 +432,26 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
 
     for doc in docs {
         let dt = doc.doc_type.as_deref();
-        // --- labs: whole-doc for lab reports; else only from embedded 化验 sections
-        // (section-scoped, so a discharge summary's prose 血压 stays out) —— #148. ---
-        let doc_labs = if wants_labs(dt) {
+        // 手动录入(MANUAL-ENTRY-DESIGN.md §3.4/§3.6):`self_measurement`/`note`
+        // 文档没有可信的诊断/用药信号 —— `self_measurement` 的合成文本本来就不会
+        // 触发 meds/conditions 正则,`note` 是用户随手写的一句话("头晕,是不是又
+        // 高血压了"),把它喂给 extract_conditions 有真实概率读出一条无凭无据的
+        // 诊断。两类文档都显式跳过 meds/conditions —— 比"恰好没触发"更安全、更好
+        // 审计,且对每一个调用方(手机端投影、`assemble_summary`/加密分享/二维码)
+        // 统一生效,不依赖每个调用方自己记得先过滤。
+        let is_manual_entry = matches!(dt, Some("self_measurement") | Some("note"));
+
+        // --- labs: self_measurement 文档直接读回结构化载荷(不跑 extract_labs——
+        // 那是给 OCR 报告用的模糊正则,我们自己写的、自己读的格式不需要模糊匹配);
+        // 其余按原规则:whole-doc for lab reports,否则只从embedded 化验 sections
+        // 抽(section-scoped,so a discharge summary's prose 血压 stays out) —— #148. ---
+        let doc_labs: Vec<LabObservation> = if dt == Some("self_measurement") {
+            self_entry::parse_self_measurement_payload(doc.text)
+                .unwrap_or_default()
+                .iter()
+                .map(build_self_measured_observation)
+                .collect()
+        } else if wants_labs(dt) {
             extract_labs(doc.text)
         } else {
             sections_text(doc.text, SecKind::Labs)
@@ -371,9 +461,13 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         };
         for obs in doc_labs {
             let matched = obs.analyte_key.is_some();
-            let key = match &obs.analyte_key {
-                Some(k) => GroupKey::Matched(k.clone()),
-                None => GroupKey::Raw(obs.raw_name.clone()),
+            // 自测值与医院值永不同组:即使 analyte_key 相同(如同是
+            // "bp_systolic"),`self_measured` 把它们分进结构上不同的 GroupKey
+            // 分支 —— 见 GroupKey 的文档。
+            let key = match (&obs.analyte_key, obs.self_measured) {
+                (Some(k), true) => GroupKey::SelfMeasured(k.clone()),
+                (Some(k), false) => GroupKey::Matched(k.clone()),
+                (None, _) => GroupKey::Raw(obs.raw_name.clone()),
             };
             let point = LabPoint {
                 date: doc.date,
@@ -394,6 +488,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 has_ref: false,
                 points: Vec::new(),
                 any_abnormal: false,
+                self_measured: obs.self_measured,
             });
             // First matched observation supplies the display name + LOINC.
             if !b.meta_from_match && matched {
@@ -428,8 +523,11 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
 
         // --- meds (only from prescriptions; see wants_meds) ---
         // --- meds: whole-doc for prescriptions; else only from embedded 用药/带药
-        // sections (a discharge summary's 出院医嘱 list) —— #148. ---
-        let doc_meds = if wants_meds(dt) {
+        // sections (a discharge summary's 出院医嘱 list) —— #148. 手动录入文档
+        // (self_measurement/note) 显式跳过,见本函数开头 is_manual_entry 的注释。
+        let doc_meds = if is_manual_entry {
+            Vec::new()
+        } else if wants_meds(dt) {
             extract_meds(doc.text)
         } else {
             sections_text(doc.text, SecKind::Meds)
@@ -505,7 +603,12 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             }
         }
 
-        // --- conditions ---
+        // --- conditions --- 手动录入文档跳过(见 is_manual_entry 的注释):这里
+        // 原本对每份文档无条件跑,没有 doc_type 门控,一条随手记的笔记("头晕,
+        // 是不是又高血压了")会被读成一条无凭无据的诊断。
+        if is_manual_entry {
+            continue;
+        }
         for c in extract_conditions(doc.text) {
             let raw = c.raw_text.trim().to_string();
             if raw.is_empty() {
@@ -540,6 +643,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 ref_high: b.ref_high,
                 points: b.points,
                 any_abnormal: b.any_abnormal,
+                self_measured: b.self_measured,
             }
         })
         .collect();
@@ -924,5 +1028,255 @@ mod tests {
         let mut sorted_conds = cond_texts.clone();
         sorted_conds.sort();
         assert_eq!(cond_texts, sorted_conds, "conditions must be sorted");
+    }
+
+    // ──────────────── MANUAL-ENTRY-DESIGN.md: self-measurement dispatch ────────────────
+
+    fn self_entry_doc_text(values: &[crate::SelfMeasuredValue]) -> String {
+        crate::render_self_measurement_text(&["(测试用合成文本)".to_string()], values)
+    }
+
+    #[test]
+    fn self_measured_series_never_merges_with_a_same_analyte_hospital_series() {
+        // 家测血压 128/82,同一天医院化验单也测了一次血压(140/90,诊室值)。两条
+        // 序列共享同一个 analyte_key("bp_systolic"),但绝不能合成一条线 —— 这是
+        // 本次改动最硬的一条不变量(MANUAL-ENTRY-DESIGN.md §1/§3.4/硬约束)。
+        let self_text = self_entry_doc_text(&[crate::SelfMeasuredValue {
+            analyte_key: "bp_systolic".into(),
+            value: 128.0,
+            unit: "mmHg".into(),
+        }]);
+        let docs = vec![
+            SourceDoc {
+                index: 0,
+                doc_type: Some("self_measurement".into()),
+                title: None,
+                date: d(2026, 8, 1),
+                text: &self_text,
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("lab_report".into()),
+                title: None,
+                date: d(2026, 8, 1),
+                text: "收缩压 140 mmHg",
+            },
+        ];
+        let agg = aggregate(&docs);
+        let bp_series: Vec<&AnalyteSeries> = agg
+            .labs
+            .iter()
+            .filter(|s| s.analyte_key.as_deref() == Some("bp_systolic"))
+            .collect();
+        assert_eq!(
+            bp_series.len(),
+            2,
+            "自测血压与医院血压必须是两条独立序列,不能合并成一条: {:?}",
+            bp_series
+                .iter()
+                .map(|s| (s.self_measured, s.points.len()))
+                .collect::<Vec<_>>()
+        );
+        let self_series = bp_series
+            .iter()
+            .find(|s| s.self_measured)
+            .expect("one series must be the self-measured one");
+        let hospital_series = bp_series
+            .iter()
+            .find(|s| !s.self_measured)
+            .expect("one series must be the hospital one");
+        assert_eq!(self_series.points.len(), 1);
+        assert_eq!(self_series.points[0].value, 128.0);
+        assert_eq!(hospital_series.points.len(), 1);
+        assert_eq!(hospital_series.points[0].value, 140.0);
+    }
+
+    #[test]
+    fn self_measured_bp_uses_home_range_not_clinic_range() {
+        // 128 mmHg 低于家测阈值 135,但若被误套诊室区间(140)也会判"正常"——
+        // 这条测试要的是"用的是家测那套区间",不是碰巧两套区间给出同一个结论,
+        // 所以取一个能在两套区间下给出不同 flag 的值:138。
+        // 家测(<=135 正常)→ H;诊室(<=140 正常)→ 若误用会是 N。
+        let text = self_entry_doc_text(&[crate::SelfMeasuredValue {
+            analyte_key: "bp_systolic".into(),
+            value: 138.0,
+            unit: "mmHg".into(),
+        }]);
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("self_measurement".into()),
+            title: None,
+            date: d(2026, 8, 1),
+            text: &text,
+        }];
+        let agg = aggregate(&docs);
+        let s = agg
+            .labs
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("bp_systolic"))
+            .expect("bp series present");
+        assert_eq!(
+            s.ref_high,
+            Some(135.0),
+            "must be the home threshold, not 140"
+        );
+        assert_eq!(s.points[0].flag.as_deref(), Some("H"));
+    }
+
+    #[test]
+    fn self_measured_bp_is_one_document_two_series() {
+        // §5.3:血压两个值共享同一份文档/同一个 measured_at,但在 AnalyteSeries
+        // 层面仍拆成两条独立序列(与医院化验从不把两个不同 LOINC 的值画在同一条
+        // 线上是一个道理)。
+        let text = self_entry_doc_text(&[
+            crate::SelfMeasuredValue {
+                analyte_key: "bp_systolic".into(),
+                value: 128.0,
+                unit: "mmHg".into(),
+            },
+            crate::SelfMeasuredValue {
+                analyte_key: "bp_diastolic".into(),
+                value: 82.0,
+                unit: "mmHg".into(),
+            },
+        ]);
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("self_measurement".into()),
+            title: None,
+            date: d(2026, 8, 1),
+            text: &text,
+        }];
+        let agg = aggregate(&docs);
+        assert_eq!(agg.labs.len(), 2);
+        let sys = agg
+            .labs
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("bp_systolic"))
+            .unwrap();
+        let dia = agg
+            .labs
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("bp_diastolic"))
+            .unwrap();
+        // 两条序列的唯一一个点都来自同一份文档(index 0)。
+        assert_eq!(sys.points[0].source, 0);
+        assert_eq!(dia.points[0].source, 0);
+    }
+
+    #[test]
+    fn analytes_with_no_home_range_get_no_flag() {
+        // 体温/体重/血糖(§5.2/§3.3):没有出处就不给区间、不出 flag —— 裸值显示。
+        for (key, value, unit) in [
+            ("body_temperature", 39.0, "Cel"), // 明显"发烧"级别的高值,也不该出 flag
+            ("body_weight", 65.0, "kg"),
+            ("glucose", 20.0, "mmol/L"), // 明显异常的高血糖,也不该出 flag
+        ] {
+            let text = self_entry_doc_text(&[crate::SelfMeasuredValue {
+                analyte_key: key.into(),
+                value,
+                unit: unit.into(),
+            }]);
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some("self_measurement".into()),
+                title: None,
+                date: d(2026, 8, 1),
+                text: &text,
+            }];
+            let agg = aggregate(&docs);
+            let s = agg
+                .labs
+                .iter()
+                .find(|s| s.analyte_key.as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("series for {key} present"));
+            assert_eq!(s.ref_low, None, "{key} must have no ref_low");
+            assert_eq!(s.ref_high, None, "{key} must have no ref_high");
+            assert_eq!(
+                s.points[0].flag, None,
+                "{key} must never carry a flag with no defensible home range"
+            );
+        }
+    }
+
+    #[test]
+    fn self_measured_heart_rate_series_marked_self_measured() {
+        let text = self_entry_doc_text(&[crate::SelfMeasuredValue {
+            analyte_key: "heart_rate".into(),
+            value: 72.0,
+            unit: "/min".into(),
+        }]);
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("self_measurement".into()),
+            title: None,
+            date: d(2026, 8, 1),
+            text: &text,
+        }];
+        let agg = aggregate(&docs);
+        let s = &agg.labs[0];
+        assert!(s.self_measured);
+        assert_eq!(s.loinc.as_deref(), Some("8867-4"));
+        assert_eq!(s.group_name, "心率");
+    }
+
+    #[test]
+    fn self_measurement_document_contributes_no_meds_or_conditions() {
+        // 显式跳过,即使合成文本理论上"恰好没触发"正则也不该依赖那份运气。
+        let text = self_entry_doc_text(&[crate::SelfMeasuredValue {
+            analyte_key: "heart_rate".into(),
+            value: 72.0,
+            unit: "/min".into(),
+        }]);
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("self_measurement".into()),
+            title: None,
+            date: d(2026, 8, 1),
+            text: &text,
+        }];
+        let agg = aggregate(&docs);
+        assert!(agg.meds.is_empty());
+        assert!(agg.conditions.is_empty());
+    }
+
+    #[test]
+    fn note_document_contributes_no_conditions_meds_or_labs() {
+        // 笔记文档("头晕,是不是又高血压了")绝不能被读成一条诊断 —— 这是本次
+        // 改动特别要堵的那类假线(MANUAL-ENTRY-DESIGN.md §3.4)。
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("note".into()),
+            title: None,
+            date: d(2026, 8, 1),
+            text: "今天有点头晕,是不是又高血压了,下次问问医生。",
+        }];
+        let agg = aggregate(&docs);
+        assert!(agg.labs.is_empty());
+        assert!(agg.meds.is_empty());
+        assert!(
+            agg.conditions.is_empty(),
+            "笔记不该被读出诊断: {:?}",
+            agg.conditions
+                .iter()
+                .map(|c| &c.raw_text)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn self_measurement_with_unparseable_payload_yields_no_labs_but_does_not_panic() {
+        // 载荷损坏(标记丢失/版本不认识)→ 没有数值,不半猜,也不 panic。文档本身
+        // 是否仍在时间线/档案里可见由调用方(vault_projections)决定,这里只保证
+        // aggregate() 本身对损坏输入是安全、确定的空结果。
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("self_measurement".into()),
+            title: None,
+            date: d(2026, 8, 1),
+            text: "损坏的自测记录,没有任何标记行。",
+        }];
+        let agg = aggregate(&docs);
+        assert!(agg.labs.is_empty());
     }
 }

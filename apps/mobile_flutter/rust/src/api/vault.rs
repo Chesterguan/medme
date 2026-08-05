@@ -610,6 +610,236 @@ pub fn ingest_image_with_text(
     })
 }
 
+/// `SelfMeasuredValueDto.analyte_key` → 中文标签,只用于合成文本的人类可读部分
+/// (不是临床判定,判定/参考区间在 `parser::self_entry::home_ref_range`)。这五个
+/// 键是「记录」入口封闭五选一的全部取值 —— 不接受任意字符串,故这里穷举即可,
+/// 不需要接一份完整词典(本 crate 未直接依赖 `terminology`,Rust 2018+ 的
+/// direct-dependency 规则也不允许隔着 `parser` 传递 `use` 它)。
+fn self_measured_label(analyte_key: &str) -> &'static str {
+    match analyte_key {
+        "bp_systolic" => "收缩压",
+        "bp_diastolic" => "舒张压",
+        "heart_rate" => "心率",
+        "body_weight" => "体重",
+        "body_temperature" => "体温",
+        "glucose" => "血糖",
+        _ => "记录值",
+    }
+}
+
+/// 这批值该给文档起的标题:血压(收缩压+舒张压同时在场)统一叫「血压」,其余
+/// 单值记录直接用那个值的中文标签。
+fn self_measured_title(values: &[SelfMeasuredValueDto]) -> String {
+    let has = |k: &str| values.iter().any(|v| v.analyte_key == k);
+    if has("bp_systolic") || has("bp_diastolic") {
+        "血压".to_string()
+    } else {
+        values
+            .first()
+            .map(|v| self_measured_label(&v.analyte_key).to_string())
+            .unwrap_or_else(|| "记录".to_string())
+    }
+}
+
+/// 数值渲染:与 `handoff::fmt_num`/`vault_projections::fmt_num` 同一取法 ——
+/// `{}` 的默认 f64 格式,`72` 不会印成 `72.0`。合成文本是给人看的,这个 `.0`
+/// 是 IEEE 754 的产物,不是用户填的数字。
+fn fmt_value(v: f64) -> String {
+    format!("{v}")
+}
+
+fn parse_measured_at(measured_at: Option<&str>) -> chrono::DateTime<chrono::Utc> {
+    measured_at
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now)
+}
+
+/// 写一条自测记录(结构化,append-only)。血压两个值(收缩压+舒张压)共享
+/// 同一份文档/同一个 `measured_at` —— 一次测量是最小操作单元,一起删一起改
+/// (MANUAL-ENTRY-DESIGN.md §5.3);其余四项(心率/体重/体温/血糖)各自单独一条
+/// 记录一份文档。`measured_at` 缺省(`None`)= 写入时刻,否则调用方传用户选择
+/// 的测量时间(RFC3339)。
+///
+/// 与 DICOM/txt 导入同构(见 `pipeline::add_text_layer_document`/
+/// `pipeline::dicom_summary` 的先例):没有原件,把合成文本本身当"文件"过一遍
+/// `vault.import`,再走 `add_document`+`add_ocr`。`doc_type` 固定
+/// `SelfMeasurement`,不经 `parser::classify` 猜 —— 这条录入路径的类型是
+/// 确定的,不需要也不该走给不确定文本猜类型的那条推断。
+///
+/// 硬约束(设计文档反复强调):**不支持任意化验项**——`values` 里的
+/// `analyte_key` 由 Dart 侧封闭五选一界面产出,这里不做白名单校验(校验属于
+/// UI 层拒绝非法输入的职责),但也不会因为一个陌生 key 而崩:未知 key 落进
+/// `parser::home_ref_range` 的 `_ => None` 分支,裸值显示、不出 flag。
+pub fn add_self_measurement(
+    values: Vec<SelfMeasuredValueDto>,
+    measured_at: Option<String>,
+) -> anyhow::Result<i64> {
+    if values.is_empty() {
+        anyhow::bail!("没有要记录的数值");
+    }
+    let when = parse_measured_at(measured_at.as_deref());
+
+    let mut human_lines: Vec<String> = values
+        .iter()
+        .map(|v| {
+            format!(
+                "{} {} {}",
+                self_measured_label(&v.analyte_key),
+                fmt_value(v.value),
+                v.unit
+            )
+        })
+        .collect();
+    human_lines.push(format!("记录时间:{}", when.format("%Y-%m-%d %H:%M")));
+
+    let sv: Vec<parser::SelfMeasuredValue> = values
+        .iter()
+        .map(|v| parser::SelfMeasuredValue {
+            analyte_key: v.analyte_key.clone(),
+            value: v.value,
+            unit: v.unit.clone(),
+        })
+        .collect();
+    let text = parser::render_self_measurement_text(&human_lines, &sv);
+    let title = self_measured_title(&values);
+
+    with_state(|state| {
+        let v = &state.vault;
+        let name = format!("self-measurement-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
+        let imp = v
+            .import(&name, "text/plain", text.as_bytes())
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let sid = imp.source_file.id;
+        // 合成文本逐字节相同(极少见,但见 `Vault::import` 的 CAS 去重)且已建过
+        // 档 —— 真·重复提交,直接回传已有文档 id,不再建档(`document.source_file_id`
+        // 唯一,重复建档会违反约束)。与 `ingest_image_with_text` 的同一防线同构。
+        if imp.deduped
+            && v.has_document(sid)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+        {
+            return v
+                .document_by_source_file_id(sid)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .map(|d| d.id)
+                .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
+        }
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: sid,
+                doc_type: DocType::SelfMeasurement,
+                doc_date: Some(when),
+                doc_date_end: None,
+                title: Some(title),
+                language: Some("zh".into()),
+                page_count: 1,
+            })
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        v.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "self-entry".into(),
+            text,
+            confidence: None,
+        })
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        v.rebuild_encounters()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(doc.id)
+    })
+}
+
+/// 读回一份 `self_measurement` 文档的结构化值 —— 供「编辑」预填表单用(编辑=
+/// 删除旧文档+重新走一遍 `add_self_measurement`,见 MANUAL-ENTRY-DESIGN.md
+/// §3.6:没有专门的编辑 API,复用现成的 `delete_document`+新增)。
+///
+/// 读不出结构化载荷(文档不是这个类型 / 载荷损坏)→ 空列表,调用方按「没有可
+/// 编辑的值」处理,不猜(与 `parser::parse_self_measurement_payload` 同一条
+/// "读不出就是没有,不半猜"的规矩)。
+pub fn self_measurement_values(document_id: i64) -> anyhow::Result<Vec<SelfMeasuredValueDto>> {
+    with_state(|state| {
+        let text = state
+            .vault
+            .ocr_text(document_id)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(parser::parse_self_measurement_payload(&text)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| SelfMeasuredValueDto {
+                analyte_key: v.analyte_key,
+                value: v.value,
+                unit: v.unit,
+            })
+            .collect())
+    })
+}
+
+/// 写一条笔记(纯文本自由文字)。原文即内容 —— 不需要 `self_entry` 那层结构化
+/// 载荷编码(那是给数值用的),`ocr_result.text` 直接是用户输入的原文,读回来
+/// 就是它本身。`doc_type` 固定 `Note`,不解析、不关联到具体用药/诊断
+/// (`aggregate()` 对 `note` 类型文档显式跳过 meds/conditions 抽取)。
+///
+/// 与 [`add_self_measurement`] 同构:没有原件,把这段文字本身当"文件"过一遍
+/// `vault.import`。`measured_at` 缺省 = 写入时刻。
+pub fn add_note(text: String, measured_at: Option<String>) -> anyhow::Result<i64> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        anyhow::bail!("笔记内容为空");
+    }
+    let when = parse_measured_at(measured_at.as_deref());
+    // 标题取首行(超长截断到 30 个字符——列表页标题不需要整段笔记)。
+    let title: String = text
+        .lines()
+        .next()
+        .unwrap_or(&text)
+        .chars()
+        .take(30)
+        .collect();
+
+    with_state(|state| {
+        let v = &state.vault;
+        let name = format!("note-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
+        let imp = v
+            .import(&name, "text/plain", text.as_bytes())
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let sid = imp.source_file.id;
+        if imp.deduped
+            && v.has_document(sid)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+        {
+            return v
+                .document_by_source_file_id(sid)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .map(|d| d.id)
+                .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
+        }
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: sid,
+                doc_type: DocType::Note,
+                doc_date: Some(when),
+                doc_date_end: None,
+                title: Some(title),
+                language: parser::detect_language(&text),
+                page_count: 1,
+            })
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        v.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "self-entry".into(),
+            text,
+            confidence: None,
+        })
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        v.rebuild_encounters()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(doc.id)
+    })
+}
+
 /// 端到端加密分享:复用 `medme_share::share::build_encrypted_share`,把全部病历
 /// 面对面二维码分享:把「当下病情」压成一条 URL,由手机端渲染成二维码给医生扫。
 ///
@@ -755,10 +985,13 @@ pub fn claim_import(blob: Vec<u8>, key_b64: String) -> anyhow::Result<ClaimResul
 /// 只解密、不落盘:让病人在「存进哪个成员」之前先看到这包里有几份、是谁的。
 /// 返回 `(记录数, 患者姓名)`;姓名解析不出时为空串。
 pub fn claim_preview(blob: Vec<u8>, key_b64: String) -> anyhow::Result<(i64, String)> {
-    let payload = medme_share::claim::decrypt_claim(&blob, &key_b64)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let payload =
+        medme_share::claim::decrypt_claim(&blob, &key_b64).map_err(|e| anyhow::anyhow!(e))?;
     let n = payload["records"].as_array().map(|a| a.len()).unwrap_or(0) as i64;
-    let name = payload["patient"]["name"].as_str().unwrap_or("").to_string();
+    let name = payload["patient"]["name"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     Ok((n, name))
 }
 

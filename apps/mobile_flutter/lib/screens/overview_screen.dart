@@ -7,6 +7,7 @@ import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
+import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
@@ -130,6 +131,22 @@ class _OverviewScreenState extends State<OverviewScreen> {
     );
   }
 
+  /// 「记录」快捷操作:打开手动录入弹层。
+  ///
+  /// 存完**不**走 [_goReviewNewDocs] 那条"待确认"复核路径 —— 那道闸门是为
+  /// OCR 抽取质量不确定而设的(见 `_goReviewNewDocs` 的文档),手动录入没有
+  /// OCR 这一步:用户填的数字就是存进去的数字,没有"识别错了"这回事需要核对。
+  /// 存完直接留在本屏,`showManualEntrySheet` 内部已经 `bumpVaultRevision`,
+  /// 本屏监听着这个信号会自动刷新「最近的关键化验」/「最近归档」,不需要额外
+  /// 跳转。只用一条 SnackBar 确认"存上了"。
+  Future<void> _openManualEntry() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final saved = await showManualEntrySheet(context);
+    if (saved == true && messenger.mounted) {
+      messenger.showSnackBar(const SnackBar(content: Text('已记录')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
@@ -201,8 +218,8 @@ class _OverviewScreenState extends State<OverviewScreen> {
                 ),
                 const SizedBox(height: MedShape.s3),
                 _QuickActions(
-                  onPhoto: () => _import(ImportChoice.camera),
                   onArchiveIn: () => _import(null),
+                  onManualEntry: _openManualEntry,
                   onEmergency: goToEmergencyCard,
                   onVisitSummary: () => showVisitSummarySheet(context),
                 ),
@@ -227,23 +244,28 @@ class _OverviewScreenState extends State<OverviewScreen> {
   }
 }
 
-/// 一排四颗快捷操作:拍照 / 存档 / 应急卡 / 就诊单。
+/// 一排四颗快捷操作:存档 / 记录 / 应急卡 / 就诊单。
 ///
-/// 为什么是这四颗:前两颗是**往里放**(日常打开最常见的下一步是拍一张新单子),
+/// 为什么是这四颗:前两颗是**往里放**(日常打开最常见的下一步是添一条新东西),
 /// 后两颗是**往外拿**(急诊室、诊室)。「看」不在这里 —— 看什么下面就是。
+///
+/// 原先前两颗是「拍照 / 存档」,但拍照本来就是存档三选一(拍照/相册/文件,见
+/// `showImportSheet`)里的一个分支,两颗并排读起来像两件不同的事。改成
+/// 「存档 / 记录」才是两件真正不同的事(有没有原件),拍照仍然是存档流程里最
+/// 顺手的默认选项(`showImportSheet` 把它做成视觉主选项,抵消多出的一次点击)。
 ///
 /// 用 `Wrap` 不用 `GridView`:系统字号放大后「就诊单」三个字会撑宽,固定四列会把
 /// 文字挤掉一半。Wrap 让它自然掉到第二行(007 §2.5「字号可放大,不可砍」)。
 class _QuickActions extends StatelessWidget {
   const _QuickActions({
-    required this.onPhoto,
     required this.onArchiveIn,
+    required this.onManualEntry,
     required this.onEmergency,
     required this.onVisitSummary,
   });
 
-  final VoidCallback onPhoto;
   final VoidCallback onArchiveIn;
+  final VoidCallback onManualEntry;
   final VoidCallback onEmergency;
   final VoidCallback onVisitSummary;
 
@@ -260,15 +282,15 @@ class _QuickActions extends StatelessWidget {
           children: [
             _QuickAction(
               width: w,
-              icon: Icons.photo_camera_outlined,
-              label: '拍照',
-              onTap: onPhoto,
-            ),
-            _QuickAction(
-              width: w,
               icon: Icons.add_box_outlined,
               label: '存档',
               onTap: onArchiveIn,
+            ),
+            _QuickAction(
+              width: w,
+              icon: Icons.edit_note_outlined,
+              label: '记录',
+              onTap: onManualEntry,
             ),
             _QuickAction(
               width: w,
@@ -398,7 +420,10 @@ class _LabSnapshot extends StatelessWidget {
                             flag: labs[i].flag,
                             refLow: labs[i].refLow,
                             refHigh: labs[i].refHigh,
-                            meta: labs[i].date,
+                            // 见 visit_summary_sheet.dart 的 `_LabRow` 同一处注释。
+                            meta: labs[i].selfMeasured
+                                ? '${labs[i].date} · 家测'
+                                : labs[i].date,
                             onTap: () => onOpenDoc(labs[i].documentId),
                           ),
                         ),

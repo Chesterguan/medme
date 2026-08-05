@@ -76,6 +76,12 @@ pub(crate) fn doc_type_label(t: &DocType) -> &'static str {
         DocType::ClinicalNote => "病历",
         DocType::Pathology => "病理",
         DocType::Surgery => "手术",
+        // MANUAL-ENTRY-DESIGN.md:新增的两个手动录入 doc_type。这个模块不在本次
+        // 改动范围内(packages/share),这里只是补足穷尽匹配让 core-model 的新
+        // 变体能编译 —— 标签取值与 `apps/mobile_flutter/lib/doc_labels.dart`
+        // 的 `docLabel` 一致。
+        DocType::SelfMeasurement => "自测记录",
+        DocType::Note => "笔记",
         DocType::Other => "其他",
         DocType::Unknown => "未分类",
     }

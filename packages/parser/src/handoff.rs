@@ -704,7 +704,16 @@ fn imaging_group(title: Option<&str>, text: &str) -> String {
 /// See the module header for scope. `docs[i].index` must equal the record's
 /// index in the viewer's `records[]` so evidence chips jump to the right doc.
 pub fn assemble_summary(docs: &[SourceDoc<'_>]) -> Value {
-    let agg = aggregate(docs);
+    let mut agg = aggregate(docs);
+    // MANUAL-ENTRY-DESIGN.md §5.1, decision: 选项 B。自测数据(家测血压/血糖/
+    // 体重/体温/心率)不进医生二维码分享 / hosted-viewer —— 那条链的受众是医生,
+    // 而"这条线是不是诊室测的"这件事目前只在手机端(趋势页/就诊单)标注了
+    // "(家测)",viewer 侧还没有对应的展示逻辑(那是下一刀,需要单独批准触碰
+    // `web/hosted-viewer/**`)。在那之前,宁可不出现,不能让医生把家测血压误当
+    // 诊室血压看。`view_trends()`/`view_visit_summary()` 走的是不过滤的
+    // `aggregate()` 直接输出,自测数据在手机端本机始终可见——这里的过滤只影响
+    // 这一条(经 `assemble_summary` 的)分享链路。
+    agg.labs.retain(|s| !s.self_measured);
 
     // Track which analyte series / med spans got placed under ANY problem, so
     // the leftovers fall into the synthetic「其他」bucket instead of vanishing.
@@ -1485,5 +1494,65 @@ mod tests {
         }];
         let sm = assemble_summary(&docs);
         assert!(sm.get("imaging").is_none(), "no imaging key when empty");
+    }
+
+    /// MANUAL-ENTRY-DESIGN.md §5.1 决定(选项 B):自测数据永远不出现在
+    /// `assemble_summary` 的输出里 —— 这是医生二维码分享 / hosted-viewer 的数据
+    /// 源。不只是不出现在"其他"桶,连本该按 LOINC 挂进「高血压」泳道(与
+    /// `problem_map.json` 里 8480-6/8462-4 完全匹配)的自测血压也必须被挡在外面,
+    /// 否则医生扫码看到的会是一条没有"这是家测"标注的裸血压值,可能被误当诊室值。
+    #[test]
+    fn assemble_summary_never_includes_self_measured_series_even_under_a_matched_disease() {
+        let self_text = crate::render_self_measurement_text(
+            &["血压 150/95 mmHg".to_string()],
+            &[
+                crate::SelfMeasuredValue {
+                    analyte_key: "bp_systolic".into(),
+                    value: 150.0,
+                    unit: "mmHg".into(),
+                },
+                crate::SelfMeasuredValue {
+                    analyte_key: "bp_diastolic".into(),
+                    value: 95.0,
+                    unit: "mmHg".into(),
+                },
+            ],
+        );
+        let docs = vec![
+            SourceDoc {
+                index: 0,
+                doc_type: Some("discharge_summary".into()),
+                title: None,
+                date: d(2024, 1, 1),
+                text: "出院诊断:高血压",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("self_measurement".into()),
+                title: None,
+                date: d(2024, 2, 1),
+                text: &self_text,
+            },
+        ];
+        let sm = assemble_summary(&docs);
+        let all_lab_names: Vec<String> = sm["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .flat_map(|p| p["labs"].as_array().into_iter().flatten())
+            .filter_map(|l| l["name"].as_str().map(str::to_string))
+            .collect();
+        assert!(
+            !all_lab_names.iter().any(|n| n.contains('压')),
+            "自测血压不该出现在任何泳道里,实际出现: {all_lab_names:?}"
+        );
+        // 但同一份数据喂给不过滤的 `aggregate()` 时,自测序列确实在(手机端趋势页/
+        // 就诊单走的是这条,不受本函数内部过滤影响)——这一断言确认过滤发生在
+        // `assemble_summary` 内部,不是数据从一开始就没被抽出来。
+        let agg = aggregate(&docs);
+        assert!(
+            agg.labs.iter().any(|s| s.self_measured),
+            "sanity: aggregate() 本身仍然产出自测序列,过滤只发生在 assemble_summary"
+        );
     }
 }

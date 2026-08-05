@@ -266,6 +266,13 @@ class TrendSeriesDto {
   /// **全部**观测点,按时间升序(无日期的排最后)。不做任何数量裁剪。
   final List<TrendPointDto> points;
 
+  /// 这条序列是不是手动录入的自测值(血压/血糖/体重/体温/心率,「记录」入口
+  /// 产出,而非从化验单 OCR 出来的)——`parser::AnalyteSeries::self_measured`
+  /// 透传。自测序列结构上永远不会与同名医院序列合并(`aggregate` 的分组约定,
+  /// 见 MANUAL-ENTRY-DESIGN.md),这个字段只用于**显示**:UI 据此加"(家测)"
+  /// 标注 / 换个点形状,不改变哪些点属于这条序列。
+  final bool selfMeasured;
+
   const TrendSeriesDto({
     required this.name,
     this.analyteKey,
@@ -276,6 +283,7 @@ class TrendSeriesDto {
     required this.anyAbnormal,
     required this.problemGroups,
     required this.points,
+    required this.selfMeasured,
   });
 
   @override
@@ -288,7 +296,8 @@ class TrendSeriesDto {
       refHigh.hashCode ^
       anyAbnormal.hashCode ^
       problemGroups.hashCode ^
-      points.hashCode;
+      points.hashCode ^
+      selfMeasured.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -303,7 +312,8 @@ class TrendSeriesDto {
           refHigh == other.refHigh &&
           anyAbnormal == other.anyAbnormal &&
           problemGroups == other.problemGroups &&
-          points == other.points;
+          points == other.points &&
+          selfMeasured == other.selfMeasured;
 }
 
 /// 摘要单上的一行化验:一个具体的测量点。
@@ -319,6 +329,10 @@ class VisitLabDto {
   final double? refHigh;
   final PlatformInt64 documentId;
 
+  /// 见 `TrendSeriesDto::self_measured` 的文档 —— 同一份透传,就诊单据此在
+  /// 「复制给医生」纯文本里追加"(家测)"(`render_plain_text`)。
+  final bool selfMeasured;
+
   const VisitLabDto({
     required this.name,
     required this.date,
@@ -328,6 +342,7 @@ class VisitLabDto {
     this.refLow,
     this.refHigh,
     required this.documentId,
+    required this.selfMeasured,
   });
 
   @override
@@ -339,7 +354,8 @@ class VisitLabDto {
       flag.hashCode ^
       refLow.hashCode ^
       refHigh.hashCode ^
-      documentId.hashCode;
+      documentId.hashCode ^
+      selfMeasured.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -353,7 +369,8 @@ class VisitLabDto {
           flag == other.flag &&
           refLow == other.refLow &&
           refHigh == other.refHigh &&
-          documentId == other.documentId;
+          documentId == other.documentId &&
+          selfMeasured == other.selfMeasured;
 }
 
 /// 摘要单上的一行就诊记录 —— 一个就诊组,或一份不属于任何就诊的独立文档。
