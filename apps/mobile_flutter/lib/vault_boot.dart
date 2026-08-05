@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/src/rust/api/vault.dart';
@@ -97,44 +98,91 @@ Future<void> switchProfileAndReopen(String id) async {
 }
 
 /// 「清空所有数据」= 恢复出厂:清**所有成员、所有位置**的 vault 数据(本机 + iCloud
-/// 容器)+ 份数缓存 + 待确认,重置成单一默认档案。
+/// 容器)+ 份数缓存 + 待确认,重置成单一默认档案,最后重开一个空箱子。
 ///
-/// ⚠️ root 成员有**两处** vault:本机 `<docs>/vault` 与 iCloud `<container>/Documents/vault`
-/// (关 iCloud 时容器副本会被 `disable_icloud_sync` 保留)。`resetVault` 只干净清掉**当前
-/// 活跃**那处(正常关连接 + 删 db/wal + 重开空);另一处必须显式删,否则清空后容器里仍留
-/// 整份病历、再开 iCloud 会 adopt 回来(评审 Critical)。子成员整个 `profiles/` 删掉。
+/// 实现是 [runWipeSequence];顺序契约与踩过的坑写在那上面。
 Future<void> wipeAllData() async {
-  final docsRoot = (await getApplicationDocumentsDirectory()).path;
-  final containerRoot = await IcloudBridge.containerPath();
+  await runWipeSequence(
+    docsRoot: (await getApplicationDocumentsDirectory()).path,
+    containerRoot: await IcloudBridge.containerPath(),
+    releaseActiveVault: resetVault,
+    openFreshRootVault: openCurrentProfileVault,
+  );
+  bumpVaultRevision();
+}
 
+/// [wipeAllData] 的本体。三个副作用抽成参数,只为让顺序契约能在**不带 Rust 原生库**
+/// 的 `flutter test` 里被钉住(见 `test/wipe_all_data_test.dart`);产品代码里的唯一
+/// 调用点就是 [wipeAllData],传的永远是真实现。
+///
+/// ## 顺序契约:**先松手,再删盘,最后开箱 —— 开箱永远是最后一步**
+///
+/// 这条契约不是风格偏好,它对应一个真实事故(BUG-3)。原先的顺序是「开箱 → 清箱 →
+/// 删目录」,而删掉的目录里就包含刚开好的那个箱子:
+///
+/// * Rust 的 `open_vault` 会 `create_dir_all` 出目录并在里面攥着 sqlite 连接;
+/// * **每个**成员 —— 包括恢复出厂后的 root `p-1` —— 都住在 `<root>/profiles/<id>/`
+///   ([ProfileManager.localBaseOf];那个类的文档写着「成员一律平等,路径规则只有
+///   一条」)。所以 `profiles/` 不是「**子**成员目录」,它是**全部**成员目录,含当前
+///   这个。旧注释把它写成「子成员」,那句话是错的,也正是这个 bug 的来源。
+///
+/// 反序的后果不是「删不干净」,而是**箱子开在一个已经不存在的目录上**:读走的是已
+/// 打开的连接/内存态,所以「已清空」这个反馈是真的;而之后每一次**写**(手动录入、
+/// 导入、载入示例)都炸在 `No such file or directory`,直到 App 重启。用户此刻恰好
+/// 处在「我刚清空,准备重新开始录」的状态。
+///
+/// 于是三步各自的理由:
+///
+///   ① [releaseActiveVault](`reset_vault`)—— 要的是它前半截「正常关连接 + 删 db/wal」,
+///      让紧接着的 `rm -rf` 不落在一个还开着的 sqlite 上。它顺手在原地重开的那个空箱子
+///      随即被 ② 删掉,不浪费也不留痕。**这一步允许失败**:本次启动压根没开过箱时
+///      (`VaultBootstrap` 开箱失败)Rust 会抛「保险箱尚未打开」,那时本来也没有句柄
+///      要松开 —— 不能因此让整个「清空」半途而废。
+///   ② 删磁盘上**所有位置**:本机与 iCloud 容器两个根下的 `profiles/`(全部成员)
+///      + 遗留的 `vault/`(多成员布局之前 root 待过的老位置)。两个根都删的理由:关掉
+///      iCloud 时容器副本会被 `disable_icloud_sync` 保留,只删本机的话数据还躺在容器里,
+///      再开 iCloud 会被 adopt 回来 —— 用户以为清干净了,过一阵又冒出来(评审 Critical)。
+///      两处都无条件删,不再看 `icloudStatus()`:「哪一处是活跃的」这个判断在这里没有
+///      意义,反正两处都要没。
+///   ③ [openFreshRootVault] —— 目录删完之后才开,`open_vault` 的 `create_dir_all`
+///      会把 `profiles/p-1/vault` 重新建出来,进程里于是攥着一个真实存在、且是空的箱子。
+///
+/// 加新步骤时守住这条:**任何 `rm` 都必须排在开箱之前**。
+@visibleForTesting
+Future<void> runWipeSequence({
+  required String docsRoot,
+  required String? containerRoot,
+  required Future<void> Function() releaseActiveVault,
+  required Future<void> Function() openFreshRootVault,
+}) async {
   Future<void> rmDir(String path) async {
     final d = Directory(path);
     if (await d.exists()) await d.delete(recursive: true);
   }
 
-  // 1. 注册表恢复出厂(current→默认 root)+ 清待确认。
+  // 注册表恢复出厂(current→默认 root)+ 清待确认。必须在开箱之前 —— 否则 ③ 开的
+  // 会是清空之前那个成员的箱子。
   await ProfileManager.instance.factoryReset();
   await ReviewState.instance.clearAll();
 
-  // 2. 重开默认(root)vault → 活跃 = root;3. resetVault 干净清活跃那处(含 db/wal)+ 重开空。
-  await openCurrentProfileVault();
-  await resetVault();
-
-  // 4. 删 root 的**非活跃**那处 vault 副本(resetVault 没碰到的):iCloud 开时活跃=容器,
-  //    非活跃=本机;关时反之。icloudStatus().enabled 与 Rust 的路径决策同源(同一 marker)。
-  final icloudOn = (await icloudStatus()).enabled;
-  if (icloudOn) {
-    await rmDir('$docsRoot/vault');
-  } else if (containerRoot != null) {
-    await rmDir('$containerRoot/Documents/vault');
+  // ① 松手。
+  try {
+    await releaseActiveVault();
+  } catch (_) {
+    // 没开过箱 → 没有句柄要松开,继续删。见上面 ① 的说明。
   }
 
-  // 5. 删所有子成员数据(各自 vault + 派生库都在 profiles/ 内);本机 + iCloud 容器都删。
-  for (final root in [docsRoot, if (containerRoot != null) '$containerRoot/Documents']) {
+  // ② 删盘。
+  for (final root in [
+    docsRoot,
+    if (containerRoot != null) '$containerRoot/Documents',
+  ]) {
     await rmDir('$root/profiles');
+    await rmDir('$root/vault');
   }
 
-  bumpVaultRevision();
+  // ③ 开箱 —— 最后一步。
+  await openFreshRootVault();
 }
 
 /// 用报告里识别到的患者姓名,给还没定过名的默认档案自动命名。幂等:只在首次未命名时
