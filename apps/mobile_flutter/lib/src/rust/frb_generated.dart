@@ -2290,6 +2290,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<VisitNoteDto> dco_decode_list_visit_note_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_visit_note_dto).toList();
+  }
+
+  @protected
   List<VisitRecordDto> dco_decode_list_visit_record_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_visit_record_dto).toList();
@@ -2583,6 +2589,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  VisitNoteDto dco_decode_visit_note_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return VisitNoteDto(
+      text: dco_decode_String(arr[0]),
+      date: dco_decode_opt_String(arr[1]),
+      documentId: dco_decode_i_64(arr[2]),
+    );
+  }
+
+  @protected
   VisitRecordDto dco_decode_visit_record_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2600,15 +2619,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   VisitSummaryDto dco_decode_visit_summary_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return VisitSummaryDto(
       patient: dco_decode_patient_profile_dto(arr[0]),
       allergies: dco_decode_list_allergy_item_dto(arr[1]),
       activeMeds: dco_decode_list_active_med_dto(arr[2]),
       recentLabs: dco_decode_list_visit_lab_dto(arr[3]),
-      recentVisits: dco_decode_list_visit_record_dto(arr[4]),
-      plainText: dco_decode_String(arr[5]),
+      recentChanges: dco_decode_list_visit_lab_dto(arr[4]),
+      recentVisits: dco_decode_list_visit_record_dto(arr[5]),
+      recentNotes: dco_decode_list_visit_note_dto(arr[6]),
+      plainText: dco_decode_String(arr[7]),
     );
   }
 
@@ -3181,6 +3202,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<VisitNoteDto> sse_decode_list_visit_note_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <VisitNoteDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_visit_note_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<VisitRecordDto> sse_decode_list_visit_record_dto(
     SseDeserializer deserializer,
   ) {
@@ -3528,6 +3563,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  VisitNoteDto sse_decode_visit_note_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_text = sse_decode_String(deserializer);
+    var var_date = sse_decode_opt_String(deserializer);
+    var var_documentId = sse_decode_i_64(deserializer);
+    return VisitNoteDto(
+      text: var_text,
+      date: var_date,
+      documentId: var_documentId,
+    );
+  }
+
+  @protected
   VisitRecordDto sse_decode_visit_record_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_title = sse_decode_opt_String(deserializer);
@@ -3549,14 +3597,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_allergies = sse_decode_list_allergy_item_dto(deserializer);
     var var_activeMeds = sse_decode_list_active_med_dto(deserializer);
     var var_recentLabs = sse_decode_list_visit_lab_dto(deserializer);
+    var var_recentChanges = sse_decode_list_visit_lab_dto(deserializer);
     var var_recentVisits = sse_decode_list_visit_record_dto(deserializer);
+    var var_recentNotes = sse_decode_list_visit_note_dto(deserializer);
     var var_plainText = sse_decode_String(deserializer);
     return VisitSummaryDto(
       patient: var_patient,
       allergies: var_allergies,
       activeMeds: var_activeMeds,
       recentLabs: var_recentLabs,
+      recentChanges: var_recentChanges,
       recentVisits: var_recentVisits,
+      recentNotes: var_recentNotes,
       plainText: var_plainText,
     );
   }
@@ -4066,6 +4118,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_visit_note_dto(
+    List<VisitNoteDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_visit_note_dto(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_visit_record_dto(
     List<VisitRecordDto> self,
     SseSerializer serializer,
@@ -4347,6 +4411,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_visit_note_dto(VisitNoteDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.text, serializer);
+    sse_encode_opt_String(self.date, serializer);
+    sse_encode_i_64(self.documentId, serializer);
+  }
+
+  @protected
   void sse_encode_visit_record_dto(
     VisitRecordDto self,
     SseSerializer serializer,
@@ -4368,7 +4440,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_allergy_item_dto(self.allergies, serializer);
     sse_encode_list_active_med_dto(self.activeMeds, serializer);
     sse_encode_list_visit_lab_dto(self.recentLabs, serializer);
+    sse_encode_list_visit_lab_dto(self.recentChanges, serializer);
     sse_encode_list_visit_record_dto(self.recentVisits, serializer);
+    sse_encode_list_visit_note_dto(self.recentNotes, serializer);
     sse_encode_String(self.plainText, serializer);
   }
 }

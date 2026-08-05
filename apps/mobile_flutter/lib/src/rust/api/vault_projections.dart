@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `document_ids_for`, `extract_allergies_pairs`, `fmt_date`, `fmt_num`, `gather`, `is_renderable`, `parse_allergy_item`, `parse_rfc3339_date`, `render_plain_text`, `source_docs`, `trend_series`
+// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `extract_allergies_pairs`, `fmt_date`, `fmt_num`, `gather`, `is_renderable`, `parse_allergy_item`, `parse_rfc3339_date`, `render_plain_text`, `source_docs`, `trend_series`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ProjectionDoc`, `VaultProjection`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// 分组 chip 的完整目录,固定顺序(策展在 `terminology::PANEL_CATALOG`,与每条
 /// [`TrendSeriesDto::panel`] 用的是同一份表)。**只回答「有哪些大类、先后顺序是
@@ -40,8 +40,10 @@ Future<EmergencyCardDto> viewEmergencyCard() =>
 
 /// **就诊摘要单**:一屏能看完的结构化版(给 UI 渲染)+ 纯文本版(给「复制给医生」)。
 ///
-/// 内容:基本信息 + 过敏史 + 在用药 + 最近关键化验(带日期与 flag)+ 最近就诊记录标题。
-/// 全部是原文逐字内容或从原文抽出的数值/日期,**不生成任何解释性文字或结论**。
+/// 内容:基本信息 + 过敏史 + 在用药 + 最近关键化验(带日期与 flag)+ 我最近的变化 +
+/// 我想问医生的(笔记)+ 最近就诊记录标题。全部是原文逐字内容、从原文抽出的数值/
+/// 日期,或患者自己写的笔记(笔记单独标注,见 [`VisitNoteDto`])——**不生成任何
+/// 解释性文字或结论**。
 Future<VisitSummaryDto> viewVisitSummary() =>
     RustLib.instance.api.crateApiVaultProjectionsViewVisitSummary();
 
@@ -376,6 +378,54 @@ class VisitLabDto {
           selfMeasured == other.selfMeasured;
 }
 
+/// 就诊摘要单「我想问医生的」一节的一条笔记。
+///
+/// ## 为什么不进 [`VisitSummaryDto::plain_text`] 或二维码分享
+///
+/// 笔记是患者自己写的自由文本("今天头晕""问王医生片子的事"),不是从病历原文
+/// 抽出来的。这一屏其它每一节都可以说"这是原文逐字"或"这是从原文抽出的数值/
+/// 日期";笔记不行——它是患者此刻的主观记录,混进给医生的那份文本,读起来会
+/// 被当成一条病历陈述(甚至被当成主诉)。所以它只出现在这一屏上,给患者自己看,
+/// 提醒"待会儿要问这个"。二维码分享走的是 `packages/parser::handoff::assemble_summary`
+/// 那条完全不同的管线(结构化的 problems/labs/meds,没有"最近文档"这种原文转述),
+/// 笔记原本就到不了那里,这条边界是**结构性的**,不需要额外过滤。
+///
+/// ## 为什么没有"已经问过医生"这种已读标记
+///
+/// `MANUAL-ENTRY-DESIGN.md` §5.4 提过一个更细的方案:录入笔记时加一个"要问医生"
+/// 的勾选标记,只有勾了的笔记才进这一节。这需要在笔记文本里编码一个隐藏标记(见
+/// 该文档 §3.2 自测值的"结构化载荷"先例)——但笔记的 OCR 文本在这个项目里是一条
+/// 反复强调的不变量:「逐字来自你的记录」,`note_never_becomes_a_condition_or_a_lab_series`
+/// 这类测试钉的就是这条保真度。往里面塞一个显示时要再摘掉的隐藏前缀,是在为了一个
+/// UI 分类去弄脏这条不变量,且没有历史笔记的回填路径(老笔记永远没有这个标记)。
+/// 权衡下来选了更简单的退路:直接显示**最近几条**笔记(见
+/// [`VISIT_SUMMARY_MAX_NOTES`]),不分类。代价是"今天头晕"和"问王医生片子的事"
+/// 会混在一起,好处是零 core-model/parser 改动、老笔记立刻可用、没有退化的空标记
+/// 语义。
+class VisitNoteDto {
+  /// 笔记原文,逐字。
+  final String text;
+
+  /// 记录时间,`"YYYY-MM-DD"`。录入弹层的"测量时间"对笔记同样必填,实践中恒有
+  /// 值,但仍按 `Option` 处理,不假设。
+  final String? date;
+  final PlatformInt64 documentId;
+
+  const VisitNoteDto({required this.text, this.date, required this.documentId});
+
+  @override
+  int get hashCode => text.hashCode ^ date.hashCode ^ documentId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VisitNoteDto &&
+          runtimeType == other.runtimeType &&
+          text == other.text &&
+          date == other.date &&
+          documentId == other.documentId;
+}
+
 /// 摘要单上的一行就诊记录 —— 一个就诊组,或一份不属于任何就诊的独立文档。
 class VisitRecordDto {
   /// 就诊组标题 / 文档标题;识别不到标题时为 None。
@@ -420,14 +470,30 @@ class VisitSummaryDto {
   final List<ActiveMedDto> activeMeds;
 
   /// 最近的关键化验:每条序列取**最新一个带日期的点**,按日期倒序,最多
-  /// [`VISIT_SUMMARY_MAX_LABS`] 条。完整序列在趋势页。
+  /// [`VISIT_SUMMARY_MAX_LABS`] 条。完整序列在趋势页。**这一屏不单独渲染这份
+  /// 全量列表**(2026-08-05 改版后只显示 [`recent_changes`]),它只喂
+  /// [`plain_text`]——复制给医生的那份要带全的最近化验,不只是异常的那几条。
   final List<VisitLabDto> recentLabs;
+
+  /// 「我最近的变化」:[`recent_labs`] 里自测的(`self_measured`)或有异常标记
+  /// (`flag.is_some()`)的那些,最多 [`VISIT_SUMMARY_MAX_CHANGES`] 条,**不是**
+  /// 从 [`recent_labs`] 截出来的——见 [`view_visit_summary`] 里的说明,共享同一个
+  /// 8 条上限会把自测值挤没。只进这一屏的 UI,不进 [`plain_text`]/二维码分享
+  /// (那两处已经有更完整的化验数据,不需要再复述一遍"哪些变了")。
+  final List<VisitLabDto> recentChanges;
 
   /// 最近就诊/文档,最多 [`VISIT_SUMMARY_MAX_VISITS`] 条。
   final List<VisitRecordDto> recentVisits;
 
+  /// 「我想问医生的」:最近的手动笔记,最多 [`VISIT_SUMMARY_MAX_NOTES`] 条,
+  /// 按记录时间倒序。**只进这一屏,患者自己看**——见 [`VisitNoteDto`] 文档,
+  /// 绝不进 [`plain_text`] 或二维码分享。
+  final List<VisitNoteDto> recentNotes;
+
   /// 与上面结构化字段**同源同内容**的纯文本渲染,供直接复制给医生。
-  /// 只含原文逐字内容 + 字段标签,不含任何解释、结论或推断。
+  /// 只含原文逐字内容 + 字段标签,不含任何解释、结论或推断,**且不含笔记**——
+  /// 笔记是患者自由文本,混进给医生的这份容易被当成病历内容(见
+  /// [`VisitNoteDto`] 文档)。
   final String plainText;
 
   const VisitSummaryDto({
@@ -435,7 +501,9 @@ class VisitSummaryDto {
     required this.allergies,
     required this.activeMeds,
     required this.recentLabs,
+    required this.recentChanges,
     required this.recentVisits,
+    required this.recentNotes,
     required this.plainText,
   });
 
@@ -445,7 +513,9 @@ class VisitSummaryDto {
       allergies.hashCode ^
       activeMeds.hashCode ^
       recentLabs.hashCode ^
+      recentChanges.hashCode ^
       recentVisits.hashCode ^
+      recentNotes.hashCode ^
       plainText.hashCode;
 
   @override
@@ -457,6 +527,8 @@ class VisitSummaryDto {
           allergies == other.allergies &&
           activeMeds == other.activeMeds &&
           recentLabs == other.recentLabs &&
+          recentChanges == other.recentChanges &&
           recentVisits == other.recentVisits &&
+          recentNotes == other.recentNotes &&
           plainText == other.plainText;
 }

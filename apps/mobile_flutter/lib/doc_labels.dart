@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 /// 文档类型 / 就诊类型的中文标签与图标 —— 全 app **唯一**一份。
 ///
 /// 这些映射原本私有在 `screens/archive_screen.dart` 里。信息架构改成五个 tab 之后,
-/// 概览、就诊单浮层也要显示同样的「化验 / 影像 / 出院小结」,再抄一份就意味着同一份
-/// 病历在两个 tab 上可能叫两个名字。挪到这里,改一处四处一致。
+/// 概览、「看病带这个」浮层也要显示同样的「化验 / 影像 / 出院小结」,再抄一份就
+/// 意味着同一份病历在两个 tab 上可能叫两个名字。挪到这里,改一处四处一致。
 ///
 /// 与 core-model `types.rs`、旧 `App.tsx` 的取值保持一致。
 
@@ -70,8 +70,7 @@ IconData iconForKind(String kind) =>
 /// `VisitRecordDto.kind` 的取值**跨了两个命名空间**:就诊组用 `inpatient` 这类,
 /// 独立文档用 `lab_report` 这类(见 DTO 文档)。两张表都查一遍,都不中就原样透出
 /// —— 编一个好看的名字不如把我们读到的原值给人看。
-String visitKindLabel(String kind) =>
-    kindLabel[kind] ?? docLabel[kind] ?? kind;
+String visitKindLabel(String kind) => kindLabel[kind] ?? docLabel[kind] ?? kind;
 
 IconData iconForVisitKind(String kind) =>
     _kindIcon[kind] ?? _docIcon[kind] ?? Icons.local_hospital_outlined;

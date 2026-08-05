@@ -56,7 +56,9 @@ class MedMeApp extends StatefulWidget {
 
 void pushClaimScreen(ClaimLink link, {required bool cold}) {
   appNavigatorKey.currentState?.push(
-    MaterialPageRoute(builder: (_) => ClaimScreen(link: link, cold: cold)),
+    MaterialPageRoute(
+      builder: (_) => ClaimScreen(link: link, cold: cold),
+    ),
   );
 }
 
@@ -158,7 +160,10 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
   final Future<void> _open = (() async {
     var ok = true;
     try {
-      await Future.wait([openCurrentProfileVault(), AppMode.instance.ensureLoaded()]);
+      await Future.wait([
+        openCurrentProfileVault(),
+        AppMode.instance.ensureLoaded(),
+      ]);
     } catch (_) {
       ok = false;
       rethrow; // 错误界面照旧显示,埋点只是搭个便车
@@ -314,15 +319,17 @@ class _AppRootState extends State<AppRoot> {
 ///
 /// ## 两处刻意的缺席
 ///
-/// **「就诊单」不是 tab。** 它是诊室里那 30 秒的动作,从概览的快捷操作与档案的顶栏
-/// 两处以浮层唤起(`screens/visit_summary_sheet.dart`)。做成 tab 就是给一个一年用
-/// 十次的动作一个常驻席位,而把它挤掉的会是应急卡。
+/// **「看病带这个」不是 tab。**(原名「就诊单」,2026-08-05 改名,见
+/// `screens/visit_summary_sheet.dart` 顶部文档)它是诊室里那 30 秒的动作,从
+/// 概览与档案的顶栏两处以浮层唤起。做成 tab 就是给一个一年用十次的动作一个
+/// 常驻席位,而把它挤掉的会是应急卡。
 ///
 /// **「导出·分享」不再是 tab,收进了设置。** 它承载的是 E2E 加密分享与可打印导出:
-/// 重、正式、要联网、低频。它和就诊单不是一回事(那个是本地的、离线的、一页纸),
-/// 所以不能并进就诊单;而它的心智恰好就是设置这个 tab 的定义 ——「数据主权:我的
-/// 数据往哪去」,和备份、清空是同一件事的三个方向。
-/// 诊室现场那条最高频的路没有变长:就诊单浮层底部直接有「医生要看原件 · 出示二维码」。
+/// 重、正式、要联网、低频。它和「看病带这个」不是一回事(那个是本地的、离线的、
+/// 一页纸),所以不能并进去;而它的心智恰好就是设置这个 tab 的定义 ——「数据
+/// 主权:我的数据往哪去」,和备份、清空是同一件事的三个方向。
+/// 诊室现场那条最高频的路没有变长:「看病带这个」浮层底部直接有「医生要看原件 ·
+/// 出示二维码」。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 

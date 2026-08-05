@@ -21,7 +21,9 @@ import 'package:mobile_flutter/widgets/member_switcher.dart';
 ///
 /// 五 tab 信息架构(设计系统 §八)里,这一屏对应的使用时刻是**「找某一张单子」**。
 /// 「我现在怎么样」搬去了概览,「这两年怎么变的」搬去了趋势 —— 这一屏专心做检索,
-/// 不再兼职做首页。顶部因此多了一颗「就诊单」:找单子的人下一步常常就是要进诊室。
+/// 不再兼职做首页。顶部因此多了一颗「看病带这个」(原名「就诊单」,2026-08-05
+/// 改名,见 `visit_summary_sheet.dart` 顶部文档):找单子的人下一步常常就是要
+/// 进诊室。
 ///
 /// 文档类型标签与图标已挪到 `lib/doc_labels.dart`(四个屏共用,免得同一份病历在
 /// 两个 tab 上叫两个名字)。
@@ -254,13 +256,14 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           child: Container(height: 1, color: c.line),
         ),
         actions: [
-          // 「就诊单」的第二个入口(另一个在概览的快捷操作)。它刻意不是 tab ——
-          // 是诊室里那 30 秒的动作,不是一个常驻浏览的空间(设计系统 §八)。
-          // 放在档案顶栏是因为:翻单子的人下一步常常就是要进诊室。
+          // 「看病带这个」的第二个入口(另一个在概览,现在是独立一整条的
+          // `_VisitSheetBanner`)。它刻意不是 tab —— 是诊室里那 30 秒的动作,
+          // 不是一个常驻浏览的空间(设计系统 §八)。放在档案顶栏是因为:翻单子
+          // 的人下一步常常就是要进诊室。
           IconButton(
             onPressed: () => showVisitSummarySheet(context),
             icon: const Icon(Icons.assignment_outlined),
-            tooltip: '就诊单',
+            tooltip: '看病带这个',
           ),
           // 右上角「导入」:弹三选一(拍照/相册/选文件),导入后本屏经 vaultRevision 自动刷新。
           Padding(
@@ -355,8 +358,10 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   memberName: ProfileManager.instance.displayName,
                   // tab 条已经在管「选谁」,身份卡就不再兼职切换入口;
                   // 人多退回弹出式时,它仍是唯一的切换入口。
-                  showName: ProfileManager.instance.profiles.length > kMemberTabsMax,
-                  onTap: ProfileManager.instance.profiles.length > kMemberTabsMax
+                  showName:
+                      ProfileManager.instance.profiles.length > kMemberTabsMax,
+                  onTap:
+                      ProfileManager.instance.profiles.length > kMemberTabsMax
                       ? _showProfileSwitcher
                       : null,
                 ),
@@ -532,6 +537,7 @@ class _MemberTabs extends StatelessWidget {
 class _PatientHeader extends StatelessWidget {
   final PatientProfileDto profile;
   final String memberName;
+
   /// 是否在卡片里显示姓名。有 tab 条时传 false —— 姓名由 tab 条负责,
   /// 卡片只讲这个人的档案信息,免得同一个名字在屏幕上出现两次。
   final bool showName;
@@ -971,8 +977,10 @@ class _PendingCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            [docLabel[doc.docType] ?? doc.docType, '点开核对并确认']
-                                .join(' · '),
+                            [
+                              docLabel[doc.docType] ?? doc.docType,
+                              '点开核对并确认',
+                            ].join(' · '),
                             style: MedType.secondary.copyWith(color: c.ink2),
                           ),
                         ],

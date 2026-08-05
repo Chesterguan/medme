@@ -261,7 +261,10 @@ class _TrendsScreenState extends State<TrendsScreen> {
                                   ? '这个大类下没有可显示的指标。'
                                   : '这些记录里没有非正常项。'),
                         textAlign: TextAlign.center,
-                        style: MedType.body.copyWith(color: c.ink2, height: 1.6),
+                        style: MedType.body.copyWith(
+                          color: c.ink2,
+                          height: 1.6,
+                        ),
                       ),
                     ),
                 ],
@@ -629,9 +632,9 @@ class SeriesCard extends StatelessWidget {
                 // 「这是你自己填的」。这与 `lab_status.dart` 那条同源:状态同时编码
                 // 在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
                 //
-                // 概览(`overview_screen.dart:434`)和就诊单
-                // (`visit_summary_sheet.dart:365`)早就在日期旁标了「· 家测」,
-                // 只有趋势漏了。措辞与它们一致,不另造一套。
+                // 概览(`overview_screen.dart` 的 `_LabSnapshot`)和「看病带这个」
+                // (`visit_summary_sheet.dart` 的 `_LabRow`)早就在日期旁标了
+                // 「· 家测」,只有趋势漏了。措辞与它们一致,不另造一套。
                 if (series.selfMeasured) const _SelfMeasuredLegend(),
                 if (ref != null) _RefLegend(text: '参考区间 $ref'),
                 Text(

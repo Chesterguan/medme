@@ -30,6 +30,7 @@ const _appBuildNumber = '52';
 /// 是否在设置里露出「iCloud 同步」入口。当前 false —— 全力做手机端本体,跨设备
 /// 同步先不投入。底层能力未删,改回 true 即恢复。
 const bool _showIcloudSync = false;
+
 /// 分组卡片列表,视觉还原自 `apps/mobile/src/App.tsx` 的设置区(sect + group + row)。
 /// 保险箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。
 class SettingsScreen extends StatefulWidget {
@@ -138,7 +139,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final originalMemberId = pm.currentId.value;
       // 按名字找已存在的示例成员:名字本来可重复,但这个是我们自己建的、用户改不到,
       // 拿它认一下就够,免得再存一个 id。找不到就新建(新建会自动切过去)。
-      final existing = pm.profiles.where((p) => p.name == _demoMember).firstOrNull;
+      final existing = pm.profiles
+          .where((p) => p.name == _demoMember)
+          .firstOrNull;
       final String demoMemberId;
       if (existing == null) {
         final created = await createProfileAndReopen(
@@ -327,11 +330,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // 一次交付动作,心智恰好落在这个 tab 的定义上 ——「数据主权:我的数据往
           // 哪去」,和下面的「清空所有数据」是同一件事的两个方向。
           //
-          // 它没有并进「就诊单」,因为那是两个场景:就诊单是本地的、离线的、一页
-          // 纸、三十秒;这里是端到端加密、把**完整病历含原件**交出去。
+          // 它没有并进「看病带这个」(原名「就诊单」,2026-08-05 改名),因为那是
+          // 两个场景:「看病带这个」是本地的、离线的、一页纸、三十秒;这里是端到
+          // 端加密、把**完整病历含原件**交出去。
           //
-          // 诊室现场那条最高频的路没有变长:就诊单浮层底部直接就有「医生要看原件 ·
-          // 出示二维码」,一步到同一个界面(见 `visit_summary_sheet.dart`)。
+          // 诊室现场那条最高频的路没有变长:「看病带这个」浮层底部直接就有
+          // 「医生要看原件 · 出示二维码」,一步到同一个界面(见
+          // `visit_summary_sheet.dart`)。
           _SectionLabel('数据出口'),
           _SettingsGroup(
             children: [
@@ -441,7 +446,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.description_outlined,
                 title: '用户协议',
                 subtitle: '工具定位、责任边界与开源许可',
-                onTap: () => _openWeb('https://medmenow.com/terms.html', '用户协议'),
+                onTap: () =>
+                    _openWeb('https://medmenow.com/terms.html', '用户协议'),
               ),
               _InfoRow(
                 title: 'MedMe 医我',
@@ -533,7 +539,9 @@ class _VaultCard extends StatelessWidget {
   /// 当前成员用刚查到的最新记录数,其余成员用缓存(没加载过为 null)。
   int? _countOf(String id) {
     final pm = ProfileManager.instance;
-    if (id == pm.currentId.value && profile != null) return profile!.recordCount;
+    if (id == pm.currentId.value && profile != null) {
+      return profile!.recordCount;
+    }
     return pm.countFor(id);
   }
 
@@ -545,7 +553,11 @@ class _VaultCard extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        icon: const Icon(Icons.warning_amber_rounded, color: MedMe.danger, size: 44),
+        icon: const Icon(
+          Icons.warning_amber_rounded,
+          color: MedMe.danger,
+          size: 44,
+        ),
         title: Text(
           '删除「$name」的全部病历?',
           textAlign: TextAlign.center,
@@ -597,9 +609,9 @@ class _VaultCard extends StatelessWidget {
     if (ok != true) return;
     final removed = await removeProfileAndReopen(p.id);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(removed ? '已移除「$name」' : '无法移除该成员')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(removed ? '已移除「$name」' : '无法移除该成员')));
     onChanged();
   }
 
@@ -667,7 +679,12 @@ class _VaultCard extends StatelessWidget {
             const Divider(height: 1, color: MedMe.line),
             for (final m in members)
               Padding(
-                padding: EdgeInsets.fromLTRB(20, 8, pm.canRemove(m.id) ? 8 : 20, 8),
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  8,
+                  pm.canRemove(m.id) ? 8 : 20,
+                  8,
+                ),
                 child: Row(
                   children: [
                     Expanded(

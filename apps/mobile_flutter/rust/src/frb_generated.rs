@@ -2438,6 +2438,20 @@ impl SseDecode for Vec<crate::api::vault_projections::VisitLabDto> {
     }
 }
 
+impl SseDecode for Vec<crate::api::vault_projections::VisitNoteDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::VisitNoteDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::vault_projections::VisitRecordDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2806,6 +2820,20 @@ impl SseDecode for crate::api::vault_projections::VisitLabDto {
     }
 }
 
+impl SseDecode for crate::api::vault_projections::VisitNoteDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_text = <String>::sse_decode(deserializer);
+        let mut var_date = <Option<String>>::sse_decode(deserializer);
+        let mut var_documentId = <i64>::sse_decode(deserializer);
+        return crate::api::vault_projections::VisitNoteDto {
+            text: var_text,
+            date: var_date,
+            document_id: var_documentId,
+        };
+    }
+}
+
 impl SseDecode for crate::api::vault_projections::VisitRecordDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2832,15 +2860,21 @@ impl SseDecode for crate::api::vault_projections::VisitSummaryDto {
             <Vec<crate::api::vault_projections::ActiveMedDto>>::sse_decode(deserializer);
         let mut var_recentLabs =
             <Vec<crate::api::vault_projections::VisitLabDto>>::sse_decode(deserializer);
+        let mut var_recentChanges =
+            <Vec<crate::api::vault_projections::VisitLabDto>>::sse_decode(deserializer);
         let mut var_recentVisits =
             <Vec<crate::api::vault_projections::VisitRecordDto>>::sse_decode(deserializer);
+        let mut var_recentNotes =
+            <Vec<crate::api::vault_projections::VisitNoteDto>>::sse_decode(deserializer);
         let mut var_plainText = <String>::sse_decode(deserializer);
         return crate::api::vault_projections::VisitSummaryDto {
             patient: var_patient,
             allergies: var_allergies,
             active_meds: var_activeMeds,
             recent_labs: var_recentLabs,
+            recent_changes: var_recentChanges,
             recent_visits: var_recentVisits,
+            recent_notes: var_recentNotes,
             plain_text: var_plainText,
         };
     }
@@ -3697,6 +3731,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::VisitLabDt
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::VisitNoteDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.text.into_into_dart().into_dart(),
+            self.date.into_into_dart().into_dart(),
+            self.document_id.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::VisitNoteDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::VisitNoteDto>
+    for crate::api::vault_projections::VisitNoteDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::VisitNoteDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::VisitRecordDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -3727,7 +3783,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::VisitSumma
             self.allergies.into_into_dart().into_dart(),
             self.active_meds.into_into_dart().into_dart(),
             self.recent_labs.into_into_dart().into_dart(),
+            self.recent_changes.into_into_dart().into_dart(),
             self.recent_visits.into_into_dart().into_dart(),
+            self.recent_notes.into_into_dart().into_dart(),
             self.plain_text.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -4142,6 +4200,16 @@ impl SseEncode for Vec<crate::api::vault_projections::VisitLabDto> {
     }
 }
 
+impl SseEncode for Vec<crate::api::vault_projections::VisitNoteDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::VisitNoteDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::vault_projections::VisitRecordDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -4399,6 +4467,15 @@ impl SseEncode for crate::api::vault_projections::VisitLabDto {
     }
 }
 
+impl SseEncode for crate::api::vault_projections::VisitNoteDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.text, serializer);
+        <Option<String>>::sse_encode(self.date, serializer);
+        <i64>::sse_encode(self.document_id, serializer);
+    }
+}
+
 impl SseEncode for crate::api::vault_projections::VisitRecordDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -4422,8 +4499,16 @@ impl SseEncode for crate::api::vault_projections::VisitSummaryDto {
             serializer,
         );
         <Vec<crate::api::vault_projections::VisitLabDto>>::sse_encode(self.recent_labs, serializer);
+        <Vec<crate::api::vault_projections::VisitLabDto>>::sse_encode(
+            self.recent_changes,
+            serializer,
+        );
         <Vec<crate::api::vault_projections::VisitRecordDto>>::sse_encode(
             self.recent_visits,
+            serializer,
+        );
+        <Vec<crate::api::vault_projections::VisitNoteDto>>::sse_encode(
+            self.recent_notes,
             serializer,
         );
         <String>::sse_encode(self.plain_text, serializer);
