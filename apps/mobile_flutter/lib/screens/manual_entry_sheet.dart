@@ -92,6 +92,99 @@ double? _valueFor(List<SelfMeasuredValueDto> values, String analyteKey) {
   return null;
 }
 
+/// analyte_key → (中文标签, 展示用单位)。展示单位与写进 [SelfMeasuredValueDto]
+/// 的规范单位不总相同(体温规范单位是 UCUM 的 `Cel`,展示给用户用更常见的
+/// `°C`,与下面 [_SingleValueField] 的 `displayUnit` 取法一致)——这张表只用于
+/// 拼错误提示文案,不影响实际写入的值/单位。
+const _analyteDisplay = <String, (String, String)>{
+  'bp_systolic': ('收缩压', 'mmHg'),
+  'bp_diastolic': ('舒张压', 'mmHg'),
+  'heart_rate': ('心率', '次/分'),
+  'body_weight': ('体重', 'kg'),
+  'body_temperature': ('体温', '°C'),
+  'glucose': ('血糖', 'mmol/L'),
+};
+
+/// 一个自测项的「可能性范围」——挡的是打错(如华为 Mate 9 真机实测里,手填
+/// 收缩压存进了 138388 mmHg)导致的、生理上不可能的值,**不是**判断
+/// "正常/偏高"(那是家测参考区间的职责,见
+/// `packages/parser/src/self_entry.rs` 的 `home_ref_range`,数值窄得多——
+/// 血压 135/85)。两套东西各管各的:范围外直接拒绝保存;范围内但超参考区间
+/// (例如 200/110 的高血压危象、40°C 的高热)必须照常存得进去,只是存进去之后
+/// 会被标"偏高"。范围要宽到能容纳这些真实的危急值——这里只挡物理上不存在
+/// 的数字。
+///
+/// 与 Rust 侧 `self_entry::validate_self_measured_values`
+/// 是同一条判断规则的两份独立实现:这里挡在 UI 层,能给出更具体的"改哪个
+/// 字段"引导文案;`add_self_measurement`(自测数据写入的唯一入口)里再挡
+/// 一道兜底,防的是这层 UI 校验将来被别的录入入口绕过。
+class _PlausibleRange {
+  const _PlausibleRange(this.low, this.high);
+  final double low;
+  final double high;
+}
+
+/// 六项的可能性范围 + 出处(仿 `problem_map.json` 的 `source` 字段/
+/// `self_entry.rs` 参考区间的做法——查不到可靠出处的,照实写"未核实到具体
+/// 出处",不编一个看起来权威的引用)。
+const _plausibleRanges = <String, _PlausibleRange>{
+  // 未核实到具体出处,取值依据是生理学极限的保守外扩:收缩压低于 60 mmHg
+  // 已属重度低血压/休克范畴,常规示波法血压计在此区间以下多半已测不出稳定
+  // 读数;260 mmHg 高于临床上作为"高血压危象"报告的极端病例,取整数上限
+  // 留出余量——不是某一部指南给出的切点。
+  'bp_systolic': _PlausibleRange(60, 260),
+  // 未核实到具体出处,取值依据同收缩压:30 mmHg 以下、160 mmHg 以上都超出
+  // 常规血压计示波法测量的可信区间,是生理学极限的保守外扩,不是某一部
+  // 指南给出的切点。
+  'bp_diastolic': _PlausibleRange(30, 160),
+  // 未核实到具体出处,取值依据是生理学极限的保守外扩:成人静息心率低于
+  // 25 次/分已接近严重心动过缓/心脏停搏边缘,高于 250 次/分超出心脏电生理
+  // 能维持有效搏出的上限,两端都留了余量。
+  'heart_rate': _PlausibleRange(25, 250),
+  // 未核实到具体出处,取值依据是生理学极限的保守外扩:体温低于 30°C 已属
+  // 重度低体温,高于 45°C 已超出人类已知存活体温记录的保守外扩;常规体温计
+  // 的量程也大多落在此区间之内。
+  'body_temperature': _PlausibleRange(30, 45),
+  // 未核实到具体出处,取值依据是生理学极限的保守外扩:1 kg 以下不是本应用
+  // 自测场景会出现的体重,400 kg 超出常见家用体重秤的量程上限,也远高于
+  // 已报道的极端病例体重。
+  'body_weight': _PlausibleRange(1, 400),
+  // 未核实到具体出处,取值依据是生理学极限的保守外扩:1 mmol/L 以下已低于
+  // 可测出的血糖下限(严重低血糖昏迷阈值约 2.8 mmol/L 之下留了余量),
+  // 40 mmol/L 远高于常见家用血糖仪的量程上限(通常 33.3 mmol/L 封顶),
+  // 留出余量避免卡住真实的极端高血糖读数。
+  'glucose': _PlausibleRange(1, 40),
+};
+
+/// 保存前的"可能性"校验:逐项查 [_plausibleRanges],再加一条单值范围查不出来
+/// 的交叉校验——收缩压必须大于舒张压(88/138 是明显填反了,两个数各自都在
+/// 各自的可能性范围内,只有配对比较才挡得住)。命中即返回给用户看的中文
+/// 提示(说清哪项、什么值、该改成什么样),不静默截断或改写用户输入;
+/// 通过则返回 `null`。
+///
+/// 非私有(与 [manualEntryKindForKeys] 同样的理由):`_save` 调这个决定能不能
+/// 保存,测试也需要能直接调它——`flutter test` 不带 Rust 原生库,点「保存」
+/// 走到 FFI 那一步就会崩(见 `manual_entry_sheet_test.dart` 顶部注释),所以
+/// "范围内的危急值必须能存"这条只能靠直接调这个纯函数断言返回 `null` 来钉住,
+/// 不能靠真的点「保存」看它有没有落库。
+String? manualEntryRangeError(List<SelfMeasuredValueDto> values) {
+  for (final v in values) {
+    final range = _plausibleRanges[v.analyteKey];
+    if (range == null || (v.value >= range.low && v.value <= range.high)) continue;
+    final meta = _analyteDisplay[v.analyteKey];
+    final label = meta?.$1 ?? v.analyteKey;
+    final unit = meta?.$2 ?? v.unit;
+    return '$label ${_fmtNum(v.value)} $unit 超出可能范围'
+        '(${_fmtNum(range.low)}–${_fmtNum(range.high)} $unit),请检查后重新输入';
+  }
+  final sys = _valueFor(values, 'bp_systolic');
+  final dia = _valueFor(values, 'bp_diastolic');
+  if (sys != null && dia != null && sys <= dia) {
+    return '收缩压(${_fmtNum(sys)})应大于舒张压(${_fmtNum(dia)}),请检查是否填反了';
+  }
+  return null;
+}
+
 /// `SelfMeasuredValueDto.analyteKey` 列表(`selfMeasurementValues` 读回来的)→
 /// 该用哪个 [ManualEntryKind] 预填编辑表单。血压两个 key 都在场时归到血压;
 /// 单值项按第一个 key 匹配;读不出/不认识的 key(理论上不会发生,五选一界面
@@ -247,6 +340,11 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
     final values = _collectValues();
     if (values == null) {
       setState(() => _error = '请输入完整的数值');
+      return;
+    }
+    final rangeError = manualEntryRangeError(values);
+    if (rangeError != null) {
+      setState(() => _error = rangeError);
       return;
     }
     setState(() => _saving = true);

@@ -663,6 +663,38 @@ fn fmt_value(v: f64) -> String {
     format!("{v}")
 }
 
+/// `parser::PlausibilityViolation` → 用户可读的中文提示。`parser` crate 没有
+/// UI 词汇(不知道"收缩压"这种中文标签怎么说),所以标签拼接放在这一层,复用
+/// 已有的 [`self_measured_label`]。这是兜底路径的文案(见调用处注释),不需要
+/// 像 `manual_entry_sheet.dart` 那样引导用户改哪个字段,但仍要说清"哪项、
+/// 什么值、超出多少"。
+fn format_plausibility_violation(v: &parser::PlausibilityViolation) -> String {
+    match v {
+        parser::PlausibilityViolation::OutOfRange {
+            analyte_key,
+            value,
+            low,
+            high,
+        } => format!(
+            "{}({})超出可能范围({}–{}),请检查是否输入有误",
+            self_measured_label(analyte_key),
+            fmt_value(*value),
+            fmt_value(*low),
+            fmt_value(*high),
+        ),
+        parser::PlausibilityViolation::SystolicNotAboveDiastolic {
+            systolic,
+            diastolic,
+        } => {
+            format!(
+                "收缩压({})应大于舒张压({}),请检查是否填反了",
+                fmt_value(*systolic),
+                fmt_value(*diastolic),
+            )
+        }
+    }
+}
+
 fn parse_measured_at(measured_at: Option<&str>) -> chrono::DateTime<chrono::Utc> {
     measured_at
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -695,6 +727,23 @@ pub fn add_self_measurement(
     }
     let when = parse_measured_at(measured_at.as_deref());
 
+    let sv: Vec<parser::SelfMeasuredValue> = values
+        .iter()
+        .map(|v| parser::SelfMeasuredValue {
+            analyte_key: v.analyte_key.clone(),
+            value: v.value,
+            unit: v.unit.clone(),
+        })
+        .collect();
+    // 生理学"可能性"校验(拒绝像 138388 mmHg 这种打错的值,不是判断
+    // "正常/偏高"——那是 home_ref_range 的职责,见 `parser::self_entry` 的文档)。
+    // `manual_entry_sheet.dart` 保存前已经跑过同一条校验并给出更具体的引导
+    // 文案,这里是它被绕过时的兜底——`add_self_measurement` 是所有自测数据
+    // 写入的唯一入口,不能只靠 UI 层这一道防线。
+    if let Err(violation) = parser::validate_self_measured_values(&sv) {
+        anyhow::bail!(format_plausibility_violation(&violation));
+    }
+
     let mut human_lines: Vec<String> = values
         .iter()
         .map(|v| {
@@ -707,15 +756,6 @@ pub fn add_self_measurement(
         })
         .collect();
     human_lines.push(format!("记录时间:{}", when.format("%Y-%m-%d %H:%M")));
-
-    let sv: Vec<parser::SelfMeasuredValue> = values
-        .iter()
-        .map(|v| parser::SelfMeasuredValue {
-            analyte_key: v.analyte_key.clone(),
-            value: v.value,
-            unit: v.unit.clone(),
-        })
-        .collect();
     let text = parser::render_self_measurement_text(&human_lines, &sv);
     let title = self_measured_title(&values);
 
