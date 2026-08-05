@@ -105,17 +105,73 @@ fn row_re() -> &'static Regex {
 // and tolerate spaces around the comparator/dash. 真 corpus 把参考写成带空格的
 // `< 5.20`、`> 90`、`3.9 - 6.1` —— 逐 token 分类会把 `<` 和 `5.20` 拆成两个各自作废
 // 的 token,单边参考(LDL/TC/eGFR)与带空格的双边参考就全丢了(quality dim 4/5)。
+//
+// The number sub-pattern `\d+(?:[.,]\d+)?` accepts EITHER `.` or `,` as the
+// decimal separator — see `resolve_range_number` for why `,` is folded to a
+// decimal point unconditionally rather than treated as a thousands grouping.
+// Being unanchored, an earlier version of this pattern (dot-only) had no
+// notion of where a numeral starts or ends, so on a malformed token it would
+// silently match the TAIL of a number instead of the whole thing: with the
+// old dot-only pattern, `12,5~20` (comma is OCR's misread decimal point) had
+// no way to consume the `,`, so the match started only at `5` — reading the
+// range as `5~20` and dropping the `12,` prefix entirely, with no error and
+// no implausible result to notice. Two independent fixes close this:
+// (1) the number pattern now consumes a single comma-decimal group itself,
+// so `12,5` is read whole in the first place; (2) `range_is_bounded` rejects
+// any match that still sits directly against a digit or `.` outside the
+// match (a genuinely malformed/glued numeral this pattern can't make sense
+// of), so a same-shaped failure in some other punctuation combination fails
+// loud (row dropped) rather than fabricating a plausible-looking half value.
 fn range_two_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(\d+(?:\.\d+)?)\s*[-~]\s*(\d+(?:\.\d+)?)").expect("range re"))
+    R.get_or_init(|| Regex::new(r"(\d+(?:[.,]\d+)?)\s*[-~]\s*(\d+(?:[.,]\d+)?)").expect("range re"))
 }
 fn range_high_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"[<≤]=?\s*(\d+(?:\.\d+)?)").expect("high re"))
+    R.get_or_init(|| Regex::new(r"[<≤]=?\s*(\d+(?:[.,]\d+)?)").expect("high re"))
 }
 fn range_low_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"[>≥]=?\s*(\d+(?:\.\d+)?)").expect("low re"))
+    R.get_or_init(|| Regex::new(r"[>≥]=?\s*(\d+(?:[.,]\d+)?)").expect("low re"))
+}
+
+/// True when neither the char immediately before `start` nor the char
+/// immediately after `end` in `s` is a digit or `.` — i.e. the match at
+/// `[start, end)` is not the truncated head/tail of a longer numeral the
+/// pattern didn't fully consume. `,` is deliberately NOT in this forbidden
+/// set: it's already folded into the number by the regex itself (see
+/// `range_two_re` doc), so a `,` can only appear at a match boundary when
+/// it's a SECOND, un-consumed comma group (e.g. a genuine `1,234,567`
+/// thousands chain) — real corpus (11/11 digit-comma-digit occurrences
+/// sampled from actual OCR'd reports, `labaudit/ocr-dump/*.txt`) never does
+/// that, so there's nothing to defend against there.
+fn range_is_bounded(s: &str, start: usize, end: usize) -> bool {
+    let breaks_numeral = |c: char| c.is_ascii_digit() || c == '.';
+    let before_ok = !s[..start].chars().next_back().is_some_and(breaks_numeral);
+    let after_ok = !s[end..].chars().next().is_some_and(breaks_numeral);
+    before_ok && after_ok
+}
+
+/// Parse a captured range-number token (`5.20` or a comma-decimal `5,20`)
+/// into an `f64`. Chinese lab reports print decimals with `.` only; a `,`
+/// between digits is PP-OCR misreading a period, never a thousands
+/// separator — the domain's values are already SI-scaled (platelet counts
+/// read e.g. `171`, not `150,000`), and a sample of every digit-comma-digit
+/// token across the project's real OCR corpus
+/// (`labaudit/ocr-dump/*.txt`, 11 occurrences across 6 independent reports)
+/// found 1–2 digits after the comma in every case, zero instances of the
+/// 3-digit shape a thousands grouping would need — so there is no live
+/// ambiguity to hedge against. This mirrors `normalize_ocr_decimal_comma` in
+/// the `ocr` crate exactly (same rule, unconditional comma→period), which
+/// text-layer/`.txt` input never passes through — this parser has no
+/// dependency on `ocr`, so it has to make the same call itself here rather
+/// than rely on that normalization having already happened upstream.
+fn resolve_range_number(raw: &str) -> Option<f64> {
+    if raw.contains(',') {
+        raw.replace(',', ".").parse().ok()
+    } else {
+        raw.parse().ok()
+    }
 }
 /// A dash-separated `YYYY-MM-DD` date. Only the dash form matters: the range regex
 /// keys on `[-~]`, so slash/dot dates never look like a range in the first place.
@@ -309,21 +365,42 @@ type RangeMatch = (Option<f64>, Option<f64>, (usize, usize));
 /// `< 5.20`/`≤6.5` → high only; `> 90`/`≥130` → low only. Two-sided wins over
 /// single-sided. `None` when no range is present. `folded` must already be
 /// punctuation-folded so `＜`/`～`/`－` read as `<`/`~`/`-`.
+///
+/// Each regex is scanned with `captures_iter`, not a single `captures` call,
+/// skipping over any match `range_is_bounded` rejects rather than stopping at
+/// the first (possibly truncated) one — see that function's doc. This does
+/// NOT run into the "boundary consumes a char, so the next match's own
+/// left-boundary check has nothing to consume" trap that a lookbehind
+/// work-around by consuming a prefix character would: the boundary check
+/// only PEEKS at the neighbouring char via string indexing, it never
+/// consumes it, so two ranges sitting back-to-back on one line (a real shape
+/// — see `glued_cbc_unit_does_not_inflate_ref_high_or_truncate_unit`, which
+/// has a second row's range trailing in the same `rest`) are found
+/// independently, in the same left-to-right order as before.
 fn find_range(folded: &str) -> Option<RangeMatch> {
-    if let Some(c) = range_two_re().captures(folded) {
-        let lo = c.get(1)?.as_str().parse().ok();
-        let hi = c.get(2)?.as_str().parse().ok();
-        let m = c.get(0)?;
+    for c in range_two_re().captures_iter(folded) {
+        let m = c.get(0).expect("group 0 always present");
+        if !range_is_bounded(folded, m.start(), m.end()) {
+            continue;
+        }
+        let lo = resolve_range_number(c.get(1)?.as_str());
+        let hi = resolve_range_number(c.get(2)?.as_str());
         return Some((lo, hi, (m.start(), m.end())));
     }
-    if let Some(c) = range_high_re().captures(folded) {
-        let hi = c.get(1)?.as_str().parse().ok();
-        let m = c.get(0)?;
+    for c in range_high_re().captures_iter(folded) {
+        let m = c.get(0).expect("group 0 always present");
+        if !range_is_bounded(folded, m.start(), m.end()) {
+            continue;
+        }
+        let hi = resolve_range_number(c.get(1)?.as_str());
         return Some((None, hi, (m.start(), m.end())));
     }
-    if let Some(c) = range_low_re().captures(folded) {
-        let lo = c.get(1)?.as_str().parse().ok();
-        let m = c.get(0)?;
+    for c in range_low_re().captures_iter(folded) {
+        let m = c.get(0).expect("group 0 always present");
+        if !range_is_bounded(folded, m.start(), m.end()) {
+            continue;
+        }
+        let lo = resolve_range_number(c.get(1)?.as_str());
         return Some((lo, None, (m.start(), m.end())));
     }
     None
@@ -504,6 +581,17 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
             continue;
         }
         let (unit_raw, ref_low, ref_high, explicit_flag) = parse_rest(rest);
+        // Invariant fallback, NOT the fix itself: a genuine reference range
+        // never inverts, so low>high can only mean the range was misread
+        // somewhere upstream (range_is_bounded / resolve_range_number above
+        // are the actual fix for the known misread shapes — this is a net
+        // for whatever shape isn't covered yet). Discard the whole pair
+        // rather than pick one bound to trust; the row otherwise still
+        // extracts (value/unit/flag), just without a reference range.
+        let (ref_low, ref_high) = match (ref_low, ref_high) {
+            (Some(lo), Some(hi)) if lo > hi => (None, None),
+            other => other,
+        };
 
         let m = resolve(raw_name, unit_raw.as_deref());
         // Lab-row gate: some evidence beyond "a name and a number" must exist,
@@ -999,5 +1087,142 @@ GLU        空腹血糖 Glucose       7.1      mmol/L      3.9 - 6.1       ↑
         let glu = find(&obs, "glucose");
         assert_eq!(glu.value_num, 6.9);
         assert_eq!(glu.flag.as_deref(), Some("H")); // 6.9 > 6.1, computed
+    }
+
+    // --- range_two_re boundary fix (comma-misread-as-decimal-point) ---
+    //
+    // Root cause: the old dot-only number pattern `\d+(?:\.\d+)?` had no way
+    // to consume a `,`, so on a token where PP-OCR misread a `.` as `,` it
+    // matched only the TAIL of the numeral after the comma — silently, with
+    // no implausible-looking result to raise suspicion. `low > high` cases
+    // (e.g. `3,50~10.00` → old code read `50~10.00`) at least "say something
+    // is wrong"; these two don't: the truncated result looks like a
+    // perfectly ordinary range.
+
+    #[test]
+    fn comma_misread_decimal_at_low_bound_is_read_whole_not_truncated() {
+        // Real quiet failure: `12,5~20` (comma is OCR's misread `.`). Old
+        // code silently returned low=5/high=20 — a plausible-looking range
+        // with the `12` prefix simply gone, nothing to raise suspicion.
+        let obs = extract_labs("血糖 15.0 mmol/L 12,5~20");
+        let glu = find(&obs, "glucose");
+        assert_eq!(glu.ref_low, Some(12.5), "must read 12,5 as 12.5, not 5");
+        assert_eq!(glu.ref_high, Some(20.0));
+        assert_eq!(glu.flag.as_deref(), Some("N")); // 15.0 sits inside 12.5-20
+    }
+
+    #[test]
+    fn comma_misread_decimal_at_high_bound_is_read_whole_not_truncated() {
+        // Same shape as the ticket's `3.50~10,00` example, but with `10,25`
+        // instead of `10,00`: `10` and `10.00` are the same f64 value, so
+        // that literal example can't distinguish correct from truncated via
+        // a numeric assertion (the underlying regex bug — dropping
+        // everything before the last matched digit run — is identical
+        // either way). `10,25` makes the truncation numerically visible:
+        // old code silently returned high=10 (`,25` dropped entirely).
+        let obs = extract_labs("血糖 8.0 mmol/L 3.50~10,25");
+        let glu = find(&obs, "glucose");
+        assert_eq!(glu.ref_low, Some(3.50));
+        assert_eq!(
+            glu.ref_high,
+            Some(10.25),
+            "must read 10,25 as 10.25, not 25"
+        );
+    }
+
+    #[test]
+    fn comma_misread_decimal_also_fixed_in_single_sided_ranges() {
+        // Same shape, single-sided comparator form — `range_high_re` /
+        // `range_low_re` share the same number pattern and boundary check.
+        let hi = extract_labs("总胆固醇 4.0 mmol/L < 5,20")
+            .first()
+            .and_then(|o| o.ref_high);
+        assert_eq!(hi, Some(5.20), "must read 5,20 as 5.20, not 5");
+        let lo = extract_labs("eGFR 95 ml/min/1.73m2 ≥ 3,50")
+            .first()
+            .and_then(|o| o.ref_low);
+        assert_eq!(lo, Some(3.50), "must read 3,50 as 3.50, not 3");
+    }
+
+    #[test]
+    fn three_digit_comma_shape_is_still_read_as_a_decimal_misread() {
+        // `1,200` is the one shape where a comma COULD in principle be a
+        // thousands separator instead of a misread decimal point (exactly 3
+        // digits after it). Decided by real data, not by guessing: a sample
+        // of every digit-comma-digit token across this project's actual OCR
+        // corpus (`labaudit/ocr-dump/*.txt`, 11 occurrences across 6
+        // independently-scanned reports) found 1-2 digits after the comma in
+        // every single case and zero 3-digit occurrences — this domain's lab
+        // values are already SI-scaled (e.g. platelets read `171`, never
+        // `150,000`), so there is no real ambiguity to hedge against here.
+        // Matches `normalize_ocr_decimal_comma` in the `ocr` crate, which
+        // makes the same unconditional call.
+        let obs = extract_labs("血糖 1.5 mmol/L 1,200~2,000");
+        let glu = find(&obs, "glucose");
+        assert_eq!(glu.ref_low, Some(1.200));
+        assert_eq!(glu.ref_high, Some(2.000));
+    }
+
+    #[test]
+    fn low_greater_than_high_is_discarded_as_a_safety_net() {
+        // Not the primary fix (that's range_is_bounded / resolve_range_number
+        // above) — a defensive invariant check for whatever range-misread
+        // shape isn't covered by those. A genuine reference range never
+        // inverts, so if low > high still slips through, drop the whole pair
+        // rather than trust either bound. The row itself is NOT dropped —
+        // value/unit still extract, just without a reference range or a
+        // range-derived flag.
+        let obs = extract_labs("血糖 5.0 mmol/L 70~40");
+        let glu = find(&obs, "glucose");
+        assert_eq!(glu.ref_low, None);
+        assert_eq!(glu.ref_high, None);
+        assert_eq!(glu.flag, None);
+        assert_eq!(glu.value_num, 5.0); // value itself is untouched
+    }
+
+    #[test]
+    fn invalid_leading_range_candidate_does_not_hide_a_later_valid_one() {
+        // Guards the specific implementation risk called out when this fix
+        // was written: `find_range` now walks ALL `range_two_re` matches
+        // (`captures_iter`, not a single `captures`) and skips ones
+        // `range_is_bounded` rejects, so it must not stop scanning after the
+        // first rejection and miss a later, genuinely valid range on the
+        // same line. `2.35.6~7.8` has a stray extra `.` (a malformed/glued
+        // numeral — exactly what `range_is_bounded` exists to reject: the
+        // match it finds, `35.6~7.8`, sits directly against the leading
+        // `.`), so it must be skipped over in favor of the real range that
+        // follows it, `3.9-6.1`.
+        let obs = extract_labs("血糖 5.0 mmol/L 2.35.6~7.8 参考 3.9-6.1");
+        let glu = find(&obs, "glucose");
+        assert_eq!(
+            glu.ref_low,
+            Some(3.9),
+            "later valid range must still be found"
+        );
+        assert_eq!(glu.ref_high, Some(6.1));
+    }
+
+    #[test]
+    fn ticket_example_inputs_are_locked_down_unchanged() {
+        // Explicit regression lock for every "must not regress" example the
+        // fix ticket called out by name.
+        let cases: &[(&str, Option<f64>, Option<f64>)] = &[
+            ("血糖 5.0 mmol/L 3.50~10.00", Some(3.50), Some(10.00)),
+            ("血糖 5.0 mmol/L 4.0-10.0", Some(4.0), Some(10.0)),
+            ("血糖 5.0 mmol/L 0.00~5.00", Some(0.00), Some(5.00)),
+            ("血糖 5.0 mmol/L 120~160", Some(120.0), Some(160.0)),
+        ];
+        for (text, lo, hi) in cases {
+            let obs = extract_labs(text);
+            let glu = find(&obs, "glucose");
+            assert_eq!(glu.ref_low, *lo, "ref_low regressed for {text:?}");
+            assert_eq!(glu.ref_high, *hi, "ref_high regressed for {text:?}");
+        }
+        let below = extract_labs("血糖 5.0 mmol/L < 5.20");
+        assert_eq!(find(&below, "glucose").ref_high, Some(5.20));
+        assert_eq!(find(&below, "glucose").ref_low, None);
+        let above = extract_labs("血糖 5.0 mmol/L ≥ 90");
+        assert_eq!(find(&above, "glucose").ref_low, Some(90.0));
+        assert_eq!(find(&above, "glucose").ref_high, None);
     }
 }
