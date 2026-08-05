@@ -289,4 +289,123 @@ void main() {
       expect(tapped, isTrue);
     });
   });
+
+  // ── BUG-4 ──────────────────────────────────────────────────────────────────
+  //
+  // 这一组测的是浮层**本体**(`VisitSummarySheet`,上面几组测的是它里面那层无状态的
+  // `VisitSummaryBody`),盯的是它自己的文档承诺的那件事:「存完刷新这一屏的数据,
+  // 不需要用户自己关掉浮层再重开」。
+  //
+  // 它曾经写的是 `setState(() => _future = viewVisitSummary())` —— **箭头体**。
+  // `State.setState` 先执行回调(赋值已经发生),再在断言里发现回调返回了一个
+  // `Future` 并抛出,而那一抛发生在 `markNeedsBuild()` **之前**:`_future` 换成了
+  // 新的,却没有任何一次重建被调度。用户看着自己刚写的笔记没出现,自然会再写一遍。
+  // 这一处还更狠 —— 它在一个 `async` 方法里、由 `VoidCallback` 调起,异常直接逃成
+  // **未捕获的 zone 错误**,连控制台上都只是一条与现象对不上的噪音。
+  //
+  // release 里断言被剥掉 → 正常;**debug/profile 必现**,而 `flutter test` 与 debug
+  // 同侧(断言开着),所以这条测试正好站在能看见它的那一边。
+  //
+  // 数据源与「加一条」都要走 FFI,所以两处都注入假的(见文件顶部同一条限制)。
+  group('存完笔记要当场刷新', () {
+    testWidgets('「加一条」存完之后,浮层重新拉一次数据并把新笔记显示出来', (tester) async {
+      useViewport(tester, 390, 844);
+
+      var summary = emptySummary();
+      var loads = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MedMe.theme(),
+          home: Scaffold(
+            body: VisitSummarySheet(
+              load: () async {
+                loads++;
+                return summary;
+              },
+              // 录入弹层的替身:用户写完一句、点了保存。
+              onRequestAddNote: (_) async {
+                summary = summaryWithNote('降压药是不是要减量');
+                return true;
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(loads, 1);
+      expect(find.textContaining('降压药是不是要减量'), findsNothing);
+
+      await tester.tap(find.text('加一条'));
+      await tester.pumpAndSettle();
+
+      expect(loads, 2, reason: '存完必须重新拉一次');
+      expect(
+        find.textContaining('降压药是不是要减量'),
+        findsOneWidget,
+        reason: 'BUG-4:重建没被调度,用户看着自己刚写的东西没出现,只能关掉浮层再重开',
+      );
+    });
+
+    testWidgets('用户中途放弃(没存)就不该白拉一次', (tester) async {
+      useViewport(tester, 390, 844);
+      var loads = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MedMe.theme(),
+          home: Scaffold(
+            body: VisitSummarySheet(
+              load: () async {
+                loads++;
+                return emptySummary();
+              },
+              onRequestAddNote: (_) async => null, // 划掉弹层,什么也没存
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('加一条'));
+      await tester.pumpAndSettle();
+      expect(loads, 1);
+    });
+
+    testWidgets('刷新路径上没有任何未捕获的异常', (tester) async {
+      // 箭头体那版在这里抛的是**未捕获的 zone 错误**(`async` 方法里、由
+      // `VoidCallback` 调起),`flutter_test` 会把它记成用例的 pending exception。
+      useViewport(tester, 390, 844);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MedMe.theme(),
+          home: Scaffold(
+            body: VisitSummarySheet(
+              load: () async => emptySummary(),
+              onRequestAddNote: (_) async => true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('加一条'));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+    });
+  });
 }
+
+/// 只有一条笔记的摘要 —— 用来看「存完之后这一屏有没有变」。
+VisitSummaryDto summaryWithNote(String text) => VisitSummaryDto(
+  patient: const PatientProfileDto(recordCount: 1),
+  allergies: const [],
+  activeMeds: const [],
+  recentLabs: const [],
+  recentChanges: const [],
+  recentVisits: const [],
+  recentNotes: [VisitNoteDto(text: text, date: '2026-08-05', documentId: 1)],
+  plainText: '',
+);

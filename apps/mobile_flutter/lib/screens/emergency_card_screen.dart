@@ -28,17 +28,22 @@ import 'package:mobile_flutter/widgets/recorded_meds.dart';
 ///   急救医生把它当成当前医嘱会改变处置决定。
 /// * 过敏史排第一,因为它是这一屏唯一一条**用错会当场出事**的信息。
 class EmergencyCardScreen extends StatefulWidget {
-  const EmergencyCardScreen({super.key});
+  const EmergencyCardScreen({super.key, this.load});
+
+  /// 数据源。生产恒为 null → 走 FFI([viewEmergencyCard] + [patientProfile])。
+  /// `flutter test` 不加载 Rust 原生库,注入一个假的才能把「保险箱一变这一屏就
+  /// 重新拉一次」钉成不依赖设备的回归(见 `test/emergency_card_refresh_test.dart`)。
+  final Future<CardData> Function()? load;
 
   @override
   State<EmergencyCardScreen> createState() => _EmergencyCardScreenState();
 }
 
 /// 应急卡一次要用到的两样东西:抽取出来的卡本体 + 档案里的姓名性别年龄。
-typedef _CardData = (EmergencyCardDto, PatientProfileDto);
+typedef CardData = (EmergencyCardDto, PatientProfileDto);
 
 class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
-  late Future<_CardData> _future = _load();
+  late Future<CardData> _future = _load();
 
   @override
   void initState() {
@@ -55,10 +60,28 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
   }
 
   void _onVaultChanged() {
-    if (mounted) setState(() => _future = _load());
+    if (mounted) _refresh();
   }
 
-  Future<_CardData> _load() async {
+  /// 与概览 / 趋势 / 档案三屏同一个写法,理由也同一条:`setState(() => _future = …)`
+  /// 的**箭头体**会把赋值结果(一个 `Future`)当成 setState 的返回值交出去,
+  /// `State.setState` 在断言里发现它是 Future 就抛 —— 而那一抛发生在
+  /// `markNeedsBuild()` **之前**。于是 `_future` 换成了新的,却没有任何一次重建被
+  /// 调度;五个 tab 全在 `IndexedStack` 里、`tabScreens` 又是 `const` 列表,切 tab
+  /// 也不重建(`identical(newWidget, oldWidget)` 直接跳过),这一屏就停在冷启动那
+  /// 一刻,直到 App 重启。release 里断言被剥掉看不出来,debug/profile 必现。
+  /// **所以必须是语句块,不是箭头。**
+  Future<void> _refresh() async {
+    final next = _load();
+    setState(() {
+      _future = next;
+    });
+    await next;
+  }
+
+  Future<CardData> _load() async {
+    final inject = widget.load;
+    if (inject != null) return inject();
     final r = await Future.wait([viewEmergencyCard(), patientProfile()]);
     return (r[0] as EmergencyCardDto, r[1] as PatientProfileDto);
   }
@@ -81,7 +104,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
           child: Container(height: 1, color: c.line),
         ),
       ),
-      body: FutureBuilder<_CardData>(
+      body: FutureBuilder<CardData>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
