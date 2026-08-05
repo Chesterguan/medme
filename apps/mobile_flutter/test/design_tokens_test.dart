@@ -20,7 +20,7 @@ import 'package:mobile_flutter/widgets/report_content.dart';
 const Map<String, int> specLight = {
   'ink': 0xFF101A23,
   'ink-2': 0xFF3A4A57,
-  'ink-3': 0xFF6B7C89,
+  'ink-3': 0xFF657581,
   'paper': 0xFFF6F8FA,
   'surface': 0xFFFFFFFF,
   'line': 0xFFE3E9EE,
@@ -30,7 +30,7 @@ const Map<String, int> specLight = {
   'seal-wash': 0xFFEAF5FA,
   'low': 0xFF1D4ED8,
   'low-wash': 0xFFE8EEFC,
-  'high': 0xFFB45309,
+  'high': 0xFFAB4E08,
   'high-wash': 0xFFFBF1E4,
   'critical': 0xFFBE123C,
   'critical-wash': 0xFFFCEAEF,
@@ -272,14 +272,14 @@ void main() {
       ),
     );
 
-    testWidgets('偏高 = --high #B45309,偏低 = --low #1D4ED8,正常不上色', (tester) async {
+    testWidgets('偏高 = --high #AB4E08,偏低 = --low #1D4ED8,正常不上色', (tester) async {
       await pumpLab(tester);
 
       expect(
         valueColor(tester, '6.05 mmol/L', '6.05').toARGB32(),
         MedColors.light.high.toARGB32(),
       );
-      expect(valueColor(tester, '6.05 mmol/L', '6.05').toARGB32(), 0xFFB45309);
+      expect(valueColor(tester, '6.05 mmol/L', '6.05').toARGB32(), 0xFFAB4E08);
       expect(
         valueColor(tester, '0.98 mmol/L', '0.98').toARGB32(),
         MedColors.light.low.toARGB32(),
@@ -360,7 +360,7 @@ void main() {
     });
 
     // 借用化验状态色当 chrome = 稀释语义。`feat/mobile-visual` 正是因为这个删掉了
-    // 整张文档类型配色表;旧的医生模式橙 #C2570C 与 `high` #B45309 相差 1° 色相,
+    // 整张文档类型配色表;旧的医生模式橙 #C2570C 与 `high` #AB4E08 相差 1° 色相,
     // 就是这条规矩的现行反例,它已被换掉。
     test('不撞任何一档化验状态色,也不撞个人模式主色', () {
       for (final c in [MedColors.light, MedColors.dark]) {

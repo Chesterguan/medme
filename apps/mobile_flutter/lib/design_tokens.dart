@@ -127,7 +127,7 @@ class MedColors extends ThemeExtension<MedColors> {
   static const MedColors light = MedColors(
     ink: Color(0xFF101A23),
     ink2: Color(0xFF3A4A57),
-    ink3: Color(0xFF6B7C89),
+    ink3: Color(0xFF657581),
     paper: Color(0xFFF6F8FA),
     surface: Color(0xFFFFFFFF),
     line: Color(0xFFE3E9EE),
@@ -140,7 +140,7 @@ class MedColors extends ThemeExtension<MedColors> {
     proxyWash: Color(0xFFF4ECF8),
     low: Color(0xFF1D4ED8),
     lowWash: Color(0xFFE8EEFC),
-    high: Color(0xFFB45309),
+    high: Color(0xFFAB4E08),
     highWash: Color(0xFFFBF1E4),
     critical: Color(0xFFBE123C),
     criticalWash: Color(0xFFFCEAEF),
