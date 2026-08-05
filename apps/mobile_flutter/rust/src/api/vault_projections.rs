@@ -794,18 +794,23 @@ mod tests {
             .collect()
     }
 
-    /// 目录:14 个检验大类,每条文案唯一(chip 靠文案本身当 key,不能撞名),顺序
-    /// 与 `terminology::PANEL_CATALOG` 一致(策展顺序,不是数据里第一次出现的
-    /// 顺序 —— 见该函数文档)。
+    /// 目录:16 个大类(14 个检验大类 + 生命体征/体格测量),每条文案唯一
+    /// (chip 靠文案本身当 key,不能撞名),顺序与 `terminology::PANEL_CATALOG`
+    /// 一致(策展顺序,不是数据里第一次出现的顺序 —— 见该函数文档)。
+    ///
+    /// 生命体征与体格测量排在最前:手动录入的血压/心率/体重是用户**自己天天在看**
+    /// 的,而化验大类隔几个月才来一次;chip 横向滚动,谁在前谁被看见。
     #[test]
-    fn view_trend_panel_catalog_has_fourteen_distinct_labels_in_curated_order() {
+    fn view_trend_panel_catalog_has_sixteen_distinct_labels_in_curated_order() {
         let catalog = view_trend_panel_catalog();
-        assert_eq!(catalog.len(), 14, "实际={catalog:?}");
+        assert_eq!(catalog.len(), 16, "实际={catalog:?}");
         let uniq: BTreeSet<&String> = catalog.iter().collect();
         assert_eq!(uniq.len(), catalog.len(), "chip 文案不能撞名:{catalog:?}");
         assert_eq!(
             catalog,
             vec![
+                "生命体征",
+                "体格测量",
                 "血常规",
                 "尿液",
                 "肝功能",
