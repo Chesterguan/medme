@@ -744,7 +744,19 @@ const DUAL_COLUMN_MIN_SUPPORT_FRACTION: f32 = 0.34;
 /// box-producing recognizer, not just PP-OCRv5.
 #[cfg_attr(not(feature = "engine"), allow(dead_code))]
 pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
-    let mut lines: Vec<&LayoutLine> = lines.iter().filter(|l| !l.text.trim().is_empty()).collect();
+    // Each line's text is corrected in isolation (see
+    // `normalize_ocr_decimal_comma`) before anything else touches it, so both
+    // the single-box "prose" fast path in `build_row_text` and the multi-box
+    // column-aligned path see the same fixed-up text.
+    let owned: Vec<LayoutLine> = lines
+        .iter()
+        .filter(|l| !l.text.trim().is_empty())
+        .map(|l| LayoutLine {
+            text: normalize_ocr_decimal_comma(&l.text),
+            ..(*l).clone()
+        })
+        .collect();
+    let mut lines: Vec<&LayoutLine> = owned.iter().collect();
     if lines.is_empty() {
         return String::new();
     }
@@ -831,6 +843,40 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
         prev_height = Some(row_height);
     }
     out_lines.join("\n")
+}
+
+/// Corrects a specific, narrow OCR misread: a printed decimal point recognized
+/// as a comma. On a compressed or low-resolution photo the two glyphs are
+/// nearly indistinguishable, and PP-OCRv5 occasionally reads "3.50~10.00" as
+/// "3,50~10.00". Every lab report this reconstructs uses a period as its
+/// decimal separator throughout (`4.00~10.00`, `1.80~6.40`, ... — never a
+/// thousands-grouping comma on a lab value), so a comma directly between two
+/// ASCII digits, with nothing else around it, is unambiguously that misread
+/// rather than a second, different number format. Left uncorrected it feeds
+/// the downstream extractor a malformed range: `3,50~10.00` parses as
+/// low=`50`, high=`10` — `low > high`, and a confidently wrong reference band
+/// is worse than the extractor dropping the value outright.
+///
+/// Deliberately narrow: it only ever rewrites a comma that has an ASCII digit
+/// immediately on both sides, so prose punctuation (including full-width `，`)
+/// and any comma next to whitespace or a CJK character is untouched.
+fn normalize_ocr_decimal_comma(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    chars
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| {
+            let misread_decimal_point = c == ','
+                && i > 0
+                && chars[i - 1].is_ascii_digit()
+                && chars.get(i + 1).is_some_and(char::is_ascii_digit);
+            if misread_decimal_point {
+                '.'
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 /// How far either side of level [`estimate_tilt`] searches, and how finely.
@@ -2023,6 +2069,37 @@ mod tests {
                 "expected >=2 space gap before {part:?}, got {gap} in {out:?}"
             );
         }
+    }
+
+    #[test]
+    fn normalize_ocr_decimal_comma_rewrites_digit_flanked_comma() {
+        // The reproduction this exists for: PP-OCRv5 misreading the decimal
+        // point in "3.50~10.00" as a comma on a compressed real photo. Left
+        // alone, the extractor parses "3,50~10.00" as low=50, high=10 --
+        // `low > high`, a malformed range reported with full confidence.
+        assert_eq!(
+            normalize_ocr_decimal_comma("10嗜酸性粒细胞百分4.40  +  3,50~10.00 %"),
+            "10嗜酸性粒细胞百分4.40  +  3.50~10.00 %"
+        );
+    }
+
+    #[test]
+    fn normalize_ocr_decimal_comma_leaves_non_digit_flanked_commas_alone() {
+        // Only a comma with an ASCII digit on *both* sides is a plausible
+        // misread decimal point. Prose punctuation (including the full-width
+        // CJK comma) and a comma next to whitespace must pass through as-is.
+        for text in ["项目, 结果", "备注：正常，无需复查", "12, 34", "12 ,34"] {
+            assert_eq!(normalize_ocr_decimal_comma(text), text);
+        }
+    }
+
+    #[test]
+    fn rebuild_layout_text_fixes_decimal_comma_before_extraction() {
+        // End-to-end through `rebuild_layout_text`: a single mis-OCR'd box
+        // must come out with its decimal point restored, not just the
+        // isolated helper.
+        let lines = vec![ll("3,50~10.00", 0.0, 0.0, 100.0, 20.0)];
+        assert_eq!(rebuild_layout_text(&lines), "3.50~10.00");
     }
 
     #[test]
