@@ -113,3 +113,32 @@
 检索都因 web search 配额耗尽未能进行。代码注释如实标注为「未核实到具体出处，取值
 依据是生理学极限的保守外扩」。拒绝 138388 本身不需要指南背书，但这六个数字目前
 没有指南支撑，应当补。
+
+---
+
+## 验证纪律：macOS 上验手机端 OCR 的陷阱
+
+`packages/ocr` 有三个入口，**只有一个和手机端跑的是同一条路**：
+
+| 函数 | 门控 | macOS 上实际用什么 |
+|---|---|---|
+| `recognize` | `#[cfg(target_os = "macos")]` 分支 | **Apple Vision** |
+| `recognize_pdf` | 同上 | **Apple Vision** |
+| `recognize_engine_layout` | `#[cfg(feature = "engine")]` | PP-OCRv5 ✓ |
+
+**Vision 是按 `target_os` 门控的，不是按 feature。** 把依赖写成和手机端一样的
+`default-features = false, features = ["engine"]` **也关不掉它** —— 在 macOS 上
+编译就一定带进来。
+
+所以唯一可靠的做法：**验手机端行为时只调 `recognize_engine_layout`**。
+
+已经踩过一次：`labaudit/ocr-dump/*.pdf.txt` 是 Vision 的输出，被当成 PP-OCR 语料
+支撑过一次判断（逗号小数点统计）。复查后那次结论没变，但那是运气 —— 两个引擎
+错的地方不一样，误读模式、字符混淆都不可互推。
+
+已加的防线：
+- `scratchpad/valprobe` 遇到 `.pdf` **直接报错退出**，不再悄悄换引擎
+- `openmed/labaudit` 的 `ScannedPdf` 分支注释里写明了引擎来源和不可推断性
+
+要在 PDF 路径上得到手机端可比的数字，必须先把页面渲染成图，再走
+`recognize_engine_layout`。
