@@ -140,11 +140,25 @@ pub struct UnreadableRow {
 /// `sep2` (the gap between value and rest) is captured, not just skipped, so
 /// callers can tell a genuine separator from a zero-width one — see
 /// `value_glued_to_next_number`.
+///
+/// The value sub-pattern accepts EITHER `.` or `,` as the decimal separator,
+/// exactly like the reference-range patterns below, and is parsed through the
+/// same [`parse_decimal_token`]. It used to be dot-only while the ranges were
+/// not, and that asymmetry is a value-fabricating bug, not a cosmetic gap: on
+/// `肌钙蛋白I 0,08 ng/mL 0-0.04` the dot-only group could not consume the `,`,
+/// so it stopped at the leading `0` and reported **troponin I = 0, flag N** for
+/// a result that is twice its own cutoff. The truncated head is always a
+/// physiologically plausible number, so nothing downstream can notice it — the
+/// same silent-failure shape the range patterns were fixed for one commit
+/// earlier. See [`parse_decimal_token`] for why a `,` between digits is a
+/// misread period rather than a thousands grouping.
 fn row_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
-        Regex::new(r"^\s*(?P<name>.*?)[\s:：]+(?P<value>-?\d+(?:\.\d+)?)(?P<sep2>\s*)(?P<rest>.*)$")
-            .expect("row re")
+        Regex::new(
+            r"^\s*(?P<name>.*?)[\s:：]+(?P<value>-?\d+(?:[.,]\d+)?)(?P<sep2>\s*)(?P<rest>.*)$",
+        )
+        .expect("row re")
     })
 }
 
@@ -154,7 +168,7 @@ fn row_re() -> &'static Regex {
 // 的 token,单边参考(LDL/TC/eGFR)与带空格的双边参考就全丢了(quality dim 4/5)。
 //
 // The number sub-pattern `\d+(?:[.,]\d+)?` accepts EITHER `.` or `,` as the
-// decimal separator — see `resolve_range_number` for why `,` is folded to a
+// decimal separator — see `parse_decimal_token` for why `,` is folded to a
 // decimal point unconditionally rather than treated as a thousands grouping.
 // Being unanchored, an earlier version of this pattern (dot-only) had no
 // notion of where a numeral starts or ends, so on a malformed token it would
@@ -199,8 +213,13 @@ fn range_is_bounded(s: &str, start: usize, end: usize) -> bool {
     before_ok && after_ok
 }
 
-/// Parse a captured range-number token (`5.20` or a comma-decimal `5,20`)
-/// into an `f64`. Chinese lab reports print decimals with `.` only; a `,`
+/// Parse a captured number token (`5.20` or a comma-decimal `5,20`) into an
+/// `f64`. Used for BOTH the result column (`row_re`'s `value` group) and the
+/// reference-range bounds, so the two cannot drift apart again: the rule below
+/// is a property of the document, not of one column, and applying it to only
+/// one of them is what let `0,08` be read as `0`.
+///
+/// Chinese lab reports print decimals with `.` only; a `,`
 /// between digits is PP-OCR misreading a period, never a thousands
 /// separator — the domain's values are already SI-scaled (platelet counts
 /// read e.g. `171`, not `150,000`), and a sample of every digit-comma-digit
@@ -213,7 +232,7 @@ fn range_is_bounded(s: &str, start: usize, end: usize) -> bool {
 /// text-layer/`.txt` input never passes through — this parser has no
 /// dependency on `ocr`, so it has to make the same call itself here rather
 /// than rely on that normalization having already happened upstream.
-fn resolve_range_number(raw: &str) -> Option<f64> {
+fn parse_decimal_token(raw: &str) -> Option<f64> {
     if raw.contains(',') {
         raw.replace(',', ".").parse().ok()
     } else {
@@ -520,8 +539,8 @@ fn find_range(folded: &str) -> Option<RangeMatch> {
         if !range_is_bounded(folded, m.start(), m.end()) {
             continue;
         }
-        let lo = resolve_range_number(c.get(1)?.as_str());
-        let hi = resolve_range_number(c.get(2)?.as_str());
+        let lo = parse_decimal_token(c.get(1)?.as_str());
+        let hi = parse_decimal_token(c.get(2)?.as_str());
         return Some((lo, hi, (m.start(), m.end())));
     }
     for c in range_high_re().captures_iter(folded) {
@@ -529,7 +548,7 @@ fn find_range(folded: &str) -> Option<RangeMatch> {
         if !range_is_bounded(folded, m.start(), m.end()) {
             continue;
         }
-        let hi = resolve_range_number(c.get(1)?.as_str());
+        let hi = parse_decimal_token(c.get(1)?.as_str());
         return Some((None, hi, (m.start(), m.end())));
     }
     for c in range_low_re().captures_iter(folded) {
@@ -537,7 +556,7 @@ fn find_range(folded: &str) -> Option<RangeMatch> {
         if !range_is_bounded(folded, m.start(), m.end()) {
             continue;
         }
-        let lo = resolve_range_number(c.get(1)?.as_str());
+        let lo = parse_decimal_token(c.get(1)?.as_str());
         return Some((lo, None, (m.start(), m.end())));
     }
     None
@@ -847,11 +866,10 @@ fn parse_line(raw_line: &str) -> LineOutcome {
     if is_page_furniture(raw_name) {
         return LineOutcome::Nothing;
     }
-    let Ok(value_num) = caps
-        .name("value")
-        .expect("value group")
-        .as_str()
-        .parse::<f64>()
+    // Same number parser as the reference-range bounds — a comma-decimal
+    // result (`0,08`) is read whole instead of truncated to its leading digit.
+    // See `parse_decimal_token` / `row_re`.
+    let Some(value_num) = parse_decimal_token(caps.name("value").expect("value group").as_str())
     else {
         return LineOutcome::Nothing;
     };
@@ -870,7 +888,7 @@ fn parse_line(raw_line: &str) -> LineOutcome {
     let (unit_raw, ref_low, ref_high, explicit_flag) = parse_rest(rest);
     // Invariant fallback, NOT the fix itself: a genuine reference range
     // never inverts, so low>high can only mean the range was misread
-    // somewhere upstream (range_is_bounded / resolve_range_number above
+    // somewhere upstream (range_is_bounded / parse_decimal_token above
     // are the actual fix for the known misread shapes — this is a net
     // for whatever shape isn't covered yet). Discard the whole pair
     // rather than pick one bound to trust; the row otherwise still
@@ -910,7 +928,6 @@ fn parse_line(raw_line: &str) -> LineOutcome {
     if !has_evidence {
         return LineOutcome::Nothing;
     }
-
     // Canonical conversion (only when matched AND the entry knows this unit).
     let mut value_canonical = None;
     let mut unit_canonical = None;
@@ -1467,9 +1484,53 @@ GLU        空腹血糖 Glucose       7.1      mmol/L      3.9 - 6.1       ↑
         assert_eq!(glu.ref_high, Some(2.000));
     }
 
+    /// The comma-decimal defence has to cover the RESULT column, not just the
+    /// reference range. While it did not, a troponin I of 0.08 ng/mL — twice
+    /// its own 0.04 cutoff, i.e. a myocardial-infarction marker — was read as
+    /// `0` and flagged **N**: the parser asserting "normal" about the single
+    /// number on the sheet that says the opposite. The truncated head of a
+    /// comma-decimal is always a plausible-looking value, so there is nothing
+    /// downstream (no inverted range, no implausible magnitude) that could
+    /// catch it. Both columns now go through `parse_decimal_token`.
+    #[test]
+    fn comma_decimal_in_the_result_column_is_read_whole() {
+        let obs = extract_labs("肌钙蛋白I 0,08 ng/mL 0-0.04");
+        let tni = find(&obs, "troponin_i");
+        assert_eq!(tni.value_num, 0.08, "result column truncated at the comma");
+        assert_eq!(
+            tni.flag.as_deref(),
+            Some("H"),
+            "a value at twice its cutoff must not read as normal"
+        );
+
+        // Same shape where the flag happens to come out right anyway — the
+        // VALUE is still wrong, and it is the value that gets charted.
+        let obs = extract_labs("糖化血红蛋白 7,2 % 4.0-6.0");
+        assert_eq!(find(&obs, "hba1c").value_num, 7.2);
+
+        // Real corpus, verbatim (血常规报告3.jpg PP-OCRv5 layout rebuild):
+        // RBC `4,35` was being reported as `4`.
+        let obs = extract_labs("2红细胞计数          4,35   4.00~5.50 1012/");
+        assert_eq!(obs.first().map(|o| o.value_num), Some(4.35));
+
+        // Counter-examples: the dot form and plain integers are untouched.
+        assert_eq!(
+            extract_labs("肌钙蛋白I 0.08 ng/mL 0-0.04")
+                .first()
+                .map(|o| o.value_num),
+            Some(0.08)
+        );
+        assert_eq!(
+            extract_labs("肌酐 88 μmol/L 59-104")
+                .first()
+                .map(|o| o.value_num),
+            Some(88.0)
+        );
+    }
+
     #[test]
     fn low_greater_than_high_is_discarded_as_a_safety_net() {
-        // Not the primary fix (that's range_is_bounded / resolve_range_number
+        // Not the primary fix (that's range_is_bounded / parse_decimal_token
         // above) — a defensive invariant check for whatever range-misread
         // shape isn't covered by those. A genuine reference range never
         // inverts, so if low > high still slips through, drop the whole pair
