@@ -226,12 +226,13 @@ class _OverviewScreenState extends State<OverviewScreen> {
                   ),
                 ),
                 const SizedBox(height: MedShape.s3),
-                _QuickActions(
+                QuickActions(
                   onArchiveIn: () => _import(null),
                   onManualEntry: _openManualEntry,
                   onEmergency: goToEmergencyCard,
-                  onVisitSummary: () => showVisitSummarySheet(context),
                 ),
+                const SizedBox(height: MedShape.s2),
+                VisitSheetBanner(onTap: () => showVisitSummarySheet(context)),
                 const SizedBox(height: MedShape.s5),
                 if (s.patient.recordCount == 0)
                   _FirstRunEmpty(onImport: () => _import(null))
@@ -253,65 +254,62 @@ class _OverviewScreenState extends State<OverviewScreen> {
   }
 }
 
-/// 一排四颗快捷操作:存档 / 记录 / 应急卡 / 就诊单。
+/// 一排三颗快捷操作:存档 / 记录 / 应急卡。
 ///
-/// 为什么是这四颗:前两颗是**往里放**(日常打开最常见的下一步是添一条新东西),
-/// 后两颗是**往外拿**(急诊室、诊室)。「看」不在这里 —— 看什么下面就是。
+/// 为什么是这三颗:前两颗是**往里放**(日常打开最常见的下一步是添一条新东西),
+/// 后一颗是**往外拿**(急诊室,别人翻你的手机)。「看病带这个」原来也在这一排
+/// (第四颗,当时叫「就诊单」),2026-08-05 产品验收后挪了出去——真机上看这颗
+/// 图标挤在四等分的第四格里被反馈「蛮有用的」但不够显眼,于是改成下面单独一整
+/// 条的 [VisitSheetBanner],不再和这三颗挤同一排(见该类文档的完整理由)。
+/// 「看」不在这一排里 —— 看什么下面就是。
 ///
 /// 原先前两颗是「拍照 / 存档」,但拍照本来就是存档三选一(拍照/相册/文件,见
 /// `showImportSheet`)里的一个分支,两颗并排读起来像两件不同的事。改成
 /// 「存档 / 记录」才是两件真正不同的事(有没有原件),拍照仍然是存档流程里最
 /// 顺手的默认选项(`showImportSheet` 把它做成视觉主选项,抵消多出的一次点击)。
 ///
-/// 用 `Wrap` 不用 `GridView`:系统字号放大后「就诊单」三个字会撑宽,固定四列会把
-/// 文字挤掉一半。Wrap 让它自然掉到第二行(007 §2.5「字号可放大,不可砍」)。
-class _QuickActions extends StatelessWidget {
-  const _QuickActions({
+/// 用 `Wrap` 不用 `GridView`:系统字号放大后文字会撑宽,固定列数会把文字挤掉
+/// 一半。Wrap 让它自然掉到第二行(007 §2.5「字号可放大,不可砍」)。
+class QuickActions extends StatelessWidget {
+  const QuickActions({
+    super.key,
     required this.onArchiveIn,
     required this.onManualEntry,
     required this.onEmergency,
-    required this.onVisitSummary,
   });
 
   final VoidCallback onArchiveIn;
   final VoidCallback onManualEntry;
   final VoidCallback onEmergency;
-  final VoidCallback onVisitSummary;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // 四列平分,列间距 s2。放大字号后每颗自己变高,不裁字。
+        // 三列平分,列间距 s2。放大字号后每颗自己变高,不裁字。
         const gap = MedShape.s2;
-        final w = (constraints.maxWidth - gap * 3) / 4;
+        final w = (constraints.maxWidth - gap * 2) / 3;
         return Wrap(
           spacing: gap,
           runSpacing: gap,
           children: [
-            _QuickAction(
+            QuickAction(
               width: w,
               icon: Icons.add_box_outlined,
               label: '存档',
               onTap: onArchiveIn,
             ),
-            _QuickAction(
+            QuickAction(
               width: w,
               icon: Icons.edit_note_outlined,
               label: '记录',
               onTap: onManualEntry,
             ),
-            _QuickAction(
+            QuickAction(
               width: w,
               icon: Icons.emergency_outlined,
               label: '应急卡',
               onTap: onEmergency,
-            ),
-            _QuickAction(
-              width: w,
-              icon: Icons.assignment_outlined,
-              label: '就诊单',
-              onTap: onVisitSummary,
             ),
           ],
         );
@@ -320,8 +318,80 @@ class _QuickActions extends StatelessWidget {
   }
 }
 
-class _QuickAction extends StatelessWidget {
-  const _QuickAction({
+/// 「看病带这个」的入口卡——单独一整条,不和上面三颗快捷操作挤同一排。
+///
+/// ## 为什么要单独拎出来,而不是四等分里的第四格
+///
+/// 产品真机验收原话:「这个功能蛮有用的」,要求比原来更显眼。原来它是四等分
+/// 快捷操作里视觉权重最低的一格——一个图标 + 两个字,和「存档」「记录」长得
+/// 一样重。但它和另外三颗不是同一种"重要性":存档/记录/应急卡是**动作**,
+/// 点一下就完成;这一条是**入口**,点进去是接下来几分钟要用的一整屏内容
+/// (医生问诊时递给他看的东西)。用一整条、带说明文字的卡片而不是一个图标格,
+/// 是让它的视觉权重配得上它的使用价值,不是单纯"调大字号"——调大字号在四等分
+/// 网格里做不到(会把另外三颗挤变形),换成独立一整行是唯一不破坏那三颗现有
+/// 布局的做法。
+///
+/// 用 `sealWash`/`sealInk` 这对强调色(而不是普通卡片的 `surface`/`line`)—— 与
+/// `RecordedMedsCaveat` 的 `highWash`/`high` 同一手法(左侧竖条 + 浅底强调一整块),
+/// 但换成品牌强调色而不是警示色:这不是一条警告,是一处**推荐路径**。
+class VisitSheetBanner extends StatelessWidget {
+  const VisitSheetBanner({super.key, required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Material(
+      color: c.sealWash,
+      borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: MedShape.s3,
+            vertical: MedShape.s2,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+            border: Border.all(color: c.sealInk.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.assignment_outlined, size: 26, color: c.sealInk),
+              const SizedBox(width: MedShape.s2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '看病带这个',
+                      style: MedType.body.copyWith(
+                        color: c.sealInk,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '过敏史、用药、化验,医生问什么都在这一页',
+                      style: MedType.secondary.copyWith(color: c.ink2),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, size: 20, color: c.sealInk),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class QuickAction extends StatelessWidget {
+  const QuickAction({
+    super.key,
     required this.width,
     required this.icon,
     required this.label,
@@ -623,11 +693,7 @@ class _VisitCard extends StatelessWidget {
 
 /// 分区标题 + 右侧的一个次级动作。
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    this.actionLabel,
-    this.onAction,
-  });
+  const _SectionHeader({required this.title, this.actionLabel, this.onAction});
 
   final String title;
   final String? actionLabel;

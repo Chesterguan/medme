@@ -171,6 +171,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<VisitLabDto> dco_decode_list_visit_lab_dto(dynamic raw);
 
   @protected
+  List<VisitNoteDto> dco_decode_list_visit_note_dto(dynamic raw);
+
+  @protected
   List<VisitRecordDto> dco_decode_list_visit_record_dto(dynamic raw);
 
   @protected
@@ -245,6 +248,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   VisitLabDto dco_decode_visit_lab_dto(dynamic raw);
+
+  @protected
+  VisitNoteDto dco_decode_visit_note_dto(dynamic raw);
 
   @protected
   VisitRecordDto dco_decode_visit_record_dto(dynamic raw);
@@ -438,6 +444,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<VisitLabDto> sse_decode_list_visit_lab_dto(SseDeserializer deserializer);
 
   @protected
+  List<VisitNoteDto> sse_decode_list_visit_note_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<VisitRecordDto> sse_decode_list_visit_record_dto(
     SseDeserializer deserializer,
   );
@@ -524,6 +535,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   VisitLabDto sse_decode_visit_lab_dto(SseDeserializer deserializer);
+
+  @protected
+  VisitNoteDto sse_decode_visit_note_dto(SseDeserializer deserializer);
 
   @protected
   VisitRecordDto sse_decode_visit_record_dto(SseDeserializer deserializer);
@@ -781,6 +795,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_visit_note_dto(
+    List<VisitNoteDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_visit_record_dto(
     List<VisitRecordDto> self,
     SseSerializer serializer,
@@ -896,6 +916,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_visit_lab_dto(VisitLabDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_visit_note_dto(VisitNoteDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_visit_record_dto(

@@ -50,12 +50,24 @@ use crate::api::dto::PatientProfileDto;
 use crate::api::dto::TimelineGroupDto;
 use chrono::NaiveDate;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// 就诊摘要单「最近关键化验」最多列几条(一屏能看完;完整序列去趋势页)。
 const VISIT_SUMMARY_MAX_LABS: usize = 8;
 
 /// 就诊摘要单「最近就诊」最多列几条。
 const VISIT_SUMMARY_MAX_VISITS: usize = 5;
+
+/// 就诊摘要单「我最近的变化」最多列几条。**独立于** [`VISIT_SUMMARY_MAX_LABS`] ——
+/// 那个 8 条上限是跨全部检验大类排的,天天量的家测血压很容易被更晚一次的医院化验
+/// 挤出前 8(见本文件 [`view_visit_summary`] 的说明),所以「变化」这一节从未截断的
+/// 全量最新点里单独选,不共享同一个上限。
+const VISIT_SUMMARY_MAX_CHANGES: usize = 8;
+
+/// 就诊摘要单「我想问医生的」最多列几条笔记。产品判断(2026-08-05):这一节没有
+/// 「已读/已问过」的标记(见 [`VisitNoteDto`] 文档),列太多会让屏幕被去年写的
+/// 笔记占满,列太少又会漏掉最近真正想问的那条,5 条是能一屏看完又不算苛刻的折中。
+const VISIT_SUMMARY_MAX_NOTES: usize = 5;
 
 // ─────────────────────────── DTO ───────────────────────────
 
@@ -167,12 +179,26 @@ pub struct VisitSummaryDto {
     pub allergies: Vec<AllergyItemDto>,
     pub active_meds: Vec<ActiveMedDto>,
     /// 最近的关键化验:每条序列取**最新一个带日期的点**,按日期倒序,最多
-    /// [`VISIT_SUMMARY_MAX_LABS`] 条。完整序列在趋势页。
+    /// [`VISIT_SUMMARY_MAX_LABS`] 条。完整序列在趋势页。**这一屏不单独渲染这份
+    /// 全量列表**(2026-08-05 改版后只显示 [`recent_changes`]),它只喂
+    /// [`plain_text`]——复制给医生的那份要带全的最近化验,不只是异常的那几条。
     pub recent_labs: Vec<VisitLabDto>,
+    /// 「我最近的变化」:[`recent_labs`] 里自测的(`self_measured`)或**确为异常**
+    /// (`flag` 是 `H`/`L`)的那些,最多 [`VISIT_SUMMARY_MAX_CHANGES`] 条,**不是**
+    /// 从 [`recent_labs`] 截出来的——见 [`view_visit_summary`] 里的说明,共享同一个
+    /// 8 条上限会把自测值挤没。只进这一屏的 UI,不进 [`plain_text`]/二维码分享
+    /// (那两处已经有更完整的化验数据,不需要再复述一遍"哪些变了")。
+    pub recent_changes: Vec<VisitLabDto>,
     /// 最近就诊/文档,最多 [`VISIT_SUMMARY_MAX_VISITS`] 条。
     pub recent_visits: Vec<VisitRecordDto>,
+    /// 「我想问医生的」:最近的手动笔记,最多 [`VISIT_SUMMARY_MAX_NOTES`] 条,
+    /// 按记录时间倒序。**只进这一屏,患者自己看**——见 [`VisitNoteDto`] 文档,
+    /// 绝不进 [`plain_text`] 或二维码分享。
+    pub recent_notes: Vec<VisitNoteDto>,
     /// 与上面结构化字段**同源同内容**的纯文本渲染,供直接复制给医生。
-    /// 只含原文逐字内容 + 字段标签,不含任何解释、结论或推断。
+    /// 只含原文逐字内容 + 字段标签,不含任何解释、结论或推断,**且不含笔记**——
+    /// 笔记是患者自由文本,混进给医生的这份容易被当成病历内容(见
+    /// [`VisitNoteDto`] 文档)。
     pub plain_text: String,
 }
 
@@ -205,6 +231,40 @@ pub struct VisitRecordDto {
     pub date: Option<String>,
     /// 这条记录涵盖的文档 id(就诊组含组内全部文档)。
     pub document_ids: Vec<i64>,
+}
+
+/// 就诊摘要单「我想问医生的」一节的一条笔记。
+///
+/// ## 为什么不进 [`VisitSummaryDto::plain_text`] 或二维码分享
+///
+/// 笔记是患者自己写的自由文本("今天头晕""问王医生片子的事"),不是从病历原文
+/// 抽出来的。这一屏其它每一节都可以说"这是原文逐字"或"这是从原文抽出的数值/
+/// 日期";笔记不行——它是患者此刻的主观记录,混进给医生的那份文本,读起来会
+/// 被当成一条病历陈述(甚至被当成主诉)。所以它只出现在这一屏上,给患者自己看,
+/// 提醒"待会儿要问这个"。二维码分享走的是 `packages/parser::handoff::assemble_summary`
+/// 那条完全不同的管线(结构化的 problems/labs/meds,没有"最近文档"这种原文转述),
+/// 笔记原本就到不了那里,这条边界是**结构性的**,不需要额外过滤。
+///
+/// ## 为什么没有"已经问过医生"这种已读标记
+///
+/// `MANUAL-ENTRY-DESIGN.md` §5.4 提过一个更细的方案:录入笔记时加一个"要问医生"
+/// 的勾选标记,只有勾了的笔记才进这一节。这需要在笔记文本里编码一个隐藏标记(见
+/// 该文档 §3.2 自测值的"结构化载荷"先例)——但笔记的 OCR 文本在这个项目里是一条
+/// 反复强调的不变量:「逐字来自你的记录」,`note_never_becomes_a_condition_or_a_lab_series`
+/// 这类测试钉的就是这条保真度。往里面塞一个显示时要再摘掉的隐藏前缀,是在为了一个
+/// UI 分类去弄脏这条不变量,且没有历史笔记的回填路径(老笔记永远没有这个标记)。
+/// 权衡下来选了更简单的退路:直接显示**最近几条**笔记(见
+/// [`VISIT_SUMMARY_MAX_NOTES`]),不分类。代价是"今天头晕"和"问王医生片子的事"
+/// 会混在一起,好处是零 core-model/parser 改动、老笔记立刻可用、没有退化的空标记
+/// 语义。
+#[derive(Debug, Clone)]
+pub struct VisitNoteDto {
+    /// 笔记原文,逐字。
+    pub text: String,
+    /// 记录时间,`"YYYY-MM-DD"`。录入弹层的"测量时间"对笔记同样必填,实践中恒有
+    /// 值,但仍按 `Option` 处理,不假设。
+    pub date: Option<String>,
+    pub document_id: i64,
 }
 
 // ─────────────────── 装配:index → document_id ───────────────────
@@ -577,8 +637,10 @@ pub fn view_emergency_card() -> anyhow::Result<EmergencyCardDto> {
 
 /// **就诊摘要单**:一屏能看完的结构化版(给 UI 渲染)+ 纯文本版(给「复制给医生」)。
 ///
-/// 内容:基本信息 + 过敏史 + 在用药 + 最近关键化验(带日期与 flag)+ 最近就诊记录标题。
-/// 全部是原文逐字内容或从原文抽出的数值/日期,**不生成任何解释性文字或结论**。
+/// 内容:基本信息 + 过敏史 + 在用药 + 最近关键化验(带日期与 flag)+ 我最近的变化 +
+/// 我想问医生的(笔记)+ 最近就诊记录标题。全部是原文逐字内容、从原文抽出的数值/
+/// 日期,或患者自己写的笔记(笔记单独标注,见 [`VisitNoteDto`])——**不生成任何
+/// 解释性文字或结论**。
 pub fn view_visit_summary() -> anyhow::Result<VisitSummaryDto> {
     let projection = gather()?;
     let src = source_docs(&projection.docs);
@@ -588,8 +650,10 @@ pub fn view_visit_summary() -> anyhow::Result<VisitSummaryDto> {
     let allergies = collect_allergies(&projection.docs);
     let active_meds = collect_active_meds(&projection.docs, &clinical.meds);
 
-    // 每条可渲染序列取最新一个**带日期**的点,按日期倒序,同日按名字稳定排。
-    let mut recent_labs: Vec<VisitLabDto> = clinical
+    // 每条可渲染序列取最新一个**带日期**的点,按日期倒序,同日按名字稳定排。这是
+    // 「最近的变化」与「最近化验(喂纯文本)」共同的底料,截断方式不同,所以在两者
+    // 分叉之前先算好、排好序,不重复写一遍取点逻辑。
+    let mut all_latest_labs: Vec<VisitLabDto> = clinical
         .labs
         .iter()
         .filter(|s| is_renderable(s))
@@ -610,18 +674,65 @@ pub fn view_visit_summary() -> anyhow::Result<VisitSummaryDto> {
             })
         })
         .collect();
-    recent_labs.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| a.name.cmp(&b.name)));
+    all_latest_labs.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| a.name.cmp(&b.name)));
+
+    let mut recent_labs = all_latest_labs.clone();
     recent_labs.truncate(VISIT_SUMMARY_MAX_LABS);
 
+    // 「我最近的变化」:自测的,或带异常标记的。从**未截断**的 `all_latest_labs`
+    // 里选,不是从上面已经砍到 8 条的 `recent_labs` 里选——否则天天量的家测血压
+    // 一旦被更晚的一次医院化验挤到前 8 名之外,这一节就会漏掉它,而这一节存在的
+    // 意义恰恰是不能漏掉家测值(见 [`VisitSummaryDto::recent_changes`] 文档)。
+    //
+    // 判「异常」用 `H`/`L`,**不是 `flag.is_some()`**。`flag` 是化验单上印的原始
+    // 记号,而化验单也会印表示正常的记号——真机上就撞到过:低密度脂蛋白胆固醇
+    // 2.75(参考 ≤3.37)印着 `N`,`flag.is_some()` 为真,于是一条明确正常的化验
+    // 出现在「我最近的变化」里。「单子上印了个记号」和「异常」是两回事。
+    //
+    // `Some("H") | Some("L")` 与 `packages/parser/src/aggregate.rs` 里 `abnormal`
+    // 是同一条判据(`any_abnormal` 也这么算)——这条判据全项目只该有一种写法。
+    let mut recent_changes: Vec<VisitLabDto> = all_latest_labs
+        .into_iter()
+        .filter(|l| l.self_measured || matches!(l.flag.as_deref(), Some("H") | Some("L")))
+        .collect();
+    recent_changes.truncate(VISIT_SUMMARY_MAX_CHANGES);
+
     let mut recent_visits = projection.visits;
+    // 「复制给医生」的纯文本要过滤掉笔记(规则见 [`VisitNoteDto`] 文档),但结构化
+    // 的 `recent_visits` 字段不过滤——概览「最近归档」用的是同一个字段,那里笔记
+    // 该照常出现(它确实是刚存进档案的一份东西)。所以在 `recent_visits` 自己的
+    // 截断**之前**先派生出纯文本要用的过滤版本,避免笔记占掉截断名额、把本该出现
+    // 的真实就诊记录挤出这份文本。
+    //
+    // 不能靠 `VisitRecordDto::kind` 判断——一份孤零零的笔记会被 `load_archive`
+    // 的就诊分组(`rebuild_encounters`)包成它自己单份的"门诊"就诊组,`kind` 因此
+    // 是 `"outpatient"` 不是 `"note"`,和真实门诊记录长得一模一样。真正稳定的判断
+    // 是看这条记录涵盖的文档是不是**清一色**笔记——`document_ids` 混着真实文档的
+    // 就诊组照常保留(那不是"一条笔记",是一次真实就诊,只是笔记也归了进去)。
+    let note_doc_ids: BTreeSet<i64> = projection
+        .docs
+        .iter()
+        .filter(|d| d.doc_type.as_deref() == Some("note"))
+        .map(|d| d.document_id)
+        .collect();
+    let visits_for_text: Vec<VisitRecordDto> = recent_visits
+        .iter()
+        // 保留条件是"至少有一份不是笔记"。`document_ids` 空列表这种理论上不该出现
+        // 的边界上,`any` 老实返回 false(排除),不需要额外判断空表。
+        .filter(|v| v.document_ids.iter().any(|id| !note_doc_ids.contains(id)))
+        .take(VISIT_SUMMARY_MAX_VISITS)
+        .cloned()
+        .collect();
     recent_visits.truncate(VISIT_SUMMARY_MAX_VISITS);
+
+    let recent_notes = collect_recent_notes(&projection.docs);
 
     let plain_text = render_plain_text(
         &patient,
         &allergies,
         &active_meds,
         &recent_labs,
-        &recent_visits,
+        &visits_for_text,
     );
 
     Ok(VisitSummaryDto {
@@ -629,9 +740,38 @@ pub fn view_visit_summary() -> anyhow::Result<VisitSummaryDto> {
         allergies,
         active_meds,
         recent_labs,
+        recent_changes,
         recent_visits,
+        recent_notes,
         plain_text,
     })
+}
+
+/// 逐份扫过 [`ProjectionDoc`],挑出笔记(`doc_type == "note"`),按记录日期倒序,
+/// 无日期的排最后(理论上不会发生,笔记录入必填测量时间,但仍按这条通用规则处理,
+/// 不假设),取前 [`VISIT_SUMMARY_MAX_NOTES`] 条。
+fn collect_recent_notes(docs: &[ProjectionDoc]) -> Vec<VisitNoteDto> {
+    let mut notes: Vec<&ProjectionDoc> = docs
+        .iter()
+        .filter(|d| d.doc_type.as_deref() == Some("note"))
+        .collect();
+    notes.sort_by(|a, b| match (a.date, b.date) {
+        (Some(x), Some(y)) => y.cmp(&x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        // 同无日期:按 document_id 降序,新建的记录 id 更大,排前面——与其它地方
+        // "无日期排最后"里再稳定排序的取法(`gather` 的 `flat.sort_by`)同一手法。
+        (None, None) => b.document_id.cmp(&a.document_id),
+    });
+    notes.truncate(VISIT_SUMMARY_MAX_NOTES);
+    notes
+        .into_iter()
+        .map(|d| VisitNoteDto {
+            text: d.text.clone(),
+            date: d.date.map(fmt_date),
+            document_id: d.document_id,
+        })
+        .collect()
 }
 
 /// 数值渲染:与 `handoff::fmt_num` 同一取法(`{}` 的默认 f64 格式,`7.9` 不会变成
@@ -770,7 +910,6 @@ fn render_plain_text(
 mod tests {
     use super::*;
     use crate::api::dto::SelfMeasuredValueDto;
-    use std::collections::BTreeSet;
     use std::sync::Mutex;
 
     // 端到端测试跑同一个进程级 `api::vault::VAULT` cell(和生产代码一样,一次只有一个
@@ -1193,6 +1332,15 @@ mod tests {
         assert_eq!(lab.value, 7.9);
         assert_eq!(lab.flag.as_deref(), Some("H"));
         assert_eq!(lab.document_id, newer_id);
+        // 「我最近的变化」:这份化验单自己印了 `H`,不是系统编的诊室切点,该出现。
+        assert!(
+            visit
+                .recent_changes
+                .iter()
+                .any(|l| l.name == "糖化血红蛋白" && l.flag.as_deref() == Some("H")),
+            "带 H 标记的化验该出现在「我最近的变化」里,实际={:?}",
+            visit.recent_changes
+        );
         assert!(!visit.recent_visits.is_empty());
         assert!(visit.plain_text.contains("青霉素(皮疹)"));
         assert!(visit.plain_text.contains("2024-06-01 糖化血红蛋白 7.9"));
@@ -1323,6 +1471,143 @@ mod tests {
             !visit.plain_text.contains("140 mmHg (家测)"),
             "医院血压不该被标成家测"
         );
+
+        // 「我最近的变化」:自测那条(self_measured)该在场。医院那条这里没有印
+        // 参考区间(`收缩压 140 mmHg`,没有跟着的 ref range),系统不替它编一个
+        // 诊室切点,所以 flag 是 None、不进这一节——"异常标记带来的可见性"这半条
+        // 规则由 `end_to_end_over_a_real_vault` 里印了 `H` 的化验单来钉。
+        assert!(
+            visit
+                .recent_changes
+                .iter()
+                .any(|l| l.self_measured && l.value == 128.0),
+            "自测收缩压该出现在「我最近的变化」里,实际={:?}",
+            visit.recent_changes
+        );
+    }
+
+    /// 「我最近的变化」不能从已经砍到 [`VISIT_SUMMARY_MAX_LABS`] 条的全量列表里筛——
+    /// 天天量的自测值很容易被更晚一次的医院化验挤出前 8 名。这条测试构造出正是
+    /// 这个挤出场景,钉住 `recent_changes` 绕过了这次截断(见
+    /// [`VisitSummaryDto::recent_changes`] 文档)。
+    #[test]
+    fn recent_changes_are_not_crowded_out_by_a_full_page_of_later_hospital_labs() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        // 8 月 1 日量了一次心率(自测)。
+        crate::api::vault::add_self_measurement(
+            vec![SelfMeasuredValueDto {
+                analyte_key: "heart_rate".into(),
+                value: 88.0,
+                unit: "/min".into(),
+            }],
+            Some("2026-08-01T08:00:00Z".into()),
+        )
+        .unwrap();
+
+        // 之后医院又做了 [`VISIT_SUMMARY_MAX_LABS`] 项不同的化验,每项各自成一条独立
+        // 序列,日期全部晚于自测那次——足够把自测心率挤出全量列表的前 8 名。
+        // 名字用汉字序数区分(甲乙丙……),不用阿拉伯数字直接拼在名字后面——名字
+        // 与后面的数值之间没有分隔符时,数字会被"未收录指标7 8.0"这类行读成同一个
+        // 原始名字丢了尾号,8 项因此在 `GroupKey::Raw` 上全部撞成一条线。
+        const LABELS: [&str; VISIT_SUMMARY_MAX_LABS] =
+            ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛"];
+        for (i, label) in LABELS.iter().enumerate() {
+            let text = format!(
+                "生化检验报告单\n检验日期 2026-08-{:02}\n未收录指标{label} {}.0 mmol/L\n",
+                10 + i,
+                i + 1,
+            );
+            crate::api::vault::ingest_bytes(format!("化验{i}.txt"), text.into_bytes()).unwrap();
+        }
+
+        let visit = view_visit_summary().unwrap();
+        assert_eq!(
+            visit.recent_labs.len(),
+            VISIT_SUMMARY_MAX_LABS,
+            "全量列表仍按原样截断(喂纯文本用,这条行为不该变)"
+        );
+        assert!(
+            !visit.recent_labs.iter().any(|l| l.name == "心率"),
+            "本测试要先确认挤出场景成立:8 条更晚的医院化验应该已经把自测心率挤出\
+             全量列表,不然下面对 recent_changes 的断言就验证不了任何东西"
+        );
+        assert!(
+            visit
+                .recent_changes
+                .iter()
+                .any(|l| l.name == "心率" && l.self_measured),
+            "「我最近的变化」不该受全量列表截断影响,自测心率必须仍在场,实际={:?}",
+            visit.recent_changes
+        );
+    }
+
+    /// 化验单上印着表示**正常**的记号(常见 `N`)时,那一条不是「变化」。
+    ///
+    /// 真机上撞到过:低密度脂蛋白胆固醇 2.75(参考 ≤3.37)印着 `N`,而当时的判据
+    /// 是 `flag.is_some()`——「单子上印了个记号」被当成了「异常」,一条明确正常的
+    /// 化验因此出现在「我最近的变化」里。判据应与 `aggregate.rs` 的 `abnormal`
+    /// 一致:只认 `H`/`L`。
+    ///
+    /// 注意 `N` 本身仍要**原样显示**成中性 pill(见 `lab_status.dart` 文件头:认不出
+    /// 的记号不吞)。这里管的只是「进不进这一节」,不是「显不显示那个记号」。
+    #[test]
+    fn a_lab_printed_with_a_normal_marker_is_not_a_recent_change() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        crate::api::vault::ingest_bytes(
+            "生化.txt".into(),
+            "生化检验报告单\n检验日期 2026-08-01\n\
+             低密度脂蛋白胆固醇 2.75 mmol/L 0.00-3.37 N\n\
+             甘油三酯 2.90 mmol/L 0.00-1.70 H\n"
+                .into(),
+        )
+        .unwrap();
+
+        let visit = view_visit_summary().unwrap();
+
+        // 先确认场景成立:`N` 确实被读成了 flag,否则下面的断言什么都验证不了。
+        let ldl = visit
+            .recent_labs
+            .iter()
+            .find(|l| l.name.contains("低密度脂蛋白"))
+            .expect("全量化验里应有低密度脂蛋白胆固醇");
+        assert_eq!(
+            ldl.flag.as_deref(),
+            Some("N"),
+            "本测试的前提是 `N` 被当成 flag 读了进来;它没进来的话这条测试是假绿的"
+        );
+
+        assert!(
+            !visit
+                .recent_changes
+                .iter()
+                .any(|l| l.name.contains("低密度脂蛋白")),
+            "印着 `N`(正常)的化验不该出现在「我最近的变化」里,实际={:?}",
+            visit.recent_changes
+        );
+        assert!(
+            visit
+                .recent_changes
+                .iter()
+                .any(|l| l.name.contains("甘油三酯")),
+            "同一份单子上印着 `H` 的那条该在,不然就是把整节筛空了,实际={:?}",
+            visit.recent_changes
+        );
     }
 
     /// 编辑=删除旧文档+重新走一遍新增(§3.6,没有专门的编辑 API)。
@@ -1394,7 +1679,7 @@ mod tests {
         )
         .unwrap();
 
-        crate::api::vault::add_note(
+        let note_id = crate::api::vault::add_note(
             "今天有点头晕,是不是又高血压了,下次问问医生。".into(),
             Some("2026-08-01T09:00:00Z".into()),
         )
@@ -1408,10 +1693,97 @@ mod tests {
         );
         assert!(view_trends().unwrap().is_empty());
 
-        // 但笔记本身仍然是一份可见文档(时间线/档案里看得到)——就诊单的
-        // 「最近就诊」里应该出现这条记录。
+        // 但笔记本身仍然是一份可见文档(时间线/档案里看得到)——`recent_visits`
+        // (结构化字段,概览「最近归档」用的就是它)里应该出现这条记录。不能拿
+        // `kind == "note"` 判断:一份孤零零的笔记会被 `load_archive` 的就诊分组包成
+        // 它自己单份的"门诊"就诊组,`kind` 因此是 `"outpatient"`;真正的判断是看
+        // 这条记录涵盖的文档 id 里有没有笔记自己的 id。
         let visit = view_visit_summary().unwrap();
         assert_eq!(visit.patient.record_count, 1);
+        assert!(
+            visit
+                .recent_visits
+                .iter()
+                .any(|v| v.document_ids.contains(&note_id)),
+            "笔记该出现在 recent_visits 里(概览「最近归档」复用这个字段),实际={:?}",
+            visit.recent_visits
+        );
+    }
+
+    /// 笔记是患者自由文本,不是从病历原文抽出的内容——不该出现在「复制给医生」的
+    /// 纯文本里(会被当成病历内容读),但要出现在 `recent_notes`(「我想问医生的」
+    /// 这一节专用,只给患者自己看)。见 [`VisitNoteDto`] 文档。
+    #[test]
+    fn notes_never_enter_the_doctor_facing_plain_text_but_do_enter_recent_notes() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        let note_id_1 = crate::api::vault::add_note(
+            "问王医生片子的事".into(),
+            Some("2026-07-20T09:00:00Z".into()),
+        )
+        .unwrap();
+        let note_id_2 =
+            crate::api::vault::add_note("今天有点头晕".into(), Some("2026-08-01T09:00:00Z".into()))
+                .unwrap();
+        // 一份真正的就诊记录,验证过滤掉笔记不会连真实就诊也一起过滤掉。
+        crate::api::vault::ingest_bytes(
+            "出院小结.txt".into(),
+            "出院小结\n出院日期 2026-06-01\n出院诊断:高血压\n".into(),
+        )
+        .unwrap();
+
+        let visit = view_visit_summary().unwrap();
+
+        // ── recent_notes:两条都在,按记录时间倒序,原文逐字 ──
+        assert_eq!(visit.recent_notes.len(), 2, "实际={:?}", visit.recent_notes);
+        assert_eq!(
+            visit.recent_notes[0].text, "今天有点头晕",
+            "应按日期倒序,最新的在前"
+        );
+        assert_eq!(visit.recent_notes[0].date.as_deref(), Some("2026-08-01"));
+        assert_eq!(visit.recent_notes[1].text, "问王医生片子的事");
+
+        // ── plain_text:两条笔记的原文都不该出现 ──
+        assert!(
+            !visit.plain_text.contains("问王医生片子的事"),
+            "笔记不该出现在复制给医生的文本里,实际:\n{}",
+            visit.plain_text
+        );
+        assert!(
+            !visit.plain_text.contains("今天有点头晕"),
+            "笔记不该出现在复制给医生的文本里,实际:\n{}",
+            visit.plain_text
+        );
+        // 真实的就诊记录应该照常出现在【最近就诊】里,证明过滤对象是笔记本身,
+        // 不是整节内容。用日期而不是"出院"这个词断言——就诊组的 `kind` 是
+        // `load_archive` 按启发式判的,不保证是"住院"(实测这份出院小结被归到了
+        // "门诊"),不是本测试要钉的东西,这里只关心"这份真实记录没被连坐滤掉"。
+        assert!(
+            visit.plain_text.contains("2026-06-01"),
+            "过滤笔记不该连真实就诊也一起滤掉,实际:\n{}",
+            visit.plain_text
+        );
+
+        // ── recent_visits(结构化字段,给概览「最近归档」用):两条笔记的 id 仍都
+        // 在场,不受这次「复制给医生」的过滤影响。不能用 `kind == "note"` 数——
+        // 见 `note_never_becomes_a_condition_or_a_lab_series` 里的同一条注释。
+        let visible_doc_ids: BTreeSet<i64> = visit
+            .recent_visits
+            .iter()
+            .flat_map(|v| v.document_ids.iter().copied())
+            .collect();
+        assert!(
+            visible_doc_ids.contains(&note_id_1) && visible_doc_ids.contains(&note_id_2),
+            "recent_visits 不该被这次改动过滤,概览「最近归档」需要看到笔记,实际={:?}",
+            visit.recent_visits
+        );
     }
 
     /// 编辑必须"先删旧的,再写新的"——反过来在"编辑但没改任何字段直接保存"

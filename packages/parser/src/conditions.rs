@@ -113,7 +113,10 @@ fn section_hits(line: &str) -> Vec<(&str, usize, usize)> {
             // diagnosis; `病理 诊断:…` does not.
             if label.as_str() == "诊断" {
                 let before = line[..label.start()].trim_end();
-                if NOT_A_PROBLEM_LIST_PREFIX.iter().any(|p| before.ends_with(p)) {
+                if NOT_A_PROBLEM_LIST_PREFIX
+                    .iter()
+                    .any(|p| before.ends_with(p))
+                {
                     return None;
                 }
             }

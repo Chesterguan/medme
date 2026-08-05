@@ -23,21 +23,36 @@ import 'package:mobile_flutter/vault_events.dart';
 /// 编辑 API(设计文档 §3.6:append-only,删除是墓碑事件,不是原地覆盖)。
 ///
 /// 返回 `true` = 保存成功(调用方据此 `bumpVaultRevision`);`false`/`null` = 取消。
+///
+/// [initialKind] 让调用方跳过六选一,直接落在某一种类型上——目前唯一的用途是
+/// 「看病带这个」的「我想问医生的」空态那颗「加一条」:用户已经点的是"记笔记"
+/// 这个意图,没有理由让他再从六个图标里点一次「笔记」。`editing` 不为空时这个
+/// 参数被忽略(编辑态的类型来自 `editing.kind`,见 [_ManualEntrySheetState]
+/// 的初始化)。
 Future<bool?> showManualEntrySheet(
   BuildContext context, {
   ManualEntryEditing? editing,
+  ManualEntryKind? initialKind,
 }) {
   return showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (context) => _ManualEntrySheet(editing: editing),
+    builder: (context) =>
+        _ManualEntrySheet(editing: editing, initialKind: initialKind),
   );
 }
 
 /// 录入的六个封闭类型。血压是唯一"一次录入两个数"的类型(收缩压+舒张压共享
 /// 同一份文档/同一个测量时间,见设计文档 §5.3)。
-enum ManualEntryKind { bloodPressure, heartRate, weight, temperature, glucose, note }
+enum ManualEntryKind {
+  bloodPressure,
+  heartRate,
+  weight,
+  temperature,
+  glucose,
+  note,
+}
 
 extension _KindMeta on ManualEntryKind {
   String get label => switch (this) {
@@ -170,7 +185,9 @@ const _plausibleRanges = <String, _PlausibleRange>{
 String? manualEntryRangeError(List<SelfMeasuredValueDto> values) {
   for (final v in values) {
     final range = _plausibleRanges[v.analyteKey];
-    if (range == null || (v.value >= range.low && v.value <= range.high)) continue;
+    if (range == null || (v.value >= range.low && v.value <= range.high)) {
+      continue;
+    }
     final meta = _analyteDisplay[v.analyteKey];
     final label = meta?.$1 ?? v.analyteKey;
     final unit = meta?.$2 ?? v.unit;
@@ -191,7 +208,8 @@ String? manualEntryRangeError(List<SelfMeasuredValueDto> values) {
 /// 产出的 key 是封闭的)兜底成心率,不崩。供 `document_detail.dart` 的「编辑」
 /// 入口使用。
 ManualEntryKind manualEntryKindForKeys(List<String> analyteKeys) {
-  if (analyteKeys.contains('bp_systolic') || analyteKeys.contains('bp_diastolic')) {
+  if (analyteKeys.contains('bp_systolic') ||
+      analyteKeys.contains('bp_diastolic')) {
     return ManualEntryKind.bloodPressure;
   }
   final first = analyteKeys.isEmpty ? null : analyteKeys.first;
@@ -204,15 +222,19 @@ ManualEntryKind manualEntryKindForKeys(List<String> analyteKeys) {
 }
 
 class _ManualEntrySheet extends StatefulWidget {
-  const _ManualEntrySheet({this.editing});
+  const _ManualEntrySheet({this.editing, this.initialKind});
   final ManualEntryEditing? editing;
+  final ManualEntryKind? initialKind;
 
   @override
   State<_ManualEntrySheet> createState() => _ManualEntrySheetState();
 }
 
 class _ManualEntrySheetState extends State<_ManualEntrySheet> {
-  late ManualEntryKind _kind = widget.editing?.kind ?? ManualEntryKind.bloodPressure;
+  late ManualEntryKind _kind =
+      widget.editing?.kind ??
+      widget.initialKind ??
+      ManualEntryKind.bloodPressure;
   late DateTime _when = widget.editing?.measuredAt ?? DateTime.now();
   final _systolicCtl = TextEditingController();
   final _diastolicCtl = TextEditingController();
@@ -237,7 +259,9 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
       case ManualEntryKind.note:
         _noteCtl.text = e.noteText ?? '';
       default:
-        if (e.values.isNotEmpty) _singleCtl.text = _fmtNum(e.values.first.value);
+        if (e.values.isNotEmpty) {
+          _singleCtl.text = _fmtNum(e.values.first.value);
+        }
     }
   }
 
@@ -265,15 +289,25 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
       final dia = double.tryParse(_diastolicCtl.text.trim());
       if (sys == null || dia == null) return null;
       return [
-        SelfMeasuredValueDto(analyteKey: 'bp_systolic', value: sys, unit: 'mmHg'),
-        SelfMeasuredValueDto(analyteKey: 'bp_diastolic', value: dia, unit: 'mmHg'),
+        SelfMeasuredValueDto(
+          analyteKey: 'bp_systolic',
+          value: sys,
+          unit: 'mmHg',
+        ),
+        SelfMeasuredValueDto(
+          analyteKey: 'bp_diastolic',
+          value: dia,
+          unit: 'mmHg',
+        ),
       ];
     }
     final analyte = _singleAnalyte;
     if (analyte == null) return null; // 笔记不经过这里
     final v = double.tryParse(_singleCtl.text.trim());
     if (v == null) return null;
-    return [SelfMeasuredValueDto(analyteKey: analyte.$1, value: v, unit: analyte.$2)];
+    return [
+      SelfMeasuredValueDto(analyteKey: analyte.$1, value: v, unit: analyte.$2),
+    ];
   }
 
   Future<void> _pickWhen() async {
@@ -420,7 +454,10 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
               _WhenRow(when: _when, onTap: _pickWhen),
               if (_error != null) ...[
                 const SizedBox(height: MedShape.s2),
-                Text(_error!, style: MedType.secondary.copyWith(color: c.critical)),
+                Text(
+                  _error!,
+                  style: MedType.secondary.copyWith(color: c.critical),
+                ),
               ],
               const SizedBox(height: MedShape.s4),
               FilledButton(
@@ -600,7 +637,9 @@ class _SingleValueField extends StatelessWidget {
     final c = MedColors.of(context);
     return Row(
       children: [
-        Expanded(child: _NumberBox(controller: controller, hint: label)),
+        Expanded(
+          child: _NumberBox(controller: controller, hint: label),
+        ),
         if (displayUnit.isNotEmpty) ...[
           const SizedBox(width: MedShape.s2),
           Text(displayUnit, style: MedType.secondary.copyWith(color: c.ink3)),

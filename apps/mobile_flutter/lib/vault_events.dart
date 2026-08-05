@@ -20,8 +20,9 @@ void bumpVaultRevision() => vaultRevision.value++;
 /// 左边而不是塞进设置里,是因为**用它的人不是你** —— 急救人员在陌生手机上找东西,
 /// 只会扫一眼底栏,不会进设置翻。
 ///
-/// 「就诊单」刻意**不是** tab:它是诊室里那 30 秒的动作,从概览与档案两处以浮层
-/// 唤起(见 `screens/visit_summary_sheet.dart`),不是一个你会常驻浏览的空间。
+/// 「看病带这个」刻意**不是** tab(原名「就诊单」,2026-08-05 改名,见
+/// `screens/visit_summary_sheet.dart` 顶部文档):它是诊室里那 30 秒的动作,从
+/// 概览与档案两处以浮层唤起,不是一个你会常驻浏览的空间。
 class HomeTab {
   HomeTab._();
 

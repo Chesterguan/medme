@@ -56,7 +56,10 @@ TrendSeriesDto series(List<TrendPointDto> points, {double? lo, double? hi}) =>
       unit: 'umol/L',
       refLow: lo,
       refHigh: hi,
-      anyAbnormal: points.any((p) => p.flag != null),
+      // 与 Rust 侧 `aggregate.rs` 的 `abnormal` 同一条判据:只认 H/L。夹具里若写
+      // `flag != null`,将来有人喂一个印着 `N`(正常)的点进来,这里就会静默把它
+      // 标成异常,测试跟着假绿。
+      anyAbnormal: points.any((p) => p.flag == 'H' || p.flag == 'L'),
       panel: null,
       points: points,
       selfMeasured: false,
