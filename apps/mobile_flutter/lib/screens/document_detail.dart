@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
@@ -23,9 +24,28 @@ const Map<String, String> _docLabel = {
   'clinical_note': '病历',
   'pathology': '病理',
   'surgery': '手术',
+  // 手动录入(「记录」入口产出,没有原件——见 MANUAL-ENTRY-DESIGN.md)。
+  'self_measurement': '自测记录',
+  'note': '笔记',
   'other': '其他',
   'unknown': '待归类',
 };
+
+/// 手动录入的两个 doc_type(与 `doc.dart`/`core_model::DocType` 的取值一致)——
+/// 这两类文档没有原件(合成文本本身当"文件"存进 CAS),详情页要换一套展示。
+bool _isManualEntry(String docType) =>
+    docType == 'self_measurement' || docType == 'note';
+
+/// 自测记录的 `ocrText` 是"人类可读的几行 + 空行 + 结构化载荷"
+/// (`parser::render_self_measurement_text` 的格式),后半段是给机器读的 JSON,
+/// 不该直接糊给用户看。空行是这两段之间**唯一**的契约(不依赖具体的标记字符串,
+/// 那是 Rust 侧的实现细节),取空行之前的部分即可。笔记文档没有这层编码,原样
+/// 显示。
+String _displayText(String ocrText, String docType) {
+  if (docType != 'self_measurement') return ocrText;
+  final idx = ocrText.indexOf('\n\n');
+  return idx == -1 ? ocrText : ocrText.substring(0, idx);
+}
 
 String _fmtDate(String? iso) {
   if (iso == null || iso.isEmpty) return '';
@@ -199,8 +219,11 @@ class _DetailBody extends StatelessWidget {
     final doc = detail.document;
     final sf = detail.sourceFile;
     final typeLabel = _docLabel[doc.docType] ?? doc.docType;
+    final isManualEntry = _isManualEntry(doc.docType);
 
     // OCR 置信度:换算成患者能看懂的三档,而非裸百分比(与旧 App.tsx 一致)。
+    // 手动录入没有 OCR 这一步,`ocrConfidence` 恒为 null,这里自然算不出档位,
+    // 不需要额外判断。
     final conf = detail.ocrConfidence;
     final confTier = conf == null
         ? null
@@ -286,20 +309,44 @@ class _DetailBody extends StatelessWidget {
                 ],
 
                 const SizedBox(height: MedShape.s3),
-                // 次级按钮(规范 §六 btn-2):seal-wash 底 + seal-ink 字。
-                // 「原件永远可达」是 007 §2.1 的铁律,所以它不能是最弱的那一级;
-                // 但本屏的主按钮位置留给底部的「确认无误」,它就不该是纯色主按钮。
-                OutlinedButton.icon(
-                  onPressed: () => _openOriginal(context, sf),
-                  icon: const Icon(Icons.visibility_outlined, size: 18),
-                  label: const Text('查看原件'),
-                  style: OutlinedButton.styleFrom(
-                    backgroundColor: c.sealWash,
-                    foregroundColor: c.sealInk,
-                    side: BorderSide(color: c.line),
-                    minimumSize: const Size.fromHeight(44),
+                if (isManualEntry) ...[
+                  // 手动录入没有"被拍下来的原件"——合成文本本身当"文件"存进
+                  // CAS(见 MANUAL-ENTRY-DESIGN.md),如实说清楚,而不是让用户
+                  // 点「查看原件」看到一句"此格式暂不能预览"的困惑提示。
+                  Text(
+                    '这是你手动填写的记录,没有原件照片。',
+                    style: MedType.secondary.copyWith(color: c.ink3),
                   ),
-                ),
+                  const SizedBox(height: MedShape.s2),
+                  // 次级按钮(规范 §六 btn-2):seal-wash 底 + seal-ink 字,与
+                  // 其它文档类型「查看原件」同一视觉分量——编辑对这类文档而言
+                  // 就是它的「原件永远可达」等价物:能回去改。
+                  OutlinedButton.icon(
+                    onPressed: () => _editManualEntry(context),
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text('编辑'),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: c.sealWash,
+                      foregroundColor: c.sealInk,
+                      side: BorderSide(color: c.line),
+                      minimumSize: const Size.fromHeight(44),
+                    ),
+                  ),
+                ] else
+                  // 次级按钮(规范 §六 btn-2):seal-wash 底 + seal-ink 字。
+                  // 「原件永远可达」是 007 §2.1 的铁律,所以它不能是最弱的那一级;
+                  // 但本屏的主按钮位置留给底部的「确认无误」,它就不该是纯色主按钮。
+                  OutlinedButton.icon(
+                    onPressed: () => _openOriginal(context, sf),
+                    icon: const Icon(Icons.visibility_outlined, size: 18),
+                    label: const Text('查看原件'),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: c.sealWash,
+                      foregroundColor: c.sealInk,
+                      side: BorderSide(color: c.line),
+                      minimumSize: const Size.fromHeight(44),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -317,9 +364,43 @@ class _DetailBody extends StatelessWidget {
           ],
         ),
         const SizedBox(height: MedShape.s2),
-        ReportContent(text: detail.ocrText, docType: doc.docType),
+        ReportContent(
+          text: _displayText(detail.ocrText, doc.docType),
+          docType: doc.docType,
+        ),
       ],
     );
+  }
+
+  /// 「编辑」——预填录入弹层,保存后原文档已被删除重建(§3.6),身份不再是
+  /// `doc.id`,退回上一屏(时间线/档案会因 `bumpVaultRevision` 自动刷新)。
+  Future<void> _editManualEntry(BuildContext context) async {
+    final doc = detail.document;
+    final measuredAt = doc.docDate != null
+        ? DateTime.tryParse(doc.docDate!)
+        : null;
+    final ManualEntryEditing editing;
+    if (doc.docType == 'note') {
+      editing = ManualEntryEditing(
+        documentId: doc.id,
+        kind: ManualEntryKind.note,
+        noteText: detail.ocrText,
+        measuredAt: measuredAt,
+      );
+    } else {
+      final values = await selfMeasurementValues(documentId: doc.id);
+      editing = ManualEntryEditing(
+        documentId: doc.id,
+        kind: manualEntryKindForKeys(values.map((v) => v.analyteKey).toList()),
+        values: values,
+        measuredAt: measuredAt,
+      );
+    }
+    if (!context.mounted) return;
+    final saved = await showManualEntrySheet(context, editing: editing);
+    if (saved == true && context.mounted) {
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _openOriginal(BuildContext context, SourceFileMetaDto sf) async {

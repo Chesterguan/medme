@@ -59,6 +59,7 @@ TrendSeriesDto series(List<TrendPointDto> points, {double? lo, double? hi}) =>
       anyAbnormal: points.any((p) => p.flag != null),
       panel: null,
       points: points,
+      selfMeasured: false,
     );
 
 void main() {
@@ -226,6 +227,7 @@ void main() {
           anyAbnormal: abnormal,
           panel: panel,
           points: [pt('2024-03-01', 1)],
+          selfMeasured: false,
         );
 
     final all = [
@@ -272,6 +274,7 @@ void main() {
           anyAbnormal: abnormal,
           panel: panel,
           points: [pt('2024-03-01', 1)],
+          selfMeasured: false,
         );
 
     test('「其他」桶:兜底不漏项 —— 没能归一化(panel 为 null)的序列必须能'

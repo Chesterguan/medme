@@ -137,6 +137,21 @@ pub struct ImportOutcomeDto {
     pub pages_without_text: Vec<i32>,
 }
 
+/// 一次「记录」(手动录入)里的一个数值 —— 血压一次记录有两个(收缩压+舒张压,
+/// 共享同一份文档/`measuredAt`,见 `add_self_measurement` 的文档),其余四项各
+/// 一个。`analyteKey`/`unit` 都是 `terminology` 词典里现成的规范键/单位
+/// (`bp_systolic`/`bp_diastolic`/`heart_rate`/`body_weight`/`body_temperature`/
+/// `glucose`,单位分别是 mmHg/mmHg/`/min`/kg/Cel/mmol/L)——Dart 侧只从封闭的
+/// 五选一录入界面产出这个结构,不接受任意字符串(硬约束:不做手打化验值)。
+/// 与 `parser::SelfMeasuredValue` 逐字段镜像,只是换成 FRB 能生成绑定的 plain
+/// struct(见本文件头的取舍)。
+#[derive(Debug, Clone)]
+pub struct SelfMeasuredValueDto {
+    pub analyte_key: String,
+    pub value: f64,
+    pub unit: String,
+}
+
 /// **iOS PP-OCRv5 测试路径**结果(feat/ios-pp-ocr-test 分支,探索性——ADR 0005
 /// 尚未 supersede)。镜像 Dart `OcrResult`(`ocr_bridge.dart`),供
 /// `recognize_image_pp` 返回,让真机能对比 Apple Vision vs PP-OCRv5 的识别质量。

@@ -17,6 +17,9 @@ const Map<String, String> docLabel = {
   'clinical_note': '病历',
   'pathology': '病理',
   'surgery': '手术',
+  // 手动录入(「记录」入口产出,没有原件——见 MANUAL-ENTRY-DESIGN.md)。
+  'self_measurement': '自测记录',
+  'note': '笔记',
   'other': '其他',
   'unknown': '待归类',
 };
@@ -47,6 +50,8 @@ const Map<String, IconData> _docIcon = {
   'clinical_note': Icons.medical_services_outlined,
   'pathology': Icons.biotech_outlined,
   'surgery': Icons.content_cut,
+  'self_measurement': Icons.monitor_heart_outlined,
+  'note': Icons.sticky_note_2_outlined,
   'other': Icons.description_outlined,
   'unknown': Icons.help_outline,
 };

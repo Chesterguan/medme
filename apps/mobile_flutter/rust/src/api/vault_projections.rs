@@ -88,6 +88,12 @@ pub struct TrendSeriesDto {
     pub panel: Option<String>,
     /// **全部**观测点,按时间升序(无日期的排最后)。不做任何数量裁剪。
     pub points: Vec<TrendPointDto>,
+    /// 这条序列是不是手动录入的自测值(血压/血糖/体重/体温/心率,「记录」入口
+    /// 产出,而非从化验单 OCR 出来的)——`parser::AnalyteSeries::self_measured`
+    /// 透传。自测序列结构上永远不会与同名医院序列合并(`aggregate` 的分组约定,
+    /// 见 MANUAL-ENTRY-DESIGN.md),这个字段只用于**显示**:UI 据此加"(家测)"
+    /// 标注 / 换个点形状,不改变哪些点属于这条序列。
+    pub self_measured: bool,
 }
 
 /// 序列上的一个观测点。
@@ -182,6 +188,9 @@ pub struct VisitLabDto {
     pub ref_low: Option<f64>,
     pub ref_high: Option<f64>,
     pub document_id: i64,
+    /// 见 `TrendSeriesDto::self_measured` 的文档 —— 同一份透传,就诊单据此在
+    /// 「复制给医生」纯文本里追加"(家测)"(`render_plain_text`)。
+    pub self_measured: bool,
 }
 
 /// 摘要单上的一行就诊记录 —— 一个就诊组,或一份不属于任何就诊的独立文档。
@@ -525,6 +534,7 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
                 })
             })
             .collect(),
+        self_measured: s.self_measured,
     }
 }
 
@@ -596,6 +606,7 @@ pub fn view_visit_summary() -> anyhow::Result<VisitSummaryDto> {
                 ref_low: s.ref_low,
                 ref_high: s.ref_high,
                 document_id: projection.docs.get(p.source)?.document_id,
+                self_measured: s.self_measured,
             })
         })
         .collect();
@@ -714,6 +725,11 @@ fn render_plain_text(
                 out.push(' ');
                 out.push_str(u);
             }
+            // 自测值(家测血压/血糖/体重/体温/心率)与医院值在这份纯文本里长得
+            // 一样,靠这个标注让医生一眼分清"这是病人自己量的"——不是诊室测的。
+            if l.self_measured {
+                out.push_str(" (家测)");
+            }
             if let Some(f) = &l.flag {
                 out.push(' ');
                 out.push_str(f);
@@ -753,6 +769,7 @@ fn render_plain_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::dto::SelfMeasuredValueDto;
     use std::collections::BTreeSet;
     use std::sync::Mutex;
 
@@ -1065,6 +1082,7 @@ mod tests {
             ref_low: Some(4.0),
             ref_high: Some(6.5),
             document_id: 102,
+            self_measured: false,
         }];
         let text = render_plain_text(&patient, &allergies, &[], &labs, &[]);
 
@@ -1213,5 +1231,255 @@ mod tests {
             .expect("剩下那份仍有序列");
         assert_eq!(hba1c_after.points.len(), 1);
         assert_eq!(hba1c_after.points[0].document_id, older_id);
+    }
+
+    // ──────────────── MANUAL-ENTRY-DESIGN.md: 手动录入端到端 ────────────────
+
+    /// 自测血压(§3.4/§5.3)与同一天的医院血压绝不合并成一条线,即使
+    /// `analyte_key` 相同;`view_trends()` 里能分辨出哪条是自测(`selfMeasured`),
+    /// `render_plain_text` 据此在纯文本里标"(家测)"。
+    #[test]
+    fn self_measured_bp_never_merges_with_hospital_bp_end_to_end() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        // 同一天:医院化验单印了一次血压(诊室值,140 应判 H——诊室切点 140/90);
+        // 用户自己在家又量了一次(128,低于家测阈值 135,应判正常/无 flag)。
+        let hospital = crate::api::vault::ingest_bytes(
+            "检验单.txt".into(),
+            "生化检验报告单\n检验日期 2026-08-01\n收缩压 140 mmHg\n".into(),
+        )
+        .unwrap();
+        assert!(hospital.document_id.is_some());
+
+        let self_doc_id = crate::api::vault::add_self_measurement(
+            vec![
+                SelfMeasuredValueDto {
+                    analyte_key: "bp_systolic".into(),
+                    value: 128.0,
+                    unit: "mmHg".into(),
+                },
+                SelfMeasuredValueDto {
+                    analyte_key: "bp_diastolic".into(),
+                    value: 82.0,
+                    unit: "mmHg".into(),
+                },
+            ],
+            Some("2026-08-01T07:30:00Z".into()),
+        )
+        .unwrap();
+        assert!(self_doc_id > 0);
+
+        let trends = view_trends().unwrap();
+        let bp_series: Vec<&TrendSeriesDto> = trends
+            .iter()
+            .filter(|s| s.analyte_key.as_deref() == Some("bp_systolic"))
+            .collect();
+        assert_eq!(
+            bp_series.len(),
+            2,
+            "自测收缩压与医院收缩压必须是两条独立序列: {:?}",
+            bp_series
+                .iter()
+                .map(|s| (s.self_measured, s.points.len()))
+                .collect::<Vec<_>>()
+        );
+        let self_series = bp_series
+            .iter()
+            .find(|s| s.self_measured)
+            .expect("一条应标 selfMeasured");
+        let hospital_series = bp_series
+            .iter()
+            .find(|s| !s.self_measured)
+            .expect("一条应是医院来源");
+        assert_eq!(self_series.points[0].value, 128.0);
+        // 家测阈值 135,128 未超 → "N"(有区间、值在区间内,与 extract_labs 同一套
+        // 三态 flag 约定,见 labs.rs)。这条要钉住的是用的是家测阈值 135 而不是
+        // 误套诊室切点 140——两套阈值下 128 都是"N",所以另一个测试
+        // (aggregate.rs 的 self_measured_bp_uses_home_range_not_clinic_range)
+        // 用一个能在两套阈值下给出不同结论的值来钉这件事;这里只做端到端冒烟。
+        assert_eq!(self_series.points[0].flag.as_deref(), Some("N"));
+        assert_eq!(hospital_series.points[0].value, 140.0);
+
+        // 就诊单纯文本:自测那一行带"(家测)",医院那一行不带。
+        let visit = view_visit_summary().unwrap();
+        assert!(
+            visit.plain_text.contains("128 mmHg (家测)"),
+            "缺少家测标注,实际:\n{}",
+            visit.plain_text
+        );
+        assert!(
+            !visit.plain_text.contains("140 mmHg (家测)"),
+            "医院血压不该被标成家测"
+        );
+    }
+
+    /// 编辑=删除旧文档+重新走一遍新增(§3.6,没有专门的编辑 API)。
+    /// `self_measurement_values` 供预填表单,读回的值须与写入的一致。
+    #[test]
+    fn self_measurement_edit_via_delete_and_recreate() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        let doc_id = crate::api::vault::add_self_measurement(
+            vec![SelfMeasuredValueDto {
+                analyte_key: "heart_rate".into(),
+                value: 72.0,
+                unit: "/min".into(),
+            }],
+            Some("2026-08-01T08:00:00Z".into()),
+        )
+        .unwrap();
+
+        let readback = crate::api::vault::self_measurement_values(doc_id).unwrap();
+        assert_eq!(readback.len(), 1);
+        assert_eq!(readback[0].analyte_key, "heart_rate");
+        assert_eq!(readback[0].value, 72.0);
+
+        // "编辑":删旧的,拿读回的值改一个数再写一份新的。
+        crate::api::vault::delete_document(doc_id).unwrap();
+        let new_id = crate::api::vault::add_self_measurement(
+            vec![SelfMeasuredValueDto {
+                analyte_key: "heart_rate".into(),
+                value: 75.0,
+                unit: "/min".into(),
+            }],
+            Some("2026-08-01T08:00:00Z".into()),
+        )
+        .unwrap();
+        // 不断言 `doc_id != new_id`——`document.id` 是普通 SQLite `INTEGER PRIMARY
+        // KEY`(schema.rs 没有 `AUTOINCREMENT`),删掉唯一一份文档后 rowid 可能被
+        // 复用,这是这套 derived DB 一直以来的既有行为(id 只在一次物化快照内保证
+        // 唯一,不是全局永不重复的审计标识——真正 append-only、永久保留历史的是
+        // 事件日志本身,`DocumentDeleted` 事件永远留痕,可查)。这里要钉住的是
+        // "旧的那份数据真的没了、新的那份数据是新值",不是 id 数值本身。
+        let _ = new_id;
+
+        let trends = view_trends().unwrap();
+        let hr = trends
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("heart_rate"))
+            .expect("心率序列仍在");
+        assert_eq!(hr.points.len(), 1, "旧文档已删,不该残留旧的那个点");
+        assert_eq!(hr.points[0].value, 75.0);
+    }
+
+    /// 笔记("头晕,是不是又高血压了")不该被读成一条诊断——不进应急卡的
+    /// `conditions`,也不进任何 `TrendSeriesDto`。
+    #[test]
+    fn note_never_becomes_a_condition_or_a_lab_series() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        crate::api::vault::add_note(
+            "今天有点头晕,是不是又高血压了,下次问问医生。".into(),
+            Some("2026-08-01T09:00:00Z".into()),
+        )
+        .unwrap();
+
+        let card = view_emergency_card().unwrap();
+        assert!(
+            card.conditions.is_empty(),
+            "笔记不该被读出诊断: {:?}",
+            card.conditions.iter().map(|c| &c.term).collect::<Vec<_>>()
+        );
+        assert!(view_trends().unwrap().is_empty());
+
+        // 但笔记本身仍然是一份可见文档(时间线/档案里看得到)——就诊单的
+        // 「最近就诊」里应该出现这条记录。
+        let visit = view_visit_summary().unwrap();
+        assert_eq!(visit.patient.record_count, 1);
+    }
+
+    /// 编辑必须"先删旧的,再写新的"——反过来在"编辑但没改任何字段直接保存"
+    /// 时会把记录整个删没:CAS 是内容寻址,新文本与旧文档逐字节相同时
+    /// `Vault::import` 命中去重,`add_self_measurement` 的去重防线(见
+    /// `vault.rs` 的注释)会把旧文档自己的 id 当"新文档"直接返回;随后再删除
+    /// 这个 id,删掉的就是用户刚保存的那条。这条测试钉住**正确**顺序(先删
+    /// 后写)在内容完全相同时仍然保留记录——手机端 `manual_entry_sheet.dart`
+    /// 的 `_save()` 必须遵守这个顺序。
+    #[test]
+    fn editing_with_unchanged_values_preserves_the_record_when_delete_precedes_add() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        let values = vec![SelfMeasuredValueDto {
+            analyte_key: "heart_rate".into(),
+            value: 72.0,
+            unit: "/min".into(),
+        }];
+        let when = Some("2026-08-01T08:00:00Z".to_string());
+        let id1 = crate::api::vault::add_self_measurement(values.clone(), when.clone()).unwrap();
+
+        // "编辑但没改任何字段"直接保存:正确顺序是先删,再用完全相同的值重写。
+        crate::api::vault::delete_document(id1).unwrap();
+        let id2 = crate::api::vault::add_self_measurement(values, when).unwrap();
+        assert!(id2 > 0);
+
+        let trends = view_trends().unwrap();
+        let hr = trends
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("heart_rate"))
+            .expect("记录必须还在——即使内容与被删的那份逐字节相同");
+        assert_eq!(hr.points.len(), 1);
+        assert_eq!(hr.points[0].value, 72.0);
+    }
+
+    /// 反过来的顺序(先写"新"的、再删旧的)在内容不变时会把记录删没——这条
+    /// 测试明确钉住错误顺序的后果,防止将来有人"优化"手机端代码把顺序改
+    /// 回来。**这是在记录一个已知陷阱,不是在认可它。**
+    #[test]
+    fn editing_with_unchanged_values_loses_the_record_when_add_precedes_delete() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        let values = vec![SelfMeasuredValueDto {
+            analyte_key: "heart_rate".into(),
+            value: 72.0,
+            unit: "/min".into(),
+        }];
+        let when = Some("2026-08-01T08:00:00Z".to_string());
+        let id1 = crate::api::vault::add_self_measurement(values.clone(), when.clone()).unwrap();
+
+        // 错误顺序:先"写新的"(内容相同 → CAS 去重 → 拿回的其实还是 id1),
+        // 再删这个 id —— 结果是把刚"保存"的记录删没了。
+        let id2 = crate::api::vault::add_self_measurement(values, when).unwrap();
+        assert_eq!(id2, id1, "内容相同 → 去重防线返回的就是旧文档本身的 id");
+        crate::api::vault::delete_document(id2).unwrap();
+
+        assert!(
+            view_trends().unwrap().is_empty(),
+            "这就是错误顺序的后果:记录整个消失了"
+        );
     }
 }

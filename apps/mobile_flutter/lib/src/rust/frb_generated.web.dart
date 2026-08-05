@@ -147,6 +147,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ProxyProblemDto> dco_decode_list_proxy_problem_dto(dynamic raw);
 
   @protected
+  List<SelfMeasuredValueDto> dco_decode_list_self_measured_value_dto(
+    dynamic raw,
+  );
+
+  @protected
   List<TimelineGroupDto> dco_decode_list_timeline_group_dto(dynamic raw);
 
   @protected
@@ -206,6 +211,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   (Uint8List, String, PlatformInt64)
   dco_decode_record_list_prim_u_8_strict_string_i_64(dynamic raw);
+
+  @protected
+  SelfMeasuredValueDto dco_decode_self_measured_value_dto(dynamic raw);
 
   @protected
   ShareResultDto dco_decode_share_result_dto(dynamic raw);
@@ -389,6 +397,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SelfMeasuredValueDto> sse_decode_list_self_measured_value_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<TimelineGroupDto> sse_decode_list_timeline_group_dto(
     SseDeserializer deserializer,
   );
@@ -460,6 +473,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   (Uint8List, String, PlatformInt64)
   sse_decode_record_list_prim_u_8_strict_string_i_64(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SelfMeasuredValueDto sse_decode_self_measured_value_dto(
     SseDeserializer deserializer,
   );
 
@@ -703,6 +721,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_self_measured_value_dto(
+    List<SelfMeasuredValueDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_timeline_group_dto(
     List<TimelineGroupDto> self,
     SseSerializer serializer,
@@ -798,6 +822,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_record_list_prim_u_8_strict_string_i_64(
     (Uint8List, String, PlatformInt64) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_self_measured_value_dto(
+    SelfMeasuredValueDto self,
     SseSerializer serializer,
   );
 

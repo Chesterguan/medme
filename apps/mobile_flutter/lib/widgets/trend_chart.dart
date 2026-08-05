@@ -111,6 +111,7 @@ class TrendChart extends StatelessWidget {
       child: CustomPaint(
         painter: _TrendPainter(
           points: pts,
+          selfMeasured: series.selfMeasured,
           refLow: series.refLow,
           refHigh: series.refHigh,
           band: c.sealWash,
@@ -129,6 +130,7 @@ class TrendChart extends StatelessWidget {
 class _TrendPainter extends CustomPainter {
   const _TrendPainter({
     required this.points,
+    required this.selfMeasured,
     required this.refLow,
     required this.refHigh,
     required this.band,
@@ -141,6 +143,9 @@ class _TrendPainter extends CustomPainter {
   });
 
   final List<TrendPointDto> points;
+  /// 整条序列是不是自测值(`TrendSeriesDto.selfMeasured`,组内同质,见其文档)。
+  /// 只改点的**形状**(实心/空心圈),颜色逻辑不变 —— 颜色永远只读 `flag`。
+  final bool selfMeasured;
   final double? refLow;
   final double? refHigh;
   final Color band;
@@ -252,12 +257,27 @@ class _TrendPainter extends CustomPainter {
         _ => dot,
       };
       final at = Offset(x(i), y(p.value));
+      final r = last ? _rLast : _r;
       if (last) {
         // 末点先铺一圈底色再画实心 —— 与 sparkSVG 的 `stroke="#fff"` 同效果,
         // 让它从折线和参考带上「浮」出来。
         canvas.drawCircle(at, _rLast + 1.5, Paint()..color = ring);
       }
-      canvas.drawCircle(at, last ? _rLast : _r, Paint()..color = color);
+      if (selfMeasured) {
+        // 自测值:空心圈(底色先垫一层背景色,再描边)——与医院值的实心圈一眼
+        // 可辨,同一条规矩不靠颜色讲(颜色永远只读 flag,见文件头第三条)。
+        canvas.drawCircle(at, r, Paint()..color = ring);
+        canvas.drawCircle(
+          at,
+          r,
+          Paint()
+            ..color = color
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.6,
+        );
+      } else {
+        canvas.drawCircle(at, r, Paint()..color = color);
+      }
     }
   }
 
@@ -275,6 +295,7 @@ class _TrendPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _TrendPainter old) =>
       old.points != points ||
+      old.selfMeasured != selfMeasured ||
       old.refLow != refLow ||
       old.refHigh != refHigh ||
       old.line != line;

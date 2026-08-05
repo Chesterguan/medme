@@ -360,7 +360,9 @@ class _LabRow extends StatelessWidget {
       flag: lab.flag,
       refLow: lab.refLow,
       refHigh: lab.refHigh,
-      meta: lab.date,
+      // 自测值(家测血压/血糖/体重/体温/心率)与医院值排在同一份就诊单里,
+      // 靠这个标注分清"这是病人自己量的"——见 MANUAL-ENTRY-DESIGN.md。
+      meta: lab.selfMeasured ? '${lab.date} · 家测' : lab.date,
       onTap: () => onOpenDoc(lab.documentId),
     );
   }
