@@ -659,7 +659,8 @@
         "Systolic",
         "Systolic blood pressure"
       ],
-      "ocr_confusions": []
+      "ocr_confusions": [],
+      "panel": "生命体征"
     },
     {
       "key": "bp_diastolic",
@@ -685,7 +686,8 @@
         "Diastolic",
         "Diastolic blood pressure"
       ],
-      "ocr_confusions": []
+      "ocr_confusions": [],
+      "panel": "生命体征"
     },
     {
       "key": "heart_rate",
@@ -712,7 +714,8 @@
         "Heart rate",
         "Pulse"
       ],
-      "ocr_confusions": []
+      "ocr_confusions": [],
+      "panel": "生命体征"
     },
     {
       "key": "body_weight",
@@ -747,7 +750,8 @@
         "Body weight",
         "Weight"
       ],
-      "ocr_confusions": []
+      "ocr_confusions": [],
+      "panel": "体格测量"
     },
     {
       "key": "bmi",
@@ -773,7 +777,8 @@
         "BMI",
         "Body mass index"
       ],
-      "ocr_confusions": []
+      "ocr_confusions": [],
+      "panel": "体格测量"
     },
     {
       "key": "metformin",
@@ -3711,7 +3716,8 @@
         "Stature"
       ],
       "ocr_confusions": [],
-      "note": null
+      "note": null,
+      "panel": "体格测量"
     },
     {
       "key": "spo2",
@@ -3743,7 +3749,8 @@
         "Pulse oximetry"
       ],
       "ocr_confusions": [],
-      "note": "Canonical LOINC 59408-5 is SpO2 by pulse oximetry (the value patients see on a finger oximeter). Arterial-blood-gas SaO2 (LOINC 2708-6) is included as an alias and folds here in V1; if the pulse-ox-vs-ABG distinction is needed later, split SaO2 to its own entry."
+      "note": "Canonical LOINC 59408-5 is SpO2 by pulse oximetry (the value patients see on a finger oximeter). Arterial-blood-gas SaO2 (LOINC 2708-6) is included as an alias and folds here in V1; if the pulse-ox-vs-ABG distinction is needed later, split SaO2 to its own entry.",
+      "panel": "生命体征"
     },
     {
       "key": "body_temperature",
@@ -3777,7 +3784,8 @@
         "Body temperature"
       ],
       "ocr_confusions": [],
-      "note": "Canonical unit is degree Celsius (UCUM 'Cel'). The [degF] row is the exact affine Fahrenheit→Celsius conversion C = (5/9)(F−32) = 0.5555555556·F − 17.7777777778. Bare 'T' is intentionally NOT an alias (collides with thyroid T3/T4)."
+      "note": "Canonical unit is degree Celsius (UCUM 'Cel'). The [degF] row is the exact affine Fahrenheit→Celsius conversion C = (5/9)(F−32) = 0.5555555556·F − 17.7777777778. Bare 'T' is intentionally NOT an alias (collides with thyroid T3/T4).",
+      "panel": "生命体征"
     },
     {
       "key": "respiratory_rate",
@@ -3806,7 +3814,8 @@
         "Breaths per minute"
       ],
       "ocr_confusions": [],
-      "note": null
+      "note": null,
+      "panel": "生命体征"
     },
     {
       "key": "waist_circumference",
@@ -3837,7 +3846,8 @@
         "Waist"
       ],
       "ocr_confusions": [],
-      "note": null
+      "note": null,
+      "panel": "体格测量"
     },
     {
       "key": "repaglinide",

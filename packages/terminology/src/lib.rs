@@ -652,6 +652,10 @@ pub fn dictionary_entries() -> &'static [Entry] {
 /// distinct `panel` values actually present in `dictionary.json`, so a typo or
 /// a forgotten/renamed panel can't silently drift the two apart.
 pub const PANEL_CATALOG: &[&str] = &[
+    // 自测项排在最前:手动录入的血压/心率/体重是用户**自己天天在看**的东西,
+    // 而化验大类是隔几个月才来一次的。chip 是横向滚动的,谁在前谁被看见。
+    "生命体征",
+    "体格测量",
     "血常规",
     "尿液",
     "肝功能",
@@ -1313,17 +1317,43 @@ mod tests {
     }
 
     #[test]
-    fn panel_only_set_on_lab_entries() {
-        // panel 是化验报告单的项目组表头概念,vital/drug 没有这个概念,恒为 None。
+    fn panel_never_set_on_drug_entries() {
+        // panel 回答的是「这一项在报告单/病历上印在哪一栏下」。化验有(项目组表头),
+        // 生命体征与体格测量也有(病历首页的固定栏位) —— **药没有**,它的分类维度是
+        // ATC,不是报告单版式,给它 panel 只会在趋势页挂出一个查无实据的 chip。
+        //
+        // 这条原本写的是「只有 lab 能有 panel」。手动录入上线后,自测的血压/心率/
+        // 体重全是 `Category::Vital`,而它们**必须**能被趋势页的分类入口选中 ——
+        // 否则用户自己天天填的东西反而只能从「其他」里翻。放宽到 lab + vital,
+        // 但对药继续钉死。
         for e in dictionary_entries() {
-            if e.category != Category::Lab {
+            if e.category == Category::Drug {
                 assert!(
                     e.panel.is_none(),
-                    "{} is not a lab but has a panel: {:?}",
+                    "{} is a drug but has a panel: {:?}",
                     e.key,
                     e.panel
                 );
             }
+        }
+    }
+
+    #[test]
+    fn every_self_measurable_vital_has_a_panel() {
+        // 手动录入支持的五项(见 parser::self_entry)必须都能被分类入口选中。
+        // 少一项就意味着那一项只能从「其他」里翻 —— 而「其他」是给未归一化的
+        // 残留项准备的兜底,不是给产品主推功能的默认归宿。
+        for key in [
+            "bp_systolic",
+            "bp_diastolic",
+            "heart_rate",
+            "body_temperature",
+            "body_weight",
+        ] {
+            assert!(
+                panel_for(key).is_some(),
+                "{key} 是手动录入支持项,却没有 panel —— 它会掉进「其他」"
+            );
         }
     }
 }
