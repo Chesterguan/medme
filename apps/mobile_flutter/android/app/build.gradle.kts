@@ -50,6 +50,19 @@ android {
     }
 
     buildTypes {
+        debug {
+            // **debug 包用独立的 applicationId,与正式版并存。**
+            // 两者同名时,想在装着正式版的真机上验 debug 构建就只有两条路:签名
+            // 冲突装不上(白跑),或者先 uninstall —— 而这个 app 本地优先、无云端
+            // 副本,卸载就把那台机器上的病历删干净了,恢复不回来。
+            // 加个后缀,两份各自独立、互不覆盖,真机验证随时可做。
+            //
+            // 代价:深链与 App Links 认的是正式包名 + 正式签名指纹
+            // (web/well-known/assetlinks.json),debug 包本来就走不通那条路,
+            // 所以这个后缀没有额外损失。
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+        }
         release {
             // 有正式 keystore 就用它,否则退回 debug 签名 —— 本地开发不必持有正式
             // 私钥也能出 release 包。**安卓 App Links 只认正式签名的指纹**
