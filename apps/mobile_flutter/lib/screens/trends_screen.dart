@@ -637,6 +637,14 @@ class SeriesCard extends StatelessWidget {
                 // 「· 家测」,只有趋势漏了。措辞与它们一致,不另造一套。
                 if (series.selfMeasured) const _SelfMeasuredLegend(),
                 if (ref != null) _RefLegend(text: '参考区间 $ref'),
+                // 这条线上混了不同医院/不同单位的报告,Rust 把值和参考区间一起
+                // 换算到了规范单位(否则连不成一条线)。**说出来** —— 屏幕上
+                // 这些数字在用户手里那张化验单上找不到,不说等于改写原文。
+                if (series.valuesConverted)
+                  Text(
+                    unitConvertedNote(unit),
+                    style: MedType.secondary.copyWith(color: c.ink3),
+                  ),
                 Text(
                   pts.length == 1
                       ? '只有 ${pts.first.date} 这一次'

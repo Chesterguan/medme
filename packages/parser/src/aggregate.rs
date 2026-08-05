@@ -22,6 +22,38 @@
 //!   spellings of the same disease stay separate rather than be laundered.
 //! - Unmatched analytes/drugs are kept separate from matched ones (grouped by
 //!   raw name) and never merged into a coded series — honest about what resolved.
+//!
+//! ## 单位:哪一层用哪一套(**这就是那个「铆」**,2026-08-05)
+//!
+//! 一份化验有两套自洽的数:**印刷套**(纸上逐字印的值+单位+参考区间)和**规范套**
+//! (换算到词典 `canonical_unit` 的值+单位+参考区间)。两套各自内部同单位,由
+//! `labs.rs` 用同一个仿射映射同时产出(见那里的模块头)。本模块负责**选**:
+//!
+//! | 层 | 用哪一套 | 为什么 |
+//! |---|---|---|
+//! | 数据层 · 归组 | 与单位无关 | 按 `analyte_key` 归组(`GroupKey`),压根不看数值 |
+//! | 数据层 · flag | 印刷套 | 仿射严格单调递增 ⇒ 两套算出的 H/L/N **恒等**,取印刷套是因为它永远存在(未归一化的项目也有) |
+//! | 数据层 · 锚 | 规范套 | `LabPoint::value_canonical` + `AnalyteSeries::ref_*_canonical` + `unit_canonical`,供跨院/跨单位比较,恒同单位 |
+//! | 趋势图(轴/点/参考带) | **显示基准**(见下) | 带子必须和点同一个单位,否则参考带画在错的高度上 |
+//! | 概览化验行 / 「看病带这个」 | 显示基准 | 患者要拿 app 上的数字去核对手里那张纸(`docs/007` §2.1「原件永远可达」) |
+//! | 医生纯文本 / 二维码 / 托管查看器 | 显示基准 | 医生要能和患者递过来的纸对上;三者同源于 `AnalyteSeries`,不各算各的 |
+//!
+//! **显示基准(display basis)由本模块每条序列算一次,下游一律读
+//! `LabPoint::value`/`unit` 与 `AnalyteSeries::ref_low`/`ref_high`,不自己判断:**
+//!
+//! 1. 这条序列全部点的印刷单位一致(忽略没印单位的点)⇒ 基准 = **印刷套**。
+//!    这是绝大多数情况(一家医院一套单位),患者看到的就是纸上那个数。
+//! 2. 印刷单位不一致(mg/dL 的报告和 umol/L 的报告混在一条线上)⇒ 一条线上没法
+//!    同时画两种单位,基准 = **规范套**,前提是**每一个**点都换算得出来。
+//!    `values_converted = true`,渲染层据此告诉用户「已统一换算」—— 显示一个纸上
+//!    没有的数字必须说出来,否则用户核对不了。
+//! 3. 印刷单位不一致**且**换不全(未归一化的项目按原始名归组、各报告单位又不同)
+//!    ⇒ 没有任何一对区间对所有点都成立,**序列级参考区间整体留空**(`None`),
+//!    点仍带各自的印刷值和印刷单位。宁可没有区间,也不给一个错单位的区间 ——
+//!    这正是本次要修的那个缺陷的形状。
+//!
+//! 参考区间还有一道闸:即使基准是印刷套,那对区间**必须来自印刷单位与序列一致的
+//! 那份报告**,否则也留空。区间和值同单位是硬不变量,不是「尽量」。
 
 use crate::{
     extract_conditions, extract_labs, extract_meds, self_entry, LabObservation, MedObservation,
@@ -51,10 +83,17 @@ pub struct SourceDoc<'a> {
 #[derive(Debug, Clone)]
 pub struct LabPoint {
     pub date: Option<NaiveDate>,
-    /// `value_canonical` if the observation had one, else `value_num`.
+    /// **显示基准值** —— 见模块头「哪一层用哪一套」。同一条序列上所有点的
+    /// `value` 保证同单位,且与该序列的 `ref_low`/`ref_high` 同单位。渲染层
+    /// (趋势图、化验行、纯文本、二维码、托管查看器)读这个,不自己挑。
     pub value: f64,
-    /// `unit_canonical` if present, else `unit_raw`.
+    /// `value` 的单位。序列内恒定(基准=印刷套时是那份报告印的单位;基准=规范套
+    /// 时是词典 `canonical_unit`)。序列连一个单位都没印时为 `None`。
     pub unit: Option<String>,
+    /// **规范单位下的值(锚)**,单位见 [`AnalyteSeries::unit_canonical`]。
+    /// `None` = 这个点换算不出来(项目没归一化,或词典不认这份报告的单位)。
+    /// 跨院/跨单位比较只许用这个,不许用 `value`。
+    pub value_canonical: Option<f64>,
     pub flag: Option<String>,
     /// The [`SourceDoc::index`] this point came from.
     pub source: usize,
@@ -71,8 +110,22 @@ pub struct AnalyteSeries {
     pub loinc: Option<String>,
     /// Reference range, taken from the most recent observation in the group that
     /// carried one (fallback: any). The viewer draws the normal band from these.
+    ///
+    /// **单位保证与 [`LabPoint::value`] 一致**(显示基准),这是硬不变量:参考带
+    /// 必须和点同一个单位。做不到保证时整体为 `None`,不给错单位的一对数 ——
+    /// 见模块头「哪一层用哪一套」的第 3 条与最后那道闸。
     pub ref_low: Option<f64>,
     pub ref_high: Option<f64>,
+    /// 规范单位(词典 `canonical_unit`)。未归一化的序列为 `None`。
+    pub unit_canonical: Option<String>,
+    /// **规范单位下的参考区间(锚)**,与 [`LabPoint::value_canonical`] 同单位。
+    /// 与 `ref_low`/`ref_high` 同源同一份报告、同一个仿射映射,只是换了单位。
+    /// 那份报告换算不出来时为 `None`。
+    pub ref_low_canonical: Option<f64>,
+    pub ref_high_canonical: Option<f64>,
+    /// 显示基准是不是**规范套**(即:这条线上混了不同印刷单位,已统一换算)。
+    /// `true` 时渲染层必须说出来 —— 用户在纸上找不到这个数字,不说就等于改写原文。
+    pub values_converted: bool,
     /// Chronological; `None`-dated points sort last, preserving input order.
     pub points: Vec<LabPoint>,
     /// True if any point is flagged "H" or "L".
@@ -393,6 +446,17 @@ fn dose_string(m: &MedObservation) -> Option<String> {
     }
 }
 
+/// 一个还没定下显示基准的观测点。显示基准是**序列级**决定(要看齐这条序列上所有
+/// 点的印刷单位),所以两套数一直原样带到 finalize 才二选一 —— 见模块头。
+struct PendingPoint {
+    date: Option<NaiveDate>,
+    value_printed: f64,
+    unit_printed: Option<String>,
+    value_canonical: Option<f64>,
+    flag: Option<String>,
+    source: usize,
+}
+
 struct LabBuilder {
     analyte_key: Option<String>,
     group_name: String,
@@ -400,11 +464,20 @@ struct LabBuilder {
     /// Whether `group_name`/`loinc` were taken from a matched observation yet.
     meta_from_match: bool,
     /// Reference range of the mention currently winning "most recent ref".
+    /// 印刷套与规范套**成对**保留(同一份报告、同一个仿射映射),连同那份报告的
+    /// 印刷单位 —— finalize 要用它验证「区间和点同单位」。
     ref_low: Option<f64>,
     ref_high: Option<f64>,
+    ref_low_canonical: Option<f64>,
+    ref_high_canonical: Option<f64>,
+    ref_unit_printed: Option<String>,
     ref_date: Option<NaiveDate>,
     has_ref: bool,
-    points: Vec<LabPoint>,
+    /// 词典规范单位。序列内恒定:`GroupKey::Matched`/`SelfMeasured` 按
+    /// `analyte_key` 归组 ⇒ 同一个词典条目 ⇒ 同一个 `canonical_unit`;
+    /// `GroupKey::Raw`(未归一化)则全程为 `None`。
+    unit_canonical: Option<String>,
+    points: Vec<PendingPoint>,
     any_abnormal: bool,
     /// Set once from the first observation's `self_measured` and never
     /// changed — `GroupKey::SelfMeasured` guarantees every observation folded
@@ -476,11 +549,112 @@ fn build_self_measured_observation(v: &self_entry::SelfMeasuredValue) -> LabObse
         unit_canonical: Some(v.unit.clone()),
         ref_low,
         ref_high,
+        // 同上:写入方恒发规范单位,印刷套与规范套在自测值上是同一对数(恒等
+        // 换算)。照样两套都填满,好让 finalize 的基准选择不必为自测值开特例。
+        ref_low_canonical: ref_low,
+        ref_high_canonical: ref_high,
         flag,
         // 不是术语模糊匹配出来的置信度(那个字段的原意),而是"这是用户在封闭
         // 五选一里选的项,结构上精确无歧义" —— 满置信度是如实的,不是编的。
         confidence: 1.0,
         self_measured: true,
+    }
+}
+
+/// 给一条序列定下**显示基准**,把「印刷套 / 规范套」两套数收敛成渲染层可以直接
+/// 用的一对(点的 `value`/`unit` 与序列的 `ref_low`/`ref_high`,保证同单位)。
+///
+/// **这是那个「铆」——全项目唯一做这个决定的地方。** 规则、理由与边界情况见模块头
+/// 的「哪一层用哪一套」。渲染层(趋势图、概览化验行、就诊摘要、医生纯文本、二维码、
+/// 托管查看器)一律读结果,不许自己在 `value_num` / `value_canonical` 之间挑,
+/// 也不许自己拿区间反推 —— 那正是本次缺陷的成因。
+fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
+    use terminology::normalize_unit;
+
+    // 这条线上印了几种单位?没印单位的点不参与表决 —— 它在纸上本来就没有单位,
+    // 显示成一个光秃秃的数才是忠实的;但它也证明不了同质,所以只在「印了单位的
+    // 点」之间比。
+    let printed_units: BTreeSet<String> = b
+        .points
+        .iter()
+        .filter_map(|p| p.unit_printed.as_deref().map(normalize_unit))
+        .collect();
+    let series_printed_unit = printed_units.iter().next().cloned();
+    let printed_homogeneous = printed_units.len() <= 1;
+
+    // 规范套**要么整条能用,要么整条不用**:`collect::<Option<Vec<_>>>()` 让
+    // 「有一个点换不出来」直接塌成 `None`,结构上不可能只换一半。
+    let canonical_values: Option<Vec<f64>> = b
+        .points
+        .iter()
+        .map(|p| p.value_canonical)
+        .collect::<Option<Vec<f64>>>()
+        .filter(|_| b.unit_canonical.is_some());
+
+    let (display_values, canonical_basis, ref_low, ref_high) = if printed_homogeneous {
+        // ① 单位同质 ⇒ 显示纸上那个数。参考区间还要过一道闸:必须来自印刷单位与
+        // 本序列一致的那份报告,否则宁可没有区间,也不给一个错单位的区间。
+        let ref_ok = b.ref_unit_printed.as_deref().map(normalize_unit) == series_printed_unit;
+        let (lo, hi) = if ref_ok {
+            (b.ref_low, b.ref_high)
+        } else {
+            (None, None)
+        };
+        (
+            b.points.iter().map(|p| p.value_printed).collect::<Vec<_>>(),
+            false,
+            lo,
+            hi,
+        )
+    } else if let Some(vals) = canonical_values {
+        // ② 混了单位但换得全 ⇒ 统一到规范单位才连得成一条线。区间同样取规范套
+        // (与值同源同映射)。`values_converted` 让渲染层把「已换算」说出来。
+        (vals, true, b.ref_low_canonical, b.ref_high_canonical)
+    } else {
+        // ③ 混了单位又换不全(未归一化的项目按原始名归组,各报告单位还不同)⇒
+        // 没有任何一对区间对所有点都成立。点各自带自己的印刷值/印刷单位(自
+        // 描述),**序列级区间整体留空**。
+        (
+            b.points.iter().map(|p| p.value_printed).collect::<Vec<_>>(),
+            false,
+            None,
+            None,
+        )
+    };
+
+    let points = b
+        .points
+        .into_iter()
+        .zip(display_values)
+        .map(|(p, value)| LabPoint {
+            date: p.date,
+            value,
+            // 基准=规范套时用词典规范单位;否则**逐字**用这份报告印的单位 ——
+            // 别的报告印了单位不代表这一份也印了,替它补一个就是改写原文。
+            unit: if canonical_basis {
+                b.unit_canonical.clone()
+            } else {
+                p.unit_printed
+            },
+            value_canonical: p.value_canonical,
+            flag: p.flag,
+            source: p.source,
+        })
+        .collect();
+
+    AnalyteSeries {
+        analyte_key: b.analyte_key,
+        group_name: b.group_name,
+        loinc: b.loinc,
+        ref_low,
+        ref_high,
+        unit_canonical: b.unit_canonical,
+        ref_low_canonical: b.ref_low_canonical,
+        ref_high_canonical: b.ref_high_canonical,
+        values_converted: canonical_basis,
+        points,
+        any_abnormal: b.any_abnormal,
+        self_measured: b.self_measured,
     }
 }
 
@@ -531,10 +705,12 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 (Some(k), false) => GroupKey::Matched(k.clone()),
                 (None, _) => GroupKey::Raw(obs.raw_name.clone()),
             };
-            let point = LabPoint {
+            // 两套数原样入库,基准留到 finalize 选 —— 见模块头「哪一层用哪一套」。
+            let point = PendingPoint {
                 date: doc.date,
-                value: obs.value_canonical.unwrap_or(obs.value_num),
-                unit: obs.unit_canonical.clone().or_else(|| obs.unit_raw.clone()),
+                value_printed: obs.value_num,
+                unit_printed: obs.unit_raw.clone(),
+                value_canonical: obs.value_canonical,
                 flag: obs.flag.clone(),
                 source: doc.index,
             };
@@ -546,12 +722,20 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 meta_from_match: false,
                 ref_low: None,
                 ref_high: None,
+                ref_low_canonical: None,
+                ref_high_canonical: None,
+                ref_unit_printed: None,
                 ref_date: None,
                 has_ref: false,
+                unit_canonical: None,
                 points: Vec::new(),
                 any_abnormal: false,
                 self_measured: obs.self_measured,
             });
+            // 序列内恒定(见字段文档);第一个换算得出来的点供出即可。
+            if b.unit_canonical.is_none() {
+                b.unit_canonical = obs.unit_canonical.clone();
+            }
             // First matched observation supplies the display name + LOINC.
             if !b.meta_from_match && matched {
                 if let Some(name) = &obs.canonical_name {
@@ -575,6 +759,11 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 if replace {
                     b.ref_low = obs.ref_low;
                     b.ref_high = obs.ref_high;
+                    // 印刷套与规范套**同时**换掉,连同这份报告的印刷单位。三者
+                    // 是一个整体:任何一个单独更新都会造出「值换了区间没换」。
+                    b.ref_low_canonical = obs.ref_low_canonical;
+                    b.ref_high_canonical = obs.ref_high_canonical;
+                    b.ref_unit_printed = obs.unit_raw.clone();
                     b.ref_date = doc.date;
                     b.has_ref = true;
                 }
@@ -697,16 +886,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         .map(|mut b| {
             b.points
                 .sort_by(|x, y| cmp_date_none_last(&x.date, &y.date));
-            AnalyteSeries {
-                analyte_key: b.analyte_key,
-                group_name: b.group_name,
-                loinc: b.loinc,
-                ref_low: b.ref_low,
-                ref_high: b.ref_high,
-                points: b.points,
-                any_abnormal: b.any_abnormal,
-                self_measured: b.self_measured,
-            }
+            finalize_lab_series(b)
         })
         .collect();
     // (group_name, analyte_key) fully determinizes order despite HashMap.
@@ -761,6 +941,209 @@ mod tests {
 
     fn d(y: i32, m: u32, day: u32) -> Option<NaiveDate> {
         NaiveDate::from_ymd_opt(y, m, day)
+    }
+
+    fn lab_doc(index: usize, date: Option<NaiveDate>, text: &str) -> SourceDoc<'_> {
+        SourceDoc {
+            index,
+            doc_type: Some("lab_report".into()),
+            title: Some("生化".into()),
+            date,
+            text,
+        }
+    }
+
+    fn series<'a>(agg: &'a AggregatedClinical, key: &str) -> &'a AnalyteSeries {
+        agg.labs
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("no series for {key}"))
+    }
+
+    /// 「值和区间必须同单位」——这是本模块对每一个渲染层的硬承诺。任何一条序列
+    /// 都要过这一关:序列级区间存在时,它必须和**每一个**点的 `value` 同单位。
+    /// 单位字符串对不上就当场炸,而不是让托管查看器去替我们发现。
+    fn assert_ref_and_points_share_a_unit(s: &AnalyteSeries) {
+        if s.ref_low.is_none() && s.ref_high.is_none() {
+            return;
+        }
+        let units: BTreeSet<Option<String>> = s
+            .points
+            .iter()
+            .map(|p| p.unit.as_deref().map(terminology::normalize_unit))
+            .collect();
+        assert!(
+            units.len() <= 1,
+            "{}: 序列带着参考区间,点却有多种单位 {:?} —— 这正是缺陷的形状",
+            s.group_name,
+            units
+        );
+    }
+
+    /// **缺陷钉子(2026-08-05)。** 一份完全正常的报告 `肌酐: 1.2 mg/dL (参考
+    /// 0.6-1.3)`,曾让 `aggregate` 产出 `value=106.104 umol/L` 配 `ref=[0.6,1.3]`
+    /// (mg/dL 的区间,没换算)。托管查看器 `sumFlag` 自己重算,得出「高出上限 80
+    /// 倍」= 终末期肾衰,而同一份载荷里 `warn:false`,自相矛盾。
+    ///
+    /// 新契约(见模块头「哪一层用哪一套」①):单位同质的序列显示**印刷套** ——
+    /// 患者手里那张纸印的就是 `1.2 mg/dL 参考 0.6-1.3`,app 上必须能对得上。
+    #[test]
+    fn homogeneous_series_ships_paper_values_with_paper_refs() {
+        let text = "肌酐: 1.2 mg/dL (参考 0.6-1.3)";
+        let docs = vec![lab_doc(0, d(2026, 8, 1), text)];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+
+        assert_eq!(s.points.len(), 1);
+        assert_eq!(s.points[0].value, 1.2, "患者要看到纸上那个数");
+        assert_eq!(s.points[0].unit.as_deref(), Some("mg/dL"));
+        assert_eq!((s.ref_low, s.ref_high), (Some(0.6), Some(1.3)));
+        assert!(!s.values_converted, "没换算就不许说换算了");
+        assert_ref_and_points_share_a_unit(s);
+
+        // 锚仍在,且规范套自己也成对同单位 —— 跨院比较照样有得用。
+        assert_eq!(s.unit_canonical.as_deref(), Some("umol/L"));
+        let vc = s.points[0].value_canonical.expect("锚必须在");
+        let (lo, hi) = (
+            s.ref_low_canonical.expect("锚的区间必须在"),
+            s.ref_high_canonical.expect("锚的区间必须在"),
+        );
+        assert!((vc - 106.104).abs() < 0.01, "{vc}");
+        assert!(
+            (lo - 53.052).abs() < 0.01 && (hi - 114.946).abs() < 0.01,
+            "{lo} {hi}"
+        );
+        // 下游任何「值 vs 区间」的重算,两套都必须得出「正常」。
+        assert!(
+            s.points[0].value >= s.ref_low.unwrap() && s.points[0].value <= s.ref_high.unwrap()
+        );
+        assert!(vc >= lo && vc <= hi);
+        assert_eq!(s.points[0].flag.as_deref(), Some("N"));
+    }
+
+    /// 模块头②:两家医院用了不同单位,一条线上没法同时画两种单位 ⇒ 轴、点、
+    /// 参考带**一起**换到规范单位,并把「已换算」这件事说出来。
+    #[test]
+    fn mixed_unit_series_converts_values_and_refs_together() {
+        let docs = vec![
+            lab_doc(0, d(2026, 1, 1), "肌酐: 1.2 mg/dL (参考 0.6-1.3)"),
+            lab_doc(1, d(2026, 6, 1), "肌酐: 96 umol/L (参考 59-104)"),
+        ];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+
+        assert!(s.values_converted, "混单位必须走规范套,而且必须说出来");
+        assert_eq!(s.points.len(), 2);
+        for p in &s.points {
+            assert_eq!(p.unit.as_deref(), Some("umol/L"), "轴只能有一个单位");
+        }
+        assert!(
+            (s.points[0].value - 106.104).abs() < 0.01,
+            "{:?}",
+            s.points[0].value
+        );
+        assert_eq!(s.points[1].value, 96.0);
+        // 区间取的是最近一份报告(2026-06,umol/L),规范套 = 印刷套(恒等换算)。
+        assert_eq!((s.ref_low, s.ref_high), (Some(59.0), Some(104.0)));
+        assert_ref_and_points_share_a_unit(s);
+    }
+
+    /// 反过来:最近一份报告是 mg/dL,区间也必须跟着换到规范单位,不能把
+    /// `[0.6, 1.3]` 配到 umol/L 的点上 —— 那就是原缺陷换了个方向再来一次。
+    #[test]
+    fn mixed_unit_series_converts_the_ref_of_the_newest_report_too() {
+        let docs = vec![
+            lab_doc(0, d(2026, 1, 1), "肌酐: 96 umol/L (参考 59-104)"),
+            lab_doc(1, d(2026, 6, 1), "肌酐: 1.2 mg/dL (参考 0.6-1.3)"),
+        ];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+        assert!(s.values_converted);
+        let (lo, hi) = (
+            s.ref_low.expect("必须有区间"),
+            s.ref_high.expect("必须有区间"),
+        );
+        assert!(
+            (lo - 53.052).abs() < 0.01 && (hi - 114.946).abs() < 0.01,
+            "参考区间没跟着换算:[{lo}, {hi}]"
+        );
+        assert_ref_and_points_share_a_unit(s);
+    }
+
+    /// 模块头③:未归一化的项目按原始名归组,两份报告单位还不同 ⇒ 换不出规范套,
+    /// 也没有任何一对区间对所有点都成立。**宁可没有区间,也不给一个错单位的区间。**
+    #[test]
+    fn incoherent_series_ships_no_series_level_ref() {
+        let docs = vec![
+            lab_doc(0, d(2026, 1, 1), "神秘指标XYZ   12.3   mg/L   0-5"),
+            lab_doc(1, d(2026, 6, 1), "神秘指标XYZ   0.8    g/L    0-0.005"),
+        ];
+        let agg = aggregate(&docs);
+        let s = agg
+            .labs
+            .iter()
+            .find(|s| s.group_name.contains("神秘指标XYZ"))
+            .expect("未归一化的序列也要在");
+        assert_eq!(s.points.len(), 2, "点一个都不能丢");
+        assert_eq!(s.analyte_key, None);
+        assert_eq!(
+            (s.ref_low, s.ref_high),
+            (None, None),
+            "单位对不上就不许给序列级区间"
+        );
+        assert!(!s.values_converted, "换都换不出来,不许说换算了");
+        // 点各自带自己印刷的单位,自描述,不被改写。
+        assert_eq!(s.points[0].unit.as_deref(), Some("mg/L"));
+        assert_eq!(s.points[1].unit.as_deref(), Some("g/L"));
+        assert_ref_and_points_share_a_unit(s);
+    }
+
+    /// 参考区间的那道闸:区间来自一份**没印单位**的报告,而序列的点印着 mg/dL
+    /// ⇒ 这对数字是几的量纲无从判断,留空。
+    #[test]
+    fn series_ref_is_dropped_when_its_report_printed_no_unit() {
+        let docs = vec![
+            lab_doc(0, d(2026, 6, 1), "肌酐: 1.2 mg/dL"),
+            // 更晚的一份带区间但没有单位 —— 它会赢下「最近的区间」。
+            lab_doc(1, d(2026, 7, 1), "肌酐: 1.1 (参考 0.6-1.3)"),
+        ];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+        assert_eq!(
+            (s.ref_low, s.ref_high),
+            (None, None),
+            "量纲不明的区间不许发给渲染层"
+        );
+        assert_ref_and_points_share_a_unit(s);
+    }
+
+    /// 自测值(家测血压/血糖…)本来就恒发规范单位,两套是同一对数。改动不能把它
+    /// 的参考区间弄丢 —— 那是 `self_entry::home_ref_range` 给的家测阈值。
+    #[test]
+    fn self_measured_series_keeps_its_home_ref_range() {
+        let text = self_entry::render_self_measurement_text(
+            &["收缩压 128 mmHg".to_string()],
+            &[self_entry::SelfMeasuredValue {
+                analyte_key: "bp_systolic".into(),
+                value: 128.0,
+                unit: "mmHg".into(),
+            }],
+        );
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("self_measurement".into()),
+            title: None,
+            date: d(2026, 6, 1),
+            text: &text,
+        }];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "bp_systolic");
+        assert!(s.self_measured);
+        assert_eq!(s.points[0].value, 128.0);
+        assert!(s.ref_high.is_some(), "家测阈值不能丢");
+        assert_eq!(s.ref_high, s.ref_high_canonical, "恒等换算,两套必须一致");
+        assert!(!s.values_converted);
+        assert_ref_and_points_share_a_unit(s);
     }
 
     #[test]

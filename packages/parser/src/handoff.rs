@@ -1227,6 +1227,72 @@ mod tests {
         }
     }
 
+    /// **缺陷钉子(2026-08-05):托管查看器的 `sumFlag` 与载荷里的 `warn` 自相矛盾。**
+    ///
+    /// `web/hosted-viewer/index.html` 不看 flag,自己拿 `pts[i][1]` 与
+    /// `refLow`/`refHigh` 重算(`sumFlag`)。当值换算成 umol/L、区间还是 mg/dL 时,
+    /// 它对一份**完全正常**的肌酐报告算出「高出上限 80 倍」= 终末期肾衰,而同一份
+    /// 载荷里 `warn: false`。医生扫码看到的原文逐字是:
+    /// `{"name":"肌酐","pts":[["2026-08",106.104]],"refHigh":1.3,"refLow":0.6,"unit":"umol/L"}`
+    ///
+    /// 修法(见 `aggregate.rs` 的「哪一层用哪一套」):**让查看器拿到同单位的一对
+    /// 数**,而不是改查看器的脚本(那个文件带 CSP 内联脚本哈希,改脚本要连
+    /// `packages/share` 的哈希一起重算)。查看器继续自己重算 —— 载荷里的 `pts`
+    /// 本来就不带逐点 flag,它没有别的选择;重算的输入现在是自洽的。
+    ///
+    /// 这条测试就地重放 `sumFlag` 的算式,并要求它与 `warn` 一致。
+    #[test]
+    fn viewer_recomputed_flag_agrees_with_the_payloads_own_warn() {
+        // `sumFlag(v, lo, hi)` 逐字搬运自 hosted-viewer/index.html。
+        fn sum_flag(v: f64, lo: Option<f64>, hi: Option<f64>) -> bool {
+            hi.is_some_and(|h| v > h) || lo.is_some_and(|l| v < l)
+        }
+
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: Some("生化".into()),
+            date: d(2026, 8, 1),
+            // 一份完全正常的报告:1.2 落在 0.6–1.3 内。
+            text: "临床诊断:慢性肾脏病\n肌酐: 1.2 mg/dL (参考 0.6-1.3)",
+        }];
+        let sm = assemble_summary(&docs);
+
+        let mut seen = 0usize;
+        for p in sm["problems"].as_array().expect("problems") {
+            let warn = p["warn"].as_bool().expect("warn");
+            for l in p["labs"].as_array().into_iter().flatten() {
+                let lo = l["refLow"].as_f64();
+                let hi = l["refHigh"].as_f64();
+                for pt in l["pts"].as_array().into_iter().flatten() {
+                    let v = pt[1].as_f64().expect("point value");
+                    seen += 1;
+                    assert!(
+                        !sum_flag(v, lo, hi),
+                        "查看器会把一份正常报告算成异常:{} = {v} {:?},区间 [{lo:?}, {hi:?}];\
+                         而载荷里 warn = {warn}。整条 payload:{l}",
+                        l["name"].as_str().unwrap_or("?"),
+                        l["unit"].as_str(),
+                    );
+                }
+            }
+        }
+        assert!(seen > 0, "这条测试必须真的看到点,否则它什么都没证明");
+
+        // 顺带钉住②:医生扫到的数值/单位/区间就是患者纸上印的那一套。
+        let lab = sm["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .flat_map(|p| p["labs"].as_array().into_iter().flatten())
+            .find(|l| l["name"].as_str() == Some("肌酐"))
+            .expect("肌酐 series");
+        assert_eq!(lab["unit"].as_str(), Some("mg/dL"));
+        assert_eq!(lab["refLow"].as_f64(), Some(0.6));
+        assert_eq!(lab["refHigh"].as_f64(), Some(1.3));
+        assert_eq!(lab["pts"][0][1].as_f64(), Some(1.2));
+    }
+
     #[test]
     fn assemble_summary_groups_labs_meds_and_buckets_the_rest() {
         // doc0/doc1: two HbA1c lab reports (both high) + an unmapped analyte.

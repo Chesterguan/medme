@@ -83,11 +83,23 @@ pub struct TrendSeriesDto {
     /// —— 未归一化的序列**绝不与已归一化的合并**,这是 `parser::aggregate` 的分组约定。
     pub analyte_key: Option<String>,
     pub loinc: Option<String>,
-    /// 序列级单位:取**最后一个点**的单位,与 `handoff::series_to_json` 同一取法
-    /// (同一指标跨报告单位可能不一致,故每个点自己也带 `unit`,以点为准)。
+    /// 序列级单位:取**最后一个点**的单位,与 `handoff::series_to_json` 同一取法。
+    ///
+    /// 单位是 `parser::aggregate` 定下的**显示基准**单位 —— 绝大多数情况就是化验单
+    /// 上逐字印的那个(患者要拿 app 上的数去核对手里那张纸);只有一条线上混了不同
+    /// 印刷单位时才是规范单位,此时 [`Self::values_converted`] 为 `true`。
+    /// 详见 `packages/parser/src/aggregate.rs` 模块头的「哪一层用哪一套单位」。
     pub unit: Option<String>,
+    /// 参考区间,**与 [`TrendPointDto::value`] 同单位**(`parser` 侧的硬不变量:
+    /// 保证不了就整体留空)。UI 拿它画参考带 —— 带子和点必须同一个单位。
     pub ref_low: Option<f64>,
     pub ref_high: Option<f64>,
+    /// 这条线上混了不同印刷单位,值和参考区间**已统一换算**到规范单位。
+    ///
+    /// `true` 时 UI **必须说出来**:用户在自己那张化验单上找不到屏幕上这个数字,
+    /// 不说等于改写原文(`docs/007` §2.1「原件永远可达」「不改写原文」)。
+    /// `false`(常态)= 屏幕上的数值/单位/区间就是纸上印的那一套。
+    pub values_converted: bool,
     /// 任一点被标记 H/L(`parser::AnalyteSeries::any_abnormal`)。
     pub any_abnormal: bool,
     /// 这条序列所属的**检验大类**(化验单项目组表头,如「血常规」「肝功能」——
@@ -208,11 +220,16 @@ pub struct VisitLabDto {
     pub name: String,
     /// `"YYYY-MM-DD"`。只收带日期的点,故必有值。
     pub date: String,
+    /// 值 / 单位 / 参考区间三者**同单位**,来自 `parser::aggregate` 定下的显示基准
+    /// (见那里的「哪一层用哪一套单位」)。常态下就是化验单上逐字印的那一套。
     pub value: f64,
     pub unit: Option<String>,
     pub flag: Option<String>,
     pub ref_low: Option<f64>,
     pub ref_high: Option<f64>,
+    /// 见 [`TrendSeriesDto::values_converted`] —— 同一份透传。`true` 时这一行的
+    /// 数值在患者手里那张纸上找不到,UI 必须标注「已统一换算」。
+    pub values_converted: bool,
     pub document_id: i64,
     /// 见 `TrendSeriesDto::self_measured` 的文档 —— 同一份透传,就诊单据此在
     /// 「复制给医生」纯文本里追加"(家测)"(`render_plain_text`)。
@@ -577,6 +594,7 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
         unit: s.points.last().and_then(|p| p.unit.clone()),
         ref_low: s.ref_low,
         ref_high: s.ref_high,
+        values_converted: s.values_converted,
         any_abnormal: s.any_abnormal,
         points: s
             .points
@@ -669,6 +687,7 @@ pub fn view_visit_summary() -> anyhow::Result<VisitSummaryDto> {
                 flag: p.flag.clone(),
                 ref_low: s.ref_low,
                 ref_high: s.ref_high,
+                values_converted: s.values_converted,
                 document_id: projection.docs.get(p.source)?.document_id,
                 self_measured: s.self_measured,
             })
@@ -992,6 +1011,76 @@ mod tests {
     /// 没能归一化出 `analyte_key` 的序列(名字没进词典)拿不到 panel,`None` 是
     /// 诚实的降级 —— UI 把它归入「其他」,不是硬凑一个大类进去。这是「分类入口绝
     /// 不能让任何一条化验变得够不着」的兜底证据。
+    /// **缺陷钉子(2026-08-05):趋势卡的参考带与点不同单位。**
+    ///
+    /// `TrendChart` 用 `refLow`/`refHigh` 画参考带、用 `points[].value` 画点。
+    /// 值换算成 umol/L 而区间还是 mg/dL 时,带子画在 0.6–1.3 的高度上、点落在
+    /// 106 —— 点在带外老远,而 pill 读的是 flag(正常)。图和 pill 互相打脸。
+    ///
+    /// 新契约:同一条序列上,区间与每一个点**必须同单位**(见
+    /// `packages/parser/src/aggregate.rs` 的「哪一层用哪一套单位」)。
+    #[test]
+    fn trend_series_ref_band_shares_the_unit_of_its_points() {
+        let docs = docs_from(&[(
+            "生化检验报告单\n肌酐: 1.2 mg/dL (参考 0.6-1.3)\n",
+            Some("2026-08-01"),
+            "lab_report",
+        )]);
+        let src = source_docs(&docs);
+        let clinical = parser::aggregate(&src);
+        let cr = clinical
+            .labs
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("creatinine"))
+            .expect("creatinine series");
+        let dto = trend_series(&docs, cr);
+
+        // 患者手里那张纸印的是 `1.2 mg/dL 参考 0.6-1.3` —— 屏幕上就该是这个。
+        assert_eq!(dto.unit.as_deref(), Some("mg/dL"));
+        assert_eq!(dto.points[0].value, 1.2);
+        assert_eq!(dto.points[0].unit.as_deref(), Some("mg/dL"));
+        assert_eq!((dto.ref_low, dto.ref_high), (Some(0.6), Some(1.3)));
+        assert!(!dto.values_converted, "没换算就不许标「已统一换算」");
+        // 参考带包得住这个点,与 flag 的结论一致。
+        assert!(dto.points[0].value >= dto.ref_low.unwrap());
+        assert!(dto.points[0].value <= dto.ref_high.unwrap());
+        assert_eq!(dto.points[0].flag.as_deref(), Some("N"));
+    }
+
+    /// 混了单位的一条线:轴/点/参考带一起走规范单位(否则连不成线),并且
+    /// `values_converted` 必须为真 —— 屏幕上的数字用户在纸上找不到,UI 要说出来。
+    #[test]
+    fn trend_series_mixed_units_are_converted_and_say_so() {
+        let docs = docs_from(&[
+            (
+                "生化检验报告单\n肌酐: 1.2 mg/dL (参考 0.6-1.3)\n",
+                Some("2026-01-01"),
+                "lab_report",
+            ),
+            (
+                "生化检验报告单\n肌酐 96 umol/L 59-104\n",
+                Some("2026-06-01"),
+                "lab_report",
+            ),
+        ]);
+        let src = source_docs(&docs);
+        let clinical = parser::aggregate(&src);
+        let cr = clinical
+            .labs
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("creatinine"))
+            .expect("creatinine series");
+        let dto = trend_series(&docs, cr);
+
+        assert!(dto.values_converted, "混单位必须说出来");
+        assert_eq!(dto.unit.as_deref(), Some("umol/L"));
+        for p in &dto.points {
+            assert_eq!(p.unit.as_deref(), Some("umol/L"));
+        }
+        assert!((dto.points[0].value - 106.104).abs() < 0.01);
+        assert_eq!((dto.ref_low, dto.ref_high), (Some(59.0), Some(104.0)));
+    }
+
     #[test]
     fn trend_series_dto_panel_is_none_without_analyte_key() {
         let docs = docs_from(&[(
@@ -1225,6 +1314,7 @@ mod tests {
             flag: Some("H".into()),
             ref_low: Some(4.0),
             ref_high: Some(6.5),
+            values_converted: false,
             document_id: 102,
             self_measured: false,
         }];
@@ -1257,6 +1347,55 @@ mod tests {
         assert_eq!(document_ids_for(&docs, &[0, 1]), vec![100, 101]);
         // 越界序号静默跳过,不 panic。
         assert_eq!(document_ids_for(&docs, &[1, 9]), vec![101]);
+    }
+
+    /// **缺陷钉子(2026-08-05):「复制给医生」的纯文本印出单位不一致的一对数。**
+    ///
+    /// 缺陷原样是 `Hemoglobin 120 g/L N [参考 11-16]` —— 值换算过、区间没有。医生
+    /// 读到的是一个自相矛盾的句子。
+    ///
+    /// 产品负责人定的方向:显示回到用户那张纸上印的样子。所以这一行的值、单位、
+    /// 参考区间三者都取印刷套。医生要能跟患者递过来的化验单逐字对上;跨院比较用的
+    /// 规范套仍在 `AnalyteSeries::*_canonical`(见 `aggregate.rs` 的表)。
+    #[test]
+    fn doctor_plain_text_prints_one_coherent_unit_per_lab_line() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        // 一份完全正常的报告,印的是 mg/dL。
+        let text = "生化检验报告单\n检验日期 2026-08-01\n肌酐: 1.2 mg/dL (参考 0.6-1.3)\n";
+        crate::api::vault::ingest_bytes("化验单.txt".into(), text.as_bytes().to_vec()).unwrap();
+
+        let visit = view_visit_summary().unwrap();
+        let cr = visit
+            .recent_labs
+            .iter()
+            .find(|l| l.name == "肌酐")
+            .expect("最近化验里应有 肌酐");
+        assert_eq!(cr.value, 1.2, "医生看到的必须是纸上那个数");
+        assert_eq!(cr.unit.as_deref(), Some("mg/dL"));
+        assert_eq!((cr.ref_low, cr.ref_high), (Some(0.6), Some(1.3)));
+        assert!(!cr.values_converted);
+        // 值落在区间内 —— 与 flag 同一个结论,任何下游重算都不会翻脸。
+        assert!(cr.value >= cr.ref_low.unwrap() && cr.value <= cr.ref_high.unwrap());
+        assert_eq!(cr.flag.as_deref(), Some("N"));
+
+        assert!(
+            visit.plain_text.contains("肌酐 1.2 mg/dL N [参考 0.6-1.3]"),
+            "纯文本里值与区间必须同单位;实际:\n{}",
+            visit.plain_text
+        );
+        assert!(
+            !visit.plain_text.contains("106.104"),
+            "规范单位的值不该出现在给医生的纯文本里(那张纸上没有这个数):\n{}",
+            visit.plain_text
+        );
     }
 
     #[test]

@@ -501,9 +501,12 @@ class _LabSnapshot extends StatelessWidget {
                             refLow: labs[i].refLow,
                             refHigh: labs[i].refHigh,
                             // 见 visit_summary_sheet.dart 的 `_LabRow` 同一处注释。
-                            meta: labs[i].selfMeasured
-                                ? '${labs[i].date} · 家测'
-                                : labs[i].date,
+                            meta: [
+                              labs[i].date,
+                              if (labs[i].selfMeasured) '家测',
+                              if (labs[i].valuesConverted)
+                                unitConvertedNote(labs[i].unit),
+                            ].join(' · '),
                             onTap: () => onOpenDoc(labs[i].documentId),
                           ),
                         ),

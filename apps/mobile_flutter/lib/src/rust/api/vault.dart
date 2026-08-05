@@ -93,11 +93,17 @@ Future<ImportOutcomeDto> ingestBytes({
 );
 
 /// 扫描版 PDF 的逐页 OCR 回填。`ingest_bytes`/`ingest_pdf`(Rust pipeline)对
-/// 缺文本层的页只能给出 `IngestOutcome::pages_without_text`(移动端未链接 Rust
-/// OCR 引擎,那些页落库时压根没能 OCR),文档可能已建好(部分页有文本层)、也
-/// 可能整份 `stored_no_text`(一页可用文本都没有)。Flutter 侧用 `pdfx` 把
-/// `pages_without_text` 里点名的那些页逐一渲染成 PNG、走原生图片 OCR(iOS
-/// Vision / 安卓 ML Kit)拿到文本后,逐页调本函数把文本补进该文档。
+/// 没能恢复出文本的页给出 `IngestOutcome::pages_without_text`,文档可能已建好
+/// (部分页有文本层)、也可能整份 `stored_no_text`(一页可用文本都没有)。
+/// Flutter 侧用 `pdfx` 把这些页逐一渲染成 PNG、走 `recognizeImageText`
+/// (PP-OCRv5,iOS/安卓同一条路)拿到文本后,逐页调本函数补进该文档。
+///
+/// ⚠️ 旧注释说「移动端未链接 Rust OCR 引擎」——**已经不对了**:iOS 与 arm64
+/// 安卓都直接依赖 `packages/ocr` 的 `engine`,`pipeline::ingest_pdf` 在端上真的
+/// 会去调 PP-OCRv5。但 `ocr::set_model_dir` 只由 `ensure_pp_models_ready`
+/// (`recognize_image_pp` 的入口)设置,所以一次会话里**第一份**导入是 PDF 时
+/// 模型还没落盘,Rust 侧逐页 OCR 会全部失败、整份落到 `pages_without_text`,
+/// 全靠这条回填路径兜底。不是数据丢失(页码如实报了),但白跑一趟。
 ///
 /// `page_no` 是 1-based、对应 PDF 里的真实页码(与 `pages_without_text` 的口径
 /// 一致)——不再固定写 1:一份文档现在可能有多条 `ocr_result`(每页一条,
@@ -122,6 +128,14 @@ Future<void> backfillPdfText({
 /// 传入值);识别为空则退回文件名元数据(`StoredNoText`),原件仍可见。落库语义逐字
 /// 镜像 Tauri 版 `ingest_image_via_vision`/`ingest_image_via_mlkit`,只是识别文本来自
 /// 参数而非本地再跑一次 OCR。
+///
+/// **多页原件(多页 TIFF)**:Dart 侧把**文件路径**交给 Apple Vision / ML Kit,
+/// 两者都只识别第一帧,所以 `ocr_text` 里永远只有第 1 页。这条路径过去把
+/// `page_count` 写死 1、`pages_without_text` 写死空,于是第 2 页起整页丢失而
+/// UI 报「已识别入库」——与 `pipeline::ingest_image` 修的是同一个缺陷,只是发生
+/// 在移动端这条**不经 `pipeline::ingest`** 的独立路径上(移动端的 `.tiff` 由
+/// `isImageName` 判为图片,走的就是这里,不是 `ingest_bytes`)。现在如实带出真实
+/// 页数与没读到的页码;调用方 `import_flow.dart` 据此报「N 页未能识别文字」。
 Future<ImportOutcomeDto> ingestImageWithText({
   required String name,
   required List<int> bytes,
