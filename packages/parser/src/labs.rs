@@ -34,10 +34,57 @@
 //! themselves glued to yet another number. Anything less clear-cut drops the
 //! whole row rather than guess — see that function's doc for why.
 //!
+//! ## Wrapped rows (name on one line, its result on the next)
+//! Clean text layers keep a row on one line, and for years that made strict
+//! line-by-line parsing the right call. Photographs don't: PP-OCR emits one
+//! detection box per column block, so a report can come out with the whole
+//! 项目 column on one line and the 结果/单位/参考范围 columns on the next
+//! (real corpus, 北京协和 biochemistry sheet — 8 analytes, zero extracted,
+//! with not a single character mis-read).
+//!
+//! Joining lines is the most dangerous thing in this module: a wrong join
+//! invents a lab value that appears nowhere in the document. So the join is
+//! gated on *both* lines having an unmistakable shape and on the result being
+//! corroborated — see `merged_wrap_row` for the full list of conditions and,
+//! more importantly, for when we deliberately refuse to join.
+//!
+//! ## Row number glued to the name (`12红细胞计数`)
+//! The printed row number from a Chinese lab sheet's leftmost column is
+//! sometimes fused onto the analyte name by OCR. The name itself is spelled
+//! correctly — only the exact-match lookup fails — so `strip_serial_prefix`
+//! peels the leading digits off and retries as a fallback (never a rewrite:
+//! `raw_name` always stays verbatim, and a name that resolves as printed is
+//! never touched — see that function's doc).
+//!
+//! This fallback is trusted for **bare `name value` lines only** — nothing
+//! else on the line for OCR to have bled in from a neighbouring column. Real
+//! corpus (扫描版, 苏州独墅湖 血常规 photos) shows why: on a two-column sheet,
+//! the "rest" after the value is exactly where a stray unit or reference-range
+//! fragment from the RIGHT-hand column shows up glued onto a LEFT-hand
+//! column's row. One photo's `13血红蛋白` line carries no value of its own on
+//! that line at all — HGB's real result (122) is one line down — but the line
+//! still parses as `name value rest` because a neighbouring column's stray
+//! unit token (`1012/`) landed in the "rest" slot; without this restriction,
+//! stripping the row number resolves the name to `hgb` and charts a
+//! **fabricated `hgb ≈ 4`** (the row's incidental numeral, not the LOINC-coded
+//! measurement) right next to the real trend line. Sampling every serial-prefix
+//! candidate across the real photo corpus: every bare-pair case checked out
+//! correct; every case with an attached unit/range was inconsistent with the
+//! resolved analyte at least once. Per "宁可漏,不能编", the fallback is
+//! restricted to the shape it can actually vouch for, at the cost of a few
+//! recoveries (`9单核细胞百分比 12.70 3.50~10.00%`, correct on this document)
+//! that a name+value+rest line cannot be told apart from the fabricating one.
+//!
 //! ## Deliberately NOT handled (kept lean)
 //! - Ratio-style results printed as one token (`血压 120/80`) — the `/80` is
 //!   mistaken for a unit; blood pressure is a vital, out of scope here.
-//! - Multi-line wrapped rows (name on one line, value on the next).
+//! - Wrapped rows whose analyte is NOT in the dictionary: the join needs
+//!   corroboration and an unknown name provides none, so those stay dropped.
+//! - Wraps spanning 3+ lines, and value-above-name wraps — neither is observed
+//!   in the corpus, and each extra degree of freedom multiplies the ways a join
+//!   can fabricate a row.
+//! - A row-number-glued name is only recovered when the line is otherwise
+//!   bare — see "Row number glued to the name" above.
 //! - Reference ranges are parsed/stored in the RAW reporting unit only; the
 //!   struct has no canonical-ref fields, so refs are compared against the raw
 //!   value (same unit) for flagging and left un-converted.
@@ -221,12 +268,54 @@ fn glued_cbc_unit_re() -> &'static Regex {
 /// exact spot to insert the missing space. Restricted to CJK/`*` specifically
 /// (not any name char) so it can never fire on an ordinary ASCII analyte code
 /// like `CA125` or a serial-number prefix (`12红细胞` — digit-then-CJK, the
-/// other direction, never matches this pattern).
+/// other direction, handled separately by `strip_serial_prefix`).
 fn glued_name_value_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(r"[\u{4e00}-\u{9fa5}*](\d+(?:\.\d+)?)").expect("glued name-value re")
     })
+}
+
+/// The OTHER glue direction: the printed row number from the leftmost column of
+/// a Chinese lab sheet, fused onto the analyte name (`12红细胞计数`,
+/// `1白细胞计数`). Anchored at the start, 1–2 digits (sheets number rows 1..99),
+/// and the digits must be followed by a CJK ideograph — which is what separates
+/// a row number from a name that legitimately *begins* with digits
+/// (`25羟基维生素D`, `13C尿素呼气试验`, `24小时尿蛋白定量`: the char after the
+/// digits is Latin, or the whole name is a dictionary alias that resolves before
+/// this is ever consulted).
+///
+/// Only the glued form needs this. When the sheet prints a space
+/// (`2  中性粒细胞计数`), `terminology::term_candidates` already splits on
+/// whitespace and the name resolves on its own.
+fn serial_prefix_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"^\d{1,2}(?P<name>[\u{4e00}-\u{9fa5}].*)$").expect("serial re"))
+}
+
+/// A whitespace-delimited token that is nothing but a number — the shape of a
+/// bare result cell. Used by the wrapped-row detector to tell a line that
+/// carries its own value from one that doesn't.
+fn bare_number_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"^-?\d+(?:\.\d+)?$").expect("bare number re"))
+}
+
+/// Drop a leading printed row number from an analyte name — see
+/// `serial_prefix_re`. `None` when there is no row-number prefix, or when
+/// removing it would leave too little to identify (a single character resolves
+/// far too eagerly against the dictionary's short aliases).
+///
+/// Callers must try the UNSTRIPPED name first: this is a fallback, never a
+/// rewrite, so a name that already resolves can never be changed by it. And
+/// per the module doc ("Row number glued to the name"), callers must only
+/// trust the fallback match for a bare `name value` line — see `parse_line`.
+fn strip_serial_prefix(raw_name: &str) -> Option<&str> {
+    let name = serial_prefix_re()
+        .captures(raw_name)?
+        .name("name")?
+        .as_str();
+    (name.chars().count() >= 2).then_some(name)
 }
 
 /// User-facing reason (Chinese, for the person reviewing the row — not a
@@ -262,7 +351,55 @@ const PAGE_FURNITURE: &[&str] = &[
     "审核者",
     "送检医生",
     "申请医生",
+    // Same letterhead family, seen in the photo corpus but not in the clean
+    // PDFs the original list was built from.
+    "打印时间",
+    "接收时间",
+    "检验时间",
+    "登记时间",
 ];
+
+/// The COLUMN LABELS of the result table itself (`检验项目 结果 参考范围 单位`),
+/// plus the report's own title line. Different from `PAGE_FURNITURE` in origin,
+/// identical in consequence: on a photograph the header band is split across
+/// detection boxes and lands in the text stream next to a stray number from a
+/// neighbouring column, so `row_re` reads e.g. `参考范围 单位 检验项目` as an
+/// analyte with value 42, or the title line as an analyte with value 2016. The
+/// viewer then draws that as a trend line beside a real one — the same
+/// fabricated-chart failure `PAGE_FURNITURE` exists to prevent.
+///
+/// Substring-matched, and therefore restricted to words that cannot occur
+/// inside a measured quantity's name. Column labels that are too short or too
+/// generic to match as a substring safely (`结果`, `单位`) are deliberately
+/// absent: every header line in the corpus already carries one of the words
+/// below, so the extra reach buys nothing and only risks a real analyte.
+const TABLE_HEADER: &[&str] = &[
+    "检验项目",
+    "检测项目",
+    "项目名称",
+    "项目缩写",
+    "参考范围",
+    "参考值",
+    "报告单",
+    "标本状态",
+];
+
+/// Header labels that must match a WHOLE whitespace-delimited token, never a
+/// substring. `No`(=编号, as in `No:20160824XXS0025`) is the only one so far:
+/// as a substring it would swallow anything containing those two letters, and
+/// even as a token it is case-sensitive so the nitric-oxide abbreviation `NO`
+/// stays untouched.
+const HEADER_TOKENS: &[&str] = &["No"];
+
+/// True when a parsed "analyte name" is really letterhead, specimen-block, or
+/// result-table-header text. See `PAGE_FURNITURE` / `TABLE_HEADER`.
+fn is_page_furniture(raw_name: &str) -> bool {
+    PAGE_FURNITURE.iter().any(|w| raw_name.contains(w))
+        || TABLE_HEADER.iter().any(|w| raw_name.contains(w))
+        || raw_name
+            .split_whitespace()
+            .any(|t| HEADER_TOKENS.contains(&t))
+}
 
 const REASON_VALUE_GLUED_TO_RANGE: &str = "数值和参考范围粘在一起,读不准,请核对原件";
 const REASON_MULTIPLE_GLUE_POINTS: &str =
@@ -499,155 +636,322 @@ pub fn extract_labs(text: &str) -> Vec<LabObservation> {
 pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<UnreadableRow>) {
     let mut out = Vec::new();
     let mut unreadable = Vec::new();
-    for raw_line in text.lines() {
-        // Un-glue a name directly fused to its value (`含量*26.3`) before
-        // row_re ever sees the line — see fix_name_value_glue doc. An
-        // ambiguous glue (can't tell where name ends) surfaces the row as
-        // unreadable rather than guessing.
-        let owned_line;
-        let line: &str = match fix_name_value_glue(raw_line) {
-            GlueFix::Clean => raw_line,
-            GlueFix::Fixed(s) => {
-                owned_line = s;
-                &owned_line
-            }
-            GlueFix::Ambiguous(reason) => {
-                unreadable.push(UnreadableRow {
-                    raw_line: raw_line.to_string(),
-                    reason: reason.to_string(),
-                });
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let outcome = parse_line(lines[i]);
+        // A line that yielded nothing may be the NAME half of a row whose
+        // result columns wrapped onto the next line. Only ever attempted here,
+        // i.e. after the line has failed on its own, so joining can never take
+        // away a row the strict line-by-line reading already produced.
+        if matches!(outcome, LineOutcome::Nothing) && i + 1 < lines.len() {
+            if let Some(row) = merged_wrap_row(lines[i], lines[i + 1]) {
+                out.push(row);
+                i += 2;
                 continue;
             }
-        };
-        let Some(caps) = row_re().captures(line) else {
-            continue;
-        };
-        let name_group = caps.name("name").expect("name group");
-        let raw_name = name_group.as_str().trim();
-        // Need a real name token — rejects date/number-only lines.
-        if raw_name.is_empty() || !raw_name.chars().any(|c| c.is_alphabetic()) {
-            continue;
         }
-        // The "value column" (everything from right after the name) is itself a
-        // YYYY-MM-DD date — this is a 采集/送检/报告 timestamp row, not a result.
-        // See date_value_column_re doc.
-        if date_value_column_re().is_match(&line[name_group.end()..]) {
-            continue;
+        match outcome {
+            LineOutcome::Row(o) => out.push(o),
+            LineOutcome::Unreadable(u) => unreadable.push(u),
+            LineOutcome::Nothing => {}
         }
-        // A real analyte name has no *sentence* punctuation. This rejects narrative
-        // fragments that a mis-routed prose/imaging line would otherwise smuggle in
-        // as a "lab" (`右肺上叶尖段磨玻璃结节(GGN),大小约` value 8 …) — quality dim 3.
-        if raw_name
-            .chars()
-            .any(|c| matches!(c, '，' | ',' | '。' | '；' | ';' | '、'))
-        {
-            continue;
-        }
-        // Demographics / specimen headers (`姓名：张建国  性别：男  年龄：58岁
-        // 门诊号：20230615-1046`) parse as a lab row because the trailing field is
-        // numeric: name = `姓名：张建国  性别：男  年龄`, value = 58, and the 门诊号
-        // digits get read as a reference range. The viewer then charts that as a
-        // trend line and flags it red, next to a real creatinine curve.
-        //
-        // Identified by NAMING the furniture, not by guessing from punctuation.
-        // The obvious punctuation rule — "a colon inside the name means it is
-        // really several `label：value` fields" — reads well and is wrong: it
-        // discards `生化:钾 4.2 mmol/L 3.5-5.3`, `甲功三项:TSH …`, `PT:INR …` and
-        // `白球比值(A:G) 1.52 1.20-2.40` (which resolves to a real dictionary
-        // entry). The dictionary itself curates `皮质醇(8:00)` and friends, so a
-        // colon in an analyte name is expressly normal in this domain.
-        if PAGE_FURNITURE.iter().any(|w| raw_name.contains(w)) {
-            continue;
-        }
-        let Ok(value_num) = caps
-            .name("value")
-            .expect("value group")
-            .as_str()
-            .parse::<f64>()
-        else {
-            continue;
-        };
-        let rest = caps.name("rest").expect("rest group").as_str();
-        // Value glued with zero separator straight into another number (its
-        // own reference range's low bound, typically) — no reliable split
-        // point exists (see value_glued_to_next_number doc). Surface it as
-        // unreadable rather than report a value we can't actually justify.
-        let sep2_is_empty = caps.name("sep2").expect("sep2 group").as_str().is_empty();
-        if value_glued_to_next_number(sep2_is_empty, rest) {
-            unreadable.push(UnreadableRow {
-                raw_line: raw_line.to_string(),
-                reason: REASON_VALUE_GLUED_TO_RANGE.to_string(),
-            });
-            continue;
-        }
-        let (unit_raw, ref_low, ref_high, explicit_flag) = parse_rest(rest);
-        // Invariant fallback, NOT the fix itself: a genuine reference range
-        // never inverts, so low>high can only mean the range was misread
-        // somewhere upstream (range_is_bounded / resolve_range_number above
-        // are the actual fix for the known misread shapes — this is a net
-        // for whatever shape isn't covered yet). Discard the whole pair
-        // rather than pick one bound to trust; the row otherwise still
-        // extracts (value/unit/flag), just without a reference range.
-        let (ref_low, ref_high) = match (ref_low, ref_high) {
-            (Some(lo), Some(hi)) if lo > hi => (None, None),
-            other => other,
-        };
-
-        let m = resolve(raw_name, unit_raw.as_deref());
-        // Lab-row gate: some evidence beyond "a name and a number" must exist,
-        // else it's demographics/metadata (年龄:60) — skip it.
-        let has_evidence = unit_raw.is_some()
-            || ref_low.is_some()
-            || ref_high.is_some()
-            || explicit_flag.is_some()
-            || m.is_some();
-        if !has_evidence {
-            continue;
-        }
-
-        // Canonical conversion (only when matched AND the entry knows this unit).
-        let mut value_canonical = None;
-        let mut unit_canonical = None;
-        if let (Some(m), Some(u)) = (&m, &unit_raw) {
-            if let Some(entry) = dictionary_entries().iter().find(|e| e.key == m.key) {
-                let nu = normalize_unit(u);
-                if let Some(conv) = entry.units.iter().find(|c| normalize_unit(&c.unit) == nu) {
-                    value_canonical = Some(conv.slope * value_num + conv.intercept);
-                    unit_canonical = entry.canonical_unit.clone();
-                }
-            }
-        }
-
-        // Flag: explicit marker wins; else compare raw value against raw refs.
-        let flag = explicit_flag.or_else(|| {
-            if ref_high.is_some_and(|h| value_num > h) {
-                Some("H".to_string())
-            } else if ref_low.is_some_and(|l| value_num < l) {
-                Some("L".to_string())
-            } else if ref_low.is_some() || ref_high.is_some() {
-                Some("N".to_string())
-            } else {
-                None
-            }
-        });
-
-        out.push(LabObservation {
-            raw_name: raw_name.to_string(),
-            analyte_key: m.as_ref().map(|m| m.key.clone()),
-            canonical_name: m.as_ref().map(|m| m.canonical_name.clone()),
-            loinc: m.as_ref().and_then(|m| m.codes.loinc.clone()),
-            value_num,
-            value_canonical,
-            unit_raw,
-            unit_canonical,
-            ref_low,
-            ref_high,
-            flag,
-            confidence: m.as_ref().map_or(0.0, |m| m.confidence),
-            self_measured: false,
-        });
+        i += 1;
     }
     (out, unreadable)
+}
+
+/// What one line of the report turned into.
+enum LineOutcome {
+    /// A readable lab row.
+    Row(LabObservation),
+    /// Lab-row-shaped but not readable with confidence (see [`UnreadableRow`]).
+    Unreadable(UnreadableRow),
+    /// Not a lab row (header, prose, blank, demographics …).
+    Nothing,
+}
+
+/// Join a wrapped row's two halves and parse them as one — or refuse.
+///
+/// Returns a row only when ALL of the following hold, because a wrong join
+/// fabricates a lab value that appears nowhere in the document (strictly worse
+/// than dropping the row — see the module's 宁可漏,不能编 rule):
+///
+/// 1. `name_line` looks like a bare analyte-name cell: it has name characters,
+///    carries NO bare number token of its own, and no reference range. A line
+///    that already holds a number is a row in its own right, not a dangling
+///    name, and pulling the next line's number onto it would attach a result to
+///    the wrong analyte.
+/// 2. `value_line` looks like a bare result cell: it STARTS with a number and
+///    every one of its tokens is result-column material (number, unit, range,
+///    flag) — no analyte name anywhere in it.
+/// 3. `value_line` carries real lab evidence besides that number (a unit, a
+///    range, or a flag). This is the guard that matters most: a lone number on
+///    the following line is exactly what a two-COLUMN layout produces when the
+///    OCR reading order interleaves columns, and the number then belongs to a
+///    different analyte entirely.
+/// 4. The joined row RESOLVES to a dictionary analyte. The join is an inference
+///    about page layout; a terminology hit is independent corroboration that
+///    the text above really was this number's name. Unknown analytes therefore
+///    stay dropped when they wrap — the deliberate cost of not guessing.
+fn merged_wrap_row(name_line: &str, value_line: &str) -> Option<LabObservation> {
+    if !is_wrapped_name_line(name_line) || !is_wrapped_value_line(value_line) {
+        return None;
+    }
+    let joined = format!("{}  {}", name_line.trim_end(), value_line.trim_start());
+    match parse_line(&joined) {
+        LineOutcome::Row(o) if o.analyte_key.is_some() => Some(o),
+        _ => None,
+    }
+}
+
+/// Condition 1 of [`merged_wrap_row`]: a line holding only an analyte name.
+fn is_wrapped_name_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() || !t.chars().any(char::is_alphabetic) {
+        return false;
+    }
+    if t.split_whitespace()
+        .any(|tok| bare_number_re().is_match(tok))
+    {
+        return false;
+    }
+    if find_range(&fold_range_punct(t)).is_some() {
+        return false;
+    }
+    !is_page_furniture(t)
+}
+
+/// Conditions 2+3 of [`merged_wrap_row`]: a line holding only result columns.
+fn is_wrapped_value_line(line: &str) -> bool {
+    let t = line.trim();
+    let mut toks = t.split_whitespace();
+    if !toks
+        .next()
+        .is_some_and(|first| bare_number_re().is_match(first))
+    {
+        return false;
+    }
+    let mut has_evidence = false;
+    for tok in toks {
+        if !is_result_column_token(tok) {
+            return false;
+        }
+        has_evidence = has_evidence || is_lab_evidence_token(tok);
+    }
+    has_evidence
+}
+
+/// A token that can appear in the 结果/单位/参考范围/提示 columns and nowhere
+/// else: numbers, units, ranges, comparators, arrows, and the handful of CJK
+/// words that are flag-column vocabulary (`parse_rest` already reads exactly
+/// these). Anything else — notably any other CJK text — means the line still
+/// contains an analyte name and is not a bare result cell.
+fn is_result_column_token(tok: &str) -> bool {
+    let t = tok.trim_matches(|c| matches!(c, '(' | ')' | '（' | '）' | '[' | ']' | '【' | '】'));
+    if t.is_empty() || matches!(t, "高" | "低" | "偏高" | "偏低" | "正常") {
+        return true;
+    }
+    t.chars()
+        .all(|c| c.is_ascii_alphanumeric() || RESULT_COLUMN_PUNCT.contains(c))
+}
+
+/// Every non-alphanumeric character that legitimately shows up in a result,
+/// unit, reference range or flag cell: decimal points and thousands commas,
+/// range dashes/tildes (half- and full-width), exponent and multiplication
+/// marks, unit slashes and micro signs, comparators, plus/minus, the ↑↓ arrows,
+/// and the `|` PP-OCR emits for a printed column rule. Anything outside this
+/// set means the token is not result-column material.
+const RESULT_COLUMN_PUNCT: &str = ".,-~^*/%<>=°μµ±＜＞≤≥～－—−↑↓|";
+
+/// Condition 3's evidence test: this token is a unit, a range/comparator, or an
+/// abnormal-flag marker — i.e. proof the line really is a result row's tail and
+/// not a stray number from another column.
+fn is_lab_evidence_token(tok: &str) -> bool {
+    let t = tok.trim_matches(|c| matches!(c, '(' | ')' | '（' | '）' | '[' | ']' | '【' | '】'));
+    if t.contains('↑') || t.contains('↓') || matches!(t, "H" | "Ｈ" | "L" | "Ｌ") {
+        return true;
+    }
+    if matches!(t, "高" | "低" | "偏高" | "偏低") {
+        return true;
+    }
+    if find_range(&fold_range_punct(t)).is_some() {
+        return true;
+    }
+    t.chars()
+        .any(|c| c.is_ascii_alphabetic() || c == '%' || c == '/' || c == '°')
+}
+
+/// Parse ONE line into at most one lab row. Split out of
+/// [`extract_labs_with_unreadable`] so a wrapped pair can be re-parsed as a
+/// single joined line through exactly the same rules.
+fn parse_line(raw_line: &str) -> LineOutcome {
+    // Un-glue a name directly fused to its value (`含量*26.3`) before
+    // row_re ever sees the line — see fix_name_value_glue doc. An
+    // ambiguous glue (can't tell where name ends) surfaces the row as
+    // unreadable rather than guessing.
+    let owned_line;
+    let line: &str = match fix_name_value_glue(raw_line) {
+        GlueFix::Clean => raw_line,
+        GlueFix::Fixed(s) => {
+            owned_line = s;
+            &owned_line
+        }
+        GlueFix::Ambiguous(reason) => {
+            return LineOutcome::Unreadable(UnreadableRow {
+                raw_line: raw_line.to_string(),
+                reason: reason.to_string(),
+            });
+        }
+    };
+    let Some(caps) = row_re().captures(line) else {
+        return LineOutcome::Nothing;
+    };
+    let name_group = caps.name("name").expect("name group");
+    let raw_name = name_group.as_str().trim();
+    // Need a real name token — rejects date/number-only lines.
+    if raw_name.is_empty() || !raw_name.chars().any(|c| c.is_alphabetic()) {
+        return LineOutcome::Nothing;
+    }
+    // The "value column" (everything from right after the name) is itself a
+    // YYYY-MM-DD date — this is a 采集/送检/报告 timestamp row, not a result.
+    // See date_value_column_re doc.
+    if date_value_column_re().is_match(&line[name_group.end()..]) {
+        return LineOutcome::Nothing;
+    }
+    // A real analyte name has no *sentence* punctuation. This rejects narrative
+    // fragments that a mis-routed prose/imaging line would otherwise smuggle in
+    // as a "lab" (`右肺上叶尖段磨玻璃结节(GGN),大小约` value 8 …) — quality dim 3.
+    if raw_name
+        .chars()
+        .any(|c| matches!(c, '，' | ',' | '。' | '；' | ';' | '、'))
+    {
+        return LineOutcome::Nothing;
+    }
+    // Demographics / specimen headers (`姓名：张建国  性别：男  年龄：58岁
+    // 门诊号：20230615-1046`) parse as a lab row because the trailing field is
+    // numeric: name = `姓名：张建国  性别：男  年龄`, value = 58, and the 门诊号
+    // digits get read as a reference range. The viewer then charts that as a
+    // trend line and flags it red, next to a real creatinine curve.
+    //
+    // Identified by NAMING the furniture, not by guessing from punctuation.
+    // The obvious punctuation rule — "a colon inside the name means it is
+    // really several `label：value` fields" — reads well and is wrong: it
+    // discards `生化:钾 4.2 mmol/L 3.5-5.3`, `甲功三项:TSH …`, `PT:INR …` and
+    // `白球比值(A:G) 1.52 1.20-2.40` (which resolves to a real dictionary
+    // entry). The dictionary itself curates `皮质醇(8:00)` and friends, so a
+    // colon in an analyte name is expressly normal in this domain.
+    //
+    // The result table's own COLUMN LABELS fail the same way once a photo
+    // splits the header band across detection boxes — see `TABLE_HEADER`.
+    if is_page_furniture(raw_name) {
+        return LineOutcome::Nothing;
+    }
+    let Ok(value_num) = caps
+        .name("value")
+        .expect("value group")
+        .as_str()
+        .parse::<f64>()
+    else {
+        return LineOutcome::Nothing;
+    };
+    let rest = caps.name("rest").expect("rest group").as_str();
+    // Value glued with zero separator straight into another number (its
+    // own reference range's low bound, typically) — no reliable split
+    // point exists (see value_glued_to_next_number doc). Surface it as
+    // unreadable rather than report a value we can't actually justify.
+    let sep2_is_empty = caps.name("sep2").expect("sep2 group").as_str().is_empty();
+    if value_glued_to_next_number(sep2_is_empty, rest) {
+        return LineOutcome::Unreadable(UnreadableRow {
+            raw_line: raw_line.to_string(),
+            reason: REASON_VALUE_GLUED_TO_RANGE.to_string(),
+        });
+    }
+    let (unit_raw, ref_low, ref_high, explicit_flag) = parse_rest(rest);
+    // Invariant fallback, NOT the fix itself: a genuine reference range
+    // never inverts, so low>high can only mean the range was misread
+    // somewhere upstream (range_is_bounded / resolve_range_number above
+    // are the actual fix for the known misread shapes — this is a net
+    // for whatever shape isn't covered yet). Discard the whole pair
+    // rather than pick one bound to trust; the row otherwise still
+    // extracts (value/unit/flag), just without a reference range.
+    let (ref_low, ref_high) = match (ref_low, ref_high) {
+        (Some(lo), Some(hi)) if lo > hi => (None, None),
+        other => other,
+    };
+
+    // Terminology lookup, then — only if that missed AND the line is a bare
+    // `name value` pair — the same lookup with the sheet's printed row number
+    // peeled off the front (`12红细胞计数`). Fallback order matters: a name
+    // that resolves as printed is never rewritten, so this can add a mapping
+    // but never change or remove one.
+    //
+    // The bare-pair restriction is the module doc's "Row number glued to the
+    // name" section: real corpus shows a line that ALSO carries a unit, range
+    // or flag cannot be trusted to have that content actually belong to this
+    // name — on a two-column sheet it is exactly where a neighbouring
+    // column's stray token shows up. Trusting it there turned an (unmapped,
+    // harmless) row into a charted one with a fabricated value.
+    let is_bare_pair =
+        unit_raw.is_none() && ref_low.is_none() && ref_high.is_none() && explicit_flag.is_none();
+    let m = resolve(raw_name, unit_raw.as_deref()).or_else(|| {
+        is_bare_pair
+            .then(|| strip_serial_prefix(raw_name))
+            .flatten()
+            .and_then(|n| resolve(n, unit_raw.as_deref()))
+    });
+    // Lab-row gate: some evidence beyond "a name and a number" must exist,
+    // else it's demographics/metadata (年龄:60) — skip it.
+    let has_evidence = unit_raw.is_some()
+        || ref_low.is_some()
+        || ref_high.is_some()
+        || explicit_flag.is_some()
+        || m.is_some();
+    if !has_evidence {
+        return LineOutcome::Nothing;
+    }
+
+    // Canonical conversion (only when matched AND the entry knows this unit).
+    let mut value_canonical = None;
+    let mut unit_canonical = None;
+    if let (Some(m), Some(u)) = (&m, &unit_raw) {
+        if let Some(entry) = dictionary_entries().iter().find(|e| e.key == m.key) {
+            let nu = normalize_unit(u);
+            if let Some(conv) = entry.units.iter().find(|c| normalize_unit(&c.unit) == nu) {
+                value_canonical = Some(conv.slope * value_num + conv.intercept);
+                unit_canonical = entry.canonical_unit.clone();
+            }
+        }
+    }
+
+    // Flag: explicit marker wins; else compare raw value against raw refs.
+    let flag = explicit_flag.or_else(|| {
+        if ref_high.is_some_and(|h| value_num > h) {
+            Some("H".to_string())
+        } else if ref_low.is_some_and(|l| value_num < l) {
+            Some("L".to_string())
+        } else if ref_low.is_some() || ref_high.is_some() {
+            Some("N".to_string())
+        } else {
+            None
+        }
+    });
+
+    LineOutcome::Row(LabObservation {
+        raw_name: raw_name.to_string(),
+        analyte_key: m.as_ref().map(|m| m.key.clone()),
+        canonical_name: m.as_ref().map(|m| m.canonical_name.clone()),
+        loinc: m.as_ref().and_then(|m| m.codes.loinc.clone()),
+        value_num,
+        value_canonical,
+        unit_raw,
+        unit_canonical,
+        ref_low,
+        ref_high,
+        flag,
+        confidence: m.as_ref().map_or(0.0, |m| m.confidence),
+        self_measured: false,
+    })
 }
 
 #[cfg(test)]
@@ -1224,5 +1528,303 @@ GLU        空腹血糖 Glucose       7.1      mmol/L      3.9 - 6.1       ↑
         let above = extract_labs("血糖 5.0 mmol/L ≥ 90");
         assert_eq!(find(&above, "glucose").ref_low, Some(90.0));
         assert_eq!(find(&above, "glucose").ref_high, None);
+    }
+
+    // ---------------------------------------------------------------- 折行
+    // (wrapped rows: name on one line, result columns on the next)
+
+    #[test]
+    fn wrapped_row_joins_the_name_line_to_its_result_line() {
+        // Real repro, verbatim PP-OCRv5 output of 北京协和医院 生化+血糖检验报告单
+        // (photo, no text layer; also reproduced live via the actual OCR engine
+        // against `labaudit/extra-photos/化验单照片.jpg` during validation of this
+        // change — 8/8 rows extracted, every value/unit/ref/flag correct). Not a
+        // single character is mis-read — the row is simply split across two
+        // detection boxes, 项目 column above, 结果/单位/参考范围/提示 columns below.
+        // Strict line-by-line parsing got 0 of these 8 analytes; the only thing it
+        // did produce was one junk row (`7.1 … mmol/L` read as the NAME, 3.9 — the
+        // range's low bound — read as the value), which the join replaces with the
+        // real 空腹血糖 7.1.
+        let text = "\
+项目缩写            项目名称
+结果                                                     单位            参考范围           提示
+TC              总胆固醇 Cholesterol
+6.05                                                   mmol/L                <5.20   ↑
+HDL-C           高密度脂蛋白胆固醇
+0.98                                                    mmol/L               >1.04   ↓
+GLU             空腹血糖 Glucose
+7.1                                                    mmol/L               3.9 -6.1  ↑
+HbA1c           糖化血红蛋白
+6.9                                                    %                   4.0 -6.0  ↑
+Cr              肌酐 Creatinine
+95                                                     umol/L               57-97   正常
+";
+        let obs = extract_labs(text);
+        assert_eq!(obs.len(), 5, "got {:?}", obs);
+        let tc = find(&obs, "cholesterol");
+        assert_eq!(tc.value_num, 6.05);
+        assert_eq!(tc.unit_raw.as_deref(), Some("mmol/L"));
+        assert_eq!(tc.ref_high, Some(5.20));
+        assert_eq!(tc.flag.as_deref(), Some("H"));
+        let hdl = find(&obs, "hdl");
+        assert_eq!(hdl.value_num, 0.98);
+        assert_eq!(hdl.ref_low, Some(1.04));
+        assert_eq!(hdl.flag.as_deref(), Some("L"));
+        let glu = find(&obs, "glucose");
+        assert_eq!(
+            glu.value_num, 7.1,
+            "must be the result, not the range's low"
+        );
+        assert_eq!(glu.ref_low, Some(3.9));
+        assert_eq!(glu.ref_high, Some(6.1));
+        let cr = find(&obs, "creatinine");
+        assert_eq!(cr.value_num, 95.0);
+        assert_eq!(cr.flag.as_deref(), Some("N"));
+        // The table's own header band sits directly above the first data row and
+        // must never be joined into one.
+        assert!(obs.iter().all(|o| !o.raw_name.contains("项目缩写")));
+    }
+
+    #[test]
+    fn a_lone_number_on_the_next_line_is_never_joined_even_though_it_sometimes_would_be_right() {
+        // The guard that matters most (`merged_wrap_row` condition 3). A value
+        // line with no unit, no range and no flag is indistinguishable from a
+        // number belonging to a DIFFERENT column, and a two-column sheet read in
+        // OCR order produces exactly that.
+        let obs = extract_labs("4 单核细胞计数\n28.0.\n27.9-33.0\n");
+        assert!(
+            obs.iter()
+                .all(|o| o.analyte_key.as_deref() != Some("mono_count")),
+            "fabricated a 单核细胞计数 from a neighbouring column: {:?}",
+            obs
+        );
+        // Same guard, isolated: a bare name over a bare number, nothing else.
+        // This one WOULD have been correct — refusing it is the price of the
+        // rule, paid on purpose (宁可漏,不能编).
+        assert_eq!(extract_labs("单核细胞计数\n0.49\n").len(), 0);
+        // …and it is genuinely the missing unit/range that decides, not the
+        // analyte: the same pair with its result columns attached does join.
+        let joined = extract_labs("单核细胞计数\n0.49   10^9/L   0.20~1.00\n");
+        assert_eq!(joined.len(), 1, "got {:?}", joined);
+        assert_eq!(joined[0].analyte_key.as_deref(), Some("mono_count"));
+        assert_eq!(joined[0].value_num, 0.49);
+    }
+
+    #[test]
+    fn a_wrapped_row_is_only_joined_when_the_joined_name_is_a_known_analyte() {
+        // `merged_wrap_row` condition 4: joining is an inference about page
+        // layout, and a dictionary hit is the only independent corroboration
+        // available that the text above really names this number. An unknown
+        // analyte offers none, so it stays dropped — even though the value line
+        // is perfectly well-formed.
+        assert_eq!(extract_labs("神秘指标XYZ\n12.3   mg/L   0-5\n").len(), 0);
+        // Counter-example: identical shape, name the dictionary knows.
+        let obs = extract_labs("肌酐 Creatinine\n88   umol/L   59-104\n");
+        assert_eq!(obs.len(), 1, "got {:?}", obs);
+        assert_eq!(obs[0].analyte_key.as_deref(), Some("creatinine"));
+        assert_eq!(obs[0].value_num, 88.0);
+    }
+
+    #[test]
+    fn a_name_line_carrying_its_own_number_is_never_used_as_a_wrap_head() {
+        // `merged_wrap_row` condition 1. `2 中性粒细胞计数` produces nothing on
+        // its own (row_re finds no number AFTER a separator), so it does reach
+        // the wrap path — and the bare `2` is the sheet's printed row number.
+        // Without this condition the line below it, which on these two-column
+        // 血常规 sheets belongs to the RIGHT-hand column (血小板压积 0.20,
+        // 0.11~0.28 L/L), would be attributed to 中性粒细胞计数: a fabricated
+        // value with somebody else's reference range attached.
+        let obs = extract_labs("2 中性粒细胞计数\n0.20      0.11~0.28  L/L\n");
+        assert_eq!(obs.len(), 0, "joined across a row number: {:?}", obs);
+    }
+
+    #[test]
+    fn a_line_that_already_parsed_never_absorbs_the_next_lines_number() {
+        // `merged_wrap_row` is only reached after a line has failed to parse on
+        // its own, and a name line carrying its own bare number is rejected
+        // besides. Both together mean the join can never re-attribute a result
+        // that the strict line-by-line reading already got right.
+        let obs = extract_labs("甘油三酯 TG 2.35\n1.70   mmol/L   0.5-1.7\n");
+        assert_eq!(obs.len(), 1, "got {:?}", obs);
+        assert_eq!(obs[0].analyte_key.as_deref(), Some("triglycerides"));
+        assert_eq!(obs[0].value_num, 2.35, "swallowed the next line's number");
+    }
+
+    #[test]
+    fn single_line_rows_are_completely_unaffected_by_wrapping() {
+        // Idempotency counter-example: a clean report where every row is whole
+        // must parse exactly as it did before wrapping existed — same count,
+        // same values — including when consecutive rows could superficially
+        // look like a name line followed by a value line.
+        let text = "\
+肌酐            88      μmol/L      59-104
+尿素            5.2     mmol/L      2.9-8.2
+低密度脂蛋白胆固醇  3.6  mmol/L  <3.4  ↑
+";
+        let obs = extract_labs(text);
+        assert_eq!(obs.len(), 3, "got {:?}", obs);
+        assert_eq!(find(&obs, "creatinine").value_num, 88.0);
+        assert_eq!(find(&obs, "urea").value_num, 5.2);
+        assert_eq!(find(&obs, "ldl").value_num, 3.6);
+    }
+
+    // ------------------------------------------------- 项目名粘上行序号
+
+    #[test]
+    fn a_bare_row_number_glued_name_value_pair_resolves_via_the_dictionary() {
+        // Real repro (血常规报告1.jpg / 血常规报告5.jpg, PP-OCRv5, verified against
+        // the live OCR engine during validation of this change): the leftmost
+        // column of a Chinese lab sheet is the printed row number, and OCR fuses
+        // it onto the analyte name. The name itself is spelled correctly — only
+        // the exact-match lookup fails. When the line carries NOTHING else (no
+        // unit, no range, no flag — a bare `name value` pair, exactly this
+        // shape), there is nothing on the line OCR could have bled in from a
+        // neighbouring column, so the fallback is trusted.
+        let cases = [
+            ("1白细胞计数               3.86", "wbc", 3.86),
+            ("2中性粒细胞计数             1.68", "neut_count", 1.68),
+            ("3淋巴细胞计数              1.48", "lymph_count", 1.48),
+            ("12红细胞计数            4.35", "rbc", 4.35),
+            ("13血红蛋白             122", "hgb", 122.0),
+        ];
+        for (line, key, value) in cases {
+            let obs = extract_labs(line);
+            assert_eq!(
+                obs.first().and_then(|o| o.analyte_key.as_deref()),
+                Some(key),
+                "row number blocked the lookup: {line}"
+            );
+            assert_eq!(obs[0].value_num, value, "{line}");
+            // The raw name stays verbatim — stripping is a lookup fallback, not
+            // a rewrite of what the document says.
+            assert!(obs[0].raw_name.starts_with(|c: char| c.is_ascii_digit()));
+        }
+    }
+
+    #[test]
+    fn a_row_number_glued_name_with_anything_else_on_the_line_stays_unmapped() {
+        // The restriction that keeps `strip_serial_prefix` from repeating the
+        // exact failure this branch was sent back for: promoting a name→value
+        // pair to a charted analyte is safe only when there is nothing else on
+        // the line for OCR to have bled in from a neighbouring column. The
+        // moment a unit, range or flag is ALSO present, that attachment cannot
+        // be trusted — real corpus (血常规报告1.jpg, verbatim PP-OCRv5 layout
+        // reconstruction) has exactly this line: `13血红蛋白` carries no value of
+        // its own here (HGB's real result, 122, is a full line further down —
+        // see `wrapped_row_joins_the_name_line_to_its_result_line` for what a
+        // GENUINE wrap looks like), but the line still parses as `name value
+        // rest` because the right-hand column's stray reference-unit fragment
+        // (`1012/`, itself garbled from a neighbouring row's `10^12/L`) landed
+        // in the "rest" slot. Without this restriction, stripping the row
+        // number resolves the name to `hgb` and charts a fabricated `hgb ≈ 4`
+        // right next to the real trend line — strictly worse than the
+        // (unmapped, harmless) row this line produces today.
+        let obs = extract_labs("13血红蛋白                     4.00~5.50  1012/");
+        assert_eq!(
+            obs.first().and_then(|o| o.analyte_key.as_deref()),
+            None,
+            "promoted a contaminated row-number-glued line: {:?}",
+            obs
+        );
+        assert_eq!(
+            obs[0].value_num, 4.0,
+            "value itself is untouched, only unmapped"
+        );
+
+        // Same danger, a unit alone is enough to trip it.
+        let obs = extract_labs("9单核细胞百分比          12.70     3.50~10.00%");
+        assert_eq!(
+            obs.first().and_then(|o| o.analyte_key.as_deref()),
+            None,
+            "a unit/range on the line must block the fallback too: {:?}",
+            obs
+        );
+
+        // Counter-example: strip the trailing range/unit and the same name+value
+        // pair (now bare) resolves fine — confirms the gate is the "anything
+        // else on the line" shape, not the name or value themselves.
+        let bare = extract_labs("9单核细胞百分比          12.70");
+        assert_eq!(
+            bare.first().and_then(|o| o.analyte_key.as_deref()),
+            Some("mono_pct")
+        );
+    }
+
+    #[test]
+    fn analyte_names_that_legitimately_begin_with_digits_are_not_mangled() {
+        // Counter-example. Plenty of real analytes start with digits, so the
+        // strip must never run before the name has been tried as printed, must
+        // stop at 2 digits (sheets number rows 1..99), and must require a CJK
+        // char right after them (`13C…`, `25-OH…` are Latin-initial).
+        for (line, key) in [
+            (
+                "25羟基维生素D        18.5    ng/mL    30-100",
+                "vitamin_d_25oh",
+            ),
+            ("24小时尿蛋白定量      0.35    g/24h", "urine_protein_24h"),
+            (
+                "2小时餐后血糖         9.8     mmol/L   <7.8",
+                "glucose_2h_pp",
+            ),
+        ] {
+            assert_eq!(
+                extract_labs(line)
+                    .first()
+                    .and_then(|o| o.analyte_key.as_deref()),
+                Some(key),
+                "digit-initial analyte name was broken: {line}"
+            );
+        }
+        // A 3-digit prefix is not a sheet row number — no strip, so no match.
+        let obs = extract_labs("123红细胞计数     4.35    4.00~5.50   10^12/L");
+        assert_eq!(obs.len(), 1, "got {:?}", obs);
+        assert_eq!(obs[0].analyte_key, None, "guessed past a 3-digit prefix");
+    }
+
+    // ------------------------------------------------------- 表头残余
+
+    #[test]
+    fn result_table_column_headers_are_not_charted_as_analytes() {
+        // Real repro (verbatim PP-OCRv5 output, 苏州独墅湖 血常规 photos +
+        // scanned PDFs). A photograph splits the header band across detection
+        // boxes, so the column labels land in the text stream next to a stray
+        // number from a neighbouring column and parse as `name + value`:
+        // `参考范围 单位 检验项目` = 42, the title line = 2016, `No` = 20160824.
+        // Each one becomes a fabricated trend line beside a real one.
+        let text = "\
+【血常规】  门诊          独墅湖科教创新区医院化验报告单                          No:20160824XXS0025
+参考范围                                   单位    检验项目                     42.0~49.0L/L
+独墅湖科教创新区医院化验报告单                                                               2016-08-Z4
+结果                             参考范围       单位    14红细胞压积          39.2    82.0~95.0 f1
+检验项目                 3.86      4.00~10.0010~9/L
+项目缩写            项目名称
+No:20160824XXS0025
+打印时间2016-08-2411:08                                   审核者樊笋
+";
+        let obs = extract_labs(text);
+        assert_eq!(obs.len(), 0, "header residue charted as labs: {:?}", obs);
+    }
+
+    #[test]
+    fn header_words_never_take_out_a_real_analyte_row() {
+        // Counter-example: the header list is substring-matched, so it must only
+        // contain words that cannot occur inside a measured quantity's name.
+        // `No` is the one that could — it is matched as a whole token and
+        // case-sensitively, so the nitric-oxide abbreviation survives.
+        let text = "\
+肌酐            88      μmol/L      59-104
+谷丙转氨酶(ALT)  45     U/L         0-40    ↑
+白球比值(A:G)   1.52    1.20-2.40
+NO             25      umol/L      10-40
+";
+        let obs = extract_labs(text);
+        assert_eq!(
+            obs.len(),
+            4,
+            "a real row was taken out as header: {:?}",
+            obs
+        );
+        assert_eq!(find(&obs, "creatinine").value_num, 88.0);
+        assert_eq!(find(&obs, "alt").value_num, 45.0);
     }
 }
