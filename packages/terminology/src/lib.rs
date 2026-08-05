@@ -1099,14 +1099,68 @@ mod tests {
 
     #[test]
     fn total_entry_count_is_expected() {
-        // Coverage expansion (2026-07-14.1): 191 + 446 按专科批次扩容 = 637
-        // (血液/凝血/铁代谢、生化、内分泌/骨代谢、心肌/感染、风湿/肿标、尿粪、西药、抗感染+中成药)。
+        // Coverage expansion (2026-07-14.1): 191 + 446 按专科批次扩容 = 637,再减 1
+        // (2026-08-05:去重 polystyrene_sulfonate 的重复条目,见 dictionary_keys_are_globally_unique)= 636。
         // A drift here means an entry was accidentally dropped or duplicated.
         assert_eq!(
             dictionary_entries().len(),
-            637,
+            636,
             "unexpected dictionary entry count"
         );
+    }
+
+    #[test]
+    fn dictionary_keys_are_globally_unique() {
+        // `key` 是查表/panel_for/problem_map ATC 匹配等一切下游逻辑的主键。重复 key
+        // 本身不会让 parse 失败(entries 是数组,不是以 key 为键的 map),但会让归一化
+        // 结果取决于 build_index 的遍历顺序——两条同 key 但内容不同的条目,谁的别名生效
+        // 全看谁在数组里排在后面(HashMap::insert 后写覆盖先写),silently 不确定。
+        // 曾经发生过(polystyrene_sulfonate 两条,别名列表还不完全一致),没有测试钉住才漏进来。
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        for (i, e) in dictionary_entries().iter().enumerate() {
+            if let Some(&first) = seen.get(e.key.as_str()) {
+                panic!(
+                    "duplicate key {:?} at entries[{first}] and entries[{i}]",
+                    e.key
+                );
+            }
+            seen.insert(e.key.as_str(), i);
+        }
+    }
+
+    #[test]
+    fn system_never_set_on_drug_entries() {
+        // `system`(标本类型)的文档明确写着「`None` for drugs」,但这个方向从没被断言过——
+        // labs_and_vitals_have_canonical_unit_and_identity_row 只测了 canonical_unit/units,
+        // 没人查过 system。跟 panel_never_set_on_drug_entries 是同一类盲点。
+        for e in dictionary_entries() {
+            if e.category == Category::Drug {
+                assert!(
+                    e.system.is_none(),
+                    "{} is a drug but has a system: {:?}",
+                    e.key,
+                    e.system
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ingredient_never_set_on_lab_or_vital_entries() {
+        // 反方向同理:`ingredient` 的文档写着「`Some` only for drugs」,但
+        // labs_and_vitals_have_canonical_unit_and_identity_row 的 Lab/Vital 分支从没
+        // 断言过 ingredient 恒为 None——只测了 Drug 分支必须 Some。
+        for e in dictionary_entries() {
+            if e.category != Category::Drug {
+                assert!(
+                    e.ingredient.is_none(),
+                    "{} is category {:?} but has an ingredient: {:?}",
+                    e.key,
+                    e.category,
+                    e.ingredient
+                );
+            }
+        }
     }
 
     #[test]
@@ -1355,5 +1409,34 @@ mod tests {
                 "{key} 是手动录入支持项,却没有 panel —— 它会掉进「其他」"
             );
         }
+    }
+
+    #[test]
+    fn drugs_without_atc_are_all_explained() {
+        // WORKLIST #9:53 条药物没有 ATC —— problem_map.json 按 ATC 前缀挂疾病泳道,
+        // 没有 ATC 的药永远挂不到任何泳道。这些不是遗漏统计,是逐条查过 OMOP 本地
+        // vocab(LOINC/RxNorm/ATC)后诚实记录的结论,理由分别写在各自的 `note` 里,
+        // 汇总清单见 `atc_gaps_methodology.md`。
+        //
+        // 这条测试钉两件事:①数量不能悄悄涨——涨了要么是新条目忘了查 ATC,要么是
+        // 方法学文档没跟上,两种都要求人去看一眼,而不是被下一次「补全字典」的批量
+        // 提交悄悄吞掉;②每一条都必须有 `note` 解释留空理由——不允许「没查」和
+        // 「查过确认没有」混在同一个空值里分不清。
+        let no_atc: Vec<&Entry> = dictionary_entries()
+            .iter()
+            .filter(|e| e.category == Category::Drug && e.codes.atc.is_none())
+            .collect();
+        for e in &no_atc {
+            assert!(
+                e.note.is_some(),
+                "{} 没有 ATC 也没有 note 解释原因 —— 补 note 或补 ATC,见 atc_gaps_methodology.md",
+                e.key
+            );
+        }
+        assert_eq!(
+            no_atc.len(),
+            53,
+            "无 ATC 的 drug 条目数变了 —— 同步更新 atc_gaps_methodology.md 与这个数字"
+        );
     }
 }

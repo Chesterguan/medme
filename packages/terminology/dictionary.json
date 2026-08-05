@@ -13618,7 +13618,7 @@
         "Polystyrene sulfonate"
       ],
       "ocr_confusions": [],
-      "note": "钙盐/钠盐同一活性成分;OMOP 取通用 Ingredient polystyrene sulfonate(45775570)。"
+      "note": "钙盐/钠盐同一活性成分;OMOP 取通用 Ingredient polystyrene sulfonate(45775570);RxNorm/ATC 同样取该通用 ingredient(离子交换树脂),盐型差异见剂型,不建单独条目。"
     },
     {
       "key": "insulin_aspart_30",
@@ -16195,25 +16195,6 @@
       ],
       "ocr_confusions": [],
       "note": null
-    },
-    {
-      "key": "polystyrene_sulfonate",
-      "canonical_name": "聚苯乙烯磺酸钙",
-      "category": "drug",
-      "codes": {
-        "rxnorm": "1546437",
-        "atc": "V03AE01",
-        "omop_concept_id": 45775570
-      },
-      "ingredient": "Polystyrene sulfonate",
-      "aliases": [
-        "聚苯乙烯磺酸钙",
-        "降钾树脂",
-        "聚磺苯乙烯",
-        "Polystyrene sulfonate"
-      ],
-      "ocr_confusions": [],
-      "note": "码取 RxNorm/ATC 的 polystyrene sulfonate(离子交换树脂);国内钙型与钠型同一成分骨架,盐型差异见剂型。"
     }
   ]
 }
