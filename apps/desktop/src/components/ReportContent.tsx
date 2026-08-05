@@ -3,8 +3,19 @@
 //  - 处方 → 用药清单卡片
 //  - 病理/影像/出院/病历/手术 → 分节 + 行内标签加粗
 // 解析不到结构就退回干净文本 —— 永不比原文更糟(见 memory: content-aware-rendering)。
+//
+// 视觉:设计系统 v1(见 ../tokens.css)。化验表的状态编色是**跨端硬性对齐**的一条
+// 规矩,移植自 mobile_flutter/lib/widgets/report_content.dart,逐条照抄:
+//   - 颜色只编码严重度(偏高/偏低),不编码文档类型。
+//   - 正常与无标记不上色,继承正文墨色 —— 一份血常规 22 项通常只有 1–2 项异常,
+//     给正常配色会把异常淹没。
+//   - 状态**同时**编码在左侧色条与文字 pill 上:色盲用户靠 pill 读「偏低/偏高」,
+//     正常视力扫视靠色条,少一个就有一类用户读不到结论。
+//   - 无绿色(规范明令排除,见 ImportView.tsx 关于加密分享卡改版的说明)。
 
 import { tryParseLabRun, type LabRow } from "../labTable";
+
+type Flag = LabRow["flag"]; // "high" | "low" | "normal" | null —— 与手机端 LabFlag 同构
 
 type Block =
   | { kind: "table"; header: string[] | null; rows: string[][] }
@@ -28,7 +39,7 @@ function isDataRow(line: string): boolean {
   return splitCells(line).length >= 3 && /\d/.test(line);
 }
 
-function rowStatus(cells: string[]): "high" | "low" | "normal" | null {
+function rowStatus(cells: string[]): Flag {
   const j = cells.join(" ");
   if (cells.includes("↑") || /↑|偏高|升高/.test(j)) return "high";
   if (cells.includes("↓") || /↓|偏低|降低|减低/.test(j)) return "low";
@@ -79,8 +90,23 @@ function parse(text: string): Block[] {
   return blocks;
 }
 
-const statusText = (s: string | null) =>
-  s === "high" ? "text-amber-700" : s === "low" ? "text-blue-700" : "text-slate-700";
+// 化验状态 → 前景色。正常/无标记**不上色**,继承正文墨色(见文件头注释)。
+// 对比度(WCAG AA 正文 4.5:1):#b45309(high)/#fff = 5.02:1,#1d4ed8(low)/#fff = 6.70:1。
+const flagTextClass = (f: Flag) =>
+  f === "high" ? "text-high" : f === "low" ? "text-low" : "text-ink";
+
+// 化验状态 → 左侧 3px 色条(border-left)。正常/无标记是透明占位,不是不画 ——
+// 占位恒定,异常行才有颜色,整列文字起点不会因为有没有色条而左右跳。
+const flagStripeClass = (f: Flag) =>
+  f === "high" ? "border-l-high" : f === "low" ? "border-l-low" : "border-l-transparent";
+
+// 化验状态 → 文字 pill。正常/无标记不给 pill —— 状态同时编码在色条和 pill 上,
+// 色盲用户靠这个读「偏低/偏高」。对比度:high-wash/high ≈ 4.50:1,low-wash/low = 5.77:1。
+function FlagPill({ flag }: { flag: Flag }) {
+  if (flag === "high") return <span className="med-pill bg-high-wash text-high">偏高</span>;
+  if (flag === "low") return <span className="med-pill bg-low-wash text-low">偏低</span>;
+  return null;
+}
 
 // 行内"标签:内容" → 标签加粗(主诉:/病理诊断:/诊断意见:…)
 const LABEL_RE = /^([一-龥A-Za-z]{2,10})([:：])(.*)$/;
@@ -90,7 +116,7 @@ function Para({ text }: { text: string }) {
   if (m && m[3].trim().length > 0) {
     return (
       <div className="whitespace-pre-wrap">
-        <span className="font-semibold text-slate-900">
+        <span className="font-semibold text-ink">
           {m[1]}
           {m[2]}
         </span>
@@ -149,58 +175,67 @@ function parseMeds(text: string): { intro: string[]; meds: Med[]; footer: string
   return meds.length ? { intro, meds, footer } : null;
 }
 
+// 化验表:一行一项,状态编码在左侧 3px 色条 + 文字 pill 上(移植自 report_content.dart
+// 的 _LabTableView/_LabRowView)。相对旧版(四列 <table> + 斑马纹 + 整行文字统一上色)
+// 的结构性改动:
+//  - 斑马纹去掉,行间改用 line-2 细线 —— 规范「层次靠边框不靠阴影」,斑马纹在 22
+//    行的血常规上是纯噪声,还会和状态底色打架。
+//  - 不再是四列 <table>:项目名单占一栏,结果/单位/参考区间收进右栏两行,数值右对齐
+//    + 等宽,一列数字自然对齐,也不会把中文项目名挤窄。
+function LabTable({ rows }: { rows: LabRow[] }) {
+  return (
+    <div className="rounded-block border border-line overflow-hidden bg-surface">
+      <div className="flex bg-paper px-3 py-2">
+        <span className="flex-[3] text-caption text-ink-3">项目</span>
+        <span className="flex-[2] text-caption text-ink-3 text-right">结果 / 参考区间</span>
+      </div>
+      {rows.map((r, i) => (
+        <div
+          key={i}
+          className={`flex items-start gap-3 pl-[9px] pr-3 py-[9px] border-l-[3px] ${flagStripeClass(
+            r.flag,
+          )} ${i < rows.length - 1 ? "border-b border-line-2" : ""}`}
+        >
+          <div className="flex-[3] flex flex-wrap items-center gap-x-1.5 gap-y-1 min-w-0">
+            <span className="text-body text-ink">{r.name}</span>
+            <FlagPill flag={r.flag} />
+          </div>
+          <div className="flex-[2] text-right">
+            <span className={`text-body font-semibold font-mono tabular-nums ${flagTextClass(r.flag)}`}>
+              {r.value}
+            </span>
+            {r.unit && <span className="text-secondary font-mono text-ink-3"> {r.unit}</span>}
+            {r.range && (
+              <div className="text-caption font-normal font-mono tabular-nums text-ink-3">
+                {r.range}
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function GenericBlocks({ blocks }: { blocks: Block[] }) {
   return (
     <>
       {blocks.map((b, i) => {
         if (b.kind === "labtable") {
-          return (
-            <div key={i} className="overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-xs">
-                    {["项目", "结果", "单位", "参考范围/提示"].map((h) => (
-                      <th
-                        key={h}
-                        className="text-left font-medium px-3 py-2 border-b border-slate-200 whitespace-nowrap"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {b.rows.map((r, ri) => (
-                    <tr key={ri} className={`${ri % 2 ? "bg-slate-50/40" : ""} ${statusText(r.flag)}`}>
-                      <td className="px-3 py-1.5 border-b border-slate-100">{r.name}</td>
-                      <td className="px-3 py-1.5 font-mono border-b border-slate-100 whitespace-nowrap">
-                        {r.value}
-                      </td>
-                      <td className="px-3 py-1.5 font-mono border-b border-slate-100 whitespace-nowrap">
-                        {r.unit}
-                      </td>
-                      <td className="px-3 py-1.5 font-mono border-b border-slate-100 whitespace-nowrap">
-                        {r.range}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
+          return <LabTable key={i} rows={b.rows} />;
         }
         if (b.kind === "table") {
           const cols = Math.max(b.header?.length ?? 0, ...b.rows.map((r) => r.length));
           return (
-            <div key={i} className="overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full text-sm border-collapse">
+            <div key={i} className="overflow-x-auto rounded-block border border-line bg-surface">
+              <table className="w-full text-body border-collapse">
                 {b.header && (
                   <thead>
-                    <tr className="bg-slate-50 text-slate-500 text-xs">
+                    <tr className="bg-paper text-caption text-ink-3 uppercase">
                       {b.header.map((h, j) => (
                         <th
                           key={j}
-                          className="text-left font-medium px-3 py-2 border-b border-slate-200 whitespace-nowrap"
+                          className="text-left font-medium px-3 py-2 border-b border-line whitespace-nowrap"
                         >
                           {h}
                         </th>
@@ -209,29 +244,30 @@ function GenericBlocks({ blocks }: { blocks: Block[] }) {
                   </thead>
                 )}
                 <tbody>
-                  {b.rows.map((r, ri) => {
-                    const st = rowStatus(r);
-                    return (
-                      <tr key={ri} className={`${ri % 2 ? "bg-slate-50/40" : ""} ${statusText(st)}`}>
-                        {Array.from({ length: cols }).map((_, ci) => (
-                          <td
-                            key={ci}
-                            className="px-3 py-1.5 font-mono border-b border-slate-100 whitespace-nowrap"
-                          >
-                            {r[ci] ?? ""}
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
+                  {b.rows.map((r, ri) => (
+                    <tr key={ri} className="border-t border-line-2">
+                      {Array.from({ length: cols }).map((_, ci) => (
+                        <td
+                          key={ci}
+                          className={`px-3 py-1.5 font-mono tabular-nums whitespace-nowrap ${flagTextClass(
+                            rowStatus(r),
+                          )}`}
+                        >
+                          {r[ci] ?? ""}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           );
         }
         if (b.kind === "section") {
+          // 分节标题(【…】/「主诉:」这类)走 subtitle 一档(17·600),比正文明确高
+          // 一档 —— 只靠字重区分,在放大后的字阶里几乎分不开(与手机端一致)。
           return (
-            <div key={i} className="font-semibold text-slate-900 pt-1">
+            <div key={i} className="text-subtitle font-semibold text-ink pt-1">
               {b.text}
             </div>
           );
@@ -243,14 +279,14 @@ function GenericBlocks({ blocks }: { blocks: Block[] }) {
 }
 
 export default function ReportContent({ text, docType }: { text: string; docType?: string }) {
-  if (!text.trim()) return <div className="text-slate-400 text-sm">无文本内容。</div>;
+  if (!text.trim()) return <div className="text-ink-3 text-body">无文本内容。</div>;
 
   // 处方 → 用药清单
   if (docType === "prescription") {
     const p = parseMeds(text);
     if (p) {
       return (
-        <div className="space-y-4 text-[15px] leading-relaxed text-slate-700">
+        <div className="space-y-4 text-body text-ink">
           {p.intro.length > 0 && (
             <div className="space-y-1">
               {p.intro.map((t, i) => (
@@ -258,20 +294,20 @@ export default function ReportContent({ text, docType }: { text: string; docType
               ))}
             </div>
           )}
-          <div className="text-[11px] font-mono text-slate-400 uppercase tracking-widest">用药</div>
+          <div className="text-caption font-mono text-ink-3 uppercase">用药</div>
           <div className="space-y-2">
             {p.meds.map((m, i) => (
-              <div
-                key={i}
-                className="flex gap-3 bg-emerald-50/40 border border-emerald-100 rounded-xl p-3"
-              >
-                <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 text-sm font-bold">
+              // 改版前是 emerald 绿卡 —— 规范色板里没有绿(绿=正常/安全正是规范刻意
+              // 不做的暗示,见 ImportView.tsx)。改成中性分块(paper 底 + line-2 边),
+              // 序号用主色 seal:清单要好数,不要好看。
+              <div key={i} className="flex gap-3 bg-paper border border-line-2 rounded-block p-3">
+                <div className="w-7 h-7 rounded-ctl bg-seal-wash text-seal-ink flex items-center justify-center shrink-0 text-caption font-bold tabular-nums">
                   {i + 1}
                 </div>
                 <div className="min-w-0">
-                  <div className="font-medium text-slate-800">{m.name}</div>
+                  <div className="font-semibold text-ink">{m.name}</div>
                   {m.usage.map((u, j) => (
-                    <div key={j} className="text-sm text-slate-500 leading-relaxed">
+                    <div key={j} className="text-secondary text-ink-2 leading-relaxed">
                       {u}
                     </div>
                   ))}
@@ -280,7 +316,7 @@ export default function ReportContent({ text, docType }: { text: string; docType
             ))}
           </div>
           {p.footer.length > 0 && (
-            <div className="space-y-1 text-sm text-slate-500">
+            <div className="space-y-1 text-secondary text-ink-3">
               {p.footer.map((t, i) => (
                 <Para key={i} text={t} />
               ))}
@@ -293,7 +329,7 @@ export default function ReportContent({ text, docType }: { text: string; docType
 
   // 其余类型(化验表格 / 病理·影像·出院·病历·手术 分节+行内标签 / 通用)
   return (
-    <div className="space-y-4 text-[15px] leading-relaxed text-slate-700">
+    <div className="space-y-4 text-body text-ink">
       <GenericBlocks blocks={parse(text)} />
     </div>
   );
