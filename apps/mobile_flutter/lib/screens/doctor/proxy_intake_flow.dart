@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/import_flow.dart'
-    show ImportChoice, pickImportItems;
+    show ImportChoice, backfillPagesWithoutText, pickImportItems;
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/doctor/consent_screen.dart';
@@ -349,8 +349,14 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   /// 采集落库——走**与患者模式同一条**链路(`vault.ingestImageWithText` /
   /// `vault.ingestBytes`),此刻进程里打开的是这个病人的箱子,所以东西落进他自己的
   /// vault。OCR 仍是未改动的 [recognizeImageText](`ocr_bridge.dart`,iOS/安卓各自
-  /// 原生引擎)。Phase 1 范围内不做扫描版 PDF 的 OCR 回填(仅存原件),不在诊室现场
-  /// 为个别扫描版 PDF 多等一轮渲染。
+  /// 原生引擎)。
+  ///
+  /// **混合页 PDF 的按页补 OCR 走与患者模式同一个 [backfillPagesWithoutText]**。
+  /// 早先这里的说法是「Phase 1 不做扫描版 PDF 的回填,不在诊室现场多等一轮渲染」——
+  /// 但实际代码连 `outcome.pagesWithoutText` 都整个丢了:既不补,也**不说**。医生
+  /// 当场拍完以为收全了,病人一走就再也补不上,比患者事后自己发现贵得多。所以现在
+  /// 两件事都做:能补的补,补不完的用 [incompleteNoticesFor] 当场说出来(文案与
+  /// 患者模式同一来源,见 `import_helpers.dart` 的 [ImportIncompleteNotice])。
   ///
   /// 顺手拿 Rust 回传的 `detectedName`:第一份识别到姓名就给这个病人命名(主页
   /// 「今日病历表」按名字列);之后再识别到**别的**名字就记进 [_mismatch],在待确认
@@ -383,6 +389,10 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     ImportFailReason? failReason;
 
     var failed = 0;
+    // 每份的展示态(与患者模式同一个 `rowForOutcome`)。代拍不弹汇总弹窗——诊室里
+    // 多一次「知道了」是多一次点击——但「哪几份没收全」必须留下来,采集完汇总成一条
+    // 提示条说出去。
+    final rows = <ImportResultRow>[];
     for (var i = 0; i < items.length; i++) {
       final item = items[i];
       if (mounted) {
@@ -408,6 +418,14 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
           final bytes = await File(item.path).readAsBytes();
           outcome = await vault.ingestBytes(filename: item.name, data: bytes);
         }
+        // 缺文本层的页按页码精确补 OCR;补不完的如实计入 `stillMissingPages`,
+        // 下面进 `rowForOutcome` 变成用户看得见的一句话。
+        final stillMissingPages = await backfillPagesWithoutText(
+          outcome,
+          item.path,
+          onStage: (s) => stage = s,
+        );
+        rows.add(rowForOutcome(outcome, stillMissingPages: stillMissingPages));
         await _noteDetectedName(patientId, outcome);
         _capturedCount++;
         okElapsedMs += DateTime.now().difference(itemStartedAt).inMilliseconds;
@@ -448,10 +466,13 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       _busy = false;
       _progress = null;
     });
-    if (failed > 0) {
+    // 「没能处理」和「落库了但没收全」是两件事,一条提示条里分行说完 ——
+    // 分两条 snackbar 的话第二条要排队等 4 秒,而这一屏紧接着就切到待确认列表了。
+    final notice = proxyIntakeNotice(rows: rows, failed: failed);
+    if (notice != null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('有 $failed 份未能处理,可重拍')));
+      ).showSnackBar(SnackBar(content: Text(notice)));
     }
     // 采集完直接进审阅屏(病情摘要 + 逐份识别内容摊开),不再停在采集屏问「继续 / 去
     // 预览」——「继续拍摄」是审阅屏上的一个按钮。让「拍完 → 看到审阅」一步到位。

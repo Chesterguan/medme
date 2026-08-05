@@ -687,32 +687,14 @@ Future<ImportRunResult> _runImport(
         outcome = await ingestBytes(filename: item.name, data: bytes);
       }
 
-      // `pagesWithoutText` 点名了哪些 PDF 页 pipeline 落库时没能拿到文字——可能
-      // 是全篇扫描,也可能是混合页(如出院小结第 1 页打印、后面几页附检验报告
-      // 扫描件,只有那几页需要补)。不再像旧版那样只在 status=='stored_no_text'
-      // 时才补、且不问页数盲扫前 20 页:现在按页码精确补,补不完的(超出单次
-      // 上限/渲染或 OCR 失败)如实计入 `stillMissingPages`,绝不悄悄吞掉。
-      //
-      // 注:Rust 侧在 iOS/arm64 安卓上**是**链接了 PP-OCRv5 的,只是它只能 OCR
-      // PDF 里内嵌的 DCTDecode(JPEG)图,且模型要等 `recognizeImageText` 跑过
-      // 一次才落盘。所以这条回填路径既兜「非 JPEG 编码的扫描页」,也兜「本次
-      // 会话第一份就是 PDF」。
-      var stillMissingPages = 0;
-      if (outcome.pagesWithoutText.isNotEmpty && outcome.documentId != null) {
-        stage = 'ocr';
-        final targetPages = outcome.pagesWithoutText.toList();
-        final scan = await _ocrScannedPdfPages(item.path, targetPages);
-        stage = 'save';
-        for (final entry in scan.entries) {
-          await backfillPdfText(
-            documentId: outcome.documentId!,
-            pageNo: entry.key,
-            text: entry.value.text,
-            confidence: entry.value.confidence,
-          );
-        }
-        stillMissingPages = targetPages.length - scan.length;
-      }
+      // 按页补 OCR:哪些页缺文本层由 `outcome.pagesWithoutText` 点名。逻辑本身
+      // 见 [backfillPagesWithoutText] —— 医生代拍(`proxy_intake_flow.dart`)
+      // 共用同一个函数,两条路不许各写一份。
+      final stillMissingPages = await backfillPagesWithoutText(
+        outcome,
+        item.path,
+        onStage: (s) => stage = s,
+      );
 
       if (outcome.documentId case final id?) newDocs[id] = outcome.detectedName;
       rows.add(rowForOutcome(outcome, stillMissingPages: stillMissingPages));
@@ -780,6 +762,85 @@ Future<ImportRunResult> _runImport(
   await _showImportSummary(context, rows);
   progress.dispose();
   return result;
+}
+
+/// 按页渲染 + OCR 的注入点(测试替身用)。生产实现是 [_ocrScannedPdfPages]。
+typedef PdfPageOcr =
+    Future<Map<int, OcrResult>> Function(String path, List<int> pageNumbers);
+
+/// 逐页回填文本的注入点(测试替身用)。生产实现是 `vault.dart` 的
+/// [backfillPdfText]。
+///
+/// `documentId` 写 `int` 而不是 FRB 生成签名里的 `PlatformInt64`:后者只在
+/// `flutter_rust_bridge_for_generated.dart`(标了 internal 的生成侧入口)里,
+/// 应用代码不该 import 它;而这支 app 只发 iOS/安卓,在那儿
+/// `PlatformInt64 == int`(web 上才是 BigInt,本项目不发 web)。
+typedef PdfTextBackfill =
+    Future<void> Function({
+      required int documentId,
+      required int pageNo,
+      required String text,
+      required double confidence,
+    });
+
+Future<void> _defaultBackfill({
+  required int documentId,
+  required int pageNo,
+  required String text,
+  required double confidence,
+}) => backfillPdfText(
+  documentId: documentId,
+  pageNo: pageNo,
+  text: text,
+  confidence: confidence,
+);
+
+/// 把 `outcome.pagesWithoutText` 点名的那些页在端上补 OCR 回填,返回**补完之后
+/// 依然没有文本**的页数(即调用方要交给 [rowForOutcome] 的 `stillMissingPages`)。
+///
+/// `pagesWithoutText` 点名了哪些 PDF 页缺文本层(pipeline 落库时没能替这些页拿到
+/// 文字)——可能是全篇扫描,也可能是混合页(如出院小结第 1 页打印、后面几页附
+/// 检验报告扫描件,只有那几页需要补)。按页码精确补,补不完的(超出单次上限 /
+/// 渲染或 OCR 失败)如实计回返回值,**绝不悄悄吞掉**。
+///
+/// 这段逻辑原先只长在患者模式的导入循环里(`_runImport`),医生代拍那条路
+/// (`screens/doctor/proxy_intake_flow.dart`)拿到 `outcome` 后整个丢弃
+/// `pagesWithoutText` —— 既不补也不说,医生当场拍完以为收全了。抽成公共函数就是
+/// 为了让两条路共用同一份行为:**同一件事不许长成两个实现**。
+///
+/// 这条路为什么还需要存在(注释此前是反着写的,别再改回去):Rust 侧在 iOS 与
+/// arm64 安卓上**是**链接了 PP-OCRv5 的(`apps/mobile_flutter/rust/Cargo.toml`
+/// 对 `ocr` 声明了 `features = ["engine"]`),只是它只能 OCR PDF 里内嵌的
+/// DCTDecode(JPEG)图,且模型要等 `recognizeImageText` 跑过一次才落盘。所以这条
+/// Dart 侧的回填既兜「非 JPEG 编码的扫描页」,也兜「本次会话第一份就是 PDF」。
+///
+/// [onStage] 供调用方同步埋点用的 `stage`(失败发生在哪一步):进入渲染/OCR 前
+/// 报 `'ocr'`,开始回填时报 `'save'` —— 与抽取前患者模式内联写法逐字一致。没有
+/// 任何页要补时**一次都不回调**,`stage` 保持调用方原样(落库后就是 `'save'`)。
+///
+/// [ocrPages] / [backfill] 只为测试注入替身:真实实现要碰 `pdfx` 渲染和 Rust
+/// FFI,在 `flutter test` 的纯 dart 进程里都跑不起来。生产调用一律用默认值。
+Future<int> backfillPagesWithoutText(
+  ImportOutcomeDto outcome,
+  String path, {
+  void Function(String stage)? onStage,
+  PdfPageOcr ocrPages = _ocrScannedPdfPages,
+  PdfTextBackfill backfill = _defaultBackfill,
+}) async {
+  if (outcome.pagesWithoutText.isEmpty || outcome.documentId == null) return 0;
+  onStage?.call('ocr');
+  final targetPages = outcome.pagesWithoutText.toList();
+  final scan = await ocrPages(path, targetPages);
+  onStage?.call('save');
+  for (final entry in scan.entries) {
+    await backfill(
+      documentId: outcome.documentId!,
+      pageNo: entry.key,
+      text: entry.value.text,
+      confidence: entry.value.confidence,
+    );
+  }
+  return targetPages.length - scan.length;
 }
 
 /// 一次导入单份文件时,`_ocrScannedPdfPages` 实际会渲染 + OCR 的页数上限
@@ -926,7 +987,7 @@ Future<void> _showImportSummary(
                   context,
                   Icons.warning_amber_rounded,
                   c.high,
-                  '仅存原件(未识别到文字)$storedNoText 份',
+                  ImportIncompleteNotice.storedNoText(storedNoText),
                 ),
               // 部分识别:PDF 有些页认出来了、有些没有——同样是 `high`(要你
               // 回头核对/补拍),但和「彻底没识别」用不同文案,别混在一起。
@@ -935,7 +996,7 @@ Future<void> _showImportSummary(
                   context,
                   Icons.warning_amber_rounded,
                   c.high,
-                  '部分页未能识别 $partial 份',
+                  ImportIncompleteNotice.partialPages(partial),
                 ),
               if (failed > 0)
                 _summaryLine(
