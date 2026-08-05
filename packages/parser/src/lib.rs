@@ -19,7 +19,8 @@ pub use handoff::{assemble_summary, match_disease};
 pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};
 pub use self_entry::{
-    home_ref_range, parse_self_measurement_payload, render_self_measurement_text, HomeRefRange,
+    home_ref_range, parse_self_measurement_payload, plausible_range, render_self_measurement_text,
+    validate_self_measured_values, HomeRefRange, PlausibilityViolation, PlausibleRange,
     SelfMeasuredValue, SELF_MEASUREMENT_MARKER,
 };
 
