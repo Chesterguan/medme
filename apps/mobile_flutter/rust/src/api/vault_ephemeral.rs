@@ -214,6 +214,10 @@ pub fn ephemeral_ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result
 /// ML Kit——识别好文本):与 `vault.rs::ingest_image_with_text` 同落库语义
 /// (逐段复制),落临时会话箱。**本函数不碰任何 OCR 逻辑**,只接收调用方已识别好
 /// 的文本 + 置信度。
+///
+/// 多页原件(多页 TIFF)的页数/漏页上报同样逐段复制自 `vault.rs`
+/// (本文件与它零共享代码是刻意的,见模块头注释):Vision/ML Kit 只识别第一帧,
+/// 故 `ocr_text` 永远只有第 1 页,其余页如实点名而不是冒充「整份都读了」。
 pub fn ephemeral_ingest_image_with_text(
     name: String,
     bytes: Vec<u8>,
@@ -239,6 +243,17 @@ pub fn ephemeral_ingest_image_with_text(
         base.to_string()
     } else {
         format!("{base}.jpg")
+    };
+
+    // 原件真实页数与「没读到的页」——语义与 `vault.rs::ingest_image_with_text`
+    // 逐字相同(单页图片退化成 1 / 空表,行为不变)。
+    let page_count = pipeline::image_page_count(&bytes) as i32;
+    let unread_from = |first: i32| -> Vec<i32> {
+        if page_count > 1 {
+            (first..=page_count).collect()
+        } else {
+            Vec::new()
+        }
     };
 
     with_ephemeral(|state| {
@@ -275,7 +290,7 @@ pub fn ephemeral_ingest_image_with_text(
                         doc_date_end,
                         title: Some(safe_name.clone()),
                         language: parser::detect_language(&text),
-                        page_count: 1,
+                        page_count,
                     })
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 v.add_ocr(NewOcr {
@@ -295,7 +310,8 @@ pub fn ephemeral_ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: parser::extract_demographics(&text).name,
-                    pages_without_text: Vec::new(),
+                    // 第 1 页有文字,2..=n 没读到。
+                    pages_without_text: unread_from(2),
                 }
             } else {
                 let (doc_date, doc_date_end) = parser::guess_date_range(&safe_name);
@@ -308,7 +324,7 @@ pub fn ephemeral_ingest_image_with_text(
                         doc_date_end,
                         title: Some(safe_name.clone()),
                         language: None,
-                        page_count: 1,
+                        page_count,
                     })
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 ImportOutcomeDto {
@@ -318,7 +334,8 @@ pub fn ephemeral_ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: None, // 无文本,识别不到名字
-                    pages_without_text: Vec::new(),
+                    // 一页文字都没有,1..=n 全都没读到。
+                    pages_without_text: unread_from(1),
                 }
             }
         };

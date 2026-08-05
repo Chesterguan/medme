@@ -100,10 +100,11 @@ ImportResultRow rowFromOutcome(ImportOutcomeDto outcome) {
 }
 
 /// 把 `outcome` + 移动端补 OCR 后**仍**缺文本的页数,映射成汇总行。
-/// `stillMissingPages` 是 `outcome.pagesWithoutText`(pipeline 落库时点名缺
-/// 文本层的页——混合页 PDF 里没有文本层的那几页,或全篇扫描 PDF 的所有页)
-/// 经调用方在移动端补 OCR 后依然没拿到文本的页数;默认 0(绝大多数文件——
-/// 非 PDF,或 PDF 每页本就有文本层——都是这条路径,直接退化成 `rowFromOutcome`)。
+/// `stillMissingPages` 是 `outcome.pagesWithoutText`(落库时点名内容没进库的
+/// 页——混合页 PDF 里没有文本层的那几页、全篇扫描 PDF 的所有页,或**多页图片
+/// (多页 TIFF)里第 2 页起那些原生识别器压根没读过的页**)经调用方尽力补救后
+/// 依然没拿到文本的页数;默认 0(绝大多数文件——单页图片,或 PDF 每页本就有
+/// 文本层——都是这条路径,直接退化成 `rowFromOutcome`)。
 ///
 /// **不能静默**是这个函数存在的唯一理由:哪怕补救之后仍有页没识别,也必须让
 /// 用户在汇总弹窗里看到"不是全部",而不是回退成看起来完整的「已识别入库」——
