@@ -42,7 +42,13 @@ class PendingImport {
 
 /// 单份文件导入结果的展示态:区分「FFI 落库但状态非全新成功」与
 /// 「处理过程中直接抛异常」,汇总弹窗按此分类计数。
-enum ImportRowKind { success, duplicate, storedNoText, failed }
+///
+/// `partial`:PDF 有部分页(混合页里有文本层的页,和/或移动端补 OCR 成功的页)
+/// 识别成功,但还有页始终没能拿到文本——不同于 `success`(全部拿到)或
+/// `storedNoText`(一点文本都没有),必须单独一档,不能塞进任一个都会让用户
+/// 误判「已经全部识别完」或「什么都没识别到」。见 `import_flow.dart`
+/// 的 `_rowForOutcome`。
+enum ImportRowKind { success, duplicate, storedNoText, partial, failed }
 
 class ImportResultRow {
   final String name;
@@ -91,6 +97,50 @@ ImportResultRow rowFromOutcome(ImportOutcomeDto outcome) {
         kind: ImportRowKind.failed,
       );
   }
+}
+
+/// 把 `outcome` + 移动端补 OCR 后**仍**缺文本的页数,映射成汇总行。
+/// `stillMissingPages` 是 `outcome.pagesWithoutText`(pipeline 落库时点名缺
+/// 文本层的页——混合页 PDF 里没有文本层的那几页,或全篇扫描 PDF 的所有页)
+/// 经调用方在移动端补 OCR 后依然没拿到文本的页数;默认 0(绝大多数文件——
+/// 非 PDF,或 PDF 每页本就有文本层——都是这条路径,直接退化成 `rowFromOutcome`)。
+///
+/// **不能静默**是这个函数存在的唯一理由:哪怕补救之后仍有页没识别,也必须让
+/// 用户在汇总弹窗里看到"不是全部",而不是回退成看起来完整的「已识别入库」——
+/// 这正是混合页 PDF 曾经静默丢数据的用户可见症状(修复见
+/// `pipeline::ingest_pdf` 与本文件调用方 `import_flow.dart::_runImport`)。
+ImportResultRow rowForOutcome(
+  ImportOutcomeDto outcome, {
+  int stillMissingPages = 0,
+}) {
+  final totalPagesNeeded = outcome.pagesWithoutText.length;
+  if (totalPagesNeeded == 0) {
+    return rowFromOutcome(outcome);
+  }
+  if (stillMissingPages == 0) {
+    // 缺文本层的页全部靠移动端 OCR 补上了。
+    return ImportResultRow(
+      name: outcome.name,
+      statusLabel: '已识别入库(含扫描页 OCR 补全)',
+      kind: ImportRowKind.success,
+    );
+  }
+  // pipeline 落库时本就拿到一些文本(混合页部分成功),或这次补救恢复了部分
+  // 页——只要有任何一点内容,就不是「仅存原件」那种彻底没有文字的状态。
+  final recoveredAny = stillMissingPages < totalPagesNeeded;
+  final hasAnyText = outcome.status != 'stored_no_text' || recoveredAny;
+  if (!hasAnyText) {
+    return ImportResultRow(
+      name: outcome.name,
+      statusLabel: '仅存原件(未识别到文字,共 $stillMissingPages 页)',
+      kind: ImportRowKind.storedNoText,
+    );
+  }
+  return ImportResultRow(
+    name: outcome.name,
+    statusLabel: '已识别入库,但 $stillMissingPages 页未能识别文字',
+    kind: ImportRowKind.partial,
+  );
 }
 
 /// 单份文件处理过程中直接抛异常(读文件失败、FFI 报错等),同样归入失败展示行,

@@ -2995,6 +2995,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-vision",
+ "pdf-extract",
  "pollster",
  "windows",
 ]

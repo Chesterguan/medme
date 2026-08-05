@@ -83,6 +83,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 abstract class RustLibApi extends BaseApi {
   Future<void> crateApiVaultBackfillPdfText({
     required PlatformInt64 documentId,
+    required int pageNo,
     required String text,
     required double confidence,
   });
@@ -257,6 +258,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<void> crateApiVaultBackfillPdfText({
     required PlatformInt64 documentId,
+    required int pageNo,
     required String text,
     required double confidence,
   }) {
@@ -265,6 +267,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_i_64(documentId, serializer);
+          sse_encode_i_32(pageNo, serializer);
           sse_encode_String(text, serializer);
           sse_encode_f_64(confidence, serializer);
           pdeCallFfi(
@@ -279,7 +282,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiVaultBackfillPdfTextConstMeta,
-        argValues: [documentId, text, confidence],
+        argValues: [documentId, pageNo, text, confidence],
         apiImpl: this,
       ),
     );
@@ -288,7 +291,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiVaultBackfillPdfTextConstMeta =>
       const TaskConstMeta(
         debugName: "backfill_pdf_text",
-        argNames: ["documentId", "text", "confidence"],
+        argNames: ["documentId", "pageNo", "text", "confidence"],
       );
 
   @override
@@ -2008,8 +2011,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ImportOutcomeDto dco_decode_import_outcome_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return ImportOutcomeDto(
       name: dco_decode_String(arr[0]),
       sourceFileId: dco_decode_i_64(arr[1]),
@@ -2017,6 +2020,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       docType: dco_decode_opt_String(arr[3]),
       documentId: dco_decode_opt_box_autoadd_i_64(arr[4]),
       detectedName: dco_decode_opt_String(arr[5]),
+      pagesWithoutText: dco_decode_list_prim_i_32_strict(arr[6]),
     );
   }
 
@@ -2056,6 +2060,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<DocumentSummaryDto> dco_decode_list_document_summary_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_document_summary_dto).toList();
+  }
+
+  @protected
+  Int32List dco_decode_list_prim_i_32_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Int32List;
   }
 
   @protected
@@ -2726,6 +2736,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_docType = sse_decode_opt_String(deserializer);
     var var_documentId = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_detectedName = sse_decode_opt_String(deserializer);
+    var var_pagesWithoutText = sse_decode_list_prim_i_32_strict(deserializer);
     return ImportOutcomeDto(
       name: var_name,
       sourceFileId: var_sourceFileId,
@@ -2733,6 +2744,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       docType: var_docType,
       documentId: var_documentId,
       detectedName: var_detectedName,
+      pagesWithoutText: var_pagesWithoutText,
     );
   }
 
@@ -2816,6 +2828,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ans_.add(sse_decode_document_summary_dto(deserializer));
     }
     return ans_;
+  }
+
+  @protected
+  Int32List sse_decode_list_prim_i_32_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getInt32List(len_);
   }
 
   @protected
@@ -3566,6 +3585,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.docType, serializer);
     sse_encode_opt_box_autoadd_i_64(self.documentId, serializer);
     sse_encode_opt_String(self.detectedName, serializer);
+    sse_encode_list_prim_i_32_strict(self.pagesWithoutText, serializer);
   }
 
   @protected
@@ -3635,6 +3655,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     for (final item in self) {
       sse_encode_document_summary_dto(item, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_list_prim_i_32_strict(
+    Int32List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putInt32List(self);
   }
 
   @protected

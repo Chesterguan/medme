@@ -4612,6 +4612,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-vision",
+ "pdf-extract",
  "pollster",
  "windows 0.62.2",
 ]
@@ -4944,6 +4945,7 @@ dependencies = [
  "chrono",
  "core-model",
  "dicom",
+ "lopdf 0.44.0",
  "ocr",
  "parser",
  "tempfile",

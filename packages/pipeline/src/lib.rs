@@ -97,6 +97,7 @@ fn add_dicom_document(
                 name: name.to_string(),
                 status: IngestStatus::Deduped,
                 doc_type: Some(DocType::ImagingReport),
+                pages_without_text: Vec::new(),
             });
         }
     }
@@ -121,6 +122,7 @@ fn add_dicom_document(
                 name: name.to_string(),
                 status: IngestStatus::InstanceAttached,
                 doc_type: Some(doc_type),
+                pages_without_text: Vec::new(),
             });
         }
     }
@@ -172,10 +174,12 @@ fn add_dicom_document(
         name: name.to_string(),
         status,
         doc_type: Some(doc.doc_type),
+        pages_without_text: Vec::new(),
     })
 }
 
-/// 按文本层(txt / 已抽取文本的 PDF)建 document + ocr_result(Native 后端)。
+/// 按文本层(纯 txt;PDF 现在走 `ingest_pdf`,逐页判定,见其文档注释)建
+/// document + ocr_result(Native 后端)。
 fn add_text_layer_document(
     vault: &Vault,
     sid: i64,
@@ -210,6 +214,7 @@ fn add_text_layer_document(
         name: name.to_string(),
         status,
         doc_type: Some(doc.doc_type),
+        pages_without_text: Vec::new(),
     })
 }
 
@@ -217,7 +222,16 @@ fn add_text_layer_document(
 /// `StoredNoText`。原件已永存、时间线可见可查看原件,留待后续 reindex 补 OCR。
 /// 图片/扫描件的 OCR 失败或空时统一走这里 —— 包括扫描 PDF(#55:失败不再冒充
 /// 成功文本层),与直接图片路径行为一致。
-fn store_no_text(vault: &Vault, sid: i64, name: &str) -> anyhow::Result<IngestOutcome> {
+///
+/// `page_count`:非 PDF 调用方(单张图片)传 1;PDF 调用方(`ingest_pdf`)传
+/// 真实页数——即便一页可用文本都没有,页数本身仍是已知的,不该退化成 1
+/// (旧版换页符 heuristic 从未生效导致的老问题,见 `ocr::MIN_TEXT_LAYER_LEN`)。
+fn store_no_text(
+    vault: &Vault,
+    sid: i64,
+    name: &str,
+    page_count: i32,
+) -> anyhow::Result<IngestOutcome> {
     let (doc_date, doc_date_end) = parser::guess_date_range(name);
     let doc_type = parser::classify(name);
     vault.add_document(NewDocument {
@@ -227,7 +241,7 @@ fn store_no_text(vault: &Vault, sid: i64, name: &str) -> anyhow::Result<IngestOu
         doc_date_end,
         title: Some(name.to_string()),
         language: None,
-        page_count: 1,
+        page_count,
     })?;
     // 不建 ocr_result(暂无文本)
     Ok(IngestOutcome {
@@ -235,6 +249,7 @@ fn store_no_text(vault: &Vault, sid: i64, name: &str) -> anyhow::Result<IngestOu
         name: name.to_string(),
         status: IngestStatus::StoredNoText,
         doc_type: Some(doc_type),
+        pages_without_text: Vec::new(),
     })
 }
 
@@ -287,6 +302,18 @@ pub struct IngestOutcome {
     pub name: String,
     pub status: IngestStatus,
     pub doc_type: Option<DocType>,
+    /// 1-based page numbers (PDF only; always empty for every other file
+    /// type) that neither had a usable text layer nor could be OCR'd --
+    /// no embedded image to OCR, OCR found nothing, or the per-document OCR
+    /// cap was hit. **Must not be discarded by callers.** The whole point of
+    /// this field is that a document can come back `status: New` (real,
+    /// useful, in the timeline) while still being incomplete -- callers
+    /// (mobile: attempt targeted OCR backfill on exactly these pages, then
+    /// tell the user what's still missing; desktop/CLI: at minimum log it)
+    /// must surface a non-empty list rather than let the user believe every
+    /// page was captured. See `ingest_pdf`'s doc comment for the defect this
+    /// closes.
+    pub pages_without_text: Vec<i32>,
 }
 
 /// 导入一个文件:存 CAS(去重)→ 若尚无 document 则抽文本层并建 document/ocr。
@@ -334,6 +361,7 @@ pub fn ingest_with_dicom_parser(
             name,
             status: IngestStatus::Deduped,
             doc_type: None,
+            pages_without_text: Vec::new(),
         });
     }
 
@@ -343,55 +371,13 @@ pub fn ingest_with_dicom_parser(
         return add_dicom_document(vault, sid, &name, &bytes, imp.deduped, parse_dicom_meta);
     }
 
-    // 无文本层的判定阈值:去空白后 < 20 字符视为"实际没有文本层"(扫描图 PDF 常见,
-    // pdf-extract 对纯图片页返回空/近空字符串,不报错)。
-    const MIN_TEXT_LAYER_LEN: usize = 20;
+    // PDF 走独立分支(逐页判定文本层,而非整份拼接后的长度——见 `ingest_pdf`
+    // 文档注释里的"混合页 PDF 静默丢数据"缺陷)。
+    if is_pdf(path) {
+        return ingest_pdf(vault, sid, &name, &bytes, imp.deduped);
+    }
 
     match parser::extract(path) {
-        Ok(e) if is_pdf(path) && e.text.trim().len() < MIN_TEXT_LAYER_LEN => {
-            // 扫描图 PDF(无文本层):尝试从页面图片 OCR 补文本,像图片一样处理。
-            match ocr::recognize_pdf(&bytes) {
-                Ok(outcome) if !outcome.text.trim().is_empty() => {
-                    let (backend, model_version) = ocr_provenance(outcome.backend);
-                    let text = outcome.text;
-                    let doc_type = parser::classify(&text);
-                    let (doc_date, doc_date_end) = parser::guess_date_range(&text);
-                    let doc = vault.add_document(NewDocument {
-                        source_file_id: sid,
-                        doc_type: doc_type.clone(),
-                        doc_date,
-                        doc_date_end,
-                        title: Some(name.clone()),
-                        language: parser::detect_language(&text),
-                        page_count: e.page_count,
-                    })?;
-                    vault.add_ocr(NewOcr {
-                        document_id: doc.id,
-                        page_no: 1,
-                        backend,
-                        model_version: model_version.into(),
-                        text,
-                        confidence: Some(outcome.confidence),
-                    })?;
-                    let status = if imp.deduped {
-                        IngestStatus::Backfilled
-                    } else {
-                        IngestStatus::New
-                    };
-                    Ok(IngestOutcome {
-                        source_file_id: sid,
-                        name,
-                        status,
-                        doc_type: Some(doc_type),
-                    })
-                }
-                // #55:扫描 PDF 的 OCR 失败/空时,别把 pdf-extract 找到的近空
-                // (<20 字)文本冒充成「有文本层」的成功文档(那会谎报 New/Backfilled、
-                // 让扫描件看起来已识别)。降级为 StoredNoText,如实反映「已存原件、
-                // 暂无文本」,与直接图片路径一致,留待后续 reindex 补 OCR。
-                _ => store_no_text(vault, sid, &name),
-            }
-        }
         Ok(e) => add_text_layer_document(vault, sid, &name, e, imp.deduped),
         Err(_) => {
             // 无文本层(图片/扫描件):先尝试 OCR。
@@ -429,13 +415,116 @@ pub fn ingest_with_dicom_parser(
                         name,
                         status,
                         doc_type: Some(doc_type),
+                        pages_without_text: Vec::new(),
                     })
                 }
                 // OCR 失败/空:退回「已存但无文本」(见 `store_no_text`)。
-                _ => store_no_text(vault, sid, &name),
+                _ => store_no_text(vault, sid, &name, 1),
             }
         }
     }
+}
+
+/// PDF 专用导入分支:逐页判定文本层(不再对整份文档拼接后的字符数判定)。
+///
+/// **修的缺陷**:旧版本把 `parser::extract` 抽出的**整份文档**文本长度拿去和
+/// `MIN_TEXT_LAYER_LEN` 比——一份"第 1 页是打印文本、后面几页是扫描图片"的
+/// 混合页 PDF(常见于出院小结附检验报告扫描件),因为第 1 页贡献的文本已经
+/// 远超阈值,整篇被当成"有文本层"处理,后续扫描页**从未进入 OCR 分支**,UI
+/// 却照样报"已识别入库"——用户永久丢失那几页内容而不自知。现在按页判定:
+/// 每页各自检查有没有可用文本层,没有的页各自尝试 OCR(`ocr::recognize_pdf_mixed`)。
+///
+/// **不静默**:任何一页最终既没有文本层、也没能 OCR 出文本(无可 OCR 图片 /
+/// OCR 失败或为空 / 触达 `MAX_OCR_PAGE_IMAGES` 页数上限),其页码进
+/// `IngestOutcome::pages_without_text`——调用方(尤其移动端 UI)必须显式告知
+/// 用户"这些页未能识别",不能让人以为整份都读了。桌面/CLI 目前还没有对应的
+/// UI 横幅(不在本次改动范围),至少落一条 `eprintln!` 留痕。
+fn ingest_pdf(
+    vault: &Vault,
+    sid: i64,
+    name: &str,
+    bytes: &[u8],
+    deduped: bool,
+) -> anyhow::Result<IngestOutcome> {
+    let mixed = match ocr::recognize_pdf_mixed(bytes) {
+        Ok(m) => m,
+        // 连 lopdf 都解析不了(畸形/损坏 PDF):和旧版行为一致——不致命,退回
+        // 「已存但无文本」而不是让整次 ingest 报错(原文件已进 CAS,时间线仍
+        // 可见,留待后续处理)。页数未知,沿用非 PDF 分支的默认值 1。
+        Err(e) => {
+            eprintln!("ingest_pdf: {name}: failed to parse PDF, storing without text: {e:#}");
+            return store_no_text(vault, sid, name, 1);
+        }
+    };
+    let pages_without_text = mixed.unrecognized_pages();
+    if !pages_without_text.is_empty() {
+        eprintln!(
+            "ingest_pdf: {name}: {} page(s) had no usable text layer and could not be OCR'd: {pages_without_text:?}",
+            pages_without_text.len()
+        );
+    }
+    let text = mixed.text();
+    if text.trim().is_empty() {
+        // 一页可用文本都没拿到:和旧版"扫描 PDF 全篇无文本"行为一致(#55)——
+        // 降级为 StoredNoText 而非建一个空文档冒充成功,但页数如实带上真实
+        // page_count(不再退化成 1),且仍把 pages_without_text 带回去,供
+        // 移动端后续针对性补 OCR。
+        let mut outcome = store_no_text(vault, sid, name, mixed.page_count())?;
+        outcome.pages_without_text = pages_without_text;
+        return Ok(outcome);
+    }
+    let doc_type = parser::classify(&text);
+    let (doc_date, doc_date_end) = parser::guess_date_range(&text);
+    let doc = vault.add_document(NewDocument {
+        source_file_id: sid,
+        doc_type: doc_type.clone(),
+        doc_date,
+        doc_date_end,
+        title: Some(name.to_string()),
+        language: parser::detect_language(&text),
+        page_count: mixed.page_count(),
+    })?;
+    for page in &mixed.pages {
+        let (page_text, backend, model_version, confidence): (
+            &str,
+            OcrBackendKind,
+            &str,
+            Option<f32>,
+        ) = match &page.result {
+            ocr::PdfPageText::TextLayer(t) => (t, OcrBackendKind::Native, "text-layer", None),
+            ocr::PdfPageText::Ocr {
+                text,
+                confidence,
+                backend,
+            } => {
+                let (backend, model_version) = ocr_provenance(*backend);
+                (text, backend, model_version, Some(*confidence))
+            }
+            // 没恢复出文本的页不落 ocr_result 行——`pages_without_text` 已经
+            // 如实带出了它的页码,没必要在这里再造一条空/占位记录。
+            ocr::PdfPageText::Unrecognized => continue,
+        };
+        vault.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no: page.page_no,
+            backend,
+            model_version: model_version.to_string(),
+            text: page_text.to_string(),
+            confidence,
+        })?;
+    }
+    let status = if deduped {
+        IngestStatus::Backfilled
+    } else {
+        IngestStatus::New
+    };
+    Ok(IngestOutcome {
+        source_file_id: sid,
+        name: name.to_string(),
+        status,
+        doc_type: Some(doc_type),
+        pages_without_text,
+    })
 }
 
 pub struct PatientProfile {
@@ -568,6 +657,128 @@ trailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n";
         let tl = v.timeline().unwrap();
         assert_eq!(tl.len(), 1);
         assert_eq!(v.ocr_text(tl[0].document_id).unwrap(), "");
+    }
+
+    /// Hand-builds a real 2-page PDF: page 1 has an actual (Helvetica) text
+    /// layer long enough to clear `MIN_TEXT_LAYER_LEN` on its own; page 2 is
+    /// blank -- no text, no embedded image, i.e. genuinely nothing to
+    /// recover. Mirrors a real "printed page 1 + appended scan" discharge
+    /// summary, minus the scan itself (kept dependency-free: JPEG/`image`
+    /// isn't otherwise a `pipeline` dependency, and a genuinely-unrecoverable
+    /// page reproduces the silent-drop defect just as well as a
+    /// scanned-image page would -- see the test using this).
+    fn build_two_page_pdf_second_page_blank() -> Vec<u8> {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Document as LoDocument, Object, Stream};
+
+        let mut doc = LoDocument::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id },
+        });
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Td", vec![20.into(), 700.into()]),
+                Operation::new(
+                    "Tj",
+                    vec![Object::string_literal(
+                        "Discharge summary printed page one clinical text",
+                    )],
+                ),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(
+            dictionary! {},
+            content.encode().expect("encode content stream"),
+        ));
+        let page1_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+            "Resources" => resources_id,
+        });
+        // Page 2: blank -- no Contents, no image. Nothing recoverable, which
+        // is exactly the case that must be *reported*, not swallowed.
+        let page2_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page1_id.into(), page2_id.into()],
+                "Count" => 2,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save PDF");
+        bytes
+    }
+
+    /// **Reproduces the mixed-page-PDF silent-data-loss defect this file's
+    /// `ingest_pdf` split fixes.** A document whose page 1 has a real
+    /// printed text layer and whose page 2 has nothing recoverable used to
+    /// be judged by the *whole document's concatenated* text length: page 1
+    /// alone cleared the old `MIN_TEXT_LAYER_LEN` check, so the document was
+    /// accepted as "fully has a text layer" and page 2 was never even looked
+    /// at. Result: `IngestStatus::New` (UI reports success), `page_count`
+    /// wrong (the dead form-feed heuristic always says 1 -- see
+    /// `ocr::MIN_TEXT_LAYER_LEN`'s doc comment), and *zero* signal anywhere
+    /// that page 2's content never made it in.
+    ///
+    /// Run this against `origin/main` (pre-fix): it fails to compile, because
+    /// `IngestOutcome` has no `pages_without_text` field there -- the field
+    /// itself is part of the fix (undetectable data loss can't be asserted
+    /// against without something to assert on). After the fix: page count is
+    /// accurate and page 2 is explicitly named as unrecognized rather than
+    /// silently dropped.
+    #[test]
+    fn mixed_page_pdf_reports_unreadable_pages_instead_of_silently_dropping_them() {
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let p = fdir.path().join("2026-01-10_出院小结_混合页.pdf");
+        std::fs::write(&p, build_two_page_pdf_second_page_blank()).unwrap();
+
+        let o = ingest(&v, &p).unwrap();
+        // Page 1's real text is enough to make this a genuine, useful
+        // document -- not StoredNoText.
+        assert_eq!(o.status, IngestStatus::New);
+        // The crux of the fix: page 2 must be named, not swallowed.
+        assert_eq!(
+            o.pages_without_text,
+            vec![2],
+            "page 2 has no text layer and no OCR-able image -- must be reported, not silently dropped"
+        );
+
+        let tl = v.timeline().unwrap();
+        assert_eq!(tl.len(), 1);
+        let doc = v.document_by_id(tl[0].document_id).unwrap().unwrap();
+        assert_eq!(
+            doc.page_count, 2,
+            "page count must reflect both pages, not the dead form-feed heuristic's stuck-at-1"
+        );
+        // Page 1's text made it in; nothing fabricated for page 2.
+        let text = v.ocr_text(tl[0].document_id).unwrap();
+        assert!(
+            text.contains("Discharge summary"),
+            "page 1 text missing: {text}"
+        );
     }
 
     /// .dcm 走独立分支:元数据(非 OCR)驱动 doc_type/日期/标题,原文件+摘要

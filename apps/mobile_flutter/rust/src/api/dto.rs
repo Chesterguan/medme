@@ -128,6 +128,13 @@ pub struct ImportOutcomeDto {
     /// 前端用它和当前成员档案名字比对——不一致就在「待确认」里标红警告(防导错人)。
     /// 识别不到为 None。
     pub detected_name: Option<String>,
+    /// PDF 专属(其他文件类型恒为空):1-based 页码,列出既没有文本层、也没能
+    /// 在落库时 OCR 出文字的页(移动端未链接 Rust OCR 引擎,这里几乎总是非空的
+    /// "待处理"清单)。前端**必须**据此显式提示用户,不能让人以为整份 PDF 都
+    /// 识别完了——这正是"混合页 PDF 静默丢数据"缺陷的修复点(见
+    /// `pipeline::ingest_pdf` 文档注释)。`import_flow.dart` 用它驱动逐页 OCR
+    /// 回填(`backfillPdfText`),回填后仍剩的页数进导入汇总弹窗。
+    pub pages_without_text: Vec<i32>,
 }
 
 /// **iOS PP-OCRv5 测试路径**结果(feat/ios-pp-ocr-test 分支,探索性——ADR 0005

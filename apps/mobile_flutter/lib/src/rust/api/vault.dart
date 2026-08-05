@@ -92,19 +92,26 @@ Future<ImportOutcomeDto> ingestBytes({
   data: data,
 );
 
-/// 扫描版 PDF 的 OCR 回填。`ingest_bytes` 对无文本层的 PDF 只 `store_no_text`
-/// (移动端未链接 Rust OCR 引擎),文档已存但无文字。Flutter 侧用 `pdfx` 逐页把
-/// PDF 渲染成 PNG、走原生图片 OCR(iOS Vision / 安卓 ML Kit)拿到文本后,调本函数
-/// 把文本补进该已存文档,使其可搜索、进 summary。
+/// 扫描版 PDF 的逐页 OCR 回填。`ingest_bytes`/`ingest_pdf`(Rust pipeline)对
+/// 缺文本层的页只能给出 `IngestOutcome::pages_without_text`(移动端未链接 Rust
+/// OCR 引擎,那些页落库时压根没能 OCR),文档可能已建好(部分页有文本层)、也
+/// 可能整份 `stored_no_text`(一页可用文本都没有)。Flutter 侧用 `pdfx` 把
+/// `pages_without_text` 里点名的那些页逐一渲染成 PNG、走原生图片 OCR(iOS
+/// Vision / 安卓 ML Kit)拿到文本后,逐页调本函数把文本补进该文档。
 ///
-/// 只补 `ocr_result`;`doc_type` 暂沿用建档时的文件名分类(用 OCR 文本重分类属质量
-/// 提升,另做)。文本为空则报错(调用方不应回填空)。
+/// `page_no` 是 1-based、对应 PDF 里的真实页码(与 `pages_without_text` 的口径
+/// 一致)——不再固定写 1:一份文档现在可能有多条 `ocr_result`(每页一条,
+/// `core_model::Vault::add_ocr` 按 `(document_id, page_no)` 天然去重/幂等),
+/// `ocr_text` 读取时按页码拼接。只补 `ocr_result`;`doc_type` 暂沿用建档时的
+/// 分类(用 OCR 文本重分类属质量提升,另做)。文本为空则报错(调用方不应回填空)。
 Future<void> backfillPdfText({
   required PlatformInt64 documentId,
+  required int pageNo,
   required String text,
   required double confidence,
 }) => RustLib.instance.api.crateApiVaultBackfillPdfText(
   documentId: documentId,
+  pageNo: pageNo,
   text: text,
   confidence: confidence,
 );

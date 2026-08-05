@@ -21,3 +21,7 @@ chrono.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Only for hand-building a minimal real PDF in the mixed-page-PDF regression
+# test (packages/ocr already depends on lopdf for the same reason at
+# runtime; this is test-only here).
+lopdf.workspace = true

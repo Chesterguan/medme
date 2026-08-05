@@ -391,6 +391,7 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 doc_type: o.doc_type.map(|d| d.as_str().to_string()),
                 document_id,
                 detected_name,
+                pages_without_text: o.pages_without_text,
             }
         }
         Err(e) => {
@@ -406,6 +407,7 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 doc_type: None,
                 document_id: None,
                 detected_name: None,
+                pages_without_text: Vec::new(),
             }
         }
     }
@@ -465,14 +467,24 @@ pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOut
     })
 }
 
-/// 扫描版 PDF 的 OCR 回填。`ingest_bytes` 对无文本层的 PDF 只 `store_no_text`
-/// (移动端未链接 Rust OCR 引擎),文档已存但无文字。Flutter 侧用 `pdfx` 逐页把
-/// PDF 渲染成 PNG、走原生图片 OCR(iOS Vision / 安卓 ML Kit)拿到文本后,调本函数
-/// 把文本补进该已存文档,使其可搜索、进 summary。
+/// 扫描版 PDF 的逐页 OCR 回填。`ingest_bytes`/`ingest_pdf`(Rust pipeline)对
+/// 缺文本层的页只能给出 `IngestOutcome::pages_without_text`(移动端未链接 Rust
+/// OCR 引擎,那些页落库时压根没能 OCR),文档可能已建好(部分页有文本层)、也
+/// 可能整份 `stored_no_text`(一页可用文本都没有)。Flutter 侧用 `pdfx` 把
+/// `pages_without_text` 里点名的那些页逐一渲染成 PNG、走原生图片 OCR(iOS
+/// Vision / 安卓 ML Kit)拿到文本后,逐页调本函数把文本补进该文档。
 ///
-/// 只补 `ocr_result`;`doc_type` 暂沿用建档时的文件名分类(用 OCR 文本重分类属质量
-/// 提升,另做)。文本为空则报错(调用方不应回填空)。
-pub fn backfill_pdf_text(document_id: i64, text: String, confidence: f64) -> anyhow::Result<()> {
+/// `page_no` 是 1-based、对应 PDF 里的真实页码(与 `pages_without_text` 的口径
+/// 一致)——不再固定写 1:一份文档现在可能有多条 `ocr_result`(每页一条,
+/// `core_model::Vault::add_ocr` 按 `(document_id, page_no)` 天然去重/幂等),
+/// `ocr_text` 读取时按页码拼接。只补 `ocr_result`;`doc_type` 暂沿用建档时的
+/// 分类(用 OCR 文本重分类属质量提升,另做)。文本为空则报错(调用方不应回填空)。
+pub fn backfill_pdf_text(
+    document_id: i64,
+    page_no: i32,
+    text: String,
+    confidence: f64,
+) -> anyhow::Result<()> {
     let text = text.trim().to_string();
     if text.is_empty() {
         anyhow::bail!("回填文本为空,拒绝");
@@ -482,7 +494,7 @@ pub fn backfill_pdf_text(document_id: i64, text: String, confidence: f64) -> any
             .vault
             .add_ocr(NewOcr {
                 document_id,
-                page_no: 1,
+                page_no,
                 backend: MOBILE_OCR_BACKEND,
                 model_version: MOBILE_OCR_MODEL.into(),
                 text,
@@ -545,6 +557,7 @@ pub fn ingest_image_with_text(
                 doc_type: None,
                 document_id: None,
                 detected_name: None,
+                pages_without_text: Vec::new(),
             }
         } else {
             let text = ocr_text.trim().to_string();
@@ -579,6 +592,7 @@ pub fn ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: parser::extract_demographics(&text).name,
+                    pages_without_text: Vec::new(),
                 }
             } else {
                 let (doc_date, doc_date_end) = parser::guess_date_range(&safe_name);
@@ -601,6 +615,7 @@ pub fn ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: None, // 无文本,识别不到名字
+                    pages_without_text: Vec::new(),
                 }
             }
         };
