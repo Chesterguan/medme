@@ -35,6 +35,10 @@ Future<ImportOutcomeDto> ephemeralIngestBytes({
 /// ML Kit——识别好文本):与 `vault.rs::ingest_image_with_text` 同落库语义
 /// (逐段复制),落临时会话箱。**本函数不碰任何 OCR 逻辑**,只接收调用方已识别好
 /// 的文本 + 置信度。
+///
+/// 多页原件(多页 TIFF)的页数/漏页上报同样逐段复制自 `vault.rs`
+/// (本文件与它零共享代码是刻意的,见模块头注释):Vision/ML Kit 只识别第一帧,
+/// 故 `ocr_text` 永远只有第 1 页,其余页如实点名而不是冒充「整份都读了」。
 Future<ImportOutcomeDto> ephemeralIngestImageWithText({
   required String name,
   required List<int> bytes,

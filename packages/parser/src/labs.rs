@@ -94,9 +94,38 @@
 //!   can fabricate a row.
 //! - A row-number-glued name is only recovered when the line is otherwise
 //!   bare — see "Row number glued to the name" above.
-//! - Reference ranges are parsed/stored in the RAW reporting unit only; the
-//!   struct has no canonical-ref fields, so refs are compared against the raw
-//!   value (same unit) for flagging and left un-converted.
+//!
+//! ## 参考区间也换算(2026-08-05,推翻本模块此前一条既定决定)
+//!
+//! **旧决定(此处逐字保留,不是删掉):**「Reference ranges are parsed/stored in
+//! the RAW reporting unit only; the struct has no canonical-ref fields, so refs
+//! are compared against the raw value (same unit) for flagging and left
+//! un-converted.」
+//!
+//! 旧决定在本模块内部是自洽的(flag 用印刷值比印刷区间,同单位,永远对),但它
+//! 把一个**半截状态**交给了下游:`value_canonical` 换过、`ref_low`/`ref_high`
+//! 没换。凡是「拿值和区间比」的下游都会算错 —— 实测 `肌酐: 1.2 mg/dL (参考
+//! 0.6-1.3)`,`value_canonical = 106.104 umol/L` 配 `ref = [0.6, 1.3] mg/dL`,
+//! 托管查看器(`web/hosted-viewer/index.html` 的 `sumFlag`)据此算出「高出上限
+//! 80 倍」,而同一份载荷里 `warn: false`,自相矛盾。
+//!
+//! **新契约:值和区间必须成对、同单位,一共两套,各自内部自洽,永不交叉。**
+//!
+//! | 套 | 值 | 单位 | 区间 |
+//! |---|---|---|---|
+//! | 印刷(paper) | `value_num` | `unit_raw` | `ref_low` / `ref_high` |
+//! | 规范(canonical,锚) | `value_canonical` | `unit_canonical` | `ref_low_canonical` / `ref_high_canonical` |
+//!
+//! 两套用**同一个**仿射映射 `y = slope * x + intercept` 生成(值和两个界值走同一
+//! 行 `UnitConversion`),所以要么两套都有、要么规范那套整体为 `None`,不存在
+//! 「值换了区间没换」。词典里全部 `slope > 0`(见
+//! `dictionary_slopes_are_all_positive` 测试),仿射严格单调递增 ⇒ low/high 不需
+//! 互换,且 `flag` 在两套单位下**可证明相同**(见
+//! `flag_is_identical_under_canonical_conversion`)。`slope <= 0` 时本模块拒绝换
+//! 算(规范那套整体留空),而不是产出一个上下颠倒的区间。
+//!
+//! 「哪一层显示哪一套」不由本模块决定 —— 本模块只保证两套都在、都自洽。选哪一套
+//! 显示是 `aggregate.rs` 的职责(见那里的「哪一层用哪一套单位」表)。
 
 use regex::Regex;
 use std::sync::OnceLock;
@@ -114,9 +143,19 @@ pub struct LabObservation {
     pub value_canonical: Option<f64>,
     pub unit_raw: Option<String>,
     pub unit_canonical: Option<String>,
+    /// 参考区间,**印刷单位**(`unit_raw`)—— 报告上逐字印的那一对。
     pub ref_low: Option<f64>,
     pub ref_high: Option<f64>,
+    /// 参考区间,**规范单位**(`unit_canonical`)。与 `value_canonical` 用同一行
+    /// `UnitConversion`、同一个仿射映射生成,故三者恒同单位;换算不可用时三者
+    /// 一起为 `None`。见模块头「参考区间也换算」一节。
+    pub ref_low_canonical: Option<f64>,
+    pub ref_high_canonical: Option<f64>,
     /// "H" | "L" | "N": explicit ↑/↓/H/L marker if present, else value-vs-ref.
+    ///
+    /// 用**印刷值比印刷区间**算(同单位)。因换算是严格单调递增的仿射映射,拿
+    /// `value_canonical` 比 `ref_*_canonical` 得到的结论完全相同 —— 两套单位下
+    /// flag 唯一,不需要也不该有第二个 flag 字段。
     pub flag: Option<String>,
     /// 0.0 if unmatched; else the terminology `Match.confidence`.
     pub confidence: f32,
@@ -762,6 +801,13 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
 }
 
 /// What one line of the report turned into.
+///
+/// `Row` 明显比另外两个变体大(`LabObservation` 有十几个字段),clippy 的
+/// `large_enum_variant` 因此建议 `Box` 起来。这里**不 Box**:这个枚举的生命周期
+/// 只有「产出 → 立刻 match 掉」这么长(见 `extract_labs_with_unreadable` 的循环),
+/// 从不进集合、不跨线程、不长期持有;为它每行做一次堆分配,是拿真实开销换一个
+/// 这里不存在的问题。
+#[allow(clippy::large_enum_variant)]
 enum LineOutcome {
     /// A readable lab row.
     Row(LabObservation),
@@ -1023,14 +1069,28 @@ fn parse_line(raw_line: &str) -> LineOutcome {
     }
 
     // Canonical conversion (only when matched AND the entry knows this unit).
+    // 值和参考区间的两个界值走**同一行** `UnitConversion`、**同一个**仿射映射:
+    // 规范那一套要么整体产出、要么整体留空,不存在「值换了区间没换」——
+    // 见模块头「参考区间也换算」。
     let mut value_canonical = None;
     let mut unit_canonical = None;
+    let mut ref_low_canonical = None;
+    let mut ref_high_canonical = None;
     if let (Some(m), Some(u)) = (&m, &unit_raw) {
         if let Some(entry) = dictionary_entries().iter().find(|e| e.key == m.key) {
             let nu = normalize_unit(u);
             if let Some(conv) = entry.units.iter().find(|c| normalize_unit(&c.unit) == nu) {
-                value_canonical = Some(conv.slope * value_num + conv.intercept);
-                unit_canonical = entry.canonical_unit.clone();
+                // `slope <= 0` 会让映射单调递减,low/high 的含义互换。词典里目前
+                // 一条都没有(`dictionary_slopes_are_all_positive` 守着),真出现
+                // 时**拒绝换算**(规范那套整体留空)而不是产出一个上下颠倒的
+                // 区间 —— 一个颠倒的区间比没有区间危险得多。
+                if conv.slope > 0.0 {
+                    let to_canonical = |x: f64| conv.slope * x + conv.intercept;
+                    value_canonical = Some(to_canonical(value_num));
+                    ref_low_canonical = ref_low.map(to_canonical);
+                    ref_high_canonical = ref_high.map(to_canonical);
+                    unit_canonical = entry.canonical_unit.clone();
+                }
             }
         }
     }
@@ -1059,6 +1119,8 @@ fn parse_line(raw_line: &str) -> LineOutcome {
         unit_canonical,
         ref_low,
         ref_high,
+        ref_low_canonical,
+        ref_high_canonical,
         flag,
         confidence: m.as_ref().map_or(0.0, |m| m.confidence),
         self_measured: false,
@@ -1229,6 +1291,84 @@ GLU        空腹血糖 Glucose       7.1      mmol/L      3.9 - 6.1       ↑
         assert_eq!(cr.unit_canonical.as_deref(), Some("umol/L"));
         let vc = cr.value_canonical.expect("mg/dL must convert");
         assert!((vc - 106.104).abs() < 0.01, "got {vc}");
+    }
+
+    /// 缺陷钉子(2026-08-05):值换算了、参考区间没换,下游拿到一对**单位不一致**
+    /// 的数。实测 `肌酐: 1.2 mg/dL (参考 0.6-1.3)` 曾产出
+    /// `value_canonical=106.104 umol/L` 配 `ref=[0.6,1.3] mg/dL`。
+    #[test]
+    fn mgdl_ref_range_converts_alongside_the_value() {
+        let text = "肌酐: 1.2 mg/dL (参考 0.6-1.3)";
+        let obs = extract_labs(text);
+        let cr = find(&obs, "creatinine");
+        // 印刷套:逐字保留,一个字都不动。
+        assert_eq!(cr.value_num, 1.2);
+        assert_eq!(cr.unit_raw.as_deref(), Some("mg/dL"));
+        assert_eq!(cr.ref_low, Some(0.6));
+        assert_eq!(cr.ref_high, Some(1.3));
+        // 规范套:值和两个界值走同一个仿射映射(×88.42)。
+        let lo = cr.ref_low_canonical.expect("ref_low must convert too");
+        let hi = cr.ref_high_canonical.expect("ref_high must convert too");
+        assert!((lo - 53.052).abs() < 0.01, "ref_low_canonical = {lo}");
+        assert!((hi - 114.946).abs() < 0.01, "ref_high_canonical = {hi}");
+        // 硬不变量:规范套三者同在同缺 —— 不许出现「值换了区间没换」。
+        assert_eq!(
+            cr.value_canonical.is_some(),
+            cr.ref_low_canonical.is_some(),
+            "value/ref canonical must appear together"
+        );
+        // 换算后 106.104 仍落在 [53.05, 114.95] 内 —— 与印刷套同一个结论。
+        assert_eq!(cr.flag.as_deref(), Some("N"));
+    }
+
+    /// 换算是仿射的;`slope > 0` 时严格单调递增,low/high 不需互换,且 flag 在两套
+    /// 单位下**可证明相同**。这条不变量是整套「印刷套/规范套」设计的地基,词典一旦
+    /// 加进一条负斜率(理论上不存在,但没人拦着)就必须先来这里改设计。
+    #[test]
+    fn dictionary_slopes_are_all_positive() {
+        let bad: Vec<_> = dictionary_entries()
+            .iter()
+            .flat_map(|e| e.units.iter().map(move |u| (&e.key, u)))
+            .filter(|(_, u)| u.slope <= 0.0)
+            .map(|(k, u)| format!("{k}/{} slope={}", u.unit, u.slope))
+            .collect();
+        assert!(bad.is_empty(), "non-positive slopes: {bad:?}");
+    }
+
+    /// 词典里**每一条**非恒等换算都验一遍:印刷值比印刷区间、规范值比规范区间,
+    /// 两者得出的 H/L/N 恒等。这是「flag 只存一份」这个决定的凭据。
+    #[test]
+    fn flag_is_identical_under_canonical_conversion() {
+        let cmp = |v: f64, lo: f64, hi: f64| {
+            if v > hi {
+                "H"
+            } else if v < lo {
+                "L"
+            } else {
+                "N"
+            }
+        };
+        let mut checked = 0usize;
+        for e in dictionary_entries() {
+            for c in &e.units {
+                let map = |x: f64| c.slope * x + c.intercept;
+                // 区间 [10, 20],取带内/带外/正好压线四类探针。
+                let (lo, hi) = (10.0_f64, 20.0_f64);
+                for v in [-5.0, 0.0, 9.999, 10.0, 15.0, 20.0, 20.001, 100.0] {
+                    assert_eq!(
+                        cmp(v, lo, hi),
+                        cmp(map(v), map(lo), map(hi)),
+                        "{}/{}: flag flipped for v={v} (slope={}, intercept={})",
+                        e.key,
+                        c.unit,
+                        c.slope,
+                        c.intercept
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 1000, "expected a real sweep, checked {checked}");
     }
 
     #[test]

@@ -57,6 +57,7 @@ TrendSeriesDto series(List<TrendPointDto> points, {double? lo, double? hi}) =>
       unit: 'umol/L',
       refLow: lo,
       refHigh: hi,
+      valuesConverted: false,
       // 与 Rust 侧 `aggregate.rs` 的 `abnormal` 同一条判据:只认 H/L。夹具里若写
       // `flag != null`,将来有人喂一个印着 `N`(正常)的点进来,这里就会静默把它
       // 标成异常,测试跟着假绿。
@@ -277,6 +278,7 @@ void main() {
         TrendSeriesDto(
           name: name,
           unit: 'umol/L',
+          valuesConverted: false,
           anyAbnormal: abnormal,
           panel: panel,
           points: [pt('2024-03-01', 1)],
@@ -324,6 +326,7 @@ void main() {
         TrendSeriesDto(
           name: name,
           unit: 'umol/L',
+          valuesConverted: false,
           anyAbnormal: abnormal,
           panel: panel,
           points: [pt('2024-03-01', 1)],
@@ -437,6 +440,7 @@ void main() {
     TrendSeriesDto s({required bool self}) => TrendSeriesDto(
       name: '收缩压',
       unit: 'mmHg',
+      valuesConverted: false,
       anyAbnormal: true,
       refHigh: 135,
       panel: '生命体征',
@@ -456,6 +460,45 @@ void main() {
         wrap(SeriesCard(series: s(self: false), onOpenDoc: (_) {})),
       );
       expect(find.text('家测'), findsNothing);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  group('趋势:换算过的序列必须说出来', () {
+    // 常态下屏幕上的数值/单位/参考区间就是化验单上逐字印的那一套。只有同一指标
+    // 的几份报告用了不同单位、一条线上没法同时画两种单位时,Rust 才把值和区间
+    // 一起换到规范单位(`aggregate.rs` 的「哪一层用哪一套单位」②)。那一刻用户
+    // 在自己那张纸上找不到屏幕上这个数字 —— 不说出来等于改写原文。
+    TrendSeriesDto s({required bool converted}) => TrendSeriesDto(
+      name: '肌酐',
+      unit: converted ? 'umol/L' : 'mg/dL',
+      valuesConverted: converted,
+      anyAbnormal: false,
+      refLow: converted ? 59 : 0.6,
+      refHigh: converted ? 104 : 1.3,
+      panel: '肾功能',
+      selfMeasured: false,
+      points: [pt('2026-08-05', converted ? 96 : 1.2, flag: 'N')],
+    );
+
+    testWidgets('换算过 → 卡上出现「已统一换算为 umol/L」', (tester) async {
+      await tester.pumpWidget(
+        wrap(SeriesCard(series: s(converted: true), onOpenDoc: (_) {})),
+      );
+      expect(find.text('已统一换算为 umol/L'), findsOneWidget);
+    });
+
+    testWidgets('没换算 → 一个字都不许多说(那会让人以为数字被动过)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(SeriesCard(series: s(converted: false), onOpenDoc: (_) {})),
+      );
+      expect(find.textContaining('已统一换算'), findsNothing);
+      // 卡上就是纸上那一套:1.2 与 参考区间 0.6–1.3。
+      expect(find.text('1.2'), findsOneWidget);
+      expect(find.text('参考区间 0.6–1.3'), findsOneWidget);
+      expect(find.text('mg/dL'), findsOneWidget);
     });
   });
 

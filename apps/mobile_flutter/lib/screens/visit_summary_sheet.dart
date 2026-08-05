@@ -697,7 +697,13 @@ class _LabRow extends StatelessWidget {
       // 自测值(家测血压/血糖/体重/体温/心率)与医院值排在同一份「我最近的
       // 变化」里,靠这个标注分清"这是病人自己量的"——见 MANUAL-ENTRY-DESIGN.md,
       // 措辞与概览、趋势页复用同一个"· 家测"。
-      meta: lab.selfMeasured ? '${lab.date} · 家测' : lab.date,
+      // `valuesConverted` 见 `unitConvertedNote` —— 这一行的数值不是纸上印的那个
+      // 时必须标注,概览行(overview_screen)用同一份措辞。
+      meta: [
+        lab.date,
+        if (lab.selfMeasured) '家测',
+        if (lab.valuesConverted) unitConvertedNote(lab.unit),
+      ].join(' · '),
       onTap: () => onOpenDoc(lab.documentId),
     );
   }

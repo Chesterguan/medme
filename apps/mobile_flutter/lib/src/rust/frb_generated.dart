@@ -2541,8 +2541,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TrendSeriesDto dco_decode_trend_series_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return TrendSeriesDto(
       name: dco_decode_String(arr[0]),
       analyteKey: dco_decode_opt_String(arr[1]),
@@ -2550,10 +2550,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       unit: dco_decode_opt_String(arr[3]),
       refLow: dco_decode_opt_box_autoadd_f_64(arr[4]),
       refHigh: dco_decode_opt_box_autoadd_f_64(arr[5]),
-      anyAbnormal: dco_decode_bool(arr[6]),
-      panel: dco_decode_opt_String(arr[7]),
-      points: dco_decode_list_trend_point_dto(arr[8]),
-      selfMeasured: dco_decode_bool(arr[9]),
+      valuesConverted: dco_decode_bool(arr[6]),
+      anyAbnormal: dco_decode_bool(arr[7]),
+      panel: dco_decode_opt_String(arr[8]),
+      points: dco_decode_list_trend_point_dto(arr[9]),
+      selfMeasured: dco_decode_bool(arr[10]),
     );
   }
 
@@ -2573,8 +2574,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   VisitLabDto dco_decode_visit_lab_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 9)
-      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return VisitLabDto(
       name: dco_decode_String(arr[0]),
       date: dco_decode_String(arr[1]),
@@ -2583,8 +2584,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       flag: dco_decode_opt_String(arr[4]),
       refLow: dco_decode_opt_box_autoadd_f_64(arr[5]),
       refHigh: dco_decode_opt_box_autoadd_f_64(arr[6]),
-      documentId: dco_decode_i_64(arr[7]),
-      selfMeasured: dco_decode_bool(arr[8]),
+      valuesConverted: dco_decode_bool(arr[7]),
+      documentId: dco_decode_i_64(arr[8]),
+      selfMeasured: dco_decode_bool(arr[9]),
     );
   }
 
@@ -3508,6 +3510,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_unit = sse_decode_opt_String(deserializer);
     var var_refLow = sse_decode_opt_box_autoadd_f_64(deserializer);
     var var_refHigh = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_valuesConverted = sse_decode_bool(deserializer);
     var var_anyAbnormal = sse_decode_bool(deserializer);
     var var_panel = sse_decode_opt_String(deserializer);
     var var_points = sse_decode_list_trend_point_dto(deserializer);
@@ -3519,6 +3522,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       unit: var_unit,
       refLow: var_refLow,
       refHigh: var_refHigh,
+      valuesConverted: var_valuesConverted,
       anyAbnormal: var_anyAbnormal,
       panel: var_panel,
       points: var_points,
@@ -3547,6 +3551,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_flag = sse_decode_opt_String(deserializer);
     var var_refLow = sse_decode_opt_box_autoadd_f_64(deserializer);
     var var_refHigh = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_valuesConverted = sse_decode_bool(deserializer);
     var var_documentId = sse_decode_i_64(deserializer);
     var var_selfMeasured = sse_decode_bool(deserializer);
     return VisitLabDto(
@@ -3557,6 +3562,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       flag: var_flag,
       refLow: var_refLow,
       refHigh: var_refHigh,
+      valuesConverted: var_valuesConverted,
       documentId: var_documentId,
       selfMeasured: var_selfMeasured,
     );
@@ -4379,6 +4385,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.unit, serializer);
     sse_encode_opt_box_autoadd_f_64(self.refLow, serializer);
     sse_encode_opt_box_autoadd_f_64(self.refHigh, serializer);
+    sse_encode_bool(self.valuesConverted, serializer);
     sse_encode_bool(self.anyAbnormal, serializer);
     sse_encode_opt_String(self.panel, serializer);
     sse_encode_list_trend_point_dto(self.points, serializer);
@@ -4406,6 +4413,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.flag, serializer);
     sse_encode_opt_box_autoadd_f_64(self.refLow, serializer);
     sse_encode_opt_box_autoadd_f_64(self.refHigh, serializer);
+    sse_encode_bool(self.valuesConverted, serializer);
     sse_encode_i_64(self.documentId, serializer);
     sse_encode_bool(self.selfMeasured, serializer);
   }

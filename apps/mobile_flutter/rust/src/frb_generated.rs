@@ -2762,6 +2762,7 @@ impl SseDecode for crate::api::vault_projections::TrendSeriesDto {
         let mut var_unit = <Option<String>>::sse_decode(deserializer);
         let mut var_refLow = <Option<f64>>::sse_decode(deserializer);
         let mut var_refHigh = <Option<f64>>::sse_decode(deserializer);
+        let mut var_valuesConverted = <bool>::sse_decode(deserializer);
         let mut var_anyAbnormal = <bool>::sse_decode(deserializer);
         let mut var_panel = <Option<String>>::sse_decode(deserializer);
         let mut var_points =
@@ -2774,6 +2775,7 @@ impl SseDecode for crate::api::vault_projections::TrendSeriesDto {
             unit: var_unit,
             ref_low: var_refLow,
             ref_high: var_refHigh,
+            values_converted: var_valuesConverted,
             any_abnormal: var_anyAbnormal,
             panel: var_panel,
             points: var_points,
@@ -2804,6 +2806,7 @@ impl SseDecode for crate::api::vault_projections::VisitLabDto {
         let mut var_flag = <Option<String>>::sse_decode(deserializer);
         let mut var_refLow = <Option<f64>>::sse_decode(deserializer);
         let mut var_refHigh = <Option<f64>>::sse_decode(deserializer);
+        let mut var_valuesConverted = <bool>::sse_decode(deserializer);
         let mut var_documentId = <i64>::sse_decode(deserializer);
         let mut var_selfMeasured = <bool>::sse_decode(deserializer);
         return crate::api::vault_projections::VisitLabDto {
@@ -2814,6 +2817,7 @@ impl SseDecode for crate::api::vault_projections::VisitLabDto {
             flag: var_flag,
             ref_low: var_refLow,
             ref_high: var_refHigh,
+            values_converted: var_valuesConverted,
             document_id: var_documentId,
             self_measured: var_selfMeasured,
         };
@@ -3683,6 +3687,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::TrendSerie
             self.unit.into_into_dart().into_dart(),
             self.ref_low.into_into_dart().into_dart(),
             self.ref_high.into_into_dart().into_dart(),
+            self.values_converted.into_into_dart().into_dart(),
             self.any_abnormal.into_into_dart().into_dart(),
             self.panel.into_into_dart().into_dart(),
             self.points.into_into_dart().into_dart(),
@@ -3713,6 +3718,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::VisitLabDt
             self.flag.into_into_dart().into_dart(),
             self.ref_low.into_into_dart().into_dart(),
             self.ref_high.into_into_dart().into_dart(),
+            self.values_converted.into_into_dart().into_dart(),
             self.document_id.into_into_dart().into_dart(),
             self.self_measured.into_into_dart().into_dart(),
         ]
@@ -4433,6 +4439,7 @@ impl SseEncode for crate::api::vault_projections::TrendSeriesDto {
         <Option<String>>::sse_encode(self.unit, serializer);
         <Option<f64>>::sse_encode(self.ref_low, serializer);
         <Option<f64>>::sse_encode(self.ref_high, serializer);
+        <bool>::sse_encode(self.values_converted, serializer);
         <bool>::sse_encode(self.any_abnormal, serializer);
         <Option<String>>::sse_encode(self.panel, serializer);
         <Vec<crate::api::vault_projections::TrendPointDto>>::sse_encode(self.points, serializer);
@@ -4462,6 +4469,7 @@ impl SseEncode for crate::api::vault_projections::VisitLabDto {
         <Option<String>>::sse_encode(self.flag, serializer);
         <Option<f64>>::sse_encode(self.ref_low, serializer);
         <Option<f64>>::sse_encode(self.ref_high, serializer);
+        <bool>::sse_encode(self.values_converted, serializer);
         <i64>::sse_encode(self.document_id, serializer);
         <bool>::sse_encode(self.self_measured, serializer);
     }

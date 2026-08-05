@@ -250,11 +250,25 @@ class TrendSeriesDto {
   final String? analyteKey;
   final String? loinc;
 
-  /// 序列级单位:取**最后一个点**的单位,与 `handoff::series_to_json` 同一取法
-  /// (同一指标跨报告单位可能不一致,故每个点自己也带 `unit`,以点为准)。
+  /// 序列级单位:取**最后一个点**的单位,与 `handoff::series_to_json` 同一取法。
+  ///
+  /// 单位是 `parser::aggregate` 定下的**显示基准**单位 —— 绝大多数情况就是化验单
+  /// 上逐字印的那个(患者要拿 app 上的数去核对手里那张纸);只有一条线上混了不同
+  /// 印刷单位时才是规范单位,此时 [`Self::values_converted`] 为 `true`。
+  /// 详见 `packages/parser/src/aggregate.rs` 模块头的「哪一层用哪一套单位」。
   final String? unit;
+
+  /// 参考区间,**与 [`TrendPointDto::value`] 同单位**(`parser` 侧的硬不变量:
+  /// 保证不了就整体留空)。UI 拿它画参考带 —— 带子和点必须同一个单位。
   final double? refLow;
   final double? refHigh;
+
+  /// 这条线上混了不同印刷单位,值和参考区间**已统一换算**到规范单位。
+  ///
+  /// `true` 时 UI **必须说出来**:用户在自己那张化验单上找不到屏幕上这个数字,
+  /// 不说等于改写原文(`docs/007` §2.1「原件永远可达」「不改写原文」)。
+  /// `false`(常态)= 屏幕上的数值/单位/区间就是纸上印的那一套。
+  final bool valuesConverted;
 
   /// 任一点被标记 H/L(`parser::AnalyteSeries::any_abnormal`)。
   final bool anyAbnormal;
@@ -285,6 +299,7 @@ class TrendSeriesDto {
     this.unit,
     this.refLow,
     this.refHigh,
+    required this.valuesConverted,
     required this.anyAbnormal,
     this.panel,
     required this.points,
@@ -299,6 +314,7 @@ class TrendSeriesDto {
       unit.hashCode ^
       refLow.hashCode ^
       refHigh.hashCode ^
+      valuesConverted.hashCode ^
       anyAbnormal.hashCode ^
       panel.hashCode ^
       points.hashCode ^
@@ -315,6 +331,7 @@ class TrendSeriesDto {
           unit == other.unit &&
           refLow == other.refLow &&
           refHigh == other.refHigh &&
+          valuesConverted == other.valuesConverted &&
           anyAbnormal == other.anyAbnormal &&
           panel == other.panel &&
           points == other.points &&
@@ -327,11 +344,18 @@ class VisitLabDto {
 
   /// `"YYYY-MM-DD"`。只收带日期的点,故必有值。
   final String date;
+
+  /// 值 / 单位 / 参考区间三者**同单位**,来自 `parser::aggregate` 定下的显示基准
+  /// (见那里的「哪一层用哪一套单位」)。常态下就是化验单上逐字印的那一套。
   final double value;
   final String? unit;
   final String? flag;
   final double? refLow;
   final double? refHigh;
+
+  /// 见 [`TrendSeriesDto::values_converted`] —— 同一份透传。`true` 时这一行的
+  /// 数值在患者手里那张纸上找不到,UI 必须标注「已统一换算」。
+  final bool valuesConverted;
   final PlatformInt64 documentId;
 
   /// 见 `TrendSeriesDto::self_measured` 的文档 —— 同一份透传,就诊单据此在
@@ -346,6 +370,7 @@ class VisitLabDto {
     this.flag,
     this.refLow,
     this.refHigh,
+    required this.valuesConverted,
     required this.documentId,
     required this.selfMeasured,
   });
@@ -359,6 +384,7 @@ class VisitLabDto {
       flag.hashCode ^
       refLow.hashCode ^
       refHigh.hashCode ^
+      valuesConverted.hashCode ^
       documentId.hashCode ^
       selfMeasured.hashCode;
 
@@ -374,6 +400,7 @@ class VisitLabDto {
           flag == other.flag &&
           refLow == other.refLow &&
           refHigh == other.refHigh &&
+          valuesConverted == other.valuesConverted &&
           documentId == other.documentId &&
           selfMeasured == other.selfMeasured;
 }
