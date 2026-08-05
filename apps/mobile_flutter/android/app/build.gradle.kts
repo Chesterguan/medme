@@ -85,9 +85,8 @@ android {
             }
 
             // **只打包 arm64-v8a。** CI 的 `--target-platform android-arm64` 只过滤
-            // Flutter 自己的产物(libflutter/libapp/librust_*),**管不到 AAR 带进来的
-            // jniLibs** —— 实测 release APK 里躺着 x86_64 与 armeabi-v7a 的 ML Kit
-            // (11.6 + 6.8 MB)和 dartjni,合计 18.6 MB 死重,arm64 机器永远不会加载。
+            // Flutter 自己的产物(libflutter/libapp/libc++_shared),**管不到 AAR 带
+            // 进来的 jniLibs**,也**管不到 cargokit** —— 后者按自己的清单编 Rust 库。
             // 我们本来就只发 arm64(PP-OCR 的 ort 预编译库与 libc++_shared 都只做了
             // arm64,见 rust/build.rs 与 rust_builder/android/JNILIBS_NOTES.md)。
             //
@@ -99,6 +98,31 @@ android {
             }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
         }
+    }
+}
+
+// release 包再补一道:把非 arm64 的 .so 直接排除在打包之外。
+//
+// **`ndk.abiFilters` 挡不住 cargokit。** 实测 1.6.0+54 的 release APK 里
+// `librust_lib_mobile_flutter.so` 三个 ABI 全在(arm64 57MB / v7a 14MB /
+// x86_64 18MB),而 `libflutter.so`、`libapp.so`、`libc++_shared.so` **只有
+// arm64** —— `--target-platform android-arm64` 管住了 Flutter 自己的产物,
+// cargokit 按自己的清单编,两道过滤都没拦住它。
+//
+// 后果不是「多几十 MB 死重」,是**装上就崩**:32 位手机看到 `lib/armeabi-v7a/`
+// 存在,就认定自己该用那一份,于是只解压 v7a 的库 —— 而那里面没有
+// `libflutter.so`,app 一启动就 UnsatisfiedLinkError。x86_64 同理。
+// 走蒲公英分发时,任何一台 32 位测试机拿到的都是一个必崩的包。
+//
+// 用变体 API 而不是 `--split-per-abi`:后者与上面的 `ndk.abiFilters` 冲突
+// (`Conflicting configuration : 'arm64-v8a' in ndk abiFilters cannot be present
+// when splits abi filters are set`),二选一的话 abiFilters 那道还得留着挡 AAR。
+// 只作用于 release,debug 的 x86_64 模拟器支持不受影响。
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.packaging.jniLibs.excludes.addAll(
+            listOf("lib/armeabi-v7a/**", "lib/x86/**", "lib/x86_64/**"),
+        )
     }
 }
 
