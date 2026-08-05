@@ -44,14 +44,25 @@ static MODEL_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// (`pp-ocrv5_mobile_det.onnx`, `pp-ocrv5_mobile_rec.onnx`, `ppocrv5_dict.txt`).
 ///
 /// For packaging the models next to the binary instead of auto-downloading
-/// them. In production, has no callers -- mobile does not use this crate (ADR
-/// 0005), and desktop/CLI auto-download. **Test-branch exception:**
-/// `feat/ios-pp-ocr-test`'s `apps/mobile_flutter/rust/src/api/vault.rs`
-/// (`ensure_pp_models_ready`) calls this to point at models it writes out of
-/// its own `include_bytes!`-embedded copies -- see that function for why (no
-/// writable `$OAR_HOME` in the iOS sandbox). Must be called before the first
-/// `recognize`/`recognize_pdf` call (the pipeline is built lazily on first use
-/// and cached). Idempotent: the first call wins; later calls are ignored.
+/// them. **This is the production path on mobile** (the doc comment used to
+/// say it had no callers -- that predates ADR 0006 / the Android PP-OCR
+/// switch): `apps/mobile_flutter/rust/src/api/vault.rs`'s
+/// `ensure_pp_models_ready` writes the three `include_bytes!`-embedded model
+/// files into the app sandbox and calls this, because there is no writable
+/// `$OAR_HOME` there and `auto-download` is off. Desktop/CLI leave it unset
+/// and auto-download into `~/.oar`.
+///
+/// Must be called before the first `recognize_*` call (the pipeline is built
+/// lazily on first use and cached). Idempotent: the first call wins; later
+/// calls are ignored.
+///
+/// ⚠️ **Ordering matters on mobile.** Anything that reaches the engine before
+/// `ensure_pp_models_ready` has run -- notably `pipeline::ingest_pdf` ->
+/// [`recognize_pdf_mixed`], which mobile hits on a PDF import without going
+/// through `recognize_image_pp` -- builds with bare file names, finds no
+/// models, and fails per page. That failure is non-fatal (those pages come
+/// back `Unrecognized` and are reported), but the OCR work is simply not
+/// done in Rust.
 #[cfg(feature = "engine")]
 pub fn set_model_dir(dir: PathBuf) {
     let _ = MODEL_DIR.set(dir);

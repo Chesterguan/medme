@@ -351,12 +351,6 @@ pub fn patient_profile() -> anyhow::Result<PatientProfileDto> {
     })
 }
 
-/// 跑一次 `pipeline::ingest` 并映射成 `ImportOutcomeDto`。抽取失败(扫描图等)
-/// 不致命——原文件已进 CAS,返回 status="failed" 让前端提示「未能识别」而非报错
-/// 崩溃。与 Tauri 版 `ingest_one` 同构,但不含 iOS Vision / 安卓 ML Kit 的分岔——
-/// Flutter 端已用 `google_mlkit_text_recognition` 识别好图片文本,走
-/// `ingest_image_with_text`,这里只处理 PDF/TXT/DICOM 等有文本层/结构化元数据的
-/// 文件类型(见 `docs/020_Flutter_Mobile_Rewrite.md` 的 OCR 分工)。
 /// 从一份文档的 OCR 文本里识别患者姓名(用于「导错人」核对)。读文本失败或识别不到返回 None。
 fn detected_name_for(v: &Vault, doc_id: i64) -> Option<String> {
     v.ocr_text(doc_id)
@@ -364,6 +358,15 @@ fn detected_name_for(v: &Vault, doc_id: i64) -> Option<String> {
         .and_then(|t| parser::extract_demographics(&t).name)
 }
 
+/// 跑一次 `pipeline::ingest` 并映射成 `ImportOutcomeDto`。抽取失败(扫描图等)
+/// 不致命——原文件已进 CAS,返回 status="failed" 让前端提示「未能识别」而非报错
+/// 崩溃。与 Tauri 版 `ingest_one` 同构。
+///
+/// 图片**不走这里**:Flutter 端先用 PP-OCRv5(`ocr_bridge.dart` →
+/// `recognize_image_pp`,iOS/安卓同引擎同模型)识别好文本,再走
+/// `ingest_image_with_text`。这里只处理 PDF/TXT/DICOM 等有文本层/结构化元数据的
+/// 文件类型。(旧注释写「安卓走 google_mlkit_text_recognition」,那条依赖早已
+/// 删除,别再据此推断。)
 fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
     // Panic firewall:parser/dicom 栈里的 panic 不能一路 unwind 穿过持锁的 Vault、
     // 污染共享 Mutex(与 Tauri 版 `ingest_one` 同一理由)。
@@ -473,11 +476,17 @@ pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOut
 }
 
 /// 扫描版 PDF 的逐页 OCR 回填。`ingest_bytes`/`ingest_pdf`(Rust pipeline)对
-/// 缺文本层的页只能给出 `IngestOutcome::pages_without_text`(移动端未链接 Rust
-/// OCR 引擎,那些页落库时压根没能 OCR),文档可能已建好(部分页有文本层)、也
-/// 可能整份 `stored_no_text`(一页可用文本都没有)。Flutter 侧用 `pdfx` 把
-/// `pages_without_text` 里点名的那些页逐一渲染成 PNG、走原生图片 OCR(iOS
-/// Vision / 安卓 ML Kit)拿到文本后,逐页调本函数把文本补进该文档。
+/// 没能恢复出文本的页给出 `IngestOutcome::pages_without_text`,文档可能已建好
+/// (部分页有文本层)、也可能整份 `stored_no_text`(一页可用文本都没有)。
+/// Flutter 侧用 `pdfx` 把这些页逐一渲染成 PNG、走 `recognizeImageText`
+/// (PP-OCRv5,iOS/安卓同一条路)拿到文本后,逐页调本函数补进该文档。
+///
+/// ⚠️ 旧注释说「移动端未链接 Rust OCR 引擎」——**已经不对了**:iOS 与 arm64
+/// 安卓都直接依赖 `packages/ocr` 的 `engine`,`pipeline::ingest_pdf` 在端上真的
+/// 会去调 PP-OCRv5。但 `ocr::set_model_dir` 只由 `ensure_pp_models_ready`
+/// (`recognize_image_pp` 的入口)设置,所以一次会话里**第一份**导入是 PDF 时
+/// 模型还没落盘,Rust 侧逐页 OCR 会全部失败、整份落到 `pages_without_text`,
+/// 全靠这条回填路径兜底。不是数据丢失(页码如实报了),但白跑一趟。
 ///
 /// `page_no` 是 1-based、对应 PDF 里的真实页码(与 `pages_without_text` 的口径
 /// 一致)——不再固定写 1:一份文档现在可能有多条 `ocr_result`(每页一条,
