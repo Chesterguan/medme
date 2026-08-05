@@ -197,13 +197,19 @@ class LabLine extends StatelessWidget {
                 children: [
                   // 名称 + pill 用 Wrap:系统字号放大后这一行必须能折,不能把
                   // 项目名省略成两个字(007 §2.5「字号可放大,不可砍」)。
+                  //
+                  // **pill 在名字前面**,不在后面。放后面时它是最后一个 Wrap 子项,
+                  // 名字一长就被挤到下一行甚至第三行 —— 真机(华为 Mate 9,
+                  // 逻辑 360×640)上「估算肾小球滤过率」那行就是这样一行变三行的。
+                  // 放前面它和左侧色条一样占恒定位置,不参与「挤不下就换行」的竞争;
+                  // 读起来也顺(先说结论再说是什么项目),而且和色条同侧、语义一致。
                   Wrap(
                     spacing: MedShape.s1,
                     runSpacing: 4,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Text(name, style: MedType.body.copyWith(color: c.ink)),
                       ?pill,
+                      Text(name, style: MedType.body.copyWith(color: c.ink)),
                     ],
                   ),
                   if (sub.isNotEmpty) ...[
@@ -220,15 +226,26 @@ class LabLine extends StatelessWidget {
               ),
             ),
             const SizedBox(width: MedShape.s2),
-            Text(
-              [
-                fmtLabNumber(value),
-                if (unit case final u? when u.isNotEmpty) u,
-              ].join(' '),
-              style: MedType.body.copyWith(
-                color: labStatusColor(context, status),
-                fontWeight: FontWeight.w600,
-                fontFeatures: MedType.tabular,
+            // **数值列必须可伸缩。** 原先它是个裸 `Text`,在 `Row` 里属于不可伸缩
+            // 子项 —— 先按自己的固有宽度占满,剩下的才轮到名称列。于是长单位
+            // (`ml/min/1.73m2`)配上放大的系统字号,就能反过来把名称列挤没,
+            // 把 pill 顶出当前行,最后 `RenderFlex` 横向溢出(卡片底边切掉内容)。
+            //
+            // 用 `Flexible` 而不是 `Expanded`:loose fit 让它在常见的短值
+            // (`405 umol/L`)上仍按固有宽度收窄、把余量还给名称列,只有真的放不下
+            // 时才折行。**不缩字号、不截断单位** —— 折行是这里唯一允许的退让。
+            Flexible(
+              child: Text(
+                [
+                  fmtLabNumber(value),
+                  if (unit case final u? when u.isNotEmpty) u,
+                ].join(' '),
+                textAlign: TextAlign.end,
+                style: MedType.body.copyWith(
+                  color: labStatusColor(context, status),
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: MedType.tabular,
+                ),
               ),
             ),
             if (onTap != null)
