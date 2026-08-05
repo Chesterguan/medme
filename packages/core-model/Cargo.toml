@@ -14,3 +14,5 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 regex.workspace = true
+# `text::normalize_cjk_radicals` 用 NFKC 折康熙部首(见那个模块的说明)。
+unicode-normalization = "0.1"
