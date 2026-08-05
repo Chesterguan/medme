@@ -36,6 +36,11 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // launcher 上的名字。默认值放在 `defaultConfig` 而不是逐个 buildType 写:
+        // Flutter 的 gradle 插件会自己加一个 `profile` buildType,只写 debug/release
+        // 的话 profile 构建会因为 manifest 里的 `${appLabel}` 解析不出来而挂掉。
+        // debug 覆盖成「医我 dev」,见下。
+        manifestPlaceholders["appLabel"] = "医我"
     }
 
     signingConfigs {
@@ -62,6 +67,11 @@ android {
             // 所以这个后缀没有额外损失。
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
+            // **图标名字也要区分,不然后缀等于白加。** 两个包在 launcher 上都叫
+            // 「医我」、图标一模一样,谁也分不出点的是哪个 —— 真实后果:清空模拟器
+            // 后两份都在,点进旧那份看到的是几个月前的界面(直角 banner、四宫格),
+            // 然后花时间去查一个不存在的回归。
+            manifestPlaceholders["appLabel"] = "医我 dev"
         }
         release {
             // 有正式 keystore 就用它,否则退回 debug 签名 —— 本地开发不必持有正式

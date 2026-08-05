@@ -248,11 +248,22 @@ class LabLine extends StatelessWidget {
                 chevronW;
             final sideBySide = needed <= box.maxWidth;
 
-            final head = Wrap(
-              spacing: MedShape.s1,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [?pill, nameText],
+            // pill 与名字**必须待在同一行里**,所以是 `Row` 而不是 `Wrap`。`Wrap` 在
+            // 宽度不够时会把名字甩到第二个 run,产出的形态是:
+            //
+            //     [N]                  2.75 mmol/L ›
+            //     低密度脂蛋白胆固醇
+            //
+            // pill 孤零零地跟数值待在一起,而它标注的那个名字在下一行 —— 一个飘着的
+            // 状态标记比没有标记更糟。名字用 `Flexible`:宽度真不够时它自己折行变高,
+            // pill 和数值都不动。
+            final head = Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (pill != null) ...[pill, const SizedBox(width: MedShape.s1)],
+                Flexible(child: nameText),
+              ],
             );
 
             // 次要说明行**两个分支都整宽**。它一度被放在并排分支左边那个 `Expanded`
@@ -270,13 +281,21 @@ class LabLine extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // 数值是**非 flex 子项**,这一点是有代价换来的:它和 `Expanded`
+                      // 的 head 都写成 flex 时,`RenderFlex` 会把可用宽度**对半分**
+                      // (两个 flex:1),而不是「数值取它需要的、剩下全给名字」。
+                      //
+                      // 411dp 上算出来:可用 ~375,减非 flex 的 8+20,余 347,对半
+                      // 各 ~173。而「[N] 低密度脂蛋白胆固醇」需要 ~196(名字 144 +
+                      // pill 44 + 间距 8)—— 差 23dp,于是名字被挤下去。360dp 的
+                      // 华为反而看不到:那边这一行走的是下面的窄分支。
+                      //
+                      // 非 flex 子项先按固有宽度布局,`Expanded` 拿剩下的全部,这才是
+                      // 想要的分配。上面的测量已经保证放得下;万一估偏了,head 里的
+                      // `Flexible(nameText)` 会让名字折行,pill 和数值仍在原位。
                       Expanded(child: head),
                       const SizedBox(width: MedShape.s2),
-                      // 上面的测量决定**布局形态**(并排还是分两行),这里的 `Flexible`
-                      // 是防估算误差的第二道:pill 宽度是保守估的,估小了就会仍然溢出。
-                      // 形态判对时它不生效(短值按固有宽度收窄),判错时它把横向溢出
-                      // 降级成折行 —— 难看但不是坏掉。
-                      Flexible(child: valueText),
+                      valueText,
                       ?chevron,
                     ],
                   ),
