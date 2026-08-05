@@ -494,6 +494,24 @@ class _RecentArchive extends StatelessWidget {
   }
 }
 
+/// 右侧那一列日期该不该渲染 —— 标题里已经带了就不重复。
+///
+/// 公开是为了可测:整屏 pump 需要 `viewVisitSummary()` 的 Rust FFI,测试环境没有
+/// 原生库。与 `manualEntryRangeError`、`SeriesCard` 同一先例。
+bool visitCardShowsDate({required String title, required String date}) =>
+    date.isNotEmpty && !title.contains(date);
+
+/// 副标题文案 —— 标题里已有的类型不重复,份数(多份时)照常给。全被涵盖时返回空串,
+/// 调用方据此整行不渲染。
+String visitCardDesc({
+  required String title,
+  required String kindLabel,
+  required int docCount,
+}) => [
+  if (!title.contains(kindLabel)) kindLabel,
+  if (docCount != 1) '$docCount 份记录',
+].join(' · ');
+
 class _VisitCard extends StatelessWidget {
   const _VisitCard({required this.visit, required this.onOpenDoc});
 
@@ -505,10 +523,25 @@ class _VisitCard extends StatelessWidget {
     final c = MedColors.of(context);
     final single = visit.documentIds.length == 1;
     final date = fmtDate(visit.date);
-    final desc = [
-      visitKindLabel(visit.kind),
-      if (!single) '${visit.documentIds.length} 份记录',
-    ].join(' · ');
+    final kindLabel = visitKindLabel(visit.kind);
+    final title = visit.title ?? kindLabel;
+
+    // **标题里已经有的东西不再重复说一遍。**
+    //
+    // 标题来自保险箱里的就诊组标题,而它常常已经把类型和日期都拼进去了
+    // (示例数据里就是 `门诊 · 2026-06-20`)。此前这里无条件在右侧再渲染一次日期、
+    // 在副标题里再渲染一次类型,于是一张卡把同样的信息说三遍:
+    //
+    //     门诊 · 2026-06-20        2026-06-20
+    //     门诊
+    //
+    // 三处各自都对,合起来是坏的。改成按标题的实际内容裁剪。
+    final showDate = visitCardShowsDate(title: title, date: date);
+    final desc = visitCardDesc(
+      title: title,
+      kindLabel: kindLabel,
+      docCount: visit.documentIds.length,
+    );
 
     return MedCard(
       perforated: single,
@@ -550,12 +583,12 @@ class _VisitCard extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              visit.title ?? visitKindLabel(visit.kind),
+                              title,
                               style: MedType.subtitle.copyWith(color: c.ink),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          if (date.isNotEmpty) ...[
+                          if (showDate) ...[
                             const SizedBox(width: MedShape.s1),
                             Text(
                               date,
@@ -567,11 +600,14 @@ class _VisitCard extends StatelessWidget {
                           ],
                         ],
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        desc,
-                        style: MedType.secondary.copyWith(color: c.ink2),
-                      ),
+                      // 全被标题涵盖时整行不渲染 —— 空的副标题只会留一道空隙。
+                      if (desc.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          desc,
+                          style: MedType.secondary.copyWith(color: c.ink2),
+                        ),
+                      ],
                     ],
                   ),
                 ),

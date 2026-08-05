@@ -188,69 +188,120 @@ class LabLine extends StatelessWidget {
           0,
           MedShape.s1,
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
+        child: LayoutBuilder(
+          builder: (context, box) {
+            final nameText = Text(
+              name,
+              style: MedType.body.copyWith(color: c.ink),
+            );
+            final valueText = Text(
+              [
+                fmtLabNumber(value),
+                if (unit case final u? when u.isNotEmpty) u,
+              ].join(' '),
+              style: MedType.body.copyWith(
+                color: labStatusColor(context, status),
+                fontWeight: FontWeight.w600,
+                fontFeatures: MedType.tabular,
+              ),
+            );
+            final subText = sub.isEmpty
+                ? null
+                : Text(
+                    sub,
+                    style: MedType.secondary.copyWith(
+                      color: c.ink3,
+                      fontFeatures: MedType.tabular,
+                    ),
+                  );
+            final chevron = onTap == null
+                ? null
+                : Icon(Icons.chevron_right, size: 20, color: c.ink3);
+
+            // 「名字 + pill + 数值」放不放得下同一行,**实测量,不猜**。
+            //
+            // 窄屏 + 长名 + 长单位(`估算肾小球滤过率` / `ml/min/1.73m2`)在任何
+            // 合理字号下本来就挤不进一行 —— 硬并排的结果是各种难看形态:pill 被
+            // 顶到独占一行、数值折成 `63 ml/min/` + `1.73m2`、名字被挤到第二行。
+            // 那些形态在「不溢出」的意义上都是合格的,看着却是坏的。
+            //
+            // 所以放不下时**改成为两行而设计**(名字+pill 一行,数值单独一行右对齐),
+            // 而不是继续挤。放得下时保持并排 —— 宽屏与短名不该白白多占一行。
+            // `Text('文字')` 把内容放在 `data`,`textSpan` 是 null —— 直接取
+            // `textSpan` 会 StateError。这里按 data + style 自己搭 span。
+            double probe(Text w) {
+              final tp = TextPainter(
+                text: TextSpan(text: w.data ?? '', style: w.style),
+                textDirection: Directionality.of(context),
+                textScaler: MediaQuery.textScalerOf(context),
+              )..layout(maxWidth: double.infinity);
+              return tp.width;
+            }
+            final pillW = pill == null ? 0.0 : 56.0; // pill 的保守估宽,宁可早换行
+            final chevronW = chevron == null ? 0.0 : 20.0;
+            final needed =
+                probe(nameText) +
+                pillW +
+                MedShape.s1 +
+                MedShape.s2 +
+                probe(valueText) +
+                chevronW;
+            final sideBySide = needed <= box.maxWidth;
+
+            final head = Wrap(
+              spacing: MedShape.s1,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [?pill, nameText],
+            );
+
+            if (sideBySide) {
+              return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 名称 + pill 用 Wrap:系统字号放大后这一行必须能折,不能把
-                  // 项目名省略成两个字(007 §2.5「字号可放大,不可砍」)。
-                  //
-                  // **pill 在名字前面**,不在后面。放后面时它是最后一个 Wrap 子项,
-                  // 名字一长就被挤到下一行甚至第三行 —— 真机(华为 Mate 9,
-                  // 逻辑 360×640)上「估算肾小球滤过率」那行就是这样一行变三行的。
-                  // 放前面它和左侧色条一样占恒定位置,不参与「挤不下就换行」的竞争;
-                  // 读起来也顺(先说结论再说是什么项目),而且和色条同侧、语义一致。
-                  Wrap(
-                    spacing: MedShape.s1,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      ?pill,
-                      Text(name, style: MedType.body.copyWith(color: c.ink)),
-                    ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        head,
+                        if (subText != null) ...[
+                          const SizedBox(height: 2),
+                          subText,
+                        ],
+                      ],
+                    ),
                   ),
-                  if (sub.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      sub,
-                      style: MedType.secondary.copyWith(
-                        color: c.ink3,
-                        fontFeatures: MedType.tabular,
+                  const SizedBox(width: MedShape.s2),
+                  // 上面的测量决定**布局形态**(并排还是分两行),这里的 `Flexible`
+                  // 是防估算误差的第二道:pill 宽度是保守估的,估小了就会仍然溢出。
+                  // 形态判对时它不生效(短值按固有宽度收窄),判错时它把横向溢出
+                  // 降级成折行 —— 难看但不是坏掉。
+                  Flexible(child: valueText),
+                  ?chevron,
+                ],
+              );
+            }
+            // 窄:名字+pill 一行,数值自己一行(右对齐,箭头跟着数值走)。
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                head,
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: valueText,
                       ),
                     ),
+                    ?chevron,
                   ],
-                ],
-              ),
-            ),
-            const SizedBox(width: MedShape.s2),
-            // **数值列必须可伸缩。** 原先它是个裸 `Text`,在 `Row` 里属于不可伸缩
-            // 子项 —— 先按自己的固有宽度占满,剩下的才轮到名称列。于是长单位
-            // (`ml/min/1.73m2`)配上放大的系统字号,就能反过来把名称列挤没,
-            // 把 pill 顶出当前行,最后 `RenderFlex` 横向溢出(卡片底边切掉内容)。
-            //
-            // 用 `Flexible` 而不是 `Expanded`:loose fit 让它在常见的短值
-            // (`405 umol/L`)上仍按固有宽度收窄、把余量还给名称列,只有真的放不下
-            // 时才折行。**不缩字号、不截断单位** —— 折行是这里唯一允许的退让。
-            Flexible(
-              child: Text(
-                [
-                  fmtLabNumber(value),
-                  if (unit case final u? when u.isNotEmpty) u,
-                ].join(' '),
-                textAlign: TextAlign.end,
-                style: MedType.body.copyWith(
-                  color: labStatusColor(context, status),
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: MedType.tabular,
                 ),
-              ),
-            ),
-            if (onTap != null)
-              Icon(Icons.chevron_right, size: 20, color: c.ink3),
-          ],
+                if (subText != null) ...[const SizedBox(height: 2), subText],
+              ],
+            );
+          },
         ),
       ),
     );
