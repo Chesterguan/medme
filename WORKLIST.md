@@ -61,15 +61,15 @@
 
 | 分支 | 处置 |
 |---|---|
-| `fix/disease-synonyms` | 🔵 评审中 |
-| `fix/disease-lane-normalization` | 🔵 评审中（28 文件 / 1404 行，且动了 `web/hosted-viewer`） |
+| `fix/disease-synonyms` | ❌ **评审判定不合**：三条阻塞。最硬的一条是回归 —— `2型糖尿病伴酒精性脂肪肝` 会让整条诊断串返回 `None`，病人的糖尿病泳道连同化验用药一起消失。前两条同义词（等价改名）干净，值得单独留下 |
 | `feat/doctor-mode-landing` | ⏸ 桌面/官网，暂不理会 |
-| `fix/lab-row-recovery` | ❌ 作废，被 `-safe` 变体取代 |
 | `fix/scanner-timeout-fallback` | ❌ **永不合** —— 建立在已被证伪的前提上：看门狗判据在真实失败模式下无效，GMS 的下载界面占着前台，MedMe 根本不处于 `resumed` 状态 |
+| `test/brute-force-journeys` | 📦 资产分支：重写后的集成测试 + 钉住已知缺陷的用例。修复落地后要把断言方向翻过来 |
+| `test/data-layer-brute-force` | 📦 资产分支：50 条数据层测试，30 条 `#[ignore]` 标着已知缺陷编号 |
+
+**已删**：`fix/disease-lane-normalization`（`git diff` 证实与 `ad433bc (#189)` **逐字节相同**，早就 squash 合过，留着只会制造冲突）、`fix/lab-row-recovery`（被 `-safe` 变体取代）。
 
 其余全部已合。已合并的 worktree 已删（`target/` 单份 2–12 GB，见下方环境教训）。
-
-**永不合**：`fix/scanner-timeout-fallback` —— 建立在已被证伪的前提上（看门狗判据在真实失败模式下无效：GMS 的下载界面占着前台，MedMe 根本不处于 `resumed` 状态）
 
 **临时**：`demo/mobile-preview` —— 给产品看的合并分支，用完删
 
