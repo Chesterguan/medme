@@ -253,7 +253,7 @@ fn store_no_text(
     })
 }
 
-/// 把 `ocr::recognize`/`recognize_pdf` 报告的实际引擎映射为 vault 里记录的
+/// 把 `ocr::recognize_platform_best`/`recognize_pdf_platform_best` 报告的实际引擎映射为 vault 里记录的
 /// (后端, 模型版本) —— 桌面上 mac/Win 的主引擎是 Apple Vision / Windows.Media.Ocr,
 /// 不再一律谎称 ONNX/ppocr-v5(#56 溯源准确性)。
 fn ocr_provenance(b: ocr::OcrBackend) -> (OcrBackendKind, &'static str) {
@@ -381,7 +381,7 @@ pub fn ingest_with_dicom_parser(
         Ok(e) => add_text_layer_document(vault, sid, &name, e, imp.deduped),
         Err(_) => {
             // 无文本层(图片/扫描件):先尝试 OCR。
-            match ocr::recognize(&bytes) {
+            match ocr::recognize_platform_best(&bytes) {
                 Ok(outcome) if !outcome.text.trim().is_empty() => {
                     // OCR 成功:像文本文档一样处理(分类/日期取自识别文本)
                     let (backend, model_version) = ocr_provenance(outcome.backend);

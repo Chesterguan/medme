@@ -13,12 +13,12 @@
 ```
 Flutter (Dart) UI  ──FRB──▶  apps/mobile_flutter/rust  ──▶  core-model / pipeline / share / dicom / parser
    原生界面/导航/PDF查看/相机                薄封装:把 vault 操作暴露成 async Dart API
-   OCR:iOS=Apple Vision 原生 / Android=ML Kit 插件(均离线中文)
+   OCR:两端都是 PP-OCRv5(见下方 2026-08-05 更正 —— 原文写的平台分流已不成立)
 ```
 
 - **UI = Flutter**:所有屏幕、导航、PDF 查看(`pdfx`/`syncfusion` 等成熟插件)、图片查看、相机/相册/文件选择,全部原生组件。再无 WebView。
 - **数据核 = 现有 Rust crate**,经新增的 `apps/mobile_flutter/rust` 薄封装暴露。**不重写保险箱**(否则同步断、且推倒最难最已测透的代码)。
-- **OCR = 平台分流**:iOS 用 **Apple Vision**(原生 `VNRecognizeTextRequest`,经 `medme/ocr` MethodChannel 调用 —— 中文/HEIC 更强);Android 用 **`google_mlkit_text_recognition` 插件**(离线中文)。Flutter 拍照/选图 → 平台 OCR 识别 → 把「原始字节 + 识别文本 + 置信度」交给 Rust `ingest_image_with_text` 落库。**不再维护 Rust 的 Vision/MLKit FFI 桥**。PDF 文本层抽取、DICOM 元数据仍在 Rust。
+- ~~**OCR = 平台分流**:iOS 用 Apple Vision,Android 用 `google_mlkit_text_recognition` 插件~~ **【2026-08-05 更正:此项已不成立,见文末】**。PDF 文本层抽取、DICOM 元数据仍在 Rust。
 
 ## 复用 vs 新建
 - **复用(不动)**:`packages/core-model`(Vault/CAS/log/HMAC)、`packages/pipeline`(ingest 编排)、`packages/share`(加密分享+导出)、`packages/dicom`、`packages/parser`。桌面端继续用。
@@ -72,3 +72,34 @@ DTO 用 FRB 的镜像结构(Rust struct → Dart class 自动生成)。
 - FRB iOS/安卓构建集成(cargokit)是最需要跑通的一环 → P1 先验证。
 - ML Kit 中文识别质量需真机验(和之前一样,发前门槛)。
 - 保留桌面同款保险箱格式是硬约束(用 FRB 复用 Rust 核天然满足)。
+
+---
+
+## 更正:OCR 不再平台分流(2026-08-05)
+
+本文 2026-07-12 写的「iOS=Apple Vision / Android=ML Kit」**已经不是现状**。
+当前实现:**两端都是 PP-OCRv5**,ONNX 模型经 `include_bytes!` 打进二进制
+(约 20MB),`ocr_bridge.dart` 两个平台走同一条 `recognize_engine_layout`。
+
+改变的原因(从提交历史与 issue 归纳,不是本文原作者的决定):
+
+1. **ML Kit 文档扫描/识别依赖 GMS 按需下载的模块** —— 国内无 Google 服务的
+   安卓机(2019 年后的华为纯 HMS 等)上起不来。这是「拍照打不开且不弹权限」
+   那个线上 bug 的根因,而它**在有 GMS 的开发机上不复现**,连续几个版本没被修掉。
+2. 模型内置后**零运行时下载、零 GMS 依赖**,与「本地优先」这条产品原则一致。
+
+`pubspec.yaml` 现在没有任何 ML Kit 文字识别依赖;`packages/ocr` 里的
+Apple Vision 分支只在 **macOS 桌面端**生效,与移动端无关。
+
+### 附带的一条陷阱
+
+`packages/ocr::recognize_platform_best` / `recognize_pdf_platform_best` 按
+`#[cfg(target_os)]` 分流:macOS 上主用 Apple Vision,其它平台用 PP-OCRv5。
+**这是 target 门控不是 feature 门控**,`default-features = false` 关不掉。
+
+因此**在 macOS 上验证移动端 OCR 行为时,必须只调 `recognize_engine_layout`**。
+已经踩过一次:`openmed/labaudit` 扫描 PDF 路径产出的 dump 是 Vision 输出,
+却被当作 PP-OCR 语料支撑过一次判断。详见 `WORKLIST.md` 的「验证纪律」一节。
+
+(另注:原文与 `packages/ocr` 里「Apple Vision 中文更强」的说法出自 issue #41,
+**本仓库没有留下任何对比测试**。桌面端换成 PP-OCRv5 是否更好,至今没有人量过。)

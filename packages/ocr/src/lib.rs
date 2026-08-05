@@ -561,7 +561,8 @@ fn mean_line_confidence(lines: &[OcrLine]) -> f32 {
 /// "\n"-join need. Shared by [`recognize_engine`] and [`recognize_engine_layout`].
 #[cfg(feature = "engine")]
 fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
-    let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
+    let dynamic =
+        decode_image_bounded(image_bytes).context("ocr::recognize_platform_best: decode image")?;
     let dynamic = preprocess(dynamic);
 
     // 1) Orientation. OCR once; if the page reads sideways (predominantly tall line
@@ -1259,12 +1260,31 @@ fn recognize_vision(image_bytes: &[u8]) -> Result<OcrOutcome> {
     vision_macos::recognize_bytes(image_bytes)
 }
 
-/// Recognize text in image bytes. **macOS**: Apple Vision is the primary
-/// recognizer (offline, strong Chinese, #41); if it errors or finds no text,
-/// fall back to the oar-ocr / PP-OCRv5 engine. **Other platforms**: the engine
-/// (or a stub error when the engine isn't linked in, e.g. a no-`engine` build).
+/// 用**当前平台上可用的最佳识别器**认字 —— 名字里的 `platform_best` 是警告:
+/// **这个函数在不同平台上跑的是不同的引擎**。
+///
+/// | 平台 | 主识别器 | 兜底 |
+/// |---|---|---|
+/// | macOS | Apple Vision(`#41`:离线、中文强) | PP-OCRv5 引擎 |
+/// | Windows | `Windows.Media.Ocr`(同上) | PP-OCRv5 引擎 |
+/// | 其它(含 iOS/Android) | PP-OCRv5 引擎 | — |
+///
+/// 分流是 `#[cfg(target_os = ...)]` 做的,**不是 feature** —— 把依赖写成
+/// `default-features = false, features = ["engine"]` 也关不掉 macOS 上的 Vision。
+///
+/// # 要验手机端行为,不要调这个
+///
+/// 在 macOS 上调它,拿到的是 **Apple Vision** 的结果,而手机上跑的是 PP-OCRv5。
+/// 两个引擎的误读模式、字符混淆都不一样,结果不可互推。**验手机端一律用
+/// [`recognize_engine_layout`]**(`#[cfg(feature = "engine")]`,纯引擎)。
+///
+/// 已经踩过一次:`openmed/labaudit` 的扫描 PDF 路径经由此函数产出的 dump,
+/// 被当成 PP-OCR 语料支撑过一次判断。
+///
+/// (「Vision 在中文上更强」出自 `#41`,**本仓库没有留下对比测试** —— 它是当时的
+/// 判断,不是被验证过的结论。桌面端换回 PP-OCRv5 是否更好,尚未有人量过。)
 #[cfg(target_os = "macos")]
-pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
+pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
     match recognize_vision(image_bytes) {
         Ok(outcome) if !outcome.text.trim().is_empty() => return Ok(outcome),
         Ok(_) => {} // Vision ran but found nothing — try the engine.
@@ -1288,7 +1308,7 @@ pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
 /// #41); if it errors or finds no text, fall back to the oar-ocr / PP-OCRv5
 /// engine.
 #[cfg(target_os = "windows")]
-pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
+pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
     match windows_ocr::recognize_bytes(image_bytes) {
         Ok(outcome) if !outcome.text.trim().is_empty() => return Ok(outcome),
         Ok(_) => {} // ran but found nothing — try the engine.
@@ -1313,7 +1333,7 @@ pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
     not(target_os = "windows"),
     feature = "engine"
 ))]
-pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
+pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
     recognize_engine(image_bytes)
 }
 
@@ -1324,8 +1344,8 @@ pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
     not(target_os = "windows"),
     not(feature = "engine")
 ))]
-pub fn recognize(_image_bytes: &[u8]) -> Result<OcrOutcome> {
-    anyhow::bail!("ocr::recognize: OCR engine not available on this platform")
+pub fn recognize_platform_best(_image_bytes: &[u8]) -> Result<OcrOutcome> {
+    anyhow::bail!("ocr::recognize_platform_best: OCR engine not available on this platform")
 }
 
 /// OCR a PDF that has no text layer: extract each page's embedded image
@@ -1391,7 +1411,7 @@ where
     (page_texts, page_confidences, skipped)
 }
 
-pub fn recognize_pdf(pdf_bytes: &[u8]) -> Result<OcrOutcome> {
+pub fn recognize_pdf_platform_best(pdf_bytes: &[u8]) -> Result<OcrOutcome> {
     let doc = Document::load_mem(pdf_bytes).context("recognize_pdf: parse PDF")?;
     // Lazily stream every page's DCTDecode images; the cap is enforced (and
     // peak memory bounded) inside `ocr_page_images`.
@@ -1399,7 +1419,7 @@ pub fn recognize_pdf(pdf_bytes: &[u8]) -> Result<OcrOutcome> {
         .get_pages()
         .into_values()
         .flat_map(|page_id| extract_dct_images(&doc, page_id));
-    let (page_texts, page_confidences, skipped) = ocr_page_images(images, recognize);
+    let (page_texts, page_confidences, skipped) = ocr_page_images(images, recognize_platform_best);
     if skipped > 0 {
         // No silent truncation: make it visible that we stopped early on purpose.
         eprintln!(
@@ -1674,7 +1694,7 @@ pub fn recognize_pdf_mixed(pdf_bytes: &[u8]) -> Result<MixedPdfOutcome> {
         .iter()
         .map(|&page_id| extract_dct_images(&doc, page_id))
         .collect();
-    let pages = build_mixed_pages(page_texts, page_images, recognize);
+    let pages = build_mixed_pages(page_texts, page_images, recognize_platform_best);
     Ok(MixedPdfOutcome { pages })
 }
 
@@ -2383,7 +2403,7 @@ mod tests {
     fn recognizes_cjk_test_image() {
         let bytes = std::fs::read("/tmp/ocr_test.png")
             .expect("generate /tmp/ocr_test.png first (see feat-ocr-report.md)");
-        let outcome = recognize(&bytes).expect("OCR should succeed");
+        let outcome = recognize_platform_best(&bytes).expect("OCR should succeed");
         assert!(
             outcome.text.contains("Creatinine") || outcome.text.contains("肌酐"),
             "unexpected OCR text: {}",
@@ -2407,7 +2427,8 @@ mod tests {
             "/../../examples/demo-dataset/photos/2026-03-15_检验报告_扫描图PDF.pdf"
         );
         let bytes = std::fs::read(path).expect("demo scanned PDF present");
-        let outcome = recognize_pdf(&bytes).expect("recognize_pdf should succeed");
+        let outcome = recognize_pdf_platform_best(&bytes)
+            .expect("recognize_pdf_platform_best should succeed");
         assert!(
             outcome.text.contains("肌酐") || outcome.text.contains("Creatinine"),
             "unexpected OCR text: {}",
