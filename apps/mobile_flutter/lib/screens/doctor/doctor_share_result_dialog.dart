@@ -4,6 +4,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 「医生代拍」交付结果弹窗:记录数说明 + 可复制的口令 + 「分享文件」按钮。
 ///
@@ -78,7 +79,7 @@ Future<void> showDoctorShareResultDialog(
                       if (context.mounted) {
                         ScaffoldMessenger.of(
                           context,
-                        ).showSnackBar(const SnackBar(content: Text('口令已复制')));
+                        ).showSnackBar(appSnackBar(content: Text('口令已复制')));
                       }
                     },
                   ),

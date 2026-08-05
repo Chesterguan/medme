@@ -7,6 +7,7 @@ import 'package:signature/signature.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 同意告知文案的版本号。文案改了就升这个号——落进加密包(`ConsentDto.consentTextVersion`),
 /// 便于日后区分「病人是在哪版文案下同意的」。
@@ -84,7 +85,7 @@ class _ConsentScreenState extends State<ConsentScreen>
     if (_sigController.isEmpty) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('请先在下方签名')));
+      ).showSnackBar(appSnackBar(content: Text('请先在下方签名')));
       return;
     }
     setState(() => _submitting = true);
@@ -94,7 +95,7 @@ class _ConsentScreenState extends State<ConsentScreen>
       setState(() => _submitting = false);
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('签名保存失败,请重试')));
+      ).showSnackBar(appSnackBar(content: Text('签名保存失败,请重试')));
       return;
     }
     _emit(method: 'signature', signaturePngBase64: base64Encode(png));

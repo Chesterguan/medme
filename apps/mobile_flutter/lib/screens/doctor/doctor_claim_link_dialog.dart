@@ -4,6 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 代拍交付成功后的结果:**一条认领链接,直接显示成二维码**。
 ///
@@ -68,7 +69,7 @@ Future<void> showDoctorClaimLinkDialog(
                   await Clipboard.setData(ClipboardData(text: url));
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('链接已复制,可以发给病人')),
+                      appSnackBar(content: Text('链接已复制,可以发给病人')),
                     );
                   }
                 },

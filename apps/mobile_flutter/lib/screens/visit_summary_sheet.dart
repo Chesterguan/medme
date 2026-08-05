@@ -10,6 +10,7 @@ import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 「看病带这个」—— **刻意不是一个 tab**(设计系统 §八)。
 ///
@@ -95,7 +96,7 @@ class _VisitSummarySheetState extends State<VisitSummarySheet> {
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('已复制,可以粘贴到微信发给医生')));
+    ).showSnackBar(appSnackBar(content: Text('已复制,可以粘贴到微信发给医生')));
   }
 
   /// 「我想问医生的」空态与常态共用的「加一条」——直接开录入弹层,预选中「笔记」,

@@ -15,6 +15,7 @@ import 'package:mobile_flutter/widgets/identity_hero_card.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 底部导航一级 tab「概览」—— 使用时刻:**日常打开,看一眼「我现在怎么样」**
 /// (设计系统 §八)。
@@ -95,7 +96,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
       debugPrint('[overview] 导入流程未捕获异常: $e');
       if (!messenger.mounted) return;
       messenger.showSnackBar(
-        SnackBar(
+        appSnackBar(
           content: Text('导入没能开始:$e'),
           duration: const Duration(seconds: 8),
         ),
@@ -152,7 +153,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final saved = await showManualEntrySheet(context);
     if (saved == true && messenger.mounted) {
-      messenger.showSnackBar(const SnackBar(content: Text('已记录')));
+      messenger.showSnackBar(appSnackBar(content: Text('已记录')));
     }
   }
 

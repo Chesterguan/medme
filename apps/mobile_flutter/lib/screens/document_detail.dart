@@ -13,6 +13,7 @@ import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 // doc_type → 中文标签,与 archive_screen.dart 保持同一份映射(桌面/旧移动端
 // 同构,来自 core-model types.rs)。
@@ -124,7 +125,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('删除失败:$e')));
+        ).showSnackBar(appSnackBar(content: Text('删除失败:$e')));
       }
     }
   }
