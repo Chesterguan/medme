@@ -13,6 +13,7 @@ import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 底部导航一级 tab「应急卡」—— 使用时刻:**急诊室,别人拿着你的手机**
 /// (设计系统 §八、§九)。
@@ -946,17 +947,17 @@ class EmergencyBigCardScreen extends StatelessWidget {
     // 号码里常带空格、连字符或全角字符(用户手打的),`tel:` 只认数字与 +*#。
     final digits = phone.replaceAll(RegExp(r'[^0-9+*#]'), '');
     if (digits.isEmpty) {
-      messenger.showSnackBar(const SnackBar(content: Text('这个号码拨不出去')));
+      messenger.showSnackBar(appSnackBar(content: Text('这个号码拨不出去')));
       return;
     }
     try {
       final ok = await launchUrl(Uri(scheme: 'tel', path: digits));
       if (!ok && messenger.mounted) {
-        messenger.showSnackBar(SnackBar(content: Text('无法拨号,请手动拨 $digits')));
+        messenger.showSnackBar(appSnackBar(content: Text('无法拨号,请手动拨 $digits')));
       }
     } catch (e) {
       if (messenger.mounted) {
-        messenger.showSnackBar(SnackBar(content: Text('无法拨号,请手动拨 $digits')));
+        messenger.showSnackBar(appSnackBar(content: Text('无法拨号,请手动拨 $digits')));
       }
     }
   }

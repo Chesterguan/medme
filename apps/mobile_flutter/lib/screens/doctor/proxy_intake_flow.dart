@@ -25,6 +25,7 @@ import 'package:mobile_flutter/src/rust/api/vault.dart' as vault;
 import 'package:mobile_flutter/vault_boot.dart'
     show ensureProxyVaultOpen, openCurrentProfileVault, openProxyPatientVault;
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 代拍交付的有效期(天)。与本机那 12 小时保留是两回事:这个天数约束「病人手里那条
 /// 认领链接还能用多久」。
@@ -472,7 +473,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     if (notice != null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(notice)));
+      ).showSnackBar(appSnackBar(content: Text(notice)));
     }
     // 采集完直接进审阅屏(病情摘要 + 逐份识别内容摊开),不再停在采集屏问「继续 / 去
     // 预览」——「继续拍摄」是审阅屏上的一个按钮。让「拍完 → 看到审阅」一步到位。

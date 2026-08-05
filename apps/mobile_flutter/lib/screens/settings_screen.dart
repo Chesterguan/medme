@@ -12,6 +12,7 @@ import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 与 `pubspec.yaml` 的 `version:` 字段(`x.y.z+build`)保持一致。P3 范围内没有为
 /// 读版本号新增 `package_info_plus` 依赖(约束里明确不加新依赖),手工同步即可——
@@ -98,7 +99,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _showSnack(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(text)));
   }
 
   Future<void> _openHomepage() => _openWeb('https://medmenow.com/', '主页');
@@ -186,7 +187,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       // 带 action 的 SnackBar,而不是直接跳走:去不去看示例数据由用户自己决定。
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        appSnackBar(
           content: Text('已载入 $succeeded 份示例病历(在「$_demoMember」里)'),
           action: SnackBarAction(
             label: '去看看',
@@ -611,7 +612,7 @@ class _VaultCard extends StatelessWidget {
     if (!context.mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(removed ? '已移除「$name」' : '无法移除该成员')));
+    ).showSnackBar(appSnackBar(content: Text(removed ? '已移除「$name」' : '无法移除该成员')));
     onChanged();
   }
 

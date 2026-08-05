@@ -17,6 +17,7 @@ import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/vault_boot.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 一次导入运行的结果,供调用方判断要不要、往哪儿带用户去核对新东西。
 ///
@@ -521,7 +522,7 @@ Future<bool> _offerPlainCamera(ScaffoldMessengerState? probe) async {
   // 前面可能还挂着别的探针提示,先收掉,否则这条要排队等它,用户早走了。
   probe.hideCurrentSnackBar();
   final controller = probe.showSnackBar(
-    SnackBar(
+    appSnackBar(
       content: const Text('没有拍到照片。如果刚才扫描器没能打开,可以改用普通相机。'),
       duration: const Duration(seconds: 8),
       behavior: SnackBarBehavior.floating,
@@ -595,7 +596,7 @@ void _report(
   // 分析失败绝不影响功能,屏上探针同理:messenger 已经不在树上就安静放弃。
   if (probe == null || !probe.mounted) return;
   probe.showSnackBar(
-    SnackBar(
+    appSnackBar(
       content: Text(detail),
       duration: const Duration(seconds: 8),
       behavior: SnackBarBehavior.floating,

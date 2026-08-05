@@ -14,6 +14,7 @@ import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 底部导航一级 tab「档案」—— 生命时间线:就诊组 + 独立文档,按日期倒序,
 /// 点开看详情。与旧 Tauri 移动端 App.tsx 的 archive tab(phead + tl)同一观感,
@@ -188,7 +189,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('删除失败:$e')));
+        ).showSnackBar(appSnackBar(content: Text('删除失败:$e')));
       }
     }
   }
@@ -282,7 +283,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   debugPrint('[archive] 导入流程未捕获异常: $e');
                   if (!messenger.mounted) return;
                   messenger.showSnackBar(
-                    SnackBar(
+                    appSnackBar(
                       content: Text('导入没能开始:$e'),
                       duration: const Duration(seconds: 8),
                     ),
