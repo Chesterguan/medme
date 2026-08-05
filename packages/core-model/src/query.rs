@@ -29,16 +29,88 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
-/// 从文本抽取医院/医学中心名(2-18 个中文字,以 医院/医学中心 结尾)。取第一个匹配。
-pub fn extract_provider(text: &str) -> Option<String> {
+/// 页脚签名栏的标签。这些字段后面跟的是**人名**。
+///
+/// 中文姓名和机构名之间没有任何词边界可依:`王涛` 和 `北京` 在字符类上完全一样,
+/// 所以一旦 OCR/PDF 文本层把签名与紧随其后的医院名连成一串
+/// (`审核者:王涛四川大学华西医院医疗文书专用章` —— 真实语料,demo-dataset 的
+/// PDF 文本层逐字如此),**没有任何正则能从这一串里切出正确的起点**:非贪婪只让
+/// 匹配尽量短,起始位置仍然取最早的那个,于是人名被一起吞掉。既然切不准,就整个
+/// 候选作废(宁可不抽,不能编)—— 这些 token 里的名字宁可返回 None,也不能把
+/// 「王涛北京协和医院」当成一家医院印到就诊卡上。
+///
+/// 按**空白分隔的 token** 判定,不是整行:同一行里 `审核者:王涛 北京协和医院`
+/// 的第三个 token 有自己的左边界,是干净的,不能被同行的签名连累。
+const SIGNER_LABELS: &[&str] = &[
+    "检验者",
+    "审核者",
+    "审核",
+    "报告医师",
+    "审核医师",
+    "检验医师",
+    "报告医生",
+    "报告者",
+    "记录者",
+    "送检医生",
+    "申请医生",
+    "主治医师",
+    "主诊医师",
+    "医师",
+    "医生",
+];
+
+/// 抬头/标题里被逐字拉开的机构名(`四 川 大 学 华 西 医 院`)—— PDF 文本层与
+/// 部分排版把标题渲染成字间带空格。每个汉字后面都跟**恰好一个**空白才算,所以
+/// `王涛 北京协和医院` 这种只在词间有空格的写法不会被误当成抬头连起来读。
+fn spaced_provider_re() -> &'static regex::Regex {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r"((?:[\x{4e00}-\x{9fa5}][ \t]){2,18}?(?:医[ \t]院|医[ \t]学[ \t]中[ \t]心))",
+        )
+        .expect("spaced provider regex")
+    })
+}
+
+/// 紧凑写法的机构名(2-18 个中文字,以 医院/医学中心 结尾)。
+fn tight_provider_re() -> &'static regex::Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
         regex::Regex::new(r"([\x{4e00}-\x{9fa5}]{2,18}?(?:医院|医学中心))").expect("provider regex")
-    });
-    re.captures(text)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_string())
+    })
+}
+
+/// 从文本抽取医院/医学中心名。
+///
+/// ## 为什么不是「全文找第一个 `xx医院`」
+///
+/// 原来就是那么写的,结果就诊卡上印出 `门诊 · 王涛北京协和医院` —— 把审核医师的
+/// 名字当成了医院名的一部分。根因有两层,只修一层不够:
+///
+/// 1. **抬头根本没被看见。** 文档自报家门的地方是抬头(第一行),而 PDF 文本层把
+///    抬头渲染成 `北 京 协 和 医 院` —— 字间有空格,紧凑正则匹配不上,于是扫描
+///    一路滑到页脚的签名栏。demo-dataset 32 份里有 9 份栽在这上面。
+/// 2. **页脚那一串切不准。** 见 [`SIGNER_LABELS`]:人名与机构名之间没有词边界。
+///
+/// 所以:先按抬头形态找(权威出处),再按 token 找紧凑形态并跳过签名 token;
+/// 两轮都没有可信候选就返回 `None`,而不是退而求其次给一个带人名的串。
+pub fn extract_provider(text: &str) -> Option<String> {
+    // 第一轮:抬头。字间空格只是排版,收进结果前去掉。
+    if let Some(m) = spaced_provider_re().captures(text).and_then(|c| c.get(1)) {
+        return Some(m.as_str().chars().filter(|c| !c.is_whitespace()).collect());
+    }
+    // 第二轮:正文/页脚的紧凑写法,逐 token,跳过签名栏。
+    text.lines()
+        .flat_map(str::split_whitespace)
+        .filter(|tok| !SIGNER_LABELS.iter().any(|l| tok.contains(l)))
+        .find_map(|tok| {
+            tight_provider_re()
+                .captures(tok)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+        })
 }
 
 /// 给定一组文档 id,返回各文档 OCR 文本命中的 provider 名(未去重,用于统计众数)。
@@ -459,6 +531,7 @@ impl Vault {
 
 #[cfg(test)]
 mod tests {
+    use crate::query::extract_provider;
     use crate::types::{NewDocument, NewOcr};
     use crate::Vault;
     use crate::{DocType, EncounterKind, OcrBackendKind};
@@ -806,6 +879,79 @@ mod tests {
             "title should note 转院, got {:?}",
             inpatient.title
         );
+    }
+
+    /// 就诊卡标题(`门诊 · {provider}`,archive_screen.dart)上印出的必须是医院,
+    /// 不能是「审核医师的名字 + 医院」。原正则全文取第一个 `xx医院`,没有左边界,
+    /// 于是把紧邻在前的人名一起吞掉;而中文姓名与机构名之间没有词边界,切不准就
+    /// 整条作废。
+    #[test]
+    fn a_signers_name_is_never_glued_onto_the_hospital_name() {
+        // 真实语料逐字:demo-dataset 的 PDF 文本层把签名与公章文字连成一串。
+        for line in [
+            "审核者:王涛北京协和医院",
+            "报告医师:郑华浙江大学医学院附属第一医院",
+            "检验者:李梅 审核者:王涛四川大学华西医院医疗文书专用章",
+        ] {
+            assert_eq!(
+                extract_provider(line),
+                None,
+                "把签名当成医院名的一部分了: {line:?}"
+            );
+        }
+        // 反例:同一行里有自己左边界的 token 不受连累,照常抽出。
+        assert_eq!(
+            extract_provider("检验者:韩梅 审核者:王涛 北京协和医院").as_deref(),
+            Some("北京协和医院")
+        );
+    }
+
+    /// 页脚之所以会被读到,是因为**抬头压根没被看见**:PDF 文本层把抬头逐字拉开
+    /// 成 `北 京 协 和 医 院`,紧凑正则匹配不上,扫描就一路滑到签名栏。抬头是文档
+    /// 自报家门的地方,必须先在那里找。
+    #[test]
+    fn a_letter_spaced_letterhead_is_the_first_place_looked() {
+        // demo-dataset/corpus/2024-01-15_检验报告_血脂.pdf 的文本层,逐字。
+        let doc = "\n\n四 川 大 学 华 西 医 院\n\n检验科 生化检验报告单\n\n\
+                   检验者:李梅 审核者:王涛四川大学华西医院医疗文书专用章\n";
+        assert_eq!(extract_provider(doc).as_deref(), Some("四川大学华西医院"));
+        assert_eq!(
+            extract_provider("\n\n北 京 协 和 医 院\n\n神经内科 门诊病历\n").as_deref(),
+            Some("北京协和医院")
+        );
+        assert_eq!(
+            extract_provider("国 家 儿 童 医 学 中 心\n").as_deref(),
+            Some("国家儿童医学中心")
+        );
+        // 字间空格是排版,词间空格不是:`王涛 北京协和医院` 不能被当成抬头连读。
+        assert_eq!(
+            extract_provider("王涛 北京协和医院").as_deref(),
+            Some("北京协和医院")
+        );
+    }
+
+    /// 紧凑写法的老行为原封不动 —— 这次改动只加左边界与抬头,不动别的。
+    #[test]
+    fn ordinary_provider_lines_are_unchanged() {
+        for (text, want) in [
+            ("北京协和医院", "北京协和医院"),
+            ("北京协和医院 出院记录", "北京协和医院"),
+            ("四川大学华西医院 检验科 生化检验报告单", "四川大学华西医院"),
+            (
+                "上海交通大学医学院附属瑞金医院 超声医学科 检查报告单",
+                "上海交通大学医学院附属瑞金医院",
+            ),
+            ("独墅湖科教创新区医院化验报告单", "独墅湖科教创新区医院"),
+            ("某三甲医院 检验科 甲状腺功能检验报告单", "某三甲医院"),
+            // 行尾公章:前面是句号,左边界干净。
+            (
+                "提示:凝血功能正常,可耐受手术。复旦大学附属华山医院 医疗文书专用章",
+                "复旦大学附属华山医院",
+            ),
+        ] {
+            assert_eq!(extract_provider(text).as_deref(), Some(want), "{text:?}");
+        }
+        assert_eq!(extract_provider("本院 转入我院 医院"), None);
     }
 
     #[test]

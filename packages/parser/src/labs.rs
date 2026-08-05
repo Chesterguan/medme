@@ -75,6 +75,15 @@
 //! recoveries (`9单核细胞百分比 12.70 3.50~10.00%`, correct on this document)
 //! that a name+value+rest line cannot be told apart from the fabricating one.
 //!
+//! ## A row with no result of its own (`13血红蛋白  4.00~5.50`)
+//! The result column is found by POSITION — first number after the name — and
+//! a reference range's low bound sits in exactly that position when the result
+//! cell is empty or its text landed on another line. Splitting the range token
+//! in half then reports the bound as the measurement, and because a bound is
+//! by construction a sensible number for that analyte, the fabricated point is
+//! invisible on a chart. `value_is_range_low_bound` catches it (a range
+//! operator directly abutting the value) and the row is refused, not guessed.
+//!
 //! ## Deliberately NOT handled (kept lean)
 //! - Ratio-style results printed as one token (`血压 120/80`) — the `/80` is
 //!   mistaken for a unit; blood pressure is a vital, out of scope here.
@@ -140,11 +149,25 @@ pub struct UnreadableRow {
 /// `sep2` (the gap between value and rest) is captured, not just skipped, so
 /// callers can tell a genuine separator from a zero-width one — see
 /// `value_glued_to_next_number`.
+///
+/// The value sub-pattern accepts EITHER `.` or `,` as the decimal separator,
+/// exactly like the reference-range patterns below, and is parsed through the
+/// same [`parse_decimal_token`]. It used to be dot-only while the ranges were
+/// not, and that asymmetry is a value-fabricating bug, not a cosmetic gap: on
+/// `肌钙蛋白I 0,08 ng/mL 0-0.04` the dot-only group could not consume the `,`,
+/// so it stopped at the leading `0` and reported **troponin I = 0, flag N** for
+/// a result that is twice its own cutoff. The truncated head is always a
+/// physiologically plausible number, so nothing downstream can notice it — the
+/// same silent-failure shape the range patterns were fixed for one commit
+/// earlier. See [`parse_decimal_token`] for why a `,` between digits is a
+/// misread period rather than a thousands grouping.
 fn row_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
-        Regex::new(r"^\s*(?P<name>.*?)[\s:：]+(?P<value>-?\d+(?:\.\d+)?)(?P<sep2>\s*)(?P<rest>.*)$")
-            .expect("row re")
+        Regex::new(
+            r"^\s*(?P<name>.*?)[\s:：]+(?P<value>-?\d+(?:[.,]\d+)?)(?P<sep2>\s*)(?P<rest>.*)$",
+        )
+        .expect("row re")
     })
 }
 
@@ -154,7 +177,7 @@ fn row_re() -> &'static Regex {
 // 的 token,单边参考(LDL/TC/eGFR)与带空格的双边参考就全丢了(quality dim 4/5)。
 //
 // The number sub-pattern `\d+(?:[.,]\d+)?` accepts EITHER `.` or `,` as the
-// decimal separator — see `resolve_range_number` for why `,` is folded to a
+// decimal separator — see `parse_decimal_token` for why `,` is folded to a
 // decimal point unconditionally rather than treated as a thousands grouping.
 // Being unanchored, an earlier version of this pattern (dot-only) had no
 // notion of where a numeral starts or ends, so on a malformed token it would
@@ -181,6 +204,13 @@ fn range_low_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"[>≥]=?\s*(\d+(?:[.,]\d+)?)").expect("low re"))
 }
+/// The TAIL of a two-sided range — the operator plus the high bound — anchored
+/// at the start of whatever follows the result. Same number sub-pattern as the
+/// range regexes above. Used by `value_is_range_low_bound`.
+fn range_tail_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"^[-~]\s*(\d+(?:[.,]\d+)?)").expect("range tail re"))
+}
 
 /// True when neither the char immediately before `start` nor the char
 /// immediately after `end` in `s` is a digit or `.` — i.e. the match at
@@ -199,8 +229,13 @@ fn range_is_bounded(s: &str, start: usize, end: usize) -> bool {
     before_ok && after_ok
 }
 
-/// Parse a captured range-number token (`5.20` or a comma-decimal `5,20`)
-/// into an `f64`. Chinese lab reports print decimals with `.` only; a `,`
+/// Parse a captured number token (`5.20` or a comma-decimal `5,20`) into an
+/// `f64`. Used for BOTH the result column (`row_re`'s `value` group) and the
+/// reference-range bounds, so the two cannot drift apart again: the rule below
+/// is a property of the document, not of one column, and applying it to only
+/// one of them is what let `0,08` be read as `0`.
+///
+/// Chinese lab reports print decimals with `.` only; a `,`
 /// between digits is PP-OCR misreading a period, never a thousands
 /// separator — the domain's values are already SI-scaled (platelet counts
 /// read e.g. `171`, not `150,000`), and a sample of every digit-comma-digit
@@ -213,7 +248,7 @@ fn range_is_bounded(s: &str, start: usize, end: usize) -> bool {
 /// text-layer/`.txt` input never passes through — this parser has no
 /// dependency on `ocr`, so it has to make the same call itself here rather
 /// than rely on that normalization having already happened upstream.
-fn resolve_range_number(raw: &str) -> Option<f64> {
+fn parse_decimal_token(raw: &str) -> Option<f64> {
     if raw.contains(',') {
         raw.replace(',', ".").parse().ok()
     } else {
@@ -404,6 +439,9 @@ fn is_page_furniture(raw_name: &str) -> bool {
 const REASON_VALUE_GLUED_TO_RANGE: &str = "数值和参考范围粘在一起,读不准,请核对原件";
 const REASON_MULTIPLE_GLUE_POINTS: &str =
     "这一行有多处数字和名称粘在一起,分不清对应关系,读不准,请核对原件";
+/// See `value_is_range_low_bound`: the line has a name and a reference range but
+/// no result of its own.
+const REASON_NO_RESULT_ONLY_RANGE: &str = "这一行只有参考范围,没有结果值,请核对原件";
 
 /// Result of scanning a raw line for the name↔value glue.
 enum GlueFix {
@@ -480,6 +518,68 @@ fn value_glued_to_next_number(sep2_is_empty: bool, rest: &str) -> bool {
     sep2_is_empty && starts_with_glued_number(rest)
 }
 
+/// True when a range operator sits immediately after the value — i.e. the
+/// number `row_re` picked as the RESULT is really the LOW BOUND of a printed
+/// reference range, and this line carries no result of its own.
+///
+/// `row_re` identifies the result column by POSITION: first number after the
+/// name. A reference range is two numbers joined by `-`/`~`, and its low bound
+/// occupies exactly that position whenever the result cell is empty or its
+/// text landed elsewhere — which is routine on a photographed two-column sheet.
+/// Nothing in the parser said "a number bound into a range is not a result", so
+/// it happily split the range token in half:
+///
+/// ```text
+/// 13血红蛋白  4.00~5.50   → hgb = 4.0 g/L   (a lethal value, charted as a
+///                            clean historical point next to the real trend)
+/// 淋巴细胞计数 1.00~3.30   → lymph = 1.0
+/// 钾 3.5-5.3              → potassium = 3.5
+/// ```
+///
+/// The fabrication is undetectable by inspection because a reference range's
+/// low bound is, by construction, always a physiologically sensible number for
+/// that analyte. Per 宁可漏,不能编 the whole row goes out (surfaced as an
+/// [`UnreadableRow`] when it otherwise looked like a real lab row, so a person
+/// can check the original) rather than reporting the bound as a measurement.
+///
+/// Two conditions, both necessary:
+///
+/// 1. **A range operator directly abuts the value.** That is what shows the
+///    value was bound INTO the range rather than standing on its own, and it is
+///    what separates this from the ordinary row where a genuine result is
+///    separated from its range (`血红蛋白 122  4.00~5.50` → `rest` starts with a
+///    digit → a real reading, kept). `row_re`'s `sep2` has already absorbed the
+///    whitespace, so `rest` begins at the first non-space character and the
+///    spaced form `3.9 - 6.1` is caught the same way as the glued `4.00~5.50`.
+///
+/// 2. **The pair reads as a well-formed range** — `value <= high`. A genuine
+///    reference range never inverts (the same invariant `parse_line` already
+///    uses to discard a misread `low > high` pair), so if it does invert, the
+///    operator is not binding the value into a range and the value stands.
+///
+/// Condition 2 is not a hedge, it is what keeps a real corpus row readable:
+/// an analyte with no unit prints an empty unit cell as a `-` placeholder, so
+/// `INR 国际标准化比值 1.05 - 0.8 - 1.2 正常` (华山医院 术前凝血, verbatim) puts
+/// an operator right after a perfectly good result. Reading `1.05` as a low
+/// bound would make the range `1.05–0.8`, which is impossible; the real range
+/// `0.8 - 1.2` follows, and both are parsed correctly today. Condition 1 alone
+/// threw this row away.
+///
+/// Known gap this leaves open: when OCR misreads a decimal point as a dash
+/// (`38.3` → `38-3`, seen once in the corpus), the pair inverts, so the row is
+/// kept and the value reads `38`. That is the pre-existing behaviour and it is
+/// still wrong, but `-` between digits is a genuine range operator in this
+/// domain — unlike `,`, there is no elimination argument that makes the misread
+/// reading the only possible one, so it is not fixed here by guessing.
+fn value_is_range_low_bound(value_num: f64, rest: &str) -> bool {
+    let folded = fold_range_punct(rest);
+    let Some(caps) = range_tail_re().captures(&folded) else {
+        return false;
+    };
+    parse_decimal_token(caps.get(1).expect("high group").as_str())
+        .is_some_and(|high| value_num <= high)
+}
+
 /// Fold the full-width comparison/range punctuation a report might use into the
 /// half-width forms the range regexes expect. Pure notation, not semantics.
 fn fold_range_punct(tok: &str) -> String {
@@ -520,8 +620,8 @@ fn find_range(folded: &str) -> Option<RangeMatch> {
         if !range_is_bounded(folded, m.start(), m.end()) {
             continue;
         }
-        let lo = resolve_range_number(c.get(1)?.as_str());
-        let hi = resolve_range_number(c.get(2)?.as_str());
+        let lo = parse_decimal_token(c.get(1)?.as_str());
+        let hi = parse_decimal_token(c.get(2)?.as_str());
         return Some((lo, hi, (m.start(), m.end())));
     }
     for c in range_high_re().captures_iter(folded) {
@@ -529,7 +629,7 @@ fn find_range(folded: &str) -> Option<RangeMatch> {
         if !range_is_bounded(folded, m.start(), m.end()) {
             continue;
         }
-        let hi = resolve_range_number(c.get(1)?.as_str());
+        let hi = parse_decimal_token(c.get(1)?.as_str());
         return Some((None, hi, (m.start(), m.end())));
     }
     for c in range_low_re().captures_iter(folded) {
@@ -537,7 +637,7 @@ fn find_range(folded: &str) -> Option<RangeMatch> {
         if !range_is_bounded(folded, m.start(), m.end()) {
             continue;
         }
-        let lo = resolve_range_number(c.get(1)?.as_str());
+        let lo = parse_decimal_token(c.get(1)?.as_str());
         return Some((lo, None, (m.start(), m.end())));
     }
     None
@@ -847,11 +947,10 @@ fn parse_line(raw_line: &str) -> LineOutcome {
     if is_page_furniture(raw_name) {
         return LineOutcome::Nothing;
     }
-    let Ok(value_num) = caps
-        .name("value")
-        .expect("value group")
-        .as_str()
-        .parse::<f64>()
+    // Same number parser as the reference-range bounds — a comma-decimal
+    // result (`0,08`) is read whole instead of truncated to its leading digit.
+    // See `parse_decimal_token` / `row_re`.
+    let Some(value_num) = parse_decimal_token(caps.name("value").expect("value group").as_str())
     else {
         return LineOutcome::Nothing;
     };
@@ -870,7 +969,7 @@ fn parse_line(raw_line: &str) -> LineOutcome {
     let (unit_raw, ref_low, ref_high, explicit_flag) = parse_rest(rest);
     // Invariant fallback, NOT the fix itself: a genuine reference range
     // never inverts, so low>high can only mean the range was misread
-    // somewhere upstream (range_is_bounded / resolve_range_number above
+    // somewhere upstream (range_is_bounded / parse_decimal_token above
     // are the actual fix for the known misread shapes — this is a net
     // for whatever shape isn't covered yet). Discard the whole pair
     // rather than pick one bound to trust; the row otherwise still
@@ -909,6 +1008,18 @@ fn parse_line(raw_line: &str) -> LineOutcome {
         || m.is_some();
     if !has_evidence {
         return LineOutcome::Nothing;
+    }
+    // The number taken as the result is bound into a reference range — this
+    // line has a name and a range but no result of its own (see
+    // `value_is_range_low_bound`). Checked AFTER the evidence gate on purpose:
+    // ordinary prose with a numeric span in it (`随访 3-6 个月复查`) has the
+    // same shape and is already thrown away as a non-row, and promoting those
+    // to reviewable rows would bury the real ones in noise.
+    if value_is_range_low_bound(value_num, rest) {
+        return LineOutcome::Unreadable(UnreadableRow {
+            raw_line: raw_line.to_string(),
+            reason: REASON_NO_RESULT_ONLY_RANGE.to_string(),
+        });
     }
 
     // Canonical conversion (only when matched AND the entry knows this unit).
@@ -1467,9 +1578,127 @@ GLU        空腹血糖 Glucose       7.1      mmol/L      3.9 - 6.1       ↑
         assert_eq!(glu.ref_high, Some(2.000));
     }
 
+    /// The comma-decimal defence has to cover the RESULT column, not just the
+    /// reference range. While it did not, a troponin I of 0.08 ng/mL — twice
+    /// its own 0.04 cutoff, i.e. a myocardial-infarction marker — was read as
+    /// `0` and flagged **N**: the parser asserting "normal" about the single
+    /// number on the sheet that says the opposite. The truncated head of a
+    /// comma-decimal is always a plausible-looking value, so there is nothing
+    /// downstream (no inverted range, no implausible magnitude) that could
+    /// catch it. Both columns now go through `parse_decimal_token`.
+    #[test]
+    fn comma_decimal_in_the_result_column_is_read_whole() {
+        let obs = extract_labs("肌钙蛋白I 0,08 ng/mL 0-0.04");
+        let tni = find(&obs, "troponin_i");
+        assert_eq!(tni.value_num, 0.08, "result column truncated at the comma");
+        assert_eq!(
+            tni.flag.as_deref(),
+            Some("H"),
+            "a value at twice its cutoff must not read as normal"
+        );
+
+        // Same shape where the flag happens to come out right anyway — the
+        // VALUE is still wrong, and it is the value that gets charted.
+        let obs = extract_labs("糖化血红蛋白 7,2 % 4.0-6.0");
+        assert_eq!(find(&obs, "hba1c").value_num, 7.2);
+
+        // Real corpus, verbatim (血常规报告3.jpg PP-OCRv5 layout rebuild):
+        // RBC `4,35` was being reported as `4`.
+        let obs = extract_labs("2红细胞计数          4,35   4.00~5.50 1012/");
+        assert_eq!(obs.first().map(|o| o.value_num), Some(4.35));
+
+        // Counter-examples: the dot form and plain integers are untouched.
+        assert_eq!(
+            extract_labs("肌钙蛋白I 0.08 ng/mL 0-0.04")
+                .first()
+                .map(|o| o.value_num),
+            Some(0.08)
+        );
+        assert_eq!(
+            extract_labs("肌酐 88 μmol/L 59-104")
+                .first()
+                .map(|o| o.value_num),
+            Some(88.0)
+        );
+    }
+
+    /// A line that prints a name and a reference range but no result of its own
+    /// must not have the range's low bound reported as the measurement. This is
+    /// the worst shape in the module: the fabricated number is a reference
+    /// bound, so it is *by construction* physiologically sensible for that
+    /// analyte and cannot be spotted on a chart. `hgb 4.0 g/L` is a lethal
+    /// value and it used to land on the trend line as a clean historical point.
+    #[test]
+    fn a_row_whose_value_is_its_reference_ranges_low_bound_is_refused() {
+        for line in [
+            // Real corpus shape (血常规报告1.jpg): row number glued to the name,
+            // no result cell on this line at all.
+            "13血红蛋白  4.00~5.50",
+            "13血红蛋白                     4.00~5.50  1012/",
+            "淋巴细胞计数  1.00~3.30",
+            // Plain half-width dash, and the spaced form (`sep2` swallows the
+            // space, so `rest` still begins at the operator).
+            "钾 3.5-5.3",
+            "葡萄糖 3.9 - 6.1",
+            // Full-width range punctuation must be caught the same way.
+            "钾 3.5～5.3",
+        ] {
+            let (obs, unreadable) = extract_labs_with_unreadable(line);
+            assert!(
+                obs.is_empty(),
+                "fabricated a result from a reference bound: {line:?} -> {obs:?}"
+            );
+            assert_eq!(
+                unreadable.len(),
+                1,
+                "the row must be surfaced for review, not silently dropped: {line:?}"
+            );
+            assert_eq!(unreadable[0].reason, REASON_NO_RESULT_ONLY_RANGE);
+        }
+    }
+
+    /// Counter-examples for the check above: it must key on the range operator
+    /// ABUTTING the value, so an ordinary row — where a genuine result is
+    /// followed by its own reference range — is completely untouched.
+    #[test]
+    fn a_genuine_result_followed_by_its_range_is_untouched() {
+        for (line, key, value) in [
+            ("血红蛋白 122  4.00~5.50", "hgb", 122.0),
+            (
+                "肌酐            88      μmol/L      59-104",
+                "creatinine",
+                88.0,
+            ),
+            ("葡萄糖 7.1 mmol/L 3.9 - 6.1 ↑", "glucose", 7.1),
+            ("钾 4.2 mmol/L 3.5-5.3", "potassium", 4.2),
+            // Negative results still parse; the `-` here is the value's own sign.
+            ("剩余碱 -2.5 mmol/L -3.0 - 3.0", "base_excess", -2.5),
+            // Real corpus, verbatim (复旦华山 术前生化+凝血, 2024-08-08): INR has
+            // no unit, so the empty unit cell prints as a `-` placeholder and a
+            // range operator lands directly after a perfectly good result. The
+            // inversion test is what keeps this row — `1.05–0.8` is impossible,
+            // so `1.05` is a result, and the real range `0.8 - 1.2` follows.
+            ("INR 国际标准化比值 1.05 - 0.8 - 1.2 正常", "inr", 1.05),
+        ] {
+            let obs = extract_labs(line);
+            let o = obs
+                .iter()
+                .find(|o| o.analyte_key.as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("{key} disappeared from {line:?}: {obs:?}"));
+            assert_eq!(o.value_num, value, "{line:?}");
+        }
+        // Prose with a numeric span reads the same way but carries no lab
+        // evidence — it must stay a non-row, NOT become review noise.
+        let (obs, unreadable) = extract_labs_with_unreadable("随访 3-6 个月复查");
+        assert!(
+            obs.is_empty() && unreadable.is_empty(),
+            "{obs:?} {unreadable:?}"
+        );
+    }
+
     #[test]
     fn low_greater_than_high_is_discarded_as_a_safety_net() {
-        // Not the primary fix (that's range_is_bounded / resolve_range_number
+        // Not the primary fix (that's range_is_bounded / parse_decimal_token
         // above) — a defensive invariant check for whatever range-misread
         // shape isn't covered by those. A genuine reference range never
         // inverts, so if low > high still slips through, drop the whole pair
@@ -1719,17 +1948,22 @@ Cr              肌酐 Creatinine
         // number resolves the name to `hgb` and charts a fabricated `hgb ≈ 4`
         // right next to the real trend line — strictly worse than the
         // (unmapped, harmless) row this line produces today.
-        let obs = extract_labs("13血红蛋白                     4.00~5.50  1012/");
-        assert_eq!(
-            obs.first().and_then(|o| o.analyte_key.as_deref()),
-            None,
-            "promoted a contaminated row-number-glued line: {:?}",
-            obs
+        // Note the assertion has been TIGHTENED since this test was written:
+        // it used to accept the line still producing an (unmapped) row with
+        // `value_num == 4.0`, on the reasoning that an unmapped row is
+        // harmless. It is not — `aggregate` groups unmapped rows by raw name
+        // (`GroupKey::Raw`) and they render as their own trend line, so the
+        // fabricated 4.0 was charted either way, just under the label
+        // `13血红蛋白` instead of `血红蛋白`. The row has no result of its own
+        // and is now refused outright; see
+        // `a_row_whose_value_is_its_reference_ranges_low_bound_is_refused`.
+        let (obs, unreadable) =
+            extract_labs_with_unreadable("13血红蛋白                     4.00~5.50  1012/");
+        assert!(
+            obs.is_empty(),
+            "a reference bound was reported as a result: {obs:?}"
         );
-        assert_eq!(
-            obs[0].value_num, 4.0,
-            "value itself is untouched, only unmapped"
-        );
+        assert_eq!(unreadable.len(), 1, "and it must be surfaced for review");
 
         // Same danger, a unit alone is enough to trip it.
         let obs = extract_labs("9单核细胞百分比          12.70     3.50~10.00%");
