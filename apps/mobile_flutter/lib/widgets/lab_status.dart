@@ -255,29 +255,32 @@ class LabLine extends StatelessWidget {
               children: [?pill, nameText],
             );
 
+            // 次要说明行**两个分支都整宽**。它一度被放在并排分支左边那个 `Expanded`
+            // 列里,于是只拿得到「总宽减去数值和箭头」的宽度 —— 而它下面右边根本没有
+            // 东西占着。真机 360dp 上的后果是把参考区间从中间劈开:
+            //
+            //     2026-02-14 · 参考 3.1–
+            //     8
+            //
+            // 一个被折断的数字比难看更糟:那个孤零零的 `8` 读起来像另一个值。
             if (sideBySide) {
-              return Row(
+              return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        head,
-                        if (subText != null) ...[
-                          const SizedBox(height: 2),
-                          subText,
-                        ],
-                      ],
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: head),
+                      const SizedBox(width: MedShape.s2),
+                      // 上面的测量决定**布局形态**(并排还是分两行),这里的 `Flexible`
+                      // 是防估算误差的第二道:pill 宽度是保守估的,估小了就会仍然溢出。
+                      // 形态判对时它不生效(短值按固有宽度收窄),判错时它把横向溢出
+                      // 降级成折行 —— 难看但不是坏掉。
+                      Flexible(child: valueText),
+                      ?chevron,
+                    ],
                   ),
-                  const SizedBox(width: MedShape.s2),
-                  // 上面的测量决定**布局形态**(并排还是分两行),这里的 `Flexible`
-                  // 是防估算误差的第二道:pill 宽度是保守估的,估小了就会仍然溢出。
-                  // 形态判对时它不生效(短值按固有宽度收窄),判错时它把横向溢出
-                  // 降级成折行 —— 难看但不是坏掉。
-                  Flexible(child: valueText),
-                  ?chevron,
+                  if (subText != null) ...[const SizedBox(height: 2), subText],
                 ],
               );
             }
