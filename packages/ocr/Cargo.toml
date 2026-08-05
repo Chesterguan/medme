@@ -19,6 +19,11 @@ image = "0.25"
 imageproc = "0.27"
 anyhow.workspace = true
 lopdf.workspace = true
+# Per-page text-layer extraction for mixed PDFs (some pages printed/real text,
+# others scanned images) -- `extract_text_from_mem_by_pages` is the one public
+# API that gives page-scoped text instead of one whole-document blob, which is
+# what `recognize_pdf_mixed` needs to decide *which pages* actually need OCR.
+pdf-extract.workspace = true
 
 [dev-dependencies]
 

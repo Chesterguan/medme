@@ -1426,6 +1426,212 @@ fn extract_dct_images(doc: &Document, page_id: lopdf::ObjectId) -> Vec<Vec<u8>> 
     out
 }
 
+/// Per-page threshold below which a page's own extracted text is treated as
+/// "no usable text layer" for [`recognize_pdf_mixed`]. Same value `pipeline`
+/// used to apply to the *whole document's* concatenated text -- the bug this
+/// module fixes is exactly that whole-document application: a text-rich page
+/// 1 (e.g. a printed discharge summary) pushes the concatenated length past
+/// this threshold even when every later page is a scanned image with no text
+/// layer at all, so those pages never got OCR'd and their content silently
+/// never made it into the document.
+pub const MIN_TEXT_LAYER_LEN: usize = 20;
+
+/// How one page of a [`recognize_pdf_mixed`] call was resolved.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PdfPageText {
+    /// The page's own embedded text layer had enough text to use as-is.
+    TextLayer(String),
+    /// The text layer was missing/too short; OCR on the page's embedded
+    /// DCTDecode image(s) recovered text instead.
+    Ocr {
+        text: String,
+        confidence: f32,
+        backend: OcrBackend,
+    },
+    /// Neither a usable text layer nor OCR produced anything for this page:
+    /// no embedded DCTDecode image to OCR, OCR ran and found nothing, every
+    /// image on the page failed to OCR, or the page was past
+    /// [`MAX_OCR_PAGE_IMAGES`] and never attempted. Callers MUST surface
+    /// pages in this state to the user -- silently dropping them is the bug
+    /// `recognize_pdf_mixed` exists to fix, and reproducing it one layer up
+    /// (e.g. by joining only the recognized pages and reporting success) just
+    /// moves the same defect.
+    Unrecognized,
+}
+
+/// One page's outcome from [`recognize_pdf_mixed`]. `page_no` is 1-based,
+/// matching `lopdf`/`pdf-extract`'s own page numbering.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PdfPage {
+    pub page_no: i32,
+    pub result: PdfPageText,
+}
+
+/// Outcome of a whole-document mixed-PDF recognition pass: one entry per
+/// page, in order. `pages.len()` is therefore an accurate page count --
+/// unlike `parser::extract`'s old form-feed-counting heuristic, which always
+/// undercounted: `pdf-extract`'s `PlainTextOutput::end_page` never actually
+/// writes `\x0c` between pages, so that heuristic's `+= 1` on match count
+/// never fired and every PDF reported `page_count == 1` regardless of its
+/// real length.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MixedPdfOutcome {
+    pub pages: Vec<PdfPage>,
+}
+
+impl MixedPdfOutcome {
+    pub fn page_count(&self) -> i32 {
+        self.pages.len() as i32
+    }
+
+    /// 1-based page numbers that ended up [`PdfPageText::Unrecognized`] --
+    /// exactly the set a caller must not stay silent about.
+    pub fn unrecognized_pages(&self) -> Vec<i32> {
+        self.pages
+            .iter()
+            .filter(|p| matches!(p.result, PdfPageText::Unrecognized))
+            .map(|p| p.page_no)
+            .collect()
+    }
+
+    /// All recognized text (text-layer + OCR'd pages), joined in page order.
+    /// Unrecognized pages contribute nothing to this string -- callers that
+    /// need to know about them use [`unrecognized_pages`](Self::unrecognized_pages).
+    pub fn text(&self) -> String {
+        self.pages
+            .iter()
+            .filter_map(|p| match &p.result {
+                PdfPageText::TextLayer(t) => Some(t.as_str()),
+                PdfPageText::Ocr { text, .. } => Some(text.as_str()),
+                PdfPageText::Unrecognized => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Resolve one page that has no usable text layer: OCR its embedded
+/// DCTDecode image(s) if the per-document OCR budget allows, otherwise
+/// report [`PdfPageText::Unrecognized`] rather than silently skip it.
+/// `ocr_budget` is shared (decremented) across the whole document -- see
+/// [`build_mixed_pages`].
+fn resolve_page_via_ocr<F>(
+    images: Vec<Vec<u8>>,
+    ocr_budget: &mut usize,
+    recognize_one: &mut F,
+) -> PdfPageText
+where
+    F: FnMut(&[u8]) -> Result<OcrOutcome>,
+{
+    if images.is_empty() {
+        return PdfPageText::Unrecognized;
+    }
+    if *ocr_budget == 0 {
+        // Past the cap: don't run the (expensive) recognizer, but this page
+        // is explicitly "not attempted", not "checked and empty" -- both
+        // collapse to `Unrecognized` so the caller reports it either way.
+        return PdfPageText::Unrecognized;
+    }
+    *ocr_budget -= 1;
+    let mut texts = Vec::new();
+    let mut confidences = Vec::new();
+    let mut backend = None;
+    for image_bytes in images {
+        match recognize_one(&image_bytes) {
+            Ok(outcome) if !outcome.text.trim().is_empty() => {
+                backend = Some(outcome.backend);
+                confidences.push(outcome.confidence);
+                texts.push(outcome.text);
+            }
+            Ok(_) => {} // ran, found nothing on this image -- other images on the page may still hit.
+            Err(e) => {
+                // One image failing OCR shouldn't sink the rest of the page's images.
+                eprintln!("recognize_pdf_mixed: OCR failed for one page image: {e:#}");
+            }
+        }
+    }
+    match backend {
+        Some(backend) if !texts.is_empty() => PdfPageText::Ocr {
+            text: texts.join("\n"),
+            confidence: mean_confidence(&confidences),
+            backend,
+        },
+        _ => PdfPageText::Unrecognized,
+    }
+}
+
+/// Pure decision core of [`recognize_pdf_mixed`]: given each page's own
+/// extracted text-layer text and its embedded DCTDecode image bytes (if
+/// any), decide per page whether the text layer is usable and, for pages
+/// that need it, run `recognize_one` (capped at [`MAX_OCR_PAGE_IMAGES`]
+/// pages actually OCR'd -- same DoS bound `recognize_pdf` already enforces,
+/// just counted per page instead of per image since real scanned PDFs are
+/// overwhelmingly one image per page). Kept separate from
+/// `recognize_pdf_mixed` so the actual fix -- per-page instead of
+/// whole-document text-layer detection -- is unit-testable without a real
+/// multi-page PDF or the OCR engine (mirrors [`ocr_page_images`]'s reason
+/// for existing).
+fn build_mixed_pages<F>(
+    page_texts: Vec<String>,
+    mut page_images: Vec<Vec<Vec<u8>>>,
+    mut recognize_one: F,
+) -> Vec<PdfPage>
+where
+    F: FnMut(&[u8]) -> Result<OcrOutcome>,
+{
+    let mut ocr_budget = MAX_OCR_PAGE_IMAGES;
+    page_texts
+        .into_iter()
+        .enumerate()
+        .map(|(idx, text)| {
+            let page_no = idx as i32 + 1;
+            if text.trim().chars().count() >= MIN_TEXT_LAYER_LEN {
+                return PdfPage {
+                    page_no,
+                    result: PdfPageText::TextLayer(text),
+                };
+            }
+            let images = page_images
+                .get_mut(idx)
+                .map(std::mem::take)
+                .unwrap_or_default();
+            let result = resolve_page_via_ocr(images, &mut ocr_budget, &mut recognize_one);
+            PdfPage { page_no, result }
+        })
+        .collect()
+}
+
+/// OCR a PDF that mixes real text-layer pages with scanned/image-only pages
+/// (e.g. a discharge summary whose first page was printed and whose later
+/// pages are appended lab-report scans), one page at a time -- so a
+/// text-rich first page can no longer cause every later scanned page to be
+/// silently skipped. See [`MIN_TEXT_LAYER_LEN`]'s doc comment for the bug
+/// this replaces.
+///
+/// Returns one [`PdfPage`] per page, in order. `pipeline::ingest` uses
+/// [`MixedPdfOutcome::text`] for what gets stored and
+/// [`MixedPdfOutcome::unrecognized_pages`] for what it MUST tell the caller
+/// was not captured -- never silently drop that list.
+pub fn recognize_pdf_mixed(pdf_bytes: &[u8]) -> Result<MixedPdfOutcome> {
+    let doc = Document::load_mem(pdf_bytes).context("recognize_pdf_mixed: parse PDF")?;
+    let page_ids: Vec<lopdf::ObjectId> = doc.get_pages().into_values().collect();
+    let mut page_texts = pdf_extract::extract_text_from_mem_by_pages(pdf_bytes)
+        .map_err(|e| anyhow::anyhow!("recognize_pdf_mixed: extract per-page text layer: {e}"))?;
+    // `pdf-extract` and `lopdf` both derive page order by walking the same page
+    // tree (`Document::get_pages`), so these line up 1:1 for any PDF that parses
+    // at all. Guard the lengths anyway rather than assume it, so a PDF where
+    // they somehow disagree degrades to "treat the extra/missing pages as no
+    // text layer" (still OCR-attempted) instead of a panic or a silent
+    // misalignment that mislabels every later page.
+    page_texts.resize(page_ids.len(), String::new());
+    let page_images: Vec<Vec<Vec<u8>>> = page_ids
+        .iter()
+        .map(|&page_id| extract_dct_images(&doc, page_id))
+        .collect();
+    let pages = build_mixed_pages(page_texts, page_images, recognize);
+    Ok(MixedPdfOutcome { pages })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1879,6 +2085,203 @@ mod tests {
         assert_eq!(calls, 3);
         assert_eq!(texts.len(), 3);
         assert_eq!(skipped, 0);
+    }
+
+    /// The mixed-PDF bug, reproduced without a real PDF or OCR engine: a
+    /// text-rich page 1 (e.g. a printed report header) must not stop a later
+    /// image-only page from being OCR'd. Before `build_mixed_pages` existed,
+    /// `pipeline::ingest` checked `MIN_TEXT_LAYER_LEN` against the
+    /// *concatenation* of all pages -- page 1 alone cleared it, so page 2's
+    /// image was never even looked at.
+    #[test]
+    fn build_mixed_pages_ocrs_image_only_pages_even_after_a_text_rich_page() {
+        let page_texts = vec![
+            "本页为出院小结正文,内容足够长,超过最小文本层阈值。".to_string(),
+            String::new(), // scanned page: pdf-extract finds nothing
+        ];
+        let page_images = vec![
+            vec![],             // page 1: no embedded image, doesn't matter
+            vec![vec![0xFFu8]], // page 2: one (fake) DCTDecode image
+        ];
+        let mut calls = 0usize;
+        let pages = build_mixed_pages(page_texts, page_images, |_bytes| {
+            calls += 1;
+            Ok(OcrOutcome {
+                text: "化验结果:肌酐 120".to_string(),
+                confidence: 0.9,
+                backend: OcrBackend::Onnx,
+            })
+        });
+        assert_eq!(calls, 1, "only the image-only page should trigger OCR");
+        assert_eq!(pages.len(), 2);
+        assert!(matches!(pages[0].result, PdfPageText::TextLayer(_)));
+        assert_eq!(pages[0].page_no, 1);
+        match &pages[1].result {
+            PdfPageText::Ocr { text, .. } => assert!(text.contains("肌酐")),
+            other => panic!("expected page 2 to be OCR'd, got {other:?}"),
+        }
+        assert_eq!(pages[1].page_no, 2);
+
+        let outcome = MixedPdfOutcome { pages };
+        assert_eq!(
+            outcome.page_count(),
+            2,
+            "page count must reflect both pages"
+        );
+        assert!(outcome.unrecognized_pages().is_empty());
+        assert!(
+            outcome.text().contains("肌酐"),
+            "OCR'd page text must make it into the document"
+        );
+    }
+
+    /// A page with no text layer AND no OCR-able image (blank scan artifact,
+    /// or an image encoding `extract_dct_images` doesn't handle) must come
+    /// back `Unrecognized` -- not silently absent from the page list, and not
+    /// papered over as if it were successfully processed. This is the crux of
+    /// the "no silent data loss" requirement: we may not always be able to
+    /// recover a page's content, but we must always be able to say so.
+    #[test]
+    fn build_mixed_pages_reports_unrecognized_when_nothing_to_ocr() {
+        let page_texts = vec![
+            "够长的第一页文本内容超过阈值二十个字符没问题".to_string(),
+            String::new(),
+        ];
+        let page_images = vec![vec![], vec![]]; // neither page has an image
+        let pages = build_mixed_pages(page_texts, page_images, |_bytes| {
+            panic!("recognize_one should never be called: page 2 has no image")
+        });
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[1].result, PdfPageText::Unrecognized);
+
+        let outcome = MixedPdfOutcome { pages };
+        assert_eq!(outcome.unrecognized_pages(), vec![2]);
+        assert!(
+            !outcome.text().contains("Unrecognized"),
+            "unrecognized pages must contribute no fabricated text"
+        );
+    }
+
+    /// The per-document OCR budget (same DoS bound as `ocr_page_images`, now
+    /// counted per page) must still cap expensive work on a document with
+    /// many image-only pages, and every page past the cap must come back
+    /// `Unrecognized` -- "capped" is a form of "not processed" and must be
+    /// just as visible as any other reason a page didn't get text.
+    #[test]
+    fn build_mixed_pages_caps_ocr_work_and_marks_the_rest_unrecognized() {
+        let extra = 3;
+        let total = MAX_OCR_PAGE_IMAGES + extra;
+        let page_texts = vec![String::new(); total];
+        let page_images = vec![vec![vec![0u8]]; total];
+        let mut calls = 0usize;
+        let pages = build_mixed_pages(page_texts, page_images, |_bytes| {
+            calls += 1;
+            Ok(OcrOutcome {
+                text: "text".to_string(),
+                confidence: 1.0,
+                backend: OcrBackend::Onnx,
+            })
+        });
+        assert_eq!(
+            calls, MAX_OCR_PAGE_IMAGES,
+            "OCR must run on at most the cap-many pages"
+        );
+        let outcome = MixedPdfOutcome { pages };
+        assert_eq!(
+            outcome.unrecognized_pages().len(),
+            extra,
+            "pages past the cap must be reported, not silently dropped"
+        );
+    }
+
+    /// End-to-end wiring check with a real (hand-built) PDF: page 1 has an
+    /// actual Helvetica text layer, page 2 is blank (no content stream, no
+    /// image) -- confirms `lopdf`'s page order and `pdf-extract`'s per-page
+    /// order line up 1:1 on a real document, and that a page with truly
+    /// nothing recoverable comes back `Unrecognized` rather than panicking or
+    /// silently vanishing from the page list. Doesn't touch the OCR engine
+    /// (page 2 has no image, so `recognize` is never invoked), so this test
+    /// behaves the same with or without the `engine` feature.
+    #[test]
+    fn recognize_pdf_mixed_reads_real_two_page_pdf_in_order() {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Stream};
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id },
+        });
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Td", vec![20.into(), 700.into()]),
+                Operation::new(
+                    "Tj",
+                    vec![Object::string_literal(
+                        "Discharge summary page one printed text",
+                    )],
+                ),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(
+            dictionary! {},
+            content.encode().expect("encode content stream"),
+        ));
+        let page1_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+            "Resources" => resources_id,
+        });
+        // Page 2: blank -- no Contents, no image. Nothing recoverable.
+        let page2_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+        });
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page1_id.into(), page2_id.into()],
+                "Count" => 2,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save PDF");
+
+        let outcome =
+            recognize_pdf_mixed(&bytes).expect("recognize_pdf_mixed should parse this PDF");
+        assert_eq!(outcome.page_count(), 2);
+        match &outcome.pages[0].result {
+            PdfPageText::TextLayer(t) => {
+                assert!(
+                    t.contains("Discharge summary"),
+                    "unexpected page 1 text: {t}"
+                )
+            }
+            other => panic!("expected page 1 text layer, got {other:?}"),
+        }
+        assert_eq!(outcome.pages[0].page_no, 1);
+        assert_eq!(outcome.pages[1].result, PdfPageText::Unrecognized);
+        assert_eq!(outcome.pages[1].page_no, 2);
+        assert_eq!(outcome.unrecognized_pages(), vec![2]);
     }
 
     #[test]

@@ -69,6 +69,7 @@ fn wire__crate__api__vault__backfill_pdf_text_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_document_id = <i64>::sse_decode(&mut deserializer);
+            let api_page_no = <i32>::sse_decode(&mut deserializer);
             let api_text = <String>::sse_decode(&mut deserializer);
             let api_confidence = <f64>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -77,6 +78,7 @@ fn wire__crate__api__vault__backfill_pdf_text_impl(
                     (move || {
                         let output_ok = crate::api::vault::backfill_pdf_text(
                             api_document_id,
+                            api_page_no,
                             api_text,
                             api_confidence,
                         )?;
@@ -2042,6 +2044,7 @@ impl SseDecode for crate::api::dto::ImportOutcomeDto {
         let mut var_docType = <Option<String>>::sse_decode(deserializer);
         let mut var_documentId = <Option<i64>>::sse_decode(deserializer);
         let mut var_detectedName = <Option<String>>::sse_decode(deserializer);
+        let mut var_pagesWithoutText = <Vec<i32>>::sse_decode(deserializer);
         return crate::api::dto::ImportOutcomeDto {
             name: var_name,
             source_file_id: var_sourceFileId,
@@ -2049,6 +2052,7 @@ impl SseDecode for crate::api::dto::ImportOutcomeDto {
             doc_type: var_docType,
             document_id: var_documentId,
             detected_name: var_detectedName,
+            pages_without_text: var_pagesWithoutText,
         };
     }
 }
@@ -2130,6 +2134,18 @@ impl SseDecode for Vec<crate::api::dto::DocumentSummaryDto> {
             ans_.push(<crate::api::dto::DocumentSummaryDto>::sse_decode(
                 deserializer,
             ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<i32>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -3113,6 +3129,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::ImportOutcomeDto {
             self.doc_type.into_into_dart().into_dart(),
             self.document_id.into_into_dart().into_dart(),
             self.detected_name.into_into_dart().into_dart(),
+            self.pages_without_text.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3692,6 +3709,7 @@ impl SseEncode for crate::api::dto::ImportOutcomeDto {
         <Option<String>>::sse_encode(self.doc_type, serializer);
         <Option<i64>>::sse_encode(self.document_id, serializer);
         <Option<String>>::sse_encode(self.detected_name, serializer);
+        <Vec<i32>>::sse_encode(self.pages_without_text, serializer);
     }
 }
 
@@ -3751,6 +3769,16 @@ impl SseEncode for Vec<crate::api::dto::DocumentSummaryDto> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::dto::DocumentSummaryDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <i32>::sse_encode(item, serializer);
         }
     }
 }

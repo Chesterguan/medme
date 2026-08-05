@@ -225,7 +225,8 @@ Future<List<PendingImport>> pickImportItems(
       var useScanner = !Platform.isAndroid;
       if (Platform.isAndroid) {
         try {
-          useScanner = (await GoogleApiAvailability.instance
+          useScanner =
+              (await GoogleApiAvailability.instance
                   .checkGooglePlayServicesAvailability()) ==
               GooglePlayServicesAvailability.success;
         } catch (e) {
@@ -261,7 +262,12 @@ Future<List<PendingImport>> pickImportItems(
           await _ScannerAvailability.isKnownUnavailable()) {
         useScanner = false;
         // 不打扰用户(detail 为 null):这是**静默走通**的一条路,不是故障。
-        _report(probe, choice, ImportCaptureIssue.scannerSkippedUnavailable, null);
+        _report(
+          probe,
+          choice,
+          ImportCaptureIssue.scannerSkippedUnavailable,
+          null,
+        );
       }
       if (useScanner) {
         // 不要给交互式扫描器加 wall-clock 超时:VisionKit 是多页扫描器,用户拍完一页
@@ -278,7 +284,9 @@ Future<List<PendingImport>> pickImportItems(
           if (await _scannerFailedToLaunch(scan)) {
             // 扫描器根本没起来。降级到普通相机 —— 注意这里**没有 return**,直接落到
             // 下面那段,与「检测到无 GMS」走同一条路。
-            debugPrint('[import] 文档扫描器 ${_kScannerLaunchWatchdog.inSeconds}s 未启动,回退普通拍照');
+            debugPrint(
+              '[import] 文档扫描器 ${_kScannerLaunchWatchdog.inSeconds}s 未启动,回退普通拍照',
+            );
             _report(
               probe,
               choice,
@@ -299,7 +307,9 @@ Future<List<PendingImport>> pickImportItems(
               //         扫完 0 页 → `processSelectedImages([])` → 空列表 = 静默失败。
               // 此前两者一律 `return const []`,于是「点拍照没反应」的分子分母糊在
               // 一起,永远算不出真实占比。
-              final cancelled = Platform.isAndroid ? paths != null : paths == null;
+              final cancelled = Platform.isAndroid
+                  ? paths != null
+                  : paths == null;
               // ⚠️⚠️ **安卓上「用户取消」和「模块拉不到」是同一个返回值。**
               //
               // 2026-08-04 实测(见上文 AVD 复现)插件源码路径已经走通对齐:
@@ -313,7 +323,8 @@ Future<List<PendingImport>> pickImportItems(
               // 来分流:真取消的人不会去点「用普通相机」,点了的人就是没拍成的人。
               // 这一下点击同时也是我们唯一拿得到的「模块不可用」信号 —— 据此记住
               // 这台机器,下次连那页英文都不再出现。
-              final recover = Platform.isAndroid &&
+              final recover =
+                  Platform.isAndroid &&
                   cancelled &&
                   await _offerPlainCamera(probe);
               if (!recover) {
@@ -340,7 +351,11 @@ Future<List<PendingImport>> pickImportItems(
             } else {
               return [
                 for (final p in paths)
-                  PendingImport(name: p.split('/').last, path: p, isImage: true),
+                  PendingImport(
+                    name: p.split('/').last,
+                    path: p,
+                    isImage: true,
+                  ),
               ];
             }
           }
@@ -391,7 +406,13 @@ Future<List<PendingImport>> pickImportItems(
           allowMultiple: true,
           type: FileType.custom,
           allowedExtensions: [
-            'pdf', 'txt', 'png', 'jpg', 'jpeg', 'tiff', 'heic',
+            'pdf',
+            'txt',
+            'png',
+            'jpg',
+            'jpeg',
+            'tiff',
+            'heic',
           ],
         );
         if (result == null) {
@@ -475,7 +496,8 @@ Future<bool> _scannerFailedToLaunch(Future<List<String>?> scan) {
     Future<void>.delayed(_kScannerLaunchWatchdog).then((_) {
       // `lifecycleState` 在极早期可能是 null。读不到就**不判它有罪** ——
       // 宁可维持现状(继续等),也不能凭猜测把用户的扫描打断。
-      return WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+      return WidgetsBinding.instance.lifecycleState ==
+          AppLifecycleState.resumed;
     }),
   ]);
 }
@@ -641,7 +663,6 @@ Future<ImportRunResult> _runImport(
     final itemStartedAt = DateTime.now();
     try {
       final ImportOutcomeDto outcome;
-      var pdfBackfilled = false;
       if (item.isImage) {
         // 各平台原生最强 OCR:iOS Apple Vision / 安卓 ML Kit(见 ocr_bridge.dart)。
         stage = 'ocr';
@@ -658,32 +679,33 @@ Future<ImportRunResult> _runImport(
         stage = 'save';
         final bytes = await File(item.path).readAsBytes();
         outcome = await ingestBytes(filename: item.name, data: bytes);
-        // 扫描版 PDF(无文本层 → 仅存原件):移动端未链接 Rust OCR 引擎,改用 pdfx
-        // 逐页渲染成 PNG、走能用的原生图片 OCR(Vision/ML Kit)后回填,补齐文本。
-        if (outcome.status == 'stored_no_text' &&
-            outcome.documentId != null &&
-            item.name.toLowerCase().endsWith('.pdf')) {
-          final pdfOcr = await _ocrScannedPdf(item.path);
-          if (pdfOcr.text.trim().isNotEmpty) {
-            await backfillPdfText(
-              documentId: outcome.documentId!,
-              text: pdfOcr.text,
-              confidence: pdfOcr.confidence,
-            );
-            pdfBackfilled = true;
-          }
-        }
       }
+
+      // `pagesWithoutText` 点名了哪些 PDF 页缺文本层(移动端未链接 Rust OCR
+      // 引擎,pipeline 落库时没能替这些页拿到文字)——可能是全篇扫描,也可能是
+      // 混合页(如出院小结第 1 页打印、后面几页附检验报告扫描件,只有那几页
+      // 需要补)。不再像旧版那样只在 status=='stored_no_text' 时才补、且不问
+      // 页数盲扫前 20 页:现在按页码精确补,补不完的(超出单次上限/渲染或 OCR
+      // 失败)如实计入 `stillMissingPages`,绝不悄悄吞掉。
+      var stillMissingPages = 0;
+      if (outcome.pagesWithoutText.isNotEmpty && outcome.documentId != null) {
+        stage = 'ocr';
+        final targetPages = outcome.pagesWithoutText.toList();
+        final scan = await _ocrScannedPdfPages(item.path, targetPages);
+        stage = 'save';
+        for (final entry in scan.entries) {
+          await backfillPdfText(
+            documentId: outcome.documentId!,
+            pageNo: entry.key,
+            text: entry.value.text,
+            confidence: entry.value.confidence,
+          );
+        }
+        stillMissingPages = targetPages.length - scan.length;
+      }
+
       if (outcome.documentId case final id?) newDocs[id] = outcome.detectedName;
-      rows.add(
-        pdfBackfilled
-            ? ImportResultRow(
-                name: outcome.name,
-                statusLabel: '已识别入库(扫描件)',
-                kind: ImportRowKind.success,
-              )
-            : rowFromOutcome(outcome),
-      );
+      rows.add(rowForOutcome(outcome, stillMissingPages: stillMissingPages));
       okElapsedMs += DateTime.now().difference(itemStartedAt).inMilliseconds;
       okCount++;
     } catch (e) {
@@ -716,7 +738,9 @@ Future<ImportRunResult> _runImport(
   final failedCount = rows.where((r) => r.kind == ImportRowKind.failed).length;
   final allFailed = failedCount == rows.length;
   Analytics.track(
-    allFailed ? AnalyticsEvent.docImportFailed : AnalyticsEvent.docImportCompleted,
+    allFailed
+        ? AnalyticsEvent.docImportFailed
+        : AnalyticsEvent.docImportCompleted,
     {
       'source': source.name,
       'count_bucket': Bucket.count(rows.length),
@@ -748,11 +772,11 @@ Future<ImportRunResult> _runImport(
   return result;
 }
 
-/// 扫描版 PDF 补 OCR:用 `pdfx` 逐页渲染成 PNG,走原生图片 OCR
-/// ([recognizeImageText],iOS Vision / 安卓 ML Kit),合并各页文本 + 平均置信度。
-/// 任何一步失败/无文本都安全返回(空文本 → 调用方不回填,保持「仅存原件」)。
-/// 页数封顶 [_kMaxPdfOcrPages] 防超大 PDF 卡死。
-const int _kMaxPdfOcrPages = 20;
+/// 一次导入单份文件时,`_ocrScannedPdfPages` 实际会渲染 + OCR 的页数上限
+/// (而不是"这份 PDF 最多支持多少页")——超出的页数如实计入调用方的
+/// `stillMissingPages`,不再像旧版 `_kMaxPdfOcrPages` 那样悄悄停在 20 页、
+/// UI 一声不吭(那是本次修复一并解决的"移动端扫描 PDF 硬截断,零提示"缺陷)。
+const int _kMaxPdfOcrPagesPerImport = 20;
 
 /// 渲染放大倍数的候选,从清晰到保守**逐级降档**。
 ///
@@ -765,18 +789,37 @@ const int _kMaxPdfOcrPages = 20;
 /// 是相对原始尺寸的倍数,不能按 DPI 直接换算。
 const List<double> _kRenderScales = [3.0, 2.0, 1.5];
 
-Future<OcrResult> _ocrScannedPdf(String path) async {
-  final buf = StringBuffer();
-  final confs = <double>[];
+/// 对 `pageNumbers`(1-based,由 `pipeline::ingest_pdf` 通过
+/// `ImportOutcomeDto.pagesWithoutText` 点名——缺文本层、移动端没能在落库时
+/// OCR 的那些页)逐页渲染成 PNG、走原生图片 OCR([recognizeImageText],iOS
+/// Vision / 安卓 ML Kit),返回 page_no → 识别结果,而不是像旧版那样不管页数
+/// 一律从第 1 页盲扫、合并成一整块文本再整份回填。这样才能:(1)只处理真正
+/// 缺文本层的页,混合页 PDF 不用把已有文本层的页也重跑一遍;(2)每页独立回填
+/// (`page_no` 对应真实页码),某页失败不连累其它页。
+///
+/// 返回值里没出现的页码 == 没拿到文本(渲染/OCR 失败、识别为空,或超出
+/// [_kMaxPdfOcrPagesPerImport] 单次上限没跑到)——调用方用
+/// `pageNumbers.length - result.length` 算出「还有几页没识别」,原因不细分,
+/// 但**数量本身绝不能不报**,这正是本次修复解决的"移动端扫描 PDF 静默截断"
+/// 一类缺陷。
+Future<Map<int, OcrResult>> _ocrScannedPdfPages(
+  String path,
+  List<int> pageNumbers,
+) async {
+  final byPage = <int, OcrResult>{};
+  final toAttempt = pageNumbers.take(_kMaxPdfOcrPagesPerImport);
   PdfDocument? doc;
   Directory? tmp;
   try {
     doc = await PdfDocument.openFile(path);
     tmp = await Directory.systemTemp.createTemp('medme_pdf_ocr');
-    final pages = doc.pagesCount < _kMaxPdfOcrPages
-        ? doc.pagesCount
-        : _kMaxPdfOcrPages;
-    for (var i = 1; i <= pages; i++) {
+    for (final i in toAttempt) {
+      // 防御性检查:页码来自 Rust 端,正常情况下必然落在 [1, pagesCount] 内;
+      // 万一不一致(不同库对同一份 PDF 的页数判定有分歧),跳过而非崩溃或越界。
+      if (i < 1 || i > doc.pagesCount) {
+        debugPrint('[import] 页码 $i 超出 pdfx 报告的页数 ${doc.pagesCount},跳过');
+        continue;
+      }
       final page = await doc.getPage(i);
       try {
         // 逐级降档:清晰优先,渲不出来就退一档,别让整页变成零文本。
@@ -792,13 +835,13 @@ Future<OcrResult> _ocrScannedPdf(String path) async {
               backgroundColor: '#FFFFFF',
             );
           } catch (e) {
-            debugPrint('[import] 第 \$i 页 \$scale× 渲染异常: \$e');
+            debugPrint('[import] 第 $i 页 $scale× 渲染异常: $e');
           }
           if (img != null) {
-            debugPrint('[import] 第 \$i 页以 \$scale× 渲染成功');
+            debugPrint('[import] 第 $i 页以 $scale× 渲染成功');
             break;
           }
-          debugPrint('[import] 第 \$i 页 \$scale× 渲染失败,降档重试');
+          debugPrint('[import] 第 $i 页 $scale× 渲染失败,降档重试');
         }
         if (img == null) {
           debugPrint('[import] 第 $i 页所有倍数均渲染失败,跳过');
@@ -808,11 +851,7 @@ Future<OcrResult> _ocrScannedPdf(String path) async {
         await f.writeAsBytes(img.bytes);
         final ocr = await recognizeImageText(f.path);
         if (ocr.text.trim().isNotEmpty) {
-          // 页间必须空行分隔:OCR 已用 `\n\n` 分块(Layer-0),若这里只写一个
-          // 换行,上一页的末块会和下一页的首块粘成同一块,下游按段分块就错位。
-          if (buf.isNotEmpty) buf.write('\n\n');
-          buf.write(ocr.text.trim());
-          confs.add(ocr.confidence);
+          byPage[i] = OcrResult(ocr.text.trim(), ocr.confidence);
         }
       } finally {
         await page.close();
@@ -828,10 +867,7 @@ Future<OcrResult> _ocrScannedPdf(String path) async {
       } catch (_) {}
     }
   }
-  final conf = confs.isEmpty
-      ? 0.0
-      : confs.reduce((a, b) => a + b) / confs.length;
-  return OcrResult(buf.toString().trim(), conf);
+  return byPage;
 }
 
 Future<void> _showImportSummary(
@@ -843,6 +879,7 @@ Future<void> _showImportSummary(
   final storedNoText = rows
       .where((r) => r.kind == ImportRowKind.storedNoText)
       .length;
+  final partial = rows.where((r) => r.kind == ImportRowKind.partial).length;
   final failed = rows.where((r) => r.kind == ImportRowKind.failed).length;
 
   if (!context.mounted) return;
@@ -880,6 +917,15 @@ Future<void> _showImportSummary(
                   Icons.warning_amber_rounded,
                   c.high,
                   '仅存原件(未识别到文字)$storedNoText 份',
+                ),
+              // 部分识别:PDF 有些页认出来了、有些没有——同样是 `high`(要你
+              // 回头核对/补拍),但和「彻底没识别」用不同文案,别混在一起。
+              if (partial > 0)
+                _summaryLine(
+                  context,
+                  Icons.warning_amber_rounded,
+                  c.high,
+                  '部分页未能识别 $partial 份',
                 ),
               if (failed > 0)
                 _summaryLine(

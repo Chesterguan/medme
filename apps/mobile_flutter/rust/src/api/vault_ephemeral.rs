@@ -144,6 +144,7 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 doc_type: o.doc_type.map(|d| d.as_str().to_string()),
                 document_id,
                 detected_name,
+                pages_without_text: o.pages_without_text,
             }
         }
         Err(e) => {
@@ -159,6 +160,7 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 doc_type: None,
                 document_id: None,
                 detected_name: None,
+                pages_without_text: Vec::new(),
             }
         }
     }
@@ -254,6 +256,7 @@ pub fn ephemeral_ingest_image_with_text(
                 doc_type: None,
                 document_id: None,
                 detected_name: None,
+                pages_without_text: Vec::new(),
             }
         } else {
             let text = ocr_text.trim().to_string();
@@ -288,6 +291,7 @@ pub fn ephemeral_ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: parser::extract_demographics(&text).name,
+                    pages_without_text: Vec::new(),
                 }
             } else {
                 let (doc_date, doc_date_end) = parser::guess_date_range(&safe_name);
@@ -310,6 +314,7 @@ pub fn ephemeral_ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: None, // 无文本,识别不到名字
+                    pages_without_text: Vec::new(),
                 }
             }
         };
