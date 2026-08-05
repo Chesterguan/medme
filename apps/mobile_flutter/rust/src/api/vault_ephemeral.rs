@@ -16,6 +16,7 @@
 //! `create_share` 的落库逻辑,也不碰 `vault.rs` 一个字节——本文件对 `vault.rs`
 //! 的 git diff 恒为 0。
 use crate::api::dto::*;
+use crate::diagnostics::warn as log_warn;
 use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind, Vault};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -152,7 +153,10 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            eprintln!("[ephemeral-ingest] failed for {}: {e}", path.display());
+            log_warn(&format!(
+                "[ephemeral-ingest] failed for {}: {e}",
+                path.display()
+            ));
             ImportOutcomeDto {
                 name,
                 source_file_id: 0,

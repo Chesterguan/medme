@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
 ///
@@ -110,6 +110,53 @@ class ConsentDto {
           signaturePngBase64 == other.signaturePngBase64 &&
           method == other.method &&
           sessionId == other.sessionId;
+}
+
+/// 「载入示例数据」的进度回报(`api::vault::load_demo_data` 经 `StreamSink` 逐份
+/// 推给 Dart)。真机实测过全程 11 秒零反馈——不是慢,是安卓那次 22 份的循环里
+/// Dart 侧原来只等一个 `Future`,中途没有任何信号可渲染。这里补一个流,让设置屏
+/// 能画「正在载入 N/total」而不是一个不知道在不在跑的忙态。
+///
+/// **`error` 而不是让整个函数返回 `Err`**:FRB 里带 `StreamSink` 参数的函数,
+/// Dart 侧签名会整个折成 `Stream<T>`——函数自身的 `Result` 只用来标记这一次
+/// FFI 调用本身,`load_demo_data` 内部通过 `unawaited(...)` 发起,没有代码
+/// `await` 它,一旦真返回 `Err` 就是一次悄悄丢失、连 Dart 的 `try/catch` 都接不住
+/// 的异常(本工单要修的正是「失败静默不可见」,不能在同一次改动里换个地方复发)。
+/// 所以 `load_demo_data` 恒返回 `Ok(())`,任何失败(保险箱未打开、磁盘写入失败等)
+/// 都经这个 `error` 字段随流报出来,Dart 侧照常能 `catch`。
+class DemoLoadProgressDto {
+  /// 已处理(尝试过,含失败)的份数;发生 `error` 时为 0。
+  final PlatformInt64 loaded;
+
+  /// 总份数;发生 `error` 时为 0(还没来得及数出总数就失败了)。
+  final PlatformInt64 total;
+
+  /// 到目前为止成功入库的份数(累计)。
+  final PlatformInt64 succeeded;
+
+  /// 整个操作失败的原因;正常进行中/正常完成为 `None`。
+  final String? error;
+
+  const DemoLoadProgressDto({
+    required this.loaded,
+    required this.total,
+    required this.succeeded,
+    this.error,
+  });
+
+  @override
+  int get hashCode =>
+      loaded.hashCode ^ total.hashCode ^ succeeded.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DemoLoadProgressDto &&
+          runtimeType == other.runtimeType &&
+          loaded == other.loaded &&
+          total == other.total &&
+          succeeded == other.succeeded &&
+          error == other.error;
 }
 
 /// 文档详情:类型/日期(在 document 里)+ 来源文件 + 识别文本。

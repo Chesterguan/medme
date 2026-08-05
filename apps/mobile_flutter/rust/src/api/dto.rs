@@ -14,6 +14,30 @@ pub struct IcloudStatusDto {
     pub enabled: bool,
 }
 
+/// 「载入示例数据」的进度回报(`api::vault::load_demo_data` 经 `StreamSink` 逐份
+/// 推给 Dart)。真机实测过全程 11 秒零反馈——不是慢,是安卓那次 22 份的循环里
+/// Dart 侧原来只等一个 `Future`,中途没有任何信号可渲染。这里补一个流,让设置屏
+/// 能画「正在载入 N/total」而不是一个不知道在不在跑的忙态。
+///
+/// **`error` 而不是让整个函数返回 `Err`**:FRB 里带 `StreamSink` 参数的函数,
+/// Dart 侧签名会整个折成 `Stream<T>`——函数自身的 `Result` 只用来标记这一次
+/// FFI 调用本身,`load_demo_data` 内部通过 `unawaited(...)` 发起,没有代码
+/// `await` 它,一旦真返回 `Err` 就是一次悄悄丢失、连 Dart 的 `try/catch` 都接不住
+/// 的异常(本工单要修的正是「失败静默不可见」,不能在同一次改动里换个地方复发)。
+/// 所以 `load_demo_data` 恒返回 `Ok(())`,任何失败(保险箱未打开、磁盘写入失败等)
+/// 都经这个 `error` 字段随流报出来,Dart 侧照常能 `catch`。
+#[derive(Debug, Clone)]
+pub struct DemoLoadProgressDto {
+    /// 已处理(尝试过,含失败)的份数;发生 `error` 时为 0。
+    pub loaded: i64,
+    /// 总份数;发生 `error` 时为 0(还没来得及数出总数就失败了)。
+    pub total: i64,
+    /// 到目前为止成功入库的份数(累计)。
+    pub succeeded: i64,
+    /// 整个操作失败的原因;正常进行中/正常完成为 `None`。
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DocumentSummaryDto {
     pub id: i64,

@@ -25,6 +25,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  RustStreamSink<DemoLoadProgressDto>
+  dco_decode_StreamSink_demo_load_progress_dto_Sse(dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
@@ -68,6 +72,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ConsentDto dco_decode_consent_dto(dynamic raw);
+
+  @protected
+  DemoLoadProgressDto dco_decode_demo_load_progress_dto(dynamic raw);
 
   @protected
   DocumentDetailDto dco_decode_document_detail_dto(dynamic raw);
@@ -247,6 +254,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<DemoLoadProgressDto>
+  sse_decode_StreamSink_demo_load_progress_dto_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
@@ -298,6 +311,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ConsentDto sse_decode_consent_dto(SseDeserializer deserializer);
+
+  @protected
+  DemoLoadProgressDto sse_decode_demo_load_progress_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   DocumentDetailDto sse_decode_document_detail_dto(
@@ -518,6 +536,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_demo_load_progress_dto_Sse(
+    RustStreamSink<DemoLoadProgressDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
@@ -585,6 +609,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_consent_dto(ConsentDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_demo_load_progress_dto(
+    DemoLoadProgressDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_document_detail_dto(

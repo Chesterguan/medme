@@ -1344,11 +1344,15 @@ fn wire__crate__api__vault__load_demo_data_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_progress = <StreamSink<
+                crate::api::dto::DemoLoadProgressDto,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || {
-                        let output_ok = crate::api::vault::load_demo_data()?;
+                        let output_ok = crate::api::vault::load_demo_data(api_progress)?;
                         Ok(output_ok)
                     })(),
                 )
@@ -1899,6 +1903,19 @@ impl SseDecode for flutter_rust_bridge::for_generated::anyhow::Error {
     }
 }
 
+impl SseDecode
+    for StreamSink<
+        crate::api::dto::DemoLoadProgressDto,
+        flutter_rust_bridge::for_generated::SseCodec,
+    >
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <String>::sse_decode(deserializer);
+        return StreamSink::deserialize(inner);
+    }
+}
+
 impl SseDecode for String {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2004,6 +2021,22 @@ impl SseDecode for crate::api::dto::ConsentDto {
             signature_png_base64: var_signaturePngBase64,
             method: var_method,
             session_id: var_sessionId,
+        };
+    }
+}
+
+impl SseDecode for crate::api::dto::DemoLoadProgressDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_loaded = <i64>::sse_decode(deserializer);
+        let mut var_total = <i64>::sse_decode(deserializer);
+        let mut var_succeeded = <i64>::sse_decode(deserializer);
+        let mut var_error = <Option<String>>::sse_decode(deserializer);
+        return crate::api::dto::DemoLoadProgressDto {
+            loaded: var_loaded,
+            total: var_total,
+            succeeded: var_succeeded,
+            error: var_error,
         };
     }
 }
@@ -3124,6 +3157,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::ConsentDto>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::DemoLoadProgressDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.loaded.into_into_dart().into_dart(),
+            self.total.into_into_dart().into_dart(),
+            self.succeeded.into_into_dart().into_dart(),
+            self.error.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::dto::DemoLoadProgressDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::DemoLoadProgressDto>
+    for crate::api::dto::DemoLoadProgressDto
+{
+    fn into_into_dart(self) -> crate::api::dto::DemoLoadProgressDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::dto::DocumentDetailDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -3696,6 +3752,18 @@ impl SseEncode for flutter_rust_bridge::for_generated::anyhow::Error {
     }
 }
 
+impl SseEncode
+    for StreamSink<
+        crate::api::dto::DemoLoadProgressDto,
+        flutter_rust_bridge::for_generated::SseCodec,
+    >
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        unimplemented!("")
+    }
+}
+
 impl SseEncode for String {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3766,6 +3834,16 @@ impl SseEncode for crate::api::dto::ConsentDto {
         <Option<String>>::sse_encode(self.signature_png_base64, serializer);
         <String>::sse_encode(self.method, serializer);
         <String>::sse_encode(self.session_id, serializer);
+    }
+}
+
+impl SseEncode for crate::api::dto::DemoLoadProgressDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i64>::sse_encode(self.loaded, serializer);
+        <i64>::sse_encode(self.total, serializer);
+        <i64>::sse_encode(self.succeeded, serializer);
+        <Option<String>>::sse_encode(self.error, serializer);
     }
 }
 

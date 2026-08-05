@@ -61,6 +61,14 @@ dicom = { path = "../../../packages/dicom", default-features = false }
 [target.'cfg(any(target_os = "ios", all(target_os = "android", target_arch = "aarch64")))'.dependencies]
 ocr = { path = "../../../packages/ocr", default-features = false, features = ["engine"] }
 
+# 安卓不捕获进程 stderr——`eprintln!` 诊断在真机 `adb logcat` 上完全看不见
+# (2026-08 真机实测复现,见 `crate::diagnostics`)。`android_logger` 把 `log`
+# 门面接进 logcat,只在安卓上链接;iOS/其它平台继续用 `eprintln!`,不需要这两个
+# 依赖。
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
+log = "0.4"
+
 [dev-dependencies]
 # `api::vault_ephemeral` 的单测用临时目录(会话根/沙盒 `cache_dir`)。
 tempfile = "3"
