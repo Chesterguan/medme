@@ -377,6 +377,36 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
+  group('趋势:自测序列必须有文字图例', () {
+    // 图上的自测点画成空心圈,但形状不能是唯一载体 —— 没有图例的形状编码等于
+    // 没有编码。产品负责人真机看到图后原话:「trend 里面没有 legend,谁知道
+    // 空心是自测数据呢」。
+    TrendSeriesDto s({required bool self}) => TrendSeriesDto(
+      name: '收缩压',
+      unit: 'mmHg',
+      anyAbnormal: true,
+      refHigh: 135,
+      panel: '生命体征',
+      selfMeasured: self,
+      points: [pt('2026-08-05', 138, flag: 'H')],
+    );
+
+    testWidgets('自测序列的卡上出现「家测」二字', (tester) async {
+      await tester.pumpWidget(
+        wrap(SeriesCard(series: s(self: true), onOpenDoc: (_) {})),
+      );
+      expect(find.text('家测'), findsOneWidget);
+    });
+
+    testWidgets('医院序列不出现「家测」', (tester) async {
+      await tester.pumpWidget(
+        wrap(SeriesCard(series: s(self: false), onOpenDoc: (_) {})),
+      );
+      expect(find.text('家测'), findsNothing);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
   group('应急卡', () {
     final emptyCard = const EmergencyCardDto(
       allergies: [],

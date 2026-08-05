@@ -238,7 +238,7 @@ class _TrendsScreenState extends State<TrendsScreen> {
                   const SizedBox(height: MedShape.s3),
                   for (var i = 0; i < shown.length; i++) ...[
                     if (i > 0) const SizedBox(height: MedShape.s2),
-                    _SeriesCard(series: shown[i], onOpenDoc: _openDoc),
+                    SeriesCard(series: shown[i], onOpenDoc: _openDoc),
                   ],
                   if (shown.isEmpty)
                     Padding(
@@ -539,8 +539,12 @@ class _PanelChip extends StatelessWidget {
 /// **不画骑缝线。** 这是一张派生卡:一条趋势是从许多份原件里算出来的结论,背后没有
 /// 「某一张纸」叫做「肌酐趋势」(规范 §五,那里正是拿趋势汇总卡当反例的)。可溯源
 /// 由卡底那颗「最新一次的原件」兑现 —— 它指向一个具体的 `documentId`。
-class _SeriesCard extends StatelessWidget {
-  const _SeriesCard({required this.series, required this.onOpenDoc});
+class SeriesCard extends StatelessWidget {
+  /// **公开是为了可测。** 「自测序列必须带文字图例」这条只能在渲染出来的卡上验证
+  /// —— 整屏 pump 需要 `viewTrends()` 的 Rust FFI,测试环境没有原生库。与
+  /// `manualEntryRangeError` 同一个先例:把被测单元暴露出来,而不是把断言降级成
+  /// 「只测纯函数、渲染层靠肉眼」。
+  const SeriesCard({super.key, required this.series, required this.onOpenDoc});
 
   final TrendSeriesDto series;
   final void Function(int docId) onOpenDoc;
@@ -620,6 +624,15 @@ class _SeriesCard extends StatelessWidget {
               runSpacing: 4,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
+                // 自测序列必须**用文字**说出来。图上的空心点是区分手段,但形状不能
+                // 是唯一载体 —— 没有图例的形状编码等于没有编码,没人知道空心圈是
+                // 「这是你自己填的」。这与 `lab_status.dart` 那条同源:状态同时编码
+                // 在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
+                //
+                // 概览(`overview_screen.dart:434`)和就诊单
+                // (`visit_summary_sheet.dart:365`)早就在日期旁标了「· 家测」,
+                // 只有趋势漏了。措辞与它们一致,不另造一套。
+                if (series.selfMeasured) const _SelfMeasuredLegend(),
                 if (ref != null) _RefLegend(text: '参考区间 $ref'),
                 Text(
                   pts.length == 1
@@ -668,6 +681,40 @@ class _SeriesCard extends StatelessWidget {
 ///
 /// 图里那条带子没有标数值(画布里一个字都没有,见 `TrendChart` 的文档),数值由
 /// 这行文字给。色块和带子同色同边框,眼睛才连得起来。
+///
+/// 「家测」图例:一个和图里同样画法的**空心圈** + 两个字。
+///
+/// 图上的自测点画成空心圈(见 `TrendChart` 的 `selfMeasured`),但**形状不能是唯一
+/// 载体** —— 没有图例的形状编码等于没有编码。这与 `lab_status.dart` 那条同源:
+/// 偏高/偏低同时编码在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
+///
+/// 圈的画法(线宽 1.5、半径 3.4、`seal` 描边、`surface` 填心)与
+/// `_TrendPainter` 里末点的自测画法一致 —— 图例和图不一致,比没有图例更糟。
+class _SelfMeasuredLegend extends StatelessWidget {
+  const _SelfMeasuredLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: c.surface,
+            border: Border.all(color: c.seal, width: 1.5),
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text('家测', style: MedType.secondary.copyWith(color: c.ink3)),
+      ],
+    );
+  }
+}
+
 class _RefLegend extends StatelessWidget {
   const _RefLegend({required this.text});
 
