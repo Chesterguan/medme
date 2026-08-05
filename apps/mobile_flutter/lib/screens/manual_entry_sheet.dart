@@ -17,7 +17,9 @@ import 'package:mobile_flutter/vault_events.dart';
 /// 与 DICOM/文本导入同构(没有原件,合成文本本身当"文件",见 Rust 侧的文档)。
 ///
 /// 编辑复用同一个弹层:传入 [editing](已有文档 id + 预填的值)时,保存动作变成
-/// **先成功写入新的,再删旧的**——这样万一保存失败,原记录不受影响。没有专门的
+/// **先删旧的,再写新的**(见 [_ManualEntrySheetState._save] 的详细注释——
+/// 顺序反过来会在"编辑但没改任何字段"时把这条记录整个删没,因为 CAS
+/// 内容寻址会把"新"文本判定成和旧文档同一份内容而拒绝重复建档)。没有专门的
 /// 编辑 API(设计文档 §3.6:append-only,删除是墓碑事件,不是原地覆盖)。
 ///
 /// 返回 `true` = 保存成功(调用方据此 `bumpVaultRevision`);`false`/`null` = 取消。
@@ -217,12 +219,21 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
       }
       setState(() => _saving = true);
       try {
-        await addNote(text: text, measuredAt: measuredAt);
-        // 编辑:新的已经写成功了,再删旧的 —— 顺序反过来的话,一旦上面那步
-        // 失败,用户会发现自己的旧记录凭空消失了。
+        // 编辑:先删旧的,再写新的。**顺序不能反过来**——写自测/笔记记录走的
+        // 是 CAS(内容寻址):没改任何字段时,新文本和旧文档的合成文本逐字节
+        // 相同。若先写新的,`vault.import` 会命中去重,判定"这份内容已经建过
+        // 档"而直接把旧文档的 id 当成"新文档"返回(不建新记录);随后再删除
+        // 这个 id,就把用户刚保存的记录整个删没了——静默丢数据,且用户毫无
+        // 察觉("保存"按钮明明显示了成功)。先删再写,即使内容逐字节相同,
+        // `vault.import` 也会因为旧文档已不存在而正常建出一份新的
+        // (`core_model::materialize` 的 `HashReplayState`/`pending_deletes`
+        // 就是为"内容相同、先删后建"这个序列设计的)。代价是:若中间那步写入
+        // 真的失败(理论上只有存储层故障),旧记录已经删了、新的没建成——但这
+        // 比"编辑时不改任何字段直接保存,记录消失"这个必现的 bug 要好得多。
         if (_editing) {
           await deleteDocument(documentId: widget.editing!.documentId);
         }
+        await addNote(text: text, measuredAt: measuredAt);
         _finish();
       } catch (e) {
         setState(() {
@@ -240,10 +251,11 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
     }
     setState(() => _saving = true);
     try {
-      await addSelfMeasurement(values: values, measuredAt: measuredAt);
+      // 见上面笔记分支的注释:同一条"先删再写"的理由。
       if (_editing) {
         await deleteDocument(documentId: widget.editing!.documentId);
       }
+      await addSelfMeasurement(values: values, measuredAt: measuredAt);
       _finish();
     } catch (e) {
       setState(() {

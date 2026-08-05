@@ -1513,4 +1513,78 @@ mod tests {
         let visit = view_visit_summary().unwrap();
         assert_eq!(visit.patient.record_count, 1);
     }
+
+    /// 编辑必须"先删旧的,再写新的"——反过来在"编辑但没改任何字段直接保存"
+    /// 时会把记录整个删没:CAS 是内容寻址,新文本与旧文档逐字节相同时
+    /// `Vault::import` 命中去重,`add_self_measurement` 的去重防线(见
+    /// `vault.rs` 的注释)会把旧文档自己的 id 当"新文档"直接返回;随后再删除
+    /// 这个 id,删掉的就是用户刚保存的那条。这条测试钉住**正确**顺序(先删
+    /// 后写)在内容完全相同时仍然保留记录——手机端 `manual_entry_sheet.dart`
+    /// 的 `_save()` 必须遵守这个顺序。
+    #[test]
+    fn editing_with_unchanged_values_preserves_the_record_when_delete_precedes_add() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        let values = vec![SelfMeasuredValueDto {
+            analyte_key: "heart_rate".into(),
+            value: 72.0,
+            unit: "/min".into(),
+        }];
+        let when = Some("2026-08-01T08:00:00Z".to_string());
+        let id1 = crate::api::vault::add_self_measurement(values.clone(), when.clone()).unwrap();
+
+        // "编辑但没改任何字段"直接保存:正确顺序是先删,再用完全相同的值重写。
+        crate::api::vault::delete_document(id1).unwrap();
+        let id2 = crate::api::vault::add_self_measurement(values, when).unwrap();
+        assert!(id2 > 0);
+
+        let trends = view_trends().unwrap();
+        let hr = trends
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("heart_rate"))
+            .expect("记录必须还在——即使内容与被删的那份逐字节相同");
+        assert_eq!(hr.points.len(), 1);
+        assert_eq!(hr.points[0].value, 72.0);
+    }
+
+    /// 反过来的顺序(先写"新"的、再删旧的)在内容不变时会把记录删没——这条
+    /// 测试明确钉住错误顺序的后果,防止将来有人"优化"手机端代码把顺序改
+    /// 回来。**这是在记录一个已知陷阱,不是在认可它。**
+    #[test]
+    fn editing_with_unchanged_values_loses_the_record_when_add_precedes_delete() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        let values = vec![SelfMeasuredValueDto {
+            analyte_key: "heart_rate".into(),
+            value: 72.0,
+            unit: "/min".into(),
+        }];
+        let when = Some("2026-08-01T08:00:00Z".to_string());
+        let id1 = crate::api::vault::add_self_measurement(values.clone(), when.clone()).unwrap();
+
+        // 错误顺序:先"写新的"(内容相同 → CAS 去重 → 拿回的其实还是 id1),
+        // 再删这个 id —— 结果是把刚"保存"的记录删没了。
+        let id2 = crate::api::vault::add_self_measurement(values, when).unwrap();
+        assert_eq!(id2, id1, "内容相同 → 去重防线返回的就是旧文档本身的 id");
+        crate::api::vault::delete_document(id2).unwrap();
+
+        assert!(
+            view_trends().unwrap().is_empty(),
+            "这就是错误顺序的后果:记录整个消失了"
+        );
+    }
 }
