@@ -21,7 +21,11 @@ class MedMe {
   static const Color panel = Colors.white;
   static const Color line = Color(0xFFE2E8F0);
   static const Color ink = Color(0xFF1E293B);
-  static const Color faint = Color(0xFF94A3B8);
+  // 原 #94A3B8 压 `bg` 只有 2.41:1、压白 2.56:1,远低于 WCAG AA 的 4.5 ——
+  // 而这个色被用在同意屏正文、设置项说明等大段可读文字上,不是纯装饰性弱化。
+  // 保持原色相(H≈215°)与饱和度不变,只压暗明度,取刚好过线的值:
+  // 压 `bg`(比白更难过的底)4.55:1、压白 4.84:1,两者都过 4.5。
+  static const Color faint = Color(0xFF5F7390);
   static const Color danger = Color(0xFFBE123C);
 
   // 医生模式(代拍病人纸质材料)专属强调色曾经是橙 `#C2570C` —— **已删**。
