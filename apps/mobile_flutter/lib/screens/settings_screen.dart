@@ -20,8 +20,8 @@ import 'package:url_launcher/url_launcher.dart';
 /// 这颗常量已经漂过两次(团队靠它核「有没有装到最新版」,结果显示的还是两个小版本
 /// 前的号)。`test/app_version_test.dart` 会拿这里的字面量去和 `pubspec.yaml` 比对,
 /// 漂了就会红——改这两行时记得同时改 `pubspec.yaml`,或者反过来。
-const _appVersionName = '1.3.6';
-const _appBuildNumber = '52';
+const _appVersionName = '1.4.0';
+const _appBuildNumber = '53';
 
 /// 底部导航一级 tab「设置」—— 保险箱/成员 / 载入示例数据 / 清空重置 / 关于。
 ///
