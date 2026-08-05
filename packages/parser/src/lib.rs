@@ -52,8 +52,21 @@ pub fn extract(path: &Path) -> anyhow::Result<Extracted> {
                 pdf_extract::extract_text(path)
             }))
             .map_err(|_| anyhow::anyhow!("pdf_extract panicked on malformed PDF"))??;
-            let pages = t.matches('\u{0C}').count() as i32 + 1; // 换页符估页数
-            (t, pages)
+            // 页数恒为 1 —— 这里**没有**页数信息可拿,不要再往回加「估算」。
+            //
+            // 旧代码是 `t.matches('\u{0C}').count() as i32 + 1`(数换页符),那个
+            // heuristic **从未生效过**:`pdf_extract::extract_text` 用的
+            // `PlainTextOutput`,其 `end_page()` 是个空实现(`Ok(())`,见
+            // pdf-extract 0.12 `src/lib.rs`),页与页之间一个 `\x0c` 都不写。于是
+            // 任何 PDF 都只能数出 0 个换页符、恒返回 1 —— 「page_count 恒为 1」这条
+            // 缺陷的根因就在这里,而不是调用方。
+            //
+            // 真实页数由 `ocr::recognize_pdf_mixed` 按页树给出
+            // (`MixedPdfOutcome::page_count`),`pipeline::ingest` 的 PDF 分支已改走
+            // 那条路,本函数的 pdf 分支在生产里不再被 PDF 命中(见
+            // `pipeline::ingest` 里 `is_pdf` 的早分流)。保留这个分支只为库的
+            // 通用性与既有测试;要页数请用 `ocr::recognize_pdf_mixed`。
+            (t, 1)
         }
         other => anyhow::bail!("unsupported extension: {other}"),
     };
