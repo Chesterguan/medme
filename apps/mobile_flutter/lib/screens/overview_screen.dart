@@ -136,9 +136,18 @@ class _OverviewScreenState extends State<OverviewScreen> {
   /// 存完**不**走 [_goReviewNewDocs] 那条"待确认"复核路径 —— 那道闸门是为
   /// OCR 抽取质量不确定而设的(见 `_goReviewNewDocs` 的文档),手动录入没有
   /// OCR 这一步:用户填的数字就是存进去的数字,没有"识别错了"这回事需要核对。
-  /// 存完直接留在本屏,`showManualEntrySheet` 内部已经 `bumpVaultRevision`,
-  /// 本屏监听着这个信号会自动刷新「最近的关键化验」/「最近归档」,不需要额外
-  /// 跳转。只用一条 SnackBar 确认"存上了"。
+  ///
+  /// 但"导入要跳转"还有第二个理由——**让人看见结果**,这一条手动录入同样需要
+  /// 兑现,不能因为不需要复核就顺带把它也省了。核对过下面这条链路,确认存完
+  /// 就地关弹层**不会**是「点了没反应」:`showManualEntrySheet` 内部先
+  /// `bumpVaultRevision`才 `pop`,本屏监听着这个信号 `_onVaultChanged` →
+  /// `_refresh()` 会重新拉一次 `viewVisitSummary()`——
+  ///   · 数值项(血压/心率/体重/体温/血糖)落在 `recentLabs` 里,新记录按测量
+  ///     时间排序,默认就是"现在",会排到「最近的关键化验」最上面;
+  ///   · 笔记落在 `recentVisits` 里(它就是一份普通文档,`load_archive()`
+  ///     按日期倒序),同样会排到「最近归档」最上面。
+  /// 弹层一关,底下这屏正好翻到新记录所在的那个区块,不需要另开一个页面
+  /// 去"证明"存上了——再加一条 SnackBar 是双重确认,不是唯一的反馈渠道。
   Future<void> _openManualEntry() async {
     final messenger = ScaffoldMessenger.of(context);
     final saved = await showManualEntrySheet(context);
