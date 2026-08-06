@@ -82,4 +82,79 @@ mod tests {
             "Cr 104 umol/L 见附页"
         );
     }
+
+    /// 「折部首会不会误伤」的答案,穷举了整个 Kangxi Radicals 块(U+2F00–2FD5)
+    /// 才有资格说:**214 个康熙部首,每一个的 NFKC 都恰好是一个统一汉字**,
+    /// 没有一个会展开成多字、也没有一个会落到汉字区外。所以这条折叠
+    /// 「把一个字换成长得一样的另一个码位」,不会把别的东西搅碎。
+    ///
+    /// 这条穷举同时是加映射表时的护栏:哪天有人往 `match` 里塞一条把部首映射
+    /// 到多字/非汉字的规则,这里会当场炸。
+    #[test]
+    fn every_kangxi_radical_folds_to_exactly_one_unified_ideograph() {
+        let mut n = 0usize;
+        for cp in 0x2F00u32..=0x2FD5 {
+            let c = char::from_u32(cp).expect("valid scalar");
+            let folded = normalize_cjk_radicals(&c.to_string());
+            let mut it = folded.chars();
+            let one = it.next().expect("folds to something");
+            assert!(
+                it.next().is_none(),
+                "U+{cp:04X} {c} 折成了多个字符 {folded:?} —— 折叠必须是 1:1"
+            );
+            assert_ne!(one, c, "U+{cp:04X} {c} 没被折走");
+            assert!(
+                ('\u{3400}'..='\u{9FFF}').contains(&one),
+                "U+{cp:04X} {c} 折成了非汉字 U+{:04X}",
+                one as u32
+            );
+            n += 1;
+        }
+        assert_eq!(n, 214, "Kangxi Radicals 块是 214 个部首");
+    }
+
+    /// CJK Radicals Supplement(U+2E80–2EF3)**整块没有 NFKC 分解** —— 115 个里
+    /// 只有 2 个能靠 NFKC 折走,其余全靠上面那张手写表。表里现在 10 条,
+    /// 剩下 105 个原样穿过。
+    ///
+    /// 这不是"已经覆盖完了",是"覆盖了见过的"。这条测试把**当前覆盖面**钉成
+    /// 一个数字:往表里加一条,这里就得改一次,改的人才会顺手看一眼还差哪些。
+    /// 现实里还可能踩到的简化字形部首(各自都是一个常用独体字的同形码位):
+    /// `⻉`贝 `⻋`车 `⻘`青 `⻚`页 `⻢`马 `⻥`鱼 `⻦`鸟 `⻮`齿 `⻰`龙 `⺟`母。
+    #[test]
+    fn supplement_block_coverage_is_a_known_finite_number() {
+        let mut folded_count = 0usize;
+        let mut assigned = 0usize;
+        for cp in 0x2E80u32..=0x2EF3 {
+            let c = char::from_u32(cp).expect("valid scalar");
+            // U+2E9A 是块内唯一的未分配码位。
+            if cp == 0x2E9A {
+                continue;
+            }
+            assigned += 1;
+            let folded = normalize_cjk_radicals(&c.to_string());
+            if folded != c.to_string() {
+                folded_count += 1;
+                assert_eq!(
+                    folded.chars().count(),
+                    1,
+                    "U+{cp:04X} {c} 折成了多个字符 {folded:?}"
+                );
+            }
+        }
+        assert_eq!(assigned, 115, "Supplement 块分配了 115 个码位");
+        assert_eq!(
+            folded_count, 12,
+            "手写表 10 条 + NFKC 能吃掉的 2 条 = 12。改了表就更新这个数,\
+             并顺手看一眼上面注释里列的那批还没进表的常用同形部首"
+        );
+    }
+
+    /// 折叠必须幂等 —— 不然「在 ingest 折一次、消费者又各折一次」这种叠加会出事。
+    #[test]
+    fn folding_is_idempotent() {
+        let s = "四川⼤学华⻄医院 ⾎糖 6.8 mmol/L 诊断意⻅:⾼⾎压 3 级";
+        let once = normalize_cjk_radicals(s);
+        assert_eq!(normalize_cjk_radicals(&once), once);
+    }
 }
