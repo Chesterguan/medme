@@ -233,7 +233,12 @@ class _OverviewScreenState extends State<OverviewScreen> {
                   onEmergency: goToEmergencyCard,
                 ),
                 const SizedBox(height: MedShape.s2),
-                VisitSheetBanner(onTap: () => showVisitSummarySheet(context)),
+                VisitSheetBanner(
+                  onTap: () => showVisitSummarySheet(
+                    context,
+                    from: VisitSheetEntry.overview,
+                  ),
+                ),
                 const SizedBox(height: MedShape.s5),
                 if (s.patient.recordCount == 0)
                   _FirstRunEmpty(onImport: () => _import(null))

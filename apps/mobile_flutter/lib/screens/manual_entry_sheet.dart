@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
@@ -398,6 +399,18 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
   }
 
   void _finish() {
+    // 埋点:只报**「数值」还是「笔记」**,以及这次是新增还是编辑。
+    //
+    // 绝不报是哪一种(血压/心率/体重/体温/血糖)—— 「这台设备在测血糖」是对机主
+    // 的健康推断,与「不采内容」同级。数值本身、单位、笔记原文、测量时间更是一个
+    // 字都不出去。理由与取舍见 `analytics.dart` 的 [RecordKindGroup]。
+    Analytics.track(AnalyticsEvent.recordAdded, {
+      'kind_group': (_kind == ManualEntryKind.note
+              ? RecordKindGroup.note
+              : RecordKindGroup.measurement)
+          .name,
+      'edited': _editing,
+    });
     bumpVaultRevision();
     if (mounted) Navigator.of(context).pop(true);
   }

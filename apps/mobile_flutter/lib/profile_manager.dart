@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:mobile_flutter/analytics.dart';
+
 /// 家庭多成员管理:每个成员一个独立保险箱(子文件夹)。成员表持久化到沙盒
 /// `<support>/profiles.json`,与 Apple ID 无关——纯本地 + 子文件夹。
 ///
@@ -119,9 +121,30 @@ class ProfileManager {
       // 读坏了不致命:退回单成员默认档案。
     }
     _loaded = true;
+    _publishMemberCount();
   }
 
+  /// 把**成员个数(分桶)**放进会话上下文,于是每条事件都能按「单成员 / 多成员」
+  /// 切开看。
+  ///
+  /// **为什么是上下文而不是一条 `member_added` 事件:** 要回答的决定是「多成员
+  /// 这套东西(每人一个 vault、切换要重开箱、示例数据靠它隔离)值不值它的复杂度」,
+  /// 而那要看的是**存量**(有多少设备真的有第二个人),不是流量(谁在什么时候加的)。
+  /// 存量用上下文一个键就够,不用新增任何事件。
+  ///
+  /// 不泄露内容:成员**名字**是病历里最直接的身份信息,一个字都不出去;这里出去的
+  /// 只有 `Bucket.count(个数)`,而成员上限是 5,所以实际取值只有 `1` 和 `2-5` 两档。
+  ///
+  /// ⚠️ 载入过示例数据的设备会多出一个合成成员(「张建国(示例)」),所以这个数
+  /// 是**上界**。真实多成员占比要按 `demo_data_loaded` 切开看 —— 目录第三节写了这条。
+  void _publishMemberCount() =>
+      Analytics.setContext({'member_count_bucket': Bucket.count(_profiles.length)});
+
   Future<void> _save() async {
+    // 成员表每一次变化都经过这里(create / remove / rename / switchTo /
+    // setVaultName / factoryReset),所以上下文的刷新只挂这一处就够 ——
+    // 不用在每个改动点各记一遍。
+    _publishMemberCount();
     try {
       final f = await _stateFile();
       await f.writeAsString(

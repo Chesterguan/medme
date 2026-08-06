@@ -52,7 +52,16 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// 例外:那是患者自己写的笔记,只在这一屏显示给患者自己看,绝不进「复制给医生」
 /// 的文本或二维码分享(见 Rust 侧 `VisitNoteDto` 的文档)。这一屏本身也不加结论:
 /// 没有「建议复查」,没有「病情稳定」。它是一页纸,不是一份意见。
-Future<void> showVisitSummarySheet(BuildContext context) {
+/// [from] 是**唯一**的必填参数,而且刻意没有默认值:这一屏没有 tab 席位,只靠
+/// 概览与档案两处顶栏被找到,所以「哪个入口在起作用」正是它最需要回答的问题
+/// (见 `analytics.dart` 的 [AnalyticsEvent.visitSheetOpened])。给了默认值,
+/// 下一个加入口的人就会漏掉它,而漏掉的表现是数据静静地偏 —— 不是编译错误。
+Future<void> showVisitSummarySheet(
+  BuildContext context, {
+  required VisitSheetEntry from,
+}) {
+  // 埋点:只报「从哪一屏唤起的」。屏上显示的药名、过敏史、化验值一个字不带。
+  Analytics.track(AnalyticsEvent.visitSheetOpened, {'where': from.name});
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -92,6 +101,10 @@ class _VisitSummarySheetState extends State<VisitSummarySheet> {
   }
 
   Future<void> _copy(String text) async {
+    // 埋点:只报「按了复制」。**`text` 就是整页病历摘要,绝不上报任何片段。**
+    Analytics.track(AnalyticsEvent.visitSheetAction, {
+      'action': VisitSheetAction.copy.name,
+    });
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -104,6 +117,11 @@ class _VisitSummarySheetState extends State<VisitSummarySheet> {
   /// 这一屏的数据,不需要用户自己关掉浮层再重开——参见 `overview_screen.dart` 的
   /// `_openManualEntry` 同一条理由:存完立刻看见结果,不是靠额外的 SnackBar 交代。
   Future<void> _addNote() async {
+    // 埋点:只报「按了加一条」——**入口归属**。真正存下来的那条由 `record_added`
+    // 计数(且同样不带内容),这里回答的是「我想问医生的」这一节有没有人用。
+    Analytics.track(AnalyticsEvent.visitSheetAction, {
+      'action': VisitSheetAction.addNote.name,
+    });
     final add = widget.onRequestAddNote;
     final saved = add != null
         ? await add(context)
@@ -215,9 +233,19 @@ class _VisitSummarySheetState extends State<VisitSummarySheet> {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const QrShareScreen()),
-              ),
+              onPressed: () {
+                // 埋点:只报**入口归属**。出码本身仍由 `share_qr_shown` 计数,
+                // 载荷、份数、体积都在那条上(且都是分桶)。这里回答的是
+                // 「诊室里走的是复制还是出码」。
+                Analytics.track(AnalyticsEvent.visitSheetAction, {
+                  'action': VisitSheetAction.qr.name,
+                });
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const QrShareScreen(),
+                  ),
+                );
+              },
               icon: const Icon(Icons.qr_code_2, size: 20),
               label: const Text('医生要看原件 · 出示二维码'),
             ),

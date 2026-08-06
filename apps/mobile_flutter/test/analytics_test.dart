@@ -146,6 +146,62 @@ void main() {
     expect(() => Analytics.track(AnalyticsEvent.docImportFailed), returnsNormally);
   });
 
+  test('封闭取值枚举里不许出现身体部位 / 检验项 —— 属性值也是上报面', () {
+    // 事件**名**的中性由上面第一条守着,但取值同样会进后台。`kind_group=glucose`
+    // 泄漏的东西和一个叫 `viewed_lab_result` 的事件名一样多:都是对机主的健康推断。
+    //
+    // 这条盯的是最容易被「顺手加细一点」破坏的地方 —— 手动录入本来就有六个类型,
+    // 把它们原样报上去只要改一个字符,而那一改没有任何别的地方会红。
+    // ⚠️ 这份词表与事件名那份**不同**:少了 `lab`。取值名是 camelCase 的英文词组,
+    // `lab` 会命中 `scannerModuleUnavai(lab)le`、`label` —— 一个必然的假阳性,
+    // 而假阳性会逼下一个人整条删掉。事件名那边是 snake_case 的短名,不吃这个亏。
+    // 这里留下的都是**只可能因为报了身体系统 / 检验项才出现**的词。
+    const forbidden = [
+      'glucose', 'pressure', 'systolic', 'diastolic', 'heart', 'weight',
+      'temperature', 'liver', 'kidney', 'thyroid', 'tumor', 'diagnos',
+      'analyte', 'loinc',
+    ];
+    final reportedValues = [
+      ...RecordKindGroup.values.map((e) => e.name),
+      ...TrendsFilterControl.values.map((e) => e.name),
+      ...VisitSheetAction.values.map((e) => e.name),
+      ...VisitSheetEntry.values.map((e) => e.name),
+      ...AnalyticsTab.values.map((e) => e.name),
+      ...ImportFailReason.values.map((e) => e.name),
+      ...ImportCaptureIssue.values.map((e) => e.name),
+    ];
+    for (final v in reportedValues) {
+      for (final bad in forbidden) {
+        expect(
+          v.toLowerCase().contains(bad),
+          isFalse,
+          reason: '上报取值「$v」含医疗语义词「$bad」—— 属性值和事件名一样会进后台',
+        );
+      }
+    }
+    // 手动录入有六个类型,上报面**必须**只有两档。数字写死在这里:有人把它拆细
+    // 的那一刻就红,不用等到 code review。
+    expect(
+      RecordKindGroup.values.length,
+      2,
+      reason: '「数值 vs 笔记」两分是刻意的上界 —— 六种自测项是健康推断,不上报',
+    );
+  });
+
+  test('会话上下文未声明的键 → debug 下立刻炸', () {
+    // 上下文跟着**每一条**事件出去,覆盖面比任何单条事件都大,而它此前是全自由的。
+    // 与下面那条事件属性的 assert 同一条理由,守的是更大的那一半。
+    expect(
+      () => Analytics.setContext({'patient_name': '张建国'}),
+      throwsA(isA<StateError>()),
+    );
+    // 已声明的键照常放行。
+    expect(
+      () => Analytics.setContext({'member_count_bucket': '1'}),
+      returnsNormally,
+    );
+  });
+
   test('发了未声明的属性 → debug 下立刻炸(release 会被剥掉,线上不受影响)', () {
     // 这是 `AnalyticsEvent.props` 那张表的执行者。属性漂了在后台是**看不出来**的:
     // 图照样画,只是画的东西不对;而目录 `docs/analytics-catalog.md` 是隐私政策与

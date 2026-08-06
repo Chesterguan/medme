@@ -133,6 +133,66 @@ void main() {
     );
   });
 
+  test('第四节标题里的条数与枚举长度一致(手写的计数是最先烂的东西)', () {
+    // 标题写着「事件全集(19 条)」而枚举里已经是 27 条 —— 这正是 1.6.0 发生过的。
+    // 事件名和属性都被钉住了,唯独这个数字没有,于是它成了整份文档里最先过期的一处:
+    // 加事件的人在第四节补了一行,不会想起回头改标题。
+    //
+    // 而这个数字有实际用途 —— 双清单和隐私政策审阅时,第一眼看的就是「一共采几条」。
+    final md = _catalog.readAsStringSync();
+    final m = RegExp(r'##\s*四、事件全集[((](\d+)\s*条[))]').firstMatch(md);
+    expect(
+      m,
+      isNotNull,
+      reason: '第四节标题里应当写明条数,形如「## 四、事件全集(27 条)」',
+    );
+    expect(
+      int.parse(m!.group(1)!),
+      AnalyticsEvent.values.length,
+      reason:
+          '第四节标题写的条数与 AnalyticsEvent 的实际条数对不上 —— '
+          '加/删事件时把标题里那个数字一起改了',
+    );
+  });
+
+  test('会话上下文与 Analytics.contextKeys 双向对钉(它跟着每一条事件出去)', () {
+    // 事件属性早就被 `AnalyticsEvent.props` 钉住了,上下文这半边一直是自由的:
+    // 谁在哪一屏 `setContext` 一把就多一个键,而它会跟着**每一条**事件出去 ——
+    // 覆盖面比任何单条事件都大,漂了却没有任何地方会红。这里补上那半边。
+    //
+    // 第三节的表与第四节结构不同(第一列是**属性名**不是事件名),所以按小节切了
+    // 单独解析,不能复用 `_eventsInCatalog`。
+    final md = _catalog.readAsStringSync();
+    final start = md.indexOf('## 三、');
+    final end = md.indexOf('## 四、');
+    expect(start, greaterThan(-1), reason: '目录里找不到「## 三、」会话上下文小节');
+    expect(end, greaterThan(start), reason: '第三节没有结尾');
+    final section = md.substring(start, end);
+    // 表格行:`| `key` | … |`。引用块(`> ⚠️ …`)里也会出现反引号包的键名,
+    // 所以必须锚在行首的 `|` 上,不能全节扫反引号词。
+    final documented = RegExp(r'^\|\s*`([a-z][a-z0-9_]*)`\s*\|', multiLine: true)
+        .allMatches(section)
+        .map((m) => m.group(1)!)
+        .toSet();
+
+    final missingInDoc = Analytics.contextKeys.difference(documented);
+    final staleInDoc = documented.difference(Analytics.contextKeys);
+    expect(
+      missingInDoc,
+      isEmpty,
+      reason:
+          '这些上下文键在代码里有、目录第三节没写:$missingInDoc\n'
+          '上下文跟着每一条事件出去 —— 它不在清单里就等于双清单漏报。',
+    );
+    expect(
+      staleInDoc,
+      isEmpty,
+      reason:
+          '目录第三节写了但 Analytics.contextKeys 里没有:$staleInDoc\n'
+          '要么调用点确实会 setContext 这个键、把它加进 contextKeys,要么这行是漂的,删掉。',
+    );
+  });
+
   test('目录里没漏掉「不采什么」那一节 —— 隐私政策直接引它', () {
     final md = _catalog.readAsStringSync();
     for (final must in ['录屏', r'$geoip_disable', 'ADR 0009']) {

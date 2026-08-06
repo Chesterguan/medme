@@ -77,7 +77,40 @@ class _TrendsScreenState extends State<TrendsScreen> {
   /// 页面都占掉近 90px 把第一张图挤出屏幕。
   bool _searchOpen = false;
 
+  /// 「只看非正常项」被拨动。**关掉那一档才是信号** —— 它是这个默认值
+  /// (全 App 唯一一处替用户排序的默认)唯一的检验,见 [_abnormalOnly] 的文档。
+  void _onToggleAbnormalOnly(bool v) {
+    Analytics.track(AnalyticsEvent.trendsFilterUsed, {
+      'control': (v
+              ? TrendsFilterControl.abnormalOnlyOn
+              : TrendsFilterControl.abnormalOnlyOff)
+          .name,
+    });
+    setState(() => _abnormalOnly = v);
+  }
+
+  /// 点了一颗检验大类 chip。
+  ///
+  /// ⚠️ **绝不上报是哪个大类。** 「这台设备在看肝功能 / 肿瘤标志物」是对机主的
+  /// 健康推断,与「不采内容」同级。这里只报「chip 这条路被走了一次」,回答的是
+  /// 「大类目录那份词典投入值不值」,不需要知道是哪一类。
+  ///
+  /// 取消选中(再点一次同一颗,`g == null`)同样计一次 —— 它一样是「用户在用
+  /// chip 这个控件」。
+  void _onSelectPanel(String? g) {
+    Analytics.track(AnalyticsEvent.trendsFilterUsed, {
+      'control': TrendsFilterControl.panel.name,
+    });
+    setState(() => _selectedPanel = g);
+  }
+
   void _toggleSearch() {
+    // 只在**展开**时报一次,收起不报,输入更不报 —— 搜索词是内容。
+    if (!_searchOpen) {
+      Analytics.track(AnalyticsEvent.trendsFilterUsed, {
+        'control': TrendsFilterControl.search.name,
+      });
+    }
     setState(() {
       _searchOpen = !_searchOpen;
       if (!_searchOpen) {
@@ -231,9 +264,12 @@ class _TrendsScreenState extends State<TrendsScreen> {
                     hiddenByFilter: hiddenByFilter,
                     panelChips: chips,
                     selectedPanel: _selectedPanel,
+                    // `onQuery` **不埋**:每敲一个字都会走到这里,按键上报既是
+                    // 噪音,又一步步逼近搜索词本身(那是内容)。搜索这条路被没被
+                    // 走,由 [_toggleSearch] 里那一条代表。
                     onQuery: (v) => setState(() => _query = v.trim()),
-                    onToggle: (v) => setState(() => _abnormalOnly = v),
-                    onSelectPanel: (g) => setState(() => _selectedPanel = g),
+                    onToggle: _onToggleAbnormalOnly,
+                    onSelectPanel: _onSelectPanel,
                   ),
                   const SizedBox(height: MedShape.s3),
                   for (var i = 0; i < shown.length; i++) ...[
