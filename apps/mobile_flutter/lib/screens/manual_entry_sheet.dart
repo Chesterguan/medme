@@ -101,6 +101,30 @@ String _fmtNum(double v) {
   return v.toString();
 }
 
+/// `_when` 编成 Rust `parse_measured_at` 能解析、且带真实本地偏移的 RFC3339
+/// 字符串——**不能**用 `_when.toUtc().toIso8601String()`(旧写法):那一步把
+/// `_when` 真按时区换算成 UTC 瞬间,偏移量随之丢失,Rust 侧因此没法区分"北京
+/// 时间早上 6:50"和"UTC 6:50",这正是自测记录早间测量整段错位到前一天那个
+/// bug 的源头(另一半在 Rust 侧的 `parse_measured_at`,那边现在按同一约定处理:
+/// 存的是字面挂钟读数,不做时区换算)。
+///
+/// 偏移取 `dt.timeZoneOffset`——设备当时的真实时区,动态读取、不写死
+/// `+08:00`:用户出国就医/旅行中记录时,这里应该、也会带上当地的真实偏移。
+///
+/// `dt.isUtc` 时(仅出现在"编辑"回填路径——`document_detail.dart` 用
+/// `DateTime.tryParse` 读回已带偏移标记的 `docDate`,若用户没碰日期/时间选择器
+/// 就直接保存,`_when` 仍是那个 UTC 标记的 `DateTime`),`timeZoneOffset` 恒为
+/// 零,`toIso8601String()` 已自带 `Z`,直接透传即可,不需要再拼偏移。
+String _rfc3339WithLocalOffset(DateTime dt) {
+  if (dt.isUtc) return dt.toIso8601String();
+  final offset = dt.timeZoneOffset;
+  final sign = offset.isNegative ? '-' : '+';
+  final abs = offset.abs();
+  final hh = abs.inHours.toString().padLeft(2, '0');
+  final mm = (abs.inMinutes % 60).toString().padLeft(2, '0');
+  return '${dt.toIso8601String()}$sign$hh:$mm';
+}
+
 double? _valueFor(List<SelfMeasuredValueDto> values, String analyteKey) {
   for (final v in values) {
     if (v.analyteKey == analyteKey) return v.value;
@@ -337,7 +361,7 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
 
   Future<void> _save() async {
     setState(() => _error = null);
-    final measuredAt = _when.toUtc().toIso8601String();
+    final measuredAt = _rfc3339WithLocalOffset(_when);
 
     if (_kind == ManualEntryKind.note) {
       final text = _noteCtl.text.trim();

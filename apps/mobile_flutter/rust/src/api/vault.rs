@@ -731,10 +731,32 @@ fn format_plausibility_violation(v: &parser::PlausibilityViolation) -> String {
     }
 }
 
+/// 约定与 `parser::build_date`(导入文档猜日期用的,`packages/parser/src/lib.rs`)
+/// 同一条:落库的是"挂钟读数"本身,不做时区换算——`.naive_local()` 取出调用方
+/// 传来的偏移下的字面 Y-M-D-H-M-S,`.and_utc()` 只是重新贴 `Utc` 标签(数值不变,
+/// 不是"转换到那一刻的真实 UTC 瞬间"),直接落库。
+///
+/// 这是本次修 bug(自测记录早间测量错位到前一天)定下的约定,别再改回
+/// `.with_timezone(&Utc)`——那是真的时区转换,会把"北京时间 06:50"变成
+/// "UTC 前一天 22:50",doc_date 与「记录时间」文案都会跟着掉到前一天。
+///
+/// 自测记录与导入文档因此共享同一套"日期/时间即字面挂钟读数"规则:两者的
+/// `doc_date` 按 UTC 分量读出来的都是"文档/用户当时表上的那一天",趋势图
+/// 按日归组时不会一边按本地一边按 UTC 而错位。
+///
+/// 传入的偏移是调用方(`manual_entry_sheet.dart`)当时的真实设备时区,动态
+/// 读取、不写死 +08:00——用户出国就医/旅行中测量时,记的是"当时手表上看到的
+/// 那一刻"(与本函数对导入文档"PDF 上印的日期,不管文档来自哪个时区"的处理
+/// 是同一件事),不追求跨时区场景下的"绝对时刻"还原。
+///
+/// `measured_at` 缺省(`None`,调用方永远不传——见 `add_self_measurement`/
+/// `add_note` 文档)时退到 `Utc::now()`:这是进程的真实 UTC 瞬间,不是"设备本地
+/// 此刻",因为没有输入就没有偏移可用——但这条路径不是本次要修的用户 bug 的成因
+/// (真实 App 调用方 `manual_entry_sheet.dart` 恒显式传 `measured_at`)。
 fn parse_measured_at(measured_at: Option<&str>) -> chrono::DateTime<chrono::Utc> {
     measured_at
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|d| d.with_timezone(&chrono::Utc))
+        .map(|d| d.naive_local().and_utc())
         .unwrap_or_else(chrono::Utc::now)
 }
 
@@ -758,10 +780,25 @@ pub fn add_self_measurement(
     values: Vec<SelfMeasuredValueDto>,
     measured_at: Option<String>,
 ) -> anyhow::Result<i64> {
+    with_state(|state| add_self_measurement_to(&state.vault, &values, measured_at.as_deref()))
+}
+
+/// [`add_self_measurement`] 的核心逻辑,不经全局 `VAULT` 锁 —— 单独抽出来是为了
+/// 让 `load_demo_data`(载入示例数据时,调用者已经在 `with_state` 闭包里持有
+/// `&state.vault`,不该再抢一次同一把锁)与单元测试(见文件末尾
+/// `home_monitoring_demo_data_tests`,在一个独立临时保险箱上跑,不碰全局静态/
+/// `StreamSink`)都走**同一条**写入路径,而不是各自另造一条。参数与
+/// [`add_self_measurement`] 逐一对应,只是多一个 `v: &Vault`、`values` 借用而非
+/// 移动(两处调用方各自还要用 `values` 拼标题/human_lines,不必两次 clone)。
+fn add_self_measurement_to(
+    v: &Vault,
+    values: &[SelfMeasuredValueDto],
+    measured_at: Option<&str>,
+) -> anyhow::Result<i64> {
     if values.is_empty() {
         anyhow::bail!("没有要记录的数值");
     }
-    let when = parse_measured_at(measured_at.as_deref());
+    let when = parse_measured_at(measured_at);
 
     let sv: Vec<parser::SelfMeasuredValue> = values
         .iter()
@@ -774,8 +811,8 @@ pub fn add_self_measurement(
     // 生理学"可能性"校验(拒绝像 138388 mmHg 这种打错的值,不是判断
     // "正常/偏高"——那是 home_ref_range 的职责,见 `parser::self_entry` 的文档)。
     // `manual_entry_sheet.dart` 保存前已经跑过同一条校验并给出更具体的引导
-    // 文案,这里是它被绕过时的兜底——`add_self_measurement` 是所有自测数据
-    // 写入的唯一入口,不能只靠 UI 层这一道防线。
+    // 文案,这里是它被绕过时的兜底——这是所有自测数据写入的唯一入口(不论调用方
+    // 是真实用户还是 `load_demo_data`),不能只靠 UI 层这一道防线。
     if let Err(violation) = parser::validate_self_measured_values(&sv) {
         anyhow::bail!(format_plausibility_violation(&violation));
     }
@@ -793,52 +830,49 @@ pub fn add_self_measurement(
         .collect();
     human_lines.push(format!("记录时间:{}", when.format("%Y-%m-%d %H:%M")));
     let text = parser::render_self_measurement_text(&human_lines, &sv);
-    let title = self_measured_title(&values);
+    let title = self_measured_title(values);
 
-    with_state(|state| {
-        let v = &state.vault;
-        let name = format!("self-measurement-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
-        let imp = v
-            .import(&name, "text/plain", text.as_bytes())
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let sid = imp.source_file.id;
-        // 合成文本逐字节相同(极少见,但见 `Vault::import` 的 CAS 去重)且已建过
-        // 档 —— 真·重复提交,直接回传已有文档 id,不再建档(`document.source_file_id`
-        // 唯一,重复建档会违反约束)。与 `ingest_image_with_text` 的同一防线同构。
-        if imp.deduped
-            && v.has_document(sid)
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?
-        {
-            return v
-                .document_by_source_file_id(sid)
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?
-                .map(|d| d.id)
-                .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
-        }
-        let doc = v
-            .add_document(NewDocument {
-                source_file_id: sid,
-                doc_type: DocType::SelfMeasurement,
-                doc_date: Some(when),
-                doc_date_end: None,
-                title: Some(title),
-                language: Some("zh".into()),
-                page_count: 1,
-            })
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        v.add_ocr(NewOcr {
-            document_id: doc.id,
-            page_no: 1,
-            backend: OcrBackendKind::Native,
-            model_version: "self-entry".into(),
-            text,
-            confidence: None,
+    let name = format!("self-measurement-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
+    let imp = v
+        .import(&name, "text/plain", text.as_bytes())
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let sid = imp.source_file.id;
+    // 合成文本逐字节相同(极少见,但见 `Vault::import` 的 CAS 去重)且已建过
+    // 档 —— 真·重复提交,直接回传已有文档 id,不再建档(`document.source_file_id`
+    // 唯一,重复建档会违反约束)。与 `ingest_image_with_text` 的同一防线同构。
+    if imp.deduped
+        && v.has_document(sid)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+    {
+        return v
+            .document_by_source_file_id(sid)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .map(|d| d.id)
+            .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
+    }
+    let doc = v
+        .add_document(NewDocument {
+            source_file_id: sid,
+            doc_type: DocType::SelfMeasurement,
+            doc_date: Some(when),
+            doc_date_end: None,
+            title: Some(title),
+            language: Some("zh".into()),
+            page_count: 1,
         })
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        v.rebuild_encounters()
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        Ok(doc.id)
+    v.add_ocr(NewOcr {
+        document_id: doc.id,
+        page_no: 1,
+        backend: OcrBackendKind::Native,
+        model_version: "self-entry".into(),
+        text,
+        confidence: None,
     })
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    v.rebuild_encounters()
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    Ok(doc.id)
 }
 
 /// 读回一份 `self_measurement` 文档的结构化值 —— 供「编辑」预填表单用(编辑=
@@ -1230,6 +1264,89 @@ fn collect_demo_files<'a>(dir: &'a include_dir::Dir<'a>, out: &mut Vec<&'a inclu
     }
 }
 
+/// 张建国示例病历「家庭血压/血糖自测记录」的原始读数 —— 与
+/// `demo-data/corpus/2026-04-30_血压记录_家庭监测.pdf` 用 `pdftotext` 通读全文
+/// 逐条核对过(不是只看前几行推测后面的)。字段顺序:日期 / 时(24h)/ 分 /
+/// 收缩压(mmHg)/ 舒张压(mmHg)/ 心率(次/分)/ 空腹血糖(mmol/L)。PDF 备注列
+/// (「晨起」「轻度头晕」等)不落进这张表,见 [`home_monitoring_demo_entries`]
+/// 文档——`add_self_measurement` 的入参没有备注字段,不为了塞示例数据改这份
+/// 现有接口。
+const HOME_MONITORING_READINGS: &[(&str, u32, u32, f64, f64, f64, f64)] = &[
+    ("2026-04-01", 6, 50, 138.0, 86.0, 72.0, 7.2),
+    ("2026-04-05", 6, 55, 142.0, 88.0, 75.0, 7.6),
+    ("2026-04-08", 7, 0, 135.0, 84.0, 70.0, 7.0),
+    ("2026-04-12", 7, 10, 142.0, 90.0, 68.0, 7.4),
+    ("2026-04-15", 6, 45, 130.0, 80.0, 71.0, 6.8),
+    ("2026-04-19", 6, 50, 128.0, 78.0, 69.0, 6.5),
+    ("2026-04-22", 6, 55, 126.0, 76.0, 70.0, 6.6),
+    ("2026-04-26", 7, 0, 124.0, 78.0, 68.0, 6.4),
+    ("2026-04-30", 6, 50, 122.0, 76.0, 70.0, 6.3),
+];
+
+/// 把 [`HOME_MONITORING_READINGS`] 展开成 [`add_self_measurement_to`] 能直接吃的
+/// 调用参数:每天三条独立记录(与真实用户逐次录入「记录」同构)—— 血压(收缩压
+/// +舒张压共享一份文档,见 [`add_self_measurement`] 文档「血压两个值……」一节)、
+/// 心率、血糖各自单独一份文档,顺序固定 `[血压, 心率, 血糖]`(供
+/// `home_monitoring_demo_data_tests` 按索引核对)。
+///
+/// `measured_at` 用 `+08:00`(北京时间偏移),不是 `Z`——这是真实用户在
+/// `manual_entry_sheet.dart` 上保存一条记录时,`measured_at` 参数实际的形状
+/// (设备本地挂钟时间 + 该设备当时的真实时区偏移,见该文件 `_save()` 与
+/// `parse_measured_at` 顶部的约定文档)。张建国这份示例病历假定是一台中国大陆
+/// 设备记的,`+08:00` 是这个示例场景的具体取值,不是 App 逻辑本身写死的常量——
+/// `parse_measured_at` 认的是"传入什么偏移就按字面存那个偏移下的挂钟读数",
+/// 换一台外国设备记录的示例数据,这里应该换成对应的偏移。
+///
+/// 早前这里用 `Z` 是为了绕开自测记录早间测量错位到前一天的 bug(`parse_measured_at`
+/// 那时把 `+08:00` 之类的偏移真按时区转换成 UTC 瞬间,早晨的记录会被转到前一天)。
+/// 那个 bug 已经修了(`parse_measured_at` 现在不做真时区转换,只是把传入偏移下的
+/// 字面挂钟读数重新贴上 `Utc` 标签),`Z` 这个绕过手段没有必要再留着——留着反而
+/// 让示例数据成了唯一一份不符合真实录入形状的数据,不利于用示例数据本身发现同类
+/// 回归。
+fn home_monitoring_demo_entries() -> Vec<(Vec<SelfMeasuredValueDto>, String)> {
+    HOME_MONITORING_READINGS
+        .iter()
+        .flat_map(
+            |&(date, hour, minute, systolic, diastolic, heart_rate, glucose)| {
+                let measured_at = format!("{date}T{hour:02}:{minute:02}:00+08:00");
+                [
+                    (
+                        vec![
+                            SelfMeasuredValueDto {
+                                analyte_key: "bp_systolic".into(),
+                                value: systolic,
+                                unit: "mmHg".into(),
+                            },
+                            SelfMeasuredValueDto {
+                                analyte_key: "bp_diastolic".into(),
+                                value: diastolic,
+                                unit: "mmHg".into(),
+                            },
+                        ],
+                        measured_at.clone(),
+                    ),
+                    (
+                        vec![SelfMeasuredValueDto {
+                            analyte_key: "heart_rate".into(),
+                            value: heart_rate,
+                            unit: "/min".into(),
+                        }],
+                        measured_at.clone(),
+                    ),
+                    (
+                        vec![SelfMeasuredValueDto {
+                            analyte_key: "glucose".into(),
+                            value: glucose,
+                            unit: "mmol/L".into(),
+                        }],
+                        measured_at,
+                    ),
+                ]
+            },
+        )
+        .collect()
+}
+
 /// 一键「载入示例数据」:把编译进本 crate 的张建国示例病历(见 `DEMO_DATA`)
 /// 批量导入保险箱,让测试者无需手动选文件就能看到 健康档案。按路径排序保证
 /// 可复现;`pipeline::ingest` 去重,重复点击安全。返回成功处理的文件数。
@@ -1239,9 +1356,17 @@ fn collect_demo_files<'a>(dir: &'a include_dir::Dir<'a>, out: &mut Vec<&'a inclu
 /// 二进制(`DEMO_DATA`),运行时落一份到 `data_dir` 下的临时目录再喂给
 /// `pipeline::ingest`(它按路径操作,不接受内存字节),用完即删。
 ///
+/// 文件批量导入之后,额外把 [`home_monitoring_demo_entries`] 里的家庭自测读数
+/// 写进同一个保险箱——那份 PDF(`2026-04-30_血压记录_家庭监测.pdf`)本身已经在
+/// 上面的文件循环里照常按文档路径入库(硬不变量「原件永远可达」,不换不删),
+/// 这里是**同一批数据**额外再走一遍「记录」入口([`add_self_measurement_to`],
+/// 与用户手动录入完全同一条写入路径),让示例数据里第一次有真实的自测记录可看
+/// (载入示例前,「记录」这条入库路径在示例数据里一条都没有)。
+///
 /// `progress` 每处理完一份(不论成败)推一条 [DemoLoadProgressDto]——华为 Mate 9
 /// 真机实测 22 份 11 秒零反馈,用户以为没点上又点了第二次。这颗 sink 让设置屏能画
-/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。
+/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。`total` 把自测读数也算进去,
+/// 不然文件都处理完之后进度条又莫名其妙继续跳。
 ///
 /// **本函数恒返回 `Ok(())`,成败一律走 `progress` 的 `error` 字段**——见
 /// [DemoLoadProgressDto] 顶部文档:带 `StreamSink` 参数的 FRB 函数,Dart 侧没有
@@ -1252,12 +1377,14 @@ pub fn load_demo_data(progress: StreamSink<DemoLoadProgressDto>) -> anyhow::Resu
         let mut files: Vec<&include_dir::File<'_>> = Vec::new();
         collect_demo_files(&DEMO_DATA, &mut files);
         files.sort_by_key(|f| f.path().to_path_buf());
-        let total = files.len() as i64;
+        let home_readings = home_monitoring_demo_entries();
+        let total = files.len() as i64 + home_readings.len() as i64;
 
         let tmp_root = state.data_dir.join("medme-demo-data");
         std::fs::create_dir_all(&tmp_root)?;
         let mut count = 0i64;
-        for (i, f) in files.iter().enumerate() {
+        let mut loaded = 0i64;
+        for f in files.iter() {
             let tmp_path = tmp_root.join(f.path());
             if let Some(parent) = tmp_path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -1279,16 +1406,35 @@ pub fn load_demo_data(progress: StreamSink<DemoLoadProgressDto>) -> anyhow::Resu
                     tmp_path.display()
                 )),
             }
+            loaded += 1;
             // 忽略发送失败:监听端已断开不该打断导入本身(单向 UI 反馈,不是
             // 导入流程的一部分)。
             let _ = progress.add(DemoLoadProgressDto {
-                loaded: i as i64 + 1,
+                loaded,
                 total,
                 succeeded: count,
                 error: None,
             });
         }
         let _ = std::fs::remove_dir_all(&tmp_root); // 尽力清理,失败无妨
+
+        // 见本函数顶部文档:同一批家庭监测读数,额外走一遍「记录」写入路径。
+        for (values, measured_at) in &home_readings {
+            match add_self_measurement_to(v, values, Some(measured_at)) {
+                Ok(_) => count += 1,
+                Err(e) => log_warn(&format!(
+                    "[demo-data] self-measurement seed failed for {measured_at}: {e}"
+                )),
+            }
+            loaded += 1;
+            let _ = progress.add(DemoLoadProgressDto {
+                loaded,
+                total,
+                succeeded: count,
+                error: None,
+            });
+        }
+
         v.rebuild_encounters()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(count)
@@ -1498,4 +1644,189 @@ pub fn recognize_image_pp(bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
 #[cfg(not(pp_ocr))]
 pub fn recognize_image_pp(_bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
     anyhow::bail!("PP-OCR 路径仅 iOS/安卓构建可用")
+}
+
+#[cfg(test)]
+mod home_monitoring_demo_data_tests {
+    use super::*;
+
+    /// 张建国示例病历的家庭监测读数(`load_demo_data` 用 [`add_self_measurement_to`]
+    /// 写进保险箱那份)必须与源 PDF(`demo-data/corpus/2026-04-30_血压记录_家庭监测.pdf`)
+    /// 逐条一致 —— 用一个不经全局 `VAULT` 静态、单独打开的临时保险箱验证,不依赖
+    /// `load_demo_data` 本身(它需要一个真实 Dart 消息端口才能构造 `StreamSink`,
+    /// 单测环境下造不出来)。这正是把核心写入逻辑抽成 [`add_self_measurement_to`]
+    /// 的意义:能在不碰 FRB/`StreamSink` 的前提下,对「示例数据里的自测记录写没写对」
+    /// 单独下断言。
+    #[test]
+    fn seeds_nine_days_of_readings_matching_the_source_pdf_exactly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let truth_root = tmp.path().join("vault");
+        let db_path = truth_root.join("medme.db");
+        let v = Vault::open_split_resilient(&truth_root, &db_path, "test-device").unwrap();
+
+        let entries = home_monitoring_demo_entries();
+        // 9 天 × 3 条(血压共享一份文档 + 心率 + 血糖)= 27 份文档。
+        assert_eq!(entries.len(), 27, "9 天 × 3 条自测记录");
+
+        let mut doc_ids = Vec::new();
+        for (values, measured_at) in &entries {
+            let id = add_self_measurement_to(&v, values, Some(measured_at))
+                .unwrap_or_else(|e| panic!("写入 {measured_at} 失败:{e}"));
+            doc_ids.push(id);
+        }
+        // 27 份各自建了独立文档(内容互不相同,不会被 CAS 去重合并)。
+        let unique: std::collections::HashSet<_> = doc_ids.iter().collect();
+        assert_eq!(unique.len(), 27, "27 份记录应各自成文档,不应被去重合并");
+
+        // `measured_at` 现在带 `+08:00`(与真实录入同形状,见
+        // `home_monitoring_demo_entries` 文档),而 6-7 点是北京时间的清晨——
+        // 正是「自测记录早间测量掉到前一天」这个 bug 的打击面。这里钉住 9 天
+        // 的 `doc_date` 都落在 PDF 印的那一天,不是转 UTC 后的前一天(0/12/24 是
+        // 每天血压文档在 `doc_ids` 里的起点,见下面「按索引核对」的说明)。
+        for (day_idx, &(date, ..)) in HOME_MONITORING_READINGS.iter().enumerate() {
+            let bp_doc_id = doc_ids[day_idx * 3];
+            let doc = v
+                .document_by_id(bp_doc_id)
+                .unwrap()
+                .unwrap_or_else(|| panic!("文档 {bp_doc_id} 应能读到"));
+            assert_eq!(
+                doc.doc_date
+                    .unwrap_or_else(|| panic!("{date} 这条应有 doc_date"))
+                    .date_naive()
+                    .to_string(),
+                date,
+                "{date} 06/07 点这条清晨记录不该因转 UTC 掉到前一天",
+            );
+        }
+
+        // 抽样核对几个点与 PDF 原文(pdftotext 逐行核对过)完全一致:
+        // 2026-04-01 06:50 138/86 72 7.2;2026-04-15 06:45 130/80 71 6.8(药物
+        // 调整当天);2026-04-30 06:50 122/76 70 6.3(月末最后一条)。
+        let payload_of = |doc_id: i64| -> Vec<parser::SelfMeasuredValue> {
+            let text = v.ocr_text(doc_id).unwrap();
+            parser::parse_self_measurement_payload(&text).expect("payload parses")
+        };
+
+        // entries 里每天固定 [血压, 心率, 血糖] 三条,按 HOME_MONITORING_READINGS 顺序展开。
+        let bp_04_01 = payload_of(doc_ids[0]);
+        assert_eq!(
+            bp_04_01,
+            vec![
+                parser::SelfMeasuredValue {
+                    analyte_key: "bp_systolic".into(),
+                    value: 138.0,
+                    unit: "mmHg".into(),
+                },
+                parser::SelfMeasuredValue {
+                    analyte_key: "bp_diastolic".into(),
+                    value: 86.0,
+                    unit: "mmHg".into(),
+                },
+            ]
+        );
+        let hr_04_01 = payload_of(doc_ids[1]);
+        assert_eq!(hr_04_01[0].value, 72.0);
+        let glucose_04_01 = payload_of(doc_ids[2]);
+        assert_eq!(glucose_04_01[0].value, 7.2);
+
+        // 2026-04-15 是第 5 天(索引 4),三条记录起点在 doc_ids[4*3] = doc_ids[12]。
+        let bp_04_15 = payload_of(doc_ids[12]);
+        assert_eq!(bp_04_15[0].value, 130.0);
+        assert_eq!(bp_04_15[1].value, 80.0);
+        let hr_04_15 = payload_of(doc_ids[13]);
+        assert_eq!(hr_04_15[0].value, 71.0);
+        let glucose_04_15 = payload_of(doc_ids[14]);
+        assert_eq!(glucose_04_15[0].value, 6.8);
+
+        // 2026-04-30 是第 9(最后)天,起点在 doc_ids[8*3] = doc_ids[24]。
+        let bp_04_30 = payload_of(doc_ids[24]);
+        assert_eq!(bp_04_30[0].value, 122.0);
+        assert_eq!(bp_04_30[1].value, 76.0);
+        let hr_04_30 = payload_of(doc_ids[25]);
+        assert_eq!(hr_04_30[0].value, 70.0);
+        let glucose_04_30 = payload_of(doc_ids[26]);
+        assert_eq!(glucose_04_30[0].value, 6.3);
+
+        // 血糖(glucose)故意没有家测参考区间(`home_ref_range` 的既定行为,不是
+        // 这次改动漏补)—— 钉住这条设计不被悄悄"补全"。
+        assert!(parser::home_ref_range("glucose").is_none());
+    }
+}
+
+#[cfg(test)]
+mod measured_at_timezone_tests {
+    use super::*;
+
+    /// 复现真实用户 bug:早上 6:50(北京时间,+08:00)量的血压,不能被系统记成
+    /// 前一天晚上。回归前 `parse_measured_at` 直接转真 UTC 瞬间——
+    /// `2026-05-01T06:50:00+08:00` 变成 `2026-04-30T22:50:00Z`,`doc_date` 与
+    /// 「记录时间」文案都掉到 04-30,家庭血压监测的标准晨起测量场景全部中招。
+    #[test]
+    fn a_beijing_morning_measurement_lands_on_the_local_calendar_day_not_the_utc_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let truth_root = tmp.path().join("vault");
+        let db_path = truth_root.join("medme.db");
+        let v = Vault::open_split_resilient(&truth_root, &db_path, "test-device").unwrap();
+
+        let values = vec![SelfMeasuredValueDto {
+            analyte_key: "heart_rate".into(),
+            value: 72.0,
+            unit: "/min".into(),
+        }];
+        let doc_id = add_self_measurement_to(&v, &values, Some("2026-05-01T06:50:00+08:00"))
+            .unwrap_or_else(|e| panic!("写入失败:{e}"));
+
+        let doc = v
+            .document_by_id(doc_id)
+            .unwrap()
+            .expect("刚写入的文档应能读到");
+        assert_eq!(
+            doc.doc_date
+                .expect("自测记录必须落 doc_date")
+                .date_naive()
+                .to_string(),
+            "2026-05-01",
+            "早间(北京时间)测量的自测记录必须落在用户表上看到的那一天,不能因转 UTC 掉到前一天",
+        );
+
+        // 「记录时间」这行给用户看的文案同样必须是本地挂钟读数,不是转换后的 UTC 分量。
+        let text = v.ocr_text(doc_id).unwrap();
+        assert!(
+            text.contains("记录时间:2026-05-01 06:50"),
+            "记录时间应显示用户表上看到的本地时间,实际文本:\n{text}",
+        );
+    }
+
+    /// 跨时区场景(出国就医/旅行中测量):不同偏移下的字面挂钟读数各自直接落库,
+    /// 不做"统一成一个真实时刻"的换算——与本文件顶部 `parse_measured_at` 文档
+    /// 记的约定一致,这里钉住"偏移不写死 +08:00,输入什么偏移就按字面存"。
+    #[test]
+    fn a_non_china_offset_still_stores_the_literal_wall_clock_reading() {
+        let tmp = tempfile::tempdir().unwrap();
+        let truth_root = tmp.path().join("vault");
+        let db_path = truth_root.join("medme.db");
+        let v = Vault::open_split_resilient(&truth_root, &db_path, "test-device").unwrap();
+
+        let values = vec![SelfMeasuredValueDto {
+            analyte_key: "heart_rate".into(),
+            value: 65.0,
+            unit: "/min".into(),
+        }];
+        // 美东时间(-05:00)晚上 23:30 —— 若转真 UTC 瞬间会跨到第二天 04:30。
+        let doc_id = add_self_measurement_to(&v, &values, Some("2026-05-01T23:30:00-05:00"))
+            .unwrap_or_else(|e| panic!("写入失败:{e}"));
+
+        let doc = v
+            .document_by_id(doc_id)
+            .unwrap()
+            .expect("刚写入的文档应能读到");
+        assert_eq!(
+            doc.doc_date
+                .expect("自测记录必须落 doc_date")
+                .date_naive()
+                .to_string(),
+            "2026-05-01",
+            "应按传入偏移下的字面日期落库,不因转 UTC 跨到下一天",
+        );
+    }
 }
