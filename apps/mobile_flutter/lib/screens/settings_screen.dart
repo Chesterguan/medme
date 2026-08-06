@@ -22,7 +22,7 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// 前的号)。`test/app_version_test.dart` 会拿这里的字面量去和 `pubspec.yaml` 比对,
 /// 漂了就会红——改这两行时记得同时改 `pubspec.yaml`,或者反过来。
 const _appVersionName = '1.6.0';
-const _appBuildNumber = '55';
+const _appBuildNumber = '56';
 
 /// 底部导航一级 tab「设置」—— 保险箱/成员 / 载入示例数据 / 清空重置 / 关于。
 ///
