@@ -292,6 +292,21 @@ class TrendSeriesDto {
   /// 标注 / 换个点形状,不改变哪些点属于这条序列。
   final bool selfMeasured;
 
+  /// 家测参考区间的出处引文(`self_entry::HomeRefRange::source` 原样透传),仅
+  /// [`Self::self_measured`] 为 `true` 且该分析物有可引用的家测区间时才是
+  /// `Some`——与 `ref_low`/`ref_high` 同源同一次 `home_ref_range` 查询,不会出现
+  /// "有区间没出处"或"有出处没区间"的错配。
+  ///
+  /// 医院化验序列(`self_measured == false`)恒为 `None`:那条序列的参考区间
+  /// 出处是化验单原件本身,不是这段可引用的指南/共识文字能替代的——UI 改用卡底
+  /// 「查看原件」入口交代来源(`trends_screen.dart` 的 `SeriesCard`),不读这个
+  /// 字段。
+  ///
+  /// **追加在结尾**,不插进中间——与本文件头「函数命名为什么统一 `view_`
+  /// 前缀」那条注释同一个用意:FRB 的 `sse_encode`/`sse_decode` 按字段声明顺序
+  /// 逐个编解码,新增字段放最后,现有字段的顺序 / 生成代码的既有形状都不挪动。
+  final String? refSource;
+
   const TrendSeriesDto({
     required this.name,
     this.analyteKey,
@@ -304,6 +319,7 @@ class TrendSeriesDto {
     this.panel,
     required this.points,
     required this.selfMeasured,
+    this.refSource,
   });
 
   @override
@@ -318,7 +334,8 @@ class TrendSeriesDto {
       anyAbnormal.hashCode ^
       panel.hashCode ^
       points.hashCode ^
-      selfMeasured.hashCode;
+      selfMeasured.hashCode ^
+      refSource.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -335,7 +352,8 @@ class TrendSeriesDto {
           anyAbnormal == other.anyAbnormal &&
           panel == other.panel &&
           points == other.points &&
-          selfMeasured == other.selfMeasured;
+          selfMeasured == other.selfMeasured &&
+          refSource == other.refSource;
 }
 
 /// 摘要单上的一行化验:一个具体的测量点。

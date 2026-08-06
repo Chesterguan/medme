@@ -118,6 +118,20 @@ pub struct TrendSeriesDto {
     /// 见 MANUAL-ENTRY-DESIGN.md),这个字段只用于**显示**:UI 据此加"(家测)"
     /// 标注 / 换个点形状,不改变哪些点属于这条序列。
     pub self_measured: bool,
+    /// 家测参考区间的出处引文(`self_entry::HomeRefRange::source` 原样透传),仅
+    /// [`Self::self_measured`] 为 `true` 且该分析物有可引用的家测区间时才是
+    /// `Some`——与 `ref_low`/`ref_high` 同源同一次 `home_ref_range` 查询,不会出现
+    /// "有区间没出处"或"有出处没区间"的错配。
+    ///
+    /// 医院化验序列(`self_measured == false`)恒为 `None`:那条序列的参考区间
+    /// 出处是化验单原件本身,不是这段可引用的指南/共识文字能替代的——UI 改用卡底
+    /// 「查看原件」入口交代来源(`trends_screen.dart` 的 `SeriesCard`),不读这个
+    /// 字段。
+    ///
+    /// **追加在结尾**,不插进中间——与本文件头「函数命名为什么统一 `view_`
+    /// 前缀」那条注释同一个用意:FRB 的 `sse_encode`/`sse_decode` 按字段声明顺序
+    /// 逐个编解码,新增字段放最后,现有字段的顺序 / 生成代码的既有形状都不挪动。
+    pub ref_source: Option<String>,
 }
 
 /// 序列上的一个观测点。
@@ -613,6 +627,17 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
             })
             .collect(),
         self_measured: s.self_measured,
+        // 只对自测序列重新查一次 `home_ref_range`——不是从 `aggregate.rs` 那边
+        // 多穿一个字段过来的:`ref_low`/`ref_high` 已经是拿同一个查询算出来的
+        // (`aggregate::build_self_measured_observation`),这里重查同一个纯函数
+        // 拿它的 `source`,两边保证读到同一份结果,又不用碰 `AnalyteSeries`
+        // 的形状(spine 不动)。医院化验序列没有 `home_ref_range` 可查,恒为 None。
+        ref_source: s
+            .self_measured
+            .then_some(s.analyte_key.as_deref())
+            .flatten()
+            .and_then(parser::home_ref_range)
+            .map(|r| r.source.to_string()),
     }
 }
 
@@ -1006,6 +1031,90 @@ mod tests {
             .expect("LDL series should resolve via the terminology dictionary");
         let dto = trend_series(&docs, ldl);
         assert_eq!(dto.panel.as_deref(), Some("血脂"));
+    }
+
+    /// 家测序列的参考区间出处(`ref_source`)必须原样带到 DTO 上,且与
+    /// `ref_low`/`ref_high` 出自**同一次** `home_ref_range` 查询 —— 界面能不能
+    /// 证明「我们用的是官方来源」就看这个字段有没有值、值对不对。
+    #[test]
+    fn trend_series_dto_carries_ref_source_for_self_measured_series() {
+        let text = parser::render_self_measurement_text(
+            &["心率 72 /min".to_string()],
+            &[parser::SelfMeasuredValue {
+                analyte_key: "heart_rate".into(),
+                value: 72.0,
+                unit: "/min".into(),
+            }],
+        );
+        let docs = docs_from(&[(text.as_str(), Some("2026-08-01"), "self_measurement")]);
+        let src = source_docs(&docs);
+        let clinical = parser::aggregate(&src);
+        let hr = clinical
+            .labs
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("heart_rate"))
+            .expect("heart_rate series should exist");
+        let dto = trend_series(&docs, hr);
+        assert_eq!(
+            dto.ref_source,
+            parser::home_ref_range("heart_rate").map(|r| r.source.to_string()),
+            "ref_source 必须和 ref_low/ref_high 出自同一次 home_ref_range 查询"
+        );
+        assert!(dto.ref_source.as_deref().unwrap().contains("心率"));
+    }
+
+    /// 医院化验序列的出处是化验单原件本身,不是某条可引用的指南/共识文字 ——
+    /// `ref_source` 恒为 `None`,即使这条序列本身带着参考区间(那对区间来自
+    /// 报告原文,不是 `home_ref_range` 给的)。
+    #[test]
+    fn trend_series_dto_never_carries_ref_source_for_hospital_series() {
+        let docs = docs_from(&[(
+            "生化检验报告单\n低密度脂蛋白胆固醇 3.6 mmol/L 0-3.4\n",
+            Some("2024-06-01"),
+            "lab_report",
+        )]);
+        let src = source_docs(&docs);
+        let clinical = parser::aggregate(&src);
+        let ldl = clinical
+            .labs
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("ldl"))
+            .expect("LDL series should resolve via the terminology dictionary");
+        let dto = trend_series(&docs, ldl);
+        assert!(
+            dto.ref_low.is_some(),
+            "这条序列本身要带着参考区间,测试才有意义"
+        );
+        assert!(
+            dto.ref_source.is_none(),
+            "医院化验序列的出处是化验单原件,不该有 ref_source"
+        );
+    }
+
+    /// 没有可引用家测区间的分析物(体温/体重/血糖,见
+    /// `self_entry::home_ref_range` 的文档)——`ref_low`/`ref_high`/`ref_source`
+    /// 三者一起留空,不会出现「没区间却有出处」这种半吊子状态。
+    #[test]
+    fn trend_series_dto_has_no_ref_source_when_there_is_no_home_range() {
+        let text = parser::render_self_measurement_text(
+            &["体重 65 kg".to_string()],
+            &[parser::SelfMeasuredValue {
+                analyte_key: "body_weight".into(),
+                value: 65.0,
+                unit: "kg".into(),
+            }],
+        );
+        let docs = docs_from(&[(text.as_str(), Some("2026-08-01"), "self_measurement")]);
+        let src = source_docs(&docs);
+        let clinical = parser::aggregate(&src);
+        let weight = clinical
+            .labs
+            .iter()
+            .find(|s| s.analyte_key.as_deref() == Some("body_weight"))
+            .expect("body_weight series should exist");
+        let dto = trend_series(&docs, weight);
+        assert!(dto.ref_low.is_none() && dto.ref_high.is_none());
+        assert!(dto.ref_source.is_none());
     }
 
     /// 没能归一化出 `analyte_key` 的序列(名字没进词典)拿不到 panel,`None` 是

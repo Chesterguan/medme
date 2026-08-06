@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
@@ -303,6 +305,12 @@ class _TrendsScreenState extends State<TrendsScreen> {
                         ),
                       ),
                     ),
+                  // 页脚只交代一次「参考区间的三种出处」,不重复在每张卡上说——
+                  // 只要 `all` 非空(这一屏至少能画出一条线)就露出来,不随筛选
+                  // 结果(`shown`)增减而消失,免得用户搜/筛到没有结果时反而看不
+                  // 见这段说明。
+                  const SizedBox(height: MedShape.s4),
+                  const ProvenanceFooter(),
                 ],
               ],
             ),
@@ -600,6 +608,7 @@ class SeriesCard extends StatelessWidget {
     final status = labStatusOf(last.flag);
     final pill = labStatusPill(context, last.flag);
     final ref = refRangeText(series.refLow, series.refHigh);
+    final refSourceCitation = trendRefSourceCitation(series);
     // 单位以**点自己的**为准:同一指标跨报告单位可能不一致,序列级 unit 只是取了
     // 最后一个点的(见 DTO 文档)。这里显示的就是最后一个点,两者其实同源。
     final unit = last.unit ?? series.unit;
@@ -672,7 +681,21 @@ class SeriesCard extends StatelessWidget {
                 // (`visit_summary_sheet.dart` 的 `_LabRow`)早就在日期旁标了
                 // 「· 家测」,只有趋势漏了。措辞与它们一致,不另造一套。
                 if (series.selfMeasured) const _SelfMeasuredLegend(),
-                if (ref != null) _RefLegend(text: '参考区间 $ref'),
+                // 图例本身只加一句短后缀交代出处:医院化验的出处是化验单原件
+                // 本身,不新造一个跳转入口 —— 卡底「查看最新一次的原件」按钮
+                // 已经能兑现它,这里只是指一下。家测序列的出处(指南/共识引文)
+                // 往往一句话放不下,另起一段显示在 Wrap 外面,见下方
+                // `refSourceCitation`。
+                if (ref != null)
+                  _RefLegend(text: trendRefLegendText(series, ref))
+                // 家测但**没有**参考区间(体温/体重/血糖)—— 不是漏配,是
+                // `self_entry::home_ref_range` 的拍板决定(查不到出处就不给
+                // 区间)。裸值旁边说一句,免得用户以为是 bug。
+                else if (series.selfMeasured)
+                  Text(
+                    trendNoHomeRangeNote,
+                    style: MedType.secondary.copyWith(color: c.ink3),
+                  ),
                 // 这条线上混了不同医院/不同单位的报告,Rust 把值和参考区间一起
                 // 换算到了规范单位(否则连不成一条线)。**说出来** —— 屏幕上
                 // 这些数字在用户手里那张化验单上找不到,不说等于改写原文。
@@ -692,6 +715,18 @@ class SeriesCard extends StatelessWidget {
                 ),
               ],
             ),
+
+            // 家测参考区间的完整引文 —— 一句指南/共识原话往往比 Wrap 里能塞下的
+            // 短图例长得多,另起一段,不挤在图例那一行里。医院化验序列
+            // `refSourceCitation` 恒为 null(见 `trendRefSourceCitation` 的文档),
+            // 这一段不出现。
+            if (refSourceCitation != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                '出处:$refSourceCitation',
+                style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
+              ),
+            ],
 
             // 无日期的点画不到时间轴上,所以图里没有它们。**说出来** —— 否则用户
             // 数图上的点会发现比他记忆里的次数少,而少掉的那几次没有任何交代。
@@ -762,6 +797,27 @@ class _SelfMeasuredLegend extends StatelessWidget {
   }
 }
 
+/// 参考区间图例上的文字。医院化验序列的出处就是化验单原件本身 —— 卡底已经有
+/// 「查看最新一次的原件」入口(见 [SeriesCard]),这里只是**指一下**,不新造
+/// 一个跳转;家测序列的出处是一句可能很长的指南/共识引文,放不进这一行短图例,
+/// 另起一段显示,见 [trendRefSourceCitation]。
+String trendRefLegendText(TrendSeriesDto series, String ref) => series.selfMeasured
+    ? '参考区间 $ref'
+    : '参考区间 $ref · 出自化验单原件';
+
+/// 家测序列参考区间的引文(指南/共识出处,`TrendSeriesDto.refSource` 原样
+/// 透传)。医院化验序列恒为 `null` —— 它的出处是化验单原件本身,不是这段引文
+/// 的用途(见 [TrendSeriesDto.refSource] 的文档);家测但没有可引用区间(体温/
+/// 体重/血糖)时同样为 `null`,那种情况改由 [trendNoHomeRangeNote] 交代。
+String? trendRefSourceCitation(TrendSeriesDto series) =>
+    series.selfMeasured ? series.refSource : null;
+
+/// 家测序列**没有**参考区间时的说明(体温/体重/血糖 —— 见
+/// `self_entry::home_ref_range` 的文档:「查不到出处就不给区间」是拍板决定,
+/// 不是漏配)。医院化验序列没区间就是报告本身没印,不需要额外解释,这句只给
+/// 家测序列用。
+const trendNoHomeRangeNote = '暂无公认家测正常区间,仅显示数值';
+
 class _RefLegend extends StatelessWidget {
   const _RefLegend({required this.text});
 
@@ -789,6 +845,100 @@ class _RefLegend extends StatelessWidget {
             color: c.ink3,
             fontFeatures: MedType.tabular,
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 《中国高血压防治指南(2024年修订版)》原文 PDF —— 血压两条家测序列
+/// (`bp_systolic`/`bp_diastolic`)的 [TrendSeriesDto.refSource] 引用的就是这份
+/// 指南。**2026-08-06 用 WebFetch 实际抓取验证过**:文件首页标题、发布机构
+/// (中国高血压防治指南修订委员会、高血压联盟(中国)等)、期刊出处(《中华
+/// 高血压杂志(中英文)》2024 年 7 月第 32 卷第 7 期,doi:10.16439/j.issn.
+/// 1673-7245.2024.07.002)与本文引用的指南名称、发布年份逐字对得上,不是二手
+/// 摘要或转载。链接本身来自高血压联盟(中国)官网 chlonline.cn 首页「下载中心」
+/// 给出的直接下载地址(文件实际托管在该联盟使用的会议文件服务上,但入口在联盟
+/// 自己的官网首页)。
+///
+/// **只有这一条出处现在能给一个验证过的链接。** 心率参考区间的出处是「内科学/
+/// 生命体征通用共识」—— 跨教材的基础生理学常数,没有单一可指认、可验证的官方
+/// 发布页,所以心率**不**配链接,只在卡片上留文字出处(见
+/// [trendRefSourceCitation])。体温/体重/血糖没有家测参考区间,更谈不上链接。
+/// **绝不为验不到的出处编一个链接** —— 死链或猜的链接比不放链接更伤这页要证明
+/// 的事(「我们用的是官方来源」)。
+const _hypertensionGuidelineUrl =
+    'https://files.sciconf.cn/medcon/2024/08/20240814/2024081410492823875104169.pdf';
+
+/// 页脚:参考区间的三种出处,统一交代一次。
+///
+/// 产品原话:「如果不是每个都可以链接,至少底下得有」—— 三类出处里只有血压
+/// 那条现在能给出经过验证的链接(见 [_hypertensionGuidelineUrl]),其余两类
+/// 只有文字说明,这一段把三类都说全,不是只给能链接的那类交代。
+///
+/// **公开是为了可测**,与 [SeriesCard] 同一个先例(见那里的文档):整屏
+/// `TrendsScreen` 需要 `viewTrends()` 的 Rust FFI,测试环境没有原生库,只能
+/// 把这块单独暴露出来,直接 pump 它来测文案是否齐全。
+class ProvenanceFooter extends StatelessWidget {
+  const ProvenanceFooter({super.key});
+
+  Future<void> _openGuideline(BuildContext context) async {
+    final ok = await launchUrl(
+      Uri.parse(_hypertensionGuidelineUrl),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(appSnackBar(content: const Text('无法打开指南原文,请稍后重试')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final bodyStyle = MedType.secondary.copyWith(color: c.ink3, height: 1.5);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('参考区间的出处', style: MedType.body.copyWith(color: c.ink)),
+        const SizedBox(height: 4),
+        Text(
+          '· 医院化验:来自化验单原件本身 —— 点开卡片下方「查看最新一次的原件」'
+          '核对。\n'
+          '· 家测(血压、心率等):来自公开发布的临床指南或医学共识,出处写在'
+          '各卡片区间下方。\n'
+          '· 体温、体重、血糖(家测):目前没有可靠、可引用的家测正常区间,'
+          '只显示数值,不做偏高偏低的判断。',
+          style: bodyStyle,
+        ),
+        const SizedBox(height: 4),
+        GestureDetector(
+          onTap: () => _openGuideline(context),
+          child: Text(
+            '查看《中国高血压防治指南(2024年修订版)》原文',
+            style: bodyStyle.copyWith(
+              color: c.sealInk,
+              decoration: TextDecoration.underline,
+              decorationColor: c.sealInk,
+            ),
+          ),
+        ),
+        const SizedBox(height: 2),
+        // 期刊卷期 + DOI,和上面那条链接并列。
+        //
+        // **链接会烂,卷期和 DOI 不会。** [_hypertensionGuidelineUrl] 指的是会议
+        // 文件服务上的一个具体路径(入口在联盟官网首页下载中心),路径一旦轮换,
+        // 这页就在替一个死链背书;而 `launchUrl` 只在唤不起浏览器时才返回 false,
+        // 浏览器打开一个 404 页面在它看来是成功的,所以那条失败提示兜不住这种烂法。
+        //
+        // 这行字是链接烂掉之后的后备:用户凭卷期或 DOI 照样查得到原文。而且它本身
+        // 就是这一段想证明的那件事(「我们引的是正式发表的指南」)最硬的证据 ——
+        // 一个 URL 证明不了发表过,一个卷期号能。
+        Text(
+          '《中华高血压杂志(中英文)》2024年7月第32卷第7期\n'
+          'doi:10.16439/j.issn.1673-7245.2024.07.002',
+          style: bodyStyle.copyWith(color: c.ink3),
         ),
       ],
     );

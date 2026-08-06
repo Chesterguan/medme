@@ -495,10 +495,123 @@ void main() {
         wrap(SeriesCard(series: s(converted: false), onOpenDoc: (_) {})),
       );
       expect(find.textContaining('已统一换算'), findsNothing);
-      // 卡上就是纸上那一套:1.2 与 参考区间 0.6–1.3。
+      // 卡上就是纸上那一套:1.2 与 参考区间 0.6–1.3。医院化验序列(`selfMeasured:
+      // false`)的图例带「出自化验单原件」后缀,见 `trendRefLegendText`。
       expect(find.text('1.2'), findsOneWidget);
-      expect(find.text('参考区间 0.6–1.3'), findsOneWidget);
+      expect(find.text('参考区间 0.6–1.3 · 出自化验单原件'), findsOneWidget);
       expect(find.text('mg/dL'), findsOneWidget);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  group('趋势:参考区间的出处', () {
+    // 产品要求(2026-08-06):趋势页的参考区间要能证明「我们用的是官方来源」——
+    // 医院化验的出处是化验单原件本身,家测的出处是 `TrendSeriesDto.refSource`
+    // 带的指南/共识引文,两者不能混着说。
+
+    TrendSeriesDto hospitalSeries({double? refLow, double? refHigh}) =>
+        TrendSeriesDto(
+          name: '肌酐',
+          unit: 'umol/L',
+          valuesConverted: false,
+          anyAbnormal: false,
+          refLow: refLow,
+          refHigh: refHigh,
+          panel: '肾功能',
+          selfMeasured: false,
+          points: [pt('2026-08-05', 96, flag: 'N')],
+        );
+
+    TrendSeriesDto homeSeries({
+      double? refLow,
+      double? refHigh,
+      String? refSource,
+    }) => TrendSeriesDto(
+      name: '心率',
+      unit: '/min',
+      valuesConverted: false,
+      anyAbnormal: false,
+      refLow: refLow,
+      refHigh: refHigh,
+      refSource: refSource,
+      panel: '生命体征',
+      selfMeasured: true,
+      points: [pt('2026-08-05', 72)],
+    );
+
+    test('图例文字:医院序列加「出自化验单原件」后缀,家测序列不加', () {
+      expect(
+        trendRefLegendText(hospitalSeries(refLow: 0.6, refHigh: 1.3), '0.6–1.3'),
+        '参考区间 0.6–1.3 · 出自化验单原件',
+      );
+      expect(
+        trendRefLegendText(homeSeries(refHigh: 100), '≤ 100'),
+        '参考区间 ≤ 100',
+      );
+    });
+
+    test('引文:只有家测序列读 refSource,医院序列恒为 null', () {
+      expect(
+        trendRefSourceCitation(homeSeries(refHigh: 100, refSource: '内科学共识')),
+        '内科学共识',
+      );
+      // 医院序列即使 DTO 上手滑填了 refSource(不该发生,Rust 侧恒为 null),
+      // UI 也不该读它 —— 出处必须是化验单原件,不是这段引文的用途。
+      expect(
+        trendRefSourceCitation(
+          TrendSeriesDto(
+            name: '肌酐',
+            valuesConverted: false,
+            anyAbnormal: false,
+            refLow: 0.6,
+            refHigh: 1.3,
+            refSource: '不该被读到的引文',
+            selfMeasured: false,
+            points: const [],
+          ),
+        ),
+        isNull,
+      );
+    });
+
+    testWidgets('家测且有出处 → 卡上出现「出处:引文原文」这一整段', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          SeriesCard(
+            series: homeSeries(refHigh: 100, refSource: '成年人静息心率正常范围'),
+            onOpenDoc: (_) {},
+          ),
+        ),
+      );
+      expect(find.text('出处:成年人静息心率正常范围'), findsOneWidget);
+    });
+
+    testWidgets('家测但没有区间(体温/体重/血糖同构)→ 提示「暂无公认家测正常区间」', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(SeriesCard(series: homeSeries(), onOpenDoc: (_) {})),
+      );
+      expect(find.text(trendNoHomeRangeNote), findsOneWidget);
+      // 没有区间就没有出处可言,「出处:」那一段不该出现。
+      expect(find.textContaining('出处:'), findsNothing);
+    });
+
+    testWidgets('医院序列没有区间 → 不画任何「暂无家测区间」提示(那句只给家测用)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(SeriesCard(series: hospitalSeries(), onOpenDoc: (_) {})),
+      );
+      expect(find.text(trendNoHomeRangeNote), findsNothing);
+    });
+
+    testWidgets('页脚:三种出处都说到,且给出那条验证过的指南链接', (tester) async {
+      await tester.pumpWidget(wrap(const ProvenanceFooter()));
+      expect(find.textContaining('医院化验'), findsOneWidget);
+      expect(find.textContaining('家测'), findsOneWidget);
+      expect(find.textContaining('体温、体重、血糖'), findsOneWidget);
+      expect(find.text('查看《中国高血压防治指南(2024年修订版)》原文'), findsOneWidget);
     });
   });
 

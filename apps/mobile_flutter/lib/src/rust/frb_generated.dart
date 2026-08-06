@@ -2541,8 +2541,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TrendSeriesDto dco_decode_trend_series_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 11)
-      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
     return TrendSeriesDto(
       name: dco_decode_String(arr[0]),
       analyteKey: dco_decode_opt_String(arr[1]),
@@ -2555,6 +2555,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       panel: dco_decode_opt_String(arr[8]),
       points: dco_decode_list_trend_point_dto(arr[9]),
       selfMeasured: dco_decode_bool(arr[10]),
+      refSource: dco_decode_opt_String(arr[11]),
     );
   }
 
@@ -3515,6 +3516,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_panel = sse_decode_opt_String(deserializer);
     var var_points = sse_decode_list_trend_point_dto(deserializer);
     var var_selfMeasured = sse_decode_bool(deserializer);
+    var var_refSource = sse_decode_opt_String(deserializer);
     return TrendSeriesDto(
       name: var_name,
       analyteKey: var_analyteKey,
@@ -3527,6 +3529,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       panel: var_panel,
       points: var_points,
       selfMeasured: var_selfMeasured,
+      refSource: var_refSource,
     );
   }
 
@@ -4390,6 +4393,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.panel, serializer);
     sse_encode_list_trend_point_dto(self.points, serializer);
     sse_encode_bool(self.selfMeasured, serializer);
+    sse_encode_opt_String(self.refSource, serializer);
   }
 
   @protected
