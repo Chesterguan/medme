@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- SECURITY (GHSA-j7fx): 本页只运行三段固定的内联脚本(首屏防闪 + 内联 dicom-parser + 查看器逻辑),
-     故 script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-tgMYYCcSnW98CKBcMaf3qOuf4b5ehzoIw0ofjlCikho=';并加 form-action/base-uri/
+     故 script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-+wNevL3wz+Yekl9ErHW6gMoaEJmXXgAi1wQVRi1qvyY=';并加 form-action/base-uri/
      frame-ancestors 'none' 锁死导航/表单/框架,断掉潜在注入外泄 DECRYPTED PHI 的路径。
      connect-src 只放行认领密文所在的那一个源(CLAIM_BASE):托管查看器要按 id 取回医生
      代拍的密文,别的地方一概连不上,解密后的 PHI 仍无处可外泄。**离线分享文件不吃这条**
@@ -15,7 +15,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-PutkAHzpKHe3+AT6q2Xaj4hjO3QcWYET1fOGKKKoDhk='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-+wNevL3wz+Yekl9ErHW6gMoaEJmXXgAi1wQVRi1qvyY='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -820,7 +820,6 @@ function buildEMRFromSummary(sm, patient) {
   let s2 = "近期" + (lastDate ? "(" + lastDate + ")" : "") + "复查";
   if (labStr) s2 += ":" + labStr;
   s2 += "。目前系" + status + "状态";
-  if (onMeds.length) s2 += ",现规律服用" + onMeds.join("、") + "治疗";
   if (sm.effect) s2 += ",效果" + sm.effect;
   s2 += "。患者为" + reason + "来我院就诊。";
   L.push(s2);
@@ -919,7 +918,7 @@ function renderSummary(sm, asOf, patient) {
 
   let h = '<div class="sum"><div class="sum-top"><div class="sum-card">';
   if (diseases) h += '<div class="sum-row"><span class="sum-lab">在治疾病</span><span>' + diseases + '</span></div>';
-  if (onMeds.length || offMeds.length) h += '<div class="sum-row"><span class="sum-lab">当前用药</span><span>' + medsLine + '</span></div>';
+  if (onMeds.length || offMeds.length) h += '<div class="sum-row"><span class="sum-lab">病历中的用药</span><span>' + medsLine + '</span></div>';
   if (allerg) h += '<div class="sum-row"><span class="sum-lab">过敏史</span><span class="sum-bad">' + allerg + '</span></div>';
   h += '<button class="sum-copy" type="button">📋 复制为病历文本(可直接粘进你的病历)</button>'
     + '<details class="sum-emr"><summary>预览要复制的文本 ▾</summary><pre id="sum-emr-text">' + esc(emrText) + '</pre></details></div>';
@@ -1272,7 +1271,7 @@ async function renderQrSummary(fragment) {
   note.className = "notice";
   note.style.cssText = "margin:12px 0";
   note.textContent =
-    "本页来自患者当面出示的二维码,只包含当前在治的问题、关键指标与在用药物 —— "
+    "本页来自患者当面出示的二维码,只包含记录里的问题、关键指标与用过的药 —— "
     + "不是完整病历。需要看原件、影像或更早的记录,请让患者在手机上出示。";
   const app = document.getElementById("app");
   app.insertBefore(note, app.firstChild ? app.firstChild.nextSibling : null);
