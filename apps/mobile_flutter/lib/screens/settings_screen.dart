@@ -173,6 +173,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _demoProgressText = '正在载入 ${p.loaded}/${p.total}…');
       }
 
+      // 埋点就发在这里 —— 循环刚结束、`failure` 已定,而后面切回成员 / 刷新 /
+      // 弹 SnackBar 都还没跑。放在更后面的话,那几步里任何一个抛出去都会让这条
+      // 事件丢掉,于是「示例数据坏了」在数据里仍然是零。
+      //
+      // **只报成没成这一个布尔**:`failure` 是 Rust 侧的一段文本、可能带路径,
+      // 绝不上报(与 `doc_import_failed` 只报 `reason_code` 同一条规矩)。
+      Analytics.track(AnalyticsEvent.demoDataLoaded, {'ok': failure == null});
+
       // 切回用户载入前正看着的那个人(见本函数顶部文档)。
       if (pm.currentId.value != originalMemberId) {
         await switchProfileAndReopen(originalMemberId);
@@ -201,6 +209,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
     } catch (e) {
+      // 抛在流跑完之前(建成员、切箱子、FFI 起不来)—— 上面那条来不及发,
+      // 在这里补一条 `ok:false`。**只有布尔,`e` 不上报。**
+      Analytics.track(AnalyticsEvent.demoDataLoaded, {'ok': false});
       _showSnack('载入示例数据失败:$e');
     } finally {
       if (mounted) {
@@ -245,6 +256,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _busy = true);
     try {
       await wipeAllData(); // 全清:所有成员 vault + 份数缓存 + 待确认 + 恢复出厂
+      // 埋点:**无属性**,而且此刻设备上已经什么都不剩了。
+      // 这是没有持久 ID 的情况下我们能看见的最强负面信号(卸载永远看不到),
+      // 而且它在一道二次确认之后 —— 不会是误触。配合上下文的 `tenure_bucket`
+      // 就分得开「第一天就清掉」和「用了一个月才清」,那是两种病。
+      //
+      // 发在 `wipeAllData()` **之后**:清空失败(磁盘故障)不该记成一次清空,
+      // 那是另一件事,由用户看到的错误提示承担。
+      Analytics.track(AnalyticsEvent.dataWiped);
       await _refresh();
       _showSnack('已清空');
     } catch (e) {

@@ -262,7 +262,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           // 不是一个常驻浏览的空间(设计系统 §八)。放在档案顶栏是因为:翻单子
           // 的人下一步常常就是要进诊室。
           IconButton(
-            onPressed: () => showVisitSummarySheet(context),
+            onPressed: () =>
+                showVisitSummarySheet(context, from: VisitSheetEntry.archive),
             icon: const Icon(Icons.assignment_outlined),
             tooltip: '看病带这个',
           ),

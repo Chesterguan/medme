@@ -405,6 +405,19 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
+  /// 底栏被**手点**。埋点只挂在这里,**不挂 [_onTabRequested]** ——
+  /// 后者也接程序化跳转(`goToArchive()`、载入示例后的「去看看」),那是别的功能
+  /// 的副作用,不是用户想去哪。混进来会把一个功能的成功记成另一个 tab 的人气,
+  /// 而这条事件存在的全部意义正是「五个席位该给谁」。
+  void _onTabTapped(int i) {
+    final tab = AnalyticsTab.of(i);
+    // 认不出来就不报(不猜),但 tab 照切 —— 埋点绝不影响功能。
+    if (tab != null) {
+      Analytics.track(AnalyticsEvent.homeTabSelected, {'tab': tab.name});
+    }
+    selectedTab.value = i;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -418,7 +431,7 @@ class _HomeShellState extends State<HomeShell> {
         child: NavigationBar(
           selectedIndex: _index,
           // 统一走 selectedTab:手点和程序化跳转(设置载入示例后)同一条路径。
-          onDestinationSelected: (i) => selectedTab.value = i,
+          onDestinationSelected: _onTabTapped,
           destinations: HomeShell.tabDestinations,
         ),
       ),

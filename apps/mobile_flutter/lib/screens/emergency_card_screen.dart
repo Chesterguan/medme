@@ -133,14 +133,20 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
               ),
               children: [
                 _BigModeLauncher(
-                  onOpen: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => EmergencyBigCardScreen(
-                        card: card,
-                        profile: profile,
+                  onOpen: () {
+                    // 埋点:**无属性**。这一屏上的每一样东西(姓名、血型、过敏史、
+                    // 联系人)都是最敏感的那一类,一个都不带。回答的只有
+                    // 「大字模式到底有没有人开」——那是应急卡这个一级席位的依据。
+                    Analytics.track(AnalyticsEvent.emergencyBigModeOpened);
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => EmergencyBigCardScreen(
+                          card: card,
+                          profile: profile,
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
                 const SizedBox(height: MedShape.s5),
                 _BloodTypeCard(bloodType: card.bloodType),
