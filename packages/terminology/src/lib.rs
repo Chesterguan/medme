@@ -72,6 +72,16 @@ pub struct Entry {
     /// collapsing (design §6 red line 2). `None` for drugs.
     #[serde(default)]
     pub system: Option<String>,
+    /// 检验大类(化验报告单印刷惯例,不是临床判断) —— 血常规/肝功能/肾功能等,
+    /// 见 `panel_methodology.md`。与 `system`(标本类型)是两个独立维度:
+    /// `system` 太粗(181 条同为 `serum/plasma`,肝肾血脂血糖全混在一起)。
+    /// `None` 表示这条没能干净地归进策展的 ~14 类里,老实留空,消费方(手机端
+    /// 趋势页)落进「其他」兜底,不强凑。只有 `category == Lab` 的条目会有值;
+    /// vital/drug 恒为 `None`——这是化验报告单的项目组表头,体征/药物没有这个
+    /// 概念。**只给一个**(不像 `problem_map.json` 的疾病泳道允许多重归属):
+    /// 一项化验在真实报告单上物理上只印在一个项目组表头下。
+    #[serde(default)]
+    pub panel: Option<String>,
     pub codes: Codes,
     /// Canonical unit (UCUM). `None` for drugs.
     #[serde(default)]
@@ -636,6 +646,45 @@ pub fn dictionary_entries() -> &'static [Entry] {
     &index().entries
 }
 
+/// Fixed display order for the lab-panel catalog (检验大类:血常规/肝功能/…) —
+/// mirrors a Chinese lab report's project-group headers, curated in
+/// `panel_methodology.md`. A test below asserts this exactly matches the set of
+/// distinct `panel` values actually present in `dictionary.json`, so a typo or
+/// a forgotten/renamed panel can't silently drift the two apart.
+pub const PANEL_CATALOG: &[&str] = &[
+    // 自测项排在最前:手动录入的血压/心率/体重是用户**自己天天在看**的东西,
+    // 而化验大类是隔几个月才来一次的。chip 是横向滚动的,谁在前谁被看见。
+    "生命体征",
+    "体格测量",
+    "血常规",
+    "尿液",
+    "肝功能",
+    "肾功能",
+    "血糖",
+    "血脂",
+    "电解质",
+    "甲状腺功能",
+    "凝血",
+    "心肌标志物",
+    "炎症/感染",
+    "肿瘤标志物",
+    "风湿免疫",
+    "性激素",
+];
+
+/// Which lab panel a normalized analyte `key` belongs to (e.g.
+/// `panel_for("creatinine") == Some("肾功能")`). `None` when `key` doesn't
+/// resolve to a dictionary entry, or when the entry has no `panel` — most
+/// commonly a specialty/low-frequency lab that doesn't cleanly fit one of the
+/// curated panels (see `panel_methodology.md`'s "留空" section). Callers should
+/// treat `None` as "uncategorized", not as an error.
+pub fn panel_for(key: &str) -> Option<&'static str> {
+    dictionary_entries()
+        .iter()
+        .find(|e| e.key == key)
+        .and_then(|e| e.panel.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1050,14 +1099,68 @@ mod tests {
 
     #[test]
     fn total_entry_count_is_expected() {
-        // Coverage expansion (2026-07-14.1): 191 + 446 按专科批次扩容 = 637
-        // (血液/凝血/铁代谢、生化、内分泌/骨代谢、心肌/感染、风湿/肿标、尿粪、西药、抗感染+中成药)。
+        // Coverage expansion (2026-07-14.1): 191 + 446 按专科批次扩容 = 637,再减 1
+        // (2026-08-05:去重 polystyrene_sulfonate 的重复条目,见 dictionary_keys_are_globally_unique)= 636。
         // A drift here means an entry was accidentally dropped or duplicated.
         assert_eq!(
             dictionary_entries().len(),
-            637,
+            636,
             "unexpected dictionary entry count"
         );
+    }
+
+    #[test]
+    fn dictionary_keys_are_globally_unique() {
+        // `key` 是查表/panel_for/problem_map ATC 匹配等一切下游逻辑的主键。重复 key
+        // 本身不会让 parse 失败(entries 是数组,不是以 key 为键的 map),但会让归一化
+        // 结果取决于 build_index 的遍历顺序——两条同 key 但内容不同的条目,谁的别名生效
+        // 全看谁在数组里排在后面(HashMap::insert 后写覆盖先写),silently 不确定。
+        // 曾经发生过(polystyrene_sulfonate 两条,别名列表还不完全一致),没有测试钉住才漏进来。
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        for (i, e) in dictionary_entries().iter().enumerate() {
+            if let Some(&first) = seen.get(e.key.as_str()) {
+                panic!(
+                    "duplicate key {:?} at entries[{first}] and entries[{i}]",
+                    e.key
+                );
+            }
+            seen.insert(e.key.as_str(), i);
+        }
+    }
+
+    #[test]
+    fn system_never_set_on_drug_entries() {
+        // `system`(标本类型)的文档明确写着「`None` for drugs」,但这个方向从没被断言过——
+        // labs_and_vitals_have_canonical_unit_and_identity_row 只测了 canonical_unit/units,
+        // 没人查过 system。跟 panel_never_set_on_drug_entries 是同一类盲点。
+        for e in dictionary_entries() {
+            if e.category == Category::Drug {
+                assert!(
+                    e.system.is_none(),
+                    "{} is a drug but has a system: {:?}",
+                    e.key,
+                    e.system
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ingredient_never_set_on_lab_or_vital_entries() {
+        // 反方向同理:`ingredient` 的文档写着「`Some` only for drugs」,但
+        // labs_and_vitals_have_canonical_unit_and_identity_row 的 Lab/Vital 分支从没
+        // 断言过 ingredient 恒为 None——只测了 Drug 分支必须 Some。
+        for e in dictionary_entries() {
+            if e.category != Category::Drug {
+                assert!(
+                    e.ingredient.is_none(),
+                    "{} is category {:?} but has an ingredient: {:?}",
+                    e.key,
+                    e.category,
+                    e.ingredient
+                );
+            }
+        }
     }
 
     #[test]
@@ -1225,6 +1328,115 @@ mod tests {
         assert_eq!(
             normalize_drug("琥珀酸亚铁片").unwrap().canonical_name,
             "琥珀酸亚铁"
+        );
+    }
+
+    #[test]
+    fn panel_for_known_and_unknown_keys() {
+        // 常见项各归其类(印刷惯例,见 panel_methodology.md)。
+        assert_eq!(panel_for("creatinine"), Some("肾功能"));
+        assert_eq!(panel_for("alt"), Some("肝功能"));
+        assert_eq!(panel_for("wbc"), Some("血常规"));
+        assert_eq!(panel_for("hgb"), Some("血常规"));
+        assert_eq!(panel_for("plt"), Some("血常规"));
+        // 血红蛋白只给一个 panel(血常规),即使它在 problem_map.json 里同时挂在
+        // 「贫血相关」「肾功能」两条疾病泳道下 —— panel 是印刷分组,不是关注方向,
+        // 两个维度不该互相渗透。
+        // 不存在的 key、以及词典里确实没配 panel 的条目,都老实返回 None。
+        assert_eq!(panel_for("完全不是术语"), None);
+        assert_eq!(
+            panel_for("cortisol"),
+            None,
+            "皮质醇节律没有稳定印刷惯例,留空"
+        );
+    }
+
+    #[test]
+    fn panel_catalog_matches_dictionary_distinct_panels() {
+        // PANEL_CATALOG 是人工维护的展示顺序;这里钉住它与词典里实际出现的 panel
+        // 值**完全一致**(不多不少) —— 漏了会让某个大类的 chip 永远不出现在目录
+        // 里(即使有条目落在它下面),多了会在目录里挂一个查无条目的空 chip。
+        let mut from_dict: Vec<&str> = dictionary_entries()
+            .iter()
+            .filter_map(|e| e.panel.as_deref())
+            .collect();
+        from_dict.sort_unstable();
+        from_dict.dedup();
+        let mut from_catalog: Vec<&str> = PANEL_CATALOG.to_vec();
+        from_catalog.sort_unstable();
+        assert_eq!(
+            from_dict, from_catalog,
+            "PANEL_CATALOG 与 dictionary.json 里实际出现的 panel 集合不一致"
+        );
+    }
+
+    #[test]
+    fn panel_never_set_on_drug_entries() {
+        // panel 回答的是「这一项在报告单/病历上印在哪一栏下」。化验有(项目组表头),
+        // 生命体征与体格测量也有(病历首页的固定栏位) —— **药没有**,它的分类维度是
+        // ATC,不是报告单版式,给它 panel 只会在趋势页挂出一个查无实据的 chip。
+        //
+        // 这条原本写的是「只有 lab 能有 panel」。手动录入上线后,自测的血压/心率/
+        // 体重全是 `Category::Vital`,而它们**必须**能被趋势页的分类入口选中 ——
+        // 否则用户自己天天填的东西反而只能从「其他」里翻。放宽到 lab + vital,
+        // 但对药继续钉死。
+        for e in dictionary_entries() {
+            if e.category == Category::Drug {
+                assert!(
+                    e.panel.is_none(),
+                    "{} is a drug but has a panel: {:?}",
+                    e.key,
+                    e.panel
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_self_measurable_vital_has_a_panel() {
+        // 手动录入支持的五项(见 parser::self_entry)必须都能被分类入口选中。
+        // 少一项就意味着那一项只能从「其他」里翻 —— 而「其他」是给未归一化的
+        // 残留项准备的兜底,不是给产品主推功能的默认归宿。
+        for key in [
+            "bp_systolic",
+            "bp_diastolic",
+            "heart_rate",
+            "body_temperature",
+            "body_weight",
+        ] {
+            assert!(
+                panel_for(key).is_some(),
+                "{key} 是手动录入支持项,却没有 panel —— 它会掉进「其他」"
+            );
+        }
+    }
+
+    #[test]
+    fn drugs_without_atc_are_all_explained() {
+        // WORKLIST #9:53 条药物没有 ATC —— problem_map.json 按 ATC 前缀挂疾病泳道,
+        // 没有 ATC 的药永远挂不到任何泳道。这些不是遗漏统计,是逐条查过 OMOP 本地
+        // vocab(LOINC/RxNorm/ATC)后诚实记录的结论,理由分别写在各自的 `note` 里,
+        // 汇总清单见 `atc_gaps_methodology.md`。
+        //
+        // 这条测试钉两件事:①数量不能悄悄涨——涨了要么是新条目忘了查 ATC,要么是
+        // 方法学文档没跟上,两种都要求人去看一眼,而不是被下一次「补全字典」的批量
+        // 提交悄悄吞掉;②每一条都必须有 `note` 解释留空理由——不允许「没查」和
+        // 「查过确认没有」混在同一个空值里分不清。
+        let no_atc: Vec<&Entry> = dictionary_entries()
+            .iter()
+            .filter(|e| e.category == Category::Drug && e.codes.atc.is_none())
+            .collect();
+        for e in &no_atc {
+            assert!(
+                e.note.is_some(),
+                "{} 没有 ATC 也没有 note 解释原因 —— 补 note 或补 ATC,见 atc_gaps_methodology.md",
+                e.key
+            );
+        }
+        assert_eq!(
+            no_atc.len(),
+            53,
+            "无 ATC 的 drug 条目数变了 —— 同步更新 atc_gaps_methodology.md 与这个数字"
         );
     }
 }

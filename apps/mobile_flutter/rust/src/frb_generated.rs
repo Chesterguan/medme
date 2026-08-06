@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1943098302;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 564326456;
 
 // Section: executor
 
@@ -46,6 +46,80 @@ flutter_rust_bridge::frb_generated_default_handler!();
 
 // Section: wire_funcs
 
+fn wire__crate__api__vault__add_note_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "add_note",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_text = <String>::sse_decode(&mut deserializer);
+            let api_measured_at = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault::add_note(api_text, api_measured_at)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__vault__add_self_measurement_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "add_self_measurement",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_values =
+                <Vec<crate::api::dto::SelfMeasuredValueDto>>::sse_decode(&mut deserializer);
+            let api_measured_at = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok =
+                            crate::api::vault::add_self_measurement(api_values, api_measured_at)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__vault__backfill_pdf_text_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -69,6 +143,7 @@ fn wire__crate__api__vault__backfill_pdf_text_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_document_id = <i64>::sse_decode(&mut deserializer);
+            let api_page_no = <i32>::sse_decode(&mut deserializer);
             let api_text = <String>::sse_decode(&mut deserializer);
             let api_confidence = <f64>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -77,6 +152,7 @@ fn wire__crate__api__vault__backfill_pdf_text_impl(
                     (move || {
                         let output_ok = crate::api::vault::backfill_pdf_text(
                             api_document_id,
+                            api_page_no,
                             api_text,
                             api_confidence,
                         )?;
@@ -1268,11 +1344,15 @@ fn wire__crate__api__vault__load_demo_data_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_progress = <StreamSink<
+                crate::api::dto::DemoLoadProgressDto,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || {
-                        let output_ok = crate::api::vault::load_demo_data()?;
+                        let output_ok = crate::api::vault::load_demo_data(api_progress)?;
                         Ok(output_ok)
                     })(),
                 )
@@ -1605,6 +1685,42 @@ fn wire__crate__api__vault__reset_vault_impl(
         },
     )
 }
+fn wire__crate__api__vault__self_measurement_values_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "self_measurement_values",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_document_id = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok =
+                            crate::api::vault::self_measurement_values(api_document_id)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__vault__source_file_object_path_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1640,6 +1756,142 @@ fn wire__crate__api__vault__source_file_object_path_impl(
         },
     )
 }
+fn wire__crate__api__vault_projections__view_emergency_card_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "view_emergency_card",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault_projections::view_emergency_card()?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "view_trend_panel_catalog",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok(
+                        crate::api::vault_projections::view_trend_panel_catalog(),
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__vault_projections__view_trends_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "view_trends",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault_projections::view_trends()?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__vault_projections__view_visit_summary_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "view_visit_summary",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault_projections::view_visit_summary()?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 
 // Section: dart2rust
 
@@ -1651,6 +1903,19 @@ impl SseDecode for flutter_rust_bridge::for_generated::anyhow::Error {
     }
 }
 
+impl SseDecode
+    for StreamSink<
+        crate::api::dto::DemoLoadProgressDto,
+        flutter_rust_bridge::for_generated::SseCodec,
+    >
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <String>::sse_decode(deserializer);
+        return StreamSink::deserialize(inner);
+    }
+}
+
 impl SseDecode for String {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1659,10 +1924,60 @@ impl SseDecode for String {
     }
 }
 
+impl SseDecode for crate::api::vault_projections::ActiveMedDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_atc = <Option<String>>::sse_decode(deserializer);
+        let mut var_dose = <Option<String>>::sse_decode(deserializer);
+        let mut var_since = <Option<String>>::sse_decode(deserializer);
+        let mut var_until = <Option<String>>::sse_decode(deserializer);
+        let mut var_documentIds = <Vec<i64>>::sse_decode(deserializer);
+        return crate::api::vault_projections::ActiveMedDto {
+            name: var_name,
+            atc: var_atc,
+            dose: var_dose,
+            since: var_since,
+            until: var_until,
+            document_ids: var_documentIds,
+        };
+    }
+}
+
+impl SseDecode for crate::api::vault_projections::AllergyItemDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_substance = <String>::sse_decode(deserializer);
+        let mut var_reaction = <String>::sse_decode(deserializer);
+        let mut var_documentIds = <Vec<i64>>::sse_decode(deserializer);
+        return crate::api::vault_projections::AllergyItemDto {
+            substance: var_substance,
+            reaction: var_reaction,
+            document_ids: var_documentIds,
+        };
+    }
+}
+
 impl SseDecode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u8().unwrap() != 0
+    }
+}
+
+impl SseDecode for crate::api::vault_projections::ChronicConditionDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_term = <String>::sse_decode(deserializer);
+        let mut var_onset = <Option<String>>::sse_decode(deserializer);
+        let mut var_icdCode = <Option<String>>::sse_decode(deserializer);
+        let mut var_documentIds = <Vec<i64>>::sse_decode(deserializer);
+        return crate::api::vault_projections::ChronicConditionDto {
+            term: var_term,
+            onset: var_onset,
+            icd_code: var_icdCode,
+            document_ids: var_documentIds,
+        };
     }
 }
 
@@ -1710,6 +2025,22 @@ impl SseDecode for crate::api::dto::ConsentDto {
     }
 }
 
+impl SseDecode for crate::api::dto::DemoLoadProgressDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_loaded = <i64>::sse_decode(deserializer);
+        let mut var_total = <i64>::sse_decode(deserializer);
+        let mut var_succeeded = <i64>::sse_decode(deserializer);
+        let mut var_error = <Option<String>>::sse_decode(deserializer);
+        return crate::api::dto::DemoLoadProgressDto {
+            loaded: var_loaded,
+            total: var_total,
+            succeeded: var_succeeded,
+            error: var_error,
+        };
+    }
+}
+
 impl SseDecode for crate::api::dto::DocumentDetailDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1746,6 +2077,25 @@ impl SseDecode for crate::api::dto::DocumentSummaryDto {
             title: var_title,
             page_count: var_pageCount,
             slice_count: var_sliceCount,
+        };
+    }
+}
+
+impl SseDecode for crate::api::vault_projections::EmergencyCardDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_bloodType = <Option<String>>::sse_decode(deserializer);
+        let mut var_allergies =
+            <Vec<crate::api::vault_projections::AllergyItemDto>>::sse_decode(deserializer);
+        let mut var_activeMeds =
+            <Vec<crate::api::vault_projections::ActiveMedDto>>::sse_decode(deserializer);
+        let mut var_conditions =
+            <Vec<crate::api::vault_projections::ChronicConditionDto>>::sse_decode(deserializer);
+        return crate::api::vault_projections::EmergencyCardDto {
+            blood_type: var_bloodType,
+            allergies: var_allergies,
+            active_meds: var_activeMeds,
+            conditions: var_conditions,
         };
     }
 }
@@ -1837,6 +2187,7 @@ impl SseDecode for crate::api::dto::ImportOutcomeDto {
         let mut var_docType = <Option<String>>::sse_decode(deserializer);
         let mut var_documentId = <Option<i64>>::sse_decode(deserializer);
         let mut var_detectedName = <Option<String>>::sse_decode(deserializer);
+        let mut var_pagesWithoutText = <Vec<i32>>::sse_decode(deserializer);
         return crate::api::dto::ImportOutcomeDto {
             name: var_name,
             source_file_id: var_sourceFileId,
@@ -1844,7 +2195,62 @@ impl SseDecode for crate::api::dto::ImportOutcomeDto {
             doc_type: var_docType,
             document_id: var_documentId,
             detected_name: var_detectedName,
+            pages_without_text: var_pagesWithoutText,
         };
+    }
+}
+
+impl SseDecode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<String>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::ActiveMedDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::ActiveMedDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::AllergyItemDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::AllergyItemDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::ChronicConditionDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(
+                <crate::api::vault_projections::ChronicConditionDto>::sse_decode(deserializer),
+            );
+        }
+        return ans_;
     }
 }
 
@@ -1871,6 +2277,18 @@ impl SseDecode for Vec<crate::api::dto::DocumentSummaryDto> {
             ans_.push(<crate::api::dto::DocumentSummaryDto>::sse_decode(
                 deserializer,
             ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<i32>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -1950,6 +2368,20 @@ impl SseDecode for Vec<crate::api::dto::ProxyProblemDto> {
     }
 }
 
+impl SseDecode for Vec<crate::api::dto::SelfMeasuredValueDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::dto::SelfMeasuredValueDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::dto::TimelineGroupDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1957,6 +2389,76 @@ impl SseDecode for Vec<crate::api::dto::TimelineGroupDto> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::dto::TimelineGroupDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::TrendPointDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::TrendPointDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::TrendSeriesDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::TrendSeriesDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::VisitLabDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::VisitLabDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::VisitNoteDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::VisitNoteDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::VisitRecordDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::VisitRecordDto>::sse_decode(
                 deserializer,
             ));
         }
@@ -2159,6 +2661,20 @@ impl SseDecode for (Vec<u8>, String, i64) {
     }
 }
 
+impl SseDecode for crate::api::dto::SelfMeasuredValueDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_analyteKey = <String>::sse_decode(deserializer);
+        let mut var_value = <f64>::sse_decode(deserializer);
+        let mut var_unit = <String>::sse_decode(deserializer);
+        return crate::api::dto::SelfMeasuredValueDto {
+            analyte_key: var_analyteKey,
+            value: var_value,
+            unit: var_unit,
+        };
+    }
+}
+
 impl SseDecode for crate::api::dto::ShareResultDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2219,6 +2735,55 @@ impl SseDecode for crate::api::dto::TimelineGroupDto {
     }
 }
 
+impl SseDecode for crate::api::vault_projections::TrendPointDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_date = <Option<String>>::sse_decode(deserializer);
+        let mut var_value = <f64>::sse_decode(deserializer);
+        let mut var_unit = <Option<String>>::sse_decode(deserializer);
+        let mut var_flag = <Option<String>>::sse_decode(deserializer);
+        let mut var_documentId = <i64>::sse_decode(deserializer);
+        return crate::api::vault_projections::TrendPointDto {
+            date: var_date,
+            value: var_value,
+            unit: var_unit,
+            flag: var_flag,
+            document_id: var_documentId,
+        };
+    }
+}
+
+impl SseDecode for crate::api::vault_projections::TrendSeriesDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_analyteKey = <Option<String>>::sse_decode(deserializer);
+        let mut var_loinc = <Option<String>>::sse_decode(deserializer);
+        let mut var_unit = <Option<String>>::sse_decode(deserializer);
+        let mut var_refLow = <Option<f64>>::sse_decode(deserializer);
+        let mut var_refHigh = <Option<f64>>::sse_decode(deserializer);
+        let mut var_valuesConverted = <bool>::sse_decode(deserializer);
+        let mut var_anyAbnormal = <bool>::sse_decode(deserializer);
+        let mut var_panel = <Option<String>>::sse_decode(deserializer);
+        let mut var_points =
+            <Vec<crate::api::vault_projections::TrendPointDto>>::sse_decode(deserializer);
+        let mut var_selfMeasured = <bool>::sse_decode(deserializer);
+        return crate::api::vault_projections::TrendSeriesDto {
+            name: var_name,
+            analyte_key: var_analyteKey,
+            loinc: var_loinc,
+            unit: var_unit,
+            ref_low: var_refLow,
+            ref_high: var_refHigh,
+            values_converted: var_valuesConverted,
+            any_abnormal: var_anyAbnormal,
+            panel: var_panel,
+            points: var_points,
+            self_measured: var_selfMeasured,
+        };
+    }
+}
+
 impl SseDecode for u8 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2231,6 +2796,94 @@ impl SseDecode for () {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {}
 }
 
+impl SseDecode for crate::api::vault_projections::VisitLabDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_date = <String>::sse_decode(deserializer);
+        let mut var_value = <f64>::sse_decode(deserializer);
+        let mut var_unit = <Option<String>>::sse_decode(deserializer);
+        let mut var_flag = <Option<String>>::sse_decode(deserializer);
+        let mut var_refLow = <Option<f64>>::sse_decode(deserializer);
+        let mut var_refHigh = <Option<f64>>::sse_decode(deserializer);
+        let mut var_valuesConverted = <bool>::sse_decode(deserializer);
+        let mut var_documentId = <i64>::sse_decode(deserializer);
+        let mut var_selfMeasured = <bool>::sse_decode(deserializer);
+        return crate::api::vault_projections::VisitLabDto {
+            name: var_name,
+            date: var_date,
+            value: var_value,
+            unit: var_unit,
+            flag: var_flag,
+            ref_low: var_refLow,
+            ref_high: var_refHigh,
+            values_converted: var_valuesConverted,
+            document_id: var_documentId,
+            self_measured: var_selfMeasured,
+        };
+    }
+}
+
+impl SseDecode for crate::api::vault_projections::VisitNoteDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_text = <String>::sse_decode(deserializer);
+        let mut var_date = <Option<String>>::sse_decode(deserializer);
+        let mut var_documentId = <i64>::sse_decode(deserializer);
+        return crate::api::vault_projections::VisitNoteDto {
+            text: var_text,
+            date: var_date,
+            document_id: var_documentId,
+        };
+    }
+}
+
+impl SseDecode for crate::api::vault_projections::VisitRecordDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_title = <Option<String>>::sse_decode(deserializer);
+        let mut var_kind = <String>::sse_decode(deserializer);
+        let mut var_date = <Option<String>>::sse_decode(deserializer);
+        let mut var_documentIds = <Vec<i64>>::sse_decode(deserializer);
+        return crate::api::vault_projections::VisitRecordDto {
+            title: var_title,
+            kind: var_kind,
+            date: var_date,
+            document_ids: var_documentIds,
+        };
+    }
+}
+
+impl SseDecode for crate::api::vault_projections::VisitSummaryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_patient = <crate::api::dto::PatientProfileDto>::sse_decode(deserializer);
+        let mut var_allergies =
+            <Vec<crate::api::vault_projections::AllergyItemDto>>::sse_decode(deserializer);
+        let mut var_activeMeds =
+            <Vec<crate::api::vault_projections::ActiveMedDto>>::sse_decode(deserializer);
+        let mut var_recentLabs =
+            <Vec<crate::api::vault_projections::VisitLabDto>>::sse_decode(deserializer);
+        let mut var_recentChanges =
+            <Vec<crate::api::vault_projections::VisitLabDto>>::sse_decode(deserializer);
+        let mut var_recentVisits =
+            <Vec<crate::api::vault_projections::VisitRecordDto>>::sse_decode(deserializer);
+        let mut var_recentNotes =
+            <Vec<crate::api::vault_projections::VisitNoteDto>>::sse_decode(deserializer);
+        let mut var_plainText = <String>::sse_decode(deserializer);
+        return crate::api::vault_projections::VisitSummaryDto {
+            patient: var_patient,
+            allergies: var_allergies,
+            active_meds: var_activeMeds,
+            recent_labs: var_recentLabs,
+            recent_changes: var_recentChanges,
+            recent_visits: var_recentVisits,
+            recent_notes: var_recentNotes,
+            plain_text: var_plainText,
+        };
+    }
+}
+
 fn pde_ffi_dispatcher_primary_impl(
     func_id: i32,
     port: flutter_rust_bridge::for_generated::MessagePort,
@@ -2240,129 +2893,155 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        1 => wire__crate__api__vault__backfill_pdf_text_impl(port, ptr, rust_vec_len, data_len),
-        2 => wire__crate__api__vault__build_qr_share_url_impl(port, ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__vault__claim_import_impl(port, ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__vault__claim_preview_impl(port, ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__vault__create_proxy_share_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__vault__create_share_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__vault__current_vault_root_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__vault__delete_document_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__vault__disable_icloud_sync_impl(port, ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__vault__enable_icloud_sync_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__vault_ephemeral__ephemeral_begin_impl(
+        1 => wire__crate__api__vault__add_note_impl(port, ptr, rust_vec_len, data_len),
+        2 => wire__crate__api__vault__add_self_measurement_impl(port, ptr, rust_vec_len, data_len),
+        3 => wire__crate__api__vault__backfill_pdf_text_impl(port, ptr, rust_vec_len, data_len),
+        4 => wire__crate__api__vault__build_qr_share_url_impl(port, ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__vault__claim_import_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__vault__claim_preview_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__vault__create_proxy_share_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__vault__create_share_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__vault__current_vault_root_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__vault__delete_document_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__vault__disable_icloud_sync_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__vault__enable_icloud_sync_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__vault_ephemeral__ephemeral_begin_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        12 => wire__crate__api__vault_ephemeral__ephemeral_confirmed_map_impl(
+        14 => wire__crate__api__vault_ephemeral__ephemeral_confirmed_map_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        13 => wire__crate__api__vault_ephemeral__ephemeral_create_share_impl(
+        15 => wire__crate__api__vault_ephemeral__ephemeral_create_share_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        14 => wire__crate__api__vault_ephemeral__ephemeral_delete_document_impl(
+        16 => wire__crate__api__vault_ephemeral__ephemeral_delete_document_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        15 => wire__crate__api__vault_ephemeral__ephemeral_document_text_impl(
+        17 => wire__crate__api__vault_ephemeral__ephemeral_document_text_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__vault_ephemeral__ephemeral_get_document_impl(
+        18 => wire__crate__api__vault_ephemeral__ephemeral_get_document_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        17 => wire__crate__api__vault_ephemeral__ephemeral_ingest_bytes_impl(
+        19 => wire__crate__api__vault_ephemeral__ephemeral_ingest_bytes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => wire__crate__api__vault_ephemeral__ephemeral_ingest_image_with_text_impl(
+        20 => wire__crate__api__vault_ephemeral__ephemeral_ingest_image_with_text_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__vault_ephemeral__ephemeral_load_preview_impl(
+        21 => wire__crate__api__vault_ephemeral__ephemeral_load_preview_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        20 => wire__crate__api__vault_ephemeral__ephemeral_read_source_bytes_impl(
+        22 => wire__crate__api__vault_ephemeral__ephemeral_read_source_bytes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        21 => wire__crate__api__vault_ephemeral__ephemeral_render_dicom_png_impl(
+        23 => wire__crate__api__vault_ephemeral__ephemeral_render_dicom_png_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        22 => wire__crate__api__vault_ephemeral__ephemeral_set_confirmed_impl(
+        24 => wire__crate__api__vault_ephemeral__ephemeral_set_confirmed_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__vault_ephemeral__ephemeral_summary_impl(
+        25 => wire__crate__api__vault_ephemeral__ephemeral_summary_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__vault_ephemeral__ephemeral_sweep_impl(
+        26 => wire__crate__api__vault_ephemeral__ephemeral_sweep_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        25 => wire__crate__api__vault_ephemeral__ephemeral_wipe_impl(
+        27 => wire__crate__api__vault_ephemeral__ephemeral_wipe_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        26 => wire__crate__api__vault__export_timeline_html_impl(port, ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__vault__get_document_impl(port, ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__vault__icloud_status_impl(port, ptr, rust_vec_len, data_len),
-        29 => wire__crate__api__vault__ingest_bytes_impl(port, ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__vault__ingest_file_impl(port, ptr, rust_vec_len, data_len),
-        31 => {
+        28 => wire__crate__api__vault__export_timeline_html_impl(port, ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__vault__get_document_impl(port, ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__vault__icloud_status_impl(port, ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__vault__ingest_bytes_impl(port, ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__vault__ingest_file_impl(port, ptr, rust_vec_len, data_len),
+        33 => {
             wire__crate__api__vault__ingest_image_with_text_impl(port, ptr, rust_vec_len, data_len)
         }
-        32 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__vault__load_archive_impl(port, ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__vault__load_demo_data_impl(port, ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__vault__open_vault_impl(port, ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__vault__patient_profile_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__vault__proxy_claim_blob_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__vault__proxy_summary_impl(port, ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__vault__qr_share_blob_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__vault__read_source_bytes_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__vault__recognize_image_pp_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__vault__render_dicom_png_impl(port, ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__vault__reset_vault_impl(port, ptr, rust_vec_len, data_len),
-        44 => {
+        34 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__vault__load_archive_impl(port, ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__vault__load_demo_data_impl(port, ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__vault__open_vault_impl(port, ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__vault__patient_profile_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__vault__proxy_claim_blob_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__vault__proxy_summary_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__vault__qr_share_blob_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__vault__read_source_bytes_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__vault__recognize_image_pp_impl(port, ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__vault__render_dicom_png_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__vault__reset_vault_impl(port, ptr, rust_vec_len, data_len),
+        46 => {
+            wire__crate__api__vault__self_measurement_values_impl(port, ptr, rust_vec_len, data_len)
+        }
+        47 => {
             wire__crate__api__vault__source_file_object_path_impl(port, ptr, rust_vec_len, data_len)
         }
+        48 => wire__crate__api__vault_projections__view_emergency_card_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        49 => wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        50 => {
+            wire__crate__api__vault_projections__view_trends_impl(port, ptr, rust_vec_len, data_len)
+        }
+        51 => wire__crate__api__vault_projections__view_visit_summary_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
         _ => unreachable!(),
     }
 }
@@ -2381,6 +3060,76 @@ fn pde_ffi_dispatcher_sync_impl(
 
 // Section: rust2dart
 
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::ActiveMedDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.name.into_into_dart().into_dart(),
+            self.atc.into_into_dart().into_dart(),
+            self.dose.into_into_dart().into_dart(),
+            self.since.into_into_dart().into_dart(),
+            self.until.into_into_dart().into_dart(),
+            self.document_ids.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::ActiveMedDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::ActiveMedDto>
+    for crate::api::vault_projections::ActiveMedDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::ActiveMedDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::AllergyItemDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.substance.into_into_dart().into_dart(),
+            self.reaction.into_into_dart().into_dart(),
+            self.document_ids.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::AllergyItemDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::AllergyItemDto>
+    for crate::api::vault_projections::AllergyItemDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::AllergyItemDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::ChronicConditionDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.term.into_into_dart().into_dart(),
+            self.onset.into_into_dart().into_dart(),
+            self.icd_code.into_into_dart().into_dart(),
+            self.document_ids.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::ChronicConditionDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::ChronicConditionDto>
+    for crate::api::vault_projections::ChronicConditionDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::ChronicConditionDto {
+        self
+    }
+}
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::dto::ClaimResultDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
@@ -2446,6 +3195,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::ConsentDto>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::DemoLoadProgressDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.loaded.into_into_dart().into_dart(),
+            self.total.into_into_dart().into_dart(),
+            self.succeeded.into_into_dart().into_dart(),
+            self.error.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::dto::DemoLoadProgressDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::DemoLoadProgressDto>
+    for crate::api::dto::DemoLoadProgressDto
+{
+    fn into_into_dart(self) -> crate::api::dto::DemoLoadProgressDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::dto::DocumentDetailDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2492,6 +3264,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::DocumentSummaryDto>
     for crate::api::dto::DocumentSummaryDto
 {
     fn into_into_dart(self) -> crate::api::dto::DocumentSummaryDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::EmergencyCardDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.blood_type.into_into_dart().into_dart(),
+            self.allergies.into_into_dart().into_dart(),
+            self.active_meds.into_into_dart().into_dart(),
+            self.conditions.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::EmergencyCardDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::EmergencyCardDto>
+    for crate::api::vault_projections::EmergencyCardDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::EmergencyCardDto {
         self
     }
 }
@@ -2575,6 +3370,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::ImportOutcomeDto {
             self.doc_type.into_into_dart().into_dart(),
             self.document_id.into_into_dart().into_dart(),
             self.detected_name.into_into_dart().into_dart(),
+            self.pages_without_text.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -2759,6 +3555,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::QrShareDto>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::SelfMeasuredValueDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.analyte_key.into_into_dart().into_dart(),
+            self.value.into_into_dart().into_dart(),
+            self.unit.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::dto::SelfMeasuredValueDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::SelfMeasuredValueDto>
+    for crate::api::dto::SelfMeasuredValueDto
+{
+    fn into_into_dart(self) -> crate::api::dto::SelfMeasuredValueDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::dto::ShareResultDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2835,11 +3653,178 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::TimelineGroupDto>
         self
     }
 }
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::TrendPointDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.date.into_into_dart().into_dart(),
+            self.value.into_into_dart().into_dart(),
+            self.unit.into_into_dart().into_dart(),
+            self.flag.into_into_dart().into_dart(),
+            self.document_id.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::TrendPointDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::TrendPointDto>
+    for crate::api::vault_projections::TrendPointDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::TrendPointDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::TrendSeriesDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.name.into_into_dart().into_dart(),
+            self.analyte_key.into_into_dart().into_dart(),
+            self.loinc.into_into_dart().into_dart(),
+            self.unit.into_into_dart().into_dart(),
+            self.ref_low.into_into_dart().into_dart(),
+            self.ref_high.into_into_dart().into_dart(),
+            self.values_converted.into_into_dart().into_dart(),
+            self.any_abnormal.into_into_dart().into_dart(),
+            self.panel.into_into_dart().into_dart(),
+            self.points.into_into_dart().into_dart(),
+            self.self_measured.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::TrendSeriesDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::TrendSeriesDto>
+    for crate::api::vault_projections::TrendSeriesDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::TrendSeriesDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::VisitLabDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.name.into_into_dart().into_dart(),
+            self.date.into_into_dart().into_dart(),
+            self.value.into_into_dart().into_dart(),
+            self.unit.into_into_dart().into_dart(),
+            self.flag.into_into_dart().into_dart(),
+            self.ref_low.into_into_dart().into_dart(),
+            self.ref_high.into_into_dart().into_dart(),
+            self.values_converted.into_into_dart().into_dart(),
+            self.document_id.into_into_dart().into_dart(),
+            self.self_measured.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::VisitLabDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::VisitLabDto>
+    for crate::api::vault_projections::VisitLabDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::VisitLabDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::VisitNoteDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.text.into_into_dart().into_dart(),
+            self.date.into_into_dart().into_dart(),
+            self.document_id.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::VisitNoteDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::VisitNoteDto>
+    for crate::api::vault_projections::VisitNoteDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::VisitNoteDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::VisitRecordDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.title.into_into_dart().into_dart(),
+            self.kind.into_into_dart().into_dart(),
+            self.date.into_into_dart().into_dart(),
+            self.document_ids.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::VisitRecordDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::VisitRecordDto>
+    for crate::api::vault_projections::VisitRecordDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::VisitRecordDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::VisitSummaryDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.patient.into_into_dart().into_dart(),
+            self.allergies.into_into_dart().into_dart(),
+            self.active_meds.into_into_dart().into_dart(),
+            self.recent_labs.into_into_dart().into_dart(),
+            self.recent_changes.into_into_dart().into_dart(),
+            self.recent_visits.into_into_dart().into_dart(),
+            self.recent_notes.into_into_dart().into_dart(),
+            self.plain_text.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::VisitSummaryDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::VisitSummaryDto>
+    for crate::api::vault_projections::VisitSummaryDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::VisitSummaryDto {
+        self
+    }
+}
 
 impl SseEncode for flutter_rust_bridge::for_generated::anyhow::Error {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(format!("{:?}", self), serializer);
+    }
+}
+
+impl SseEncode
+    for StreamSink<
+        crate::api::dto::DemoLoadProgressDto,
+        flutter_rust_bridge::for_generated::SseCodec,
+    >
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        unimplemented!("")
     }
 }
 
@@ -2850,10 +3835,41 @@ impl SseEncode for String {
     }
 }
 
+impl SseEncode for crate::api::vault_projections::ActiveMedDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.name, serializer);
+        <Option<String>>::sse_encode(self.atc, serializer);
+        <Option<String>>::sse_encode(self.dose, serializer);
+        <Option<String>>::sse_encode(self.since, serializer);
+        <Option<String>>::sse_encode(self.until, serializer);
+        <Vec<i64>>::sse_encode(self.document_ids, serializer);
+    }
+}
+
+impl SseEncode for crate::api::vault_projections::AllergyItemDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.substance, serializer);
+        <String>::sse_encode(self.reaction, serializer);
+        <Vec<i64>>::sse_encode(self.document_ids, serializer);
+    }
+}
+
 impl SseEncode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u8(self as _).unwrap();
+    }
+}
+
+impl SseEncode for crate::api::vault_projections::ChronicConditionDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.term, serializer);
+        <Option<String>>::sse_encode(self.onset, serializer);
+        <Option<String>>::sse_encode(self.icd_code, serializer);
+        <Vec<i64>>::sse_encode(self.document_ids, serializer);
     }
 }
 
@@ -2885,6 +3901,16 @@ impl SseEncode for crate::api::dto::ConsentDto {
     }
 }
 
+impl SseEncode for crate::api::dto::DemoLoadProgressDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i64>::sse_encode(self.loaded, serializer);
+        <i64>::sse_encode(self.total, serializer);
+        <i64>::sse_encode(self.succeeded, serializer);
+        <Option<String>>::sse_encode(self.error, serializer);
+    }
+}
+
 impl SseEncode for crate::api::dto::DocumentDetailDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -2906,6 +3932,25 @@ impl SseEncode for crate::api::dto::DocumentSummaryDto {
         <Option<String>>::sse_encode(self.title, serializer);
         <i32>::sse_encode(self.page_count, serializer);
         <Option<i32>>::sse_encode(self.slice_count, serializer);
+    }
+}
+
+impl SseEncode for crate::api::vault_projections::EmergencyCardDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<String>>::sse_encode(self.blood_type, serializer);
+        <Vec<crate::api::vault_projections::AllergyItemDto>>::sse_encode(
+            self.allergies,
+            serializer,
+        );
+        <Vec<crate::api::vault_projections::ActiveMedDto>>::sse_encode(
+            self.active_meds,
+            serializer,
+        );
+        <Vec<crate::api::vault_projections::ChronicConditionDto>>::sse_encode(
+            self.conditions,
+            serializer,
+        );
     }
 }
 
@@ -2977,6 +4022,47 @@ impl SseEncode for crate::api::dto::ImportOutcomeDto {
         <Option<String>>::sse_encode(self.doc_type, serializer);
         <Option<i64>>::sse_encode(self.document_id, serializer);
         <Option<String>>::sse_encode(self.detected_name, serializer);
+        <Vec<i32>>::sse_encode(self.pages_without_text, serializer);
+    }
+}
+
+impl SseEncode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <String>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::ActiveMedDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::ActiveMedDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::AllergyItemDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::AllergyItemDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::ChronicConditionDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::ChronicConditionDto>::sse_encode(item, serializer);
+        }
     }
 }
 
@@ -2996,6 +4082,16 @@ impl SseEncode for Vec<crate::api::dto::DocumentSummaryDto> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::dto::DocumentSummaryDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <i32>::sse_encode(item, serializer);
         }
     }
 }
@@ -3060,12 +4156,72 @@ impl SseEncode for Vec<crate::api::dto::ProxyProblemDto> {
     }
 }
 
+impl SseEncode for Vec<crate::api::dto::SelfMeasuredValueDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::dto::SelfMeasuredValueDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::dto::TimelineGroupDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::dto::TimelineGroupDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::TrendPointDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::TrendPointDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::TrendSeriesDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::TrendSeriesDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::VisitLabDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::VisitLabDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::VisitNoteDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::VisitNoteDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::VisitRecordDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::VisitRecordDto>::sse_encode(item, serializer);
         }
     }
 }
@@ -3213,6 +4369,15 @@ impl SseEncode for (Vec<u8>, String, i64) {
     }
 }
 
+impl SseEncode for crate::api::dto::SelfMeasuredValueDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.analyte_key, serializer);
+        <f64>::sse_encode(self.value, serializer);
+        <String>::sse_encode(self.unit, serializer);
+    }
+}
+
 impl SseEncode for crate::api::dto::ShareResultDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3254,6 +4419,34 @@ impl SseEncode for crate::api::dto::TimelineGroupDto {
     }
 }
 
+impl SseEncode for crate::api::vault_projections::TrendPointDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<String>>::sse_encode(self.date, serializer);
+        <f64>::sse_encode(self.value, serializer);
+        <Option<String>>::sse_encode(self.unit, serializer);
+        <Option<String>>::sse_encode(self.flag, serializer);
+        <i64>::sse_encode(self.document_id, serializer);
+    }
+}
+
+impl SseEncode for crate::api::vault_projections::TrendSeriesDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.name, serializer);
+        <Option<String>>::sse_encode(self.analyte_key, serializer);
+        <Option<String>>::sse_encode(self.loinc, serializer);
+        <Option<String>>::sse_encode(self.unit, serializer);
+        <Option<f64>>::sse_encode(self.ref_low, serializer);
+        <Option<f64>>::sse_encode(self.ref_high, serializer);
+        <bool>::sse_encode(self.values_converted, serializer);
+        <bool>::sse_encode(self.any_abnormal, serializer);
+        <Option<String>>::sse_encode(self.panel, serializer);
+        <Vec<crate::api::vault_projections::TrendPointDto>>::sse_encode(self.points, serializer);
+        <bool>::sse_encode(self.self_measured, serializer);
+    }
+}
+
 impl SseEncode for u8 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3264,6 +4457,70 @@ impl SseEncode for u8 {
 impl SseEncode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {}
+}
+
+impl SseEncode for crate::api::vault_projections::VisitLabDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.name, serializer);
+        <String>::sse_encode(self.date, serializer);
+        <f64>::sse_encode(self.value, serializer);
+        <Option<String>>::sse_encode(self.unit, serializer);
+        <Option<String>>::sse_encode(self.flag, serializer);
+        <Option<f64>>::sse_encode(self.ref_low, serializer);
+        <Option<f64>>::sse_encode(self.ref_high, serializer);
+        <bool>::sse_encode(self.values_converted, serializer);
+        <i64>::sse_encode(self.document_id, serializer);
+        <bool>::sse_encode(self.self_measured, serializer);
+    }
+}
+
+impl SseEncode for crate::api::vault_projections::VisitNoteDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.text, serializer);
+        <Option<String>>::sse_encode(self.date, serializer);
+        <i64>::sse_encode(self.document_id, serializer);
+    }
+}
+
+impl SseEncode for crate::api::vault_projections::VisitRecordDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<String>>::sse_encode(self.title, serializer);
+        <String>::sse_encode(self.kind, serializer);
+        <Option<String>>::sse_encode(self.date, serializer);
+        <Vec<i64>>::sse_encode(self.document_ids, serializer);
+    }
+}
+
+impl SseEncode for crate::api::vault_projections::VisitSummaryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::dto::PatientProfileDto>::sse_encode(self.patient, serializer);
+        <Vec<crate::api::vault_projections::AllergyItemDto>>::sse_encode(
+            self.allergies,
+            serializer,
+        );
+        <Vec<crate::api::vault_projections::ActiveMedDto>>::sse_encode(
+            self.active_meds,
+            serializer,
+        );
+        <Vec<crate::api::vault_projections::VisitLabDto>>::sse_encode(self.recent_labs, serializer);
+        <Vec<crate::api::vault_projections::VisitLabDto>>::sse_encode(
+            self.recent_changes,
+            serializer,
+        );
+        <Vec<crate::api::vault_projections::VisitRecordDto>>::sse_encode(
+            self.recent_visits,
+            serializer,
+        );
+        <Vec<crate::api::vault_projections::VisitNoteDto>>::sse_encode(
+            self.recent_notes,
+            serializer,
+        );
+        <String>::sse_encode(self.plain_text, serializer);
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]

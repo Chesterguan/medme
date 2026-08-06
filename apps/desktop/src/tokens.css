@@ -1,0 +1,130 @@
+/*
+ * MedMe 设计系统 v1 —— 桌面端令牌。
+ *
+ * 规范正本是 `DESIGN-SYSTEM-v1.html`;变量名与规范、与 hosted-viewer 逐字一致,
+ * 这样同一份化验值在手机 / 桌面 / 医生查看器三端长得一样。`test/tokens.test.ts`
+ * 会逐一断言下面的值,谁随手改一个色值,测试就红。
+ *
+ * 与既有变量体系的关系:App.css 里的 `@theme` 把 Tailwind 的 `blue-*` 调色板重映
+ * 射成品牌 teal —— 那套**照旧不动**。本文件只是在它旁边补上语义令牌,用的是
+ * Tailwind v4 未占用的裸名(Tailwind 的主题变量全在 `--color-*` / `--text-*` /
+ * `--radius-*` / `--shadow-*` 等命名空间下),不会互相覆盖。
+ *
+ * 本次只**定义**令牌,不改任何现有界面的取色 —— 逐屏迁移是后续独立的事,
+ * 那样视觉回归才评审得动。
+ */
+
+:root {
+  /* 中性:带轻微冷偏(朝主色偏),不是纯灰 */
+  --ink: #101a23;
+  --ink-2: #3a4a57;
+  --ink-3: #657581;
+  --paper: #f6f8fa;
+  --surface: #ffffff;
+  --line: #e3e9ee;
+  --line-2: #eef2f5;
+
+  /* 主色「钤印」:沿用 hosted-viewer 现值,比通用健康 app 的亮蓝更沉 */
+  --seal: #1789c1;
+  --seal-ink: #0e6285;
+  --seal-wash: #eaf5fa;
+
+  /*
+   * 化验状态四级。**正常刻意没有令牌** —— 正常值不上色,继承正文:
+   * 一份血常规 22 项通常只有 1–2 项异常,给正常配色会把异常淹没。
+   * 状态判定一律来自 Rust 的 `flag` 字段,UI 只做映射,不重算。
+   */
+  --low: #1d4ed8;
+  --low-wash: #e8eefc;
+  --high: #ab4e08;
+  --high-wash: #fbf1e4;
+  --critical: #be123c;
+  --critical-wash: #fceaef;
+
+  /* 圆角严格递减:卡片 > 分块 > 控件;pill 单独 999px */
+  --r-card: 20px;
+  --r-block: 14px;
+  --r-ctl: 10px;
+
+  /* 间距阶 */
+  --s1: 8px;
+  --s2: 12px;
+  --s3: 16px;
+  --s4: 20px;
+  --s5: 24px;
+  --s6: 32px;
+
+  /* 层次靠边框不靠阴影,所以阴影只有一档 */
+  --shadow: 0 1px 2px rgba(16, 26, 35, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8eef3;
+    --ink-2: #a6b6c2;
+    --ink-3: #7c8d9a;
+    --paper: #0d141a;
+    --surface: #151f27;
+    --line: #25333d;
+    --line-2: #1d2830;
+    --seal: #4fb3df;
+    --seal-ink: #8fd3f0;
+    --seal-wash: #13303d;
+    --low: #7ba3f5;
+    --low-wash: #17233d;
+    --high: #e0a45c;
+    --high-wash: #33260f;
+    --critical: #f2789a;
+    --critical-wash: #3a1521;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* 显式主题选择优先于系统偏好(与规范、与 hosted-viewer 的做法一致) */
+:root[data-theme="dark"] {
+  --ink: #e8eef3;
+  --ink-2: #a6b6c2;
+  --ink-3: #7c8d9a;
+  --paper: #0d141a;
+  --surface: #151f27;
+  --line: #25333d;
+  --line-2: #1d2830;
+  --seal: #4fb3df;
+  --seal-ink: #8fd3f0;
+  --seal-wash: #13303d;
+  --low: #7ba3f5;
+  --low-wash: #17233d;
+  --high: #e0a45c;
+  --high-wash: #33260f;
+  --critical: #f2789a;
+  --critical-wash: #3a1521;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+:root[data-theme="light"] {
+  --ink: #101a23;
+  --ink-2: #3a4a57;
+  --ink-3: #657581;
+  --paper: #f6f8fa;
+  --surface: #ffffff;
+  --line: #e3e9ee;
+  --line-2: #eef2f5;
+  --seal: #1789c1;
+  --seal-ink: #0e6285;
+  --seal-wash: #eaf5fa;
+  --low: #1d4ed8;
+  --low-wash: #e8eefc;
+  --high: #ab4e08;
+  --high-wash: #fbf1e4;
+  --critical: #be123c;
+  --critical-wash: #fceaef;
+  --shadow: 0 1px 2px rgba(16, 26, 35, 0.05);
+}
+
+/*
+ * 数值必须等宽对齐 —— 不是审美选择,是化验值的小数点必须对位。
+ * Flutter 侧的对应物是 `FontFeature.tabularFigures()`。
+ */
+.med-num {
+  font-variant-numeric: tabular-nums;
+}

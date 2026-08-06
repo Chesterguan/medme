@@ -5,12 +5,14 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 与 `pubspec.yaml` 的 `version:` 字段(`x.y.z+build`)保持一致。P3 范围内没有为
 /// 读版本号新增 `package_info_plus` 依赖(约束里明确不加新依赖),手工同步即可——
@@ -19,8 +21,8 @@ import 'package:url_launcher/url_launcher.dart';
 /// 这颗常量已经漂过两次(团队靠它核「有没有装到最新版」,结果显示的还是两个小版本
 /// 前的号)。`test/app_version_test.dart` 会拿这里的字面量去和 `pubspec.yaml` 比对,
 /// 漂了就会红——改这两行时记得同时改 `pubspec.yaml`,或者反过来。
-const _appVersionName = '1.3.6';
-const _appBuildNumber = '52';
+const _appVersionName = '1.6.0';
+const _appBuildNumber = '55';
 
 /// 底部导航一级 tab「设置」—— 保险箱/成员 / 载入示例数据 / 清空重置 / 关于。
 ///
@@ -29,6 +31,7 @@ const _appBuildNumber = '52';
 /// 是否在设置里露出「iCloud 同步」入口。当前 false —— 全力做手机端本体,跨设备
 /// 同步先不投入。底层能力未删,改回 true 即恢复。
 const bool _showIcloudSync = false;
+
 /// 分组卡片列表,视觉还原自 `apps/mobile/src/App.tsx` 的设置区(sect + group + row)。
 /// 保险箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。
 class SettingsScreen extends StatefulWidget {
@@ -48,6 +51,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// 用户反馈过「载入示例后清空点了没反应」,这里确保按钮忙时不可再点,
   /// 而不是悄悄丢弃点击)。
   bool _busy = false;
+
+  /// 「载入示例数据」这一颗按钮**自己的**进行中状态,与 [_busy] 分开管:[_busy]
+  /// 负责禁用全屏其它按钮(防误触),这个才负责「这颗按钮该不该画进度条」——
+  /// 清空/iCloud 等操作也会置 [_busy],但不该让示例数据那一行跟着显示进度。
+  ///
+  /// 真机实测过(华为 Mate 9,22 份 PDF、11 秒):这段时间里屏幕纹丝不动,用户
+  /// 分不清「没点上」还是「在跑」,十一秒足够让人以为没点上又点第二次。见
+  /// `_loadDemoData` 里怎么用它配合逐份进度画面。
+  bool _demoLoading = false;
+
+  /// [_demoLoading] 期间显示的进度文案(如「正在载入 3/22…」);拿不到进度
+  /// (刚开始、或 Rust 侧这一份还没报回来)时为 null,退化成一句不确定进度的
+  /// 「正在载入示例数据…」,总比空着强。
+  String? _demoProgressText;
+
   bool _analyticsOn = Analytics.isEnabled;
 
   @override
@@ -81,7 +99,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _showSnack(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(text)));
   }
 
   Future<void> _openHomepage() => _openWeb('https://medmenow.com/', '主页');
@@ -100,28 +118,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// 自动命名成「张建国」,想清掉就只能动用「清空所有数据」那颗核弹。)
   static const _demoMember = '张建国(示例)';
 
+  /// 载入示例数据要先把「当前成员」切到 [_demoMember](写入侧的技术要求——Rust
+  /// 那颗 vault 是进程级单例,写哪个成员就得先开哪个成员的箱子,见
+  /// `vault_boot.dart` 顶部说明),但**这只是写入侧的手段,不代表用户想把「正在
+  /// 看的视角」也换过去**。早先版本载入完直接留在示例成员上、还把人跳到「健康
+  /// 档案」——用户没要求换成员,自己的档案却被切走了,回来还得先发现顶部那排
+  /// chip 才知道发生了什么。
+  ///
+  /// 现在的分工:切成员是**手段**,载入完立刻切回用户载入前正看着的那个人;
+  /// 是否要去看示例数据,交给 SnackBar 上的「去看看」——用户自己点了,才在同一次
+  /// 点击里把视角切过去 + 跳到「健康档案」,两件事绑在一起,而不是替他做主。
   Future<void> _loadDemoData() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _demoLoading = true;
+      _demoProgressText = null;
+    });
     try {
       final pm = ProfileManager.instance;
       await pm.ensureLoaded();
+      final originalMemberId = pm.currentId.value;
       // 按名字找已存在的示例成员:名字本来可重复,但这个是我们自己建的、用户改不到,
-      // 拿它认一下就够,免得再存一个 id。找不到就新建。
-      final existing = pm.profiles.where((p) => p.name == _demoMember).firstOrNull;
+      // 拿它认一下就够,免得再存一个 id。找不到就新建(新建会自动切过去)。
+      final existing = pm.profiles
+          .where((p) => p.name == _demoMember)
+          .firstOrNull;
+      final String demoMemberId;
       if (existing == null) {
-        await createProfileAndReopen(_demoMember, userManaged: false);
-      } else if (pm.currentId.value != existing.id) {
-        await switchProfileAndReopen(existing.id);
+        final created = await createProfileAndReopen(
+          _demoMember,
+          userManaged: false,
+        );
+        if (created == null) throw StateError('无法创建示例成员');
+        demoMemberId = created;
+      } else {
+        demoMemberId = existing.id;
+        if (pm.currentId.value != demoMemberId) {
+          await switchProfileAndReopen(demoMemberId);
+        }
       }
-      final n = await loadDemoData();
+
+      // 逐份进度:见 `api::vault::load_demo_data` 的文档——这条流恒不报 Rust 侧的
+      // `Err`(那样的话 Dart 这里永远等不到、也 catch 不到,详见 Rust 侧注释),
+      // 失败改用 `error` 字段带出来,这里判它、`break` 出循环。
+      var succeeded = 0;
+      String? failure;
+      await for (final p in loadDemoData()) {
+        if (p.error != null) {
+          failure = p.error;
+          break;
+        }
+        succeeded = p.succeeded.toInt();
+        if (!mounted) continue;
+        setState(() => _demoProgressText = '正在载入 ${p.loaded}/${p.total}…');
+      }
+
+      // 切回用户载入前正看着的那个人(见本函数顶部文档)。
+      if (pm.currentId.value != originalMemberId) {
+        await switchProfileAndReopen(originalMemberId);
+      }
       bumpVaultRevision(); // 通知「健康档案」屏自动重载(并按识别姓名自动命名档案)
       await _refresh();
-      goToArchive(); // 载入完直接跳到「健康档案」,不用用户再手点
-      _showSnack('已载入 $n 份示例病历(在「$_demoMember」里,可随时整个移除)');
+      if (!mounted) return;
+
+      if (failure != null) {
+        _showSnack('载入示例数据失败:$failure');
+        return;
+      }
+      // 带 action 的 SnackBar,而不是直接跳走:去不去看示例数据由用户自己决定。
+      ScaffoldMessenger.of(context).showSnackBar(
+        appSnackBar(
+          content: Text('已载入 $succeeded 份示例病历(在「$_demoMember」里)'),
+          action: SnackBarAction(
+            label: '去看看',
+            onPressed: () async {
+              if (pm.currentId.value != demoMemberId) {
+                await switchProfileAndReopen(demoMemberId);
+              }
+              goToArchive();
+            },
+          ),
+        ),
+      );
     } catch (e) {
       _showSnack('载入示例数据失败:$e');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _demoLoading = false;
+          _demoProgressText = null;
+        });
+      }
     }
   }
 
@@ -237,13 +325,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _SectionLabel('保险箱'),
           _VaultCard(profile: _profile, onChanged: () => setState(() {})),
-          _SectionLabel('示例数据'),
+          // ⚠️ 「导出·分享」原本是一个一级 tab。五 tab 信息架构(设计系统 §八)按
+          // 「使用时刻」重排之后,它没有属于自己的时刻:它不是「日常打开」、不是
+          // 「复诊前」、不是「找单子」、更不是急诊室。它是**低频、正式、要联网**的
+          // 一次交付动作,心智恰好落在这个 tab 的定义上 ——「数据主权:我的数据往
+          // 哪去」,和下面的「清空所有数据」是同一件事的两个方向。
+          //
+          // 它没有并进「看病带这个」(原名「就诊单」,2026-08-05 改名),因为那是
+          // 两个场景:「看病带这个」是本地的、离线的、一页纸、三十秒;这里是端到
+          // 端加密、把**完整病历含原件**交出去。
+          //
+          // 诊室现场那条最高频的路没有变长:「看病带这个」浮层底部直接就有
+          // 「医生要看原件 · 出示二维码」,一步到同一个界面(见
+          // `visit_summary_sheet.dart`)。
+          _SectionLabel('数据出口'),
           _SettingsGroup(
             children: [
               _SettingsRow(
-                icon: Icons.download_outlined,
-                title: '载入示例数据(张建国)',
-                subtitle: '单独放一个成员里,不和你的病历混在一起;看完可在上面「保险箱」里整个移除',
+                icon: Icons.ios_share_outlined,
+                title: '导出 · 分享',
+                subtitle: '当面出示二维码给医生,或导出可打印文件用于报销、留档',
+                onTap: _busy
+                    ? null
+                    : () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const ExportScreen(),
+                        ),
+                      ),
+              ),
+            ],
+          ),
+          _SectionLabel('示例数据'),
+          _SettingsGroup(
+            children: [
+              _DemoDataRow(
+                loading: _demoLoading,
+                progressText: _demoProgressText,
                 onTap: _busy ? null : _loadDemoData,
               ),
             ],
@@ -330,7 +447,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.description_outlined,
                 title: '用户协议',
                 subtitle: '工具定位、责任边界与开源许可',
-                onTap: () => _openWeb('https://medmenow.com/terms.html', '用户协议'),
+                onTap: () =>
+                    _openWeb('https://medmenow.com/terms.html', '用户协议'),
               ),
               _InfoRow(
                 title: 'MedMe 医我',
@@ -422,7 +540,9 @@ class _VaultCard extends StatelessWidget {
   /// 当前成员用刚查到的最新记录数,其余成员用缓存(没加载过为 null)。
   int? _countOf(String id) {
     final pm = ProfileManager.instance;
-    if (id == pm.currentId.value && profile != null) return profile!.recordCount;
+    if (id == pm.currentId.value && profile != null) {
+      return profile!.recordCount;
+    }
     return pm.countFor(id);
   }
 
@@ -434,7 +554,11 @@ class _VaultCard extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        icon: const Icon(Icons.warning_amber_rounded, color: MedMe.danger, size: 44),
+        icon: const Icon(
+          Icons.warning_amber_rounded,
+          color: MedMe.danger,
+          size: 44,
+        ),
         title: Text(
           '删除「$name」的全部病历?',
           textAlign: TextAlign.center,
@@ -486,9 +610,9 @@ class _VaultCard extends StatelessWidget {
     if (ok != true) return;
     final removed = await removeProfileAndReopen(p.id);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(removed ? '已移除「$name」' : '无法移除该成员')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(appSnackBar(content: Text(removed ? '已移除「$name」' : '无法移除该成员')));
     onChanged();
   }
 
@@ -556,7 +680,12 @@ class _VaultCard extends StatelessWidget {
             const Divider(height: 1, color: MedMe.line),
             for (final m in members)
               Padding(
-                padding: EdgeInsets.fromLTRB(20, 8, pm.canRemove(m.id) ? 8 : 20, 8),
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  8,
+                  pm.canRemove(m.id) ? 8 : 20,
+                  8,
+                ),
                 child: Row(
                   children: [
                     Expanded(
@@ -665,6 +794,62 @@ class _SettingsRow extends StatelessWidget {
               : null),
       onTap: onTap,
       enabled: onTap != null || trailing != null,
+    );
+  }
+}
+
+/// 「载入示例数据」专属行:载入中要换成 spinner + 「正在载入 N/22…」,
+/// [_SettingsRow] 那套「图标/标题/说明」是静态的,管不了这种按状态切换内容的
+/// 需求,所以单独一个 widget,外观仍与 [_SettingsRow] 保持一致。
+///
+/// **`contentPadding` 比 [_SettingsRow] 更大**:真机实测(华为 Mate 9)踩到过
+/// 一次点在这张卡与上一张卡的缝隙里、11 秒后才发现「点空了」——加大这一行的
+/// 点击热区(等于加大这张卡的可点范围),降低再次点空的概率。
+///
+/// **载入中特意不让 [ListTile] 整行变暗**(`enabled` 恒为 true):默认禁用态会把
+/// 文字连同新画的进度文案一起压暗,削弱这次改动本来要解决的「反馈不够显眼」。
+class _DemoDataRow extends StatelessWidget {
+  const _DemoDataRow({
+    required this.loading,
+    required this.progressText,
+    required this.onTap,
+  });
+
+  final bool loading;
+
+  /// 逐份进度文案(如「正在载入 3/22…」)。拿不到具体进度(刚点下去、第一条
+  /// 还没从 Rust 侧报回来)时为 null——退化成一句不确定进度的提示,总比空着强。
+  final String? progressText;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      leading: loading
+          ? const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            )
+          : const Icon(Icons.download_outlined, color: MedMe.teal),
+      title: Text(
+        loading ? '正在载入示例数据…' : '载入示例数据(张建国)',
+        style: const TextStyle(fontWeight: FontWeight.w600, color: MedMe.ink),
+      ),
+      subtitle: Text(
+        loading
+            ? (progressText ?? '正在载入示例数据…')
+            : '单独放一个成员里,不和你的病历混在一起;看完可在上面「保险箱」里整个移除',
+        style: const TextStyle(color: MedMe.faint),
+      ),
+      trailing: loading
+          ? null
+          : (onTap != null
+                ? const Icon(Icons.chevron_right, color: MedMe.faint)
+                : null),
+      onTap: onTap,
+      enabled: onTap != null || loading,
     );
   }
 }

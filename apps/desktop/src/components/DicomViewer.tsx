@@ -632,22 +632,23 @@ export default function DicomViewer({
         {/* 缩放 */}
         <button
           onClick={() => zoomBy(1.2)}
-          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors"
+          className="med-focusable flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-ctl bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors"
         >
           <ZoomIn className="w-3.5 h-3.5" /> 放大
         </button>
         <button
           onClick={() => zoomBy(1 / 1.2)}
-          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors"
+          className="med-focusable flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-ctl bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors"
         >
           <ZoomOut className="w-3.5 h-3.5" /> 缩小
         </button>
 
         <span className="w-px h-4 bg-white/20 mx-1" />
 
-        {/* 专业阅片工具:窗宽窗位预设(给医生看片调明暗;普通用户滚轮看图即可,可无视这组)*/}
+        {/* 专业阅片工具:窗宽窗位预设(给医生看片调明暗;普通用户滚轮看图即可,可无视这组)。
+            改版前 text-[11px],低于 007 §2.5 的 12px 下限 —— 提到 text-xs(12px)。 */}
         <span
-          className="flex items-center gap-1 text-[11px] font-medium text-amber-300"
+          className="flex items-center gap-1 text-xs font-medium text-amber-300"
           title="窗宽窗位是给医生调节明暗看不同组织的专业工具"
         >
           <Stethoscope className="w-3.5 h-3.5" /> 医生 · 窗位
@@ -656,7 +657,7 @@ export default function DicomViewer({
           <button
             key={p.label}
             onClick={() => applyPreset(p.center, p.width)}
-            className="text-xs px-2.5 py-1.5 rounded-lg bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors"
+            className="med-focusable text-xs px-2.5 py-1.5 rounded-ctl bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer transition-colors"
           >
             {p.label}
           </button>
@@ -666,7 +667,7 @@ export default function DicomViewer({
 
         <button
           onClick={handleReset}
-          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer"
+          className="med-focusable flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-ctl bg-white/10 text-white/80 hover:bg-white/20 cursor-pointer"
         >
           <RotateCcw className="w-3.5 h-3.5" /> 重置
         </button>
@@ -679,7 +680,7 @@ export default function DicomViewer({
         {error && <span className="text-xs text-rose-300 ml-1">{error}</span>}
         {!ready && !error && <span className="text-xs text-white/50 ml-1">加载中…</span>}
         {ready && !error && (
-          <span className="ml-auto text-[11px] text-white/70">
+          <span className="ml-auto text-xs text-white/70">
             {frameTotal > 1 ? "↕ 滚轮翻看每一层 · " : ""}左键调明暗 · 右键缩放 · ESC 返回
           </span>
         )}
@@ -702,7 +703,7 @@ export default function DicomViewer({
           />
         </div>
         {notice && (
-          <div className="pointer-events-none absolute top-4 left-1/2 -translate-x-1/2 bg-black/75 text-white/90 text-xs px-4 py-2 rounded-lg max-w-[80%] text-center">
+          <div className="pointer-events-none absolute top-4 left-1/2 -translate-x-1/2 bg-black/75 text-white/90 text-xs px-4 py-2 rounded-ctl max-w-[80%] text-center">
             {notice}
           </div>
         )}

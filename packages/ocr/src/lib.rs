@@ -44,14 +44,25 @@ static MODEL_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// (`pp-ocrv5_mobile_det.onnx`, `pp-ocrv5_mobile_rec.onnx`, `ppocrv5_dict.txt`).
 ///
 /// For packaging the models next to the binary instead of auto-downloading
-/// them. In production, has no callers -- mobile does not use this crate (ADR
-/// 0005), and desktop/CLI auto-download. **Test-branch exception:**
-/// `feat/ios-pp-ocr-test`'s `apps/mobile_flutter/rust/src/api/vault.rs`
-/// (`ensure_pp_models_ready`) calls this to point at models it writes out of
-/// its own `include_bytes!`-embedded copies -- see that function for why (no
-/// writable `$OAR_HOME` in the iOS sandbox). Must be called before the first
-/// `recognize`/`recognize_pdf` call (the pipeline is built lazily on first use
-/// and cached). Idempotent: the first call wins; later calls are ignored.
+/// them. **This is the production path on mobile** (the doc comment used to
+/// say it had no callers -- that predates ADR 0006 / the Android PP-OCR
+/// switch): `apps/mobile_flutter/rust/src/api/vault.rs`'s
+/// `ensure_pp_models_ready` writes the three `include_bytes!`-embedded model
+/// files into the app sandbox and calls this, because there is no writable
+/// `$OAR_HOME` there and `auto-download` is off. Desktop/CLI leave it unset
+/// and auto-download into `~/.oar`.
+///
+/// Must be called before the first `recognize_*` call (the pipeline is built
+/// lazily on first use and cached). Idempotent: the first call wins; later
+/// calls are ignored.
+///
+/// ⚠️ **Ordering matters on mobile.** Anything that reaches the engine before
+/// `ensure_pp_models_ready` has run -- notably `pipeline::ingest_pdf` ->
+/// [`recognize_pdf_mixed`], which mobile hits on a PDF import without going
+/// through `recognize_image_pp` -- builds with bare file names, finds no
+/// models, and fails per page. That failure is non-fatal (those pages come
+/// back `Unrecognized` and are reported), but the OCR work is simply not
+/// done in Rust.
 #[cfg(feature = "engine")]
 pub fn set_model_dir(dir: PathBuf) {
     let _ = MODEL_DIR.set(dir);
@@ -179,6 +190,157 @@ fn decode_image_bounded(image_bytes: &[u8]) -> Result<DynamicImage> {
     let mut img = DynamicImage::from_decoder(decoder).context("ocr: decode image within limits")?;
     img.apply_orientation(orientation);
     Ok(img)
+}
+
+/// Hard cap on the IFD-chain walk in [`image_page_count`]. Each step is a
+/// handful of bounds-checked slice reads -- no allocation, no pixel decoding --
+/// so this exists purely so a malformed/hostile file whose IFDs form a cycle
+/// can't spin forever. Saturating here can only ever *under*-report pages,
+/// never over-report, so honesty degrades gracefully.
+const MAX_IMAGE_PAGES: u32 = 4_096;
+
+/// How many pages the image file in `image_bytes` actually holds.
+///
+/// **Why this exists.** Every recognizer in this app reads exactly *one* frame
+/// out of an image file: [`decode_image_bounded`] (`DynamicImage::from_decoder`)
+/// decodes the first frame only, Apple Vision / `Windows.Media.Ocr` are handed
+/// raw bytes and recognize the primary image, and the mobile Dart layer hands a
+/// file path to Apple Vision / ML Kit, which do the same. Of the file types
+/// this app accepts (`pipeline::mime_for`: png/jpeg/tiff/heic) **TIFF can hold
+/// more than one page**, and a multi-page TIFF's pages 2..n were therefore
+/// dropped *without any signal at all* -- the document came back
+/// `IngestStatus::New`, `page_count == 1`, and the UI said "已识别入库".
+///
+/// This does not fix that (nothing here decodes frame 2); it makes the loss
+/// *reportable*, which is what `IngestOutcome::pages_without_text` needs. See
+/// `pipeline::ingest_image`.
+///
+/// Returns `1` for single-page images, for non-TIFF formats, and for anything
+/// it cannot make sense of -- i.e. it never claims pages it isn't sure about,
+/// so a parse failure degrades to exactly the pre-existing assumption rather
+/// than to a false alarm. Never panics and never allocates: the whole walk is
+/// `slice::get` reads over untrusted bytes with an iteration cap.
+pub fn image_page_count(image_bytes: &[u8]) -> u32 {
+    tiff_page_count(image_bytes).unwrap_or(0).max(1)
+}
+
+/// Byte-order-aware, bounds-checked scalar reads over a TIFF's raw bytes.
+/// Every accessor returns `None` rather than panicking when the offset a
+/// (possibly malformed) file points at is out of range.
+struct TiffReader<'a> {
+    bytes: &'a [u8],
+    big_endian: bool,
+}
+
+impl TiffReader<'_> {
+    fn u16(&self, at: usize) -> Option<u16> {
+        let raw: [u8; 2] = self.bytes.get(at..at.checked_add(2)?)?.try_into().ok()?;
+        Some(if self.big_endian {
+            u16::from_be_bytes(raw)
+        } else {
+            u16::from_le_bytes(raw)
+        })
+    }
+
+    fn u32(&self, at: usize) -> Option<u32> {
+        let raw: [u8; 4] = self.bytes.get(at..at.checked_add(4)?)?.try_into().ok()?;
+        Some(if self.big_endian {
+            u32::from_be_bytes(raw)
+        } else {
+            u32::from_le_bytes(raw)
+        })
+    }
+
+    fn u64(&self, at: usize) -> Option<u64> {
+        let raw: [u8; 8] = self.bytes.get(at..at.checked_add(8)?)?.try_into().ok()?;
+        Some(if self.big_endian {
+            u64::from_be_bytes(raw)
+        } else {
+            u64::from_le_bytes(raw)
+        })
+    }
+}
+
+/// Count the pages of a TIFF by walking its IFD chain (classic and BigTIFF),
+/// reading only the directory structure -- never any pixel data. `None` means
+/// "not a TIFF, or malformed enough that no honest count can be given".
+fn tiff_page_count(bytes: &[u8]) -> Option<u32> {
+    let r = TiffReader {
+        bytes,
+        big_endian: match bytes.get(..2)? {
+            b"II" => false,
+            b"MM" => true,
+            _ => return None,
+        },
+    };
+    // Magic 42 = classic TIFF (u32 offsets, 12-byte entries); 43 = BigTIFF
+    // (u64 offsets, 20-byte entries, and a u64 entry count per IFD).
+    let (bigtiff, mut next_ifd) = match r.u16(2)? {
+        42 => (false, u64::from(r.u32(4)?)),
+        43 => {
+            // BigTIFF header: offset size (always 8) then a constant 0.
+            if r.u16(4)? != 8 || r.u16(6)? != 0 {
+                return None;
+            }
+            (true, r.u64(8)?)
+        }
+        _ => return None,
+    };
+    let (entry_size, value_off) = if bigtiff {
+        (20usize, 12usize)
+    } else {
+        (12usize, 8usize)
+    };
+
+    let mut pages = 0u32;
+    while next_ifd != 0 && pages < MAX_IMAGE_PAGES {
+        let ifd = usize::try_from(next_ifd).ok()?;
+        let (entries, first_entry) = if bigtiff {
+            (usize::try_from(r.u64(ifd)?).ok()?, ifd.checked_add(8)?)
+        } else {
+            (usize::from(r.u16(ifd)?), ifd.checked_add(2)?)
+        };
+        let after_entries = first_entry.checked_add(entries.checked_mul(entry_size)?)?;
+        // Every entry must actually be present. A declared count that runs off
+        // the end of the file is malformed -> no honest count, bail out.
+        bytes.get(first_entry..after_entries)?;
+        if !is_thumbnail_ifd(&r, first_entry, after_entries, entry_size, value_off) {
+            pages += 1;
+        }
+        next_ifd = if bigtiff {
+            r.u64(after_entries)?
+        } else {
+            u64::from(r.u32(after_entries)?)
+        };
+    }
+    Some(pages)
+}
+
+/// True when this IFD describes a reduced-resolution *thumbnail* of another
+/// image rather than a page of its own (TIFF 6.0 `NewSubfileType` bit 0, or the
+/// deprecated `SubfileType == 2`).
+///
+/// Scanner-produced multi-page TIFFs never set this on their pages, but some
+/// writers append a thumbnail IFD to an otherwise single-page file -- counting
+/// that as page 2 would raise a "1 page could not be read" alarm on a file
+/// nothing was ever lost from. Both tags hold a single inline SHORT/LONG, so no
+/// out-of-line value ever has to be followed.
+fn is_thumbnail_ifd(
+    r: &TiffReader,
+    first_entry: usize,
+    after_entries: usize,
+    entry_size: usize,
+    value_off: usize,
+) -> bool {
+    (first_entry..after_entries)
+        .step_by(entry_size)
+        .any(|entry| match r.u16(entry) {
+            // NewSubfileType: LONG bitfield, bit 0 = "reduced resolution".
+            Some(254) => r.u32(entry + value_off).is_some_and(|v| v & 1 != 0),
+            // SubfileType (deprecated): SHORT, 2 = reduced-resolution image.
+            Some(255) => r.u16(entry + value_off) == Some(2),
+            _ => false,
+        })
 }
 
 /// Downscale `img` (preserving aspect ratio) so neither dimension exceeds
@@ -561,7 +723,8 @@ fn mean_line_confidence(lines: &[OcrLine]) -> f32 {
 /// "\n"-join need. Shared by [`recognize_engine`] and [`recognize_engine_layout`].
 #[cfg(feature = "engine")]
 fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
-    let dynamic = decode_image_bounded(image_bytes).context("ocr::recognize: decode image")?;
+    let dynamic =
+        decode_image_bounded(image_bytes).context("ocr::recognize_platform_best: decode image")?;
     let dynamic = preprocess(dynamic);
 
     // 1) Orientation. OCR once; if the page reads sideways (predominantly tall line
@@ -710,11 +873,12 @@ const DUAL_COLUMN_MIN_SUPPORT_ROWS: usize = 4;
 /// of stray multi-box rows scattered through an otherwise prose-only page
 /// can't reach the floor above by sheer page length.
 const DUAL_COLUMN_MIN_SUPPORT_FRACTION: f32 = 0.34;
-/// Gaps whose horizontal midpoints land within this fraction of the page's
-/// content width of each other are treated as "the same" candidate seam when
-/// clustering. Expressed as a ratio of `content_span` (rather than an
-/// absolute pixel count) so it scales with image resolution.
-const DUAL_COLUMN_CLUSTER_RATIO: f32 = 0.02;
+// There is deliberately no "how close must two rows' gaps be to count as the
+// same seam" constant here any more. The previous implementation had one --
+// gaps had to cluster within 2% of `content_span` and the reported band was
+// the *intersection* of every contributing row's gap -- and it never found a
+// real lab report's gutter: see `find_dual_column_band` for why that
+// calibration describes a geometry that does not occur in practice.
 
 /// Reconstructs page layout from per-line detection boxes: lines are grouped
 /// into visual rows by y-coordinate (within a tolerance relative to line
@@ -743,7 +907,19 @@ const DUAL_COLUMN_CLUSTER_RATIO: f32 = 0.02;
 /// box-producing recognizer, not just PP-OCRv5.
 #[cfg_attr(not(feature = "engine"), allow(dead_code))]
 pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
-    let mut lines: Vec<&LayoutLine> = lines.iter().filter(|l| !l.text.trim().is_empty()).collect();
+    // Each line's text is corrected in isolation (see
+    // `normalize_ocr_decimal_comma`) before anything else touches it, so both
+    // the single-box "prose" fast path in `build_row_text` and the multi-box
+    // column-aligned path see the same fixed-up text.
+    let owned: Vec<LayoutLine> = lines
+        .iter()
+        .filter(|l| !l.text.trim().is_empty())
+        .map(|l| LayoutLine {
+            text: normalize_ocr_decimal_comma(&l.text),
+            ..(*l).clone()
+        })
+        .collect();
+    let mut lines: Vec<&LayoutLine> = owned.iter().collect();
     if lines.is_empty() {
         return String::new();
     }
@@ -783,9 +959,21 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
         .fold(f32::NEG_INFINITY, f32::max);
     let content_span = content_right - content_left;
 
-    // 2b) Does this page have a two-table-side-by-side layout? Detected once
+    // 2b) Can a cell's *content* be trusted to say which record it belongs to?
+    //     Only on a page whose text lines run level. Photographed reports are
+    //     often tilted, and step 1 groups boxes into rows by raw `top`, so once
+    //     the tilt carries a line further than the very tolerance that grouping
+    //     uses, one visual row silently mixes cells from neighbouring records
+    //     — the item name from one row, the reference range from the next.
+    //     Reasoning about such a row's cells is then unsound, so
+    //     `find_dual_column_band` is told not to.
+    let median_height = median_line_height(&lines);
+    let tilt_drift = estimate_tilt(&lines, median_height).abs() * content_span;
+    let trust_cell_content = tilt_drift <= LAYOUT_ROW_Y_TOLERANCE_RATIO * median_height;
+
+    // 2c) Does this page have a two-table-side-by-side layout? Detected once
     //     over all rows (not per-row) — see `find_dual_column_band` doc.
-    let dual_column_band = find_dual_column_band(&rows, content_span);
+    let dual_column_band = find_dual_column_band(&rows, content_span, trust_cell_content);
 
     // 3) Emit each visual row; insert a blank line where the vertical gap to
     //    the previous row is much larger than the line height (block break).
@@ -820,15 +1008,103 @@ pub fn rebuild_layout_text(lines: &[LayoutLine]) -> String {
     out_lines.join("\n")
 }
 
-/// One recurring gap between adjacent boxes on some visual row — the raw
-/// material [`find_dual_column_band`] clusters to find the page's gutter.
-struct RowGap {
-    /// Index into the candidate-row list this gap came from (only used to
-    /// count *distinct rows* supporting a cluster, not raw gap count).
-    row: usize,
-    start: f32,
-    end: f32,
-    mid: f32,
+/// Corrects a specific, narrow OCR misread: a printed decimal point recognized
+/// as a comma. On a compressed or low-resolution photo the two glyphs are
+/// nearly indistinguishable, and PP-OCRv5 occasionally reads "3.50~10.00" as
+/// "3,50~10.00". Every lab report this reconstructs uses a period as its
+/// decimal separator throughout (`4.00~10.00`, `1.80~6.40`, ... — never a
+/// thousands-grouping comma on a lab value), so a comma directly between two
+/// ASCII digits, with nothing else around it, is unambiguously that misread
+/// rather than a second, different number format. Left uncorrected it feeds
+/// the downstream extractor a malformed range: `3,50~10.00` parses as
+/// low=`50`, high=`10` — `low > high`, and a confidently wrong reference band
+/// is worse than the extractor dropping the value outright.
+///
+/// Deliberately narrow: it only ever rewrites a comma that has an ASCII digit
+/// immediately on both sides, so prose punctuation (including full-width `，`)
+/// and any comma next to whitespace or a CJK character is untouched.
+fn normalize_ocr_decimal_comma(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    chars
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| {
+            let misread_decimal_point = c == ','
+                && i > 0
+                && chars[i - 1].is_ascii_digit()
+                && chars.get(i + 1).is_some_and(char::is_ascii_digit);
+            if misread_decimal_point {
+                '.'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// How far either side of level [`estimate_tilt`] searches, and how finely.
+/// These bound the search, they don't calibrate the decision — the threshold
+/// the tilt is compared against is [`LAYOUT_ROW_Y_TOLERANCE_RATIO`], the same
+/// tolerance row grouping already uses. 0.25 is ~14 degrees, well past what a
+/// legible hand-held photo of a report survives.
+const TILT_SEARCH_LIMIT: f32 = 0.25;
+const TILT_SEARCH_STEP: f32 = 0.002;
+
+/// Median detection-box height — the page's line height, used as the unit
+/// tilt is judged in. Median rather than mean so a banner or a stamp doesn't
+/// drag it.
+fn median_line_height(lines: &[&LayoutLine]) -> f32 {
+    let mut heights: Vec<f32> = lines.iter().map(|l| l.height).collect();
+    heights.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    heights.get(heights.len() / 2).copied().unwrap_or(0.0)
+}
+
+/// Estimates the page's tilt as the slope (dy/dx) whose horizontal projection
+/// of the detection boxes is most sharply peaked. This is the textbook skew
+/// estimate: at the true tilt every text line's boxes land in one bin, so the
+/// profile is a comb of tall spikes; away from it neighbouring lines smear
+/// into each other and flatten it. Sum of squared bin mass scores that
+/// peakiness, and boxes are weighted by width so a long line of body text
+/// counts for more than a stray tick mark.
+fn estimate_tilt(lines: &[&LayoutLine], median_height: f32) -> f32 {
+    if median_height <= 0.0 || lines.is_empty() {
+        return 0.0;
+    }
+    let bin = (median_height / 4.0).max(1.0);
+    let mut best = (0.0f32, f32::NEG_INFINITY);
+    let mut slope = -TILT_SEARCH_LIMIT;
+    while slope <= TILT_SEARCH_LIMIT {
+        let mut hist: std::collections::HashMap<i64, f32> = std::collections::HashMap::new();
+        for line in lines {
+            let x_centre = (line.left + line.right) / 2.0;
+            let key = ((line.top - slope * x_centre) / bin).floor() as i64;
+            *hist.entry(key).or_insert(0.0) += line.right - line.left;
+        }
+        let peakiness: f32 = hist.values().map(|mass| mass * mass).sum();
+        if peakiness > best.1 {
+            best = (slope, peakiness);
+        }
+        slope += TILT_SEARCH_STEP;
+    }
+    best.0
+}
+
+/// One candidate row's horizontal occupancy, as [`find_dual_column_band`]'s
+/// projection profile consumes it: the row's own extent (leftmost box edge to
+/// rightmost) plus every box interval within it.
+struct RowSpans {
+    extent: (f32, f32),
+    boxes: Vec<(f32, f32)>,
+}
+
+impl RowSpans {
+    /// Does this row leave the column at `x` blank? Only true *strictly
+    /// inside* the row's own extent: the whitespace past a short row's last
+    /// box is the page margin, not a gutter, and letting it vote would let a
+    /// page of ragged-right prose manufacture a seam out of its own margin.
+    fn is_blank_at(&self, x: f32) -> bool {
+        x > self.extent.0 && x < self.extent.1 && !self.boxes.iter().any(|(l, r)| x > *l && x < *r)
+    }
 }
 
 /// Looks for a vertical whitespace band that recurs at (roughly) the same
@@ -854,7 +1130,44 @@ struct RowGap {
 /// row) has zero multi-box rows, so this returns `None` immediately — see
 /// `rebuild_layout_text_single_line_per_row_passes_through` and
 /// `rebuild_layout_text_dual_column_leaves_single_column_page_untouched`.
-fn find_dual_column_band(rows: &[Vec<&LayoutLine>], content_span: f32) -> Option<(f32, f32)> {
+///
+/// # Why this is a projection profile and not a clustering of per-row gaps
+///
+/// The original implementation collected each row's adjacent-box gaps,
+/// clustered them by midpoint within a fixed 2%-of-content-width tolerance,
+/// and reported the *intersection* of every contributing row's gap. On real
+/// lab photos it never fired once. Both halves of that calibration assume the
+/// left table's right edge is essentially constant down the page, and it
+/// simply isn't: item names differ in length (`1白细胞计数` vs
+/// `5嗜酸性粒细胞计数`) and the recognizer frequently glues a value onto the
+/// name (`5嗜酸性粒细胞计数0.17`), so the left half's right edge swings far
+/// wider than 2% — which both scatters the gaps across several clusters and
+/// collapses the intersection to nothing (`width <= 0.0`, cluster discarded).
+/// One row with an unusually wide left half could veto the whole page.
+///
+/// So instead of asking "do the rows' gaps agree closely enough", this asks
+/// the question document layout analysis normally asks: **for each x, how
+/// many rows leave that column blank?** That profile's high plateau *is* the
+/// gutter, and its edges fall out of the data — there is no tolerance
+/// constant to calibrate, so a ragged left edge costs support only at the x
+/// values it actually reaches, instead of invalidating the seam entirely.
+/// The band is then the widest run of x that clears the same support bar the
+/// old code used ([`DUAL_COLUMN_MIN_SUPPORT_ROWS`] /
+/// [`DUAL_COLUMN_MIN_SUPPORT_FRACTION`], both unchanged), and what's returned
+/// is that run's best-supported core, so the midpoint `split_row_at_gutter`
+/// tests sits where the most rows are blank.
+///
+/// Dropping the intersection loses the old guarantee that every voting row's
+/// gap contains the returned midpoint — deliberately. That guarantee was
+/// never needed: [`split_row_at_gutter`] re-checks each row on its own and
+/// returns `None` for any row that doesn't straddle the seam, which is
+/// already the correct per-row degradation (that row is emitted unsplit).
+/// Requiring it up front only let one narrow row suppress the entire page.
+fn find_dual_column_band(
+    rows: &[Vec<&LayoutLine>],
+    content_span: f32,
+    trust_cell_content: bool,
+) -> Option<(f32, f32)> {
     if content_span <= 0.0 {
         return None;
     }
@@ -863,83 +1176,162 @@ fn find_dual_column_band(rows: &[Vec<&LayoutLine>], content_span: f32) -> Option
         return None;
     }
 
-    let mut gaps: Vec<RowGap> = Vec::new();
-    for (row_idx, row) in candidate_rows.iter().enumerate() {
-        let mut sorted: Vec<&LayoutLine> = (*row).clone();
-        sorted.sort_by(|a, b| {
-            a.left
-                .partial_cmp(&b.left)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        for pair in sorted.windows(2) {
-            let (start, end) = (pair[0].right, pair[1].left);
-            if end > start {
-                gaps.push(RowGap {
-                    row: row_idx,
-                    start,
-                    end,
-                    mid: (start + end) / 2.0,
-                });
-            }
-        }
+    let spans: Vec<RowSpans> = candidate_rows
+        .iter()
+        .map(|row| RowSpans {
+            extent: (
+                row.iter().map(|l| l.left).fold(f32::INFINITY, f32::min),
+                row.iter()
+                    .map(|l| l.right)
+                    .fold(f32::NEG_INFINITY, f32::max),
+            ),
+            boxes: row.iter().map(|l| (l.left, l.right)).collect(),
+        })
+        .collect();
+
+    // The profile can only change value at a box edge, so it is piecewise
+    // constant between consecutive edges. Sweeping the sorted edges evaluates
+    // it exactly, with no bin count / resolution constant to pick.
+    let mut edges: Vec<f32> = spans
+        .iter()
+        .flat_map(|s| s.boxes.iter().flat_map(|(l, r)| [*l, *r]))
+        .collect();
+    edges.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    edges.dedup();
+    if edges.len() < 2 {
+        return None;
     }
 
-    // Cluster gaps by x-position: sort by midpoint, then greedily group
-    // consecutive gaps that stay within `DUAL_COLUMN_CLUSTER_RATIO` of the
-    // *first* gap in the current cluster (anchoring to the first element
-    // rather than the previous one bounds each cluster's total span instead
-    // of letting it drift indefinitely across a dense run of gaps).
-    gaps.sort_by(|a, b| {
-        a.mid
-            .partial_cmp(&b.mid)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let tolerance = content_span * DUAL_COLUMN_CLUSTER_RATIO;
-    let mut clusters: Vec<Vec<&RowGap>> = Vec::new();
-    for gap in &gaps {
-        let joined = clusters
-            .last_mut()
-            .filter(|cluster: &&mut Vec<&RowGap>| (gap.mid - cluster[0].mid).abs() <= tolerance)
-            .map(|cluster| cluster.push(gap));
-        if joined.is_none() {
-            clusters.push(vec![gap]);
-        }
-    }
+    // Same bar as before: an absolute row floor *and* a healthy fraction of
+    // the page's multi-box rows.
+    let min_support = DUAL_COLUMN_MIN_SUPPORT_ROWS
+        .max((DUAL_COLUMN_MIN_SUPPORT_FRACTION * candidate_rows.len() as f32).ceil() as usize);
 
-    let total_rows = candidate_rows.len() as f32;
-    let mut best: Option<(f32, f32, f32)> = None; // (width, band_left, band_right)
-    for cluster in &clusters {
-        let support = cluster
-            .iter()
-            .map(|g| g.row)
-            .collect::<std::collections::HashSet<_>>()
-            .len();
-        if support < DUAL_COLUMN_MIN_SUPPORT_ROWS
-            || (support as f32) < DUAL_COLUMN_MIN_SUPPORT_FRACTION * total_rows
-        {
+    // (left, right, how many rows are blank across this whole slice)
+    let cells: Vec<(f32, f32, usize)> = edges
+        .windows(2)
+        .map(|w| {
+            let mid = (w[0] + w[1]) / 2.0;
+            let support = spans.iter().filter(|s| s.is_blank_at(mid)).count();
+            (w[0], w[1], support)
+        })
+        .collect();
+
+    let mut candidates: Vec<(f32, f32, f32)> = Vec::new(); // (core width, left, right)
+    let mut i = 0;
+    while i < cells.len() {
+        if cells[i].2 < min_support {
+            i += 1;
             continue;
         }
-        // The band reported for this cluster must be a sub-interval of
-        // *every* contributing row's own gap (not e.g. each coordinate's
-        // median independently, which can land just outside a narrower
-        // row's gap by a hair) -- so `split_row_at_gutter`'s "gap contains
-        // the gutter midpoint" check is guaranteed to hold for every row
-        // that voted for this cluster. That's exactly the intersection of
-        // all the cluster's [start, end] intervals.
-        let band_left = cluster
-            .iter()
-            .map(|g| g.start)
-            .fold(f32::NEG_INFINITY, f32::max);
-        let band_right = cluster.iter().map(|g| g.end).fold(f32::INFINITY, f32::min);
-        let width = band_right - band_left;
-        if width <= 0.0 {
-            continue; // this cluster's gaps don't all actually overlap -- not a real seam.
+        let start = i;
+        while i < cells.len() && cells[i].2 >= min_support {
+            i += 1;
         }
-        if best.is_none_or(|(best_width, _, _)| width > best_width) {
-            best = Some((width, band_left, band_right));
+        // Within this qualifying run, keep the widest stretch at the run's
+        // peak support: the sub-band the largest number of rows agree is
+        // blank, so the midpoint handed to `split_row_at_gutter` is the one
+        // most rows can actually act on. Ranking candidate seams by that
+        // core's width preserves the previous policy of preferring the
+        // widest band -- an internal column gap (value -> its reference
+        // range) is narrow, whereas the seam between two independent tables
+        // is the one whitespace band wide enough to separate them.
+        let run = &cells[start..i];
+        let peak = run.iter().map(|c| c.2).max().unwrap_or(0);
+        let mut core: Option<(f32, f32)> = None;
+        let mut j = 0;
+        while j < run.len() {
+            if run[j].2 != peak {
+                j += 1;
+                continue;
+            }
+            let s = j;
+            while j < run.len() && run[j].2 == peak {
+                j += 1;
+            }
+            let (l, r) = (run[s].0, run[j - 1].1);
+            if core.is_none_or(|(cl, cr)| r - l > cr - cl) {
+                core = Some((l, r));
+            }
+        }
+        if let Some((l, r)) = core {
+            candidates.push((r - l, l, r));
         }
     }
-    best.map(|(_, l, r)| (l, r))
+
+    // Geometry alone cannot finish the job: a single-column 4-field table
+    // ("Hemoglobin | 12 | 11.0-16.0 | g/dL", every row identical) projects
+    // exactly the same profile as two side-by-side 2-field tables -- a clean,
+    // fully-supported whitespace band with two boxes either side, widest in
+    // the middle. Splitting there would tear one record in half, which is
+    // strictly worse than leaving two records joined, so the widest band is
+    // only *proposed* here; each candidate must then show it behaves like a
+    // seam before it is believed.
+    //
+    // The tell is what starts the right-hand half. A record begins with an
+    // item *name*; the cell after a mere column break begins with the value,
+    // range or unit that belongs to the record still in progress on the left.
+    // So a candidate is accepted only if it actually splits enough rows and
+    // most of those right halves open with something name-like.
+    candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_, l, r) in candidates {
+        let (mut splits, mut name_heads, mut value_heads) = (0usize, 0usize, 0usize);
+        for row in &candidate_rows {
+            if let Some((_, right)) = split_row_at_gutter(row, l, r) {
+                splits += 1;
+                // `split_row_at_gutter` returns the right half sorted by
+                // `left`, so `right[0]` is the cell the record would open on.
+                if looks_like_measurement(&right[0].text) {
+                    value_heads += 1;
+                } else {
+                    name_heads += 1;
+                }
+            }
+        }
+        // On a tilted page the head cell may simply belong to a different
+        // record than the rest of its half, so the name-vs-measurement test
+        // means nothing and is skipped. Skipping it splits more eagerly, which
+        // is the safe direction downstream: an over-split row leaves a value
+        // stranded without a reference range and the extractor drops it,
+        // whereas leaving the row joined hands that value the *neighbouring*
+        // record's range and produces a confidently wrong result.
+        if splits >= DUAL_COLUMN_MIN_SUPPORT_ROWS
+            && (!trust_cell_content || name_heads > value_heads)
+        {
+            return Some((l, r));
+        }
+    }
+    None
+}
+
+/// Does this cell read as a measurement — a figure, a range, a unit — rather
+/// than the start of a new record? Used by [`find_dual_column_band`] to reject
+/// a single-column table's internal column break, which is geometrically
+/// indistinguishable from a real dual-table seam, so only the content of the
+/// cell the right-hand record would open on can tell them apart.
+///
+/// Three shapes count as a measurement, all of them things that continue the
+/// record already in progress rather than starting a new one:
+///   * no letters at all (`char::is_alphabetic` covers CJK item names as well
+///     as Latin ones) — `11.0 - 16.0`, `120~160`, `3.86`;
+///   * a solidus anywhere — `mmol/L`, `g/dL`, `10^9/L` are units, and a unit
+///     never opens a record;
+///   * a leading comparison — `<5.20`, `>1.04` is a reference bound.
+///
+/// Erring toward "measurement" is the safe direction: it can only suppress a
+/// split (two records left on one line, which the extractor already survives),
+/// never manufacture one that tears a record in half. The known cost is a
+/// Chinese item name that genuinely contains a solidus, e.g. `A/G比值` — a
+/// page whose right-hand column starts with one of those simply won't split.
+fn looks_like_measurement(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    !trimmed.chars().any(char::is_alphabetic)
+        || trimmed.contains('/')
+        || trimmed.starts_with('<')
+        || trimmed.starts_with('>')
 }
 
 /// If `row` has a genuine left/right split at the gutter `[gutter_left,
@@ -1030,12 +1422,31 @@ fn recognize_vision(image_bytes: &[u8]) -> Result<OcrOutcome> {
     vision_macos::recognize_bytes(image_bytes)
 }
 
-/// Recognize text in image bytes. **macOS**: Apple Vision is the primary
-/// recognizer (offline, strong Chinese, #41); if it errors or finds no text,
-/// fall back to the oar-ocr / PP-OCRv5 engine. **Other platforms**: the engine
-/// (or a stub error when the engine isn't linked in, e.g. a no-`engine` build).
+/// 用**当前平台上可用的最佳识别器**认字 —— 名字里的 `platform_best` 是警告:
+/// **这个函数在不同平台上跑的是不同的引擎**。
+///
+/// | 平台 | 主识别器 | 兜底 |
+/// |---|---|---|
+/// | macOS | Apple Vision(`#41`:离线、中文强) | PP-OCRv5 引擎 |
+/// | Windows | `Windows.Media.Ocr`(同上) | PP-OCRv5 引擎 |
+/// | 其它(含 iOS/Android) | PP-OCRv5 引擎 | — |
+///
+/// 分流是 `#[cfg(target_os = ...)]` 做的,**不是 feature** —— 把依赖写成
+/// `default-features = false, features = ["engine"]` 也关不掉 macOS 上的 Vision。
+///
+/// # 要验手机端行为,不要调这个
+///
+/// 在 macOS 上调它,拿到的是 **Apple Vision** 的结果,而手机上跑的是 PP-OCRv5。
+/// 两个引擎的误读模式、字符混淆都不一样,结果不可互推。**验手机端一律用
+/// [`recognize_engine_layout`]**(`#[cfg(feature = "engine")]`,纯引擎)。
+///
+/// 已经踩过一次:`openmed/labaudit` 的扫描 PDF 路径经由此函数产出的 dump,
+/// 被当成 PP-OCR 语料支撑过一次判断。
+///
+/// (「Vision 在中文上更强」出自 `#41`,**本仓库没有留下对比测试** —— 它是当时的
+/// 判断,不是被验证过的结论。桌面端换回 PP-OCRv5 是否更好,尚未有人量过。)
 #[cfg(target_os = "macos")]
-pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
+pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
     match recognize_vision(image_bytes) {
         Ok(outcome) if !outcome.text.trim().is_empty() => return Ok(outcome),
         Ok(_) => {} // Vision ran but found nothing — try the engine.
@@ -1059,7 +1470,7 @@ pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
 /// #41); if it errors or finds no text, fall back to the oar-ocr / PP-OCRv5
 /// engine.
 #[cfg(target_os = "windows")]
-pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
+pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
     match windows_ocr::recognize_bytes(image_bytes) {
         Ok(outcome) if !outcome.text.trim().is_empty() => return Ok(outcome),
         Ok(_) => {} // ran but found nothing — try the engine.
@@ -1084,7 +1495,7 @@ pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
     not(target_os = "windows"),
     feature = "engine"
 ))]
-pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
+pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
     recognize_engine(image_bytes)
 }
 
@@ -1095,8 +1506,8 @@ pub fn recognize(image_bytes: &[u8]) -> Result<OcrOutcome> {
     not(target_os = "windows"),
     not(feature = "engine")
 ))]
-pub fn recognize(_image_bytes: &[u8]) -> Result<OcrOutcome> {
-    anyhow::bail!("ocr::recognize: OCR engine not available on this platform")
+pub fn recognize_platform_best(_image_bytes: &[u8]) -> Result<OcrOutcome> {
+    anyhow::bail!("ocr::recognize_platform_best: OCR engine not available on this platform")
 }
 
 /// OCR a PDF that has no text layer: extract each page's embedded image
@@ -1162,7 +1573,7 @@ where
     (page_texts, page_confidences, skipped)
 }
 
-pub fn recognize_pdf(pdf_bytes: &[u8]) -> Result<OcrOutcome> {
+pub fn recognize_pdf_platform_best(pdf_bytes: &[u8]) -> Result<OcrOutcome> {
     let doc = Document::load_mem(pdf_bytes).context("recognize_pdf: parse PDF")?;
     // Lazily stream every page's DCTDecode images; the cap is enforced (and
     // peak memory bounded) inside `ocr_page_images`.
@@ -1170,7 +1581,7 @@ pub fn recognize_pdf(pdf_bytes: &[u8]) -> Result<OcrOutcome> {
         .get_pages()
         .into_values()
         .flat_map(|page_id| extract_dct_images(&doc, page_id));
-    let (page_texts, page_confidences, skipped) = ocr_page_images(images, recognize);
+    let (page_texts, page_confidences, skipped) = ocr_page_images(images, recognize_platform_best);
     if skipped > 0 {
         // No silent truncation: make it visible that we stopped early on purpose.
         eprintln!(
@@ -1243,9 +1654,446 @@ fn extract_dct_images(doc: &Document, page_id: lopdf::ObjectId) -> Vec<Vec<u8>> 
     out
 }
 
+/// Per-page threshold below which a page's own extracted text is treated as
+/// "no usable text layer" for [`recognize_pdf_mixed`]. Same value `pipeline`
+/// used to apply to the *whole document's* concatenated text -- the bug this
+/// module fixes is exactly that whole-document application: a text-rich page
+/// 1 (e.g. a printed discharge summary) pushes the concatenated length past
+/// this threshold even when every later page is a scanned image with no text
+/// layer at all, so those pages never got OCR'd and their content silently
+/// never made it into the document.
+pub const MIN_TEXT_LAYER_LEN: usize = 20;
+
+/// How one page of a [`recognize_pdf_mixed`] call was resolved.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PdfPageText {
+    /// The page's own embedded text layer had enough text to use as-is.
+    TextLayer(String),
+    /// The text layer was missing/too short; OCR on the page's embedded
+    /// DCTDecode image(s) recovered text instead.
+    Ocr {
+        text: String,
+        confidence: f32,
+        backend: OcrBackend,
+    },
+    /// Neither a usable text layer nor OCR produced anything for this page:
+    /// no embedded DCTDecode image to OCR, OCR ran and found nothing, every
+    /// image on the page failed to OCR, or the page was past
+    /// [`MAX_OCR_PAGE_IMAGES`] and never attempted. Callers MUST surface
+    /// pages in this state to the user -- silently dropping them is the bug
+    /// `recognize_pdf_mixed` exists to fix, and reproducing it one layer up
+    /// (e.g. by joining only the recognized pages and reporting success) just
+    /// moves the same defect.
+    Unrecognized,
+}
+
+/// One page's outcome from [`recognize_pdf_mixed`]. `page_no` is 1-based,
+/// matching `lopdf`/`pdf-extract`'s own page numbering.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PdfPage {
+    pub page_no: i32,
+    pub result: PdfPageText,
+}
+
+/// Outcome of a whole-document mixed-PDF recognition pass: one entry per
+/// page, in order. `pages.len()` is therefore an accurate page count --
+/// unlike `parser::extract`'s old form-feed-counting heuristic, which always
+/// undercounted: `pdf-extract`'s `PlainTextOutput::end_page` never actually
+/// writes `\x0c` between pages, so that heuristic's `+= 1` on match count
+/// never fired and every PDF reported `page_count == 1` regardless of its
+/// real length.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MixedPdfOutcome {
+    pub pages: Vec<PdfPage>,
+}
+
+impl MixedPdfOutcome {
+    pub fn page_count(&self) -> i32 {
+        self.pages.len() as i32
+    }
+
+    /// 1-based page numbers that ended up [`PdfPageText::Unrecognized`] --
+    /// exactly the set a caller must not stay silent about.
+    pub fn unrecognized_pages(&self) -> Vec<i32> {
+        self.pages
+            .iter()
+            .filter(|p| matches!(p.result, PdfPageText::Unrecognized))
+            .map(|p| p.page_no)
+            .collect()
+    }
+
+    /// All recognized text (text-layer + OCR'd pages), joined in page order.
+    /// Unrecognized pages contribute nothing to this string -- callers that
+    /// need to know about them use [`unrecognized_pages`](Self::unrecognized_pages).
+    pub fn text(&self) -> String {
+        self.pages
+            .iter()
+            .filter_map(|p| match &p.result {
+                PdfPageText::TextLayer(t) => Some(t.as_str()),
+                PdfPageText::Ocr { text, .. } => Some(text.as_str()),
+                PdfPageText::Unrecognized => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Resolve one page that has no usable text layer: OCR its embedded
+/// DCTDecode image(s) if the per-document OCR budget allows, otherwise
+/// report [`PdfPageText::Unrecognized`] rather than silently skip it.
+/// `ocr_budget` is shared (decremented) across the whole document -- see
+/// [`build_mixed_pages`].
+fn resolve_page_via_ocr<F>(
+    images: Vec<Vec<u8>>,
+    ocr_budget: &mut usize,
+    recognize_one: &mut F,
+) -> PdfPageText
+where
+    F: FnMut(&[u8]) -> Result<OcrOutcome>,
+{
+    if images.is_empty() {
+        return PdfPageText::Unrecognized;
+    }
+    if *ocr_budget == 0 {
+        // Past the cap: don't run the (expensive) recognizer, but this page
+        // is explicitly "not attempted", not "checked and empty" -- both
+        // collapse to `Unrecognized` so the caller reports it either way.
+        return PdfPageText::Unrecognized;
+    }
+    *ocr_budget -= 1;
+    let mut texts = Vec::new();
+    let mut confidences = Vec::new();
+    let mut backend = None;
+    for image_bytes in images {
+        match recognize_one(&image_bytes) {
+            Ok(outcome) if !outcome.text.trim().is_empty() => {
+                backend = Some(outcome.backend);
+                confidences.push(outcome.confidence);
+                texts.push(outcome.text);
+            }
+            Ok(_) => {} // ran, found nothing on this image -- other images on the page may still hit.
+            Err(e) => {
+                // One image failing OCR shouldn't sink the rest of the page's images.
+                eprintln!("recognize_pdf_mixed: OCR failed for one page image: {e:#}");
+            }
+        }
+    }
+    match backend {
+        Some(backend) if !texts.is_empty() => PdfPageText::Ocr {
+            text: texts.join("\n"),
+            confidence: mean_confidence(&confidences),
+            backend,
+        },
+        _ => PdfPageText::Unrecognized,
+    }
+}
+
+/// Pure decision core of [`recognize_pdf_mixed`]: given each page's own
+/// extracted text-layer text and its embedded DCTDecode image bytes (if
+/// any), decide per page whether the text layer is usable and, for pages
+/// that need it, run `recognize_one` (capped at [`MAX_OCR_PAGE_IMAGES`]
+/// pages actually OCR'd -- same DoS bound `recognize_pdf` already enforces,
+/// just counted per page instead of per image since real scanned PDFs are
+/// overwhelmingly one image per page). Kept separate from
+/// `recognize_pdf_mixed` so the actual fix -- per-page instead of
+/// whole-document text-layer detection -- is unit-testable without a real
+/// multi-page PDF or the OCR engine (mirrors [`ocr_page_images`]'s reason
+/// for existing).
+fn build_mixed_pages<F>(
+    page_texts: Vec<String>,
+    mut page_images: Vec<Vec<Vec<u8>>>,
+    mut recognize_one: F,
+) -> Vec<PdfPage>
+where
+    F: FnMut(&[u8]) -> Result<OcrOutcome>,
+{
+    let mut ocr_budget = MAX_OCR_PAGE_IMAGES;
+    page_texts
+        .into_iter()
+        .enumerate()
+        .map(|(idx, text)| {
+            let page_no = idx as i32 + 1;
+            if text.trim().chars().count() >= MIN_TEXT_LAYER_LEN {
+                return PdfPage {
+                    page_no,
+                    result: PdfPageText::TextLayer(text),
+                };
+            }
+            let images = page_images
+                .get_mut(idx)
+                .map(std::mem::take)
+                .unwrap_or_default();
+            let result = resolve_page_via_ocr(images, &mut ocr_budget, &mut recognize_one);
+            PdfPage { page_no, result }
+        })
+        .collect()
+}
+
+/// OCR a PDF that mixes real text-layer pages with scanned/image-only pages
+/// (e.g. a discharge summary whose first page was printed and whose later
+/// pages are appended lab-report scans), one page at a time -- so a
+/// text-rich first page can no longer cause every later scanned page to be
+/// silently skipped. See [`MIN_TEXT_LAYER_LEN`]'s doc comment for the bug
+/// this replaces.
+///
+/// Returns one [`PdfPage`] per page, in order. `pipeline::ingest` uses
+/// [`MixedPdfOutcome::text`] for what gets stored and
+/// [`MixedPdfOutcome::unrecognized_pages`] for what it MUST tell the caller
+/// was not captured -- never silently drop that list.
+pub fn recognize_pdf_mixed(pdf_bytes: &[u8]) -> Result<MixedPdfOutcome> {
+    let doc = Document::load_mem(pdf_bytes).context("recognize_pdf_mixed: parse PDF")?;
+    let page_ids: Vec<lopdf::ObjectId> = doc.get_pages().into_values().collect();
+    let mut page_texts = pdf_extract::extract_text_from_mem_by_pages(pdf_bytes)
+        .map_err(|e| anyhow::anyhow!("recognize_pdf_mixed: extract per-page text layer: {e}"))?;
+    // `pdf-extract` and `lopdf` both derive page order by walking the same page
+    // tree (`Document::get_pages`), so these line up 1:1 for any PDF that parses
+    // at all. Guard the lengths anyway rather than assume it, so a PDF where
+    // they somehow disagree degrades to "treat the extra/missing pages as no
+    // text layer" (still OCR-attempted) instead of a panic or a silent
+    // misalignment that mislabels every later page.
+    page_texts.resize(page_ids.len(), String::new());
+    let page_images: Vec<Vec<Vec<u8>>> = page_ids
+        .iter()
+        .map(|&page_id| extract_dct_images(&doc, page_id))
+        .collect();
+    let pages = build_mixed_pages(page_texts, page_images, recognize_platform_best);
+    Ok(MixedPdfOutcome { pages })
+}
+
+/// Test-only builders for real, decodable multi-page TIFFs, so the multi-page
+/// regression tests here *and* in `pipeline` need no checked-in binary fixture
+/// -- the bytes are the spec, right there in the test.
+///
+/// Compiled only for this crate's own tests and for consumers that ask for the
+/// `testing` feature from a `[dev-dependencies]` entry (`pipeline` does); it is
+/// never part of a shipping build.
+#[cfg(any(test, feature = "testing"))]
+#[doc(hidden)]
+pub mod testing {
+    /// Every page is 8x8, so its uncompressed 8-bit grayscale strip is 64 bytes.
+    const DIM: u32 = 8;
+    const STRIP_LEN: u32 = DIM * DIM;
+    /// ImageWidth, ImageLength, BitsPerSample, Compression, Photometric,
+    /// StripOffsets, SamplesPerPixel, RowsPerStrip, StripByteCounts (+ an
+    /// optional leading NewSubfileType).
+    const BASE_TAGS: u32 = 9;
+
+    fn ifd_len(tags: u32) -> u32 {
+        2 + 12 * tags + 4
+    }
+
+    /// One 12-byte IFD entry. SHORT (type 3) count 1 is left-justified in the
+    /// 4-byte value field on a little-endian TIFF and LONG (type 4) fills it,
+    /// so writing `value` as a u32 is correct for both.
+    fn entry(out: &mut Vec<u8>, tag: u16, ty: u16, value: u32) {
+        out.extend_from_slice(&tag.to_le_bytes());
+        out.extend_from_slice(&ty.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    /// A genuine classic little-endian TIFF with one page per entry of
+    /// `pages`. Each entry is `(gray_fill, is_reduced_resolution_thumbnail)`;
+    /// thumbnail pages carry `NewSubfileType` bit 0, which is how a writer
+    /// marks an IFD that is *not* a page of its own.
+    pub fn multipage_tiff(pages: &[(u8, bool)]) -> Vec<u8> {
+        // Lay every page out as [IFD][64-byte strip] so all offsets are known
+        // up front. Thumbnail pages carry one extra tag, hence the running sum.
+        let mut page_at = Vec::with_capacity(pages.len());
+        let mut cursor = 8u32; // right after the 8-byte header
+        for (_, thumb) in pages {
+            page_at.push(cursor);
+            cursor += ifd_len(BASE_TAGS + u32::from(*thumb)) + STRIP_LEN;
+        }
+
+        let mut out = Vec::with_capacity(cursor as usize);
+        out.extend_from_slice(b"II");
+        out.extend_from_slice(&42u16.to_le_bytes());
+        out.extend_from_slice(&page_at[0].to_le_bytes());
+
+        for (i, (fill, thumb)) in pages.iter().enumerate() {
+            let tags = BASE_TAGS + u32::from(*thumb);
+            let strip_at = page_at[i] + ifd_len(tags);
+            out.extend_from_slice(&(tags as u16).to_le_bytes());
+            // Entries must be sorted by tag; 254 (if present) comes first.
+            if *thumb {
+                entry(&mut out, 254, 4, 1); // NewSubfileType: reduced resolution
+            }
+            entry(&mut out, 256, 4, DIM); // ImageWidth
+            entry(&mut out, 257, 4, DIM); // ImageLength
+            entry(&mut out, 258, 3, 8); // BitsPerSample
+            entry(&mut out, 259, 3, 1); // Compression = none
+            entry(&mut out, 262, 3, 1); // Photometric = BlackIsZero
+            entry(&mut out, 273, 4, strip_at); // StripOffsets
+            entry(&mut out, 277, 3, 1); // SamplesPerPixel
+            entry(&mut out, 278, 4, DIM); // RowsPerStrip
+            entry(&mut out, 279, 4, STRIP_LEN); // StripByteCounts
+            let next = page_at.get(i + 1).copied().unwrap_or(0);
+            out.extend_from_slice(&next.to_le_bytes());
+            out.extend_from_slice(&vec![*fill; STRIP_LEN as usize]);
+        }
+        out
+    }
+
+    /// Shorthand: `n` ordinary (non-thumbnail) pages, each a different gray.
+    pub fn plain_multipage_tiff(n: usize) -> Vec<u8> {
+        let pages: Vec<(u8, bool)> = (0..n).map(|i| ((i as u8) * 40, false)).collect();
+        multipage_tiff(&pages)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::testing::{multipage_tiff, plain_multipage_tiff};
     use super::*;
+
+    /// The fixture builder must produce a TIFF the `image` crate really
+    /// decodes -- otherwise the page-count tests below would be asserting
+    /// against bytes no decoder agrees are a TIFF, and the "only frame 1 is
+    /// read" claim would be unfounded.
+    #[test]
+    fn multipage_tiff_fixture_is_a_real_decodable_tiff() {
+        let bytes = plain_multipage_tiff(2);
+        let img = decode_image_bounded(&bytes).expect("fixture must decode as a TIFF");
+        assert_eq!(img.dimensions(), (8, 8));
+        // The whole defect in one assertion: the decoder hands back a single
+        // frame and offers no hint that a second page exists.
+        assert_eq!(img.to_luma8().get_pixel(0, 0).0[0], 0, "must be page 1");
+    }
+
+    #[test]
+    fn image_page_count_counts_every_page_of_a_multipage_tiff() {
+        for n in 1..=5 {
+            assert_eq!(
+                image_page_count(&plain_multipage_tiff(n)),
+                n as u32,
+                "{n}-page TIFF"
+            );
+        }
+    }
+
+    /// A reduced-resolution thumbnail IFD is not a page. Counting it would
+    /// raise a false "1 page could not be read" alarm on a single-page file
+    /// nothing was ever lost from.
+    #[test]
+    fn image_page_count_ignores_reduced_resolution_thumbnail_ifds() {
+        let with_thumb = multipage_tiff(&[(10, false), (200, true)]);
+        assert_eq!(image_page_count(&with_thumb), 1);
+        // ...but a real second page next to a thumbnail still counts.
+        let two_plus_thumb = multipage_tiff(&[(10, false), (200, true), (90, false)]);
+        assert_eq!(image_page_count(&two_plus_thumb), 2);
+    }
+
+    /// Non-TIFF and unparseable inputs must degrade to exactly the
+    /// pre-existing assumption (1 page), never to a false alarm and never to
+    /// a panic -- these bytes come straight from an untrusted file.
+    #[test]
+    fn image_page_count_is_one_for_non_tiff_and_never_panics_on_garbage() {
+        use std::io::Cursor;
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageLuma8(GrayImage::new(4, 4))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encode png");
+        assert_eq!(image_page_count(png.get_ref()), 1, "PNG");
+        assert_eq!(image_page_count(b""), 1, "empty");
+        assert_eq!(image_page_count(b"II"), 1, "truncated header");
+        assert_eq!(image_page_count(b"not an image at all"), 1, "garbage");
+        // Well-formed header pointing at an IFD past EOF.
+        let mut dangling = b"II\x2a\x00".to_vec();
+        dangling.extend_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+        assert_eq!(image_page_count(&dangling), 1, "IFD offset past EOF");
+        // Truncate a real 3-page TIFF mid-way: the surviving prefix must still
+        // yield a sane answer rather than a panic or a bogus huge count.
+        let full = plain_multipage_tiff(3);
+        for cut in [9, 20, 60, 150, full.len() - 1] {
+            let n = image_page_count(&full[..cut]);
+            assert!((1..=3).contains(&n), "truncated at {cut} gave {n}");
+        }
+    }
+
+    /// A crafted TIFF whose IFD chain loops back on itself must terminate.
+    /// The walk is capped, so the worst case is an under-count, never a hang.
+    #[test]
+    fn image_page_count_terminates_on_a_cyclic_ifd_chain() {
+        let mut bytes = plain_multipage_tiff(2);
+        // Point page 2's "next IFD" back at page 1's IFD (offset 8).
+        let page2_ifd = 8 + (2 + 12 * 9 + 4) + 64;
+        let next_field = page2_ifd + 2 + 12 * 9;
+        bytes[next_field..next_field + 4].copy_from_slice(&8u32.to_le_bytes());
+        let n = image_page_count(&bytes);
+        assert_eq!(n, MAX_IMAGE_PAGES, "must saturate at the cap, not spin");
+    }
+
+    /// A bare IFD chain -- header plus `pages` directories of one dummy entry
+    /// each, no pixel data. `tiff_page_count` never decodes pixels, so this is
+    /// all it needs, and it lets the big-endian and BigTIFF header variants be
+    /// covered without teaching the full fixture builder three more layouts.
+    fn structural_tiff(big_endian: bool, bigtiff: bool, pages: usize) -> Vec<u8> {
+        // Widths, in bytes, of: one IFD entry / an IFD's entry-count field / an
+        // IFD offset / an entry's `count` field / an entry's value field.
+        let (entry_size, dir_count, off_size, tag_count, value_size) = if bigtiff {
+            (20usize, 8usize, 8usize, 8usize, 8usize)
+        } else {
+            (12usize, 2usize, 4usize, 4usize, 4usize)
+        };
+        let header = if bigtiff { 16usize } else { 8usize };
+        let ifd_len = dir_count + entry_size + off_size; // exactly one entry
+        let put = |out: &mut Vec<u8>, v: u64, width: usize| {
+            let be = v.to_be_bytes();
+            let le = v.to_le_bytes();
+            if big_endian {
+                out.extend_from_slice(&be[8 - width..]);
+            } else {
+                out.extend_from_slice(&le[..width]);
+            }
+        };
+
+        let mut out = Vec::new();
+        out.extend_from_slice(if big_endian { b"MM" } else { b"II" });
+        put(&mut out, if bigtiff { 43 } else { 42 }, 2);
+        if bigtiff {
+            put(&mut out, 8, 2); // offset size
+            put(&mut out, 0, 2); // constant zero
+        }
+        put(&mut out, header as u64, off_size); // first IFD sits right after
+        for i in 0..pages {
+            put(&mut out, 1, dir_count); // this IFD has one entry
+            put(&mut out, 256, 2); // tag ImageWidth -- not a subfile-type tag
+            put(&mut out, 4, 2); // type LONG
+            put(&mut out, 1, tag_count);
+            put(&mut out, 8, value_size);
+            let next = if i + 1 < pages {
+                (header + (i + 1) * ifd_len) as u64
+            } else {
+                0
+            };
+            put(&mut out, next, off_size);
+        }
+        out
+    }
+
+    /// The three header layouts the walker claims to handle must actually be
+    /// handled. Big-endian ("MM") and BigTIFF (magic 43, u64 offsets, 20-byte
+    /// entries) are separate code paths from the little-endian classic case the
+    /// tests above exercise -- untested branches in a parser reading untrusted
+    /// bytes are exactly where a silent wrong answer hides.
+    #[test]
+    fn image_page_count_handles_big_endian_and_bigtiff_layouts() {
+        for (be, big, label) in [
+            (false, false, "LE classic"),
+            (true, false, "BE classic"),
+            (false, true, "LE BigTIFF"),
+            (true, true, "BE BigTIFF"),
+        ] {
+            for n in [1usize, 3] {
+                assert_eq!(
+                    image_page_count(&structural_tiff(be, big, n)),
+                    n as u32,
+                    "{label}, {n} page(s)"
+                );
+            }
+        }
+    }
 
     /// The banding dedup rule must tile the page with no gaps and no double-counts:
     /// every vertical position is owned by exactly one band's core. Cores here are
@@ -1698,6 +2546,203 @@ mod tests {
         assert_eq!(skipped, 0);
     }
 
+    /// The mixed-PDF bug, reproduced without a real PDF or OCR engine: a
+    /// text-rich page 1 (e.g. a printed report header) must not stop a later
+    /// image-only page from being OCR'd. Before `build_mixed_pages` existed,
+    /// `pipeline::ingest` checked `MIN_TEXT_LAYER_LEN` against the
+    /// *concatenation* of all pages -- page 1 alone cleared it, so page 2's
+    /// image was never even looked at.
+    #[test]
+    fn build_mixed_pages_ocrs_image_only_pages_even_after_a_text_rich_page() {
+        let page_texts = vec![
+            "本页为出院小结正文,内容足够长,超过最小文本层阈值。".to_string(),
+            String::new(), // scanned page: pdf-extract finds nothing
+        ];
+        let page_images = vec![
+            vec![],             // page 1: no embedded image, doesn't matter
+            vec![vec![0xFFu8]], // page 2: one (fake) DCTDecode image
+        ];
+        let mut calls = 0usize;
+        let pages = build_mixed_pages(page_texts, page_images, |_bytes| {
+            calls += 1;
+            Ok(OcrOutcome {
+                text: "化验结果:肌酐 120".to_string(),
+                confidence: 0.9,
+                backend: OcrBackend::Onnx,
+            })
+        });
+        assert_eq!(calls, 1, "only the image-only page should trigger OCR");
+        assert_eq!(pages.len(), 2);
+        assert!(matches!(pages[0].result, PdfPageText::TextLayer(_)));
+        assert_eq!(pages[0].page_no, 1);
+        match &pages[1].result {
+            PdfPageText::Ocr { text, .. } => assert!(text.contains("肌酐")),
+            other => panic!("expected page 2 to be OCR'd, got {other:?}"),
+        }
+        assert_eq!(pages[1].page_no, 2);
+
+        let outcome = MixedPdfOutcome { pages };
+        assert_eq!(
+            outcome.page_count(),
+            2,
+            "page count must reflect both pages"
+        );
+        assert!(outcome.unrecognized_pages().is_empty());
+        assert!(
+            outcome.text().contains("肌酐"),
+            "OCR'd page text must make it into the document"
+        );
+    }
+
+    /// A page with no text layer AND no OCR-able image (blank scan artifact,
+    /// or an image encoding `extract_dct_images` doesn't handle) must come
+    /// back `Unrecognized` -- not silently absent from the page list, and not
+    /// papered over as if it were successfully processed. This is the crux of
+    /// the "no silent data loss" requirement: we may not always be able to
+    /// recover a page's content, but we must always be able to say so.
+    #[test]
+    fn build_mixed_pages_reports_unrecognized_when_nothing_to_ocr() {
+        let page_texts = vec![
+            "够长的第一页文本内容超过阈值二十个字符没问题".to_string(),
+            String::new(),
+        ];
+        let page_images = vec![vec![], vec![]]; // neither page has an image
+        let pages = build_mixed_pages(page_texts, page_images, |_bytes| {
+            panic!("recognize_one should never be called: page 2 has no image")
+        });
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[1].result, PdfPageText::Unrecognized);
+
+        let outcome = MixedPdfOutcome { pages };
+        assert_eq!(outcome.unrecognized_pages(), vec![2]);
+        assert!(
+            !outcome.text().contains("Unrecognized"),
+            "unrecognized pages must contribute no fabricated text"
+        );
+    }
+
+    /// The per-document OCR budget (same DoS bound as `ocr_page_images`, now
+    /// counted per page) must still cap expensive work on a document with
+    /// many image-only pages, and every page past the cap must come back
+    /// `Unrecognized` -- "capped" is a form of "not processed" and must be
+    /// just as visible as any other reason a page didn't get text.
+    #[test]
+    fn build_mixed_pages_caps_ocr_work_and_marks_the_rest_unrecognized() {
+        let extra = 3;
+        let total = MAX_OCR_PAGE_IMAGES + extra;
+        let page_texts = vec![String::new(); total];
+        let page_images = vec![vec![vec![0u8]]; total];
+        let mut calls = 0usize;
+        let pages = build_mixed_pages(page_texts, page_images, |_bytes| {
+            calls += 1;
+            Ok(OcrOutcome {
+                text: "text".to_string(),
+                confidence: 1.0,
+                backend: OcrBackend::Onnx,
+            })
+        });
+        assert_eq!(
+            calls, MAX_OCR_PAGE_IMAGES,
+            "OCR must run on at most the cap-many pages"
+        );
+        let outcome = MixedPdfOutcome { pages };
+        assert_eq!(
+            outcome.unrecognized_pages().len(),
+            extra,
+            "pages past the cap must be reported, not silently dropped"
+        );
+    }
+
+    /// End-to-end wiring check with a real (hand-built) PDF: page 1 has an
+    /// actual Helvetica text layer, page 2 is blank (no content stream, no
+    /// image) -- confirms `lopdf`'s page order and `pdf-extract`'s per-page
+    /// order line up 1:1 on a real document, and that a page with truly
+    /// nothing recoverable comes back `Unrecognized` rather than panicking or
+    /// silently vanishing from the page list. Doesn't touch the OCR engine
+    /// (page 2 has no image, so `recognize` is never invoked), so this test
+    /// behaves the same with or without the `engine` feature.
+    #[test]
+    fn recognize_pdf_mixed_reads_real_two_page_pdf_in_order() {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Stream};
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id },
+        });
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Td", vec![20.into(), 700.into()]),
+                Operation::new(
+                    "Tj",
+                    vec![Object::string_literal(
+                        "Discharge summary page one printed text",
+                    )],
+                ),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(
+            dictionary! {},
+            content.encode().expect("encode content stream"),
+        ));
+        let page1_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+            "Resources" => resources_id,
+        });
+        // Page 2: blank -- no Contents, no image. Nothing recoverable.
+        let page2_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+        });
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page1_id.into(), page2_id.into()],
+                "Count" => 2,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save PDF");
+
+        let outcome =
+            recognize_pdf_mixed(&bytes).expect("recognize_pdf_mixed should parse this PDF");
+        assert_eq!(outcome.page_count(), 2);
+        match &outcome.pages[0].result {
+            PdfPageText::TextLayer(t) => {
+                assert!(
+                    t.contains("Discharge summary"),
+                    "unexpected page 1 text: {t}"
+                )
+            }
+            other => panic!("expected page 1 text layer, got {other:?}"),
+        }
+        assert_eq!(outcome.pages[0].page_no, 1);
+        assert_eq!(outcome.pages[1].result, PdfPageText::Unrecognized);
+        assert_eq!(outcome.pages[1].page_no, 2);
+        assert_eq!(outcome.unrecognized_pages(), vec![2]);
+    }
+
     #[test]
     fn downscale_shrinks_oversized_image_preserving_aspect() {
         // An 8000x4000 image (legal under the 20000px decode cap) is brought
@@ -1751,7 +2796,7 @@ mod tests {
     fn recognizes_cjk_test_image() {
         let bytes = std::fs::read("/tmp/ocr_test.png")
             .expect("generate /tmp/ocr_test.png first (see feat-ocr-report.md)");
-        let outcome = recognize(&bytes).expect("OCR should succeed");
+        let outcome = recognize_platform_best(&bytes).expect("OCR should succeed");
         assert!(
             outcome.text.contains("Creatinine") || outcome.text.contains("肌酐"),
             "unexpected OCR text: {}",
@@ -1775,7 +2820,8 @@ mod tests {
             "/../../examples/demo-dataset/photos/2026-03-15_检验报告_扫描图PDF.pdf"
         );
         let bytes = std::fs::read(path).expect("demo scanned PDF present");
-        let outcome = recognize_pdf(&bytes).expect("recognize_pdf should succeed");
+        let outcome = recognize_pdf_platform_best(&bytes)
+            .expect("recognize_pdf_platform_best should succeed");
         assert!(
             outcome.text.contains("肌酐") || outcome.text.contains("Creatinine"),
             "unexpected OCR text: {}",
@@ -1840,6 +2886,37 @@ mod tests {
                 "expected >=2 space gap before {part:?}, got {gap} in {out:?}"
             );
         }
+    }
+
+    #[test]
+    fn normalize_ocr_decimal_comma_rewrites_digit_flanked_comma() {
+        // The reproduction this exists for: PP-OCRv5 misreading the decimal
+        // point in "3.50~10.00" as a comma on a compressed real photo. Left
+        // alone, the extractor parses "3,50~10.00" as low=50, high=10 --
+        // `low > high`, a malformed range reported with full confidence.
+        assert_eq!(
+            normalize_ocr_decimal_comma("10嗜酸性粒细胞百分4.40  +  3,50~10.00 %"),
+            "10嗜酸性粒细胞百分4.40  +  3.50~10.00 %"
+        );
+    }
+
+    #[test]
+    fn normalize_ocr_decimal_comma_leaves_non_digit_flanked_commas_alone() {
+        // Only a comma with an ASCII digit on *both* sides is a plausible
+        // misread decimal point. Prose punctuation (including the full-width
+        // CJK comma) and a comma next to whitespace must pass through as-is.
+        for text in ["项目, 结果", "备注：正常，无需复查", "12, 34", "12 ,34"] {
+            assert_eq!(normalize_ocr_decimal_comma(text), text);
+        }
+    }
+
+    #[test]
+    fn rebuild_layout_text_fixes_decimal_comma_before_extraction() {
+        // End-to-end through `rebuild_layout_text`: a single mis-OCR'd box
+        // must come out with its decimal point restored, not just the
+        // isolated helper.
+        let lines = vec![ll("3,50~10.00", 0.0, 0.0, 100.0, 20.0)];
+        assert_eq!(rebuild_layout_text(&lines), "3.50~10.00");
     }
 
     #[test]
@@ -2006,6 +3083,331 @@ mod tests {
             banner_line.contains("边A")
                 && banner_line.contains("边C")
                 && banner_line.contains("边D")
+        );
+    }
+
+    #[test]
+    fn estimate_tilt_recovers_known_page_rotation() {
+        // Lay a level page out, then rotate it: every box's top gains
+        // `slope * x_centre`. The projection profile is sharpest at exactly
+        // that slope, so the estimate must find it back.
+        let slope = 0.10_f32;
+        let mut owned = Vec::new();
+        for row in 0..10 {
+            for col in 0..5 {
+                let left = col as f32 * 200.0;
+                let right = left + 150.0;
+                let x_centre = (left + right) / 2.0;
+                let top = row as f32 * 40.0 + slope * x_centre;
+                owned.push(ll("x", left, top, right, 20.0));
+            }
+        }
+        let refs: Vec<&LayoutLine> = owned.iter().collect();
+        let estimated = estimate_tilt(&refs, median_line_height(&refs));
+        assert!(
+            (estimated - slope).abs() <= 2.0 * TILT_SEARCH_STEP,
+            "expected tilt ~{slope}, got {estimated}"
+        );
+
+        // ...and a level page must read as level, or every page would be
+        // treated as untrustworthy.
+        let mut level = Vec::new();
+        for row in 0..10 {
+            for col in 0..5 {
+                let left = col as f32 * 200.0;
+                level.push(ll("x", left, row as f32 * 40.0, left + 150.0, 20.0));
+            }
+        }
+        let level_refs: Vec<&LayoutLine> = level.iter().collect();
+        let flat = estimate_tilt(&level_refs, median_line_height(&level_refs));
+        assert!(
+            flat.abs() <= 2.0 * TILT_SEARCH_STEP,
+            "level page read as {flat}"
+        );
+    }
+
+    #[test]
+    fn rebuild_layout_text_dual_column_splits_despite_ragged_left_edge() {
+        // The bug this rewrite exists for. Every row here is a genuine
+        // two-record row, but the left half's right edge moves around by ~70px
+        // between rows -- exactly what real lab photos do, because item names
+        // differ in length and the recognizer often glues the value onto the
+        // name (`5嗜酸性粒细胞计数0.17`). The previous detector demanded the
+        // rows' gaps cluster within 2% of the content width *and* that all of
+        // them overlap, so a page like this scattered into several clusters
+        // whose intersections were empty, and it split nothing at all.
+        let names = [
+            "1白细胞计数",
+            "2中性粒细胞计数",
+            "3淋巴细胞计数",
+            "4单核细胞计数",
+            "5嗜酸性粒细胞计数0.17",
+            "6嗜碱性粒细胞计数0.04",
+        ];
+        let right_names = [
+            "14红细胞压积",
+            "15红细胞平均体积",
+            "16平均血红蛋白",
+            "17平均血红蛋白浓度",
+            "18红细胞分布宽度",
+            "19血小板计数",
+        ];
+        // Ragged: the left half ends anywhere in 430..=500.
+        let left_edges = [430.0, 470.0, 445.0, 455.0, 500.0, 495.0];
+        let mut lines = Vec::new();
+        for i in 0..6 {
+            let top = i as f32 * 40.0;
+            let edge: f32 = left_edges[i];
+            lines.push(ll(names[i], 40.0, top, edge - 120.0, 24.0));
+            lines.push(ll("4.00~10.00", edge - 110.0, top, edge, 24.0));
+            // Right half starts at a stable x, as the second table does.
+            lines.push(ll(right_names[i], 560.0, top, 700.0, 24.0));
+            lines.push(ll("39.2", 720.0, top, 780.0, 24.0));
+            lines.push(ll("42.0~49.0", 800.0, top, 920.0, 24.0));
+        }
+
+        let out = rebuild_layout_text(&lines);
+        for (i, right) in right_names.iter().enumerate() {
+            let offender = out
+                .lines()
+                .find(|l| l.contains(names[i]) && l.contains(right));
+            assert!(
+                offender.is_none(),
+                "left record {:?} and right record {right:?} must not share a line, got {offender:?}",
+                names[i]
+            );
+        }
+    }
+
+    #[test]
+    fn rebuild_layout_text_dual_column_keeps_single_table_record_whole() {
+        // A single-column 4-field table -- name | result | range | unit, every
+        // row on the same four x anchors. Geometrically this is *identical* to
+        // two side-by-side 2-field tables: a clean, fully-supported whitespace
+        // band with two boxes either side, widest in the middle. Only the
+        // content says otherwise: each candidate seam's right half would open
+        // on a value (`12`), a range (`11.0 - 16.0`) or a unit (`g/dL`), never
+        // on an item name, so none of them is a record boundary. Splitting one
+        // would tear a record in half and leave the extractor a value with no
+        // name -- strictly worse than leaving two records on one line.
+        // Regression fixture: the real `GNU_Health_lab_report_sample.png`.
+        let rows = [
+            ("Hemoglobin", "12", "11.0 - 16.0", "g/dL"),
+            ("RBC", "3.3", "3.5-5.50", "10^6/uL"),
+            ("HCT", "36", "37.0-50.0", "%"),
+            ("MCV", "83", "82-95", "fL"),
+            ("MCH", "28", "27-31", "pg"),
+            ("WBC", "6.7", "4.5-11", "10^3/uL"),
+        ];
+        let mut lines = Vec::new();
+        for (i, (name, result, range, unit)) in rows.iter().enumerate() {
+            let top = i as f32 * 30.0;
+            lines.push(ll(name, 0.0, top, 100.0, 20.0));
+            lines.push(ll(result, 200.0, top, 230.0, 20.0));
+            lines.push(ll(range, 300.0, top, 380.0, 20.0));
+            lines.push(ll(unit, 450.0, top, 500.0, 20.0));
+        }
+
+        let out = rebuild_layout_text(&lines);
+        assert_eq!(
+            out.lines().count(),
+            rows.len(),
+            "single-column table must stay one line per record: {out:?}"
+        );
+        for (name, result, range, unit) in rows {
+            let line = out
+                .lines()
+                .find(|l| l.contains(name))
+                .unwrap_or_else(|| panic!("record {name:?} present in {out:?}"));
+            assert!(
+                line.contains(result) && line.contains(range) && line.contains(unit),
+                "record {name:?} must keep its value, range and unit on one line, got {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rebuild_layout_text_report1_tilt_does_not_misattribute_reference_ranges() {
+        // Real detection-box geometry captured from
+        // `examples/demo-dataset/real/血常规报告1.jpg` (~7° page tilt -- the
+        // reproduction case for fix/banded-tilt-rows). Every `ll(...)` below
+        // is the exact (text, left, top, right, height) PP-OCRv5 detection
+        // output for this image, dumped once so this fixture doesn't need
+        // the OCR engine or model weights to run.
+        //
+        // This round investigated grouping rows by a *banded* (per-region)
+        // tilt-compensated top (`top - s*x`, with `s` estimated locally
+        // instead of page-wide) to fix the failure this image demonstrates:
+        // name "3淋巴细胞计数" (value 1.48, true ref 1.00~3.30) sits ~44px
+        // above its own reference range at this image's ~0.13 local slope --
+        // past the row-grouping tolerance (`0.6 * height` ≈ 33-36px here) --
+        // so raw-top grouping lands the *previous* item's reference range
+        // ("1.80~6.40") on the same visual row as this item's name instead.
+        // That is a real failure mode. It is just not the one this fixture
+        // is red on, which is the point of this test:
+        //
+        // The over-merged row that raw-top grouping actually produces here
+        // (see the row-by-row simulation in the commit message) is *already*
+        // broken apart correctly -- but for an unrelated reason. This page
+        // also legitimately lays out two tables side by side (items 1-13
+        // left, 14-22 right), so `find_dual_column_band`'s gutter split
+        // (present before this round, unrelated to tilt) cuts the
+        // over-merged row at the same x position that happens to separate
+        // "name + own value" (left column) from "next item's misattributed
+        // range" (right column). Verified against the actual `origin/main`
+        // binary with this exact image: the two required criteria
+        // (`3淋巴细胞计数` must not carry ref_low=1.8; `9单核细胞百分比`
+        // must not carry ref[18.0,40.0]) already hold there, with zero code
+        // changes -- there was no red state for this round to turn green.
+        //
+        // Banded tilt correction was not added on top of that, because it
+        // would not fix the actual near-miss in this photo: under the
+        // previous round's leveled-top reconstruction (fix/tilt-aware-rows,
+        // commit 741d165, not merged), item 1's own value and item 2's name
+        // land within ~2.2px of the reference range that decides which one
+        // it belongs to -- this page's table row pitch (~43px) and its tilt
+        // drift (~44px) are nearly equal, so no single slope, global or
+        // local-to-the-table-band, can safely resolve that boundary. A
+        // banded estimate for this image's table region works out to
+        // approximately the same ~0.13 slope the previous round already
+        // measured (see 741d165's commit message: local ≈ global for this
+        // image), so banding does not change that near-tie.
+        //
+        // Confirmed independently that the dual-column rescue is
+        // coincidental, not a general fix: `血常规报告4.jpg` (whose
+        // extraction results this round's acceptance bar explicitly freezes
+        // unchanged) exhibits this exact failure mode *unprotected* today --
+        // `3淋巴细胞计数` extracts with ref[0.0,0.5], `9单核细胞百分比`
+        // with ref[3.5,10.0]. Touching row-grouping broadly enough to help
+        // report1 in a principled way risks changing report4's (already
+        // wrong) output too, which the acceptance bar forbids.
+        //
+        // This test pins the current, correct-by-luck output so a future
+        // change (e.g. reviving banded tilt) can't silently regress it
+        // without a test failing here first.
+        let lines = vec![
+            ll("独墅湖科教创新区医院化验报告单", 369.0, 0.0, 919.0, 107.0),
+            ll("名孟丁", 192.0, 36.0, 315.0, 48.0),
+            ll("建", 139.0, 39.0, 167.0, 20.0),
+            ll("2016-08-24", 1009.0, 55.0, 1135.0, 50.0),
+            ll("门诊号90051065", 126.0, 57.0, 348.0, 62.0),
+            ll("性别男", 462.0, 67.0, 565.0, 52.0),
+            ll("No: 20160824XXS0025", 872.0, 96.0, 1117.0, 68.0),
+            ll("检验项目", 128.0, 98.0, 245.0, 52.0),
+            ll("科室儿科", 458.0, 98.0, 578.0, 54.0),
+            ll("年龄", 692.0, 101.0, 784.0, 50.0),
+            ll("2岁", 765.0, 110.0, 832.0, 47.0),
+            ll("结果", 323.0, 123.0, 425.0, 52.0),
+            ll("样本类型血液", 860.0, 125.0, 1021.0, 55.0),
+            ll("参考范围", 447.0, 139.0, 570.0, 56.0),
+            ll("1白细胞计数", 111.0, 141.0, 271.0, 55.0),
+            ll("标本状态正常", 856.0, 153.0, 1020.0, 58.0),
+            ll("单位", 582.0, 158.0, 653.0, 48.0),
+            ll("3.86", 320.0, 168.0, 391.0, 44.0),
+            ll("检验项目", 667.0, 169.0, 781.0, 54.0),
+            ll("2中性粒细胞计数", 107.0, 184.0, 319.0, 60.0),
+            ll("4.00~10.00", 440.0, 185.0, 587.0, 52.0),
+            ll("↓", 403.0, 186.0, 429.0, 24.0),
+            ll("结果", 852.0, 193.0, 957.0, 53.0),
+            ll("10^9/14红细胞压积", 572.0, 200.0, 804.0, 67.0),
+            ll("参考范围", 975.0, 209.0, 1094.0, 53.0),
+            ll("1.68", 319.0, 212.0, 385.0, 40.0),
+            ll("单位", 1072.0, 219.0, 1162.0, 54.0),
+            ll("3淋巴细胞计数", 105.0, 226.0, 292.0, 57.0),
+            ll("1.80~6.40", 436.0, 227.0, 571.0, 50.0),
+            ll("↓", 406.0, 229.0, 423.0, 21.0),
+            ll("39.2", 849.0, 238.0, 915.0, 43.0),
+            ll("10^9/L15红细胞平均体积90.1", 570.0, 243.0, 907.0, 79.0),
+            ll("4", 912.0, 248.0, 959.0, 35.0),
+            ll("42.0~49.0", 947.0, 252.0, 1093.0, 49.0),
+            ll("1.48", 316.0, 253.0, 383.0, 42.0),
+            ll("4单核细胞计数", 105.0, 267.0, 293.0, 57.0),
+            ll("1.00~3.30", 435.0, 269.0, 566.0, 49.0),
+            ll("L/L", 1088.0, 270.0, 1146.0, 39.0),
+            ll("10~9/116平均血红蛋白28.0", 564.0, 284.0, 900.0, 77.0),
+            ll("82.0~95.0f1", 956.0, 290.0, 1129.0, 59.0),
+            ll("0.49", 311.0, 293.0, 380.0, 42.0),
+            ll("5嗜酸性粒细胞计数0.17", 104.0, 307.0, 378.0, 68.0),
+            ll("0.20~1.00", 430.0, 310.0, 562.0, 47.0),
+            ll("109/L17平均血红蛋白浓度311", 560.0, 326.0, 880.0, 72.0),
+            ll("27.0~33.0 pg", 945.0, 329.0, 1122.0, 63.0),
+            ll("6嗜碱性粒细胞计数0.04", 103.0, 348.0, 375.0, 66.0),
+            ll("0.00~0.50", 428.0, 350.0, 559.0, 47.0),
+            ll("10~9/L18红细胞分布宽度13.4", 541.0, 363.0, 884.0, 75.0),
+            ll("320~360", 950.0, 374.0, 1061.0, 45.0),
+            ll("4", 911.0, 378.0, 925.0, 19.0),
+            ll("0.02~0.10109/119血小板计数", 422.0, 386.0, 772.0, 78.0),
+            ll("7中性粒细胞百分比43.60", 100.0, 387.0, 380.0, 67.0),
+            ll("0 g/1", 1038.0, 387.0, 1120.0, 41.0),
+            ll("10.6~15.0%", 934.0, 409.0, 1099.0, 57.0),
+            ll("40.00~75.00%", 411.0, 426.0, 581.0, 53.0),
+            ll("8淋巴细胞百分比38.3", 96.0, 428.0, 371.0, 66.0),
+            ll("171", 813.0, 437.0, 867.0, 37.0),
+            ll("20血小板压积", 618.0, 449.0, 768.0, 54.0),
+            ll("100~300", 938.0, 451.0, 1049.0, 46.0),
+            ll("109/L", 1051.0, 465.0, 1139.0, 43.0),
+            ll("18.0~40.0 %", 416.0, 466.0, 576.0, 52.0),
+            ll("9单核细胞百分比12.70", 91.0, 468.0, 373.0, 67.0),
+            ll("0.20", 808.0, 476.0, 872.0, 38.0),
+            ll(
+                "21血小板分布宽度13.7↓ 15.1~18.1%",
+                613.0,
+                489.0,
+                1082.0,
+                91.0,
+            ),
+            ll("0.11~0.28", 921.0, 489.0, 1050.0, 46.0),
+            ll("3.50~10.00 %", 407.0, 506.0, 571.0, 50.0),
+            ll("l/l", 1047.0, 507.0, 1097.0, 32.0),
+            ll("10嗜酸性粒细胞百分4.40", 91.0, 509.0, 355.0, 64.0),
+            ll("+", 377.0, 509.0, 397.0, 17.0),
+            ll("22平均血小板体积 11.70", 610.0, 529.0, 875.0, 65.0),
+            ll("0.00~5.00%", 404.0, 544.0, 569.0, 53.0),
+            ll("11嗜碱性粒细胞百分1.00", 85.0, 548.0, 350.0, 65.0),
+            ll("6.00~14.00 fL", 910.0, 565.0, 1083.0, 54.0),
+            ll("0.00~1.50 %", 397.0, 583.0, 565.0, 56.0),
+            ll("12红细胞计数", 81.0, 588.0, 233.0, 51.0),
+            ll("4.35", 282.0, 611.0, 346.0, 41.0),
+            ll("4.00~5.50", 396.0, 624.0, 527.0, 45.0),
+            ll("13血红蛋白", 76.0, 626.0, 206.0, 50.0),
+            ll("1012/", 505.0, 636.0, 603.0, 42.0),
+            ll("122", 280.0, 653.0, 328.0, 34.0),
+            ll("120~160", 403.0, 664.0, 511.0, 43.0),
+            ll("g/1", 511.0, 678.0, 569.0, 35.0),
+            ll("送检医生董薇", 77.0, 704.0, 240.0, 52.0),
+            ll("接收时间2016-08-2411:07", 72.0, 730.0, 371.0, 67.0),
+            ll("检验者29028", 405.0, 739.0, 576.0, 53.0),
+            ll("本报告仪对所接收样本负责！", 64.0, 758.0, 380.0, 68.0),
+            ll("检验时间2016-08-2411:08", 402.0, 766.0, 694.0, 65.0),
+            ll("审核者樊笋", 726.0, 774.0, 905.0, 56.0),
+            ll("打印时间2016-08-2411:08", 722.0, 801.0, 1013.0, 69.0),
+            ll("发票号码01425472", 798.0, 838.0, 997.0, 59.0),
+        ];
+
+        let out = rebuild_layout_text(&lines);
+
+        let item3_line = out
+            .lines()
+            .find(|l| l.contains("3淋巴细胞计数"))
+            .expect("3淋巴细胞计数 line present");
+        assert!(
+            !item3_line.contains("1.80~6.40"),
+            "item 2's reference range must not land on item 3's name/value line: {item3_line:?}"
+        );
+
+        let item9_line = out
+            .lines()
+            .find(|l| l.contains("9单核细胞百分比"))
+            .expect("9单核细胞百分比 line present");
+        assert!(
+            item9_line.contains("21血小板分布宽度"),
+            "item 9 must stay glued to the unrelated content next to it -- if it \
+             ever comes out clean (name, value, ref alone), that is new behavior, \
+             not this fixture's current accidental safety net, and the reference \
+             range must be checked by hand against the original photo before \
+             trusting it (18.0~40.0 in this row is item 9's own printed range,  \
+             but arrives glued to item 21's row -- confirm parser-side handling \
+             separately): {item9_line:?}"
         );
     }
 }

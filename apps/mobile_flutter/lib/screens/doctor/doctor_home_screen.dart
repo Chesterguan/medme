@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_delivery_count.dart';
 import 'package:mobile_flutter/screens/doctor/proxy_intake_flow.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
-import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 /// 医生模式主界面——不放进「导出·分享」tab,是独立的应用根(见 `main.dart` 的
 /// `AppRoot`)。「为病人代拍」按钮 + **今日病历表**:代拍过的病人按姓名列在这里,
 /// 本机最多留 12 小时(到点由 [ProxyPatientManager] 自动删),期间可点回去补拍、
 /// 继续核对、重新交付。右上「清空」一次删干净。
+///
+/// 视觉:主色走 `MedColors.proxy`(紫),不是个人模式的 `seal`(蓝)——医生模式
+/// 的每一屏都靠这个颜色宣告「这不是你自己的档案」。除主色外的一切(中性色、字阶、
+/// 圆角、阴影、卡片)与个人模式同源。
 class DoctorHomeScreen extends StatefulWidget {
   const DoctorHomeScreen({super.key});
 
@@ -92,7 +97,9 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
           child: const Text('取消'),
         ),
         FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: MedMe.danger),
+          style: FilledButton.styleFrom(
+            backgroundColor: MedColors.of(context).critical,
+          ),
           onPressed: () => Navigator.of(context).pop(true),
           child: const Text('删除'),
         ),
@@ -102,6 +109,7 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('医生模式'),
@@ -125,44 +133,45 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(28, 24, 28, 8),
+              padding: const EdgeInsets.fromLTRB(
+                MedShape.s5,
+                MedShape.s5,
+                MedShape.s5,
+                MedShape.s1,
+              ),
               child: Column(
                 children: [
                   CircleAvatar(
                     radius: 34,
-                    backgroundColor: MedMe.proxyOrangeSoft,
-                    child: const Icon(
+                    backgroundColor: c.proxyWash,
+                    child: Icon(
                       Icons.medical_services_outlined,
-                      color: MedMe.proxyOrange,
+                      color: c.proxy,
                       size: 32,
                     ),
                   ),
-                  const SizedBox(height: 14),
-                  const Text(
-                    '为病人代建档',
-                    style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
-                  ),
+                  const SizedBox(height: MedShape.s2),
+                  Text('为病人代建档', style: MedType.title.copyWith(color: c.ink)),
                   const SizedBox(height: 6),
-                  const Text(
+                  Text(
                     '当面征得同意后拍摄病人的纸质病历材料,拍完生成一个认领码让病人当场扫走;'
                     '网络不畅时退回加密文件+口令。本机最多留 12 小时,到时间自动删。',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 13, color: MedMe.faint, height: 1.5),
+                    style: MedType.secondary.copyWith(
+                      color: c.ink2,
+                      height: 1.5,
+                    ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: MedShape.s4),
                   SizedBox(
                     width: double.infinity,
                     height: 54,
                     child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: MedMe.proxyOrange,
-                      ),
+                      // 一屏唯一的主按钮:紫色纯色不用渐变(规范 §六)。
+                      style: FilledButton.styleFrom(backgroundColor: c.proxy),
                       onPressed: _startCapture,
                       icon: const Icon(Icons.camera_alt_outlined),
-                      label: const Text(
-                        '为病人代拍',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                      ),
+                      label: const Text('为病人代拍'),
                     ),
                   ),
                 ],
@@ -170,10 +179,14 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
             ),
             Expanded(child: _buildList()),
             Padding(
-              padding: const EdgeInsets.only(bottom: 12, top: 4),
+              padding: const EdgeInsets.only(bottom: MedShape.s2, top: 4),
               child: Text(
                 '今日已交付 ${_todayCount ?? 0} 份',
-                style: const TextStyle(fontSize: 13, color: MedMe.faint),
+                // 数字要等宽:一天下来这行只有它在变。
+                style: MedType.secondary.copyWith(
+                  color: c.ink3,
+                  fontFeatures: MedType.tabular,
+                ),
               ),
             ),
           ],
@@ -183,35 +196,37 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
   }
 
   Widget _buildList() {
+    final c = MedColors.of(context);
     if (_patients.isEmpty) {
-      return const Center(
+      // 空态给虚线框(规范 §六)——出路就在框正上方那个主按钮,不再重复一个。
+      return Center(
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 32),
-          child: Text(
-            '还没有代拍的病人。\n代拍过的会列在这里,12 小时内可以随时回来补拍或重发。',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: MedMe.faint, height: 1.6),
+          padding: const EdgeInsets.symmetric(horizontal: MedShape.s6),
+          child: DottedBorderBox(
+            child: Text(
+              '还没有代拍的病人。\n代拍过的会列在这里,12 小时内可以随时回来补拍或重发。',
+              textAlign: TextAlign.center,
+              style: MedType.body.copyWith(color: c.ink2, height: 1.6),
+            ),
           ),
         ),
       );
     }
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      padding: const EdgeInsets.fromLTRB(
+        MedShape.s3,
+        MedShape.s1,
+        MedShape.s3,
+        MedShape.s1,
+      ),
       children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(4, 4, 4, 8),
-          child: Text(
-            '今日病历表',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: MedMe.faint,
-            ),
-          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 4, MedShape.s1),
+          child: Text('今日病历表', style: MedType.caption.copyWith(color: c.ink3)),
         ),
         for (final p in _patients)
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: MedShape.s1),
             child: _PatientRow(
               patient: p,
               onTap: () => _openPatient(p),
@@ -224,6 +239,10 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
 }
 
 /// 今日病历表一行:病人名 + 份数 + 还剩多久自动删 + 删除按钮。
+///
+/// **不带骑缝线。** 这是一张派生卡:名字是从若干份原件里识别出来的、份数是数出来
+/// 的,背后没有「某一张纸」可点进去(点进去是这个病人的清单)。骑缝线只给点得进
+/// 原件的卡(规范 §五),当装饰用就把「可溯源」这句话说成了假话。
 class _PatientRow extends StatelessWidget {
   const _PatientRow({
     required this.patient,
@@ -237,63 +256,62 @@ class _PatientRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: MedMe.panel,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: MedMe.line),
-          ),
-          padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: MedMe.proxyOrangeSoft,
-                  borderRadius: BorderRadius.circular(10),
+    final c = MedColors.of(context);
+    return MedCard(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              MedShape.s2,
+              MedShape.s2,
+              4,
+              MedShape.s2,
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: c.proxyWash,
+                    borderRadius: BorderRadius.circular(MedShape.radiusControl),
+                  ),
+                  child: Icon(Icons.person_outline, size: 19, color: c.proxy),
                 ),
-                child: const Icon(
-                  Icons.person_outline,
-                  size: 19,
-                  color: MedMe.proxyOrange,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      patient.displayName,
-                      style: const TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w700,
+                const SizedBox(width: MedShape.s2),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        patient.displayName,
+                        style: MedType.subtitle.copyWith(color: c.ink),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '${patient.docCount} 份 · ${_remainingLabel(patient.remaining)}',
-                      style: const TextStyle(fontSize: 12.5, color: MedMe.faint),
-                    ),
-                  ],
+                      const SizedBox(height: 3),
+                      Text(
+                        '${patient.docCount} 份 · ${_remainingLabel(patient.remaining)}',
+                        // 份数与倒计时都是数字,等宽才对得齐。
+                        style: MedType.secondary.copyWith(
+                          color: c.ink2,
+                          fontFeatures: MedType.tabular,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, size: 20),
-                color: MedMe.faint,
-                tooltip: '删除这个病人',
-                onPressed: onDelete,
-              ),
-            ],
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  color: c.ink3,
+                  tooltip: '删除这个病人',
+                  onPressed: onDelete,
+                ),
+              ],
+            ),
           ),
         ),
       ),

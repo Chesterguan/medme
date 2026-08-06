@@ -9,6 +9,11 @@
 //! 使用 —— 语义与 Tauri 版的 `AppState`/`VaultPaths` 一致(真相根/派生库路径/
 //! 设备 id 一起存,重置/迁移时一并替换)。
 use crate::api::dto::*;
+use crate::diagnostics::warn as log_warn;
+// `StreamSink` 不是 `flutter_rust_bridge` crate 本身导出的类型——codegen 按
+// `frb_generated_stream_sink!` 宏把它生成进 `frb_generated.rs`,API 侧照官方
+// 约定从那里 `use`(见 `load_demo_data` 的进度回报,`DemoLoadProgressDto`)。
+use crate::frb_generated::StreamSink;
 use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind, Vault};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -346,12 +351,6 @@ pub fn patient_profile() -> anyhow::Result<PatientProfileDto> {
     })
 }
 
-/// 跑一次 `pipeline::ingest` 并映射成 `ImportOutcomeDto`。抽取失败(扫描图等)
-/// 不致命——原文件已进 CAS,返回 status="failed" 让前端提示「未能识别」而非报错
-/// 崩溃。与 Tauri 版 `ingest_one` 同构,但不含 iOS Vision / 安卓 ML Kit 的分岔——
-/// Flutter 端已用 `google_mlkit_text_recognition` 识别好图片文本,走
-/// `ingest_image_with_text`,这里只处理 PDF/TXT/DICOM 等有文本层/结构化元数据的
-/// 文件类型(见 `docs/020_Flutter_Mobile_Rewrite.md` 的 OCR 分工)。
 /// 从一份文档的 OCR 文本里识别患者姓名(用于「导错人」核对)。读文本失败或识别不到返回 None。
 fn detected_name_for(v: &Vault, doc_id: i64) -> Option<String> {
     v.ocr_text(doc_id)
@@ -359,6 +358,15 @@ fn detected_name_for(v: &Vault, doc_id: i64) -> Option<String> {
         .and_then(|t| parser::extract_demographics(&t).name)
 }
 
+/// 跑一次 `pipeline::ingest` 并映射成 `ImportOutcomeDto`。抽取失败(扫描图等)
+/// 不致命——原文件已进 CAS,返回 status="failed" 让前端提示「未能识别」而非报错
+/// 崩溃。与 Tauri 版 `ingest_one` 同构。
+///
+/// 图片**不走这里**:Flutter 端先用 PP-OCRv5(`ocr_bridge.dart` →
+/// `recognize_image_pp`,iOS/安卓同引擎同模型)识别好文本,再走
+/// `ingest_image_with_text`。这里只处理 PDF/TXT/DICOM 等有文本层/结构化元数据的
+/// 文件类型。(旧注释写「安卓走 google_mlkit_text_recognition」,那条依赖早已
+/// 删除,别再据此推断。)
 fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
     // Panic firewall:parser/dicom 栈里的 panic 不能一路 unwind 穿过持锁的 Vault、
     // 污染共享 Mutex(与 Tauri 版 `ingest_one` 同一理由)。
@@ -391,6 +399,7 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 doc_type: o.doc_type.map(|d| d.as_str().to_string()),
                 document_id,
                 detected_name,
+                pages_without_text: o.pages_without_text,
             }
         }
         Err(e) => {
@@ -398,7 +407,7 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            eprintln!("[ingest] failed for {}: {e}", path.display());
+            log_warn(&format!("[ingest] failed for {}: {e}", path.display()));
             ImportOutcomeDto {
                 name,
                 source_file_id: 0,
@@ -406,6 +415,7 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 doc_type: None,
                 document_id: None,
                 detected_name: None,
+                pages_without_text: Vec::new(),
             }
         }
     }
@@ -465,14 +475,30 @@ pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOut
     })
 }
 
-/// 扫描版 PDF 的 OCR 回填。`ingest_bytes` 对无文本层的 PDF 只 `store_no_text`
-/// (移动端未链接 Rust OCR 引擎),文档已存但无文字。Flutter 侧用 `pdfx` 逐页把
-/// PDF 渲染成 PNG、走原生图片 OCR(iOS Vision / 安卓 ML Kit)拿到文本后,调本函数
-/// 把文本补进该已存文档,使其可搜索、进 summary。
+/// 扫描版 PDF 的逐页 OCR 回填。`ingest_bytes`/`ingest_pdf`(Rust pipeline)对
+/// 没能恢复出文本的页给出 `IngestOutcome::pages_without_text`,文档可能已建好
+/// (部分页有文本层)、也可能整份 `stored_no_text`(一页可用文本都没有)。
+/// Flutter 侧用 `pdfx` 把这些页逐一渲染成 PNG、走 `recognizeImageText`
+/// (PP-OCRv5,iOS/安卓同一条路)拿到文本后,逐页调本函数补进该文档。
 ///
-/// 只补 `ocr_result`;`doc_type` 暂沿用建档时的文件名分类(用 OCR 文本重分类属质量
-/// 提升,另做)。文本为空则报错(调用方不应回填空)。
-pub fn backfill_pdf_text(document_id: i64, text: String, confidence: f64) -> anyhow::Result<()> {
+/// ⚠️ 旧注释说「移动端未链接 Rust OCR 引擎」——**已经不对了**:iOS 与 arm64
+/// 安卓都直接依赖 `packages/ocr` 的 `engine`,`pipeline::ingest_pdf` 在端上真的
+/// 会去调 PP-OCRv5。但 `ocr::set_model_dir` 只由 `ensure_pp_models_ready`
+/// (`recognize_image_pp` 的入口)设置,所以一次会话里**第一份**导入是 PDF 时
+/// 模型还没落盘,Rust 侧逐页 OCR 会全部失败、整份落到 `pages_without_text`,
+/// 全靠这条回填路径兜底。不是数据丢失(页码如实报了),但白跑一趟。
+///
+/// `page_no` 是 1-based、对应 PDF 里的真实页码(与 `pages_without_text` 的口径
+/// 一致)——不再固定写 1:一份文档现在可能有多条 `ocr_result`(每页一条,
+/// `core_model::Vault::add_ocr` 按 `(document_id, page_no)` 天然去重/幂等),
+/// `ocr_text` 读取时按页码拼接。只补 `ocr_result`;`doc_type` 暂沿用建档时的
+/// 分类(用 OCR 文本重分类属质量提升,另做)。文本为空则报错(调用方不应回填空)。
+pub fn backfill_pdf_text(
+    document_id: i64,
+    page_no: i32,
+    text: String,
+    confidence: f64,
+) -> anyhow::Result<()> {
     let text = text.trim().to_string();
     if text.is_empty() {
         anyhow::bail!("回填文本为空,拒绝");
@@ -482,7 +508,7 @@ pub fn backfill_pdf_text(document_id: i64, text: String, confidence: f64) -> any
             .vault
             .add_ocr(NewOcr {
                 document_id,
-                page_no: 1,
+                page_no,
                 backend: MOBILE_OCR_BACKEND,
                 model_version: MOBILE_OCR_MODEL.into(),
                 text,
@@ -499,6 +525,14 @@ pub fn backfill_pdf_text(document_id: i64, text: String, confidence: f64) -> any
 /// 传入值);识别为空则退回文件名元数据(`StoredNoText`),原件仍可见。落库语义逐字
 /// 镜像 Tauri 版 `ingest_image_via_vision`/`ingest_image_via_mlkit`,只是识别文本来自
 /// 参数而非本地再跑一次 OCR。
+///
+/// **多页原件(多页 TIFF)**:Dart 侧把**文件路径**交给 Apple Vision / ML Kit,
+/// 两者都只识别第一帧,所以 `ocr_text` 里永远只有第 1 页。这条路径过去把
+/// `page_count` 写死 1、`pages_without_text` 写死空,于是第 2 页起整页丢失而
+/// UI 报「已识别入库」——与 `pipeline::ingest_image` 修的是同一个缺陷,只是发生
+/// 在移动端这条**不经 `pipeline::ingest`** 的独立路径上(移动端的 `.tiff` 由
+/// `isImageName` 判为图片,走的就是这里,不是 `ingest_bytes`)。现在如实带出真实
+/// 页数与没读到的页码;调用方 `import_flow.dart` 据此报「N 页未能识别文字」。
 pub fn ingest_image_with_text(
     name: String,
     bytes: Vec<u8>,
@@ -526,6 +560,18 @@ pub fn ingest_image_with_text(
         format!("{base}.jpg")
     };
 
+    // 原件真实页数(多页 TIFF>1,其余一律 1)。`ocr_text` 只可能是第 1 页的,
+    // 故 2..=n 是「没读到的页」;一页文字都没识别出来时 1..=n 全都没读到。
+    // 单页图片(绝大多数)两者都退化成 1 页 / 空表,行为与旧版逐字节相同。
+    let page_count = pipeline::image_page_count(&bytes) as i32;
+    let unread_from = |first: i32| -> Vec<i32> {
+        if page_count > 1 {
+            (first..=page_count).collect()
+        } else {
+            Vec::new()
+        }
+    };
+
     with_state(|state| {
         let v = &state.vault;
         let mime = pipeline::mime_for(Path::new(&safe_name));
@@ -545,6 +591,7 @@ pub fn ingest_image_with_text(
                 doc_type: None,
                 document_id: None,
                 detected_name: None,
+                pages_without_text: Vec::new(),
             }
         } else {
             let text = ocr_text.trim().to_string();
@@ -559,7 +606,7 @@ pub fn ingest_image_with_text(
                         doc_date_end,
                         title: Some(safe_name.clone()),
                         language: parser::detect_language(&text),
-                        page_count: 1,
+                        page_count,
                     })
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 v.add_ocr(NewOcr {
@@ -579,6 +626,8 @@ pub fn ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: parser::extract_demographics(&text).name,
+                    // 第 1 页有文字,2..=n 没读到。
+                    pages_without_text: unread_from(2),
                 }
             } else {
                 let (doc_date, doc_date_end) = parser::guess_date_range(&safe_name);
@@ -591,7 +640,7 @@ pub fn ingest_image_with_text(
                         doc_date_end,
                         title: Some(safe_name.clone()),
                         language: None,
-                        page_count: 1,
+                        page_count,
                     })
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 ImportOutcomeDto {
@@ -601,12 +650,284 @@ pub fn ingest_image_with_text(
                     doc_type: Some(doc_type.as_str().to_string()),
                     document_id: Some(doc.id),
                     detected_name: None, // 无文本,识别不到名字
+                    // 一页文字都没有,1..=n 全都没读到。
+                    pages_without_text: unread_from(1),
                 }
             }
         };
         v.rebuild_encounters()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(outcome)
+    })
+}
+
+/// `SelfMeasuredValueDto.analyte_key` → 中文标签,只用于合成文本的人类可读部分
+/// (不是临床判定,判定/参考区间在 `parser::self_entry::home_ref_range`)。这五个
+/// 键是「记录」入口封闭五选一的全部取值 —— 不接受任意字符串,故这里穷举即可,
+/// 不需要接一份完整词典(本 crate 未直接依赖 `terminology`,Rust 2018+ 的
+/// direct-dependency 规则也不允许隔着 `parser` 传递 `use` 它)。
+fn self_measured_label(analyte_key: &str) -> &'static str {
+    match analyte_key {
+        "bp_systolic" => "收缩压",
+        "bp_diastolic" => "舒张压",
+        "heart_rate" => "心率",
+        "body_weight" => "体重",
+        "body_temperature" => "体温",
+        "glucose" => "血糖",
+        _ => "记录值",
+    }
+}
+
+/// 这批值该给文档起的标题:血压(收缩压+舒张压同时在场)统一叫「血压」,其余
+/// 单值记录直接用那个值的中文标签。
+fn self_measured_title(values: &[SelfMeasuredValueDto]) -> String {
+    let has = |k: &str| values.iter().any(|v| v.analyte_key == k);
+    if has("bp_systolic") || has("bp_diastolic") {
+        "血压".to_string()
+    } else {
+        values
+            .first()
+            .map(|v| self_measured_label(&v.analyte_key).to_string())
+            .unwrap_or_else(|| "记录".to_string())
+    }
+}
+
+/// 数值渲染:与 `handoff::fmt_num`/`vault_projections::fmt_num` 同一取法 ——
+/// `{}` 的默认 f64 格式,`72` 不会印成 `72.0`。合成文本是给人看的,这个 `.0`
+/// 是 IEEE 754 的产物,不是用户填的数字。
+fn fmt_value(v: f64) -> String {
+    format!("{v}")
+}
+
+/// `parser::PlausibilityViolation` → 用户可读的中文提示。`parser` crate 没有
+/// UI 词汇(不知道"收缩压"这种中文标签怎么说),所以标签拼接放在这一层,复用
+/// 已有的 [`self_measured_label`]。这是兜底路径的文案(见调用处注释),不需要
+/// 像 `manual_entry_sheet.dart` 那样引导用户改哪个字段,但仍要说清"哪项、
+/// 什么值、超出多少"。
+fn format_plausibility_violation(v: &parser::PlausibilityViolation) -> String {
+    match v {
+        parser::PlausibilityViolation::OutOfRange {
+            analyte_key,
+            value,
+            low,
+            high,
+        } => format!(
+            "{}({})超出可能范围({}–{}),请检查是否输入有误",
+            self_measured_label(analyte_key),
+            fmt_value(*value),
+            fmt_value(*low),
+            fmt_value(*high),
+        ),
+        parser::PlausibilityViolation::SystolicNotAboveDiastolic {
+            systolic,
+            diastolic,
+        } => {
+            format!(
+                "收缩压({})应大于舒张压({}),请检查是否填反了",
+                fmt_value(*systolic),
+                fmt_value(*diastolic),
+            )
+        }
+    }
+}
+
+fn parse_measured_at(measured_at: Option<&str>) -> chrono::DateTime<chrono::Utc> {
+    measured_at
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now)
+}
+
+/// 写一条自测记录(结构化,append-only)。血压两个值(收缩压+舒张压)共享
+/// 同一份文档/同一个 `measured_at` —— 一次测量是最小操作单元,一起删一起改
+/// (MANUAL-ENTRY-DESIGN.md §5.3);其余四项(心率/体重/体温/血糖)各自单独一条
+/// 记录一份文档。`measured_at` 缺省(`None`)= 写入时刻,否则调用方传用户选择
+/// 的测量时间(RFC3339)。
+///
+/// 与 DICOM/txt 导入同构(见 `pipeline::add_text_layer_document`/
+/// `pipeline::dicom_summary` 的先例):没有原件,把合成文本本身当"文件"过一遍
+/// `vault.import`,再走 `add_document`+`add_ocr`。`doc_type` 固定
+/// `SelfMeasurement`,不经 `parser::classify` 猜 —— 这条录入路径的类型是
+/// 确定的,不需要也不该走给不确定文本猜类型的那条推断。
+///
+/// 硬约束(设计文档反复强调):**不支持任意化验项**——`values` 里的
+/// `analyte_key` 由 Dart 侧封闭五选一界面产出,这里不做白名单校验(校验属于
+/// UI 层拒绝非法输入的职责),但也不会因为一个陌生 key 而崩:未知 key 落进
+/// `parser::home_ref_range` 的 `_ => None` 分支,裸值显示、不出 flag。
+pub fn add_self_measurement(
+    values: Vec<SelfMeasuredValueDto>,
+    measured_at: Option<String>,
+) -> anyhow::Result<i64> {
+    if values.is_empty() {
+        anyhow::bail!("没有要记录的数值");
+    }
+    let when = parse_measured_at(measured_at.as_deref());
+
+    let sv: Vec<parser::SelfMeasuredValue> = values
+        .iter()
+        .map(|v| parser::SelfMeasuredValue {
+            analyte_key: v.analyte_key.clone(),
+            value: v.value,
+            unit: v.unit.clone(),
+        })
+        .collect();
+    // 生理学"可能性"校验(拒绝像 138388 mmHg 这种打错的值,不是判断
+    // "正常/偏高"——那是 home_ref_range 的职责,见 `parser::self_entry` 的文档)。
+    // `manual_entry_sheet.dart` 保存前已经跑过同一条校验并给出更具体的引导
+    // 文案,这里是它被绕过时的兜底——`add_self_measurement` 是所有自测数据
+    // 写入的唯一入口,不能只靠 UI 层这一道防线。
+    if let Err(violation) = parser::validate_self_measured_values(&sv) {
+        anyhow::bail!(format_plausibility_violation(&violation));
+    }
+
+    let mut human_lines: Vec<String> = values
+        .iter()
+        .map(|v| {
+            format!(
+                "{} {} {}",
+                self_measured_label(&v.analyte_key),
+                fmt_value(v.value),
+                v.unit
+            )
+        })
+        .collect();
+    human_lines.push(format!("记录时间:{}", when.format("%Y-%m-%d %H:%M")));
+    let text = parser::render_self_measurement_text(&human_lines, &sv);
+    let title = self_measured_title(&values);
+
+    with_state(|state| {
+        let v = &state.vault;
+        let name = format!("self-measurement-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
+        let imp = v
+            .import(&name, "text/plain", text.as_bytes())
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let sid = imp.source_file.id;
+        // 合成文本逐字节相同(极少见,但见 `Vault::import` 的 CAS 去重)且已建过
+        // 档 —— 真·重复提交,直接回传已有文档 id,不再建档(`document.source_file_id`
+        // 唯一,重复建档会违反约束)。与 `ingest_image_with_text` 的同一防线同构。
+        if imp.deduped
+            && v.has_document(sid)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+        {
+            return v
+                .document_by_source_file_id(sid)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .map(|d| d.id)
+                .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
+        }
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: sid,
+                doc_type: DocType::SelfMeasurement,
+                doc_date: Some(when),
+                doc_date_end: None,
+                title: Some(title),
+                language: Some("zh".into()),
+                page_count: 1,
+            })
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        v.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "self-entry".into(),
+            text,
+            confidence: None,
+        })
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        v.rebuild_encounters()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(doc.id)
+    })
+}
+
+/// 读回一份 `self_measurement` 文档的结构化值 —— 供「编辑」预填表单用(编辑=
+/// 删除旧文档+重新走一遍 `add_self_measurement`,见 MANUAL-ENTRY-DESIGN.md
+/// §3.6:没有专门的编辑 API,复用现成的 `delete_document`+新增)。
+///
+/// 读不出结构化载荷(文档不是这个类型 / 载荷损坏)→ 空列表,调用方按「没有可
+/// 编辑的值」处理,不猜(与 `parser::parse_self_measurement_payload` 同一条
+/// "读不出就是没有,不半猜"的规矩)。
+pub fn self_measurement_values(document_id: i64) -> anyhow::Result<Vec<SelfMeasuredValueDto>> {
+    with_state(|state| {
+        let text = state
+            .vault
+            .ocr_text(document_id)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(parser::parse_self_measurement_payload(&text)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| SelfMeasuredValueDto {
+                analyte_key: v.analyte_key,
+                value: v.value,
+                unit: v.unit,
+            })
+            .collect())
+    })
+}
+
+/// 写一条笔记(纯文本自由文字)。原文即内容 —— 不需要 `self_entry` 那层结构化
+/// 载荷编码(那是给数值用的),`ocr_result.text` 直接是用户输入的原文,读回来
+/// 就是它本身。`doc_type` 固定 `Note`,不解析、不关联到具体用药/诊断
+/// (`aggregate()` 对 `note` 类型文档显式跳过 meds/conditions 抽取)。
+///
+/// 与 [`add_self_measurement`] 同构:没有原件,把这段文字本身当"文件"过一遍
+/// `vault.import`。`measured_at` 缺省 = 写入时刻。
+pub fn add_note(text: String, measured_at: Option<String>) -> anyhow::Result<i64> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        anyhow::bail!("笔记内容为空");
+    }
+    let when = parse_measured_at(measured_at.as_deref());
+    // 标题取首行(超长截断到 30 个字符——列表页标题不需要整段笔记)。
+    let title: String = text
+        .lines()
+        .next()
+        .unwrap_or(&text)
+        .chars()
+        .take(30)
+        .collect();
+
+    with_state(|state| {
+        let v = &state.vault;
+        let name = format!("note-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
+        let imp = v
+            .import(&name, "text/plain", text.as_bytes())
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let sid = imp.source_file.id;
+        if imp.deduped
+            && v.has_document(sid)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+        {
+            return v
+                .document_by_source_file_id(sid)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .map(|d| d.id)
+                .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
+        }
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: sid,
+                doc_type: DocType::Note,
+                doc_date: Some(when),
+                doc_date_end: None,
+                title: Some(title),
+                language: parser::detect_language(&text),
+                page_count: 1,
+            })
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        v.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "self-entry".into(),
+            text,
+            confidence: None,
+        })
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        v.rebuild_encounters()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(doc.id)
     })
 }
 
@@ -755,10 +1076,13 @@ pub fn claim_import(blob: Vec<u8>, key_b64: String) -> anyhow::Result<ClaimResul
 /// 只解密、不落盘:让病人在「存进哪个成员」之前先看到这包里有几份、是谁的。
 /// 返回 `(记录数, 患者姓名)`;姓名解析不出时为空串。
 pub fn claim_preview(blob: Vec<u8>, key_b64: String) -> anyhow::Result<(i64, String)> {
-    let payload = medme_share::claim::decrypt_claim(&blob, &key_b64)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let payload =
+        medme_share::claim::decrypt_claim(&blob, &key_b64).map_err(|e| anyhow::anyhow!(e))?;
     let n = payload["records"].as_array().map(|a| a.len()).unwrap_or(0) as i64;
-    let name = payload["patient"]["name"].as_str().unwrap_or("").to_string();
+    let name = payload["patient"]["name"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     Ok((n, name))
 }
 
@@ -914,17 +1238,26 @@ fn collect_demo_files<'a>(dir: &'a include_dir::Dir<'a>, out: &mut Vec<&'a inclu
 /// 运行时用 `resource_dir()` 定位;这里没有「应用资源目录」,数据集直接编译进
 /// 二进制(`DEMO_DATA`),运行时落一份到 `data_dir` 下的临时目录再喂给
 /// `pipeline::ingest`(它按路径操作,不接受内存字节),用完即删。
-pub fn load_demo_data() -> anyhow::Result<i64> {
-    with_state(|state| {
+///
+/// `progress` 每处理完一份(不论成败)推一条 [DemoLoadProgressDto]——华为 Mate 9
+/// 真机实测 22 份 11 秒零反馈,用户以为没点上又点了第二次。这颗 sink 让设置屏能画
+/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。
+///
+/// **本函数恒返回 `Ok(())`,成败一律走 `progress` 的 `error` 字段**——见
+/// [DemoLoadProgressDto] 顶部文档:带 `StreamSink` 参数的 FRB 函数,Dart 侧没有
+/// 任何代码 `await` 这个函数自身的返回值,真返回 `Err` 会在这里悄悄丢失。
+pub fn load_demo_data(progress: StreamSink<DemoLoadProgressDto>) -> anyhow::Result<()> {
+    let result = with_state(|state| {
         let v = &state.vault;
         let mut files: Vec<&include_dir::File<'_>> = Vec::new();
         collect_demo_files(&DEMO_DATA, &mut files);
         files.sort_by_key(|f| f.path().to_path_buf());
+        let total = files.len() as i64;
 
         let tmp_root = state.data_dir.join("medme-demo-data");
         std::fs::create_dir_all(&tmp_root)?;
         let mut count = 0i64;
-        for f in &files {
+        for (i, f) in files.iter().enumerate() {
             let tmp_path = tmp_root.join(f.path());
             if let Some(parent) = tmp_path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -937,20 +1270,41 @@ pub fn load_demo_data() -> anyhow::Result<i64> {
             }));
             match result {
                 Ok(Ok(_)) => count += 1,
-                Ok(Err(e)) => {
-                    eprintln!("[demo-data] ingest failed for {}: {e}", tmp_path.display())
-                }
-                Err(_) => eprintln!(
+                Ok(Err(e)) => log_warn(&format!(
+                    "[demo-data] ingest failed for {}: {e}",
+                    tmp_path.display()
+                )),
+                Err(_) => log_warn(&format!(
                     "[demo-data] ingest panicked (isolated) for {}",
                     tmp_path.display()
-                ),
+                )),
             }
+            // 忽略发送失败:监听端已断开不该打断导入本身(单向 UI 反馈,不是
+            // 导入流程的一部分)。
+            let _ = progress.add(DemoLoadProgressDto {
+                loaded: i as i64 + 1,
+                total,
+                succeeded: count,
+                error: None,
+            });
         }
         let _ = std::fs::remove_dir_all(&tmp_root); // 尽力清理,失败无妨
         v.rebuild_encounters()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(count)
-    })
+    });
+    if let Err(e) = result {
+        // 整段操作失败——可能一份都没来得及处理(如「保险箱尚未打开」),也可能
+        // 半途 I/O 出错。不管哪种,都得经流报出来,否则等于这个工单要修的
+        // 「安卓上失败静默不可见」在另一个地方原样复发。
+        let _ = progress.add(DemoLoadProgressDto {
+            loaded: 0,
+            total: 0,
+            succeeded: 0,
+            error: Some(e.to_string()),
+        });
+    }
+    Ok(())
 }
 
 /// 「清空保险箱 · 重置」:删掉当前真相目录(`truth_root`)+ 派生库

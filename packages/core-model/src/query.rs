@@ -29,16 +29,154 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
-/// 从文本抽取医院/医学中心名(2-18 个中文字,以 医院/医学中心 结尾)。取第一个匹配。
-pub fn extract_provider(text: &str) -> Option<String> {
+/// 页脚签名栏的标签。这些字段后面跟的是**人名**。
+///
+/// 中文姓名和机构名之间没有任何词边界可依:`王涛` 和 `北京` 在字符类上完全一样,
+/// 所以一旦 OCR/PDF 文本层把签名与紧随其后的医院名连成一串
+/// (`审核者:王涛四川大学华西医院医疗文书专用章` —— 真实语料,demo-dataset 的
+/// PDF 文本层逐字如此),**没有任何正则能从这一串里切出正确的起点**:非贪婪只让
+/// 匹配尽量短,起始位置仍然取最早的那个,于是人名被一起吞掉。这条结论到今天仍然
+/// 成立 —— 变的只是切不准之后怎么办,见 [`extract_provider`] 的「取舍」一节。
+///
+/// 所以这些 token 排在最后一顺位:先让有干净左边界的候选赢;只有全场再没有别的
+/// 候选时,才从签名串里退而求其次抽一个(会带上人名)。
+///
+/// 按**空白分隔的 token** 判定,不是整行:同一行里 `审核者:王涛 北京协和医院`
+/// 的第三个 token 有自己的左边界,是干净的,不能被同行的签名连累。
+const SIGNER_LABELS: &[&str] = &[
+    "检验者",
+    "审核者",
+    "审核",
+    "报告医师",
+    "审核医师",
+    "检验医师",
+    "报告医生",
+    "报告者",
+    "记录者",
+    "送检医生",
+    "申请医生",
+    "主治医师",
+    "主诊医师",
+    "医师",
+    "医生",
+];
+
+/// 抬头/标题里被逐字拉开的机构名(`四 川 大 学 华 西 医 院`)—— PDF 文本层与
+/// 部分排版把标题渲染成字间带空格。每个字后面都跟**恰好一个**空白才算,所以
+/// `王涛 北京协和医院` 这种只在词间有空格的写法不会被误当成抬头连起来读。
+///
+/// 字符类里带上拉丁字母与数字:真实抬头会夹英文/数字
+/// (`河 北 省 X X 县 人 民 医 院` —— demo scenarios 的急诊记录逐字如此)。少了
+/// 这一条,整行匹配不上,扫描就滑到正文,把医嘱 `建议立即转上级医院` 当成院名。
+fn spaced_provider_re() -> &'static regex::Regex {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r"((?:[\x{4e00}-\x{9fa5}A-Za-z0-9][ \t]){2,18}?(?:医[ \t]院|医[ \t]学[ \t]中[ \t]心))",
+        )
+        .expect("spaced provider regex")
+    })
+}
+
+/// 泛指「某家医院」的说法,不是任何一家医院的名字。医嘱里到处都是
+/// (`建议立即转上级医院`),抬头缺席时扫描一定会撞上它 —— 撞上就整个候选作废,
+/// 就诊卡上宁可空着也不能印一句医嘱。
+///
+/// 判据是**后缀**:`医院` 结尾的匹配才可能出现在这里,而 `上级医院` 无论前面接
+/// 什么(`转上级医院`/`建议立即转上级医院`)都仍然是泛指。
+const GENERIC_HOSPITAL_REFS: &[&str] =
+    &["上级医院", "下级医院", "当地医院", "外院", "我院", "本院"];
+
+fn is_generic_reference(name: &str) -> bool {
+    GENERIC_HOSPITAL_REFS.iter().any(|g| name.ends_with(g))
+}
+
+/// 紧凑写法的机构名(2-18 个中文字,以 医院/医学中心 结尾)。
+fn tight_provider_re() -> &'static regex::Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
         regex::Regex::new(r"([\x{4e00}-\x{9fa5}]{2,18}?(?:医院|医学中心))").expect("provider regex")
-    });
-    re.captures(text)
+    })
+}
+
+/// 把签名 token 前面的标签连同紧跟的分隔符切掉:`审核医师:孙立复旦大学附属华山
+/// 医院` → `孙立复旦大学附属华山医院`。切到**最靠后**的那个标签末尾(`审核医师`
+/// 而不是它内部的 `审核`),这样剩下的串尽量短、噪声尽量少。
+///
+/// 切不掉人名 —— 那正是 [`SIGNER_LABELS`] 说的「谁也切不准」。这里只保证标签本身
+/// 不会被当成院名的一部分。
+fn strip_signer_label(tok: &str) -> &str {
+    let cut = SIGNER_LABELS
+        .iter()
+        .filter_map(|l| tok.find(l).map(|p| p + l.len()))
+        .max();
+    match cut {
+        // `find` 与 `+ len()` 都落在字符边界上,切片安全。
+        Some(p) => tok[p..].trim_start_matches([':', ':', ' ', '\u{3000}']),
+        None => tok,
+    }
+}
+
+fn first_named_provider(tok: &str) -> Option<String> {
+    tight_provider_re()
+        .captures(tok)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
+        .filter(|name| !is_generic_reference(name))
+}
+
+/// 从文本抽取医院/医学中心名。
+///
+/// ## 三层根因,少修一层就抽不出来
+///
+/// 1. **部首字形。** 生成 corpus 的字体把常用字映射到部首码位,`pdf-extract` 于是
+///    吐出 `四 川 ⼤ 学 华 ⻄ 医 院`(`⼤` U+2F24、`⻄` U+2EC4)。这些码位掉在
+///    `\x{4e00}-\x{9fa5}` 之外,**任何一条**院名正则都匹配不上。`parser::extract`
+///    早就折叠了部首,但抽 provider 读的是 `ocr_result.text` —— 那份文本由
+///    `ocr::recognize_pdf_mixed` 产出,**根本不经过** `parser::extract`。所以这里
+///    必须自己折一次(`crate::text::normalize_cjk_radicals`)。22 份 demo 里 13 份
+///    栽在这一层,而且只在真机上看得见:拿 `pdftotext` 或 `parser::extract` 量,
+///    这一层是隐身的。
+/// 2. **抬头没被看见。** 文档自报家门的地方是抬头(第一行),被逐字拉开成
+///    `北 京 协 和 医 院`,紧凑正则匹配不上,扫描一路滑到页脚签名栏。
+/// 3. **页脚那一串切不准。** 见 [`SIGNER_LABELS`]:人名与机构名之间没有词边界。
+///
+/// ## 取舍:这个字段宁可带噪,也不能为空
+///
+/// 上一版在第 3 层选了「切不准就返回 `None`」。**这条取舍对化验数值是对的,对这个
+/// 字段是错的**,原因是错法的后果不是一回事:
+///
+/// * 化验数值读错 → 用户据此得出错误的临床结论,危害是实的,宁可空着。
+/// * 院名读成 `王涛北京协和医院` → 用户一眼看出多了俩字,照样知道「这次是在协和
+///   看的」。而时间线卡片(`archive_screen.dart` 的 `门诊 · {provider}`)存在的
+///   全部意义就是回答「在哪家看的」;抽不出来,整张卡就没有理由存在。
+///
+/// 所以顺位是:**干净的赢,带噪的兜底,只有文档里确实没有医院才是 `None`**。
+/// 家庭自测记录那种压根没有机构的文档,仍然、也应该返回 `None`。
+pub fn extract_provider(text: &str) -> Option<String> {
+    // 第 0 步:折部首。不折,后面三轮全部空手而归(见上「三层根因」第 1 条)。
+    let text = crate::text::normalize_cjk_radicals(text);
+    // 第一轮:抬头,权威出处。字间空格只是排版,收进结果前去掉。
+    if let Some(m) = spaced_provider_re().captures(&text).and_then(|c| c.get(1)) {
+        let name: String = m.as_str().chars().filter(|c| !c.is_whitespace()).collect();
+        if !is_generic_reference(&name) {
+            return Some(name);
+        }
+    }
+    // 第二轮:正文/页脚的紧凑写法,逐 token —— 有自己左边界的候选,干净。
+    let (signer_toks, clean_toks): (Vec<&str>, Vec<&str>) = text
+        .lines()
+        .flat_map(str::split_whitespace)
+        .partition(|tok| SIGNER_LABELS.iter().any(|l| tok.contains(l)));
+    if let Some(name) = clean_toks.iter().find_map(|tok| first_named_provider(tok)) {
+        return Some(name);
+    }
+    // 第三轮:兜底。只剩签名串了,切不准也要给出名字 —— 带上人名前缀也比空着强。
+    signer_toks
+        .iter()
+        .find_map(|tok| first_named_provider(strip_signer_label(tok)))
 }
 
 /// 给定一组文档 id,返回各文档 OCR 文本命中的 provider 名(未去重,用于统计众数)。
@@ -459,6 +597,7 @@ impl Vault {
 
 #[cfg(test)]
 mod tests {
+    use crate::query::extract_provider;
     use crate::types::{NewDocument, NewOcr};
     use crate::Vault;
     use crate::{DocType, EncounterKind, OcrBackendKind};
@@ -806,6 +945,167 @@ mod tests {
             "title should note 转院, got {:?}",
             inpatient.title
         );
+    }
+
+    /// 干净的候选永远赢过签名串 —— 这是上一版的成果,原样保留。
+    ///
+    /// 同一行里 `审核者:王涛 北京协和医院` 的第三个 token 有自己的左边界,不能被
+    /// 同行的签名连累;抬头在场时更是抬头说了算,页脚的签名串根本轮不到。
+    #[test]
+    fn a_clean_candidate_always_beats_the_signature_block() {
+        assert_eq!(
+            extract_provider("检验者:韩梅 审核者:王涛 北京协和医院").as_deref(),
+            Some("北京协和医院")
+        );
+        // 抬头在场:页脚那串 `王涛四川大学华西医院医疗文书专用章` 一个字都进不来。
+        assert_eq!(
+            extract_provider(
+                "\n四 川 大 学 华 西 医 院\n检验科 生化检验报告单\n\
+                 检验者:李梅 审核者:王涛四川大学华西医院医疗文书专用章\n"
+            )
+            .as_deref(),
+            Some("四川大学华西医院")
+        );
+    }
+
+    /// 只剩签名串时的取舍 —— **这一版和上一版在这里、也只在这里不同**。
+    ///
+    /// 上一版返回 `None`,理由是「中文姓名与机构名字符类相同,谁也切不准,切不准
+    /// 就不能猜」。那条技术结论至今成立(见 [`SIGNER_LABELS`]),但由它推出的取舍
+    /// 对**这个字段**是错的,因为两种错法的后果不是一回事:
+    ///
+    /// * 化验数值读错 → 用户据此得出错误的临床结论,宁可空着;
+    /// * 院名多两个字 → 用户一眼看出是医生名,照样知道在哪家看的。而卡片
+    ///   (`门诊 · {provider}`)存在的全部意义就是回答这个问题,空着整张卡就废了。
+    ///
+    /// 所以:切不准也要给,带上人名前缀也接受。
+    #[test]
+    fn an_unsplittable_signature_yields_a_noisy_name_rather_than_nothing() {
+        // 真实语料逐字:demo-dataset 的 PDF 文本层把签名与公章文字连成一串。
+        for (line, want) in [
+            ("审核者:王涛北京协和医院", "王涛北京协和医院"),
+            (
+                "报告医师:郑华浙江大学医学院附属第一医院",
+                "郑华浙江大学医学院附属第一医院",
+            ),
+            (
+                "检验者:李梅 审核者:王涛四川大学华西医院医疗文书专用章",
+                "王涛四川大学华西医院",
+            ),
+        ] {
+            assert_eq!(
+                extract_provider(line).as_deref(),
+                Some(want),
+                "切不准就空着了,而产品要的是「至少要显示医院名」: {line:?}"
+            );
+        }
+        // 标签本身不是院名的一部分:`审核医师` 被切掉,剩下的人名切不掉。
+        assert_eq!(
+            extract_provider("审核医师:孙立复旦大学附属华山医院").as_deref(),
+            Some("孙立复旦大学附属华山医院")
+        );
+    }
+
+    /// 页脚之所以会被读到,是因为**抬头压根没被看见**:PDF 文本层把抬头逐字拉开
+    /// 成 `北 京 协 和 医 院`,紧凑正则匹配不上,扫描就一路滑到签名栏。抬头是文档
+    /// 自报家门的地方,必须先在那里找。
+    #[test]
+    fn a_letter_spaced_letterhead_is_the_first_place_looked() {
+        // demo-dataset/corpus/2024-01-15_检验报告_血脂.pdf 的文本层,逐字。
+        let doc = "\n\n四 川 大 学 华 西 医 院\n\n检验科 生化检验报告单\n\n\
+                   检验者:李梅 审核者:王涛四川大学华西医院医疗文书专用章\n";
+        assert_eq!(extract_provider(doc).as_deref(), Some("四川大学华西医院"));
+        assert_eq!(
+            extract_provider("\n\n北 京 协 和 医 院\n\n神经内科 门诊病历\n").as_deref(),
+            Some("北京协和医院")
+        );
+        assert_eq!(
+            extract_provider("国 家 儿 童 医 学 中 心\n").as_deref(),
+            Some("国家儿童医学中心")
+        );
+        // 字间空格是排版,词间空格不是:`王涛 北京协和医院` 不能被当成抬头连读。
+        assert_eq!(
+            extract_provider("王涛 北京协和医院").as_deref(),
+            Some("北京协和医院")
+        );
+    }
+
+    /// 抬头里夹拉丁字母 —— demo scenarios/2023-04-24_急诊记录_县医院转院.pdf 的
+    /// 抬头是 `河 北 省 X X 县 人 民 医 院`。字符类只认汉字时整行匹配不上,扫描
+    /// 滑到正文的 `建议立即转上级医院`,就诊卡上印出一句医嘱。
+    #[test]
+    fn a_letterhead_may_contain_latin_and_digits() {
+        assert_eq!(
+            extract_provider(
+                "河 北 省 X X 县 人 民 医 院\n急诊科 急诊病历\n\
+                 病情较重且在溶栓时间窗内,建议立即转上级医院(北京协和医院)进一步诊治。\n"
+            )
+            .as_deref(),
+            Some("河北省XX县人民医院")
+        );
+    }
+
+    /// PDF 文本层的部首字形 —— **这条是真机上抽不出医院名的头号原因**,而且只有
+    /// 走 app 那条真路才看得见:`parser::extract` 折叠了部首,`pdftotext` 也不吐
+    /// 部首码位,拿它们量会得出「全好」的假象。app 读的是 `ocr_result.text`,由
+    /// `ocr::recognize_pdf_mixed` 产出,不经过 `parser::extract`。
+    ///
+    /// 逐份的真实回归钉在 `packages/pipeline/tests/demo_provider.rs`(那里才拿得
+    /// 到真实 PDF 字节);这里钉住 `extract_provider` 自己必须先折一次部首。
+    #[test]
+    fn radical_glyphs_in_the_text_layer_do_not_hide_the_hospital() {
+        // `⼤` U+2F24(康熙部首,有 NFKC 分解)、`⻄` U+2EC4(部首补充,靠显式映射)。
+        assert_eq!(
+            extract_provider("四 川 ⼤ 学 华 ⻄ 医 院\n放射科 头颅 MRI 检查报告\n").as_deref(),
+            Some("四川大学华西医院")
+        );
+        // `⺠` U+2EA0:部首补充块,**没有** NFKC 分解 —— 漏进映射表就整份抽不出来。
+        assert_eq!(
+            extract_provider("河 北 省 X X 县 ⼈ ⺠ 医 院\n急诊科 急诊病历\n").as_deref(),
+            Some("河北省XX县人民医院")
+        );
+        // 紧凑抬头同样得先折(demo 里 2024-05-18 / 2024-06-10 两份是这个形态)。
+        assert_eq!(
+            extract_provider("四川⼤学华⻄医院 检验科 肾功能+⾎糖检验报告单\n").as_deref(),
+            Some("四川大学华西医院")
+        );
+    }
+
+    /// 医嘱里的泛指不是一家医院。抬头缺席时扫描必然撞上它,撞上就作废 ——
+    /// 就诊卡上宁可空着,也不能印半句医嘱。
+    #[test]
+    fn a_generic_reference_to_some_hospital_is_not_a_name() {
+        for line in [
+            "病情较重且在溶栓时间窗内,建议立即转上级医院。",
+            "转上级医院",
+            "请于当地医院复查",
+        ] {
+            assert_eq!(extract_provider(line), None, "{line:?}");
+        }
+    }
+
+    /// 紧凑写法的老行为原封不动 —— 这次改动只加左边界与抬头,不动别的。
+    #[test]
+    fn ordinary_provider_lines_are_unchanged() {
+        for (text, want) in [
+            ("北京协和医院", "北京协和医院"),
+            ("北京协和医院 出院记录", "北京协和医院"),
+            ("四川大学华西医院 检验科 生化检验报告单", "四川大学华西医院"),
+            (
+                "上海交通大学医学院附属瑞金医院 超声医学科 检查报告单",
+                "上海交通大学医学院附属瑞金医院",
+            ),
+            ("独墅湖科教创新区医院化验报告单", "独墅湖科教创新区医院"),
+            ("某三甲医院 检验科 甲状腺功能检验报告单", "某三甲医院"),
+            // 行尾公章:前面是句号,左边界干净。
+            (
+                "提示:凝血功能正常,可耐受手术。复旦大学附属华山医院 医疗文书专用章",
+                "复旦大学附属华山医院",
+            ),
+        ] {
+            assert_eq!(extract_provider(text).as_deref(), Some(want), "{text:?}");
+        }
+        assert_eq!(extract_provider("本院 转入我院 医院"), None);
     }
 
     #[test]

@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_demo_files`, `detected_name_for`, `doc_summary`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `resolve_vault_paths`, `vault_cell`, `with_state_mut`, `with_state`
+// These functions are ignored because they are not marked as `pub`: `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `format_plausibility_violation`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -92,19 +92,32 @@ Future<ImportOutcomeDto> ingestBytes({
   data: data,
 );
 
-/// 扫描版 PDF 的 OCR 回填。`ingest_bytes` 对无文本层的 PDF 只 `store_no_text`
-/// (移动端未链接 Rust OCR 引擎),文档已存但无文字。Flutter 侧用 `pdfx` 逐页把
-/// PDF 渲染成 PNG、走原生图片 OCR(iOS Vision / 安卓 ML Kit)拿到文本后,调本函数
-/// 把文本补进该已存文档,使其可搜索、进 summary。
+/// 扫描版 PDF 的逐页 OCR 回填。`ingest_bytes`/`ingest_pdf`(Rust pipeline)对
+/// 没能恢复出文本的页给出 `IngestOutcome::pages_without_text`,文档可能已建好
+/// (部分页有文本层)、也可能整份 `stored_no_text`(一页可用文本都没有)。
+/// Flutter 侧用 `pdfx` 把这些页逐一渲染成 PNG、走 `recognizeImageText`
+/// (PP-OCRv5,iOS/安卓同一条路)拿到文本后,逐页调本函数补进该文档。
 ///
-/// 只补 `ocr_result`;`doc_type` 暂沿用建档时的文件名分类(用 OCR 文本重分类属质量
-/// 提升,另做)。文本为空则报错(调用方不应回填空)。
+/// ⚠️ 旧注释说「移动端未链接 Rust OCR 引擎」——**已经不对了**:iOS 与 arm64
+/// 安卓都直接依赖 `packages/ocr` 的 `engine`,`pipeline::ingest_pdf` 在端上真的
+/// 会去调 PP-OCRv5。但 `ocr::set_model_dir` 只由 `ensure_pp_models_ready`
+/// (`recognize_image_pp` 的入口)设置,所以一次会话里**第一份**导入是 PDF 时
+/// 模型还没落盘,Rust 侧逐页 OCR 会全部失败、整份落到 `pages_without_text`,
+/// 全靠这条回填路径兜底。不是数据丢失(页码如实报了),但白跑一趟。
+///
+/// `page_no` 是 1-based、对应 PDF 里的真实页码(与 `pages_without_text` 的口径
+/// 一致)——不再固定写 1:一份文档现在可能有多条 `ocr_result`(每页一条,
+/// `core_model::Vault::add_ocr` 按 `(document_id, page_no)` 天然去重/幂等),
+/// `ocr_text` 读取时按页码拼接。只补 `ocr_result`;`doc_type` 暂沿用建档时的
+/// 分类(用 OCR 文本重分类属质量提升,另做)。文本为空则报错(调用方不应回填空)。
 Future<void> backfillPdfText({
   required PlatformInt64 documentId,
+  required int pageNo,
   required String text,
   required double confidence,
 }) => RustLib.instance.api.crateApiVaultBackfillPdfText(
   documentId: documentId,
+  pageNo: pageNo,
   text: text,
   confidence: confidence,
 );
@@ -115,6 +128,14 @@ Future<void> backfillPdfText({
 /// 传入值);识别为空则退回文件名元数据(`StoredNoText`),原件仍可见。落库语义逐字
 /// 镜像 Tauri 版 `ingest_image_via_vision`/`ingest_image_via_mlkit`,只是识别文本来自
 /// 参数而非本地再跑一次 OCR。
+///
+/// **多页原件(多页 TIFF)**:Dart 侧把**文件路径**交给 Apple Vision / ML Kit,
+/// 两者都只识别第一帧,所以 `ocr_text` 里永远只有第 1 页。这条路径过去把
+/// `page_count` 写死 1、`pages_without_text` 写死空,于是第 2 页起整页丢失而
+/// UI 报「已识别入库」——与 `pipeline::ingest_image` 修的是同一个缺陷,只是发生
+/// 在移动端这条**不经 `pipeline::ingest`** 的独立路径上(移动端的 `.tiff` 由
+/// `isImageName` 判为图片,走的就是这里,不是 `ingest_bytes`)。现在如实带出真实
+/// 页数与没读到的页码;调用方 `import_flow.dart` 据此报「N 页未能识别文字」。
 Future<ImportOutcomeDto> ingestImageWithText({
   required String name,
   required List<int> bytes,
@@ -126,6 +147,56 @@ Future<ImportOutcomeDto> ingestImageWithText({
   ocrText: ocrText,
   confidence: confidence,
 );
+
+/// 写一条自测记录(结构化,append-only)。血压两个值(收缩压+舒张压)共享
+/// 同一份文档/同一个 `measured_at` —— 一次测量是最小操作单元,一起删一起改
+/// (MANUAL-ENTRY-DESIGN.md §5.3);其余四项(心率/体重/体温/血糖)各自单独一条
+/// 记录一份文档。`measured_at` 缺省(`None`)= 写入时刻,否则调用方传用户选择
+/// 的测量时间(RFC3339)。
+///
+/// 与 DICOM/txt 导入同构(见 `pipeline::add_text_layer_document`/
+/// `pipeline::dicom_summary` 的先例):没有原件,把合成文本本身当"文件"过一遍
+/// `vault.import`,再走 `add_document`+`add_ocr`。`doc_type` 固定
+/// `SelfMeasurement`,不经 `parser::classify` 猜 —— 这条录入路径的类型是
+/// 确定的,不需要也不该走给不确定文本猜类型的那条推断。
+///
+/// 硬约束(设计文档反复强调):**不支持任意化验项**——`values` 里的
+/// `analyte_key` 由 Dart 侧封闭五选一界面产出,这里不做白名单校验(校验属于
+/// UI 层拒绝非法输入的职责),但也不会因为一个陌生 key 而崩:未知 key 落进
+/// `parser::home_ref_range` 的 `_ => None` 分支,裸值显示、不出 flag。
+Future<PlatformInt64> addSelfMeasurement({
+  required List<SelfMeasuredValueDto> values,
+  String? measuredAt,
+}) => RustLib.instance.api.crateApiVaultAddSelfMeasurement(
+  values: values,
+  measuredAt: measuredAt,
+);
+
+/// 读回一份 `self_measurement` 文档的结构化值 —— 供「编辑」预填表单用(编辑=
+/// 删除旧文档+重新走一遍 `add_self_measurement`,见 MANUAL-ENTRY-DESIGN.md
+/// §3.6:没有专门的编辑 API,复用现成的 `delete_document`+新增)。
+///
+/// 读不出结构化载荷(文档不是这个类型 / 载荷损坏)→ 空列表,调用方按「没有可
+/// 编辑的值」处理,不猜(与 `parser::parse_self_measurement_payload` 同一条
+/// "读不出就是没有,不半猜"的规矩)。
+Future<List<SelfMeasuredValueDto>> selfMeasurementValues({
+  required PlatformInt64 documentId,
+}) => RustLib.instance.api.crateApiVaultSelfMeasurementValues(
+  documentId: documentId,
+);
+
+/// 写一条笔记(纯文本自由文字)。原文即内容 —— 不需要 `self_entry` 那层结构化
+/// 载荷编码(那是给数值用的),`ocr_result.text` 直接是用户输入的原文,读回来
+/// 就是它本身。`doc_type` 固定 `Note`,不解析、不关联到具体用药/诊断
+/// (`aggregate()` 对 `note` 类型文档显式跳过 meds/conditions 抽取)。
+///
+/// 与 [`add_self_measurement`] 同构:没有原件,把这段文字本身当"文件"过一遍
+/// `vault.import`。`measured_at` 缺省 = 写入时刻。
+Future<PlatformInt64> addNote({required String text, String? measuredAt}) =>
+    RustLib.instance.api.crateApiVaultAddNote(
+      text: text,
+      measuredAt: measuredAt,
+    );
 
 /// 端到端加密分享:复用 `medme_share::share::build_encrypted_share`,把全部病历
 /// 面对面二维码分享:把「当下病情」压成一条 URL,由手机端渲染成二维码给医生扫。
@@ -251,7 +322,15 @@ Future<ExportResultDto> exportTimelineHtml({
 /// 运行时用 `resource_dir()` 定位;这里没有「应用资源目录」,数据集直接编译进
 /// 二进制(`DEMO_DATA`),运行时落一份到 `data_dir` 下的临时目录再喂给
 /// `pipeline::ingest`(它按路径操作,不接受内存字节),用完即删。
-Future<PlatformInt64> loadDemoData() =>
+///
+/// `progress` 每处理完一份(不论成败)推一条 [DemoLoadProgressDto]——华为 Mate 9
+/// 真机实测 22 份 11 秒零反馈,用户以为没点上又点了第二次。这颗 sink 让设置屏能画
+/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。
+///
+/// **本函数恒返回 `Ok(())`,成败一律走 `progress` 的 `error` 字段**——见
+/// [DemoLoadProgressDto] 顶部文档:带 `StreamSink` 参数的 FRB 函数,Dart 侧没有
+/// 任何代码 `await` 这个函数自身的返回值,真返回 `Err` 会在这里悄悄丢失。
+Stream<DemoLoadProgressDto> loadDemoData() =>
     RustLib.instance.api.crateApiVaultLoadDemoData();
 
 /// 「清空保险箱 · 重置」:删掉当前真相目录(`truth_root`)+ 派生库

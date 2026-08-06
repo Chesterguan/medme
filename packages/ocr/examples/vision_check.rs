@@ -5,7 +5,7 @@ fn main() {
         .expect("usage: vision_check <image>");
     let bytes = std::fs::read(&path).expect("read image");
     let t = std::time::Instant::now();
-    let out = ocr::recognize(&bytes).expect("recognize");
+    let out = ocr::recognize_platform_best(&bytes).expect("recognize");
     eprintln!(
         "[{}ms] confidence={:.3}",
         t.elapsed().as_millis(),

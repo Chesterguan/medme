@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
 ///
@@ -110,6 +110,53 @@ class ConsentDto {
           signaturePngBase64 == other.signaturePngBase64 &&
           method == other.method &&
           sessionId == other.sessionId;
+}
+
+/// 「载入示例数据」的进度回报(`api::vault::load_demo_data` 经 `StreamSink` 逐份
+/// 推给 Dart)。真机实测过全程 11 秒零反馈——不是慢,是安卓那次 22 份的循环里
+/// Dart 侧原来只等一个 `Future`,中途没有任何信号可渲染。这里补一个流,让设置屏
+/// 能画「正在载入 N/total」而不是一个不知道在不在跑的忙态。
+///
+/// **`error` 而不是让整个函数返回 `Err`**:FRB 里带 `StreamSink` 参数的函数,
+/// Dart 侧签名会整个折成 `Stream<T>`——函数自身的 `Result` 只用来标记这一次
+/// FFI 调用本身,`load_demo_data` 内部通过 `unawaited(...)` 发起,没有代码
+/// `await` 它,一旦真返回 `Err` 就是一次悄悄丢失、连 Dart 的 `try/catch` 都接不住
+/// 的异常(本工单要修的正是「失败静默不可见」,不能在同一次改动里换个地方复发)。
+/// 所以 `load_demo_data` 恒返回 `Ok(())`,任何失败(保险箱未打开、磁盘写入失败等)
+/// 都经这个 `error` 字段随流报出来,Dart 侧照常能 `catch`。
+class DemoLoadProgressDto {
+  /// 已处理(尝试过,含失败)的份数;发生 `error` 时为 0。
+  final PlatformInt64 loaded;
+
+  /// 总份数;发生 `error` 时为 0(还没来得及数出总数就失败了)。
+  final PlatformInt64 total;
+
+  /// 到目前为止成功入库的份数(累计)。
+  final PlatformInt64 succeeded;
+
+  /// 整个操作失败的原因;正常进行中/正常完成为 `None`。
+  final String? error;
+
+  const DemoLoadProgressDto({
+    required this.loaded,
+    required this.total,
+    required this.succeeded,
+    this.error,
+  });
+
+  @override
+  int get hashCode =>
+      loaded.hashCode ^ total.hashCode ^ succeeded.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DemoLoadProgressDto &&
+          runtimeType == other.runtimeType &&
+          loaded == other.loaded &&
+          total == other.total &&
+          succeeded == other.succeeded &&
+          error == other.error;
 }
 
 /// 文档详情:类型/日期(在 document 里)+ 来源文件 + 识别文本。
@@ -303,6 +350,14 @@ class ImportOutcomeDto {
   /// 识别不到为 None。
   final String? detectedName;
 
+  /// PDF 专属(其他文件类型恒为空):1-based 页码,列出既没有文本层、也没能
+  /// 在落库时 OCR 出文字的页(移动端未链接 Rust OCR 引擎,这里几乎总是非空的
+  /// "待处理"清单)。前端**必须**据此显式提示用户,不能让人以为整份 PDF 都
+  /// 识别完了——这正是"混合页 PDF 静默丢数据"缺陷的修复点(见
+  /// `pipeline::ingest_pdf` 文档注释)。`import_flow.dart` 用它驱动逐页 OCR
+  /// 回填(`backfillPdfText`),回填后仍剩的页数进导入汇总弹窗。
+  final Int32List pagesWithoutText;
+
   const ImportOutcomeDto({
     required this.name,
     required this.sourceFileId,
@@ -310,6 +365,7 @@ class ImportOutcomeDto {
     this.docType,
     this.documentId,
     this.detectedName,
+    required this.pagesWithoutText,
   });
 
   @override
@@ -319,7 +375,8 @@ class ImportOutcomeDto {
       status.hashCode ^
       docType.hashCode ^
       documentId.hashCode ^
-      detectedName.hashCode;
+      detectedName.hashCode ^
+      pagesWithoutText.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -331,7 +388,8 @@ class ImportOutcomeDto {
           status == other.status &&
           docType == other.docType &&
           documentId == other.documentId &&
-          detectedName == other.detectedName;
+          detectedName == other.detectedName &&
+          pagesWithoutText == other.pagesWithoutText;
 }
 
 /// **iOS PP-OCRv5 测试路径**结果(feat/ios-pp-ocr-test 分支,探索性——ADR 0005
@@ -567,6 +625,38 @@ class QrShareDto {
           url == other.url &&
           problemCount == other.problemCount &&
           fitsQr == other.fitsQr;
+}
+
+/// 一次「记录」(手动录入)里的一个数值 —— 血压一次记录有两个(收缩压+舒张压,
+/// 共享同一份文档/`measuredAt`,见 `add_self_measurement` 的文档),其余四项各
+/// 一个。`analyteKey`/`unit` 都是 `terminology` 词典里现成的规范键/单位
+/// (`bp_systolic`/`bp_diastolic`/`heart_rate`/`body_weight`/`body_temperature`/
+/// `glucose`,单位分别是 mmHg/mmHg/`/min`/kg/Cel/mmol/L)——Dart 侧只从封闭的
+/// 五选一录入界面产出这个结构,不接受任意字符串(硬约束:不做手打化验值)。
+/// 与 `parser::SelfMeasuredValue` 逐字段镜像,只是换成 FRB 能生成绑定的 plain
+/// struct(见本文件头的取舍)。
+class SelfMeasuredValueDto {
+  final String analyteKey;
+  final double value;
+  final String unit;
+
+  const SelfMeasuredValueDto({
+    required this.analyteKey,
+    required this.value,
+    required this.unit,
+  });
+
+  @override
+  int get hashCode => analyteKey.hashCode ^ value.hashCode ^ unit.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SelfMeasuredValueDto &&
+          runtimeType == other.runtimeType &&
+          analyteKey == other.analyteKey &&
+          value == other.value &&
+          unit == other.unit;
 }
 
 /// 加密分享生成结果:口令(单独告知医生)、记录数、文件字节数、分享文件路径。

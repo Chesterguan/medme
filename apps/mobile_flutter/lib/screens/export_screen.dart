@@ -6,6 +6,7 @@ import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/theme.dart';
 
 import 'qr_share_screen.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 底部导航一级 tab「导出·分享」—— 当面出示二维码给医生,或把病历导出成可打印文件
 /// (可按日期区间筛选)。手机端只做「轻」的导出/筛选;全文搜索、趋势等「重」功能在
@@ -113,7 +114,7 @@ class _ExportScreenState extends State<ExportScreen> {
                 onPressed: () {
                   if (from != null && to != null && from!.isAfter(to!)) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('起始日期不能晚于结束日期')),
+                      appSnackBar(content: Text('起始日期不能晚于结束日期')),
                     );
                     return;
                   }

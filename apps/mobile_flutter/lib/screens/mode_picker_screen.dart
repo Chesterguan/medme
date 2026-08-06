@@ -2,11 +2,17 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/app_mode.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
 
 /// 首次打开 App 的「你是?」选择屏——只在 [AppMode.instance.mode] 还没选过时
 /// 显示(见 `main.dart` 的 `AppRoot`)。选完写入持久化,`AppRoot` 监听同一个
 /// notifier 自动切进对应模式的主界面,本屏无需自己导航。
+///
+/// **这是全 app 唯一一处两个模式的主色并排出现的地方**,所以两张卡的强调色都从
+/// 令牌取:个人 = `seal`(蓝),医生 = `proxy`(紫)。用户在这里学到的这层对应
+/// 关系,之后每一屏都在复用 —— 这里对不上,后面所有屏的颜色提示都失效。
+/// (本屏其余部分仍读旧 `MedMe` 常量,整屏迁移是独立一件事。)
 class ModePickerScreen extends StatelessWidget {
   const ModePickerScreen({super.key});
 
@@ -23,6 +29,7 @@ class ModePickerScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -54,8 +61,8 @@ class ModePickerScreen extends StatelessWidget {
               const SizedBox(height: 32),
               _ModeCard(
                 icon: Icons.folder_shared_outlined,
-                accentColor: MedMe.teal,
-                accentSoft: MedMe.tealSoft,
+                accentColor: c.seal,
+                accentSoft: c.sealWash,
                 title: '自己/家人的病历',
                 subtitle: '整理、查看、加密分享自己和家人的病历',
                 onTap: () => _choose(AppModeKind.personal),
@@ -63,8 +70,8 @@ class ModePickerScreen extends StatelessWidget {
               const SizedBox(height: 16),
               _ModeCard(
                 icon: Icons.medical_services_outlined,
-                accentColor: MedMe.proxyOrange,
-                accentSoft: MedMe.proxyOrangeSoft,
+                accentColor: c.proxy,
+                accentSoft: c.proxyWash,
                 title: '医生,帮病人建档',
                 subtitle: '当面为病人拍摄纸质病历材料,生成认领码交给病人',
                 onTap: () => _choose(AppModeKind.doctor),
@@ -124,7 +131,11 @@ class _ModeCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
-                      style: const TextStyle(fontSize: 13, color: MedMe.faint, height: 1.4),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: MedMe.faint,
+                        height: 1.4,
+                      ),
                     ),
                   ],
                 ),

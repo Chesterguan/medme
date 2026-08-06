@@ -8,6 +8,7 @@ pub mod materialize;
 pub mod query;
 pub mod relocate;
 pub mod schema;
+pub mod text;
 pub mod tokenize;
 pub mod types;
 
@@ -16,6 +17,7 @@ pub use error::MedmeError;
 pub use event::{DocRef, Event};
 pub use materialize::generate_device_id;
 pub use query::{extract_provider, SearchHit, TimelineEntry};
+pub use text::normalize_cjk_radicals;
 pub use types::{
     DocType, Document, Encounter, EncounterKind, ImagingInstance, Import, NewDocument,
     NewImagingInstance, NewOcr, OcrBackendKind, SourceFile,

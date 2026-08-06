@@ -139,7 +139,15 @@ fn diabetes_lane_is_not_empty() {
 /// it means this test also tells us the day it starts working.
 #[test]
 fn diseases_named_in_the_documents_get_a_lane_with_content() {
-    // (disease named in a document, where it is written)
+    // (disease, where a document names it)
+    //
+    // The first field is the **problem map's** `disease` name, because that is
+    // what `lane_for` below compares against — `match_disease` answers with the
+    // map's spelling, not the note's. Writing the note's spelling instead makes
+    // the lookup silently unsatisfiable: `高尿酸血症` sat in NAMED_BUT_MISSING
+    // spelled that way, and since `match_disease` returns `痛风/高尿酸血症`, the
+    // "still missing" assertion was true no matter what the parser did. Both
+    // lists now carry map names; the note's own wording is in the citation.
     const NAMED_AND_SERVED: &[(&str, &str)] = &[
         (
             "2型糖尿病",
@@ -149,27 +157,26 @@ fn diseases_named_in_the_documents_get_a_lane_with_content() {
             "高血压",
             "2023-04-24_出院记录_脑梗死.txt — `出院诊断:… 2. 高血压 3 级(很高危)`",
         ),
+        (
+            "痛风/高尿酸血症",
+            "2026-06-20_处方_内分泌科.txt:4 — written 高尿酸血症, on the line \
+             `处方日期:2026-06-20    临床诊断:2 型糖尿病、糖尿病肾病(早期)、高尿酸血症`. \
+             The label sits mid-line, which `conditions.rs` used to require to be \
+             at line start; the whole prescription's diagnoses vanished with it. \
+             Now served, with 尿酸 (three readings, two of them ↑) and 非布司他.",
+        ),
     ];
 
     // Named by a document, still not served. Each needs a fix elsewhere; until
     // then the assertion below pins the *current* behaviour so the day it changes
     // is visible.
-    const NAMED_BUT_MISSING: &[(&str, &str)] = &[
-        (
-            "高尿酸血症",
-            "2026-06-20_处方_内分泌科.txt:4 — the line reads \
-             `处方日期:2026-06-20    临床诊断:2 型糖尿病、糖尿病肾病(早期)、高尿酸血症`. \
-             conditions.rs `section_re` is `^`-anchored, so a 诊断 label sitting \
-             mid-line takes the whole line's diagnoses down with it.",
-        ),
-        (
-            "脂肪肝",
-            "2024-03-22_腹部超声_脂肪肝.txt:13 — `1. 脂肪肝(中度)。` under 提示, \
-             which is not a diagnosis-section label; and 脂肪肝 is a synonym of \
-             代谢相关(非酒精性)脂肪性肝病 rather than a spelling of it, which the \
-             mechanical alias expansion deliberately does not invent.",
-        ),
-    ];
+    const NAMED_BUT_MISSING: &[(&str, &str)] = &[(
+        "代谢相关(非酒精性)脂肪性肝病",
+        "2024-03-22_腹部超声_脂肪肝.txt:13 — `1. 脂肪肝(中度)。` under 提示, \
+         which is not a diagnosis-section label; and 脂肪肝 is a synonym of \
+         代谢相关(非酒精性)脂肪性肝病 rather than a spelling of it, which the \
+         mechanical alias expansion deliberately does not invent.",
+    )];
 
     let sm = summary();
     let lanes: Vec<(&str, usize, usize)> = problems(&sm)

@@ -481,6 +481,72 @@ mod tests {
     use super::*;
     use aes_gcm::aead::Aead;
 
+    /// 查看器 CSP 里声明的每个 `'sha256-…'` 必须**确实**对应一个内联脚本,反过来
+    /// 每个内联脚本也必须被声明 —— 否则浏览器直接把脚本拦掉,页面白屏。
+    ///
+    /// 这条测试是补的,因为它已经发生过了:有人改了第三段内联脚本却没重算哈希,
+    /// 于是**查看器自己 64KB 的主脚本被自己的 CSP 拦了**,而仓库里没有任何东西
+    /// 会发现这件事 —— 没有重算脚本、没有 CI 检查,文件顶部只有一句「改动任一内联
+    /// 脚本块后必须更新对应的 sha256」的口头约定。口头约定挡不住这类错误:改脚本
+    /// 的人本地打开的是 `file://`,而 `<meta>` CSP 在那里照样生效但没人会去看
+    /// devtools 控制台。
+    ///
+    /// 同时钉住反方向(声明了却无对应脚本):那种多余哈希本身无害,但它是「有人改
+    /// 了脚本、加了新哈希却没删旧的」的指纹,留着会让下一个人以为哈希是对的。
+    #[test]
+    fn every_inline_script_in_the_hosted_viewer_is_allowed_by_its_own_csp() {
+        use base64::Engine as _;
+        use sha2::{Digest, Sha256};
+
+        let html = CANONICAL_VIEWER;
+
+        // CSP 的 script-src 段。
+        let csp_start = html.find("script-src ").expect("查看器里应有 script-src");
+        let csp = &html
+            [csp_start..csp_start + html[csp_start..].find(';').expect("script-src 未以 ; 结束")];
+        let declared: std::collections::BTreeSet<String> = csp
+            .split('\'')
+            .filter(|t| t.starts_with("sha256-"))
+            .map(str::to_string)
+            .collect();
+        assert!(!declared.is_empty(), "script-src 里一个 sha256 都没有");
+
+        // 内联脚本 = 没有 src= 属性的 <script>。CSP 哈希算的是标签之间的**原文**。
+        let mut actual = std::collections::BTreeSet::new();
+        let mut cursor = 0usize;
+        while let Some(open) = html[cursor..].find("<script") {
+            let open = cursor + open;
+            let gt = open + html[open..].find('>').expect("<script 未闭合");
+            let attrs = &html[open..gt];
+            let close = gt + 1 + html[gt + 1..].find("</script>").expect("</script> 缺失");
+            let body = &html[gt + 1..close];
+            cursor = close + "</script>".len();
+            if attrs.contains(" src=") {
+                continue; // 外链脚本不走哈希
+            }
+            let digest = Sha256::digest(body.as_bytes());
+            actual.insert(format!(
+                "sha256-{}",
+                base64::engine::general_purpose::STANDARD.encode(digest)
+            ));
+        }
+        assert!(
+            !actual.is_empty(),
+            "查看器里一个内联脚本都没有,解析逻辑坏了"
+        );
+
+        let blocked: Vec<_> = actual.difference(&declared).collect();
+        assert!(
+            blocked.is_empty(),
+            "这些内联脚本会被查看器自己的 CSP 拦掉(改了脚本没重算哈希):{blocked:?}"
+        );
+        let orphan: Vec<_> = declared.difference(&actual).collect();
+        assert!(
+            orphan.is_empty(),
+            "CSP 里声明了没有对应脚本的哈希(多半是改脚本时加了新的没删旧的):{orphan:?}"
+        );
+    }
+
     /// 从生成 HTML 的 `#share-data` 数据节点取出 base64 blob——与浏览器查看器同源
     /// (`JSON.parse(#share-data).blob`),供各解密往返测试复用。
     fn extract_blob_b64(html: &str) -> String {

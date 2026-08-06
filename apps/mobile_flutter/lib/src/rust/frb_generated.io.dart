@@ -6,6 +6,7 @@
 import 'api/dto.dart';
 import 'api/vault.dart';
 import 'api/vault_ephemeral.dart';
+import 'api/vault_projections.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
@@ -24,7 +25,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  RustStreamSink<DemoLoadProgressDto>
+  dco_decode_StreamSink_demo_load_progress_dto_Sse(dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
+
+  @protected
+  ActiveMedDto dco_decode_active_med_dto(dynamic raw);
+
+  @protected
+  AllergyItemDto dco_decode_allergy_item_dto(dynamic raw);
 
   @protected
   bool dco_decode_bool(dynamic raw);
@@ -51,6 +62,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
+  ChronicConditionDto dco_decode_chronic_condition_dto(dynamic raw);
+
+  @protected
   ClaimResultDto dco_decode_claim_result_dto(dynamic raw);
 
   @protected
@@ -60,10 +74,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ConsentDto dco_decode_consent_dto(dynamic raw);
 
   @protected
+  DemoLoadProgressDto dco_decode_demo_load_progress_dto(dynamic raw);
+
+  @protected
   DocumentDetailDto dco_decode_document_detail_dto(dynamic raw);
 
   @protected
   DocumentSummaryDto dco_decode_document_summary_dto(dynamic raw);
+
+  @protected
+  EmergencyCardDto dco_decode_emergency_card_dto(dynamic raw);
 
   @protected
   EncounterSummaryDto dco_decode_encounter_summary_dto(dynamic raw);
@@ -90,10 +110,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ImportOutcomeDto dco_decode_import_outcome_dto(dynamic raw);
 
   @protected
+  List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<ActiveMedDto> dco_decode_list_active_med_dto(dynamic raw);
+
+  @protected
+  List<AllergyItemDto> dco_decode_list_allergy_item_dto(dynamic raw);
+
+  @protected
+  List<ChronicConditionDto> dco_decode_list_chronic_condition_dto(dynamic raw);
+
+  @protected
   List<ConfirmedStatusDto> dco_decode_list_confirmed_status_dto(dynamic raw);
 
   @protected
   List<DocumentSummaryDto> dco_decode_list_document_summary_dto(dynamic raw);
+
+  @protected
+  Int32List dco_decode_list_prim_i_32_strict(dynamic raw);
 
   @protected
   Int64List dco_decode_list_prim_i_64_strict(dynamic raw);
@@ -117,7 +152,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ProxyProblemDto> dco_decode_list_proxy_problem_dto(dynamic raw);
 
   @protected
+  List<SelfMeasuredValueDto> dco_decode_list_self_measured_value_dto(
+    dynamic raw,
+  );
+
+  @protected
   List<TimelineGroupDto> dco_decode_list_timeline_group_dto(dynamic raw);
+
+  @protected
+  List<TrendPointDto> dco_decode_list_trend_point_dto(dynamic raw);
+
+  @protected
+  List<TrendSeriesDto> dco_decode_list_trend_series_dto(dynamic raw);
+
+  @protected
+  List<VisitLabDto> dco_decode_list_visit_lab_dto(dynamic raw);
+
+  @protected
+  List<VisitNoteDto> dco_decode_list_visit_note_dto(dynamic raw);
+
+  @protected
+  List<VisitRecordDto> dco_decode_list_visit_record_dto(dynamic raw);
 
   @protected
   OcrPpResultDto dco_decode_ocr_pp_result_dto(dynamic raw);
@@ -166,6 +221,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_record_list_prim_u_8_strict_string_i_64(dynamic raw);
 
   @protected
+  SelfMeasuredValueDto dco_decode_self_measured_value_dto(dynamic raw);
+
+  @protected
   ShareResultDto dco_decode_share_result_dto(dynamic raw);
 
   @protected
@@ -175,16 +233,46 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TimelineGroupDto dco_decode_timeline_group_dto(dynamic raw);
 
   @protected
+  TrendPointDto dco_decode_trend_point_dto(dynamic raw);
+
+  @protected
+  TrendSeriesDto dco_decode_trend_series_dto(dynamic raw);
+
+  @protected
   int dco_decode_u_8(dynamic raw);
 
   @protected
   void dco_decode_unit(dynamic raw);
 
   @protected
+  VisitLabDto dco_decode_visit_lab_dto(dynamic raw);
+
+  @protected
+  VisitNoteDto dco_decode_visit_note_dto(dynamic raw);
+
+  @protected
+  VisitRecordDto dco_decode_visit_record_dto(dynamic raw);
+
+  @protected
+  VisitSummaryDto dco_decode_visit_summary_dto(dynamic raw);
+
+  @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<DemoLoadProgressDto>
+  sse_decode_StreamSink_demo_load_progress_dto_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
+
+  @protected
+  ActiveMedDto sse_decode_active_med_dto(SseDeserializer deserializer);
+
+  @protected
+  AllergyItemDto sse_decode_allergy_item_dto(SseDeserializer deserializer);
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
@@ -215,6 +303,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  ChronicConditionDto sse_decode_chronic_condition_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ClaimResultDto sse_decode_claim_result_dto(SseDeserializer deserializer);
 
   @protected
@@ -226,6 +319,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ConsentDto sse_decode_consent_dto(SseDeserializer deserializer);
 
   @protected
+  DemoLoadProgressDto sse_decode_demo_load_progress_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DocumentDetailDto sse_decode_document_detail_dto(
     SseDeserializer deserializer,
   );
@@ -234,6 +332,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DocumentSummaryDto sse_decode_document_summary_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  EmergencyCardDto sse_decode_emergency_card_dto(SseDeserializer deserializer);
 
   @protected
   EncounterSummaryDto sse_decode_encounter_summary_dto(
@@ -262,6 +363,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ImportOutcomeDto sse_decode_import_outcome_dto(SseDeserializer deserializer);
 
   @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<ActiveMedDto> sse_decode_list_active_med_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<AllergyItemDto> sse_decode_list_allergy_item_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ChronicConditionDto> sse_decode_list_chronic_condition_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<ConfirmedStatusDto> sse_decode_list_confirmed_status_dto(
     SseDeserializer deserializer,
   );
@@ -270,6 +389,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<DocumentSummaryDto> sse_decode_list_document_summary_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  Int32List sse_decode_list_prim_i_32_strict(SseDeserializer deserializer);
 
   @protected
   Int64List sse_decode_list_prim_i_64_strict(SseDeserializer deserializer);
@@ -297,7 +419,35 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SelfMeasuredValueDto> sse_decode_list_self_measured_value_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<TimelineGroupDto> sse_decode_list_timeline_group_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<TrendPointDto> sse_decode_list_trend_point_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<TrendSeriesDto> sse_decode_list_trend_series_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<VisitLabDto> sse_decode_list_visit_lab_dto(SseDeserializer deserializer);
+
+  @protected
+  List<VisitNoteDto> sse_decode_list_visit_note_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<VisitRecordDto> sse_decode_list_visit_record_dto(
     SseDeserializer deserializer,
   );
 
@@ -354,6 +504,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SelfMeasuredValueDto sse_decode_self_measured_value_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ShareResultDto sse_decode_share_result_dto(SseDeserializer deserializer);
 
   @protected
@@ -365,10 +520,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TimelineGroupDto sse_decode_timeline_group_dto(SseDeserializer deserializer);
 
   @protected
+  TrendPointDto sse_decode_trend_point_dto(SseDeserializer deserializer);
+
+  @protected
+  TrendSeriesDto sse_decode_trend_series_dto(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_u_8(SseDeserializer deserializer);
 
   @protected
   void sse_decode_unit(SseDeserializer deserializer);
+
+  @protected
+  VisitLabDto sse_decode_visit_lab_dto(SseDeserializer deserializer);
+
+  @protected
+  VisitNoteDto sse_decode_visit_note_dto(SseDeserializer deserializer);
+
+  @protected
+  VisitRecordDto sse_decode_visit_record_dto(SseDeserializer deserializer);
+
+  @protected
+  VisitSummaryDto sse_decode_visit_summary_dto(SseDeserializer deserializer);
 
   @protected
   void sse_encode_AnyhowException(
@@ -377,7 +550,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_demo_load_progress_dto_Sse(
+    RustStreamSink<DemoLoadProgressDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_active_med_dto(ActiveMedDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_allergy_item_dto(
+    AllergyItemDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
@@ -416,6 +604,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_chronic_condition_dto(
+    ChronicConditionDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_claim_result_dto(
     ClaimResultDto self,
     SseSerializer serializer,
@@ -431,6 +625,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_consent_dto(ConsentDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_demo_load_progress_dto(
+    DemoLoadProgressDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_document_detail_dto(
     DocumentDetailDto self,
     SseSerializer serializer,
@@ -439,6 +639,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_document_summary_dto(
     DocumentSummaryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_emergency_card_dto(
+    EmergencyCardDto self,
     SseSerializer serializer,
   );
 
@@ -479,6 +685,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_active_med_dto(
+    List<ActiveMedDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_allergy_item_dto(
+    List<AllergyItemDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_chronic_condition_dto(
+    List<ChronicConditionDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_confirmed_status_dto(
     List<ConfirmedStatusDto> self,
     SseSerializer serializer,
@@ -487,6 +714,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_document_summary_dto(
     List<DocumentSummaryDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_i_32_strict(
+    Int32List self,
     SseSerializer serializer,
   );
 
@@ -530,8 +763,44 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_self_measured_value_dto(
+    List<SelfMeasuredValueDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_timeline_group_dto(
     List<TimelineGroupDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_trend_point_dto(
+    List<TrendPointDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_trend_series_dto(
+    List<TrendSeriesDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_visit_lab_dto(
+    List<VisitLabDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_visit_note_dto(
+    List<VisitNoteDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_visit_record_dto(
+    List<VisitRecordDto> self,
     SseSerializer serializer,
   );
 
@@ -605,6 +874,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_self_measured_value_dto(
+    SelfMeasuredValueDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_share_result_dto(
     ShareResultDto self,
     SseSerializer serializer,
@@ -623,10 +898,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_trend_point_dto(TrendPointDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_trend_series_dto(
+    TrendSeriesDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_visit_lab_dto(VisitLabDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_visit_note_dto(VisitNoteDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_visit_record_dto(
+    VisitRecordDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_visit_summary_dto(
+    VisitSummaryDto self,
+    SseSerializer serializer,
+  );
 }
 
 // Section: wire_class

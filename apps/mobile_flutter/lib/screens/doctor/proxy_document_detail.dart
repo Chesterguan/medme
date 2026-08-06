@@ -3,11 +3,12 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart' show kDocTypeLabel;
 import 'package:mobile_flutter/src/rust/api/vault.dart' as vault;
 import 'package:mobile_flutter/src/rust/api/dto.dart';
-import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 
 /// [ProxyDocumentDetailScreen] 弹出时告诉调用方(待确认列表屏)接下来该做什么:
@@ -23,8 +24,13 @@ enum ProxyDetailResult { none, changed, retake }
 /// 代码与 `document_detail.dart` 重复大半,也不去改那个文件抽公共组件——保持「不碰
 /// 普通人模式一行代码」这条硬规矩在这两个文件上都显而易见成立。
 ///
-/// 布局复用 `document_detail.dart` 的呈现方式:原件图/PDF + 识别文本(`ReportContent`)。
-/// 底部按钮换成本流程要的三个动作:确认这一份 / 删除 / 重拍。
+/// 布局复用 `document_detail.dart` 的呈现方式:抬头卡(带骑缝线)+ 识别文本
+/// (`ReportContent`)。底部按钮换成本流程要的三个动作:确认这一份 / 删除 / 重拍。
+///
+/// **视觉上与 `document_detail.dart` 逐处对齐,只把主色 `seal`(蓝)换成 `proxy`
+/// (紫)** —— 结构、字阶、圆角、骑缝线、间距全部同源。识别文本区整块交给共用的
+/// `ReportContent`,它一个字节都不为医生模式改:同一份化验值在两个模式下必须
+/// 长得一模一样。
 class ProxyDocumentDetailScreen extends StatefulWidget {
   const ProxyDocumentDetailScreen({
     super.key,
@@ -38,6 +44,7 @@ class ProxyDocumentDetailScreen extends StatefulWidget {
   final String patientId;
 
   final int docId;
+
   /// 打开详情页那一刻,列表屏已知的确认状态(列表屏已经从
   /// [ProxyPatientManager] 读过一次,这里不必再问一遍)。
   final bool initiallyConfirmed;
@@ -47,8 +54,7 @@ class ProxyDocumentDetailScreen extends StatefulWidget {
       _ProxyDocumentDetailScreenState();
 }
 
-class _ProxyDocumentDetailScreenState
-    extends State<ProxyDocumentDetailScreen> {
+class _ProxyDocumentDetailScreenState extends State<ProxyDocumentDetailScreen> {
   late final Future<DocumentDetailDto> _future = vault.getDocument(
     id: widget.docId,
   );
@@ -68,7 +74,9 @@ class _ProxyDocumentDetailScreenState
             child: const Text('取消'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: MedMe.danger),
+            style: FilledButton.styleFrom(
+              backgroundColor: MedColors.of(context).critical,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('删除'),
           ),
@@ -175,6 +183,7 @@ class _ProxyDocumentDetailScreenState
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -198,28 +207,35 @@ class _ProxyDocumentDetailScreenState
         ),
         bottomNavigationBar: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            padding: const EdgeInsets.fromLTRB(
+              MedShape.s3,
+              MedShape.s1,
+              MedShape.s3,
+              MedShape.s2,
+            ),
+            // 「按过了」= 同一个紫的**淡底版**(proxy-wash 底 + proxy-ink 字),
+            // 「还要你按」= 同一个紫的**实心版**。同色系、不同分量,一眼分得清
+            // 谁还需要动作。原先「已确认」是 emerald 绿 —— 绿不在规范色板里
+            // (§二「正常不上色」的直接后果),而且它和这一屏其余颜色毫无亲缘。
             child: _confirmed
                 ? Container(
                     padding: const EdgeInsets.symmetric(vertical: 13),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFECFDF5),
-                      borderRadius: BorderRadius.circular(10),
+                      color: c.proxyWash,
+                      borderRadius: BorderRadius.circular(
+                        MedShape.radiusControl,
+                      ),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
-                          Icons.check_circle,
-                          color: Color(0xFF047857),
-                          size: 18,
-                        ),
-                        SizedBox(width: 8),
+                        Icon(Icons.check_circle, color: c.proxyInk, size: 18),
+                        const SizedBox(width: MedShape.s1),
                         Text(
                           '已确认',
-                          style: TextStyle(
-                            color: Color(0xFF047857),
-                            fontWeight: FontWeight.w700,
+                          style: MedType.body.copyWith(
+                            color: c.proxyInk,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
@@ -230,7 +246,7 @@ class _ProxyDocumentDetailScreenState
                     icon: const Icon(Icons.check),
                     label: const Text('确认这一份'),
                     style: FilledButton.styleFrom(
-                      backgroundColor: MedMe.proxyOrange,
+                      backgroundColor: c.proxy,
                       minimumSize: const Size.fromHeight(48),
                     ),
                   ),
@@ -240,18 +256,16 @@ class _ProxyDocumentDetailScreenState
           future: _future,
           builder: (context, snap) {
             if (snap.connectionState != ConnectionState.done) {
-              return const Center(
-                child: CircularProgressIndicator(color: MedMe.proxyOrange),
-              );
+              return Center(child: CircularProgressIndicator(color: c.proxy));
             }
             if (snap.hasError) {
               return Center(
                 child: Padding(
-                  padding: const EdgeInsets.all(32),
+                  padding: const EdgeInsets.all(MedShape.s6),
                   child: Text(
                     '打开失败:\n${snap.error}',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: MedMe.faint),
+                    style: MedType.body.copyWith(color: c.ink2, height: 1.6),
                   ),
                 ),
               );
@@ -270,88 +284,113 @@ class _ProxyDetailBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     final doc = detail.document;
     final sf = detail.sourceFile;
     final typeLabel = kDocTypeLabel[doc.docType] ?? doc.docType;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      padding: const EdgeInsets.fromLTRB(
+        MedShape.s3,
+        MedShape.s3,
+        MedShape.s3,
+        MedShape.s6,
+      ),
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: MedMe.proxyOrangeSoft,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.description_outlined,
-                color: MedMe.proxyOrange,
-              ),
+        // 抬头卡带骑缝线:这一整屏讲的就是**某一份原件**,而且「查看原件」就在卡
+        // 里 —— 「背后有原件、点得进去」两条都成立(规范 §五)。与个人模式的
+        // `document_detail.dart` 同一处理,一道也不多、不少。
+        MedCard(
+          perforated: true,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              MedShape.s4,
+              MedShape.s2,
+              MedShape.s4,
+              MedShape.s4,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    doc.title ?? typeLabel,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: c.proxyWash,
+                        borderRadius: BorderRadius.circular(
+                          MedShape.radiusBlock,
+                        ),
+                      ),
+                      child: Icon(Icons.description_outlined, color: c.proxy),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    [
-                      typeLabel,
-                      if (doc.docDate != null) _fmtDate(doc.docDate),
-                    ].join(' · '),
-                    style: const TextStyle(fontSize: 12.5, color: MedMe.faint),
-                  ),
-                  Text(
-                    '来源:${sf.originalName}',
-                    style: const TextStyle(fontSize: 12, color: MedMe.faint),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+                    const SizedBox(width: MedShape.s2),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            doc.title ?? typeLabel,
+                            style: MedType.title.copyWith(color: c.ink),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            [
+                              typeLabel,
+                              if (doc.docDate != null) _fmtDate(doc.docDate),
+                            ].join(' · '),
+                            style: MedType.secondary.copyWith(
+                              color: c.ink2,
+                              fontFeatures: MedType.tabular,
+                            ),
+                          ),
+                          Text(
+                            '来源:${sf.originalName}',
+                            style: MedType.secondary.copyWith(color: c.ink3),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
 
-        const SizedBox(height: 14),
-        OutlinedButton.icon(
-          onPressed: () => _openOriginal(context, sf),
-          icon: const Icon(Icons.visibility_outlined, size: 18),
-          label: const Text('查看原件'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: MedMe.proxyOrange,
-            side: const BorderSide(color: MedMe.proxyOrange),
-            minimumSize: const Size.fromHeight(44),
+                const SizedBox(height: MedShape.s3),
+                // 次级按钮(规范 §六 btn-2):proxy-wash 底 + proxy-ink 字。
+                // 「原件永远可达」是 007 §2.1 的铁律,所以它不能是最弱的那一级;
+                // 但本屏的主按钮位置留给底部的「确认这一份」,它就不该是纯色主按钮。
+                // 原先它是紫(当时的橙)描边 + 同色字,与底部主按钮同分量 ——
+                // 一屏两个「主」,医生在赶时间时得读文字才知道该按哪个。
+                OutlinedButton.icon(
+                  onPressed: () => _openOriginal(context, sf),
+                  icon: const Icon(Icons.visibility_outlined, size: 18),
+                  label: const Text('查看原件'),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: c.proxyWash,
+                    foregroundColor: c.proxyInk,
+                    side: BorderSide(color: c.line),
+                    minimumSize: const Size.fromHeight(44),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
 
-        const SizedBox(height: 20),
+        const SizedBox(height: MedShape.s5),
         Row(
           children: [
-            const Icon(Icons.article_outlined, size: 15, color: MedMe.faint),
-            const SizedBox(width: 6),
+            Icon(Icons.article_outlined, size: 15, color: c.ink3),
+            const SizedBox(width: MedShape.s1),
             Text(
               sf.mimeType.startsWith('image/') ? '识别文本' : '文档内容',
-              style: const TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-                color: MedMe.faint,
-                letterSpacing: 0.4,
-              ),
+              style: MedType.caption.copyWith(color: c.ink3),
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: MedShape.s2),
         ReportContent(text: detail.ocrText, docType: doc.docType),
       ],
     );
@@ -429,8 +468,10 @@ class _ProxyImageViewerScreen extends StatelessWidget {
         future: vault.readSourceBytes(id: sourceFileId),
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(
-              child: CircularProgressIndicator(color: MedMe.proxyOrange),
+            return Center(
+              child: CircularProgressIndicator(
+                color: MedColors.of(context).proxy,
+              ),
             );
           }
           if (snap.hasError || !snap.hasData) {
@@ -491,8 +532,10 @@ class _ProxyPdfViewerScreenState extends State<_ProxyPdfViewerScreen> {
       body: _error != null
           ? const _ProxyViewerFallback(message: '此文件暂不能预览。')
           : _controller == null
-          ? const Center(
-              child: CircularProgressIndicator(color: MedMe.proxyOrange),
+          ? Center(
+              child: CircularProgressIndicator(
+                color: MedColors.of(context).proxy,
+              ),
             )
           : PdfView(controller: _controller!, onDocumentError: (_) {}),
     );
@@ -517,8 +560,10 @@ class _ProxyDicomViewerScreen extends StatelessWidget {
         future: vault.renderDicomPng(id: sourceFileId),
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(
-              child: CircularProgressIndicator(color: MedMe.proxyOrange),
+            return Center(
+              child: CircularProgressIndicator(
+                color: MedColors.of(context).proxy,
+              ),
             );
           }
           if (snap.hasError || !snap.hasData) {
@@ -545,19 +590,21 @@ class _ProxyViewerFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = light ? MedMe.faint : Colors.white70;
+    // 全屏看片是黑底(`_ProxyImageViewerScreen` / DICOM),那一档只能用白系文字;
+    // 浅底那一档走令牌 `ink2`。
+    final color = light ? MedColors.of(context).ink2 : Colors.white70;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(MedShape.s6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.image_not_supported_outlined, size: 40, color: color),
-            const SizedBox(height: 12),
+            const SizedBox(height: MedShape.s2),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: TextStyle(color: color, fontSize: 13.5, height: 1.6),
+              style: MedType.body.copyWith(color: color, height: 1.6),
             ),
           ],
         ),

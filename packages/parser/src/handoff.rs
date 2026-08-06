@@ -391,6 +391,13 @@ fn series_to_json(s: &AnalyteSeries) -> Value {
     }
     m.insert("pts".into(), json!(points_json(s)));
     m.insert("evidence".into(), json!(series_evidence(s)));
+    // MANUAL-ENTRY-DESIGN.md §5.1(选项 A):自测系列(家测血压/血糖/体重/体温/
+    // 心率)与医院系列一样正常流进这份摘要——它们各自带着自己的 `refHigh`/
+    // `refLow`(家测阈值,不是诊室切点,见上面 `s.ref_high`/`s.ref_low` 的来源
+    // `self_entry::home_ref_range`),所以哪怕消费方(hosted-viewer)暂时还不
+    // 认这个字段、不显示"家测"两个字,拿这份数据算出的 H/L/N 也不会算错——
+    // 区间本来就是对的,`selfMeasured` 只是让将来的渲染层能加一句标注。
+    m.insert("selfMeasured".into(), json!(s.self_measured));
     Value::Object(m)
 }
 
@@ -705,6 +712,21 @@ fn imaging_group(title: Option<&str>, text: &str) -> String {
 /// index in the viewer's `records[]` so evidence chips jump to the right doc.
 pub fn assemble_summary(docs: &[SourceDoc<'_>]) -> Value {
     let agg = aggregate(docs);
+    // MANUAL-ENTRY-DESIGN.md §5.1, decision: 选项 A。自测数据(家测血压/血糖/
+    // 体重/体温/心率)照常流进医生二维码分享 / hosted-viewer——**不**过滤。
+    // 产品原话:"查看器本身就是和手机端功能不一样的,没必要直接对比,有价值
+    // 那就要给呀"。家庭自测血压是指南推荐项目,医生真的想看,诊室血压反而有
+    // 白大衣效应这层噪音。
+    //
+    // 这不会把结论算反:`series_to_json` 里每条自测系列带的 `refHigh`/`refLow`
+    // 就是它自己的家测阈值(来自 `self_entry::home_ref_range`,不是诊室切点)、
+    // 是**逐序列**写进 payload 的,消费方(含还没升级的旧版 hosted-viewer)拿
+    // 这两个数算 H/L/N 不会算错——旧版只是暂时不会显示"家测"这两个字
+    // (`selfMeasured` 字段就是给这句标注准备的,见 `series_to_json`),但区间
+    // 本身摆在那里就是对的。挡掉反而是净损失。
+    //
+    // `web/hosted-viewer/**` 读取并显示这个标注是下一刀(需要单独批准触碰那个
+    // 目录),这一轮只把数据和字段准备好。
 
     // Track which analyte series / med spans got placed under ANY problem, so
     // the leftovers fall into the synthetic「其他」bucket instead of vanishing.
@@ -1205,6 +1227,72 @@ mod tests {
         }
     }
 
+    /// **缺陷钉子(2026-08-05):托管查看器的 `sumFlag` 与载荷里的 `warn` 自相矛盾。**
+    ///
+    /// `web/hosted-viewer/index.html` 不看 flag,自己拿 `pts[i][1]` 与
+    /// `refLow`/`refHigh` 重算(`sumFlag`)。当值换算成 umol/L、区间还是 mg/dL 时,
+    /// 它对一份**完全正常**的肌酐报告算出「高出上限 80 倍」= 终末期肾衰,而同一份
+    /// 载荷里 `warn: false`。医生扫码看到的原文逐字是:
+    /// `{"name":"肌酐","pts":[["2026-08",106.104]],"refHigh":1.3,"refLow":0.6,"unit":"umol/L"}`
+    ///
+    /// 修法(见 `aggregate.rs` 的「哪一层用哪一套」):**让查看器拿到同单位的一对
+    /// 数**,而不是改查看器的脚本(那个文件带 CSP 内联脚本哈希,改脚本要连
+    /// `packages/share` 的哈希一起重算)。查看器继续自己重算 —— 载荷里的 `pts`
+    /// 本来就不带逐点 flag,它没有别的选择;重算的输入现在是自洽的。
+    ///
+    /// 这条测试就地重放 `sumFlag` 的算式,并要求它与 `warn` 一致。
+    #[test]
+    fn viewer_recomputed_flag_agrees_with_the_payloads_own_warn() {
+        // `sumFlag(v, lo, hi)` 逐字搬运自 hosted-viewer/index.html。
+        fn sum_flag(v: f64, lo: Option<f64>, hi: Option<f64>) -> bool {
+            hi.is_some_and(|h| v > h) || lo.is_some_and(|l| v < l)
+        }
+
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: Some("生化".into()),
+            date: d(2026, 8, 1),
+            // 一份完全正常的报告:1.2 落在 0.6–1.3 内。
+            text: "临床诊断:慢性肾脏病\n肌酐: 1.2 mg/dL (参考 0.6-1.3)",
+        }];
+        let sm = assemble_summary(&docs);
+
+        let mut seen = 0usize;
+        for p in sm["problems"].as_array().expect("problems") {
+            let warn = p["warn"].as_bool().expect("warn");
+            for l in p["labs"].as_array().into_iter().flatten() {
+                let lo = l["refLow"].as_f64();
+                let hi = l["refHigh"].as_f64();
+                for pt in l["pts"].as_array().into_iter().flatten() {
+                    let v = pt[1].as_f64().expect("point value");
+                    seen += 1;
+                    assert!(
+                        !sum_flag(v, lo, hi),
+                        "查看器会把一份正常报告算成异常:{} = {v} {:?},区间 [{lo:?}, {hi:?}];\
+                         而载荷里 warn = {warn}。整条 payload:{l}",
+                        l["name"].as_str().unwrap_or("?"),
+                        l["unit"].as_str(),
+                    );
+                }
+            }
+        }
+        assert!(seen > 0, "这条测试必须真的看到点,否则它什么都没证明");
+
+        // 顺带钉住②:医生扫到的数值/单位/区间就是患者纸上印的那一套。
+        let lab = sm["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .flat_map(|p| p["labs"].as_array().into_iter().flatten())
+            .find(|l| l["name"].as_str() == Some("肌酐"))
+            .expect("肌酐 series");
+        assert_eq!(lab["unit"].as_str(), Some("mg/dL"));
+        assert_eq!(lab["refLow"].as_f64(), Some(0.6));
+        assert_eq!(lab["refHigh"].as_f64(), Some(1.3));
+        assert_eq!(lab["pts"][0][1].as_f64(), Some(1.2));
+    }
+
     #[test]
     fn assemble_summary_groups_labs_meds_and_buckets_the_rest() {
         // doc0/doc1: two HbA1c lab reports (both high) + an unmapped analyte.
@@ -1485,5 +1573,107 @@ mod tests {
         }];
         let sm = assemble_summary(&docs);
         assert!(sm.get("imaging").is_none(), "no imaging key when empty");
+    }
+
+    /// MANUAL-ENTRY-DESIGN.md §5.1 决定(选项 B):自测数据永远不出现在
+    /// `assemble_summary` 的输出里 —— 这是医生二维码分享 / hosted-viewer 的数据
+    /// 源。不只是不出现在"其他"桶,连本该按 LOINC 挂进「高血压」泳道(与
+    /// `problem_map.json` 里 8480-6/8462-4 完全匹配)的自测血压也必须被挡在外面,
+    /// 否则医生扫码看到的会是一条没有"这是家测"标注的裸血压值,可能被误当诊室值。
+    #[test]
+    fn assemble_summary_includes_self_measured_series_with_its_own_home_reference_range() {
+        // MANUAL-ENTRY-DESIGN.md §5.1,选项 A(产品拍板):自测系列照常流进医生
+        // 摘要 / 二维码分享 / hosted-viewer,**不过滤**。「查看器本身就是和手机
+        // 端功能不一样的,没必要直接对比,有价值那就要给呀」——家庭自测血压是
+        // 指南推荐项目,医生真的想看。
+        //
+        // 这条测试真正要守的是**区间跟着走**:自测那条序列必须带着它自己的家测
+        // 阈值(135/85),不是诊室切点(140/90)——旧版 hosted-viewer 暂时不会
+        // 显示"家测"两个字(那是下一刀,读 `selfMeasured` 字段),但只要区间是
+        // 对的,`sumFlag(value, refLow, refHigh)` 算出来的 H/L/N 就不会算反。
+        let self_text = crate::render_self_measurement_text(
+            &["血压 150/95 mmHg".to_string()],
+            &[
+                crate::SelfMeasuredValue {
+                    analyte_key: "bp_systolic".into(),
+                    value: 150.0,
+                    unit: "mmHg".into(),
+                },
+                crate::SelfMeasuredValue {
+                    analyte_key: "bp_diastolic".into(),
+                    value: 95.0,
+                    unit: "mmHg".into(),
+                },
+            ],
+        );
+        let docs = vec![
+            SourceDoc {
+                index: 0,
+                doc_type: Some("discharge_summary".into()),
+                title: None,
+                date: d(2024, 1, 1),
+                text: "出院诊断:高血压",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("self_measurement".into()),
+                title: None,
+                date: d(2024, 2, 1),
+                text: &self_text,
+            },
+        ];
+        let sm = assemble_summary(&docs);
+
+        let hypertension = sm["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .find(|p| p["term"] == "高血压")
+            .expect("高血压泳道应存在(LOINC 8480-6/8462-4 都在 problem_map 里)");
+        let labs = hypertension["labs"].as_array().expect("labs");
+
+        let systolic = labs
+            .iter()
+            .find(|l| l["name"] == "收缩压")
+            .expect("自测收缩压应出现在高血压泳道里(选项 A,不再被过滤掉)");
+        assert_eq!(
+            systolic["selfMeasured"],
+            json!(true),
+            "必须带 selfMeasured 标记,供 hosted-viewer 下一刀显示"
+        );
+        // 家测阈值 135,不是诊室切点 140 —— 这是本测试要钉住的核心事实。
+        assert_eq!(systolic["refHigh"], json!(135.0));
+        assert_eq!(systolic["pts"][0][1], json!(150.0));
+
+        let diastolic = labs
+            .iter()
+            .find(|l| l["name"] == "舒张压")
+            .expect("自测舒张压应出现在高血压泳道里");
+        assert_eq!(diastolic["selfMeasured"], json!(true));
+        assert_eq!(diastolic["refHigh"], json!(85.0));
+        assert_eq!(diastolic["pts"][0][1], json!(95.0));
+    }
+
+    /// 非自测的普通医院系列必须显式带 `selfMeasured: false`(不是缺省省略)——
+    /// 消费方(hosted-viewer)按这个字段区分要不要加"家测"标注,字段本身必须
+    /// 稳定存在,不能只在自测时才出现。
+    #[test]
+    fn series_to_json_marks_hospital_series_as_not_self_measured() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            date: d(2024, 1, 1),
+            text: "肌酐 88 μmol/L 59-104",
+        }];
+        let sm = assemble_summary(&docs);
+        let creatinine = sm["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .find(|p| p["term"] == "其他")
+            .expect("未挂号疾病的化验落其他桶")["labs"][0]
+            .clone();
+        assert_eq!(creatinine["selfMeasured"], json!(false));
     }
 }

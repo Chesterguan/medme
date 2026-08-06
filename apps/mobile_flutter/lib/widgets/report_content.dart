@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../design_tokens.dart';
 import '../report_content.dart' show LabFlag, LabRow, tryParseLabRun;
-import '../theme.dart';
+import 'med_card.dart';
 
 // 内容感知渲染(维度 B):按文档类型富渲染,移植自桌面端
 // apps/desktop/src/components/ReportContent.tsx。
@@ -21,9 +22,9 @@ class ReportContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (text.trim().isEmpty) {
-      return const Text(
+      return Text(
         '无文本内容。',
-        style: TextStyle(color: MedMe.faint, fontSize: 13),
+        style: MedType.secondary.copyWith(color: MedColors.of(context).ink3),
       );
     }
 
@@ -41,7 +42,7 @@ class ReportContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (var i = 0; i < blocks.length; i++) ...[
-          if (i > 0) const SizedBox(height: 16),
+          if (i > 0) const SizedBox(height: MedShape.s3),
           _blockView(blocks[i]),
         ],
       ],
@@ -168,10 +169,49 @@ LabFlag? _rowStatus(List<String> cells) {
   return null;
 }
 
-Color _flagColor(LabFlag? flag) {
-  if (flag == LabFlag.high) return const Color(0xFFB45309); // amber-700
-  if (flag == LabFlag.low) return const Color(0xFF1D4ED8); // blue-700
-  return MedMe.ink;
+/// 化验状态 → 前景色。色值来自设计系统 v1 令牌(`MedColors`),不在这里写死。
+/// 正常与无标记**不上色**,继承正文墨色 —— 一份血常规 22 项通常只有 1–2 项异常,
+/// 给正常配色会把异常淹没(规范 §二)。
+Color _flagColor(BuildContext context, LabFlag? flag) {
+  final c = MedColors.of(context);
+  if (flag == LabFlag.high) return c.high;
+  if (flag == LabFlag.low) return c.low;
+  return c.ink;
+}
+
+/// 化验状态 → 左侧色条。正常/无标记是**透明**的,但色条本身照画 —— 3px 的占位
+/// 恒定,异常行才有颜色,整列文字起点才不会因为有没有色条而左右跳。
+Color _stripeColor(BuildContext context, LabFlag? flag) {
+  final c = MedColors.of(context);
+  if (flag == LabFlag.high) return c.high;
+  if (flag == LabFlag.low) return c.low;
+  return Colors.transparent;
+}
+
+/// 化验状态 → 文字 pill。正常/无标记不给 pill。
+///
+/// 状态**同时**编码在色条和 pill 上:色盲用户靠 pill 读「偏低/偏高」,正常视力
+/// 扫视靠色条(规范 §二)。少任何一个,就有一类用户读不到这一行的结论。
+///
+/// ⚠️ 规范的第四级「危急值」这里画不出来:它得由 Rust 在 `LabFlag` 里给出,而
+/// 现在的 `LabFlag` 只有 high/low/normal 三个值。**不在 UI 层拿参考区间反推**
+/// —— 007 §2.5「所有『怎么算』在 Rust,UI 只『怎么显示』」。令牌 `critical` /
+/// `criticalWash` 因此暂时无人消费,等抽取侧补上这一级。
+Widget? _flagPill(BuildContext context, LabFlag? flag) {
+  final c = MedColors.of(context);
+  return switch (flag) {
+    LabFlag.high => MedPill(
+      text: '偏高',
+      foreground: c.high,
+      background: c.highWash,
+    ),
+    LabFlag.low => MedPill(
+      text: '偏低',
+      foreground: c.low,
+      background: c.lowWash,
+    ),
+    _ => null,
+  };
 }
 
 // ── 段落:行内"标签:内容" → 标签加粗(主诉:/病理诊断:/诊断意见:…)──
@@ -184,20 +224,19 @@ class _ParaView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const style = TextStyle(fontSize: 15, height: 1.6, color: MedMe.ink);
+    final c = MedColors.of(context);
+    // body 15·400,行高 1.6 —— 大段中文识别文本,行距比字号更影响可读性。
+    final style = MedType.body.copyWith(height: 1.6, color: c.ink);
     final t = text.trimRight();
     final m = _labelRe.firstMatch(t);
     if (m != null && m.group(3)!.trim().isNotEmpty) {
-      return RichText(
-        text: TextSpan(
+      return Text.rich(
+        TextSpan(
           style: style,
           children: [
             TextSpan(
               text: '${m.group(1)}${m.group(2)}',
-              style: const TextStyle(
-                fontWeight: FontWeight.w600,
-                color: MedMe.ink,
-              ),
+              style: const TextStyle(fontWeight: FontWeight.w600),
             ),
             TextSpan(text: m.group(3)),
           ],
@@ -214,15 +253,13 @@ class _SectionView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 分节标题(【…】/「主诉:」这类)走 subtitle 17·600,比正文明确高一档 ——
+    // 原先 15·700 只靠字重区分,放大字号后两者几乎分不开。
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Text(
         text,
-        style: const TextStyle(
-          fontWeight: FontWeight.w700,
-          color: MedMe.ink,
-          fontSize: 15,
-        ),
+        style: MedType.subtitle.copyWith(color: MedColors.of(context).ink),
       ),
     );
   }
@@ -230,94 +267,201 @@ class _SectionView extends StatelessWidget {
 
 // ── 表格:化验表(结构化解析)与通用多空格表共用的外框/单元格样式 ──
 
+/// 表格外框:卡内分块这一档圆角(14),边框 `line`。
 class _TableFrame extends StatelessWidget {
   final Widget child;
   const _TableFrame({required this.child});
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        decoration: BoxDecoration(border: Border.all(color: MedMe.line)),
-        child: child,
+    final c = MedColors.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+        border: Border.all(color: c.line),
       ),
+      clipBehavior: Clip.antiAlias,
+      child: child,
     );
   }
 }
 
-TableRow _headerRow(List<String> headers) {
+/// 表头单元格文字:caption 12·600·字距 .05em,`ink3`。原先是 11px ——
+/// 低于规范 12px 下限(007 §2.5「字号可放大,不可砍」),已提上来。
+TableRow _headerRow(BuildContext context, List<String> headers) {
+  final c = MedColors.of(context);
   return TableRow(
-    decoration: const BoxDecoration(color: MedMe.bg),
+    decoration: BoxDecoration(
+      color: c.paper,
+      border: Border(bottom: BorderSide(color: c.line)),
+    ),
     children: [
       for (final h in headers)
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Text(
-            h,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: MedMe.faint,
-            ),
+          padding: const EdgeInsets.symmetric(
+            horizontal: MedShape.s2,
+            vertical: MedShape.s1,
           ),
+          child: Text(h, style: MedType.caption.copyWith(color: c.ink3)),
         ),
     ],
   );
 }
 
-Widget _cell(String text, Color color, {bool mono = false}) {
+/// 通用表格的单元格。[numeric] 只加**等宽表格数字**,不换字体 —— 原先给所有
+/// 「数值列」套 `fontFamily: monospace`,而这些列里混着中文(单位、「正常」这类
+/// 提示),中文落到等宽字体上会掉字重、掉字形。对齐要的是 tabular figures,
+/// 不是等宽字体本身。
+Widget _cell(String text, Color color, {bool numeric = false}) {
   return Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    padding: const EdgeInsets.symmetric(
+      horizontal: MedShape.s2,
+      vertical: 7,
+    ),
     child: Text(
       text,
-      style: TextStyle(
-        fontSize: 13,
+      style: MedType.secondary.copyWith(
         color: color,
-        fontFamily: mono ? 'monospace' : null,
+        fontFeatures: numeric ? MedType.tabular : null,
       ),
     ),
   );
 }
 
-BoxDecoration? _zebra(int index) =>
-    index.isOdd ? const BoxDecoration(color: Color(0x0A64748B)) : null;
-
+/// 化验表:一行一项,状态编码在**左侧 3px 色条**与**文字 pill** 上。
+///
+/// 相对旧版(四列 `Table` + 斑马纹 + 整行文字统一上色)的两处结构性改动:
+///  - 斑马纹去掉,行间改用 `line-2` 细线 —— 规范 §四「层次靠边框不靠阴影」,
+///    斑马纹在 22 行的血常规上是纯噪声,还会和状态底色打架。
+///  - 单位不再单占一列。手机宽度下四列会把中文项目名挤成竖条;改成左「项目」
+///    右「结果 + 参考区间」两栏,数值右对齐 + 等宽表格数字,一列数字自然对齐。
 class _LabTableView extends StatelessWidget {
   final List<LabRow> rows;
   const _LabTableView({required this.rows});
 
-  static const _headers = ['项目', '结果', '单位', '参考范围/提示'];
-
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return _TableFrame(
-      child: Table(
-        columnWidths: const {
-          0: FlexColumnWidth(2.2),
-          1: FlexColumnWidth(1),
-          2: FlexColumnWidth(1),
-          3: FlexColumnWidth(1.6),
-        },
-        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _headerRow(_headers),
-          for (var i = 0; i < rows.length; i++) _dataRow(i, rows[i]),
+          Container(
+            color: c.paper,
+            padding: const EdgeInsets.fromLTRB(
+              MedShape.s2,
+              MedShape.s1,
+              MedShape.s2,
+              MedShape.s1,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    '项目',
+                    style: MedType.caption.copyWith(color: c.ink3),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    '结果 / 参考区间',
+                    textAlign: TextAlign.right,
+                    style: MedType.caption.copyWith(color: c.ink3),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (var i = 0; i < rows.length; i++)
+            _LabRowView(row: rows[i], last: i == rows.length - 1),
         ],
       ),
     );
   }
+}
 
-  TableRow _dataRow(int index, LabRow r) {
-    final color = _flagColor(r.flag);
-    return TableRow(
-      decoration: _zebra(index),
-      children: [
-        _cell(r.name, color),
-        _cell(r.value, color, mono: true),
-        _cell(r.unit, color, mono: true),
-        _cell(r.range, color, mono: true),
-      ],
+class _LabRowView extends StatelessWidget {
+  const _LabRowView({required this.row, required this.last});
+
+  final LabRow row;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final fg = _flagColor(context, row.flag);
+    final pill = _flagPill(context, row.flag);
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          // 3px 色条走边框而不是独立的 Container:边框天然铺满整行高度,
+          // 不需要 IntrinsicHeight 去量一遍。
+          left: BorderSide(color: _stripeColor(context, row.flag), width: 3),
+          bottom: last ? BorderSide.none : BorderSide(color: c.line2),
+        ),
+      ),
+      // 左内边距 9 + 3px 色条 = s2(12),与右侧对齐;有没有色条都不跳。
+      padding: const EdgeInsets.fromLTRB(9, 9, MedShape.s2, 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 3,
+            child: Wrap(
+              spacing: MedShape.s1,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(row.name, style: MedType.body.copyWith(color: c.ink)),
+                ?pill,
+              ],
+            ),
+          ),
+          const SizedBox(width: MedShape.s2),
+          Expanded(
+            flex: 2,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: row.value,
+                        style: MedType.body.copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: MedType.tabular,
+                          color: fg,
+                        ),
+                      ),
+                      if (row.unit.isNotEmpty)
+                        TextSpan(
+                          text: ' ${row.unit}',
+                          style: MedType.secondary.copyWith(color: c.ink3),
+                        ),
+                    ],
+                  ),
+                  textAlign: TextAlign.right,
+                ),
+                if (row.range.isNotEmpty)
+                  Text(
+                    row.range,
+                    textAlign: TextAlign.right,
+                    style: MedType.caption.copyWith(
+                      fontWeight: FontWeight.w400,
+                      letterSpacing: 0,
+                      fontFeatures: MedType.tabular,
+                      color: c.ink3,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -343,11 +487,12 @@ class _GenericTableView extends StatelessWidget {
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       children: [
         if (header != null)
-          _headerRow([
+          _headerRow(context, [
             for (var c = 0; c < cols; c++)
               c < header!.length ? header![c] : '',
           ]),
-        for (var i = 0; i < rows.length; i++) _dataRow(i, rows[i], cols),
+        for (var i = 0; i < rows.length; i++)
+          _dataRow(context, i, rows[i], cols),
       ],
     );
     return SingleChildScrollView(
@@ -356,13 +501,27 @@ class _GenericTableView extends StatelessWidget {
     );
   }
 
-  TableRow _dataRow(int index, List<String> r, int cols) {
-    final color = _flagColor(_rowStatus(r));
+  TableRow _dataRow(
+    BuildContext context,
+    int index,
+    List<String> r,
+    int cols,
+  ) {
+    final color = _flagColor(context, _rowStatus(r));
+    // 行间用 `line-2` 细线替代原来的斑马纹(规范 §四:层次靠边框不靠阴影)。
+    // 末行不画,免得和外框叠成两条。
+    final last = index == rows.length - 1;
     return TableRow(
-      decoration: _zebra(index),
+      decoration: last
+          ? null
+          : BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: MedColors.of(context).line2),
+              ),
+            ),
       children: [
         for (var c = 0; c < cols; c++)
-          _cell(c < r.length ? r[c] : '', color, mono: true),
+          _cell(c < r.length ? r[c] : '', color, numeric: true),
       ],
     );
   }
@@ -455,29 +614,23 @@ class _MedsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (meds.intro.isNotEmpty) ...[
           for (final t in meds.intro) _ParaView(text: t),
-          const SizedBox(height: 16),
+          const SizedBox(height: MedShape.s3),
         ],
-        const Text(
-          '用药',
-          style: TextStyle(
-            fontSize: 11,
-            letterSpacing: 1.2,
-            color: MedMe.faint,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 8),
+        // 小标签走 caption 12·600·字距 .05em。原先 11px 低于规范下限。
+        Text('用药', style: MedType.caption.copyWith(color: c.ink3)),
+        const SizedBox(height: MedShape.s1),
         for (var i = 0; i < meds.meds.length; i++) ...[
-          if (i > 0) const SizedBox(height: 8),
-          _MedCard(index: i, med: meds.meds[i]),
+          if (i > 0) const SizedBox(height: MedShape.s1),
+          _MedItemCard(index: i, med: meds.meds[i]),
         ],
         if (meds.footer.isNotEmpty) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: MedShape.s3),
           for (final t in meds.footer) _ParaView(text: t),
         ],
       ],
@@ -485,19 +638,23 @@ class _MedsView extends StatelessWidget {
   }
 }
 
-class _MedCard extends StatelessWidget {
+/// 单条用药。原先是 emerald 绿卡(#ECFDF5 / #D1FAE5 / #047857)—— 绿色不在
+/// 规范色板里,而且「绿 = 正常/安全」正是规范 §二 刻意不做的暗示。改成中性
+/// 分块(`paper` 底 + `line-2` 边),序号用主色 `seal`:清单要好数,不要好看。
+class _MedItemCard extends StatelessWidget {
   final int index;
   final _Med med;
-  const _MedCard({required this.index, required this.med});
+  const _MedItemCard({required this.index, required this.med});
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(MedShape.s2),
       decoration: BoxDecoration(
-        color: const Color(0xFFECFDF5), // emerald-50/40 近似
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFD1FAE5)), // emerald-100 近似
+        color: c.paper,
+        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+        border: Border.all(color: c.line2),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -507,29 +664,27 @@ class _MedCard extends StatelessWidget {
             height: 28,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: const Color(0xFFD1FAE5),
-              borderRadius: BorderRadius.circular(8),
+              color: c.sealWash,
+              borderRadius: BorderRadius.circular(MedShape.radiusControl),
             ),
             child: Text(
               '${index + 1}',
-              style: const TextStyle(
-                color: Color(0xFF047857),
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
+              style: MedType.caption.copyWith(
+                color: c.sealInk,
+                fontFeatures: MedType.tabular,
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: MedShape.s2),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   med.name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w500,
-                    color: MedMe.ink,
-                    fontSize: 15,
+                  style: MedType.body.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: c.ink,
                   ),
                 ),
                 for (final u in med.usage)
@@ -537,9 +692,8 @@ class _MedCard extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 2),
                     child: Text(
                       u,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: MedMe.faint,
+                      style: MedType.secondary.copyWith(
+                        color: c.ink2,
                         height: 1.5,
                       ),
                     ),

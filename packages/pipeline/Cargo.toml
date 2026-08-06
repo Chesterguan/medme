@@ -21,3 +21,12 @@ chrono.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Test-only: `ocr::testing`'s multi-page-TIFF builders, for the multi-page-image
+# regression test below (`ocr` is already a normal dependency above; this entry
+# only turns on the fixture-builder feature for the test profile, so nothing
+# extra is linked into a shipping build).
+ocr = { path = "../ocr", default-features = false, features = ["testing"] }
+# Only for hand-building a minimal real PDF in the mixed-page-PDF regression
+# test (packages/ocr already depends on lopdf for the same reason at
+# runtime; this is test-only here).
+lopdf.workspace = true

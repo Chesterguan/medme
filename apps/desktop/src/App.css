@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* 设计系统 v1 语义令牌(颜色/圆角/间距/阴影)。与下面的 blue-* 品牌重映射并存,
+ * 不覆盖它 —— 见 tokens.css 顶部说明。 */
+@import "./tokens.css";
 
 /*
  * Brand accent override — remaps Tailwind's default `blue-*` palette to the
@@ -22,16 +25,234 @@
   --color-blue-950: #0b1e42;
 }
 
-/* 根字号:正常档(16px 浏览器默认) */
+/*
+ * ─── 设计系统 v1 → Tailwind 工具类 ────────────────────────────────────────
+ *
+ * `@theme inline` 的意义:生成的工具类里直接写 `var(--surface)` 本身,而不是把
+ * 当前值拷一份进去。于是 tokens.css 在 `:root` 上换掉令牌(深色模式 / 显式
+ * data-theme)时,`bg-surface` 跟着变 —— 全 app 一处 `dark:` 变体都不用写。
+ *
+ * 与上面 blue-* 重映射的分工:blue-* 是**品牌基调**(logo、品牌字样),这里是
+ * **界面语义**(纸/面/线/主色/化验状态)。两套并存,互不覆盖 —— 前者占
+ * `--color-blue-*`,后者占 Tailwind 未使用的裸语义名。
+ */
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-seal: var(--seal);
+  --color-seal-ink: var(--seal-ink);
+  --color-seal-wash: var(--seal-wash);
+
+  /*
+   * 化验状态四级里的三级。**正常刻意没有** —— 见 tokens.css。
+   *
+   * ⚠️ 规范只为**化验值**定义了这三档。桌面端还有一批非化验的状态(导入失败、
+   * 清空保险箱、审计里的「分享」…),色板是封闭的、没有第二套「警告色」可用,
+   * 所以这里做了一条**规范之外的推广**,全 app 统一按它执行:
+   *   high     = 「注意一下」(未识别到文字、数据离开过设备)
+   *   critical = 「出事了 / 不可撤销」(加载失败、导入失败、清空保险箱)
+   * 这是本次改版的主观判断,不是规范原文 —— 若评审不认,改这两行的用法即可,
+   * 化验值那边的取色不受影响(它读的是 Rust 给的 flag)。
+   */
+  --color-low: var(--low);
+  --color-low-wash: var(--low-wash);
+  --color-high: var(--high);
+  --color-high-wash: var(--high-wash);
+  --color-critical: var(--critical);
+  --color-critical-wash: var(--critical-wash);
+
+  /* 圆角严格递减:rounded-card > rounded-block > rounded-ctl。嵌套时不能同级。 */
+  --radius-card: var(--r-card);
+  --radius-block: var(--r-block);
+  --radius-ctl: var(--r-ctl);
+
+  /* 层次靠边框不靠阴影 —— 所以 shadow-card 是全 app 唯一一档阴影。 */
+  --shadow-card: var(--shadow);
+}
+
+/*
+ * 字阶:比改版前整体上移一档。目标用户含老年人,`007 §2.5` 规定「字号可放大,
+ * 不可砍」,所以**最小 12px(caption)**,不存在 10px / 11px 这两档。
+ * 一律 rem 不写死 px —— 根字号变大时整屏跟着放大。
+ */
+@theme {
+  --text-caption: 0.75rem; /* 12 · 600 · 0.05em —— 分区小标题、单位 */
+  --text-caption--line-height: 1.5;
+  --text-caption--letter-spacing: 0.05em;
+  --text-secondary: 0.8125rem; /* 13 · 400 —— 日期、次要说明 */
+  --text-secondary--line-height: 1.55;
+  --text-body: 0.9375rem; /* 15 · 400 —— 正文 */
+  --text-body--line-height: 1.65;
+  --text-subtitle: 1.0625rem; /* 17 · 600 —— 条目标题、机构名 */
+  --text-subtitle--line-height: 1.5;
+  --text-title: 1.25rem; /* 20 · 700 —— 卡片 / 区块标题 */
+  --text-title--line-height: 1.35;
+  --text-value: 1.375rem; /* 22 · 600 · 等宽 —— 化验值 */
+  --text-value--line-height: 1.3;
+  --text-display: 1.75rem; /* 28 · 700 —— 页面主标题 */
+  --text-display--line-height: 1.25;
+  --text-display--letter-spacing: -0.02em;
+
+  /*
+   * 中文产品没有换字体的余地,用系统字栈(且不引外链字体 —— `007 §2.4` 要求
+   * 无网络也全可用)。个性来自字号阶差与字重对比,不来自字体本身。
+   */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC",
+    "Microsoft YaHei", Segoe UI, Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/*
+ * 根字号跟随浏览器 / 系统设置(`100%` 而非写死 `16px`)—— 默认仍是 16px「正常
+ * 档」,但用户把系统字号调大时整屏能跟着放大。这是 `007 §2.5`「字号可放大」
+ * 的前提:写死 px 会把这条能力关掉。
+ */
 html {
-  font-size: 16px;
+  font-size: 100%;
 }
 
 :root {
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
+}
+
+/*
+ * ─── 组件原语 ─────────────────────────────────────────────────────────────
+ * 类名与 DESIGN-SYSTEM-v1.html 里的示例逐一对应(card / perf / pill / btn /
+ * empty),便于拿规范逐条比对。它们落在 components 层,任何 Tailwind 工具类
+ * (utilities 层在后)都能就地覆盖 —— 不需要 `!important`。
+ */
+@layer components {
+  /* 卡片:白面 + 一像素线 + 20px 圆角 + 唯一那档阴影 */
+  .med-card {
+    background-color: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    box-shadow: var(--shadow);
+  }
+
+  /* 卡内分块:纸底 + 更浅的线 + 14px 圆角(必须比卡片小) */
+  .med-block {
+    background-color: var(--paper);
+    border: 1px solid var(--line-2);
+    border-radius: var(--r-block);
+  }
+
+  /*
+   * 签名元素「骑缝线」。**只许出现在「背后有原件、点得进去」的卡上** ——
+   * 它不是装饰,是「可溯源」这条铁律的视觉语言。派生数据卡(病人 banner 的
+   * 归纳身份、就诊分组这类算出来的东西)不带这道线。
+   *
+   * 用法:容器加 `med-perf`,并留出 >= 24px 的上内边距(齿孔占 9–13px)。
+   */
+  .med-perf {
+    position: relative;
+  }
+  .med-perf::before {
+    content: "";
+    position: absolute;
+    top: 9px;
+    left: var(--s4);
+    right: var(--s4);
+    height: 4px;
+    background-image: radial-gradient(circle at 2px 2px, var(--line) 1.6px, transparent 1.7px);
+    background-size: 9px 4px;
+    background-repeat: repeat-x;
+    pointer-events: none;
+  }
+
+  /*
+   * 键盘焦点环。`007 §2.5` 的可访问性基线要求「键盘可达」—— 改版前多数按钮
+   * 只有 hover 态,tab 过去看不出焦点在哪。焦点用主色,不用浏览器默认蓝。
+   */
+  .med-focusable:focus-visible {
+    outline: 2px solid var(--seal);
+    outline-offset: 2px;
+  }
+
+  /* 状态 pill:唯一允许 999px 圆角的地方。数字同样等宽,免得徽标宽度跳动。 */
+  .med-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.7;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * 按钮只有三级:主(纯色 seal,一屏只许一个)/ 次(seal-wash)/ 幽灵。
+   * 主按钮**用纯色不用渐变** —— 全 app 唯一的渐变留给品牌标记本身。
+   */
+  .med-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-family: inherit;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.4;
+    padding: 10px 18px;
+    border: 1px solid transparent;
+    border-radius: var(--r-ctl);
+    cursor: pointer;
+  }
+  .med-btn:focus-visible {
+    outline: 2px solid var(--seal);
+    outline-offset: 2px;
+  }
+  /* 白字压 seal(#1789C1) 只有 3.90:1,低于 WCAG AA 的 4.5 —— 用户含老年人。
+     填充按钮改用 seal-ink(6.76:1);seal 保留给图标/描边/大标题(非文本门槛 3:1)。 */
+  .med-btn-1 {
+    background-color: var(--seal-ink);
+    color: #fff;
+  }
+  .med-btn-2 {
+    background-color: var(--seal-wash);
+    color: var(--seal-ink);
+    border-color: var(--line);
+  }
+  .med-btn-3 {
+    background-color: transparent;
+    color: var(--ink-2);
+    border-color: var(--line);
+  }
+  .med-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .med-btn {
+      transition: filter 0.15s;
+    }
+    .med-btn:not(:disabled):hover {
+      filter: brightness(1.06);
+    }
+  }
+
+  /*
+   * 空态必须给出路 —— 留白等于说「你没有相关检查」,那是临床上的假话。
+   * 虚线框本身就在说「这里本该有东西」。
+   */
+  .med-empty {
+    border: 1.5px dashed var(--line);
+    border-radius: var(--r-block);
+    padding: var(--s5) var(--s3);
+    text-align: center;
+    color: var(--ink-3);
+  }
 }

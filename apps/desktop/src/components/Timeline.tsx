@@ -11,7 +11,6 @@ import {
 import type { TimelineGroup, DocumentSummary, EncounterSummary } from "../types";
 import {
   TYPE_LABEL,
-  TYPE_ACCENT,
   TYPE_BADGE,
   TYPE_ICON,
   KIND_LABEL,
@@ -27,42 +26,45 @@ function docDateStr(d: DocumentSummary): string {
 }
 
 // 独立文档:大卡片(与就诊组同层级)
+//
+// 这张卡**带骑缝线** —— 点它就打开那份原件,符合「背后有原件、点得进去」。
+// 改版前它靠左侧 4px 彩色竖条(TYPE_ACCENT,七种颜色)标类型;竖条这个语汇在
+// 设计系统里是留给化验状态(偏低/偏高/危急值)的,占着会撞语义,所以撤掉,
+// 类型改由图标 + 徽标承担 —— 信息没少,颜色少了六种。
 function DocCard({ d, onSelect }: { d: DocumentSummary; onSelect: (id: number) => void }) {
   const Icon = TYPE_ICON[d.doc_type] ?? FileQuestion;
   return (
     <button
       onClick={() => onSelect(d.id)}
-      className={`w-full text-left bg-white border border-slate-200 border-l-4 ${
-        TYPE_ACCENT[d.doc_type] ?? "border-slate-300"
-      } rounded-2xl p-4 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer group`}
+      className="med-card med-perf med-focusable w-full text-left px-5 pb-5 pt-6 hover:border-seal transition-colors cursor-pointer group"
     >
       <div className="flex items-center gap-4">
         <div
-          className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-            TYPE_BADGE[d.doc_type] ?? "bg-slate-100 text-slate-600"
+          className={`w-11 h-11 rounded-block flex items-center justify-center shrink-0 ${
+            TYPE_BADGE[d.doc_type] ?? "bg-line-2 text-ink-2"
           }`}
         >
           <Icon className="w-5 h-5" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-4">
-            <span className="font-medium text-base text-slate-800 group-hover:text-blue-700 transition-colors truncate">
+            <span className="text-subtitle font-semibold text-ink group-hover:text-seal-ink transition-colors truncate">
               {d.title ?? "(无标题)"}
             </span>
-            <span className="text-sm font-mono text-slate-500 shrink-0 pt-0.5">{docDateStr(d)}</span>
-          </div>
-          <span
-            className={`text-xs font-mono px-2 py-0.5 rounded-full mt-1.5 inline-block ${
-              TYPE_BADGE[d.doc_type] ?? "bg-slate-100 text-slate-600"
-            }`}
-          >
-            {TYPE_LABEL[d.doc_type] ?? d.doc_type}
-          </span>
-          {d.slice_count && d.slice_count > 1 && (
-            <span className="text-xs font-mono text-slate-400 ml-2">
-              · {d.slice_count} 张切片
+            <span className="text-secondary font-mono tabular-nums text-ink-3 shrink-0 pt-1">
+              {docDateStr(d)}
             </span>
-          )}
+          </div>
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className={`med-pill ${TYPE_BADGE[d.doc_type] ?? "bg-line-2 text-ink-2"}`}>
+              {TYPE_LABEL[d.doc_type] ?? d.doc_type}
+            </span>
+            {d.slice_count && d.slice_count > 1 && (
+              <span className="text-secondary font-mono tabular-nums text-ink-3">
+                · {d.slice_count} 张切片
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </button>
@@ -75,22 +77,24 @@ function DocRow({ d, onSelect }: { d: DocumentSummary; onSelect: (id: number) =>
   return (
     <button
       onClick={() => onSelect(d.id)}
-      className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white transition-colors cursor-pointer group"
+      className="med-focusable w-full text-left flex items-center gap-3 px-3 py-2 rounded-ctl hover:bg-surface transition-colors cursor-pointer group"
     >
       <div
-        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-          TYPE_BADGE[d.doc_type] ?? "bg-slate-100 text-slate-600"
+        className={`w-8 h-8 rounded-ctl flex items-center justify-center shrink-0 ${
+          TYPE_BADGE[d.doc_type] ?? "bg-line-2 text-ink-2"
         }`}
       >
         <Icon className="w-4 h-4" />
       </div>
-      <span className="text-sm text-slate-700 group-hover:text-blue-700 truncate flex-1">
+      <span className="text-body text-ink group-hover:text-seal-ink truncate flex-1">
         {d.title ?? "(无标题)"}
       </span>
-      <span className="text-[11px] font-mono text-slate-400 shrink-0">
+      {/* 改版前是 text-[11px],低于 007 §2.5 的 12px 下限 —— 提到 caption 一档 */}
+      <span className="text-caption font-mono text-ink-3 shrink-0">
         {TYPE_LABEL[d.doc_type] ?? d.doc_type}
       </span>
-      <span className="text-xs font-mono text-slate-500 shrink-0 w-24 text-right">
+      {/* 日期成列右对齐 → 必须等宽,否则每行的「2016」宽度都不一样 */}
+      <span className="text-secondary font-mono tabular-nums text-ink-3 shrink-0 w-24 text-right">
         {fmtDate(d.doc_date)}
       </span>
     </button>
@@ -113,42 +117,48 @@ function EncounterCard({
     ? `${fmtDate(enc.start_date)} → ${fmtDate(enc.end_date)}`
     : fmtDate(enc.start_date);
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+    // 就诊卡**不带骑缝线**:「一次就诊」是分组算出来的,点它是展开而不是打开
+    // 某一张原件。原件在展开后的每一行里,一键可达。
+    <div className="med-card overflow-hidden">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full text-left flex items-center gap-4 p-4 hover:bg-slate-50/60 transition-colors cursor-pointer"
+        className="med-focusable w-full text-left flex items-center gap-4 p-5 hover:bg-paper transition-colors cursor-pointer"
       >
         {open ? (
-          <ChevronDown className="w-5 h-5 text-slate-400 shrink-0" />
+          <ChevronDown className="w-5 h-5 text-ink-3 shrink-0" />
         ) : (
-          <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
+          <ChevronRight className="w-5 h-5 text-ink-3 shrink-0" />
         )}
         <div
-          className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-            KIND_TINT[enc.kind] ?? "bg-slate-100 text-slate-600"
+          className={`w-11 h-11 rounded-block flex items-center justify-center shrink-0 ${
+            KIND_TINT[enc.kind] ?? "bg-line-2 text-ink-2"
           }`}
         >
           <KindIcon className="w-5 h-5" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-base text-slate-900">
+            <span className="text-subtitle font-semibold text-ink">
               {KIND_LABEL[enc.kind] ?? enc.kind}
             </span>
-            {enc.provider && <span className="text-sm text-slate-600">· {enc.provider}</span>}
+            {enc.provider && <span className="text-body text-ink-2">· {enc.provider}</span>}
             {enc.transferred && (
-              <span className="text-[11px] font-mono px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 flex items-center gap-1">
-                <ArrowLeftRight className="w-3 h-3" />
+              // 改版前是 amber(#B45309 那一族)。设计系统把这一族**定死给「偏高」**,
+              // 借来标转院会稀释化验状态色的语义 —— 转院是事实不是异常,收成中性。
+              <span className="med-pill bg-line-2 text-ink-2">
+                <ArrowLeftRight className="w-3.5 h-3.5" />
                 转院
               </span>
             )}
           </div>
-          <span className="text-xs font-mono text-slate-400">{enc.doc_count} 份记录</span>
+          <span className="text-secondary font-mono tabular-nums text-ink-3">
+            {enc.doc_count} 份记录
+          </span>
         </div>
-        <span className="text-sm font-mono text-slate-500 shrink-0">{dateStr}</span>
+        <span className="text-secondary font-mono tabular-nums text-ink-3 shrink-0">{dateStr}</span>
       </button>
       {open && (
-        <div className="border-t border-slate-100 p-2 space-y-0.5 bg-slate-50/40">
+        <div className="border-t border-line-2 p-2 space-y-0.5 bg-paper">
           {docs.map((d) => (
             <DocRow key={d.id} d={d} onSelect={onSelect} />
           ))}
@@ -173,28 +183,42 @@ export default function Timeline({
   demoError?: string | null;
 }) {
   if (groups.length === 0) {
+    // 空态必须给出路 —— 虚线框在说「这里本该有东西」,框里就是那条出路。
+    // 改版前:一行灰字 + 一颗紫色(violet-600,不在色板里)按钮浮在留白正中。
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 text-slate-400 text-base px-6 text-center">
-        <div>暂无记录 —— 点「加载示例数据」一键试用,或到「导入」页拖入你的病历。</div>
-        {onLoadDemo && (
-          <>
-            <button
-              type="button"
-              onClick={onLoadDemo}
-              disabled={loadingDemo}
-              className="flex items-center gap-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-wait rounded-xl px-4 py-2.5 transition-colors cursor-pointer"
-            >
-              {loadingDemo ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
-              )}
-              {loadingDemo ? "加载中…" : "加载示例数据(张建国)"}
-            </button>
-            <span className="text-xs text-slate-400">示例数据,可随时删除保险箱重来</span>
-            {demoError && <div className="text-sm text-rose-600 max-w-md break-all">{demoError}</div>}
-          </>
-        )}
+      <div className="flex-1 overflow-y-auto bg-paper p-6 md:p-10">
+        <div className="max-w-4xl mx-auto">
+          <h1 className="text-display font-bold text-ink mb-6">生命时间线</h1>
+          <div className="med-empty">
+            <p className="text-body text-ink-2 mb-4">
+              保险箱里还没有记录 —— 点下面一键试用,或到「导入 · 导出」页拖入你的病历。
+            </p>
+            {onLoadDemo && (
+              <>
+                {/* 这一屏唯一的主按钮:纯色 seal,不用渐变 */}
+                <button
+                  type="button"
+                  onClick={onLoadDemo}
+                  disabled={loadingDemo}
+                  className="med-btn med-btn-1 med-focusable"
+                >
+                  {loadingDemo ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                  {loadingDemo ? "加载中…" : "加载示例数据(张建国)"}
+                </button>
+                <p className="text-secondary text-ink-3 mt-3">示例数据,可随时删除保险箱重来</p>
+                {demoError && (
+                  <p className="text-body text-critical mt-3 max-w-md mx-auto break-all">
+                    {demoError}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -204,11 +228,11 @@ export default function Timeline({
   );
   const visits = groups.filter((g) => g.group_type === "encounter").length;
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-10">
-      <div className="max-w-4xl mx-auto space-y-4">
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">
+    <div className="flex-1 overflow-y-auto bg-paper p-6 md:p-10">
+      <div className="max-w-4xl mx-auto space-y-3">
+        <h1 className="text-display font-bold text-ink mb-6 flex items-baseline gap-3 flex-wrap">
           生命时间线
-          <span className="ml-2 text-sm font-mono text-slate-500">
+          <span className="text-secondary font-mono tabular-nums text-ink-3 font-normal">
             {total} 份 · {visits} 次就诊
           </span>
         </h1>

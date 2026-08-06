@@ -5,8 +5,9 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:signature/signature.dart';
 
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
-import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 同意告知文案的版本号。文案改了就升这个号——落进加密包(`ConsentDto.consentTextVersion`),
 /// 便于日后区分「病人是在哪版文案下同意的」。
@@ -18,8 +19,16 @@ const String kConsentTextVersion = 'v1';
 ///
 /// 产出 [ConsentDto] 经 [onAgreed] 交给外层流程——本屏自己不碰 Rust FFI,只负责
 /// 采集「谁、以何种方式、何时同意」这一件事。
+///
+/// ⚠️ **这是法务文案屏,一个字都不改。** 文案变了要升 [kConsentTextVersion]。视觉
+/// 上走设计系统令牌:强调色是医生模式的 `proxy`(紫),正文字号从 13.5 提到 15
+/// (`MedType.body`)—— 读这一屏的是**病人**,常常是老人,而他要在这里签字。
 class ConsentScreen extends StatefulWidget {
-  const ConsentScreen({super.key, required this.onAgreed, required this.onCancel});
+  const ConsentScreen({
+    super.key,
+    required this.onAgreed,
+    required this.onCancel,
+  });
 
   final ValueChanged<ConsentDto> onAgreed;
   final VoidCallback onCancel;
@@ -30,9 +39,11 @@ class ConsentScreen extends StatefulWidget {
 
 class _ConsentScreenState extends State<ConsentScreen>
     with SingleTickerProviderStateMixin {
+  // 笔色写死浅色一套的 `ink`,不跟主题走:签名要导出成**白底 PNG** 落进加密包
+  // (`exportBackgroundColor: white`),深色主题下的浅墨色画在白底上等于没签。
   late final SignatureController _sigController = SignatureController(
     penStrokeWidth: 3,
-    penColor: MedMe.ink,
+    penColor: MedColors.light.ink,
     exportBackgroundColor: Colors.white,
   );
   late final AnimationController _holdController = AnimationController(
@@ -74,7 +85,7 @@ class _ConsentScreenState extends State<ConsentScreen>
     if (_sigController.isEmpty) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('请先在下方签名')));
+      ).showSnackBar(appSnackBar(content: Text('请先在下方签名')));
       return;
     }
     setState(() => _submitting = true);
@@ -84,7 +95,7 @@ class _ConsentScreenState extends State<ConsentScreen>
       setState(() => _submitting = false);
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('签名保存失败,请重试')));
+      ).showSnackBar(appSnackBar(content: Text('签名保存失败,请重试')));
       return;
     }
     _emit(method: 'signature', signaturePngBase64: base64Encode(png));
@@ -106,28 +117,30 @@ class _ConsentScreenState extends State<ConsentScreen>
 
   @override
   Widget build(BuildContext context) {
-    // 不是独立 Scaffold——composes 进 `ProxyIntakeFlow` 的 Scaffold(顶部常驻橙色
+    final c = MedColors.of(context);
+    // 不是独立 Scaffold——composes 进 `ProxyIntakeFlow` 的 Scaffold(顶部常驻紫色
     // 横幅在外层,任何阶段都在),这里只是内容区。
     return ColoredBox(
-      color: MedMe.bg,
+      color: c.paper,
       child: SafeArea(
         top: false,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          padding: const EdgeInsets.fromLTRB(
+            MedShape.s4,
+            MedShape.s3,
+            MedShape.s4,
+            MedShape.s5,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(
-                Icons.privacy_tip_outlined,
-                color: MedMe.proxyOrange,
-                size: 44,
-              ),
-              const SizedBox(height: 14),
-              const Text(
+              Icon(Icons.privacy_tip_outlined, color: c.proxy, size: 44),
+              const SizedBox(height: MedShape.s2),
+              Text(
                 '在拍之前,请告诉对方这几件事',
-                style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+                style: MedType.title.copyWith(color: c.ink),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: MedShape.s3),
               const _ConsentPoint(
                 icon: Icons.camera_alt_outlined,
                 title: '拍什么',
@@ -151,33 +164,40 @@ class _ConsentScreenState extends State<ConsentScreen>
               const _ConsentPoint(
                 icon: Icons.lock_outline,
                 title: '谁能打开',
-                body: '只有拿到这个码的人能打开。医生和我们都看不到里面的内容。'
+                body:
+                    '只有拿到这个码的人能打开。医生和我们都看不到里面的内容。'
                     '这个码 15 天后自动失效。',
               ),
-              const SizedBox(height: 22),
-              const Divider(height: 1, color: MedMe.line),
-              const SizedBox(height: 18),
+              const SizedBox(height: MedShape.s5),
+              Divider(height: 1, color: c.line),
+              const SizedBox(height: MedShape.s3),
               Text(
                 _useSignature ? '请在下方签名确认' : '请按住下方按钮 3 秒确认',
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                style: MedType.subtitle.copyWith(color: c.ink),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: MedShape.s1),
               if (_useSignature) ...[
                 Container(
                   height: 180,
+                  // 签名板底色写死白:导出的 PNG 也是白底,画布和成品要一致。
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: MedMe.line),
+                    borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+                    border: Border.all(color: c.line),
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: Signature(controller: _sigController, backgroundColor: Colors.white),
+                  child: Signature(
+                    controller: _sigController,
+                    backgroundColor: Colors.white,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Row(
                   children: [
                     TextButton(
-                      onPressed: _submitting ? null : () => _sigController.clear(),
+                      onPressed: _submitting
+                          ? null
+                          : () => _sigController.clear(),
                       child: const Text('重签'),
                     ),
                     const Spacer(),
@@ -189,13 +209,11 @@ class _ConsentScreenState extends State<ConsentScreen>
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: MedShape.s1),
                 SizedBox(
                   height: 50,
                   child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: MedMe.proxyOrange,
-                    ),
+                    style: FilledButton.styleFrom(backgroundColor: c.proxy),
                     onPressed: _submitting ? null : _confirmWithSignature,
                     child: _submitting
                         ? const SizedBox(
@@ -210,11 +228,11 @@ class _ConsentScreenState extends State<ConsentScreen>
                   ),
                 ),
               ] else ...[
-                const Text(
+                Text(
                   '手指按住不放,进度环转满一圈即视为同意确认',
-                  style: TextStyle(fontSize: 13, color: MedMe.faint),
+                  style: MedType.secondary.copyWith(color: c.ink2),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: MedShape.s2),
                 Center(
                   child: GestureDetector(
                     onTapDown: (_) => _holdController.forward(from: 0),
@@ -234,18 +252,16 @@ class _ConsentScreenState extends State<ConsentScreen>
                               child: CircularProgressIndicator(
                                 value: _holdController.value,
                                 strokeWidth: 8,
-                                backgroundColor: MedMe.line,
-                                valueColor: const AlwaysStoppedAnimation(
-                                  MedMe.proxyOrange,
-                                ),
+                                backgroundColor: c.line,
+                                valueColor: AlwaysStoppedAnimation(c.proxy),
                               ),
                             ),
-                            const Text(
+                            Text(
                               '按住\n确认',
                               textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: MedMe.proxyOrange,
+                              style: MedType.body.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: c.proxyInk,
                               ),
                             ),
                           ],
@@ -254,7 +270,7 @@ class _ConsentScreenState extends State<ConsentScreen>
                     ),
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: MedShape.s2),
                 Center(
                   child: TextButton(
                     onPressed: () => setState(() => _useSignature = true),
@@ -262,11 +278,11 @@ class _ConsentScreenState extends State<ConsentScreen>
                   ),
                 ),
               ],
-              const SizedBox(height: 8),
+              const SizedBox(height: MedShape.s1),
               Center(
                 child: TextButton(
                   onPressed: _submitting ? null : widget.onCancel,
-                  child: const Text('不同意,退出', style: TextStyle(color: MedMe.faint)),
+                  child: Text('不同意,退出', style: TextStyle(color: c.ink3)),
                 ),
               ),
             ],
@@ -290,29 +306,25 @@ class _ConsentPoint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: MedMe.proxyOrange, size: 22),
-          const SizedBox(width: 12),
+          Icon(icon, color: c.proxy, size: 22),
+          const SizedBox(width: MedShape.s2),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700),
-                ),
+                Text(title, style: MedType.subtitle.copyWith(color: c.ink)),
                 const SizedBox(height: 2),
+                // 正文从 13.5 提到 15(`body`),颜色从 faint 提到 ink2 —— 读这几行
+                // 的是病人本人,读完要签字。这一屏没有「读不清也无所谓」的字。
                 Text(
                   body,
-                  style: const TextStyle(
-                    fontSize: 13.5,
-                    color: MedMe.faint,
-                    height: 1.45,
-                  ),
+                  style: MedType.body.copyWith(color: c.ink2, height: 1.5),
                 ),
               ],
             ),
