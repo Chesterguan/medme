@@ -535,7 +535,55 @@ fn ingest_pdf(
             pages_without_text.len()
         );
     }
-    let text = mixed.text();
+    // **康熙部首折叠 —— 缺陷进入系统的唯一入口,这里折一次,下游全部受益。**
+    //
+    // Chrome / Skia 打印出来的 PDF(国内医院门户导出的常见路径)在自己的
+    // `ToUnicode` CMap 里就把常用字声明成了康熙部首码位:`见`→`⻅` U+2EC5、
+    // `大`→`⼤` U+2F24、`血`→`⾎`……。**换 PDF 库解决不了** —— `pdf-extract`
+    // 忠实照读了 PDF 声明的东西,是那份 PDF 自己错了。(`pdftotext` 不吐部首
+    // 只是 poppler 有自己的兜底,不代表 CMap 是对的。)
+    //
+    // 屏幕上完全看不出来 —— 两者渲染出的字形一模一样。但对每一个做文本匹配的
+    // 下游来说它们是不同的字,于是 22 份 demo 上实测:
+    //
+    //   诊断挂上泳道         1 → 4      「⾼⾎压」对不上 problem_map 的「高血压」
+    //   影像/病理诊断意见     1/3 → 3/3  「影像所⻅」对不上「所见」——**那两段
+    //                                   整段进不了医生摘要与二维码分享**,而
+    //                                   用户以为分享出去了
+    //   药物映射到 ATC       6 → 7
+    //   classify 判定        3 份被带偏(门诊病历被判成影像报告)
+    //   时间线日期           2 份被带偏(MRI 日期变成横跨七个月的假区间)
+    //   FTS 26 个关键词      14 个搜不到
+    //
+    // 化验**几乎不受影响,但那是运气不是设计**:demo 化验单印了 `TC`/`Cr`/`Glu`
+    // 拉丁缩写列,词典靠缩写命中。只印中文项目名的化验单不受这条保护。
+    //
+    // ## 为什么折在这里
+    //
+    // `classify` / `guess_date_range` 的结果写进 `DocumentAdded` **事件**,建档时
+    // 就定死、事后 `rebuild_from_log` 也不自愈 —— 必须赶在它们之前折,放
+    // `materialize` 侧救不回来。而 `ocr` crate 不依赖 `core-model`,为一个折叠把
+    // rusqlite/jieba 拖进 OCR crate 不划算。`pipeline` 两边都已经依赖,这里是唯一
+    // 不需要新增依赖、又赶在所有消费者之前的位置。
+    //
+    // ## 为什么改「存进库的文字」是安全的
+    //
+    // 康熙部首块 214 个码位的 NFKC **全部 1:1 折成统一汉字,零例外**(测试
+    // `every_kangxi_radical_folds_to_exactly_one_unified_ideograph` 穷举钉住)。
+    // 严格同形替换:用户在「文档详情 · 文档内容」里看到的字**一个都不会变样**,
+    // 变的只有「复制出去的码位」和「能不能被搜到」—— 而这两样现在都是坏的
+    // (复制「⾎糖」去搜是搜不到的)。
+    //
+    // 「原件永远可达」不受影响:CAS 里的原始 PDF 字节一个 bit 不动。
+    //
+    // 而且 `.txt` 导入走的 `parser::extract` **早就在折了**,只有 PDF 这条路是
+    // 例外 —— 这不是开新口子,是把漏掉的一处补上。
+    //
+    // ⚠️ 仍有缺口:CJK Radicals Supplement 块(U+2E80–2EF3)**114 个码位没有 NFKC
+    // 分解**,现有手写表只覆盖 12 个。`⻉贝 ⻋车 ⻘青 ⻚页 ⻢马 ⻥鱼 ⻦鸟 ⻮齿 ⻰龙`
+    // 都还不折,`⻮`(齿)对口腔科文档是实打实的风险。补全要从 Unicode
+    // `CJKRadicals.txt` 一次性来,见 `text.rs` 里那条覆盖面测试。
+    let text = core_model::text::normalize_cjk_radicals(&mixed.text());
     if text.trim().is_empty() {
         // 一页可用文本都没拿到:和旧版"扫描 PDF 全篇无文本"行为一致(#55)——
         // 降级为 StoredNoText 而非建一个空文档冒充成功,但页数如实带上真实
@@ -581,7 +629,11 @@ fn ingest_pdf(
             page_no: page.page_no,
             backend,
             model_version: model_version.to_string(),
-            text: page_text.to_string(),
+            // 逐页也要折 —— 上面折的是喂给 classify/guess_date 的整篇副本,
+            // 落进 `ocr_result` 的是这一份。`ocr_result.text` 同时是 FTS 索引的
+            // 来源、医生分享正文的来源、以及用户在「文档内容」里看到的东西:
+            // 这里不折,搜索和影像诊断意见照样是坏的。折叠幂等,重复折无害。
+            text: core_model::text::normalize_cjk_radicals(page_text),
             confidence,
         })?;
     }

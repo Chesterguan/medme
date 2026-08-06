@@ -16,11 +16,17 @@
 //! U+2E80–2FDF)。`pdf-extract` 忠实照读,没有读错。所以这不能靠"换个更好的
 //! PDF 库"解决,只能显式折。
 //!
-//! ## 修好之后怎么办
+//! ## 已经修好了(2026-08-06)
 //!
-//! 若哪天决定在 ingest 侧统一折(见调查报告),这个文件里成对的 `AS_IS_*` /
-//! `FOLDED_*` 常量会收敛成同一个值 —— 那时把断言改成"两者相等",测试的意义
-//! 从"量化欠债"变成"钉住已还清"。**不要**因为数字不再匹配就直接删掉它。
+//! `pipeline::ingest_pdf` 现在在 `recognize_pdf_mixed` 返回之后、
+//! `classify`/`guess_date_range`/`add_ocr` 之前折一次部首。上面那些成对常量
+//! **已经收敛成同一个值**,断言随之从"量化欠债"改成了"钉住已还清":两条路
+//! (照原样 / 先折一次)必须给出**相同**的结果 —— 因为入库文本本来就已经折过,
+//! 再折一次是幂等的空操作。
+//!
+//! 所以这个文件现在的作用是**回归护栏**:哪天有人把 `ingest_pdf` 里那两处折叠
+//! 拿掉(或者新加一条绕过它的入库路径),这里立刻红,并且报出来的差值就是
+//! 当年那张影响表。**不要**因为"看起来两边总是相等、没什么用"就删掉它。
 
 use core_model::Vault;
 use std::path::{Path, PathBuf};
@@ -28,14 +34,17 @@ use std::path::{Path, PathBuf};
 // ---- 实测基线(2026-08,demo-data 22 份,`cargo test -p pipeline`)----
 /// 挂上疾病泳道(`parser::match_disease`)的诊断条数。这是差距最大的一项:
 /// 部首把 `⾼⾎压` / `⾼尿酸⾎症` 打穿,`problem_map.json` 一条都对不上。
-const AS_IS_LANED_CONDITIONS: usize = 1;
+const AS_IS_LANED_CONDITIONS: usize = 4;
 const FOLDED_LANED_CONDITIONS: usize = 4;
 /// 映射到 ATC 的药物条数。
-const AS_IS_MEDS_WITH_ATC: usize = 6;
+const AS_IS_MEDS_WITH_ATC: usize = 7;
 const FOLDED_MEDS_WITH_ATC: usize = 7;
+/// 药物总行数。修复前是 9 —— 其中两条是 `⼆甲双胍` / `⼝服阿司匹林` 被部首
+/// 拆出来的重复条目,折叠后并回正条。
+const MEDS_ROWS: usize = 7;
 /// 影像/病理「诊断意见」段落抽出正文的份数(`意⻅` 的 `⻅` 是 U+2EC5,
 /// 标签匹配不上,整段 impression 从医生摘要/分享里消失)。
-const AS_IS_IMAGING_FINDINGS: usize = 1;
+const AS_IS_IMAGING_FINDINGS: usize = 3;
 const FOLDED_IMAGING_FINDINGS: usize = 3;
 
 fn demo_root() -> PathBuf {
@@ -112,28 +121,44 @@ fn source_docs<'a>(docs: &'a [Doc], texts: &'a [String]) -> Vec<parser::SourceDo
         .collect()
 }
 
-/// 部首字形**确实**活在 `ocr_result.text` 里,而且不是个别现象 —— 22 份全中。
+/// **`ocr_result.text` 里一个部首码位都不许剩下。**
 ///
-/// 这条是所有后面几条的前提。哪天 corpus 换成不带这个毛病的 PDF、或者 ingest
-/// 侧开始折了,它会第一个失败,提醒你别再拿本文件的数字当结论。
+/// 这条是整个文件的地基。原本它断言的是反面(22 份全带部首),用来证明缺陷存在;
+/// `ingest_pdf` 的折叠落地后翻过来:入库文本必须是干净的。
+///
+/// 它会在两种情况下红,两种都该红:
+///   1. 有人拿掉了 `ingest_pdf` 里的折叠 —— 缺陷复发;
+///   2. 有人新加了一条绕过 `ingest_pdf` 的 PDF 入库路径 —— 缺陷从新口子漏进来。
+///
+/// 报错里逐份列出还带部首的文件**以及具体是哪些码位** —— 因为 CJK Radicals
+/// Supplement 块还有 114 个码位没有 NFKC 分解(见 `core_model::text` 的
+/// `supplement_block_coverage_is_a_known_finite_number`)。真冒出新码位时,
+/// 光知道「某份不干净」没用,得知道要往表里补哪个字。
 #[test]
-fn radical_glyphs_survive_all_the_way_into_ocr_result_text() {
+fn ocr_result_text_carries_no_radical_glyphs() {
     let td = tempfile::tempdir().expect("tempdir");
     let (_v, docs) = ingested_docs(td.path());
     assert_eq!(docs.len(), 22, "demo-data 的份数变了");
-    let clean: Vec<&str> = docs
+    let dirty: Vec<String> = docs
         .iter()
-        .filter(|d| {
-            !d.text
+        .filter_map(|d| {
+            let mut cps: Vec<String> = d
+                .text
                 .chars()
-                .any(|c| ('\u{2E80}'..='\u{2FDF}').contains(&c))
+                .filter(|c| ('\u{2E80}'..='\u{2FDF}').contains(c))
+                .map(|c| format!("{c}(U+{:04X})", c as u32))
+                .collect();
+            cps.sort();
+            cps.dedup();
+            (!cps.is_empty()).then(|| format!("{} → {}", d.name, cps.join(" ")))
         })
-        .map(|d| d.name.as_str())
         .collect();
     assert!(
-        clean.is_empty(),
-        "这些 demo 的 ocr_result.text 里已经没有部首码位了 —— 前提变了,\
-         本文件其余断言的数字全部作废,请重新实测:{clean:?}"
+        dirty.is_empty(),
+        "入库文本里仍有部首码位。要么 ingest_pdf 的折叠被拿掉了,要么有新的入库\
+         路径绕过了它,要么这些码位不在折叠表里(Supplement 块还有 114 个没有 \
+         NFKC 分解,得手工补):\n  {}",
+        dirty.join("\n  ")
     );
 }
 
@@ -156,8 +181,13 @@ fn radicals_cost_three_quarters_of_the_disease_lanes() {
     assert_eq!(count(true), FOLDED_LANED_CONDITIONS, "折部首后");
 }
 
-/// 药物 → ATC。`达格列净⽚`(`⽚` U+2F49)对不上词典,折完就对上了
-/// `A10BK01`;同时 `⼆甲双胍`/`⼝服阿司匹林` 两条重复条目并回正条。
+/// 药物 → ATC。修复前 `达格列净⽚`(`⽚` U+2F49)对不上词典,折完就对上了
+/// `A10BK01`;同时 `⼆甲双胍` / `⼝服阿司匹林` 两条被拆出来的重复条目并回正条
+/// (9 行 → 7 行)。
+///
+/// 现在两条路必须给出**相同**结果 —— 入库文本已折过,再折是幂等空操作。
+/// 行数那条不再写成「as-is 比 folded 多」:折叠落地后两边相等,那种写法按定义
+/// 就永远失败,留着只会让人以为测试坏了。改成钉住修好之后的绝对值。
 #[test]
 fn radicals_cost_one_drug_its_atc_code_and_split_two_more_in_half() {
     let td = tempfile::tempdir().expect("tempdir");
@@ -171,9 +201,15 @@ fn radicals_cost_one_drug_its_atc_code_and_split_two_more_in_half() {
     let (rows_folded, atc_folded) = measure(true);
     assert_eq!(atc_asis, AS_IS_MEDS_WITH_ATC, "现状:映射到 ATC 的条数");
     assert_eq!(atc_folded, FOLDED_MEDS_WITH_ATC, "折后:映射到 ATC 的条数");
-    assert!(
-        rows_asis > rows_folded,
-        "现状下同一种药被部首拆成了额外的行(实测 {rows_asis} → {rows_folded})"
+    assert_eq!(
+        rows_asis, rows_folded,
+        "入库文本再折一次不该改变药物行数 —— 不相等说明 ingest_pdf 的折叠没生效,\
+         同一种药又被拆成了额外的行(实测 {rows_asis} vs {rows_folded})"
+    );
+    assert_eq!(
+        rows_asis, MEDS_ROWS,
+        "药物行数变了。修复前是 9 行(其中两条是被部首拆出来的重复条目),\
+         修复后并回 {MEDS_ROWS} 行"
     );
 }
 
@@ -229,11 +265,19 @@ fn radicals_swallow_two_of_three_imaging_impressions() {
     assert_eq!(with_finding(true), FOLDED_IMAGING_FINDINGS, "折部首后");
 }
 
-/// 建档时就定死、事后不会自愈的两项:`parser::classify` 的文档类型、
-/// `parser::guess_date_range` 的时间线日期。它们在 `ingest` 里对着**没折过**的
-/// 文本跑一次就写进 `document` 表,之后任何消费者都读那个错值。
+/// **建档时定死、事后不自愈的两项现在算对了。**
+///
+/// `parser::classify` 的文档类型与 `parser::guess_date_range` 的时间线日期,
+/// 在 `ingest` 里跑一次就写进 `DocumentAdded` **事件**,`rebuild_from_log` 重放
+/// 也是同一个错值 —— 所以它们必须在**入库前**就拿到折过的文本,放 `materialize`
+/// 侧补救来不及。这正是折叠点选在 `ingest_pdf` 而不是更下游的原因。
+///
+/// 判据:入库文本再折一次不应改变任何结论(折叠幂等 ⇒ 已经折过了)。
+/// 修复前这里是 3 份 doc_type、2 份日期对不上;其中 `2023-05-20_门诊病历`
+/// 被判成影像报告(时间线卡片写「检查」不写「病历」),`2023-11-02_头颅MRI`
+/// 的日期变成横跨七个月的假区间。
 #[test]
-fn classify_and_dates_are_decided_once_at_ingest_on_unfolded_text() {
+fn classify_and_dates_no_longer_shift_when_text_is_folded_again() {
     let td = tempfile::tempdir().expect("tempdir");
     let (_v, docs) = ingested_docs(td.path());
     let mut type_diffs = Vec::new();
@@ -247,20 +291,25 @@ fn classify_and_dates_are_decided_once_at_ingest_on_unfolded_text() {
             date_diffs.push(d.name.clone());
         }
     }
-    assert_eq!(
-        type_diffs.len(),
-        3,
-        "3 份的 doc_type 被部首带偏(其中 2023-05-20 门诊病历被判成了影像报告):{type_diffs:?}"
+    assert!(
+        type_diffs.is_empty(),
+        "这些文档的 doc_type 会因为再折一次而改变 —— 说明入库时用的是没折过的\
+         文本,而 doc_type 一旦写进事件就不自愈:{type_diffs:?}"
     );
-    assert_eq!(
-        date_diffs.len(),
-        2,
-        "2 份的时间线日期被部首带偏(变成横跨数月的假区间):{date_diffs:?}"
+    assert!(
+        date_diffs.is_empty(),
+        "这些文档的时间线日期会因为再折一次而改变 —— 同上,日期错了会让卡片\
+         排错位置甚至横跨数月:{date_diffs:?}"
     );
 }
 
-/// 全文检索。FTS body 是 `jieba` 分词后的 `ocr_result.text`,部首把词切碎成单字,
-/// 于是这些词**一份都搜不到**。折完索引后它们各自都能搜到。
+/// **这些词现在搜得到了。**
+///
+/// FTS body 是 `jieba` 分词后的 `ocr_result.text`。修复前部首把词切碎成单字,
+/// 这七个词**一份都搜不到** —— 病历里白纸黑字写着「甘油三酯」,搜出来是空的。
+///
+/// 现在正走的库(`v`)与「先折一次再建索引」的对照库(`vb`)必须给出**相同**
+/// 的命中数:入库文本已经折过了,再折是幂等空操作。
 ///
 /// 注:同时存在**反向**的两例(`医院`、`尿酸`),那不是折叠的损伤,而是
 /// `jieba` + FTS5 短语匹配的固有粒度问题 —— 折完 `华⼭医院` 成词为
@@ -268,12 +317,12 @@ fn classify_and_dates_are_decided_once_at_ingest_on_unfolded_text() {
 /// 这种本来就没部首的份,现在也一样搜不到 `医院`)。见
 /// [`compound_tokens_are_a_pre_existing_fts_limitation`]。
 #[test]
-fn radicals_make_these_terms_unsearchable() {
+fn these_terms_are_searchable_now() {
     let td = tempfile::tempdir().expect("tempdir");
     let (v, _docs) = ingested_docs(td.path());
     let td2 = tempfile::tempdir().expect("tempdir");
     let vb = folded_vault(td2.path());
-    for (kw, want_folded) in [
+    for (kw, want) in [
         ("甘油三酯", 4usize),
         ("二甲双胍", 5),
         ("血红蛋白", 7),
@@ -284,13 +333,15 @@ fn radicals_make_these_terms_unsearchable() {
     ] {
         assert_eq!(
             distinct_hits(&v, kw),
-            0,
-            "{kw}:现状下 FTS 一份都搜不到(索引里是被部首切碎的单字)"
+            want,
+            "{kw}:正走的入库路径应该搜得到这么多份 —— 搜不到就说明 ingest_pdf \
+             的折叠没生效"
         );
         assert_eq!(
             distinct_hits(&vb, kw),
-            want_folded,
-            "{kw}:索引建在折过的文本上时能搜到的份数"
+            want,
+            "{kw}:对照库(先折再建索引)必须与正走的路径一致 —— 不一致说明折叠\
+             不幂等,或两条路的索引结构漂了"
         );
     }
 }
