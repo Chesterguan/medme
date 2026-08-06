@@ -228,6 +228,43 @@ fn provider_summary(providers: &[String]) -> (Option<String>, bool) {
     (best.cloned(), transferred)
 }
 
+/// 这个 `doc_type`(数据库原始字符串,`DocType::as_str()` 的取值)能不能**单独**
+/// 撑起 [`Vault::rebuild_encounters`] 同日聚合(§2)里的一次门诊/急诊。
+///
+/// 用**允许清单**而不是排除清单:只有 `classify()` 里那几个真正代表"去看过病"的
+/// 分支——化验/影像/出院小结/处方/病历/病理/手术——才算数。这样以后 `DocType`
+/// 再加新变体,默认就是"不算数"(不必每加一种新类型就记得回来把它列进排除名单,
+/// `rebuild_encounters` 也不会替它瞎担保一次就诊)。
+///
+/// **不算数的四类,和为什么:**
+/// - `note` —— 患者自己写的笔记,不是病历原文;
+/// - `other` —— `classify()` 明确判定"不是病历"的东西(目前只有家庭自测记录:
+///   血压/血糖/体温监测关键词命中的那几行,见 `parser::classify`);
+/// - `self_measurement` —— 手动录入的自测数值(`Vault::add_self_measurement`),
+///   和 `other` 同一件事,只是从「记录」表单进来而不是从导入的原件解析出来;
+/// - `unknown` —— 分类器完全没把握。包成"门诊"等于替它担保了一个我们其实
+///   不知道的结论,比诚实地留着"待归类"更容易误导人。
+///
+/// **但这四类都能搭车**——同一天只要还有至少一份下面这几个真正的锚点文档,这天
+/// 就是一次真实就诊,笔记/自测记录跟着一起归进去合情合理(比如就诊当天顺手记的
+/// 笔记)。所以判据是"这一天有没有锚点",不是逐份文档各自判断:见调用处
+/// (`rebuild_encounters` 第 2 步)的完整说明,以及
+/// `apps/mobile_flutter/rust/src/api/vault_projections.rs` 里「复制给医生」纯文本
+/// 过滤笔记那段——那段过滤和这里是两回事:这里管"建不建就诊组",那段管"笔记原文
+/// 上不上医生看的纯文本",两者互不依赖,不会重复过滤。
+fn is_encounter_anchor(doc_type: &str) -> bool {
+    matches!(
+        doc_type,
+        "lab_report"
+            | "imaging_report"
+            | "discharge_summary"
+            | "prescription"
+            | "clinical_note"
+            | "pathology"
+            | "surgery"
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct TimelineEntry {
     pub document_id: i64,
@@ -447,9 +484,17 @@ impl Vault {
         }
 
         // 2) 同日聚合:剩余有日期文档按天分组
+        //
+        // 只把有日期的文档扔进按天分桶——这一步本身不看 `doc_type`,笔记/自测记录/
+        // 待归类文档一样进桶,好让它们在"这天还有别的锚点文档"时能搭车归进同一个
+        // 就诊组(design 见 `is_encounter_anchor` 文档)。真正的判断在分桶之后:
+        // 一天里有没有至少一份 `is_encounter_anchor` 认可的文档,没有就不建这次
+        // "就诊",桶里的文档全部留 `encounter_id = NULL`——`load_archive` /
+        // `standalone_documents` 会把它们当独立文档条目照常显示在时间线上,
+        // 不会从档案里消失,只是不再冒充一次门诊/急诊。
         use std::collections::BTreeMap;
-        let mut byday: BTreeMap<String, Vec<(i64, bool)>> = BTreeMap::new(); // day -> (doc_id, is_emergency_by_title)
-        for (id, _dt, dd, _dde, title) in &docs {
+        let mut byday: BTreeMap<String, Vec<(i64, bool, bool)>> = BTreeMap::new(); // day -> (doc_id, is_emergency_by_title, is_anchor)
+        for (id, dtype, dd, _dde, title) in &docs {
             if assigned.contains(id) {
                 continue;
             }
@@ -461,14 +506,21 @@ impl Vault {
                 .as_deref()
                 .map(|t| t.contains("急诊"))
                 .unwrap_or(false);
-            byday.entry(day).or_default().push((*id, emerg));
+            byday
+                .entry(day)
+                .or_default()
+                .push((*id, emerg, is_encounter_anchor(dtype)));
         }
         for (day, group) in byday {
-            let emergency = group.iter().any(|(_, e)| *e);
+            // 全天没有一份锚点文档 → 这天不构成"就诊",跳过建组,文档保持独立。
+            if !group.iter().any(|(_, _, anchor)| *anchor) {
+                continue;
+            }
+            let emergency = group.iter().any(|(_, e, _)| *e);
             let kind = if emergency { "emergency" } else { "outpatient" };
             let label = if emergency { "急诊" } else { "门诊" };
             let start = format!("{day}T00:00:00+00:00");
-            let member_ids: Vec<i64> = group.iter().map(|(id, _)| *id).collect();
+            let member_ids: Vec<i64> = group.iter().map(|(id, _, _)| *id).collect();
             let providers = providers_for_doc_ids(&tx, &member_ids)?;
             let (provider, transferred) = provider_summary(&providers);
             let mut title = format!("{label} · {day}");
@@ -873,6 +925,95 @@ mod tests {
             .unwrap();
         assert_eq!(outpatient.1.len(), 2);
         assert!(v.standalone_documents().unwrap().is_empty());
+    }
+
+    /// 复现产品实测发现的 bug:档案里一份**家庭血压自测记录**(`classify()` 判成
+    /// `DocType::Other`)被 `rebuild_encounters` 单独包成了一次"门诊"。
+    /// 同类的还有笔记、手动录入的自测数值、待归类文档——这四类**单独一天**都不该
+    /// 建出就诊组(见 `is_encounter_anchor` 文档),但如果同一天还有一份真正的
+    /// 锚点文档(如化验单),就该照旧搭车归进同一个就诊组——这条是历史行为
+    /// (`apps/mobile_flutter/rust/src/api/vault_projections.rs` 的"复制给医生"
+    /// 过滤笔记那段就是靠这条设计撑住的),不能被这次修复改掉。
+    #[test]
+    fn rebuild_does_not_wrap_non_visit_doc_types_into_their_own_encounter() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let d = |s: &str| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let mk = |v: &Vault, dt: DocType, start: &str, title: &str| {
+            let imp = v.import(title, "text/plain", title.as_bytes()).unwrap();
+            v.add_document(crate::types::NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: dt,
+                doc_date: Some(d(start)),
+                doc_date_end: None,
+                title: Some(title.into()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap()
+            .id
+        };
+
+        // 四份"单独一天、没有别的文档陪着"的非就诊文档,日期各不相同。
+        let other_id = mk(
+            &v,
+            DocType::Other,
+            "2026-04-30T00:00:00Z",
+            "血压记录_家庭监测",
+        );
+        let note_id = mk(&v, DocType::Note, "2026-05-01T00:00:00Z", "笔记");
+        let self_measurement_id = mk(
+            &v,
+            DocType::SelfMeasurement,
+            "2026-05-02T00:00:00Z",
+            "自测心率",
+        );
+        let unknown_id = mk(&v, DocType::Unknown, "2026-05-03T00:00:00Z", "待归类");
+
+        // 混合一天:笔记 + 真正的锚点文档(化验单)—— 应该照旧搭车归进同一个就诊组。
+        let lab_id = mk(&v, DocType::LabReport, "2026-05-10T00:00:00Z", "门诊化验");
+        let riding_note_id = mk(&v, DocType::Note, "2026-05-10T00:00:00Z", "就诊当天的笔记");
+
+        v.rebuild_encounters().unwrap();
+
+        // 只有混合的那一天建出了就诊组,四份孤零零的非就诊文档都没有。
+        let groups = v.encounters_with_docs().unwrap();
+        assert_eq!(
+            groups.len(),
+            1,
+            "只有 2026-05-10 那天该建出就诊组,实际={:?}",
+            groups
+                .iter()
+                .map(|(e, docs)| (e.title.clone(), docs.len()))
+                .collect::<Vec<_>>()
+        );
+        let (encounter, docs) = &groups[0];
+        assert_eq!(encounter.kind, EncounterKind::Outpatient);
+        let doc_ids: std::collections::HashSet<i64> = docs.iter().map(|d| d.id).collect();
+        assert_eq!(
+            doc_ids,
+            [lab_id, riding_note_id].into_iter().collect(),
+            "笔记该跟着同日的化验单一起搭车进就诊组"
+        );
+
+        // 四份非就诊文档都还在——没有从档案里消失,只是没被包成"门诊"。
+        let standalone_ids: std::collections::HashSet<i64> = v
+            .standalone_documents()
+            .unwrap()
+            .into_iter()
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(
+            standalone_ids,
+            [other_id, note_id, self_measurement_id, unknown_id]
+                .into_iter()
+                .collect(),
+            "孤零零的自测记录/笔记/待归类文档该留在独立文档里,不该消失也不该被包成就诊"
+        );
     }
 
     #[test]
