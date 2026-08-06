@@ -157,12 +157,39 @@
     letter-spacing:.06em;color:#1560a8;background:rgba(255,255,255,.75);
     border:1px solid var(--line);padding:4px 10px;border-radius:999px}
   /* product demo: phone(自动循环)+ desktop(点击播放) */
-  .shots{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;max-width:920px;margin:0 auto 40px}
-.shot{margin:0}
-.shot img{width:100%;height:auto;display:block;border-radius:14px;border:1px solid var(--line);background:#fff}
-.shot b{display:block;margin:16px 0 5px;font-size:16px;line-height:1.5;color:var(--ink)}
-.shot span{display:block;color:var(--muted);font-size:14px;line-height:1.75}
-@media(max-width:760px){.shots{grid-template-columns:1fr;gap:34px;margin-bottom:34px}}
+  /* 六张手机截图排成一排。**要挣脱 .wrap 的 1040px**,否则每张只剩 ~160px,
+     中文界面糊成一片。用 margin-left:50% + translateX(-50%) 相对父容器居中,
+     这样不依赖父级宽度,也不需要负 margin 去猜。
+     宽度用 min(1320px, 94vw):94 而不是 100 是给滚动条留位 —— 用 100vw 在
+     有滚动条的桌面浏览器上会顶出几像素的横向滚动,而整页横向滚动是硬伤。
+     一共 **7 张**。7 是质数,一排放不下又不能整除,所以走 **4 + 3 两排** ——
+     比「6 + 1」那种孤零零吊一张好看得多,也比挤成一排 7 张(每张 175px)清楚。
+     再窄依次退成 3 / 2 / 1,每一档都不留半列空。**不用 auto-fit**:它不知道
+     总共几张,会自己排出 5+2 这种。 */
+  .shots{display:grid;grid-template-columns:repeat(4,1fr);
+    gap:26px 20px;width:min(1180px,94vw);margin-left:50%;transform:translateX(-50%);
+    margin-bottom:44px}
+@media(max-width:1080px){.shots{grid-template-columns:repeat(3,1fr);gap:28px 22px}}
+@media(max-width:820px){.shots{grid-template-columns:repeat(2,1fr);gap:30px 22px}}
+.shot{margin:0;min-width:0}
+/* 七张里有一张(二维码)是二级页、天生矮一截。盒子用 aspect-ratio 钉死同一个
+   高度,图用 contain 居中 —— 否则同一排里的说明文字会各起各的行。 */
+/* `height:auto` 不能省:`<img>` 上有 HTML 的 `height` 属性,CSS 不写 height 时
+   浏览器用的是那个属性值 —— 于是每张被拉成 280 宽 × 850 高,严重压扁,只是
+   `contain` 居中留白把它掩盖了。必须让 aspect-ratio 来定高。 */
+.shot img{width:100%;height:auto;aspect-ratio:540/850;object-fit:contain;object-position:center;
+  display:block;border-radius:14px;border:1px solid var(--line);background:#fff}
+/* 一排六张时每张只有 ~210px,标题与说明都得跟着收 —— 沿用原来的字号会让
+   两行标题变四行,把图挤扁。用 clamp 让它随列宽走,而不是断点跳变。 */
+.shot b{display:block;margin:14px 0 4px;font-size:clamp(14px,1.05vw,16px);
+  line-height:1.45;color:var(--ink);text-wrap:balance}
+.shot span{display:block;color:var(--muted);font-size:clamp(12.5px,0.92vw,14px);line-height:1.65}
+/* 窄屏回到单列时,图会被拉到满宽 —— 手机截图放到 700px 宽既不好看也没必要,
+   限一个上限并居中。 */
+@media(max-width:560px){
+  .shots{grid-template-columns:1fr;gap:34px;width:min(360px,88vw)}
+  .shot b{font-size:17px}.shot span{font-size:15px}
+}
 .demo-wrap{display:flex;gap:30px;align-items:center;justify-content:center;flex-wrap:wrap;max-width:920px;margin:0 auto}
   .demo-wrap figure{margin:0;text-align:center}
   .demo-wrap figcaption{margin-top:12px;font-weight:600;color:#1560a8;font-size:16px}
@@ -479,24 +506,51 @@
 <section id="how">
   <div class="wrap">
     <!-- 产品演示:手机(自动循环)+ 桌面(点击播放)。视频在 demo/,相对路径。 -->
-    <!-- 三张真机截图,各打一个差异点。**不用自动播放视频**:autoplay 在低电量模式、
+    <!-- 六张真机截图,各打一个差异点。**不用自动播放视频**:autoplay 在低电量模式、
          省流量模式、微信内置浏览器里会被系统拒绝,那块就一直黑着(用户实测撞到过);
-         而且 4.8MB 在弱网上是白等。截图任何环境都渲染,三张加起来 330KB。 -->
+         而且 4.8MB 在弱网上是白等。截图任何环境都渲染,六张加起来约 700KB。
+         全部来自 1.6.0 的真机(360dp)运行截图,不是设计稿 —— 官网上出现的每一个
+         界面都必须是用户装完就能看到的样子。 -->
     <div class="shots">
       <figure class="shot">
-        <img src="demo/shot-cross.png" width="540" height="792" alt="健康档案时间轴:北京协和医院、浙江大学医学院、上海交通大学等多家医院的就诊记录按时间排在一起">
+        <img src="demo/shot-overview.png" width="540" height="850" loading="lazy" alt="概览:身份卡显示张建国(示例)、男 59 岁、22 份记录,下面是存档/记录/应急卡三个快捷入口与「看病带这个」,再下面是最近的关键化验">
+        <b>打开就知道现在什么情况</b>
+        <span>最近一次看的什么、哪几项不正常,一屏说完。</span>
+      </figure>
+      <figure class="shot">
+        <img src="demo/shot-archive.png" width="540" height="850" loading="lazy" alt="档案时间轴:中国医学科学院、复旦大学附属、四川大学华西、上海交通大学等多家医院的就诊记录按时间排在一起,其中一次住院含 4 份记录">
         <b>换了几家医院,记录还是一条线</b>
-        <span>协和、浙大、上海交大…… 谁家看的都在这儿,不用再翻微信找照片。</span>
+        <span>协和、华西、瑞金…… 谁家看的都在这儿,一次住院的几份也归在一起。</span>
       </figure>
       <figure class="shot">
-        <img src="demo/shot-original.png" width="540" height="792" alt="文档详情:顶部「查看原件」按钮,下面是识别出的检验报告文字与化验值表格,肌酐 112 标为偏高">
+        <img src="demo/shot-original.png" width="540" height="850" loading="lazy" alt="文档详情:顶部「查看原件」按钮,下面是识别出的检验报告文字与化验值表格,肌酐 112 标为偏高">
         <b>认出来的字,和原件都留着</b>
-        <span>偏高偏低自己标出来;拿不准的地方,一键翻回那张原始报告。</span>
+        <span>拿不准的地方,一键翻回那张原始报告。</span>
       </figure>
       <figure class="shot">
-        <img src="demo/shot-qr.png" width="540" height="792" alt="给医生看:一个二维码,下面写着本码含 22 份病历、含原件">
+        <img src="demo/shot-trends.png" width="540" height="850" loading="lazy" alt="趋势:19 条指标,按血常规、肝功能、肾功能等检验大类分组,开关「只看非正常项」已打开,图上画着参考区间带">
+        <b>同一个指标,连成一条线</b>
+        <span>默认只列不正常的;正常的几条折起来,不淹没重点。</span>
+      </figure>
+      <figure class="shot">
+        <img src="demo/shot-visit.png" width="540" height="850" loading="lazy" alt="看病带这个:我想问医生的、我最近的变化(估算肾小球滤过率偏低、尿素偏高、甘油三酯偏高),底部「复制全文给医生」与「出示二维码」">
+        <b>诊室里那 30 秒</b>
+        <span>医生问什么都在这一页,还能记下你想问的。</span>
+      </figure>
+      <figure class="shot">
+        <img src="demo/shot-emergency.png" width="540" height="850" loading="lazy" alt="应急卡:给急救人员看的一屏,黑底大字模式入口;血型一栏写着「未登记」并解释为什么不提供手动填写">
+        <b>昏迷时,别人能读到什么</b>
+        <span>黑底大字、过敏史框起来。血型那栏<strong>刻意空着</strong>:填错会出人命,而输血前本来就要现场配血。</span>
+      </figure>
+      <!-- 二维码这张是二级页(没有底部导航),天然比其余六张矮一截 —— 盒子用
+           aspect-ratio 统一、图用 contain 居中,靠白底吃掉差额,这样一排里每条
+           说明文字的起点都对齐。**不重新截这一张**:本地 debug 包不带
+           MEDME_UPLOAD_TOKEN,只能截到「这次没能带上原件」的降级态,拿失败态
+           当官网图是在说假话。这张成功态仍然准确,且不受本轮改版影响。 -->
+      <figure class="shot">
+        <img src="demo/shot-qr.png" width="540" height="792" loading="lazy" alt="给医生看:一个二维码,下面写着本码含 22 份病历、含原件">
         <b>医生扫一下就看到</b>
-        <span>对方不用装 App、不用加好友,浏览器里直接打开你的整段病史。</span>
+        <span>对方不用装 App、不用加好友,浏览器里直接打开。</span>
       </figure>
     </div>
 
