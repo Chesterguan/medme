@@ -61,7 +61,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// `_loadDemoData` 里怎么用它配合逐份进度画面。
   bool _demoLoading = false;
 
-  /// [_demoLoading] 期间显示的进度文案(如「正在载入 3/22…」);拿不到进度
+  /// [_demoLoading] 期间显示的进度文案(如「正在载入 3/50…」——分母是
+  /// `load_demo_data` 报回来的总数,不是这里写死的,示例数据增减会自己跟上);拿不到进度
   /// (刚开始、或 Rust 侧这一份还没报回来)时为 null,退化成一句不确定进度的
   /// 「正在载入示例数据…」,总比空着强。
   String? _demoProgressText;
