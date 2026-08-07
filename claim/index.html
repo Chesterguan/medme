@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- SECURITY (GHSA-j7fx): 本页只运行三段固定的内联脚本(首屏防闪 + 内联 dicom-parser + 查看器逻辑),
-     故 script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-+wNevL3wz+Yekl9ErHW6gMoaEJmXXgAi1wQVRi1qvyY=';并加 form-action/base-uri/
+     故 script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-lXHVzATJ5IinuXqhlW/n8DiHTQDP0p5dLnpQTgpHmjE=';并加 form-action/base-uri/
      frame-ancestors 'none' 锁死导航/表单/框架,断掉潜在注入外泄 DECRYPTED PHI 的路径。
      connect-src 只放行认领密文所在的那一个源(CLAIM_BASE):托管查看器要按 id 取回医生
      代拍的密文,别的地方一概连不上,解密后的 PHI 仍无处可外泄。**离线分享文件不吃这条**
@@ -15,7 +15,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-+wNevL3wz+Yekl9ErHW6gMoaEJmXXgAi1wQVRi1qvyY='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-lXHVzATJ5IinuXqhlW/n8DiHTQDP0p5dLnpQTgpHmjE='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -170,6 +170,9 @@
   .sum-row { display: flex; gap: 10px; font-size: 13.5px; padding: 3px 0; }
   .sum-lab { color: #94a3b8; font-size: 12px; font-weight: 700; min-width: 56px; flex-shrink: 0; padding-top: 2px; }
   .sum-bad { color: #be123c; }
+  /* 过敏史「未识别」态:不是「无过敏」,不用 .sum-bad 的红,用琥珀色标出"这里
+     缺信息、请核实",而不是"这里确认没事"。见 renderSummary 里的用法。 */
+  .sum-unclear { color: #b45309; }
   .sum-copy { margin-top: 14px; width: 100%; border: 0; background: #1789c1; color: #fff; font-weight: 700; font-size: 14.5px; padding: 12px; border-radius: 11px; cursor: pointer; font-family: inherit; }
   .sum-copy:active { background: #1560a8; }
   .sum-emr { margin-top: 9px; background: #f6f8fb; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
@@ -823,7 +826,13 @@ function buildEMRFromSummary(sm, patient) {
   if (sm.effect) s2 += ",效果" + sm.effect;
   s2 += "。患者为" + reason + "来我院就诊。";
   L.push(s2);
-  if ((sm.allergies || []).length) L.push("过敏史:" + sm.allergies.map(a => a.substance + (a.reaction ? "(" + a.reaction + ")" : "")).join("、") + "。");
+  // 过敏史这一行永远打印,空的时候也不能省——省了在这段叙事文本里等于"没提",
+  // 医生读文字会当成"没有异常"。app 不能替病人断言"没有过敏"(几乎没有人做过
+  // 完整的过敏原检测),只能说"未识别",原因也点一句,供医生判断要不要当面追问。
+  const allergyLine = (sm.allergies || []).length
+    ? sm.allergies.map(a => a.substance + (a.reaction ? "(" + a.reaction + ")" : "")).join("、")
+    : "未识别(极少有人做过完整过敏原检测,不等于没有过敏,建议当面核实)";
+  L.push("过敏史:" + allergyLine + "。");
   L.push("(由患者 MedMe 整理,数值取自原件,供参考、以原件为准;医生可按需增删。)");
   return L.join("\n");
 }
@@ -913,13 +922,21 @@ function renderSummary(sm, asOf, patient) {
   const onMeds = [], offMeds = [];
   probs.forEach(p => (p.meds || []).forEach(m => (m.on ? onMeds : offMeds).push(esc(m.name))));
   const medsLine = onMeds.join(" · ") + (offMeds.length ? ' <span style="color:#94a3b8">(' + offMeds.join("、") + "已停)</span>" : "");
+  const hasAllerg = (sm.allergies || []).length > 0;
   const allerg = (sm.allergies || []).map(a => esc(a.substance) + (a.reaction ? "(" + esc(a.reaction) + ")" : "")).join("、");
   const emrText = buildEMRFromSummary(sm, patient);
 
   let h = '<div class="sum"><div class="sum-top"><div class="sum-card">';
   if (diseases) h += '<div class="sum-row"><span class="sum-lab">在治疾病</span><span>' + diseases + '</span></div>';
   if (onMeds.length || offMeds.length) h += '<div class="sum-row"><span class="sum-lab">病历中的用药</span><span>' + medsLine + '</span></div>';
-  if (allerg) h += '<div class="sum-row"><span class="sum-lab">过敏史</span><span class="sum-bad">' + allerg + '</span></div>';
+  // 过敏史这一行永远渲染,即使空——医生扫码打开时,这一节整个消失比显示
+  // "未识别"危险得多:沉默会被读成"没什么特别的",而"未识别"会让人开口问。
+  // app 不能替病人断言"没有过敏"(几乎没有人做过完整的过敏原检测,记录没写
+  // 通常只是没查到),所以空态用琥珀色 .sum-unclear 而不是 .sum-bad 的红,
+  // 但绝不省略这一行。
+  h += '<div class="sum-row"><span class="sum-lab">过敏史</span><span class="' + (hasAllerg ? "sum-bad" : "sum-unclear") + '">'
+    + (hasAllerg ? allerg : "未识别 · 极少有人做过完整过敏原检测,不等于没有过敏,请当面核实")
+    + '</span></div>';
   h += '<button class="sum-copy" type="button">📋 复制为病历文本(可直接粘进你的病历)</button>'
     + '<details class="sum-emr"><summary>预览要复制的文本 ▾</summary><pre id="sum-emr-text">' + esc(emrText) + '</pre></details></div>';
   if ((sm.notable_changes || []).length)
