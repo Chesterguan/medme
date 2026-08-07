@@ -489,9 +489,101 @@ pub fn view_trend_panel_catalog() -> Vec<String> {
 // 只产出 `(substance, reaction)`,不带来源;应急卡要求每条过敏史能跳回原件,必须在
 // 逐份扫描时自己记住是哪一份文档说的。
 
-/// 在 `text` 里找过敏史标签(`过敏史` / `过敏`),取标签之后的剩余部分,按
-/// `；;，,、` 拆成若干条 `物质(反应)`。否定式(`无…` / `否认…`)与空条目跳过。
+/// 过敏史否定词前缀集合,分别用在两层检查上:一次判整个分句(第一层,见
+/// `extract_allergies_pairs`),一次判单条 item(第二层,`parse_allergy_item`)——
+/// 两处都要判的原因见各自函数上的注释。同 `handoff::ALLERGY_NEGATION_PREFIXES`。
+///
+/// - `否认`:病历里最常见的否定写法,后面永远跟着"没有的东西"(否认食物过敏/
+///   否认药物过敏史……),不存在"否认"本身就是物质名一部分的歧义,所以整词
+///   前缀匹配是安全的。
+/// - `未见`:查体/病史场景下"未见异常"式的否定,语义上就是"没有"。
+/// - `(-)`/`（-）`:皮试等检验报告惯用的阴性结果记号,同样是"没有"的另一种
+///   写法(半角/全角括号都收,因为录入时括号和减号常常不是同一种宽度)。
+///
+/// `无` **不在这张表里**——它单独处理,见 `is_negation_after_wu`(下方
+/// `is_allergy_negation` 里内联的分支):`无` 后面跟的可能是"没有的东西"
+/// (无过敏史/无殊),也可能是一个恰好以"无"开头的物质名(无花果)。整词
+/// 前缀匹配对"否认"安全,对"无"不安全,不能一视同仁——见 #65。
+///
+/// 刻意不收 `不详`/`不知`/`未知`/`不清楚`:那是"不知道",不是"没有过敏"。把
+/// 这类词也归进否定词,会让应急卡把"信息缺失"显示成"确认无过敏"——这本身
+/// 就是一次反向安全事故,跟这次要修的是同一类问题。这几个词走的是另一条
+/// 独立的"宁缺"规则(见 `is_allergy_unclear`),不产出条目,但**不是**因为
+/// 判成了否定。
+const ALLERGY_NEGATION_PREFIXES: [&str; 4] = ["否认", "未见", "(-)", "（-）"];
+
+/// `无` 后面接的词决定它是不是否定词。这些词都是"没有的东西/没有的说法",
+/// 而不是一个物质名的开头。
+///
+/// **这张表清单是本次 #65 修复里刻意选择的失败方向**:白名单漏收某种病历里
+/// 真实存在、但这里没想到的否定写法,那条会被当成物质名显示在应急卡的红框
+/// 里——一次**假阳性**。假阳性会被使用者/医生看见、质疑、可以当场澄清;而
+/// 误把真实过敏原(比如"无花果过敏")的"无"字当否定词吃掉是**假阴性**——
+/// 过敏原从卡片上直接消失,没人有机会发现少了什么,却仍可能被当作"已确认
+/// 无过敏"来行动。两种错误不对称,所以这张表宁可漏收,也不要贪多误伤真实
+/// 物质名。
+const WU_NEGATION_CONTINUATIONS: [&str; 9] = [
+    "过敏", "特殊", "殊", "明确", "明显", "已知", "药物", "食物", "其他",
+];
+
+/// 判断一段文本(一个分句,或退化到一条 item)是不是以否定词开头。
+fn is_allergy_negation(s: &str) -> bool {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix('无') {
+        // 剥掉「无」之后,剩余为空(单独一个「无」)、或以某个"否定延续词"开头,
+        // 才判否定;否则「无」就是物质名自己的第一个字(无花果、无花果酱……)。
+        return rest.is_empty()
+            || WU_NEGATION_CONTINUATIONS
+                .iter()
+                .any(|p| rest.starts_with(p));
+    }
+    ALLERGY_NEGATION_PREFIXES.iter().any(|p| s.starts_with(p))
+}
+
+/// 「不详」类标记:病历里的意思是"没查清楚/没说清楚",既不是"有过敏"也不是
+/// "无过敏"。宁缺规则——卡片默认状态本来就是"未识别",这类条目不构成一条
+/// 明确的过敏原,不需要占红框重复表达同一件事,所以直接不产出。
+///
+/// **这不是否定词**,故意不并进 `is_allergy_negation`/`ALLERGY_NEGATION_PREFIXES`:
+/// 语义上不一样(见该常量上的注释),混在一起会让下一个读代码的人以为"不详"
+/// 可以当"无过敏"处理。
+const ALLERGY_UNCLEAR_MARKERS: [&str; 4] = ["不详", "不知", "未知", "不清楚"];
+
+/// 判断一条 item(标签已经在 `extract_allergies_pairs` 里去掉)是不是"不详"
+/// 类的含糊标记。行标签(过敏史/过敏)有时会在剩余文本里再出现一次——例如
+/// 「过敏史:过敏史不详。」——所以先剥掉可能重复出现的标签前缀,再整词比对。
+fn is_allergy_unclear(item: &str) -> bool {
+    let s = item
+        .trim_start_matches("过敏史")
+        .trim_start_matches("过敏")
+        .trim();
+    ALLERGY_UNCLEAR_MARKERS.contains(&s)
+}
+
+/// 在 `text` 里找过敏史标签(`过敏史` / `过敏`),取标签之后的剩余部分,分两层解析。
 /// 同 `handoff::extract_allergies_pairs`。
+///
+/// **第一层——按分句切,否定分句整句丢弃。** 按 `；;。`(只认句子边界标点)切成
+/// 分句,每个分句是一句完整陈述;分句开头是否定词就整句丢掉,根本不进第二层。
+/// 这就是本次修复的核心:**「否认」/「无」管的是它引出的整个分句,不是紧贴在
+/// 它后面的那一个条目**。「否认食物、药物过敏史」是一句被否定的话,句里的
+/// 食物、药物两个物质都在「否认」的管辖范围内;旧逻辑在判否定之前就先按 `、`
+/// 切开,「食物」独立成第一条(碰巧自己开头是「否认」,还能被挡住),「药物过敏史」
+/// 却独立成第二条,开头既不是「否认」也不是「无」,读起来就成了阳性过敏——
+/// 而且因为它尾巴上还带着行标签同款的「过敏史」三个字,连"物质名"看起来都是
+/// 「药物过敏史」。这就是「无已知过敏」被印成过敏原的根因。`、`/`，`/`,` 故意
+/// 不放进这一层的分隔符里:中文病历里逗号经常身兼两职,既断句又当并列顿号用,
+/// 放进来会把「青霉素过敏,否认食物过敏」这种一句里前阳后否定的写法切成两句,
+/// 破坏第二层"把同一分句内的阳性/否定条目留在一起判"的设计。
+///
+/// **第二层——阳性分句才按顿号/逗号切成条目。** 只有第一层判定为阳性的分句
+/// 才会按 `，,、` 切成 `物质(反应)` 条目,交给 `parse_allergy_item` 逐条解析;
+/// 那个函数自带的条目级否定检查(不变)是第二道防线——「青霉素过敏,否认食物
+/// 过敏」这种一个分句内部混了阳性和否定、且分句内没有 `；;。` 可切的写法,
+/// 第一层因为分句开头是「青霉素」不会触发,靠第二层按逗号切开后逐条判否定
+/// 才能把「否认食物过敏」这一条挡住。
+///
+/// 空分句/空条目两层都会跳过。
 fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in text.lines() {
@@ -503,9 +595,15 @@ fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
             })
         });
         let Some(rest) = rest else { continue };
-        for item in rest.split(['；', ';', '，', ',', '、']) {
-            if let Some(pair) = parse_allergy_item(item) {
-                out.push(pair);
+        for clause in rest.split(['；', ';', '。']) {
+            let clause = clause.trim();
+            if clause.is_empty() || is_allergy_negation(clause) {
+                continue;
+            }
+            for item in clause.split(['，', ',', '、']) {
+                if let Some(pair) = parse_allergy_item(item) {
+                    out.push(pair);
+                }
             }
         }
     }
@@ -513,12 +611,15 @@ fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
 }
 
 /// 解析一条 `青霉素(皮疹)` → `("青霉素", "皮疹")`,或裸的 `磺胺` → `("磺胺", "")`。
-/// 空条目/否定式返回 None。同 `handoff::parse_allergy_item`。
+/// 空条目/否定式返回 None——这是 `extract_allergies_pairs` 注释里说的第二道
+/// 防线。「不详」类(`is_allergy_unclear`)也返回 None,但原因不同:不是"确认
+/// 无过敏",只是"不构成一条明确过敏原"(宁缺)——调用方只需要"跳过这条",不
+/// 需要区分原因,所以共用同一个 `None`。同 `handoff::parse_allergy_item`。
 fn parse_allergy_item(item: &str) -> Option<(String, String)> {
     let item = item
         .trim()
         .trim_matches(|c: char| c.is_whitespace() || matches!(c, '。' | '.' | ';' | '；'));
-    if item.is_empty() || item.starts_with('无') || item.starts_with("否认") {
+    if item.is_empty() || is_allergy_negation(item) || is_allergy_unclear(item) {
         return None;
     }
     if let Some(op) = item.find(['(', '（']) {
@@ -1358,6 +1459,118 @@ mod tests {
 
         // 否定式不该产出条目(`否认药物过敏史` 里没有第三条)。
         assert_eq!(allergies.len(), 2, "实际={allergies:?}");
+    }
+
+    /// 反向安全回归:「否认食物、药物过敏史」不该产出任何过敏条目。「否认」管的是
+    /// **整个分句**,不是紧跟在它后面那一个顿号分隔的条目——修复前按 `、` 一刀切
+    /// 再逐条判否定前缀,会把分句尾部那个"没人管"的条目读成阳性过敏,而且因为它
+    /// 尾巴上带着跟标签同款的「过敏史」三个字,连"物质名"都长得像「药物过敏史」。
+    /// 应急卡把"无已知过敏"印成过敏原,比少抽一条更危险:急救者会照着卡片回避或
+    /// 慎用一样病人其实没有过敏史的东西。同 `handoff::` 里的
+    /// `allergy_negation_scopes_the_whole_clause_not_the_first_item`/
+    /// `allergy_positive_and_negation_sharing_one_clause`/
+    /// `allergy_negation_prefix_variants`,验的是这份手抄副本,不是原版。
+    #[test]
+    fn allergy_negation_scopes_the_whole_clause_not_the_first_item() {
+        assert_eq!(
+            extract_allergies_pairs("过敏史:否认食物、药物过敏史。"),
+            Vec::<(String, String)>::new(),
+            "否认同时管着食物和药物,不是只管紧跟其后的食物"
+        );
+        assert_eq!(
+            extract_allergies_pairs("过敏史:否认药物、食物过敏史。"),
+            Vec::<(String, String)>::new(),
+            "顺序调换,否认依旧管两项"
+        );
+        assert_eq!(
+            extract_allergies_pairs("过敏史:否认食物及其他药物过敏史。"),
+            Vec::<(String, String)>::new(),
+            "句内本来就没有顿号——此前已经是对的,不能改坏"
+        );
+        assert_eq!(
+            extract_allergies_pairs("过敏史:磺胺类药物(皮疹史);否认食物及其他药物过敏史。"),
+            vec![("磺胺类药物".to_string(), "皮疹史".to_string())],
+            "真实出院记录写法:阳性分句与否定分句共享一个字段,靠；分开"
+        );
+        assert_eq!(
+            extract_allergies_pairs("既往史:否认肝炎、结核病史,否认食物、药物过敏史。"),
+            Vec::<(String, String)>::new(),
+            "过敏史标签命中的是句中「药物过敏史」尾巴,剩余部分只有一个句号"
+        );
+    }
+
+    /// 同一分句内阳性 + 否定混写(分句内没有 ；;。可切),第一层因为分句开头是阳性
+    /// 物质而不会触发,靠 `parse_allergy_item` 自带的条目级否定检查(第二道防线)
+    /// 挡住否定的那一半。
+    #[test]
+    fn allergy_positive_and_negation_sharing_one_clause() {
+        let pairs = extract_allergies_pairs("过敏史:青霉素过敏,否认食物过敏");
+        assert_eq!(pairs.len(), 1, "实际={pairs:?}");
+        assert_eq!(pairs[0].0, "青霉素过敏");
+    }
+
+    /// `未见`/`(-)`/`（-）` 是 否认 之外常见的否定写法。
+    #[test]
+    fn allergy_negation_prefix_variants() {
+        assert!(extract_allergies_pairs("过敏史:未见明确食物、药物过敏史。").is_empty());
+        assert!(extract_allergies_pairs("过敏史:(-)").is_empty());
+        assert!(extract_allergies_pairs("过敏史:（-）").is_empty());
+    }
+
+    /// #65:物质名恰好以「无」开头(无花果,即无花果)不能被「无」否定检查
+    /// 误伤。「无」是不是否定词要看它后面接的词,不是看它本身——见
+    /// `is_allergy_negation`/`WU_NEGATION_CONTINUATIONS` 上的注释,那里也写了
+    /// 为什么这张白名单宁可漏收也不要贪多(假阳性可见可质疑,假阴性会让真实
+    /// 过敏原从卡片上无声消失)。同 `handoff::allergy_wu_prefix_is_not_blanket_negation`,
+    /// 验的是这份手抄副本。
+    #[test]
+    fn allergy_wu_prefix_is_not_blanket_negation() {
+        assert_eq!(
+            extract_allergies_pairs("过敏史:无花果过敏。"),
+            vec![("无花果过敏".to_string(), String::new())],
+            "无花果过敏是阳性条目,「无」在这里是物质名的一部分"
+        );
+        for negated in [
+            "过敏史:无。",
+            "过敏史:无殊。",
+            "过敏史:无特殊。",
+            "过敏史:无过敏史。",
+            "过敏史:无明确过敏史。",
+            "过敏史:无药物过敏史。",
+            "过敏史:无明显过敏史。",
+            "过敏史:无已知过敏史。",
+            "过敏史:无食物过敏史。",
+            "过敏史:无其他过敏史。",
+        ] {
+            assert_eq!(
+                extract_allergies_pairs(negated),
+                Vec::<(String, String)>::new(),
+                "应判否定:{negated}"
+            );
+        }
+    }
+
+    /// ②「不详」类:宁缺,不产出条目,但不是否定词(见 `ALLERGY_UNCLEAR_MARKERS`
+    /// 上的注释)。同 `handoff::allergy_unclear_markers_produce_no_item`。
+    #[test]
+    fn allergy_unclear_markers_produce_no_item() {
+        for unclear in [
+            "过敏史:不详。",
+            "过敏史:过敏史不详。",
+            "过敏史:不知。",
+            "过敏史:未知。",
+            "过敏史:不清楚。",
+        ] {
+            assert_eq!(
+                extract_allergies_pairs(unclear),
+                Vec::<(String, String)>::new(),
+                "「不详」类应当宁缺,不产出条目:{unclear}"
+            );
+        }
+        assert_eq!(
+            extract_allergies_pairs("过敏史:青霉素过敏,过敏史不详。"),
+            vec![("青霉素过敏".to_string(), String::new())],
+        );
     }
 
     /// 上面那条是手写合成文本;这条改用示例数据集里的**真实文档**原文

@@ -295,16 +295,26 @@ fn no_page_furniture_is_reported_as_an_analyte() {
 /// allergy with its reaction, and an explicit negation of food/other-drug
 /// allergy in the same field, exactly as Chinese discharge summaries write it.
 ///
-/// This is not a hypothetical risk: a nearby, differently-shaped negation —
+/// This was not a hypothetical risk: a nearby, differently-shaped negation —
 /// `过敏史:否认食物、药物过敏史。`, i.e. the negated list's *last* item shares
 /// its trailing noun with the label instead of repeating 否认/无 on each item —
-/// makes `extract_allergies_pairs` mis-split on the 、 and return a phantom
-/// `("药物过敏史", "")` entry, turning "no known drug allergy" into an
-/// apparent allergy. That phrasing was deliberately **not** used here (per the
-/// task's instruction not to bend the fixture to dodge a found gap by hacking
-/// the regex, nor to ship a known false positive on this specific screen) —
-/// see the session report for the repro. This test pins the phrasing that the
-/// current implementation gets right; the other one is a real, open gap.
+/// used to make `extract_allergies_pairs` mis-split on the 、 and return a
+/// phantom `("药物过敏史", "")` entry, turning "no known drug allergy" into an
+/// apparent allergy. Root cause: `否认`/`无` scope the *entire clause* they
+/// introduce, not just the item immediately after them — splitting on 、/，
+/// before checking for negation orphaned the clause's later items. Fixed by
+/// parsing 过敏史 fields in two layers (split into ；;。-delimited clauses
+/// first, drop a whole clause if *it* starts with a negation word, only then
+/// split a surviving clause on 、，for items) — see `extract_allergies_pairs`
+/// in `packages/parser/src/handoff.rs` and its hand-copied twin in
+/// `apps/mobile_flutter/rust/src/api/vault_projections.rs`. Synthetic coverage
+/// for that exact phrasing (and several sibling negation forms) now lives in
+/// `handoff::tests::allergy_negation_scopes_the_whole_clause_not_the_first_item`
+/// and friends; not added to this fixture file because corpus fixtures are
+/// generated verbatim from `examples/demo-dataset/generate.sh` and are not
+/// hand-edited (see the module doc above) — this test still pins the
+/// mixed-clause phrasing the real document uses, which is the shape the fix
+/// had to keep working.
 #[test]
 fn allergy_history_is_extracted_from_a_real_document() {
     let sm = summary();

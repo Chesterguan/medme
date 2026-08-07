@@ -429,10 +429,109 @@ fn med_to_json(m: &MedSpan) -> Value {
     Value::Object(map)
 }
 
-/// Scan `text` for an allergy label (`过敏史` / `过敏`), then split the remainder
-/// on `；;，,、` into items of the form `substance(reaction)`; the reaction, if
-/// any, is the trailing parenthesized fragment. Negations (`无…`/`否认…`) and
-/// empty remainders are skipped. Returns `(substance, reaction)` pairs.
+/// Negation-prefix set for 过敏史 parsing, checked against a whole clause
+/// (layer 1, `extract_allergies_pairs`) and against a single item (layer 2,
+/// `parse_allergy_item`) — see both call sites for why the check has to run
+/// twice.
+///
+/// - `否认`:病历里最常见的否定写法,后面永远跟着"没有的东西"(否认食物过敏/
+///   否认药物过敏史……),不存在"否认"本身就是物质名一部分的歧义,所以整词
+///   前缀匹配是安全的。
+/// - `未见`:查体/病史场景下"未见异常"式的否定,语义上就是"没有"。
+/// - `(-)`/`（-）`:皮试等检验报告惯用的阴性结果记号,同样是"没有"的另一种
+///   写法(半角/全角括号都收,因为录入时括号和减号常常不是同一种宽度)。
+///
+/// `无` **不在这张表里**——它单独处理,见 `is_negation_after_wu`:`无` 后面
+/// 跟的可能是"没有的东西"(无过敏史/无殊),也可能是一个恰好以"无"开头的
+/// 物质名(无花果)。整词前缀匹配对"否认"安全,对"无"不安全,不能一视同仁。
+///
+/// 刻意不收 `不详`/`不知`/`未知`/`不清楚`:那是"不知道",不是"没有过敏"。把
+/// 这类词也归进否定词,会让应急卡把"信息缺失"显示成"确认无过敏"——这本身
+/// 就是一次反向安全事故,跟这次要修的是同一类问题。这几个词走的是另一条
+/// 独立的"宁缺"规则(见 `is_allergy_unclear`),不产出条目,但**不是**因为
+/// 判成了否定。
+const ALLERGY_NEGATION_PREFIXES: [&str; 4] = ["否认", "未见", "(-)", "（-）"];
+
+/// `无` 后面接的词决定它是不是否定词。这些词都是"没有的东西/没有的说法",
+/// 而不是一个物质名的开头。
+///
+/// **这张表清单是本次 #65 修复里刻意选择的失败方向**:白名单漏收某种病历里
+/// 真实存在、但这里没想到的否定写法(比如某种这里没列出的说法),那条会被
+/// 当成物质名显示在应急卡的红框里——一次**假阳性**。假阳性会被使用者/医生
+/// 看见、质疑、可以当场澄清;而误把真实过敏原(比如"无花果过敏")的"无"字
+/// 当否定词吃掉是**假阴性**——过敏原从卡片上直接消失,没人有机会发现少了
+/// 什么,却仍可能被当作"已确认无过敏"来行动。两种错误不对称,所以这张表
+/// 宁可漏收(让更多条目走向"显示,可疑"),也不要贪多误伤真实物质名。
+const WU_NEGATION_CONTINUATIONS: [&str; 9] = [
+    "过敏", "特殊", "殊", "明确", "明显", "已知", "药物", "食物", "其他",
+];
+
+/// 判断一段文本(一个分句,或退化到一条 item)是不是以否定词开头。
+fn is_allergy_negation(s: &str) -> bool {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix('无') {
+        // 剥掉「无」之后,剩余为空(单独一个「无」)、或以某个"否定延续词"开头,
+        // 才判否定;否则「无」就是物质名自己的第一个字(无花果、无花果酱……)。
+        return rest.is_empty()
+            || WU_NEGATION_CONTINUATIONS
+                .iter()
+                .any(|p| rest.starts_with(p));
+    }
+    ALLERGY_NEGATION_PREFIXES.iter().any(|p| s.starts_with(p))
+}
+
+/// 「不详」类标记:病历里的意思是"没查清楚/没说清楚",既不是"有过敏"也不是
+/// "无过敏"。宁缺规则——卡片默认状态本来就是"未识别",这类条目不构成一条
+/// 明确的过敏原,不需要占红框重复表达同一件事,所以直接不产出。
+///
+/// **这不是否定词**,故意不并进 `is_allergy_negation`/`ALLERGY_NEGATION_PREFIXES`:
+/// 语义上不一样(见该常量上的注释),混在一起会让下一个读代码的人以为"不详"
+/// 可以当"无过敏"处理。
+const ALLERGY_UNCLEAR_MARKERS: [&str; 4] = ["不详", "不知", "未知", "不清楚"];
+
+/// 判断一条 item(标签已经在 `extract_allergies_pairs` 里去掉)是不是"不详"
+/// 类的含糊标记。行标签(过敏史/过敏)有时会在剩余文本里再出现一次——例如
+/// 「过敏史:过敏史不详。」——所以先剥掉可能重复出现的标签前缀,再整词比对。
+fn is_allergy_unclear(item: &str) -> bool {
+    let s = item
+        .trim_start_matches("过敏史")
+        .trim_start_matches("过敏")
+        .trim();
+    ALLERGY_UNCLEAR_MARKERS.contains(&s)
+}
+
+/// Scan `text` for an allergy label (`过敏史` / `过敏`), then parse the
+/// remainder in two layers.
+///
+/// **Layer 1 — split into clauses, drop negated clauses whole.** Split on
+/// `；;。`(sentence-boundary punctuation only) into clauses, each a complete
+/// statement. A clause that starts with a negation word is dropped entirely
+/// *before* it ever reaches layer 2. This is the actual fix: `否认`/`无` is a
+/// **scope word that governs the whole clause it introduces, not a prefix
+/// glued to the one item that happens to follow it**. `否认食物、药物过敏史`
+/// is one negated clause naming two substances (食物, 药物) that both fall
+/// under `否认`; splitting on `、` *before* checking for negation — the old,
+/// single-layer behavior — turns "食物" into an orphan first item (correctly
+/// dropped, since it alone starts with 否认) and turns "药物过敏史" into an
+/// orphan *second* item that starts with neither 否认 nor 无 and so reads as
+/// a positive allergy — and because it still ends in the same "过敏史" the
+/// line's label matched on, it further reads as an allergy *named*
+/// "药物过敏史". That is how "no known drug allergy" became a printed
+/// allergen. `、`/`，`/`,` are deliberately *not* clause separators here:
+/// in Chinese chart text a comma is used both to end a statement and to
+/// separate list items, so treating it as a clause boundary would split
+/// `青霉素过敏,否认食物过敏` into two clauses and defeat layer 2's job of
+/// keeping a same-clause positive+negation pair together.
+///
+/// **Layer 2 — split a positive clause into items.** Only a clause that
+/// survives layer 1 gets split on `，,、` into `substance(reaction)` items,
+/// each parsed by `parse_allergy_item`. That function keeps its own
+/// item-level negation check (unchanged) as a second line of defense: it is
+/// what catches `否认食物过敏` in `青霉素过敏,否认食物过敏` — a single clause
+/// (no `；;。` inside it) whose *first* word is positive, so layer 1 doesn't
+/// fire, and the negation only shows up once the clause is split into items.
+///
+/// Empty clauses/items are skipped either way.
 fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in text.lines() {
@@ -444,9 +543,15 @@ fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
             })
         });
         let Some(rest) = rest else { continue };
-        for item in rest.split(['；', ';', '，', ',', '、']) {
-            if let Some(pair) = parse_allergy_item(item) {
-                out.push(pair);
+        for clause in rest.split(['；', ';', '。']) {
+            let clause = clause.trim();
+            if clause.is_empty() || is_allergy_negation(clause) {
+                continue;
+            }
+            for item in clause.split(['，', ',', '、']) {
+                if let Some(pair) = parse_allergy_item(item) {
+                    out.push(pair);
+                }
             }
         }
     }
@@ -454,12 +559,17 @@ fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
 }
 
 /// Parse one allergy item like `青霉素(皮疹)` → `("青霉素", "皮疹")`, or bare
-/// `磺胺` → `("磺胺", "")`. Returns `None` for empty / negation items.
+/// `磺胺` → `("磺胺", "")`. Returns `None` for empty / negation items — this
+/// is the second line of defense described on `extract_allergies_pairs` — and
+/// also for "不详" -type items (`is_allergy_unclear`), which is a *different*
+/// reason for the same `None`: not "confirmed no allergy", just "not a clear
+/// enough allergen to put on the card" (宁缺). Both fall through to the same
+/// return value because the caller only needs "skip this one", not why.
 fn parse_allergy_item(item: &str) -> Option<(String, String)> {
     let item = item
         .trim()
         .trim_matches(|c: char| c.is_whitespace() || matches!(c, '。' | '.' | ';' | '；'));
-    if item.is_empty() || item.starts_with('无') || item.starts_with("否认") {
+    if item.is_empty() || is_allergy_negation(item) || is_allergy_unclear(item) {
         return None;
     }
     if let Some(op) = item.find(['(', '（']) {
@@ -1403,6 +1513,143 @@ mod tests {
         assert_eq!(pairs.len(), 2);
         assert_eq!(pairs[0], ("磺胺".to_string(), String::new()));
         assert_eq!(pairs[1], ("头孢".to_string(), "荨麻疹".to_string()));
+    }
+
+    /// Reverse-safety regression: 「否认食物、药物过敏史」must not surface any
+    /// allergy. `否认` scopes the *whole clause*, not just the first
+    /// 顿号-separated item — splitting on 、/，before checking for negation
+    /// (the old, single-layer behavior) turned the clause's last item into an
+    /// orphan that read as a positive allergy named "药物过敏史" (it even
+    /// borrowed its "name" from the label itself, since both end in 过敏史).
+    /// Printing that on the emergency card as an allergen, when the chart
+    /// explicitly denies one, is a worse failure than under-extracting: a
+    /// responder trusts the card and withholds/avoids a drug the patient was
+    /// never actually allergic to. Before this fix, `extract_allergies_pairs`
+    /// returned `[("药物过敏史", "")]` / `[("食物过敏史", "")]` for the first
+    /// two cases below.
+    #[test]
+    fn allergy_negation_scopes_the_whole_clause_not_the_first_item() {
+        assert_eq!(
+            extract_allergies_pairs("过敏史:否认食物、药物过敏史。"),
+            Vec::<(String, String)>::new(),
+            "否认 governs both 食物 and 药物, not just 食物"
+        );
+        assert_eq!(
+            extract_allergies_pairs("过敏史:否认药物、食物过敏史。"),
+            Vec::<(String, String)>::new(),
+            "order swapped: 否认 still governs both items"
+        );
+        assert_eq!(
+            extract_allergies_pairs("过敏史:否认食物及其他药物过敏史。"),
+            Vec::<(String, String)>::new(),
+            "no internal 、 at all — was already correct, must stay correct"
+        );
+        assert_eq!(
+            extract_allergies_pairs("过敏史:磺胺类药物(皮疹史);否认食物及其他药物过敏史。"),
+            vec![("磺胺类药物".to_string(), "皮疹史".to_string())],
+            "real discharge-summary phrasing: a positive clause and a negated \
+             clause sharing one field, split by ；"
+        );
+        assert_eq!(
+            extract_allergies_pairs("既往史:否认肝炎、结核病史,否认食物、药物过敏史。"),
+            Vec::<(String, String)>::new(),
+            "过敏史 label match lands mid-sentence on the trailing 药物过敏史, \
+             leaving only a trailing 。 as the remainder"
+        );
+    }
+
+    /// Same-clause mix: a positive item and a negated item with no `；;。`
+    /// between them (so layer 1's whole-clause check doesn't fire — the
+    /// clause *starts* with the positive substance). Layer 2's per-item
+    /// negation check (unchanged, in `parse_allergy_item`) is what has to
+    /// catch the negated half here; this test pins that second line of
+    /// defense so it doesn't get deleted as "redundant" with layer 1.
+    #[test]
+    fn allergy_positive_and_negation_sharing_one_clause() {
+        let pairs = extract_allergies_pairs("过敏史:青霉素过敏,否认食物过敏");
+        assert_eq!(pairs.len(), 1, "实际={pairs:?}");
+        assert_eq!(pairs[0].0, "青霉素过敏");
+    }
+
+    /// `未见`/`(-)`/`（-）` are additional common negation spellings beyond
+    /// `否认` (`无` is handled separately — see `WU_NEGATION_CONTINUATIONS` —
+    /// because unlike these, it can also be the first character of a real
+    /// substance name). `不详`/`不知`/`未知`/`不清楚` are covered by
+    /// `allergy_unclear_markers_produce_no_item`, not here: they are
+    /// deliberately *not* negation (see `ALLERGY_UNCLEAR_MARKERS`), they just
+    /// don't produce an item either, for an unrelated reason (宁缺).
+    #[test]
+    fn allergy_negation_prefix_variants() {
+        assert!(extract_allergies_pairs("过敏史:未见明确食物、药物过敏史。").is_empty());
+        assert!(extract_allergies_pairs("过敏史:(-)").is_empty());
+        assert!(extract_allergies_pairs("过敏史:（-）").is_empty());
+    }
+
+    /// #65: a substance name that happens to *start with* `无` (e.g. 无花果,
+    /// the fig) must not be swallowed by the `无` negation check. `无` is only
+    /// a negation when what follows it is a word that completes a negation
+    /// phrase (`无`+空 / `无特殊` / `无殊` / `无过敏史` / `无明确过敏史` /
+    /// `无药物过敏史` …) — not whenever a token merely begins with the
+    /// character `无`. See `is_allergy_negation` for the exact rule and why
+    /// it deliberately leans toward under-negating (false positive: a real
+    /// allergen shown = visible, gets questioned) over over-negating (false
+    /// negative: a real allergen silently dropped = invisible, never
+    /// questioned, and worse, the emergency card would look confidently
+    /// clean).
+    #[test]
+    fn allergy_wu_prefix_is_not_blanket_negation() {
+        // 物质名恰好以「无」开头 —— 必须显示,这是本次要修的假阴性。
+        assert_eq!(
+            extract_allergies_pairs("过敏史:无花果过敏。"),
+            vec![("无花果过敏".to_string(), String::new())],
+            "无花果过敏 是阳性条目,「无」在这里是物质名的一部分,不是否定词"
+        );
+        // 病历里真实的否定写法,必须继续被判否定。
+        for negated in [
+            "过敏史:无。",
+            "过敏史:无殊。",
+            "过敏史:无特殊。",
+            "过敏史:无过敏史。",
+            "过敏史:无明确过敏史。",
+            "过敏史:无药物过敏史。",
+            "过敏史:无明显过敏史。",
+            "过敏史:无已知过敏史。",
+            "过敏史:无食物过敏史。",
+            "过敏史:无其他过敏史。",
+        ] {
+            assert_eq!(
+                extract_allergies_pairs(negated),
+                Vec::<(String, String)>::new(),
+                "应判否定:{negated}"
+            );
+        }
+    }
+
+    /// ②「不详」类:不是「无过敏」,也不构成一条明确的过敏原,所以宁缺 ——
+    /// 不产出条目(落到卡片默认的「未识别」状态),但**不**归进否定词表(见
+    /// `ALLERGY_NEGATION_PREFIXES` 上的注释——这是两件不同的事:一个是"确认无",
+    /// 一个是"没查/没说清楚",混进同一张否定词表会让"信息缺失"被记成"已确认
+    /// 无过敏",这正是本次修复要避免的另一个方向的错误)。
+    #[test]
+    fn allergy_unclear_markers_produce_no_item() {
+        for unclear in [
+            "过敏史:不详。",
+            "过敏史:过敏史不详。", // 行标签命中后,剩余部分自己又带了一次「过敏史」
+            "过敏史:不知。",
+            "过敏史:未知。",
+            "过敏史:不清楚。",
+        ] {
+            assert_eq!(
+                extract_allergies_pairs(unclear),
+                Vec::<(String, String)>::new(),
+                "「不详」类应当宁缺,不产出条目:{unclear}"
+            );
+        }
+        // 同一分句里一条明确 + 一条不详:明确的那条要留,不详的那条不占位。
+        assert_eq!(
+            extract_allergies_pairs("过敏史:青霉素过敏,过敏史不详。"),
+            vec![("青霉素过敏".to_string(), String::new())],
+        );
     }
 
     #[test]

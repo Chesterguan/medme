@@ -771,6 +771,49 @@ mod tests {
         }
     }
 
+    /// 过敏史语义统一(产品拍板):app 永远不能宣称「没有过敏」,只能说「未识别」。
+    /// 托管查看器此前对空过敏史的处理是 `if (allerg) h += …`——医生扫码打开时
+    /// 「过敏史」这一节**整个消失**,沉默会被读成「没什么特别的」,这是四个文案
+    /// 出口里最危险的一个(另外三个见 `emergency_card_screen.dart` 与
+    /// `vault_projections.rs::render_plain_text` 的 NOT_FOUND)。
+    ///
+    /// 这条测试不跑 JS(仓库里没有 JS 运行时依赖),按这份文件一贯的做法
+    /// (`viewer_script_parses_on_old_browsers` 同一套手法)在源码字符串上钉住:
+    /// 旧的"空则整行不渲染"写法必须消失,新的"永远渲染 + 未识别措辞 + 独立
+    /// 琥珀色样式"必须都在。真正的渲染结果(空态实际吐出的 HTML/文本)已经用
+    /// node 从这份文件里现取现跑验过,不是凭读代码猜的;这里钉的是"关键写法
+    /// 还在不在",防止以后有人改回旧的 truthy-gate。
+    #[test]
+    fn hosted_viewer_never_hides_the_allergy_row_when_empty() {
+        // 旧的两处「空则不渲染」写法不能再出现。
+        assert!(
+            !CANONICAL_VIEWER.contains("if (allerg) h +="),
+            "renderSummary 的过敏史 sum-row 不能再是「空则不渲染」"
+        );
+        assert!(
+            !CANONICAL_VIEWER.contains("if ((sm.allergies || []).length) L.push(\"过敏史:\""),
+            "buildEMRFromSummary 的过敏史行不能再是「空则不打印」"
+        );
+        // 新写法:两处都要出现「未识别」措辞,且过敏史这一行的产出不再包一层
+        // `if`(sum-row 用三元选文案,EMR 文本用三元选 allergyLine,两处都是
+        // 无条件 push/追加)。
+        assert!(
+            CANONICAL_VIEWER
+                .contains("未识别(极少有人做过完整过敏原检测,不等于没有过敏,建议当面核实)"),
+            "buildEMRFromSummary 空过敏史时应打印「未识别」并说明原因"
+        );
+        assert!(
+            CANONICAL_VIEWER
+                .contains("未识别 · 极少有人做过完整过敏原检测,不等于没有过敏,请当面核实"),
+            "renderSummary 的过敏史 sum-row 空态应显示「未识别」并说明原因"
+        );
+        // 空态不能借用 .sum-bad(那是「已知过敏原」的红色警示),必须有独立样式。
+        assert!(
+            CANONICAL_VIEWER.contains(".sum-unclear"),
+            "过敏史「未识别」态需要一个独立于 .sum-bad 的样式,不能显示成和真实过敏原一样的红"
+        );
+    }
+
     #[test]
     fn share_viewer_csp_hardened_and_round_trips() {
         use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind};

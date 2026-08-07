@@ -635,12 +635,25 @@ void main() {
       expect(find.byType(TextFormField), findsNothing);
     });
 
-    testWidgets('空过敏史必须自己说话,不能留白', (tester) async {
+    testWidgets('空过敏史说「未识别」,并且绝不说「没有过敏」', (tester) async {
       // 留白会被读成「无过敏史」,而我们只知道「已导入的这些纸上没写」。
+      //
+      // 断言钉的是**产品定的语义**,不是某一版措辞:app 永远不能宣称病人没有
+      // 过敏 —— 几乎没有人做过完整的过敏原检测,病历上「否认过敏」也只是没查
+      // 出来。所以这里查两件事:说了「未识别」,以及**整屏没有任何一处**出现
+      // 「没有过敏」「无过敏」。后一条是这条测试真正的价值:换文案时改错了
+      // 方向(写成「未发现过敏,应无过敏史」这类)会在这里当场被拦下。
       await tester.pumpWidget(
         wrapScreen(EmergencyBigCardScreen(card: emptyCard, profile: profile)),
       );
-      expect(find.textContaining('不等于没有过敏'), findsOneWidget);
+      expect(find.textContaining('未识别'), findsWidgets);
+      for (final claim in ['没有过敏', '无过敏', '不存在过敏']) {
+        expect(
+          find.textContaining(claim),
+          findsNothing,
+          reason: '应急卡不能宣称「$claim」—— 我们只知道记录里没读到,不知道病人有没有',
+        );
+      }
     });
 
     testWidgets('药物一节写「记录中出现的药物」,绝不写「在用药」', (tester) async {

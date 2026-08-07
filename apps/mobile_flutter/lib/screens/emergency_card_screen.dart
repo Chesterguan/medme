@@ -263,8 +263,11 @@ class _BloodTypeCard extends StatelessWidget {
 /// 过敏史 —— 这一屏最要紧的一节,所以整块用 `critical` 描边框起来(规范 §九
 /// 「过敏史框起来」)。
 ///
-/// 空过敏史必须自己说话:留白会被读成「无过敏史」,而我们只知道「已导入的这些纸
-/// 上没写」。这两件事在急救现场差着一条命。
+/// 产品拍板(过敏史语义统一):app 永远不能宣称「没有过敏」,只能说「未识别」——
+/// 几乎没有人做过完整的过敏原检测,病历上「否认过敏」也只是没查出来,不是查过
+/// 确认没有。所以空过敏史必须自己说话,而且说的是「未识别」不是「无过敏」:
+/// 让小节的默认状态(标题 + 说明)去承载这份不确定性,单条条目就不用背——不
+/// 明确的条目直接不显示(宁缺),不必塞进这个红框。
 class _AllergySection extends StatelessWidget {
   const _AllergySection({required this.allergies, required this.onOpenDoc});
 
@@ -274,10 +277,14 @@ class _AllergySection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
+    final unidentified = allergies.isEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('过敏史', style: MedType.caption.copyWith(color: c.ink3)),
+        Text(
+          unidentified ? '过敏史(未识别)' : '过敏史',
+          style: MedType.caption.copyWith(color: c.ink3),
+        ),
         const SizedBox(height: MedShape.s1),
         MedCard(
           borderColor: allergies.isEmpty ? null : c.critical,
@@ -286,8 +293,9 @@ class _AllergySection extends StatelessWidget {
             padding: const EdgeInsets.all(MedShape.s3),
             child: allergies.isEmpty
                 ? Text(
-                    '已导入的病历里没有找到过敏记录。\n'
-                    '这不等于没有过敏 —— 只说明这些纸上没写。请当面告知医生。',
+                    '已导入的病历里没有找到过敏记录,状态是「未识别」。\n'
+                    '这不等于没有过敏 —— 几乎没有人做过完整的过敏原检测,'
+                    '记录没写通常只是没查到,不是查过确认没有。请当面告知医生。',
                     style: MedType.body.copyWith(color: c.ink2, height: 1.5),
                   )
                 : Column(
@@ -819,14 +827,17 @@ class EmergencyBigCardScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '过敏史',
+            has ? '过敏史' : '过敏史(未识别)',
             style: MedType.subtitle.copyWith(color: has ? c.critical : c.ink3),
           ),
           const SizedBox(height: MedShape.s1),
           if (!has)
-            // 空过敏史在急救屏上尤其危险:留白会被读成「无过敏史」。
+            // 空过敏史在急救屏上尤其危险:留白会被读成「无过敏史」。这屏是给
+            // 急救人员三秒内读的,措辞要比普通模式(_AllergySection)短很多,
+            // 但「未识别 ≠ 没有过敏」这条不能省——同一套产品拍板,只是压缩到
+            // 一句话。
             Text(
-              '病历里没有找到过敏记录。\n这不等于没有过敏 —— 请向本人或家属确认。',
+              '未识别到过敏记录。\n很少有人查全过敏原,未识别 ≠ 没有,请立刻向本人/家属确认。',
               style: MedType.subtitle.copyWith(color: c.ink2, height: 1.4),
             )
           else
