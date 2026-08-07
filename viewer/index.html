@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- SECURITY (GHSA-j7fx): 本页只运行三段固定的内联脚本(首屏防闪 + 内联 dicom-parser + 查看器逻辑),
-     故 script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-lXHVzATJ5IinuXqhlW/n8DiHTQDP0p5dLnpQTgpHmjE=';并加 form-action/base-uri/
+     故 script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk=';并加 form-action/base-uri/
      frame-ancestors 'none' 锁死导航/表单/框架,断掉潜在注入外泄 DECRYPTED PHI 的路径。
      connect-src 只放行认领密文所在的那一个源(CLAIM_BASE):托管查看器要按 id 取回医生
      代拍的密文,别的地方一概连不上,解密后的 PHI 仍无处可外泄。**离线分享文件不吃这条**
@@ -15,7 +15,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-lXHVzATJ5IinuXqhlW/n8DiHTQDP0p5dLnpQTgpHmjE='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -1117,7 +1117,13 @@ function render(payload) {
     + '<h1>MedMe 医我 · 加密病历分享</h1></div>';
   html += '<div class="patient">' + patientLine + "</div>";
   // 二维码分享没有 record_count(载荷里没有记录数组)—— 别显示「共 0 份记录」。
-  const countPart = p.record_count ? " · 共 " + p.record_count + " 份记录" : "";
+  //
+  // **必须 esc**(issue #143):Rust 侧发的是 `i64`,但查看器解的是「对方递过来的
+  // 任意密文」——造一份 `record_count` 为字符串的载荷,这里就是个 HTML 注入点。
+  // 严格 CSP(script-src 只认那几个 sha256)挡得住脚本执行,**挡不住往医生眼前
+  // 塞一段假的医疗文字**;在这一页上,伪造内容比弹窗危险。这曾是本行唯一漏 esc
+  // 的字段——紧邻的 `gen` 一直是转义的。
+  const countPart = p.record_count ? " · 共 " + esc(p.record_count) + " 份记录" : "";
   html += '<div class="generated">生成时间:' + esc(gen) + countPart + "</div></header>";
   // 隐私声明必须按来源说实话:自包含分享文件确实一个字节都没上传过;而二维码与认领
   // 链接的密文**正是从瞬时云取回来的** —— 只是密钥从不上行,所以云上那份谁也解不开。
