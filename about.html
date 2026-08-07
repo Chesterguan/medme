@@ -102,7 +102,10 @@
   footer .disc{max-width:720px;margin:0 auto 16px;color:#94a3b8;font-size:13px;line-height:1.8}
   footer b{color:#e2e8f0}
   @media(max-width:900px){
-    .team{grid-template-columns:repeat(2,1fr);max-width:720px}
+    /* `.team.founders`(两个类)压得过单类 `.team`,不写全就只有科学顾问那组
+       降到两列,创始团队卡在三列 —— 760–900px 之间同一页两套栅格,卡片被挤到
+       300px 宽。下面 760px 那条本来就写全了,这条当初漏了。 */
+    .team,.team.founders{grid-template-columns:repeat(2,1fr);max-width:720px}
   }
   @media(max-width:760px){
     header.phead h1{font-size:30px}
@@ -172,6 +175,20 @@
         <p>北京协和医学院血液学;爱丁堡大学博士在读。</p>
         <div class="links">
           <a href="https://www.linkedin.com/in/lexuan-lin" target="_blank" rel="noopener" title="LinkedIn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14zM8.34 17V10.4H6.16V17h2.18zM7.25 9.5a1.26 1.26 0 1 0 0-2.52 1.26 1.26 0 0 0 0 2.52zM18 17v-3.62c0-1.93-.41-3.42-2.67-3.42-1.08 0-1.81.6-2.11 1.16h-.03V10.4h-2.09V17h2.18v-3.26c0-.86.16-1.69 1.23-1.69 1.05 0 1.07.98 1.07 1.75V17H18z"/></svg> LinkedIn</a>
+        </div>
+      </div>
+
+      <!-- 联合创始人(医学顾问·临床背景) -->
+      <div class="member">
+        <div class="avatar">
+          <img src="assets/team/yiran.jpg" alt="崔依然 Yiran Cui" onerror="this.remove()" />
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <h3>崔依然 Yiran Cui</h3>
+        <div class="role">联合创始人 · 医学顾问 · 临床背景</div>
+        <p>北京协和医学院血液病医院,干细胞与再生医学专业硕博连读;目前博士在读。</p>
+        <div class="links">
+          <a href="https://scholar.google.com/citations?user=M0TFzfUAAAAJ&amp;hl=en" target="_blank" rel="noopener" title="Google Scholar"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v3.5L12 20l7-3.32v-3.5L12 17l-7-3.82z"/></svg> Scholar</a>
         </div>
       </div>
 
