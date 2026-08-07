@@ -91,6 +91,11 @@ const EXPECTED: &[(&str, Option<&str>)] = &[
         "2025-02-18_胸部CT_肺结节.pdf",
         Some("中国医学科学院肿瘤医院"),
     ),
+    // corpus/(续)——过敏史(应急卡最要紧一节)第一份真实文档,见 generate.sh #21。
+    (
+        "2026-07-15_出院记录_冠脉支架术后.pdf",
+        Some("复旦大学附属中山医院"),
+    ),
 ];
 
 fn demo_root() -> PathBuf {

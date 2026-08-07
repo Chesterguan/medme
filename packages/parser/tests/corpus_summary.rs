@@ -281,3 +281,53 @@ fn no_page_furniture_is_reported_as_an_analyte() {
         "header text is being charted as a lab series: {bad:#?}"
     );
 }
+
+/// The emergency card's 「过敏史」 section — the one entry on that screen that
+/// is wrong in a way that hurts someone at the point of care (see
+/// `apps/mobile_flutter/lib/screens/emergency_card_screen.dart`) — had never
+/// been driven by a real document. `extract_allergies_pairs`/`parse_allergy_item`
+/// only had synthetic unit-test coverage (`allergy_negation_and_bare_substance`
+/// below, and the one-liner in `assemble_summary_groups_labs_meds_and_buckets_the_rest`).
+///
+/// `2026-07-15_出院记录_冠脉支架术后.txt` (`examples/demo-dataset/generate.sh` #21)
+/// closes that gap with one real 过敏史 field carrying both directions:
+/// `过敏史:磺胺类药物(皮疹史);否认食物及其他药物过敏史。` — a positive drug
+/// allergy with its reaction, and an explicit negation of food/other-drug
+/// allergy in the same field, exactly as Chinese discharge summaries write it.
+///
+/// This is not a hypothetical risk: a nearby, differently-shaped negation —
+/// `过敏史:否认食物、药物过敏史。`, i.e. the negated list's *last* item shares
+/// its trailing noun with the label instead of repeating 否认/无 on each item —
+/// makes `extract_allergies_pairs` mis-split on the 、 and return a phantom
+/// `("药物过敏史", "")` entry, turning "no known drug allergy" into an
+/// apparent allergy. That phrasing was deliberately **not** used here (per the
+/// task's instruction not to bend the fixture to dodge a found gap by hacking
+/// the regex, nor to ship a known false positive on this specific screen) —
+/// see the session report for the repro. This test pins the phrasing that the
+/// current implementation gets right; the other one is a real, open gap.
+#[test]
+fn allergy_history_is_extracted_from_a_real_document() {
+    let sm = summary();
+    let allergies = sm["allergies"].as_array().expect("allergies array");
+
+    let sulfa = allergies
+        .iter()
+        .find(|a| a["substance"] == "磺胺类药物")
+        .unwrap_or_else(|| {
+            panic!(
+                "positive allergy (磺胺类药物, from 2026-07-15_出院记录_冠脉支架术后.txt) \
+                 not extracted; allergies were: {allergies:?}"
+            )
+        });
+    assert_eq!(sulfa["reaction"], "皮疹史");
+
+    // The negated clause in the same field (`否认食物及其他药物过敏史`) must not
+    // produce an entry — mis-extracting a denial as a positive allergy is the
+    // reverse safety incident (an emergency responder giving a drug the card
+    // wrongly claims is safe, or withholding one it wrongly claims isn't).
+    assert_eq!(
+        allergies.len(),
+        1,
+        "the negated food/other-drug clause must not surface as an allergy: {allergies:?}"
+    );
+}

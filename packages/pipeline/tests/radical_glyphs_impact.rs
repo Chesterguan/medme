@@ -10,7 +10,8 @@
 //!
 //! ## 根因在 PDF 自己身上,不是 `pdf-extract` 读错了
 //!
-//! demo corpus 的 22 份全部由 Chrome 打印生成(`/Producer (Skia/PDF m150)`)。
+//! demo corpus 的 23 份全部由 Chrome 打印生成(`/Producer (Skia/PDF m150)`,
+//! 2026-08 新增的第 23 份用同一条流水线、当时的 Chrome 版本落成 `m151`)。
 //! 逐份解开它们的 `ToUnicode` CMap 可见:**PDF 自己就把常用字的字形映射到了
 //! 康熙部首码位**(如 `2023-11-02_头颅MRI` 一份 195 条映射里有 15 条落在
 //! U+2E80–2FDF)。`pdf-extract` 忠实照读,没有读错。所以这不能靠"换个更好的
@@ -31,17 +32,26 @@
 use core_model::Vault;
 use std::path::{Path, PathBuf};
 
-// ---- 实测基线(2026-08,demo-data 22 份,`cargo test -p pipeline`)----
+// ---- 实测基线(2026-08,demo-data 23 份,`cargo test -p pipeline`)----
+//
+// 2026-08 新增第 23 份(`2026-07-15_出院记录_冠脉支架术后.pdf`,过敏史阳性/
+// 阴性各一条,见 `examples/demo-dataset/generate.sh` #21)之后,这批常量跟着
+// 重新实测过一遍——这份文档没有部首字形残留(渲染前就避开了两个当时发现、
+// 折叠表尚未收录的码位,见 generate.sh 该条目的注释),所以下面只有「新增
+// 文档带来的新内容」这一类变化,不是部首缺陷本身又变严重了。
 /// 挂上疾病泳道(`parser::match_disease`)的诊断条数。这是差距最大的一项:
 /// 部首把 `⾼⾎压` / `⾼尿酸⾎症` 打穿,`problem_map.json` 一条都对不上。
 const AS_IS_LANED_CONDITIONS: usize = 4;
 const FOLDED_LANED_CONDITIONS: usize = 4;
-/// 映射到 ATC 的药物条数。
-const AS_IS_MEDS_WITH_ATC: usize = 7;
-const FOLDED_MEDS_WITH_ATC: usize = 7;
-/// 药物总行数。修复前是 9 —— 其中两条是 `⼆甲双胍` / `⼝服阿司匹林` 被部首
-/// 拆出来的重复条目,折叠后并回正条。
-const MEDS_ROWS: usize = 7;
+/// 映射到 ATC 的药物条数。新增文档带来氯吡格雷(冠心病抗血小板药,B01AC),
+/// 7 → 8。
+const AS_IS_MEDS_WITH_ATC: usize = 8;
+const FOLDED_MEDS_WITH_ATC: usize = 8;
+/// 药物总行数。修复前(部首缺陷未折叠)是 9 —— 其中两条是 `⼆甲双胍` /
+/// `⼝服阿司匹林` 被部首拆出来的重复条目,折叠后曾并回 7 正条。新增文档带来
+/// 两个语料里从未出现过的药名(氯吡格雷、头孢曲松钠),7 → 9,与部首缺陷
+/// 无关。
+const MEDS_ROWS: usize = 9;
 /// 影像/病理「诊断意见」段落抽出正文的份数(`意⻅` 的 `⻅` 是 U+2EC5,
 /// 标签匹配不上,整段 impression 从医生摘要/分享里消失)。
 const AS_IS_IMAGING_FINDINGS: usize = 3;
@@ -71,7 +81,7 @@ struct Doc {
     text: String,
 }
 
-/// 把 22 份 demo 走一遍 `pipeline::ingest`,再从 `ocr_result` 读回文本 ——
+/// 把 23 份 demo 走一遍 `pipeline::ingest`,再从 `ocr_result` 读回文本 ——
 /// 与真机上「文档详情 · 文档内容」和所有抽取消费者看到的是同一份。
 fn ingested_docs(dir: &Path) -> (Vault, Vec<Doc>) {
     let mut pdfs = Vec::new();
@@ -138,7 +148,7 @@ fn source_docs<'a>(docs: &'a [Doc], texts: &'a [String]) -> Vec<parser::SourceDo
 fn ocr_result_text_carries_no_radical_glyphs() {
     let td = tempfile::tempdir().expect("tempdir");
     let (_v, docs) = ingested_docs(td.path());
-    assert_eq!(docs.len(), 22, "demo-data 的份数变了");
+    assert_eq!(docs.len(), 23, "demo-data 的份数变了");
     let dirty: Vec<String> = docs
         .iter()
         .filter_map(|d| {
@@ -324,7 +334,8 @@ fn these_terms_are_searchable_now() {
     let vb = folded_vault(td2.path());
     for (kw, want) in [
         ("甘油三酯", 4usize),
-        ("二甲双胍", 5),
+        // 6 = 原 5 份 + 新增的第 23 份(出院记录,既往史提到「规律服用二甲双胍」)。
+        ("二甲双胍", 6),
         ("血红蛋白", 7),
         ("低密度脂蛋白", 4),
         ("华西医院", 4),
@@ -411,8 +422,9 @@ fn compound_tokens_are_a_pre_existing_fts_limitation() {
 }
 
 /// 医院名是上一轮(`8fb35c4`)已经修掉的那一处:`extract_provider` 自己先折
-/// 一次部首,所以它**不受**本文件其余各条的影响 —— 22 份里 21 份抽得出。
-/// 这条在这里是为了说明「逐个消费者各折一次」这条路走得通但要人人记得。
+/// 一次部首,所以它**不受**本文件其余各条的影响 —— 23 份里 22 份抽得出(唯一
+/// 没有的仍是家庭自测记录,那份原文里根本没有机构名)。这条在这里是为了说明
+/// 「逐个消费者各折一次」这条路走得通但要人人记得。
 #[test]
 fn provider_extraction_already_folds_on_its_own() {
     let td = tempfile::tempdir().expect("tempdir");
@@ -423,7 +435,7 @@ fn provider_extraction_already_folds_on_its_own() {
             .filter(|t| core_model::extract_provider(t).is_some())
             .count()
     };
-    assert_eq!(n(false), 21);
+    assert_eq!(n(false), 22);
     assert_eq!(n(false), n(true), "折不折都一样 —— 它在函数入口自己折过了");
 }
 

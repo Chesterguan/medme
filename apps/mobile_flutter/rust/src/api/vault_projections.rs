@@ -1360,6 +1360,40 @@ mod tests {
         assert_eq!(allergies.len(), 2, "实际={allergies:?}");
     }
 
+    /// 上面那条是手写合成文本;这条改用示例数据集里的**真实文档**原文
+    /// (`include_str!` 直接读 `packages/parser` 的 corpus fixture,与
+    /// `corpus_summary.rs` 用的是同一份,不是抄一遍手打)。
+    ///
+    /// 动机:应急卡「过敏史」一节是这一屏唯一「用错会当场出事」的信息(见
+    /// `emergency_card_screen.dart` 顶部文档),而这份 `extract_allergies_pairs`/
+    /// `parse_allergy_item` 是从 `packages/parser::handoff` **手工抄一遍**维护的
+    /// 独立副本(见上面「过敏史」小节的注释),此前从未拿真实文档验过 —— 只有
+    /// 合成单测。加示例数据集第 21 份文档(`2026-07-15_出院记录_冠脉支架术后.txt`,
+    /// 张建国冠脉支架术后出院记录)时顺带补上这一条,同时验证阳性(磺胺类药物,
+    /// 标准的「物质(反应)」写法)与阴性(食物及其他药物,标准的「否认…」写法)
+    /// 两条,分属过敏史段落里的两个分句 —— 与 `corpus_summary.rs` 里
+    /// `allergy_history_is_extracted_from_a_real_document` 验的是同一份原文,
+    /// 这里额外确认了应急卡自己那份独立实现给出相同结果。
+    #[test]
+    fn allergies_from_the_real_demo_discharge_summary() {
+        const REAL_DOC: &str = include_str!(
+            "../../../../../packages/parser/tests/fixtures/corpus/2026-07-15_出院记录_冠脉支架术后.txt"
+        );
+        let docs = docs_from(&[(REAL_DOC, Some("2026-07-20"), "discharge_summary")]);
+        let allergies = collect_allergies(&docs);
+
+        let sulfa = allergies
+            .iter()
+            .find(|a| a.substance == "磺胺类药物")
+            .unwrap_or_else(|| panic!("磺胺类药物 not extracted; got {allergies:?}"));
+        assert_eq!(sulfa.reaction, "皮疹史");
+        assert_eq!(sulfa.document_ids, vec![100]);
+
+        // 「否认食物及其他药物过敏史」不该产出第二条 —— 抽错成阳性是反向的
+        // 安全事故(应急救援者被卡片误导,以为病人对某样东西过敏)。
+        assert_eq!(allergies.len(), 1, "实际={allergies:?}");
+    }
+
     #[test]
     fn active_meds_and_conditions_carry_source_document_ids() {
         let docs = docs_from(&[
