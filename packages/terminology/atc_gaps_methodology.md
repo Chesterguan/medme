@@ -1,6 +1,6 @@
 # 无 ATC 码的 53 条药物 — 方法与清单(WORKLIST #9)
 
-**版本**: 草案 v1 · 2026-08-05 · MedMe（医我）
+**版本**: 草案 v2 · 2026-08-05(v1)/2026-08-08(v2 第二轮独立复核)· MedMe（医我）
 
 ## 背景
 
@@ -159,11 +159,10 @@ ATC 对复方制剂只在 WHO 认定"国际通用固定复方"时才发码（如
   后重新核对（尤其是几个"RxNorm Extension 非真实 RXCUI"的国产药，未来官方
   RxNorm 收录后可能有真实 Ingredient/ATC）。
 
-## 待人工查证（如果有更多 web 配额）
+## 待人工查证（v1 遗留，已在 v2 用完整 WebSearch 配额核实 —— 见下节）
 
-以下几条本轮查证时间有限，值得下一轮用完整 WebSearch 配额（而非仅 WebFetch 直连
-单个 URL）重新核实，因为 WHOCC 网站的 name 搜索似乎只做精确/前缀匹配、不做全文
-检索，可能漏掉命名法不同的同义词：
+以下几条 v1 查证时间有限，标记为"下一轮用完整 WebSearch 配额（而非仅 WebFetch
+直连单个 URL）重新核实"：
 
 - `iron_sucrose`（蔗糖铁）—— 确认 WHOCC 是否曾经或在其他年份索引中给过更细的
   5th 级码（本轮查的是 2026 版 Index）。
@@ -172,3 +171,64 @@ ATC 对复方制剂只在 WHO 认定"国际通用固定复方"时才发码（如
 - 组一的 24 条中成药 —— 本轮仅抽查 3 条（xuesaitong/lianhua_qingwen/
   compound_glycyrrhizin）作为方法学验证，未逐条查证；抽查结果支持"WHO ATC
   不收录中成药专利制剂"这一方法学结论对全组成立，但未做到逐条实查。
+
+## 第二轮独立复核（v2，2026-08-08，WebSearch 配额可用）
+
+**触发**：产品要求交付一版"给 53 条补 ATC"的 PR。动手前先按本文档开头的方法论
+独立核实了缺口数字与机制（`dictionary.json` 逐条统计，`category == "drug"` 的
+322 条里仍有 53 条 `codes.atc` 为空，与 v1 清单逐一比对 key 完全一致，无新增无
+减少），然后用**本轮可用的完整 WebSearch + WebFetch 直连 WHOCC**（v1 记录
+WebSearch 配额已耗尽，只能 WebFetch 单 URL）对 v1 结论做独立复核，而不是直接
+信任 v1 的记录。
+
+**复核范围与方法**：
+1. 用 WebFetch 直连 `atcddd.fhi.no/atc_ddd_index/?name=<term>` 逐条查询；
+2. 先用已知有码的药（`metformin`）验证该搜索接口本身工作正常（返回 23 条真实
+   结果，含 A10BA02 及全部 A10BD 系复方），排除"接口本身返回空白导致误判为
+   无码"的可能；
+3. 对 v1「待人工查证」标记的两条（`iron_sucrose`、`hemocoagulase_agkistrodon`
+   /`batroxobin`）逐一查证；
+4. 对组三全部 9 条单方化学药（`butylphthalide`、`iguratimod`、`oryzanol`、
+   `bicyclol`、`epalrestat`、`hyzetimibe`、`bifendate`、`anisodamine`、
+   `magnesium_isoglycyrrhizinate`）逐条查证（v1 未逐条查这组，只在 note 里记了
+   "vocab 无对应"的结论）；
+5. 对组四补查 `silibinin`（区别于已核实的 silymarin）、`polysaccharide_iron_
+   complex`、`water_for_injection`；
+6. 对组二补查 `potassium_magnesium_aspartate`（查 "potassium aspartate"）、
+   `compound_paracetamol_pseudoephedrine`/`compound_paracetamol_amantadine`
+   （查 "paracetamol" 全部复方分支）、`compound_ferrous_sulfate`（查 "ferrous
+   sulfate" 核对 B03AA07/B03AD03 两码）；
+7. 对组一中成药在 v1 已查的 3 条之外，再抽查若干条的**核心药材/组分**而非中文
+   商品名（WHOCC 不收中文名，只收国际非专利名）：`Tongxinluo`/`Wenxin Keli`/
+   `Shexiang Baoxin`（WebSearch 未见 ATC）、`Tripterygium wilfordii`（WebSearch
+   未见 ATC）、`salvia miltiorrhiza`/丹参（WebFetch 无匹配）、`cordyceps`/
+   虫草（百令、金水宝的活性来源，WebFetch 无匹配）、`hirudin`/水蛭素（疏血通
+   组分之一，WebFetch 无匹配）。
+
+**结果**：全部复核项在 2026 版 WHOCC ATC/DDD Index 中**均无匹配**
+（"No match found"）或**确认匹配的是不同层级/不同概念**（与 v1 结论一致，无
+一条改判）。逐项证据：
+
+| key | 复核方法 | 结果 |
+|---|---|---|
+| iron_sucrose | WebFetch `?name=iron+sucrose`；并用 `?code=B03AC` 核对该 4 位组码本身 | name 搜索无匹配；`B03AC`("Iron, parenteral preparations")确认只在 4 位组码层带 DDD（0.1g Fe，肠外），WHOCC 页面未列任何 5th 级子码 —— 与 v1 结论一致 |
+| hemocoagulase_agkistrodon | WebFetch `?name=hemocoagulase`（含 batroxobin 同义词） | 无匹配 |
+| butylphthalide / iguratimod / oryzanol / bicyclol / epalrestat / hyzetimibe / bifendate / anisodamine / magnesium_isoglycyrrhizinate | WebFetch `?name=<INN>` 逐条查询（9 条） | 全部无匹配 |
+| silibinin | WebFetch `?name=silibinin` | 无匹配（与已核实的 silymarin=A05BA03 是不同 OMOP Ingredient 概念，不可互代，v1 结论成立） |
+| polysaccharide_iron_complex / water_for_injection | WebFetch `?name=polysaccharide+iron` / `?name=water` | 无匹配；"water" 命中的 3 条（V08AA/AB/AC）全部是水溶性 X 光造影剂类别，与"注射用水"无关 |
+| potassium_magnesium_aspartate | WebFetch `?name=potassium+aspartate` | 无匹配 |
+| compound_paracetamol_pseudoephedrine / compound_paracetamol_amantadine | WebFetch `?name=paracetamol` | 仅 N02BE51（不含精神安定药的复方，4 位组码桶）/N02BE71（含精神安定药），无伪麻黄碱/金刚烷胺专属子码，且均非 5th 级专属码，不套用 |
+| compound_ferrous_sulfate | WebFetch `?name=ferrous+sulfate` | B03AA07（硫酸亚铁单方）、B03AD03（硫酸亚铁+叶酸）——本条目是"硫酸亚铁+多种维生素"，成分与 B03AD03 不符，不套用，与 v1 结论一致 |
+| Tongxinluo / Wenxin Keli / Shexiang Baoxin / Tripterygium wilfordii / salvia miltiorrhiza（丹参）/ cordyceps（虫草）/ hirudin（水蛭素） | WebSearch + WebFetch 组合查询核心药材/复方英文名 | 均无 ATC 码命中，支持"WHO ATC 不收录中成药专利制剂及其药材来源"对组一全组成立的结论 |
+
+**结论**：v2 复核**没有发现任何一条应该从"留空"改判为"补码"的条目**。53 条
+（`dictionary.json` 中 `codes.atc` 为空的 drug 条目）维持留空，`atc_gaps_
+methodology.md` 与 `packages/terminology/src/lib.rs` 里的
+`drugs_without_atc_are_all_explained` 测试（锁定数量 = 53、每条必有 `note`）均
+未改动。**本轮没有向 `dictionary.json` 写入任何 ATC 码** —— 红线一如既往：
+查不到官方码就不填，53 条全部诚实留空好过编一个"看起来对"的前缀。
+
+本轮改动范围与 v1 相同：只动 `packages/terminology/atc_gaps_methodology.md`
+本身（记录复核过程），不碰 `dictionary.json`、不碰 `problem_map.json`、不碰
+`problem_map.methodology.md`（后者的"45 条药物映射"统计因此不受影响，无需
+重新生成）。
