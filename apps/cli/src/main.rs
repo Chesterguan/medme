@@ -58,6 +58,19 @@ fn main() -> anyhow::Result<()> {
                         "attach {} (DICOM slice merged into study, id={})",
                         o.name, o.source_file_id
                     ),
+                    pipeline::IngestStatus::Reindexed => {
+                        if o.pages_without_text.is_empty() {
+                            format!(
+                                "reindex {} (missing pages recovered, id={})",
+                                o.name, o.source_file_id
+                            )
+                        } else {
+                            format!(
+                                "reindex {} (still missing pages {:?}, id={})",
+                                o.name, o.pages_without_text, o.source_file_id
+                            )
+                        }
+                    }
                 };
                 println!("{line}");
             }

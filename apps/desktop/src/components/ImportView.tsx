@@ -26,6 +26,9 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
   deduped: { label: "已存在 · 去重", cls: "text-ink-2 bg-line-2" },
   stored_no_text: { label: "已保存 · 未识别到文字", cls: "text-high bg-high-wash" },
   instance_attached: { label: "已并入检查", cls: "text-seal-ink bg-seal-wash" },
+  // 同一份文件再导一次:文档已存在、但当年有页缺文本层,这次顺手补上了
+  // (见 pipeline::reindex_existing_document,#63b)。
+  reindexed: { label: "已补充识别", cls: "text-seal-ink bg-seal-wash" },
   failed: { label: "导入失败", cls: "text-critical bg-critical-wash" },
 };
 

@@ -86,7 +86,7 @@ pub struct DocumentDetail {
 pub struct ImportOutcome {
     pub name: String,
     pub source_file_id: i64,
-    pub status: String, // new|backfilled|deduped|stored_no_text
+    pub status: String, // new|backfilled|deduped|stored_no_text|instance_attached|reindexed
     pub doc_type: Option<String>,
 }
 
