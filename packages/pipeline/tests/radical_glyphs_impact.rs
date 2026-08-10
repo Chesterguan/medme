@@ -141,9 +141,10 @@ fn source_docs<'a>(docs: &'a [Doc], texts: &'a [String]) -> Vec<parser::SourceDo
 ///   2. 有人新加了一条绕过 `ingest_pdf` 的 PDF 入库路径 —— 缺陷从新口子漏进来。
 ///
 /// 报错里逐份列出还带部首的文件**以及具体是哪些码位** —— 因为 CJK Radicals
-/// Supplement 块还有 114 个码位没有 NFKC 分解(见 `core_model::text` 的
-/// `supplement_block_coverage_is_a_known_finite_number`)。真冒出新码位时,
-/// 光知道「某份不干净」没用,得知道要往表里补哪个字。
+/// Supplement 块里仍有 24 个码位故意没进折叠表(Unicode 官方数据给不出唯一
+/// 依据,见 `core_model::text` 的 `supplement_block_coverage_is_a_known_finite_number`)。
+/// 真冒出新码位时,光知道「某份不干净」没用,得知道要往表里补哪个字、
+/// 有没有官方依据。
 #[test]
 fn ocr_result_text_carries_no_radical_glyphs() {
     let td = tempfile::tempdir().expect("tempdir");
@@ -166,8 +167,8 @@ fn ocr_result_text_carries_no_radical_glyphs() {
     assert!(
         dirty.is_empty(),
         "入库文本里仍有部首码位。要么 ingest_pdf 的折叠被拿掉了,要么有新的入库\
-         路径绕过了它,要么这些码位不在折叠表里(Supplement 块还有 114 个没有 \
-         NFKC 分解,得手工补):\n  {}",
+         路径绕过了它,要么这些码位是 Supplement 块里那 24 个故意没收录的\
+         (Unicode 官方数据给不出唯一依据,补表前得先在 NamesList.txt 里核实):\n  {}",
         dirty.join("\n  ")
     );
 }
