@@ -301,6 +301,11 @@ pub enum IngestStatus {
     StoredNoText,
     /// DICOM 切片并入了已存在的同 study 影像检查文档(未新建文档)。
     InstanceAttached,
+    /// dedup 命中(同一份文件再导一次)、document 也早已存在,但该文档还有页
+    /// 缺文本层——本次重新导入顺手把能恢复的 PDF 页补进了 `ocr_result`(见
+    /// `reindex_existing_document`)。`pages_without_text` 是补完之后**仍然**
+    /// 缺文本的页,可能是空(全补上了)也可能非空(部分页依旧识别不出)。
+    Reindexed,
 }
 
 #[derive(Debug, Clone)]
@@ -342,6 +347,9 @@ pub struct IngestOutcome {
 
 /// 导入一个文件:存 CAS(去重)→ 若尚无 document 则抽文本层并建 document/ocr。
 /// 抽取失败(如扫描图片)不致命 → StoredNoText(原文件已永存,留待后续 OCR 补索引)。
+/// 已去重且 document 已存在时不再无条件短路——见 [`reindex_existing_document`]:
+/// 这就是"留待后续 OCR 补索引"如何真正发生的地方,同一份文件再导一次即可补齐
+/// 当初漏掉的 PDF 页(#63b)。
 /// 可注入的 DICOM 元数据解析器。桌面端注入**隔离子进程**版本:按文件里声明的
 /// 长度分配内存发生在解析期,畸形文件可诱导数 GB 分配(模糊测试实测),隔离后
 /// 崩溃只波及短命子进程,不影响持有保险箱的主进程。
@@ -380,13 +388,7 @@ pub fn ingest_with_dicom_parser(
     let sid = imp.source_file.id;
 
     if imp.deduped && vault.has_document(sid)? {
-        return Ok(IngestOutcome {
-            source_file_id: sid,
-            name,
-            status: IngestStatus::Deduped,
-            doc_type: None,
-            pages_without_text: Vec::new(),
-        });
+        return reindex_existing_document(vault, sid, &name, is_pdf(path), &bytes);
     }
 
     // .dcm 走独立分支(不经 parser/OCR):DICOM 自带结构化元数据,免 OCR 即可
@@ -604,7 +606,32 @@ fn ingest_pdf(
         language: parser::detect_language(&text),
         page_count: mixed.page_count(),
     })?;
-    for page in &mixed.pages {
+    add_ocr_pages(vault, doc.id, mixed.pages.iter())?;
+    let status = if deduped {
+        IngestStatus::Backfilled
+    } else {
+        IngestStatus::New
+    };
+    Ok(IngestOutcome {
+        source_file_id: sid,
+        name: name.to_string(),
+        status,
+        doc_type: Some(doc_type),
+        pages_without_text,
+    })
+}
+
+/// 把 `recognize_pdf_mixed` 逐页判定的结果写进 `ocr_result`——`ingest_pdf`
+/// 建档时(全部页)与 `reindex_existing_document` 补页时(只挑 missing 的页)
+/// 共用同一段 match/落库逻辑,不许长成两份会走偏的拷贝。`Unrecognized` 的页
+/// 跳过不写(该页仍然没有文本,调用方自行从 `pages_without_text`/重新查库
+/// 得知)。
+fn add_ocr_pages<'a>(
+    vault: &Vault,
+    document_id: i64,
+    pages: impl Iterator<Item = &'a ocr::PdfPage>,
+) -> anyhow::Result<()> {
+    for page in pages {
         let (page_text, backend, model_version, confidence): (
             &str,
             OcrBackendKind,
@@ -625,7 +652,7 @@ fn ingest_pdf(
             ocr::PdfPageText::Unrecognized => continue,
         };
         vault.add_ocr(NewOcr {
-            document_id: doc.id,
+            document_id,
             page_no: page.page_no,
             backend,
             model_version: model_version.to_string(),
@@ -637,17 +664,97 @@ fn ingest_pdf(
             confidence,
         })?;
     }
-    let status = if deduped {
-        IngestStatus::Backfilled
-    } else {
-        IngestStatus::New
-    };
+    Ok(())
+}
+
+/// 给定 document 建档时定死的 `page_count` 与当前已落库的 `ocr_result.page_no`
+/// 集合,算出仍然缺文本的页码(1-based,升序)。纯函数,不碰库——
+/// `reindex_existing_document` 补页前后各调一次,分别得到「该补哪些页」和
+/// 「补完之后还缺哪些页」。
+fn missing_pages(page_count: i32, present: &[i32]) -> Vec<i32> {
+    let present: std::collections::HashSet<i32> = present.iter().copied().collect();
+    (1..=page_count).filter(|p| !present.contains(p)).collect()
+}
+
+/// dedup 命中(同一份文件字节再导一次)、且 document 早已存在时的处理:默认
+/// 什么都不做,原样报 `Deduped`;但如果这份文档还有页缺文本层
+/// (`pages_without_text` 当年非空)、这次拿到的又是 PDF,就顺手用这次重新读到
+/// 的原始字节把能恢复的页补进 `ocr_result`,状态改报 `Reindexed`。
+///
+/// **修的缺陷(#63b,GitHub 上被关早了)**:在这个改动之前,`ingest` 顶层看到
+/// `imp.deduped && vault.has_document(sid)?` 就直接短路返回 `Deduped`——不管
+/// 这份文档当初有没有页因为超出单次 OCR 上限、渲染失败、或"本次会话第一份
+/// 就是 PDF、OCR 模型还没落盘"而漏了文本。全仓没有任何别的入口能把这些页
+/// 补上,用户能做的只有删除整份、重新导入。现在:同一份文件再导一次,
+/// 如果它是 PDF 且还缺页,就顺带把缺的页重新识别一遍——不用户特地找一个
+/// "重新识别"按钮,今天最朴素的"再选一次这份文件导入"就能把缺的页找回来。
+///
+/// **为什么这样补不破坏 CAS 去重的幂等性 / 事件溯源的可重放性**:
+///
+/// 1. CAS 去重(`Vault::import` 命中已有 `content_hash` 就不再 append
+///    `FileImported`)保证的是「同一份**字节**不重复落库」——它从未是、也不该是
+///    「同一份文件不许再识别一次」的承诺。这里补的是全新的 `OcrAdded` 事件,
+///    不涉及 `FileImported`/`DocumentAdded`:不会有第二条 source_file、不会有
+///    第二个 document,CAS 的"一份内容一条记录"没有被动过。
+/// 2. 会不会补出重复的 `ocr_result` 行?不会:传进来的 `missing` 只包含**当前
+///    库里还没有 `ocr_result` 行**的页码(由 `missing_pages` 现查现算,不是
+///    沿用导入当年缓存的旧值),所以这里 append 的每一条 `OcrAdded` 事件在
+///    `materialize::apply_event` 眼里都是"这页第一次出现",按
+///    `UNIQUE(document_id, page_no)` 正常插入。万一用户手快、并发/重复触发了
+///    两次同样的补页(比如两次点了同一个"再导一次"),第二次 append 的
+///    `OcrAdded` 在 apply 时会撞上第一次已经写好的同一 `(document_id,
+///    page_no)`,`materialize.rs` 里那段 "Idempotency guard" 直接跳过插入和
+///    FTS 索引——不会长出两条 `ocr_result`。
+/// 3. `rebuild_from_log` 全量重放后是否与当前库一致?一致——因为"库里现在长
+///    什么样"完全由「日志里已经 append 了哪些事件」决定,不由「重放时是否
+///    调用过这个函数」决定。这个函数只负责**决定要不要 append 新的
+///    `OcrAdded` 事件**;一旦事件写进日志,它和任何其它 `OcrAdded` 一样,
+///    重放到哪个设备、多少次,都会投影出同一行(2 里说的幂等 guard 保证)。
+///    换句话说:补页 = 正常追加一批新事件,不是"回头改历史",重放规则完全
+///    不用为它开特例。
+///
+/// **只有 PDF 能补**:多页 TIFF 第 2 页起的缺页恢复需要新的逐帧解码路径
+/// (`ocr::decode_image_bounded` 目前只解第一帧,见 `ingest_image` 文档注释),
+/// 不在本次范围——非 PDF 或已完整的文档原样返回 `Deduped`,`pages_without_text`
+/// 留空,与改动前的行为逐字节一致(不引入新的字段语义)。
+fn reindex_existing_document(
+    vault: &Vault,
+    sid: i64,
+    name: &str,
+    is_pdf: bool,
+    bytes: &[u8],
+) -> anyhow::Result<IngestOutcome> {
+    let doc = vault.document_by_source_file_id(sid)?.ok_or_else(|| {
+        // has_document(sid) 刚判定为真,这里查不到是数据不一致(而非正常分支),
+        // 直接报错而不是悄悄退化成某个默认状态。
+        anyhow::anyhow!("has_document 为真但 document_by_source_file_id 查不到 document")
+    })?;
+    let present = vault.ocr_page_numbers(doc.id)?;
+    let missing = missing_pages(doc.page_count, &present);
+    if missing.is_empty() || !is_pdf {
+        return Ok(IngestOutcome {
+            source_file_id: sid,
+            name: name.to_string(),
+            status: IngestStatus::Deduped,
+            doc_type: Some(doc.doc_type),
+            pages_without_text: Vec::new(),
+        });
+    }
+    let want: std::collections::HashSet<i32> = missing.iter().copied().collect();
+    let mixed = ocr::recognize_pdf_mixed(bytes)?;
+    add_ocr_pages(
+        vault,
+        doc.id,
+        mixed.pages.iter().filter(|p| want.contains(&p.page_no)),
+    )?;
+    let present_after = vault.ocr_page_numbers(doc.id)?;
+    let still_missing = missing_pages(doc.page_count, &present_after);
     Ok(IngestOutcome {
         source_file_id: sid,
         name: name.to_string(),
-        status,
-        doc_type: Some(doc_type),
-        pages_without_text,
+        status: IngestStatus::Reindexed,
+        doc_type: Some(doc.doc_type),
+        pages_without_text: still_missing,
     })
 }
 
@@ -852,6 +959,191 @@ trailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n";
         let mut bytes = Vec::new();
         doc.save_to(&mut bytes).expect("save PDF");
         bytes
+    }
+
+    /// Same shape as [`build_two_page_pdf_second_page_blank`], except page 2
+    /// also carries a real (Helvetica) text layer -- long enough to clear
+    /// `ocr::MIN_TEXT_LAYER_LEN` on its own, so recognizing it never touches
+    /// an OCR engine (deterministic on every machine/CI, unlike an
+    /// OCR-recovered scanned page). Used by the reindex test below to prove a
+    /// page gets recovered on retry *without* the test depending on which (if
+    /// any) OCR engine is linked -- the same reason
+    /// `multi_page_tiff_reports_the_pages_it_never_read_...` avoids asserting
+    /// on recognized text.
+    fn build_two_page_pdf_both_pages_have_text() -> Vec<u8> {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Document as LoDocument, Object, Stream};
+
+        let mut doc = LoDocument::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id },
+        });
+        let page_of = |doc: &mut LoDocument, text: &str, parent, resources| {
+            let content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Td", vec![20.into(), 700.into()]),
+                    Operation::new("Tj", vec![Object::string_literal(text)]),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+            let content_id = doc.add_object(Stream::new(
+                dictionary! {},
+                content.encode().expect("encode content stream"),
+            ));
+            doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => parent,
+                "Contents" => content_id,
+                "Resources" => resources,
+            })
+        };
+        let page1_id = page_of(
+            &mut doc,
+            "Discharge summary printed page one clinical text",
+            pages_id,
+            resources_id,
+        );
+        let page2_id = page_of(
+            &mut doc,
+            "Lab report appended as page two clinical text",
+            pages_id,
+            resources_id,
+        );
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page1_id.into(), page2_id.into()],
+                "Count" => 2,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save PDF");
+        bytes
+    }
+
+    /// **修 #63b(GitHub 关早了):dedup 命中的已存在文档,重新导入必须能补上
+    /// 当年漏掉的页,而不是被短路成永久 `Deduped`。**
+    ///
+    /// 用底层 `Vault` API 直接摆出"首次导入当年漏了第 2 页"这个可观察状态——
+    /// document 已建、`page_count == 2`、`ocr_result` 只有第 1 页——而不经
+    /// `ingest_pdf` 走一遍完整流程:这份 PDF 两页都有真实文本层,`ingest_pdf`
+    /// 今天根本不会漏页,没法用来复现"首次漏页"这个前提(现实中漏页的原因是
+    /// 超出单次 OCR 上限 / 渲染失败 / 模型还没落盘,不是文本层本身有没有——但
+    /// 那些原因都不确定性、依赖具体 OCR 引擎,断言不动;这里只固定"漏页之后
+    /// 的库状态",不纠结漏页的成因)。
+    ///
+    /// 断言的是**真正的缺陷信号**:重新导入同一份文件后,`ocr_result` 里第 2
+    /// 页那一行是不是真的出现了——不是"函数没 panic"这种弱断言。
+    #[test]
+    fn reindex_recovers_missing_pdf_page_on_reimport() {
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let name = "2026-02-01_出院小结_两页文本.pdf";
+        let p = fdir.path().join(name);
+        let bytes = build_two_page_pdf_both_pages_have_text();
+        std::fs::write(&p, &bytes).unwrap();
+
+        let imp = v.import(name, "application/pdf", &bytes).unwrap();
+        assert!(!imp.deduped, "首次 import 不应该去重");
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::DischargeSummary,
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("出院小结".into()),
+                language: None,
+                page_count: 2,
+            })
+            .unwrap();
+        v.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "text-layer".into(),
+            text: "page one text".into(),
+            confidence: None,
+        })
+        .unwrap();
+        // 摆好前提:此刻确实只有第 1 页有 ocr_result,第 2 页缺。
+        assert_eq!(v.ocr_page_numbers(doc.id).unwrap(), vec![1]);
+
+        // 重新导入**同一份文件**(同字节 ⇒ CAS 命中 dedup)。改动前:
+        // `imp.deduped && vault.has_document(sid)?` 直接短路返回 Deduped,
+        // ocr_result 行数原地不动——这正是本次要修的缺陷,退回该行为应让
+        // 下面的断言变红(见 PR 描述里的 red→green 记录)。
+        let o2 = ingest(&v, &p).unwrap();
+
+        assert_eq!(
+            o2.status,
+            IngestStatus::Reindexed,
+            "文档已存在但仍缺页时,再导一次应报 Reindexed 而不是原地 Deduped"
+        );
+        assert!(
+            o2.pages_without_text.is_empty(),
+            "第 2 页这次应该补上了,got {:?}",
+            o2.pages_without_text
+        );
+        // 核心断言:ocr_result 真的多了一行,不是只测状态字段没 panic。
+        assert_eq!(
+            v.ocr_page_numbers(doc.id).unwrap(),
+            vec![1, 2],
+            "ocr_result 应该多出第 2 页这一行"
+        );
+        let full_text = v.ocr_text(doc.id).unwrap();
+        assert!(
+            full_text.contains("Lab report appended as page two"),
+            "第 2 页的文本应该已经落库:{full_text}"
+        );
+
+        // 事件溯源的硬约束:补页靠的是普通的 `OcrAdded` 事件(见
+        // `reindex_existing_document` 头部注释的推理),不是什么脱离日志的
+        // 旁路写入——`rebuild_from_log` 清空全部派生表、只从 `log/` + `objects/`
+        // 重放,结果必须逐页一致,否则说明补页走了日志之外的路。
+        //
+        // 重放后不假定 `document.id` 数值不变(`document` 表是 `INTEGER PRIMARY
+        // KEY` 无 AUTOINCREMENT,理论上重放顺序一致时会落回同一个 id,但不靠这个
+        // 巧合——按 `source_file_id` 重新查一次,和别处 rebuild 测试的做法一致)。
+        v.rebuild_from_log().unwrap();
+        let doc_after = v
+            .document_by_source_file_id(imp.source_file.id)
+            .unwrap()
+            .expect("重放后 document 必须还在");
+        assert_eq!(
+            v.ocr_page_numbers(doc_after.id).unwrap(),
+            vec![1, 2],
+            "rebuild_from_log 重放后,第 2 页的 ocr_result 必须还在"
+        );
+        assert_eq!(
+            v.ocr_text(doc_after.id).unwrap(),
+            full_text,
+            "rebuild_from_log 重放后文本必须与重放前逐字一致"
+        );
+
+        // 再导一次(此刻已完整):不该再报 Reindexed,也不该重复写 ocr_result。
+        let o3 = ingest(&v, &p).unwrap();
+        assert_eq!(
+            o3.status,
+            IngestStatus::Deduped,
+            "已经补完的文档,再导一次应该原样 Deduped(没有更多可补的页)"
+        );
+        assert_eq!(v.ocr_page_numbers(doc_after.id).unwrap(), vec![1, 2]);
     }
 
     /// **Reproduces the mixed-page-PDF silent-data-loss defect this file's

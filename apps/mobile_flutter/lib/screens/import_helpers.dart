@@ -63,8 +63,8 @@ class ImportResultRow {
 }
 
 /// 把 `ImportOutcomeDto.status`(见 rust/src/api/dto.rs 注释:
-/// new|backfilled|deduped|stored_no_text|instance_attached|failed)映射成
-/// 老人能看懂的一行结果。
+/// new|backfilled|deduped|stored_no_text|instance_attached|reindexed|failed)
+/// 映射成老人能看懂的一行结果。
 ImportResultRow rowFromOutcome(ImportOutcomeDto outcome) {
   final typeLabel = outcome.docType == null
       ? null
@@ -73,6 +73,10 @@ ImportResultRow rowFromOutcome(ImportOutcomeDto outcome) {
     case 'new':
     case 'backfilled':
     case 'instance_attached':
+    // 'reindexed' 只会在 pagesWithoutText 已经补空的情况下走到这里(见调用方
+    // `rowForOutcome`:非空时它自己接管、不会退化到本函数)——即「同一份文件
+    // 再导一次,当年漏的页这次补齐了」,与「已识别入库」是同一件事。
+    case 'reindexed':
       return ImportResultRow(
         name: outcome.name,
         statusLabel: typeLabel != null ? '已识别入库 · $typeLabel' : '已识别入库',

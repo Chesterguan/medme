@@ -130,6 +130,9 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
                 pipeline::IngestStatus::Deduped => "deduped",
                 pipeline::IngestStatus::StoredNoText => "stored_no_text",
                 pipeline::IngestStatus::InstanceAttached => "instance_attached",
+                // 同一份文件再导一次、文档已存在但当年有页缺文本 → 这次顺手
+                // 补上了(`pages_without_text` 带出补完之后仍缺的页,可能是空)。
+                pipeline::IngestStatus::Reindexed => "reindexed",
             }
             .to_string();
             let document_id = v

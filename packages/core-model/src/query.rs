@@ -598,6 +598,21 @@ impl Vault {
         Ok(row)
     }
 
+    /// 该文档已经落库的 OCR 页码集合(升序)。配合 `document.page_count` 就能算出
+    /// 「哪些页仍然缺文本」——reindex 补页(`pipeline::reindex_existing_document`)
+    /// 用它判断该重试哪些页、以及重试后是否补完了。
+    pub fn ocr_page_numbers(&self, document_id: i64) -> Result<Vec<i32>, MedmeError> {
+        let mut stmt = self.conn().prepare(
+            "SELECT page_no FROM ocr_result WHERE document_id = ?1 ORDER BY page_no ASC",
+        )?;
+        let rows = stmt.query_map([document_id], |r| r.get::<_, i32>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     pub fn ocr_text(&self, document_id: i64) -> Result<String, MedmeError> {
         let mut stmt = self
             .conn()
@@ -856,6 +871,43 @@ mod tests {
         })
         .unwrap();
         assert!(v.has_document(imp.source_file.id).unwrap());
+    }
+
+    /// `ocr_page_numbers` 是 `pipeline::reindex_existing_document` 判断"该补哪些
+    /// 页"的唯一依据——必须如实反映当前落库的页,升序,建档但没有任何一页
+    /// OCR 成功时返回空(而不是 panic 或返回 `page_count` 撑出来的假页码)。
+    #[test]
+    fn ocr_page_numbers_reflects_only_pages_actually_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let imp = v.import("x.pdf", "application/pdf", b"pdfbytes").unwrap();
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: None,
+                language: None,
+                page_count: 3,
+            })
+            .unwrap();
+        // 建档但还没有任何一页 OCR 成功:空,不是 [1,2,3]。
+        assert_eq!(v.ocr_page_numbers(doc.id).unwrap(), Vec::<i32>::new());
+
+        // 乱序写入第 3、1 页,验证返回值升序而不是插入顺序。
+        for page_no in [3, 1] {
+            v.add_ocr(NewOcr {
+                document_id: doc.id,
+                page_no,
+                backend: OcrBackendKind::Native,
+                model_version: "text-layer".into(),
+                text: format!("page {page_no}"),
+                confidence: None,
+            })
+            .unwrap();
+        }
+        assert_eq!(v.ocr_page_numbers(doc.id).unwrap(), vec![1, 3]);
     }
 
     #[test]

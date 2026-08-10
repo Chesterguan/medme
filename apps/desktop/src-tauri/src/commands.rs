@@ -277,6 +277,9 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcome {
                 pipeline::IngestStatus::Deduped => "deduped",
                 pipeline::IngestStatus::StoredNoText => "stored_no_text",
                 pipeline::IngestStatus::InstanceAttached => "instance_attached",
+                // 同一份文件再导一次、文档已存在但当年有页缺文本 → 这次顺手补上了
+                // (可能补全、也可能仍有页识别不出,见 `pages_without_text`)。
+                pipeline::IngestStatus::Reindexed => "reindexed",
             }
             .to_string();
             ImportOutcome {
