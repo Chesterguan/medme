@@ -784,7 +784,14 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
 /// lines' per-line confidences; `0.0` if no lines were recognized). Lazily
 /// builds the OCR pipeline on first call (models auto-download from
 /// ModelScope on first ever run on this machine).
-#[cfg(feature = "engine")]
+///
+/// **已无生产调用者。** 2026-08 起 [`recognize_platform_best`] 的三条引擎分支
+/// 全部改走 [`recognize_engine_layout`](量化依据见那里的表)。这个裸 `"\n".join`
+/// 版本只剩一个用途:给 `examples/layout_eval.rs` 当对照组,量「换过去到底提升
+/// 多少」。所以编译门也跟着收到 `testing`/`test` —— 否则它在正常的
+/// `--features engine` 构建里就是死代码,`cargo build` 会 warn(默认 feature 集
+/// 不含 `engine`,所以 `clippy --all-targets` 照不到这条,别指望它挡)。
+#[cfg(all(feature = "engine", any(test, feature = "testing")))]
 fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
     let mut lines = Vec::new();
     let mut confidences = Vec::new();
