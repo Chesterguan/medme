@@ -2049,12 +2049,14 @@ impl SseDecode for crate::api::dto::DocumentDetailDto {
         let mut var_ocrText = <String>::sse_decode(deserializer);
         let mut var_ocrConfidence = <Option<f32>>::sse_decode(deserializer);
         let mut var_ocrBackend = <Option<String>>::sse_decode(deserializer);
+        let mut var_pagesWithoutText = <Vec<i32>>::sse_decode(deserializer);
         return crate::api::dto::DocumentDetailDto {
             document: var_document,
             source_file: var_sourceFile,
             ocr_text: var_ocrText,
             ocr_confidence: var_ocrConfidence,
             ocr_backend: var_ocrBackend,
+            pages_without_text: var_pagesWithoutText,
         };
     }
 }
@@ -3228,6 +3230,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::DocumentDetailDto {
             self.ocr_text.into_into_dart().into_dart(),
             self.ocr_confidence.into_into_dart().into_dart(),
             self.ocr_backend.into_into_dart().into_dart(),
+            self.pages_without_text.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3922,6 +3925,7 @@ impl SseEncode for crate::api::dto::DocumentDetailDto {
         <String>::sse_encode(self.ocr_text, serializer);
         <Option<f32>>::sse_encode(self.ocr_confidence, serializer);
         <Option<String>>::sse_encode(self.ocr_backend, serializer);
+        <Vec<i32>>::sse_encode(self.pages_without_text, serializer);
     }
 }
 

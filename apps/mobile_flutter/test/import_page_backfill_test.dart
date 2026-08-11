@@ -54,11 +54,21 @@ class _Recorder {
   /// `stage = 'save'` 再回填,埋点据此把回填期的失败归到 `save`。
   final stageAtBackfill = <String>[];
 
-  PdfPageOcr ocrReturning(Map<int, OcrResult> result) => (path, pages) async {
-    ocrPaths.add(path);
-    ocrCalls.add(List.of(pages));
-    return result;
-  };
+  /// 每页开跑时报出来的 (done, total) —— 钉住「按页报进度」这件事本身:
+  /// 一份 25 页的扫描件要跑十几分钟,外层那个按文件数的 `1/1` 全程不动,
+  /// 用户只能认为 app 死了。
+  final pageProgress = <(int, int)>[];
+
+  PdfPageOcr ocrReturning(Map<int, OcrResult> result) =>
+      (path, pages, {onPage}) async {
+        ocrPaths.add(path);
+        ocrCalls.add(List.of(pages));
+        for (var i = 0; i < pages.length; i++) {
+          onPage?.call(i, pages.length);
+          pageProgress.add((i, pages.length));
+        }
+        return result;
+      };
 
   Future<void> backfill({
     required int documentId,

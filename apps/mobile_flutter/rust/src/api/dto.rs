@@ -129,7 +129,7 @@ impl From<&SourceFile> for SourceFileMetaDto {
     }
 }
 
-/// 文档详情:类型/日期(在 document 里)+ 来源文件 + 识别文本。
+/// 文档详情:类型/日期(在 document 里)+ 来源文件 + 识别文本 + 还缺哪几页。
 #[derive(Debug, Clone)]
 pub struct DocumentDetailDto {
     pub document: DocumentSummaryDto,
@@ -137,6 +137,18 @@ pub struct DocumentDetailDto {
     pub ocr_text: String,
     pub ocr_confidence: Option<f32>,
     pub ocr_backend: Option<String>,
+    /// 这份文档里**至今没有任何识别文字**的页码(1-based,升序)。
+    ///
+    /// 为什么详情页需要这个:漏页这件事此前**只在导入那一刻的结果框里说过一次**
+    /// ——「已识别入库,但 3 页未能识别文字」。那个框一关,信息就永远消失了:
+    /// 详情页不显示、档案列表不显示,用户过一周再打开这份文档,看到的是一份
+    /// 「正常」的病历,而里面有 3 页是空的。他不会知道要去补,也不会知道医生
+    /// 看到的摘要少了那几页的内容。
+    ///
+    /// 现查现算(`page_count` 减去 `ocr_result` 里已有的页),不是把导入时的
+    /// 结论存下来 —— 因为那个结论会过期:#193 之后「再导一次同一份文件」会补页,
+    /// 端上的按页回填也会补页,存下来的旧值只会骗人。
+    pub pages_without_text: Vec<i32>,
 }
 
 #[derive(Debug, Clone)]

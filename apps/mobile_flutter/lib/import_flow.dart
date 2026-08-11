@@ -695,6 +695,15 @@ Future<ImportRunResult> _runImport(
         outcome,
         item.path,
         onStage: (s) => stage = s,
+        // **按页报进度,不是按文件。** 外层那个 `${i + 1}/${items.length}` 数的是
+        // 文件数:一份 25 页的扫描件从头到尾都显示「正在导入 1/1」,而它要跑十几
+        // 分钟(实测)。用户面对一个十分钟不动的转圈,只能认为 app 死了 —— 这与
+        // 已修过的「载入示例数据 11 秒零反馈」是同一类缺陷,换了个屏幕。
+        onPage: (done, total) {
+          progress.value = items.length > 1
+              ? '正在导入 ${i + 1}/${items.length} · 识别第 ${done + 1}/$total 页…'
+              : '正在识别第 ${done + 1}/$total 页…';
+        },
       );
 
       if (outcome.documentId case final id?) newDocs[id] = outcome.detectedName;
@@ -767,7 +776,11 @@ Future<ImportRunResult> _runImport(
 
 /// 按页渲染 + OCR 的注入点(测试替身用)。生产实现是 [_ocrScannedPdfPages]。
 typedef PdfPageOcr =
-    Future<Map<int, OcrResult>> Function(String path, List<int> pageNumbers);
+    Future<Map<int, OcrResult>> Function(
+      String path,
+      List<int> pageNumbers, {
+      void Function(int done, int total)? onPage,
+    });
 
 /// 逐页回填文本的注入点(测试替身用)。生产实现是 `vault.dart` 的
 /// [backfillPdfText]。
@@ -835,19 +848,54 @@ Future<int> backfillPagesWithoutText(
   ImportOutcomeDto outcome,
   String path, {
   void Function(String stage)? onStage,
+  void Function(int done, int total)? onPage,
   PdfPageOcr ocrPages = _ocrScannedPdfPages,
   PdfTextBackfill backfill = _defaultBackfill,
 }) async {
   if (outcome.pagesWithoutText.isEmpty || outcome.documentId == null) return 0;
+  return backfillPagesForDocument(
+    documentId: outcome.documentId!,
+    pages: outcome.pagesWithoutText,
+    path: path,
+    onStage: onStage,
+    onPage: onPage,
+    ocrPages: ocrPages,
+    backfill: backfill,
+  );
+}
+
+/// [backfillPagesWithoutText] 的内核,按 `documentId + 页码表`直接工作,不依赖
+/// 「刚刚导入完」这个上下文。
+///
+/// 抽出来是为了让**第三条路**共用同一份行为:文档详情页的「重新识别这几页」。
+/// 那里没有 `ImportOutcomeDto` —— 用户是过了一周回来点的,当初那次导入的结论
+/// 早就不在内存里了,页码得现查(`DocumentDetailDto.pagesWithoutText`)。
+///
+/// 上面那条注释写着「同一件事不许长成两个实现」——当时说的是患者导入与医生
+/// 代拍两条路,现在第三条路照办:渲染放大倍数的降档梯、单次页数上限、补不完
+/// 如实计回,全部走同一段代码,不在详情页那边重写一遍。
+Future<int> backfillPagesForDocument({
+  required int documentId,
+  required List<int> pages,
+  required String path,
+  void Function(String stage)? onStage,
+  /// 每开始识别一页回调一次(done, total)。**必须一路透传到 UI** ——
+  /// 一页扫描件在低端机上要几秒到几十秒,不报进度用户只能看着一个不动的
+  /// 转圈,认为它死了(实测 25 页在模拟器上跑了十几分钟)。
+  void Function(int done, int total)? onPage,
+  PdfPageOcr ocrPages = _ocrScannedPdfPages,
+  PdfTextBackfill backfill = _defaultBackfill,
+}) async {
+  if (pages.isEmpty) return 0;
   // 多页图片:没得补,如实全部计入「仍未识别」,不动 `stage`(没进渲染/回填)。
-  if (isImageName(path)) return outcome.pagesWithoutText.length;
+  if (isImageName(path)) return pages.length;
   onStage?.call('ocr');
-  final targetPages = outcome.pagesWithoutText.toList();
-  final scan = await ocrPages(path, targetPages);
+  final targetPages = pages.toList();
+  final scan = await ocrPages(path, targetPages, onPage: onPage);
   onStage?.call('save');
   for (final entry in scan.entries) {
     await backfill(
-      documentId: outcome.documentId!,
+      documentId: documentId,
       pageNo: entry.key,
       text: entry.value.text,
       confidence: entry.value.confidence,
@@ -888,16 +936,24 @@ const List<double> _kRenderScales = [3.0, 2.0, 1.5];
 /// 一类缺陷。
 Future<Map<int, OcrResult>> _ocrScannedPdfPages(
   String path,
-  List<int> pageNumbers,
-) async {
+  List<int> pageNumbers, {
+  void Function(int done, int total)? onPage,
+}) async {
   final byPage = <int, OcrResult>{};
-  final toAttempt = pageNumbers.take(_kMaxPdfOcrPagesPerImport);
+  final toAttempt = pageNumbers.take(_kMaxPdfOcrPagesPerImport).toList();
   PdfDocument? doc;
   Directory? tmp;
   try {
     doc = await PdfDocument.openFile(path);
     tmp = await Directory.systemTemp.createTemp('medme_pdf_ocr');
+    var done = 0;
     for (final i in toAttempt) {
+      // **每页开跑前先报一次进度。** 一页扫描件在低端机/模拟器上要几秒到几十秒,
+      // 25 页就是十几分钟——期间界面此前只显示「正在导入 1/1」(那个 1/1 数的是
+      // 文件数,不是页数),用户看到的是一个十分钟不动的转圈,只能认为它死了。
+      // 这与已经修过的「载入示例数据 11 秒零反馈」是同一类缺陷,换了个屏幕。
+      onPage?.call(done, toAttempt.length);
+      done++;
       // 防御性检查:页码来自 Rust 端,正常情况下必然落在 [1, pagesCount] 内;
       // 万一不一致(不同库对同一份 PDF 的页数判定有分歧),跳过而非崩溃或越界。
       if (i < 1 || i > doc.pagesCount) {

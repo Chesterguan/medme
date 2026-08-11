@@ -690,12 +690,25 @@ pub fn ephemeral_get_document(document_id: i64) -> anyhow::Result<DocumentDetail
         let ocr_backend = v
             .ocr_backend(document_id)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        // 与 `api::vault::get_document` 一样现查现算(完整理由见那边)。
+        //
+        // **代拍这条路尤其不能省。** 医生当场拍完就把认领码交给病人、瞬时保险箱
+        // 12 小时后自动清除 —— 漏页在这里是**一次性**的:病人回家发现少了几页时,
+        // 医生早已不在、纸质原件也早已还给了病人。所以这条路更该把话说在屏幕上,
+        // 而不是留给导入结果框一闪而过。
+        let present = v
+            .ocr_page_numbers(document_id)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let pages_without_text: Vec<i32> = (1..=doc.page_count)
+            .filter(|p| !present.contains(p))
+            .collect();
         Ok(DocumentDetailDto {
             document: doc_summary(v, &doc),
             source_file: SourceFileMetaDto::from(&sf),
             ocr_text,
             ocr_confidence,
             ocr_backend,
+            pages_without_text,
         })
     })
 }

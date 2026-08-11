@@ -2043,14 +2043,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DocumentDetailDto dco_decode_document_detail_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return DocumentDetailDto(
       document: dco_decode_document_summary_dto(arr[0]),
       sourceFile: dco_decode_source_file_meta_dto(arr[1]),
       ocrText: dco_decode_String(arr[2]),
       ocrConfidence: dco_decode_opt_box_autoadd_f_32(arr[3]),
       ocrBackend: dco_decode_opt_String(arr[4]),
+      pagesWithoutText: dco_decode_list_prim_i_32_strict(arr[5]),
     );
   }
 
@@ -2830,12 +2831,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_ocrText = sse_decode_String(deserializer);
     var var_ocrConfidence = sse_decode_opt_box_autoadd_f_32(deserializer);
     var var_ocrBackend = sse_decode_opt_String(deserializer);
+    var var_pagesWithoutText = sse_decode_list_prim_i_32_strict(deserializer);
     return DocumentDetailDto(
       document: var_document,
       sourceFile: var_sourceFile,
       ocrText: var_ocrText,
       ocrConfidence: var_ocrConfidence,
       ocrBackend: var_ocrBackend,
+      pagesWithoutText: var_pagesWithoutText,
     );
   }
 
@@ -3802,6 +3805,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.ocrText, serializer);
     sse_encode_opt_box_autoadd_f_32(self.ocrConfidence, serializer);
     sse_encode_opt_String(self.ocrBackend, serializer);
+    sse_encode_list_prim_i_32_strict(self.pagesWithoutText, serializer);
   }
 
   @protected

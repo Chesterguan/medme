@@ -14,6 +14,9 @@ import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'package:mobile_flutter/import_flow.dart';
 
 // doc_type → 中文标签,与 archive_screen.dart 保持同一份映射(桌面/旧移动端
 // 同构,来自 core-model types.rs)。
@@ -92,7 +95,91 @@ class DocumentDetailScreen extends StatefulWidget {
 }
 
 class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
-  late final Future<DocumentDetailDto> _future = getDocument(id: widget.docId);
+  // `late final` → 可重建:「重新识别」补完页之后要重新拉一次详情,否则屏幕上
+  // 还挂着补之前的旧文本和旧页码,用户会以为没生效。
+  late Future<DocumentDetailDto> _future = getDocument(id: widget.docId);
+
+  /// 正在重新识别 —— 期间禁掉按钮并显示进度,别让用户以为点了没反应
+  /// (端上渲染 + OCR 一页要几秒,多页可能十几秒)。
+  bool _reindexing = false;
+
+  /// 正在识别第几页 / 共几页 —— 与导入流程同一个理由:一页扫描件在低端机上要
+  /// 几秒到几十秒,只说「正在重新识别…」等于给用户一个不动的转圈。
+  (int, int)? _reindexPage;
+
+  /// 重新识别这份文档里还没有文字的那几页。
+  ///
+  /// 为什么这个按钮必须存在:漏页此前**只在导入那一刻的结果框里说过一次**,框一关
+  /// 就永远消失 —— 用户过一周回来看到的是一份「正常」的病历,而里面有几页是空的。
+  /// #193 让「再导一次同一份文件」能补页,但那要求用户自己想到去重新选文件,
+  /// 而且他根本不知道有页缺着。
+  ///
+  /// 走的是导入流程同一段回填代码([backfillPagesForDocument]),不在这里重写:
+  /// 渲染降档梯、单次页数上限、补不完如实计回,三条路必须同一份行为。
+  Future<void> _reindex(DocumentDetailDto detail) async {
+    setState(() => _reindexing = true);
+    try {
+      // 原件字节在 CAS 里(Raw Never Dies),但回填要的是**文件路径**(pdfx 按页
+      // 渲染)。iOS 上先物化防 iCloud 逐出 —— 与「查看原件」同一条前置。
+      final bytes = await _readSourceMaterialized(detail.sourceFile.id);
+      final dir = await getTemporaryDirectory();
+      // 临时文件名**必须保留原始扩展名**:`backfillPagesForDocument` 拿同一个
+      // path 干两件事 —— `isImageName` 判是不是多页图片(图片端上补不回来,
+      // 要如实计回而不是白跑一趟渲染),以及交给 pdfx 打开。丢了后缀,一份
+      // 扫描 PDF 会被判成非图片没错,但一份多页 TIFF 就会被误判成 PDF,
+      // 白白渲染一轮再返回空表。
+      final tmp = File(
+        '${dir.path}/reindex_${widget.docId}_${detail.sourceFile.originalName}',
+      );
+      await tmp.writeAsBytes(bytes, flush: true);
+      final before = detail.pagesWithoutText.length;
+      int stillMissing;
+      try {
+        stillMissing = await backfillPagesForDocument(
+          documentId: widget.docId,
+          pages: detail.pagesWithoutText,
+          path: tmp.path,
+          onPage: (done, total) {
+            if (mounted) setState(() => _reindexPage = (done + 1, total));
+          },
+        );
+      } finally {
+        // 临时文件即用即删:原件本体一直在 CAS 里,这份只是给渲染器看的副本,
+        // 留在 tmp 目录等于把病历明文多摊一份在磁盘上。
+        try {
+          await tmp.delete();
+        } catch (_) {}
+      }
+      final recovered = before - stillMissing;
+      if (!mounted) return;
+      setState(() {
+        _reindexing = false;
+        _reindexPage = null;
+        _future = getDocument(id: widget.docId);
+      });
+      bumpVaultRevision();
+      ScaffoldMessenger.of(context).showSnackBar(
+        appSnackBar(
+          content: Text(
+            recovered > 0
+                ? (stillMissing > 0
+                      ? '补上了 $recovered 页,还有 $stillMissing 页没能识别'
+                      : '补上了 $recovered 页,这份已经完整')
+                : '这次仍然没能识别出文字 —— 可能是原件太模糊或不是文字页',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _reindexing = false;
+        _reindexPage = null;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(appSnackBar(content: Text('重新识别失败:$e')));
+    }
+  }
 
   /// 删除这份文档:确认 → FFI 删除 → 通知档案刷新 → 退回上一屏。
   Future<void> _delete() async {
@@ -204,7 +291,12 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
               ),
             );
           }
-          return _DetailBody(detail: snap.data!);
+          return _DetailBody(
+            detail: snap.data!,
+            reindexing: _reindexing,
+            reindexPage: _reindexPage,
+            onReindex: () => _reindex(snap.data!),
+          );
         },
       ),
     );
@@ -213,7 +305,15 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
 
 class _DetailBody extends StatelessWidget {
   final DocumentDetailDto detail;
-  const _DetailBody({required this.detail});
+  final bool reindexing;
+  final (int, int)? reindexPage;
+  final VoidCallback onReindex;
+  const _DetailBody({
+    required this.detail,
+    required this.reindexing,
+    required this.reindexPage,
+    required this.onReindex,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -352,6 +452,18 @@ class _DetailBody extends StatelessWidget {
             ),
           ),
         ),
+
+        // 缺页横幅放在正文**之前** —— 它说的正是「你下面看到的内容是不完整的」。
+        // 放在正文后面等于让用户先把一份残缺的文本当完整的读完。
+        if (detail.pagesWithoutText.isNotEmpty) ...[
+          const SizedBox(height: MedShape.s5),
+          MissingPagesBanner(
+            pages: detail.pagesWithoutText,
+            reindexing: reindexing,
+            reindexPage: reindexPage,
+            onReindex: onReindex,
+          ),
+        ],
 
         const SizedBox(height: MedShape.s5),
         Row(
@@ -651,6 +763,100 @@ class _ViewerFallback extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 「这份里有几页没识别出文字」+ 一个能当场补的按钮。
+///
+/// **为什么要有这块。** 漏页此前只在导入那一刻的结果框里说过一次:
+/// 「已识别入库,但 3 页未能识别文字」。框一关,这句话就永远消失了 —— 详情页不说、
+/// 档案列表不说。用户过一周回来,看到的是一份**看起来正常**的病历,而里面有 3 页
+/// 是空的;他不知道要补,也不知道给医生看的摘要少了那几页的内容。
+///
+/// 用 `high`(偏高那档的橙)而不是 `critical` 的红:缺页是「需要你处理一下」,
+/// 不是「出人命」。红色在这个 app 里留给临床危急值和过敏,滥用会让红色贬值。
+class MissingPagesBanner extends StatelessWidget {
+  final List<int> pages;
+  final bool reindexing;
+
+  /// 正在识别第几页 / 共几页。`null` = 还没开始报(刚点下、还在读原件字节)。
+  /// 一页扫描件在低端机上要几秒到几十秒,只说「正在重新识别…」等于给用户一个
+  /// 不动的转圈 —— 与导入流程按页报进度是同一条理由。
+  final (int, int)? reindexPage;
+  final VoidCallback onReindex;
+
+  const MissingPagesBanner({
+    super.key,
+    required this.pages,
+    required this.reindexing,
+    this.reindexPage,
+    required this.onReindex,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    // 页码要列出来,不能只说「3 页」——用户得能拿着原件对上是哪几页,
+    // 才知道丢的是化验结果那页还是封面那页。多了就省略,别把横幅撑成一屏。
+    final shown = pages.take(8).join('、');
+    final more = pages.length > 8 ? ' 等' : '';
+    return Container(
+      padding: const EdgeInsets.all(MedShape.s3),
+      decoration: BoxDecoration(
+        color: c.highWash,
+        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+        border: Border.all(color: c.high.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.image_not_supported_outlined, size: 18, color: c.high),
+              const SizedBox(width: MedShape.s2),
+              Expanded(
+                child: Text(
+                  '有 ${pages.length} 页没有识别出文字(第 $shown$more 页)',
+                  style: MedType.body.copyWith(
+                    color: c.ink,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: MedShape.s2),
+          Text(
+            '下面的「文档内容」缺这几页 —— 给医生看的摘要也一样缺。原件是完整的,'
+            '可以再识别一次试试。',
+            style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
+          ),
+          const SizedBox(height: MedShape.s3),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              // 正在跑时禁掉:端上渲染 + OCR 一页要几秒,连点会叠着跑。
+              onPressed: reindexing ? null : onReindex,
+              icon: reindexing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh, size: 18),
+              label: Text(
+                !reindexing
+                    ? '重新识别这几页'
+                    : reindexPage == null
+                    ? '正在重新识别…'
+                    : '正在识别第 ${reindexPage!.$1}/${reindexPage!.$2} 页…',
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

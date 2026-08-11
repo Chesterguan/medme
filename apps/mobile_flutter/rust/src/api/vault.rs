@@ -260,12 +260,23 @@ pub fn get_document(id: i64) -> anyhow::Result<DocumentDetailDto> {
         let ocr_backend = v
             .ocr_backend(id)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        // 还缺哪几页:**现查现算**,不读任何存下来的旧结论。用的是
+        // `pipeline::reindex_existing_document` 判「该补哪些页」的同一个查询
+        // (`ocr_page_numbers`)—— 两边必须看到同一份事实,否则详情页说「缺 3 页」、
+        // 点了重新识别却报「没什么可补的」,用户只会以为按钮坏了。
+        let present = v
+            .ocr_page_numbers(id)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let pages_without_text: Vec<i32> = (1..=doc.page_count)
+            .filter(|p| !present.contains(p))
+            .collect();
         Ok(DocumentDetailDto {
             document: doc_summary(v, &doc),
             source_file: SourceFileMetaDto::from(&sf),
             ocr_text,
             ocr_confidence,
             ocr_backend,
+            pages_without_text,
         })
     })
 }

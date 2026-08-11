@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `format_plausibility_violation`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
+// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `format_plausibility_violation`, `home_monitoring_demo_entries`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -323,9 +323,17 @@ Future<ExportResultDto> exportTimelineHtml({
 /// 二进制(`DEMO_DATA`),运行时落一份到 `data_dir` 下的临时目录再喂给
 /// `pipeline::ingest`(它按路径操作,不接受内存字节),用完即删。
 ///
+/// 文件批量导入之后,额外把 [`home_monitoring_demo_entries`] 里的家庭自测读数
+/// 写进同一个保险箱——那份 PDF(`2026-04-30_血压记录_家庭监测.pdf`)本身已经在
+/// 上面的文件循环里照常按文档路径入库(硬不变量「原件永远可达」,不换不删),
+/// 这里是**同一批数据**额外再走一遍「记录」入口([`add_self_measurement_to`],
+/// 与用户手动录入完全同一条写入路径),让示例数据里第一次有真实的自测记录可看
+/// (载入示例前,「记录」这条入库路径在示例数据里一条都没有)。
+///
 /// `progress` 每处理完一份(不论成败)推一条 [DemoLoadProgressDto]——华为 Mate 9
 /// 真机实测 22 份 11 秒零反馈,用户以为没点上又点了第二次。这颗 sink 让设置屏能画
-/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。
+/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。`total` 把自测读数也算进去,
+/// 不然文件都处理完之后进度条又莫名其妙继续跳。
 ///
 /// **本函数恒返回 `Ok(())`,成败一律走 `progress` 的 `error` 字段**——见
 /// [DemoLoadProgressDto] 顶部文档:带 `StreamSink` 参数的 FRB 函数,Dart 侧没有
