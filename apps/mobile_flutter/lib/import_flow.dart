@@ -685,7 +685,36 @@ Future<ImportRunResult> _runImport(
       } else {
         stage = 'save';
         final bytes = await File(item.path).readAsBytes();
-        outcome = await ingestBytes(filename: item.name, data: bytes);
+        // 扫描版 PDF 的耗时几乎全砸在这一步:测试 PDF 的扫描页几乎全是
+        // JPEG(DCTDecode)编码——手机拍照/App 导出扫描件最常见的编码——而
+        // `packages/ocr` 自己就能 OCR 这种页(见 `pipeline::ingest_pdf`)。下面
+        // `backfillPagesWithoutText` 那条按页回填的进度只在 Rust 没能处理时才
+        // 触发,这种最常见的情况下它一次都不会跑——原来这一步全程零反馈(真机上
+        // 是几十秒量级)。`ingestBytesWithProgress` 换掉 `ingestBytes`,复用与
+        // 下面 `backfillPagesWithoutText` 的 `onPage` 回调完全同一套文案。
+        //
+        // **不会抛出 Rust 侧的 `Err`**(与 `loadDemoData` 同一个坑,见
+        // `PdfImportProgressDto` 顶部文档):FRB 带 `StreamSink` 参数的函数,
+        // Dart 侧没有任何代码 `await` 函数自身的返回值。成败走流最后一条消息的
+        // `outcome`/`error`,这里判它、失败原样 `throw`,与旧版 `ingestBytes`
+        // 失败时抛异常的外部行为对齐,下面的 `catch` 不用跟着改。
+        ImportOutcomeDto? pdfOutcome;
+        await for (final p in ingestBytesWithProgress(
+          filename: item.name,
+          data: bytes,
+        )) {
+          if (p.error != null) throw p.error!;
+          if (p.outcome != null) {
+            pdfOutcome = p.outcome;
+            break;
+          }
+          progress.value = items.length > 1
+              ? '正在导入 ${i + 1}/${items.length} · 识别第 ${p.page}/${p.total} 页…'
+              : '正在识别第 ${p.page}/${p.total} 页…';
+        }
+        outcome =
+            pdfOutcome ??
+            (throw '导入未返回结果(ingest_bytes_with_progress 流意外结束)');
       }
 
       // 按页补 OCR:哪些页缺文本层由 `outcome.pagesWithoutText` 点名。逻辑本身

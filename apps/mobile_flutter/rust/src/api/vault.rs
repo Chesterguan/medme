@@ -369,24 +369,18 @@ fn detected_name_for(v: &Vault, doc_id: i64) -> Option<String> {
         .and_then(|t| parser::extract_demographics(&t).name)
 }
 
-/// 跑一次 `pipeline::ingest` 并映射成 `ImportOutcomeDto`。抽取失败(扫描图等)
-/// 不致命——原文件已进 CAS,返回 status="failed" 让前端提示「未能识别」而非报错
-/// 崩溃。与 Tauri 版 `ingest_one` 同构。
+/// 把一次 `pipeline::ingest`(或它的变体)的结果映射成 `ImportOutcomeDto`。
+/// 抽取失败(扫描图等)不致命——原文件已进 CAS,返回 status="failed" 让前端
+/// 提示「未能识别」而非报错崩溃。与 Tauri 版 `ingest_one` 同构。
 ///
-/// 图片**不走这里**:Flutter 端先用 PP-OCRv5(`ocr_bridge.dart` →
-/// `recognize_image_pp`,iOS/安卓同引擎同模型)识别好文本,再走
-/// `ingest_image_with_text`。这里只处理 PDF/TXT/DICOM 等有文本层/结构化元数据的
-/// 文件类型。(旧注释写「安卓走 google_mlkit_text_recognition」,那条依赖早已
-/// 删除,别再据此推断。)
-fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
-    // Panic firewall:parser/dicom 栈里的 panic 不能一路 unwind 穿过持锁的 Vault、
-    // 污染共享 Mutex(与 Tauri 版 `ingest_one` 同一理由)。
-    let dispatched = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pipeline::ingest(v, path)
-    })) {
-        Ok(r) => r,
-        Err(_) => Err(anyhow::anyhow!("导入时发生内部错误(已隔离),该文件已跳过")),
-    };
+/// [`ingest_one`]/[`ingest_one_with_progress`] 共用这段映射逻辑——两者只在
+/// 「调 `pipeline::ingest` 还是 `pipeline::ingest_with_progress`」上分岔,映射
+/// 逻辑必须只长一份,不然两条路迟早走偏。
+fn map_ingest_result(
+    v: &Vault,
+    path: &Path,
+    dispatched: anyhow::Result<pipeline::IngestOutcome>,
+) -> ImportOutcomeDto {
     match dispatched {
         Ok(o) => {
             let status = match o.status {
@@ -435,6 +429,44 @@ fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
     }
 }
 
+/// 跑一次 `pipeline::ingest` 并映射成 `ImportOutcomeDto`。
+///
+/// 图片**不走这里**:Flutter 端先用 PP-OCRv5(`ocr_bridge.dart` →
+/// `recognize_image_pp`,iOS/安卓同引擎同模型)识别好文本,再走
+/// `ingest_image_with_text`。这里只处理 PDF/TXT/DICOM 等有文本层/结构化元数据的
+/// 文件类型。(旧注释写「安卓走 google_mlkit_text_recognition」,那条依赖早已
+/// 删除,别再据此推断。)
+fn ingest_one(v: &Vault, path: &Path) -> ImportOutcomeDto {
+    // Panic firewall:parser/dicom 栈里的 panic 不能一路 unwind 穿过持锁的 Vault、
+    // 污染共享 Mutex(与 Tauri 版 `ingest_one` 同一理由)。
+    let dispatched = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pipeline::ingest(v, path)
+    })) {
+        Ok(r) => r,
+        Err(_) => Err(anyhow::anyhow!("导入时发生内部错误(已隔离),该文件已跳过")),
+    };
+    map_ingest_result(v, path, dispatched)
+}
+
+/// 同 [`ingest_one`],但透传逐页 OCR 进度回调——[`ingest_bytes_with_progress`]
+/// 用。拆成单独函数而不是给 `ingest_one` 加参数,理由与 `ingest_bytes`/
+/// `ingest_bytes_with_progress` 分离同一条:`ingest_file`/`load_demo_data` 等
+/// 一堆调用方不需要进度,不该被迫改调用点或签名。
+fn ingest_one_with_progress(
+    v: &Vault,
+    path: &Path,
+    on_page: Option<pipeline::PdfPageProgress<'_>>,
+) -> ImportOutcomeDto {
+    // Panic firewall:同 `ingest_one`。
+    let dispatched = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pipeline::ingest_with_progress(v, path, on_page)
+    })) {
+        Ok(r) => r,
+        Err(_) => Err(anyhow::anyhow!("导入时发生内部错误(已隔离),该文件已跳过")),
+    };
+    map_ingest_result(v, path, dispatched)
+}
+
 /// 采集:对一个真实文件路径(如系统文件选择器返回的路径)跑 ingest,然后重建
 /// 就诊分组。PDF/TXT/DICOM 走 `pipeline::ingest`。
 pub fn ingest_file(path: String) -> anyhow::Result<ImportOutcomeDto> {
@@ -447,11 +479,15 @@ pub fn ingest_file(path: String) -> anyhow::Result<ImportOutcomeDto> {
     })
 }
 
-/// 采集(字节直传):Flutter 侧从相机/相册/文件选择器拿到的字节 + 原始文件名。
-/// 落到沙盒 data 目录下的一次性临时文件(保留扩展名——`pipeline::mime_for` 靠
-/// 扩展名判 MIME/PDF/DICOM)→ 跑 ingest → 重建分组 → 删临时文件。镜像 Tauri 版
-/// `ingest_bytes`,只是临时文件目录用 `data_dir`(FRB 没有 `app_cache_dir()`)。
-pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOutcomeDto> {
+/// [`ingest_bytes`]/[`ingest_bytes_with_progress`] 共用的准备阶段:校验体积、
+/// 清洗文件名、落一次性临时文件(保留扩展名——`pipeline::mime_for` 靠扩展名判
+/// MIME/PDF/DICOM)。两者只在「用哪条 ingest 入口跑」上分岔,准备逻辑不许长成
+/// 两份会走偏的拷贝。调用方用完 `tmp_dir` 负责删。
+fn prepare_ingest_tmp_file(
+    state: &VaultState,
+    filename: &str,
+    data: &[u8],
+) -> anyhow::Result<(PathBuf, PathBuf)> {
     if data.is_empty() {
         anyhow::bail!("空文件,未采集到任何数据");
     }
@@ -462,7 +498,7 @@ pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOut
             pipeline::MAX_INGEST_BYTES
         );
     }
-    let base = Path::new(&filename)
+    let base = Path::new(filename)
         .file_name()
         .and_then(|n| n.to_str())
         .filter(|n| !n.is_empty())
@@ -472,21 +508,104 @@ pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOut
     } else {
         format!("{base}.jpg")
     };
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S%f");
+    let tmp_dir = state.data_dir.join("medme-ingest").join(stamp.to_string());
+    std::fs::create_dir_all(&tmp_dir)?;
+    let tmp_path = tmp_dir.join(&safe_name);
+    std::fs::write(&tmp_path, data)?;
+    Ok((tmp_dir, tmp_path))
+}
 
-    with_state(|state| {
-        let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S%f");
-        let tmp_dir = state.data_dir.join("medme-ingest").join(stamp.to_string());
-        std::fs::create_dir_all(&tmp_dir)?;
-        let tmp_path = tmp_dir.join(&safe_name);
-        std::fs::write(&tmp_path, &data)?;
+/// [`ingest_bytes`]/[`ingest_bytes_with_progress`] 共用的核心逻辑:准备临时
+/// 文件 → 跑 ingest(可选逐页进度回调)→ 重建就诊分组 → 删临时文件。
+///
+/// 特意只吃一个普通闭包 `on_page: Option<pipeline::PdfPageProgress<'_>>`,
+/// 不直接吃 `StreamSink`——这样才能在**不构造真实 `StreamSink`** 的前提下
+/// 单元测试(`StreamSink` 需要真实 Dart 消息端口才能造出来,单测环境下造不出,
+/// 同 [DemoLoadProgressDto] 顶部注释)。`ingest_bytes_with_progress` 只负责把
+/// 一个「写 `StreamSink`」的闭包包成这个类型,自身不含任何除此之外的逻辑。
+fn ingest_bytes_core(
+    state: &VaultState,
+    filename: &str,
+    data: &[u8],
+    on_page: Option<pipeline::PdfPageProgress<'_>>,
+) -> anyhow::Result<ImportOutcomeDto> {
+    let (tmp_dir, tmp_path) = prepare_ingest_tmp_file(state, filename, data)?;
+    let v = &state.vault;
+    let outcome = ingest_one_with_progress(v, &tmp_path, on_page);
+    v.rebuild_encounters()
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let _ = std::fs::remove_dir_all(&tmp_dir); // 尽力清理,失败无妨
+    Ok(outcome)
+}
 
-        let v = &state.vault;
-        let outcome = ingest_one(v, &tmp_path);
-        v.rebuild_encounters()
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let _ = std::fs::remove_dir_all(&tmp_dir); // 尽力清理,失败无妨
-        Ok(outcome)
-    })
+/// 采集(字节直传):Flutter 侧从相机/相册/文件选择器拿到的字节 + 原始文件名。
+/// 落到沙盒 data 目录下的一次性临时文件 → 跑 ingest → 重建分组 → 删临时文件。
+/// 镜像 Tauri 版 `ingest_bytes`,只是临时文件目录用 `data_dir`(FRB 没有
+/// `app_cache_dir()`)。
+///
+/// 扫描版 PDF 想要「正在识别第 N/M 页」的逐页进度请用
+/// [`ingest_bytes_with_progress`]——这个函数保持原样(没有进度出口、靠返回值
+/// 报成败),是为了不影响它现有的一大票调用方:`vault_projections.rs` 里几十处
+/// 直接调 `ingest_bytes(...)` 并**依赖返回值**的测试。改这个函数的签名会波及
+/// 全部这些调用方;新加一个函数、旧的原样保留,代价最小(决策见 PR 描述)。
+pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOutcomeDto> {
+    with_state(|state| ingest_bytes_core(state, &filename, &data, None))
+}
+
+/// 把 [`ingest_bytes_core`] 的最终 `Result` 编码成 [PdfImportProgressDto] 的
+/// 终态消息(`outcome`/`error` 二者恰好其一非 `None`)。
+///
+/// 抽成纯函数,单独就是为了能在**不构造真实 `StreamSink`** 的前提下,对
+/// 「成功和失败各自映射成什么」直接下断言——尤其是「失败必须映射成 `error`
+/// 非 `None`,不能悄悄变成一个 `outcome`/`error` 都是 `None` 的消息(那等于
+/// 静默丢失)」,这正是 [PdfImportProgressDto] 顶部文档里提到的最大风险点。
+fn final_progress_dto(result: anyhow::Result<ImportOutcomeDto>) -> PdfImportProgressDto {
+    match result {
+        Ok(outcome) => PdfImportProgressDto {
+            page: 0,
+            total: 0,
+            outcome: Some(outcome),
+            error: None,
+        },
+        Err(e) => PdfImportProgressDto {
+            page: 0,
+            total: 0,
+            outcome: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// 同 [`ingest_bytes`],但多接一个 `progress`:扫描版 PDF 逐页 OCR
+/// (`pipeline::ingest_pdf` → `ocr::recognize_pdf_mixed`)时逐页推一条
+/// [PdfImportProgressDto],配合 `import_flow.dart` 画「正在识别第 N/M 页」。
+/// 与 [`load_demo_data`] 同一手法。
+///
+/// **恒返回 `Ok(())`,成败都走 `progress`——同 [`load_demo_data`] 那个坑**
+/// (见 [DemoLoadProgressDto] 顶部文档):带 `StreamSink` 参数的 FRB 函数,
+/// Dart 侧没有任何代码 `await` 这个函数自身的返回值,真返回 `Err` 会在这里
+/// 悄悄丢失。旧版 `ingest_bytes` 靠返回值报成败,这里换成
+/// [`final_progress_dto`] 编码进流的最后一条消息——绝不能让一次真实失败被
+/// 悄悄变成「流正常结束但没有终态消息」这种 Dart 侧永远等不到结果的状态。
+pub fn ingest_bytes_with_progress(
+    filename: String,
+    data: Vec<u8>,
+    progress: StreamSink<PdfImportProgressDto>,
+) -> anyhow::Result<()> {
+    let cb = |page: i32, total: i32| {
+        // 忽略发送失败:监听端已断开不该打断导入本身(与 `load_demo_data`
+        // 同一理由,单向 UI 反馈,不是导入流程的一部分)。
+        let _ = progress.add(PdfImportProgressDto {
+            page,
+            total,
+            outcome: None,
+            error: None,
+        });
+    };
+    let result = with_state(|state| ingest_bytes_core(state, &filename, &data, Some(&cb)));
+    let _ = progress.add(final_progress_dto(result));
+    Ok(())
 }
 
 /// 扫描版 PDF 的逐页 OCR 回填。`ingest_bytes`/`ingest_pdf`(Rust pipeline)对
@@ -1842,5 +1961,177 @@ mod measured_at_timezone_tests {
             "2026-05-01",
             "应按传入偏移下的字面日期落库,不因转 UTC 跨到下一天",
         );
+    }
+}
+
+#[cfg(test)]
+mod ingest_bytes_progress_tests {
+    use super::*;
+
+    /// 造一份两页、每页都有真实文本层的最小 PDF——不需要 OCR 引擎就能走完
+    /// `pipeline::ingest_pdf` 的逐页分支,与 `packages/pipeline`/`packages/ocr`
+    /// 里同类测试手搭 PDF 的做法一致(见那两处 `build_two_page_pdf_*`/
+    /// `recognize_pdf_mixed_reads_real_two_page_pdf_in_order`)。
+    fn build_two_page_text_pdf() -> Vec<u8> {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Document as LoDocument, Object, Stream};
+
+        let mut doc = LoDocument::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => font_id },
+        });
+        let page_of = |doc: &mut LoDocument, text: &str, parent, resources| {
+            let content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Td", vec![20.into(), 700.into()]),
+                    Operation::new("Tj", vec![Object::string_literal(text)]),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+            let content_id = doc.add_object(Stream::new(
+                dictionary! {},
+                content.encode().expect("encode content stream"),
+            ));
+            doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => parent,
+                "Contents" => content_id,
+                "Resources" => resources,
+            })
+        };
+        let page1_id = page_of(
+            &mut doc,
+            "Page one clinical text content",
+            pages_id,
+            resources_id,
+        );
+        let page2_id = page_of(
+            &mut doc,
+            "Page two clinical text content",
+            pages_id,
+            resources_id,
+        );
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page1_id.into(), page2_id.into()],
+                "Count" => 2,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save PDF");
+        bytes
+    }
+
+    /// 单测专用:开一个临时保险箱,组一份 `VaultState`——不经全局 `VAULT`
+    /// 静态/`open_vault`(那条路要真实沙盒目录、且是进程级单例,并发测试会
+    /// 互相打架),与 `home_monitoring_demo_data_tests` 里的做法同一手法。
+    /// 返回值把 `tempfile::TempDir` 一并交出去,调用方必须持有到断言结束
+    /// (`TempDir` drop 时删目录,提前丢弃会让 `data_dir`/`docs_dir` 失效)。
+    fn test_vault_state() -> (VaultState, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let docs_dir = tmp.path().join("docs");
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&docs_dir).unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let truth_root = docs_dir.join("vault");
+        let db_path = truth_root.join("medme.db");
+        let vault = Vault::open_split_resilient(&truth_root, &db_path, "test-device").unwrap();
+        (
+            VaultState {
+                vault,
+                truth_root,
+                db_path,
+                device_id: "test-device".to_string(),
+                docs_dir,
+                data_dir,
+            },
+            tmp,
+        )
+    }
+
+    /// 本工单要修的核心行为:`ingest_bytes_core` 必须让 `on_page` 逐页触发,
+    /// 次数等于页数、顺序一致——这就是移动端导入对话框能画出「正在识别第
+    /// N/M 页」而不是原地不动几十秒转圈的直接依据。
+    #[test]
+    fn ingest_bytes_core_reports_progress_once_per_page() {
+        let (state, _tmp) = test_vault_state();
+        let bytes = build_two_page_text_pdf();
+        let seen: std::cell::RefCell<Vec<(i32, i32)>> = std::cell::RefCell::new(Vec::new());
+        let cb = |page: i32, total: i32| seen.borrow_mut().push((page, total));
+
+        let outcome =
+            ingest_bytes_core(&state, "两页文本.pdf", &bytes, Some(&cb)).expect("ingest 应成功");
+        assert_eq!(outcome.status, "new");
+        assert_eq!(
+            seen.into_inner(),
+            vec![(1, 2), (2, 2)],
+            "必须逐页各报一次,顺序一致,total 是真实页数"
+        );
+    }
+
+    /// 回归:重构成 `prepare_ingest_tmp_file`/`ingest_bytes_core` 之后,旧版
+    /// `ingest_bytes` 的「空文件拒绝」校验不能丢——空字节走的是这条共用路径,
+    /// 两个入口(`ingest_bytes`/`ingest_bytes_with_progress`)都靠它挡住。
+    #[test]
+    fn ingest_bytes_core_rejects_empty_data() {
+        let (state, _tmp) = test_vault_state();
+        let err = ingest_bytes_core(&state, "空文件.pdf", &[], None)
+            .expect_err("空数据应该报错,不能悄悄成功");
+        assert!(
+            err.to_string().contains("空文件"),
+            "错误信息应指明原因:{err}"
+        );
+    }
+
+    /// **本工单最大的风险点自证**:`ingest_bytes_with_progress` 不能像
+    /// [DemoLoadProgressDto] 顶部文档警告的那样,把一次真实失败悄悄变成
+    /// Dart 侧永远等不到的「流正常结束但没有终态消息」。`final_progress_dto`
+    /// 就是这个映射的全部逻辑,拆成纯函数使其可以在不构造真实 `StreamSink`
+    /// 的前提下(单测环境下造不出来)直接断言:给定一个真实的 `Err`,
+    /// 映射结果必须把它原样带在 `error` 里,`outcome` 必须是 `None`——
+    /// 不允许两者都是 `None`(那就是把失败悄悄吞成了不确定态)。
+    #[test]
+    fn final_progress_dto_carries_the_error_through_not_swallowed() {
+        let dto = final_progress_dto(Err(anyhow::anyhow!("空文件,未采集到任何数据")));
+        assert!(dto.outcome.is_none(), "失败时 outcome 必须是 None");
+        assert_eq!(
+            dto.error.as_deref(),
+            Some("空文件,未采集到任何数据"),
+            "失败原因必须原样带出,不能丢失"
+        );
+    }
+
+    /// 对照组:成功时同一个函数必须把 `outcome` 带出、`error` 留空——与上面
+    /// 失败那条一起,钉住 `outcome`/`error` 互斥这条契约的两端。
+    #[test]
+    fn final_progress_dto_carries_the_outcome_on_success() {
+        let outcome = ImportOutcomeDto {
+            name: "test.pdf".to_string(),
+            source_file_id: 1,
+            status: "new".to_string(),
+            doc_type: None,
+            document_id: Some(1),
+            detected_name: None,
+            pages_without_text: Vec::new(),
+        };
+        let dto = final_progress_dto(Ok(outcome));
+        assert!(dto.error.is_none(), "成功时 error 必须是 None");
+        assert_eq!(dto.outcome.map(|o| o.status), Some("new".to_string()));
     }
 }

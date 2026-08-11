@@ -10,6 +10,11 @@ use std::path::Path;
 /// 知道原件有几页才能不撒谎。语义见 `ocr::image_page_count`。
 pub use ocr::image_page_count;
 
+/// 扫描 PDF 逐页 OCR 进度回调的类型——转出给移动端 crate 用,理由与
+/// [`image_page_count`] 一样:移动端不该被迫直接依赖 `ocr`(它按 target 门控,
+/// 桌面/CLI 构建也不需要这个类型)。语义见 `ocr::PdfPageProgress`。
+pub use ocr::PdfPageProgress;
+
 /// 单个文件导入体积上限(字节)。超过即拒绝,**在把整份文件读进内存之前**就返回
 /// 错误 —— 否则一份几个 GB 的文件/畸形附件会在任何解析器跑起来之前就把进程 OOM。
 /// 200MB 足以覆盖高分辨率照片、扫描 PDF 与常见单张 DICOM;超大 DICOM 序列本就按
@@ -361,7 +366,7 @@ pub type DicomMetaParser<'a> = &'a dyn Fn(&[u8]) -> anyhow::Result<dicom::DicomM
 /// 导入一个文件(进程内解析 DICOM 元数据)。桌面端请用
 /// [`ingest_with_dicom_parser`] 注入隔离解析器。
 pub fn ingest(vault: &Vault, path: &Path) -> anyhow::Result<IngestOutcome> {
-    ingest_with_dicom_parser(vault, path, &dicom::parse_meta)
+    ingest_inner(vault, path, &dicom::parse_meta, None)
 }
 
 /// 同 [`ingest`],但由调用方提供 DICOM 元数据解析器(见 [`DicomMetaParser`])。
@@ -369,6 +374,39 @@ pub fn ingest_with_dicom_parser(
     vault: &Vault,
     path: &Path,
     parse_dicom_meta: DicomMetaParser<'_>,
+) -> anyhow::Result<IngestOutcome> {
+    ingest_inner(vault, path, parse_dicom_meta, None)
+}
+
+/// 同 [`ingest`],但多接受一个可选的逐页 OCR 进度回调(见
+/// [`PdfPageProgress`])——目前只有扫描版 PDF 分支([`ingest_pdf`])会调用它;
+/// 其余分支(纯文本、单页图片、DICOM)本身就是"一下子完成",没有中间态可报,
+/// 回调不会被调用。移动端 `ingest_bytes_with_progress` 用这个函数换取
+/// 「正在识别第 N/M 页」的进度信号(见那边的文档注释——`StreamSink` 参数导致
+/// 函数自身返回值到不了 Dart,进度和终态都得走另一条路)。
+///
+/// 不像 [`ingest_with_dicom_parser`] 那样接受自定义 DICOM 解析器:移动端是
+/// 这个函数目前唯一的调用方,它的文件选择器不接受 `.dcm`(见
+/// [`DicomMetaParser`] 文档),用进程内解析足够。桌面端如果将来也要进度,
+/// 再加一个 `ingest_with_dicom_parser_and_progress`——不在本次改动范围内,
+/// 现在加了也没有调用方,不必先造好。
+pub fn ingest_with_progress(
+    vault: &Vault,
+    path: &Path,
+    on_page: Option<PdfPageProgress<'_>>,
+) -> anyhow::Result<IngestOutcome> {
+    ingest_inner(vault, path, &dicom::parse_meta, on_page)
+}
+
+/// [`ingest`]/[`ingest_with_dicom_parser`]/[`ingest_with_progress`] 共用的实现。
+/// 拆出来是为了让"要不要报进度"只在这一处分岔——桌面/CLI 经前两个入口调用,
+/// `on_page` 恒为 `None`,签名和行为不变;移动端经 [`ingest_with_progress`]
+/// 调用才会真的传一个回调。
+fn ingest_inner(
+    vault: &Vault,
+    path: &Path,
+    parse_dicom_meta: DicomMetaParser<'_>,
+    on_page: Option<PdfPageProgress<'_>>,
 ) -> anyhow::Result<IngestOutcome> {
     // 体积闸门:先看元数据里的文件大小,超上限就拒绝 —— 绝不 slurp 一份不可信的
     // 超大文件进内存(那会在解析前就 OOM)。用 metadata().len() 而非读入后再判。
@@ -388,6 +426,10 @@ pub fn ingest_with_dicom_parser(
     let sid = imp.source_file.id;
 
     if imp.deduped && vault.has_document(sid)? {
+        // 补页走的是这次重新导入拿到的原始字节,不是首次导入当年那份——同一份
+        // 文件已经在手上,复用即可。这条路不接进度:`reindex_existing_document`
+        // 补的是首次导入时漏掉的少数页,不是本次改动要解决的"首次导入几十秒
+        // 零反馈"场景,不在范围内(见 PR 描述)。
         return reindex_existing_document(vault, sid, &name, is_pdf(path), &bytes);
     }
 
@@ -400,7 +442,7 @@ pub fn ingest_with_dicom_parser(
     // PDF 走独立分支(逐页判定文本层,而非整份拼接后的长度——见 `ingest_pdf`
     // 文档注释里的"混合页 PDF 静默丢数据"缺陷)。
     if is_pdf(path) {
-        return ingest_pdf(vault, sid, &name, &bytes, imp.deduped);
+        return ingest_pdf(vault, sid, &name, &bytes, imp.deduped, on_page);
     }
 
     match parser::extract(path) {
@@ -513,14 +555,20 @@ fn ingest_image(
 /// `IngestOutcome::pages_without_text`——调用方(尤其移动端 UI)必须显式告知
 /// 用户"这些页未能识别",不能让人以为整份都读了。桌面/CLI 目前还没有对应的
 /// UI 横幅(不在本次改动范围),至少落一条 `eprintln!` 留痕。
+///
+/// `on_page` 只在经 [`ingest_with_progress`] 调用时非 `None`(移动端);桌面/CLI
+/// 经 [`ingest`]/[`ingest_with_dicom_parser`] 调用时恒为 `None`,原样透传给
+/// `ocr::recognize_pdf_mixed_with_progress`,`None` 时它退化成
+/// `recognize_pdf_mixed`——不多花一次调用、也不改变行为。
 fn ingest_pdf(
     vault: &Vault,
     sid: i64,
     name: &str,
     bytes: &[u8],
     deduped: bool,
+    on_page: Option<PdfPageProgress<'_>>,
 ) -> anyhow::Result<IngestOutcome> {
-    let mixed = match ocr::recognize_pdf_mixed(bytes) {
+    let mixed = match ocr::recognize_pdf_mixed_with_progress(bytes, on_page) {
         Ok(m) => m,
         // 连 lopdf 都解析不了(畸形/损坏 PDF):和旧版行为一致——不致命,退回
         // 「已存但无文本」而不是让整次 ingest 报错(原文件已进 CAS,时间线仍
@@ -1194,6 +1242,35 @@ trailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n";
         assert!(
             text.contains("Discharge summary"),
             "page 1 text missing: {text}"
+        );
+    }
+
+    /// This is the fix the ticket is about: importing a multi-page scanned
+    /// PDF used to be a black box on mobile -- a spinner with zero feedback
+    /// until the whole file finished (real-world timing: 25 pages ~10s on a
+    /// fast native Mac build, several times that on an actual phone). `ingest`
+    /// (the plain entry point CLI/desktop use) must keep reporting nothing,
+    /// while [`ingest_with_progress`] must report once per page, in order,
+    /// with the true page count -- this is what lets mobile's import dialog
+    /// paint "正在识别第 N/M 页" instead of a dead spinner.
+    #[test]
+    fn ingest_with_progress_reports_once_per_page_in_order() {
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let p = fdir
+            .path()
+            .join("2026-02-01_出院小结_两页文本_进度测试.pdf");
+        std::fs::write(&p, build_two_page_pdf_both_pages_have_text()).unwrap();
+
+        let seen: std::cell::RefCell<Vec<(i32, i32)>> = std::cell::RefCell::new(Vec::new());
+        let cb = |page_no: i32, total: i32| seen.borrow_mut().push((page_no, total));
+        let o = ingest_with_progress(&v, &p, Some(&cb)).unwrap();
+        assert_eq!(o.status, IngestStatus::New);
+        assert_eq!(
+            seen.into_inner(),
+            vec![(1, 2), (2, 2)],
+            "must report once per page, in order, with the true page count as total"
         );
     }
 

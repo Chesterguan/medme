@@ -72,6 +72,11 @@ log = "0.4"
 [dev-dependencies]
 # `api::vault_ephemeral` 的单测用临时目录(会话根/沙盒 `cache_dir`)。
 tempfile = "3"
+# 只为手搭一份真实的多页文本 PDF,验证 `ingest_bytes_core` 逐页进度回调确实
+# 被调到(`packages/ocr`/`packages/pipeline` 的同类测试已经在依赖它,版本与根
+# workspace `Cargo.toml` 的 `lopdf = "0.44"` 保持一致——本 crate 是独立
+# workspace,没有 `.workspace = true` 可用)。仅测试 profile 链接,不影响出货体积。
+lopdf = "0.44"
 
 [lints.rust]
 # `pp_ocr` 由 build.rs 按目标平台产出(见那里的说明);声明出来,免得

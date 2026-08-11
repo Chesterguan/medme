@@ -31,6 +31,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_StreamSink_demo_load_progress_dto_Sse(dynamic raw);
 
   @protected
+  RustStreamSink<PdfImportProgressDto>
+  dco_decode_StreamSink_pdf_import_progress_dto_Sse(dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
@@ -62,6 +66,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
+
+  @protected
+  ImportOutcomeDto dco_decode_box_autoadd_import_outcome_dto(dynamic raw);
 
   @protected
   ChronicConditionDto dco_decode_chronic_condition_dto(dynamic raw);
@@ -195,7 +202,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
+  ImportOutcomeDto? dco_decode_opt_box_autoadd_import_outcome_dto(dynamic raw);
+
+  @protected
   PatientProfileDto dco_decode_patient_profile_dto(dynamic raw);
+
+  @protected
+  PdfImportProgressDto dco_decode_pdf_import_progress_dto(dynamic raw);
 
   @protected
   ProxyLabDto dco_decode_proxy_lab_dto(dynamic raw);
@@ -268,6 +281,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RustStreamSink<PdfImportProgressDto>
+  sse_decode_StreamSink_pdf_import_progress_dto_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
@@ -303,6 +322,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  ImportOutcomeDto sse_decode_box_autoadd_import_outcome_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ChronicConditionDto sse_decode_chronic_condition_dto(
@@ -472,7 +496,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  ImportOutcomeDto? sse_decode_opt_box_autoadd_import_outcome_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   PatientProfileDto sse_decode_patient_profile_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PdfImportProgressDto sse_decode_pdf_import_progress_dto(
     SseDeserializer deserializer,
   );
 
@@ -558,6 +592,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_pdf_import_progress_dto_Sse(
+    RustStreamSink<PdfImportProgressDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
@@ -602,6 +642,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_i_64(
     PlatformInt64 self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_import_outcome_dto(
+    ImportOutcomeDto self,
     SseSerializer serializer,
   );
 
@@ -831,8 +877,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_import_outcome_dto(
+    ImportOutcomeDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_patient_profile_dto(
     PatientProfileDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_pdf_import_progress_dto(
+    PdfImportProgressDto self,
     SseSerializer serializer,
   );
 

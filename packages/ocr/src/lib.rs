@@ -1738,6 +1738,26 @@ impl MixedPdfOutcome {
     }
 }
 
+/// Per-page progress callback for [`recognize_pdf_mixed_with_progress`]:
+/// called once per page, immediately after that page's text-layer/OCR
+/// decision is made, in page order (`page_no` 1..=`total`, `total` is the
+/// PDF's real page count -- same value [`MixedPdfOutcome::page_count`] would
+/// return). Fires for *every* page, not just OCR'd ones -- a text-layer page
+/// resolves near-instantly, so including it just makes the progress signal
+/// denser, never wrong.
+///
+/// Why this exists: mobile's `ingest_bytes` hits exactly one of two progress
+/// paths for a scanned PDF. If the page images aren't `DCTDecode`-encoded
+/// JPEGs, `recognize_pdf_mixed` can't OCR them at all (see
+/// [`extract_dct_images`]'s doc comment) and mobile's Dart-side fallback
+/// (`import_flow.dart` rendering pages itself) does the OCR and reports
+/// per-page progress there. But real-world scans from a phone camera or a
+/// hospital portal export are overwhelmingly JPEG -- that's the *other* path,
+/// where this function does succeed and all the OCR time lands inside this
+/// one Rust call, with nothing upstream able to report progress unless this
+/// callback exists.
+pub type PdfPageProgress<'a> = &'a dyn Fn(i32, i32);
+
 /// Resolve one page that has no usable text layer: OCR its embedded
 /// DCTDecode image(s) if the per-document OCR budget allows, otherwise
 /// report [`PdfPageText::Unrecognized`] rather than silently skip it.
@@ -1803,28 +1823,40 @@ fn build_mixed_pages<F>(
     page_texts: Vec<String>,
     mut page_images: Vec<Vec<Vec<u8>>>,
     mut recognize_one: F,
+    on_page: Option<PdfPageProgress<'_>>,
 ) -> Vec<PdfPage>
 where
     F: FnMut(&[u8]) -> Result<OcrOutcome>,
 {
     let mut ocr_budget = MAX_OCR_PAGE_IMAGES;
+    let total = page_texts.len() as i32;
     page_texts
         .into_iter()
         .enumerate()
         .map(|(idx, text)| {
             let page_no = idx as i32 + 1;
-            if text.trim().chars().count() >= MIN_TEXT_LAYER_LEN {
-                return PdfPage {
+            let page = if text.trim().chars().count() >= MIN_TEXT_LAYER_LEN {
+                PdfPage {
                     page_no,
                     result: PdfPageText::TextLayer(text),
-                };
+                }
+            } else {
+                let images = page_images
+                    .get_mut(idx)
+                    .map(std::mem::take)
+                    .unwrap_or_default();
+                let result = resolve_page_via_ocr(images, &mut ocr_budget, &mut recognize_one);
+                PdfPage { page_no, result }
+            };
+            // Report *after* this page is resolved (not before) -- `page_no`
+            // then means "this many pages are now done", matching the
+            // `loaded`/`total` convention `DemoLoadProgressDto` already uses
+            // elsewhere in this codebase, rather than inventing a second
+            // "about to start" convention here.
+            if let Some(cb) = on_page {
+                cb(page_no, total);
             }
-            let images = page_images
-                .get_mut(idx)
-                .map(std::mem::take)
-                .unwrap_or_default();
-            let result = resolve_page_via_ocr(images, &mut ocr_budget, &mut recognize_one);
-            PdfPage { page_no, result }
+            page
         })
         .collect()
 }
@@ -1841,6 +1873,20 @@ where
 /// [`MixedPdfOutcome::unrecognized_pages`] for what it MUST tell the caller
 /// was not captured -- never silently drop that list.
 pub fn recognize_pdf_mixed(pdf_bytes: &[u8]) -> Result<MixedPdfOutcome> {
+    recognize_pdf_mixed_with_progress(pdf_bytes, None)
+}
+
+/// Same as [`recognize_pdf_mixed`], but reports per-page progress through
+/// `on_page` (see [`PdfPageProgress`]) as each page is resolved. Split out
+/// as its own function -- rather than making [`recognize_pdf_mixed`] take
+/// `Option<PdfPageProgress<'_>>` directly -- purely so the many existing
+/// callers that don't need progress (desktop, CLI, `reindex_existing_document`)
+/// keep an unchanged call site; `recognize_pdf_mixed` is now a one-line
+/// wrapper that passes `None`.
+pub fn recognize_pdf_mixed_with_progress(
+    pdf_bytes: &[u8],
+    on_page: Option<PdfPageProgress<'_>>,
+) -> Result<MixedPdfOutcome> {
     let doc = Document::load_mem(pdf_bytes).context("recognize_pdf_mixed: parse PDF")?;
     let page_ids: Vec<lopdf::ObjectId> = doc.get_pages().into_values().collect();
     let mut page_texts = pdf_extract::extract_text_from_mem_by_pages(pdf_bytes)
@@ -1856,7 +1902,7 @@ pub fn recognize_pdf_mixed(pdf_bytes: &[u8]) -> Result<MixedPdfOutcome> {
         .iter()
         .map(|&page_id| extract_dct_images(&doc, page_id))
         .collect();
-    let pages = build_mixed_pages(page_texts, page_images, recognize_platform_best);
+    let pages = build_mixed_pages(page_texts, page_images, recognize_platform_best, on_page);
     Ok(MixedPdfOutcome { pages })
 }
 
@@ -2563,14 +2609,19 @@ mod tests {
             vec![vec![0xFFu8]], // page 2: one (fake) DCTDecode image
         ];
         let mut calls = 0usize;
-        let pages = build_mixed_pages(page_texts, page_images, |_bytes| {
-            calls += 1;
-            Ok(OcrOutcome {
-                text: "化验结果:肌酐 120".to_string(),
-                confidence: 0.9,
-                backend: OcrBackend::Onnx,
-            })
-        });
+        let pages = build_mixed_pages(
+            page_texts,
+            page_images,
+            |_bytes| {
+                calls += 1;
+                Ok(OcrOutcome {
+                    text: "化验结果:肌酐 120".to_string(),
+                    confidence: 0.9,
+                    backend: OcrBackend::Onnx,
+                })
+            },
+            None,
+        );
         assert_eq!(calls, 1, "only the image-only page should trigger OCR");
         assert_eq!(pages.len(), 2);
         assert!(matches!(pages[0].result, PdfPageText::TextLayer(_)));
@@ -2607,9 +2658,12 @@ mod tests {
             String::new(),
         ];
         let page_images = vec![vec![], vec![]]; // neither page has an image
-        let pages = build_mixed_pages(page_texts, page_images, |_bytes| {
-            panic!("recognize_one should never be called: page 2 has no image")
-        });
+        let pages = build_mixed_pages(
+            page_texts,
+            page_images,
+            |_bytes| panic!("recognize_one should never be called: page 2 has no image"),
+            None,
+        );
         assert_eq!(pages.len(), 2);
         assert_eq!(pages[1].result, PdfPageText::Unrecognized);
 
@@ -2633,14 +2687,19 @@ mod tests {
         let page_texts = vec![String::new(); total];
         let page_images = vec![vec![vec![0u8]]; total];
         let mut calls = 0usize;
-        let pages = build_mixed_pages(page_texts, page_images, |_bytes| {
-            calls += 1;
-            Ok(OcrOutcome {
-                text: "text".to_string(),
-                confidence: 1.0,
-                backend: OcrBackend::Onnx,
-            })
-        });
+        let pages = build_mixed_pages(
+            page_texts,
+            page_images,
+            |_bytes| {
+                calls += 1;
+                Ok(OcrOutcome {
+                    text: "text".to_string(),
+                    confidence: 1.0,
+                    backend: OcrBackend::Onnx,
+                })
+            },
+            None,
+        );
         assert_eq!(
             calls, MAX_OCR_PAGE_IMAGES,
             "OCR must run on at most the cap-many pages"
@@ -2650,6 +2709,45 @@ mod tests {
             outcome.unrecognized_pages().len(),
             extra,
             "pages past the cap must be reported, not silently dropped"
+        );
+    }
+
+    /// `on_page` must fire exactly once per page, in order, `(1, total)` ..
+    /// `(total, total)` -- this is the signal mobile's import dialog paints
+    /// "正在识别第 N/M 页" from (see `PdfPageProgress`'s doc comment for why
+    /// this callback exists at all). Mixes a text-layer page and an OCR'd
+    /// page so the callback is proven to fire on both paths, not just one.
+    #[test]
+    fn build_mixed_pages_reports_progress_once_per_page_in_order() {
+        let page_texts = vec![
+            "够长的第一页文本内容超过阈值二十个字符没问题".to_string(),
+            String::new(), // scanned page: needs OCR
+            String::new(), // scanned page, no image: stays Unrecognized
+        ];
+        let page_images = vec![vec![], vec![vec![0xFFu8]], vec![]];
+        // `on_page`'s type is `&dyn Fn`, not `FnMut` -- it may be called from
+        // inside a `.map()` closure that itself needs to be `Copy`-able (see
+        // `build_mixed_pages`'s doc comment). `RefCell` gets interior
+        // mutability without weakening that bound just for this test.
+        let seen: std::cell::RefCell<Vec<(i32, i32)>> = std::cell::RefCell::new(Vec::new());
+        let cb = |page_no: i32, total: i32| seen.borrow_mut().push((page_no, total));
+        let pages = build_mixed_pages(
+            page_texts,
+            page_images,
+            |_bytes| {
+                Ok(OcrOutcome {
+                    text: "化验结果".to_string(),
+                    confidence: 0.9,
+                    backend: OcrBackend::Onnx,
+                })
+            },
+            Some(&cb),
+        );
+        assert_eq!(pages.len(), 3);
+        assert_eq!(
+            seen.into_inner(),
+            vec![(1, 3), (2, 3), (3, 3)],
+            "must report once per page, in order, with the true page count as total"
         );
     }
 

@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `format_plausibility_violation`, `home_monitoring_demo_entries`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
+// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `doc_summary`, `final_progress_dto`, `fmt_value`, `format_plausibility_violation`, `home_monitoring_demo_entries`, `ingest_bytes_core`, `ingest_one_with_progress`, `ingest_one`, `machine_device_id`, `map_ingest_result`, `open_resilient_with_fallback`, `parse_measured_at`, `prepare_ingest_tmp_file`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -81,13 +81,38 @@ Future<ImportOutcomeDto> ingestFile({required String path}) =>
     RustLib.instance.api.crateApiVaultIngestFile(path: path);
 
 /// 采集(字节直传):Flutter 侧从相机/相册/文件选择器拿到的字节 + 原始文件名。
-/// 落到沙盒 data 目录下的一次性临时文件(保留扩展名——`pipeline::mime_for` 靠
-/// 扩展名判 MIME/PDF/DICOM)→ 跑 ingest → 重建分组 → 删临时文件。镜像 Tauri 版
-/// `ingest_bytes`,只是临时文件目录用 `data_dir`(FRB 没有 `app_cache_dir()`)。
+/// 落到沙盒 data 目录下的一次性临时文件 → 跑 ingest → 重建分组 → 删临时文件。
+/// 镜像 Tauri 版 `ingest_bytes`,只是临时文件目录用 `data_dir`(FRB 没有
+/// `app_cache_dir()`)。
+///
+/// 扫描版 PDF 想要「正在识别第 N/M 页」的逐页进度请用
+/// [`ingest_bytes_with_progress`]——这个函数保持原样(没有进度出口、靠返回值
+/// 报成败),是为了不影响它现有的一大票调用方:`vault_projections.rs` 里几十处
+/// 直接调 `ingest_bytes(...)` 并**依赖返回值**的测试。改这个函数的签名会波及
+/// 全部这些调用方;新加一个函数、旧的原样保留,代价最小(决策见 PR 描述)。
 Future<ImportOutcomeDto> ingestBytes({
   required String filename,
   required List<int> data,
 }) => RustLib.instance.api.crateApiVaultIngestBytes(
+  filename: filename,
+  data: data,
+);
+
+/// 同 [`ingest_bytes`],但多接一个 `progress`:扫描版 PDF 逐页 OCR
+/// (`pipeline::ingest_pdf` → `ocr::recognize_pdf_mixed`)时逐页推一条
+/// [PdfImportProgressDto],配合 `import_flow.dart` 画「正在识别第 N/M 页」。
+/// 与 [`load_demo_data`] 同一手法。
+///
+/// **恒返回 `Ok(())`,成败都走 `progress`——同 [`load_demo_data`] 那个坑**
+/// (见 [DemoLoadProgressDto] 顶部文档):带 `StreamSink` 参数的 FRB 函数,
+/// Dart 侧没有任何代码 `await` 这个函数自身的返回值,真返回 `Err` 会在这里
+/// 悄悄丢失。旧版 `ingest_bytes` 靠返回值报成败,这里换成
+/// [`final_progress_dto`] 编码进流的最后一条消息——绝不能让一次真实失败被
+/// 悄悄变成「流正常结束但没有终态消息」这种 Dart 侧永远等不到结果的状态。
+Stream<PdfImportProgressDto> ingestBytesWithProgress({
+  required String filename,
+  required List<int> data,
+}) => RustLib.instance.api.crateApiVaultIngestBytesWithProgress(
   filename: filename,
   data: data,
 );
