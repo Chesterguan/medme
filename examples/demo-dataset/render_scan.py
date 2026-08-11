@@ -4,13 +4,24 @@ Render plain-text (Chinese) medical report content into a realistic-looking
 "scanned/photographed paper report" image using Pillow.
 
 Usage:
-    python3 render_scan.py <output.png|.jpg> [--handwriting] < content.txt
+    python3 render_scan.py <output.png|.jpg> [--handwriting] [--scale N] < content.txt
 
 The content is read from stdin, one line per row. Long lines are drawn as-is
 (callers are expected to keep them under ~40 CJK chars per line for width).
+
+`--scale N` multiplies the type size and margins by N, so the same text renders
+at the pixel dimensions of a real full-page capture instead of a canvas
+shrink-wrapped around the glyphs. It matters because the OCR engine bands any
+image taller than `TILE_CORE_H` (1100 px, see packages/ocr/src/lib.rs) into
+overlapping horizontal strips and stitches the results back together. At the
+default scale a 17-line report renders about 850 px tall, so it goes through
+`predict` as a single frame and the banding/stitching path is never exercised —
+while a phone photo of the same A4 page is ~3000x4000 px and always is. Any
+evaluation that wants to measure that path has to ask for it explicitly.
 """
 import sys
 import random
+import zlib
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
 
 FONT_CANDIDATES = [
@@ -46,23 +57,39 @@ def main():
 
     out_path = sys.argv[1]
     handwriting = "--handwriting" in sys.argv[2:]
+    scale = 1.0
+    if "--scale" in sys.argv[2:]:
+        scale = float(sys.argv[sys.argv.index("--scale") + 1])
 
     text = sys.stdin.read()
     lines = text.split("\n")
     while lines and lines[-1].strip() == "":
         lines.pop()
 
-    random.seed(hash(out_path) & 0xFFFFFFFF)
+    # crc32, not the builtin hash(): CPython salts str hashing per process
+    # (PEP 456), so `hash(out_path)` hands a *different* seed to every
+    # invocation. Rendering the same file twice then produced different grain
+    # and a different rotation angle — fine for generating demo data, fatal for
+    # an A/B evaluation that renders once per run and compares the numbers
+    # across runs. crc32 over the path bytes is stable for a given path forever.
+    random.seed(zlib.crc32(out_path.encode("utf-8")))
 
-    font_size = 24
+    font_size = int(24 * scale)
     font = load_font(font_size)
-    title_font = load_font(font_size + 4)
+    title_font = load_font(font_size + int(4 * scale))
     line_height = int(font_size * 1.75)
-    margin_x, margin_y = 56, 56
+    margin_x = margin_y = int(56 * scale)
 
-    max_chars = max((len(l) for l in lines), default=40)
-    width = max(900, margin_x * 2 + max_chars * (font_size + 4))
-    height = margin_y * 2 + line_height * len(lines) + 30
+    # Measure the widest line with the actual font instead of assuming every
+    # character is full-width. CJK glyphs are, but digits, latin and the spaces
+    # that pad lab tables into columns are not, so `max_chars * font_size`
+    # overshot badly on mixed lines — a 17-line report came out 2066 px wide
+    # with the text ending around 1200, i.e. 40% of the page was empty margin.
+    # A page that wide also skews the aspect ratio away from the portrait paper
+    # the engine actually sees in the field.
+    widest = max((font.getlength(l) for l in lines), default=float(font_size * 40))
+    width = max(900, int(margin_x * 2 + widest))
+    height = margin_y * 2 + line_height * len(lines) + int(30 * scale)
 
     # Slightly off-white paper tone rather than pure white.
     paper = (250, 249, 245)

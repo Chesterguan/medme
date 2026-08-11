@@ -4613,6 +4613,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-vision",
+ "parser",
  "pdf-extract",
  "pollster",
  "windows 0.62.2",

@@ -26,6 +26,17 @@ lopdf.workspace = true
 pdf-extract.workspace = true
 
 [dev-dependencies]
+# examples/layout_eval.rs 用 parser::extract_labs 把 OCR 文字变成结构化化验行,
+# 再跟真值比对(复用生产已有的、经过语料校验的规则抽取器,而不是给评测另写一套解析)。
+# parser 不依赖 ocr,不会形成 dep 环。
+parser = { path = "../parser" }
+
+[[example]]
+name = "layout_eval"
+# recognize_engine_bare 只在 testing feature 下才存在(见 lib.rs `mod testing`)——
+# 没开这个 feature 时 `cargo build/test/clippy --all-targets`(默认 feature 集)
+# 直接跳过编译这个 example,而不是报「找不到该函数」的编译错误。
+required-features = ["engine", "testing"]
 
 [features]
 # `engine` pulls in `oar-ocr` (PP-OCRv5 via ONNX Runtime / `ort`), which
