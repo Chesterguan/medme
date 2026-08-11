@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:google_api_availability/google_api_availability.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
 import 'package:image_picker/image_picker.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -654,6 +655,9 @@ Future<ImportRunResult> _runImport(
   // 本次新建文档 id → 报告里识别到的患者姓名(识别不到为 null),进「待确认」队列;
   // 姓名与当前成员不符者会被标红,识别到的姓名还用来自动命名默认档案。
   final newDocs = <int, String?>{};
+  // 本次新建的**照片**文档 id(`newDocs` 的子集,排除 PDF/TXT 等非图片来源)——
+  // 「合并成一份」只对着这批照片问,见循环末尾与 `_offerPhotoMerge`。
+  final imageDocIds = <int>[];
   // 埋点用:整批里**第一次**失败发生在哪一步、归到哪个原因码。只留第一条 ——
   // 一次批量导入报一条事件,报第一个失败足以定位;报全部会把事件量和基数都吹起来。
   String? failStage;
@@ -697,7 +701,10 @@ Future<ImportRunResult> _runImport(
         onStage: (s) => stage = s,
       );
 
-      if (outcome.documentId case final id?) newDocs[id] = outcome.detectedName;
+      if (outcome.documentId case final id?) {
+        newDocs[id] = outcome.detectedName;
+        if (item.isImage) imageDocIds.add(id);
+      }
       rows.add(rowForOutcome(outcome, stillMissingPages: stillMissingPages));
       okElapsedMs += DateTime.now().difference(itemStartedAt).inMilliseconds;
       okCount++;
@@ -757,13 +764,110 @@ Future<ImportRunResult> _runImport(
 
   // newDocs 的 key 就是 ImportRunResult 要交出去的东西——早前几行已经把它喂给
   // ReviewState.markPending,这里不重算,只是把同一份数据也交给调用方。
-  final result = ImportRunResult(newDocs.keys.toList());
-  if (!context.mounted) return result;
+  // （若下面发生了合并,`newDocs` 会在合并后就地更新,`ImportRunResult` 在
+  // 函数末尾才构造,始终反映最终状态。）
+  if (!context.mounted) return ImportRunResult(newDocs.keys.toList());
   Navigator.of(context).pop(); // 关进度对话框
   await _showImportSummary(context, rows);
+
+  // 这次一起导入的照片里有 ≥2 张各自建了文档:问要不要合并成一份——见
+  // `_offerPhotoMerge` 文档注释(为什么每次都问、不自动合并)。只在这里问一次,
+  // 用户选「分开保存」或合并失败都保持原状,不重复打扰。
+  if (shouldOfferPhotoMerge(imageDocIds.length) && context.mounted) {
+    final mergedId = await _offerPhotoMerge(context, imageDocIds);
+    if (mergedId != null) {
+      // 姓名核对(「导错人」标红)要接着起作用:合并前几份里第一个识别到的
+      // 姓名带到合并后这一份上——内容是同一批照片的文字,姓名不会因为合并
+      // 变化,但 `ReviewState` 是按文档 id 记的,原 id 已经不存在了,必须
+      // 显式搬一次。
+      final mergedDetectedName = imageDocIds
+          .map((id) => newDocs[id])
+          .firstWhere(
+            (n) => n != null && n.trim().isNotEmpty,
+            orElse: () => null,
+          );
+      for (final id in imageDocIds) {
+        newDocs.remove(id);
+        await ReviewState.instance.markReviewed(id);
+      }
+      newDocs[mergedId] = mergedDetectedName;
+      await ReviewState.instance.markPending({mergedId: mergedDetectedName});
+      bumpVaultRevision();
+    }
+  }
+
   progress.dispose();
-  return result;
+  return ImportRunResult(newDocs.keys.toList());
 }
+
+/// 合并前的确认弹窗 + 实际调用合并 FFI(`mergePhotosIntoDocument`)。
+///
+/// **为什么每次都问,不自动合并**:一批拍进来的照片不保证真的是同一份文件的
+/// 连续页——顺手把上次剩的一张也扫进来、或者一次选了两份不同的化验单,都是
+/// 会发生的真实场景。合并是不可逆操作(拆开必须重新导入单张照片,见
+/// `pipeline::merge_documents_into_pdf` 文档注释),错误合并两份不相干的病历
+/// 且用户没注意到,后果比多问一次、多点一下「分开保存」严重得多——所以交给
+/// 用户自己确认,不替 TA 猜。
+///
+/// 返回合并出的新文档 id;用户选「分开保存」或合并失败都返回 `null`——两种
+/// 情况下原来的文档都原样保留(合并失败时的这条保证来自 Rust 侧
+/// `merge_documents_into_pdf` 的顺序保证:任何校验/解码失败都发生在删除任何
+/// 原文档之前)。
+Future<int?> _offerPhotoMerge(
+  BuildContext context,
+  List<int> imageDocIds,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      final c = MedColors.of(context);
+      return AlertDialog(
+        title: const Text('合并成一份?'),
+        content: Text(
+          '刚才这 ${imageDocIds.length} 张,如果是同一份病历的连续页,可以合并'
+          '成一份多页文档,时间线上只显示一条。原始照片仍然保留,只是不再各自'
+          '显示成一条记录。',
+          style: MedType.body.copyWith(color: c.ink2),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('分开保存'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: c.sealInk,
+              foregroundColor: c.surface,
+            ),
+            child: const Text('合并成一份'),
+          ),
+        ],
+      );
+    },
+  );
+  if (confirmed != true || !context.mounted) return null;
+
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final outcome = await mergePhotosIntoDocument(
+      name: '合并文档.pdf',
+      documentIds: Int64List.fromList(imageDocIds),
+    );
+    return outcome.documentId;
+  } catch (e) {
+    debugPrint('[import] 合并失败: $e');
+    messenger.showSnackBar(
+      appSnackBar(content: Text('合并失败,原来的 ${imageDocIds.length} 份都还在:$e')),
+    );
+    return null;
+  }
+}
+
+/// 该不该在导入完成后主动问「是否合并成一份」——纯判断,方便单测。至少 2 张
+/// 这次一起入库的照片才问;1 张没有「合并」这回事,0 张（全失败/全部非图片）
+/// 更谈不上。
+bool shouldOfferPhotoMerge(int imageDocCount) => imageDocCount >= 2;
 
 /// 按页渲染 + OCR 的注入点(测试替身用)。生产实现是 [_ocrScannedPdfPages]。
 typedef PdfPageOcr =

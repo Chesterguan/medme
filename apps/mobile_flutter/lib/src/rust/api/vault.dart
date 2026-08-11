@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `format_plausibility_violation`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
+// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `format_plausibility_violation`, `home_monitoring_demo_entries`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -70,6 +70,28 @@ Future<Uint8List> renderDicomPng({required PlatformInt64 id}) =>
 /// 前端删完 `bumpVaultRevision` 刷新即可。
 Future<void> deleteDocument({required PlatformInt64 documentId}) =>
     RustLib.instance.api.crateApiVaultDeleteDocument(documentId: documentId);
+
+/// 把同一批导入的多张单页照片合成一份多页 PDF 文档(「拍了三页化验单却变成三条
+/// 独立记录」的修复——见 `pipeline::merge_documents_into_pdf` 的文档注释,那里
+/// 写清楚了为什么这个功能能做到零事件类型/零 schema 改动)。
+///
+/// `document_ids` 至少 2 个,且必须都是当前会话里刚建好的单页图片文档
+/// (`page_count == 1`,来源文件 mime 为 png/jpeg/tiff——校验见
+/// `merge_documents_into_pdf`,不满足直接报错,错误文案可以原样透给用户)。
+/// 合成失败(如某张解码不出)时原文档一份不动;合成成功后才逐个墓碑掉原文档
+/// (原始字节仍在 CAS——`delete_document` 同一套 Raw Never Dies 语义)。
+///
+/// 未跟随 `mod.rs` 顶部「新增模块名排在字典序末尾,不挪动 wire 序号」那条纪律
+/// (那条纪律专为保护 `recognize_image_pp`——iOS PP-OCR 路径——的 wire 序号不被
+/// 挪动而设,见 `mod.rs` 的注释)。这里新增的是 `vault.rs` 自己模块内的一个全新
+/// 读写函数,不在那条纪律的保护范围内,直白的函数名比追加位置更值得优先。
+Future<MergeOutcomeDto> mergePhotosIntoDocument({
+  required String name,
+  required Int64List documentIds,
+}) => RustLib.instance.api.crateApiVaultMergePhotosIntoDocument(
+  name: name,
+  documentIds: documentIds,
+);
 
 /// 患者档案头(姓名/性别/年龄/记录数)。与桌面/Tauri 移动端同构。
 Future<PatientProfileDto> patientProfile() =>
@@ -323,9 +345,17 @@ Future<ExportResultDto> exportTimelineHtml({
 /// 二进制(`DEMO_DATA`),运行时落一份到 `data_dir` 下的临时目录再喂给
 /// `pipeline::ingest`(它按路径操作,不接受内存字节),用完即删。
 ///
+/// 文件批量导入之后,额外把 [`home_monitoring_demo_entries`] 里的家庭自测读数
+/// 写进同一个保险箱——那份 PDF(`2026-04-30_血压记录_家庭监测.pdf`)本身已经在
+/// 上面的文件循环里照常按文档路径入库(硬不变量「原件永远可达」,不换不删),
+/// 这里是**同一批数据**额外再走一遍「记录」入口([`add_self_measurement_to`],
+/// 与用户手动录入完全同一条写入路径),让示例数据里第一次有真实的自测记录可看
+/// (载入示例前,「记录」这条入库路径在示例数据里一条都没有)。
+///
 /// `progress` 每处理完一份(不论成败)推一条 [DemoLoadProgressDto]——华为 Mate 9
 /// 真机实测 22 份 11 秒零反馈,用户以为没点上又点了第二次。这颗 sink 让设置屏能画
-/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。
+/// 「正在载入 N/22」而不是一个不知道在不在跑的忙态。`total` 把自测读数也算进去,
+/// 不然文件都处理完之后进度条又莫名其妙继续跳。
 ///
 /// **本函数恒返回 `Ok(())`,成败一律走 `progress` 的 `error` 字段**——见
 /// [DemoLoadProgressDto] 顶部文档:带 `StreamSink` 参数的 FRB 函数,Dart 侧没有

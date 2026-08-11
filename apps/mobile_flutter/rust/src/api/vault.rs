@@ -337,6 +337,52 @@ pub fn delete_document(document_id: i64) -> anyhow::Result<()> {
     })
 }
 
+/// 把同一批导入的多张单页照片合成一份多页 PDF 文档(「拍了三页化验单却变成三条
+/// 独立记录」的修复——见 `pipeline::merge_documents_into_pdf` 的文档注释,那里
+/// 写清楚了为什么这个功能能做到零事件类型/零 schema 改动)。
+///
+/// `document_ids` 至少 2 个,且必须都是当前会话里刚建好的单页图片文档
+/// (`page_count == 1`,来源文件 mime 为 png/jpeg/tiff——校验见
+/// `merge_documents_into_pdf`,不满足直接报错,错误文案可以原样透给用户)。
+/// 合成失败(如某张解码不出)时原文档一份不动;合成成功后才逐个墓碑掉原文档
+/// (原始字节仍在 CAS——`delete_document` 同一套 Raw Never Dies 语义)。
+///
+/// 未跟随 `mod.rs` 顶部「新增模块名排在字典序末尾,不挪动 wire 序号」那条纪律
+/// (那条纪律专为保护 `recognize_image_pp`——iOS PP-OCR 路径——的 wire 序号不被
+/// 挪动而设,见 `mod.rs` 的注释)。这里新增的是 `vault.rs` 自己模块内的一个全新
+/// 读写函数,不在那条纪律的保护范围内,直白的函数名比追加位置更值得优先。
+pub fn merge_photos_into_document(
+    name: String,
+    document_ids: Vec<i64>,
+) -> anyhow::Result<MergeOutcomeDto> {
+    let base = Path::new(&name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+        .unwrap_or("merged.pdf");
+    let safe_name = if Path::new(base).extension().is_some() {
+        base.to_string()
+    } else {
+        format!("{base}.pdf")
+    };
+    with_state(|state| {
+        let v = &state.vault;
+        let outcome = pipeline::merge_documents_into_pdf(v, &safe_name, &document_ids)?;
+        let doc = v
+            .document_by_source_file_id(outcome.source_file_id)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .ok_or_else(|| anyhow::anyhow!("合并后未能找到新文档"))?;
+        v.rebuild_encounters()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(MergeOutcomeDto {
+            document_id: doc.id,
+            page_count: doc.page_count,
+            pages_without_text: outcome.pages_without_text,
+            merged_count: document_ids.len() as i64,
+        })
+    })
+}
+
 /// 患者档案头(姓名/性别/年龄/记录数)。与桌面/Tauri 移动端同构。
 pub fn patient_profile() -> anyhow::Result<PatientProfileDto> {
     with_state(|state| {
