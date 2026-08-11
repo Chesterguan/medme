@@ -73,6 +73,31 @@ android {
             // 然后花时间去查一个不存在的回归。
             manifestPlaceholders["appLabel"] = "医我 dev"
         }
+        // Flutter 自己加的 `profile` buildType —— **它此前不带 `.dev` 后缀,是个
+        // 会伤到真实数据的陷阱。**
+        //
+        // profile 构建存在的意义就是「跑真实性能」:cargokit 把它映射到 Rust 的
+        // **release** profile(见 `cargokit/build_tool/lib/src/builder.dart`:
+        // `BuildConfiguration.profile => 'release'`),而 debug 构建的 Rust 是
+        // 未优化的 —— PP-OCRv5 这种神经网络推理在 debug 下慢几十到几百倍。
+        // 所以任何「手机上到底多快」的问题,都只能用 profile/release 包回答。
+        //
+        // 但它此前的 applicationId 是 `com.medme.mobile`,与**正式版同名**:想在
+        // 真机上量一次性能,就得把用户正在用的、装着真实病历的那个 app 覆盖掉。
+        // 而这个 app 本地优先、没有云端副本 —— 签名不一致装不上,签名一致则是拿
+        // 一个未发布的分支构建替换掉人家在用的版本。两条路都不该走。
+        //
+        // 加上同一个后缀,`profile` 与 debug 共用 `com.medme.mobile.dev`,与正式版
+        // 永远并存互不覆盖;性能测量随时可做,不必拿真实病历冒险。
+        //
+        // 写法注意:`profile` 是 Flutter 的 gradle 插件**动态注册**的 buildType,
+        // Kotlin DSL 里没有它的静态访问器,直接写 `profile { ... }` 编不过
+        // (`Expression 'profile' cannot be invoked as a function`)。按名字取。
+        getByName("profile") {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-profile"
+            manifestPlaceholders["appLabel"] = "医我 dev"
+        }
         release {
             // 有正式 keystore 就用它,否则退回 debug 签名 —— 本地开发不必持有正式
             // 私钥也能出 release 包。**安卓 App Links 只认正式签名的指纹**
