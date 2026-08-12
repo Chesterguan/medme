@@ -38,6 +38,12 @@ name = "layout_eval"
 # 直接跳过编译这个 example,而不是报「找不到该函数」的编译错误。
 required-features = ["engine", "testing"]
 
+[[example]]
+name = "arena"
+required-features = ["engine", "testing"]
+
+
+
 [features]
 # `engine` pulls in `oar-ocr` (PP-OCRv5 via ONNX Runtime / `ort`), which
 # statically bundles the ONNX Runtime library -- hundreds of MB unstripped,
