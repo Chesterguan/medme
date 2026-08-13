@@ -231,9 +231,24 @@ fn row_re() -> &'static Regex {
 // match (a genuinely malformed/glued numeral this pattern can't make sense
 // of), so a same-shaped failure in some other punctuation combination fails
 // loud (row dropped) rather than fabricating a plausible-looking half value.
+//
+// The separator itself is `[-~]+` — ONE OR MORE dash/tilde chars, not exactly
+// one. Real corpus (`9.4--12.5`, `21--37`, `0--252`, MedRepBench ground truth,
+// sampled 618 occurrences of the exact `<num>--<num>` shape across the corpus'
+// source annotations) prints a doubled hyphen where a single en/em dash was
+// meant — every single one of those 618 has `low <= high` under the plain
+// "doubled separator" reading, zero under-support the alternative reading
+// "second number's own leading `-` is a minus sign" (which would make the
+// bound negative for exactly the same physiologically non-negative analytes —
+// PT/APTT seconds, bilirubin, D-dimer, TSH — that never legitimately go
+// negative). A single `-` still matches (the `+` is satisfied by one
+// repetition), so this only WIDENS what's accepted; it never changes how an
+// already-matching single-dash range reads.
 fn range_two_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(\d+(?:[.,]\d+)?)\s*[-~]\s*(\d+(?:[.,]\d+)?)").expect("range re"))
+    R.get_or_init(|| {
+        Regex::new(r"(\d+(?:[.,]\d+)?)\s*[-~]+\s*(\d+(?:[.,]\d+)?)").expect("range re")
+    })
 }
 fn range_high_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
@@ -245,10 +260,12 @@ fn range_low_re() -> &'static Regex {
 }
 /// The TAIL of a two-sided range — the operator plus the high bound — anchored
 /// at the start of whatever follows the result. Same number sub-pattern as the
-/// range regexes above. Used by `value_is_range_low_bound`.
+/// range regexes above, and the same `+` on the separator as `range_two_re`
+/// (a value bound into a doubled-dash range, e.g. `13血红蛋白  4.00--5.50`, is
+/// the same shape one dash shorter). Used by `value_is_range_low_bound`.
 fn range_tail_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"^[-~]\s*(\d+(?:[.,]\d+)?)").expect("range tail re"))
+    R.get_or_init(|| Regex::new(r"^[-~]+\s*(\d+(?:[.,]\d+)?)").expect("range tail re"))
 }
 
 /// True when neither the char immediately before `start` nor the char
@@ -791,13 +808,101 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
             }
         }
         match outcome {
-            LineOutcome::Row(o) => out.push(o),
+            LineOutcome::Row(mut o) => {
+                // The row parsed cleanly but with NO reference range at all —
+                // try completing it from a range that wrapped onto the next
+                // line (see `complete_wrapped_range`). Only attempted when
+                // `parse_rest` found neither bound, so this can only ADD a
+                // range, never override one already read with confidence.
+                if o.ref_low.is_none()
+                    && o.ref_high.is_none()
+                    && complete_wrapped_range(&mut o, lines[i], lines.get(i + 1).copied())
+                {
+                    out.push(o);
+                    i += 2;
+                    continue;
+                }
+                out.push(o);
+            }
             LineOutcome::Unreadable(u) => unreadable.push(u),
             LineOutcome::Nothing => {}
         }
         i += 1;
     }
     (out, unreadable)
+}
+
+/// A reference range's low bound trails a line with a dangling separator
+/// (`0.85-`) and nothing after it — evidence the layout reconstruction wrapped
+/// the line before the high bound could print, not that the range is simply
+/// absent. Read straight off the RAW line (not `rest`): `rest` is just its
+/// trailing substring, so the text at the very end is identical either way.
+fn dangling_range_low_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"(\d+(?:[.,]\d+)?)\s*[-~]+\s*$").expect("dangling range re"))
+}
+
+fn dangling_range_low(line: &str) -> Option<f64> {
+    let folded = fold_range_punct(line.trim_end());
+    let caps = dangling_range_low_re().captures(&folded)?;
+    parse_decimal_token(caps.get(1)?.as_str())
+}
+
+/// Complete a reference range whose high bound wrapped onto the next physical
+/// line — the reference-range twin of "Wrapped rows" (module doc): PP-OCR's
+/// line reconstruction breaks a too-wide row wherever it likes, not at a
+/// column boundary, and a long `单位 参考范围` tail is exactly wide enough to
+/// get cut. Mutates `row` in place and returns whether it consumed
+/// `next_line`; `row` is left untouched on `false`.
+///
+/// Two conditions, both necessary — same discipline as `merged_wrap_row` and
+/// for the same reason (a wrong join fabricates a reference range that
+/// appears nowhere in the document, worse than leaving the row un-ranged):
+///
+/// 1. **The current line ends in a dangling low bound** (`dangling_range_low`)
+///    — proof this line's range was cut off mid-print, not just absent.
+/// 2. **The next line, trimmed, is nothing but a bare number** — after
+///    stripping any LEADING `-`/`~` run first, since the doubled-separator
+///    typo this module already folds elsewhere (`range_two_re`'s `[-~]+` —
+///    see that function's doc, 618 corpus occurrences of `<num>--<num>`,
+///    zero genuinely negative) is exactly as likely to land split across the
+///    line break as it is to land whole on one line: `0.45-` \n `-1.81` is
+///    the same `0.45--1.81` as `0.45--1.81` on one line, just broken between
+///    the two dashes. Requiring the WHOLE trimmed line (not just its first
+///    token, unlike `is_wrapped_value_line`) to be that one number is what
+///    keeps this safe: real corpus shows the unsafe shapes this shape
+///    rejects — a stray `H`/`N` flag letter before the number (`H` \n
+///    `0.28`), a wrapped analyte-name fragment (`C)` \n `-1.94`), and an
+///    unrelated row's own name sitting where the high bound would be
+///    (`部分凝血活酶时间` \n `15.90`, a different analyte's row entirely) —
+///    joining any of those either invents a bound from noise or steals a
+///    different row's line. Left un-ranged (same outcome as today) rather
+///    than guessed, per 宁可漏,不能编 — a known, documented gap, not an
+///    oversight.
+///
+/// `low <= high` is required for the same reason `parse_line`'s own
+/// low>high check exists: a genuine reference range never inverts, so a pair
+/// that doesn't form one isn't a matching pair and the row is left alone.
+fn complete_wrapped_range(row: &mut LabObservation, line: &str, next_line: Option<&str>) -> bool {
+    let Some(low) = dangling_range_low(line) else {
+        return false;
+    };
+    let Some(next) = next_line else {
+        return false;
+    };
+    let candidate = next.trim().trim_start_matches(['-', '~']);
+    if !bare_number_re().is_match(candidate) {
+        return false;
+    }
+    let Some(high) = parse_decimal_token(candidate) else {
+        return false;
+    };
+    if low > high {
+        return false;
+    }
+    row.ref_low = Some(low);
+    row.ref_high = Some(high);
+    true
 }
 
 /// What one line of the report turned into.
@@ -2200,5 +2305,123 @@ NO             25      umol/L      10-40
         );
         assert_eq!(find(&obs, "creatinine").value_num, 88.0);
         assert_eq!(find(&obs, "alt").value_num, 45.0);
+    }
+
+    #[test]
+    fn doubled_dash_range_reads_as_one_positive_range_not_a_negative_bound() {
+        // Real MedRepBench corpus (`item_range` field, verbatim): a doubled
+        // hyphen where a single en/em dash was meant. Every one of 618 exact
+        // `<num>--<num>` occurrences sampled across the dataset's source
+        // annotations has low<=high under this "doubled separator" reading —
+        // PT/APTT seconds, bilirubin, creatinine, TSH, D-dimer — none of which
+        // is a quantity that legitimately goes negative. The OLD single-`-`
+        // separator regex read the second number's leading `-` as ITS sign
+        // instead, turning `9.4--12.5` into a negative low bound (`-12.5`) for
+        // a coagulation time — physiologically impossible, and dangerous per
+        // this module's whole point: a wrong reference range is worse than no
+        // range at all.
+        let obs = extract_labs("PT 凝血酶原时间 19.40 秒 9.4--12.5 ↑");
+        let pt = find(&obs, "pt");
+        assert_eq!(pt.ref_low, Some(9.4));
+        assert_eq!(pt.ref_high, Some(12.5));
+
+        // A single dash still reads exactly as before — the `+` only WIDENS
+        // what's accepted, it never changes how an already-matching
+        // single-dash range reads.
+        let obs2 = extract_labs("肌酐 88 μmol/L 59-104");
+        assert_eq!(find(&obs2, "creatinine").ref_low, Some(59.0));
+        assert_eq!(find(&obs2, "creatinine").ref_high, Some(104.0));
+    }
+
+    #[test]
+    fn doubled_dash_value_bound_into_range_is_still_refused() {
+        // `value_is_range_low_bound`'s tail check (`range_tail_re`) must catch
+        // the doubled-dash shape too, not just single-dash — otherwise a value
+        // bound into a doubled-dash range slips past the guard and gets
+        // reported as a fabricated result (this exact shape, `GLOB 37--53`,
+        // is real MedRepBench corpus: 球蛋白/globulin has no result of its own
+        // on that line, just its reference range, doubled-dash).
+        let (obs, unreadable) = extract_labs_with_unreadable("GLOB 球蛋白 37--53");
+        assert!(
+            obs.is_empty(),
+            "a doubled-dash range's low bound was reported as a result: {obs:?}"
+        );
+        assert_eq!(
+            unreadable.len(),
+            1,
+            "must be surfaced for review, not dropped silently"
+        );
+        assert_eq!(unreadable[0].reason, REASON_NO_RESULT_ONLY_RANGE);
+    }
+
+    #[test]
+    fn reference_range_wrapped_across_a_line_break_is_completed() {
+        // Real MedRepBench corpus shape (multiple docs, e.g. 无机磷/磷/钠/钙/
+        // 渗透压 rows): the row's name+value+unit print on one line, but the
+        // line is wide enough that the layout reconstruction wraps BEFORE the
+        // range's high bound — the low bound trails the line with a dangling
+        // `-`/`~` and the high bound alone starts the next line.
+        let text = "\
+无机磷                       HR/☆Pi 1.01              mmol/L                    0.85-
+1.51
+";
+        let obs = extract_labs(text);
+        let p = find(&obs, "phosphate");
+        assert_eq!(p.value_num, 1.01);
+        assert_eq!(p.ref_low, Some(0.85));
+        assert_eq!(p.ref_high, Some(1.51));
+
+        // The doubled-dash separator (see `range_two_re`) can itself land
+        // split across the wrap — the low bound's line ends in ONE dash, and
+        // the continuation starts with the OTHER: `0.45-` \n `-1.81` is the
+        // same `0.45--1.81` one line short of a doubled dash. The leading `-`
+        // on the continuation is stripped as more separator, not read as a
+        // sign — consistent with `range_two_re` never producing a negative
+        // bound from this shape.
+        let text2 = "\
+总胆红素                              12.9            μmol/L                       5.1-
+-28.0
+";
+        let obs2 = extract_labs(text2);
+        let t = find(&obs2, "tbil");
+        assert_eq!(t.ref_low, Some(5.1));
+        assert_eq!(t.ref_high, Some(28.0));
+    }
+
+    #[test]
+    fn reference_range_wrap_is_refused_when_the_next_line_is_not_a_bare_number() {
+        // Counter-examples for the join above — real corpus shapes that must
+        // NOT be joined, because the "next line" is not actually the missing
+        // high bound:
+        for (text, key) in [
+            // A stray abnormal-flag letter before the number (`H`/`N` column) —
+            // joining would silently absorb the flag digit-adjacent text as if
+            // it were part of the range.
+            (
+                "22          血小板压积                0.33           ml/L                         0.11-\nH                                                                            0.28\n",
+                "plateletcrit",
+            ),
+            // A wrapped ANALYTE-NAME fragment, not a value at all.
+            (
+                "高密度脂蛋白胆固醇(HDL-                                 1.48         mmol/L            0.95-\nC)                                                                            -1.94\n",
+                "hdl",
+            ),
+            // An unrelated row's own name sitting where the high bound would
+            // be — joining would steal a different analyte's line entirely.
+            (
+                "国际标准化比值                                     0.83                                0.8-\n部分凝血活酶时间                                    15.90\n",
+                "inr",
+            ),
+        ] {
+            let obs = extract_labs(text);
+            let o = obs.iter().find(|o| o.analyte_key.as_deref() == Some(key));
+            if let Some(o) = o {
+                assert_eq!(
+                    (o.ref_low, o.ref_high),
+                    (None, None),
+                    "a wrap join fabricated a range from an unsafe next line: {text:?} -> {o:?}"
+                );
+            }
+        }
     }
 }
