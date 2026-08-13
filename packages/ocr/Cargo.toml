@@ -41,6 +41,10 @@ name = "layout_eval"
 required-features = ["engine", "testing"]
 
 [[example]]
+name = "medrep_attrib"
+required-features = ["engine", "testing"]
+
+[[example]]
 name = "medrep"
 required-features = ["engine", "testing"]
 
