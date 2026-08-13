@@ -44,6 +44,15 @@ const ROOT: &str = "/private/tmp/claude-501/-Volumes-extraSupply-Projects-openme
 
 const VALUE_EPS: f64 = 0.01;
 
+/// 产出目录,`--out <名字>` 指定,默认 `out`。
+///
+/// **并行改进实验必须各用各的目录。** 多条改进线同时跑 `--produce` 时,若共用
+/// 一个 `out/`,后跑的会覆盖先跑的,两边的 `--score` 就都在读对方的产出 ——
+/// 数字看着有变化,其实是串了。每条线用 `--out out_<线名>`,互不相干。
+fn out_root(name: &str) -> PathBuf {
+    PathBuf::from(ROOT).join(name)
+}
+
 /// 真值里的一条项目(已由 `make_gt.py` 规范化,参考区间的 18 种写法在那里统一解析)。
 #[derive(Debug, Clone)]
 struct GtItem {
@@ -108,7 +117,7 @@ struct Tally {
     ok_range: (usize, usize),
 }
 
-fn produce(models: &Path, limit: Option<usize>) -> Result<()> {
+fn produce(models: &Path, limit: Option<usize>, out: &str) -> Result<()> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mob = manifest.join("../../apps/mobile_flutter/rust/ocr-models");
     // 与 arena.rs 同一套配置(那三个坑的结论:17cls 版面模型、不开表格分类器、
@@ -196,7 +205,7 @@ fn produce(models: &Path, limit: Option<usize>) -> Result<()> {
             ("arm2_geo", &geo),
             ("arm3_struct", &structured),
         ] {
-            let d = PathBuf::from(ROOT).join("out").join(dir);
+            let d = out_root(out).join(dir);
             std::fs::create_dir_all(&d)?;
             std::fs::write(d.join(format!("{doc}.txt")), text)?;
         }
@@ -273,9 +282,9 @@ fn html_tables_to_rows(md: &str) -> String {
     out
 }
 
-fn score() -> Result<()> {
+fn score(out: &str) -> Result<()> {
     let gt = load_gt()?;
-    let out_root = PathBuf::from(ROOT).join("out");
+    let out_root = out_root(out);
     let mut arms: Vec<(String, PathBuf)> = Vec::new();
     for (label, dir) in [
         ("① 裸拼接", "arm1_bare"),
@@ -299,7 +308,11 @@ fn score() -> Result<()> {
             arms.push((format!("④ LLM {n}"), m));
         }
     }
-    anyhow::ensure!(!arms.is_empty(), "out/ 下没有任何产出目录,先跑 --produce");
+    anyhow::ensure!(
+        !arms.is_empty(),
+        "{} 下没有任何产出目录,先跑 --produce",
+        out_root.display()
+    );
 
     let mut tally: Vec<Tally> = vec![Tally::default(); arms.len()];
     // 词典未覆盖的项目名 → 出现次数,报告末尾给最高频的一批(可据此补词表)。
@@ -397,7 +410,10 @@ fn score() -> Result<()> {
             h as f64 / d as f64 * 100.0
         }
     };
-    println!("# MedRepBench baseline —— {counted_docs} 份真实化验单");
+    println!(
+        "# MedRepBench —— {counted_docs} 份真实化验单(产出目录 {})",
+        out_root.display()
+    );
     println!();
     println!("## 三条指标(分母 = 可比条目:词典认得 + 数值是纯数字)");
     println!();
@@ -522,13 +538,14 @@ fn main() -> Result<()> {
             .position(|a| a == k)
             .and_then(|i| args.get(i + 1).cloned())
     };
+    let out = arg("--out").unwrap_or_else(|| "out".to_string());
     if args.iter().any(|a| a == "--produce") {
         let models = arg("--models").context("--produce 需要 --models <目录>")?;
         let limit = arg("--limit").and_then(|s| s.parse().ok());
-        produce(Path::new(&models), limit)?;
+        produce(Path::new(&models), limit, &out)?;
     }
     if args.iter().any(|a| a == "--score") {
-        score()?;
+        score(&out)?;
     }
     Ok(())
 }
