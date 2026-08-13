@@ -670,10 +670,6 @@ const ORIENT_TALL_RATIO: f32 = 1.3;
 /// sideways (rotated 90°/270°) and try to upright it.
 #[cfg(feature = "engine")]
 const ORIENT_TALL_THRESHOLD: f32 = 0.5;
-/// Minimum in-plane skew (degrees) worth a deskew + re-OCR pass. Below this the
-/// tilt doesn't meaningfully hurt row grouping and isn't worth the resample.
-#[cfg(feature = "engine")]
-const ORIENT_MIN_DESKEW_DEG: f32 = 1.0;
 
 /// Fraction of non-empty lines whose detection box is taller than wide (by
 /// [`ORIENT_TALL_RATIO`]). Near 0 for an upright document (text lines are wide and
@@ -708,6 +704,51 @@ fn mean_line_confidence(lines: &[OcrLine]) -> f32 {
         .filter_map(|l| l.confidence)
         .collect();
     mean_confidence(&confs)
+}
+
+/// How tilted `lines`' own detected-box geometry is, in the same terms
+/// [`rebuild_layout_text`] judges it by: `tilt_drift` is directly comparable
+/// to `LAYOUT_ROW_Y_TOLERANCE_RATIO * median_height`, the bar
+/// `trust_cell_content` uses there. `correction_deg` is the angle
+/// [`deskew`] would need to level it — see
+/// `ocr_box_tilt_correction_deg_cancels_a_real_image_rotation` for why this sign
+/// is right, verified against the actual [`rotate_about_center`] this module
+/// wraps, not just derived on paper.
+///
+/// `None` when there are too few non-empty lines to fit a slope from (same
+/// floor [`find_dual_column_band`] requires for any pattern to be trusted)
+/// or the content span is degenerate.
+#[cfg(feature = "engine")]
+fn measure_ocr_box_tilt(lines: &[OcrLine]) -> Option<(f32, f32, f32)> {
+    let owned: Vec<LayoutLine> = lines
+        .iter()
+        .filter(|l| !l.text.trim().is_empty())
+        .map(|l| LayoutLine {
+            text: String::new(), // geometry only -- content plays no part in the fit
+            left: l.left,
+            top: l.top,
+            right: l.right,
+            height: l.bottom - l.top,
+        })
+        .collect();
+    if owned.len() < DUAL_COLUMN_MIN_SUPPORT_ROWS {
+        return None;
+    }
+    let refs: Vec<&LayoutLine> = owned.iter().collect();
+    let content_left = refs.iter().map(|l| l.left).fold(f32::INFINITY, f32::min);
+    let content_right = refs
+        .iter()
+        .map(|l| l.right)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let content_span = content_right - content_left;
+    let median_height = median_line_height(&refs);
+    if content_span <= 0.0 || median_height <= 0.0 {
+        return None;
+    }
+    let slope = estimate_tilt(&refs, median_height);
+    let tilt_drift = slope.abs() * content_span;
+    let correction_deg = (-slope).atan().to_degrees();
+    Some((tilt_drift, median_height, correction_deg))
 }
 
 /// Decode + preprocess, then recognize with automatic **page-orientation
@@ -754,23 +795,42 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
     }
 
     // 2) Deskew (in-plane tilt). A tilted photo leaves text rows slanted even once
-    //    upright; the detector then merges/mis-groups cells (the "mashed, hard to
-    //    read" layout). If the chosen upright image has a meaningful in-plane skew,
-    //    rotate it flat (reusing the projection-profile [`estimate_skew_deg`] +
-    //    [`deskew`] already used in [`preprocess`]) and re-OCR so rows come back
-    //    horizontal. `preprocess` already deskewed upright inputs, so this only fires
-    //    for pages that were *rotated first* (their skew survives the rotation).
-    //    **Failure-safe**: accept the deskewed result only if it kept ~all its lines
-    //    and didn't make the page look more sideways — otherwise keep the pre-deskew
-    //    result. A bad warp is worse than none.
-    let gray = best_img.to_luma8();
-    if let Some(angle) = estimate_skew_deg(&gray) {
-        if angle.is_finite() && angle.abs() >= ORIENT_MIN_DESKEW_DEG {
-            let deskewed = DynamicImage::ImageLuma8(deskew(&gray, angle));
+    //    upright; row-grouping then either merges cells from neighbouring records
+    //    into one visual row, or — once the tilt is large enough to trip
+    //    `rebuild_layout_text`'s own `trust_cell_content` guard — degrades to
+    //    dropping values rather than risk pairing them wrong. Either way the fix
+    //    belongs here, before that guard ever has to fire: measure the tilt in the
+    //    OCR engine's own detected boxes ([`measure_ocr_box_tilt`]) and, if
+    //    row-grouping would no longer trust this page's geometry, rotate the image
+    //    by the fitted correction and re-OCR so rows come back level.
+    //
+    //    This deliberately does **not** reuse the pixel-intensity projection
+    //    profile ([`estimate_skew_deg`], still used by [`preprocess`] for the
+    //    same purpose) for this decision. On real photographed lab-report tables
+    //    that estimator is unreliable — measured on 40 real MedRepBench photos
+    //    (`improve/skew`'s evidence), it returned exactly 0.0° (claiming a level
+    //    page) on documents whose detected boxes show tilt drift over 200px, and
+    //    on others it saturated at its ±10° search ceiling — a sign it never
+    //    converged, not that the true skew is 10° — sometimes on *both* the
+    //    initial estimate and the re-estimate after applying its own correction.
+    //    It gets dragged off by content that isn't a text baseline (table grid
+    //    lines, stamps, fold creases), which real lab photos are full of.
+    //    [`estimate_tilt`] instead fits the OCR engine's own detected text-line
+    //    boxes, which by construction only exist where the engine already found
+    //    text — immune to the non-text content that misleads the pixel profile.
+    //
+    //    **Failure-safe**: accept the deskewed result only if it kept ~all its
+    //    lines *and* measurably reduced the tilt — otherwise keep the pre-deskew
+    //    result. A bad correction (or one that just trades one tilt for another)
+    //    is worse than none.
+    if let Some((drift, median_height, correction_deg)) = measure_ocr_box_tilt(&best_lines) {
+        if drift > LAYOUT_ROW_Y_TOLERANCE_RATIO * median_height {
+            let gray = best_img.to_luma8();
+            let deskewed = DynamicImage::ImageLuma8(deskew(&gray, correction_deg));
             if let Ok(dl) = predict_lines_core(&deskewed) {
                 let kept_lines = dl.len() * 10 >= best_lines.len() * 8;
-                let not_worse = tall_fraction(&dl) <= tall_fraction(&best_lines) + 0.05;
-                if kept_lines && not_worse {
+                let improved = measure_ocr_box_tilt(&dl).is_none_or(|(d, _, _)| d < drift);
+                if kept_lines && improved {
                     return Ok(dl);
                 }
             }
@@ -2542,6 +2602,112 @@ mod tests {
         assert!(
             residual.abs() <= 1.5,
             "expected small residual skew after deskew, got {residual} (estimated correction was {estimated})"
+        );
+    }
+
+    /// Validates the sign convention `measure_ocr_box_tilt` relies on
+    /// (`correction_deg = (-slope).atan().to_degrees()`) against the actual
+    /// [`rotate_about_center`] this module's [`deskew`] wraps -- not just the
+    /// derivation from its "rotates clockwise" doc comment. Marks four points
+    /// on one horizontal "text line", physically rotates the image by a known
+    /// angle, relocates the marks and fits their slope (the same quantity
+    /// [`estimate_tilt`] fits from real OCR box tops), and checks two things:
+    /// (a) that fitted slope matches `tan(applied angle)` -- confirming
+    /// `estimate_tilt`'s "top = intercept + slope*x" model actually describes
+    /// what a real clockwise image rotation produces, not just the synthetic
+    /// coordinates `estimate_tilt_recovers_known_page_rotation` constructs by
+    /// hand -- and (b) that rotating a second time by the derived
+    /// `correction_deg` brings the marks back level. Getting this sign wrong
+    /// would make `predict_lines`' step-2 redeskew double the tilt instead of
+    /// cancelling it, silently, on every real photo it fires on.
+    #[test]
+    fn ocr_box_tilt_correction_deg_cancels_a_real_image_rotation() {
+        let (w, h) = (400u32, 400u32);
+        let mut img = GrayImage::from_pixel(w, h, Luma([255]));
+        let xs = [80.0f32, 160.0, 240.0, 320.0];
+        let y0 = 200i64;
+        // 5x5 filled squares, not single pixels -- Nearest-neighbour resampling
+        // under a small rotation can step over (never land exactly on) a
+        // 1px mark, losing it entirely; a few-pixel square always has some
+        // pixel survive the resample.
+        for &x in &xs {
+            for dx in -2i64..=2 {
+                for dy in -2i64..=2 {
+                    img.put_pixel((x as i64 + dx) as u32, (y0 + dy) as u32, Luma([0]));
+                }
+            }
+        }
+
+        // Centroid (mean y of dark pixels in the column) of the mark nearest
+        // `x`, robust to the square's exact footprint after resampling.
+        let locate = |im: &GrayImage, x: u32| -> Option<f32> {
+            let lo = x.saturating_sub(3);
+            let hi = (x + 3).min(im.width() - 1);
+            let mut sum = 0f64;
+            let mut n = 0u32;
+            for xx in lo..=hi {
+                for y in 0..im.height() {
+                    if im.get_pixel(xx, y).0[0] < 128 {
+                        sum += y as f64;
+                        n += 1;
+                    }
+                }
+            }
+            (n > 0).then(|| (sum / n as f64) as f32)
+        };
+        // Least-squares dy/dx over the relocated marks -- exactly what
+        // `estimate_tilt` fits from OCR box tops, just computed directly here
+        // so this test doesn't depend on the detection-box grouping machinery.
+        let fit_slope = |pts: &[(f32, f32)]| -> f32 {
+            let mean_x = pts.iter().map(|p| p.0).sum::<f32>() / pts.len() as f32;
+            let mean_y = pts.iter().map(|p| p.1).sum::<f32>() / pts.len() as f32;
+            let num: f32 = pts.iter().map(|&(x, y)| (x - mean_x) * (y - mean_y)).sum();
+            let den: f32 = pts.iter().map(|&(x, _)| (x - mean_x).powi(2)).sum();
+            num / den
+        };
+
+        let theta_deg = 6.0f32;
+        let rotated = rotate_about_center(
+            &img,
+            theta_deg.to_radians(),
+            Interpolation::Nearest,
+            Border::Constant(Luma([255])),
+        );
+        let pts: Vec<(f32, f32)> = xs
+            .iter()
+            .filter_map(|&x| locate(&rotated, x as u32).map(|y| (x, y)))
+            .collect();
+        assert!(
+            pts.len() >= 3,
+            "expected to relocate the rotated marks, got {pts:?}"
+        );
+        let slope = fit_slope(&pts);
+        assert!(
+            (slope - theta_deg.to_radians().tan()).abs() < 0.03,
+            "expected slope ~= tan({theta_deg}deg) = {}, got {slope}",
+            theta_deg.to_radians().tan()
+        );
+
+        let correction_deg = (-slope).atan().to_degrees();
+        let releveled = rotate_about_center(
+            &rotated,
+            correction_deg.to_radians(),
+            Interpolation::Nearest,
+            Border::Constant(Luma([255])),
+        );
+        let pts2: Vec<(f32, f32)> = xs
+            .iter()
+            .filter_map(|&x| locate(&releveled, x as u32).map(|y| (x, y)))
+            .collect();
+        assert!(
+            pts2.len() >= 3,
+            "expected to relocate the releveled marks, got {pts2:?}"
+        );
+        let residual_slope = fit_slope(&pts2);
+        assert!(
+            residual_slope.abs() < 0.03,
+            "expected releveled marks near-flat, got slope {residual_slope} \
+             (correction_deg={correction_deg})"
         );
     }
 
