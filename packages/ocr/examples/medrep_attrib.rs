@@ -51,6 +51,10 @@ fn main() -> Result<()> {
         .position(|a| a == "--out")
         .and_then(|i| args.get(i + 1).cloned())
         .unwrap_or_else(|| "out_BASELINE_FROZEN".to_string());
+    let per_doc = args
+        .iter()
+        .position(|a| a == "--per-doc")
+        .and_then(|i| args.get(i + 1).cloned());
 
     let text = std::fs::read_to_string(format!("{ROOT}/gt.tsv")).context("读 gt.tsv")?;
     let mut gt: BTreeMap<String, Vec<Item>> = BTreeMap::new();
@@ -79,11 +83,15 @@ fn main() -> Result<()> {
         let mut n_dict_ocr = 0usize; // 两者都满足 —— parser 的机会窗口
         let mut n_paired = 0usize;
         let mut n_paired_outside = 0usize; // 抽对了,但 OCR 子串判据说"不在"(判据过严的证据)
+                                           // 逐份计数,供外部把「这份图多少像素」与「这份图抽对几条」关联起来 ——
+                                           // 分辨率悬崖是否是 OCR 那层的主因,只能这样看,聚合数字看不出来。
+        let mut rows_per_doc: Vec<(String, usize, usize, usize, usize)> = Vec::new();
 
         for (doc, items) in &gt {
             let Ok(body) = std::fs::read_to_string(dir.join(format!("{doc}.txt"))) else {
                 continue;
             };
+            let (mut d_tot, mut d_dict, mut d_ocr, mut d_pair) = (0usize, 0usize, 0usize, 0usize);
             let hay = norm(&body);
             let rows = parser::extract_labs(&body);
             for it in items {
@@ -104,11 +112,14 @@ fn main() -> Result<()> {
                 let v_raw = norm(&format!("{}", it.value));
                 let value_in = hay.contains(&v_raw);
                 let ocr_ok = name_in && value_in;
+                d_tot += 1;
                 if dict.is_some() {
                     n_dict += 1;
+                    d_dict += 1;
                 }
                 if ocr_ok {
                     n_ocr += 1;
+                    d_ocr += 1;
                 }
                 if dict.is_some() && ocr_ok {
                     n_dict_ocr += 1;
@@ -120,12 +131,21 @@ fn main() -> Result<()> {
                     });
                     if paired {
                         n_paired += 1;
+                        d_pair += 1;
                         if !ocr_ok {
                             n_paired_outside += 1;
                         }
                     }
                 }
             }
+            rows_per_doc.push((doc.clone(), d_tot, d_dict, d_ocr, d_pair));
+        }
+        if let Some(csv) = &per_doc {
+            let mut w = String::from("doc,total,dict,ocr,paired\n");
+            for (doc, t, d, o, pr) in &rows_per_doc {
+                w.push_str(&format!("{doc},{t},{d},{o},{pr}\n"));
+            }
+            std::fs::write(format!("{csv}.{arm}.csv"), w)?;
         }
         let p = |x: usize| x as f64 / n_total as f64 * 100.0;
         println!("## {arm}(数值型真值条目 {n_total} 条)");
