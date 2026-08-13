@@ -4946,6 +4946,7 @@ dependencies = [
  "chrono",
  "core-model",
  "dicom",
+ "image",
  "lopdf 0.44.0",
  "ocr",
  "parser",

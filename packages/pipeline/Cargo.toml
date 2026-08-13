@@ -18,6 +18,17 @@ ocr = { path = "../ocr", default-features = false }
 dicom = { path = "../dicom", default-features = false }
 anyhow.workspace = true
 chrono.workspace = true
+# 多页照片合成一份 PDF(`merge::build_pdf_from_photos`,多张照片合并成一份病历的
+# 流派 A——见该模块文档注释)手搭 PDF 对象树用。**不是新依赖**:`packages/ocr`
+# 已经在运行期依赖它读 PDF(`extract_dct_images` 等),这里只是从「间接可达」
+# 提到「pipeline 自己也直接声明」,因为现在要在非测试代码里用它写 PDF 了
+# (以前这个 crate 只在 `[dev-dependencies]` 里用它手搭测试用的假 PDF)。
+lopdf.workspace = true
+# 同上——把照片(png/jpeg/tiff)解码成像素、重编码成统一的 JPEG 嵌进合成 PDF。
+# **不是新依赖**:`packages/ocr` 已经直接依赖 `image`(OCR 预处理用);这里只是
+# 从「间接可达」提到「pipeline 自己也直接声明」,版本号照抄 ocr/Cargo.toml,
+# Cargo.lock 里已经解析过这个版本,不会触发新的网络下载。
+image = "0.25"
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -26,7 +37,3 @@ tempfile.workspace = true
 # only turns on the fixture-builder feature for the test profile, so nothing
 # extra is linked into a shipping build).
 ocr = { path = "../ocr", default-features = false, features = ["testing"] }
-# Only for hand-building a minimal real PDF in the mixed-page-PDF regression
-# test (packages/ocr already depends on lopdf for the same reason at
-# runtime; this is test-only here).
-lopdf.workspace = true

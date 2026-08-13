@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 564326456;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -278280637;
 
 // Section: executor
 
@@ -1360,6 +1360,45 @@ fn wire__crate__api__vault__load_demo_data_impl(
         },
     )
 }
+fn wire__crate__api__vault__merge_photos_into_document_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "merge_photos_into_document",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_name = <String>::sse_decode(&mut deserializer);
+            let api_document_ids = <Vec<i64>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault::merge_photos_into_document(
+                            api_name,
+                            api_document_ids,
+                        )?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__vault__open_vault_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2466,6 +2505,22 @@ impl SseDecode for Vec<crate::api::vault_projections::VisitRecordDto> {
     }
 }
 
+impl SseDecode for crate::api::dto::MergeOutcomeDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_documentId = <i64>::sse_decode(deserializer);
+        let mut var_pageCount = <i32>::sse_decode(deserializer);
+        let mut var_pagesWithoutText = <Vec<i32>>::sse_decode(deserializer);
+        let mut var_mergedCount = <i64>::sse_decode(deserializer);
+        return crate::api::dto::MergeOutcomeDto {
+            document_id: var_documentId,
+            page_count: var_pageCount,
+            pages_without_text: var_pagesWithoutText,
+            merged_count: var_mergedCount,
+        };
+    }
+}
+
 impl SseDecode for crate::api::dto::OcrPpResultDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3008,37 +3063,43 @@ fn pde_ffi_dispatcher_primary_impl(
         34 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
         35 => wire__crate__api__vault__load_archive_impl(port, ptr, rust_vec_len, data_len),
         36 => wire__crate__api__vault__load_demo_data_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__vault__open_vault_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__vault__patient_profile_impl(port, ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__vault__proxy_claim_blob_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__vault__proxy_summary_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__vault__qr_share_blob_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__vault__read_source_bytes_impl(port, ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__vault__recognize_image_pp_impl(port, ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__vault__render_dicom_png_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__vault__reset_vault_impl(port, ptr, rust_vec_len, data_len),
-        46 => {
+        37 => wire__crate__api__vault__merge_photos_into_document_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        38 => wire__crate__api__vault__open_vault_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__vault__patient_profile_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__vault__proxy_claim_blob_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__vault__proxy_summary_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__vault__qr_share_blob_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__vault__read_source_bytes_impl(port, ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__vault__recognize_image_pp_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__vault__render_dicom_png_impl(port, ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__vault__reset_vault_impl(port, ptr, rust_vec_len, data_len),
+        47 => {
             wire__crate__api__vault__self_measurement_values_impl(port, ptr, rust_vec_len, data_len)
         }
-        47 => {
+        48 => {
             wire__crate__api__vault__source_file_object_path_impl(port, ptr, rust_vec_len, data_len)
         }
-        48 => wire__crate__api__vault_projections__view_emergency_card_impl(
+        49 => wire__crate__api__vault_projections__view_emergency_card_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        49 => wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
+        50 => wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        50 => {
+        51 => {
             wire__crate__api__vault_projections__view_trends_impl(port, ptr, rust_vec_len, data_len)
         }
-        51 => wire__crate__api__vault_projections__view_visit_summary_impl(
+        52 => wire__crate__api__vault_projections__view_visit_summary_impl(
             port,
             ptr,
             rust_vec_len,
@@ -3385,6 +3446,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::ImportOutcomeDto>
     for crate::api::dto::ImportOutcomeDto
 {
     fn into_into_dart(self) -> crate::api::dto::ImportOutcomeDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::MergeOutcomeDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.document_id.into_into_dart().into_dart(),
+            self.page_count.into_into_dart().into_dart(),
+            self.pages_without_text.into_into_dart().into_dart(),
+            self.merged_count.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::dto::MergeOutcomeDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::MergeOutcomeDto>
+    for crate::api::dto::MergeOutcomeDto
+{
+    fn into_into_dart(self) -> crate::api::dto::MergeOutcomeDto {
         self
     }
 }
@@ -4226,6 +4310,16 @@ impl SseEncode for Vec<crate::api::vault_projections::VisitRecordDto> {
         for item in self {
             <crate::api::vault_projections::VisitRecordDto>::sse_encode(item, serializer);
         }
+    }
+}
+
+impl SseEncode for crate::api::dto::MergeOutcomeDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i64>::sse_encode(self.document_id, serializer);
+        <i32>::sse_encode(self.page_count, serializer);
+        <Vec<i32>>::sse_encode(self.pages_without_text, serializer);
+        <i64>::sse_encode(self.merged_count, serializer);
     }
 }
 

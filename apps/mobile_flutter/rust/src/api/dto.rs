@@ -309,6 +309,22 @@ pub struct ProxyMedDto {
     pub active: bool,
 }
 
+/// 「多张照片合并成一份」的结果(`api::vault::merge_photos_into_document`)。
+/// 合成的 PDF 走与桌面上传扫描版 PDF 相同的入库路径,`pages_without_text` 与
+/// `ImportOutcomeDto` 同一口径(1-based、没识别出文字的页)——`import_flow.dart`
+/// 的既有回填逻辑(`backfillPagesWithoutText`)可以原样复用,不用另写一套。
+#[derive(Debug, Clone)]
+pub struct MergeOutcomeDto {
+    /// 合并出的新文档 id——原来那几份各自的 id 已经不在库里了(墓碑掉了,原始
+    /// 字节仍在 CAS,只是不再对应任何文档)。
+    pub document_id: i64,
+    pub page_count: i32,
+    pub pages_without_text: Vec<i32>,
+    /// 合并前源文档的份数(即调用方传入 `document_ids` 的长度),供前端汇总
+    /// 文案「已合并 N 张为一份」。
+    pub merged_count: i64,
+}
+
 /// 一份文档当前的「已确认」状态(医生代拍待确认列表)。**不**塞进共享的
 /// `DocumentSummaryDto`(`vault.rs` 的正常病人档案列表也用它,这个状态只对医生
 /// 代拍流程有意义)——待确认列表屏用 `document_id` 把这份状态与
