@@ -227,6 +227,27 @@ fn arm_dirs() -> Vec<(String, PathBuf)> {
         ),
     ];
     // 第 ④ 列由外部脚本按模型分子目录产出,有几个算几个 —— 没跑完也能先看前三列。
+    // 第 ④ 列的 JSON 上界:LLM 自己吐的结构化行渲染成规范文本(见 arena 目录下的
+    // 转换脚本),同样过 extract_labs —— 量它不受我们正则行格式束缚时能到多好。
+    if let Ok(rd) = std::fs::read_dir(PathBuf::from(ARENA)) {
+        let mut ds: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.is_dir()
+                    && p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("arm4json_"))
+            })
+            .collect();
+        ds.sort();
+        for d in ds {
+            let n = d
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .replace("arm4json_", "");
+            v.push((format!("④json {n}"), d));
+        }
+    }
     let llm_root = PathBuf::from(ARENA).join("arm4_llm");
     if let Ok(rd) = std::fs::read_dir(&llm_root) {
         let mut models: Vec<PathBuf> = rd
