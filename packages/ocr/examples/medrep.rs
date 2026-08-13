@@ -106,6 +106,16 @@ struct Tally {
     /// A/B 两类被排除的条目数(只统计,不计分)
     no_dict: usize,
     qualitative: usize,
+    /// **错配**:抽出的某行认定了某个 analyte_key,该文档真值里也有这个指标,
+    /// 但数值对不上 —— 也就是「我们说这是白细胞 = 11.8,真值说白细胞是 6.2」。
+    /// 这是最危险的一类:用户看到的是一个**看着合理但错误的临床值**,比漏掉糟得多。
+    /// 召回类指标全都看不见它,所以必须单列。分母是所有抽出且能对上真值指标的行。
+    mis_value: usize,
+    mis_denom: usize,
+    /// 抽出的 analyte_key 在该文档真值里**根本没有**。可能是我们无中生有,也可能是
+    /// 真值标注不全(MedRepBench 只标了它认为是化验项的行)。**不能直接当错误**,
+    /// 只作为「模糊匹配开得太松」的预警信号看趋势。
+    unknown_key: usize,
     /// 产出为空(该臂在这份图上整个失败)
     empty_docs: usize,
     docs: usize,
@@ -337,6 +347,43 @@ fn score(out: &str) -> Result<()> {
             if !non_empty {
                 t.empty_docs += 1;
             }
+            // 反向:看我们抽出来的每一行,是不是把值安到了错的指标上。
+            {
+                use std::collections::HashMap as Map;
+                let mut by_key: Map<&str, Vec<f64>> = Map::new();
+                for gi in items {
+                    if let (Some(m), Some(v)) = (
+                        terminology::resolve(
+                            &gi.name,
+                            if gi.unit.is_empty() {
+                                None
+                            } else {
+                                Some(gi.unit.as_str())
+                            },
+                        ),
+                        gi.value,
+                    ) {
+                        by_key
+                            .entry(Box::leak(m.key.clone().into_boxed_str()))
+                            .or_default()
+                            .push(v);
+                    }
+                }
+                for r in &rows {
+                    let Some(k) = r.analyte_key.as_deref() else {
+                        continue;
+                    };
+                    match by_key.get(k) {
+                        Some(vals) => {
+                            t.mis_denom += 1;
+                            if !vals.iter().any(|v| (v - r.value_num).abs() < VALUE_EPS) {
+                                t.mis_value += 1;
+                            }
+                        }
+                        None => t.unknown_key += 1,
+                    }
+                }
+            }
             for gi in items {
                 // A 类:词典不认识这个名字 —— 与识别质量无关的上游天花板。
                 let Some(m) = terminology::resolve(
@@ -440,6 +487,21 @@ fn score(out: &str) -> Result<()> {
         }
         println!();
     }
+    print!("| **错配率**(值安错指标) |");
+    for t in &tally {
+        print!(
+            " {:.1}% ({}/{}) |",
+            pct(t.mis_value, t.mis_denom),
+            t.mis_value,
+            t.mis_denom
+        );
+    }
+    println!();
+    print!("| 真值里没有的指标(预警) |");
+    for t in &tally {
+        print!(" {} |", t.unknown_key);
+    }
+    println!();
     print!("| 产出为空的份数 |");
     for t in &tally {
         print!(" {}/{} |", t.empty_docs, t.docs);
