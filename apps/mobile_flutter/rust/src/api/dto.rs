@@ -38,6 +38,38 @@ pub struct DemoLoadProgressDto {
     pub error: Option<String>,
 }
 
+/// `api::vault::ingest_bytes_with_progress` 经 `StreamSink` 逐页推给 Dart 的
+/// 扫描版 PDF OCR 进度,配合 `import_flow.dart` 画「正在识别第 N/M 页」。
+///
+/// **为什么这条路会被卡住几十秒零反馈**:测试 PDF 的扫描页几乎全是 JPEG
+/// (DCTDecode)编码——手机拍照 / App 导出扫描件最常见的编码——而
+/// `packages/ocr` 的 `recognize_pdf_mixed` 自己就能 OCR 这种页
+/// (`extract_dct_images`)。于是耗时全砸在 `ingest_bytes` 这一次 Rust 调用
+/// 里,`import_flow.dart` 里那条按页回填的进度(`onPage` 回调,只在 Rust
+/// 没能处理时才触发)一次都没机会跑——真机上一份 25 页的扫描件是几十秒量级,
+/// 屏幕上却什么进度都没有。这个 DTO 就是给这几十秒补一个进度出口。
+///
+/// **`outcome`/`error` 而不是让函数自身返回值——同 [DemoLoadProgressDto]
+/// 顶部那段坑**:带 `StreamSink` 参数的 FRB 函数,Dart 侧签名整个折成
+/// `Stream<T>`,没有任何代码 `await` 函数自身的 `Result`。旧版 `ingest_bytes`
+/// 靠返回值报成败——如果 `ingest_bytes_with_progress` 也这样处理,恒返回
+/// `Ok(())` 却不把结果塞进流,就是把「导入失败」原样静默成功,和这张工单要
+/// 修的缺陷是同一个坑换个地方复发。所以每次调用的终态都在流的**最后一条**
+/// 消息里,`outcome`(成功)与 `error`(失败)二者恰好其一非 `None`;中间的
+/// 进度消息两者都是 `None`。
+#[derive(Debug, Clone)]
+pub struct PdfImportProgressDto {
+    /// 已识别完的页码(1-based)。终态消息(`outcome`/`error` 非 `None`)固定
+    /// 为 0——彼时页进度已经没有意义。
+    pub page: i32,
+    /// 这份 PDF 的真实总页数。终态消息固定为 0。
+    pub total: i32,
+    /// 导入成功的终态结果;仅在流的最后一条消息里非 `None`,与 `error` 互斥。
+    pub outcome: Option<ImportOutcomeDto>,
+    /// 导入失败的原因;仅在流的最后一条消息里非 `None`,与 `outcome` 互斥。
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DocumentSummaryDto {
     pub id: i64,

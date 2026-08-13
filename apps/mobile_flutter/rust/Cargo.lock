@@ -3703,6 +3703,7 @@ dependencies = [
  "flutter_rust_bridge",
  "include_dir",
  "log",
+ "lopdf 0.44.0",
  "medme-share",
  "ocr",
  "parser",
