@@ -127,7 +127,15 @@ const LINE_MATCH_THRESHOLD: f64 = 0.6;
 /// 逐行内容召回。比较前把每行压成「单空格分隔」——四列的空白填充策略天差地别
 /// (几何重建按像素补空格、结构流水线出 Markdown、LLM 想怎么写就怎么写),不归一
 /// 化的话量到的是排版风格差异,不是内容有没有丢。
-fn eval_generic(truth_text: &str, got: &str) -> (usize, usize) {
+/// 返回 (相似命中, 逐字一致命中, 真值行数)。
+///
+/// **两个口径都要报,因为宽的那个会放过替换错。** 阈值 0.6 的相似匹配衡量的是
+/// 「这行内容还在不在」;它对**改字**几乎无感 —— 实测 LLM 把「阿司匹林肠溶片」
+/// 写成「阿司匹林胶囊片」(剂型变了)、把医师「周芸」写成「陈丽霞」(换了个人),
+/// 这两行在 0.6 阈值下都算命中。对病历产品来说,这类安静的、看着合理的改写比
+/// 漏一行危险得多,所以再加一条**逐字一致率**:归一化空白后与真值行完全相同才算。
+/// OCR 的错字同样过不了这一条,两边一视同仁。
+fn eval_generic(truth_text: &str, got: &str) -> (usize, usize, usize) {
     let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
     let truth: Vec<String> = truth_text
         .lines()
@@ -135,17 +143,21 @@ fn eval_generic(truth_text: &str, got: &str) -> (usize, usize) {
         .filter(|l| !l.is_empty())
         .collect();
     let got: Vec<String> = got.lines().map(norm).filter(|l| !l.is_empty()).collect();
-    let hit = truth
-        .iter()
-        .filter(|t| {
-            got.iter().any(|g| {
-                let (ct, cg): (Vec<char>, Vec<char>) = (t.chars().collect(), g.chars().collect());
-                1.0 - levenshtein(&ct, &cg) as f64 / ct.len().max(cg.len()).max(1) as f64
-                    >= LINE_MATCH_THRESHOLD
-            })
-        })
-        .count();
-    (hit, truth.len())
+    let mut sim = 0usize;
+    let mut exact = 0usize;
+    for t in &truth {
+        if got.iter().any(|g| g == t) {
+            exact += 1;
+        }
+        if got.iter().any(|g| {
+            let (ct, cg): (Vec<char>, Vec<char>) = (t.chars().collect(), g.chars().collect());
+            1.0 - levenshtein(&ct, &cg) as f64 / ct.len().max(cg.len()).max(1) as f64
+                >= LINE_MATCH_THRESHOLD
+        }) {
+            sim += 1;
+        }
+    }
+    (sim, exact, truth.len())
 }
 
 /// 把 `to_markdown()` 里的 HTML 表格摊成「每行一条、单元格用两个空格分隔」的
@@ -365,7 +377,7 @@ fn score() -> Result<()> {
 
     let arms = arm_dirs();
     let mut agg: Vec<[(usize, usize); 3]> = vec![[(0, 0); 3]; arms.len()];
-    let mut gen: Vec<(usize, usize)> = vec![(0, 0); arms.len()];
+    let mut gen: Vec<(usize, usize, usize)> = vec![(0, 0, 0); arms.len()];
     let mut missing: BTreeMap<String, usize> = BTreeMap::new();
 
     println!("## 逐文档(表格类:召回/配对/区间;非表格类:逐行召回)");
@@ -408,7 +420,8 @@ fn score() -> Result<()> {
                 let g = eval_generic(&truth_text, &text);
                 gen[ai].0 += g.0;
                 gen[ai].1 += g.1;
-                print!(" {}/{} |", g.0, g.1);
+                gen[ai].2 += g.2;
+                print!(" {}/{} (逐字 {}) |", g.0, g.2, g.1);
             }
         }
         println!();
@@ -443,18 +456,22 @@ fn score() -> Result<()> {
         }
         println!();
     }
-    print!("| 非表格逐行召回 |");
+    let pct = |hit: usize, den: usize| {
+        if den == 0 {
+            0.0
+        } else {
+            hit as f64 / den as f64 * 100.0
+        }
+    };
+    print!("| 非表格逐行召回(相似≥0.6) |");
     for g in gen.iter() {
-        print!(
-            " {:.1}% ({}/{}) |",
-            if g.1 == 0 {
-                0.0
-            } else {
-                g.0 as f64 / g.1 as f64 * 100.0
-            },
-            g.0,
-            g.1
-        );
+        print!(" {:.1}% ({}/{}) |", pct(g.0, g.2), g.0, g.2);
+    }
+    println!();
+    // 宽口径放过改字(「肠溶片」→「胶囊片」仍算命中),严口径抓得住。两个都报。
+    print!("| 非表格**逐字一致** |");
+    for g in gen.iter() {
+        print!(" {:.1}% ({}/{}) |", pct(g.1, g.2), g.1, g.2);
     }
     println!();
 
