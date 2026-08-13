@@ -436,6 +436,26 @@ fn strip_trailing_dose(s: &str) -> Option<String> {
     None
 }
 
+/// 剥掉报告版式的印刷标记:真实报告常在项目名前印 `#`/`*`/`★`/`☆`/`◆`(「重点关注」/
+/// 「异常提示」/院内打印惯例),`*` 有时会剥完括号后残留在末尾(如
+/// 「γ-谷氨酰转肽酶(γ-GT化学法)*」剥括号后是「…酶*」)。这些标记与项目名本身无关,
+/// 但 `normalize` 是精确查表,标记不去掉就整条认不出。返回 `None` 表示没有可剥的标记。
+///
+/// **尾部刻意不剥 `#`**:血细胞分类计数的字典别名本来就用尾部 `#` 表示「绝对值/计数」
+/// 而非「百分比」(`NEUT#`、`LYM#`、`MONO#`…… 见 build_index 建索引时收录的别名),
+/// `#` 是这些别名的一部分,剥了会把「NEUT#」错剥成「NEUT」。前缀 `#` 没有这个问题——
+/// 词典里没有一条别名以 `#`/`*`/`★`/`☆`/`◆` 开头。
+fn strip_report_markers(s: &str) -> Option<String> {
+    const LEADING: &[char] = &['#', '*', '★', '☆', '◆'];
+    const TRAILING: &[char] = &['*', '★', '☆', '◆'];
+    let stripped = s.trim_start_matches(LEADING).trim_end_matches(TRAILING);
+    if stripped.chars().count() < s.chars().count() && !stripped.is_empty() {
+        Some(stripped.to_string())
+    } else {
+        None
+    }
+}
+
 /// 术语名**候选拆分**(提取层调用,不在 [`normalize`] 里跑):真实报告/处方写
 /// 「甘油三酯 TG」「肌酐 Cr(Scr)」「甲泼尼龙片(美卓乐)4mg」——整串精确查表必 miss,
 /// 拆开后各自查即命中。
@@ -492,6 +512,14 @@ pub fn term_candidates(name: &str) -> Vec<String> {
             if !t.is_empty() {
                 cands.push(t.to_string());
             }
+        }
+    }
+    // 每个候选再补一个「去掉报告版式印刷标记」的版本(#/*/★/☆/◆,见
+    // strip_report_markers 文档)。放在去规格之前,好让「★白细胞计数5mg」这类
+    // 标记+规格叠加的候选也能在下一步被去规格补全。
+    for i in 0..cands.len() {
+        if let Some(stem) = strip_report_markers(&cands[i]) {
+            cands.push(stem);
         }
     }
     // 每个候选再补一个「去掉尾部规格」的版本(处方:醋酸泼尼松片5mg)。
@@ -1002,6 +1030,31 @@ mod tests {
     }
 
     #[test]
+    fn strips_report_print_markers() {
+        // 真实报告在项目名前印 #/*/★/☆/◆(重点关注/异常提示/院内惯例),剥完括号
+        // 后 * 有时残留在尾部。这些都不是项目名的一部分。
+        let hit = |name: &str| {
+            term_candidates(name)
+                .iter()
+                .find_map(|c| normalize(c))
+                .unwrap_or_else(|| panic!("no candidate hit for {name}"))
+                .key
+        };
+        assert_eq!(hit("#白细胞计数"), "wbc");
+        assert_eq!(hit("*红细胞计数"), "rbc");
+        assert_eq!(hit("★血小板计数"), "plt");
+        assert_eq!(hit("☆癌胚抗原"), "cea");
+        assert_eq!(hit("◆乙肝e抗原"), "hbeag");
+        // 剥括号后残留的尾部 *。
+        assert_eq!(hit("γ-谷氨酰转肽酶(γ-GT化学法)*"), "ggt");
+        // 叠加多个标记(前缀 ★ + *)。
+        assert_eq!(hit("★*凝血酶原时间"), "pt");
+        // 尾部 # 是别名本身的一部分(NEUT# = 绝对计数,≠ NEUT),不能被剥掉;
+        // 整串本来就直配得到,不该被误剥成查不到的「NEUT」。
+        assert_eq!(normalize("NEUT#").unwrap().key, "neut_count");
+    }
+
+    #[test]
     fn unit_notation_folds_but_never_folds_case() {
         // 记法差异(报告 vs UCUM)折叠后必须一致。
         for (report, ucum) in [
@@ -1101,10 +1154,13 @@ mod tests {
     fn total_entry_count_is_expected() {
         // Coverage expansion (2026-07-14.1): 191 + 446 按专科批次扩容 = 637,再减 1
         // (2026-08-05:去重 polystyrene_sulfonate 的重复条目,见 dictionary_keys_are_globally_unique)= 636。
+        // +4 (2026-08-13.1:MedRepBench 词典缺口扫描,补尿沉渣分析仪四项 ——
+        // urine_pathologic_casts/urine_mucus/urine_yeast/urine_wbc_clumps,均有独立
+        // LOINC 标准概念,见各条目 note)= 640。
         // A drift here means an entry was accidentally dropped or duplicated.
         assert_eq!(
             dictionary_entries().len(),
-            636,
+            640,
             "unexpected dictionary entry count"
         );
     }
