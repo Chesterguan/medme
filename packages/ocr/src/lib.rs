@@ -784,7 +784,14 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
 /// lines' per-line confidences; `0.0` if no lines were recognized). Lazily
 /// builds the OCR pipeline on first call (models auto-download from
 /// ModelScope on first ever run on this machine).
-#[cfg(feature = "engine")]
+///
+/// **已无生产调用者。** 2026-08 起 [`recognize_platform_best`] 的三条引擎分支
+/// 全部改走 [`recognize_engine_layout`](量化依据见那里的表)。这个裸 `"\n".join`
+/// 版本只剩一个用途:给 `examples/layout_eval.rs` 当对照组,量「换过去到底提升
+/// 多少」。所以编译门也跟着收到 `testing`/`test` —— 否则它在正常的
+/// `--features engine` 构建里就是死代码,`cargo build` 会 warn(默认 feature 集
+/// 不含 `engine`,所以 `clippy --all-targets` 照不到这条,别指望它挡)。
+#[cfg(all(feature = "engine", any(test, feature = "testing")))]
 fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
     let mut lines = Vec::new();
     let mut confidences = Vec::new();
@@ -805,18 +812,51 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
 
 /// Same recognition as [`recognize_engine`], but the returned text has table
 /// columns reconstructed from each line's detection box instead of being a
-/// flat "\n"-joined dump. **Mobile iOS PP-OCRv5 test path only**
-/// (feat/ios-pp-ocr-test) — every other caller keeps using [`recognize_engine`]
-/// unchanged, so this cannot regress Linux/macOS/Windows output.
+/// flat "\n"-joined dump.
 ///
-/// Mirrors the algorithm the Android path already runs in Dart
-/// (`apps/mobile_flutter/lib/ocr_bridge.dart::_rebuildLayoutText`, added to fix
-/// lab-report tables collapsing into a flat dump when ML Kit splits one visual
-/// row into several `TextLine`s): group detection boxes into visual rows by y,
-/// then within a row map each box's x position to a character column and pad
-/// with spaces. PP-OCRv5's detector already produces one box per text *line*
-/// (not per character or per block), the same granularity ML Kit's
-/// `TextLine.boundingBox` is at, so [`rebuild_layout_text`] ports directly.
+/// **`recognize_platform_best` 的三条引擎分支现在都产出这个函数的结果。**
+///
+/// 改之前,手机端两条采集通路只有一条走这里 —— 说清楚,免得把影响面说大:
+/// - **拍照 / 选图** → Dart `recognizeImageText` → FRB `recognize_image_pp`
+///   (`apps/mobile_flutter/rust/src/api/vault.rs`)→ 本函数。**本来就是对的**,
+///   这次改动不碰它。
+/// - **导入扫描版 PDF** → `pipeline::ingest` → [`recognize_pdf_platform_best`]
+///   → [`recognize_platform_best`] → 曾经是 [`recognize_engine`] 的裸
+///   `"\n".join`。化验单绝大多数是 PDF 进来的,所以表格错位的实际来源是这条。
+///
+/// 桌面 / CLI 同理:Apple Vision 或 Windows.Media.Ocr 跑完没找到文字时的引擎
+/// 兜底,之前也是裸拼接。三处一起换。
+///
+/// 换过来的量化依据(`packages/ocr/examples/layout_eval.rs`,21 份语料渲成扫描页,
+/// 两个引擎吃同一份字节,指标用 `parser::extract_labs` 算,6 份化验单 42 行):
+///
+/// |  | 裸拼接 | 布局重建 |
+/// |---|---|---|
+/// | 化验行召回 · 单帧 | 57.1% | 83.3% |
+/// | 值-名配对 · 单帧 | 54.8% | 81.0% |
+/// | 参考区间归属 · 单帧 | 40.5% | 81.0% |
+/// | 化验行召回 · **分块** | 45.2% | 83.3% |
+/// | 值-名配对 · **分块** | 42.9% | 78.6% |
+/// | 参考区间归属 · **分块** | **19.0%** | **78.6%** |
+///
+/// 「分块」= 图高超过 [`TILE_CORE_H`],走横条切分再缝合的路径(真机拍整页必然
+/// 走到)。裸拼接在分块下参考区间归属从 40.5% 掉到 19.0% —— 缝合把不同横条的行
+/// 按 y 排到一起,而裸拼接只有 y 序、没有 x 信息,同一行的项目名和参考范围因此
+/// 错配到相邻项目上。布局重建保留了检测框的 x 坐标,几乎不受分块影响
+/// (81.0% → 78.6%)。**分块不是元凶,丢弃几何信息才是。**
+///
+/// 非表格类 15 份的逐行召回两者持平(单帧 93.0% vs 92.5%,分块 94.6% vs 94.6%)
+/// —— 散文没有列,重建不改变什么,也没有代价。
+///
+/// 算法本身([`rebuild_layout_text`]):按 y 把检测框归成视觉行,行内按每个框的
+/// x 映射到字符列、用空格补齐。PP-OCRv5 的检测器一个框对应一**行**文本(不是一个
+/// 字、也不是一个段落),正好是这个算法要的粒度。
+///
+/// (这段注释此前写着「移植自安卓 Dart 侧已在跑的 `ocr_bridge.dart::
+/// _rebuildLayoutText`,为修 ML Kit 把一个视觉行拆成多个 `TextLine`」——**已经
+/// 不成立**:安卓早已从 ML Kit 换成和 iOS 同一个 PP-OCRv5(见 `ocr_bridge.dart`
+/// 的 `recognizeImageText`),那个 Dart 函数连同 ML Kit 依赖一起删掉了,现在
+/// grep 不到。留这句话在这里会让人去找一个不存在的参照实现。)
 #[cfg(feature = "engine")]
 pub fn recognize_engine_layout(image_bytes: &[u8]) -> Result<OcrOutcome> {
     let mut confidences = Vec::new();
@@ -1454,7 +1494,7 @@ pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
     }
     #[cfg(feature = "engine")]
     {
-        recognize_engine(image_bytes)
+        recognize_engine_layout(image_bytes)
     }
     #[cfg(not(feature = "engine"))]
     {
@@ -1478,7 +1518,7 @@ pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
     }
     #[cfg(feature = "engine")]
     {
-        recognize_engine(image_bytes)
+        recognize_engine_layout(image_bytes)
     }
     #[cfg(not(feature = "engine"))]
     {
@@ -1496,7 +1536,7 @@ pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
     feature = "engine"
 ))]
 pub fn recognize_platform_best(image_bytes: &[u8]) -> Result<OcrOutcome> {
-    recognize_engine(image_bytes)
+    recognize_engine_layout(image_bytes)
 }
 
 /// No-`engine`, non-native stub: nothing to recognize with. Callers treat OCR
@@ -1939,6 +1979,23 @@ pub mod testing {
     pub fn plain_multipage_tiff(n: usize) -> Vec<u8> {
         let pages: Vec<(u8, bool)> = (0..n).map(|i| ((i as u8) * 40, false)).collect();
         multipage_tiff(&pages)
+    }
+
+    /// 把私有的 [`recognize_engine`](裸拼接、不做版面重建的**旧**引擎产出)转出来,
+    /// 只为 `examples/layout_eval.rs` 能把它当对照组量。
+    ///
+    /// `recognize_engine` 本身继续保持非 `pub`:自 2026-08 起它已不是任何生产
+    /// 路径的产出函数([`recognize_platform_best`] 的三条引擎分支全部改走
+    /// [`recognize_engine_layout`]),留着只作为 `recognize_engine_layout` 的
+    /// 内部实现基座和这个对照组。
+    ///
+    /// 评测为什么必须绕开 [`recognize_platform_best`] 直接调两个引擎函数:在跑
+    /// 评测的 macOS 机器上,那个函数的主识别器是 Apple Vision,和手机端真正跑的
+    /// PP-OCRv5 是两个完全不同的引擎(见它自己的「验证纪律」注释),调它量到的
+    /// 是 Vision 改前 vs Vision 改后 —— 引擎侧的差异一点也看不见。
+    #[cfg(feature = "engine")]
+    pub fn recognize_engine_bare(image_bytes: &[u8]) -> anyhow::Result<super::OcrOutcome> {
+        super::recognize_engine(image_bytes)
     }
 }
 

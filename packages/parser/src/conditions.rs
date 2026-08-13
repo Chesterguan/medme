@@ -162,13 +162,44 @@ fn inline_number_re() -> &'static Regex {
     R.get_or_init(|| Regex::new(r"(?:^|\s)\d+\s*[.、)）](?:\s+|$)").expect("inline number re"))
 }
 
+/// 按 `；;，,、` 切,但**括号里的分隔符不切**。
+///
+/// 中文出院诊断把限定语写在诊断名后的括号里,而限定语内部常常自带逗号:
+/// `冠状动脉粥样硬化性心脏病(不稳定型心绞痛,PCI 术后)`。无差别按逗号切,这一条
+/// 诊断就碎成 `冠状动脉粥样硬化性心脏病(不稳定型心绞痛` 和 `PCI 术后)` 两条,
+/// 后者不是任何疾病,却会作为一条独立诊断进 `problems[]`,一路显示到给医生看的
+/// 摘要里。分期/分级是同一个形状(`肺癌(腺癌,IV 期)`),同样中招。
+///
+/// 只看括号配对深度,不看括号内容:深度 > 0 时分隔符当普通字符。左括号加深度,
+/// 右括号用 `saturating_sub` —— 单独一个 `)`(OCR 把左括号漏了)不会把深度压成
+/// 负数、从而让整行后面再也不切分。
+fn split_outside_brackets(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' | '（' | '[' | '【' | '〔' => depth += 1,
+            ')' | '）' | ']' | '】' | '〕' => depth = depth.saturating_sub(1),
+            '；' | ';' | '，' | ',' | '、' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
 /// Split an inline diagnosis string, clean each part, keep order. Two passes:
-/// first on in-line numbered markers (` 2.` ` 3.`), then on `；;，,、`. Each kept
-/// part is `(display_name, optional_icd_code)`.
+/// first on in-line numbered markers (` 2.` ` 3.`), then on `；;，,、` **outside
+/// brackets** (see [`split_outside_brackets`]). Each kept part is
+/// `(display_name, optional_icd_code)`.
 fn split_inline(s: &str) -> Vec<(String, Option<String>)> {
     inline_number_re()
         .split(s)
-        .flat_map(|seg| seg.split(['；', ';', '，', ',', '、']))
+        .flat_map(split_outside_brackets)
         .filter_map(clean_dx)
         .collect()
 }
@@ -498,5 +529,40 @@ mod tests {
         // Bracket form [E11.9] is captured the same as the paren form.
         assert_eq!(obs[0].icd_code.as_deref(), Some("E11.9"));
         assert_eq!(obs[0].section.as_deref(), Some("临床诊断"));
+    }
+
+    /// 括号里的限定语自带逗号,不能把一条诊断切成两条。真语料
+    /// (`2026-07-15_出院记录_冠脉支架术后.txt`)里的原句 —— 改之前这一行产出
+    /// `冠状动脉粥样硬化性心脏病(不稳定型心绞痛` 和 `PCI 术后)` 两条,后者作为
+    /// 一条独立「诊断」一路进到给医生看的摘要里。
+    #[test]
+    fn comma_inside_a_qualifier_bracket_does_not_split_the_diagnosis() {
+        let obs = extract_conditions(
+            "出院诊断:1. 冠状动脉粥样硬化性心脏病(不稳定型心绞痛,PCI 术后)  2. 高血压 3 级(很高危)",
+        );
+        let terms: Vec<&str> = obs.iter().map(|o| o.raw_text.as_str()).collect();
+        assert_eq!(
+            terms,
+            vec![
+                "冠状动脉粥样硬化性心脏病(不稳定型心绞痛,PCI 术后)",
+                "高血压 3 级(很高危)"
+            ]
+        );
+    }
+
+    /// 括号**外**的分隔符照切 —— 修复不能反过来把整行粘成一条。
+    #[test]
+    fn separators_outside_brackets_still_split() {
+        let obs = extract_conditions("出院诊断:高血压(3级),2型糖尿病、陈旧性脑梗死");
+        let terms: Vec<&str> = obs.iter().map(|o| o.raw_text.as_str()).collect();
+        assert_eq!(terms, vec!["高血压(3级)", "2型糖尿病", "陈旧性脑梗死"]);
+    }
+
+    /// OCR 漏掉左括号时,孤立的右括号不能把深度压成负数(用 `saturating_sub`),
+    /// 否则它后面整行都不再切分。
+    #[test]
+    fn unmatched_closing_bracket_does_not_disable_later_splitting() {
+        let obs = extract_conditions("出院诊断:心绞痛),2型糖尿病,陈旧性脑梗死");
+        assert_eq!(obs.len(), 3);
     }
 }
