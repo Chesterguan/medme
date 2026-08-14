@@ -456,6 +456,129 @@ fn strip_report_markers(s: &str) -> Option<String> {
     }
 }
 
+/// 是否是 CJK 表意文字(汉字)。用来把「中文段紧贴 ASCII 段连写」(报告把化验项
+/// 中文名和缩写直接印在一起、中间无空格顿号,如「白细胞WBC」「血小板压积PCT」)
+/// 从其它 ASCII 标点/希腊字母/数字里分出来——那些整体属于同一个词(见
+/// [`term_candidates`] 顶部注释的反例),不该被当成脚本边界切开。
+fn is_han(c: char) -> bool {
+    matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}')
+}
+
+/// 按「汉字段 / 非汉字段」脚本边界把 `s` 切成连续同类字符的段。空白与
+/// [`term_candidates`] 里已经处理过的分隔符(顿号、逗号等)在这里当硬边界,
+/// 直接丢弃、不并入任何段,好让 `RDW-SD`、`NEU%`、`LYM#` 这类**自带 `-`/`%`/`#`
+/// 的缩写整体留在同一段里**——切的是「汉字↔非汉字」的边界,不是 ASCII 内部的
+/// 标点。
+fn script_runs(s: &str) -> Vec<(bool, String)> {
+    const SEPS: [char; 5] = [' ', '\u{3000}', '、', ',', '，'];
+    let mut runs: Vec<(bool, String)> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_han: Option<bool> = None;
+    for c in s.chars() {
+        if SEPS.contains(&c) {
+            if let Some(h) = cur_han.take() {
+                runs.push((h, std::mem::take(&mut cur)));
+            }
+            continue;
+        }
+        let h = is_han(c);
+        match cur_han {
+            Some(prev) if prev == h => cur.push(c),
+            _ => {
+                if let Some(prev) = cur_han {
+                    runs.push((prev, std::mem::take(&mut cur)));
+                }
+                cur_han = Some(h);
+                cur.push(c);
+            }
+        }
+    }
+    if let Some(h) = cur_han {
+        runs.push((h, cur));
+    }
+    runs
+}
+
+/// 「中文段紧贴 ASCII 段连写」的候选:只取**首尾两段**,中间夹的段绝不单独
+/// 当候选——多段夹心(「平均红细胞**HB**浓度」)里的中间段多半是词内缩写,不是
+/// 独立指标,单独查表容易撞上不相关的词条(见 [`hb_infix_candidate`])。
+///
+/// 默认中文先——裸 ASCII 短代码常跨领域撞车(`PCT` 既是「血小板压积」也是
+/// 「降钙素原」,`LEU` 既关联血 WBC 也是尿白细胞酯酶),中文描述通常无歧义。
+///
+/// 但 ASCII 段带**限定符**(连字符,或字母掺数字,如 `RDW-SD`、`A2`、`-MB`)时,
+/// 裸中文前缀**整个不给**——不是换个顺序试,是压根不当候选:限定符存在本身就
+/// 说明这个概念有好几个近亲变体共享同一个中文词根,裸中文词根默认指向的是**另一个**
+/// 变体,而不是这一条:
+/// - `RDW-SD`(标准差)vs `RDW-CV`(变异系数)是两个不同指标,词典里裸中文
+///   「红细胞体积分布宽度」本身默认指向 CV 口径——中文先试会把 RDW-SD 误配成
+///   RDW(CV)。
+/// - `血红蛋白A2`(血红蛋白电泳的一个组分,词典压根没收)如果只看得懂中文前缀
+///   「血红蛋白」,会被顶替成整段血红蛋白浓度——一个看着合理、其实错的临床值。
+/// - `肌酸激酶-MB`(本该是 CK-MB 同工酶,词典该走的别名其实是「CK-MB」/
+///   「肌酸激酶同工酶MB」,`-MB` 单独查不到)如果放行裸中文前缀「肌酸激酶」兜底,
+///   会被误配成完全不同的另一个指标「肌酸激酶」(普通 CK,不是同工酶)。
+///
+/// 三个例子里,ASCII 段自己能不能查到都不能改变结论:查得到就该让它自己赢
+/// (`RDW-SD`);查不到也不该退回去信裸中文(`血红蛋白A2`、`肌酸激酶-MB`)——
+/// 宁可连这条都 miss。
+///
+/// 报告行首常印裸数字序号(「20血小板总数」「3总胆红素」),序号紧贴中文、没有
+/// 分隔符,跟这里要切的「中文+缩写」连写长得一样(都是「汉字段紧邻非汉字段」),
+/// 但序号不是名字的一部分,也不构成限定符——过滤规则是「ASCII 段必须含字母」,
+/// 纯数字段直接放弃整切(见下)。
+fn han_ascii_boundary_candidates(s: &str) -> Vec<String> {
+    let runs = script_runs(s);
+    if runs.len() < 2 {
+        return Vec::new();
+    }
+    let mut boundary: Vec<&(bool, String)> = vec![runs.first().unwrap()];
+    let last = runs.last().unwrap();
+    if !std::ptr::eq(last, boundary[0]) {
+        boundary.push(last);
+    }
+    let han: Vec<&str> = boundary
+        .iter()
+        .filter(|r| r.0)
+        .map(|r| r.1.as_str())
+        .collect();
+    let non_han: Vec<&str> = boundary
+        .iter()
+        .filter(|r| !r.0)
+        .map(|r| r.1.as_str())
+        .collect();
+    let has_letter = |t: &str| t.chars().any(char::is_alphabetic);
+    if !non_han.iter().any(|t| has_letter(t)) {
+        return Vec::new();
+    }
+    let has_qualifier = |t: &&str| t.contains('-') || t.chars().any(|c| c.is_ascii_digit());
+    if non_han.iter().any(has_qualifier) {
+        return non_han.iter().map(|t| t.to_string()).collect();
+    }
+    han.iter()
+        .chain(non_han.iter())
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// 「中文—HB—中文」夹心(`平均红细胞HB浓度` = MCHC,`平均红细胞HB含量` = MCH):
+/// `HB` 是「血红蛋白」在报告里的惯用中缀缩写,但**只有前后都是中文时才展开替换、
+/// 重组整串再查表**——绝不把裸 `HB` 当独立候选,否则会误配到「血红蛋白」本身
+/// (`Hb` 是 hgb 条目的别名),而这里整体说的是红细胞的平均血红蛋白浓度/含量,
+/// 是完全不同的指标。重组出的整串仍然要走跟其它候选一样的精确查表,不是新开
+/// 一条模糊路径。
+fn hb_infix_candidate(s: &str) -> Option<String> {
+    let runs = script_runs(s);
+    let [(h0, r0), (hm, rm), (h2, r2)] = runs.as_slice() else {
+        return None;
+    };
+    if *h0 && *h2 && !hm && rm.eq_ignore_ascii_case("hb") {
+        Some(format!("{r0}血红蛋白{r2}"))
+    } else {
+        None
+    }
+}
+
 /// 术语名**候选拆分**(提取层调用,不在 [`normalize`] 里跑):真实报告/处方写
 /// 「甘油三酯 TG」「肌酐 Cr(Scr)」「甲泼尼龙片(美卓乐)4mg」——整串精确查表必 miss,
 /// 拆开后各自查即命中。
@@ -527,6 +650,21 @@ pub fn term_candidates(name: &str) -> Vec<String> {
         if let Some(stem) = strip_trailing_dose(&cands[i]) {
             cands.push(stem);
         }
+    }
+    // 「中文段紧贴 ASCII 段连写」兜底:放在最后,前面任何一步已经产出的命中都
+    // 优先于它。只在**去括号后的主体**(`stripped`)和**括号内内容**
+    // (`inner_all`)上切——不用带括号的原串 `name`,括号本身是非汉字字符,会把
+    // 「(」「)」跟相邻的 ASCII 缩写粘成一段,产出一堆查不到、纯浪费的候选。
+    for c in han_ascii_boundary_candidates(&stripped) {
+        cands.push(c);
+    }
+    for blk in &inner_all {
+        for c in han_ascii_boundary_candidates(blk) {
+            cands.push(c);
+        }
+    }
+    if let Some(c) = hb_infix_candidate(&stripped) {
+        cands.push(c);
     }
     cands.retain(|c| !c.is_empty());
     cands.dedup();
