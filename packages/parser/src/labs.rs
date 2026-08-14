@@ -907,18 +907,31 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
         match outcome {
             LineOutcome::Row(mut o) => {
                 // The row parsed cleanly but with NO reference range at all —
-                // try completing it from a range that wrapped onto the next
-                // line (see `complete_wrapped_range`). Only attempted when
-                // `parse_rest` found neither bound, so this can only ADD a
-                // range, never override one already read with confidence.
-                if o.ref_low.is_none()
-                    && o.ref_high.is_none()
-                    && complete_wrapped_range(&mut o, lines[i], lines.get(i + 1).copied())
-                {
-                    out.push(o);
-                    out.extend(extra);
-                    i += 2;
-                    continue;
+                // either try completing it from a range that wrapped onto the
+                // next line, or — if `value` itself turns out to BE that
+                // range's own low bound (see `value_is_range_low_bound_wrapped`)
+                // — refuse the row outright rather than fabricate a range from
+                // it. Only attempted when `parse_rest` found neither bound, so
+                // this can only ADD a range or retract the row, never override
+                // a range already read with confidence.
+                if o.ref_low.is_none() && o.ref_high.is_none() {
+                    if let Some(rest) = rest_after_value(lines[i], o.value_num) {
+                        let next_line = lines.get(i + 1).copied();
+                        if value_is_range_low_bound_wrapped(o.value_num, rest, next_line) {
+                            unreadable.push(UnreadableRow {
+                                raw_line: lines[i].to_string(),
+                                reason: REASON_NO_RESULT_ONLY_RANGE.to_string(),
+                            });
+                            i += 2;
+                            continue;
+                        }
+                        if complete_wrapped_range(&mut o, rest, next_line) {
+                            out.push(o);
+                            out.extend(extra);
+                            i += 2;
+                            continue;
+                        }
+                    }
                 }
                 out.push(o);
                 out.extend(extra);
@@ -934,17 +947,67 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
 /// A reference range's low bound trails a line with a dangling separator
 /// (`0.85-`) and nothing after it — evidence the layout reconstruction wrapped
 /// the line before the high bound could print, not that the range is simply
-/// absent. Read straight off the RAW line (not `rest`): `rest` is just its
-/// trailing substring, so the text at the very end is identical either way.
+/// absent.
+///
+/// Takes `rest` — the text after THIS row's own value column (`row_re`'s
+/// `rest` group), never the full raw line. That distinction is not
+/// cosmetic: an earlier version of this function scanned the raw line on the
+/// reasoning that "`rest` is just its trailing substring, so the text at the
+/// very end is identical either way" — true when a genuinely SEPARATE low
+/// bound sits in `rest` (`血红蛋白浓度 HGB 112 g/L 112-` \n `149`: the second
+/// `112` is `rest`'s own token, distinct from `value`'s), but false the
+/// moment the result cell is blank and there IS no second occurrence: on
+/// `钙 HR/☆ Ca2.31 mmol/L 2.11-` \n `2.52` (real corpus), `row_re` already
+/// misreads the range's own low bound as `value` (`2.31` is glued to `Ca`
+/// with no separator for `row_re` to anchor on, so it's invisible to the
+/// name/value split — see module doc "Name↔value glue"), leaving `rest` as
+/// just `-`. Scanning the raw LINE at that point re-reads `value`'s own
+/// `2.11` a second time and reports it as the range's low bound too —
+/// `value == ref_low` not because a result happens to sit at the reference
+/// floor, but because they are, literally, the same digits read twice.
+/// Scanning `rest` instead can't do this: with nothing between `value` and
+/// the trailing dash, `rest` has no number left for this regex to find, so
+/// it correctly reports "no dangling low bound here" — see
+/// `value_is_range_low_bound_wrapped` for how THAT shape is instead refused
+/// outright rather than silently left un-ranged.
 fn dangling_range_low_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"(\d+(?:[.,]\d+)?)\s*[-~]+\s*$").expect("dangling range re"))
 }
 
-fn dangling_range_low(line: &str) -> Option<f64> {
-    let folded = fold_range_punct(line.trim_end());
+fn dangling_range_low(rest: &str) -> Option<f64> {
+    let folded = fold_range_punct(rest.trim_end());
     let caps = dangling_range_low_re().captures(&folded)?;
     parse_decimal_token(caps.get(1)?.as_str())
+}
+
+/// `rest`'s wrap-across-lines twin of `value_is_range_low_bound`: the range
+/// operator directly abuts `value` exactly the same way, but the layout
+/// reconstruction wrapped the line before the high bound itself could
+/// print, so `rest` (after the operator) is empty instead of holding it —
+/// `葡萄糖 …  正常值范围：3.90-` \n `6.10` (real corpus: the label even says
+/// "reference range" outright) is `0.03~0.30` one line-break wider. `rest`
+/// reducing to NOTHING but the operator is what tells this apart from a
+/// genuine wrapped range (`complete_wrapped_range`'s shape, where `rest`
+/// still carries a unit or other text before its own dangling low bound):
+/// there, `value` and the low bound are two distinct tokens; here `value`
+/// IS the (misidentified) low bound, and the row has no result of its own
+/// to report. Same next-line safety net as `complete_wrapped_range` — see
+/// that function's doc for why the next line must be nothing but a bare
+/// number before it's trusted to belong to this row at all.
+fn value_is_range_low_bound_wrapped(value_num: f64, rest: &str, next_line: Option<&str>) -> bool {
+    let folded = fold_range_punct(rest.trim());
+    if folded.is_empty() || !folded.chars().all(|c| matches!(c, '-' | '~')) {
+        return false;
+    }
+    let Some(next) = next_line else {
+        return false;
+    };
+    let candidate = next.trim().trim_start_matches(['-', '~']);
+    if !bare_number_re().is_match(candidate) {
+        return false;
+    }
+    parse_decimal_token(candidate).is_some_and(|high| value_num <= high)
 }
 
 /// Complete a reference range whose high bound wrapped onto the next physical
@@ -958,8 +1021,9 @@ fn dangling_range_low(line: &str) -> Option<f64> {
 /// for the same reason (a wrong join fabricates a reference range that
 /// appears nowhere in the document, worse than leaving the row un-ranged):
 ///
-/// 1. **The current line ends in a dangling low bound** (`dangling_range_low`)
-///    — proof this line's range was cut off mid-print, not just absent.
+/// 1. **`rest` ends in a dangling low bound** (`dangling_range_low`) — proof
+///    THIS row's range was cut off mid-print, not just absent, and (see that
+///    function's doc) a bound distinct from `value` itself.
 /// 2. **The next line, trimmed, is nothing but a bare number** — after
 ///    stripping any LEADING `-`/`~` run first, since the doubled-separator
 ///    typo this module already folds elsewhere (`range_two_re`'s `[-~]+` —
@@ -982,8 +1046,8 @@ fn dangling_range_low(line: &str) -> Option<f64> {
 /// `low <= high` is required for the same reason `parse_line`'s own
 /// low>high check exists: a genuine reference range never inverts, so a pair
 /// that doesn't form one isn't a matching pair and the row is left alone.
-fn complete_wrapped_range(row: &mut LabObservation, line: &str, next_line: Option<&str>) -> bool {
-    let Some(low) = dangling_range_low(line) else {
+fn complete_wrapped_range(row: &mut LabObservation, rest: &str, next_line: Option<&str>) -> bool {
+    let Some(low) = dangling_range_low(rest) else {
         return false;
     };
     let Some(next) = next_line else {
@@ -1002,6 +1066,28 @@ fn complete_wrapped_range(row: &mut LabObservation, line: &str, next_line: Optio
     row.ref_low = Some(low);
     row.ref_high = Some(high);
     true
+}
+
+/// Re-locate the text after THIS row's own value column, straight off the
+/// RAW line — used by the outer loop's wrap-completion checks, which run
+/// after `parse_line` has already built (or refused) the row and no longer
+/// exposes `rest`. Mirrors, rather than reuses, `parse_line_budgeted`'s own
+/// `row_re` match: `fix_name_value_glue` (see module doc "Name↔value glue")
+/// only ever touches the name/value boundary near the FRONT of the line, so
+/// re-matching against the untouched raw line reproduces the identical tail
+/// every time. Guarded by comparing the recovered value against `o`'s own —
+/// on the rare line where the glue fix DID change what `row_re` sees, this
+/// returns `None` and the caller simply skips wrap-completion for that row
+/// (a small, deliberate recall cost, not a correctness risk: trusting a
+/// mismatched split back here is exactly how the raw-line scan this replaces
+/// re-read a value's own digits as its range's low bound).
+fn rest_after_value(raw_line: &str, value_num: f64) -> Option<&str> {
+    let caps = row_re().captures(raw_line)?;
+    let v = parse_decimal_token(caps.name("value")?.as_str())?;
+    if v != value_num {
+        return None;
+    }
+    Some(caps.name("rest")?.as_str())
 }
 
 /// What one line of the report turned into.
@@ -1304,6 +1390,47 @@ fn parse_line_budgeted(raw_line: &str, budget: u8) -> (LineOutcome, Vec<LabObser
             Vec::new(),
         );
     }
+    // KNOWN, DELIBERATE GAP — not an oversight, and not fixed here:
+    //
+    // The same fabrication as `value_is_range_low_bound` also happens when
+    // the range's OWN separator (`-`/`~`) is itself lost to OCR — misread as
+    // plain whitespace instead of a dash — rather than missing from the line
+    // entirely: `find_range` above never sees an operator, so `ref_low`/
+    // `ref_high` come back `None` even though the range is still right
+    // there. Real corpus, blanked result cell: `尿酸（急） 208  428 umol/L`
+    // prints the low and high bounds as two bare numbers with nothing but a
+    // gap between them where the dash should be — `value` (208) is really
+    // the range's own low bound, and 428 sits stranded in `residual`.
+    //
+    // A guard shaped like `value_is_range_low_bound` — reject whenever
+    // `residual` (rest with unit/flag/label-noise already blanked; see
+    // `parse_rest_with_residual`) trims down to exactly ONE bare number
+    // `>= value_num` — was tried and reverted: it cannot be told apart from
+    // an entirely different, and more common, corpus shape — a GENUINE
+    // result followed by a range whose separator was lost WITHIN the range
+    // itself, gluing the two bounds into one token instead of leaving a gap
+    // where `value` sits. Real counter-examples, all with `residual` also
+    // trimming to one bare number `>= value`, all with a real, independently
+    // plausible `value`:
+    //   碱性磷酸酶（急） 117  45125 U/L        — 117, ref "45-125" glued whole
+    //   腺苷脱氨酶       14.0  745  U/L        — 14.0, ref "7-45" glued whole
+    //   直接胆红素       12.3  V/L  040        — 12.3, ref "0-40" glued whole
+    //   (CEA)            4.84  5.2             — 4.84, ref "<5.2", `<` dropped
+    //   T4淋巴细胞数(CD4+/CD3+) 24.00 ↓ Cells/ul 40  — explicit ↓ flag already
+    //     proves 24.00 is a real (abnormal) reading, not a fabricated bound
+    // `residual`'s digit shape gives no reliable tell between "428" (a
+    // genuine second bound, 尿酸's case) and "45125"/"745"/"040" (two bounds
+    // already fused) — both are one ungapped run of digits either way. Per
+    // 宁可漏,不能编: shipping the guard traded one confirmed fabrication
+    // shape for a same-sized new one (rejecting genuine results, several
+    // already flagged abnormal), which is a worse outcome, not a better one.
+    // Left un-ranged, exactly as before this change — see the report/PR
+    // description for the full corpus audit. A real fix needs a signal this
+    // module doesn't have: either the OCR/layout stage preserving (or
+    // flagging) a blanked result-cell box, or a dictionary-informed
+    // plausibility check on the candidate bound pair — both out of scope
+    // here (the latter is `packages/terminology`, off limits per the task
+    // that produced this comment).
 
     // Canonical conversion (only when matched AND the entry knows this unit).
     // 值和参考区间的两个界值走**同一行** `UnitConversion`、**同一个**仿射映射:
@@ -2591,6 +2718,55 @@ NO             25      umol/L      10-40
         let t = find(&obs2, "tbil");
         assert_eq!(t.ref_low, Some(5.1));
         assert_eq!(t.ref_high, Some(28.0));
+    }
+
+    #[test]
+    fn wrapped_range_whose_low_bound_is_actually_the_row_s_own_value_is_refused() {
+        // Real MedRepBench corpus (`钙` row, blanked/unreadable result cell):
+        // `row_re` can't see the real result (`Ca2.31` — the digits are glued
+        // straight onto `Ca` with no separator, invisible to the name/value
+        // split; see module doc "Name↔value glue"), so it reads the FIRST
+        // number it CAN split on — the range's own low bound — as `value`.
+        // The high bound then wraps to the next line, and a naive
+        // `line`-based completion (the pre-fix behaviour) re-reads that same
+        // `2.11` a second time off the raw line and reports it as `ref_low`
+        // too: `value == ref_low` not because a result happens to sit at the
+        // reference floor (see `a_genuine_result_followed_by_its_range_is_untouched`
+        // for that legitimate shape), but because they are the same digits
+        // read twice. The row must be refused outright, not kept with a
+        // fabricated range.
+        let text = "\
+钙                        HR/☆ Ca2.31               mmol/L                    2.11-
+2.52
+";
+        let (obs, unreadable) = extract_labs_with_unreadable(text);
+        assert!(
+            !obs.iter()
+                .any(|o| o.analyte_key.as_deref() == Some("calcium")),
+            "value fabricated from the wrapped range's own low bound: {obs:?}"
+        );
+        assert_eq!(unreadable.len(), 1);
+        assert_eq!(unreadable[0].reason, REASON_NO_RESULT_ONLY_RANGE);
+    }
+
+    #[test]
+    fn a_genuine_result_followed_by_its_own_wrapped_range_is_untouched() {
+        // Counter-example for the guard above: a row whose OWN separate value
+        // token sits before a range that happens to wrap — `complete_wrapped_range`
+        // must still complete it, exactly as before this change, because
+        // there IS a second, distinct low-bound token in `rest` (not a reuse
+        // of `value`). Real corpus: `血红蛋白浓度 HGB 112 g/L 112-` \ `149` —
+        // both `112`s are printed separately; the result genuinely sits at
+        // the reference floor.
+        let text = "\
+血红蛋白浓度                              HGB         112         g/L                 112-
+149
+";
+        let obs = extract_labs(text);
+        let h = find(&obs, "hgb");
+        assert_eq!(h.value_num, 112.0);
+        assert_eq!(h.ref_low, Some(112.0));
+        assert_eq!(h.ref_high, Some(149.0));
     }
 
     #[test]
