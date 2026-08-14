@@ -347,6 +347,18 @@ fn score(out: &str) -> Result<()> {
             if !non_empty {
                 t.empty_docs += 1;
             }
+            if std::env::var("MEDREP_DUMP_ROWS").is_ok() && ai == 1 {
+                for r in &rows {
+                    println!(
+                        "ROW\t{doc}\t{}\t{}\t{}",
+                        r.raw_name.replace('\t', " "),
+                        r.value_num,
+                        r.ref_low
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "NA".into())
+                    );
+                }
+            }
             // 反向:看我们抽出来的每一行,是不是把值安到了错的指标上。
             {
                 use std::collections::HashMap as Map;
@@ -378,9 +390,23 @@ fn score(out: &str) -> Result<()> {
                             t.mis_denom += 1;
                             if !vals.iter().any(|v| (v - r.value_num).abs() < VALUE_EPS) {
                                 t.mis_value += 1;
+                                if std::env::var("MEDREP_DUMP_MIS").is_ok() && ai == 1 {
+                                    eprintln!(
+                                        "MIS\t{doc}\t{k}\t我们={}\t真值={:?}\t原文={}",
+                                        r.value_num, vals, r.raw_name
+                                    );
+                                }
                             }
                         }
-                        None => t.unknown_key += 1,
+                        None => {
+                            t.unknown_key += 1;
+                            if std::env::var("MEDREP_DUMP_UNK").is_ok() && ai == 1 {
+                                eprintln!(
+                                    "UNK\t{doc}\t{k}\t值={}\t原文={}",
+                                    r.value_num, r.raw_name
+                                );
+                            }
+                        }
                     }
                 }
             }
