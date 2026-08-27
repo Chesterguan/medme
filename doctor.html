@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light only" />
+<title>医生模式 · MedMe 医我</title>
+<meta name="description" content="病人抱着一摞纸来,几分钟内变成一份电子病历。医生当面征得同意后拍下病人的纸质材料,当场生成认领码让病人扫走——病人不必装 App,资料从此跟着他走。" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%201024%201024%22%3E%0A%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%232bc0d2%22%2F%3E%3Cstop%20offset%3D%220.52%22%20stop-color%3D%22%231789c1%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%231560a8%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%0A%3Crect%20width%3D%221024%22%20height%3D%221024%22%20rx%3D%22232%22%20fill%3D%22url%28%23g%29%22%2F%3E%0A%3Cpath%20transform%3D%22translate%2885.76%2C804.70%29%20scale%280.82760%2C-0.82760%29%22%20d%3D%22M326%20640C320%20672%20323%20688%20335%20688C431%20690%20535%20708%20650%20741C668%20748%20687%20734%20704%20699C720%20664%20716%20650%20691%20658C672%20666%20641%20663%20600%20651C557%20639%20509%20631%20458%20627C405%20623%20371%20615%20355%20605C342%20596%20332%20606%20326%20640ZM212%20393C226%20508%20234%20570%20236%20582C234%20600%20241%20605%20259%20600C274%20594%20292%20586%20310%20578C325%20568%20326%20555%20314%20537C283%20459%20266%20368%20260%20267C252%20165%20254%20101%20266%2075C271%2062%20321%2063%20413%2079C503%2095%20582%20104%20650%20106C717%20108%20757%20111%20772%20115C777%20117%20786%20110%20796%2095C804%2078%20813%2065%20822%2057C830%2047%20832%2034%20829%2020C825%204%20814%200%20798%2010C698%2035%20597%2043%20494%2033C391%2023%20324%2013%20296%203C267%20-6%20246%20-9%20234%20-4C229%20-1%20226%203%20226%2011C226%2018%20220%2040%20210%2077C196%20172%20196%20277%20212%20393ZM567%20292C558%20302%20561%20306%20578%20306C639%20287%20691%20265%20736%20237C740%20234%20741%20219%20737%20189C731%20160%20724%20144%20716%20140C706%20136%20699%20138%20695%20146C689%20154%20683%20165%20675%20179C628%20228%20593%20265%20567%20292ZM761%20328C702%20338%20636%20336%20561%20323C555%20322%20550%20321%20546%20321C538%20294%20525%20267%20509%20240C497%20216%20483%20198%20468%20188C450%20176%20444%20165%20449%20157C451%20149%20434%20142%20397%20135C358%20126%20331%20126%20315%20134C298%20142%20300%20148%20322%20154C324%20154%20335%20159%20355%20169C372%20178%20393%20190%20414%20208C434%20225%20453%20249%20471%20281C473%20291%20476%20300%20480%20309C429%20297%20387%20284%20355%20271C348%20266%20335%20274%20319%20298C302%20321%20310%20330%20342%20324C385%20338%20436%20352%20494%20367C498%20395%20499%20419%20497%20440C489%20438%20480%20435%20471%20431C457%20424%20450%20429%20449%20444C447%20454%20444%20463%20441%20473C422%20448%20400%20427%20377%20408C357%20396%20344%20391%20336%20393C326%20395%20329%20403%20346%20419C385%20473%20409%20513%20421%20540C433%20566%20438%20584%20439%20594C441%20611%20452%20613%20472%20601C489%20587%20502%20577%20511%20571C519%20565%20517%20559%20505%20552C497%20548%20490%20541%20484%20531C480%20525%20475%20517%20467%20507C504%20511%20537%20518%20566%20527C596%20537%20620%20543%20640%20546C649%20547%20656%20538%20660%20520C662%20500%20658%20488%20648%20485C619%20473%20592%20461%20568%20450C564%20449%20563%20448%20562%20447C558%20430%20555%20407%20554%20382C554%20382%20556%20382%20559%20383C598%20391%20635%20396%20671%20402C706%20406%20728%20409%20734%20413C740%20416%20745%20413%20750%20403C754%20394%20760%20387%20768%20383C773%20379%20777%20367%20778%20348C778%20328%20772%20321%20761%20328Z%22%20fill%3D%22%23ffffff%22%2F%3E%0A%3C%2Fsvg%3E">
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#FBFAF7; --card:#ffffff;
+    --ink:#14181C; --muted:#5A6570; --line:#E6E3DC;
+    --blue:#1789c1; --blue-50:#EFF7FA; --blue-ink:#0E6285;
+    --doc:#7C4096; --doc-ink:#57296B; --doc-50:#F4ECF8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;background:#f8fafc}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.7;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+  a{color:var(--blue);text-decoration:none}
+  a:hover{color:var(--blue-ink)}
+  a:focus-visible{outline:2px solid var(--blue-ink);outline-offset:2px}
+  nav.top{position:sticky;top:0;z-index:50;background:rgba(248,250,252,.85);
+    backdrop-filter:saturate(180%) blur(10px);border-bottom:1px solid var(--line)}
+  nav.top .inner{max-width:1040px;margin:0 auto;padding:11px 24px;display:flex;
+    align-items:center;justify-content:space-between;gap:16px}
+  nav.top .brand{display:inline-flex;align-items:center;gap:9px;font-weight:800;font-size:16px;color:var(--ink)}
+  nav.top .brand .cn{color:var(--muted);font-weight:600;font-size:14px}
+  nav.top .links{display:flex;align-items:center;gap:24px}
+  nav.top .links a{color:var(--muted);font-size:14px;font-weight:500}
+  nav.top .links a:hover{color:var(--blue)}
+  nav.top .links a.nav-cta{background:var(--blue-ink);color:#fff;padding:7px 16px;border-radius:10px;font-weight:600}
+  nav.top .links a.nav-cta:hover{color:#fff;background:#0a4e6b}
+  @media(max-width:760px){nav.top .links a.hide-sm{display:none}}
+  header.phead{padding:56px 0 44px;border-bottom:1px solid var(--line)}
+  header.phead .kicker{display:inline-block;font-size:14px;font-weight:700;letter-spacing:.1em;
+    color:var(--doc);text-transform:uppercase;margin-bottom:12px}
+  header.phead h1{font-size:36px;line-height:1.28;letter-spacing:-.6px;font-weight:800;max-width:18ch;margin-bottom:14px}
+  header.phead h1 .accent{color:var(--doc)}
+  header.phead p{color:var(--muted);font-size:17px;max-width:52ch}
+  section{padding:56px 0}
+  .docband{background:var(--doc-50);border-top:1px solid #E4D3EE;border-bottom:1px solid #E4D3EE}
+  .doc-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:start}
+  @media(max-width:900px){.doc-grid{grid-template-columns:1fr;gap:32px}}
+  .doc-p{color:var(--ink);font-size:16px;max-width:46ch;margin-bottom:22px}
+  .doc-quote{border-left:3px solid var(--doc);padding:2px 0 2px 16px;margin-bottom:22px}
+  .doc-quote q{quotes:none;display:block;font-size:16px;line-height:1.68;color:var(--ink)}
+  .doc-quote .by{margin-top:9px;color:var(--muted);font-size:14px}
+  .doc-note{font-size:14px;color:var(--muted);line-height:1.7}
+  .doc-note b{color:var(--doc)}
+  .doc-steps{display:flex;flex-direction:column;gap:14px}
+  .step-d{display:flex;gap:14px;align-items:flex-start;background:#fff;border:1px solid #E4D3EE;
+    border-radius:14px;padding:16px 18px}
+  .step-d .n{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--doc);color:#fff;
+    font-size:14px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .step-d b{display:block;font-size:16px;margin-bottom:3px}
+  .step-d span{color:var(--muted);font-size:14px;line-height:1.6}
+  .backcta{margin-top:12px}
+  .btn{display:inline-flex;align-items:center;gap:7px;font-size:16px;font-weight:600;
+    padding:12px 26px;border-radius:12px;background:var(--blue-ink);color:#fff}
+  .btn:hover{color:#fff;background:#0a4e6b}
+  footer{background:#0f172a;color:#cbd5e1;padding:44px 0;text-align:center;font-size:14px}
+  footer .flinks{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-bottom:20px}
+  footer .flinks a{color:#cbd5e1;font-weight:500}
+  footer .flinks a:hover{color:#fff}
+  footer .disc{max-width:720px;margin:0 auto 16px;color:#94a3b8;font-size:14px;line-height:1.8}
+  footer b{color:#e2e8f0}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="inner">
+    <a class="brand" href="index.html">
+      <svg viewBox="0 0 1024 1024" width="22" height="22" aria-hidden="true" style="flex-shrink:0" role="img"><defs><linearGradient id="mm-g-nav" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2bc0d2"/><stop offset="0.52" stop-color="#1789c1"/><stop offset="1" stop-color="#1560a8"/></linearGradient></defs><rect width="1024" height="1024" rx="232" fill="url(#mm-g-nav)"/><path transform="translate(85.76,804.70) scale(0.82760,-0.82760)" d="M326 640C320 672 323 688 335 688C431 690 535 708 650 741C668 748 687 734 704 699C720 664 716 650 691 658C672 666 641 663 600 651C557 639 509 631 458 627C405 623 371 615 355 605C342 596 332 606 326 640ZM212 393C226 508 234 570 236 582C234 600 241 605 259 600C274 594 292 586 310 578C325 568 326 555 314 537C283 459 266 368 260 267C252 165 254 101 266 75C271 62 321 63 413 79C503 95 582 104 650 106C717 108 757 111 772 115C777 117 786 110 796 95C804 78 813 65 822 57C830 47 832 34 829 20C825 4 814 0 798 10C698 35 597 43 494 33C391 23 324 13 296 3C267 -6 246 -9 234 -4C229 -1 226 3 226 11C226 18 220 40 210 77C196 172 196 277 212 393ZM567 292C558 302 561 306 578 306C639 287 691 265 736 237C740 234 741 219 737 189C731 160 724 144 716 140C706 136 699 138 695 146C689 154 683 165 675 179C628 228 593 265 567 292ZM761 328C702 338 636 336 561 323C555 322 550 321 546 321C538 294 525 267 509 240C497 216 483 198 468 188C450 176 444 165 449 157C451 149 434 142 397 135C358 126 331 126 315 134C298 142 300 148 322 154C324 154 335 159 355 169C372 178 393 190 414 208C434 225 453 249 471 281C473 291 476 300 480 309C429 297 387 284 355 271C348 266 335 274 319 298C302 321 310 330 342 324C385 338 436 352 494 367C498 395 499 419 497 440C489 438 480 435 471 431C457 424 450 429 449 444C447 454 444 463 441 473C422 448 400 427 377 408C357 396 344 391 336 393C326 395 329 403 346 419C385 473 409 513 421 540C433 566 438 584 439 594C441 611 452 613 472 601C489 587 502 577 511 571C519 565 517 559 505 552C497 548 490 541 484 531C480 525 475 517 467 507C504 511 537 518 566 527C596 537 620 543 640 546C649 547 656 538 660 520C662 500 658 488 648 485C619 473 592 461 568 450C564 449 563 448 562 447C558 430 555 407 554 382C554 382 556 382 559 383C598 391 635 396 671 402C706 406 728 409 734 413C740 416 745 413 750 403C754 394 760 387 768 383C773 379 777 367 778 348C778 328 772 321 761 328Z" fill="#ffffff"/></svg>
+      MedMe <span class="cn">医我</span>
+    </a>
+    <div class="links">
+      <a class="hide-sm" href="index.html#how">如何使用</a>
+      <a class="hide-sm" href="doctor.html">医生模式</a>
+      <a class="hide-sm" href="index.html#start">下载</a>
+      <a class="hide-sm" href="blog.html">开发日志</a>
+      <a class="hide-sm" href="about.html">关于</a>
+      <a class="nav-cta" href="index.html#start">下载 MedMe</a>
+    </div>
+  </div>
+</nav>
+
+<header class="phead">
+  <div class="wrap">
+    <span class="kicker">医生模式</span>
+    <h1>便捷生成病历</h1>
+    <p>跨院看病的人,材料常常是一叠复印件和化验单。医生当面征得同意后拍下来,当场生成一个认领码让病人扫走 —— 病人不必装 App、不必加医生好友,从此这些资料跟着他走,下一家医院也读得懂。</p>
+  </div>
+</header>
+
+<section class="docband">
+  <div class="wrap">
+    <div class="doc-grid">
+      <div>
+        <div class="doc-quote">
+          <q>很多跨院治疗的人,来的时候带了一堆纸质材料,本身就诊时间就短,问起来很多人回答得比较啰嗦。</q>
+          <div class="by">一位出门诊的医生</div>
+        </div>
+        <div class="doc-note">
+          病人材料<b>不进医生的档案</b>,单独存放、<b>本机最多留 12 小时</b>(超时后医生下次打开 App 时清除),医生也可随时手动清空。
+          拍摄前的告知与病人的确认会一并封进那份加密文件里。
+        </div>
+      </div>
+      <div class="doc-steps">
+        <div class="step-d"><span class="n">1</span><div><b>当面告知、签字同意</b><span>拍什么、做什么用、交给谁、存多久、谁能打开 —— 五句话说清,病人手写签名或按住确认。</span></div></div>
+        <div class="step-d"><span class="n">2</span><div><b>当场拍</b><span>化验单、处方、检查报告都行,可以分多次拍;拍完医生逐份核对一遍。</span></div></div>
+        <div class="step-d"><span class="n">3</span><div><b>认领码交给病人</b><span>内容在医生手机上加密后,密文暂存到我们在阿里云(杭州)的中转,当场出一个码给病人扫;<b>密钥只在码里、不上传</b>,我们打不开。云端那份 15 天后自动删除。网络不通时退回旧办法:生成加密文件 + 口令当面给。</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p style="color:var(--muted);font-size:16px;max-width:56ch">医生不用装 App、不用加好友,扫二维码,浏览器里直接打开 —— 病程时间轴、化验趋势、影像原件都在里面。</p>
+    <div class="backcta">
+      <a class="btn" href="viewer/" target="_blank" rel="noopener">打开在线查看器 →</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="flinks">
+      <a href="index.html">首页</a>
+      <a href="privacy.html">隐私政策</a>
+      <a href="terms.html">用户协议</a>
+      <a href="https://github.com/Chesterguan/medme" target="_blank" rel="noopener">源码</a>
+      <a href="viewer/" target="_blank" rel="noopener">在线查看器</a>
+    </div>
+    <p class="disc">
+      <b>MedMe(医我)</b> 是个人医疗数据整理与保存工具,非医疗器械,<b>不提供任何医疗诊断或建议</b>。
+      病人材料的拍摄须经病人本人当面同意,拍摄前的告知与确认会一并封入加密文件。
+    </p>
+    <div>© MedMe Team 2026</div>
+  </div>
+</footer>
+
+</body>
+</html>
