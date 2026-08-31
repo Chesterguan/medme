@@ -4616,6 +4616,7 @@ dependencies = [
  "parser",
  "pdf-extract",
  "pollster",
+ "terminology",
  "windows 0.62.2",
 ]
 

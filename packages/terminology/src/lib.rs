@@ -436,6 +436,149 @@ fn strip_trailing_dose(s: &str) -> Option<String> {
     None
 }
 
+/// 剥掉报告版式的印刷标记:真实报告常在项目名前印 `#`/`*`/`★`/`☆`/`◆`(「重点关注」/
+/// 「异常提示」/院内打印惯例),`*` 有时会剥完括号后残留在末尾(如
+/// 「γ-谷氨酰转肽酶(γ-GT化学法)*」剥括号后是「…酶*」)。这些标记与项目名本身无关,
+/// 但 `normalize` 是精确查表,标记不去掉就整条认不出。返回 `None` 表示没有可剥的标记。
+///
+/// **尾部刻意不剥 `#`**:血细胞分类计数的字典别名本来就用尾部 `#` 表示「绝对值/计数」
+/// 而非「百分比」(`NEUT#`、`LYM#`、`MONO#`…… 见 build_index 建索引时收录的别名),
+/// `#` 是这些别名的一部分,剥了会把「NEUT#」错剥成「NEUT」。前缀 `#` 没有这个问题——
+/// 词典里没有一条别名以 `#`/`*`/`★`/`☆`/`◆` 开头。
+fn strip_report_markers(s: &str) -> Option<String> {
+    const LEADING: &[char] = &['#', '*', '★', '☆', '◆'];
+    const TRAILING: &[char] = &['*', '★', '☆', '◆'];
+    let stripped = s.trim_start_matches(LEADING).trim_end_matches(TRAILING);
+    if stripped.chars().count() < s.chars().count() && !stripped.is_empty() {
+        Some(stripped.to_string())
+    } else {
+        None
+    }
+}
+
+/// 是否是 CJK 表意文字(汉字)。用来把「中文段紧贴 ASCII 段连写」(报告把化验项
+/// 中文名和缩写直接印在一起、中间无空格顿号,如「白细胞WBC」「血小板压积PCT」)
+/// 从其它 ASCII 标点/希腊字母/数字里分出来——那些整体属于同一个词(见
+/// [`term_candidates`] 顶部注释的反例),不该被当成脚本边界切开。
+fn is_han(c: char) -> bool {
+    matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}')
+}
+
+/// 按「汉字段 / 非汉字段」脚本边界把 `s` 切成连续同类字符的段。空白与
+/// [`term_candidates`] 里已经处理过的分隔符(顿号、逗号等)在这里当硬边界,
+/// 直接丢弃、不并入任何段,好让 `RDW-SD`、`NEU%`、`LYM#` 这类**自带 `-`/`%`/`#`
+/// 的缩写整体留在同一段里**——切的是「汉字↔非汉字」的边界,不是 ASCII 内部的
+/// 标点。
+fn script_runs(s: &str) -> Vec<(bool, String)> {
+    const SEPS: [char; 5] = [' ', '\u{3000}', '、', ',', '，'];
+    let mut runs: Vec<(bool, String)> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_han: Option<bool> = None;
+    for c in s.chars() {
+        if SEPS.contains(&c) {
+            if let Some(h) = cur_han.take() {
+                runs.push((h, std::mem::take(&mut cur)));
+            }
+            continue;
+        }
+        let h = is_han(c);
+        match cur_han {
+            Some(prev) if prev == h => cur.push(c),
+            _ => {
+                if let Some(prev) = cur_han {
+                    runs.push((prev, std::mem::take(&mut cur)));
+                }
+                cur_han = Some(h);
+                cur.push(c);
+            }
+        }
+    }
+    if let Some(h) = cur_han {
+        runs.push((h, cur));
+    }
+    runs
+}
+
+/// 「中文段紧贴 ASCII 段连写」的候选:只取**首尾两段**,中间夹的段绝不单独
+/// 当候选——多段夹心(「平均红细胞**HB**浓度」)里的中间段多半是词内缩写,不是
+/// 独立指标,单独查表容易撞上不相关的词条(见 [`hb_infix_candidate`])。
+///
+/// 默认中文先——裸 ASCII 短代码常跨领域撞车(`PCT` 既是「血小板压积」也是
+/// 「降钙素原」,`LEU` 既关联血 WBC 也是尿白细胞酯酶),中文描述通常无歧义。
+///
+/// 但 ASCII 段带**限定符**(连字符,或字母掺数字,如 `RDW-SD`、`A2`、`-MB`)时,
+/// 裸中文前缀**整个不给**——不是换个顺序试,是压根不当候选:限定符存在本身就
+/// 说明这个概念有好几个近亲变体共享同一个中文词根,裸中文词根默认指向的是**另一个**
+/// 变体,而不是这一条:
+/// - `RDW-SD`(标准差)vs `RDW-CV`(变异系数)是两个不同指标,词典里裸中文
+///   「红细胞体积分布宽度」本身默认指向 CV 口径——中文先试会把 RDW-SD 误配成
+///   RDW(CV)。
+/// - `血红蛋白A2`(血红蛋白电泳的一个组分,词典压根没收)如果只看得懂中文前缀
+///   「血红蛋白」,会被顶替成整段血红蛋白浓度——一个看着合理、其实错的临床值。
+/// - `肌酸激酶-MB`(本该是 CK-MB 同工酶,词典该走的别名其实是「CK-MB」/
+///   「肌酸激酶同工酶MB」,`-MB` 单独查不到)如果放行裸中文前缀「肌酸激酶」兜底,
+///   会被误配成完全不同的另一个指标「肌酸激酶」(普通 CK,不是同工酶)。
+///
+/// 三个例子里,ASCII 段自己能不能查到都不能改变结论:查得到就该让它自己赢
+/// (`RDW-SD`);查不到也不该退回去信裸中文(`血红蛋白A2`、`肌酸激酶-MB`)——
+/// 宁可连这条都 miss。
+///
+/// 报告行首常印裸数字序号(「20血小板总数」「3总胆红素」),序号紧贴中文、没有
+/// 分隔符,跟这里要切的「中文+缩写」连写长得一样(都是「汉字段紧邻非汉字段」),
+/// 但序号不是名字的一部分,也不构成限定符——过滤规则是「ASCII 段必须含字母」,
+/// 纯数字段直接放弃整切(见下)。
+fn han_ascii_boundary_candidates(s: &str) -> Vec<String> {
+    let runs = script_runs(s);
+    if runs.len() < 2 {
+        return Vec::new();
+    }
+    let mut boundary: Vec<&(bool, String)> = vec![runs.first().unwrap()];
+    let last = runs.last().unwrap();
+    if !std::ptr::eq(last, boundary[0]) {
+        boundary.push(last);
+    }
+    let han: Vec<&str> = boundary
+        .iter()
+        .filter(|r| r.0)
+        .map(|r| r.1.as_str())
+        .collect();
+    let non_han: Vec<&str> = boundary
+        .iter()
+        .filter(|r| !r.0)
+        .map(|r| r.1.as_str())
+        .collect();
+    let has_letter = |t: &str| t.chars().any(char::is_alphabetic);
+    if !non_han.iter().any(|t| has_letter(t)) {
+        return Vec::new();
+    }
+    let has_qualifier = |t: &&str| t.contains('-') || t.chars().any(|c| c.is_ascii_digit());
+    if non_han.iter().any(has_qualifier) {
+        return non_han.iter().map(|t| t.to_string()).collect();
+    }
+    han.iter()
+        .chain(non_han.iter())
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// 「中文—HB—中文」夹心(`平均红细胞HB浓度` = MCHC,`平均红细胞HB含量` = MCH):
+/// `HB` 是「血红蛋白」在报告里的惯用中缀缩写,但**只有前后都是中文时才展开替换、
+/// 重组整串再查表**——绝不把裸 `HB` 当独立候选,否则会误配到「血红蛋白」本身
+/// (`Hb` 是 hgb 条目的别名),而这里整体说的是红细胞的平均血红蛋白浓度/含量,
+/// 是完全不同的指标。重组出的整串仍然要走跟其它候选一样的精确查表,不是新开
+/// 一条模糊路径。
+fn hb_infix_candidate(s: &str) -> Option<String> {
+    let runs = script_runs(s);
+    let [(h0, r0), (hm, rm), (h2, r2)] = runs.as_slice() else {
+        return None;
+    };
+    if *h0 && *h2 && !hm && rm.eq_ignore_ascii_case("hb") {
+        Some(format!("{r0}血红蛋白{r2}"))
+    } else {
+        None
+    }
+}
+
 /// 术语名**候选拆分**(提取层调用,不在 [`normalize`] 里跑):真实报告/处方写
 /// 「甘油三酯 TG」「肌酐 Cr(Scr)」「甲泼尼龙片(美卓乐)4mg」——整串精确查表必 miss,
 /// 拆开后各自查即命中。
@@ -494,11 +637,34 @@ pub fn term_candidates(name: &str) -> Vec<String> {
             }
         }
     }
+    // 每个候选再补一个「去掉报告版式印刷标记」的版本(#/*/★/☆/◆,见
+    // strip_report_markers 文档)。放在去规格之前,好让「★白细胞计数5mg」这类
+    // 标记+规格叠加的候选也能在下一步被去规格补全。
+    for i in 0..cands.len() {
+        if let Some(stem) = strip_report_markers(&cands[i]) {
+            cands.push(stem);
+        }
+    }
     // 每个候选再补一个「去掉尾部规格」的版本(处方:醋酸泼尼松片5mg)。
     for i in 0..cands.len() {
         if let Some(stem) = strip_trailing_dose(&cands[i]) {
             cands.push(stem);
         }
+    }
+    // 「中文段紧贴 ASCII 段连写」兜底:放在最后,前面任何一步已经产出的命中都
+    // 优先于它。只在**去括号后的主体**(`stripped`)和**括号内内容**
+    // (`inner_all`)上切——不用带括号的原串 `name`,括号本身是非汉字字符,会把
+    // 「(」「)」跟相邻的 ASCII 缩写粘成一段,产出一堆查不到、纯浪费的候选。
+    for c in han_ascii_boundary_candidates(&stripped) {
+        cands.push(c);
+    }
+    for blk in &inner_all {
+        for c in han_ascii_boundary_candidates(blk) {
+            cands.push(c);
+        }
+    }
+    if let Some(c) = hb_infix_candidate(&stripped) {
+        cands.push(c);
     }
     cands.retain(|c| !c.is_empty());
     cands.dedup();
@@ -570,6 +736,178 @@ fn entry_accepts_unit(entry: &Entry, unit: &str) -> bool {
         || entry.units.iter().any(|r| normalize_unit(&r.unit) == u)
 }
 
+/// 模糊匹配置信度:低于 OCR 混淆表命中(0.5,人工核实过的已知误读),因为这是
+/// **推算**出来的近邻,不是任何人核对过的对应关系。仍高于 0(不是无意义的猜),
+/// 上层可据此单独路由(比如比 confusions 命中更强烈地提示人工复核)。
+const FUZZY_CONFIDENCE: f32 = 0.4;
+
+/// 模糊匹配的最短名字长度(归一化后字符数)。**3 字及以下永不模糊**——诊断样本
+/// 里过敏原/同类项套餐的近形词碰撞(`牛奶`→`小麦`、`猫上皮`→`狗上皮`、
+/// `牛肉`/`羊肉`→`士肉`)几乎全落在这个长度区间:字数太少,字形上根本分不开
+/// "这是同一个词的误读" 和 "这是同一张套餐单上另一个词"。短名字只走精确匹配 /
+/// OCR 混淆表,查不到就诚实 miss——比错配安全。
+const FUZZY_MIN_LEN: usize = 4;
+
+/// 按归一化后字符数分档的编辑距离上限。**故意统一收在 1**,没有随长度放宽——
+/// 第一版按诊断表的相对距离放宽到 2~3 字后实测(loop/fuzzy 报告)踩了一类没预料到
+/// 的坑:血常规分类计数/百分比一族(中性/淋巴/单核/嗜酸性/嗜碱性粒细胞×比率/
+/// 百分比/计数)彼此共享极长的公共后缀("…细胞比率"/"…细胞计数"),只在开头的
+/// 分类字上有 1~2 字差——`嗜酸性`→`中性`编辑距离恰好是 2,`单核`→`多核`恰好是 1,
+/// 但两者是**完全不同的临床概念**,不是同一个词的误读。放宽到 2 字直接把
+/// "嗜酸性粒细胞比率" 错配成 neut_pct、把"多核细胞比率"错配成 mono_pct,把错配率
+/// 从 13.0% 推到 13.7%,破了红线。收紧到统一 1 字之后这类整词替换基本挡住了
+/// (`单/多`这种仍是 1 字差的残余风险,靠下面的数字前缀护栏和歧义拒绝兜底,
+/// 详见报告"剩余天花板"一节)。
+fn fuzzy_max_distance(len: usize) -> usize {
+    if len < FUZZY_MIN_LEN {
+        0 // 从不会用到:调用方已用 FUZZY_MIN_LEN 挡在前面。
+    } else {
+        1
+    }
+}
+
+/// 提取字符串里的 ASCII 数字子串(按出现顺序拼接,不含分隔符)。用于
+/// [`fuzzy_lookup`] 的"数字前缀/编号必须原样一致"护栏。
+fn digit_run(s: &str) -> String {
+    s.chars().filter(char::is_ascii_digit).collect()
+}
+
+/// 截断前缀匹配允许被切掉的最长尾巴(字符数)。词典里常见后缀
+/// (百分比/绝对值/比率/计数……)大多 2~4 字,留一点余量到 4;再长就该走普通
+/// 编辑距离而不是"当作截断"——一个 4 字查询前缀配一条 12 字别名没有意义。
+const TRUNCATION_MAX_EXTRA: usize = 4;
+
+/// 字符级 Levenshtein 距离。**必须按 `char` 不按字节**——中文字符是多字节
+/// UTF-8,按字节比较会把"差一个汉字"算成"差三个字节",阈值全部失真。
+fn edit_distance(a: &[char], b: &[char]) -> usize {
+    let (n, m) = (a.len(), b.len());
+    if n == 0 {
+        return m;
+    }
+    if m == 0 {
+        return n;
+    }
+    let mut prev: Vec<usize> = (0..=m).collect();
+    let mut cur = vec![0usize; m + 1];
+    for i in 1..=n {
+        cur[0] = i;
+        for (j, &bc) in b.iter().enumerate().map(|(j, c)| (j + 1, c)) {
+            let cost = usize::from(a[i - 1] != bc);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[m]
+}
+
+/// 词典范围内的模糊查找,`resolve` 精确路径(`normalize` 的直配/OCR混淆表/药名
+/// 剥壳)全部 miss 之后才会走到这里。**只从这里调用,不接入 `normalize` /
+/// `normalize_drug`**:那两个是别的调用方(药名剥壳候选、`coverage` 覆盖率统计、
+/// 处方解析)依赖"精确查表"这条不变式的地方,模糊化会悄悄改变它们的语义。
+///
+/// 策略(宁可漏不可错——见 loop/fuzzy 报告的诊断):
+/// 1. **短名不模糊**([`FUZZY_MIN_LEN`]):见该常量文档。
+/// 2. **编辑距离上限**([`fuzzy_max_distance`])。
+/// 3. **数字前缀护栏**:query 和候选别名里的数字子串(按出现顺序拼接)必须完全
+///    相同才允许进入距离比较。医学名词里的数字几乎全是**编号/亚型**而不是易读错
+///    的笔画(`IL-2`≠`IL-6`、`CD4`≠`CD8`、`HPV16`≠`HPV18`、维生素`B6`≠`B12`)——
+///    这类词一位数字之差就是完全不同的概念,不是 OCR 手误,不能算进"1 字编辑距离"
+///    的容错预算里。（真实诊断中 `IL-2(T-N)` 被错配成 il6 就是这类事故,数字不
+///    一致直接挡住。)
+/// 4. **截断前缀优先于编辑距离**([`TRUNCATION_MAX_EXTRA`]):版式/表格列宽把名字
+///    尾巴切掉(`中性粒细胞百` = "中性粒细胞百分比" 被切掉"分比")是比"某个汉字被
+///    识别错"更常见、也更好判断的失败模式——**query 是且只是某条别名的前缀**这件
+///    事本身不需要猜任何字形。它因此比同长度的编辑距离候选更可信,哪怕两者数值
+///    上都"距离很近":`中性粒细胞百` 到 neut_count 的别名`中性粒细胞数`只差 1 字
+///    (`百`→`数`,纯属两个同族词碰巧同长度还差一个通用后缀字的巧合),但到
+///    neut_pct 的`中性粒细胞百分比`是**真前缀关系**——后者才是真相。前缀候选按
+///    "有效距离 0" 参与全局最小距离/歧义竞争,不与编辑距离候选混着比大小。
+/// 5. **歧义拒绝**:全词典范围内,若最小距离被两个以上不同条目打平,不猜——除非
+///    本行带着单位,且单位能把打平的候选唯一筛剩一个(数值侧证据消解名字侧歧义)。
+/// 6. **只在化验/体征命名空间找**(跳过 `Category::Drug`):`resolve` 是化验报告单
+///    语境,药名撞进来只有风险没有收益。
+fn fuzzy_lookup(name: &str, unit: Option<&str>) -> Option<Match> {
+    let norm = normalize_term(name);
+    let len = norm.chars().count();
+    if len < FUZZY_MIN_LEN {
+        return None;
+    }
+    let max_dist = fuzzy_max_distance(len);
+    let norm_chars: Vec<char> = norm.chars().collect();
+    let norm_digits = digit_run(&norm);
+    let idx = index();
+
+    // 每个条目在其所有别名里的最近距离(达到阈值才收;截断前缀记作 0)。
+    let mut best_per_entry: Vec<(usize, String, usize)> = Vec::new();
+    for (entry_idx, entry) in idx.entries.iter().enumerate() {
+        if entry.category == Category::Drug {
+            continue;
+        }
+        let mut best: Option<(String, usize)> = None;
+        for alias in &entry.aliases {
+            let a_norm = normalize_term(alias);
+            let a_len = a_norm.chars().count();
+            // query 是这条别名的真前缀(别名更长、被切掉的尾巴不太长)——当截断处理,
+            // 不进普通编辑距离比较(见上文文档)。
+            let is_truncation =
+                a_len > len && a_len - len <= TRUNCATION_MAX_EXTRA && a_norm.starts_with(&norm);
+            if !is_truncation && a_len.abs_diff(len) > max_dist {
+                // 长度差本身已经超阈值,距离必然超阈值——省一次 DP。
+                continue;
+            }
+            // 数字前缀护栏:两边数字不完全一致就不是同一个编号/亚型,直接跳过。
+            if digit_run(&a_norm) != norm_digits {
+                continue;
+            }
+            let d = if is_truncation {
+                0
+            } else {
+                let a_chars: Vec<char> = a_norm.chars().collect();
+                let d = edit_distance(&norm_chars, &a_chars);
+                if d > max_dist {
+                    continue;
+                }
+                d
+            };
+            if best.as_ref().map(|(_, bd)| d < *bd).unwrap_or(true) {
+                best = Some((alias.clone(), d));
+            }
+        }
+        if let Some((alias, d)) = best {
+            best_per_entry.push((entry_idx, alias, d));
+        }
+    }
+    if best_per_entry.is_empty() {
+        return None;
+    }
+    let min_dist = best_per_entry.iter().map(|(_, _, d)| *d).min()?;
+    let tied: Vec<&(usize, String, usize)> = best_per_entry
+        .iter()
+        .filter(|(_, _, d)| *d == min_dist)
+        .collect();
+
+    let winner = if tied.len() == 1 {
+        tied[0]
+    } else {
+        // 歧义:只有单位能唯一裁决才接受,否则不猜。
+        let u = unit.map(str::trim).filter(|u| !u.is_empty())?;
+        let mut accepting = tied
+            .iter()
+            .filter(|(entry_idx, _, _)| entry_accepts_unit(&idx.entries[*entry_idx], u));
+        let only = accepting.next()?;
+        if accepting.next().is_some() {
+            return None; // 单位还是分不开——仍然歧义。
+        }
+        only
+    };
+
+    let hit = AliasHit {
+        entry_idx: winner.0,
+        alias: winner.1.clone(),
+    };
+    Some(idx.to_match(&hit, FUZZY_CONFIDENCE))
+}
+
 /// 报告一行(项名 + 单位)→ 概念。**提取层该用的入口**,不是 [`normalize`]。
 ///
 /// 拆候选后**不是「第一个命中即用」** —— 那样结果取决于候选顺序,很脆:
@@ -582,12 +920,18 @@ fn entry_accepts_unit(entry: &Entry, unit: &str) -> bool {
 /// 2. 然后比置信度(精确 1.0 > 剥壳 0.8 > OCR 混淆 0.5)。
 /// 3. 再取**匹配最长**的(maximal munch):更长的别名 = 更具体的概念。
 /// 4. 全平手才按候选顺序 —— 顺序退化成 tie-break,不再是正确性的支点。
+///
+/// 精确路径(含候选拆分)全部 miss 时,再对**主体候选**(原串 + 去括号主体,
+/// [`term_candidates`] 输出的前两项)试一次 [`fuzzy_lookup`]——只试这两个,不对
+/// 拆分出的短 token / 括号内裸缩写模糊,那些片段模糊匹配风险远大于收益(见
+/// `fuzzy_lookup` 文档的歧义拒绝一节)。
 pub fn resolve(name: &str, unit: Option<&str>) -> Option<Match> {
-    let hits: Vec<Match> = term_candidates(name)
-        .iter()
-        .filter_map(|c| normalize(c))
-        .collect();
-    pick_best(hits, unit)
+    let cands = term_candidates(name);
+    let hits: Vec<Match> = cands.iter().filter_map(|c| normalize(c)).collect();
+    if !hits.is_empty() {
+        return pick_best(hits, unit);
+    }
+    cands.iter().take(2).find_map(|c| fuzzy_lookup(c, unit))
 }
 
 /// 处方语境的 [`resolve`]:只在 drug 命名空间里择优(处方没有单位可用作证据)。
@@ -839,6 +1183,55 @@ mod tests {
     }
 
     #[test]
+    fn resolve_fuzzy_matches_ocr_corrupted_names() {
+        // 精确路径全部 miss 之后,`resolve` 才会退到模糊路径 —— 单字 OCR 误读、
+        // 截断都应该救回来,且置信度必须低于精确/剥壳/OCR混淆表。
+        let cases: &[(&str, &str)] = &[
+            // 单字形近误读(非词典已收录的 ocr_confusions)。"肌酐"本身只有 2 字,
+            // 低于模糊匹配的最短长度门槛,所以用 4 字的"血清肌酐"别名来测。
+            ("血清肌配", "creatinine"),
+            // 版式截断(表格列宽切掉尾巴)—— 前缀关系,不是编辑距离。
+            ("中性粒细胞百", "neut_pct"),
+            ("嗜酸性粒细胞绝对", "eos_count"),
+        ];
+        for (raw, key) in cases {
+            let m = resolve(raw, None).unwrap_or_else(|| panic!("no fuzzy hit for {raw}"));
+            assert_eq!(m.key, *key, "{raw}");
+            assert_eq!(
+                m.confidence, FUZZY_CONFIDENCE,
+                "{raw} should be a fuzzy hit"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_fuzzy_never_matches_short_names() {
+        // 3 字及以下永不模糊 —— 过敏原/同类套餐的近形词碰撞几乎全落在这个区间
+        // (`牛奶`≠`小麦`,`猫上皮`≠`狗上皮`),字形分不开就该老实 miss,不能猜。
+        assert!(resolve("牛奶", None).is_none());
+        assert!(resolve("猫上皮", None).is_none());
+    }
+
+    #[test]
+    fn resolve_fuzzy_rejects_digit_mismatch() {
+        // 数字前缀护栏:白细胞介素家族靠数字区分亚型(IL-2 ≠ IL-6),一位数字之差
+        // 是完全不同的概念,不能被当成"1 字编辑距离"的容错。
+        assert!(resolve("IL-2", Some("pg/mL")).is_none());
+        // 数字一致时模糊仍然工作(截断/误读救回同一个编号)。
+        assert_eq!(resolve("IL-6单", None).unwrap().key, "il6");
+    }
+
+    #[test]
+    fn resolve_fuzzy_rejects_ambiguous_ties() {
+        // 嗜酸性粒细胞比率(eos_pct)和嗜碱性粒细胞比率(baso_pct)只在"酸/碱"一字
+        // 上不同,其余共享同一个模板。一个把这个字读花了的查询到两条别名的编辑
+        // 距离一样近(都是 1),而且两个条目都用 `%` —— 单位也分不开,必须拒绝
+        // 而不是随便猜一个。
+        assert!(resolve("嗜厂性粒细胞比率", None).is_none());
+        assert!(resolve("嗜厂性粒细胞比率", Some("%")).is_none());
+    }
+
+    #[test]
     fn resolve_drug_picks_longest_match() {
         // maximal munch:更长的别名 = 更具体的药。「地氯雷他定片」不该被 5 字的
         // 「氯雷他定」抢走(那是**另一个药**)。
@@ -1002,6 +1395,31 @@ mod tests {
     }
 
     #[test]
+    fn strips_report_print_markers() {
+        // 真实报告在项目名前印 #/*/★/☆/◆(重点关注/异常提示/院内惯例),剥完括号
+        // 后 * 有时残留在尾部。这些都不是项目名的一部分。
+        let hit = |name: &str| {
+            term_candidates(name)
+                .iter()
+                .find_map(|c| normalize(c))
+                .unwrap_or_else(|| panic!("no candidate hit for {name}"))
+                .key
+        };
+        assert_eq!(hit("#白细胞计数"), "wbc");
+        assert_eq!(hit("*红细胞计数"), "rbc");
+        assert_eq!(hit("★血小板计数"), "plt");
+        assert_eq!(hit("☆癌胚抗原"), "cea");
+        assert_eq!(hit("◆乙肝e抗原"), "hbeag");
+        // 剥括号后残留的尾部 *。
+        assert_eq!(hit("γ-谷氨酰转肽酶(γ-GT化学法)*"), "ggt");
+        // 叠加多个标记(前缀 ★ + *)。
+        assert_eq!(hit("★*凝血酶原时间"), "pt");
+        // 尾部 # 是别名本身的一部分(NEUT# = 绝对计数,≠ NEUT),不能被剥掉;
+        // 整串本来就直配得到,不该被误剥成查不到的「NEUT」。
+        assert_eq!(normalize("NEUT#").unwrap().key, "neut_count");
+    }
+
+    #[test]
     fn unit_notation_folds_but_never_folds_case() {
         // 记法差异(报告 vs UCUM)折叠后必须一致。
         for (report, ucum) in [
@@ -1101,10 +1519,13 @@ mod tests {
     fn total_entry_count_is_expected() {
         // Coverage expansion (2026-07-14.1): 191 + 446 按专科批次扩容 = 637,再减 1
         // (2026-08-05:去重 polystyrene_sulfonate 的重复条目,见 dictionary_keys_are_globally_unique)= 636。
+        // +4 (2026-08-13.1:MedRepBench 词典缺口扫描,补尿沉渣分析仪四项 ——
+        // urine_pathologic_casts/urine_mucus/urine_yeast/urine_wbc_clumps,均有独立
+        // LOINC 标准概念,见各条目 note)= 640。
         // A drift here means an entry was accidentally dropped or duplicated.
         assert_eq!(
             dictionary_entries().len(),
-            636,
+            640,
             "unexpected dictionary entry count"
         );
     }

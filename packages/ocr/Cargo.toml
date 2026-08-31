@@ -30,6 +30,8 @@ pdf-extract.workspace = true
 # 再跟真值比对(复用生产已有的、经过语料校验的规则抽取器,而不是给评测另写一套解析)。
 # parser 不依赖 ocr,不会形成 dep 环。
 parser = { path = "../parser" }
+# medrep.rs 直接用词典解析真值项目名,以便把「词典未覆盖」单独计一栏。
+terminology = { path = "../terminology" }
 
 [[example]]
 name = "layout_eval"
@@ -37,6 +39,24 @@ name = "layout_eval"
 # 没开这个 feature 时 `cargo build/test/clippy --all-targets`(默认 feature 集)
 # 直接跳过编译这个 example,而不是报「找不到该函数」的编译错误。
 required-features = ["engine", "testing"]
+
+[[example]]
+name = "medrep_gold"
+required-features = ["engine", "testing"]
+
+[[example]]
+name = "medrep_attrib"
+required-features = ["engine", "testing"]
+
+[[example]]
+name = "medrep"
+required-features = ["engine", "testing"]
+
+[[example]]
+name = "arena"
+required-features = ["engine", "testing"]
+
+
 
 [features]
 # `engine` pulls in `oar-ocr` (PP-OCRv5 via ONNX Runtime / `ort`), which

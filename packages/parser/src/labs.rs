@@ -231,9 +231,40 @@ fn row_re() -> &'static Regex {
 // match (a genuinely malformed/glued numeral this pattern can't make sense
 // of), so a same-shaped failure in some other punctuation combination fails
 // loud (row dropped) rather than fabricating a plausible-looking half value.
+//
+// The separator itself is `[-~]+` — ONE OR MORE dash/tilde chars, not exactly
+// one. Real corpus (`9.4--12.5`, `21--37`, `0--252`, MedRepBench ground truth,
+// sampled 618 occurrences of the exact `<num>--<num>` shape across the corpus'
+// source annotations) prints a doubled hyphen where a single en/em dash was
+// meant — every single one of those 618 has `low <= high` under the plain
+// "doubled separator" reading, zero under-support the alternative reading
+// "second number's own leading `-` is a minus sign" (which would make the
+// bound negative for exactly the same physiologically non-negative analytes —
+// PT/APTT seconds, bilirubin, D-dimer, TSH — that never legitimately go
+// negative). A single `-` still matches (the `+` is satisfied by one
+// repetition), so this only WIDENS what's accepted; it never changes how an
+// already-matching single-dash range reads.
 fn range_two_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(\d+(?:[.,]\d+)?)\s*[-~]\s*(\d+(?:[.,]\d+)?)").expect("range re"))
+    R.get_or_init(|| {
+        Regex::new(r"(\d+(?:[.,]\d+)?)\s*[-~]+\s*(\d+(?:[.,]\d+)?)").expect("range re")
+    })
+}
+/// A whitespace-delimited token that is NOTHING BUT a bounded range (an
+/// optional trailing `%`, nothing else) — anchored start-to-end, unlike
+/// `range_two_re` which matches anywhere. Used to keep `parse_rest_with_residual`'s
+/// unit search from mistaking a SECOND lab entry's own reference range
+/// (`11.00-45.00%`, printed as one token with no internal space) for THIS
+/// entry's unit. Deliberately anchored to the WHOLE token: the CBC
+/// `×10⁹/L`/`×10¹²/L` unit shape (`10~9/L`, `10^12/L`) also starts with a
+/// digit-dash-digit run but is never followed by nothing else — it always has
+/// a trailing `/<letter>` — so it fails this anchored match and stays a valid
+/// unit candidate. See `parse_rest_with_residual`'s unit-token loop.
+fn bare_range_token_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(r"^\d+(?:[.,]\d+)?[-~]+\d+(?:[.,]\d+)?%?$").expect("bare range token re")
+    })
 }
 fn range_high_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
@@ -245,10 +276,12 @@ fn range_low_re() -> &'static Regex {
 }
 /// The TAIL of a two-sided range — the operator plus the high bound — anchored
 /// at the start of whatever follows the result. Same number sub-pattern as the
-/// range regexes above. Used by `value_is_range_low_bound`.
+/// range regexes above, and the same `+` on the separator as `range_two_re`
+/// (a value bound into a doubled-dash range, e.g. `13血红蛋白  4.00--5.50`, is
+/// the same shape one dash shorter). Used by `value_is_range_low_bound`.
 fn range_tail_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"^[-~]\s*(\d+(?:[.,]\d+)?)").expect("range tail re"))
+    R.get_or_init(|| Regex::new(r"^[-~]+\s*(\d+(?:[.,]\d+)?)").expect("range tail re"))
 }
 
 /// True when neither the char immediately before `start` nor the char
@@ -682,11 +715,57 @@ fn find_range(folded: &str) -> Option<RangeMatch> {
     None
 }
 
-/// Parse the trailing `单位 参考范围 [↑/↓]` columns. The reference range is matched
-/// on the whole (punctuation-folded) string first — so a spaced `< 5.20` or
-/// `3.9 - 6.1` parses as one range — then blanked out; unit and flag are read from
-/// what remains, order-independently.
-fn parse_rest(rest: &str) -> (Option<String>, Option<f64>, Option<f64>, Option<String>) {
+/// A whitespace-delimited token together with its byte span in the source
+/// string it was cut from. `str::split_whitespace` alone doesn't expose
+/// positions; `parse_rest_with_residual` needs them to blank out exactly the
+/// tokens it consumed while leaving everything else — including a second
+/// analyte's own name/value, when the line packs two lab entries side by side
+/// (see that function's doc) — untouched.
+fn whitespace_tokens_with_spans(s: &str) -> Vec<(&str, usize, usize)> {
+    let mut out = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, c) in s.char_indices() {
+        if c.is_whitespace() {
+            if let Some(st) = start.take() {
+                out.push((&s[st..i], st, i));
+            }
+        } else if start.is_none() {
+            start = Some(i);
+        }
+    }
+    if let Some(st) = start {
+        out.push((&s[st..], st, s.len()));
+    }
+    out
+}
+
+/// Parse the trailing `单位 参考范围 [↑/↓]` columns — same job as before this
+/// module could recover a second entry: the reference range is matched on the
+/// whole (punctuation-folded) string first — so a spaced `< 5.20` or
+/// `3.9 - 6.1` parses as one range — then blanked out; unit and flag are read
+/// from what remains, order-independently. PLUS the RESIDUAL text left over
+/// after the range/unit/flag/label-noise tokens actually consumed here are
+/// blanked to spaces (byte-for-byte, so every OTHER token's position is
+/// undisturbed).
+///
+/// The residual exists for exactly one purpose — recovering a SECOND lab entry
+/// packed onto the same physical line as the one just parsed; see
+/// `recover_second_entry`'s doc for the two-column layout that produces this
+/// shape. Blanking only what was ACTUALLY consumed — not every token — is what
+/// keeps that safe: entry 1's own reference range/unit/flag can never be
+/// mistaken for entry 2's name or value (they're gone from the residual), while
+/// a genuine second entry's name/value/unit/range, never touched by entry 1's
+/// parse, comes through completely intact for `parse_line` to read fresh,
+/// gated by exactly the same rules as any other line.
+fn parse_rest_with_residual(
+    rest: &str,
+) -> (
+    Option<String>,
+    Option<f64>,
+    Option<f64>,
+    Option<String>,
+    String,
+) {
     let folded = fold_range_punct(rest);
     // Split a CBC ×10⁹/L or ×10¹²/L unit that OCR glued onto the number before it
     // (see glued_cbc_unit_re doc) before any numeric parsing, so the range regex
@@ -704,9 +783,11 @@ fn parse_rest(rest: &str) -> (Option<String>, Option<f64>, Option<f64>, Option<S
         // Blank the range so its digits can't be re-read as a unit token.
         scan.replace_range(s..e, " ");
     }
+    let mut residual = scan.clone();
 
     let (mut unit, mut flag) = (None, None);
-    for raw in scan.split_whitespace() {
+    let tokens = whitespace_tokens_with_spans(&scan);
+    for (idx, &(raw, start, end)) in tokens.iter().enumerate() {
         let tok =
             raw.trim_matches(|c| matches!(c, '(' | ')' | '（' | '）' | '[' | ']' | '【' | '】'));
         if tok.is_empty() {
@@ -734,26 +815,59 @@ fn parse_rest(rest: &str) -> (Option<String>, Option<f64>, Option<f64>, Option<S
         // their printed range, whenever OCR put spaces around the slash.
         if raw.contains('↑') || matches!(tok, "H" | "Ｈ" | "高" | "偏高") {
             flag = Some("H".to_string());
+            residual.replace_range(start..end, &" ".repeat(end - start));
             continue;
         }
         if raw.contains('↓') || matches!(tok, "L" | "Ｌ" | "低" | "偏低") {
             flag = Some("L".to_string());
+            residual.replace_range(start..end, &" ".repeat(end - start));
             continue;
         }
         // Label noise inside inline `(参考 …)` / `正常范围` etc.
         if tok.contains("参考") || tok.contains("范围") || tok.contains("正常") {
+            residual.replace_range(start..end, &" ".repeat(end - start));
             continue;
         }
-        // First unit-looking token wins (has a letter, %, / or degree sign).
+        // First unit-looking token wins (has a letter, %, / or degree sign) —
+        // UNLESS it's a bare run of 2+ uppercase ASCII letters with a CJK-led
+        // token somewhere after it. That specific shape (`MPV` ahead of
+        // `血小板体积分布宽度`) is a SECOND lab entry's own English abbreviation
+        // column, not this entry's unit — real corpus, two-column report
+        // flattened onto one line (see `recover_second_entry`'s doc). No unit
+        // in `dictionary_entries()` is a bare run of uppercase letters — every
+        // one carries a `/`, `%`, `°`, `μ`/`u`, or a digit (`g/L`, `x10^9/L`,
+        // `mmol/L`, `IU/mL`, `fL`, `pg`, `s`) — so this can only ever withhold
+        // a token that was never going to be a valid unit match anyway; the
+        // CJK-lookahead guard further restricts it to fire only when there's
+        // a plausible second entry to protect, so a genuinely bare uppercase
+        // token at the tail of an ordinary line (nothing after it) is
+        // completely unaffected.
         if unit.is_none()
             && tok
                 .chars()
                 .any(|c| c.is_ascii_alphabetic() || c == '%' || c == '/' || c == '°')
         {
-            unit = Some(tok.to_string());
+            let looks_like_next_entrys_abbreviation = tok.chars().count() >= 2
+                && tok.chars().all(|c| c.is_ascii_uppercase())
+                && tokens[idx + 1..].iter().any(|&(t, _, _)| {
+                    t.chars()
+                        .next()
+                        .is_some_and(|c| ('\u{4e00}'..='\u{9fa5}').contains(&c))
+                });
+            // Same shape of mistake, different token: a SECOND entry's own
+            // reference range printed as one glued token (`11.00-45.00%`,
+            // no internal space) satisfies "has a letter/%/…" just as well as
+            // a real unit does. `bare_range_token_re` tells the two apart —
+            // see that regex's doc for why the CBC `10~9/L` unit shape
+            // survives this check unharmed.
+            let looks_like_a_bare_range = bare_range_token_re().is_match(tok);
+            if !looks_like_next_entrys_abbreviation && !looks_like_a_bare_range {
+                unit = Some(tok.to_string());
+                residual.replace_range(start..end, &" ".repeat(end - start));
+            }
         }
     }
-    (unit, low, high, flag)
+    (unit, low, high, flag, residual)
 }
 
 /// Extract normalized lab observations from a report's text. Unknown analytes
@@ -778,7 +892,7 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
     let lines: Vec<&str> = text.lines().collect();
     let mut i = 0;
     while i < lines.len() {
-        let outcome = parse_line(lines[i]);
+        let (outcome, extra) = parse_line(lines[i]);
         // A line that yielded nothing may be the NAME half of a row whose
         // result columns wrapped onto the next line. Only ever attempted here,
         // i.e. after the line has failed on its own, so joining can never take
@@ -791,13 +905,189 @@ pub fn extract_labs_with_unreadable(text: &str) -> (Vec<LabObservation>, Vec<Unr
             }
         }
         match outcome {
-            LineOutcome::Row(o) => out.push(o),
+            LineOutcome::Row(mut o) => {
+                // The row parsed cleanly but with NO reference range at all —
+                // either try completing it from a range that wrapped onto the
+                // next line, or — if `value` itself turns out to BE that
+                // range's own low bound (see `value_is_range_low_bound_wrapped`)
+                // — refuse the row outright rather than fabricate a range from
+                // it. Only attempted when `parse_rest` found neither bound, so
+                // this can only ADD a range or retract the row, never override
+                // a range already read with confidence.
+                if o.ref_low.is_none() && o.ref_high.is_none() {
+                    if let Some(rest) = rest_after_value(lines[i], o.value_num) {
+                        let next_line = lines.get(i + 1).copied();
+                        if value_is_range_low_bound_wrapped(o.value_num, rest, next_line) {
+                            unreadable.push(UnreadableRow {
+                                raw_line: lines[i].to_string(),
+                                reason: REASON_NO_RESULT_ONLY_RANGE.to_string(),
+                            });
+                            i += 2;
+                            continue;
+                        }
+                        if complete_wrapped_range(&mut o, rest, next_line) {
+                            out.push(o);
+                            out.extend(extra);
+                            i += 2;
+                            continue;
+                        }
+                    }
+                }
+                out.push(o);
+                out.extend(extra);
+            }
             LineOutcome::Unreadable(u) => unreadable.push(u),
             LineOutcome::Nothing => {}
         }
         i += 1;
     }
     (out, unreadable)
+}
+
+/// A reference range's low bound trails a line with a dangling separator
+/// (`0.85-`) and nothing after it — evidence the layout reconstruction wrapped
+/// the line before the high bound could print, not that the range is simply
+/// absent.
+///
+/// Takes `rest` — the text after THIS row's own value column (`row_re`'s
+/// `rest` group), never the full raw line. That distinction is not
+/// cosmetic: an earlier version of this function scanned the raw line on the
+/// reasoning that "`rest` is just its trailing substring, so the text at the
+/// very end is identical either way" — true when a genuinely SEPARATE low
+/// bound sits in `rest` (`血红蛋白浓度 HGB 112 g/L 112-` \n `149`: the second
+/// `112` is `rest`'s own token, distinct from `value`'s), but false the
+/// moment the result cell is blank and there IS no second occurrence: on
+/// `钙 HR/☆ Ca2.31 mmol/L 2.11-` \n `2.52` (real corpus), `row_re` already
+/// misreads the range's own low bound as `value` (`2.31` is glued to `Ca`
+/// with no separator for `row_re` to anchor on, so it's invisible to the
+/// name/value split — see module doc "Name↔value glue"), leaving `rest` as
+/// just `-`. Scanning the raw LINE at that point re-reads `value`'s own
+/// `2.11` a second time and reports it as the range's low bound too —
+/// `value == ref_low` not because a result happens to sit at the reference
+/// floor, but because they are, literally, the same digits read twice.
+/// Scanning `rest` instead can't do this: with nothing between `value` and
+/// the trailing dash, `rest` has no number left for this regex to find, so
+/// it correctly reports "no dangling low bound here" — see
+/// `value_is_range_low_bound_wrapped` for how THAT shape is instead refused
+/// outright rather than silently left un-ranged.
+fn dangling_range_low_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"(\d+(?:[.,]\d+)?)\s*[-~]+\s*$").expect("dangling range re"))
+}
+
+fn dangling_range_low(rest: &str) -> Option<f64> {
+    let folded = fold_range_punct(rest.trim_end());
+    let caps = dangling_range_low_re().captures(&folded)?;
+    parse_decimal_token(caps.get(1)?.as_str())
+}
+
+/// `rest`'s wrap-across-lines twin of `value_is_range_low_bound`: the range
+/// operator directly abuts `value` exactly the same way, but the layout
+/// reconstruction wrapped the line before the high bound itself could
+/// print, so `rest` (after the operator) is empty instead of holding it —
+/// `葡萄糖 …  正常值范围：3.90-` \n `6.10` (real corpus: the label even says
+/// "reference range" outright) is `0.03~0.30` one line-break wider. `rest`
+/// reducing to NOTHING but the operator is what tells this apart from a
+/// genuine wrapped range (`complete_wrapped_range`'s shape, where `rest`
+/// still carries a unit or other text before its own dangling low bound):
+/// there, `value` and the low bound are two distinct tokens; here `value`
+/// IS the (misidentified) low bound, and the row has no result of its own
+/// to report. Same next-line safety net as `complete_wrapped_range` — see
+/// that function's doc for why the next line must be nothing but a bare
+/// number before it's trusted to belong to this row at all.
+fn value_is_range_low_bound_wrapped(value_num: f64, rest: &str, next_line: Option<&str>) -> bool {
+    let folded = fold_range_punct(rest.trim());
+    if folded.is_empty() || !folded.chars().all(|c| matches!(c, '-' | '~')) {
+        return false;
+    }
+    let Some(next) = next_line else {
+        return false;
+    };
+    let candidate = next.trim().trim_start_matches(['-', '~']);
+    if !bare_number_re().is_match(candidate) {
+        return false;
+    }
+    parse_decimal_token(candidate).is_some_and(|high| value_num <= high)
+}
+
+/// Complete a reference range whose high bound wrapped onto the next physical
+/// line — the reference-range twin of "Wrapped rows" (module doc): PP-OCR's
+/// line reconstruction breaks a too-wide row wherever it likes, not at a
+/// column boundary, and a long `单位 参考范围` tail is exactly wide enough to
+/// get cut. Mutates `row` in place and returns whether it consumed
+/// `next_line`; `row` is left untouched on `false`.
+///
+/// Two conditions, both necessary — same discipline as `merged_wrap_row` and
+/// for the same reason (a wrong join fabricates a reference range that
+/// appears nowhere in the document, worse than leaving the row un-ranged):
+///
+/// 1. **`rest` ends in a dangling low bound** (`dangling_range_low`) — proof
+///    THIS row's range was cut off mid-print, not just absent, and (see that
+///    function's doc) a bound distinct from `value` itself.
+/// 2. **The next line, trimmed, is nothing but a bare number** — after
+///    stripping any LEADING `-`/`~` run first, since the doubled-separator
+///    typo this module already folds elsewhere (`range_two_re`'s `[-~]+` —
+///    see that function's doc, 618 corpus occurrences of `<num>--<num>`,
+///    zero genuinely negative) is exactly as likely to land split across the
+///    line break as it is to land whole on one line: `0.45-` \n `-1.81` is
+///    the same `0.45--1.81` as `0.45--1.81` on one line, just broken between
+///    the two dashes. Requiring the WHOLE trimmed line (not just its first
+///    token, unlike `is_wrapped_value_line`) to be that one number is what
+///    keeps this safe: real corpus shows the unsafe shapes this shape
+///    rejects — a stray `H`/`N` flag letter before the number (`H` \n
+///    `0.28`), a wrapped analyte-name fragment (`C)` \n `-1.94`), and an
+///    unrelated row's own name sitting where the high bound would be
+///    (`部分凝血活酶时间` \n `15.90`, a different analyte's row entirely) —
+///    joining any of those either invents a bound from noise or steals a
+///    different row's line. Left un-ranged (same outcome as today) rather
+///    than guessed, per 宁可漏,不能编 — a known, documented gap, not an
+///    oversight.
+///
+/// `low <= high` is required for the same reason `parse_line`'s own
+/// low>high check exists: a genuine reference range never inverts, so a pair
+/// that doesn't form one isn't a matching pair and the row is left alone.
+fn complete_wrapped_range(row: &mut LabObservation, rest: &str, next_line: Option<&str>) -> bool {
+    let Some(low) = dangling_range_low(rest) else {
+        return false;
+    };
+    let Some(next) = next_line else {
+        return false;
+    };
+    let candidate = next.trim().trim_start_matches(['-', '~']);
+    if !bare_number_re().is_match(candidate) {
+        return false;
+    }
+    let Some(high) = parse_decimal_token(candidate) else {
+        return false;
+    };
+    if low > high {
+        return false;
+    }
+    row.ref_low = Some(low);
+    row.ref_high = Some(high);
+    true
+}
+
+/// Re-locate the text after THIS row's own value column, straight off the
+/// RAW line — used by the outer loop's wrap-completion checks, which run
+/// after `parse_line` has already built (or refused) the row and no longer
+/// exposes `rest`. Mirrors, rather than reuses, `parse_line_budgeted`'s own
+/// `row_re` match: `fix_name_value_glue` (see module doc "Name↔value glue")
+/// only ever touches the name/value boundary near the FRONT of the line, so
+/// re-matching against the untouched raw line reproduces the identical tail
+/// every time. Guarded by comparing the recovered value against `o`'s own —
+/// on the rare line where the glue fix DID change what `row_re` sees, this
+/// returns `None` and the caller simply skips wrap-completion for that row
+/// (a small, deliberate recall cost, not a correctness risk: trusting a
+/// mismatched split back here is exactly how the raw-line scan this replaces
+/// re-read a value's own digits as its range's low bound).
+fn rest_after_value(raw_line: &str, value_num: f64) -> Option<&str> {
+    let caps = row_re().captures(raw_line)?;
+    let v = parse_decimal_token(caps.name("value")?.as_str())?;
+    if v != value_num {
+        return None;
+    }
+    Some(caps.name("rest")?.as_str())
 }
 
 /// What one line of the report turned into.
@@ -845,7 +1135,13 @@ fn merged_wrap_row(name_line: &str, value_line: &str) -> Option<LabObservation> 
         return None;
     }
     let joined = format!("{}  {}", name_line.trim_end(), value_line.trim_start());
-    match parse_line(&joined) {
+    // Any FURTHER entries `parse_line` might recover from the joined line's own
+    // tail are dropped, not threaded through — `is_wrapped_value_line` already
+    // requires `value_line` to be nothing but one result cell's worth of
+    // material, so there is nothing left over for a genuine second entry to
+    // live in; keeping this function's existing `Option<LabObservation>`
+    // contract is simpler than a return type only one caller would ever use.
+    match parse_line(&joined).0 {
         LineOutcome::Row(o) if o.analyte_key.is_some() => Some(o),
         _ => None,
     }
@@ -928,10 +1224,28 @@ fn is_lab_evidence_token(tok: &str) -> bool {
         .any(|c| c.is_ascii_alphabetic() || c == '%' || c == '/' || c == '°')
 }
 
-/// Parse ONE line into at most one lab row. Split out of
+/// How many lab entries `parse_line` will read off ONE physical line, entry 1
+/// included. Bounds `recover_second_entry`'s recursion (see that function's
+/// doc) -- real corpus tops out at two entries packed onto a line (a
+/// two-column table row PP-OCR flattened into one text line), so this never
+/// gets close to being the limiting factor there; it exists purely so a
+/// pathological line can't recurse without bound.
+const MAX_LINE_ENTRIES: u8 = 4;
+
+/// Parse ONE line into at most one lab row, PLUS any further entries packed
+/// onto the same physical line (see `recover_second_entry`). Split out of
 /// [`extract_labs_with_unreadable`] so a wrapped pair can be re-parsed as a
 /// single joined line through exactly the same rules.
-fn parse_line(raw_line: &str) -> LineOutcome {
+fn parse_line(raw_line: &str) -> (LineOutcome, Vec<LabObservation>) {
+    parse_line_budgeted(raw_line, MAX_LINE_ENTRIES)
+}
+
+/// `parse_line`'s actual implementation, plus the entry budget passed down
+/// through `recover_second_entry`'s recursion. `budget` is "how many entries,
+/// including this one, may still be read starting here" -- the second-entry
+/// recovery only fires while `budget > 1`, so it can never fire from a call
+/// that has none left to spend.
+fn parse_line_budgeted(raw_line: &str, budget: u8) -> (LineOutcome, Vec<LabObservation>) {
     // Un-glue a name directly fused to its value (`含量*26.3`) before
     // row_re ever sees the line — see fix_name_value_glue doc. An
     // ambiguous glue (can't tell where name ends) surfaces the row as
@@ -944,26 +1258,29 @@ fn parse_line(raw_line: &str) -> LineOutcome {
             &owned_line
         }
         GlueFix::Ambiguous(reason) => {
-            return LineOutcome::Unreadable(UnreadableRow {
-                raw_line: raw_line.to_string(),
-                reason: reason.to_string(),
-            });
+            return (
+                LineOutcome::Unreadable(UnreadableRow {
+                    raw_line: raw_line.to_string(),
+                    reason: reason.to_string(),
+                }),
+                Vec::new(),
+            );
         }
     };
     let Some(caps) = row_re().captures(line) else {
-        return LineOutcome::Nothing;
+        return (LineOutcome::Nothing, Vec::new());
     };
     let name_group = caps.name("name").expect("name group");
     let raw_name = name_group.as_str().trim();
     // Need a real name token — rejects date/number-only lines.
     if raw_name.is_empty() || !raw_name.chars().any(|c| c.is_alphabetic()) {
-        return LineOutcome::Nothing;
+        return (LineOutcome::Nothing, Vec::new());
     }
     // The "value column" (everything from right after the name) is itself a
     // YYYY-MM-DD date — this is a 采集/送检/报告 timestamp row, not a result.
     // See date_value_column_re doc.
     if date_value_column_re().is_match(&line[name_group.end()..]) {
-        return LineOutcome::Nothing;
+        return (LineOutcome::Nothing, Vec::new());
     }
     // A real analyte name has no *sentence* punctuation. This rejects narrative
     // fragments that a mis-routed prose/imaging line would otherwise smuggle in
@@ -972,7 +1289,7 @@ fn parse_line(raw_line: &str) -> LineOutcome {
         .chars()
         .any(|c| matches!(c, '，' | ',' | '。' | '；' | ';' | '、'))
     {
-        return LineOutcome::Nothing;
+        return (LineOutcome::Nothing, Vec::new());
     }
     // Demographics / specimen headers (`姓名：张建国  性别：男  年龄：58岁
     // 门诊号：20230615-1046`) parse as a lab row because the trailing field is
@@ -991,14 +1308,14 @@ fn parse_line(raw_line: &str) -> LineOutcome {
     // The result table's own COLUMN LABELS fail the same way once a photo
     // splits the header band across detection boxes — see `TABLE_HEADER`.
     if is_page_furniture(raw_name) {
-        return LineOutcome::Nothing;
+        return (LineOutcome::Nothing, Vec::new());
     }
     // Same number parser as the reference-range bounds — a comma-decimal
     // result (`0,08`) is read whole instead of truncated to its leading digit.
     // See `parse_decimal_token` / `row_re`.
     let Some(value_num) = parse_decimal_token(caps.name("value").expect("value group").as_str())
     else {
-        return LineOutcome::Nothing;
+        return (LineOutcome::Nothing, Vec::new());
     };
     let rest = caps.name("rest").expect("rest group").as_str();
     // Value glued with zero separator straight into another number (its
@@ -1007,12 +1324,15 @@ fn parse_line(raw_line: &str) -> LineOutcome {
     // unreadable rather than report a value we can't actually justify.
     let sep2_is_empty = caps.name("sep2").expect("sep2 group").as_str().is_empty();
     if value_glued_to_next_number(sep2_is_empty, rest) {
-        return LineOutcome::Unreadable(UnreadableRow {
-            raw_line: raw_line.to_string(),
-            reason: REASON_VALUE_GLUED_TO_RANGE.to_string(),
-        });
+        return (
+            LineOutcome::Unreadable(UnreadableRow {
+                raw_line: raw_line.to_string(),
+                reason: REASON_VALUE_GLUED_TO_RANGE.to_string(),
+            }),
+            Vec::new(),
+        );
     }
-    let (unit_raw, ref_low, ref_high, explicit_flag) = parse_rest(rest);
+    let (unit_raw, ref_low, ref_high, explicit_flag, residual) = parse_rest_with_residual(rest);
     // Invariant fallback, NOT the fix itself: a genuine reference range
     // never inverts, so low>high can only mean the range was misread
     // somewhere upstream (range_is_bounded / parse_decimal_token above
@@ -1053,7 +1373,7 @@ fn parse_line(raw_line: &str) -> LineOutcome {
         || explicit_flag.is_some()
         || m.is_some();
     if !has_evidence {
-        return LineOutcome::Nothing;
+        return (LineOutcome::Nothing, Vec::new());
     }
     // The number taken as the result is bound into a reference range — this
     // line has a name and a range but no result of its own (see
@@ -1062,11 +1382,55 @@ fn parse_line(raw_line: &str) -> LineOutcome {
     // same shape and is already thrown away as a non-row, and promoting those
     // to reviewable rows would bury the real ones in noise.
     if value_is_range_low_bound(value_num, rest) {
-        return LineOutcome::Unreadable(UnreadableRow {
-            raw_line: raw_line.to_string(),
-            reason: REASON_NO_RESULT_ONLY_RANGE.to_string(),
-        });
+        return (
+            LineOutcome::Unreadable(UnreadableRow {
+                raw_line: raw_line.to_string(),
+                reason: REASON_NO_RESULT_ONLY_RANGE.to_string(),
+            }),
+            Vec::new(),
+        );
     }
+    // KNOWN, DELIBERATE GAP — not an oversight, and not fixed here:
+    //
+    // The same fabrication as `value_is_range_low_bound` also happens when
+    // the range's OWN separator (`-`/`~`) is itself lost to OCR — misread as
+    // plain whitespace instead of a dash — rather than missing from the line
+    // entirely: `find_range` above never sees an operator, so `ref_low`/
+    // `ref_high` come back `None` even though the range is still right
+    // there. Real corpus, blanked result cell: `尿酸（急） 208  428 umol/L`
+    // prints the low and high bounds as two bare numbers with nothing but a
+    // gap between them where the dash should be — `value` (208) is really
+    // the range's own low bound, and 428 sits stranded in `residual`.
+    //
+    // A guard shaped like `value_is_range_low_bound` — reject whenever
+    // `residual` (rest with unit/flag/label-noise already blanked; see
+    // `parse_rest_with_residual`) trims down to exactly ONE bare number
+    // `>= value_num` — was tried and reverted: it cannot be told apart from
+    // an entirely different, and more common, corpus shape — a GENUINE
+    // result followed by a range whose separator was lost WITHIN the range
+    // itself, gluing the two bounds into one token instead of leaving a gap
+    // where `value` sits. Real counter-examples, all with `residual` also
+    // trimming to one bare number `>= value`, all with a real, independently
+    // plausible `value`:
+    //   碱性磷酸酶（急） 117  45125 U/L        — 117, ref "45-125" glued whole
+    //   腺苷脱氨酶       14.0  745  U/L        — 14.0, ref "7-45" glued whole
+    //   直接胆红素       12.3  V/L  040        — 12.3, ref "0-40" glued whole
+    //   (CEA)            4.84  5.2             — 4.84, ref "<5.2", `<` dropped
+    //   T4淋巴细胞数(CD4+/CD3+) 24.00 ↓ Cells/ul 40  — explicit ↓ flag already
+    //     proves 24.00 is a real (abnormal) reading, not a fabricated bound
+    // `residual`'s digit shape gives no reliable tell between "428" (a
+    // genuine second bound, 尿酸's case) and "45125"/"745"/"040" (two bounds
+    // already fused) — both are one ungapped run of digits either way. Per
+    // 宁可漏,不能编: shipping the guard traded one confirmed fabrication
+    // shape for a same-sized new one (rejecting genuine results, several
+    // already flagged abnormal), which is a worse outcome, not a better one.
+    // Left un-ranged, exactly as before this change — see the report/PR
+    // description for the full corpus audit. A real fix needs a signal this
+    // module doesn't have: either the OCR/layout stage preserving (or
+    // flagging) a blanked result-cell box, or a dictionary-informed
+    // plausibility check on the candidate bound pair — both out of scope
+    // here (the latter is `packages/terminology`, off limits per the task
+    // that produced this comment).
 
     // Canonical conversion (only when matched AND the entry knows this unit).
     // 值和参考区间的两个界值走**同一行** `UnitConversion`、**同一个**仿射映射:
@@ -1108,23 +1472,96 @@ fn parse_line(raw_line: &str) -> LineOutcome {
         }
     });
 
-    LineOutcome::Row(LabObservation {
-        raw_name: raw_name.to_string(),
-        analyte_key: m.as_ref().map(|m| m.key.clone()),
-        canonical_name: m.as_ref().map(|m| m.canonical_name.clone()),
-        loinc: m.as_ref().and_then(|m| m.codes.loinc.clone()),
-        value_num,
-        value_canonical,
-        unit_raw,
-        unit_canonical,
-        ref_low,
-        ref_high,
-        ref_low_canonical,
-        ref_high_canonical,
-        flag,
-        confidence: m.as_ref().map_or(0.0, |m| m.confidence),
-        self_measured: false,
-    })
+    // A second (or third...) lab entry packed onto this same physical line --
+    // see `recover_second_entry`'s doc. `residual` is `rest` with THIS entry's
+    // own range/unit/flag already blanked out, so it can only contain a
+    // genuine second entry's own material, never a re-read of this one's.
+    let extra = if budget > 1 {
+        recover_second_entry(&residual, budget - 1)
+    } else {
+        Vec::new()
+    };
+
+    (
+        LineOutcome::Row(LabObservation {
+            raw_name: raw_name.to_string(),
+            analyte_key: m.as_ref().map(|m| m.key.clone()),
+            canonical_name: m.as_ref().map(|m| m.canonical_name.clone()),
+            loinc: m.as_ref().and_then(|m| m.codes.loinc.clone()),
+            value_num,
+            value_canonical,
+            unit_raw,
+            unit_canonical,
+            ref_low,
+            ref_high,
+            ref_low_canonical,
+            ref_high_canonical,
+            flag,
+            confidence: m.as_ref().map_or(0.0, |m| m.confidence),
+            self_measured: false,
+        }),
+        extra,
+    )
+}
+
+/// Recover a SECOND (or further) lab entry packed onto the same physical line
+/// as the one `parse_line_budgeted` just read -- the shape a two-column report
+/// produces when PP-OCR's line reconstruction flattens a whole physical table
+/// row (both halves of a 双栏 layout side by side) into one text line:
+/// `entry1 的名/值/单位/参考范围   entry2 的名/值/单位/参考范围`, with nothing
+/// but whitespace between the two entries. Real corpus example (MedRepBench):
+///
+/// ```text
+/// BAS0%  嗜碱细胞比率        0.3   0.0-1.0       MPV  血小板体积分布宽度   15.4   11.00-45.00%
+/// ```
+///
+/// Before this existed, `row_re` matched only the FIRST name/value pair
+/// (`嗜碱细胞比率 0.3`); everything after entry 1's own range was inert text
+/// sitting in `rest`, parsed only for a stray unit/flag/range token and then
+/// discarded -- MPV's `15.4` never became a row at all. The recall diagnostic
+/// (`ocr/examples/medrep_recall_diag.rs`) found several percent of all recall
+/// misses on the real photographed-report corpus fit exactly this shape: name
+/// and value both present in the OCR text, on the SAME line as another entry
+/// that had already consumed the line.
+///
+/// `residual` -- see `parse_rest_with_residual` -- is `rest` with entry 1's OWN
+/// range/unit/flag tokens already blanked to spaces, so entry 1's own
+/// reference range can never masquerade as entry 2's name. Feeding the RAW
+/// (unblanked) `rest` back through the parser instead would glue entry 1's own
+/// range onto entry 2's name (`0.0-1.0    MPV  血小板体积分布宽度`) and, worse,
+/// misread entry 1's range as part of entry 2's own value/name split --
+/// fabricating exactly the kind of cross-entry contamination this module's
+/// module-doc "Wrapped rows" section already warns joins can cause. What's
+/// left in `residual`, if anything, is untouched original text.
+///
+/// Mandatory corroboration, same discipline as `merged_wrap_row`: recurses
+/// through `parse_line_budgeted` -- i.e. through every one of that function's
+/// existing gates (evidence, page-furniture, sentence punctuation, ...) -- and
+/// the result is only accepted when it ALSO resolves to a dictionary analyte.
+/// An unmatched residual is far more likely to be leftover footnote/column
+/// noise than a genuine second entry, and guessing there is exactly the kind
+/// of fabrication "宁可漏,不能编" exists to prevent -- so an unresolved
+/// residual is silently dropped, never surfaced as `Unreadable` (that channel
+/// is for a genuine OCR line a person can go check against the original
+/// document; a synthesized leftover fragment isn't one).
+fn recover_second_entry(residual: &str, budget: u8) -> Vec<LabObservation> {
+    let trimmed = residual.trim();
+    // Cheap pre-filter before running the full line parser: a genuine second
+    // entry needs at least a two-character name -- the same floor
+    // `strip_serial_prefix` uses, for the same reason (anything shorter
+    // resolves far too eagerly against the dictionary's short aliases).
+    if trimmed.chars().filter(|c| c.is_alphabetic()).count() < 2 {
+        return Vec::new();
+    }
+    let (outcome, mut more) = parse_line_budgeted(trimmed, budget);
+    match outcome {
+        LineOutcome::Row(o) if o.analyte_key.is_some() => {
+            let mut out = vec![o];
+            out.append(&mut more);
+            out
+        }
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -2200,5 +2637,258 @@ NO             25      umol/L      10-40
         );
         assert_eq!(find(&obs, "creatinine").value_num, 88.0);
         assert_eq!(find(&obs, "alt").value_num, 45.0);
+    }
+
+    #[test]
+    fn doubled_dash_range_reads_as_one_positive_range_not_a_negative_bound() {
+        // Real MedRepBench corpus (`item_range` field, verbatim): a doubled
+        // hyphen where a single en/em dash was meant. Every one of 618 exact
+        // `<num>--<num>` occurrences sampled across the dataset's source
+        // annotations has low<=high under this "doubled separator" reading —
+        // PT/APTT seconds, bilirubin, creatinine, TSH, D-dimer — none of which
+        // is a quantity that legitimately goes negative. The OLD single-`-`
+        // separator regex read the second number's leading `-` as ITS sign
+        // instead, turning `9.4--12.5` into a negative low bound (`-12.5`) for
+        // a coagulation time — physiologically impossible, and dangerous per
+        // this module's whole point: a wrong reference range is worse than no
+        // range at all.
+        let obs = extract_labs("PT 凝血酶原时间 19.40 秒 9.4--12.5 ↑");
+        let pt = find(&obs, "pt");
+        assert_eq!(pt.ref_low, Some(9.4));
+        assert_eq!(pt.ref_high, Some(12.5));
+
+        // A single dash still reads exactly as before — the `+` only WIDENS
+        // what's accepted, it never changes how an already-matching
+        // single-dash range reads.
+        let obs2 = extract_labs("肌酐 88 μmol/L 59-104");
+        assert_eq!(find(&obs2, "creatinine").ref_low, Some(59.0));
+        assert_eq!(find(&obs2, "creatinine").ref_high, Some(104.0));
+    }
+
+    #[test]
+    fn doubled_dash_value_bound_into_range_is_still_refused() {
+        // `value_is_range_low_bound`'s tail check (`range_tail_re`) must catch
+        // the doubled-dash shape too, not just single-dash — otherwise a value
+        // bound into a doubled-dash range slips past the guard and gets
+        // reported as a fabricated result (this exact shape, `GLOB 37--53`,
+        // is real MedRepBench corpus: 球蛋白/globulin has no result of its own
+        // on that line, just its reference range, doubled-dash).
+        let (obs, unreadable) = extract_labs_with_unreadable("GLOB 球蛋白 37--53");
+        assert!(
+            obs.is_empty(),
+            "a doubled-dash range's low bound was reported as a result: {obs:?}"
+        );
+        assert_eq!(
+            unreadable.len(),
+            1,
+            "must be surfaced for review, not dropped silently"
+        );
+        assert_eq!(unreadable[0].reason, REASON_NO_RESULT_ONLY_RANGE);
+    }
+
+    #[test]
+    fn reference_range_wrapped_across_a_line_break_is_completed() {
+        // Real MedRepBench corpus shape (multiple docs, e.g. 无机磷/磷/钠/钙/
+        // 渗透压 rows): the row's name+value+unit print on one line, but the
+        // line is wide enough that the layout reconstruction wraps BEFORE the
+        // range's high bound — the low bound trails the line with a dangling
+        // `-`/`~` and the high bound alone starts the next line.
+        let text = "\
+无机磷                       HR/☆Pi 1.01              mmol/L                    0.85-
+1.51
+";
+        let obs = extract_labs(text);
+        let p = find(&obs, "phosphate");
+        assert_eq!(p.value_num, 1.01);
+        assert_eq!(p.ref_low, Some(0.85));
+        assert_eq!(p.ref_high, Some(1.51));
+
+        // The doubled-dash separator (see `range_two_re`) can itself land
+        // split across the wrap — the low bound's line ends in ONE dash, and
+        // the continuation starts with the OTHER: `0.45-` \n `-1.81` is the
+        // same `0.45--1.81` one line short of a doubled dash. The leading `-`
+        // on the continuation is stripped as more separator, not read as a
+        // sign — consistent with `range_two_re` never producing a negative
+        // bound from this shape.
+        let text2 = "\
+总胆红素                              12.9            μmol/L                       5.1-
+-28.0
+";
+        let obs2 = extract_labs(text2);
+        let t = find(&obs2, "tbil");
+        assert_eq!(t.ref_low, Some(5.1));
+        assert_eq!(t.ref_high, Some(28.0));
+    }
+
+    #[test]
+    fn wrapped_range_whose_low_bound_is_actually_the_row_s_own_value_is_refused() {
+        // Real MedRepBench corpus (`钙` row, blanked/unreadable result cell):
+        // `row_re` can't see the real result (`Ca2.31` — the digits are glued
+        // straight onto `Ca` with no separator, invisible to the name/value
+        // split; see module doc "Name↔value glue"), so it reads the FIRST
+        // number it CAN split on — the range's own low bound — as `value`.
+        // The high bound then wraps to the next line, and a naive
+        // `line`-based completion (the pre-fix behaviour) re-reads that same
+        // `2.11` a second time off the raw line and reports it as `ref_low`
+        // too: `value == ref_low` not because a result happens to sit at the
+        // reference floor (see `a_genuine_result_followed_by_its_range_is_untouched`
+        // for that legitimate shape), but because they are the same digits
+        // read twice. The row must be refused outright, not kept with a
+        // fabricated range.
+        let text = "\
+钙                        HR/☆ Ca2.31               mmol/L                    2.11-
+2.52
+";
+        let (obs, unreadable) = extract_labs_with_unreadable(text);
+        assert!(
+            !obs.iter()
+                .any(|o| o.analyte_key.as_deref() == Some("calcium")),
+            "value fabricated from the wrapped range's own low bound: {obs:?}"
+        );
+        assert_eq!(unreadable.len(), 1);
+        assert_eq!(unreadable[0].reason, REASON_NO_RESULT_ONLY_RANGE);
+    }
+
+    #[test]
+    fn a_genuine_result_followed_by_its_own_wrapped_range_is_untouched() {
+        // Counter-example for the guard above: a row whose OWN separate value
+        // token sits before a range that happens to wrap — `complete_wrapped_range`
+        // must still complete it, exactly as before this change, because
+        // there IS a second, distinct low-bound token in `rest` (not a reuse
+        // of `value`). Real corpus: `血红蛋白浓度 HGB 112 g/L 112-` \ `149` —
+        // both `112`s are printed separately; the result genuinely sits at
+        // the reference floor.
+        let text = "\
+血红蛋白浓度                              HGB         112         g/L                 112-
+149
+";
+        let obs = extract_labs(text);
+        let h = find(&obs, "hgb");
+        assert_eq!(h.value_num, 112.0);
+        assert_eq!(h.ref_low, Some(112.0));
+        assert_eq!(h.ref_high, Some(149.0));
+    }
+
+    #[test]
+    fn reference_range_wrap_is_refused_when_the_next_line_is_not_a_bare_number() {
+        // Counter-examples for the join above — real corpus shapes that must
+        // NOT be joined, because the "next line" is not actually the missing
+        // high bound:
+        for (text, key) in [
+            // A stray abnormal-flag letter before the number (`H`/`N` column) —
+            // joining would silently absorb the flag digit-adjacent text as if
+            // it were part of the range.
+            (
+                "22          血小板压积                0.33           ml/L                         0.11-\nH                                                                            0.28\n",
+                "plateletcrit",
+            ),
+            // A wrapped ANALYTE-NAME fragment, not a value at all.
+            (
+                "高密度脂蛋白胆固醇(HDL-                                 1.48         mmol/L            0.95-\nC)                                                                            -1.94\n",
+                "hdl",
+            ),
+            // An unrelated row's own name sitting where the high bound would
+            // be — joining would steal a different analyte's line entirely.
+            (
+                "国际标准化比值                                     0.83                                0.8-\n部分凝血活酶时间                                    15.90\n",
+                "inr",
+            ),
+        ] {
+            let obs = extract_labs(text);
+            let o = obs.iter().find(|o| o.analyte_key.as_deref() == Some(key));
+            if let Some(o) = o {
+                assert_eq!(
+                    (o.ref_low, o.ref_high),
+                    (None, None),
+                    "a wrap join fabricated a range from an unsafe next line: {text:?} -> {o:?}"
+                );
+            }
+        }
+    }
+
+    /// Real repro (MedRepBench 683-photo corpus, 血常规 CBC panel): a
+    /// two-column table flattened onto one physical text line by PP-OCR's
+    /// layout reconstruction, entry 1's own reference range butting straight
+    /// up against entry 2's English abbreviation with only whitespace between
+    /// them. Before `recover_second_entry` existed, `row_re` matched only the
+    /// FIRST name/value pair; everything from `MPV` onward was inert text
+    /// parsed just for a stray unit/range/flag token and then discarded —
+    /// PDW's `15.4` never became a row at all.
+    #[test]
+    fn second_lab_entry_packed_onto_the_same_line_is_recovered() {
+        let text = "BAS0%  嗜碱细胞比率        0.3   0.0-1.0       MPV  血小板体积分布宽度   15.4   11.00-45.00%  30-90×10^9/\n";
+        let obs = extract_labs(text);
+        let pdw = find(&obs, "pdw");
+        // `raw_name` keeps the `MPV` abbreviation column verbatim (it's part
+        // of the line, not stripped) — the abbreviation-guard test below
+        // covers that it isn't mistaken for entry 1's own unit instead.
+        assert_eq!(pdw.raw_name, "MPV  血小板体积分布宽度");
+        assert_eq!(pdw.value_num, 15.4);
+        assert_eq!(pdw.ref_low, Some(11.0));
+        assert_eq!(pdw.ref_high, Some(45.0));
+        // Entry 1's own range (`0.0-1.0`, the ONLY range that's really its
+        // own) must not have been stolen or contaminated by entry 2's
+        // material — the residual handoff blanks exactly what entry 1
+        // consumed, nothing more.
+        assert!(
+            obs.iter().any(|o| o.raw_name.contains("嗜碱")
+                && o.ref_low == Some(0.0)
+                && o.ref_high == Some(1.0)),
+            "entry 1's own range got lost or corrupted: {obs:?}"
+        );
+    }
+
+    /// The `MPV` immediately ahead of entry 2's CJK name in the fixture above
+    /// must NOT be read as entry 1's own unit — it's the leftmost token of a
+    /// SECOND entry's abbreviation column, not this row's unit cell. Before
+    /// the uppercase-abbreviation guard, entry 1 (`嗜碱细胞比率`) came out
+    /// with `unit_raw = Some("MPV")`, a fabricated field that appears nowhere
+    /// as this row's actual unit in the source document.
+    #[test]
+    fn a_second_entrys_abbreviation_is_not_mistaken_for_this_entrys_unit() {
+        let text = "BAS0%  嗜碱细胞比率        0.3   0.0-1.0       MPV  血小板体积分布宽度   15.4   11.00-45.00%  30-90×10^9/\n";
+        let obs = extract_labs(text);
+        let entry1 = obs
+            .iter()
+            .find(|o| o.raw_name.contains("嗜碱"))
+            .expect("entry 1 must still parse");
+        assert_ne!(
+            entry1.unit_raw.as_deref(),
+            Some("MPV"),
+            "entry 2's abbreviation leaked into entry 1's unit: {entry1:?}"
+        );
+    }
+
+    /// Counter-example / safety net: a second entry is only ever recovered
+    /// when it resolves to a dictionary analyte (same discipline as
+    /// `merged_wrap_row`'s condition 4). An unmatched name in the leftover
+    /// text — indistinguishable, by shape alone, from a genuine second
+    /// entry — must stay dropped, not fabricated into an extra row.
+    #[test]
+    fn an_unresolved_second_entry_candidate_is_not_fabricated() {
+        let text =
+            "肌酐            88      μmol/L      59-104    神秘指标XYZ   12.3   mg/L   0-5\n";
+        let obs = extract_labs(text);
+        assert_eq!(
+            obs.len(),
+            1,
+            "an unmatched leftover was fabricated into a row: {obs:?}"
+        );
+        let cr = find(&obs, "creatinine");
+        assert_eq!(cr.value_num, 88.0);
+        assert_eq!(cr.ref_low, Some(59.0));
+        assert_eq!(cr.ref_high, Some(104.0));
+    }
+
+    /// Counter-example: an ordinary single-entry line with a perfectly normal
+    /// bare-uppercase unit (none in the dictionary, but still plausible raw
+    /// report text) and NOTHING CJK after it must keep reading that token as
+    /// the unit — the abbreviation guard only withholds a bare-uppercase
+    /// token when a CJK-led token follows it later on the line.
+    #[test]
+    fn a_trailing_bare_uppercase_unit_with_nothing_after_it_is_still_read_as_a_unit() {
+        let obs = extract_labs("神秘指标XYZ   12.3   IU   0-5");
+        assert_eq!(obs.len(), 1, "got {obs:?}");
+        assert_eq!(obs[0].unit_raw.as_deref(), Some("IU"));
     }
 }
