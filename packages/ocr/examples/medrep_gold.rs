@@ -145,6 +145,9 @@ fn main() -> Result<()> {
                 }
                 let Some(k) = g.key.as_deref() else {
                     no_dict += 1;
+                    if std::env::var("GOLD_DUMP_NODICT").is_ok() && arm == "arm2_geo" {
+                        eprintln!("NODICT\t{}\t{}", g.name, g.unit);
+                    }
                     continue;
                 };
                 let Some(v) = g.value else {
