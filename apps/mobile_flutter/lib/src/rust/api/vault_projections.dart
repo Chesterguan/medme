@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `extract_allergies_pairs`, `fmt_date`, `fmt_num`, `gather`, `is_renderable`, `parse_allergy_item`, `parse_rfc3339_date`, `render_plain_text`, `source_docs`, `trend_series`
+// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `extract_allergies_pairs`, `fmt_date`, `fmt_num`, `gather`, `is_allergy_negation`, `is_allergy_unclear`, `is_renderable`, `parse_allergy_item`, `parse_rfc3339_date`, `render_plain_text`, `source_docs`, `trend_series`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ProjectionDoc`, `VaultProjection`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 

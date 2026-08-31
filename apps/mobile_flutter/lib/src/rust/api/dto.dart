@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
 ///
@@ -390,6 +390,46 @@ class ImportOutcomeDto {
           documentId == other.documentId &&
           detectedName == other.detectedName &&
           pagesWithoutText == other.pagesWithoutText;
+}
+
+/// 「多张照片合并成一份」的结果(`api::vault::merge_photos_into_document`)。
+/// 合成的 PDF 走与桌面上传扫描版 PDF 相同的入库路径,`pages_without_text` 与
+/// `ImportOutcomeDto` 同一口径(1-based、没识别出文字的页)——`import_flow.dart`
+/// 的既有回填逻辑(`backfillPagesWithoutText`)可以原样复用,不用另写一套。
+class MergeOutcomeDto {
+  /// 合并出的新文档 id——原来那几份各自的 id 已经不在库里了(墓碑掉了,原始
+  /// 字节仍在 CAS,只是不再对应任何文档)。
+  final PlatformInt64 documentId;
+  final int pageCount;
+  final Int32List pagesWithoutText;
+
+  /// 合并前源文档的份数(即调用方传入 `document_ids` 的长度),供前端汇总
+  /// 文案「已合并 N 张为一份」。
+  final PlatformInt64 mergedCount;
+
+  const MergeOutcomeDto({
+    required this.documentId,
+    required this.pageCount,
+    required this.pagesWithoutText,
+    required this.mergedCount,
+  });
+
+  @override
+  int get hashCode =>
+      documentId.hashCode ^
+      pageCount.hashCode ^
+      pagesWithoutText.hashCode ^
+      mergedCount.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MergeOutcomeDto &&
+          runtimeType == other.runtimeType &&
+          documentId == other.documentId &&
+          pageCount == other.pageCount &&
+          pagesWithoutText == other.pagesWithoutText &&
+          mergedCount == other.mergedCount;
 }
 
 /// **iOS PP-OCRv5 测试路径**结果(feat/ios-pp-ocr-test 分支,探索性——ADR 0005

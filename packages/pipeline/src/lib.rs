@@ -3,6 +3,8 @@ use core_model::{DocType, NewDocument, NewImagingInstance, NewOcr, OcrBackendKin
 use std::collections::HashMap;
 use std::path::Path;
 
+mod merge;
+
 /// 原件真实页数(多页 TIFF → >1,其余一律 1)。转出给移动端 crate 用:它在
 /// 宿主/安卓构建下并**不**直接依赖 `ocr`(见 `apps/mobile_flutter/rust/Cargo.toml`
 /// 里 `ocr` 的 target 门控),但它自己那条图片入库路径
@@ -758,6 +760,117 @@ fn reindex_existing_document(
     })
 }
 
+/// 把多张单页照片合成一份多页 PDF 文档(「导入体验」流派 A —— 一份三页化验单
+/// 拍三张照片,今天各自独立入库变成时间线上三张卡;merge 之后是**一份** N 页文档,
+/// 与消费级扫描 App(Adobe Scan / CamScanner / 系统"扫一扫"多页合并)同一心智模型)。
+///
+/// **对事件模型零改动,这是本设计唯一的价值所在**:
+///
+/// * 合成的 PDF 走**已有**的三段式——`vault.import`(`Event::FileImported`)→
+///   `ingest_pdf`(`Event::DocumentAdded{page_count:N}` + 最多 N 条
+///   `Event::OcrAdded`,逐页判定文本层/OCR,与桌面上传一份真实扫描 PDF 走的是
+///   **同一份代码**,零新增 OCR 逻辑)。
+/// * 原来的 N 份单页文档用**已有**的 `Vault::delete_document` 墓碑掉——见
+///   `event.rs` 对 `Event::DocumentDeleted` 的文档注释:「materialize 时移除该
+///   文档的派生行……原始字节留在 CAS 不动」。**这一点本函数依赖但不重新实现**:
+///   `delete_document` 只删 `document`/`ocr_result`/`document_fts` 投影行,
+///   `source_file`(连同 CAS 里的对象字节)原样保留、可达——三张原始照片依然
+///   能在"查看原件"里打开,只是它们的病历卡片被合并卡片取代了。
+/// * `Event` 是 `#[serde(tag = "type")]` 的封闭 enum(见 `event.rs`),老客户端
+///   碰到不认识的 tag 会**反序列化失败**而不是当 no-op 跳过——这正是本设计不
+///   新增事件变体(没有『合并』事件、没有『分组』表)的原因:任何新 `Event`
+///   变体都需要先发一版『未知事件当 no-op 跳过』的兼容版本,这里不需要。
+/// * `document.source_file_id` 是 `UNIQUE`(v0.1『一份来源文件一份文档』的
+///   约束,见 `schema.rs`)也没被触碰——合成的 PDF 本来就是**新的**一个
+///   `source_file`(新内容 = 新哈希),不存在『一个 document 挂多个 source_file』
+///   这种需要改 schema 才能表达的情况。
+///
+/// **顺序保证**(唯一需要格外小心的地方):先把合成 PDF 完整建档成功、确认
+/// `ingest_pdf` 真的建出了新 document,才去删旧文档。任何一步失败(某张照片解
+/// 不出、`ingest_pdf` 内部出错)都在删除任何旧文档之前返回 `Err`——旧的 N 份原样
+/// 留着,不会出现"新的没建成、旧的却被删了几份"的中间状态。`vault.import` 本身
+/// 对同一批字节也是幂等的(CAS 去重),重试这个函数是安全的。
+///
+/// **v1 故意收窄的输入范围**(不是遗留 TODO,是这一版明确不做的部分,见 PR
+/// 描述):
+///
+/// * 至少 2 份源文档——合并 1 份没有意义,直接报错而不是悄悄把 1 份"合并"成
+///   它自己。
+/// * 每份源文档必须是**单页**图片(`page_count == 1`,`mime_type` 为
+///   `image/png` / `image/jpeg` / `image/tiff`)。拒绝已经是 PDF、DICOM、
+///   或已经合并过的多页文档——避免"合并出的这份 PDF 里,某一页原本对应哪个
+///   source_file"在 v1 就变得含糊(每份都单页,新 PDF 的第 k 页就是
+///   `document_ids[k-1]` 那份原始照片,关系简单到不需要额外记录)。
+/// * `image/heic`(iPhone 相册默认格式)明确**不**支持:`image` crate 不带 HEIF
+///   解码器——加上它意味着引入系统 `libheif` 绑定或联网下载的编解码库,与"本地
+///   优先隐私 App、不为这一个功能新增重依赖"的约束冲突。遇到 HEIC 源文件直接
+///   报错(而不是静默丢这一页或裁出错误画面),前端据此提示用户"这张照片格式暂
+///   不支持合并"。
+pub fn merge_documents_into_pdf(
+    vault: &Vault,
+    merged_name: &str,
+    document_ids: &[i64],
+) -> anyhow::Result<IngestOutcome> {
+    anyhow::ensure!(
+        document_ids.len() >= 2,
+        "合并至少需要 2 份文档(收到 {})",
+        document_ids.len()
+    );
+
+    let mut photos = Vec::with_capacity(document_ids.len());
+    for &doc_id in document_ids {
+        let doc = vault
+            .document_by_id(doc_id)?
+            .ok_or_else(|| anyhow::anyhow!("文档 {doc_id} 不存在"))?;
+        if doc.page_count != 1 {
+            anyhow::bail!(
+                "文档 {doc_id} 不是单页原件(page_count={}),v1 暂不支持合并",
+                doc.page_count
+            );
+        }
+        let sf = vault
+            .source_file_by_id(doc.source_file_id)?
+            .ok_or_else(|| anyhow::anyhow!("文档 {doc_id} 的来源文件缺失"))?;
+        if !matches!(
+            sf.mime_type.as_str(),
+            "image/png" | "image/jpeg" | "image/tiff"
+        ) {
+            anyhow::bail!(
+                "文档 {doc_id} 的原件类型「{}」暂不支持合并(仅支持 png/jpeg/tiff 照片;\
+                 HEIC 请先在系统相册另存为 JPEG 再试)",
+                sf.mime_type
+            );
+        }
+        // 校验通过的整数完整性读:`read_object` 重算 sha256 校验字节没被篡改/
+        // 损坏(与 `read_source_bytes` FFI 走的裸 `fs::read` 相比更强——这里没有
+        // "先物化 iCloud 占位符"那层平台特判要顾,直接要最强的读法)。
+        let bytes = vault.read_object(&sf.content_hash)?;
+        photos.push(bytes);
+    }
+
+    let merged_bytes = merge::build_pdf_from_photos(&photos)?;
+    let imp = vault.import(merged_name, "application/pdf", &merged_bytes)?;
+    // 走与桌面上传扫描版 PDF 完全相同的入库路径——这就是"合并后怎么重新 OCR
+    // 接上现有管线"的答案:不新增任何 OCR 代码,喂给 `ingest_pdf` 的只是一份
+    // 恰好由本函数现造出来的 PDF 字节。
+    let outcome = ingest_pdf(
+        vault,
+        imp.source_file.id,
+        merged_name,
+        &merged_bytes,
+        imp.deduped,
+    )?;
+
+    // 新文档确认建成(上面两行没有提前返回 Err)才轮到删旧的——见本函数文档
+    // 注释里的"顺序保证"。`delete_document` 对已经不存在的文档是 no-op(见其
+    // 文档注释),重复调用本函数(比如前端重试)不会在这里报错。
+    for &doc_id in document_ids {
+        vault.delete_document(doc_id)?;
+    }
+
+    Ok(outcome)
+}
+
 pub struct PatientProfile {
     pub name: Option<String>,
     pub gender: Option<String>,
@@ -1485,5 +1598,208 @@ trailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n";
         assert_eq!(prof.name.as_deref(), Some("张建国"));
         assert_eq!(prof.gender.as_deref(), Some("男"));
         assert_eq!(prof.record_count, 2);
+    }
+
+    /// 造一份「已入库的单页照片文档」——不经完整 `ingest_image`(需要一个真的
+    /// OCR 引擎),直接用 `import` + `add_document` 组出与 `ingest_image` 落库
+    /// 后完全同构的状态(见 `types.rs` 里同一手法的 `add_document_and_ocr_populates_fts`
+    /// 测试)。`merge_documents_into_pdf` 只关心 `page_count`/`mime_type`,不关心
+    /// 文档是怎么建出来的。
+    fn seed_single_page_photo_doc(v: &Vault, name: &str, bytes: &[u8]) -> (i64, i64) {
+        let imp = v.import(name, "image/jpeg", bytes).unwrap();
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::Unknown,
+                doc_date: None,
+                doc_date_end: None,
+                title: Some(name.to_string()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        (doc.id, imp.source_file.id)
+    }
+
+    /// 核心场景(见 `merge_documents_into_pdf` 文档注释里的「流派 A」说明):
+    /// 三页化验单拍三张照片,今天各自独立入库变成时间线上三张卡;合并后必须是
+    /// **一份** `page_count == 3` 的文档,不是三份。同时钉住两条硬不变量:
+    ///
+    /// 1. Raw Never Dies —— 三份原始照片的 `source_file` 行、CAS 里的字节
+    ///    合并后原样可读、逐字节不变(不是"删除只留个哈希",是真的还能读出来)。
+    /// 2. `rebuild_from_log` 全量重放后状态不变 —— 合并只是一串正常的
+    ///    `FileImported`/`DocumentAdded`/`DocumentDeleted` 事件,没有绕过重放
+    ///    规则的特例。
+    #[test]
+    fn merges_three_photos_into_one_three_page_document_and_survives_rebuild() {
+        let vdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+
+        let mut doc_ids = Vec::new();
+        let mut source_file_ids = Vec::new();
+        let mut original_bytes = Vec::new();
+        for i in 0..3u32 {
+            let bytes = merge::fake_photo(60 + i * 10, 80);
+            let (doc_id, sid) = seed_single_page_photo_doc(&v, &format!("photo{i}.jpg"), &bytes);
+            doc_ids.push(doc_id);
+            source_file_ids.push(sid);
+            original_bytes.push(bytes);
+        }
+        assert_eq!(
+            v.timeline().unwrap().len(),
+            3,
+            "合并前:三张照片各占一条时间线"
+        );
+
+        let outcome = merge_documents_into_pdf(&v, "merged.pdf", &doc_ids).unwrap();
+        let merged_doc = v
+            .document_by_source_file_id(outcome.source_file_id)
+            .unwrap()
+            .expect("合并应建出新文档");
+        assert_eq!(
+            merged_doc.page_count, 3,
+            "三张照片应合成一份三页文档,不是三份"
+        );
+
+        // 时间线只剩合并出的这一份。
+        let tl = v.timeline().unwrap();
+        assert_eq!(tl.len(), 1, "合并后:时间线只剩合并出的这一份");
+        assert_eq!(tl[0].document_id, merged_doc.id);
+
+        // 原来三份文档的**投影行**没了(墓碑)……
+        for &doc_id in &doc_ids {
+            assert!(
+                v.document_by_id(doc_id).unwrap().is_none(),
+                "原文档 {doc_id} 应已被墓碑掉"
+            );
+        }
+        // ……但三份原始照片的 source_file 行、CAS 里的字节都还在、逐字节不变——
+        // Raw Never Dies:删除只是墓碑,不是真删除(见 event.rs 对
+        // `Event::DocumentDeleted` 的文档注释)。
+        for (i, &sid) in source_file_ids.iter().enumerate() {
+            let sf = v
+                .source_file_by_id(sid)
+                .unwrap()
+                .expect("原始照片的 source_file 行应仍在(Raw Never Dies)");
+            assert_eq!(
+                v.read_object(&sf.content_hash).unwrap(),
+                original_bytes[i],
+                "原始照片字节必须逐字节不变、可达"
+            );
+        }
+
+        // rebuild_from_log:全量重放后状态必须与重放前一致。
+        let before: Vec<i64> = v
+            .timeline()
+            .unwrap()
+            .iter()
+            .map(|d| d.document_id)
+            .collect();
+        v.rebuild_from_log().unwrap();
+        let after: Vec<i64> = v
+            .timeline()
+            .unwrap()
+            .iter()
+            .map(|d| d.document_id)
+            .collect();
+        assert_eq!(before, after, "rebuild_from_log 前后时间线应一致");
+        assert!(
+            v.document_by_id(merged_doc.id).unwrap().is_some(),
+            "重放后合并出的文档应仍在"
+        );
+        for &doc_id in &doc_ids {
+            assert!(
+                v.document_by_id(doc_id).unwrap().is_none(),
+                "重放后原文档仍应保持墓碑状态"
+            );
+        }
+        for (i, &sid) in source_file_ids.iter().enumerate() {
+            let sf = v.source_file_by_id(sid).unwrap().unwrap();
+            assert_eq!(
+                v.read_object(&sf.content_hash).unwrap(),
+                original_bytes[i],
+                "重放后原始照片字节仍应逐字节不变"
+            );
+        }
+    }
+
+    #[test]
+    fn merge_requires_at_least_two_documents() {
+        let vdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let bytes = merge::fake_photo(40, 40);
+        let (doc_id, _) = seed_single_page_photo_doc(&v, "solo.jpg", &bytes);
+
+        let err = merge_documents_into_pdf(&v, "merged.pdf", &[doc_id]).unwrap_err();
+        assert!(err.to_string().contains("至少需要 2 份"), "实际: {err}");
+    }
+
+    /// 校验(至少 2 份、单页、图片 mime)先于任何落库动作——混进一份 PDF 源文档
+    /// 必须被拒绝,且**两份原文档都原样保留**(校验失败不能提前删任何一份)。
+    #[test]
+    fn merge_rejects_non_image_source_and_leaves_originals_untouched() {
+        let vdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let img = merge::fake_photo(40, 40);
+        let (doc1, _) = seed_single_page_photo_doc(&v, "a.jpg", &img);
+
+        let imp2 = v
+            .import("b.pdf", "application/pdf", b"%PDF-1.4 fake")
+            .unwrap();
+        let doc2 = v
+            .add_document(NewDocument {
+                source_file_id: imp2.source_file.id,
+                doc_type: DocType::Unknown,
+                doc_date: None,
+                doc_date_end: None,
+                title: None,
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+
+        let err = merge_documents_into_pdf(&v, "merged.pdf", &[doc1, doc2.id]).unwrap_err();
+        assert!(err.to_string().contains("暂不支持合并"), "实际: {err}");
+        assert!(
+            v.document_by_id(doc1).unwrap().is_some(),
+            "校验失败不能删第一份"
+        );
+        assert!(
+            v.document_by_id(doc2.id).unwrap().is_some(),
+            "校验失败不能删第二份"
+        );
+        assert_eq!(v.timeline().unwrap().len(), 2);
+    }
+
+    /// **顺序保证**的直接测试(见 `merge_documents_into_pdf` 文档注释):第二张
+    /// "照片"字节其实是垃圾(模拟 HEIC/损坏文件混进来、mime 却谎称
+    /// image/jpeg——校验层拦不住这种「扩展名与内容对不上」的情况,要靠真正解码
+    /// 时才发现)。解码失败必须在**任何** `DocumentDeleted` 被 append 之前返回
+    /// `Err`——半途出错时旧文档一份不能少,不能出现"新的没建成、旧的却被删了
+    /// 几份"的中间状态。
+    #[test]
+    fn merge_failure_midway_leaves_all_originals_untouched() {
+        let vdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        let good = merge::fake_photo(40, 40);
+        let (doc1, _) = seed_single_page_photo_doc(&v, "a.jpg", &good);
+        let junk = b"not actually a jpeg".to_vec();
+        let (doc2, _) = seed_single_page_photo_doc(&v, "b.jpg", &junk);
+
+        let err = merge_documents_into_pdf(&v, "merged.pdf", &[doc1, doc2]).unwrap_err();
+        assert!(err.to_string().contains("第 2 张"), "实际: {err}");
+        assert!(
+            v.document_by_id(doc1).unwrap().is_some(),
+            "半途失败:第一份不能被删"
+        );
+        assert!(
+            v.document_by_id(doc2).unwrap().is_some(),
+            "半途失败:第二份不能被删"
+        );
+        assert_eq!(
+            v.timeline().unwrap().len(),
+            2,
+            "半途失败:时间线应保持原样两条"
+        );
     }
 }

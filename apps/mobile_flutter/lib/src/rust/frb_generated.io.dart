@@ -175,6 +175,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<VisitRecordDto> dco_decode_list_visit_record_dto(dynamic raw);
 
   @protected
+  MergeOutcomeDto dco_decode_merge_outcome_dto(dynamic raw);
+
+  @protected
   OcrPpResultDto dco_decode_ocr_pp_result_dto(dynamic raw);
 
   @protected
@@ -450,6 +453,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<VisitRecordDto> sse_decode_list_visit_record_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  MergeOutcomeDto sse_decode_merge_outcome_dto(SseDeserializer deserializer);
 
   @protected
   OcrPpResultDto sse_decode_ocr_pp_result_dto(SseDeserializer deserializer);
@@ -801,6 +807,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_visit_record_dto(
     List<VisitRecordDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_merge_outcome_dto(
+    MergeOutcomeDto self,
     SseSerializer serializer,
   );
 
