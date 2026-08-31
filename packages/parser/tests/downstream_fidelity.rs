@@ -315,28 +315,16 @@ fn analyte_series_point_counts_match_hand_counted_ground_truth() {
     }
 }
 
-/// **②级缺陷(诊断,不是 labs)**:`2026-07-15_出院记录_冠脉支架术后.txt` 的
+/// **②级(诊断,不是 labs)**:`2026-07-15_出院记录_冠脉支架术后.txt` 的
 /// 出院诊断行——
 /// `出院诊断:1. 冠状动脉粥样硬化性心脏病(不稳定型心绞痛,PCI 术后)  2. 高血压…`
 /// ——诊断名的括注里带了一个逗号(`不稳定型心绞痛,PCI 术后`,常见的「分型,处置」
-/// 写法)。`handoff::split_inline` 先按行内编号切开五条诊断,再对每一段无条件
-/// 按 `；;，,、` 切一遍——第二刀不认括号语境,把第一段从逗号处切成了两截:
-///
-/// - `冠状动脉粥样硬化性心脏病(不稳定型心绞痛` —— 左括号孤悬,一个不平衡的
-///   诊断名,`icd_paren_re` 因为末尾不是 `)` 提取不出(伪)ICD 码,原样进
-///   `raw_text`。
-/// - `PCI 术后)` —— 右括号孤悬,一个无意义碎片,被当成独立诊断收进
-///   `AggregatedCondition`。
-///
-/// 同一份文档的入院诊断行(`入院诊断:冠状动脉粥样硬化性心脏病(不稳定型心绞痛)`,
-/// 没有逗号,括号配对)正常抽出完整诊断名,三条 `raw_text` 于是同时存在。
-///
-/// 这条测试钉住**现状**(缺陷成立),不是期望值——`comma_inside_a_diagnosis_
-/// parenthetical_is_not_mistaken_for_a_separator` 这个名字如果哪天测试改成
-/// 断言只有一条干净的诊断,说明 `split_inline` 学会了跳过括号内的逗号,这条
-/// 测试要跟着改成正面断言。
+/// 写法)。这条测试最初钉住的是缺陷:`handoff::split_inline` 的第二刀不认括号
+/// 语境,把这条诊断从逗号处切成「孤悬左括号残缺名 + `PCI 术后)`碎片」两截。
+/// 缺陷修复后(切分学会跳过括号内的逗号),按原注释的约定改成正面断言:
+/// 括注带逗号的诊断名保持完整,碎片不再出现。
 #[test]
-fn comma_inside_a_diagnosis_parenthetical_fragments_one_condition_into_three() {
+fn comma_inside_a_diagnosis_parenthetical_is_not_mistaken_for_a_separator() {
     let raw = corpus();
     let docs = source_docs(&raw);
     let agg = aggregate(&docs);
@@ -348,18 +336,20 @@ fn comma_inside_a_diagnosis_parenthetical_fragments_one_condition_into_three() {
         "完整、括号配对的诊断名(来自入院诊断行)应该存在: {texts:?}"
     );
     assert!(
-        texts.contains(&"冠状动脉粥样硬化性心脏病(不稳定型心绞痛"),
-        "已知缺陷:出院诊断行的逗号把诊断名从括注中间切断,留下孤悬左括号的\
-         残缺名——这条断言如果失败说明缺陷已经不在了,把这个测试改成反向断言: {texts:?}"
+        texts.contains(&"冠状动脉粥样硬化性心脏病(不稳定型心绞痛,PCI 术后)"),
+        "出院诊断行括注里带逗号的诊断名应该原样保留完整: {texts:?}"
     );
     assert!(
-        texts.contains(&"PCI 术后)"),
-        "已知缺陷:上面那次切断的另一半——一个带孤悬右括号的无意义碎片,被当成\
-         独立诊断收了进来: {texts:?}"
+        !texts.contains(&"冠状动脉粥样硬化性心脏病(不稳定型心绞痛"),
+        "孤悬左括号的残缺诊断名不该再出现(逗号切断缺陷回归): {texts:?}"
+    );
+    assert!(
+        !texts.contains(&"PCI 术后)"),
+        "孤悬右括号的碎片不该再被当成独立诊断(逗号切断缺陷回归): {texts:?}"
     );
 
-    // 三条 raw_text 全部来自同一份文档(index 20 = 2026-07-15_出院记录_冠脉支架术后),
-    // 印证这不是三个不同诊断,是一个诊断被切成了三份记录。
+    // 两条 raw_text 都来自同一份文档(index 20 = 2026-07-15_出院记录_冠脉支架术后):
+    // 入院诊断行(无逗号)与出院诊断行(括注带逗号)各出一条完整诊断名。
     let idx = |t: &str| {
         agg.conditions
             .iter()
@@ -371,10 +361,9 @@ fn comma_inside_a_diagnosis_parenthetical_fragments_one_condition_into_three() {
         Some(vec![20])
     );
     assert_eq!(
-        idx("冠状动脉粥样硬化性心脏病(不稳定型心绞痛"),
+        idx("冠状动脉粥样硬化性心脏病(不稳定型心绞痛,PCI 术后)"),
         Some(vec![20])
     );
-    assert_eq!(idx("PCI 术后)"), Some(vec![20]));
 }
 
 /// **已知且已有测试覆盖的限制,不是新缺陷**——`2025-12-03_处方_扫描件.txt`
@@ -419,15 +408,13 @@ fn term_of(p: &Value) -> &str {
     p.get("term").and_then(Value::as_str).unwrap_or("")
 }
 
-/// **③级断言**:②级钉住的诊断炸裂,原样出现在医生实际看到的 `problems[]`
-/// 数组里——同一次住院、同一个诊断,查看器会渲染出三条问题泳道,其中一条
-/// 泳道的标题字面意思是「PCI 术后)」,读起来像一个诊断,其实是解析产物。
-/// `merge_conditions`(`handoff.rs`)按 `condition_key` 归并同义变体,但
-/// `condition_key` 只处理 `problem_map.json` 里已知的疾病别名和几个手工维护
-/// 的词干(`DISEASE_STEMS`),对这三条互不包含的字符串无能为力——它们不是
-/// 同义词,是同一句话被切断后的三个不同片段,合并逻辑设计上就管不到这种情况。
+/// **③级断言**:②级的诊断切分结果一路传到医生实际看到的 `problems[]` 数组。
+/// 缺陷时期这里是三条泳道(完整名 + 残缺名 + 「PCI 术后)」碎片);修复后改成
+/// 正面断言:碎片泳道不再出现。入院/出院两个完整变体(括注一短一长)互不为
+/// 子串、也不在 `problem_map.json` 的别名表里,`merge_conditions` 归并不了,
+/// 仍是两条泳道并存——这是另一个已知限制,不是本测试钉的缺陷。
 #[test]
-fn assemble_summary_shows_the_fragmented_diagnosis_as_three_problem_lanes() {
+fn assemble_summary_no_longer_shows_fragmented_diagnosis_lanes() {
     let raw = corpus();
     let docs = source_docs(&raw);
     let sm = assemble_summary(&docs);
@@ -435,28 +422,31 @@ fn assemble_summary_shows_the_fragmented_diagnosis_as_three_problem_lanes() {
     let terms: Vec<&str> = probs.iter().map(|p| term_of(p)).collect();
 
     assert!(
-        terms.contains(&"PCI 术后)"),
-        "已知缺陷:医生摘要里出现了一条标题是解析碎片的泳道,不是被过滤掉了: {terms:?}"
+        !terms.contains(&"PCI 术后)"),
+        "解析碎片泳道不该再出现在医生摘要里(逗号切断缺陷回归): {terms:?}"
     );
     assert!(
-        terms.contains(&"冠状动脉粥样硬化性心脏病(不稳定型心绞痛"),
-        "已知缺陷:医生摘要里还有一条标题带孤悬左括号的残缺诊断名: {terms:?}"
+        !terms.contains(&"冠状动脉粥样硬化性心脏病(不稳定型心绞痛"),
+        "孤悬左括号的残缺诊断名泳道不该再出现(逗号切断缺陷回归): {terms:?}"
     );
     assert!(
         terms.contains(&"冠状动脉粥样硬化性心脏病(不稳定型心绞痛)"),
-        "完整版本也在,三条并存,不是三选一: {terms:?}"
+        "入院诊断的完整版本应该在: {terms:?}"
+    );
+    assert!(
+        terms.contains(&"冠状动脉粥样硬化性心脏病(不稳定型心绞痛,PCI 术后)"),
+        "出院诊断的完整版本(括注带逗号)应该在: {terms:?}"
     );
 
-    // 三条泳道都没有挂上任何化验/用药——这是另一个已知、有据可查的限制
+    // 两条泳道都没有挂上任何化验/用药——这是另一个已知、有据可查的限制
     // (`problem_map.json` 里的疾病名是「冠心病」,`match_disease` 只做双向子串
     // 匹配、没有同义词表,`WORKLIST.md` #3 记录着 `fix/disease-synonyms` 分支
-    // 因为会把糖尿病泳道整条打空而被拒绝合入)——就算三条炸裂的泳道合并成一条
-    // 干净的完整诊断名,`match_disease("冠状动脉粥样硬化性心脏病(不稳定型心绞痛)")`
-    // 依然不会命中「冠心病」。两个缺陷相互独立,修其中一个不会连带修好另一个。
+    // 因为会把糖尿病泳道整条打空而被拒绝合入)——
+    // `match_disease("冠状动脉粥样硬化性心脏病(不稳定型心绞痛)")`
+    // 不会命中「冠心病」。两个缺陷相互独立,修其中一个不会连带修好另一个。
     for t in [
-        "PCI 术后)",
-        "冠状动脉粥样硬化性心脏病(不稳定型心绞痛",
         "冠状动脉粥样硬化性心脏病(不稳定型心绞痛)",
+        "冠状动脉粥样硬化性心脏病(不稳定型心绞痛,PCI 术后)",
     ] {
         let p = probs.iter().find(|p| term_of(p) == t).unwrap();
         assert_eq!(
