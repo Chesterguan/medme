@@ -10,6 +10,15 @@ SYSTEM_PROMPT_V1 = """你是医疗单据结构化助手。只输出一个 JSON �
 {"doc_type":"lab|discharge|outpatient|imaging|prescription|other","doc_date":"YYYY-MM-DD","labs":[{"name":"","value":"","unit":"","ref_low":"","ref_high":"","flag":"H|L|"}],"meds":[{"name":"","dose":"","freq":"","route":""}],"diagnoses":[{"text":"","icd":""}],"impression":"","notes":""}"""
 
 
+class SchemaError(Exception):
+    """请求本身不满足 schema v1(client 的错,对应 400)。"""
+
+
+class UpstreamError(Exception):
+    """DeepSeek 请求失败,或返回了解不出 schema v1 的内容(不是 client 的错,对应
+    502;不回显上游原文——那可能是模型吐出来的任意内容,不能直接转发给调用方)。"""
+
+
 def _call_deepseek(model: str, messages: list) -> dict:
     req = urllib.request.Request(
         f"{DEEPSEEK_BASE}/chat/completions",
@@ -24,15 +33,24 @@ def _call_deepseek(model: str, messages: list) -> dict:
 def run(body: dict) -> tuple[dict, int, int]:
     mode = body.get("mode", "text")
     if body.get("schema") != 1:
-        raise ValueError("schema")
+        raise SchemaError("schema")
     if mode == "image":
+        payload = body.get("payload")
+        if not payload:
+            raise SchemaError("payload")
         content = [{"type": "text", "text": "请按 schema 输出这份单据的内容。"},
-                   {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{body['payload']}"}}]
+                   {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{payload}"}}]
         model = MODEL_VISION
     else:
-        content = body["payload"]
+        content = body.get("payload")
+        if not content:
+            raise SchemaError("payload")
         model = MODEL_TEXT
-    out = _call_deepseek(model, [{"role": "system", "content": SYSTEM_PROMPT_V1}, {"role": "user", "content": content}])
-    text = out["choices"][0]["message"]["content"]
-    usage = out.get("usage", {})
-    return json.loads(text), int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
+    try:
+        out = _call_deepseek(model, [{"role": "system", "content": SYSTEM_PROMPT_V1}, {"role": "user", "content": content}])
+        text = out["choices"][0]["message"]["content"]
+        usage = out.get("usage", {})
+        parsed = json.loads(text)
+    except Exception as e:  # 上游 HTTP 失败 / 返回形状不对 / 内容不是合法 JSON,统统算上游的错
+        raise UpstreamError("upstream") from e
+    return parsed, int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))

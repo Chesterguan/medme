@@ -9,7 +9,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 import auth, db, extract, oss
 
-_OID = re.compile(r"^[0-9a-f]{64}$")
+_OID = re.compile(r"[0-9a-f]{64}")  # 用 .fullmatch() 校验;.match() + 结尾 $ 会放过一个尾随换行
+_SIGN_VERBS = {"PUT", "GET"}
+OBJECT_MAX_BYTES = 64 * 1024 * 1024  # 64 MiB:预签名对象的体积上限(OSS V1 预签名本身管不了体积,这里在登记前先挡一道)
 
 app = FastAPI(title="medme-api")
 
@@ -253,13 +255,27 @@ def device_approval(device_id: str, aid=Depends(account_dep), conn=Depends(conn_
 @app.get("/v1/profiles/{pid}/events")
 def events_pull(pid: str, since: str = "{}", aid=Depends(account_dep), conn=Depends(conn_dep)):
     _require_role(conn, pid, aid, {"owner", "editor", "viewer"})
-    events, seq_map = db.events_pull(conn, pid, json.loads(since))
+    try:
+        since_map = json.loads(since)
+        if not isinstance(since_map, dict) or not all(
+            isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) for k, v in since_map.items()
+        ):
+            raise ValueError("since")
+    except (ValueError, TypeError):
+        raise HTTPException(400, "since")
+    events, seq_map = db.events_pull(conn, pid, since_map)
     return JSONResponse(content=events, headers={"X-Seq-Map": json.dumps(seq_map)})
 
 
 @app.post("/v1/profiles/{pid}/events")
 def events_push(pid: str, body: List[dict], aid=Depends(account_dep), conn=Depends(conn_dep)):
     _require_role(conn, pid, aid, {"owner", "editor"})
+    if len(body) > db.MAX_EVENTS_PER_PUSH:
+        raise HTTPException(400, "too many events")
+    for i, e in enumerate(body):
+        err = db.validate_event(e)
+        if err:
+            raise HTTPException(400, f"event {i}: {err}")
     db.events_push(conn, pid, body)
     return {"ok": True}
 
@@ -268,12 +284,18 @@ def events_push(pid: str, body: List[dict], aid=Depends(account_dep), conn=Depen
 def object_sign(pid: str, body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
     verb = body.get("verb", "GET")
     oid = body.get("object_id", "")
-    if not _OID.match(oid):
+    if verb not in _SIGN_VERBS:
+        raise HTTPException(400, "verb")
+    if not _OID.fullmatch(oid):
         raise HTTPException(400, "object_id")
+    size = body.get("size", 0)
+    if verb == "PUT" and (isinstance(size, bool) or not isinstance(size, int) or not (0 < size <= OBJECT_MAX_BYTES)):
+        raise HTTPException(400, "size")
     _require_role(conn, pid, aid, {"owner", "editor"} if verb == "PUT" else {"owner", "editor", "viewer"})
     if verb == "PUT":
-        db.object_register(conn, pid, aid, oid, int(body.get("size", 0)))
-    return {"url": oss.presign(verb, f"v/{pid}/{oid}"), "content_type": oss.CONTENT_TYPE, "expires_in": oss.PRESIGN_TTL}
+        db.object_register(conn, pid, aid, oid, size)
+    return {"url": oss.presign(verb, f"v/{pid}/{oid}"),
+            "content_type": oss.CONTENT_TYPE if verb == "PUT" else "", "expires_in": oss.PRESIGN_TTL}
 
 
 @app.get("/v1/profiles/{pid}/objects")
@@ -286,9 +308,9 @@ def objects_list(pid: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
 def extract_route(body: dict, aid=Depends(extract_account_dep), conn=Depends(conn_dep)):
     try:
         result, tin, tout = extract.run(body)
-    except ValueError as e:
+    except extract.SchemaError as e:
         raise HTTPException(400, str(e))
-    except Exception:  # 上游失败如实报 502,payload 不进日志
+    except extract.UpstreamError:  # 上游失败如实报 502,不回显上游内容(也不进日志)
         raise HTTPException(502, "upstream")
     db.usage_add(conn, aid, tokens_in=tin, tokens_out=tout)
     return result

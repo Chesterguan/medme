@@ -1,10 +1,12 @@
 """建表 + 全部查询。所有函数接收 psycopg.Connection;没有 ORM。
 服务端只存密文与账号业务数据:任何列都不该出现明文病历、档案密钥、私钥、口令。"""
 import base64
+import binascii
 import datetime
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import time
 import psycopg
@@ -314,6 +316,41 @@ def device_take_approval(conn, aid, did):
 
 # ---- 事件推拉、对象登记、用量(Task 6) ----
 
+EVENT_MAX_BYTES = 1024 * 1024   # 1 MiB:单条事件密文上限
+MAX_EVENTS_PER_PUSH = 500       # 单次推送最多多少条事件
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
+def validate_event(e):
+    """校验单条事件的形状。通过返回 None,否则返回出错的字段名——只挡明显畸形的
+    输入(类型不对、缺字段、base64 解不出来),不做业务语义校验,免得随手一条
+    NaN/缺字段/坏 base64 就把整个请求炸成 500。"""
+    if not isinstance(e, dict):
+        return "event"
+    device_id = e.get("device_id")
+    if not isinstance(device_id, str) or not (0 < len(device_id) <= 64):
+        return "device_id"
+    seq = e.get("seq")
+    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+        return "seq"
+    event_id = e.get("event_id")
+    if not isinstance(event_id, str) or not _HEX64.fullmatch(event_id):
+        return "event_id"
+    ts = e.get("ts")
+    if not isinstance(ts, str) or not (0 < len(ts) <= 64):
+        return "ts"
+    ciphertext = e.get("ciphertext")
+    if not isinstance(ciphertext, str):
+        return "ciphertext"
+    try:
+        raw = base64.b64decode(ciphertext, validate=True)
+    except (binascii.Error, ValueError):
+        return "ciphertext"
+    if len(raw) > EVENT_MAX_BYTES:
+        return "ciphertext"
+    return None
+
+
 def events_push(conn, pid, events):
     for e in events:
         conn.execute(
@@ -324,7 +361,9 @@ def events_push(conn, pid, events):
 
 def events_pull(conn, pid, since: dict):
     """返回 (events, seq_map)。seq_map 是本档案全部设备当前的最大 seq(不受 since
-    过滤),客户端拿它当下一次的 since 游标——含它自己没查过的设备。"""
+    过滤),客户端拿它当下一次的 since 游标——含它自己没查过的设备。
+    ponytail: 每次全表扫一遍本档案所有事件再在 Python 里过滤,档案事件多了会变慢——
+    量上来了再改成按 device_id 分别查 `seq > since` 且 seq_map 走 GROUP BY MAX(seq)。"""
     rows = conn.execute("SELECT device_id, seq, event_id, ts, ciphertext FROM events WHERE profile_id=%s ORDER BY device_id, seq", (pid,)).fetchall()
     seq_map = {}
     events = []

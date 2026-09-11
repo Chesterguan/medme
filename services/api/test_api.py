@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import jwt  # noqa: E402
 import db as dbm  # noqa: E402
 import auth  # noqa: E402
+import app as app_module  # noqa: E402 - 拿模块级常量(如 OBJECT_MAX_BYTES)用,不是重复导入
 from app import app  # noqa: E402
 
 
@@ -198,6 +199,11 @@ def _h(tok, device=""):
 
 def b64(b):
     return base64.b64encode(b).decode()
+
+
+def eid(s):
+    """事件 id 现在要求 64 位小写 hex(fullmatch)——测试里拿 sha256 凑一个合法形状。"""
+    return hashlib.sha256(s.encode()).hexdigest()
 
 
 def test_keys_profile_family_grant_and_doctor_invite_flow():
@@ -469,7 +475,7 @@ def test_events_push_pull_role_enforced_and_since_filter():
     inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 15, "token_hash": hashlib.sha256(token.encode()).hexdigest(),
                                                             "wrapped_key_by_token": b64(b"w"), "invite_ttl_s": 600}, headers=ha).json()
     client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hv)
-    evs = [{"device_id": "a", "seq": i, "event_id": f"e{i}", "ts": "2026-09-11T00:00:00Z", "ciphertext": b64(b"c%d" % i)} for i in (1, 2, 3)]
+    evs = [{"device_id": "a", "seq": i, "event_id": eid(f"e{i}"), "ts": "2026-09-11T00:00:00Z", "ciphertext": b64(b"c%d" % i)} for i in (1, 2, 3)]
     assert client.post(f"/v1/profiles/{pid}/events", json=evs, headers=ha).status_code == 200
     assert client.post(f"/v1/profiles/{pid}/events", json=evs, headers=ha).status_code == 200  # 幂等
     assert client.post(f"/v1/profiles/{pid}/events", json=evs, headers=hv).status_code == 403   # viewer 不能写
@@ -489,7 +495,7 @@ def test_events_push_by_viewer_forbidden_event_not_written():
     inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 15, "token_hash": hashlib.sha256(token.encode()).hexdigest(),
                                                             "wrapped_key_by_token": b64(b"w"), "invite_ttl_s": 600}, headers=ha).json()
     client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hv)
-    ev = [{"device_id": "v", "seq": 1, "event_id": "ev1", "ts": "2026-09-11T00:00:00Z", "ciphertext": b64(b"x")}]
+    ev = [{"device_id": "v", "seq": 1, "event_id": eid("ev1"), "ts": "2026-09-11T00:00:00Z", "ciphertext": b64(b"x")}]
     assert client.post(f"/v1/profiles/{pid}/events", json=ev, headers=hv).status_code == 403
     with dbm.connect() as conn:
         assert conn.execute("SELECT count(*) FROM events WHERE profile_id=%s", (pid,)).fetchone()[0] == 0
@@ -551,6 +557,106 @@ def test_extract_dev_token_scoped_cannot_touch_profiles():
     assert r.status_code == 401
     with dbm.connect() as conn:
         assert conn.execute("SELECT count(*) FROM profiles").fetchone()[0] == 0
+
+
+# ---- fix round 1 (Task 6 review) ----
+
+def test_object_sign_rejects_bad_verb_before_role_check():
+    a = login("13800000070", "a")
+    v = login("13800000071", "v")
+    ha, hv = _h(a["access"]), _h(v["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    token = "D" * 32
+    inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 15, "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                                                            "wrapped_key_by_token": b64(b"w"), "invite_ttl_s": 600}, headers=ha).json()
+    client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hv)
+    oid = "ef" * 32
+    r = client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": oid, "verb": "DELETE", "size": 1}, headers=hv)
+    assert r.status_code == 400
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM objects WHERE profile_id=%s AND object_id=%s", (pid, oid)).fetchone()[0] == 0
+        assert conn.execute("SELECT storage_bytes FROM usage WHERE account_id=%s", (v["account_id"],)).fetchone() is None
+    assert client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": oid, "verb": "PUT", "size": 1}, headers=hv).status_code == 403
+
+
+def test_object_sign_rejects_bad_size():
+    a = login("13800000072", "a")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    oid1 = "11" * 32
+    assert client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": oid1, "verb": "PUT", "size": -5000000000}, headers=ha).status_code == 400
+    oid2 = "22" * 32
+    oversize = app_module.OBJECT_MAX_BYTES + 1
+    assert client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": oid2, "verb": "PUT", "size": oversize}, headers=ha).status_code == 400
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM objects WHERE profile_id=%s", (pid,)).fetchone()[0] == 0
+        assert conn.execute("SELECT storage_bytes FROM usage WHERE account_id=%s", (a["account_id"],)).fetchone() is None
+
+
+def test_object_sign_object_id_rejects_trailing_newline():
+    a = login("13800000073", "a")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    r = client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": "ab" * 32 + "\n", "verb": "PUT", "size": 1}, headers=ha)
+    assert r.status_code == 400
+
+
+def test_object_sign_get_has_empty_content_type():
+    os.environ.update({"OSS_ACCESS_KEY_ID": "AK", "OSS_ACCESS_KEY_SECRET": "SK", "OSS_BUCKET": "medme-vault", "OSS_ENDPOINT": "oss-cn-hangzhou.aliyuncs.com"})
+    a = login("13800000074", "a")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    r = client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": "33" * 32, "verb": "GET"}, headers=ha)
+    assert r.status_code == 200 and r.json()["content_type"] == ""
+
+
+def test_events_push_rejects_malformed_events_all_or_nothing():
+    a = login("13800000075", "a")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    good_id = eid("good")
+
+    bad_seq = [{"device_id": "a", "seq": "NaN", "event_id": good_id, "ts": "2026-09-11T00:00:00Z", "ciphertext": b64(b"x")}]
+    r = client.post(f"/v1/profiles/{pid}/events", json=bad_seq, headers=ha)
+    assert r.status_code == 400 and r.json()["detail"] == "event 0: seq"
+
+    missing_seq = [{"device_id": "a", "event_id": good_id, "ts": "2026-09-11T00:00:00Z", "ciphertext": b64(b"x")}]
+    assert client.post(f"/v1/profiles/{pid}/events", json=missing_seq, headers=ha).status_code == 400
+
+    bad_b64 = [{"device_id": "a", "seq": 1, "event_id": good_id, "ts": "2026-09-11T00:00:00Z", "ciphertext": "not-base64!!"}]
+    assert client.post(f"/v1/profiles/{pid}/events", json=bad_b64, headers=ha).status_code == 400
+
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM events WHERE profile_id=%s", (pid,)).fetchone()[0] == 0
+
+
+def test_events_push_rejects_more_than_max_per_push():
+    a = login("13800000076", "a")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    too_many = [{"device_id": "a", "seq": i, "event_id": eid(f"m{i}"), "ts": "2026-09-11T00:00:00Z", "ciphertext": b64(b"x")}
+                for i in range(dbm.MAX_EVENTS_PER_PUSH + 1)]
+    assert client.post(f"/v1/profiles/{pid}/events", json=too_many, headers=ha).status_code == 400
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM events WHERE profile_id=%s", (pid,)).fetchone()[0] == 0
+
+
+def test_events_pull_rejects_malformed_since():
+    a = login("13800000077", "a")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    assert client.get(f"/v1/profiles/{pid}/events", params={"since": "oops"}, headers=ha).status_code == 400
+    assert client.get(f"/v1/profiles/{pid}/events", params={"since": json.dumps([1, 2])}, headers=ha).status_code == 400
+
+
+def test_extract_upstream_garbage_is_502_not_400(monkeypatch):
+    import extract
+    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {
+        "choices": [{"message": {"content": "not json at all"}}], "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+    a = login("13800000078", "a")
+    r = client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers=_h(a["access"]))
+    assert r.status_code == 502
+    assert "not json" not in r.text
 
 
 if __name__ == "__main__":
