@@ -1176,7 +1176,7 @@ mod tests {
                 text: t,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
-            })
+                extraction_json: None,            })
             .collect();
         let sm = assemble_summary(&docs);
         let terms: Vec<&str> = sm["problems"]
@@ -1200,7 +1200,7 @@ mod tests {
                 text: t,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
-            })
+                extraction_json: None,            })
             .collect();
         let sm2 = assemble_summary(&docs2);
         let n = sm2["problems"]
@@ -1255,7 +1255,7 @@ mod tests {
                 text: t,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
-            })
+                extraction_json: None,            })
             .collect();
         let sm = assemble_summary(&docs);
         let terms: Vec<&str> = sm["problems"]
@@ -1287,7 +1287,7 @@ mod tests {
                 text: t,
                 doc_type: Some("lab_report".into()),
                 title: None,
-            })
+                extraction_json: None,            })
             .collect();
         let sm = assemble_summary(&docs);
         let shown: usize = sm["problems"]
@@ -1321,7 +1321,7 @@ mod tests {
             text,
             doc_type: Some("lab_report".into()),
             title: None,
-        }];
+            extraction_json: None,        }];
         let sm = assemble_summary(&docs);
         let problems = sm["problems"].as_array().expect("problems array");
         for p in problems {
@@ -1362,6 +1362,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: Some("生化".into()),
+            extraction_json: None,
             date: d(2026, 8, 1),
             // 一份完全正常的报告:1.2 落在 0.6–1.3 内。
             text: "临床诊断:慢性肾脏病\n肌酐: 1.2 mg/dL (参考 0.6-1.3)",
@@ -1412,6 +1413,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 6, 1),
                 text: "生化检验报告单\n糖化血红蛋白 7.9 % 4-6.5\n神秘指标XYZ 12.3 mg/L 0-5",
             },
@@ -1419,6 +1421,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2026, 6, 1),
                 text: "生化检验报告单\n糖化血红蛋白 7.2 % 4-6.5",
             },
@@ -1426,6 +1429,7 @@ mod tests {
                 index: 2,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2021, 5, 1),
                 text: "门诊病历\n诊断:2型糖尿病\n二甲双胍 0.5g bid\n过敏史:青霉素(皮疹)",
             },
@@ -1489,6 +1493,7 @@ mod tests {
             index: 0,
             doc_type: None,
             title: None,
+            extraction_json: None,
             date: d(2022, 12, 1),
             text: "出院诊断:社区获得性肺炎",
         }];
@@ -1733,6 +1738,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("imaging_report".into()),
                 title: Some("胸部CT".into()),
+                extraction_json: None,
                 date: d(2024, 3, 1),
                 text: "结论:两肺未见明显异常。",
             },
@@ -1740,6 +1746,7 @@ mod tests {
                 index: 1,
                 doc_type: Some("imaging_report".into()),
                 title: Some("胸部CT".into()),
+                extraction_json: None,
                 date: d(2025, 1, 1),
                 text: "结论:右肺上叶小结节,较前稳定。",
             },
@@ -1748,6 +1755,7 @@ mod tests {
                 index: 2,
                 doc_type: Some("clinical_note".into()),
                 title: Some("门诊病历".into()),
+                extraction_json: None,
                 date: d(2024, 6, 1),
                 text: "诊断:2型糖尿病",
             },
@@ -1776,6 +1784,7 @@ mod tests {
             index: 11,
             doc_type: Some("pathology".into()),
             title: Some("胃镜活检病理".into()),
+            extraction_json: None,
             date: d(2024, 9, 1),
             text: "病理诊断:(胃窦)慢性活动性胃炎,伴轻度肠上皮化生,Hp阳性(++)。未见异型增生及恶性证据。",
         }];
@@ -1800,6 +1809,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: Some("血常规".into()),
+            extraction_json: None,
             date: d(2024, 1, 1),
             text: "白细胞 10.5",
         }];
@@ -1815,6 +1825,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: Some("血常规".into()),
+            extraction_json: None,
             date: d(2024, 1, 1),
             text: "白细胞 10.5",
         }];
@@ -1858,6 +1869,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2024, 1, 1),
                 text: "出院诊断:高血压",
             },
@@ -1865,6 +1877,7 @@ mod tests {
                 index: 1,
                 doc_type: Some("self_measurement".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2024, 2, 1),
                 text: &self_text,
             },
@@ -1910,6 +1923,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: None,
+            extraction_json: None,
             date: d(2024, 1, 1),
             text: "肌酐 88 μmol/L 59-104",
         }];

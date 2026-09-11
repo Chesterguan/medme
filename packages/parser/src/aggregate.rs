@@ -77,6 +77,9 @@ pub struct SourceDoc<'a> {
     /// The record's title (e.g. `"胸部CT"`); helps derive an imaging group label.
     /// `None` when unknown. Ignored by `aggregate`.
     pub title: Option<String>,
+    /// 云抽取结果(deid schema v1 JSON);`Some` 时 labs 用它,不再对 `text` 跑
+    /// `extract_labs`。`None`(老文档/离线/未通过校验)时退回原正则路径。
+    pub extraction_json: Option<&'a str>,
 }
 
 /// One measured value of an analyte, tagged with the document it came from.
@@ -681,7 +684,13 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // 抽(section-scoped,so a discharge summary's prose 血压 stays out) —— #148。
         // whole-doc 那条路上先把 出院医嘱/带药 段屏蔽掉:一行药读起来就是一行化验,
         // 而 `wants_labs` 会对一份标题被 OCR 丢掉的出院小结点头 —— 见 mask_meds_blocks。 ---
-        let doc_labs: Vec<LabObservation> = if dt == Some("self_measurement") {
+        let doc_labs: Vec<LabObservation> = if let Some(labs) = doc
+            .extraction_json
+            .and_then(crate::extraction::try_labs_from_json)
+        {
+            // 有云抽取结果且能解析(哪怕零条 lab)就用它,不再对 text 跑正则。
+            labs
+        } else if dt == Some("self_measurement") {
             self_entry::parse_self_measurement_payload(doc.text)
                 .unwrap_or_default()
                 .iter()
@@ -948,6 +957,7 @@ mod tests {
             index,
             doc_type: Some("lab_report".into()),
             title: Some("生化".into()),
+            extraction_json: None,
             date,
             text,
         }
@@ -958,6 +968,56 @@ mod tests {
             .iter()
             .find(|s| s.analyte_key.as_deref() == Some(key))
             .unwrap_or_else(|| panic!("no series for {key}"))
+    }
+
+    /// 同一份文档:`extraction_json` 给「白细胞计数」,`text` 里写的是「肌酐」的
+    /// 正则可抽内容。`Some(有效 JSON)` 时必须用抽取结果,`text` 不再跑
+    /// `extract_labs` —— 见不到 creatinine 序列,只见得到 wbc。
+    #[test]
+    fn extraction_json_present_is_preferred_over_regex() {
+        let j = r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0","flag":""}]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 1, 1),
+            text: "肌酐: 1.2 mg/dL (参考 0.6-1.3)",
+        }];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "wbc");
+        assert_eq!(s.points.len(), 1);
+        assert!(
+            agg.labs.iter().all(|s| s.analyte_key.as_deref() != Some("creatinine")),
+            "有抽取结果时不该再对 text 跑正则"
+        );
+    }
+
+    /// `extraction_json: None`(老文档/离线)——原样退回 `extract_labs` 的正则
+    /// 路径,行为不变。
+    #[test]
+    fn extraction_json_absent_falls_back_to_regex() {
+        let docs = vec![lab_doc(0, d(2026, 1, 1), "肌酐: 1.2 mg/dL (参考 0.6-1.3)")];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+        assert_eq!(s.points.len(), 1);
+    }
+
+    /// `extraction_json: Some(格式不对的 JSON)`(被拒收/损坏的云回包)—— 同样要
+    /// 退回正则,不能因为字段是 `Some` 就把这份文档的化验直接吞掉。
+    #[test]
+    fn extraction_json_malformed_falls_back_to_regex() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: Some("not json"),
+            date: d(2026, 1, 1),
+            text: "肌酐: 1.2 mg/dL (参考 0.6-1.3)",
+        }];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+        assert_eq!(s.points.len(), 1, "解析失败要退回正则");
     }
 
     /// 「值和区间必须同单位」——这是本模块对每一个渲染层的硬承诺。任何一条序列
@@ -1133,6 +1193,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 6, 1),
             text: &text,
         }];
@@ -1154,6 +1215,7 @@ mod tests {
             index: 0,
             doc_type: Some("discharge_summary".into()),
             title: None,
+            extraction_json: None,
             date: d(2023, 5, 1),
             text: "出院诊断:急性脑梗死\n出院医嘱:低盐低脂饮食;继续口服阿司匹林 100mg qd、阿托伐他汀 20mg qn、氨氯地平 5mg qd、二甲双胍 0.5g bid;门诊随访。",
         }];
@@ -1192,6 +1254,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2023, 5, 1),
                 text: &text,
             }];
@@ -1228,6 +1291,7 @@ mod tests {
                     index: 0,
                     doc_type: Some("discharge_summary".into()),
                     title: None,
+                    extraction_json: None,
                     date: d(2026, 5, 1),
                     text: t,
                 }];
@@ -1265,6 +1329,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2023, 5, 1),
                 text: &text,
             }];
@@ -1288,6 +1353,7 @@ mod tests {
             index: 0,
             doc_type: Some(crate::classify(text).as_str().to_lowercase()),
             title: None,
+            extraction_json: None,
             date: d(2026, 5, 1),
             text,
         }];
@@ -1391,6 +1457,7 @@ mod tests {
             index: 0,
             doc_type: None,
             title: None,
+            extraction_json: None,
             date: d(2026, 5, 1),
             text: "血红蛋白 122 g/L 120-160\n出院带药:\n二甲双胍 0.5g bid\n",
         }];
@@ -1414,6 +1481,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 5, 1),
             text: "检验报告单\n血红蛋白 122 g/L 120-160\n肌酐 145 umol/L 57-97",
         }];
@@ -1454,6 +1522,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2023, 6, 1),
                 text: "肌酐 96 μmol/L 59-104",
             },
@@ -1461,6 +1530,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2022, 1, 1),
                 text: "肌酐 88 μmol/L 59-104",
             },
@@ -1468,6 +1538,7 @@ mod tests {
                 index: 2,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2023, 1, 1),
                 text: "肌酐 120 μmol/L 59-104", // > 104 -> H
             },
@@ -1493,6 +1564,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 1, 1),
                 text: "肌酐 88 μmol/L 59-104",
             },
@@ -1500,6 +1572,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 2, 1),
                 text: "神秘指标XYZ 12.3 mg/L 0-5",
             },
@@ -1529,6 +1602,7 @@ mod tests {
                 index: 3,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2023, 1, 1),
                 text: "二甲双胍 0.5g bid",
             },
@@ -1536,6 +1610,7 @@ mod tests {
                 index: 7,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 3, 1),
                 text: "二甲双胍 0.85g tid",
             },
@@ -1559,6 +1634,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 5, 1),
                 text: "出院诊断:2型糖尿病",
             },
@@ -1566,6 +1642,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2023, 2, 1),
                 text: "入院诊断:2型糖尿病",
             },
@@ -1585,6 +1662,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: None,
                 text: "肌酐 88 μmol/L 59-104",
             },
@@ -1592,6 +1670,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 1, 1),
                 text: "肌酐 90 μmol/L 59-104",
             },
@@ -1612,6 +1691,7 @@ mod tests {
             index: 0,
             doc_type: None,
             title: None,
+            extraction_json: None,
             date: d(2024, 1, 1),
             text: "\
 肌酐 88 μmol/L 59-104
@@ -1661,6 +1741,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("self_measurement".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2026, 8, 1),
                 text: &self_text,
             },
@@ -1668,6 +1749,7 @@ mod tests {
                 index: 1,
                 doc_type: Some("lab_report".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2026, 8, 1),
                 text: "收缩压 140 mmHg",
             },
@@ -1716,6 +1798,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: &text,
         }];
@@ -1754,6 +1837,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: &text,
         }];
@@ -1791,6 +1875,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("self_measurement".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2026, 8, 1),
                 text: &text,
             }];
@@ -1820,6 +1905,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: &text,
         }];
@@ -1842,6 +1928,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: &text,
         }];
@@ -1858,6 +1945,7 @@ mod tests {
             index: 0,
             doc_type: Some("note".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: "今天有点头晕,是不是又高血压了,下次问问医生。",
         }];
@@ -1883,6 +1971,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: "损坏的自测记录,没有任何标记行。",
         }];

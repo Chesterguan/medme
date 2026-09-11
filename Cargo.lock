@@ -4904,6 +4904,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "core-model",
+ "deid",
  "pdf-extract",
  "regex",
  "serde",

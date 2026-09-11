@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 
 mod aggregate;
 mod conditions;
+pub mod extraction;
 mod handoff;
 mod labs;
 mod meds;
@@ -18,6 +19,7 @@ pub use aggregate::{
     aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedSpan, SourceDoc,
 };
 pub use conditions::{extract_conditions, ConditionMention};
+pub use extraction::labs_from_json;
 pub use handoff::{assemble_summary, match_disease};
 pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};
