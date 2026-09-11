@@ -9,10 +9,17 @@
   value: 纯数字;非数字(阴性/未见等)记 NA,kind=qual
   low/high: 数字或 NA
   kind: num(数值型) | qual(定性型)
-"""
-import csv, json, re, sys
 
-D = "/private/tmp/claude-501/-Volumes-extraSupply-Projects-openmed/3c224b0f-768e-498c-b5ef-328c3ba3b549/scratchpad/datasets/medrepbench"
+跑法:`export MEDREP_ROOT=<medrepbench 下载目录>` 再跑本脚本,产出
+`$MEDREP_ROOT/gt.tsv`。
+
+注:HF 上 `MedRepBench/MedRepBench` 当前这份的元数据文件叫
+`datasets-meta-zhCN.csv`,不叫 `meta.csv`(旧版本/文档说的是 `meta.csv`,这份
+下载下来实际是前者,三列 image/meta/items 的结构没变,只是文件名不同)。
+"""
+import csv, json, os, re, sys
+
+D = os.environ["MEDREP_ROOT"]
 csv.field_size_limit(sys.maxsize)
 
 NUM = r"[-+]?\d+(?:\.\d+)?"
@@ -58,7 +65,7 @@ def parse_range(s):
 def main():
     out = open(f"{D}/gt.tsv", "w")
     n_doc = n_item = n_num = n_qual = n_range = 0
-    for r in csv.DictReader(open(f"{D}/meta.csv")):
+    for r in csv.DictReader(open(f"{D}/datasets-meta-zhCN.csv")):
         try:
             if json.loads(r["meta"]).get("type") != "Laboratory":
                 continue

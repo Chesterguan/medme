@@ -26,11 +26,19 @@
 //
 // ## 跑法
 //
+// 先 `export MEDREP_ROOT=<medrepbench 下载目录>`(内容见下一节)。
+//
 // ```
 // cargo run --release -p ocr --example medrep --features engine,testing -- \
 //   --produce --models <结构模型目录> [--limit N]
 // cargo run --release -p ocr --example medrep --features engine,testing -- --score
 // ```
+//
+// ## `MEDREP_ROOT` 下何处找到什么
+//
+// `$MEDREP_ROOT/gt.tsv`(`medrep_make_gt.py` 生成)、`$MEDREP_ROOT/images/`
+// (原始报告图,按需从 HF `MedRepBench/MedRepBench` 数据集下载)、
+// `$MEDREP_ROOT/<out>/arm{1,2,3}_*/`、`arm4_llm/deepseek-<text|image>/`(各臂产出)。
 
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
@@ -40,7 +48,13 @@ use std::time::Instant;
 use oar_ocr::domain::tasks::LayoutDetectionConfig;
 use oar_ocr::prelude::OARStructureBuilder;
 
-const ROOT: &str = "/private/tmp/claude-501/-Volumes-extraSupply-Projects-openmed/3c224b0f-768e-498c-b5ef-328c3ba3b549/scratchpad/datasets/medrepbench";
+/// medrepbench 下载目录(gt.tsv、images/、各臂产出都在它下面)。之前这里是个
+/// 写死的 scratchpad 路径,那个 scratchpad 早被清了,写死也没意义——换成环境
+/// 变量,谁跑谁指定自己机器上的下载位置。
+fn root() -> String {
+    std::env::var("MEDREP_ROOT")
+        .expect("设置 MEDREP_ROOT=<medrepbench 目录>(见本文件头注释「MEDREP_ROOT 下何处找到什么」)")
+}
 
 const VALUE_EPS: f64 = 0.01;
 
@@ -50,7 +64,7 @@ const VALUE_EPS: f64 = 0.01;
 /// 一个 `out/`,后跑的会覆盖先跑的,两边的 `--score` 就都在读对方的产出 ——
 /// 数字看着有变化,其实是串了。每条线用 `--out out_<线名>`,互不相干。
 fn out_root(name: &str) -> PathBuf {
-    PathBuf::from(ROOT).join(name)
+    PathBuf::from(root()).join(name)
 }
 
 /// 真值里的一条项目(已由 `make_gt.py` 规范化,参考区间的 18 种写法在那里统一解析)。
@@ -64,7 +78,7 @@ struct GtItem {
 }
 
 fn load_gt() -> Result<BTreeMap<String, Vec<GtItem>>> {
-    let text = std::fs::read_to_string(format!("{ROOT}/gt.tsv")).context("读 gt.tsv")?;
+    let text = std::fs::read_to_string(format!("{}/gt.tsv", root())).context("读 gt.tsv")?;
     let mut out: BTreeMap<String, Vec<GtItem>> = BTreeMap::new();
     for line in text.lines() {
         let c: Vec<&str> = line.split('\t').collect();
@@ -162,7 +176,7 @@ fn produce(models: &Path, limit: Option<usize>, out: &str) -> Result<()> {
     let mut arm_fail = [0usize; 3];
     let mut skipped = 0usize;
     for (i, doc) in docs.iter().enumerate() {
-        let img_path = PathBuf::from(ROOT).join("images").join(doc);
+        let img_path = PathBuf::from(root()).join("images").join(doc);
         let Ok(bytes) = std::fs::read(&img_path) else {
             skipped += 1;
             continue;
@@ -615,6 +629,38 @@ fn score(out: &str) -> Result<()> {
     println!();
     for (n, c) in miss.iter().take(40) {
         println!("- {c:>4}  {n}");
+    }
+
+    println!();
+    println!("## 第 ④ 臂(LLM)幻觉率——逐字校验后被丢弃的条目占比");
+    println!();
+    // 每份文档的 {doc}.halluc.json 由 medrep_llm.rs 写(deid::verify 的
+    // rejected/total),这里跨全部文档累加,不重新跑校验。
+    for (n, dir) in &arms {
+        if !n.starts_with("④") {
+            continue;
+        }
+        let (mut t, mut r, mut u) = (0u64, 0u64, 0u64);
+        for e in std::fs::read_dir(dir)?.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&p)?)
+            {
+                t += v["total"].as_u64().unwrap_or(0);
+                r += v["rejected"].as_u64().unwrap_or(0);
+                u += v["unverified"].as_u64().unwrap_or(0);
+            }
+        }
+        println!(
+            "{n} 幻觉率(逐字校验不过被丢弃)= {r}/{t} = {:.1}%;待核 {u}",
+            if t > 0 {
+                r as f64 * 100.0 / t as f64
+            } else {
+                0.0
+            }
+        );
     }
     Ok(())
 }
