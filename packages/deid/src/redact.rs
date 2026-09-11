@@ -91,4 +91,91 @@ mod tests {
         let back = restore(&r.text, &r.map);
         assert_eq!(back, src);
     }
+
+    // --- fix round 1: 复现审阅发现的泄漏/误伤,逐条钉住 ---
+
+    #[test]
+    fn dot_or_dash_lead_in_no_longer_swallows_the_whole_number() {
+        // 旧实现:紧邻 `.`/`-` 就当成小数/区间跳过,不管另一侧是不是数字——
+        // 结果座机号、条码号整段漏网。三条各占一行,避免和「化验行豁免」(item4)的
+        // 行级判断互相干扰——那条规则本身在 patterns.rs 的测试里单独钉住了。
+        let r = redact_text(
+            "电话010-69156114\n编号No.2023061512345\n参考 100000-300000",
+            &known(),
+            0,
+        );
+        assert!(!r.text.contains("69156114"), "座机号漏了:{}", r.text);
+        assert!(!r.text.contains("2023061512345"), "条码号漏了:{}", r.text);
+        assert!(r.text.contains("100000-300000"), "参考区间不该被掩:{}", r.text);
+    }
+
+    #[test]
+    fn adjacent_long_digit_runs_are_all_masked_not_just_the_first() {
+        // 旧实现:消费型正则把分隔符吃进上一个匹配,下一个数字串就找不到合法起点了。
+        let r = redact_text("90051065/62198842", &known(), 0);
+        assert!(!r.text.contains("90051065") && !r.text.contains("62198842"), "{}", r.text);
+
+        let r2 = redact_text("111111 222222 333333", &known(), 0);
+        for leak in ["111111", "222222", "333333"] {
+            assert!(!r2.text.contains(leak), "{leak} 漏了:{}", r2.text);
+        }
+    }
+
+    #[test]
+    fn anchor_id_and_ward_values_are_not_truncated_by_a_character_cap() {
+        // 旧实现:锚点值上限 12 字符,18 位身份证号/16 位住院号被拦腰截断,尾巴明文残留。
+        let src = "身份证号44010519850101123X 住院号:1234567890123456";
+        let r = redact_text(src, &known(), 0);
+        assert!(!r.text.contains("44010519850101123X"), "{}", r.text);
+        assert!(!r.text.contains("1234567890123456"), "{}", r.text);
+        for tail in ["01123X", "3456"] {
+            assert!(!r.text.contains(tail), "残留尾巴 {tail}:{}", r.text);
+        }
+        let back = restore(&r.text, &r.map);
+        assert_eq!(back, src);
+    }
+
+    #[test]
+    fn compact_date_is_shifted_not_masked_and_round_trips() {
+        let src = "采集时间20240305";
+        let r = redact_text(src, &known(), 7);
+        assert!(r.text.contains("20240312"), "紧凑日期该偏移而不是掩码:{}", r.text);
+        let back = restore(&r.text, &r.map);
+        assert_eq!(back, src);
+    }
+
+    #[test]
+    fn name_anchor_value_stops_at_next_anchor_word_even_when_glued() {
+        let unrelated = KnownIdentity { name: "赵六".into(), id_number: None, phone: None };
+        let r = redact_text("姓名孟丁性别男门诊号90051065", &unrelated, 0);
+        assert_eq!(r.text, "姓名[P1]性别男门诊号[N1]");
+    }
+
+    #[test]
+    fn bare_doctor_and_patient_words_are_not_anchors() {
+        let a = redact_text("患者主诉发热三天 无咳嗽", &known(), 0);
+        assert_eq!(a.text, "患者主诉发热三天 无咳嗽");
+        let b = redact_text("医生建议复查肝功能", &known(), 0);
+        assert_eq!(b.text, "医生建议复查肝功能");
+    }
+
+    #[test]
+    fn repeated_value_reuses_the_same_numbered_placeholder() {
+        let r = redact_text("审核者樊笋 复核 审核者樊笋", &known(), 0);
+        let p_count = r.map.placeholders.iter().filter(|(p, _)| p.starts_with("[P")).count();
+        assert_eq!(p_count, 1, "同一个值该只分配一个占位符:{:?}", r.map.placeholders);
+        assert_eq!(r.text.matches("[P1]").count(), 2, "{}", r.text);
+    }
+
+    #[test]
+    fn lab_row_units_age_and_sex_all_survive() {
+        let r = redact_text(
+            "性别:男 年龄:45岁 白细胞 5.6 10^9/L 血小板 120000 参考 100000-300000",
+            &known(),
+            0,
+        );
+        for keep in ["性别:男", "年龄:45岁", "白细胞 5.6", "10^9/L", "血小板 120000", "100000-300000"] {
+            assert!(r.text.contains(keep), "{keep} 应保留:{}", r.text);
+        }
+    }
 }
