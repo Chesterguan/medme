@@ -917,15 +917,17 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
 /// 不成立**:安卓早已从 ML Kit 换成和 iOS 同一个 PP-OCRv5(见 `ocr_bridge.dart`
 /// 的 `recognizeImageText`),那个 Dart 函数连同 ML Kit 依赖一起删掉了,现在
 /// grep 不到。留这句话在这里会让人去找一个不存在的参照实现。)
+/// 与 [`recognize_engine_layout`] 同一条识别路径,但把检测框交出去(脱敏要按框涂黑)。
+/// 文本由调用方 `rebuild_layout_text(&lines)` 得到,与 layout 版逐字节相同。
 #[cfg(feature = "engine")]
-pub fn recognize_engine_layout(image_bytes: &[u8]) -> Result<OcrOutcome> {
+pub fn recognize_engine_lines(image_bytes: &[u8]) -> Result<(Vec<LayoutLine>, f32)> {
     let mut confidences = Vec::new();
-    let mut layout_lines = Vec::new();
+    let mut out = Vec::new();
     for line in predict_lines(image_bytes)? {
         if let Some(c) = line.confidence {
             confidences.push(c);
         }
-        layout_lines.push(LayoutLine {
+        out.push(LayoutLine {
             text: line.text,
             left: line.left,
             top: line.top,
@@ -933,11 +935,54 @@ pub fn recognize_engine_layout(image_bytes: &[u8]) -> Result<OcrOutcome> {
             height: line.bottom - line.top,
         });
     }
+    Ok((out, mean_confidence(&confidences)))
+}
+
+#[cfg(feature = "engine")]
+pub fn recognize_engine_layout(image_bytes: &[u8]) -> Result<OcrOutcome> {
+    let (layout_lines, confidence) = recognize_engine_lines(image_bytes)?;
     Ok(OcrOutcome {
         text: rebuild_layout_text(&layout_lines),
-        confidence: mean_confidence(&confidences),
+        confidence,
         backend: OcrBackend::Onnx,
     })
+}
+
+/// 要涂黑的矩形(整图像素坐标,与 [`LayoutLine`] 同一坐标系)。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PaintRect {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+/// 按框涂黑,输出 JPEG q85(送云端的那份;原件不动)。不依赖 `engine`,纯图像操作,
+/// 所有 target 都能编译。坐标按 [`decode_image_bounded`] 处理后的正向像素帧解读
+/// (与 [`LayoutLine`] 同一坐标系),越界矩形会被裁到图内、不会 panic。
+pub fn redact_image(image_bytes: &[u8], rects: &[PaintRect]) -> Result<Vec<u8>> {
+    use imageproc::drawing::draw_filled_rect_mut;
+    use imageproc::rect::Rect;
+    let mut img = decode_image_bounded(image_bytes)
+        .context("redact_image: decode")?
+        .to_rgb8();
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    for r in rects {
+        let l = r.left.max(0.0).min(w) as i32;
+        let t = r.top.max(0.0).min(h) as i32;
+        let rw = (r.right.min(w) - l as f32).max(1.0) as u32;
+        let rh = (r.bottom.min(h) - t as f32).max(1.0) as u32;
+        draw_filled_rect_mut(
+            &mut img,
+            Rect::at(l, t).of_size(rw, rh),
+            image::Rgb([0u8, 0, 0]),
+        );
+    }
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)
+        .encode_image(&image::DynamicImage::ImageRgb8(img))
+        .context("redact_image: encode jpeg")?;
+    Ok(out)
 }
 
 /// A recognized text line's content plus its on-page geometry (pixel
@@ -2063,6 +2108,29 @@ pub mod testing {
 mod tests {
     use super::testing::{multipage_tiff, plain_multipage_tiff};
     use super::*;
+
+    #[test]
+    fn redact_image_paints_rects_black() {
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_pixel(100, 60, Rgb([255u8, 255, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let out = redact_image(
+            &png,
+            &[PaintRect {
+                left: 10.0,
+                top: 10.0,
+                right: 50.0,
+                bottom: 30.0,
+            }],
+        )
+        .unwrap();
+        let back = image::load_from_memory(&out).unwrap().to_rgb8();
+        assert!(back.get_pixel(20, 20)[0] < 30, "框内应为黑");
+        assert!(back.get_pixel(80, 50)[0] > 220, "框外应为白");
+    }
 
     /// The fixture builder must produce a TIFF the `image` crate really
     /// decodes -- otherwise the page-count tests below would be asserting
