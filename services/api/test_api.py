@@ -458,6 +458,101 @@ def test_invite_days_capped_at_grant_doctor_days():
     assert row[0] == dbm.GRANT_DOCTOR_DAYS == 15
 
 
+# ---- Task 6: 事件推拉、对象预签名、LLM 代理 ----
+
+def test_events_push_pull_role_enforced_and_since_filter():
+    a = login("13800000040", "a")
+    v = login("13800000041", "v")
+    ha, hv = _h(a["access"]), _h(v["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    token = "V" * 32
+    inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 15, "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                                                            "wrapped_key_by_token": b64(b"w"), "invite_ttl_s": 600}, headers=ha).json()
+    client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hv)
+    evs = [{"device_id": "a", "seq": i, "event_id": f"e{i}", "ts": "2026-09-11T00:00:00Z", "ciphertext": b64(b"c%d" % i)} for i in (1, 2, 3)]
+    assert client.post(f"/v1/profiles/{pid}/events", json=evs, headers=ha).status_code == 200
+    assert client.post(f"/v1/profiles/{pid}/events", json=evs, headers=ha).status_code == 200  # 幂等
+    assert client.post(f"/v1/profiles/{pid}/events", json=evs, headers=hv).status_code == 403   # viewer 不能写
+    r = client.get(f"/v1/profiles/{pid}/events", params={"since": json.dumps({"a": 1})}, headers=hv)
+    got = r.json()
+    assert [e["seq"] for e in got] == [2, 3]
+    assert got[0]["ciphertext"] == b64(b"c2")
+    assert json.loads(r.headers["X-Seq-Map"]) == {"a": 3}
+
+
+def test_events_push_by_viewer_forbidden_event_not_written():
+    a = login("13800000042", "a")
+    v = login("13800000043", "v")
+    ha, hv = _h(a["access"]), _h(v["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    token = "W" * 32
+    inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 15, "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                                                            "wrapped_key_by_token": b64(b"w"), "invite_ttl_s": 600}, headers=ha).json()
+    client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hv)
+    ev = [{"device_id": "v", "seq": 1, "event_id": "ev1", "ts": "2026-09-11T00:00:00Z", "ciphertext": b64(b"x")}]
+    assert client.post(f"/v1/profiles/{pid}/events", json=ev, headers=hv).status_code == 403
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM events WHERE profile_id=%s", (pid,)).fetchone()[0] == 0
+
+
+def test_events_pull_forbidden_without_grant():
+    a = login("13800000044", "a")
+    stranger = login("13800000045", "s")
+    ha, hs = _h(a["access"]), _h(stranger["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    assert client.get(f"/v1/profiles/{pid}/events", headers=hs).status_code == 403
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM grants WHERE profile_id=%s AND grantee_id=%s", (pid, stranger["account_id"])).fetchone()[0] == 0
+
+
+def test_object_sign_registers_and_counts_storage():
+    os.environ.update({"OSS_ACCESS_KEY_ID": "AK", "OSS_ACCESS_KEY_SECRET": "SK", "OSS_BUCKET": "medme-vault", "OSS_ENDPOINT": "oss-cn-hangzhou.aliyuncs.com"})
+    a = login("13800000050", "a")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    r = client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": "ab" * 32, "verb": "PUT", "size": 1234}, headers=ha).json()
+    assert r["url"].startswith("https://medme-vault.oss-cn-hangzhou.aliyuncs.com/v/") and "Signature=" in r["url"]
+    assert client.get(f"/v1/profiles/{pid}/objects", headers=ha).json() == ["ab" * 32]
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT storage_bytes FROM usage WHERE account_id=%s", (a["account_id"],)).fetchone()[0] == 1234
+    assert client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": "zz", "verb": "PUT", "size": 1}, headers=ha).status_code == 400
+
+
+def test_object_sign_forbidden_without_grant():
+    a = login("13800000051", "a")
+    stranger = login("13800000052", "s")
+    ha, hs = _h(a["access"]), _h(stranger["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    oid = "cd" * 32
+    assert client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": oid, "verb": "PUT", "size": 999}, headers=hs).status_code == 403
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM objects WHERE profile_id=%s AND object_id=%s", (pid, oid)).fetchone()[0] == 0
+        row = conn.execute("SELECT storage_bytes FROM usage WHERE account_id=%s", (stranger["account_id"],)).fetchone()
+        assert row is None
+
+
+def test_extract_proxies_and_counts_tokens(monkeypatch):
+    import extract
+    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {"choices": [{"message": {"content": '{"doc_type":"lab","labs":[]}'}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+    a = login("13800000060", "a")
+    r = client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "血红蛋白 130 g/L", "hints": {}}, headers=_h(a["access"]))
+    assert r.status_code == 200 and r.json()["doc_type"] == "lab"
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT llm_tokens_in, llm_tokens_out FROM usage WHERE account_id=%s", (a["account_id"],)).fetchone() == (10, 5)
+    os.environ["MEDME_EXTRACT_TOKEN"] = "dev-token"
+    assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers={"Authorization": "Bearer dev-token"}).status_code == 200
+
+
+def test_extract_dev_token_scoped_cannot_touch_profiles():
+    os.environ["MEDME_EXTRACT_TOKEN"] = "dev-token-scope"
+    hdev = {"Authorization": "Bearer dev-token-scope"}
+    assert client.get("/v1/profiles", headers=hdev).status_code == 401
+    r = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=hdev)
+    assert r.status_code == 401
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM profiles").fetchone()[0] == 0
+
+
 if __name__ == "__main__":
     # `python3 services/api/test_api.py`:与 services/claim-signer/test_handler.py 同风格的
     # 无 pytest 自检——手动跑每个 test_* 函数,复用 `clean` fixture 的清库逻辑,
@@ -476,16 +571,25 @@ if __name__ == "__main__":
             )
             conn.commit()
 
+    import inspect as _inspect
+
     _tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     _fail = []
     for _t in _tests:
         _clean_db()
+        # 少数测试要 monkeypatch 一个 pytest fixture 参数(如 test_extract_* 打桩
+        # _call_deepseek,免得自检真打 DeepSeek 的网)——pytest.MonkeyPatch 本身是
+        # 独立于 fixture 系统可以直接实例化的公开 API,不用起一整个 pytest session。
+        _mp = pytest.MonkeyPatch() if "monkeypatch" in _inspect.signature(_t).parameters else None
         try:
-            _t()
+            _t(_mp) if _mp else _t()
             print(f"  ✓ {_t.__name__}")
         except Exception as e:  # noqa: BLE001 - 自检要能报出任何一种失败
             print(f"  ✗ {_t.__name__}  {e!r}")
             _fail.append(_t.__name__)
+        finally:
+            if _mp:
+                _mp.undo()
 
     print()
     if _fail:

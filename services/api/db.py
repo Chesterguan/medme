@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import time
 import psycopg
 
 SCHEMA = """
@@ -309,3 +310,46 @@ def device_take_approval(conn, aid, did):
         return None
     conn.execute("UPDATE devices SET approved_priv=NULL WHERE account_id=%s AND device_id=%s", (aid, did))
     return b64e(r[0])
+
+
+# ---- 事件推拉、对象登记、用量(Task 6) ----
+
+def events_push(conn, pid, events):
+    for e in events:
+        conn.execute(
+            """INSERT INTO events(profile_id, device_id, seq, event_id, ts, ciphertext) VALUES (%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (profile_id, device_id, seq) DO NOTHING""",
+            (pid, e["device_id"], int(e["seq"]), e["event_id"], e["ts"], b64d(e["ciphertext"])))
+
+
+def events_pull(conn, pid, since: dict):
+    """返回 (events, seq_map)。seq_map 是本档案全部设备当前的最大 seq(不受 since
+    过滤),客户端拿它当下一次的 since 游标——含它自己没查过的设备。"""
+    rows = conn.execute("SELECT device_id, seq, event_id, ts, ciphertext FROM events WHERE profile_id=%s ORDER BY device_id, seq", (pid,)).fetchall()
+    seq_map = {}
+    events = []
+    for r in rows:
+        device_id, seq = r[0], r[1]
+        if seq > seq_map.get(device_id, 0):
+            seq_map[device_id] = seq
+        if seq > int(since.get(device_id, 0)):
+            events.append({"device_id": device_id, "seq": seq, "event_id": r[2], "ts": r[3], "ciphertext": b64e(r[4])})
+    return events, seq_map
+
+
+def object_register(conn, pid, aid, oid, size):
+    conn.execute("INSERT INTO objects(profile_id, object_id, size) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (pid, oid, size))
+    usage_add(conn, aid, storage_bytes=size)
+
+
+def objects_list(conn, pid):
+    return [r[0] for r in conn.execute("SELECT object_id FROM objects WHERE profile_id=%s ORDER BY created_at", (pid,)).fetchall()]
+
+
+def usage_add(conn, aid, *, tokens_in=0, tokens_out=0, storage_bytes=0):
+    month = time.strftime("%Y-%m")
+    conn.execute(
+        """INSERT INTO usage(account_id, month, llm_tokens_in, llm_tokens_out, storage_bytes) VALUES (%s,%s,%s,%s,%s)
+           ON CONFLICT (account_id, month) DO UPDATE SET llm_tokens_in=usage.llm_tokens_in+EXCLUDED.llm_tokens_in,
+             llm_tokens_out=usage.llm_tokens_out+EXCLUDED.llm_tokens_out, storage_bytes=usage.storage_bytes+EXCLUDED.storage_bytes""",
+        (aid, month, tokens_in, tokens_out, storage_bytes))

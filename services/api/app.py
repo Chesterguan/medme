@@ -1,10 +1,15 @@
 """MedMe 账号/同步/授权/LLM 代理 API。阿里云 FC 自定义运行时:`python3 -m uvicorn app:app --host 0.0.0.0 --port 9000`。
 服务端只见密文:此文件里不得出现任何解密调用。"""
 import datetime
+import json
 import os
+import re
+from typing import List
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-import auth, db
+import auth, db, extract, oss
+
+_OID = re.compile(r"^[0-9a-f]{64}$")
 
 app = FastAPI(title="medme-api")
 
@@ -31,7 +36,19 @@ def account_dep(authorization: str = Header(default="")) -> str:
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "missing bearer")
     token = authorization[7:]
-    # 子项目 A 评测期的静态 token(与 claim-signer 的 MEDME_UPLOAD_TOKEN 同一模式)
+    try:
+        return auth.verify_access(token)
+    except auth.AuthError as e:
+        raise HTTPException(401, str(e))
+
+
+def extract_account_dep(authorization: str = Header(default="")) -> str:
+    """只给 /v1/extract 用:多接受子项目 A 评测期的静态 token(与 claim-signer 的
+    MEDME_UPLOAD_TOKEN 同一模式)。别的路由一律走 account_dep,拿这个 token 去调
+    会在 auth.verify_access 里炸成 401——这就是"scope 到 extract"的全部实现。"""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(401, "missing bearer")
+    token = authorization[7:]
     dev = os.environ.get("MEDME_EXTRACT_TOKEN", "")
     if dev and token == dev:
         return "dev"
@@ -229,3 +246,49 @@ def device_approval(device_id: str, aid=Depends(account_dep), conn=Depends(conn_
     if not x_device_id or x_device_id != device_id:
         raise HTTPException(404, "not found")
     return {"approved_priv": db.device_take_approval(conn, aid, device_id)}
+
+
+# ---- 事件推拉、对象预签名、LLM 代理(Task 6) ----
+
+@app.get("/v1/profiles/{pid}/events")
+def events_pull(pid: str, since: str = "{}", aid=Depends(account_dep), conn=Depends(conn_dep)):
+    _require_role(conn, pid, aid, {"owner", "editor", "viewer"})
+    events, seq_map = db.events_pull(conn, pid, json.loads(since))
+    return JSONResponse(content=events, headers={"X-Seq-Map": json.dumps(seq_map)})
+
+
+@app.post("/v1/profiles/{pid}/events")
+def events_push(pid: str, body: List[dict], aid=Depends(account_dep), conn=Depends(conn_dep)):
+    _require_role(conn, pid, aid, {"owner", "editor"})
+    db.events_push(conn, pid, body)
+    return {"ok": True}
+
+
+@app.post("/v1/profiles/{pid}/objects/sign")
+def object_sign(pid: str, body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    verb = body.get("verb", "GET")
+    oid = body.get("object_id", "")
+    if not _OID.match(oid):
+        raise HTTPException(400, "object_id")
+    _require_role(conn, pid, aid, {"owner", "editor"} if verb == "PUT" else {"owner", "editor", "viewer"})
+    if verb == "PUT":
+        db.object_register(conn, pid, aid, oid, int(body.get("size", 0)))
+    return {"url": oss.presign(verb, f"v/{pid}/{oid}"), "content_type": oss.CONTENT_TYPE, "expires_in": oss.PRESIGN_TTL}
+
+
+@app.get("/v1/profiles/{pid}/objects")
+def objects_list(pid: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    _require_role(conn, pid, aid, {"owner", "editor", "viewer"})
+    return db.objects_list(conn, pid)
+
+
+@app.post("/v1/extract")
+def extract_route(body: dict, aid=Depends(extract_account_dep), conn=Depends(conn_dep)):
+    try:
+        result, tin, tout = extract.run(body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception:  # 上游失败如实报 502,payload 不进日志
+        raise HTTPException(502, "upstream")
+    db.usage_add(conn, aid, tokens_in=tin, tokens_out=tout)
+    return result
