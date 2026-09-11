@@ -47,15 +47,56 @@ mod tests {
         assert!(open_sealed(&bob.secret, &sealed).is_err());
     }
 
+    /// 低阶/全零公钥会让 X25519 共享密钥可预测(=0),必须在两端都拒绝,
+    /// 否则一个恶意服务端可以喂假公钥、自己算出 box key。
+    #[test]
+    fn seal_to_rejects_low_order_public_key() {
+        let pk = profile_key_new();
+        assert!(seal_to(&[0u8; 32], &pk).is_err());
+    }
+
+    #[test]
+    fn open_sealed_rejects_low_order_ephemeral_public_key() {
+        let bob = account_keys_new();
+        // eph_pub 全零 + 任意长度足够的 nonce/ct/tag:合法性检查应在解密之前就失败。
+        let forged = vec![0u8; 32 + 12 + 16];
+        assert!(open_sealed(&bob.secret, &forged).is_err());
+    }
+
     #[test]
     fn blob_encrypt_is_bound_to_id_and_object_id_hides_plaintext_hash() {
         let pk = profile_key_new();
-        let id = object_id(&pk, "ab".repeat(32).as_str());
+        let id = object_id(&pk, "ab".repeat(32).as_str()).unwrap();
         assert_eq!(id.len(), 64);
         assert_ne!(id, "ab".repeat(32));
         let ct = encrypt_blob(&pk, &id, b"hello").unwrap();
         assert_eq!(decrypt_blob(&pk, &id, &ct).unwrap(), b"hello");
         assert!(decrypt_blob(&pk, "other-id", &ct).is_err());
+    }
+
+    #[test]
+    fn object_id_rejects_non_lowercase_hex() {
+        let pk = profile_key_new();
+        assert!(object_id(&pk, &"AB".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn tampered_wrap_ciphertext_fails_to_unwrap() {
+        let kek = profile_key_new();
+        let mut blob = wrap(&kek, b"hello world", b"aad").unwrap();
+        let last = blob.len() - 1;
+        blob[last] ^= 0x01; // 翻转密文体(nonce 之后)里的一个字节
+        assert!(unwrap(&kek, &blob, b"aad").is_err());
+    }
+
+    #[test]
+    fn tampered_blob_ciphertext_fails_to_decrypt() {
+        let pk = profile_key_new();
+        let id = object_id(&pk, "cd".repeat(32).as_str()).unwrap();
+        let mut ct = encrypt_blob(&pk, &id, b"hello").unwrap();
+        let last = ct.len() - 1;
+        ct[last] ^= 0x01;
+        assert!(decrypt_blob(&pk, &id, &ct).is_err());
     }
 
     #[test]

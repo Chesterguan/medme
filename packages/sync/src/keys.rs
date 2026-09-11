@@ -87,12 +87,13 @@ fn gcm(key: &[u8; 32]) -> Aes256Gcm {
 
 /// `nonce(12) || ciphertext+tag`。
 pub fn wrap(kek: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, SyncError> {
-    let mut nonce = [0u8; 12];
-    getrandom::fill(&mut nonce).expect("OS entropy source is always available on supported targets");
+    let mut nonce_bytes = [0u8; 12];
+    getrandom::fill(&mut nonce_bytes).expect("OS entropy source is always available on supported targets");
+    let nonce: &Nonce<_> = (&nonce_bytes).into();
     let ct = gcm(kek)
-        .encrypt(Nonce::from_slice(&nonce), Payload { msg: plaintext, aad })
+        .encrypt(nonce, Payload { msg: plaintext, aad })
         .map_err(|_| SyncError::Crypto)?;
-    let mut out = nonce.to_vec();
+    let mut out = nonce_bytes.to_vec();
     out.extend_from_slice(&ct);
     Ok(out)
 }
@@ -101,9 +102,10 @@ pub fn unwrap(kek: &[u8; 32], blob: &[u8], aad: &[u8]) -> Result<Vec<u8>, SyncEr
     if blob.len() < 12 + 16 {
         return Err(SyncError::Format("blob too short".into()));
     }
-    let (nonce, ct) = blob.split_at(12);
+    let (nonce_bytes, ct) = blob.split_at(12);
+    let nonce: &Nonce<_> = nonce_bytes.try_into().expect("已按 12 字节切片");
     gcm(kek)
-        .decrypt(Nonce::from_slice(nonce), Payload { msg: ct, aad })
+        .decrypt(nonce, Payload { msg: ct, aad })
         .map_err(|_| SyncError::Crypto)
 }
 
@@ -112,6 +114,11 @@ pub fn seal_to(public: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, SyncError
     let eph = StaticSecret::from(random32());
     let eph_pub = PublicKey::from(&eph);
     let shared = eph.diffie_hellman(&PublicKey::from(*public));
+    // 拒绝低阶/全零公钥:否则对方(比如服务端)可以喂一个低阶点,让共享密钥可预测,
+    // 自己算出 box key。`was_contributory` 是 x25519-dalek 对这类点的标准检测。
+    if !shared.was_contributory() {
+        return Err(SyncError::Crypto);
+    }
     let key = derive_box_key(shared.as_bytes(), eph_pub.as_bytes(), public)?;
     let mut out = eph_pub.to_bytes().to_vec();
     out.extend(wrap(&key, plaintext, b"medme-sealed-v1")?);
@@ -127,6 +134,10 @@ pub fn open_sealed(secret: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, SyncError>
     let me = StaticSecret::from(*secret);
     let my_pub = PublicKey::from(&me);
     let shared = me.diffie_hellman(&PublicKey::from(eph_pub));
+    // 同上:拒绝发件方(比如被篡改的服务端存储)塞进来的低阶/全零临时公钥。
+    if !shared.was_contributory() {
+        return Err(SyncError::Crypto);
+    }
     let key = derive_box_key(shared.as_bytes(), &eph_pub, my_pub.as_bytes())?;
     unwrap(&key, &blob[32..], b"medme-sealed-v1")
 }
