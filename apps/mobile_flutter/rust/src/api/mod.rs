@@ -13,3 +13,6 @@ pub mod vault_ephemeral;
 // 因此统一用 `view_` 前缀——排在现存最末的 `source_file_object_path` 之后,新增只会
 // 追加在生成代码末尾,`recognize_image_pp` 的序号纹丝不动。
 pub mod vault_projections;
+// 同一条纪律,第三次:本模块函数全部 `sync_` 前缀,排在 `vault_projections`
+// 之后、字典序最末,新增只会追加在生成代码末尾,不挪动任何既有函数的序号。
+pub mod vault_sync;

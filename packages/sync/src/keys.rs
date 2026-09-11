@@ -81,6 +81,19 @@ pub fn kek_from_recovery(code: &str) -> Result<[u8; 32], SyncError> {
     Ok(out)
 }
 
+/// 邀请令牌派生 KEK(邀请医生/家属加入档案时,用于封装/开封临时共享的密钥材料)。
+/// 令牌由后端签发、一次性、本身已足够随机(不是人手打的恢复码),同
+/// `kek_from_recovery` 一样直接 HKDF 拉伸即可、不需要 Argon2 的抗暴力代价;
+/// salt 换成 `medme-invite-v1`(与恢复码的 `medme-recovery-v1` 区分),两条派生
+/// 链互不可推导。不做 `normalize_recovery` 那样的大小写/分隔符折叠——令牌是
+/// 程序生成、经 URL 传递的不透明串,不是人手输入的东西。
+pub fn kek_from_token(token: &str) -> Result<[u8; 32], SyncError> {
+    let hk = Hkdf::<Sha256>::new(Some(b"medme-invite-v1"), token.as_bytes());
+    let mut out = [0u8; 32];
+    hk.expand(b"kek", &mut out).map_err(|_| SyncError::Crypto)?;
+    Ok(out)
+}
+
 fn gcm(key: &[u8; 32]) -> Aes256Gcm {
     Aes256Gcm::new_from_slice(key).expect("32-byte key is always a valid AES-256 key")
 }

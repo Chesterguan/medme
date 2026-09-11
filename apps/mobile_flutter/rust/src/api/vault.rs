@@ -47,28 +47,50 @@ static DEMO_DATA: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIF
 /// Vault 一起存(`reset_vault` 需要同时读写这几样)。`data_dir` 是 App 沙盒 data
 /// 目录,存 `device_id` 文件,也是 `ingest_bytes`/`load_demo_data` 的临时文件落点
 /// (镜像 Tauri 版用 `app_cache_dir()` 存一次性导入临时文件的做法)。
-struct VaultState {
-    vault: Vault,
+// `pub(crate)`(struct + 全部字段):`api::vault_sync` 的 keyed open
+// (`sync_open_profile_vault`)需要直接构造这个结构体、其余 `sync_*` 函数经
+// `with_state` 读 `vault`/`device_id` 等字段——它们跟本模块是兄弟模块而非子
+// 模块,私有字段(默认可见性)在那边看不到。
+pub(crate) struct VaultState {
+    pub(crate) vault: Vault,
     /// 真相(`objects/` + `log/`)所在目录:本机 `<docs_dir>/vault`,或(开了 iCloud
     /// 同步且容器可用时)iCloud 容器 `<container>/Documents/vault`。
-    truth_root: PathBuf,
-    db_path: PathBuf,
-    device_id: String,
+    pub(crate) truth_root: PathBuf,
+    pub(crate) db_path: PathBuf,
+    pub(crate) device_id: String,
     /// App 沙盒 Documents 目录;本机保险箱固定 `<docs_dir>/vault`(关 iCloud 时复制回这)。
-    docs_dir: PathBuf,
-    data_dir: PathBuf,
+    pub(crate) docs_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
+    /// 云同步档案密钥(仅 `sync_open_profile_vault` 打开的 keyed vault 有值)。
+    /// 普通 `open_vault` 恒为 `None`——不影响本机专用的既有能力。当前
+    /// `sync_*` 系列函数都各自接收 `profile_key` 参数、不读这个字段;留着是
+    /// 为了让状态如实反映"这是不是一个 keyed 打开的 vault"(未来要加"当前
+    /// vault 是否已绑定档案密钥"这类查询时,不用再改一次 `VaultState`)。
+    // ponytail: 目前只写不读,真加读取方(如一致性校验)时去掉这个 allow。
+    #[allow(dead_code)]
+    pub(crate) profile_key: Option<[u8; 32]>,
 }
 
 static VAULT: OnceLock<Mutex<Option<VaultState>>> = OnceLock::new();
 
-fn vault_cell() -> &'static Mutex<Option<VaultState>> {
+pub(crate) fn vault_cell() -> &'static Mutex<Option<VaultState>> {
     VAULT.get_or_init(|| Mutex::new(None))
 }
+
+/// 测试专用粗互斥锁,串行化任何会打开/替换真实进程级 `VAULT`(经 `open_vault`
+/// 或 `vault_sync::sync_open_profile_vault`)的单测。`cargo test` 默认多线程
+/// 并发跑同一进程里的测试,而 `VAULT` 是货真价实的进程单例——两个测试线程
+/// 同时 `open_vault`/`ingest_bytes` 会相互践踏对方的保险箱状态,断言随机失败。
+/// 一把共享锁(而不是每个用到它的模块各开一把自己的 `TEST_LOCK`,那样互相
+/// 不认识、锁了也白锁)是修法:所有触碰真实 `VAULT` 的测试模块
+/// (`vault_projections`、`vault_sync`)在测试开头都先拿这把锁。
+#[cfg(test)]
+pub(crate) static VAULT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// 在已打开的 vault 状态上跑 `f`。恢复被污染的锁而不是让此后每次调用都失败——
 /// 镜像 Tauri 版 `commands::lock()` 的理由:Vault 的「真相」是追加式日志 + CAS,
 /// 一把被 panic 污染过的锁里的 Vault 仍然可用。
-fn with_state<T>(f: impl FnOnce(&VaultState) -> anyhow::Result<T>) -> anyhow::Result<T> {
+pub(crate) fn with_state<T>(f: impl FnOnce(&VaultState) -> anyhow::Result<T>) -> anyhow::Result<T> {
     let guard = vault_cell().lock().unwrap_or_else(|p| p.into_inner());
     let state = guard
         .as_ref()
@@ -88,7 +110,7 @@ fn with_state_mut<T>(f: impl FnOnce(&mut VaultState) -> anyhow::Result<T>) -> an
 /// 本机持久设备 id,存在 `<data_dir>/device_id`(沙盒 data 目录,不进保险箱本身——
 /// 保险箱可能是个跨设备共享/同步的文件夹,设备 id 必须留在本机)。首次打开时生成
 /// 并落盘。镜像 Tauri 版 `lib.rs::machine_device_id`。
-fn machine_device_id(data_dir: &Path) -> anyhow::Result<String> {
+pub(crate) fn machine_device_id(data_dir: &Path) -> anyhow::Result<String> {
     let file = data_dir.join("device_id");
     if let Ok(s) = std::fs::read_to_string(&file) {
         let trimmed = s.trim();
@@ -148,6 +170,7 @@ pub fn open_vault(
         device_id,
         docs_dir,
         data_dir,
+        profile_key: None,
     });
     Ok(())
 }

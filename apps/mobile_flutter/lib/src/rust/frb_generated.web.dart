@@ -10,6 +10,7 @@ import 'api/dto.dart';
 import 'api/vault.dart';
 import 'api/vault_ephemeral.dart';
 import 'api/vault_projections.dart';
+import 'api/vault_sync.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -154,9 +155,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ProxyProblemDto> dco_decode_list_proxy_problem_dto(dynamic raw);
 
   @protected
+  List<(String, PlatformInt64)> dco_decode_list_record_string_i_64(dynamic raw);
+
+  @protected
+  List<(String, String)> dco_decode_list_record_string_string(dynamic raw);
+
+  @protected
   List<SelfMeasuredValueDto> dco_decode_list_self_measured_value_dto(
     dynamic raw,
   );
+
+  @protected
+  List<SyncEventDto> dco_decode_list_sync_event_dto(dynamic raw);
 
   @protected
   List<TimelineGroupDto> dco_decode_list_timeline_group_dto(dynamic raw);
@@ -222,8 +232,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (PlatformInt64, String) dco_decode_record_i_64_string(dynamic raw);
 
   @protected
+  (Uint8List, Uint8List)
+  dco_decode_record_list_prim_u_8_strict_list_prim_u_8_strict(dynamic raw);
+
+  @protected
   (Uint8List, String, PlatformInt64)
   dco_decode_record_list_prim_u_8_strict_string_i_64(dynamic raw);
+
+  @protected
+  (String, PlatformInt64) dco_decode_record_string_i_64(dynamic raw);
+
+  @protected
+  (String, Uint8List) dco_decode_record_string_list_prim_u_8_strict(
+    dynamic raw,
+  );
+
+  @protected
+  (String, String) dco_decode_record_string_string(dynamic raw);
 
   @protected
   SelfMeasuredValueDto dco_decode_self_measured_value_dto(dynamic raw);
@@ -235,6 +260,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SourceFileMetaDto dco_decode_source_file_meta_dto(dynamic raw);
 
   @protected
+  SyncEventDto dco_decode_sync_event_dto(dynamic raw);
+
+  @protected
+  SyncImportOutcomeDto dco_decode_sync_import_outcome_dto(dynamic raw);
+
+  @protected
   TimelineGroupDto dco_decode_timeline_group_dto(dynamic raw);
 
   @protected
@@ -242,6 +273,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TrendSeriesDto dco_decode_trend_series_dto(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -424,7 +461,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<(String, PlatformInt64)> sse_decode_list_record_string_i_64(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<(String, String)> sse_decode_list_record_string_string(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<SelfMeasuredValueDto> sse_decode_list_self_measured_value_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<SyncEventDto> sse_decode_list_sync_event_dto(
     SseDeserializer deserializer,
   );
 
@@ -506,8 +558,29 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  (Uint8List, Uint8List)
+  sse_decode_record_list_prim_u_8_strict_list_prim_u_8_strict(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   (Uint8List, String, PlatformInt64)
   sse_decode_record_list_prim_u_8_strict_string_i_64(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  (String, PlatformInt64) sse_decode_record_string_i_64(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  (String, Uint8List) sse_decode_record_string_list_prim_u_8_strict(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  (String, String) sse_decode_record_string_string(
     SseDeserializer deserializer,
   );
 
@@ -525,6 +598,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SyncEventDto sse_decode_sync_event_dto(SseDeserializer deserializer);
+
+  @protected
+  SyncImportOutcomeDto sse_decode_sync_import_outcome_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   TimelineGroupDto sse_decode_timeline_group_dto(SseDeserializer deserializer);
 
   @protected
@@ -532,6 +613,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TrendSeriesDto sse_decode_trend_series_dto(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -771,8 +858,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_record_string_i_64(
+    List<(String, PlatformInt64)> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_record_string_string(
+    List<(String, String)> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_self_measured_value_dto(
     List<SelfMeasuredValueDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_sync_event_dto(
+    List<SyncEventDto> self,
     SseSerializer serializer,
   );
 
@@ -882,8 +987,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_record_list_prim_u_8_strict_list_prim_u_8_strict(
+    (Uint8List, Uint8List) self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_record_list_prim_u_8_strict_string_i_64(
     (Uint8List, String, PlatformInt64) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_record_string_i_64(
+    (String, PlatformInt64) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_record_string_list_prim_u_8_strict(
+    (String, Uint8List) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_record_string_string(
+    (String, String) self,
     SseSerializer serializer,
   );
 
@@ -906,6 +1035,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_sync_event_dto(SyncEventDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sync_import_outcome_dto(
+    SyncImportOutcomeDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_timeline_group_dto(
     TimelineGroupDto self,
     SseSerializer serializer,
@@ -919,6 +1057,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     TrendSeriesDto self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);

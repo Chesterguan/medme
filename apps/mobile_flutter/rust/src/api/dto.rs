@@ -335,3 +335,30 @@ pub struct ConfirmedStatusDto {
     pub document_id: i64,
     pub confirmed: bool,
 }
+
+/// 一条云同步事件的加密信封(`api::vault_sync::sync_export_events` 产出 /
+/// `sync_import_events` 消费)。`device_id`/`seq`/`event_id`/`ts` 明文携带
+/// (服务端按 `(device_id, seq)` 去重/排序、Dart 侧按 `device_seq_map` 过滤都
+/// 不需要解密);`ciphertext` 是整条 `core_model::LogEntry` 的 JSON 序列化经
+/// 档案密钥 AEAD 加密的结果(AAD = `event_id`),真正敏感的内容都在这里面。
+#[derive(Debug, Clone)]
+pub struct SyncEventDto {
+    pub device_id: String,
+    pub seq: i64,
+    pub event_id: String,
+    pub ts: String,
+    pub ciphertext: Vec<u8>,
+}
+
+/// `core_model::sync_io::PeerAppendOutcome` 的 FRB 镜像。四个计数不互斥,
+/// Dart 侧都要看:`applied`/`skipped_existing`/`out_of_order` 是磁盘层面的去重/
+/// 排序结果,`out_of_order` 提示调用方该把这个 device 的拉取水位下调重推;
+/// `untrusted` 是 MAC/链校验层面的隔离计数(错误账号密钥或被篡改),不看这个
+/// 字段、只盯 `device_seq_map`(可信水位)会导致"越推越推不动"的死循环。
+#[derive(Debug, Clone)]
+pub struct SyncImportOutcomeDto {
+    pub applied: u32,
+    pub skipped_existing: u32,
+    pub out_of_order: u32,
+    pub untrusted: u32,
+}

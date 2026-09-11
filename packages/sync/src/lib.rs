@@ -6,8 +6,8 @@ pub mod keys;
 pub use blob::{date_shift_days, decrypt_blob, encrypt_blob, object_id, profile_key_new};
 pub use error::SyncError;
 pub use keys::{
-    account_keys_new, kek_from_password, kek_from_recovery, open_sealed, recovery_code_new,
-    seal_to, unwrap, wrap, AccountKeys, KdfParams, KDF_DEFAULT,
+    account_keys_new, kek_from_password, kek_from_recovery, kek_from_token, open_sealed,
+    recovery_code_new, seal_to, unwrap, wrap, AccountKeys, KdfParams, KDF_DEFAULT,
 };
 
 #[cfg(test)]
@@ -97,6 +97,16 @@ mod tests {
         let last = ct.len() - 1;
         ct[last] ^= 0x01;
         assert!(decrypt_blob(&pk, &id, &ct).is_err());
+    }
+
+    #[test]
+    fn token_kek_is_deterministic_and_differs_from_recovery_derivation() {
+        let a = kek_from_token("invite-tok-abc123").unwrap();
+        let b = kek_from_token("invite-tok-abc123").unwrap();
+        assert_eq!(a, b);
+        assert_ne!(a, kek_from_token("invite-tok-xyz789").unwrap());
+        // 同一串当"恢复码"跑会因长度/字符集校验直接出错,派生链互不相通。
+        assert!(kek_from_recovery("invite-tok-abc123").is_err());
     }
 
     #[test]
