@@ -192,6 +192,88 @@ def test_otp_accepts_plus86_prefixed_phone():
     assert r.status_code == 200
 
 
+def _h(tok, device=""):
+    return {"Authorization": f"Bearer {tok}", "X-Device-Id": device}
+
+
+def b64(b):
+    return base64.b64encode(b).decode()
+
+
+def test_keys_profile_family_grant_and_doctor_invite_flow():
+    alice = login("13800000010", "a-1")
+    bob = login("13800000011", "b-1")
+    doc = login("13800000012", "d-1")
+    ha, hb, hd = _h(alice["access"]), _h(bob["access"]), _h(doc["access"])
+    keys = {"public_key": b64(b"A" * 32), "wrapped_priv_pw": b64(b"pw"), "wrapped_priv_rc": b64(b"rc"),
+            "kdf_salt": b64(b"s" * 16), "kdf_params": {"m_kib": 65536, "t": 3, "p": 1}}
+    assert client.put("/v1/account/keys", json=keys, headers=ha).status_code == 200
+    assert client.get("/v1/account/keys", headers=ha).json()["public_key"] == keys["public_key"]
+    assert client.put("/v1/account/keys", json={**keys, "public_key": b64(b"B" * 32)}, headers=hb).status_code == 200
+
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk-alice")}, headers=ha).json()["profile_id"]
+    mine = client.get("/v1/profiles", headers=ha).json()
+    assert mine[0]["role"] == "owner"
+
+    # 家属:按手机号查公钥 → 直接授权 editor 永久
+    lk = client.get("/v1/accounts/lookup", params={"phone": "13800000011"}, headers=ha).json()
+    assert lk["public_key"] == b64(b"B" * 32)
+    g = client.post(f"/v1/profiles/{pid}/grants", json={"grantee_account_id": lk["account_id"], "role": "editor",
+                                                      "days": None, "wrapped_profile_key": b64(b"wk-bob")}, headers=ha)
+    assert g.status_code == 200
+    assert [p for p in client.get("/v1/profiles", headers=hb).json() if p["profile_id"] == pid][0]["role"] == "editor"
+    # bob 不是 owner,不能再授权别人
+    assert client.post(f"/v1/profiles/{pid}/grants", json={"grantee_account_id": doc["account_id"], "role": "viewer",
+                                                         "days": 15, "wrapped_profile_key": b64(b"x")}, headers=hb).status_code == 403
+
+    # 医生:患者出示邀请(15 天 viewer),医生兑换
+    token = "T" * 32
+    inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 15, "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                                                            "wrapped_key_by_token": b64(b"wk-token"), "invite_ttl_s": 600}, headers=ha).json()
+    r = client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": "wrong"}, headers=hd)
+    assert r.status_code == 404
+    r = client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hd)
+    assert r.status_code == 200 and r.json()["role"] == "viewer"
+    exp = r.json()["expires_at"]
+    assert 14 * 86400 < (time.mktime(time.strptime(exp[:19], "%Y-%m-%dT%H:%M:%S")) - time.time()) < 16 * 86400
+    assert client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hd).status_code == 410
+    gid = r.json()["grant_id"]
+    assert client.put(f"/v1/profiles/{pid}/grants/{gid}/key", json={"wrapped_profile_key": b64(b"wk-doc")}, headers=hd).status_code == 200
+    # owner 撤销
+    assert client.delete(f"/v1/profiles/{pid}/grants/{gid}", headers=ha).status_code == 200
+    assert all(p["profile_id"] != pid for p in client.get("/v1/profiles", headers=hd).json())
+
+
+def test_transfer_makes_new_owner_and_demotes_old():
+    doc = login("13800000020", "d-1")
+    pat = login("13800000021", "p-1")
+    hd, hp = _h(doc["access"]), _h(pat["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=hd).json()["profile_id"]
+    token = "X" * 32
+    inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "owner", "days": None, "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                                                            "wrapped_key_by_token": b64(b"wk-t"), "invite_ttl_s": 86400 * 15}, headers=hd).json()
+    assert client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hp).status_code == 200
+    roles = {p["profile_id"]: p["role"] for p in client.get("/v1/profiles", headers=hp).json()}
+    assert roles[pid] == "owner"
+    roles = {p["profile_id"]: p["role"] for p in client.get("/v1/profiles", headers=hd).json()}
+    assert roles[pid] == "editor"
+
+
+def test_device_approval_handoff():
+    a = login("13800000030", "old")
+    ha = _h(a["access"], "old")
+    b = login("13800000030", "new")
+    hb = _h(b["access"], "new")
+    assert client.post("/v1/devices/request", json={"eph_public": b64(b"E" * 32)}, headers=hb).status_code == 200
+    devs = client.get("/v1/devices", headers=ha).json()
+    pending = [d for d in devs if d["device_id"] == "new"][0]
+    assert pending["eph_public"] == b64(b"E" * 32)
+    assert client.post("/v1/devices/approve", json={"device_id": "new", "approved_priv": b64(b"sealed")}, headers=ha).status_code == 200
+    r = client.get("/v1/devices/approval", params={"device_id": "new"}, headers=hb)
+    assert r.json()["approved_priv"] == b64(b"sealed")
+    assert client.get("/v1/devices/approval", params={"device_id": "new"}, headers=hb).json()["approved_priv"] is None
+
+
 if __name__ == "__main__":
     # `python3 services/api/test_api.py`:与 services/claim-signer/test_handler.py 同风格的
     # 无 pytest 自检——手动跑每个 test_* 函数,复用 `clean` fixture 的清库逻辑,

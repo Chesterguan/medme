@@ -1,5 +1,6 @@
 """MedMe 账号/同步/授权/LLM 代理 API。阿里云 FC 自定义运行时:`python3 -m uvicorn app:app --host 0.0.0.0 --port 9000`。
 服务端只见密文:此文件里不得出现任何解密调用。"""
+import datetime
 import os
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -102,3 +103,105 @@ def auth_refresh(body: dict):
     except auth.AuthError as e:
         raise HTTPException(401, str(e))
     return auth.issue_tokens(aid)
+
+
+def _require_role(conn, pid, aid, allowed):
+    role = db.role_for(conn, pid, aid)
+    if role not in allowed:
+        raise HTTPException(403, "forbidden")
+    return role
+
+
+@app.put("/v1/account/keys")
+def keys_put(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    db.keys_put(conn, aid, body)
+    return {"ok": True}
+
+
+@app.get("/v1/account/keys")
+def keys_get(aid=Depends(account_dep), conn=Depends(conn_dep)):
+    k = db.keys_get(conn, aid)
+    if not k:
+        raise HTTPException(404, "no keys")
+    return k
+
+
+@app.get("/v1/accounts/lookup")
+def account_lookup(phone: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    r = db.account_lookup_by_phone_hash(conn, auth.phone_hash(phone))
+    if not r:
+        raise HTTPException(404, "not found")
+    return r
+
+
+@app.post("/v1/profiles")
+def profile_create(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    return {"profile_id": db.profile_create(conn, aid, body["wrapped_profile_key"])}
+
+
+@app.get("/v1/profiles")
+def profiles_list(aid=Depends(account_dep), conn=Depends(conn_dep)):
+    return db.profiles_for(conn, aid)
+
+
+@app.post("/v1/profiles/{pid}/grants")
+def grant_create(pid: str, body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    _require_role(conn, pid, aid, {"owner"})
+    if body["role"] not in ("editor", "viewer"):
+        raise HTTPException(400, "role")
+    days = body.get("days")
+    exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)) if days else None
+    gid = db.grant_upsert(conn, pid, body["grantee_account_id"], body["role"], exp, db.b64d(body["wrapped_profile_key"]), aid)
+    return {"grant_id": gid}
+
+
+@app.delete("/v1/profiles/{pid}/grants/{gid}")
+def grant_delete(pid: str, gid: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    _require_role(conn, pid, aid, {"owner"})
+    db.grant_delete(conn, pid, gid)
+    return {"ok": True}
+
+
+@app.put("/v1/profiles/{pid}/grants/{gid}/key")
+def grant_set_key(pid: str, gid: str, body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    _require_role(conn, pid, aid, {"owner", "editor", "viewer"})
+    db.grant_set_key(conn, pid, gid, aid, body["wrapped_profile_key"])
+    return {"ok": True}
+
+
+@app.post("/v1/profiles/{pid}/invites")
+def invite_create(pid: str, body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    _require_role(conn, pid, aid, {"owner"})
+    return {"invite_id": db.invite_create(conn, pid, aid, body)}
+
+
+@app.post("/v1/invites/redeem")
+def invite_redeem(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    status, payload = db.invite_redeem(conn, body.get("invite_id", ""), body.get("token", ""), aid)
+    if status == "notfound":
+        raise HTTPException(404, "not found")
+    if status == "gone":
+        raise HTTPException(410, "used or expired")
+    return payload
+
+
+@app.post("/v1/devices/request")
+def device_request(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep), x_device_id: str = Header(default="")):
+    db.device_request(conn, aid, body.get("device_id") or x_device_id, body["eph_public"])
+    return {"ok": True}
+
+
+@app.get("/v1/devices")
+def devices_list(aid=Depends(account_dep), conn=Depends(conn_dep)):
+    return db.devices_list(conn, aid)
+
+
+@app.post("/v1/devices/approve")
+def device_approve(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    db.device_approve(conn, aid, body["device_id"], body["approved_priv"])
+    return {"ok": True}
+
+
+@app.get("/v1/devices/approval")
+def device_approval(device_id: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    return {"approved_priv": db.device_take_approval(conn, aid, device_id)}
