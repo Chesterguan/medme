@@ -1,5 +1,5 @@
 """OTP(阿里云 PNVS 短信认证)、JWT、Apple 登录校验、LoginProvider。密钥只从环境变量读。"""
-import base64, hashlib, hmac, json, os, secrets, time, urllib.parse, urllib.request, uuid
+import base64, hashlib, hmac, json, os, re, secrets, time, urllib.parse, urllib.request, uuid
 from typing import Protocol
 import jwt
 
@@ -9,6 +9,8 @@ OTP_MAX_ATTEMPTS = 5
 ACCESS_TTL = 3600
 REFRESH_TTL = 30 * 86400
 
+_PHONE_RE = re.compile(r"1[3-9]\d{9}")
+
 
 class AuthError(Exception):
     pass
@@ -16,6 +18,22 @@ class AuthError(Exception):
 
 def _secret():
     return os.environ["API_JWT_SECRET"]
+
+
+def normalize_phone(phone) -> str:
+    """信任边界校验:非字符串直接拒(别让下游 .strip() 炸出 500),剥掉 +86/86
+    前缀后必须是标准的 11 位国内手机号形状。校验失败一律 AuthError,由调用方转 400——
+    不做任何"这个号存不存在"的区分。"""
+    if not isinstance(phone, str):
+        raise AuthError("bad phone")
+    p = phone.strip()
+    if p.startswith("+86"):
+        p = p[3:]
+    elif p.startswith("86") and len(p) == 13:
+        p = p[2:]
+    if not _PHONE_RE.fullmatch(p):
+        raise AuthError("bad phone")
+    return p
 
 
 def phone_hash(phone: str) -> str:
@@ -58,8 +76,11 @@ def otp_send(conn, phone: str):
         raise AuthError("rate_limited")
     code = "000000" if os.environ.get("OTP_DRY_RUN") else f"{secrets.randbelow(10**6):06d}"
     conn.execute(
+        # ponytail: 曾经写成 interval '%s seconds' —— 占位符落在字符串字面量里,
+        # psycopg 的参数化根本替换不到那儿,Postgres 把整段当字面文本解析,300 秒
+        # 变成了 3 秒。make_interval() 把秒数当真正的数值参数传,不再是拼串。
         """INSERT INTO otp(phone_hash, code_hash, expires_at, attempts, sends_in_window, window_started)
-           VALUES (%s,%s, now() + interval '%s seconds', 0, 1, now())
+           VALUES (%s,%s, now() + make_interval(secs => %s), 0, 1, now())
            ON CONFLICT (phone_hash) DO UPDATE SET code_hash=EXCLUDED.code_hash, expires_at=EXCLUDED.expires_at,
              attempts=0,
              sends_in_window = CASE WHEN now() - otp.window_started > interval '1 hour' THEN 1 ELSE otp.sends_in_window + 1 END,
@@ -76,16 +97,26 @@ def otp_send(conn, phone: str):
 
 def otp_check(conn, phone: str, code: str) -> bool:
     h = phone_hash(phone)
-    row = conn.execute("SELECT code_hash, expires_at, attempts FROM otp WHERE phone_hash=%s", (h,)).fetchone()
+    # 计数和读取必须是同一条原子语句(UPDATE ... RETURNING),而且要在比较/抛异常
+    # 之前就 commit——否则调用方在 bad code 时抛 AuthError → HTTPException,
+    # conn_dep 的 except 分支会 rollback,把这次自增连同其它未提交的改动一起吞掉,
+    # 试错次数永远长不到 OTP_MAX_ATTEMPTS,等于没有锁定。
+    # `attempts < %s` 的守卫顺带做到:锁定后再撞正确验证码也拿不到 code_hash,不会通过。
+    row = conn.execute(
+        "UPDATE otp SET attempts = attempts + 1 WHERE phone_hash=%s AND attempts < %s "
+        "RETURNING code_hash, expires_at",
+        (h, OTP_MAX_ATTEMPTS),
+    ).fetchone()
+    conn.commit()
     if not row:
         return False
-    code_hash, expires_at, attempts = row
-    if attempts >= OTP_MAX_ATTEMPTS or expires_at.timestamp() < time.time():
+    code_hash, expires_at = row
+    if expires_at.timestamp() < time.time():
         return False
     ok = hmac.compare_digest(code_hash, _code_hash(code))
-    conn.execute("UPDATE otp SET attempts = attempts + 1 WHERE phone_hash=%s", (h,))
     if ok:
         conn.execute("DELETE FROM otp WHERE phone_hash=%s", (h,))
+        conn.commit()
     return ok
 
 

@@ -47,14 +47,29 @@ def health():
 
 @app.post("/v1/auth/otp")
 def auth_otp(body: dict, conn=Depends(conn_dep)):
+    if not isinstance(body, dict):
+        raise HTTPException(400, "bad request")
     try:
-        auth.otp_send(conn, body.get("phone", ""))
+        # 手机号在信任边界(哈希/发短信之前)就要校验,别让格式错误或非字符串
+        # 值一路传到 phone_hash() 里炸出 500。
+        phone = auth.normalize_phone(body.get("phone"))
+    except auth.AuthError:
+        raise HTTPException(400, "bad phone")
+    try:
+        auth.otp_send(conn, phone)
     except auth.AuthError:
         raise HTTPException(429, "rate_limited")
     return {"ok": True}
 
 
 def _login_with(provider: str, body: dict, conn):
+    if not isinstance(body, dict):
+        raise HTTPException(400, "bad request")
+    if provider == "otp":
+        try:
+            body = {**body, "phone": auth.normalize_phone(body.get("phone"))}
+        except auth.AuthError:
+            raise HTTPException(400, "bad phone")
     try:
         aid = auth.PROVIDERS[provider].login(conn, body)
     except NotImplementedError:
