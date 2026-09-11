@@ -62,12 +62,8 @@ pub(crate) struct VaultState {
     pub(crate) docs_dir: PathBuf,
     pub(crate) data_dir: PathBuf,
     /// 云同步档案密钥(仅 `sync_open_profile_vault` 打开的 keyed vault 有值)。
-    /// 普通 `open_vault` 恒为 `None`——不影响本机专用的既有能力。当前
-    /// `sync_*` 系列函数都各自接收 `profile_key` 参数、不读这个字段;留着是
-    /// 为了让状态如实反映"这是不是一个 keyed 打开的 vault"(未来要加"当前
-    /// vault 是否已绑定档案密钥"这类查询时,不用再改一次 `VaultState`)。
-    // ponytail: 目前只写不读,真加读取方(如一致性校验)时去掉这个 allow。
-    #[allow(dead_code)]
+    /// 普通 `open_vault` 恒为 `None`——不影响本机专用的既有能力。读取方见
+    /// `api::vault_sync::sync_current_vault_is_keyed`。
     pub(crate) profile_key: Option<[u8; 32]>,
 }
 

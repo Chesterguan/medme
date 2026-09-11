@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `key32`
+// These functions are ignored because they are not marked as `pub`: `key32`, `object_hash_from_event`
 
 Future<(Uint8List, Uint8List)> syncAccountKeysNew() =>
     RustLib.instance.api.crateApiVaultSyncSyncAccountKeysNew();
@@ -103,6 +103,15 @@ Future<Uint8List> syncOpenSealed({
 /// 与 `open_vault` 同布局(`<docs_dir>/vault` 真相 + `<data_dir>` 本机设备
 /// id),但用档案密钥 keyed 打开(`Vault::open_split_resilient_with_key`),
 /// 且不走 iCloud——云账号同步是另一条同步路径,两者不共用 iCloud 容器解析。
+///
+/// **打开前先探测密钥是否对得上**(`core_model::log::EventLog::probe_key_mismatch`,
+/// 只读、不碰盘):这个密钥是外部传入的(账号恢复/邀请链路,不是本机生成后立刻
+/// 确认过的),用错的密钥直接走 `Vault::open_split_resilient_with_key` 有真实
+/// 破坏性——`open_inner` 见 `read_all()` 因为 MAC 全验不过而判定日志为空,若
+/// 派生库(`medme.db`,同一 `truth_root` 下之前用正确密钥打开时已经物化过)
+/// 还有行,就会误判成"预 refactor 的纯 DB vault",从 DB 反向合成一份新日志
+/// (`migrate_db_to_log`)——凭空多出一个设备段文件,而且这个动作发生在
+/// `open_inner` 内部、返回错误也来不及挽回。必须在调用它之前就拒绝。
 Future<void> syncOpenProfileVault({
   required String docsDir,
   required String dataDir,
@@ -112,6 +121,12 @@ Future<void> syncOpenProfileVault({
   dataDir: dataDir,
   profileKey: profileKey,
 );
+
+/// 当前打开的 vault 是否是 keyed(云同步档案)打开的——`Task 8` 的 Dart 侧要
+/// 靠它区分"这是本机保险箱还是账号档案",FIFO 队列怎么排开箱请求也看这个。
+/// 未打开任何 vault 时返回 `false`(而不是报错),供 UI 直接拿去判断显示。
+Future<bool> syncCurrentVaultIsKeyed() =>
+    RustLib.instance.api.crateApiVaultSyncSyncCurrentVaultIsKeyed();
 
 /// 本机每个 device 段当前**可信**的最大 seq(见
 /// `core_model::sync_io::device_seq_map` 文档:被隔离的条目不计入)。推送前
@@ -131,6 +146,17 @@ Future<List<SyncEventDto>> syncExportEvents({
 
 /// 解密 + 校验信封字段与解密出的条目一致(拒收错配),交给
 /// `append_peer_entries` 按 `(device_id, seq)` 去重/校验链/MAC 落盘。
+///
+/// **一条解不开就按设备截断,不是整批放弃**:先按 `(device_id, seq)` 排序
+/// (与 `append_peer_entries` 自己的排序口径一致,不依赖调用方传入顺序),
+/// 逐条尝试解密+反序列化+信封一致性校验;某个设备撞到第一条解不开的
+/// (密文损坏、或对方用了本地还不认识的 `Event` 变体导致反序列化失败)就停止
+/// 收它后面的条目——即使后面的条目本身能解开也不收,因为 `append_peer_entries`
+/// 要求同一设备段严格按 seq 递增落盘,跳过中间一条去接后面的会在这个设备段里
+/// 留一个洞,读回来时被判定成链断裂而整体隔离(比这里主动跳过更糟)。**其它
+/// 设备的条目不受影响**,继续正常处理——一台设备写坏一条不该拖累全体同步
+/// 卡死。`undecodable` 记的是"撞到的第一条解不开的条目数"(每台受影响设备
+/// 最多算一条,它之后被跳过的条目不再单独计数)。
 Future<SyncImportOutcomeDto> syncImportEvents({
   required List<int> profileKey,
   required List<SyncEventDto> events,
@@ -166,10 +192,12 @@ Future<(String, Uint8List)> syncEncryptObject({
 );
 
 /// 解密拉回来的对象、存入本地 CAS,并校验解密出的明文哈希经档案密钥算出的
-/// `object_id` 与传入的 `object_id` 一致(内容与其服务端别名对不上就丢弃,
-/// 不落库)。`store_object` 已存在则不重写(见其文档:已存在的对象跳过写入),
-/// 但这条校验仍然执行。写完后 `materialize` 一次,让新对象覆盖到的文档立刻
-/// 可见(单独对象拉取的调用方——即本函数——负责这一步)。
+/// `object_id` 与传入的 `object_id` 一致(内容与其服务端别名对不上就拒绝——
+/// **校验先于落盘**:先算 `sha256`/`object_id` 比对,对不上直接返回 `Err`,
+/// `store_object` 一次都不调用,`objects/` 下不会出现任何与传入 `object_id`
+/// 对不上的文件。`store_object` 本身已存在则不重写(见其文档),但那是校验
+/// 通过之后的事。写完后 `materialize` 一次,让新对象覆盖到的文档立刻可见
+/// (单独对象拉取的调用方——即本函数——负责这一步)。
 Future<String> syncStoreObject({
   required List<int> profileKey,
   required String objectId,
@@ -186,6 +214,10 @@ Future<int> syncDateShiftDays({required List<int> profileKey}) => RustLib
     .crateApiVaultSyncSyncDateShiftDays(profileKey: profileKey);
 
 /// Argon2id KDF 真机基准(设置页/首次建号按结果调参数,不写死 `KDF_DEFAULT`)。
+/// 参数合法性由 `argon2` crate 自己的下限把关(`Params::new`,`sync::kek_from_password`
+/// 内部调用):`m_kib >= 8` 且 `m_kib >= 8 * p`,`t >= 1`,`1 <= p <= 0xFFFFFF`——
+/// 不在这里另行 clamp/静默改写调用方传的参数,越界直接报错,不能悄悄跑出一个
+/// "看起来很快"但根本没有真的按参数跑满的 ~0ms(旧版 `let _ = ...` 吞错的后果)。
 Future<BigInt> syncKdfBenchMs({
   required int mKib,
   required int t,

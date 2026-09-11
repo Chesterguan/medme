@@ -807,22 +807,28 @@ class SyncEventDto {
           ciphertext == other.ciphertext;
 }
 
-/// `core_model::sync_io::PeerAppendOutcome` 的 FRB 镜像。四个计数不互斥,
-/// Dart 侧都要看:`applied`/`skipped_existing`/`out_of_order` 是磁盘层面的去重/
-/// 排序结果,`out_of_order` 提示调用方该把这个 device 的拉取水位下调重推;
-/// `untrusted` 是 MAC/链校验层面的隔离计数(错误账号密钥或被篡改),不看这个
-/// 字段、只盯 `device_seq_map`(可信水位)会导致"越推越推不动"的死循环。
+/// `core_model::sync_io::PeerAppendOutcome` 的 FRB 镜像,外加 `undecodable`。
+/// 五个计数不互斥,Dart 侧都要看:`applied`/`skipped_existing`/`out_of_order`
+/// 是磁盘层面的去重/排序结果,`out_of_order` 提示调用方该把这个 device 的拉取
+/// 水位下调重推;`untrusted` 是 MAC/链校验层面的隔离计数(错误账号密钥或被
+/// 篡改),不看这个字段、只盯 `device_seq_map`(可信水位)会导致"越推越推不动"
+/// 的死循环。`undecodable` 是 `sync_import_events` 自己这一层的计数(在交给
+/// `append_peer_entries` 之前就没能解密/反序列化/信封校验通过的条目数,按设备
+/// 只算撞到的第一条——见该函数文档),非零说明有台设备卡在了某条解不开的事件
+/// 上,该设备后面还有条目排队等着,不是"已经全部同步完"。
 class SyncImportOutcomeDto {
   final int applied;
   final int skippedExisting;
   final int outOfOrder;
   final int untrusted;
+  final int undecodable;
 
   const SyncImportOutcomeDto({
     required this.applied,
     required this.skippedExisting,
     required this.outOfOrder,
     required this.untrusted,
+    required this.undecodable,
   });
 
   @override
@@ -830,7 +836,8 @@ class SyncImportOutcomeDto {
       applied.hashCode ^
       skippedExisting.hashCode ^
       outOfOrder.hashCode ^
-      untrusted.hashCode;
+      untrusted.hashCode ^
+      undecodable.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -840,7 +847,8 @@ class SyncImportOutcomeDto {
           applied == other.applied &&
           skippedExisting == other.skippedExisting &&
           outOfOrder == other.outOfOrder &&
-          untrusted == other.untrusted;
+          untrusted == other.untrusted &&
+          undecodable == other.undecodable;
 }
 
 @freezed

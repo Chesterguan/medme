@@ -275,6 +275,38 @@ impl EventLog {
         Ok(self.segments()?.is_empty() || self.read_all()?.is_empty())
     }
 
+    /// Read-only probe: does `vault_root` already hold raw log lines, none of
+    /// which verify under `key`? `false` for a genuinely fresh vault (no raw
+    /// lines yet — nothing to mismatch against, safe to proceed).
+    ///
+    /// Callers that open a vault with an EXTERNALLY-supplied key (e.g. cloud
+    /// sync's profile key, never generated/confirmed locally) must run this
+    /// BEFORE `Vault::open_*_with_key`: on a wrong key, `open_inner` sees
+    /// `read_all()` come back empty (every entry quarantined for MAC failure)
+    /// and — when the derived db still has its rows from a PRIOR correct-key
+    /// open — takes the `migrate_db_to_log` branch, synthesizing a duplicate
+    /// log from those rows under the new (wrong) device id. That mutates the
+    /// on-disk log (a new segment file, `next_seq` reset) and is not
+    /// reversible by returning an error afterward — the check must happen
+    /// first, without ever constructing the full `Vault`. Never writes:
+    /// `EventLog::open` only ensures `log/` exists, and everything else here
+    /// is a read.
+    pub fn probe_key_mismatch(vault_root: &Path, key: &[u8]) -> Result<bool, MedmeError> {
+        let mut log = EventLog::open(vault_root)?;
+        log.set_key(Some(key.to_vec()));
+        let mut has_raw = false;
+        for path in log.segments()? {
+            if !read_segment_entries(&path)?.is_empty() {
+                has_raw = true;
+                break;
+            }
+        }
+        if !has_raw {
+            return Ok(false);
+        }
+        Ok(log.read_all()?.is_empty())
+    }
+
     pub fn max_seq(&self) -> Result<i64, MedmeError> {
         Ok(self.read_all()?.iter().map(|e| e.seq).max().unwrap_or(0))
     }
@@ -559,6 +591,34 @@ mod tests {
 
     fn write_lines(p: &Path, lines: &[String]) {
         std::fs::write(p, format!("{}\n", lines.join("\n"))).unwrap();
+    }
+
+    #[test]
+    fn probe_key_mismatch_is_false_for_a_fresh_vault_regardless_of_key() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!EventLog::probe_key_mismatch(dir.path(), KEY).unwrap());
+        assert!(!EventLog::probe_key_mismatch(dir.path(), &[9u8; 32]).unwrap());
+    }
+
+    #[test]
+    fn probe_key_mismatch_true_for_wrong_key_false_for_the_real_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = keyed_log(dir.path());
+        append_n(&log, 3);
+
+        assert!(
+            !EventLog::probe_key_mismatch(dir.path(), KEY).unwrap(),
+            "correct key: entries verify, no mismatch"
+        );
+        let wrong_key = [1u8; 32];
+        assert!(
+            EventLog::probe_key_mismatch(dir.path(), &wrong_key).unwrap(),
+            "wrong key: raw lines exist but none verify"
+        );
+
+        // Read-only: the probe itself must not have mutated the segment.
+        let raw = read_lines(&seg_path(dir.path()));
+        assert_eq!(raw.len(), 3);
     }
 
     #[test]
