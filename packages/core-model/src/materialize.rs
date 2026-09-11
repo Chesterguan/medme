@@ -140,6 +140,7 @@ impl Vault {
             let tx = self.conn().unchecked_transaction()?;
             tx.execute("DELETE FROM document_fts", [])?;
             tx.execute("DELETE FROM ocr_result", [])?;
+            tx.execute("DELETE FROM extraction", [])?;
             tx.execute("DELETE FROM imaging_instance", [])?;
             tx.execute("DELETE FROM document", [])?;
             tx.execute("DELETE FROM encounter", [])?;
@@ -410,6 +411,7 @@ fn compute_delete_suppressions(entries: &[LogEntry]) -> HashSet<(String, i64)> {
                 }
             }
             Event::OcrAdded { document_ref, .. }
+            | Event::ExtractionAdded { document_ref, .. }
             | Event::ImagingInstanceAdded { document_ref, .. } => {
                 let live = states
                     .get(document_ref.source_file_hash.as_str())
@@ -617,6 +619,60 @@ fn apply_event(
                 rusqlite::params![document_id, title_tok, body],
             )?;
         }
+        // 云 LLM 结构化抽取结果(deid-cloud-extraction spec §5)。与 OcrAdded 同构:
+        // suppressed 检查 → 找 document_id(没有则 Deferred)→ 校验/读 CAS 三态 →
+        // UTF-8 → 写表(同文档 UNIQUE,后来的覆盖先前的——重跑模型 = 再 append 一条)。
+        Event::ExtractionAdded {
+            document_ref,
+            backend,
+            model_version,
+            mode,
+            schema,
+            result_hash,
+            created_at,
+        } => {
+            if suppressed.contains(&(entry.device_id.clone(), entry.seq)) {
+                return Ok(ApplyOutcome::Applied);
+            }
+            let document_id: i64 = match tx
+                .query_row(
+                    "SELECT d.id FROM document d JOIN source_file sf ON d.source_file_id = sf.id
+                     WHERE sf.content_hash = ?1",
+                    [&document_ref.source_file_hash],
+                    |r| r.get(0),
+                )
+                .optional()?
+            {
+                Some(id) => id,
+                None => return Ok(ApplyOutcome::Deferred),
+            };
+            if !cas::is_object_hash(result_hash) {
+                eprintln!("[materialize] skip ExtractionAdded: malformed result_hash");
+                return Ok(ApplyOutcome::Applied);
+            }
+            let bytes = match vault.read_object(result_hash) {
+                Ok(b) => b,
+                Err(MedmeError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(ApplyOutcome::Deferred);
+                }
+                Err(MedmeError::Other(msg)) => {
+                    eprintln!("[materialize] skip ExtractionAdded: {msg}");
+                    return Ok(ApplyOutcome::Applied);
+                }
+                Err(e) => return Err(e),
+            };
+            let Ok(result_json) = String::from_utf8(bytes) else {
+                eprintln!("[materialize] skip ExtractionAdded: not UTF-8");
+                return Ok(ApplyOutcome::Applied);
+            };
+            tx.execute(
+                "INSERT INTO extraction (document_id, backend, model_version, mode, schema, result_json, created_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7)
+                 ON CONFLICT(document_id) DO UPDATE SET backend=excluded.backend, model_version=excluded.model_version,
+                 mode=excluded.mode, schema=excluded.schema, result_json=excluded.result_json, created_at=excluded.created_at",
+                rusqlite::params![document_id, backend, model_version, mode, schema, result_json, created_at],
+            )?;
+        }
         // 影像切片挂载(imaging overhaul P1):把 DICOM 切片行插入 imaging_instance,
         // 并把 study_uid 落到 study 文档上(供 study→document 查找)。两个引用都用
         // 内容哈希解析成当前库的行 id,保证 rebuild_from_log 脱库重放也一致。
@@ -703,6 +759,7 @@ fn apply_event(
             if let Some(id) = document_id {
                 tx.execute("DELETE FROM document_fts WHERE document_id = ?1", [id])?;
                 tx.execute("DELETE FROM ocr_result WHERE document_id = ?1", [id])?;
+                tx.execute("DELETE FROM extraction WHERE document_id = ?1", [id])?;
                 tx.execute("DELETE FROM imaging_instance WHERE document_id = ?1", [id])?;
                 tx.execute("DELETE FROM document WHERE id = ?1", [id])?;
             }
@@ -756,6 +813,94 @@ mod tests {
         assert!(matches!(events[0].event, Event::FileImported { .. }));
         assert!(matches!(events[1].event, Event::DocumentAdded { .. }));
         assert!(matches!(events[2].event, Event::OcrAdded { .. }));
+    }
+
+    #[test]
+    fn extraction_added_materializes_and_latest_wins_and_rebuilds() {
+        use crate::types::NewExtraction;
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let imp = v.import("a.jpg", "image/jpeg", b"jpgbytes").unwrap();
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: None,
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        v.add_extraction(NewExtraction {
+            document_id: doc.id,
+            backend: "deepseek".into(),
+            model_version: "v4-flash".into(),
+            mode: "text".into(),
+            result_json: r#"{"labs":[]}"#.into(),
+        })
+        .unwrap();
+        v.add_extraction(NewExtraction {
+            document_id: doc.id,
+            backend: "deepseek".into(),
+            model_version: "v4-flash".into(),
+            mode: "image".into(),
+            result_json: r#"{"labs":[{"name":"WBC"}]}"#.into(),
+        })
+        .unwrap();
+        assert_eq!(
+            v.extraction_json(doc.id).unwrap().as_deref(),
+            Some(r#"{"labs":[{"name":"WBC"}]}"#)
+        );
+        v.rebuild_from_log().unwrap();
+        assert_eq!(
+            v.extraction_json(doc.id).unwrap().as_deref(),
+            Some(r#"{"labs":[{"name":"WBC"}]}"#),
+            "重放后仍是最后一条"
+        );
+        v.delete_document(doc.id).unwrap();
+        assert!(
+            v.extraction_json(doc.id).unwrap().is_none(),
+            "删文档连抽取一起删"
+        );
+    }
+
+    /// 老日志(不含任何 ExtractionAdded)重放后与加本功能前的投影结果一致——
+    /// 新事件类型必须是纯加法,不能改变既有事件的重放结果。
+    #[test]
+    fn old_log_without_extraction_added_materializes_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let imp = v.import("a.txt", "text/plain", b"hello world").unwrap();
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("t".into()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        v.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "text-layer".into(),
+            text: "some ocr text".into(),
+            confidence: None,
+        })
+        .unwrap();
+        assert_eq!(v.debug_count("source_file"), 1);
+        assert_eq!(v.debug_count("document"), 1);
+        assert_eq!(v.debug_count("ocr_result"), 1);
+        assert_eq!(v.debug_count("extraction"), 0);
+        v.rebuild_from_log().unwrap();
+        assert_eq!(v.debug_count("source_file"), 1);
+        assert_eq!(v.debug_count("document"), 1);
+        assert_eq!(v.debug_count("ocr_result"), 1);
+        assert_eq!(v.debug_count("extraction"), 0);
     }
 
     #[test]

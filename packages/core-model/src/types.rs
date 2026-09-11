@@ -171,6 +171,17 @@ pub struct NewOcr {
     pub confidence: Option<f32>,
 }
 
+/// 一次云 LLM 结构化抽取的写入请求。`result_json` 存 CAS,事件只留哈希——同
+/// 文档再次调用(重跑模型)覆盖先前结果,原件永远不动。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewExtraction {
+    pub document_id: i64,
+    pub backend: String,
+    pub model_version: String,
+    pub mode: String,
+    pub result_json: String,
+}
+
 /// One DICOM slice (instance) attached to an imaging-study document.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImagingInstance {
@@ -307,6 +318,30 @@ impl Vault {
             |r| r.get(0),
         )?;
         Ok(ocr_id)
+    }
+
+    /// 追加一条云 LLM 结构化抽取结果:JSON 存 CAS,事件只引用哈希——与
+    /// `add_ocr` 同构。同一文档再次调用(重跑模型)覆盖先前结果(latest-wins)。
+    pub fn add_extraction(&self, e: NewExtraction) -> Result<(), MedmeError> {
+        let doc = self
+            .document_by_id(e.document_id)?
+            .ok_or_else(|| MedmeError::Other(format!("document {} not found", e.document_id)))?;
+        let sf = self.source_file_by_id(doc.source_file_id)?.ok_or_else(|| {
+            MedmeError::Other(format!("source_file {} not found", doc.source_file_id))
+        })?;
+        let (result_hash, _rel, _written) = self.store_object(e.result_json.as_bytes())?;
+        self.append_event(crate::event::Event::ExtractionAdded {
+            document_ref: crate::event::DocRef {
+                source_file_hash: sf.content_hash,
+            },
+            backend: e.backend,
+            model_version: e.model_version,
+            mode: e.mode,
+            schema: 1,
+            result_hash,
+            created_at: Self::now_rfc3339(),
+        })?;
+        self.materialize()
     }
 }
 

@@ -20,7 +20,7 @@ pub use query::{extract_provider, SearchHit, TimelineEntry};
 pub use text::normalize_cjk_radicals;
 pub use types::{
     DocType, Document, Encounter, EncounterKind, ImagingInstance, Import, NewDocument,
-    NewImagingInstance, NewOcr, OcrBackendKind, SourceFile,
+    NewExtraction, NewImagingInstance, NewOcr, OcrBackendKind, SourceFile,
 };
 
 use rusqlite::Connection;
@@ -312,7 +312,7 @@ mod tests {
     fn open_creates_vault_and_migrates() {
         let dir = tempfile::tempdir().unwrap();
         let v = Vault::open(dir.path()).unwrap();
-        assert_eq!(v.user_version().unwrap(), 5);
+        assert_eq!(v.user_version().unwrap(), 6);
         assert!(dir.path().join("objects").is_dir());
         assert!(dir.path().join("medme.db").is_file());
         assert!(dir.path().join("log").is_dir());

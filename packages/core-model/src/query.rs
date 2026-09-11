@@ -625,6 +625,18 @@ impl Vault {
         Ok(parts.join("\n"))
     }
 
+    /// 文档的云抽取结果(schema v1 JSON);没跑过/被拒发/离线为 None → 调用方退回正则。
+    pub fn extraction_json(&self, document_id: i64) -> Result<Option<String>, MedmeError> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT result_json FROM extraction WHERE document_id = ?1",
+                [document_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?)
+    }
+
     /// 所有 OCR 文本(用于派生病人档案等跨文档聚合)。
     pub fn all_ocr_texts(&self) -> Result<Vec<String>, MedmeError> {
         let mut stmt = self.conn().prepare("SELECT text FROM ocr_result")?;

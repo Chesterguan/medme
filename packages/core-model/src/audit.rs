@@ -99,6 +99,7 @@ impl Vault {
                 ),
                 Event::DocumentAdded { .. }
                 | Event::OcrAdded { .. }
+                | Event::ExtractionAdded { .. }
                 | Event::ImagingInstanceAdded { .. } => continue,
             };
             out.push(AuditEntry {

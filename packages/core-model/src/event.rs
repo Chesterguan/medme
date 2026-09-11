@@ -55,6 +55,18 @@ pub enum Event {
         confidence: Option<f32>,
         created_at: String,
     },
+    /// 云 LLM 结构化抽取结果(spec 2026-09-11 子项目 A §5)。结果 JSON 存 CAS,
+    /// 事件只引用哈希——与 `OcrAdded` 同构。同一文档后来的事件覆盖先前的
+    /// (重跑模型 = 再 append 一条);原件永远不动。
+    ExtractionAdded {
+        document_ref: DocRef,
+        backend: String,
+        model_version: String,
+        mode: String,
+        schema: i32,
+        result_hash: String,
+        created_at: String,
+    },
     /// 影像切片挂载到一个「影像检查(imaging study)」文档上(imaging overhaul P1)。
     /// 一个 DICOM 实例(切片)进 CAS 后,按 `study_uid` 归入同一 study 文档:第一个
     /// 实例经 `DocumentAdded` 建文档,其后同 study 的实例只 append 本事件(不建新文档)。
