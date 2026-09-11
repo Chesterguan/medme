@@ -508,6 +508,15 @@ pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOut
         format!("{base}.jpg")
     };
 
+    // 导入前压图(长边 2000px、JPEG q85):这条路径也接 PDF/TXT/DICOM,只对图片
+    // 压(按扩展名判 mime,与 `pipeline::ingest` 判类型的口径一致)。
+    // HEIC/多页 TIFF/已经够小的一律原样返回(见 `pipeline::compress_photo`)。
+    let data = if pipeline::mime_for(Path::new(&safe_name)).starts_with("image/") {
+        pipeline::compress_photo(&data)
+    } else {
+        data
+    };
+
     with_state(|state| {
         let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S%f");
         let tmp_dir = state.data_dir.join("medme-ingest").join(stamp.to_string());
@@ -608,6 +617,10 @@ pub fn ingest_image_with_text(
     } else {
         format!("{base}.jpg")
     };
+
+    // 导入前压图(长边 2000px、JPEG q85):这条路径全是图片,直接压,不用按
+    // mime 判断。HEIC/多页 TIFF/已经够小的一律原样返回(见 `pipeline::compress_photo`)。
+    let bytes = pipeline::compress_photo(&bytes);
 
     // 原件真实页数(多页 TIFF>1,其余一律 1)。`ocr_text` 只可能是第 1 页的,
     // 故 2..=n 是「没读到的页」;一页文字都没识别出来时 1..=n 全都没读到。
