@@ -761,9 +761,14 @@ fn measure_ocr_box_tilt(lines: &[OcrLine]) -> Option<(f32, f32, f32)> {
 /// det model, which works everywhere). Upright pages — the common case — pay only
 /// one cheap tall-fraction check and never re-OCR. Returned line coordinates are
 /// in the chosen (uprighted) frame, which is all [`rebuild_layout_text`] and the
-/// "\n"-join need. Shared by [`recognize_engine`] and [`recognize_engine_layout`].
+/// "\n"-join need. Also returns that exact frame (the *working* frame the
+/// detector ran on: post [`preprocess`] — downscaled if oversized, and possibly
+/// rotated/deskewed by the steps below) — callers that need to paint over the
+/// returned boxes (redaction) must paint on this same frame, not on a fresh
+/// [`decode_image_bounded`] of the original bytes, or the rectangles land on the
+/// wrong pixels. Shared by [`recognize_engine`] and [`recognize_engine_layout`].
 #[cfg(feature = "engine")]
-fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
+fn predict_lines(image_bytes: &[u8]) -> Result<(Vec<OcrLine>, DynamicImage)> {
     let dynamic =
         decode_image_bounded(image_bytes).context("ocr::recognize_platform_best: decode image")?;
     let dynamic = preprocess(dynamic);
@@ -831,12 +836,12 @@ fn predict_lines(image_bytes: &[u8]) -> Result<Vec<OcrLine>> {
                 let kept_lines = dl.len() * 10 >= best_lines.len() * 8;
                 let improved = measure_ocr_box_tilt(&dl).is_none_or(|(d, _, _)| d < drift);
                 if kept_lines && improved {
-                    return Ok(dl);
+                    return Ok((dl, deskewed));
                 }
             }
         }
     }
-    Ok(best_lines)
+    Ok((best_lines, best_img))
 }
 
 /// Recognize text in image bytes (png/jpg/tiff/...). Returns recognized text
@@ -857,7 +862,8 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
     let mut confidences = Vec::new();
     // predict_lines already drops empty text and returns lines in reading order
     // (top-to-bottom across bands), so a plain "\n" join matches the old output.
-    for line in predict_lines(image_bytes)? {
+    let (line_list, _frame) = predict_lines(image_bytes)?;
+    for line in line_list {
         if let Some(c) = line.confidence {
             confidences.push(c);
         }
@@ -868,6 +874,39 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
         confidence: mean_confidence(&confidences),
         backend: OcrBackend::Onnx,
     })
+}
+
+/// 与 [`recognize_engine_layout`] 同一条识别路径,但把检测框(连同它们所在的
+/// 那张 *working frame*)交出去,而不是拼好的文本——脱敏要按框涂黑,涂黑必须
+/// 画在检测时用的那张图上,不能是原始字节重新解码的那张。文本仍可由调用方对
+/// `EngineLines::lines` 跑 `rebuild_layout_text`,与 layout 版逐字节相同。
+///
+/// `EngineLines::frame` 就是 [`predict_lines`] 内部实际拿去跑检测的那张图:已
+/// 经过 [`preprocess`](超限降采样)、可能的 90°/270° 摆正、可能的去斜旋转。
+/// `EngineLines::lines` 的 left/top/right/height 是在这同一张图上量的。把这些
+/// 框直接画到一张未降采样/未旋转的原图上是错的——见 [`redact_image_bytes`] 的
+/// 坐标系警告。
+#[cfg(feature = "engine")]
+pub fn recognize_engine_lines(image_bytes: &[u8]) -> Result<(EngineLines, f32)> {
+    let mut confidences = Vec::new();
+    let mut out = Vec::new();
+    let (lines, frame) = predict_lines(image_bytes)?;
+    for line in lines {
+        if let Some(c) = line.confidence {
+            confidences.push(c);
+        }
+        out.push(LayoutLine {
+            text: line.text,
+            left: line.left,
+            top: line.top,
+            right: line.right,
+            height: line.bottom - line.top,
+        });
+    }
+    Ok((
+        EngineLines { lines: out, frame },
+        mean_confidence(&confidences),
+    ))
 }
 
 /// Same recognition as [`recognize_engine`], but the returned text has table
@@ -917,38 +956,28 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
 /// 不成立**:安卓早已从 ML Kit 换成和 iOS 同一个 PP-OCRv5(见 `ocr_bridge.dart`
 /// 的 `recognizeImageText`),那个 Dart 函数连同 ML Kit 依赖一起删掉了,现在
 /// grep 不到。留这句话在这里会让人去找一个不存在的参照实现。)
-/// 与 [`recognize_engine_layout`] 同一条识别路径,但把检测框交出去(脱敏要按框涂黑)。
-/// 文本由调用方 `rebuild_layout_text(&lines)` 得到,与 layout 版逐字节相同。
-#[cfg(feature = "engine")]
-pub fn recognize_engine_lines(image_bytes: &[u8]) -> Result<(Vec<LayoutLine>, f32)> {
-    let mut confidences = Vec::new();
-    let mut out = Vec::new();
-    for line in predict_lines(image_bytes)? {
-        if let Some(c) = line.confidence {
-            confidences.push(c);
-        }
-        out.push(LayoutLine {
-            text: line.text,
-            left: line.left,
-            top: line.top,
-            right: line.right,
-            height: line.bottom - line.top,
-        });
-    }
-    Ok((out, mean_confidence(&confidences)))
-}
-
 #[cfg(feature = "engine")]
 pub fn recognize_engine_layout(image_bytes: &[u8]) -> Result<OcrOutcome> {
-    let (layout_lines, confidence) = recognize_engine_lines(image_bytes)?;
+    let (engine_lines, confidence) = recognize_engine_lines(image_bytes)?;
     Ok(OcrOutcome {
-        text: rebuild_layout_text(&layout_lines),
+        text: rebuild_layout_text(&engine_lines.lines),
         confidence,
         backend: OcrBackend::Onnx,
     })
 }
 
-/// 要涂黑的矩形(整图像素坐标,与 [`LayoutLine`] 同一坐标系)。
+/// [`recognize_engine_lines`] 的产出:检测框 + 它们所在的那张 working frame
+/// (原图经 [`preprocess`] 降采样、可能的旋转摆正、可能的去斜之后,检测器实际
+/// 跑的那张图)。两者必须配套使用——`lines` 的坐标只在 `frame` 上有意义。
+#[cfg(feature = "engine")]
+pub struct EngineLines {
+    pub lines: Vec<LayoutLine>,
+    pub frame: DynamicImage,
+}
+
+/// 要涂黑的矩形。像素坐标,必须与所画的那张图同一坐标系——来自
+/// [`recognize_engine_lines`] 的框配 `EngineLines::frame`;若只有原始字节,配
+/// [`redact_image_bytes`] 自己解码出的那张(见其坐标系警告)。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PaintRect {
     pub left: f32,
@@ -957,15 +986,14 @@ pub struct PaintRect {
     pub bottom: f32,
 }
 
-/// 按框涂黑,输出 JPEG q85(送云端的那份;原件不动)。不依赖 `engine`,纯图像操作,
-/// 所有 target 都能编译。坐标按 [`decode_image_bounded`] 处理后的正向像素帧解读
-/// (与 [`LayoutLine`] 同一坐标系),越界矩形会被裁到图内、不会 panic。
-pub fn redact_image(image_bytes: &[u8], rects: &[PaintRect]) -> Result<Vec<u8>> {
+/// 按框涂黑,输出 JPEG q85(送云端的那份;原件不动)。不依赖 `engine`,纯图像
+/// 操作,所有 target 都能编译。`frame` 与 `rects` 必须同一坐标系(调用方负责,
+/// 典型来源是 [`recognize_engine_lines`] 返回的 `EngineLines`);越界矩形会被
+/// 裁到图内、不会 panic。
+pub fn redact_image(frame: &DynamicImage, rects: &[PaintRect]) -> Result<Vec<u8>> {
     use imageproc::drawing::draw_filled_rect_mut;
     use imageproc::rect::Rect;
-    let mut img = decode_image_bounded(image_bytes)
-        .context("redact_image: decode")?
-        .to_rgb8();
+    let mut img = frame.to_rgb8();
     let (w, h) = (img.width() as f32, img.height() as f32);
     for r in rects {
         let l = r.left.max(0.0).min(w) as i32;
@@ -983,6 +1011,21 @@ pub fn redact_image(image_bytes: &[u8], rects: &[PaintRect]) -> Result<Vec<u8>> 
         .encode_image(&image::DynamicImage::ImageRgb8(img))
         .context("redact_image: encode jpeg")?;
     Ok(out)
+}
+
+/// 只有原始字节、没有 [`recognize_engine_lines`] 产出的 frame 时的便捷封装:
+/// 用 [`decode_image_bounded`](只做 EXIF 摆正,不降采样、不去斜、不因侧拍而
+/// 旋转)解码后涂黑。
+///
+/// **坐标系警告**:这里的 `rects` 必须来自对同一份 `image_bytes` 跑
+/// [`decode_image_bounded`] 量出的坐标。**绝不能**是 [`recognize_engine_lines`]
+/// 返回的 `EngineLines::lines`——那些坐标是在 `predict_lines` 内部 preprocess
+/// 过的 working frame(可能被降采样、90°/270° 摆正、去斜旋转)上量的,和这里
+/// 重新解码出的原始朝向帧对不上,矩形会画偏,该盖住的 PHI 盖不到。带 engine
+/// 检测框的脱敏场景一律用 [`redact_image`] 配 `EngineLines::frame`。
+pub fn redact_image_bytes(image_bytes: &[u8], rects: &[PaintRect]) -> Result<Vec<u8>> {
+    let frame = decode_image_bounded(image_bytes).context("redact_image_bytes: decode")?;
+    redact_image(&frame, rects)
 }
 
 /// A recognized text line's content plus its on-page geometry (pixel
@@ -2113,11 +2156,34 @@ mod tests {
     fn redact_image_paints_rects_black() {
         use image::{ImageBuffer, Rgb};
         let img = ImageBuffer::from_pixel(100, 60, Rgb([255u8, 255, 255]));
+        let frame = image::DynamicImage::ImageRgb8(img);
+        let out = redact_image(
+            &frame,
+            &[PaintRect {
+                left: 10.0,
+                top: 10.0,
+                right: 50.0,
+                bottom: 30.0,
+            }],
+        )
+        .unwrap();
+        let back = image::load_from_memory(&out).unwrap().to_rgb8();
+        assert!(back.get_pixel(20, 20)[0] < 30, "框内应为黑");
+        assert!(back.get_pixel(80, 50)[0] > 220, "框外应为白");
+    }
+
+    /// `redact_image_bytes` is just decode-then-`redact_image`; a bytes-in
+    /// caller with no `EngineLines::frame` (e.g. no engine detection ran) must
+    /// still get correctly painted output.
+    #[test]
+    fn redact_image_bytes_decodes_then_paints() {
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_pixel(100, 60, Rgb([255u8, 255, 255]));
         let mut png = Vec::new();
         image::DynamicImage::ImageRgb8(img)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        let out = redact_image(
+        let out = redact_image_bytes(
             &png,
             &[PaintRect {
                 left: 10.0,
@@ -2343,7 +2409,7 @@ mod tests {
         let bytes = std::fs::read(path).expect("photo present");
         // predict_lines already applies geometric orientation, so boxes are in the
         // uprighted frame — the same frame rebuild_layout_text groups.
-        let mut lines = predict_lines(&bytes).expect("ocr");
+        let (mut lines, _frame) = predict_lines(&bytes).expect("ocr");
         lines.sort_by(|a, b| a.top.partial_cmp(&b.top).unwrap());
         eprintln!("total lines = {}", lines.len());
         for l in &lines {
@@ -2442,13 +2508,79 @@ mod tests {
         let single_raw = nonempty(&single);
 
         // New behavior: banded path — count raw lines it keeps after dedup.
-        let banded_raw = predict_lines(&tall_png).expect("banded predict").len();
+        let banded_raw = predict_lines(&tall_png).expect("banded predict").0.len();
 
         eprintln!("tall page 960x2560 — single-pass raw lines = {single_raw}");
         eprintln!("tall page 960x2560 — banded      raw lines = {banded_raw}");
         assert!(
             banded_raw > single_raw,
             "banding should recover more lines on a tall page: single={single_raw} banded={banded_raw}"
+        );
+    }
+
+    /// Frame-consistency regression (Task 6 review, Critical): `predict_lines`
+    /// downscales oversized photos to [`OCR_MAX_WORKING_DIM`] before detecting,
+    /// so `recognize_engine_lines`'s boxes are in that *downscaled* frame, not
+    /// the plain original. Painting them onto a fresh, undownscaled
+    /// `decode_image_bounded` of the original bytes (the old `redact_image`
+    /// bug) lands the rectangles on the wrong pixels — PHI stays visible.
+    ///
+    /// Builds a 4500x3000 (long side > 4000) synthetic page with a black
+    /// text-like block at a known position, confirms the returned `frame`
+    /// really is downscaled (long side == `OCR_MAX_WORKING_DIM`), and confirms
+    /// painting the *returned* boxes onto that *same* `frame` blackens the
+    /// block's scaled-down position. `#[ignore]` (needs the PP-OCR models,
+    /// auto-downloaded from ModelScope on first use — no network in this
+    /// sandbox/CI): run with `cargo test -p ocr --features engine,testing --
+    /// --ignored --nocapture recognize_engine_lines_boxes_match_downscaled_frame`.
+    #[cfg(feature = "engine")]
+    #[test]
+    #[ignore]
+    fn recognize_engine_lines_boxes_match_downscaled_frame() {
+        use image::{Rgb, RgbImage};
+        let (orig_w, orig_h) = (4500u32, 3000u32);
+        let mut img = RgbImage::from_pixel(orig_w, orig_h, Rgb([255, 255, 255]));
+        // A black block standing in for a text line, at a known position.
+        let (bl, bt, br, bb) = (1000u32, 500u32, 1800u32, 600u32);
+        for y in bt..bb {
+            for x in bl..br {
+                img.put_pixel(x, y, Rgb([0, 0, 0]));
+            }
+        }
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("encode png");
+
+        let (engine_lines, _confidence) = recognize_engine_lines(&png).expect("ocr");
+        let (fw, fh) = engine_lines.frame.dimensions();
+        assert_eq!(
+            fw.max(fh),
+            OCR_MAX_WORKING_DIM,
+            "frame must be the working (downscaled) frame, got {fw}x{fh}"
+        );
+
+        // Same scale factor `downscale_to_working_dim` applied (aspect-preserving).
+        let scale = fw as f32 / orig_w as f32;
+        let expect_cx = ((bl + br) as f32 / 2.0 * scale) as u32;
+        let expect_cy = ((bt + bb) as f32 / 2.0 * scale) as u32;
+
+        let rects: Vec<PaintRect> = engine_lines
+            .lines
+            .iter()
+            .map(|l| PaintRect {
+                left: l.left,
+                top: l.top,
+                right: l.right,
+                bottom: l.top + l.height,
+            })
+            .collect();
+        let out = redact_image(&engine_lines.frame, &rects).expect("redact");
+        let painted = image::load_from_memory(&out).expect("decode jpeg").to_rgb8();
+        let px = painted.get_pixel(expect_cx, expect_cy);
+        assert!(
+            px[0] < 30,
+            "block's scaled position ({expect_cx},{expect_cy}) should be painted black by its own detected box, got {px:?}"
         );
     }
 
