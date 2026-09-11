@@ -71,13 +71,56 @@ pub struct Rect {
     pub bottom: f32,
 }
 
-/// 像不像一条化验行:含数字,且含区间分隔符或常见单位。
+/// 行内数字区间形如 `4.0-10.0` / `115-150`(化验参考区间的典型形状)。跟 P 层的号码
+/// 形状规则故意不共享——这里只关心「像不像区间」,不关心该不该被掩。
+fn digit_range_re() -> &'static regex::Regex {
+    static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r"\d+(\.\d+)?\s*[-~]\s*\d+").expect("digit range re"))
+}
+
+/// 座机号形状(`patterns::landline_re` 同形,那边是私有的——两条正则字面量,不值得
+/// 为此开 pub,`dates.rs` 顶部对 iso_re/cn_re 已有同样的先例)。用来把「电话
+/// 010-69156114」这种数字区间形状的座机号从「化验区间」候选里摘出去。
+fn looks_like_landline(s: &str) -> bool {
+    static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r"^0\d{2,3}-\d{7,8}$").expect("landline shape re")).is_match(s)
+}
+
+/// 在 `t` 里、从 `at` 这个字节偏移开始,是不是一个 `YYYY-MM-DD`/`YYYY/MM/DD` 形状的
+/// 日期(`dates::iso_re` 同形,同样的「不值得为此开 pub」理由)。用来把页眉里的
+/// 打印日期(`2024-03-06`)从「化验区间」候选里摘出去——区间的左值几乎不会是恰好
+/// 4 位数字的「年份」。
+fn looks_like_iso_date_at(t: &str, at: usize) -> bool {
+    static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r"^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}").expect("iso date shape re"))
+        .is_match(&t[at..])
+}
+
+/// 这一行有没有出现任何一个身份锚点词(`anchors::ANCHORS`,姓名/证件号/地址等标签)。
+/// 化验区间判定要避开这类行——一个贴着「门诊号」标签的号码,哪怕形状像区间,也不是
+/// 化验行。
+fn has_anchor_word(t: &str) -> bool {
+    anchors::ANCHORS.iter().any(|(a, _)| t.contains(a))
+}
+
+/// 像不像一条化验行:含单位标记(`patterns::UNIT_TOKENS`,与 P 层共用同一份词表,
+/// 不再各自维护)一定算;不含单位时,退而看有没有「数字区间」形状——但排除掉贴着
+/// 身份锚点词的行,以及形状凑巧像区间、实则是座机号/日期的行(fix round 1 item 2:
+/// 旧实现只看「有数字 + 有 `-`/`~`」,电话号码、ISO 日期、单据编号全都会误判,把
+/// 页眉带收缩到只有 2px)。
 fn looks_like_lab_row(t: &str) -> bool {
-    let has_digit = t.chars().any(|c| c.is_ascii_digit());
-    has_digit
-        && (t.contains('-')
-            || t.contains('~')
-            || ["/L", "%", "mmol", "g/L", "umol", "μmol", "U/L"].iter().any(|u| t.contains(u)))
+    if patterns::UNIT_TOKENS.iter().any(|u| t.contains(u)) {
+        return true;
+    }
+    if has_anchor_word(t) {
+        return false;
+    }
+    match digit_range_re().find(t) {
+        Some(m) if looks_like_landline(m.as_str()) => false,
+        Some(m) if looks_like_iso_date_at(t, m.start()) => false,
+        Some(_) => true,
+        None => false,
+    }
 }
 
 /// 像不像页脚锚点行(检验者/审核者/打印时间/报告医生等)。
@@ -100,40 +143,135 @@ fn clip(r: Rect, page_w: f32, page_h: f32) -> Rect {
     }
 }
 
+/// 框的几何量,顺带纠正 OCR 偶尔给出的「倒装」框(`right<left` / `bottom<top`,
+/// fix round 1 item 6)——只在读取时纠正,不改调用方传入的 `Box`。
+fn norm_rect(b: &Box) -> (f32, f32, f32, f32) {
+    let (left, right) = if b.left <= b.right { (b.left, b.right) } else { (b.right, b.left) };
+    let (top, bottom) = if b.top <= b.bottom { (b.top, b.bottom) } else { (b.bottom, b.top) };
+    (left, top, right, bottom)
+}
+
+/// 按行高留边距、裁到页面范围,推入 `out`。
+fn push_painted(out: &mut Vec<Rect>, b: &Box, page_w: f32, page_h: f32) {
+    let (left, top, right, bottom) = norm_rect(b);
+    let m = margin_for(bottom - top);
+    let clipped = clip(Rect { left: left - m, top: top - m, right: right + m, bottom: bottom + m }, page_w, page_h);
+    // 健全性检查(fix round 1 item 5):框本身有面积、且跟 page_w/page_h 同一坐标系时,
+    // 裁剪后不该整个塌成 0 面积——塌成 0 通常意味着调用方传错了坐标系(比如拿了没做
+    // preprocess 的原始朝向帧的框,配 EngineLines 那张 preprocess 过的 working frame)。
+    debug_assert!(
+        !(right > left && bottom > top) || (clipped.right > clipped.left && clipped.bottom > clipped.top),
+        "redact_boxes: 有面积的框裁剪后塌成 0 面积——多半是 boxes 和 page_w/page_h 不是同一坐标系"
+    );
+    out.push(clipped);
+}
+
+/// 两个框在竖直方向的重叠比例(相对 `a` 自己的高度)。
+fn vertical_overlap_frac(a: (f32, f32, f32, f32), c: (f32, f32, f32, f32)) -> f32 {
+    let overlap = (a.3.min(c.3) - a.1.max(c.1)).max(0.0);
+    let ah = (a.3 - a.1).max(f32::EPSILON);
+    overlap / ah
+}
+
+/// 悬空锚点(标签在框尾、取值失败,比如「联系人」单独一框)时,阅读顺序上的下一框:
+/// 优先同一行右侧(那一框左边界 ≥ 本框右边界,且竖直重叠 > 50%);没有就找下一行
+/// (顶边界明显更靠下、且竖直基本不重叠的框里,顶边界最小、左边界最小的那个)。
+fn next_box_in_reading_order<'a>(boxes: &'a [Box], i: usize) -> Option<&'a Box> {
+    let bi = norm_rect(&boxes[i]);
+    let mut same_line: Option<(&Box, f32)> = None;
+    for (j, bj) in boxes.iter().enumerate() {
+        if j == i {
+            continue;
+        }
+        let r = norm_rect(bj);
+        if r.0 >= bi.2 && vertical_overlap_frac(bi, r) > 0.5 {
+            match same_line {
+                Some((_, left)) if r.0 >= left => {}
+                _ => same_line = Some((bj, r.0)),
+            }
+        }
+    }
+    if let Some((b, _)) = same_line {
+        return Some(b);
+    }
+
+    let mid = bi.1 + (bi.3 - bi.1) * 0.5;
+    let mut below: Option<(&Box, f32, f32)> = None;
+    for (j, bj) in boxes.iter().enumerate() {
+        if j == i {
+            continue;
+        }
+        let r = norm_rect(bj);
+        if r.1 >= mid && vertical_overlap_frac(bi, r) <= 0.5 {
+            match below {
+                Some((_, top, left)) if (r.1, r.0) >= (top, left) => {}
+                _ => below = Some((bj, r.1, r.0)),
+            }
+        }
+    }
+    below.map(|(b, _, _)| b)
+}
+
 /// 决定哪些 OCR 行框要涂黑(图片档脱敏,spec §1)。
 ///
-/// 三类矩形,均按各自参考行的行高留 2%(至少 2px)边距、裁到页面范围:
-/// 1. 逐框跑 `redact_text(...,0)`——文本发生变化(命中 K/A/P 三层任一)的整框涂黑;
-///    命中判定与 `redact_text` 完全一致,不另建第二份判断。
+/// **坐标系**:`boxes` 与 `page_w`/`page_h` 必须是同一套像素坐标——典型来源是
+/// `ocr::recognize_engine_lines` 返回的 `EngineLines::lines` 配它自己的 `frame`
+/// 尺寸,不能拿原始朝向帧量出的框配这里的页面尺寸(反之亦然)。
+///
+/// 四类矩形,均按各自参考行的行高留 2%(至少 2px)边距、裁到页面范围:
+/// 1. 逐框跑 `redact_text(...,0)`,与 `dates::shift_dates(...,0)` 的基准比较——文本
+///    发生变化(命中 K/A/P 三层任一)的整框涂黑。基准用日期归一化过的文本而不是原文,
+///    这样单纯的日期写法归一(`2024年3月5日`→`2024-03-05`,偏移量 0)不会被误判成命中
+///    (fix round 1 item 4);命中判定的层次与 `redact_text` 完全一致,不另建第二份判断。
 /// 2. 页眉带:从页面顶部到第一条「像化验行」的框顶,整宽涂黑。没有化验行 → 不产生页眉带
 ///    (不是整页兜底涂黑)。
-/// 3. 页脚带:从第一条含检验者/审核者/打印时间/报告医生等锚点的框顶到页面底部,整宽涂黑。
-///    没有这类锚点行 → 不产生页脚带。
-///
-/// 日期偏移、单纯的锚点值替换不影响本函数的判定基准——只看框内文本改没改。
+/// 3. 页脚带:从第一条**在最后一条化验行之下**、含检验者/审核者/打印时间/报告医生等
+///    锚点的框顶到页面底部,整宽涂黑。要求「在化验行之下」是因为这类词也可能出现在
+///    页眉(报告抬头的打印时间),不加这道顺序保护会把页眉当成页脚、整页涂黑
+///    (fix round 1 item 1)。没有化验行,或化验行下面没有这类锚点行 → 不产生页脚带
+///    (页眉/正文里的医生姓名仍然会被第 1 类逐框命中涂黑,只是不再触发整条页脚带)。
+/// 4. 悬空锚点补涂:某框含身份锚点词(`anchors::ANCHORS`),但框内没能取到值(标签
+///    在框尾,值被 OCR 切进了下一框——常见于「联系人」和姓名分属两框),这框本身按
+///    第 1 类不会被判定为命中;这类框连同阅读顺序上的下一框一起涂黑(fix round 1
+///    item 3)。
 pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f32) -> Vec<Rect> {
     let mut out = Vec::new();
 
-    for b in boxes {
+    for (i, b) in boxes.iter().enumerate() {
         let r = redact_text(&b.text, known, 0);
-        if r.text != b.text {
-            let m = margin_for(b.bottom - b.top);
-            out.push(clip(
-                Rect { left: b.left - m, top: b.top - m, right: b.right + m, bottom: b.bottom + m },
-                page_w,
-                page_h,
-            ));
+        let baseline = dates::shift_dates(&b.text, 0);
+        if r.text != baseline {
+            push_painted(&mut out, b, page_w, page_h);
+        } else if has_anchor_word(&b.text) {
+            push_painted(&mut out, b, page_w, page_h);
+            if let Some(next) = next_box_in_reading_order(boxes, i) {
+                push_painted(&mut out, next, page_w, page_h);
+            }
         }
     }
 
-    if let Some(first) = boxes.iter().filter(|b| looks_like_lab_row(&b.text)).min_by(|a, c| a.top.total_cmp(&c.top)) {
-        let m = margin_for(first.bottom - first.top);
-        out.push(clip(Rect { left: 0.0, top: 0.0, right: page_w, bottom: first.top + m }, page_w, page_h));
+    let last_lab_bottom = boxes
+        .iter()
+        .filter(|b| looks_like_lab_row(&b.text))
+        .map(|b| norm_rect(b).3)
+        .fold(None::<f32>, |acc, bottom| Some(acc.map_or(bottom, |a: f32| a.max(bottom))));
+
+    if let Some(first) = boxes.iter().filter(|b| looks_like_lab_row(&b.text)).min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1)) {
+        let (_, top, _, bottom) = norm_rect(first);
+        let m = margin_for(bottom - top);
+        out.push(clip(Rect { left: 0.0, top: 0.0, right: page_w, bottom: top + m }, page_w, page_h));
     }
 
-    if let Some(foot) = boxes.iter().filter(|b| looks_like_footer(&b.text)).min_by(|a, c| a.top.total_cmp(&c.top)) {
-        let m = margin_for(foot.bottom - foot.top);
-        out.push(clip(Rect { left: 0.0, top: foot.top - m, right: page_w, bottom: page_h }, page_w, page_h));
+    if let Some(last_lab_bottom) = last_lab_bottom {
+        if let Some(foot) = boxes
+            .iter()
+            .filter(|b| looks_like_footer(&b.text) && norm_rect(b).1 >= last_lab_bottom)
+            .min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1))
+        {
+            let (_, top, _, bottom) = norm_rect(foot);
+            let m = margin_for(bottom - top);
+            out.push(clip(Rect { left: 0.0, top: top - m, right: page_w, bottom: page_h }, page_w, page_h));
+        }
     }
 
     out
@@ -434,5 +572,106 @@ mod tests {
         assert_eq!(rects[0].left, 0.0);
         assert_eq!(rects[0].top, 0.0);
         assert_eq!(rects[0].right, 400.0);
+    }
+
+    // --- fix round 1: 独立复核抓出的 3 类 CRITICAL + 2 类 IMPORTANT ------------
+
+    #[test]
+    fn footer_anchor_above_lab_rows_does_not_paint_whole_page() {
+        // item 1:旧实现拿「所有页脚关键词框里 top 最小的那个」当页脚带起点——页眉里的
+        // 「打印时间」本身就是全篇 top 最小的锚点词框之一,于是页脚带从 0 涂到底,整页涂黑。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let boxes = vec![
+            b("北京协和医院检验报告 打印时间:2024-03-06 09:12", 0.0),
+            b("白细胞计数 WBC 5.6 10^9/L 4.0-10.0", 100.0),
+            b("血红蛋白 HGB 135 g/L 115-150", 130.0),
+            b("审核者:樊笋", 400.0),
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(!rects.iter().any(|r| r.top == 0.0 && r.bottom == 500.0), "整页涂黑了:{rects:?}");
+        assert!(
+            rects.iter().any(|r| r.bottom == 500.0 && r.top > 130.0 && r.top <= 400.0),
+            "页脚带该从化验行下面的审核者框开始:{rects:?}"
+        );
+    }
+
+    #[test]
+    fn header_band_is_not_collapsed_by_phone_or_date_shaped_lines() {
+        // item 2:旧的 looks_like_lab_row 只看「有数字 + 有 -/~」,电话号码、ISO 日期这类
+        // 页眉常见行会被误判成化验行,把页眉带收缩到只剩 2px 边距。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let boxes = vec![
+            b("北京协和医院 电话 010-69156114", 0.0),
+            b("打印日期 2024-03-06", 30.0),
+            b("白细胞计数 WBC 5.6 10^9/L 4.0-10.0", 100.0),
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(
+            rects.iter().any(|r| r.top == 0.0 && r.right == 400.0 && r.bottom >= 100.0 && r.bottom < 130.0),
+            "页眉带被电话/日期行提前收尾了:{rects:?}"
+        );
+    }
+
+    #[test]
+    fn dangling_anchor_and_its_value_in_the_next_box_to_the_right_are_both_painted() {
+        // item 3:「联系人」单独一框、姓名被 OCR 切进右边那一框——旧实现只看本框文本
+        // 有没有变化,取不到值的锚点框和它右边那个裸姓名框都不会被判定为命中。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let boxes = vec![
+            Box { text: "联系人".into(), left: 0.0, top: 200.0, right: 60.0, bottom: 220.0 },
+            Box { text: "李秀兰".into(), left: 70.0, top: 200.0, right: 140.0, bottom: 220.0 },
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(
+            rects.iter().any(|r| r.left <= 0.0 && r.right >= 58.0 && r.top <= 200.0 && r.bottom >= 220.0),
+            "联系人 框未涂:{rects:?}"
+        );
+        assert!(rects.iter().any(|r| r.left <= 70.0 && r.right >= 138.0), "李秀兰 框未涂:{rects:?}");
+    }
+
+    #[test]
+    fn dangling_anchor_and_its_value_on_the_next_line_below_are_both_painted() {
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let boxes = vec![
+            Box { text: "联系人".into(), left: 0.0, top: 200.0, right: 60.0, bottom: 220.0 },
+            Box { text: "李秀兰".into(), left: 0.0, top: 230.0, right: 70.0, bottom: 250.0 },
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(rects.iter().any(|r| r.top <= 200.0 && r.bottom >= 220.0 && r.right >= 58.0), "{rects:?}");
+        assert!(rects.iter().any(|r| r.top >= 228.0 && r.bottom >= 250.0 && r.right >= 68.0), "{rects:?}");
+    }
+
+    #[test]
+    fn date_format_normalization_alone_is_not_a_hit() {
+        // item 4:旧实现拿原文和 redact_text 的结果直接比——纯格式归一(斜杠转横杠,
+        // 偏移量 0)也算「变了」,把没有任何 K/A/P 命中的化验行整框涂黑。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let boxes = vec![Box { text: "检测日期 2024/03/06".into(), left: 10.0, top: 50.0, right: 200.0, bottom: 70.0 }];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(rects.is_empty(), "纯日期格式归一不该被当命中涂黑:{rects:?}");
+    }
+
+    #[test]
+    fn inverted_box_coordinates_are_normalized_before_margins() {
+        // item 6:OCR 偶尔给出 right<left / bottom<top 的倒装框,归一化之后应该和正常框
+        // 算出同一个矩形,而不是让负的宽高把 margin 算错。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let boxes = vec![Box { text: "姓名:张建国".into(), left: 200.0, top: 120.0, right: 50.0, bottom: 100.0 }];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].left, 48.0);
+        assert_eq!(rects[0].top, 98.0);
+        assert_eq!(rects[0].right, 202.0);
+        assert_eq!(rects[0].bottom, 122.0);
+    }
+
+    #[test]
+    fn empty_text_and_empty_box_list_paint_nothing() {
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        assert!(redact_boxes(&[], &k, 400.0, 500.0).is_empty());
+        let boxes = vec![Box { text: String::new(), left: 0.0, top: 0.0, right: 100.0, bottom: 20.0 }];
+        assert!(redact_boxes(&boxes, &k, 400.0, 500.0).is_empty());
     }
 }
