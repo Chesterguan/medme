@@ -72,10 +72,12 @@ pub struct Rect {
 }
 
 /// 行内数字区间形如 `4.0-10.0` / `115-150`(化验参考区间的典型形状)。跟 P 层的号码
-/// 形状规则故意不共享——这里只关心「像不像区间」,不关心该不该被掩。
+/// 形状规则故意不共享——这里只关心「像不像区间」,不关心该不该被掩。右值也带上可选
+/// 小数位(fix round 2 item 4:不然 "4.0-10.0" 只会匹配到 "4.0-10",剩下的 ".0" 会被
+/// 「区间后面只能跟空白/标记/单位」的收尾检查误判成不合法的尾巴)。
 fn digit_range_re() -> &'static regex::Regex {
     static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r"\d+(\.\d+)?\s*[-~]\s*\d+").expect("digit range re"))
+    R.get_or_init(|| regex::Regex::new(r"\d+(\.\d+)?\s*[-~]\s*\d+(\.\d+)?").expect("digit range re"))
 }
 
 /// 座机号形状(`patterns::landline_re` 同形,那边是私有的——两条正则字面量,不值得
@@ -103,11 +105,31 @@ fn has_anchor_word(t: &str) -> bool {
     anchors::ANCHORS.iter().any(|(a, _)| t.contains(a))
 }
 
+/// 化验异常标记(高/低箭头,或 H/L 缩写)。
+const FLAG_TOKENS: &[&str] = &["↑", "↓", "H", "L"];
+
+/// 数字区间之后、到行尾为止,是不是「只有空白 + 至多一个异常标记 + 至多一个化验单位」
+/// ——不能是别的内容(fix round 2 item 4)。比如「标本编号 24-03-1234」里,「24-03」
+/// 这一段形状也像区间,但后面还跟着「-1234」,不符合这条收尾规则,不该被当成化验行。
+fn range_tail_ok(rest: &str) -> bool {
+    let mut s = rest.trim_start();
+    for flag in FLAG_TOKENS {
+        if let Some(stripped) = s.strip_prefix(flag) {
+            s = stripped.trim_start();
+            break;
+        }
+    }
+    if s.is_empty() {
+        return true;
+    }
+    patterns::UNIT_TOKENS.iter().any(|u| s.strip_prefix(u).is_some_and(|t| t.trim_start().is_empty()))
+}
+
 /// 像不像一条化验行:含单位标记(`patterns::UNIT_TOKENS`,与 P 层共用同一份词表,
-/// 不再各自维护)一定算;不含单位时,退而看有没有「数字区间」形状——但排除掉贴着
-/// 身份锚点词的行,以及形状凑巧像区间、实则是座机号/日期的行(fix round 1 item 2:
-/// 旧实现只看「有数字 + 有 `-`/`~`」,电话号码、ISO 日期、单据编号全都会误判,把
-/// 页眉带收缩到只有 2px)。
+/// 不再各自维护、也不要求先有数字——这条口径保留不变)一定算;不含单位时,退而看有
+/// 没有「数字区间」形状——但排除掉贴着身份锚点词的行,形状凑巧像区间、实则是座机号
+/// /日期的行(fix round 1 item 2),以及区间后面还跟着别的内容、不是「空白/标记/
+/// 单位到行尾」的行(fix round 2 item 4:「标本编号 24-03-1234」这类三段式编号)。
 fn looks_like_lab_row(t: &str) -> bool {
     if patterns::UNIT_TOKENS.iter().any(|u| t.contains(u)) {
         return true;
@@ -118,7 +140,7 @@ fn looks_like_lab_row(t: &str) -> bool {
     match digit_range_re().find(t) {
         Some(m) if looks_like_landline(m.as_str()) => false,
         Some(m) if looks_like_iso_date_at(t, m.start()) => false,
-        Some(_) => true,
+        Some(m) => range_tail_ok(&t[m.end()..]),
         None => false,
     }
 }
@@ -126,6 +148,18 @@ fn looks_like_lab_row(t: &str) -> bool {
 /// 像不像页脚锚点行(检验者/审核者/打印时间/报告医生等)。
 fn looks_like_footer(t: &str) -> bool {
     ["检验者", "审核者", "打印时间", "报告医生", "报告医师", "审核医生"].iter().any(|a| t.contains(a))
+}
+
+/// 把 `t` 尾部的分隔符/冒号去掉之后,是不是恰好以一个身份锚点词结尾(fix round 2
+/// item 1)。用来抓「标签在框尾、值被切进下一框」的悬空锚点——跟 `has_anchor_word`
+/// 不同的是,这里要求锚点词就是(去掉尾部标点后)整框的结尾,不是随便出现在框里
+/// 的某个位置,不然「审核者已复核」这类锚点词出现在句中、值就在本框里的正常行也会
+/// 被误判成悬空。
+fn ends_with_anchor_word(t: &str) -> bool {
+    let trimmed = t.trim_end_matches(|c: char| {
+        c.is_whitespace() || matches!(c, ':' | '：' | ',' | '，' | ';' | '；' | '、' | '|' | '。')
+    });
+    anchors::ANCHORS.iter().any(|(a, _)| trimmed.ends_with(a))
 }
 
 /// 涂黑边距:线框高度的 2%,至少 2px——盖住反走样的笔画毛边。
@@ -174,17 +208,23 @@ fn vertical_overlap_frac(a: (f32, f32, f32, f32), c: (f32, f32, f32, f32)) -> f3
 }
 
 /// 悬空锚点(标签在框尾、取值失败,比如「联系人」单独一框)时,阅读顺序上的下一框:
-/// 优先同一行右侧(那一框左边界 ≥ 本框右边界,且竖直重叠 > 50%);没有就找下一行
-/// (顶边界明显更靠下、且竖直基本不重叠的框里,顶边界最小、左边界最小的那个)。
+/// 优先同一行右侧(那一框左边界在本框右边界的一点松弛范围内,且竖直重叠 > 50%);
+/// 没有就找下一行(顶边界明显更靠下、且竖直基本不重叠的框里,顶边界最小、左边界最小
+/// 的那个)。
+///
+/// 「同一行右侧」的松弛量是 `max(4px, 本框行高的 20%)`(fix round 2 item 2):OCR
+/// 切出来的相邻两框水平方向经常有一两像素的重叠(比如「联系人」和紧跟着的姓名框),
+/// 严格要求 `右邻框.left >= 本框.right` 会把这种边界擦边的正常邻框漏掉。
 fn next_box_in_reading_order<'a>(boxes: &'a [Box], i: usize) -> Option<&'a Box> {
     let bi = norm_rect(&boxes[i]);
+    let slack = ((bi.3 - bi.1) * 0.2).max(4.0);
     let mut same_line: Option<(&Box, f32)> = None;
     for (j, bj) in boxes.iter().enumerate() {
         if j == i {
             continue;
         }
         let r = norm_rect(bj);
-        if r.0 >= bi.2 && vertical_overlap_frac(bi, r) > 0.5 {
+        if r.0 >= bi.2 - slack && vertical_overlap_frac(bi, r) > 0.5 {
             match same_line {
                 Some((_, left)) if r.0 >= left => {}
                 _ => same_line = Some((bj, r.0)),
@@ -212,28 +252,40 @@ fn next_box_in_reading_order<'a>(boxes: &'a [Box], i: usize) -> Option<&'a Box> 
     below.map(|(b, _, _)| b)
 }
 
+/// 是不是一条「真」化验行——像化验行、但本身不是页脚锚点行。页脚带的起点判定要用
+/// 这份、不能用 `looks_like_lab_row` 本身:页脚框自己有时也会顺带命中化验行的判定
+/// (比如「审核者:樊笋 结果单位 mmol/L」,`审核者` 是页脚锚点、`mmol/L` 又是化验单位),
+/// 这时候不能让页脚框自己的存在把自己算作「最后一条化验行」,从而拿自己的位置来
+/// 卡自己(fix round 2 item 3)。
+fn is_real_lab_row(b: &Box) -> bool {
+    looks_like_lab_row(&b.text) && !looks_like_footer(&b.text)
+}
+
 /// 决定哪些 OCR 行框要涂黑(图片档脱敏,spec §1)。
 ///
 /// **坐标系**:`boxes` 与 `page_w`/`page_h` 必须是同一套像素坐标——典型来源是
 /// `ocr::recognize_engine_lines` 返回的 `EngineLines::lines` 配它自己的 `frame`
 /// 尺寸,不能拿原始朝向帧量出的框配这里的页面尺寸(反之亦然)。
 ///
-/// 四类矩形,均按各自参考行的行高留 2%(至少 2px)边距、裁到页面范围:
+/// 四类矩形,均按各自参考行的行高留 2%(至少 2px)边距、裁到页面范围,最后去重
+/// (同一个矩形被两条规则各推了一次的情况——比如某框既是命中又是悬空锚点——只留一份):
 /// 1. 逐框跑 `redact_text(...,0)`,与 `dates::shift_dates(...,0)` 的基准比较——文本
 ///    发生变化(命中 K/A/P 三层任一)的整框涂黑。基准用日期归一化过的文本而不是原文,
 ///    这样单纯的日期写法归一(`2024年3月5日`→`2024-03-05`,偏移量 0)不会被误判成命中
 ///    (fix round 1 item 4);命中判定的层次与 `redact_text` 完全一致,不另建第二份判断。
 /// 2. 页眉带:从页面顶部到第一条「像化验行」的框顶,整宽涂黑。没有化验行 → 不产生页眉带
 ///    (不是整页兜底涂黑)。
-/// 3. 页脚带:从第一条**在最后一条化验行之下**、含检验者/审核者/打印时间/报告医生等
-///    锚点的框顶到页面底部,整宽涂黑。要求「在化验行之下」是因为这类词也可能出现在
-///    页眉(报告抬头的打印时间),不加这道顺序保护会把页眉当成页脚、整页涂黑
-///    (fix round 1 item 1)。没有化验行,或化验行下面没有这类锚点行 → 不产生页脚带
-///    (页眉/正文里的医生姓名仍然会被第 1 类逐框命中涂黑,只是不再触发整条页脚带)。
-/// 4. 悬空锚点补涂:某框含身份锚点词(`anchors::ANCHORS`),但框内没能取到值(标签
-///    在框尾,值被 OCR 切进了下一框——常见于「联系人」和姓名分属两框),这框本身按
-///    第 1 类不会被判定为命中;这类框连同阅读顺序上的下一框一起涂黑(fix round 1
-///    item 3)。
+/// 3. 页脚带:从第一条**在最后一条(排除页脚框自己的)化验行之下**、含检验者/审核者/
+///    打印时间/报告医生等锚点的框顶到页面底部,整宽涂黑。要求「在化验行之下」是因为
+///    这类词也可能出现在页眉(报告抬头的打印时间),不加这道顺序保护会把页眉当成页脚、
+///    整页涂黑(fix round 1 item 1)。没有化验行,或化验行下面没有这类锚点行 → 不产生
+///    页脚带(页眉/正文里的医生姓名仍然会被第 1 类逐框命中涂黑,只是不再触发整条页脚带)。
+/// 4. 悬空锚点补涂:某框(去掉尾部分隔符/冒号之后)以身份锚点词(`anchors::ANCHORS`)
+///    结尾——不管这框本身有没有被第 1 类判定为命中(fix round 2 item 1:标签和取值
+///    分属两框时,带值的那半框——比如「姓名:张建国 性别:男 联系人」里的「张建国」——
+///    会先命中,但旧代码用 `else if` 让「联系人」这个悬空标签白白放过了它右边/下边
+///    那个真正带 PHI 的框);这类框连同阅读顺序上的下一框一起涂黑(fix round 1 item 3,
+///    下一框的查找容许一点水平松弛,fix round 2 item 2)。
 pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f32) -> Vec<Rect> {
     let mut out = Vec::new();
 
@@ -242,7 +294,8 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
         let baseline = dates::shift_dates(&b.text, 0);
         if r.text != baseline {
             push_painted(&mut out, b, page_w, page_h);
-        } else if has_anchor_word(&b.text) {
+        }
+        if ends_with_anchor_word(&b.text) {
             push_painted(&mut out, b, page_w, page_h);
             if let Some(next) = next_box_in_reading_order(boxes, i) {
                 push_painted(&mut out, next, page_w, page_h);
@@ -250,31 +303,35 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
         }
     }
 
-    let last_lab_bottom = boxes
-        .iter()
-        .filter(|b| looks_like_lab_row(&b.text))
-        .map(|b| norm_rect(b).3)
-        .fold(None::<f32>, |acc, bottom| Some(acc.map_or(bottom, |a: f32| a.max(bottom))));
-
     if let Some(first) = boxes.iter().filter(|b| looks_like_lab_row(&b.text)).min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1)) {
         let (_, top, _, bottom) = norm_rect(first);
         let m = margin_for(bottom - top);
         out.push(clip(Rect { left: 0.0, top: 0.0, right: page_w, bottom: top + m }, page_w, page_h));
     }
 
-    if let Some(last_lab_bottom) = last_lab_bottom {
-        if let Some(foot) = boxes
-            .iter()
-            .filter(|b| looks_like_footer(&b.text) && norm_rect(b).1 >= last_lab_bottom)
-            .min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1))
-        {
-            let (_, top, _, bottom) = norm_rect(foot);
-            let m = margin_for(bottom - top);
-            out.push(clip(Rect { left: 0.0, top: top - m, right: page_w, bottom: page_h }, page_w, page_h));
-        }
+    if let Some(foot) = boxes
+        .iter()
+        .filter(|b| looks_like_footer(&b.text))
+        .filter(|cand| {
+            let cand_top = norm_rect(cand).1;
+            boxes.iter().any(|lb| is_real_lab_row(lb) && norm_rect(lb).1 <= cand_top)
+        })
+        .min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1))
+    {
+        let (_, top, _, bottom) = norm_rect(foot);
+        let m = margin_for(bottom - top);
+        out.push(clip(Rect { left: 0.0, top: top - m, right: page_w, bottom: page_h }, page_w, page_h));
     }
 
-    out
+    // fix round 2:去重——同一矩形被多条规则各推一次的情况(命中 + 悬空锚点前瞻都
+    // 落到同一框上)只留一份。
+    let mut deduped: Vec<Rect> = Vec::with_capacity(out.len());
+    for r in out {
+        if !deduped.contains(&r) {
+            deduped.push(r);
+        }
+    }
+    deduped
 }
 
 #[cfg(test)]
@@ -673,5 +730,118 @@ mod tests {
         assert!(redact_boxes(&[], &k, 400.0, 500.0).is_empty());
         let boxes = vec![Box { text: String::new(), left: 0.0, top: 0.0, right: 100.0, bottom: 20.0 }];
         assert!(redact_boxes(&boxes, &k, 400.0, 500.0).is_empty());
+    }
+
+    // --- fix round 2: 独立复核在 round 1 的基础上又抓出的 3 类漏涂 + 1 类误涂 ------
+
+    #[test]
+    fn dangling_anchor_at_the_end_of_an_already_hit_box_still_forwards_to_the_next_box() {
+        // item 1:「姓名:张建国 性别:男 联系人」这一框自己已经因为「张建国」命中,旧代码
+        // 用 `else if` 只在**没命中**时才检查悬空锚点,于是「联系人」后面另一框里的
+        // 「李秀兰」(不是户主、也不在已知身份表里)就没人管了。改成命中判断和悬空锚点
+        // 判断互不排斥,各自独立触发。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let boxes = vec![
+            Box { text: "姓名:张建国 性别:男 联系人".into(), left: 0.0, top: 200.0, right: 260.0, bottom: 220.0 },
+            Box { text: "李秀兰".into(), left: 270.0, top: 200.0, right: 340.0, bottom: 220.0 },
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(rects.iter().any(|r| r.left <= 0.0 && r.right >= 258.0), "第一框未涂:{rects:?}");
+        assert!(rects.iter().any(|r| r.left <= 270.0 && r.right >= 338.0), "李秀兰 框未涂:{rects:?}");
+    }
+
+    #[test]
+    fn same_line_lookahead_tolerates_a_couple_pixels_of_box_overlap() {
+        // item 2:OCR 切出来的相邻两框水平方向经常有一两像素重叠,严格要求
+        // `右邻框.left >= 本框.right` 会把这种正常邻框漏掉——两个分支都进不去,
+        // 「联系人」单独一框、右边紧挨着(略微重叠)的姓名框就不会被前瞻到。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let boxes = vec![
+            Box { text: "联系人".into(), left: 0.0, top: 200.0, right: 60.0, bottom: 220.0 },
+            Box { text: "李秀兰".into(), left: 58.0, top: 200.0, right: 140.0, bottom: 220.0 },
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(rects.iter().any(|r| r.left <= 58.0 && r.right >= 138.0), "重叠邻框未被前瞻到:{rects:?}");
+    }
+
+    #[test]
+    fn footer_band_survives_when_the_footer_box_itself_carries_a_unit_token() {
+        // item 3 case A:「审核者:樊笋 结果单位 mmol/L」这一框自己就含单位标记,会被
+        // `looks_like_lab_row` 判定成化验行——旧代码拿它自己的 bottom 去更新
+        // last_lab_bottom,导致它自己的 top 必然小于自己的 bottom,自己把自己排除掉。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let boxes = vec![
+            b("白细胞计数 WBC 5.6 10^9/L 4.0-10.0", 100.0),
+            b("血红蛋白 HGB 135 g/L 115-150", 130.0),
+            b("审核者:樊笋 结果单位 mmol/L", 400.0),
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(rects.iter().any(|r| r.bottom == 500.0 && r.top <= 400.0), "页脚带没出现:{rects:?}");
+    }
+
+    #[test]
+    fn footer_band_survives_when_a_unit_bearing_note_sits_below_it() {
+        // item 3 case B:页脚下面还跟着一条「结果仅供参考 mmol/L」之类的免责声明,本身
+        // 含单位标记、会被算成化验行——旧的「整页最后一条化验行的 bottom」是全局最大值,
+        // 这条声明的位置比真正的页脚还靠下,会把 last_lab_bottom 推到页脚的 top 之后,
+        // 页脚反而因为「在化验行之上」被排除。改成按候选页脚框各自检查:只要它之上有
+        // 一条真化验行(排除页脚框自己)就够,不管它下面还有什么。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let boxes = vec![
+            b("白细胞计数 WBC 5.6 10^9/L 4.0-10.0", 100.0),
+            b("血红蛋白 HGB 135 g/L 115-150", 130.0),
+            b("审核者:樊笋", 400.0),
+            b("结果仅供参考 mmol/L", 450.0),
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(
+            rects.iter().any(|r| r.bottom == 500.0 && r.top <= 400.0 && r.top > 130.0),
+            "页脚带被后面的免责声明挤没了:{rects:?}"
+        );
+    }
+
+    #[test]
+    fn three_part_id_shaped_like_a_range_does_not_collapse_the_header_band() {
+        // item 4:「标本编号 24-03-1234」里的「24-03」形状也像化验区间,但后面还跟着
+        // 「-1234」——不是区间应有的收尾方式(空白/标记/单位到行尾),不该被当成化验行。
+        // 反例:真化验行(带单位,或区间后只跟异常标记)必须继续被认出来。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let boxes = vec![
+            b("北京协和医院检验报告", 0.0),
+            b("标本编号 24-03-1234", 30.0),
+            b("血红蛋白 130 g/L 115-150", 100.0),
+            b("白细胞 5.6 4.0-10.0 ↑", 130.0),
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        // 页眉带得撑到第 100 行才收尾,不能在「标本编号」那行(top 30)就提前结束
+        assert!(
+            rects.iter().any(|r| r.top == 0.0 && r.right == 400.0 && r.bottom >= 100.0 && r.bottom < 130.0),
+            "页眉带被「标本编号 24-03-1234」提前收尾了:{rects:?}"
+        );
+        assert!(looks_like_lab_row("血红蛋白 130 g/L 115-150"));
+        assert!(looks_like_lab_row("白细胞 5.6 4.0-10.0 ↑"));
+        assert!(!looks_like_lab_row("标本编号 24-03-1234"));
+    }
+
+    #[test]
+    fn identical_rects_pushed_by_more_than_one_rule_are_deduped() {
+        // 「姓名:张建国 性别:男 联系人」这一框会被命中规则(K 层命中「张建国」)和悬空
+        // 锚点规则(以「联系人」结尾)各推一次同一个矩形——去重之后只留一份;加上前瞻
+        // 推给「李秀兰」的那一份,一共 2 个不重复的矩形,不是 3 个。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let boxes = vec![
+            Box { text: "姓名:张建国 性别:男 联系人".into(), left: 0.0, top: 200.0, right: 260.0, bottom: 220.0 },
+            Box { text: "李秀兰".into(), left: 270.0, top: 200.0, right: 340.0, bottom: 220.0 },
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert_eq!(rects.len(), 2, "去重后应该只剩 2 个矩形:{rects:?}");
+        let mut seen: Vec<Rect> = Vec::new();
+        for r in &rects {
+            assert!(!seen.contains(r), "重复矩形:{r:?}");
+            seen.push(*r);
+        }
     }
 }
