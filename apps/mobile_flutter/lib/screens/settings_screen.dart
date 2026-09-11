@@ -1,10 +1,14 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/account_flow.dart';
 import 'package:mobile_flutter/analytics.dart';
+import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
@@ -340,6 +344,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ? '点击切换到你自己的家庭档案'
                     : '点击切换到「为病人代拍」',
                 onTap: _switchMode,
+              ),
+            ],
+          ),
+          _SectionLabel('账号'),
+          _SettingsGroup(
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: AccountSession.instance.loggedIn,
+                builder: (context, loggedIn, _) => _SettingsRow(
+                  icon: Icons.person_outline,
+                  title: loggedIn ? '已登录' : '登录 / 注册',
+                  subtitle: '换机恢复、家人共享、云端识别',
+                  onTap: _busy
+                      ? null
+                      : () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => AccountScreen(
+                              flow: AccountFlow(
+                                ApiClient(bearer: () async => AccountSession.instance.access),
+                                AccountSession.instance,
+                              ),
+                            ),
+                          ),
+                        ),
+                ),
               ),
             ],
           ),
