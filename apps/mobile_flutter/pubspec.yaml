@@ -66,6 +66,12 @@ dependencies:
   signature: ^6.3.0
   posthog_flutter: ^5.33.4
   shared_preferences: ^2.5.5
+  # 账号私钥 + 档案密钥的本机存储:iOS Keychain(synchronizable 开 iCloud 钥匙串同步)/
+  # 安卓 EncryptedSharedPreferences。token/id 走上面的 shared_preferences 即可,
+  # 只有密钥材料需要这一层。
+  flutter_secure_storage: ^9.2.2
+  # 账号登录方式之一(Sign in with Apple)。
+  sign_in_with_apple: ^6.1.3
 
 dev_dependencies:
   flutter_test:
