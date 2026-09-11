@@ -8,8 +8,8 @@ use regex::Regex;
 use std::sync::OnceLock;
 
 /// 锚点 → 占位符种类。人名类 P,号码/地址类 N/A,账号句柄类 U(微信公众号等,和 P 层的
-/// URL/邮箱 U 共用同一种类,取值规则同 A:自由文本,不设字符数上限),时间类不掩
-/// (日期由 dates 偏移;时间戳无身份信息)。
+/// URL/邮箱共用同一种占位符前缀,取值规则是自己的一套——见 `take_handle_value`,句柄
+/// 形状字符集,不是 A 类那种自由文本),时间类不掩(日期由 dates 偏移;时间戳无身份信息)。
 pub const ANCHORS: &[(&str, &str)] = &[
     ("姓名", "P"), ("名字", "P"), ("联系人", "P"), ("监护人", "P"),
     ("检验者", "P"), ("审核者", "P"), ("送检医生", "P"), ("申请医生", "P"), ("报告医生", "P"),
@@ -37,7 +37,14 @@ fn is_cjk(c: char) -> bool {
 }
 
 fn is_sep(c: char) -> bool {
-    c.is_whitespace() || matches!(c, ':' | '：' | ',' | '，' | ';' | '；' | '、' | '|')
+    c.is_whitespace() || matches!(c, ':' | '：' | ',' | '，' | ';' | '；' | '、' | '|' | '。')
+}
+
+/// U 类(账号句柄,微信公众号等)允许出现在句柄里的字符——ASCII 字母/数字/`_`/`@`/`.`/`-`。
+/// 句柄和自然语言叙述没有可靠的分隔符(“公众号获取检验报告”中间没有空格/标点),只能靠
+/// 字符集本身当边界:叙述句是纯 CJK,句柄是纯 ASCII,两者在形状上不会重叠。
+fn is_handle_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '@' | '.' | '-')
 }
 
 /// 找锚点词本身用的正则(只找词,不找值——值交给下面两个函数手工扫,因为「遇到停止词
@@ -97,6 +104,25 @@ fn take_free_value(rest: &str, stop_at_digit_to_cjk: bool) -> Option<&str> {
     (end > 0).then(|| &rest[..end])
 }
 
+/// U 类(账号句柄):不像 A/N 那样"什么都行、直到分隔符为止"——句柄后面紧跟的往往是
+/// 没有分隔符的中文叙述(“关注公众号获取报告”),用 `take_free_value` 会把整句话吃掉。
+/// 改成正形状匹配:第一个字符就必须是句柄字符,否则这个锚点根本不取值(“不点火”,
+/// 原文原样放过);取到的字符也全部限定在句柄字符集里,天然在遇到 CJK 叙述、全角标点
+/// 时收尾,不需要额外的停止词表。
+fn take_handle_value(rest: &str) -> Option<&str> {
+    if !rest.starts_with(is_handle_char) {
+        return None;
+    }
+    let mut end = 0;
+    for c in rest.chars() {
+        if !is_handle_char(c) {
+            break;
+        }
+        end += c.len_utf8();
+    }
+    Some(&rest[..end])
+}
+
 pub fn apply(text: &str, map: &mut RestoreMap) -> String {
     let t = hospital_re()
         .replace_all(text, |c: &regex::Captures| map.placeholder("H", &c[0]))
@@ -123,10 +149,10 @@ pub fn apply(text: &str, map: &mut RestoreMap) -> String {
         pos += skip;
 
         let rest = &t[pos..];
-        let value = if kind == "P" {
-            take_name_value(rest)
-        } else {
-            take_free_value(rest, kind == "N")
+        let value = match kind {
+            "P" => take_name_value(rest),
+            "U" => take_handle_value(rest),
+            _ => take_free_value(rest, kind == "N"),
         };
         if let Some(v) = value {
             out.push_str(&map.placeholder(kind, v));

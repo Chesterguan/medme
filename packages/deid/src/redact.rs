@@ -232,4 +232,41 @@ mod tests {
         let r2 = redact_text("公众号:pumch_official", &known(), 0);
         assert!(!r2.text.contains("pumch_official"), "{}", r2.text);
     }
+
+    // --- fix round 2: U 类锚点上一轮补漏时自己引入的过度脱敏 ---
+
+    #[test]
+    fn u_kind_anchor_does_not_fire_without_a_handle_shaped_value() {
+        // 「公众号」后面跟的是叙述句、不是账号句柄——旧实现拿 take_free_value 一路扫到底,
+        // 把「获取检验报告」整段吃成占位符。值必须是 ASCII 句柄形状,不是就不取,原文不动。
+        let r = redact_text("扫码关注公众号获取检验报告", &known(), 0);
+        assert_eq!(r.text, "扫码关注公众号获取检验报告");
+    }
+
+    #[test]
+    fn u_kind_anchor_does_not_swallow_a_full_stop_and_beyond() {
+        let r = redact_text("详见公众号。下次复查", &known(), 0);
+        assert_eq!(r.text, "详见公众号。下次复查");
+    }
+
+    #[test]
+    fn u_kind_handle_value_stops_before_trailing_narrative() {
+        let r = redact_text("微信公众号 pumch_official 下次复查", &known(), 0);
+        assert_eq!(r.text, "微信公众号 [U1] 下次复查");
+    }
+
+    #[test]
+    fn u_kind_handle_value_stops_at_a_full_stop() {
+        let r = redact_text("公众号:xiehe_hospital。", &known(), 0);
+        assert_eq!(r.text, "公众号:[U1]。");
+    }
+
+    #[test]
+    fn a_kind_value_stops_at_a_full_stop_too() {
+        // is_sep 加了「。」之后,不只是 U 类受益——A 类(民族/职业等)一样不该把全角句号
+        // 后面的下一句吞进去。
+        let unrelated = KnownIdentity { name: "赵六".into(), id_number: None, phone: None };
+        let r = redact_text("民族汉族。职业教师", &unrelated, 0);
+        assert_eq!(r.text, "民族[A1]。职业[A2]");
+    }
 }
