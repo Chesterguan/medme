@@ -476,6 +476,52 @@ mod tests {
         );
     }
 
+    /// review round 2:`probe_key_mismatch` 的第一版把"从未被任何密钥封过的
+    /// 纯 chain-only 日志"也判成了密钥不匹配——直接挡住了"已有的本机保险箱
+    /// 第一次开云同步"这个受支持的升级路径(`open_vault` 打开、写过事件、
+    /// 从未 keyed 过,现在第一次生成档案密钥、调 `sync_open_profile_vault`)。
+    /// 必须能顺利升级,不多不少还是那一个设备段文件。
+    #[test]
+    fn first_time_key_upgrade_on_an_existing_local_vault_succeeds() {
+        let _guard = VAULT_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempdir().unwrap();
+        let docs_dir = home.path().join("docs");
+        let data_dir = home.path().join("data");
+        crate::api::vault::open_vault(
+            docs_dir.to_string_lossy().to_string(),
+            data_dir.to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+        crate::api::vault::ingest_bytes("r.txt".into(), b"WBC 5.0".to_vec()).unwrap();
+        assert!(!sync_current_vault_is_keyed(), "普通 open_vault 打开的不是 keyed");
+
+        let log_dir = docs_dir.join("vault").join("log");
+        let segment_names = |dir: &std::path::Path| -> Vec<std::ffi::OsString> {
+            let mut v: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name())
+                .collect();
+            v.sort();
+            v
+        };
+        let before = segment_names(&log_dir);
+        assert_eq!(before.len(), 1, "本机 unkeyed vault 只有一个设备段");
+
+        let fresh_key = sync_profile_key_new();
+        sync_open_profile_vault(
+            docs_dir.to_string_lossy().to_string(),
+            data_dir.to_string_lossy().to_string(),
+            fresh_key,
+        )
+        .unwrap();
+        assert!(sync_current_vault_is_keyed(), "升级后应报告为 keyed");
+
+        let after = segment_names(&log_dir);
+        assert_eq!(before, after, "升级封 mac 不该多出/少掉任何段文件");
+    }
+
     /// review round 1 #1(第二部分):`VaultState.profile_key` 要真被读——
     /// keyed 打开后为 true,切回普通 `open_vault`(unkeyed 路径,行为不变)后
     /// 应该翻回 false。
