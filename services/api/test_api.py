@@ -274,6 +274,190 @@ def test_device_approval_handoff():
     assert client.get("/v1/devices/approval", params={"device_id": "new"}, headers=hb).json()["approved_priv"] is None
 
 
+# ---- fix round 1: item 1 —— grant_upsert 不能把 owner 降级 ----
+
+def test_grant_create_self_target_rejected_owner_unchanged():
+    owner = login("13800000090", "o1")
+    ho = _h(owner["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    r = client.post(f"/v1/profiles/{pid}/grants", json={"grantee_account_id": owner["account_id"], "role": "editor",
+                                                          "days": None, "wrapped_profile_key": b64(b"evil")}, headers=ho)
+    assert r.status_code == 400
+    with dbm.connect() as conn:
+        rows = conn.execute("SELECT role FROM grants WHERE profile_id=%s", (pid,)).fetchall()
+    assert [row[0] for row in rows] == ["owner"]
+
+
+def test_invite_redeem_by_issuer_rejected_owner_unchanged():
+    owner = login("13800000091", "o1")
+    ho = _h(owner["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    token = "S" * 32
+    inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "editor", "days": None,
+        "token_hash": hashlib.sha256(token.encode()).hexdigest(), "wrapped_key_by_token": b64(b"wk-t"),
+        "invite_ttl_s": 600}, headers=ho).json()
+    r = client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=ho)
+    assert r.status_code == 400
+    with dbm.connect() as conn:
+        rows = conn.execute("SELECT role FROM grants WHERE profile_id=%s", (pid,)).fetchall()
+    assert [row[0] for row in rows] == ["owner"]
+
+
+# ---- fix round 1: item 2 —— 邀请兑换的竞态 + 用 DB 时间 ----
+
+def test_invite_redeem_expired_via_db_time_is_410():
+    owner = login("13800000092", "o1")
+    doc = login("13800000093", "d1")
+    ho, hd = _h(owner["access"]), _h(doc["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    token = "E" * 32
+    inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 5,
+        "token_hash": hashlib.sha256(token.encode()).hexdigest(), "wrapped_key_by_token": b64(b"wk-t"),
+        "invite_ttl_s": 600}, headers=ho).json()
+    with dbm.connect() as conn:
+        conn.execute("UPDATE invites SET expires_at = now() - interval '1 second' WHERE id=%s", (inv["invite_id"],))
+        conn.commit()
+    r = client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hd)
+    assert r.status_code == 410
+
+
+def test_invite_redeem_second_attempt_410():
+    owner = login("13800000094", "o1")
+    doc = login("13800000095", "d1")
+    ho, hd = _h(owner["access"]), _h(doc["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    token = "F" * 32
+    inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 5,
+        "token_hash": hashlib.sha256(token.encode()).hexdigest(), "wrapped_key_by_token": b64(b"wk-t"),
+        "invite_ttl_s": 600}, headers=ho).json()
+    assert client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hd).status_code == 200
+    assert client.post("/v1/invites/redeem", json={"invite_id": inv["invite_id"], "token": token}, headers=hd).status_code == 410
+
+
+# ---- fix round 1: item 3 —— 设备批准要绑定发起批准的那台设备 ----
+
+def test_untrusted_device_cannot_approve():
+    a = login("13800000096", "d1")
+    b = login("13800000096", "d2")
+    hb = _h(b["access"], "d2")
+    client.post("/v1/devices/request", json={"eph_public": b64(b"E" * 32)}, headers=hb)
+    # d2 自己还挂在"等批准"状态,不可信,不能批准任何设备(包括它自己)
+    r = client.post("/v1/devices/approve", json={"device_id": "d2", "approved_priv": b64(b"x")}, headers=hb)
+    assert r.status_code == 403
+
+
+def test_device_approve_and_approval_scoped_to_account_not_just_device_id():
+    a_old = login("13800000097", "old")
+    a_new = login("13800000097", "new2")
+    attacker = login("13800000098", "x1")
+    h_old, h_new = _h(a_old["access"], "old"), _h(a_new["access"], "new2")
+    client.post("/v1/devices/request", json={"eph_public": b64(b"E" * 32)}, headers=h_new)
+    assert client.post("/v1/devices/approve", json={"device_id": "new2", "approved_priv": b64(b"sealed")}, headers=h_old).status_code == 200
+
+    # 攻击者拿自己的账号 token,冒充 X-Device-Id="new2" 去批准/取批准——account_id
+    # 那一列会把它挡在门外,不能碰到 A 账号下真正的 new2 那一行。approve 还会先
+    # 撞上"批准者自己的设备必须可信"那道检查(攻击者账号下根本没有 new2 这台设备,
+    # 天然不可信)——403 也好、404 也好,只要没碰到 A 的那一行就算安全。
+    h_attacker_as_new2 = {"Authorization": f"Bearer {attacker['access']}", "X-Device-Id": "new2"}
+    r = client.post("/v1/devices/approve", json={"device_id": "new2", "approved_priv": b64(b"evil")}, headers=h_attacker_as_new2)
+    assert r.status_code in (403, 404)
+    r = client.get("/v1/devices/approval", params={"device_id": "new2"}, headers=h_attacker_as_new2)
+    assert r.status_code == 200 and r.json()["approved_priv"] is None
+
+    with dbm.connect() as conn:
+        row = conn.execute("SELECT approved_priv FROM devices WHERE account_id=%s AND device_id='new2'", (a_old["account_id"],)).fetchone()
+    assert row[0] == b"sealed"
+
+
+# ---- fix round 1: item 4 —— /v1/accounts/lookup 要走 normalize_phone,且限流 ----
+
+def test_accounts_lookup_normalizes_plus86_and_rate_limits():
+    alice = login("13800000099", "a1")
+    bob = login("13800000100", "b1")
+    ha = _h(alice["access"])
+    keys = {"public_key": b64(b"K" * 32), "wrapped_priv_pw": b64(b"pw"), "wrapped_priv_rc": b64(b"rc"),
+            "kdf_salt": b64(b"s" * 16), "kdf_params": {"m_kib": 65536, "t": 3, "p": 1}}
+    client.put("/v1/account/keys", json=keys, headers=_h(bob["access"]))
+    r = client.get("/v1/accounts/lookup", params={"phone": "+8613800000100"}, headers=ha)
+    assert r.status_code == 200 and r.json()["account_id"] == bob["account_id"]
+    for _ in range(19):
+        assert client.get("/v1/accounts/lookup", params={"phone": "13800000100"}, headers=ha).status_code == 200
+    assert client.get("/v1/accounts/lookup", params={"phone": "13800000100"}, headers=ha).status_code == 429
+
+
+# ---- fix round 1: item 5 —— 带 DB 断言的负授权测试 ----
+
+def test_grant_delete_by_non_owner_forbidden_and_row_unchanged():
+    owner = login("13800000101", "o1")
+    outsider = login("13800000102", "x1")
+    ho, hx = _h(owner["access"]), _h(outsider["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    with dbm.connect() as conn:
+        owner_gid = conn.execute("SELECT id FROM grants WHERE profile_id=%s AND role='owner'", (pid,)).fetchone()[0]
+    assert client.delete(f"/v1/profiles/{pid}/grants/{owner_gid}", headers=hx).status_code == 403
+    with dbm.connect() as conn:
+        row = conn.execute("SELECT role FROM grants WHERE id=%s", (owner_gid,)).fetchone()
+    assert row[0] == "owner"
+
+
+def test_invite_create_by_non_owner_forbidden():
+    owner = login("13800000103", "o1")
+    outsider = login("13800000104", "x1")
+    ho, hx = _h(owner["access"]), _h(outsider["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    r = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 5,
+        "token_hash": hashlib.sha256(b"x").hexdigest(), "wrapped_key_by_token": b64(b"x"), "invite_ttl_s": 60}, headers=hx)
+    assert r.status_code == 403
+
+
+def test_account_with_no_grant_forbidden_on_grant_create():
+    owner = login("13800000105", "o1")
+    stranger = login("13800000106", "s1")
+    ho, hs = _h(owner["access"]), _h(stranger["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    r = client.post(f"/v1/profiles/{pid}/grants", json={"grantee_account_id": stranger["account_id"], "role": "viewer",
+        "days": 5, "wrapped_profile_key": b64(b"x")}, headers=hs)
+    assert r.status_code == 403
+
+
+def test_cross_account_grant_key_backfill_forbidden_and_row_unchanged():
+    owner = login("13800000107", "o1")
+    bob = login("13800000108", "b1")
+    doc = login("13800000109", "d1")
+    ho, hd = _h(owner["access"]), _h(doc["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    gid = client.post(f"/v1/profiles/{pid}/grants", json={"grantee_account_id": bob["account_id"], "role": "editor",
+        "days": None, "wrapped_profile_key": b64(b"wk-bob")}, headers=ho).json()["grant_id"]
+    r = client.put(f"/v1/profiles/{pid}/grants/{gid}/key", json={"wrapped_profile_key": b64(b"evil")}, headers=hd)
+    assert r.status_code == 403
+    with dbm.connect() as conn:
+        row = conn.execute("SELECT wrapped_profile_key FROM grants WHERE id=%s", (gid,)).fetchone()
+    assert row[0] == b"wk-bob"
+
+
+def test_keys_get_404_when_unset():
+    a = login("13800000110", "a1")
+    assert client.get("/v1/account/keys", headers=_h(a["access"])).status_code == 404
+
+
+def test_no_bearer_401():
+    assert client.get("/v1/profiles").status_code == 401
+
+
+# ---- fix round 1: item 7 —— days/invite_ttl_s 上限 ----
+
+def test_invite_days_capped_at_grant_doctor_days():
+    owner = login("13800000111", "o1")
+    ho = _h(owner["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 3650,
+        "token_hash": hashlib.sha256(b"cap").hexdigest(), "wrapped_key_by_token": b64(b"x"),
+        "invite_ttl_s": 999999}, headers=ho).json()
+    with dbm.connect() as conn:
+        row = conn.execute("SELECT grant_days FROM invites WHERE id=%s", (inv["invite_id"],)).fetchone()
+    assert row[0] == dbm.GRANT_DOCTOR_DAYS == 15
+
+
 if __name__ == "__main__":
     # `python3 services/api/test_api.py`:与 services/claim-signer/test_handler.py 同风格的
     # 无 pytest 自检——手动跑每个 test_* 函数,复用 `clean` fixture 的清库逻辑,

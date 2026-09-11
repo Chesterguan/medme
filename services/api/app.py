@@ -128,6 +128,12 @@ def keys_get(aid=Depends(account_dep), conn=Depends(conn_dep)):
 
 @app.get("/v1/accounts/lookup")
 def account_lookup(phone: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    try:
+        phone = auth.normalize_phone(phone)
+    except auth.AuthError:
+        raise HTTPException(400, "bad phone")
+    if not db.lookup_rate_ok(conn, aid):
+        raise HTTPException(429, "rate_limited")
     r = db.account_lookup_by_phone_hash(conn, auth.phone_hash(phone))
     if not r:
         raise HTTPException(404, "not found")
@@ -149,7 +155,11 @@ def grant_create(pid: str, body: dict, aid=Depends(account_dep), conn=Depends(co
     _require_role(conn, pid, aid, {"owner"})
     if body["role"] not in ("editor", "viewer"):
         raise HTTPException(400, "role")
+    if body["grantee_account_id"] == aid:
+        raise HTTPException(400, "cannot grant to self")
     days = body.get("days")
+    if days:
+        days = min(int(days), db.GRANT_DOCTOR_DAYS)
     exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)) if days else None
     gid = db.grant_upsert(conn, pid, body["grantee_account_id"], body["role"], exp, db.b64d(body["wrapped_profile_key"]), aid)
     return {"grant_id": gid}
@@ -158,14 +168,16 @@ def grant_create(pid: str, body: dict, aid=Depends(account_dep), conn=Depends(co
 @app.delete("/v1/profiles/{pid}/grants/{gid}")
 def grant_delete(pid: str, gid: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
     _require_role(conn, pid, aid, {"owner"})
-    db.grant_delete(conn, pid, gid)
+    if db.grant_delete(conn, pid, gid) == 0:
+        raise HTTPException(404, "not found")
     return {"ok": True}
 
 
 @app.put("/v1/profiles/{pid}/grants/{gid}/key")
 def grant_set_key(pid: str, gid: str, body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
     _require_role(conn, pid, aid, {"owner", "editor", "viewer"})
-    db.grant_set_key(conn, pid, gid, aid, body["wrapped_profile_key"])
+    if db.grant_set_key(conn, pid, gid, aid, body["wrapped_profile_key"]) == 0:
+        raise HTTPException(404, "not found")
     return {"ok": True}
 
 
@@ -182,12 +194,15 @@ def invite_redeem(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
         raise HTTPException(404, "not found")
     if status == "gone":
         raise HTTPException(410, "used or expired")
+    if status == "self":
+        raise HTTPException(400, "cannot redeem own invite")
     return payload
 
 
 @app.post("/v1/devices/request")
 def device_request(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep), x_device_id: str = Header(default="")):
-    db.device_request(conn, aid, body.get("device_id") or x_device_id, body["eph_public"])
+    if db.device_request(conn, aid, body.get("device_id") or x_device_id, body["eph_public"]) == 0:
+        raise HTTPException(404, "device not found")
     return {"ok": True}
 
 
@@ -197,11 +212,20 @@ def devices_list(aid=Depends(account_dep), conn=Depends(conn_dep)):
 
 
 @app.post("/v1/devices/approve")
-def device_approve(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
-    db.device_approve(conn, aid, body["device_id"], body["approved_priv"])
+def device_approve(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep), x_device_id: str = Header(default="")):
+    # 批准者必须是自己账号下一台已经可信的设备——挂起中(等批准/等取走)的设备
+    # 不能批准任何设备,包括它自己。
+    if not db.device_is_trusted(conn, aid, x_device_id):
+        raise HTTPException(403, "approving device not trusted")
+    if db.device_approve(conn, aid, body["device_id"], body["approved_priv"]) == 0:
+        raise HTTPException(404, "device not found")
     return {"ok": True}
 
 
 @app.get("/v1/devices/approval")
-def device_approval(device_id: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
+def device_approval(device_id: str, aid=Depends(account_dep), conn=Depends(conn_dep), x_device_id: str = Header(default="")):
+    # 只能取自己那台设备的批准——查询参数必须等于调用者自报的 X-Device-Id,
+    # 否则不查库、直接当作不存在,免得设备 A 靠猜 device_id 拿到设备 B 的密文。
+    if not x_device_id or x_device_id != device_id:
+        raise HTTPException(404, "not found")
     return {"approved_priv": db.device_take_approval(conn, aid, device_id)}
