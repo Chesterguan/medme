@@ -220,4 +220,16 @@ mod tests {
         assert_eq!(n1, Some("90051065"), "{:?}", r.map.placeholders);
         assert!(r.text.contains("病区三"), "{}", r.text);
     }
+
+    #[test]
+    fn wechat_official_account_handle_is_masked() {
+        // 微信公众号句柄标识的是医院/科室账号,不是号码/URL/邮箱形状,P 层三个模式都
+        // 逮不到它;补一个 U 类锚点,和 A 类一样自由取值到下一个分隔符/锚点词为止。
+        let r = redact_text("微信公众号 pumch_official 咨询电话010-69156114", &known(), 0);
+        assert!(!r.text.contains("pumch_official"), "{}", r.text);
+        assert!(r.text.contains("咨询电话"), "{}", r.text);
+
+        let r2 = redact_text("公众号:pumch_official", &known(), 0);
+        assert!(!r2.text.contains("pumch_official"), "{}", r2.text);
+    }
 }
