@@ -8,13 +8,14 @@ pub mod materialize;
 pub mod query;
 pub mod relocate;
 pub mod schema;
+pub mod sync_io;
 pub mod text;
 pub mod tokenize;
 pub mod types;
 
 pub use audit::AuditEntry;
 pub use error::MedmeError;
-pub use event::{DocRef, Event};
+pub use event::{DocRef, Event, LogEntry};
 pub use materialize::generate_device_id;
 pub use query::{extract_provider, SearchHit, TimelineEntry};
 pub use text::normalize_cjk_radicals;
@@ -195,6 +196,34 @@ impl Vault {
         device_id: &str,
     ) -> Result<Vault, MedmeError> {
         Self::open_split_resilient(root, &root.join("medme.db"), device_id)
+    }
+
+    /// [`Vault::open_split_resilient`] + MAC key:云同步档案的开法。所有设备用同一把
+    /// 档案密钥当 MAC key,于是拉回来的 peer 事件能通过 `verify_segment`。
+    pub fn open_split_resilient_with_key(
+        truth_root: &Path,
+        db_path: &Path,
+        device_id: &str,
+        key: &[u8],
+    ) -> Result<Vault, MedmeError> {
+        match Self::open_split_with_key(truth_root, db_path, device_id, key) {
+            Ok(v) => Ok(v),
+            Err(first) => {
+                let truth_present =
+                    truth_root.join("log").is_dir() || truth_root.join("objects").is_dir();
+                if !truth_present {
+                    return Err(first);
+                }
+                for sidecar in db_sidecar_paths(db_path) {
+                    let _ = std::fs::remove_file(&sidecar);
+                }
+                Self::open_split_with_key(truth_root, db_path, device_id, key).map_err(|second| {
+                    MedmeError::Other(format!(
+                        "vault open failed and rebuilding the db from the log also failed: {second}"
+                    ))
+                })
+            }
+        }
     }
 
     /// Shared open logic for [`Vault::open`], [`Vault::open_with_device_id`] and

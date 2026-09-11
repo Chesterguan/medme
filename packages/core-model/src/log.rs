@@ -277,6 +277,39 @@ impl EventLog {
     pub fn max_seq(&self) -> Result<i64, MedmeError> {
         Ok(self.read_all()?.iter().map(|e| e.seq).max().unwrap_or(0))
     }
+
+    /// 某设备段当前最大 seq(无段 = 0)。推送水位用。
+    pub fn tail_seq_of_device(&self, device_id: &str) -> Result<i64, MedmeError> {
+        let path = self.device_segment(device_id);
+        if !path.exists() {
+            return Ok(0);
+        }
+        Ok(read_segment_entries(&path)?
+            .iter()
+            .map(|e| e.seq)
+            .max()
+            .unwrap_or(0))
+    }
+
+    /// 原样落盘一条**已封好**的 peer 条目(其 `prev_hash`/`mac` 由源设备在自己那次
+    /// `append` 时算好,通常用账号共享密钥)——不重新封链、不用本机 key 重算 MAC。
+    ///
+    /// 这一点是同步安全性的关键:如果这里像 [`EventLog::append`] 一样用本机 key
+    /// 重新 `seal`,那么本机随便攒一条假 peer 条目也能通过本机验证(反正封/验用的
+    /// 是同一把本机 key,自己骗自己必然通过)——MAC 想证明的"这条确实是持有正确
+    /// 密钥的设备写的"这件事就彻底失效了。原样写入则不同:段落链哈希只由条目内容
+    /// 决定(与 key 无关),原样转发能完整保留链;而 MAC 仍是源设备当时用的那把
+    /// key 算出来的,`read_all`/`verify_segment` 用本机 key 重新验证时,key 不对
+    /// 就验不过 → 该条目被隔离,不会被当作可信数据吃进来。
+    pub(crate) fn append_sealed(&self, entry: &LogEntry) -> Result<(), MedmeError> {
+        let path = self.device_segment(&entry.device_id);
+        let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+        let line = serde_json::to_string(entry)?;
+        writeln!(f, "{line}")?;
+        f.flush()?;
+        f.sync_all()?;
+        Ok(())
+    }
 }
 
 /// Parse a segment file into entries in FILE (append) order. Empty lines are
