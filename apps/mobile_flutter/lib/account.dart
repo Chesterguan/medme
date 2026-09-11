@@ -53,7 +53,10 @@ class AccountSession {
   Future<void> clear() async {
     final p = await SharedPreferences.getInstance();
     for (final k in ['acct_id', 'acct_access', 'acct_refresh', 'acct_pub']) { await p.remove(k); }
-    await _secure.delete(key: 'acct_priv');
+    // `deleteAll` 而不是逐个 delete:AccountSession 是这个 app 里唯一用 secure storage
+    // 的地方,它的命名空间下只会有账号私钥(acct_priv)和各档案密钥(pk_<cloudId>)。
+    // 换账号必须把上一个账号的档案密钥也清掉,不然共享设备上账号 B 能读到账号 A 的密钥。
+    await _secure.deleteAll();
     accountId = access = refresh = null; publicKey = privateKey = null;
     loggedIn.value = false;
   }
@@ -64,4 +67,17 @@ class AccountSession {
   }
 
   Future<void> putProfileKey(String cloudId, Uint8List key) => _secure.write(key: 'pk_$cloudId', value: base64Encode(key));
+
+  /// 测试专用:把内存态重置成刚启动、还没 `ensureLoaded()` 的样子,不碰底层存储。
+  @visibleForTesting
+  void resetForTest() {
+    _loaded = false;
+    accountId = access = refresh = null;
+    publicKey = privateKey = null;
+    loggedIn.value = false;
+  }
+
+  /// 测试专用:核实 iOS secure storage 选项确实开了 `synchronizable`。
+  @visibleForTesting
+  static Map<String, String> get iosOptionsForTest => _secure.iOptions.toMap();
 }

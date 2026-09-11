@@ -24,12 +24,14 @@ class ApiClient {
   final String base;
   final Future<String?> Function()? bearer;
 
-  Future<dynamic> _json(String method, String path, {Object? body, Map<String, String>? query}) async {
+  Future<dynamic> _json(String method, String path, {Object? body, Map<String, String>? query, Map<String, String>? headers}) async {
     final uri = Uri.parse('$base$path').replace(queryParameters: query);
     return Net.run((client) async {
       final req = await client.openUrl(method, uri);
       final tok = await bearer?.call();
       if (tok != null) req.headers.set('authorization', 'Bearer $tok');
+      // 额外 header(如后端要求的 X-Device-Id)在 bearer 之后加,不影响 Authorization。
+      headers?.forEach(req.headers.set);
       if (body != null) {
         req.headers.contentType = ContentType.json;
         req.write(jsonEncode(body));
@@ -47,10 +49,13 @@ class ApiClient {
     });
   }
 
-  Future<Map<String, dynamic>> postJson(String path, Object body) async => (await _json('POST', path, body: body)) as Map<String, dynamic>;
-  Future<dynamic> getJson(String path, {Map<String, String>? query}) => _json('GET', path, query: query);
-  Future<Map<String, dynamic>> putJson(String path, Object body) async => (await _json('PUT', path, body: body)) as Map<String, dynamic>;
-  Future<void> delete(String path) => _json('DELETE', path);
+  Future<Map<String, dynamic>> postJson(String path, Object body, {Map<String, String>? headers}) async =>
+      (await _json('POST', path, body: body, headers: headers)) as Map<String, dynamic>;
+  Future<dynamic> getJson(String path, {Map<String, String>? query, Map<String, String>? headers}) =>
+      _json('GET', path, query: query, headers: headers);
+  Future<Map<String, dynamic>> putJson(String path, Object body, {Map<String, String>? headers}) async =>
+      (await _json('PUT', path, body: body, headers: headers)) as Map<String, dynamic>;
+  Future<void> delete(String path, {Map<String, String>? headers}) => _json('DELETE', path, headers: headers);
 
   /// 直传 OSS 预签名地址(不带 Bearer)。Content-Type 必须与签名一致。
   Future<void> putBytes(String url, Uint8List bytes) => Net.run((client) async {

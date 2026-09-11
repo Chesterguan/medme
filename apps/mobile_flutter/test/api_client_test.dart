@@ -14,7 +14,11 @@ void main() {
       if (req.uri.path == '/v1/echo') {
         final body = await utf8.decodeStream(req);
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode({'auth': auth, 'got': jsonDecode(body)}));
+        req.response.write(jsonEncode({
+          'auth': auth,
+          'got': jsonDecode(body),
+          'deviceId': req.headers.value('x-device-id'),
+        }));
       } else if (req.uri.path == '/v1/nope') {
         req.response.statusCode = 401;
         req.response.write('{"detail":"expired"}');
@@ -36,5 +40,12 @@ void main() {
   test('401 抛 ApiUnauthorized,其它抛 ApiFailed 带 detail', () async {
     expect(() => api.getJson('/v1/nope'), throwsA(isA<ApiUnauthorized>()));
     expect(() => api.getJson('/v1/other'), throwsA(predicate((e) => e is ApiFailed && e.status == 500 && e.message == 'boom')));
+  });
+
+  test('传入的 headers(如 X-Device-Id)会带到请求里', () async {
+    final r = await api.postJson('/v1/echo', {'a': 1}, headers: {'X-Device-Id': 'd1'});
+    expect(r['deviceId'], 'd1');
+    // bearer 仍然在,headers 是加的不是替换的。
+    expect(r['auth'], 'Bearer tok');
   });
 }
