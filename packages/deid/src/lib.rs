@@ -8,7 +8,7 @@ pub mod patterns;
 pub mod redact;
 pub mod verify;
 pub use gate::assert_clean;
-pub use redact::{redact_text, restore, KnownIdentity, Redacted, RestoreMap};
+pub use redact::{redact_boxes, redact_text, restore, Box, KnownIdentity, Redacted, Rect, RestoreMap};
 pub use verify::{parse_extraction, verify, DiagnosisItem, Extraction, LabItem, MedItem, Mode, Verified};
 
 #[derive(Debug, thiserror::Error)]

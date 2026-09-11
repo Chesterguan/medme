@@ -47,6 +47,98 @@ pub fn restore(text: &str, map: &RestoreMap) -> String {
     out
 }
 
+// --- spec §1(图片档):OCR 行框 → 哪些框要涂黑 -------------------------------
+//
+// `deid` 不依赖 `ocr`(不能把识别引擎拖进这个纯函数 crate),所以这里镜像一份
+// 轻量的框/矩形类型;调用方(桌面/移动端)负责把 `ocr::LayoutLine`/`PaintRect`
+// 和这里的 `Box`/`Rect` 相互转换。
+
+/// 一条 OCR 行:文本 + 在图片像素坐标系里的框(origin 左上)。
+pub struct Box {
+    pub text: String,
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+/// 要涂黑的矩形,像素坐标,与传入的 [`Box`] 同一坐标系。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rect {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+/// 像不像一条化验行:含数字,且含区间分隔符或常见单位。
+fn looks_like_lab_row(t: &str) -> bool {
+    let has_digit = t.chars().any(|c| c.is_ascii_digit());
+    has_digit
+        && (t.contains('-')
+            || t.contains('~')
+            || ["/L", "%", "mmol", "g/L", "umol", "μmol", "U/L"].iter().any(|u| t.contains(u)))
+}
+
+/// 像不像页脚锚点行(检验者/审核者/打印时间/报告医生等)。
+fn looks_like_footer(t: &str) -> bool {
+    ["检验者", "审核者", "打印时间", "报告医生", "报告医师", "审核医生"].iter().any(|a| t.contains(a))
+}
+
+/// 涂黑边距:线框高度的 2%,至少 2px——盖住反走样的笔画毛边。
+fn margin_for(line_height: f32) -> f32 {
+    (line_height * 0.02).max(2.0)
+}
+
+/// 裁到页面范围内,防止越界矩形。
+fn clip(r: Rect, page_w: f32, page_h: f32) -> Rect {
+    Rect {
+        left: r.left.max(0.0).min(page_w),
+        top: r.top.max(0.0).min(page_h),
+        right: r.right.max(0.0).min(page_w),
+        bottom: r.bottom.max(0.0).min(page_h),
+    }
+}
+
+/// 决定哪些 OCR 行框要涂黑(图片档脱敏,spec §1)。
+///
+/// 三类矩形,均按各自参考行的行高留 2%(至少 2px)边距、裁到页面范围:
+/// 1. 逐框跑 `redact_text(...,0)`——文本发生变化(命中 K/A/P 三层任一)的整框涂黑;
+///    命中判定与 `redact_text` 完全一致,不另建第二份判断。
+/// 2. 页眉带:从页面顶部到第一条「像化验行」的框顶,整宽涂黑。没有化验行 → 不产生页眉带
+///    (不是整页兜底涂黑)。
+/// 3. 页脚带:从第一条含检验者/审核者/打印时间/报告医生等锚点的框顶到页面底部,整宽涂黑。
+///    没有这类锚点行 → 不产生页脚带。
+///
+/// 日期偏移、单纯的锚点值替换不影响本函数的判定基准——只看框内文本改没改。
+pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f32) -> Vec<Rect> {
+    let mut out = Vec::new();
+
+    for b in boxes {
+        let r = redact_text(&b.text, known, 0);
+        if r.text != b.text {
+            let m = margin_for(b.bottom - b.top);
+            out.push(clip(
+                Rect { left: b.left - m, top: b.top - m, right: b.right + m, bottom: b.bottom + m },
+                page_w,
+                page_h,
+            ));
+        }
+    }
+
+    if let Some(first) = boxes.iter().filter(|b| looks_like_lab_row(&b.text)).min_by(|a, c| a.top.total_cmp(&c.top)) {
+        let m = margin_for(first.bottom - first.top);
+        out.push(clip(Rect { left: 0.0, top: 0.0, right: page_w, bottom: first.top + m }, page_w, page_h));
+    }
+
+    if let Some(foot) = boxes.iter().filter(|b| looks_like_footer(&b.text)).min_by(|a, c| a.top.total_cmp(&c.top)) {
+        let m = margin_for(foot.bottom - foot.top);
+        out.push(clip(Rect { left: 0.0, top: foot.top - m, right: page_w, bottom: page_h }, page_w, page_h));
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +360,79 @@ mod tests {
         let unrelated = KnownIdentity { name: "赵六".into(), id_number: None, phone: None };
         let r = redact_text("民族汉族。职业教师", &unrelated, 0);
         assert_eq!(r.text, "民族[A1]。职业[A2]");
+    }
+
+    // --- redact_boxes: 图片档「哪些框要涂」-----------------------------------
+
+    #[test]
+    fn redact_boxes_paints_hits_and_header_footer_bands() {
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let b = |t: &str, top: f32| Box { text: t.into(), left: 10.0, top, right: 300.0, bottom: top + 20.0 };
+        let boxes = vec![
+            b("北京协和医院检验报告", 0.0),
+            b("姓名:张建国 性别:男 年龄:60岁", 30.0),
+            b("白细胞计数 WBC 5.6 10^9/L 4.0-10.0", 100.0),
+            b("血红蛋白 HGB 135 g/L 115-150", 130.0),
+            b("审核者:樊笋 检验者:王涛", 400.0),
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        // 页眉带:0..100 整宽;页脚带:400..500 整宽;命中框各一
+        assert!(rects.iter().any(|r| r.top == 0.0 && r.bottom >= 100.0 && r.left == 0.0 && r.right == 400.0), "{rects:?}");
+        assert!(rects.iter().any(|r| r.top <= 400.0 && r.bottom == 500.0 && r.left == 0.0), "{rects:?}");
+        // 化验行不涂(整框——右边界还是 300,不是页眉/页脚那种整宽带)
+        assert!(!rects.iter().any(|r| (r.top - 100.0).abs() < 1.0 && r.right == 300.0), "{rects:?}");
+        assert!(!rects.iter().any(|r| (r.top - 130.0).abs() < 1.0 && r.right == 300.0), "{rects:?}");
+    }
+
+    #[test]
+    fn redact_boxes_no_lab_row_means_no_header_band_not_whole_page() {
+        // 没有任何一行「像化验行」——不该拿整页兜底涂黑。
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let boxes = vec![
+            Box { text: "北京协和医院检验报告".into(), left: 0.0, top: 0.0, right: 300.0, bottom: 20.0 },
+            Box { text: "姓名:张建国".into(), left: 0.0, top: 30.0, right: 300.0, bottom: 50.0 },
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        // 只有命中框(姓名那行),没有 left=0/right=page_w 的整宽页眉带
+        assert!(!rects.iter().any(|r| r.left == 0.0 && r.right == 400.0 && r.top == 0.0));
+        assert!(rects.iter().any(|r| r.top < 30.0)); // 命中框加了 margin,能往上探一点,但不到 0
+    }
+
+    #[test]
+    fn redact_boxes_no_footer_anchor_means_no_footer_band() {
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let boxes = vec![Box { text: "白细胞 5.6 10^9/L 4.0-10.0".into(), left: 0.0, top: 100.0, right: 300.0, bottom: 120.0 }];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert!(!rects.iter().any(|r| r.bottom == 500.0), "{rects:?}");
+    }
+
+    #[test]
+    fn redact_boxes_margin_is_two_percent_of_line_height_min_2px() {
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        // 行高 20 → 2% = 0.4,取下限 2px。
+        let boxes = vec![Box { text: "姓名:张建国".into(), left: 50.0, top: 100.0, right: 200.0, bottom: 120.0 }];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        let r = rects.iter().find(|r| (r.top - 98.0).abs() < 0.01).expect("命中框应扩 2px 边距");
+        assert_eq!(r.left, 48.0);
+        assert_eq!(r.right, 202.0);
+        assert_eq!(r.bottom, 122.0);
+
+        // 行高 200 → 2% = 4px,超过下限,应按 4px 算。
+        let boxes2 = vec![Box { text: "姓名:张建国".into(), left: 50.0, top: 100.0, right: 200.0, bottom: 300.0 }];
+        let rects2 = redact_boxes(&boxes2, &k, 400.0, 500.0);
+        let r2 = rects2.iter().find(|r| (r.top - 96.0).abs() < 0.01).expect("大行高按 2% 扩边距");
+        assert_eq!(r2.bottom, 304.0);
+    }
+
+    #[test]
+    fn redact_boxes_clips_to_page_bounds() {
+        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        // 贴着页面边缘的命中框,加了 margin 之后不能越界。
+        let boxes = vec![Box { text: "姓名:张建国".into(), left: 0.0, top: 0.0, right: 400.0, bottom: 20.0 }];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].left, 0.0);
+        assert_eq!(rects[0].top, 0.0);
+        assert_eq!(rects[0].right, 400.0);
     }
 }
