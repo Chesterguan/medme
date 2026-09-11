@@ -15,6 +15,7 @@
 
 use crate::event::{LogEntry, GENESIS_HASH};
 use crate::MedmeError;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -289,6 +290,21 @@ impl EventLog {
             .map(|e| e.seq)
             .max()
             .unwrap_or(0))
+    }
+
+    /// 某设备段**磁盘上现存**的全部 seq(含未通过 MAC/链校验、被隔离的条目)。
+    /// `append_peer_entries` 的去重要按「磁盘上确实有这个 (device_id, seq)」精确
+    /// 判断,而不是只看 `seq <= tail`——否则一条中间被跳过的 seq 会被误判成
+    /// "已经有了"而永久丢失(见 sync_io 的 `PeerAppendOutcome::out_of_order`)。
+    pub(crate) fn existing_seqs_of_device(
+        &self,
+        device_id: &str,
+    ) -> Result<HashSet<i64>, MedmeError> {
+        let path = self.device_segment(device_id);
+        if !path.exists() {
+            return Ok(HashSet::new());
+        }
+        Ok(read_segment_entries(&path)?.iter().map(|e| e.seq).collect())
     }
 
     /// 原样落盘一条**已封好**的 peer 条目(其 `prev_hash`/`mac` 由源设备在自己那次
