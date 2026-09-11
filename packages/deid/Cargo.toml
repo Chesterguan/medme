@@ -1,0 +1,14 @@
+[package]
+name = "deid"
+version = "0.1.0"
+edition = "2021"
+description = "本地脱敏:发给云 LLM 之前删已知身份、掩锚点字段、偏移日期;结果回来后还原与逐字校验。纯函数,无 IO。"
+
+[dependencies]
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
