@@ -57,13 +57,13 @@ fn kind_of(anchor: &str) -> &'static str {
     ANCHORS.iter().find(|(a, _)| *a == anchor).map(|(_, k)| *k).unwrap_or("N")
 }
 
-/// P 类(人名):2~4 个中文字符;一碰到任意锚点词或 性别/年龄/科室 开头,立刻收尾——
-/// 即使中间没有分隔符。
+/// P 类(人名):2~6 个中文字符(部分少数民族/复姓名字有 5~6 字);一碰到任意锚点词或
+/// 性别/年龄/科室 开头,立刻收尾——即使中间没有分隔符。
 fn take_name_value(rest: &str) -> Option<&str> {
     let mut end = 0;
     let mut count = 0;
     for c in rest.chars() {
-        if count >= 4 || !is_cjk(c) || starts_with_stop_word(&rest[end..]) {
+        if count >= 6 || !is_cjk(c) || starts_with_stop_word(&rest[end..]) {
             break;
         }
         end += c.len_utf8();
@@ -74,13 +74,19 @@ fn take_name_value(rest: &str) -> Option<&str> {
 
 /// N/A 类(号码/地址):不设字符数上限,一直取到下一个空白/标点分隔符或下一个锚点词为止
 /// ——18 位身份证号、16 位住院号都得整段吃掉,不能像人名那样卡字数。
-fn take_id_value(rest: &str) -> Option<&str> {
+/// `stop_at_digit_to_cjk` 仅用于 N 类:值一旦以数字开头,后面紧跟的中文字符就不再算进
+/// 值里——不然会把没有分隔符、紧贴在号码后面的叙述文字(“门诊号90051065病区三”里的
+/// “病区三”)一起吞掉。A 类(住址/民族/职业/婚姻等)本身就是自由文本,没有这种数字/
+/// 中文的形状边界可用,继续保持不设上限(fix round 2 item D:已知的残留问题,不在本轮修)。
+fn take_free_value(rest: &str, stop_at_digit_to_cjk: bool) -> Option<&str> {
     if rest.starts_with('[') {
         return None; // 已经是占位符(K 层删过),原样放过
     }
+    let starts_with_digit =
+        stop_at_digit_to_cjk && rest.chars().next().is_some_and(|c| c.is_ascii_digit());
     let mut end = 0;
     for c in rest.chars() {
-        if is_sep(c) || starts_with_stop_word(&rest[end..]) {
+        if is_sep(c) || starts_with_stop_word(&rest[end..]) || (starts_with_digit && is_cjk(c)) {
             break;
         }
         end += c.len_utf8();
@@ -117,7 +123,7 @@ pub fn apply(text: &str, map: &mut RestoreMap) -> String {
         let value = if kind == "P" {
             take_name_value(rest)
         } else {
-            take_id_value(rest)
+            take_free_value(rest, kind == "N")
         };
         if let Some(v) = value {
             out.push_str(&map.placeholder(kind, v));

@@ -10,9 +10,17 @@
 //! - 是参考区间的一段(紧邻的外侧是 `-`/`~`,再外一层是数字);
 //! - 是能解析成合法日期(1900–2099)的 8 位 yyyymmdd——放行给 `dates` 层去偏移,这里
 //!   掩掉的话,日期层就看不到原始数字了;
-//! - (仅对 6 位以上的兜底规则)所在整行本身带参考区间或化验单位标记——化验值/参考区间
-//!   本身经常就是裸的 6 位数(比如血小板 120000),不能假设「6 位以上必是证件号」,
-//!   得看行上下文。
+//! - (仅对 6 位以上的兜底规则)紧跟在数字串后面(跳过同一行内的空格/制表符,但不跨行)
+//!   的下一个词是化验单位或「参考」——化验值本身经常就是裸的 6 位数(比如血小板
+//!   120000),不能假设「6 位以上必是证件号」;这里刻意只看数字串**自己后面**紧跟的
+//!   词,而不是「整行有没有」,不然同一行里离得很远的一个证件号也会被隔壁的化验单位
+//!   连累放过(fix round 2 item A)。
+//!
+//! 18 位证件号/手机号/座机号这三条形状规则还有一层豁免:如果匹配到的这一段前面或后面
+//! 紧挨着还有 ASCII 数字,说明它只是一段更长数字串里凑巧长得像证件号/手机号的一截,
+//! 不能就地掩码——不然会把长数字串切开、只掩中间那一截,两头的数字明文残留
+//! (fix round 2 item B)。这种情况让它原样放过,交给后面的 6 位以上兜底规则把整段
+//! 数字串当一个号码掩掉。
 use super::redact::RestoreMap;
 use crate::dates;
 use regex::Regex;
@@ -40,12 +48,8 @@ fn long_digits_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"\d{6,}").expect("long digits"))
 }
-fn range_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"\d+(?:\.\d+)?\s*[-~]\s*\d+").expect("range"))
-}
 
-/// 化验单位标记:出现任意一个,这一行就当化验行处理(裸 6 位以上数字不掩)。
+/// 化验单位标记:数字串后面紧跟着任意一个,就当化验值处理,不掩。
 const UNIT_TOKENS: &[&str] = &["/L", "10^", "×10", "x10", "g/L", "%", "mmol", "umol", "μmol"];
 
 /// 紧邻外侧是 `.`/`-`/`~`,且再外一层是数字 → 这段数字是小数或区间的一部分,不当证件号。
@@ -66,21 +70,37 @@ fn is_decimal_or_range(text: &str, start: usize, end: usize) -> bool {
     before_hit || after_hit
 }
 
-fn line_of(text: &str, start: usize, end: usize) -> &str {
-    let line_start = text[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let line_end = text[end..].find('\n').map(|i| end + i).unwrap_or(text.len());
-    &text[line_start..line_end]
+/// 紧邻外侧就是另一个 ASCII 数字 → 这段只是更长数字串中间凑巧长得像证件号/手机号的
+/// 一截,不能单独掩码,得留给 6 位以上兜底规则把整段一起处理。
+fn embedded_in_digits(text: &str, start: usize, end: usize) -> bool {
+    let before = text[..start].chars().next_back().is_some_and(|c| c.is_ascii_digit());
+    let after = text[end..].chars().next().is_some_and(|c| c.is_ascii_digit());
+    before || after
 }
 
-fn line_looks_like_lab_row(line: &str) -> bool {
-    range_re().is_match(line) || UNIT_TOKENS.iter().any(|u| line.contains(u))
+/// 数字串结束位置往后跳过同一行内的空格/制表符(不跳换行)后剩下的文本——用来看
+/// 「紧跟着的下一个词是不是化验单位/参考」,不看整行。
+fn next_token_after(text: &str, end: usize) -> &str {
+    let rest = &text[end..];
+    let skip: usize = rest
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .map(|c| c.len_utf8())
+        .sum();
+    &rest[skip..]
 }
 
-/// 形状类(18 位证件号/手机号/座机号):不消费邻居,只在外侧邻接小数点/区间号时放过。
+fn followed_by_unit_or_reference(text: &str, end: usize) -> bool {
+    let rest = next_token_after(text, end);
+    UNIT_TOKENS.iter().any(|u| rest.starts_with(u)) || rest.starts_with("参考")
+}
+
+/// 形状类(18 位证件号/手机号/座机号):不消费邻居;外侧邻接小数点/区间号,或本身嵌在
+/// 更长数字串里,都放过不掩(留给 6 位以上兜底规则处理后者)。
 fn apply_shape(text: &str, re: &Regex, kind: &str, map: &mut RestoreMap) -> String {
     re.replace_all(text, |c: &regex::Captures| {
         let m = c.get(0).expect("group 0");
-        if is_decimal_or_range(text, m.start(), m.end()) {
+        if is_decimal_or_range(text, m.start(), m.end()) || embedded_in_digits(text, m.start(), m.end()) {
             m.as_str().to_string()
         } else {
             map.placeholder(kind, m.as_str())
@@ -89,13 +109,13 @@ fn apply_shape(text: &str, re: &Regex, kind: &str, map: &mut RestoreMap) -> Stri
     .into_owned()
 }
 
-/// URL/邮箱:形状本身已经足够特定,不需要小数/区间豁免。
+/// URL/邮箱:形状本身已经足够特定,不需要小数/区间/嵌入豁免。
 fn apply_plain(text: &str, re: &Regex, kind: &str, map: &mut RestoreMap) -> String {
     re.replace_all(text, |c: &regex::Captures| map.placeholder(kind, &c[0]))
         .into_owned()
 }
 
-/// 6 位以上兜底规则:多一层「合法日期」和「化验行」豁免。
+/// 6 位以上兜底规则:多一层「合法日期」和「后面紧跟化验单位/参考」豁免。
 fn apply_long_digits(text: &str, map: &mut RestoreMap) -> String {
     long_digits_re()
         .replace_all(text, |c: &regex::Captures| {
@@ -103,7 +123,7 @@ fn apply_long_digits(text: &str, map: &mut RestoreMap) -> String {
             let s = m.as_str();
             let skip = is_decimal_or_range(text, m.start(), m.end())
                 || (s.len() == 8 && dates::is_compact_date(s))
-                || line_looks_like_lab_row(line_of(text, m.start(), m.end()));
+                || followed_by_unit_or_reference(text, m.end());
             if skip {
                 s.to_string()
             } else {
@@ -127,14 +147,50 @@ mod tests {
     use crate::redact::RestoreMap;
 
     #[test]
-    fn lab_row_with_reference_range_or_unit_is_not_masked_but_plain_id_line_is() {
+    fn bare_number_before_a_unit_or_reference_token_survives() {
         let mut map = RestoreMap::default();
-        let masked = apply(
-            "血小板 120000 参考 100000-300000 10^9/L\n门诊号 90051065",
-            &mut map,
-        );
-        assert!(masked.contains("血小板 120000"), "化验值不该被掩:{masked}");
-        assert!(masked.contains("100000-300000"), "参考区间不该被掩:{masked}");
-        assert!(!masked.contains("90051065"), "没有化验行特征的裸号码仍要掩:{masked}");
+        let masked = apply("血小板 120000 参考 100000-300000", &mut map);
+        assert!(masked.contains("120000"), "{masked}");
+        assert!(masked.contains("100000-300000"), "{masked}");
+
+        let mut map2 = RestoreMap::default();
+        let masked2 = apply("血小板 120000 10^9/L", &mut map2);
+        assert!(masked2.contains("120000"), "{masked2}");
+    }
+
+    #[test]
+    fn unanchored_id_is_still_masked_even_when_a_lab_unit_appears_later_in_the_text() {
+        // fix round 2 item A:旧版按“整行”判断,这条码后面跟的是“血红蛋白”,不是
+        // 单位/参考,该掩;后面出现的 g/L 不能成为它的免罪牌。
+        let mut map = RestoreMap::default();
+        let masked = apply("标本 2023061512345 血红蛋白 130 g/L", &mut map);
+        assert!(!masked.contains("2023061512345"), "{masked}");
+        assert!(masked.contains("130 g/L"), "{masked}");
+    }
+
+    #[test]
+    fn bare_id_line_is_still_masked_by_shape_rules_alone() {
+        let mut map = RestoreMap::default();
+        let masked = apply("2023061512345 电话 010-69156114", &mut map);
+        assert!(!masked.contains("2023061512345"), "{masked}");
+        assert!(!masked.contains("69156114"), "{masked}");
+    }
+
+    #[test]
+    fn shape_rule_matching_inside_a_longer_digit_run_defers_to_the_long_digit_rule() {
+        // fix round 2 item B:去掉 \b 之后,mobile_re/id18_re 可能在更长数字串**内部**
+        // 找到一段形状对得上的子串,把它单独掩掉,两头的数字明文残留(比如
+        // "2023139123456789" 曾经变成 "2023[T1]9")。直接断言占位符对应的值是整段
+        // 原文——只看输出里还含不含完整原串堵不住这个漏洞,被切出来的中间一截
+        // 本来就不会再包含完整原串。
+        let mut map = RestoreMap::default();
+        apply("样本 2023139123456789", &mut map);
+        assert_eq!(map.placeholders.len(), 1, "{:?}", map.placeholders);
+        assert_eq!(map.placeholders[0].1, "2023139123456789", "{:?}", map.placeholders);
+
+        let mut map2 = RestoreMap::default();
+        apply("12345678901234567890", &mut map2);
+        assert_eq!(map2.placeholders.len(), 1, "{:?}", map2.placeholders);
+        assert_eq!(map2.placeholders[0].1, "12345678901234567890", "{:?}", map2.placeholders);
     }
 }

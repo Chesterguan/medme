@@ -178,4 +178,46 @@ mod tests {
             assert!(r.text.contains(keep), "{keep} 应保留:{}", r.text);
         }
     }
+
+    // --- fix round 2: 第一轮修复自己引入的两条新泄漏,加上两个小的取值边界问题 ---
+
+    #[test]
+    fn unanchored_barcode_is_masked_even_though_a_lab_unit_appears_later_in_text() {
+        // item A:旧的“整行豁免”让隔壁一句话里出现的 g/L 把跟它八竿子打不着的条码也放过了。
+        let r = redact_text("标本 2023061512345 血红蛋白 130 g/L", &known(), 0);
+        assert!(!r.text.contains("2023061512345"), "{}", r.text);
+        assert!(r.text.contains("130 g/L"), "{}", r.text);
+    }
+
+    #[test]
+    fn shape_rules_no_longer_split_a_longer_digit_run() {
+        // item B:去掉 \b 之后 mobile_re/id18_re 会在长数字串**中间**找到形状对得上的
+        // 子串,把中间一截单独掩掉,两头的数字留明文(比如 "样本 2023139123456789" 曾经
+        // 变成 "样本 2023[T1]9")。断言占位符对应的值是整段原文,不是被切出来的中间一截
+        // ——这样才真正堵住"两头明文残留"这个漏洞,只看 text 里还含不含完整原串堵不住。
+        let r = redact_text("样本 2023139123456789", &known(), 0);
+        assert_eq!(r.map.placeholders.len(), 1, "{:?}", r.map.placeholders);
+        assert_eq!(r.map.placeholders[0].1, "2023139123456789", "{:?}", r.map.placeholders);
+
+        let r2 = redact_text("12345678901234567890", &known(), 0);
+        assert_eq!(r2.map.placeholders.len(), 1, "{:?}", r2.map.placeholders);
+        assert_eq!(r2.map.placeholders[0].1, "12345678901234567890", "{:?}", r2.map.placeholders);
+    }
+
+    #[test]
+    fn six_character_name_is_not_truncated() {
+        // item C:4 字上限把「乌力吉巴图」这样 5 个字的名字截断,尾字「图」明文残留。
+        let unrelated = KnownIdentity { name: "赵六".into(), id_number: None, phone: None };
+        let r = redact_text("姓名乌力吉巴图 性别男", &unrelated, 0);
+        assert_eq!(r.text, "姓名[P1] 性别男");
+    }
+
+    #[test]
+    fn n_kind_value_stops_at_digit_to_cjk_boundary_even_when_glued_to_narrative() {
+        // item D:不设上限的号码取值会把紧贴着、没有分隔符的叙述文字也吞进去。
+        let r = redact_text("婚姻已婚 门诊号90051065病区三", &known(), 0);
+        let n1 = r.map.placeholders.iter().find(|(p, _)| p == "[N1]").map(|(_, v)| v.as_str());
+        assert_eq!(n1, Some("90051065"), "{:?}", r.map.placeholders);
+        assert!(r.text.contains("病区三"), "{}", r.text);
+    }
 }
