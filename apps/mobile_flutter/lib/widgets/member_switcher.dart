@@ -33,7 +33,7 @@ Future<void> showMemberSwitcherSheet(
   BuildContext context, {
   VoidCallback? onChanged,
   Future<void> Function(String id)? switchTo,
-  Future<int> Function()? purgeExpired,
+  Future<List<Profile>> Function()? purgeExpired,
 }) async {
   final doSwitch = switchTo ?? switchProfileAndReopen;
   final doPurge = purgeExpired ??

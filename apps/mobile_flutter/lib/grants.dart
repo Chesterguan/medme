@@ -205,16 +205,21 @@ class Grants {
   /// [removeProfile] 同 [afterStored] 的道理:默认指向真实的
   /// `vault_boot.removeProfileAndReopen`(删目录 + 重开箱,碰真实 Rust/IO),
   /// 测试传一个假实现只钉住"选中了哪些过期档案"这条逻辑。
-  Future<int> purgeExpired({Future<bool> Function(String id)? removeProfile}) async {
+  ///
+  /// 返回**被清掉的那些成员**(不只是个数):调用方要能说出"谁的授权到期了"。
+  /// C11:过期档案原来是**静默消失**的 —— 医生昨天还能看的那份病历今天不见了,
+  /// 屏上一个字都没有。
+  Future<List<Profile>> purgeExpired({Future<bool> Function(String id)? removeProfile}) async {
     final doRemove = removeProfile ?? removeProfileAndReopen;
     await ProfileManager.instance.ensureLoaded();
     final now = DateTime.now();
     final expired = ProfileManager.instance.profiles
         .where((p) => p.cloudId != null && p.role != 'owner' && p.expiresAt != null && p.expiresAt!.isBefore(now))
         .toList();
+    final removed = <Profile>[];
     for (final p in expired) {
-      await doRemove(p.id);
+      if (await doRemove(p.id)) removed.add(p);
     }
-    return expired.length;
+    return removed;
   }
 }

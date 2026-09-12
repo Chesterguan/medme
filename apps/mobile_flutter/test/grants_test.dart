@@ -380,7 +380,7 @@ void main() {
         },
       );
 
-      expect(n, 1);
+      expect(n.map((p) => p.id), [expiredId], reason: 'C11:调用方要能说出谁的授权到期了,不只是个数');
       expect(removed, [expiredId]);
     });
 
@@ -391,7 +391,7 @@ void main() {
         called = true;
         return true;
       });
-      expect(n, 0);
+      expect(n, isEmpty);
       expect(called, isFalse);
     });
   });

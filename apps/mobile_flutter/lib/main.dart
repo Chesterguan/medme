@@ -255,7 +255,7 @@ class ProfileLockedActions extends StatelessWidget {
   /// 透传给 [showMemberSwitcherSheet] 的测试注入点(同名参数),默认为 null
   /// 时用它自己的真实默认值。
   final Future<void> Function(String id)? switchTo;
-  final Future<int> Function()? purgeExpired;
+  final Future<List<Profile>> Function()? purgeExpired;
 
   @override
   Widget build(BuildContext context) {

@@ -35,7 +35,7 @@ Widget _app({required VoidCallback onDone}) => MaterialApp(
           // `showMemberSwitcherSheet` 默认会真的发 HTTP 请求清过期档案——测试
           // 环境不该有真实网络往返,注入假的。
           switchTo: (_) async {},
-          purgeExpired: () async => 0,
+          purgeExpired: () async => const <Profile>[],
         ),
       ),
     );

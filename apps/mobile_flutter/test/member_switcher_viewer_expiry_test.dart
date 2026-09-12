@@ -47,7 +47,7 @@ void main() {
                   onPressed: () => showMemberSwitcherSheet(
                     ctx,
                     switchTo: (_) async {},
-                    purgeExpired: () async => 0,
+                    purgeExpired: () async => const <Profile>[],
                   ),
                   child: const Text('打开切换器'),
                 ),
@@ -85,7 +85,7 @@ void main() {
                     ctx,
                     purgeExpired: () async {
                       purgeCalls++;
-                      return 0;
+                      return const <Profile>[];
                     },
                   ),
                   child: const Text('打开切换器'),
