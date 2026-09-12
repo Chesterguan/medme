@@ -753,6 +753,101 @@ mod tests {
         assert_eq!(outcome.undecodable, 0);
     }
 
+    /// review round 1 修复(item 3):AAD 现在绑定的是 `device_id:seq`(不再是
+    /// `event_id`),这条测试钉住这个绑定真的在拦人——篡改一台设备**最新一条**
+    /// (最大 seq)事件的 `seq`、篡改另一台设备最新一条事件的 `device_id`(都是
+    /// DTO 上的明文字段,网络/服务端都能碰到),两者都应该在 AEAD 解密这一步
+    /// 就失败(AAD 对不上),而不是先解开、再靠反序列化后的信封比对才发现。
+    ///
+    /// 只篡改"最新一条"(而不是任意/第一条)是刻意的:这样它前面那些没被碰过
+    /// 的条目按 `(device_id, seq)` 升序排必然先被正常应用,断言不用去猜
+    /// `ingest_bytes` 这一次到底写了几条日志(它不止产出一条,见其它测试
+    /// 的注释)——只要挑各自设备**最后**那条动手,该设备"少最后一条"这件事
+    /// 就是确定的,不用管前面到底有几条。C 完全没被碰,全量应用,互不牵连。
+    #[test]
+    fn tampering_wire_seq_or_device_id_makes_that_event_undecodable_others_still_apply() {
+        let _guard = VAULT_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let pk = sync_profile_key_new();
+
+        let a = tempdir().unwrap();
+        sync_open_profile_vault(
+            a.path().to_string_lossy().into(),
+            a.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+        crate::api::vault::ingest_bytes("a.txt".into(), b"WBC 5.0".to_vec()).unwrap();
+        let mut events_a = sync_export_events(pk.clone(), vec![]).unwrap();
+        events_a.sort_by_key(|e| e.seq);
+        assert!(events_a.len() >= 2, "需要至少两条才能验证'篡改最后一条,前面的仍然应用'");
+        let device_a_id = events_a[0].device_id.clone();
+        let kept_seq_a = events_a[events_a.len() - 2].seq; // 篡改前应该还留得住的那条
+
+        let b = tempdir().unwrap();
+        sync_open_profile_vault(
+            b.path().to_string_lossy().into(),
+            b.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+        crate::api::vault::ingest_bytes("b.txt".into(), b"RBC 4.5".to_vec()).unwrap();
+        let mut events_b = sync_export_events(pk.clone(), vec![]).unwrap();
+        events_b.sort_by_key(|e| e.seq);
+        assert!(events_b.len() >= 2);
+        let device_b_id = events_b[0].device_id.clone();
+        let kept_seq_b = events_b[events_b.len() - 2].seq;
+
+        let c = tempdir().unwrap();
+        sync_open_profile_vault(
+            c.path().to_string_lossy().into(),
+            c.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+        crate::api::vault::ingest_bytes("c.txt".into(), b"HGB 130".to_vec()).unwrap();
+        let events_c = sync_export_events(pk.clone(), vec![]).unwrap();
+        assert!(!events_c.is_empty());
+        let device_c_id = events_c[0].device_id.clone();
+        let max_seq_c = events_c.iter().map(|e| e.seq).max().unwrap();
+        let count_c = events_c.len();
+
+        let expected_a_applied = events_a.len() - 1;
+        let expected_b_applied = events_b.len() - 1;
+
+        // 篡改 A 最新一条事件的 seq——AAD 的一半。
+        events_a.last_mut().unwrap().seq += 1000;
+        // 篡改 B 最新一条事件的 device_id——AAD 的另一半。
+        let evil_device_id = format!("{}-evil", events_b.last().unwrap().device_id);
+        events_b.last_mut().unwrap().device_id = evil_device_id;
+
+        let d = tempdir().unwrap();
+        sync_open_profile_vault(
+            d.path().to_string_lossy().into(),
+            d.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+
+        let mut batch = events_a;
+        batch.extend(events_b);
+        batch.extend(events_c);
+        let outcome = sync_import_events(pk, batch).unwrap();
+
+        assert_eq!(
+            outcome.applied as usize,
+            expected_a_applied + expected_b_applied + count_c,
+            "A/B 各自被篡改的最后一条不应用,前面未篡改的、以及完全没被碰的 C 都照常应用"
+        );
+        assert_eq!(outcome.undecodable, 2, "A(改 seq)、B(改 device_id)各算一次,互不影响对方");
+        assert_eq!(outcome.untrusted, 0, "AAD 不对导致的是解密失败(undecodable),不是 MAC 校验层面的 untrusted");
+
+        let local_seq = sync_local_seq_map().unwrap();
+        let seq_of = |dev: &str| -> Option<i64> { local_seq.iter().find(|(d, _)| d == dev).map(|(_, s)| *s) };
+        assert_eq!(seq_of(&device_a_id), Some(kept_seq_a), "A 只落到被篡改那条之前那一条,篡改的那条没被应用");
+        assert_eq!(seq_of(&device_b_id), Some(kept_seq_b), "B 同上");
+        assert_eq!(seq_of(&device_c_id), Some(max_seq_c), "C 完全没被碰,全量落盘");
+    }
+
     #[test]
     fn kdf_bench_runs() {
         assert!(sync_kdf_bench_ms(8192, 1, 1).unwrap() < 5_000);

@@ -135,7 +135,14 @@ Future<List<(String, PlatformInt64)>> syncLocalSeqMap() =>
     RustLib.instance.api.crateApiVaultSyncSyncLocalSeqMap();
 
 /// 导出本机日志里 `seq > after[device_id]`(未提供该 device 则视为 0)的条目,
-/// 逐条整体加密(AAD = `event_id`,防止信封字段与密文错配后被悄悄接受)。
+/// 逐条整体加密(AAD = `device_id:seq`,防止信封字段与密文错配后被悄悄接受)。
+///
+/// `SyncEventDto.event_id` 装的是**服务端看到的马甲**(`sync::event_id_for_wire`,
+/// 档案密钥 HMAC 过),不是本机日志里的原始 `event_id`(内容哈希)——原样发给
+/// 服务端会让服务端能跨账号比对哪些用户存了相同内容的事件,同 `object_id` 的
+/// 顾虑(见 `blob.rs` 的文档)。真正的本机 `event_id` 只在加密前的 `plain`
+/// (整条 `LogEntry` 的 JSON)里,随密文一起传输、解密后才重新出现——见
+/// `sync_import_events`,它不读也不校验这个 wire 马甲。
 Future<List<SyncEventDto>> syncExportEvents({
   required List<int> profileKey,
   required List<(String, PlatformInt64)> after,
@@ -144,8 +151,12 @@ Future<List<SyncEventDto>> syncExportEvents({
   after: after,
 );
 
-/// 解密 + 校验信封字段与解密出的条目一致(拒收错配),交给
-/// `append_peer_entries` 按 `(device_id, seq)` 去重/校验链/MAC 落盘。
+/// 解密(AAD = `device_id:seq`,与 `sync_export_events` 对应)+ 校验信封字段
+/// 与解密出的条目一致(拒收错配),交给 `append_peer_entries` 按
+/// `(device_id, seq)` 去重/校验链/MAC 落盘。**不读、不校验 `ev.event_id`**——
+/// 那是服务端看到的 HMAC 马甲(`event_id_for_wire`),与内容无绑定关系,真正的
+/// `event_id` 解密后才从 `LogEntry` 里出现,`append_peer_entries`/去重全程只认
+/// `(device_id, seq)`。
 ///
 /// **一条解不开就按设备截断,不是整批放弃**:先按 `(device_id, seq)` 排序
 /// (与 `append_peer_entries` 自己的排序口径一致,不依赖调用方传入顺序),

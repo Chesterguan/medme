@@ -80,7 +80,7 @@ fn normalize_recovery(code: &str) -> Result<String, SyncError> {
     Ok(s)
 }
 
-/// 恢复码本身已是 100 bit 随机,用 HKDF 拉伸即可,不需要 Argon2 的抗暴力代价。
+/// 恢复码本身已是约 98 bit 随机,用 HKDF 拉伸即可,不需要 Argon2 的抗暴力代价。
 pub fn kek_from_recovery(code: &str) -> Result<[u8; 32], SyncError> {
     let s = normalize_recovery(code)?;
     let hk = Hkdf::<Sha256>::new(Some(b"medme-recovery-v1"), s.as_bytes());

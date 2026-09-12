@@ -308,7 +308,15 @@ Future<void> autoNameCurrentProfileFrom(String? detectedName) async {
 ///
 /// 删到只剩一个时不给删(见 [ProfileManager.canRemove]),这里再挡一道:`remove`
 /// 返回 false 就直接返回,绝不去删任何目录。
-Future<bool> removeProfileAndReopen(String id) async {
+Future<bool> removeProfileAndReopen(String id) => removeProfileAndReopenImpl(id, reopen: openCurrentProfileVault);
+
+/// [removeProfileAndReopen] 的本体,`reopen` 抽成参数是为了让"云档案的密钥
+/// 随成员一起被清掉、本地档案不碰密钥"这条契约能在**不带 Rust 原生库**的
+/// `flutter test` 里被钉住(同 [switchProfileAndReopenImpl]/[runWipeSequence]
+/// 的套路)。产品代码里的唯一调用点就是 [removeProfileAndReopen],传的永远是
+/// 真实现。
+@visibleForTesting
+Future<bool> removeProfileAndReopenImpl(String id, {required Future<void> Function() reopen}) async {
   await ProfileManager.instance.ensureLoaded();
   if (!ProfileManager.instance.canRemove(id)) return false;
 
@@ -327,7 +335,7 @@ Future<bool> removeProfileAndReopen(String id) async {
     if (await d.exists()) await d.delete(recursive: true);
   }
 
-  await openCurrentProfileVault();
+  await reopen();
   bumpVaultRevision();
   return true;
 }

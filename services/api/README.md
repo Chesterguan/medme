@@ -92,6 +92,11 @@ DELETE 预签名是评审 Critical 过的坑),失败个数放进 `X-Oss-Deleted`
 打库的调用里顺手扫一遍,不是独立定时任务)——清空后这台设备回到"未批准"状态,得
 重新走一遍 request/approve,不是数据丢失,只是这份临时密文的有效期到了。
 
+**迁移提醒(Task 16 review 修复):** commit `1e67062` 之前落过 `events` 表的任何
+staging 部署,必须先 `TRUNCATE events`(只这一张表)再上线新代码——事件密文的
+AEAD 绑定(AAD)从 `event_id` 改成了 `device_id:seq`,老密文按新 AAD 解不开,会被
+判成 `undecodable` 而不是正常同步。生产此前从未部署过,不受影响。
+
 ## 已知缺口
 
 - **微信登录只留位。** `WeChatProvider.login` 直接 `raise NotImplementedError`,路由

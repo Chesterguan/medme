@@ -41,6 +41,7 @@ class FakeApi extends ApiClient {
     this.failCreateProfile = false,
     this.myGrants = const {},
     this.failMyGrants = false,
+    this.myGrantsDelay,
     this.delay = const Duration(milliseconds: 30),
   }) : super(base: 'http://x');
 
@@ -58,6 +59,11 @@ class FakeApi extends ApiClient {
   /// 分开;`failMyGrants` 让它统一报错——测「我授权给谁」三态。
   final Map<String, List<Map<String, dynamic>>> myGrants;
   final bool failMyGrants;
+  /// 只加在 `/v1/profiles/{pid}/grants` 这一个调用上的额外延迟(默认不加)——
+  /// 独立于 [delay],这样能在不拖慢解锁本身(`GET /v1/profiles` 走的是
+  /// [delay])的前提下,单独撑住「我授权给谁」这一步的加载中状态够久,测出
+  /// 那一帧的进度圈。
+  final Duration? myGrantsDelay;
   /// `GET /v1/account/keys` 报 500(不是 404)——`_afterLogin` 只吞 404,
   /// 非 404 一律 rethrow;用来测 `resumeIfLoggedIn` 冷启动那条路径接不接得住。
   final bool failKeys500;
@@ -126,6 +132,7 @@ class FakeApi extends ApiClient {
       return profiles;
     }
     if (path.startsWith('/v1/profiles/') && path.endsWith('/grants')) {
+      if (myGrantsDelay != null) await Future<void>.delayed(myGrantsDelay!);
       if (failMyGrants) throw const ApiFailed(500, 'my grants failed');
       final pid = path.split('/')[3];
       return myGrants[pid] ?? const [];
@@ -671,6 +678,34 @@ void main() {
       await _scrollToMyGrants(t);
       expect(find.text('还没有授权给任何人'), findsNothing);
       expect(find.text('撤销'), findsOneWidget);
+    });
+
+    testWidgets('加载中显示进度圈', (t) async {
+      // `myGrantsDelay` 只拖慢 GET .../grants 这一个调用,不拖累解锁本身(那走
+      // 的是 [delay])——这样才能在"已进入已就绪、这一节还没回来"这个窗口里
+      // 稳定截住 loading 帧,不用赌解锁跟这一节谁先回来。
+      final api = FakeApi(
+        hasKeys: true,
+        profiles: [
+          {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
+        ],
+        myGrants: {'p1': [granteeRow()]},
+        myGrantsDelay: const Duration(seconds: 3),
+      );
+      await t.pumpWidget(_app(api));
+      await _loginUpTo(t);
+      await t.enterText(find.byKey(const Key('password')), 'right');
+      await t.tap(find.text('解锁'));
+      // 200ms:盖过解锁本身(FakeCrypto 20ms + restoreProfileKeys 的 GET
+      // /v1/profiles 30ms),但远小于 myGrantsDelay(3s)——此刻应该已经落在
+      // "已就绪,「我授权给谁」还在等" 这个窗口。
+      await t.pump(const Duration(milliseconds: 200));
+      await t.scrollUntilVisible(find.text('我授权给谁'), 200, scrollable: find.byType(Scrollable).first);
+      await t.pump();
+      expect(find.byType(CircularProgressIndicator), findsWidgets);
+      // 收尾:把剩下的延迟耗完,不留 pending timer。
+      await t.pump(const Duration(seconds: 4));
+      await t.pumpAndSettle();
     });
 
     testWidgets('没有拥有任何云档案:显示空态,不发 grants 请求', (t) async {
