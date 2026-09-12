@@ -318,15 +318,33 @@ class ProfileLockedActions extends StatelessWidget {
 ///   null,账号屏永远停在"手机号登录"那一屏,哪怕昨天刚登录过。
 ///
 /// 所以它必须在**开箱之前**、也就在任何一屏 `resumeIfLoggedIn()` 之前跑完。
+///
+/// ## B6:`restoreProfileKeys` 也要在启动时跑
+///
+/// 它原来只在「账号屏登录/解锁成功」那一刻跑过一次。于是:家人刚把一份档案授权
+/// 给你、或者你在另一台手机上加了个成员 —— 这台手机要等你**下一次进账号屏重新
+/// 登录**才看得见。用户的心智是"打开 App 就该是最新的",而不是"去设置里戳一下
+/// 账号"。
+///
+/// 跟开箱、读模式并发跑:它第一件事是一次网络请求,而 `openVault` 和它都经
+/// `vault_boot` 那一条 FIFO 队列,FFI 层面不会交错。它对网络失败本来就静默
+/// (见 `AccountFlow.restoreProfileKeys`),这里再包一层 `catchError`:**任何**
+/// 没预料到的失败都不许把用户挡在一个"无法打开你的健康档案"的错误屏上 ——
+/// 这一步是"顺手补齐",不是启动的前提。
 @visibleForTesting
 Future<void> runBootSequence({
   required Future<void> Function() restoreAccountSession,
   required Future<void> Function() openVault,
   required Future<void> Function() loadMode,
+  required Future<void> Function() restoreProfileKeys,
 }) async {
   await restoreAccountSession();
   // 开箱与读模式互不依赖,并发跑不拖慢启动。
-  await Future.wait([openVault(), loadMode()]);
+  await Future.wait([
+    openVault(),
+    loadMode(),
+    restoreProfileKeys().catchError((_) {}),
+  ]);
 }
 
 /// 启动引导:先在真实沙盒目录打开保险箱(FFI `open_vault`),再进主界面。
@@ -363,6 +381,17 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
         restoreAccountSession: AccountSession.instance.ensureLoaded,
         openVault: openCurrentProfileVault,
         loadMode: AppMode.instance.ensureLoaded,
+        restoreProfileKeys: () async {
+          // 这一步与开箱并发跑,谁先到不保证;而 `restoreProfileKeys` 自己刻意
+          // 不调 `ensureLoaded()`(见它的文档:那条路径在 widget 测试里会卡死),
+          // 所以在这里先把成员表读回来——不先读的话它会拿那份还没落地的内存
+          // 默认值去判"本机有没有这个云成员",把已有的成员又建一遍。
+          await ProfileManager.instance.ensureLoaded();
+          await AccountFlow(
+            ApiClient.forSession(AccountSession.instance),
+            AccountSession.instance,
+          ).restoreProfileKeys();
+        },
       );
     } catch (_) {
       ok = false;

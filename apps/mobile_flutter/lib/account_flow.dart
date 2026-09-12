@@ -270,13 +270,17 @@ class AccountFlow {
   /// 自己的档案。
   ///
   /// **不调 `ProfileManager.instance.ensureLoaded()`**——这里是唯一一次刻意
-  /// 不调的地方,理由是真的会踩坑:能走到这个方法,说明 App 已经完整启动过
-  /// `VaultBootstrap`(它的 `openCurrentProfileVault()` 第一行就是
-  /// `ensureLoaded()`),`ProfileManager` 早就加载好了,这里再调一次只是
-  /// 白问一次「加载了没」。而它一旦真的在没加载过的时候被调用(这个方法由一次
-  /// 按钮点击的调用链间接触发),会去碰真实文件 I/O——这类调用只有包在
-  /// `tester.runAsync()` 里才能在 `flutter test` 的 widget 测试里跑完,一次
-  /// 平常的 `await tester.tap(...)` 会直接卡死等不到它(踩过的坑,不是猜的)。
+  /// 不调的地方,理由是真的会踩坑:它会去碰真实文件 I/O,而这类调用只有包在
+  /// `tester.runAsync()` 里才能在 `flutter test` 的 widget 测试里跑完;这个方法
+  /// 由一次按钮点击的调用链间接触发,一次平常的 `await tester.tap(...)` 会直接
+  /// 卡死等不到它(踩过的坑,不是猜的——B6 时又踩了一次,20 个用例一起红)。
+  ///
+  /// **所以"加载过了没"是调用方的责任**:
+  /// * 账号屏那条路(登录/解锁)走到这里时 `VaultBootstrap` 早就加载过了;
+  /// * 启动序列那条路(B6)与开箱**并发**,谁先到不保证 —— 所以 `main.dart` 的
+  ///   `_bootOpen` 在调它之前先自己 `ensureLoaded()` 了一次。不先问的话,这里会
+  ///   读到那份还没从磁盘读回来的内存默认值(单成员 `p-1`),于是 `currentCloudId`
+  ///   判错、已有的云成员被当成"本机没有"又建一遍。
   Future<void> restoreProfileKeys() async {
     final priv = session.privateKey;
     if (priv == null) return;

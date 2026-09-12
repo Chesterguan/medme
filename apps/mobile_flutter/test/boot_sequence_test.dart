@@ -62,6 +62,7 @@ void main() {
       restoreAccountSession: () async => order.add('session'),
       openVault: () async => order.add('vault'),
       loadMode: () async => order.add('mode'),
+      restoreProfileKeys: () async => order.add('keys'),
     );
     expect(order.first, 'session', reason: '开箱读不到档案密钥 = 每个云成员都被判成 ProfileLocked');
     expect(order, containsAll(['vault', 'mode']));
@@ -76,6 +77,7 @@ void main() {
         restoreAccountSession: AccountSession.instance.ensureLoaded,
         openVault: () async => throw StateError('boom'),
         loadMode: () async {},
+        restoreProfileKeys: () async {},
       ),
       throwsA(isA<StateError>()),
     );
@@ -101,6 +103,7 @@ void main() {
       restoreAccountSession: AccountSession.instance.ensureLoaded,
       openVault: () async {},
       loadMode: () async {},
+      restoreProfileKeys: () async {},
     );
 
     expect(AccountSession.instance.accountId, 'acc_1');
@@ -130,10 +133,39 @@ void main() {
       restoreAccountSession: AccountSession.instance.ensureLoaded,
       openVault: () async {},
       loadMode: () async {},
+      restoreProfileKeys: () async {},
     );
 
     expect(await flow.resumeIfLoggedIn(), LoginOutcome.ready, reason: '本机有私钥 + 服务端有密钥 → 直接就绪');
     expect(api.calls, contains('GET /v1/account/keys'));
+  });
+
+  // ---- B6:新授权/新成员要在**启动时**出现,不必等用户去账号屏重新登录一次 ----
+  test('B6:启动序列会跑一次 restoreProfileKeys,而且排在账号态读回来之后', () async {
+    final order = <String>[];
+    await runBootSequence(
+      restoreAccountSession: () async => order.add('session'),
+      openVault: () async => order.add('vault'),
+      loadMode: () async => order.add('mode'),
+      restoreProfileKeys: () async => order.add('keys'),
+    );
+    expect(order, contains('keys'));
+    expect(
+      order.indexOf('session') < order.indexOf('keys'),
+      isTrue,
+      reason: '它要用 session.privateKey 解档案密钥,读回来之前跑就是白跑',
+    );
+  });
+
+  test('B6:restoreProfileKeys 失败不许挡住启动(否则断网就进不去 App)', () async {
+    var opened = false;
+    await runBootSequence(
+      restoreAccountSession: () async {},
+      openVault: () async => opened = true,
+      loadMode: () async {},
+      restoreProfileKeys: () async => throw StateError('补密钥炸了'),
+    );
+    expect(opened, isTrue, reason: '"顺手补齐"不是启动的前提');
   });
 
   test('冷启动后后台同步触发器真的会跑(之前 loggedIn 恒 false,永远 no-op)', () async {
@@ -158,6 +190,7 @@ void main() {
       restoreAccountSession: AccountSession.instance.ensureLoaded,
       openVault: () async {},
       loadMode: () async {},
+      restoreProfileKeys: () async {},
     );
 
     await triggerBackgroundSync(
