@@ -3,10 +3,15 @@
 // 让医生对着一个没法用的码交差。
 //
 // 决定用哪条链接的逻辑抽成了纯异步函数 `resolveDoctorClaimUrl`(不碰
-// BuildContext/Widget 树),直接测它——不需要真的 `pumpWidget` 这个对话框。
-// (`AlertDialog` 内嵌的 `QrImageView` 用了 `LayoutBuilder`,在 `flutter test`
-// 里 pump 会踩一个已知的 Flutter 渲染坑——"LayoutBuilder does not support
-// returning intrinsic dimensions",与这里要测的逻辑无关,踩过一次才发现。)
+// BuildContext/Widget 树),直接测它。
+//
+// ⚠️ 这里原来还写着「这个对话框 pump 不起来」:`AlertDialog` 内嵌的 `QrImageView`
+// 用了 `LayoutBuilder`,而 `AlertDialog` 会向内容要固有高度 ——"LayoutBuilder does
+// not support returning intrinsic dimensions"。**B5 时那个坑已经拆掉了**:码外面
+// 包了一层紧约束 `SizedBox`,`RenderConstrainedBox` 走 `hasTightHeight` 短路、不再
+// 问孩子(见 `lib/widgets/link_qr_dialog.dart` 里那段注释,`test/account_screen_test.dart`
+// 的 B5 用例现在真的 pump 了同一个对话框)。这个文件仍然只测纯函数,是因为它要钉住
+// 的就是"挑哪条链接"这一件事,不是展示。
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/api_client.dart';
