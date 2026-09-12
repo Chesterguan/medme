@@ -65,6 +65,18 @@ void main() {
       expect(s.canRetry, isFalse, reason: '重试一万次都是同一个结果');
     });
 
+    test('F1:已经有 cloudId 也一样说 iCloud —— 这一笔只会在 iCloud 挡住我们时为真', () {
+      final s = backupStatus(
+        loggedIn: true,
+        profile: synced,
+        last: (at: now.subtract(const Duration(minutes: 5)), ok: false),
+        icloudOn: true,
+        now: now,
+      );
+      expect(s.text, '这台手机开着 iCloud 同步,两套同步不能一起开');
+      expect(s.canRetry, isFalse, reason: '「点这里重试」走 enableCloud 的可续做支路,照样撞 iCloud 那道闸');
+    });
+
     test('成功:说人话的时间,不给时间戳', () {
       String at(Duration ago) => backupStatus(
         loggedIn: true,

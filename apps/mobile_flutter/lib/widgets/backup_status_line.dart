@@ -29,7 +29,13 @@ import 'package:mobile_flutter/sync_engine.dart';
   if (profile.cloudPaused) return (text: '云同步已关闭', canRetry: false);
   // 复审 I5:开着 iCloud 同步时云同步压根开不了(见 `CloudEnableBlocked`),
   // 那时说「点这里重试」是一条点不动的提示 —— 说真正的原因。
-  if (icloudOn && profile.cloudId == null) {
+  //
+  // **不看 cloudId**(F1):这一笔(`loadIcloudBlocksCloud`)只会在 iCloud 真的挡住
+  // 我们时被写成 true,而挡住的路不止"还没开通"那一条 —— 已经有 cloudId 的成员点
+  // 「同步」走的是 `enableCloud` 的可续做支路(注册跳过、直接重开箱),它照样撞同一道
+  // 闸(见 `sync_engine.dart` R1)。原来多判一个 `cloudId == null`,那种情形就落到
+  // 下面的「上次备份失败 · 点这里重试」—— 一条永远不可能成功的重试。
+  if (icloudOn) {
     return (text: '这台手机开着 iCloud 同步,两套同步不能一起开', canRetry: false);
   }
   // 还没开通成功(默认开云那条队列还没排到它、或者上次开通失败了)。

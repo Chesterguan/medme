@@ -132,7 +132,11 @@ String cloudRowStatus(Profile p, {bool icloudOn = false}) {
   }
   // I5:开着 iCloud 同步时云同步压根开不了(见 `CloudEnableBlocked`),
   // 「打开这个开关立刻再试一次」是句空话。
-  if (icloudOn && p.cloudId == null) return '这台手机开着 iCloud 同步,两套同步不能一起开';
+  //
+  // **不看 cloudId**(F1):已经开通过的成员在开着 iCloud 时同步也走不通(屏上那颗
+  // 「同步」走 `enableCloud` 的可续做支路,撞的是同一道闸),说「已开通云备份」会让
+  // 用户以为这边一切正常。iCloud 这件事是**整台手机**的,与某个成员开通到哪一步无关。
+  if (icloudOn) return '这台手机开着 iCloud 同步,两套同步不能一起开';
   if (p.cloudId == null) return '还没备份上去 —— 会自动重试,也可以打开这个开关立刻再试一次';
   // **「已开通」而不是「已备份」**(复审 N3):I7 之后,非当前成员默认开云只做"注册"
   // (建档案密钥 + 在服务端建一个空档案),它的病历一条都还没上去 —— 那时说"已备份"

@@ -3711,6 +3711,15 @@ void main() {
       expect(s, contains('iCloud 同步'));
       expect(s, isNot(contains('再试一次')));
     });
+
+    test('F1:已经有 cloudId 也一样说 iCloud —— 这一笔只会在 iCloud 挡住我们时为真', () {
+      final s = cloudRowStatus(
+        const Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner'),
+        icloudOn: true,
+      );
+      expect(s, contains('iCloud 同步'));
+      expect(s, isNot(contains('已开通云备份')));
+    });
   });
 
   group('parseDeviceApprovalCode(纯函数)', () {
