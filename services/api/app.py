@@ -199,10 +199,14 @@ def account_delete(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep))
     return Response(status_code=204, headers={"X-Oss-Deleted": f"{deleted}/{len(oss_keys)}"})
 
 
-@app.get("/v1/accounts/lookup")
-def account_lookup(phone: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
+@app.post("/v1/accounts/lookup")
+def account_lookup(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    """按手机号查账号(家属授权用)。**POST body 而不是 GET 查询串**——手机号是
+    可辨识个人信息,查询串一路进 access log/代理日志/浏览器历史,POST body 不会。"""
+    if not isinstance(body, dict):
+        raise HTTPException(400, "bad request")
     try:
-        phone = auth.normalize_phone(phone)
+        phone = auth.normalize_phone(body.get("phone"))
     except auth.AuthError:
         raise HTTPException(400, "bad phone")
     if not db.lookup_rate_ok(conn, aid):
@@ -236,6 +240,16 @@ def grant_create(pid: str, body: dict, aid=Depends(account_dep), conn=Depends(co
     exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)) if days else None
     gid = db.grant_upsert(conn, pid, body["grantee_account_id"], body["role"], exp, db.b64d(body["wrapped_profile_key"]), aid)
     return {"grant_id": gid}
+
+
+@app.get("/v1/profiles/{pid}/grants")
+def grants_list(pid: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    """owner 查「我授权给谁」——只列 grant 的元数据(grant_id/grantee_kind/role/
+    expires_at/created_at),**不带手机号/姓名**:服务端本来就不存这些(见
+    `grants` 表 schema),这里只是显式重申一遍,不给将来加字段时手滑带出去
+    留一个"看起来该有"的借口。"""
+    _require_role(conn, pid, aid, {"owner"})
+    return db.grants_list(conn, pid)
 
 
 @app.delete("/v1/profiles/{pid}/grants/{gid}")

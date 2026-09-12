@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS devices (
   name TEXT NOT NULL DEFAULT '',
   eph_public BYTEA,                     -- 等待批准时的临时公钥
   approved_priv BYTEA,                  -- 旧设备封给它的私钥(取走即删)
+  approved_at TIMESTAMPTZ,              -- approved_priv 写入的时刻,配合 24h 清扫(见 sweep_stale_approvals)
   last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (account_id, device_id)
 );
@@ -104,6 +105,9 @@ def connect():
 
 def ensure_schema(conn):
     conn.execute(SCHEMA)
+    # `CREATE TABLE IF NOT EXISTS` 不会给已存在的表补列——`devices.approved_at`
+    # 是在 `devices` 表已经上线之后才加的(Task 16 item 4),老库要单独迁移一下。
+    conn.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ")
     conn.commit()
 
 
@@ -231,6 +235,17 @@ def profiles_for(conn, aid):
              "wrapped_profile_key": b64e(r[3]), "grant_id": r[4]} for r in rows]
 
 
+def grants_list(conn, pid):
+    """owner 的「我授权给谁」列表——只选 grant 自身的元数据列,不带 grantee 的
+    手机号/姓名(服务端本来就没存这些)。owner 自己那一行也在里面(role='owner'),
+    前端按 `role != 'owner'` 自行过滤掉,不在这里假设调用方会怎么用。"""
+    rows = conn.execute(
+        """SELECT id, grantee_kind, role, expires_at, created_at FROM grants
+           WHERE profile_id=%s ORDER BY created_at""", (pid,)).fetchall()
+    return [{"grant_id": r[0], "grantee_kind": r[1], "role": r[2],
+             "expires_at": r[3].isoformat() if r[3] else None, "created_at": r[4].isoformat()} for r in rows]
+
+
 def grant_delete(conn, pid, gid):
     cur = conn.execute("DELETE FROM grants WHERE profile_id=%s AND id=%s AND role<>'owner'", (pid, gid))
     return cur.rowcount
@@ -285,7 +300,25 @@ def invite_redeem(conn, iid, token, aid):
                   "wrapped_key_by_token": b64e(wrapped), "grant_id": gid}
 
 
+APPROVAL_TTL_HOURS = 24  # 批准了但 24h 内没被取走的 approved_priv,视为过期,清掉
+
+
+def sweep_stale_approvals(conn):
+    """把超过 `APPROVAL_TTL_HOURS` 还没被取走的 `approved_priv` 清空——旧设备
+    批准之后,新设备迟迟不来取,密文就一直挂在库里等着被取走,没有必要。清空后
+    这台设备回到"未批准"状态,得重新走一遍 request/approve。在
+    `device_request`/`device_approve`/`device_take_approval` 这几个必然会打一次
+    库的调用里顺手扫一遍,不另起定时任务(ponytail:全表条件扫,`devices` 表量级
+    不大,量上来了再考虑加索引/独立任务)。"""
+    conn.execute(
+        """UPDATE devices SET approved_priv=NULL, approved_at=NULL
+           WHERE approved_priv IS NOT NULL AND approved_at < now() - make_interval(hours => %s)""",
+        (APPROVAL_TTL_HOURS,),
+    )
+
+
 def device_request(conn, aid, did, eph_public):
+    sweep_stale_approvals(conn)
     cur = conn.execute("UPDATE devices SET eph_public=%s WHERE account_id=%s AND device_id=%s", (b64d(eph_public), aid, did))
     return cur.rowcount
 
@@ -305,11 +338,16 @@ def device_is_trusted(conn, aid, did):
 
 
 def device_approve(conn, aid, did, approved_priv):
-    cur = conn.execute("UPDATE devices SET approved_priv=%s, eph_public=NULL WHERE account_id=%s AND device_id=%s", (b64d(approved_priv), aid, did))
+    sweep_stale_approvals(conn)
+    cur = conn.execute(
+        "UPDATE devices SET approved_priv=%s, approved_at=now(), eph_public=NULL WHERE account_id=%s AND device_id=%s",
+        (b64d(approved_priv), aid, did),
+    )
     return cur.rowcount
 
 
 def device_take_approval(conn, aid, did):
+    sweep_stale_approvals(conn)
     # ponytail: RETURNING approved_priv on the same UPDATE that nulls it returns the
     # POST-update (NULL) value, not the value being taken — that's a real Postgres
     # RETURNING-semantics bug, not a style choice. SELECT ... FOR UPDATE then UPDATE,
@@ -317,7 +355,7 @@ def device_take_approval(conn, aid, did):
     r = conn.execute("SELECT approved_priv FROM devices WHERE account_id=%s AND device_id=%s AND approved_priv IS NOT NULL FOR UPDATE", (aid, did)).fetchone()
     if not r:
         return None
-    conn.execute("UPDATE devices SET approved_priv=NULL WHERE account_id=%s AND device_id=%s", (aid, did))
+    conn.execute("UPDATE devices SET approved_priv=NULL, approved_at=NULL WHERE account_id=%s AND device_id=%s", (aid, did))
     return b64e(r[0])
 
 

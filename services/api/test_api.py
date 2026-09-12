@@ -223,7 +223,7 @@ def test_keys_profile_family_grant_and_doctor_invite_flow():
     assert mine[0]["role"] == "owner"
 
     # 家属:按手机号查公钥 → 直接授权 editor 永久
-    lk = client.get("/v1/accounts/lookup", params={"phone": "13800000011"}, headers=ha).json()
+    lk = client.post("/v1/accounts/lookup", json={"phone": "13800000011"}, headers=ha).json()
     assert lk["public_key"] == b64(b"B" * 32)
     g = client.post(f"/v1/profiles/{pid}/grants", json={"grantee_account_id": lk["account_id"], "role": "editor",
                                                       "days": None, "wrapped_profile_key": b64(b"wk-bob")}, headers=ha)
@@ -376,6 +376,49 @@ def test_device_approve_and_approval_scoped_to_account_not_just_device_id():
     assert row[0] == b"sealed"
 
 
+# ---- Task 16 item 4 —— approved_priv 超过 24h 没被取走就清掉 ----
+
+def test_stale_approved_priv_swept_when_collected_after_24h():
+    old = login("13800000130", "old")
+    new = login("13800000130", "new")
+    h_old, h_new = _h(old["access"], "old"), _h(new["access"], "new")
+    client.post("/v1/devices/request", json={"eph_public": b64(b"E" * 32)}, headers=h_new)
+    assert client.post("/v1/devices/approve", json={"device_id": "new", "approved_priv": b64(b"sealed")}, headers=h_old).status_code == 200
+    with dbm.connect() as conn:
+        conn.execute("UPDATE devices SET approved_at = now() - interval '25 hours' WHERE account_id=%s AND device_id='new'", (old["account_id"],))
+        conn.commit()
+    r = client.get("/v1/devices/approval", params={"device_id": "new"}, headers=h_new)
+    assert r.json()["approved_priv"] is None, "超过 24h 没取走,取批准这一步本身先扫掉,取不到东西"
+
+
+def test_stale_approved_priv_swept_by_a_later_device_approve_call():
+    old = login("13800000132", "old")
+    stale = login("13800000132", "stale")
+    fresh = login("13800000132", "fresh")
+    h_old = _h(old["access"], "old")
+    h_stale, h_fresh = _h(stale["access"], "stale"), _h(fresh["access"], "fresh")
+    client.post("/v1/devices/request", json={"eph_public": b64(b"E" * 32)}, headers=h_stale)
+    assert client.post("/v1/devices/approve", json={"device_id": "stale", "approved_priv": b64(b"sealed")}, headers=h_old).status_code == 200
+    with dbm.connect() as conn:
+        conn.execute("UPDATE devices SET approved_at = now() - interval '25 hours' WHERE account_id=%s AND device_id='stale'", (old["account_id"],))
+        conn.commit()
+    client.post("/v1/devices/request", json={"eph_public": b64(b"F" * 32)}, headers=h_fresh)
+    assert client.post("/v1/devices/approve", json={"device_id": "fresh", "approved_priv": b64(b"sealed2")}, headers=h_old).status_code == 200
+    with dbm.connect() as conn:
+        row = conn.execute("SELECT approved_priv, approved_at FROM devices WHERE account_id=%s AND device_id='stale'", (old["account_id"],)).fetchone()
+    assert row == (None, None), "批准另一台设备这一步也该顺手扫掉过期的批准"
+
+
+def test_fresh_approved_priv_not_swept_within_24h():
+    old = login("13800000133", "old")
+    new = login("13800000133", "new")
+    h_old, h_new = _h(old["access"], "old"), _h(new["access"], "new")
+    client.post("/v1/devices/request", json={"eph_public": b64(b"E" * 32)}, headers=h_new)
+    assert client.post("/v1/devices/approve", json={"device_id": "new", "approved_priv": b64(b"sealed")}, headers=h_old).status_code == 200
+    r = client.get("/v1/devices/approval", params={"device_id": "new"}, headers=h_new)
+    assert r.json()["approved_priv"] == b64(b"sealed")
+
+
 # ---- fix round 1: item 4 —— /v1/accounts/lookup 要走 normalize_phone,且限流 ----
 
 def test_accounts_lookup_normalizes_plus86_and_rate_limits():
@@ -385,11 +428,42 @@ def test_accounts_lookup_normalizes_plus86_and_rate_limits():
     keys = {"public_key": b64(b"K" * 32), "wrapped_priv_pw": b64(b"pw"), "wrapped_priv_rc": b64(b"rc"),
             "kdf_salt": b64(b"s" * 16), "kdf_params": {"m_kib": 65536, "t": 3, "p": 1}}
     client.put("/v1/account/keys", json=keys, headers=_h(bob["access"]))
-    r = client.get("/v1/accounts/lookup", params={"phone": "+8613800000100"}, headers=ha)
+    r = client.post("/v1/accounts/lookup", json={"phone": "+8613800000100"}, headers=ha)
     assert r.status_code == 200 and r.json()["account_id"] == bob["account_id"]
     for _ in range(19):
-        assert client.get("/v1/accounts/lookup", params={"phone": "13800000100"}, headers=ha).status_code == 200
-    assert client.get("/v1/accounts/lookup", params={"phone": "13800000100"}, headers=ha).status_code == 429
+        assert client.post("/v1/accounts/lookup", json={"phone": "13800000100"}, headers=ha).status_code == 200
+    assert client.post("/v1/accounts/lookup", json={"phone": "13800000100"}, headers=ha).status_code == 429
+
+
+def test_accounts_lookup_get_method_removed():
+    """Task 16 item 2:手机号从 GET 查询串换成 POST body,老的 GET 路由不该
+    还在——405(方法不存在),不是悄悄换成别的语义。"""
+    alice = login("13800000145", "a1")
+    ha = _h(alice["access"])
+    assert client.get("/v1/accounts/lookup", params={"phone": "13800000100"}, headers=ha).status_code == 405
+
+
+# ---- Task 16 item 1 —— GET /v1/profiles/{pid}/grants(owner 专用,不带手机号/姓名) ----
+
+def test_grants_list_owner_only_and_shape_excludes_phone_and_name():
+    owner = login("13800000140", "o1")
+    bob = login("13800000141", "b1")
+    ho, hb = _h(owner["access"]), _h(bob["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    gid = client.post(f"/v1/profiles/{pid}/grants", json={"grantee_account_id": bob["account_id"], "role": "editor",
+                                                            "days": None, "wrapped_profile_key": b64(b"wk-bob")}, headers=ho).json()["grant_id"]
+
+    r = client.get(f"/v1/profiles/{pid}/grants", headers=ho)
+    assert r.status_code == 200
+    rows = r.json()
+    for row in rows:
+        assert set(row.keys()) == {"grant_id", "grantee_kind", "role", "expires_at", "created_at"}, \
+            "绝不能带 phone/name——服务端本来就没存这些"
+    bob_row = [row for row in rows if row["grant_id"] == gid][0]
+    assert bob_row["role"] == "editor" and bob_row["grantee_kind"] == "account"
+
+    # 非 owner(包括被授权者自己)查不到这个列表。
+    assert client.get(f"/v1/profiles/{pid}/grants", headers=hb).status_code == 403
 
 
 # ---- fix round 1: item 5 —— 带 DB 断言的负授权测试 ----

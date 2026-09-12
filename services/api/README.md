@@ -80,6 +80,18 @@ DB 这一半是一个事务、all-or-nothing;OSS 对象在 DB 提交之后才删
 DELETE 预签名是评审 Critical 过的坑),失败个数放进 `X-Oss-Deleted` 响应头,不影响
 这次注销本身成不成功。成功返回 204。
 
+## 数据留存
+
+`medme-vault`(OSS 桶,存加密事件/对象)**没有生命周期规则,是设计如此**——里面
+全是密文,服务端本来就读不出内容,数据跟着账号活到账号被删(自助注销 `DELETE
+/v1/account`,见上一节),没有"过一阵自动清"这回事。
+
+唯一有过期清理的是 `devices.approved_priv`(设备换机批准流程里、旧设备封给新设备
+的私钥密文):批准之后 24 小时内没被新设备取走就会被清空(`db.sweep_stale_approvals`,
+在 `/v1/devices/request`、`/v1/devices/approve`、`/v1/devices/approval` 这三个必然
+打库的调用里顺手扫一遍,不是独立定时任务)——清空后这台设备回到"未批准"状态,得
+重新走一遍 request/approve,不是数据丢失,只是这份临时密文的有效期到了。
+
 ## 已知缺口
 
 - **微信登录只留位。** `WeChatProvider.login` 直接 `raise NotImplementedError`,路由
