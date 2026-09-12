@@ -337,10 +337,13 @@ pub struct ConfirmedStatusDto {
 }
 
 /// 一条云同步事件的加密信封(`api::vault_sync::sync_export_events` 产出 /
-/// `sync_import_events` 消费)。`device_id`/`seq`/`event_id`/`ts` 明文携带
-/// (服务端按 `(device_id, seq)` 去重/排序、Dart 侧按 `device_seq_map` 过滤都
-/// 不需要解密);`ciphertext` 是整条 `core_model::LogEntry` 的 JSON 序列化经
-/// 档案密钥 AEAD 加密的结果(AAD = `event_id`),真正敏感的内容都在这里面。
+/// `sync_import_events` 消费)。`device_id`/`seq`/`ts` 明文携带(服务端按
+/// `(device_id, seq)` 去重/排序、Dart 侧按 `device_seq_map` 过滤都不需要解密);
+/// `ciphertext` 是整条 `core_model::LogEntry` 的 JSON 序列化经档案密钥 AEAD
+/// 加密的结果(AAD = `device_id:seq`),真正敏感的内容(含本机真实的
+/// `event_id`)都在这里面。**`event_id` 这个字段本身是服务端看到的 HMAC 马甲**
+/// (`sync::event_id_for_wire`),不是本机内容哈希——服务端只拿它当一个不透明
+/// 校验值存,dedup 靠 `(device_id, seq)`;`sync_import_events` 不读这个字段。
 #[derive(Debug, Clone)]
 pub struct SyncEventDto {
     pub device_id: String,

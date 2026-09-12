@@ -158,7 +158,14 @@ pub fn sync_local_seq_map() -> anyhow::Result<Vec<(String, i64)>> {
 }
 
 /// 导出本机日志里 `seq > after[device_id]`(未提供该 device 则视为 0)的条目,
-/// 逐条整体加密(AAD = `event_id`,防止信封字段与密文错配后被悄悄接受)。
+/// 逐条整体加密(AAD = `device_id:seq`,防止信封字段与密文错配后被悄悄接受)。
+///
+/// `SyncEventDto.event_id` 装的是**服务端看到的马甲**(`sync::event_id_for_wire`,
+/// 档案密钥 HMAC 过),不是本机日志里的原始 `event_id`(内容哈希)——原样发给
+/// 服务端会让服务端能跨账号比对哪些用户存了相同内容的事件,同 `object_id` 的
+/// 顾虑(见 `blob.rs` 的文档)。真正的本机 `event_id` 只在加密前的 `plain`
+/// (整条 `LogEntry` 的 JSON)里,随密文一起传输、解密后才重新出现——见
+/// `sync_import_events`,它不读也不校验这个 wire 马甲。
 pub fn sync_export_events(
     profile_key: Vec<u8>,
     after: Vec<(String, i64)>,
@@ -176,11 +183,13 @@ pub fn sync_export_events(
                 continue;
             }
             let plain = serde_json::to_vec(&e)?;
-            let ct = sync::encrypt_blob(&pk, &e.event_id, &plain)?;
+            let aad = format!("{}:{}", e.device_id, e.seq);
+            let ct = sync::encrypt_blob(&pk, &aad, &plain)?;
+            let wire_id = sync::event_id_for_wire(&pk, &e.event_id)?;
             out.push(SyncEventDto {
                 device_id: e.device_id.clone(),
                 seq: e.seq,
-                event_id: e.event_id.clone(),
+                event_id: wire_id,
                 ts: e.ts.clone(),
                 ciphertext: ct,
             });
@@ -189,8 +198,12 @@ pub fn sync_export_events(
     })
 }
 
-/// 解密 + 校验信封字段与解密出的条目一致(拒收错配),交给
-/// `append_peer_entries` 按 `(device_id, seq)` 去重/校验链/MAC 落盘。
+/// 解密(AAD = `device_id:seq`,与 `sync_export_events` 对应)+ 校验信封字段
+/// 与解密出的条目一致(拒收错配),交给 `append_peer_entries` 按
+/// `(device_id, seq)` 去重/校验链/MAC 落盘。**不读、不校验 `ev.event_id`**——
+/// 那是服务端看到的 HMAC 马甲(`event_id_for_wire`),与内容无绑定关系,真正的
+/// `event_id` 解密后才从 `LogEntry` 里出现,`append_peer_entries`/去重全程只认
+/// `(device_id, seq)`。
 ///
 /// **一条解不开就按设备截断,不是整批放弃**:先按 `(device_id, seq)` 排序
 /// (与 `append_peer_entries` 自己的排序口径一致,不依赖调用方传入顺序),
@@ -217,12 +230,10 @@ pub fn sync_import_events(
             continue;
         }
         let decoded: anyhow::Result<LogEntry> = (|| {
-            let plain = sync::decrypt_blob(&pk, &ev.event_id, &ev.ciphertext)?;
+            let aad = format!("{}:{}", ev.device_id, ev.seq);
+            let plain = sync::decrypt_blob(&pk, &aad, &ev.ciphertext)?;
             let entry: LogEntry = serde_json::from_slice(&plain)?;
-            if entry.event_id != ev.event_id
-                || entry.device_id != ev.device_id
-                || entry.seq != ev.seq
-            {
+            if entry.device_id != ev.device_id || entry.seq != ev.seq {
                 anyhow::bail!("事件信封与内容不一致,拒收");
             }
             Ok(entry)
@@ -701,6 +712,45 @@ mod tests {
             events_b.last().unwrap().seq,
             "B 未受影响,全量落盘"
         );
+    }
+
+    /// Task 16 item 5:`SyncEventDto.event_id` 导出时已经是 `event_id_for_wire`
+    /// 派生的马甲,不是本机内容哈希;篡改这个字段(模拟服务端/网络层瞎改)
+    /// 不影响 import——它按 `device_id:seq` 校验/解密,压根不读这个字段。
+    #[test]
+    fn exported_event_id_is_a_wire_alias_and_import_ignores_it() {
+        let _guard = VAULT_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let pk = sync_profile_key_new();
+        let a = tempdir().unwrap();
+        sync_open_profile_vault(
+            a.path().to_string_lossy().into(),
+            a.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+        crate::api::vault::ingest_bytes("r.txt".into(), b"WBC 5.0".to_vec()).unwrap();
+        let mut events = sync_export_events(pk.clone(), vec![]).unwrap();
+        assert!(!events.is_empty());
+        for e in &events {
+            assert_eq!(e.event_id.len(), 64, "wire event_id 仍是 64 位 hex,只是内容换了");
+        }
+
+        // 篡改 wire event_id(服务端/网络层不该被信任的字段),import 仍应成功。
+        for e in events.iter_mut() {
+            e.event_id = "f".repeat(64);
+        }
+
+        let b = tempdir().unwrap();
+        sync_open_profile_vault(
+            b.path().to_string_lossy().into(),
+            b.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+        let outcome = sync_import_events(pk, events.clone()).unwrap();
+        assert_eq!(outcome.applied as usize, events.len(), "篡改 wire event_id 不该拦住 import");
+        assert_eq!(outcome.untrusted, 0);
+        assert_eq!(outcome.undecodable, 0);
     }
 
     #[test]

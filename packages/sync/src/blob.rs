@@ -41,6 +41,20 @@ pub fn object_id(profile_key: &[u8; 32], plaintext_sha256_hex: &str) -> Result<S
     Ok(hex(&mac.finalize().into_bytes()))
 }
 
+/// 服务端看到的 `event_id`(dedup 键是 `(device_id, seq)`,`event_id` 不参与去重,
+/// 只是一个不透明校验值)。本机日志里的 `event_id` 是密文内容的哈希——原样发给
+/// 服务端会让服务端能跨账号比对哪些用户存了同一份内容(与 `object_id` 同一个
+/// 顾虑,见上面的注释)。用档案密钥派生的 `event-id` 子密钥重新 HMAC 一遍,
+/// 本机日志里的 `event_id` 本身不变(只在传输时换个马甲),import 也不依赖这个
+/// 值——见 `vault_sync.rs`。
+pub fn event_id_for_wire(profile_key: &[u8; 32], local_event_id_hex: &str) -> Result<String, SyncError> {
+    let key = derive_subkey(profile_key, b"event-id")?;
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(&key).expect("HMAC-SHA256 accepts a key of any length");
+    mac.update(local_event_id_hex.as_bytes());
+    Ok(hex(&mac.finalize().into_bytes()))
+}
+
 /// 密文/HMAC 密钥经 `object-enc` 子密钥派生,与 `object_id` 用的 `object-id` 子密钥
 /// 互相独立(见 `derive_subkey`)。
 pub fn encrypt_blob(profile_key: &[u8; 32], id: &str, plaintext: &[u8]) -> Result<Vec<u8>, SyncError> {
@@ -81,5 +95,18 @@ mod tests {
         assert_ne!(enc_key, id_key);
         assert_ne!(&enc_key[..2], &date_shift[..]);
         assert_ne!(&id_key[..2], &date_shift[..]);
+    }
+
+    #[test]
+    fn event_id_for_wire_is_keyed_deterministic_and_differs_from_raw_id() {
+        let pk = profile_key_new();
+        let local_id = "ab".repeat(32);
+        let wire = event_id_for_wire(&pk, &local_id).unwrap();
+        assert_eq!(wire.len(), 64);
+        assert_ne!(wire, local_id, "上线的 event_id 不能是本机内容哈希原样");
+        assert_eq!(wire, event_id_for_wire(&pk, &local_id).unwrap(), "同密钥同输入必须确定性");
+        let other_pk = profile_key_new();
+        assert_ne!(wire, event_id_for_wire(&other_pk, &local_id).unwrap(), "换一把档案密钥,wire id 必须不同");
+        assert_ne!(wire, object_id(&pk, &local_id).unwrap(), "event-id 子密钥必须独立于 object-id 子密钥");
     }
 }

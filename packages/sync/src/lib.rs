@@ -3,7 +3,7 @@ pub mod blob;
 pub mod error;
 pub mod keys;
 
-pub use blob::{date_shift_days, decrypt_blob, encrypt_blob, object_id, profile_key_new};
+pub use blob::{date_shift_days, decrypt_blob, encrypt_blob, event_id_for_wire, object_id, profile_key_new};
 pub use error::SyncError;
 pub use keys::{
     account_keys_new, kek_from_password, kek_from_recovery, kek_from_token, open_sealed,
@@ -107,6 +107,28 @@ mod tests {
         assert_ne!(a, kek_from_token("invite-tok-xyz789").unwrap());
         // 同一串当"恢复码"跑会因长度/字符集校验直接出错,派生链互不相通。
         assert!(kek_from_recovery("invite-tok-abc123").is_err());
+    }
+
+    /// 恢复码字母表只有 30 个符号(index 0..29),拒绝采样之后不该有任何越界字符,
+    /// 且分布大致均匀(宽松的界:200 个码 * 20 符号 = 4000 个抽样,期望每个符号
+    /// 出现 ~133 次,允许到 60..240 这么宽的区间,只为抓"整段没走拒绝采样"这类
+    /// 回归,不是严谨的统计检验)。
+    #[test]
+    fn recovery_code_alphabet_is_uniform_and_never_out_of_range() {
+        const ALPHABET: &str = "ABCDEFGHJKMNPQRSTVWXYZ23456789";
+        let mut counts = [0u32; 30];
+        for _ in 0..200 {
+            let code = recovery_code_new();
+            for c in code.chars().filter(|c| *c != '-') {
+                let idx = ALPHABET.find(c).expect("symbol must be in the 30-char alphabet");
+                counts[idx] += 1;
+            }
+        }
+        let total: u32 = counts.iter().sum();
+        assert_eq!(total, 200 * 20);
+        for (i, &n) in counts.iter().enumerate() {
+            assert!((60..240).contains(&n), "symbol {i} count {n} looks non-uniform");
+        }
     }
 
     #[test]

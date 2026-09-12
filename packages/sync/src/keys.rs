@@ -44,18 +44,26 @@ pub fn kek_from_password(pw: &str, salt: &[u8; 16], p: &KdfParams) -> Result<[u8
     Ok(out)
 }
 
-/// 20 字符 base32(去掉易混的 0/O/1/I/L/U),100 bit 熵,4 字符一组。
-const ALPHABET: &[u8; 32] = b"ABCDEFGHJKMNPQRSTVWXYZ23456789ZZ"; // 末两位不会被 index 到(见 recovery_code_new)
+/// 20 字符 base32(去掉易混的 0/O/1/I/L/U),约 98 bit 熵(log2(30^20)),4 字符一组。
+const ALPHABET: &[u8; 30] = b"ABCDEFGHJKMNPQRSTVWXYZ23456789";
 
 pub fn recovery_code_new() -> String {
-    let mut raw = [0u8; 20];
-    getrandom::fill(&mut raw).expect("OS entropy source is always available on supported targets");
     let mut s = String::with_capacity(24);
-    for (i, b) in raw.iter().enumerate() {
+    let mut i = 0usize;
+    while i < 20 {
+        let mut b = [0u8; 1];
+        getrandom::fill(&mut b).expect("OS entropy source is always available on supported targets");
+        // 拒绝采样:256 不是 30 的整数倍(256 = 8*30 + 16),直接 `% 30` 会让
+        // 0..15 比 16..29 多被选中一次——舍弃 >= 240 的字节,剩下的 0..239 按
+        // 30 均分,字母表才是真均匀的。
+        if b[0] >= 240 {
+            continue;
+        }
         if i > 0 && i % 4 == 0 {
             s.push('-');
         }
-        s.push(ALPHABET[(b % 30) as usize] as char);
+        s.push(ALPHABET[(b[0] % 30) as usize] as char);
+        i += 1;
     }
     s
 }
