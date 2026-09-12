@@ -263,6 +263,9 @@ abstract class RustLibApi extends BaseApi {
     required String modelVersion,
     required String llmJson,
     required String restoreMapJson,
+    required String knownName,
+    String? knownIdNumber,
+    String? knownPhone,
   });
 
   Future<CloudExtractionRequestDto> crateApiVaultVaultCloudPrepareExtraction({
@@ -1836,6 +1839,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String modelVersion,
     required String llmJson,
     required String restoreMapJson,
+    required String knownName,
+    String? knownIdNumber,
+    String? knownPhone,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1846,6 +1852,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(modelVersion, serializer);
           sse_encode_String(llmJson, serializer);
           sse_encode_String(restoreMapJson, serializer);
+          sse_encode_String(knownName, serializer);
+          sse_encode_opt_String(knownIdNumber, serializer);
+          sse_encode_opt_String(knownPhone, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1858,7 +1867,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiVaultVaultCloudCommitExtractionConstMeta,
-        argValues: [documentId, mode, modelVersion, llmJson, restoreMapJson],
+        argValues: [
+          documentId,
+          mode,
+          modelVersion,
+          llmJson,
+          restoreMapJson,
+          knownName,
+          knownIdNumber,
+          knownPhone,
+        ],
         apiImpl: this,
       ),
     );
@@ -1873,6 +1891,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "modelVersion",
           "llmJson",
           "restoreMapJson",
+          "knownName",
+          "knownIdNumber",
+          "knownPhone",
         ],
       );
 
@@ -2585,12 +2606,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   OcrPpResultDto dco_decode_ocr_pp_result_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return OcrPpResultDto(
       text: dco_decode_String(arr[0]),
       confidence: dco_decode_f_32(arr[1]),
       lines: dco_decode_list_ocr_line_dto(arr[2]),
+      frameW: dco_decode_f_32(arr[3]),
+      frameH: dco_decode_f_32(arr[4]),
     );
   }
 
@@ -3619,10 +3642,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_text = sse_decode_String(deserializer);
     var var_confidence = sse_decode_f_32(deserializer);
     var var_lines = sse_decode_list_ocr_line_dto(deserializer);
+    var var_frameW = sse_decode_f_32(deserializer);
+    var var_frameH = sse_decode_f_32(deserializer);
     return OcrPpResultDto(
       text: var_text,
       confidence: var_confidence,
       lines: var_lines,
+      frameW: var_frameW,
+      frameH: var_frameH,
     );
   }
 
@@ -4625,6 +4652,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.text, serializer);
     sse_encode_f_32(self.confidence, serializer);
     sse_encode_list_ocr_line_dto(self.lines, serializer);
+    sse_encode_f_32(self.frameW, serializer);
+    sse_encode_f_32(self.frameH, serializer);
   }
 
   @protected

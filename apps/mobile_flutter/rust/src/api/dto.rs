@@ -186,6 +186,12 @@ pub struct OcrPpResultDto {
     /// 每行的检测框(识别引擎 working frame 像素坐标,origin 左上)。云抽取
     /// 图片档脱敏靠它定位要涂黑的区域(`deid::redact_boxes`);文本档忽略。
     pub lines: Vec<OcrLineDto>,
+    /// `lines` 所在那张 working frame 的宽高(像素)——识别引擎内部预处理(降采样/
+    /// 90°摆正/去斜)之后的图,**不是原图尺寸**。调用 `vault_cloud_prepare_extraction`
+    /// 时必须原样传这两个数作 `page_w`/`page_h`;传原始图片宽高会导致涂黑框整体
+    /// 算错坐标系(静默漏涂 PHI),传原图尺寸这类明显不对的值不会有任何报错提示。
+    pub frame_w: f32,
+    pub frame_h: f32,
 }
 
 /// [`OcrPpResultDto::lines`] 的一行:文本 + 检测框。

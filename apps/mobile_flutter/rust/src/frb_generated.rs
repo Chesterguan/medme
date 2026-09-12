@@ -1822,6 +1822,9 @@ fn wire__crate__api__vault__vault_cloud_commit_extraction_impl(
             let api_model_version = <String>::sse_decode(&mut deserializer);
             let api_llm_json = <String>::sse_decode(&mut deserializer);
             let api_restore_map_json = <String>::sse_decode(&mut deserializer);
+            let api_known_name = <String>::sse_decode(&mut deserializer);
+            let api_known_id_number = <Option<String>>::sse_decode(&mut deserializer);
+            let api_known_phone = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -1832,6 +1835,9 @@ fn wire__crate__api__vault__vault_cloud_commit_extraction_impl(
                             api_model_version,
                             api_llm_json,
                             api_restore_map_json,
+                            api_known_name,
+                            api_known_id_number,
+                            api_known_phone,
                         )?;
                         Ok(output_ok)
                     })(),
@@ -2730,10 +2736,14 @@ impl SseDecode for crate::api::dto::OcrPpResultDto {
         let mut var_text = <String>::sse_decode(deserializer);
         let mut var_confidence = <f32>::sse_decode(deserializer);
         let mut var_lines = <Vec<crate::api::dto::OcrLineDto>>::sse_decode(deserializer);
+        let mut var_frameW = <f32>::sse_decode(deserializer);
+        let mut var_frameH = <f32>::sse_decode(deserializer);
         return crate::api::dto::OcrPpResultDto {
             text: var_text,
             confidence: var_confidence,
             lines: var_lines,
+            frame_w: var_frameW,
+            frame_h: var_frameH,
         };
     }
 }
@@ -3783,6 +3793,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::OcrPpResultDto {
             self.text.into_into_dart().into_dart(),
             self.confidence.into_into_dart().into_dart(),
             self.lines.into_into_dart().into_dart(),
+            self.frame_w.into_into_dart().into_dart(),
+            self.frame_h.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4701,6 +4713,8 @@ impl SseEncode for crate::api::dto::OcrPpResultDto {
         <String>::sse_encode(self.text, serializer);
         <f32>::sse_encode(self.confidence, serializer);
         <Vec<crate::api::dto::OcrLineDto>>::sse_encode(self.lines, serializer);
+        <f32>::sse_encode(self.frame_w, serializer);
+        <f32>::sse_encode(self.frame_h, serializer);
     }
 }
 

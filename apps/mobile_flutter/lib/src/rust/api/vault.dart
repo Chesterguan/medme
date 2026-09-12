@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `doc_summary`, `extraction_json_for`, `fmt_value`, `format_plausibility_violation`, `hex_to_bytes`, `home_monitoring_demo_entries`, `ingest_one`, `known_identity`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
+// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `doc_summary`, `extraction_json_for`, `fmt_value`, `format_plausibility_violation`, `hex_to_bytes`, `home_monitoring_demo_entries`, `ingest_one`, `known_identity`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `unwrap_restore_map`, `vault_cell`, `with_state_mut`, `with_state`, `wrap_restore_map`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -408,13 +408,23 @@ Future<OcrPpResultDto> recognizeImagePp({required List<int> bytes}) =>
 /// 手机号),绝不回显值**,调用方(Dart)据此退回本地正则路径、不发云。
 ///
 /// `lines` 非空(图片档,来自 `recognize_image_pp` 的 `OcrPpResultDto::lines`)时
-/// 一并跑 `deid::redact_boxes` 算出要涂黑的框(`page_w`/`page_h` 必须与 `lines`
-/// 同一坐标系——即 `recognize_engine_lines` 那张 working frame 的尺寸);文本档
-/// (`lines` 为空)不产生任何框。
+/// 一并跑 `deid::redact_boxes` 算出要涂黑的框——`page_w`/`page_h` **必须**是
+/// `OcrPpResultDto::frame_w`/`frame_h`(识别引擎那张 working frame 的尺寸,已经过
+/// 降采样/90°摆正/去斜),**不能**是原始图片的宽高:两者坐标系不同,传错了涂黑
+/// 框会整体偏移,静默漏涂 PHI,且 `deid::redact_boxes` 内部的健全性检查只在
+/// debug build 生效(release 编译掉)。`lines` 非空但 `page_w`/`page_h` 不是正数
+/// (明显不是真实 frame 尺寸)直接 `bail!`,不生成看似正常、实则错位的涂黑框。
+/// 文本档(`lines` 为空)不产生任何框,不检查这两个参数。
 ///
-/// 返回的 `restore_map_json`(占位符/日期偏移 ↔ 原文)只在本机使用
-/// (`vault_cloud_commit_extraction` 拿它做还原)——**经 FFI 到 Dart 只是为了原样带回
-/// 下一次调用,从不上传、从不落盘**。
+/// 该文档没有任何 OCR 文字(`ocr_text` 是空串——比如原件只是照片没识别出字、或
+/// 页面识别彻底失败)时 `bail!`:发一个空 payload 出去没有意义,`commit` 那边要是
+/// 照样把这个空结果当成"抽取成功"落盘,会让 `parser::SourceDoc.extraction_json`
+/// 误以为这份文档"抽取过、就是没有化验",反而把本该退回去跑的正则结果**藏起来**
+/// (fix round 1 item 4)。
+///
+/// 返回的 `restore_map_json`(占位符/日期偏移 ↔ 原文,外裹 `document_id`——见
+/// [`wrap_restore_map`])只在本机使用(`vault_cloud_commit_extraction` 拿它做还原)
+/// ——**经 FFI 到 Dart 只是为了原样带回下一次调用,从不上传、从不落盘**。
 Future<CloudExtractionRequestDto> vaultCloudPrepareExtraction({
   required PlatformInt64 documentId,
   required List<OcrLineDto> lines,
@@ -448,11 +458,32 @@ Future<Uint8List> vaultCloudRedactImage({
 ///
 /// 校验基准**必须是本机重新算出的脱敏文本,不能信 Dart 传来的任何文本**——否则
 /// 校验形同虚设(Dart 说校验过就过)。做法:对该文档当前的 OCR 全文重新跑一遍
-/// `deid::redact_text`(空身份,只需要 A/P 层 + 日期偏移,`shift_days` 取自
-/// `restore_map_json` 里记的那个,保证与 `prepare` 那次一致),再用 `restore_map`
-/// 里登记的每一对占位符/原值把原值换回占位符——这样重建出的文本与
-/// `vault_cloud_prepare_extraction` 当时发给 LLM 的 `payload_text` 一致(确定性、不用
-/// 反查 Dart),`deid::verify` 才能诚实地判断 LLM 返回的字段是不是「原文逐字」。
+/// `deid::redact_text`,**用与 `vault_cloud_prepare_extraction` 完全相同的三个
+/// 已知身份参数**(`known_name`/`known_id_number`/`known_phone`,`shift_days` 取自
+/// `restore_map_json` 里记的那个)——同样的文本 + 同样的已知身份 + 同样的偏移天数,
+/// `redact_text` 是纯函数,重算出来的文本与 `prepare` 那次发给 LLM 的
+/// `payload_text` **逐字节相同**,`deid::verify` 才能诚实地判断 LLM 返回的字段是不是
+/// 「原文逐字」。
+///
+/// （曾经的实现用**空**身份重算 + 手动把 `restore_map` 登记的每对占位符/原值在
+/// 重算结果里做字符串替换,企图"补回"K 层本该做的事——这站不住脚:A/P 层的占位符
+/// 编号是"按扫描到的顺序从 1 开始"独立计数的,跳过 K 层会让 A/P 层重新抢注册顺序,
+/// 编号完全对不上 `prepare` 那次的真实编号(复核审阅实测复现:真实 payload 是
+/// 「门诊号:[N2] 身份证号:[N1]」,那种重建法算出「[N1]/[N2]」,顺序颠倒)。带来的
+/// 风险不只是「误伤该通过的字段」,更危险的是反过来:一个本该被拒的字段可能因为
+/// 编号巧合而被误判通过,`deid::restore` 再拿正确的 `map` 把**错的占位符**换成了
+/// 真实值,等于经这条路径泄漏。改成两边用同一个 `known_identity`,不再需要,也
+/// 删掉了那段手工替换。）
+///
+/// 身份传错(与 `prepare` 那次不一致)时,重算文本与真实 payload 不再逐字节相同,
+/// `deid::verify` 的行为只会更严格(该通过的可能被误拒),不会更松(不会把不该
+/// 通过的放过)——这正是「宁可错杀、不可放过」在这里的体现。
+///
+/// 还原映射解出来的 `document_id` 与 `document_id` 参数对不上(比如 Dart 不小心把
+/// A 文档 `prepare` 的映射喂给了 B 文档的 `commit`)时 `bail!`,不落盘(见
+/// [`unwrap_restore_map`])。该文档没有 OCR 文字时同样 `bail!`(理由见
+/// `vault_cloud_prepare_extraction` 文档——两边都要挡,`commit` 不能只信任
+/// `prepare` 已经挡过一次)。
 ///
 /// 通过校验后 `deid::restore` 把占位符/偏移日期换回真值,再 `add_extraction`
 /// 落盘(`NewExtraction`,latest-wins,见 `core_model::add_extraction` 文档)。
@@ -462,10 +493,16 @@ Future<CloudExtractionResultDto> vaultCloudCommitExtraction({
   required String modelVersion,
   required String llmJson,
   required String restoreMapJson,
+  required String knownName,
+  String? knownIdNumber,
+  String? knownPhone,
 }) => RustLib.instance.api.crateApiVaultVaultCloudCommitExtraction(
   documentId: documentId,
   mode: mode,
   modelVersion: modelVersion,
   llmJson: llmJson,
   restoreMapJson: restoreMapJson,
+  knownName: knownName,
+  knownIdNumber: knownIdNumber,
+  knownPhone: knownPhone,
 );
