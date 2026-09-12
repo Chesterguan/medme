@@ -129,7 +129,7 @@
 
 use regex::Regex;
 use std::sync::OnceLock;
-use terminology::{dictionary_entries, normalize_unit, resolve};
+use terminology::{dictionary_entries, normalize_unit, resolve, Match};
 
 /// One normalized lab result row. Mapping is additive: the raw name/value is
 /// always kept even when terminology can't resolve it (upper layer decides).
@@ -168,6 +168,15 @@ pub struct LabObservation {
     /// `GroupKey::SelfMeasured` for why this field, not `analyte_key`, decides
     /// grouping.
     pub self_measured: bool,
+    /// 这条值**未经逐字校验**,上图表前需要人再核一遍(spec §4:deid 图片模式
+    /// 下,LLM 抽取的数值没法逐字比对回原文,只能标"未核实",不能当已验证的
+    /// 值 charting)。恒为 `false`——这里(OCR/正则路径)与自测值都是可信来源;
+    /// `true` 只可能来自 `extraction::labs_from_json`(云抽取,`deid::LabItem
+    /// .unverified`)。**与 `confidence` 是两件事**:`confidence` 说的是「词典
+    /// 匹配的把握有多大」,这个字段说的是「这个数值本身有没有核实过」——即使
+    /// 词典 100% 认出了名字,值仍可能没核实过。渲染层必须能分别处理,不能把
+    /// 两者混成一个数。
+    pub unverified: bool,
 }
 
 /// A lab-report line whose result couldn't be read with confidence — kept and
@@ -320,13 +329,76 @@ fn range_is_bounded(s: &str, start: usize, end: usize) -> bool {
 /// text-layer/`.txt` input never passes through — this parser has no
 /// dependency on `ocr`, so it has to make the same call itself here rather
 /// than rely on that normalization having already happened upstream.
-fn parse_decimal_token(raw: &str) -> Option<f64> {
+pub(crate) fn parse_decimal_token(raw: &str) -> Option<f64> {
     if raw.contains(',') {
         raw.replace(',', ".").parse().ok()
     } else {
         raw.parse().ok()
     }
 }
+
+/// Lab-row gate: some evidence beyond "a name and a number" must exist, else
+/// it's demographics/metadata (年龄:60) — reject it. Shared by the OCR/regex
+/// path (`parse_line_budgeted`) and the cloud-extraction path
+/// (`extraction::labs_from_json`) so the two can't drift into accepting
+/// different things as "a lab row".
+pub(crate) fn has_lab_evidence(
+    unit_raw: Option<&str>,
+    ref_low: Option<f64>,
+    ref_high: Option<f64>,
+    explicit_flag: Option<&str>,
+    matched: bool,
+) -> bool {
+    unit_raw.is_some()
+        || ref_low.is_some()
+        || ref_high.is_some()
+        || explicit_flag.is_some()
+        || matched
+}
+
+/// 值/参考区间 → 规范单位的换算,仅在「词典匹配上 且 词典认识这份报告印的
+/// 单位 且 换算严格单调递增(`slope > 0`)」时产出,否则四个字段整体为
+/// `None` —— 不存在「值换了区间没换」,也不允许一个上下颠倒的区间(见词典
+/// `dictionary_slopes_are_all_positive` 那条守卫)。
+///
+/// 与 [`has_lab_evidence`] 一样是共享逻辑:OCR/正则路径与云抽取路径
+/// (`extraction::labs_from_json`)必须用同一套换算规则,否则同一个分析物在
+/// 两条路径下产出的 `unit_canonical` 会不一致 —— 混单位的跨文档序列
+/// (`finalize_lab_series`)就是靠「换不出来就整体 `None`」这道闸门收敛混单位
+/// 数据的,两条路径若各自实现一遍、稍有出入,这道闸就会被绕开。
+pub(crate) fn canonicalize(
+    m: Option<&Match>,
+    unit_raw: Option<&str>,
+    value_num: f64,
+    ref_low: Option<f64>,
+    ref_high: Option<f64>,
+) -> (Option<f64>, Option<String>, Option<f64>, Option<f64>) {
+    let mut value_canonical = None;
+    let mut unit_canonical = None;
+    let mut ref_low_canonical = None;
+    let mut ref_high_canonical = None;
+    if let (Some(m), Some(u)) = (m, unit_raw) {
+        if let Some(entry) = dictionary_entries().iter().find(|e| e.key == m.key) {
+            let nu = normalize_unit(u);
+            if let Some(conv) = entry.units.iter().find(|c| normalize_unit(&c.unit) == nu) {
+                if conv.slope > 0.0 {
+                    let to_canonical = |x: f64| conv.slope * x + conv.intercept;
+                    value_canonical = Some(to_canonical(value_num));
+                    ref_low_canonical = ref_low.map(to_canonical);
+                    ref_high_canonical = ref_high.map(to_canonical);
+                    unit_canonical = entry.canonical_unit.clone();
+                }
+            }
+        }
+    }
+    (
+        value_canonical,
+        unit_canonical,
+        ref_low_canonical,
+        ref_high_canonical,
+    )
+}
+
 /// A dash-separated `YYYY-MM-DD` date. Only the dash form matters: the range regex
 /// keys on `[-~]`, so slash/dot dates never look like a range in the first place.
 /// A real reference range has a single dash (`3.9-6.1`); a date has two — so this
@@ -1367,12 +1439,13 @@ fn parse_line_budgeted(raw_line: &str, budget: u8) -> (LineOutcome, Vec<LabObser
     });
     // Lab-row gate: some evidence beyond "a name and a number" must exist,
     // else it's demographics/metadata (年龄:60) — skip it.
-    let has_evidence = unit_raw.is_some()
-        || ref_low.is_some()
-        || ref_high.is_some()
-        || explicit_flag.is_some()
-        || m.is_some();
-    if !has_evidence {
+    if !has_lab_evidence(
+        unit_raw.as_deref(),
+        ref_low,
+        ref_high,
+        explicit_flag.as_deref(),
+        m.is_some(),
+    ) {
         return (LineOutcome::Nothing, Vec::new());
     }
     // The number taken as the result is bound into a reference range — this
@@ -1432,32 +1505,15 @@ fn parse_line_budgeted(raw_line: &str, budget: u8) -> (LineOutcome, Vec<LabObser
     // here (the latter is `packages/terminology`, off limits per the task
     // that produced this comment).
 
-    // Canonical conversion (only when matched AND the entry knows this unit).
-    // 值和参考区间的两个界值走**同一行** `UnitConversion`、**同一个**仿射映射:
-    // 规范那一套要么整体产出、要么整体留空,不存在「值换了区间没换」——
-    // 见模块头「参考区间也换算」。
-    let mut value_canonical = None;
-    let mut unit_canonical = None;
-    let mut ref_low_canonical = None;
-    let mut ref_high_canonical = None;
-    if let (Some(m), Some(u)) = (&m, &unit_raw) {
-        if let Some(entry) = dictionary_entries().iter().find(|e| e.key == m.key) {
-            let nu = normalize_unit(u);
-            if let Some(conv) = entry.units.iter().find(|c| normalize_unit(&c.unit) == nu) {
-                // `slope <= 0` 会让映射单调递减,low/high 的含义互换。词典里目前
-                // 一条都没有(`dictionary_slopes_are_all_positive` 守着),真出现
-                // 时**拒绝换算**(规范那套整体留空)而不是产出一个上下颠倒的
-                // 区间 —— 一个颠倒的区间比没有区间危险得多。
-                if conv.slope > 0.0 {
-                    let to_canonical = |x: f64| conv.slope * x + conv.intercept;
-                    value_canonical = Some(to_canonical(value_num));
-                    ref_low_canonical = ref_low.map(to_canonical);
-                    ref_high_canonical = ref_high.map(to_canonical);
-                    unit_canonical = entry.canonical_unit.clone();
-                }
-            }
-        }
-    }
+    // Canonical conversion (only when matched AND the entry knows this unit) —
+    // shared with `extraction::labs_from_json`, see `canonicalize`'s doc.
+    let (value_canonical, unit_canonical, ref_low_canonical, ref_high_canonical) = canonicalize(
+        m.as_ref(),
+        unit_raw.as_deref(),
+        value_num,
+        ref_low,
+        ref_high,
+    );
 
     // Flag: explicit marker wins; else compare raw value against raw refs.
     let flag = explicit_flag.or_else(|| {
@@ -1499,6 +1555,7 @@ fn parse_line_budgeted(raw_line: &str, budget: u8) -> (LineOutcome, Vec<LabObser
             flag,
             confidence: m.as_ref().map_or(0.0, |m| m.confidence),
             self_measured: false,
+            unverified: false,
         }),
         extra,
     )

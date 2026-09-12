@@ -68,7 +68,8 @@ fn lanes() -> Vec<(String, Vec<String>)> {
         text: PRESCRIPTION,
         doc_type: Some(format!("{:?}", parser::classify(PRESCRIPTION)).to_lowercase()),
         title: Some("2026-07-15_处方_心内科".to_string()),
-        extraction_json: None,    };
+        extraction_json: None,
+    };
     assemble_summary(&[doc])
         .get("problems")
         .and_then(Value::as_array)

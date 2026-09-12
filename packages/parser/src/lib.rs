@@ -19,7 +19,7 @@ pub use aggregate::{
     aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedSpan, SourceDoc,
 };
 pub use conditions::{extract_conditions, ConditionMention};
-pub use extraction::labs_from_json;
+pub use extraction::{labs_from_json, LabsFromJson};
 pub use handoff::{assemble_summary, match_disease};
 pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};

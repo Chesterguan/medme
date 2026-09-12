@@ -100,6 +100,12 @@ pub struct LabPoint {
     pub flag: Option<String>,
     /// The [`SourceDoc::index`] this point came from.
     pub source: usize,
+    /// `true` only for cloud-extraction values the local verifier couldn't
+    /// confirm against source text (`deid` image mode, spec §4) — a charting-
+    /// safety mark, distinct from `analyte_key`/`confidence` matching. Always
+    /// `false` for the OCR/regex path and for self-measured points. See
+    /// `LabObservation::unverified`.
+    pub unverified: bool,
 }
 
 /// A single analyte's trend across all documents.
@@ -139,6 +145,10 @@ pub struct AnalyteSeries {
     /// see `GroupKey::SelfMeasured`, which keeps self-measured points out of any
     /// group that also holds hospital-sourced points for the same analyte.
     pub self_measured: bool,
+    /// 序列里 `points[..].unverified == true` 的点数(见 `LabPoint::unverified`
+    /// 的文档)。`0` = 这条序列全是已核实的值。渲染层用这个决定要不要在这条
+    /// 序列上加"需核对"的提示,不必自己去数 `points`。
+    pub needs_review_count: usize,
 }
 
 /// A medication's span across all documents that mention it.
@@ -458,6 +468,7 @@ struct PendingPoint {
     value_canonical: Option<f64>,
     flag: Option<String>,
     source: usize,
+    unverified: bool,
 }
 
 struct LabBuilder {
@@ -486,6 +497,9 @@ struct LabBuilder {
     /// changed — `GroupKey::SelfMeasured` guarantees every observation folded
     /// into this builder agrees (see the struct-level doc on `AnalyteSeries`).
     self_measured: bool,
+    /// Running count of `points[..].unverified == true`; copied to
+    /// `AnalyteSeries::needs_review_count` at finalize.
+    needs_review_count: usize,
 }
 
 struct MedBuilder {
@@ -561,6 +575,8 @@ fn build_self_measured_observation(v: &self_entry::SelfMeasuredValue) -> LabObse
         // 五选一里选的项,结构上精确无歧义" —— 满置信度是如实的,不是编的。
         confidence: 1.0,
         self_measured: true,
+        // 用户在封闭五选一里选的、结构上精确的值,不是需要人核对的抽取结果。
+        unverified: false,
     }
 }
 
@@ -642,6 +658,7 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
             value_canonical: p.value_canonical,
             flag: p.flag,
             source: p.source,
+            unverified: p.unverified,
         })
         .collect();
 
@@ -658,6 +675,7 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
         points,
         any_abnormal: b.any_abnormal,
         self_measured: b.self_measured,
+        needs_review_count: b.needs_review_count,
     }
 }
 
@@ -684,12 +702,13 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // 抽(section-scoped,so a discharge summary's prose 血压 stays out) —— #148。
         // whole-doc 那条路上先把 出院医嘱/带药 段屏蔽掉:一行药读起来就是一行化验,
         // 而 `wants_labs` 会对一份标题被 OCR 丢掉的出院小结点头 —— 见 mask_meds_blocks。 ---
-        let doc_labs: Vec<LabObservation> = if let Some(labs) = doc
+        let doc_labs: Vec<LabObservation> = if let Some(parsed) = doc
             .extraction_json
-            .and_then(crate::extraction::try_labs_from_json)
+            .and_then(|j| crate::extraction::labs_from_json(j).ok())
         {
-            // 有云抽取结果且能解析(哪怕零条 lab)就用它,不再对 text 跑正则。
-            labs
+            // 有云抽取结果且能解析(哪怕零条 lab)就用它,不再对 text 跑正则;
+            // `Err`(格式不对/被拒收)才落到下面几条分支,退回正则。
+            parsed.labs
         } else if dt == Some("self_measurement") {
             self_entry::parse_self_measurement_payload(doc.text)
                 .unwrap_or_default()
@@ -722,6 +741,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 value_canonical: obs.value_canonical,
                 flag: obs.flag.clone(),
                 source: doc.index,
+                unverified: obs.unverified,
             };
             let abnormal = matches!(obs.flag.as_deref(), Some("H") | Some("L"));
             let b = labs.entry(key).or_insert_with(|| LabBuilder {
@@ -740,6 +760,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 points: Vec::new(),
                 any_abnormal: false,
                 self_measured: obs.self_measured,
+                needs_review_count: 0,
             });
             // 序列内恒定(见字段文档);第一个换算得出来的点供出即可。
             if b.unit_canonical.is_none() {
@@ -778,6 +799,9 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 }
             }
             b.any_abnormal |= abnormal;
+            if point.unverified {
+                b.needs_review_count += 1;
+            }
             b.points.push(point);
         }
 
@@ -987,9 +1011,125 @@ mod tests {
         let agg = aggregate(&docs);
         let s = series(&agg, "wbc");
         assert_eq!(s.points.len(), 1);
+        assert_eq!(
+            s.points[0].value, 11.8,
+            "值必须是抽取结果给的那个数,不是正则从 text 里读出的"
+        );
+        assert_eq!(s.points[0].unit.as_deref(), Some("10^9/L"));
+        assert_eq!(
+            s.points[0].flag.as_deref(),
+            Some("H"),
+            "11.8 > ref_high 10.0"
+        );
+        assert_eq!((s.ref_low, s.ref_high), (Some(4.0), Some(10.0)));
         assert!(
-            agg.labs.iter().all(|s| s.analyte_key.as_deref() != Some("creatinine")),
+            agg.labs
+                .iter()
+                .all(|s| s.analyte_key.as_deref() != Some("creatinine")),
             "有抽取结果时不该再对 text 跑正则"
+        );
+    }
+
+    /// `extraction_json: Some("{}")`(有效 JSON,但 LLM 没给出任何 lab)——仍然
+    /// 算「用抽取结果」,不因为零条就退回对 text 跑正则;这份文档的 labs 应该
+    /// 是空的,即使 text 本身写着一条正则能抽出来的化验。
+    #[test]
+    fn extraction_json_valid_but_empty_yields_no_labs_from_text() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: Some("{}"),
+            date: d(2026, 1, 1),
+            text: "肌酐: 1.2 mg/dL (参考 0.6-1.3)",
+        }];
+        let agg = aggregate(&docs);
+        assert!(
+            agg.labs.is_empty(),
+            "有效但零条的抽取结果不该退回正则去读 text: {:?}",
+            agg.labs.iter().map(|s| &s.group_name).collect::<Vec<_>>()
+        );
+    }
+
+    /// **缺陷钉子**:云抽取路径曾对 `value_canonical`/`unit_canonical`/
+    /// `ref_*_canonical` 做无条件恒等"换算"(`extraction.rs` 曾经的
+    /// `value_canonical: Some(value_num)`),不管词典认不认识这份印刷单位。混进
+    /// 一份正则文档(88 umol/L,真实换算)后,`finalize_lab_series` 会把两份
+    /// **本该视为同一单位**的观测正确地统一到 `umol/L`——但换算是否发生必须由
+    /// 词典的真实 `UnitConversion` 决定,不能靠云路径的恒等式蒙混过关。
+    ///
+    /// `肌酐` 词典条目**真的**同时认识 `umol/L`(canonical,slope=1)与 `mg/dL`
+    /// (slope=88.42,见 `packages/terminology/dictionary.json`),所以这个具体
+    /// 场景修复后的**正确**结果是两份观测被真实换算并统一到 `umol/L`(88.0 与
+    /// 1.2mg/dL→106.104umol/L),而不是每次都恒等式地把云端那条的印刷值原样当
+    /// 成"规范值"——那才是 identity 转换的错误行为。
+    #[test]
+    fn mixed_unit_series_across_regex_and_cloud_docs_uses_real_conversion_not_identity() {
+        let docs = vec![
+            lab_doc(0, d(2026, 1, 1), "肌酐: 88 umol/L (参考 59-104)"),
+            SourceDoc {
+                index: 1,
+                doc_type: Some("lab_report".into()),
+                title: None,
+                extraction_json: Some(
+                    r#"{"labs":[{"name":"肌酐","value":"1.2","unit":"mg/dL","ref_low":"0.6","ref_high":"1.3","flag":""}]}"#,
+                ),
+                date: d(2026, 6, 1),
+                text: "(忽略;extraction_json 存在时不跑正则)",
+            },
+        ];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+        assert!(s.values_converted, "混单位但两边都真能换算,必须统一显示");
+        assert_eq!(s.unit_canonical.as_deref(), Some("umol/L"));
+        let vals: Vec<f64> = s.points.iter().map(|p| p.value).collect();
+        assert!(
+            (vals[0] - 88.0).abs() < 0.001,
+            "umol/L 就是规范单位,恒等映射:{vals:?}"
+        );
+        assert!(
+            (vals[1] - 106.104).abs() < 0.01,
+            "1.2 mg/dL 必须真乘 88.42,不能被云端识别式转换直接当成 106.104 以外的任何数(比如恒等式的 1.2):{vals:?}"
+        );
+        // 最近一次(云端文档,6 月)供出的参考区间同样走真实换算,而非恒等式。
+        assert!((s.ref_low.unwrap() - 53.052).abs() < 0.01);
+        assert!((s.ref_high.unwrap() - 114.946).abs() < 0.01);
+    }
+
+    /// **同一枚缺陷钉子,另一半**:当词典**真的**认不出任何一份报告印的单位
+    /// 时(而不是上一条测试里"两边都认识,只是印的不一样"),换算必须整体留
+    /// 空——`unit_canonical: None`、`values_converted: false`、序列级参考区间
+    /// 留空——这正是 ruling 描述的"否则四个字段整体为 `None`"那道安全网,证明
+    /// 云路径不再对词典完全不认识的单位编一个恒等式出来。
+    #[test]
+    fn mixed_unrecognized_units_across_regex_and_cloud_docs_leave_canonical_fields_none() {
+        let docs = vec![
+            lab_doc(0, d(2026, 1, 1), "白细胞计数: 5.0 个/uL (参考 4.0-10.0)"),
+            // 注意:两份报告印的单位**不同**(个/uL vs cells/uL),缺一不可——
+            // 若两边印刷单位相同,`finalize_lab_series` 会判定"印刷同质"直接用
+            // 印刷区间(不需要规范化),测不出「换算失败该整体留空」这条闸。
+            SourceDoc {
+                index: 1,
+                doc_type: Some("lab_report".into()),
+                title: None,
+                extraction_json: Some(
+                    r#"{"labs":[{"name":"白细胞计数","value":"5.5","unit":"cells/uL","ref_low":"4.0","ref_high":"10.0","flag":""}]}"#,
+                ),
+                date: d(2026, 6, 1),
+                text: "(忽略;extraction_json 存在时不跑正则)",
+            },
+        ];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "wbc");
+        assert_eq!(
+            s.unit_canonical, None,
+            "词典不认识“个/uL”,不能恒等式地当规范单位"
+        );
+        assert!(!s.values_converted);
+        assert_eq!(
+            (s.ref_low, s.ref_high),
+            (None, None),
+            "混印刷单位又换不出规范套,序列级区间必须留空"
         );
     }
 
