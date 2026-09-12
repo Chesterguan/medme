@@ -1,8 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show kDebugMode, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_flutter/account_flow.dart';
@@ -1514,6 +1515,18 @@ class _AccountScreenState extends State<AccountScreen> {
         ));
         return;
       }
+      // I3:码里那把公钥必须和服务器 `devices` 表里那一行**逐字节一致**。两条独立的
+      // 坏路都挡在这儿:① 有人递给用户一张自造的码(公钥是攻击者的),而服务器上那台
+      // 设备记的是另一把 —— 封出去的私钥就到了攻击者手里;② 新手机中途重新生成过码,
+      // 用户扫的是旧的那张 —— 封出去的东西那台手机拆不开,而他只会看到"批准了却还是
+      // 进不去",无从下手。
+      final onServer = target['eph_public'] as String?;
+      if (onServer == null || !listEquals(base64Decode(onServer), parsed.ephPublic)) {
+        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(
+          content: const Text('这个码和服务器记录的不一致,请让新手机重新生成'),
+        ));
+        return;
+      }
       final row = deviceRow(target);
       final ok = await showDialog<bool>(
         context: context,
@@ -1571,9 +1584,12 @@ class _AccountScreenState extends State<AccountScreen> {
                   leading: Icon(row.pending ? Icons.phonelink_setup_outlined : Icons.smartphone_outlined),
                   title: Text(row.name),
                   subtitle: Text(row.status),
-                  trailing: row.pending
-                      ? TextButton(onPressed: () => _approveDevice(d), child: const Text('批准'))
-                      : null,
+                  // **没有「批准」按钮**(复审 C2,CRITICAL):它会把账号私钥封给
+                  // **服务端返回的** `eph_public` —— 恶意服务器在这份列表里塞一行假的
+                  // "待批准设备"、公钥填自己的,用户一点就把私钥交出去了(与 C1 是同一
+                  // 个替换攻击的另一半)。唯一的批准路径是上面那条"扫码":那把公钥来自
+                  // 用户眼睛看到的那张码,而且还要和服务器记录逐字节一致(见
+                  // `_scanApproveDevice`)。状态文字照实留着。
                 ),
               );
             }),
@@ -1581,23 +1597,6 @@ class _AccountScreenState extends State<AccountScreen> {
       );
     },
   );
-
-  Future<void> _approveDevice(Map<String, dynamic> device) async {
-    try {
-      // 与「扫码批准新设备」走同一条(`AccountFlow.approveDevice`)—— 同一件事
-      // 不该有两个实现,尤其不该有两处各自 `sealTo` + 拼 body 的地方。
-      await widget.flow.approveDevice(
-        device['device_id'] as String,
-        Uint8List.fromList(base64Decode(device['eph_public'] as String)),
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已批准该设备')));
-      _enterReady();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('批准失败:${friendlyApiError(e)}')));
-    }
-  }
 
   Widget _grantsSection() => FutureBuilder<List<dynamic>>(
     future: _grantsFuture,

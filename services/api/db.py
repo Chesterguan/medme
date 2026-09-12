@@ -342,8 +342,19 @@ def sweep_stale_approvals(conn):
 
 
 def device_request(conn, aid, did, eph_public):
+    """新设备登记一把临时公钥,等旧设备批准。
+
+    **同时把上一次的批准清掉**(复审 I4):一次新的请求意味着那台设备换了一对临时密钥,
+    于是上一份 `approved_priv`(用**旧**临时公钥封的账号私钥)谁也拆不开了 —— 留着只有
+    两个后果:那台设备取走一份拆不开的东西,用户看到"批准了却还是进不去、而且还得再让
+    旧手机扫一次"(因为批准已经被取走即删);以及一份账号私钥的密文在服务端白活最多
+    `APPROVAL_TTL_HOURS` 小时。
+    """
     sweep_stale_approvals(conn)
-    cur = conn.execute("UPDATE devices SET eph_public=%s WHERE account_id=%s AND device_id=%s", (b64d(eph_public), aid, did))
+    cur = conn.execute(
+        "UPDATE devices SET eph_public=%s, approved_priv=NULL, approved_at=NULL WHERE account_id=%s AND device_id=%s",
+        (b64d(eph_public), aid, did),
+    )
     return cur.rowcount
 
 

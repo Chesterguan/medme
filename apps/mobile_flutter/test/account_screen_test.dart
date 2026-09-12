@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
@@ -47,8 +48,14 @@ class FakeApi extends ApiClient {
     this.myGrantsDelay,
     this.approvalSealed,
     this.approvalPending = 0,
+    Uint8List? serverPublicKey,
     this.delay = const Duration(milliseconds: 30),
-  }) : super(base: 'http://x');
+  })  : serverPublicKey = serverPublicKey ?? Uint8List(32),
+        super(base: 'http://x');
+
+  /// `GET /v1/account/keys` 里那把账号公钥。默认 32 个 0,与 [FakeCrypto] 的
+  /// "公钥 == 私钥"模型配得上;C1 的攻击用例传一把**不一样**的进来。
+  final Uint8List serverPublicKey;
 
   /// `GET /v1/devices/approval` 的假响应:头 [approvalPending] 次回 null(旧手机
   /// 还没扫),之后回这串密文。null = 永远没人批准(测超时那条)。
@@ -154,7 +161,10 @@ class FakeApi extends ApiClient {
       if (failKeys500) throw const ApiFailed(500, 'keys server error');
       if (!hasKeys) throw const ApiFailed(404, 'no keys');
       return {
-        'public_key': 'AA==',
+        // 真实的账号公钥是 32 字节的 X25519 公钥 —— 这里必须照这个形状,否则 C1 那道
+        // "私钥和公钥是一对吗"的探针在测试里无从下手。[serverPublicKey] 让用例能把它
+        // 换成一把**不匹配**的公钥(模拟恶意服务器)。
+        'public_key': base64Encode(serverPublicKey),
         'wrapped_priv_pw': 'AA==',
         'wrapped_priv_rc': 'AA==',
         'kdf_salt': 'AA==',
@@ -335,14 +345,20 @@ class FakeCrypto implements SyncCrypto {
     return Uint8List.fromList([...public, ...plaintext]);
   }
 
-  /// 恒等透传——不追求真实密码学正确性(同这个类其它方法的一贯做法),测试只
-  /// 关心"服务端返回的 wrapped_profile_key 最终原样存进了 `pk_<cloudId>`"。
-  /// [openSealedFails] 为某些 blob 返回 true 时改为抛异常,测 I3 的"解不开就整条
-  /// 跳过、不留空壳成员"。
+  /// [sealTo] 的反面。**这个假实现把"公钥 == 私钥"当作配对**:真实现是 X25519,
+  /// 测试不需要真密码学,只需要"配不上就打不开"这件事是可观测的 —— C1 那道密钥对
+  /// 匹配探针(新设备收到的私钥必须和服务端给的公钥是一对)只有在这个模型下才测得出来。
+  ///
+  /// 不是"封给我的"那些 blob 仍然**恒等透传**:既有那批用例(服务端返回的
+  /// `wrapped_profile_key` 原样存进 `pk_<cloudId>`)依赖这个行为。
+  /// [openSealedFails] 为某些 blob 返回 true 时改为抛异常,测"解不开就整条跳过"。
   @override
   Future<Uint8List> openSealed(Uint8List secret, Uint8List blob) async {
     await _wait();
     if (openSealedFails?.call(blob) ?? false) throw Exception('open sealed boom');
+    if (blob.length >= secret.length && listEquals(blob.sublist(0, secret.length), secret)) {
+      return Uint8List.fromList(blob.sublist(secret.length));
+    }
     return blob;
   }
 }
@@ -536,6 +552,11 @@ Future<void> _scrollToText(WidgetTester t, String text) async {
   await t.ensureVisible(finder);
   await t.pumpAndSettle();
 }
+
+/// 旧设备封回来的那份批准,**真实形状**:`[...新设备的临时公钥, ...账号私钥]`
+/// (见 [FakeCrypto.sealTo]/[FakeCrypto.openSealed] 的"公钥 == 私钥"模型)。
+/// 两段都是 32 个 0,于是拆出来的账号私钥正好与 `FakeApi.serverPublicKey` 配得上。
+final _sealedApproval = base64Encode(Uint8List(64));
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -1122,14 +1143,26 @@ void main() {
     });
   });
 
-  group('已就绪:设备列表 + 批准', () {
-    testWidgets('加载中 → 成功展示(待批准设备带「批准」按钮)', (t) async {
+  group('已就绪:设备列表(C2:列表里没有「批准」按钮)', () {
+    // 复审 C2(CRITICAL):那颗按钮把账号私钥封给**服务端返回的** `eph_public` ——
+    // 和 C1 是同一个替换攻击的另一半:恶意服务器在 `GET /v1/devices` 里塞一行
+    // 假的"待批准设备",公钥是它自己的,旧设备一点「批准」就把账号私钥交出去了。
+    // 而扫码那条路上那把公钥来自**用户眼睛看到的那张码**(而且还要和服务器记录
+    // 逐字节一致,见 I3)。所以批准只留扫码这一条路。
+    testWidgets('加载中 → 成功展示;待批准的设备只有状态文字,没有可点的「批准」', (t) async {
       final api = FakeApi(hasKeys: true, devices: [
         {'device_id': 'dev2', 'name': 'iPhone 15', 'eph_public': 'AA==', 'approved': false},
       ]);
       await _toReady(t, api);
       expect(find.text('iPhone 15'), findsOneWidget);
-      expect(find.text('批准'), findsOneWidget);
+      expect(find.text('新设备,等你批准'), findsOneWidget, reason: '状态照实显示,只是不给这条操作入口');
+      expect(
+        find.widgetWithText(TextButton, '批准'),
+        findsNothing,
+        reason: '批准私钥不能封给服务端报上来的公钥 —— 唯一的批准路径是扫那张码',
+      );
+      await _scrollToText(t, '扫码批准新设备');
+      expect(find.byKey(const Key('scan_approve_device')), findsOneWidget);
     });
 
     testWidgets('加载失败:显示错误,不崩', (t) async {
@@ -1138,39 +1171,15 @@ void main() {
       expect(find.textContaining('设备列表加载失败:服务器开小差了'), findsOneWidget);
     });
 
-    testWidgets('批准成功:调用 devices/approve,不留错误', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 10),
-        devices: [
-          {'device_id': 'dev2', 'name': 'iPhone 15', 'eph_public': 'AA==', 'approved': false},
-        ],
-      );
+    testWidgets('屏上怎么点都不会发出 devices/approve(除了扫码那条)', (t) async {
+      final api = FakeApi(hasKeys: true, devices: [
+        {'device_id': 'dev2', 'name': 'iPhone 15', 'eph_public': 'AA==', 'approved': false},
+      ]);
       await _toReady(t, api);
-      await _scrollToText(t, '批准');
-      await t.tap(find.widgetWithText(TextButton, '批准'));
+      await _scrollToText(t, '新设备,等你批准');
+      await t.tap(find.text('新设备,等你批准'));
       await t.pumpAndSettle();
-      expect(api.calls, contains('POST /v1/devices/approve'));
-      expect(find.textContaining('批准失败'), findsNothing);
-    });
-
-    testWidgets('批准失败:错误可见,设备列表原样还在(没有被清空/崩溃)', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 10),
-        failApprove: true,
-        devices: [
-          {'device_id': 'dev2', 'name': 'iPhone 15', 'eph_public': 'AA==', 'approved': false},
-        ],
-      );
-      await _toReady(t, api);
-      await _scrollToText(t, '批准');
-      await t.tap(find.text('批准'));
-      await t.pump(const Duration(milliseconds: 40));
-      expect(find.textContaining('批准失败'), findsOneWidget);
-      await t.pumpAndSettle();
-      expect(find.text('iPhone 15'), findsOneWidget);
-      expect(find.text('批准'), findsOneWidget); // 列表还在,按钮还在,可以重试
+      expect(api.calls, isNot(contains('POST /v1/devices/approve')));
     });
   });
 
@@ -1335,7 +1344,7 @@ void main() {
       expect(at(DateTime(2026, 8, 3, 9)), isNot(contains('T')));
     });
 
-    testWidgets('屏上:自己的设备不带「批准」,待批准的那台带', (t) async {
+    testWidgets('屏上:两台设备各自的状态照实显示(C2 之后谁都没有「批准」按钮)', (t) async {
       final api = FakeApi(hasKeys: true, devices: [
         {'device_id': 'dev1', 'name': 'ios', 'eph_public': null, 'approved': false, 'last_seen': '2026-01-01T00:00:00.000Z'},
         {'device_id': 'dev2', 'name': 'android', 'eph_public': 'AA==', 'approved': false, 'last_seen': '2026-01-01T00:00:00.000Z'},
@@ -1344,7 +1353,11 @@ void main() {
       expect(find.text('iPhone/iPad'), findsOneWidget);
       expect(find.text('安卓手机'), findsOneWidget);
       expect(find.text('新设备,等你批准'), findsOneWidget);
-      expect(find.text('批准'), findsOneWidget, reason: '只有真在等批准的那台有按钮');
+      expect(
+        find.widgetWithText(TextButton, '批准'),
+        findsNothing,
+        reason: '复审 C2:批准私钥不能封给服务端报上来的公钥 —— 只能走扫码那条',
+      );
       expect(find.textContaining('等待批准'), findsNothing);
     });
   });
@@ -3116,7 +3129,7 @@ void main() {
       final api = FakeApi(
         hasKeys: true,
         delay: const Duration(milliseconds: 5),
-        approvalSealed: 'AAAA',
+        approvalSealed: _sealedApproval,
         approvalPending: 1,
       );
       await toUnlock(t, api);
@@ -3173,7 +3186,7 @@ void main() {
       final api = FakeApi(
         hasKeys: true,
         delay: const Duration(milliseconds: 5),
-        approvalSealed: 'AAAA',
+        approvalSealed: _sealedApproval,
       );
       // `openSealed` 对这份 blob 抛异常 —— 模拟"用户中途重新生成过一张码",
       // 旧手机封的是上一把临时公钥。
@@ -3193,6 +3206,65 @@ void main() {
     });
   });
 
+  group('C1:新设备收到的私钥必须和服务端给的公钥是一对', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-approval-c1-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    /// 恶意服务器:自造一对密钥,把**自己的**私钥封给新设备的临时公钥,同时在
+    /// `GET /v1/account/keys` 里给出自己那把公钥。新设备若照单全收,之后"默认开云"
+    /// 会把每个档案密钥封给服务器的公钥 —— 端到端加密整体失效,而用户什么都看不见。
+    testWidgets('服务端给的 public_key 与拆出来的私钥不匹配:拒绝、不保存、不进 ready', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        approvalSealed: _sealedApproval,
+        serverPublicKey: Uint8List.fromList(List.filled(32, 7)), // ← 和私钥配不上
+      );
+      await t.pumpWidget(_app(api));
+      await _loginUpTo(t);
+      expect(find.text('输入口令解锁'), findsOneWidget);
+
+      await t.tap(find.byKey(const Key('device_approval_start')));
+      await t.pump(const Duration(milliseconds: 200));
+      await t.pump(const Duration(seconds: 3));
+      await t.pump(const Duration(milliseconds: 200));
+
+      expect(find.textContaining('对不上你账号的密钥'), findsOneWidget);
+      expect(find.text('已登录'), findsNothing, reason: '配不上就不许进去');
+      expect(AccountSession.instance.privateKey, isNull, reason: '一个字节都不许落盘');
+      expect(AccountSession.instance.publicKey, isNull);
+      await t.pumpAndSettle();
+    });
+
+    testWidgets('配得上:照常进去(探针不是一道挡住正常路径的闸)', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        approvalSealed: _sealedApproval,
+      );
+      await t.pumpWidget(_app(api));
+      await _loginUpTo(t);
+
+      await t.tap(find.byKey(const Key('device_approval_start')));
+      await t.pump(const Duration(milliseconds: 200));
+      await t.pump(const Duration(seconds: 3));
+      await t.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('已登录'), findsOneWidget);
+      expect(AccountSession.instance.privateKey, isNotNull);
+      await t.pumpAndSettle();
+    });
+  });
+
   group('旧设备:扫码批准新设备', () {
     late Directory support;
 
@@ -3206,9 +3278,12 @@ void main() {
 
     tearDown(() async => support.delete(recursive: true));
 
-    /// 新设备那张码(device_id 固定,公钥 32 字节)。
+    /// 新设备那张码(device_id 固定,公钥 32 字节全 0)。
     String code(String deviceId) =>
         'mdv1.$deviceId.${base64UrlEncode(Uint8List(32)).replaceAll('=', '')}';
+
+    /// 服务器 `devices` 表里那一行记着的同一把公钥(I3:两边必须逐字节一致)。
+    final ephOnServer = base64Encode(Uint8List(32));
 
     testWidgets('入口在「设备」那一节最上面', (t) async {
       final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
@@ -3247,7 +3322,7 @@ void main() {
         hasKeys: true,
         delay: const Duration(milliseconds: 5),
         devices: [
-          {'device_id': 'dev_new', 'name': 'android', 'eph_public': 'AA==', 'approved': false},
+          {'device_id': 'dev_new', 'name': 'android', 'eph_public': ephOnServer, 'approved': false},
         ],
       );
       await _toReady(t, api, scanQr: (_) async => code('dev_new'));
@@ -3268,12 +3343,41 @@ void main() {
       expect(api.deviceApproveBodies, isEmpty);
     });
 
+    // I3:码里那把公钥必须和服务器 `devices` 表里那一行**逐字节一致**。否则有两条
+    // 互相独立的坏路:① 有人给用户一张自造的码(公钥是攻击者的),服务器上那台设备
+    // 记的是另一把 —— 批准密文就封给了攻击者;② 用户扫到的是一张过期的码(新手机
+    // 中途重新生成过),封出去的东西那台手机拆不开,而他只会看到"批准了但还是进不去"。
+    testWidgets('I3:码里的公钥和服务器记录不一致:拒绝,零 approve 请求', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        devices: [
+          // 服务器记的是另一把公钥(全 9),而扫到的码里是全 0。
+          {
+            'device_id': 'dev_new',
+            'name': 'ios',
+            'eph_public': base64Encode(Uint8List.fromList(List.filled(32, 9))),
+            'approved': false,
+          },
+        ],
+      );
+      await _toReady(t, api, scanQr: (_) async => code('dev_new'));
+      await _scrollToText(t, '扫码批准新设备');
+
+      await t.tap(find.byKey(const Key('scan_approve_device')));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('这个码和服务器记录的不一致'), findsOneWidget);
+      expect(find.text('批准这台新设备?'), findsNothing, reason: '连确认弹窗都不该弹');
+      expect(api.deviceApproveBodies, isEmpty);
+    });
+
     testWidgets('确认批准:封给那把临时公钥,带上 X-Device-Id', (t) async {
       final api = FakeApi(
         hasKeys: true,
         delay: const Duration(milliseconds: 5),
         devices: [
-          {'device_id': 'dev_new', 'name': 'ios', 'eph_public': 'AA==', 'approved': false},
+          {'device_id': 'dev_new', 'name': 'ios', 'eph_public': ephOnServer, 'approved': false},
         ],
       );
       await _toReady(t, api, scanQr: (_) async => code('dev_new'));
@@ -3296,7 +3400,7 @@ void main() {
         delay: const Duration(milliseconds: 5),
         failApprove: true,
         devices: [
-          {'device_id': 'dev_new', 'name': 'ios', 'eph_public': 'AA==', 'approved': false},
+          {'device_id': 'dev_new', 'name': 'ios', 'eph_public': ephOnServer, 'approved': false},
         ],
       );
       await _toReady(t, api, scanQr: (_) async => code('dev_new'));

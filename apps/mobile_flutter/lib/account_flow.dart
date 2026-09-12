@@ -638,8 +638,26 @@ class AccountFlow {
 
   /// 新设备这一侧第三步:用临时私钥拆开,走和口令解锁**完全相同**的后半截
   /// (存 session → 补齐档案密钥 → ready)。不需要口令。
+  ///
+  /// ## 为什么这里必须核对"私钥和公钥是一对"(复审 C1,CRITICAL)
+  ///
+  /// 这条路上**两件东西都来自服务端**:那份"批准密文"和 `GET /v1/account/keys` 里
+  /// 那把公钥。而封批准只需要新设备的**临时公钥**(它就在二维码里、也在服务端的
+  /// `devices` 表里)—— 于是一台恶意/被攻陷的服务器可以:自造一对密钥 → 把**自己的**
+  /// 私钥封给 `eph_public` → 同时把自己那把公钥当作"你的账号公钥"发下来。
+  ///
+  /// 新设备照单全收的后果不是"登录失败",而是**端到端加密整体失效且完全无声**:
+  /// 接下来"有账号默认开云"会给每个成员生成档案密钥、并用 `session.publicKey`
+  /// (= 服务器那把)封起来上传 —— 服务器从此能解开这个账号的每一份病历。
+  ///
+  /// 口令/恢复码那两条路不需要这道探针:那两份密文只有用户知道的秘密才解得开,
+  /// 服务器替换不了。**只有这条路的私钥是服务端端到端控制的**。
+  ///
+  /// 探针只用现有的两个 FRB 函数(不加新的):用服务端给的公钥封一个字节,再用刚
+  /// 拆出来的私钥拆开 —— 拆得回原样才说明它们是一对。
   Future<void> unlockWithDeviceApproval(Uint8List ephSecret, String sealed) async {
     final k = _serverKeys!;
+    final pub = base64Decode(k['public_key'] as String);
     final Uint8List sec;
     try {
       sec = await crypto.openSealed(ephSecret, base64Decode(sealed));
@@ -647,6 +665,9 @@ class AccountFlow {
       // 拆不开 = 这份批准不是封给这台设备此刻这把临时密钥的(比如用户中途重新
       // 生成过一张码)。让他重来一次,别把账号态搞脏。
       throw const UnlockFailed('这份批准打不开,请重新生成二维码再让旧手机扫一次');
+    }
+    if (!await _isKeyPair(pub, sec)) {
+      throw const UnlockFailed('这份批准对不上你账号的密钥,请改用口令或恢复码');
     }
     await session.save(
       accountId: session.accountId!,
@@ -657,6 +678,18 @@ class AccountFlow {
     );
     await restoreProfileKeys();
     lastOutcome = LoginOutcome.ready;
+  }
+
+  /// [pub] 和 [sec] 是一对吗 —— 用公钥封一个字节,再用私钥拆开,拆得回原样就是。
+  /// 任何异常都算"不是一对"(拆不开本身就是最常见的"不是一对")。
+  Future<bool> _isKeyPair(Uint8List pub, Uint8List sec) async {
+    try {
+      final probe = Uint8List.fromList([0]);
+      final opened = await crypto.openSealed(sec, await crypto.sealTo(pub, probe));
+      return opened.length == 1 && opened[0] == 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 旧设备这一侧:把本机**已解锁的账号私钥**用新设备的临时公钥封起来交给服务端

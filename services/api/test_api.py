@@ -281,6 +281,33 @@ def test_device_approval_handoff():
     assert client.get("/v1/devices/approval", params={"device_id": "new"}, headers=hb).json()["approved_priv"] is None
 
 
+# ---- UX 第二轮 复审 I4:新的批准请求作废旧批准 ----
+
+def test_new_device_request_voids_previous_approval():
+    """新设备重新生成一张码(= 新的临时密钥对)之后,上一次的批准必须作废。
+
+    不作废的后果是一把**用旧临时公钥封的账号私钥**继续躺在服务端等着被取走,而新设备
+    此刻手里的临时私钥已经换了 —— 它取走之后拆不开,只看到"批准了却还是进不去";
+    同时那份密文还在服务端多活最多 24 小时(`APPROVAL_TTL_HOURS`),而它是账号私钥。
+    """
+    a = login("13800000031", "old31")
+    ha = _h(a["access"], "old31")
+    b = login("13800000031", "new31")
+    hb = _h(b["access"], "new31")
+
+    assert client.post("/v1/devices/request", json={"eph_public": b64(b"E" * 32)}, headers=hb).status_code == 200
+    assert client.post("/v1/devices/approve", json={"device_id": "new31", "approved_priv": b64(b"sealed-old")}, headers=ha).status_code == 200
+
+    # 新设备又生成了一张码(新的临时密钥对)。
+    assert client.post("/v1/devices/request", json={"eph_public": b64(b"F" * 32)}, headers=hb).status_code == 200
+
+    r = client.get("/v1/devices/approval", params={"device_id": "new31"}, headers=hb)
+    assert r.json()["approved_priv"] is None, "旧批准必须随新请求一起作废"
+    devs = {d["device_id"]: d for d in client.get("/v1/devices", headers=ha).json()}
+    assert devs["new31"]["eph_public"] == b64(b"F" * 32)
+    assert devs["new31"]["approved"] is False
+
+
 # ---- fix round 1: item 1 —— grant_upsert 不能把 owner 降级 ----
 
 def test_grant_create_self_target_rejected_owner_unchanged():
