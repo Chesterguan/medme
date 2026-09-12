@@ -157,11 +157,20 @@ def b64e(b):
 
 
 def keys_put(conn, aid, body):
-    conn.execute(
-        """UPDATE accounts SET public_key=%s, wrapped_priv_pw=%s, wrapped_priv_rc=%s, kdf_salt=%s, kdf_params=%s WHERE id=%s""",
+    """写账号密钥,**只在还没设过的时候**(`WHERE public_key IS NULL`)。返回改了
+    几行:0 = 这个账号已经有密钥了,调用方转 409(见 `app.keys_put`)。
+
+    为什么是一次性的:公钥一换,所有已经用旧公钥封过的 `wrapped_profile_key`
+    (自己的档案 + 别人分享给我的)就再也解不开了——那不是"覆盖一个设置",那是
+    把云端数据变成垃圾。客户端的阶段机走不到这儿,但这条不可逆的破坏不能只靠
+    客户端自律(最终评审 M1)。"""
+    cur = conn.execute(
+        """UPDATE accounts SET public_key=%s, wrapped_priv_pw=%s, wrapped_priv_rc=%s, kdf_salt=%s, kdf_params=%s
+           WHERE id=%s AND public_key IS NULL""",
         (b64d(body["public_key"]), b64d(body["wrapped_priv_pw"]), b64d(body["wrapped_priv_rc"]),
          b64d(body["kdf_salt"]), psycopg.types.json.Jsonb(body["kdf_params"]), aid),
     )
+    return cur.rowcount
 
 
 def keys_get(conn, aid):
@@ -381,6 +390,10 @@ def validate_event(e):
     event_id = e.get("event_id")
     if not isinstance(event_id, str) or not _HEX64.fullmatch(event_id):
         return "event_id"
+    # `ts`:客户端从最终评审 I4 起一律发常量 `"0"`——事件的真实时间戳只在密文里
+    # (明文发出来等于白送服务端一条"这个人什么时候看了什么科"的时间线,而服务端
+    # 排序只用 (device_id, seq),压根不看它)。这里仍然要求是个非空短字符串:老
+    # 客户端发的 ISO 时间戳照样收,不为一个字段搞版本分支。
     ts = e.get("ts")
     if not isinstance(ts, str) or not (0 < len(ts) <= 64):
         return "ts"
@@ -463,6 +476,16 @@ def account_delete(conn, aid):
     conn.execute("DELETE FROM otp WHERE phone_hash = ANY(%s)", (otp_keys,))
     conn.execute("DELETE FROM accounts WHERE id=%s", (aid,))
     return oss_keys
+
+
+def usage_tokens_this_month(conn, aid):
+    """本月这个账号已用的 LLM token(in + out)。没有记录就是 0。
+    `/v1/extract` 的月度天花板按它判(见 `app.extract_route`)。"""
+    r = conn.execute(
+        "SELECT llm_tokens_in + llm_tokens_out FROM usage WHERE account_id=%s AND month=%s",
+        (aid, time.strftime("%Y-%m")),
+    ).fetchone()
+    return r[0] if r else 0
 
 
 def usage_add(conn, aid, *, tokens_in=0, tokens_out=0, storage_bytes=0):

@@ -870,6 +870,122 @@ def test_account_delete_apple_requires_fresh_identity_token(monkeypatch):
         assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (acc["account_id"],)).fetchone()[0] == 0
 
 
+# ---- 最终评审修复波 ----
+
+def test_account_delete_via_post_same_handler():
+    """I5:App 走 `POST /v1/account/delete`(带 body 的 DELETE 会被网关丢 body),
+    两条路由同一个 handler——重新鉴权、删除、204 行为必须一模一样。"""
+    a = login("13800000130", "p1")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+
+    # 先证明它和 DELETE 一样会要求重新鉴权
+    assert client.post("/v1/account/delete", json={"phone": "13800000130", "otp_code": "999999"}, headers=ha).status_code == 401
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (a["account_id"],)).fetchone()[0] == 1
+
+    assert client.post("/v1/auth/otp", json={"phone": "13800000130"}).status_code == 200
+    r = client.post("/v1/account/delete", json={"phone": "13800000130", "otp_code": "000000"}, headers=ha)
+    assert r.status_code == 204, r.text
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (a["account_id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM profiles WHERE id=%s", (pid,)).fetchone()[0] == 0
+
+
+def test_keys_put_only_once_409_and_row_unchanged():
+    """M1:公钥只能设一次——第二次 409,且库里那一行一个字节都不许变(覆盖公钥
+    = 所有已封的档案密钥全部解不开)。"""
+    a = login("13800000131", "k1")
+    ha = _h(a["access"])
+    keys = {"public_key": b64(b"A" * 32), "wrapped_priv_pw": b64(b"pw"), "wrapped_priv_rc": b64(b"rc"),
+            "kdf_salt": b64(b"s" * 16), "kdf_params": {"m_kib": 65536, "t": 3, "p": 1}}
+    assert client.put("/v1/account/keys", json=keys, headers=ha).status_code == 200
+
+    r = client.put("/v1/account/keys", json={**keys, "public_key": b64(b"B" * 32), "wrapped_priv_pw": b64(b"pw2")}, headers=ha)
+    assert r.status_code == 409, r.text
+    got = client.get("/v1/account/keys", headers=ha).json()
+    assert got["public_key"] == keys["public_key"] and got["wrapped_priv_pw"] == keys["wrapped_priv_pw"]
+
+
+def test_keys_put_missing_field_is_400_not_500():
+    a = login("13800000132", "k2")
+    assert client.put("/v1/account/keys", json={"public_key": b64(b"A" * 32)}, headers=_h(a["access"])).status_code == 400
+
+
+def test_missing_body_fields_are_400_not_500():
+    """M3:原来这些地方直接 `body["x"]`,少一个字段就是 KeyError → 500。
+    两条代表性路由:建档案(最简路径)+ 批准设备(两个必填字段);顺带授权/邀请。"""
+    a = login("13800000133", "m1")
+    ha = _h(a["access"], "m1")
+    assert client.post("/v1/profiles", json={}, headers=ha).status_code == 400
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM profiles").fetchone()[0] == 0
+
+    assert client.post("/v1/devices/approve", json={"device_id": "m1"}, headers=ha).status_code == 400
+    assert client.post("/v1/devices/request", json={}, headers=ha).status_code == 400
+    # 授权/邀请也一样(role 合法但缺密钥字段 → 400,不是 500)
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    assert client.post(f"/v1/profiles/{pid}/grants", json={"role": "editor"}, headers=ha).status_code == 400
+    assert client.post(f"/v1/profiles/{pid}/invites", json={"role": "nonsense", "token_hash": "x", "wrapped_key_by_token": b64(b"w")}, headers=ha).status_code == 400
+
+
+def test_events_push_accepts_constant_ts():
+    """I4:客户端不再明文发事件时间戳,统一发 "0"——服务端照收,排序只看
+    (device_id, seq)。"""
+    a = login("13800000134", "t1")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    evs = [{"device_id": "d1", "seq": 2, "event_id": eid("e2"), "ts": "0", "ciphertext": b64(b"c2")},
+           {"device_id": "d1", "seq": 1, "event_id": eid("e1"), "ts": "0", "ciphertext": b64(b"c1")}]
+    assert client.post(f"/v1/profiles/{pid}/events", json=evs, headers=ha).status_code == 200
+    got = client.get(f"/v1/profiles/{pid}/events", headers=ha).json()
+    assert [e["seq"] for e in got] == [1, 2], "排序不受 ts 影响"
+    assert {e["ts"] for e in got} == {"0"}
+    assert dbm.validate_event({"device_id": "d1", "seq": 1, "event_id": eid("e1"), "ts": "0", "ciphertext": b64(b"c")}) is None
+    assert dbm.validate_event({"device_id": "d1", "seq": 1, "event_id": eid("e1"), "ts": "", "ciphertext": b64(b"c")}) == "ts"
+
+
+def test_extract_rejects_oversize_payloads_413(monkeypatch):
+    """I7:体积上限——超了就 413,连上游都不打(假上游一旦被调到 calls 就非空)。"""
+    import extract
+    calls = []
+    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: calls.append(model) or {
+        "choices": [{"message": {"content": "{}"}}], "usage": {}})
+    a = login("13800000135", "x1")
+    ha = _h(a["access"])
+    big_text = "血" * (app_module.EXTRACT_TEXT_MAX_BYTES // 3 + 1)  # 每个汉字 3 字节
+    assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": big_text}, headers=ha).status_code == 413
+    big_img = "A" * (app_module.EXTRACT_IMAGE_MAX_BYTES + 1)
+    assert client.post("/v1/extract", json={"mode": "image", "schema": 1, "payload": big_img}, headers=ha).status_code == 413
+    assert calls == [], "超限请求不该打到上游"
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM usage WHERE account_id=%s", (a["account_id"],)).fetchone()[0] == 0
+    # 刚好在上限之内的文本照常放行
+    assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x" * app_module.EXTRACT_TEXT_MAX_BYTES}, headers=ha).status_code == 200
+
+
+def test_extract_monthly_token_cap_429(monkeypatch):
+    """I7:月度 token 天花板——已用量到顶就 429,不再打上游;按账号算,不是全局。"""
+    import extract
+    calls = []
+    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: calls.append(model) or {
+        "choices": [{"message": {"content": '{"doc_type":"lab"}'}}], "usage": {"prompt_tokens": 7, "completion_tokens": 3}})
+    monkeypatch.setattr(app_module, "EXTRACT_MONTHLY_TOKEN_CAP", 10)
+    a = login("13800000136", "x2")
+    ha = _h(a["access"])
+
+    # 第一次:本月用量 0 < 10,放行,用掉 7+3=10
+    assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers=ha).status_code == 200
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT llm_tokens_in + llm_tokens_out FROM usage WHERE account_id=%s", (a["account_id"],)).fetchone()[0] == 10
+    # 第二次:已用 10 >= 10,429,不打上游
+    calls.clear()
+    assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers=ha).status_code == 429
+    assert calls == []
+    b = login("13800000137", "x3")
+    assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers=_h(b["access"])).status_code == 200
+
+
 if __name__ == "__main__":
     # `python3 services/api/test_api.py`:与 services/claim-signer/test_handler.py 同风格的
     # 无 pytest 自检——手动跑每个 test_* 函数,复用 `clean` fixture 的清库逻辑,

@@ -13,7 +13,31 @@ _OID = re.compile(r"[0-9a-f]{64}")  # 用 .fullmatch() 校验;.match() + 结尾 
 _SIGN_VERBS = {"PUT", "GET"}
 OBJECT_MAX_BYTES = 64 * 1024 * 1024  # 64 MiB:预签名对象的体积上限(OSS V1 预签名本身管不了体积,这里在登记前先挡一道)
 
+# /v1/extract 的体积上限与月度 token 天花板(最终评审 I7:这条路由原来完全不计量,
+# 一个拿到 token 的客户端可以无限烧 DeepSeek 的钱)。文本按 UTF-8 字节算,图片按
+# base64 字符串本身的长度算(客户端传上来的就是这个)。
+EXTRACT_TEXT_MAX_BYTES = 64 * 1024
+EXTRACT_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+EXTRACT_MONTHLY_TOKEN_CAP = int(os.environ.get("EXTRACT_MONTHLY_TOKEN_CAP", 2_000_000))
+
 app = FastAPI(title="medme-api")
+
+
+def _req(body, *keys):
+    """取必填字段——缺字段(或 body 压根不是 dict)一律 400。
+
+    原来这些地方直接写 `body["x"]`:少一个字段就是 `KeyError` → 500,服务端日志里
+    一条"内部错误",客户端拿到的也是 500(看上去像服务挂了,其实是请求畸形)。
+    单个 key 返回值本身,多个 key 返回一个列表(按传入顺序解包)。"""
+    if not isinstance(body, dict):
+        raise HTTPException(400, "bad request")
+    out = []
+    for k in keys:
+        v = body.get(k)
+        if v is None:
+            raise HTTPException(400, f"missing {k}")
+        out.append(v)
+    return out if len(keys) > 1 else out[0]
 
 
 @app.on_event("startup")
@@ -133,7 +157,13 @@ def _require_role(conn, pid, aid, allowed):
 
 @app.put("/v1/account/keys")
 def keys_put(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
-    db.keys_put(conn, aid, body)
+    """首次注册时落账号密钥。**只能设一次**(`db.keys_put` 带
+    `WHERE public_key IS NULL`):覆盖一次公钥,等于把已经用旧公钥封过的档案密钥
+    全部变成解不开的垃圾——客户端的阶段机本来走不到这儿(最终评审 M1),但这是
+    一条不可逆的破坏,服务端必须自己挡住,不靠客户端自律。"""
+    _req(body, "public_key", "wrapped_priv_pw", "wrapped_priv_rc", "kdf_salt", "kdf_params")
+    if db.keys_put(conn, aid, body) == 0:
+        raise HTTPException(409, "keys already set")
     return {"ok": True}
 
 
@@ -145,6 +175,7 @@ def keys_get(aid=Depends(account_dep), conn=Depends(conn_dep)):
     return k
 
 
+@app.post("/v1/account/delete", status_code=204)
 @app.delete("/v1/account", status_code=204)
 def account_delete(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
     """自助注销(大陆 App Store 强制要求的自助渠道)。**必须重新证明"是本人"**——
@@ -154,7 +185,11 @@ def account_delete(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep))
     (同 `account_dep` 的一贯做法,不给攻击者当存在性预言机)。
     实际删除见 `db.account_delete`(DB all-or-nothing,由 `conn_dep` 的
     提交/回滚兜底);OSS 对象在 DB 提交之后才最佳努力删,失败个数放进响应头,
-    不影响这次注销本身是否成功——见 Task 15 brief 的设计约束。"""
+    不影响这次注销本身是否成功——见 Task 15 brief 的设计约束。
+
+    **两条路由同一个 handler**:`POST /v1/account/delete` 是 App 实际调的那条
+    (最终评审 I5:带 body 的 DELETE 会被一些网关/代理把 body 丢掉,那样重新鉴权
+    的凭证就永远"缺失" → 401);`DELETE /v1/account` 保留兼容,语义完全一致。"""
     if not isinstance(body, dict):
         raise HTTPException(400, "bad request")
     row = conn.execute("SELECT phone_hash, apple_sub FROM accounts WHERE id=%s", (aid,)).fetchone()
@@ -219,7 +254,7 @@ def account_lookup(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep))
 
 @app.post("/v1/profiles")
 def profile_create(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
-    return {"profile_id": db.profile_create(conn, aid, body["wrapped_profile_key"])}
+    return {"profile_id": db.profile_create(conn, aid, _req(body, "wrapped_profile_key"))}
 
 
 @app.get("/v1/profiles")
@@ -230,15 +265,16 @@ def profiles_list(aid=Depends(account_dep), conn=Depends(conn_dep)):
 @app.post("/v1/profiles/{pid}/grants")
 def grant_create(pid: str, body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
     _require_role(conn, pid, aid, {"owner"})
-    if body["role"] not in ("editor", "viewer"):
+    role, grantee, wrapped = _req(body, "role", "grantee_account_id", "wrapped_profile_key")
+    if role not in ("editor", "viewer"):
         raise HTTPException(400, "role")
-    if body["grantee_account_id"] == aid:
+    if grantee == aid:
         raise HTTPException(400, "cannot grant to self")
     days = body.get("days")
     if days:
         days = min(int(days), db.GRANT_DOCTOR_DAYS)
     exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)) if days else None
-    gid = db.grant_upsert(conn, pid, body["grantee_account_id"], body["role"], exp, db.b64d(body["wrapped_profile_key"]), aid)
+    gid = db.grant_upsert(conn, pid, grantee, role, exp, db.b64d(wrapped), aid)
     return {"grant_id": gid}
 
 
@@ -263,7 +299,7 @@ def grant_delete(pid: str, gid: str, aid=Depends(account_dep), conn=Depends(conn
 @app.put("/v1/profiles/{pid}/grants/{gid}/key")
 def grant_set_key(pid: str, gid: str, body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
     _require_role(conn, pid, aid, {"owner", "editor", "viewer"})
-    if db.grant_set_key(conn, pid, gid, aid, body["wrapped_profile_key"]) == 0:
+    if db.grant_set_key(conn, pid, gid, aid, _req(body, "wrapped_profile_key")) == 0:
         raise HTTPException(404, "not found")
     return {"ok": True}
 
@@ -271,6 +307,9 @@ def grant_set_key(pid: str, gid: str, body: dict, aid=Depends(account_dep), conn
 @app.post("/v1/profiles/{pid}/invites")
 def invite_create(pid: str, body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
     _require_role(conn, pid, aid, {"owner"})
+    role, _, _ = _req(body, "role", "token_hash", "wrapped_key_by_token")
+    if role not in ("owner", "editor", "viewer"):
+        raise HTTPException(400, "role")  # 不然落到 invites 表的 CHECK 约束上,炸成 500
     return {"invite_id": db.invite_create(conn, pid, aid, body)}
 
 
@@ -288,7 +327,7 @@ def invite_redeem(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
 
 @app.post("/v1/devices/request")
 def device_request(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep), x_device_id: str = Header(default="")):
-    if db.device_request(conn, aid, body.get("device_id") or x_device_id, body["eph_public"]) == 0:
+    if db.device_request(conn, aid, body.get("device_id") or x_device_id, _req(body, "eph_public")) == 0:
         raise HTTPException(404, "device not found")
     return {"ok": True}
 
@@ -304,7 +343,8 @@ def device_approve(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep),
     # 不能批准任何设备,包括它自己。
     if not db.device_is_trusted(conn, aid, x_device_id):
         raise HTTPException(403, "approving device not trusted")
-    if db.device_approve(conn, aid, body["device_id"], body["approved_priv"]) == 0:
+    did, approved_priv = _req(body, "device_id", "approved_priv")
+    if db.device_approve(conn, aid, did, approved_priv) == 0:
         raise HTTPException(404, "device not found")
     return {"ok": True}
 
@@ -374,6 +414,23 @@ def objects_list(pid: str, aid=Depends(account_dep), conn=Depends(conn_dep)):
 
 @app.post("/v1/extract")
 def extract_route(body: dict, aid=Depends(extract_account_dep), conn=Depends(conn_dep)):
+    """LLM 代理。**先计量,再放行**(最终评审 I7):
+    ① 体积上限——文本 64 KiB、图片 2 MiB(base64 串本身),超了 413,不打上游;
+    ② 月度 token 天花板——本月已用 in+out 超过 `EXTRACT_MONTHLY_TOKEN_CAP` 就 429。
+    天花板是**事后**判定(这一次请求本身还是会超一点):要做到精确不超,得先预估
+    这次要花多少 token,而那个数只有上游返回后才知道——宁可多花一次请求的量,也
+    不引入一个猜出来的预估值。"""
+    if not isinstance(body, dict):
+        raise HTTPException(400, "bad request")
+    payload = body.get("payload")
+    if isinstance(payload, str):
+        if body.get("mode") == "image":
+            if len(payload) > EXTRACT_IMAGE_MAX_BYTES:
+                raise HTTPException(413, "payload too large")
+        elif len(payload.encode()) > EXTRACT_TEXT_MAX_BYTES:
+            raise HTTPException(413, "payload too large")
+    if db.usage_tokens_this_month(conn, aid) >= EXTRACT_MONTHLY_TOKEN_CAP:
+        raise HTTPException(429, "monthly token cap reached")
     try:
         result, tin, tout = extract.run(body)
     except extract.SchemaError as e:
