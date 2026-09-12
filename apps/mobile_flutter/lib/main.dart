@@ -47,6 +47,33 @@ Future<void> main() async {
 /// 深链投递需要一个跨界面可用的导航器 —— 认领链接可能在任何界面(甚至冷启动)到达。
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
+/// 后台同步触发器的**接线**(`sync_engine.dart` 的 [triggerBackgroundSync] 负责
+/// no-op 判断、合并重叠触发、静默失败,那些都在那边单测过;这里只说用哪个
+/// [AccountSession]、哪个当前成员、哪个真正的 [SyncEngine])。
+///
+/// 三处共用:`vaultRevision` 的 debounced push、回到前台的 pull、以及**启动补齐完
+/// 之后那一次**(它负责把 `pendingFirstSync` 排空 —— 换机领回来的成员的首同步,
+/// 见 `sync_engine.pendingFirstSync`)。
+Future<void> runBackgroundSync() {
+  SyncEngine engine() => SyncEngine(
+    ApiClient.forSession(AccountSession.instance),
+    AccountSession.instance,
+  );
+  return triggerBackgroundSync(
+    session: AccountSession.instance,
+    currentProfile: () => ProfileManager.instance.current,
+    sync: (p) => engine().syncProfile(p),
+    // 与兑换授权那条路同一个函数:切过去 → 首同步 → 用病历里识别到的姓名命名 →
+    // 切回用户原来在看的那个成员。
+    firstSync: (p, returnTo) => firstSyncAndName(
+      p,
+      revertTo: returnTo,
+      returnTo: returnTo,
+      sync: (x) => engine().syncProfile(x),
+    ),
+  );
+}
+
 class MedMeApp extends StatefulWidget {
   const MedMeApp({super.key});
   @override
@@ -116,7 +143,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
 
   void _scheduleDebouncedPush() {
     _pushDebounce?.cancel();
-    _pushDebounce = Timer(const Duration(seconds: 3), () => unawaited(_triggerBackgroundSync()));
+    _pushDebounce = Timer(const Duration(seconds: 3), () => unawaited(runBackgroundSync()));
   }
 
   /// App 已在运行时,系统把链接送到这里(自定义 scheme / 将来的 Universal Links)。
@@ -138,21 +165,10 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
       unawaited(ProxyPatientManager.instance.ensureLoaded());
       // 回到前台顺手拉一次云同步(`triggerBackgroundSync` 没登录/没开通云同步
       // 时 no-op)——见 Task 15 brief:app-resume pull。
-      unawaited(_triggerBackgroundSync());
+      unawaited(runBackgroundSync());
     }
   }
 
-  /// debounced push 与 app-resume 共用同一个后台触发器(`sync_engine.dart` 的
-  /// [triggerBackgroundSync])——no-op 判断与静默失败都在那边测过,这里只负责
-  /// 接线:用哪个 [AccountSession]/当前成员/真正的 [SyncEngine]。
-  Future<void> _triggerBackgroundSync() => triggerBackgroundSync(
-    session: AccountSession.instance,
-    currentProfile: () => ProfileManager.instance.current,
-    sync: (p) => SyncEngine(
-      ApiClient.forSession(AccountSession.instance),
-      AccountSession.instance,
-    ).syncProfile(p),
-  );
 
   /// [cold] = App 是被这条链接**拉起来的**(而不是已在运行时收到)。这个区分是
   /// 认领转化里最关键的一维:冷启动基本意味着「刚装完就来认领」。
@@ -329,11 +345,19 @@ class ProfileLockedActions extends StatelessWidget {
 /// 登录**才看得见。用户的心智是"打开 App 就该是最新的",而不是"去设置里戳一下
 /// 账号"。
 ///
-/// 跟开箱、读模式并发跑:它第一件事是一次网络请求,而 `openVault` 和它都经
-/// `vault_boot` 那一条 FIFO 队列,FFI 层面不会交错。它对网络失败本来就静默
-/// (见 `AccountFlow.restoreProfileKeys`),这里再包一层 `catchError`:**任何**
-/// 没预料到的失败都不许把用户挡在一个"无法打开你的健康档案"的错误屏上 ——
-/// 这一步是"顺手补齐",不是启动的前提。
+/// **不 await 它**(评审 Important 3)。它第一件事是一次网络请求,而 `Net.connect`
+/// 是 20 秒、`Net.idle` 是 30 秒 —— 单单一个 `GET /v1/profiles` 就能把启动画面按住
+/// 约 50 秒,而且没有任何进度提示。`unawaited` + [restoreProfileKeysBudget] 的超时:
+/// 超时只是"不再把它算作启动的一部分",里头的活继续干完。
+///
+/// 排在开箱**之后**(而不是和它并发):它会 `create()`/`switchTo` 动
+/// `ProfileManager.currentId`,而 `openCurrentProfileVault` 读的正是 `current` ——
+/// 并发跑有一个真实的窗口会开错箱子。放在 `finally` 里是因为**开箱失败恰恰是最需要
+/// 它的时候**(`ProfileLocked` = 本机缺档案密钥,而补密钥正是它干的事)。
+///
+/// 失败也不许挡住启动:它对网络失败本来就静默(见
+/// `AccountFlow.restoreProfileKeys`),这里再包一层 `catchError`,任何没预料到的
+/// 失败都不该把用户摆在一个"无法打开你的健康档案"的错误屏上。
 @visibleForTesting
 Future<void> runBootSequence({
   required Future<void> Function() restoreAccountSession,
@@ -342,13 +366,18 @@ Future<void> runBootSequence({
   required Future<void> Function() restoreProfileKeys,
 }) async {
   await restoreAccountSession();
-  // 开箱与读模式互不依赖,并发跑不拖慢启动。
-  await Future.wait([
-    openVault(),
-    loadMode(),
-    restoreProfileKeys().catchError((_) {}),
-  ]);
+  try {
+    // 开箱与读模式互不依赖,并发跑不拖慢启动。
+    await Future.wait([openVault(), loadMode()]);
+  } finally {
+    unawaited(
+      restoreProfileKeys().timeout(restoreProfileKeysBudget, onTimeout: () {}).catchError((_) {}),
+    );
+  }
 }
+
+/// 「补齐云成员」这件事最多还算作启动的一部分多久。超过就不等了(它自己继续跑完)。
+const restoreProfileKeysBudget = Duration(seconds: 10);
 
 /// 启动引导:先在真实沙盒目录打开保险箱(FFI `open_vault`),再进主界面。
 /// 打开是可韧性的(损坏的派生 db 会从 log 重建);目录取自 path_provider。
@@ -385,15 +414,18 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
         openVault: openCurrentProfileVault,
         loadMode: AppMode.instance.ensureLoaded,
         restoreProfileKeys: () async {
-          // 这一步与开箱并发跑,谁先到不保证;而 `restoreProfileKeys` 自己刻意
-          // 不调 `ensureLoaded()`(见它的文档:那条路径在 widget 测试里会卡死),
-          // 所以在这里先把成员表读回来——不先读的话它会拿那份还没落地的内存
-          // 默认值去判"本机有没有这个云成员",把已有的成员又建一遍。
+          // `restoreProfileKeys` 自己刻意不调 `ensureLoaded()`(见它的文档:那条
+          // 路径在 widget 测试里会卡死),所以在这里先把成员表读回来 —— 不先读的话
+          // 它会拿那份还没落地的内存默认值去判"本机有没有这个云成员",把已有的
+          // 成员又建一遍。
           await ProfileManager.instance.ensureLoaded();
           await AccountFlow(
             ApiClient.forSession(AccountSession.instance),
             AccountSession.instance,
           ).restoreProfileKeys();
+          // 它只**登记**哪些成员要跑首同步(`sync_engine.pendingFirstSync`),
+          // 真正的同步在这里交给后台触发器 —— 不在启动路径上串行跑 N 个完整同步。
+          unawaited(runBackgroundSync());
         },
       );
     } catch (_) {

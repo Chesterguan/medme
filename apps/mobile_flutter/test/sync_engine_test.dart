@@ -407,6 +407,107 @@ void main() {
     expect(api.pushedEvents.single['event_id'], 'ok');
   });
 
+  // ---- 评审 Important 2/3:首同步排队、失败要能再试 ----
+  group('pendingFirstSync:后台触发器排空,失败留着下次再试', () {
+    setUp(() async {
+      resetPendingFirstSyncForTest();
+      await AccountSession.instance.save(accountId: 'acc_1', access: 'a', refresh: 'r');
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+    });
+
+    tearDown(resetPendingFirstSyncForTest);
+
+    /// 建一个"领回来了还没同步过"的云成员并登记进队列,返回它的 id。
+    Future<String> pendingMember(String name) async {
+      final id = (await ProfileManager.instance.create(name, userManaged: false))!;
+      await ProfileManager.instance.markCloud(id, 'prf_$id', 'owner', null);
+      await ProfileManager.instance.switchTo('p-1');
+      pendingFirstSync.add(id);
+      return id;
+    }
+
+    test('成功:跑了首同步,并从队列里移出', () async {
+      final id = await pendingMember(ProfileManager.restoringPlaceholderName);
+      final ran = <(String, String)>[];
+
+      await triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async => SyncReport(),
+        firstSync: (p, returnTo) async => ran.add((p.id, returnTo)),
+      );
+
+      expect(ran, [(id, 'p-1')], reason: 'returnTo 是排空开始时的当前成员 —— 做完要切回去');
+      expect(pendingFirstSync, isEmpty);
+    });
+
+    test('失败:**留在队列里**,下一次触发再试一遍', () async {
+      final id = await pendingMember(ProfileManager.restoringPlaceholderName);
+      var attempts = 0;
+
+      Future<void> trigger({required bool fail}) => triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async => SyncReport(),
+        firstSync: (p, returnTo) async {
+          attempts++;
+          if (fail) throw Exception('网络抖了一下');
+        },
+      );
+
+      await trigger(fail: true);
+      expect(attempts, 1);
+      expect(pendingFirstSync, contains(id), reason: '一次抖动不该把成员永久钉在占位名上');
+
+      await trigger(fail: false);
+      expect(attempts, 2);
+      expect(pendingFirstSync, isEmpty);
+    });
+
+    test('成员已经被用户删掉:从队列里摘掉,不再惦记它', () async {
+      final id = await pendingMember(ProfileManager.restoringPlaceholderName);
+      await ProfileManager.instance.remove(id);
+      final ran = <String>[];
+
+      await triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async => SyncReport(),
+        firstSync: (p, returnTo) async => ran.add(p.id),
+      );
+
+      expect(ran, isEmpty);
+      expect(pendingFirstSync, isEmpty);
+    });
+
+    test('没登录:什么都不碰(队列留着,等登录之后)', () async {
+      final id = await pendingMember(ProfileManager.restoringPlaceholderName);
+      AccountSession.instance.loggedIn.value = false;
+      final ran = <String>[];
+
+      await triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async => SyncReport(),
+        firstSync: (p, returnTo) async => ran.add(p.id),
+      );
+
+      expect(ran, isEmpty);
+      expect(pendingFirstSync, contains(id));
+    });
+
+    test('不传 firstSync(只测普通同步的老用例):队列一个字都不动', () async {
+      final id = await pendingMember(ProfileManager.restoringPlaceholderName);
+      await triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async => SyncReport(),
+      );
+      expect(pendingFirstSync, contains(id));
+    });
+  });
+
   // ---- A5:`firstSyncAndName` —— 兑换授权与换机领回自己的档案共用的那三步 ----
   group('firstSyncAndName:切过去 → 同步 → 用病历里的姓名命名 →(可选)切回来', () {
     /// 建一个带占位名的云成员,返回它。

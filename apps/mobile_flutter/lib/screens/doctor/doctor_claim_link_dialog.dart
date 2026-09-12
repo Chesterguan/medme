@@ -81,6 +81,7 @@ Future<void> showDoctorClaimLinkDialog(
     footnote: '只有拿到这个码的人能打开,医生和我们都看不到里面的内容。15 天后自动失效。',
     shareSubject: '你的病历',
     shareLabel: '发给病人',
+    copiedMessage: '链接已复制,可以发给病人',
     shareOrigin: shareOrigin,
     accent: MedColors.of(context).proxy,
   );

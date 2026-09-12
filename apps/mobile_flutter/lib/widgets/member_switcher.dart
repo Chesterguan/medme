@@ -6,6 +6,7 @@
 // vaultRevision 的屏(概览、档案都在监听)自动重载。这里不额外维护「当前
 // 选中成员」的本地状态,避免出现两份状态不同步。
 import 'package:flutter/material.dart';
+import 'package:mobile_flutter/sync_engine.dart' show pendingFirstSync;
 
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/api_client.dart';
@@ -44,9 +45,17 @@ Future<void> showMemberSwitcherSheet(
   // 清理是家务事,不是开关——它失败(网络、FFI……)绝不能挡住"打开切换器"这个
   // 主动作,否则一次瞬时的清理失败就会让切换成员永久打不开。吞掉即可:清不掉的
   // 过期档案留到下一次打开切换器时再试。
+  var purged = const <Profile>[];
   try {
-    await doPurge();
+    purged = await doPurge();
   } catch (_) {}
+  // C11 在个人模式:这里原来把返回值**扔掉**了,于是家人那份过期的共享档案照旧
+  // 从列表里消失、本机目录被删,屏上一个字都没有 —— 而这正是 C11 的原话,
+  // 且发生在原来那个 purge 点上(评审 Important 4)。
+  final notice = expiredGrantNotice(purged);
+  if (notice != null && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(notice)));
+  }
   await ProfileManager.instance.ensureLoaded();
   final members = ProfileManager.instance.profiles;
   final currentId = ProfileManager.instance.currentId.value;
@@ -85,14 +94,7 @@ Future<void> showMemberSwitcherSheet(
                   ),
                 ),
                 title: Text(m.name, style: MedType.subtitle.copyWith(color: c.ink)),
-                // 只读授权(医生扫码兑换的那种)带到期日——过期由 [doPurge] 清掉,
-                // 这里显示的永远是"还剩多久",不是"曾经有过"。
-                subtitle: (m.role == 'viewer' && m.expiresAt != null)
-                    ? Text(
-                        '只读 · 至 ${m.expiresAt!.month}月${m.expiresAt!.day}日',
-                        style: MedType.secondary.copyWith(color: c.ink3),
-                      )
-                    : null,
+                subtitle: _memberSubtitle(m, MedType.secondary.copyWith(color: c.ink3)),
                 trailing: m.id == currentId
                     ? Icon(Icons.check, color: c.seal)
                     : null,
@@ -116,14 +118,33 @@ Future<void> showMemberSwitcherSheet(
       try {
         await doSwitch(id);
         onChanged?.call();
-      } on ProfileLocked catch (e) {
-        // 目标是个锁着的云档案(cloudId 有、本机没解锁密钥)——`switchProfileAndReopen`
-        // 已经把 currentId 退回原成员了,这里只需要让用户知道发生了什么。
+      } catch (e) {
+        // 最常见是 [ProfileLocked](目标是个锁着的云档案);但
+        // `switchProfileAndReopenImpl` 回退之后会 **rethrow 原始开箱错误**,所以
+        // 别的失败(FFI 开箱失败、箱子坏了)也会到这里 —— 只接 `ProfileLocked`
+        // 就等于"点了没反应,也没有任何提示"(评审 Important 7)。
+        // `currentId` 已经被退回原成员了,这里只需要让用户知道发生了什么。
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(e.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(friendlyApiError(e))));
       }
     }
   }
+}
+
+/// 成员那一行的小字。优先级:**正在恢复** → 只读授权的到期日 → 没有。
+///
+/// 「正在恢复…点这里重试」是评审 Important 2 的可见出口:首同步没成功过的成员
+/// (换机领回来的那些)原来只是静静地叫「正在恢复的档案」、0 份病历,用户没有任何
+/// 办法让它再试一次,也不知道还能不能好。**点这一行就是重试** —— 切过去会
+/// `bumpVaultRevision()`,后台触发器随即把 `sync_engine.pendingFirstSync` 排空。
+Widget? _memberSubtitle(Profile m, TextStyle style) {
+  if (pendingFirstSync.contains(m.id)) return Text('正在恢复…点这里重试', style: style);
+  // 只读授权(医生扫码兑换的那种)带到期日——过期由 `purgeExpired` 清掉,
+  // 这里显示的永远是"还剩多久",不是"曾经有过"。
+  if (m.role == 'viewer' && m.expiresAt != null) {
+    return Text('只读 · 至 ${m.expiresAt!.month}月${m.expiresAt!.day}日', style: style);
+  }
+  return null;
 }
 
 /// 添加成员对话框:输个名字 → 建新成员并切过去。

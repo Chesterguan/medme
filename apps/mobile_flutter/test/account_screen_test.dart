@@ -486,6 +486,8 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform({});
     AccountSession.instance.resetForTest();
+    // `sync_engine.pendingFirstSync` 是模块级单例,用例之间会串。
+    resetPendingFirstSyncForTest();
     globalSupport = await Directory.systemTemp.createTemp('medme-account-screen-test');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
       const MethodChannel('plugins.flutter.io/path_provider'),
@@ -1481,6 +1483,16 @@ void main() {
       expect(find.text('请他扫这个码'), findsOneWidget);
       expect(find.text('复制链接'), findsOneWidget);
       expect(find.text('发给他'), findsOneWidget);
+
+      // Minor 18:这条路的复制提示是通用那句(代拍那条路有自己的,见
+      // `doctor_claim_link_dialog_test`)。两条都钉住,免得抽取时再丢一次。
+      // 对话框内容在 `SingleChildScrollView` 里,800×600 的测试画布上这颗按钮
+      // 落在视口外 —— 不先滚进来,`tap` 点的是一片空白。
+      await t.ensureVisible(find.text('复制链接'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('复制链接'));
+      await t.pumpAndSettle();
+      expect(find.text('链接已复制'), findsOneWidget);
     });
 
     testWidgets('生成失败(服务器 500):中文提示,列表原样还在', (t) async {
@@ -1858,9 +1870,6 @@ void main() {
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
-        // A5 的两步(首同步 + 删空默认成员)都要碰真实 Rust/IO —— 这条用例只管
-        // "成员建对了没",两步都注成空实现。它们自己的行为在下面几条里钉。
-        firstSyncNewProfile: (p, returnTo) async {},
         removeProfile: (id) async => false,
       );
       await ProfileManager.instance.ensureLoaded();
@@ -1899,57 +1908,90 @@ void main() {
       },
     ]);
 
-    test('A5:新建的成员立刻跑一次首同步,并且传了"做完切回原成员"', () async {
+    test('A5:新建的成员被登记给后台触发器跑首同步(不在这里同步)', () async {
       final api = oneUnknownCloudProfile();
-      final synced = <(String, String)>[];
       final flow = AccountFlow(
         api,
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
-        firstSyncNewProfile: (p, returnTo) async => synced.add((p.cloudId!, returnTo)),
         removeProfile: (id) async => false,
       );
       await ProfileManager.instance.ensureLoaded();
       await ProfileManager.instance.factoryReset();
-      final currentBefore = ProfileManager.instance.currentId.value;
 
       await flow.loginOtp('13800000001', '000000');
       await flow.unlockWithPassword('right');
 
-      expect(synced, [('prf_mine_1', currentBefore)],
-          reason: '换机之后不该等"用户哪天自己切过去"才有第一次同步');
+      final adopted = ProfileManager.instance.profiles.firstWhere((p) => p.cloudId == 'prf_mine_1');
+      expect(
+        pendingFirstSync,
+        contains(adopted.id),
+        reason: '换机之后不该等"用户哪天自己切过去"才有第一次同步;'
+            '但也不该在启动路径上串行跑 N 个完整同步(评审 Important 3)',
+      );
+      expect(adopted.name, '正在恢复的档案', reason: '同步还没跑,名字还是占位串');
     });
 
-    test('A5:本机已有这个云成员(只是缺密钥)→ 不重复跑首同步', () async {
+    test('A5:本机已有这个云成员、密钥也齐、名字也是真名 → 不重排首同步', () async {
       final api = oneUnknownCloudProfile();
-      final synced = <String>[];
       final flow = AccountFlow(
         api,
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
-        firstSyncNewProfile: (p, returnTo) async => synced.add(p.id),
         removeProfile: (id) async => false,
       );
       await ProfileManager.instance.ensureLoaded();
       await ProfileManager.instance.factoryReset();
-      await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, 'prf_mine_1', 'owner', null);
+      final id = ProfileManager.instance.current.id;
+      await ProfileManager.instance.markCloud(id, 'prf_mine_1', 'owner', null);
+      await ProfileManager.instance.rename(id, '张建国'); // 首同步早就成功过
+      await AccountSession.instance.putProfileKey('prf_mine_1', Uint8List(32));
 
       await flow.loginOtp('13800000001', '000000');
       await flow.unlockWithPassword('right');
 
-      expect(synced, isEmpty, reason: '它不是新建的,用户早就在看它了 —— 首同步是"新成员"才有的事');
+      expect(pendingFirstSync, isEmpty, reason: '用户早就在看它了 —— 不该白跑一次全量同步');
     });
 
-    test('A5:首同步失败不拖累别的、也不让解锁本身失败(占位名留着,下次再补)', () async {
+    // 评审 Important 2:密钥是在同步**之前**就存下的,于是下一次启动那句
+    // `continue`(有成员 + 有密钥)会把它整条跳过 —— 那唯一一次尝试里的一次网络
+    // 抖动就让用户永久看着一个叫「正在恢复的档案」、0 份病历的成员。
+    test('Important 2:首同步没成功过的成员(名字还是占位串)下次启动会被重排', () async {
       final api = oneUnknownCloudProfile();
       final flow = AccountFlow(
         api,
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
-        firstSyncNewProfile: (p, returnTo) async => throw Exception('网络炸了'),
+        removeProfile: (id) async => false,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      // 上一次启动的残局:成员在、密钥在,但名字还是占位串(首同步没成功过)。
+      final id = (await ProfileManager.instance.create(
+        ProfileManager.restoringPlaceholderName,
+        userManaged: false,
+      ))!;
+      await ProfileManager.instance.markCloud(id, 'prf_mine_1', 'owner', null);
+      await ProfileManager.instance.switchTo('p-1');
+      await AccountSession.instance.putProfileKey('prf_mine_1', Uint8List(32));
+      resetPendingFirstSyncForTest();
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(pendingFirstSync, contains(id), reason: '一次网络抖动不该把成员永久钉在占位名上');
+    });
+
+    test('A5:登记首同步不影响解锁本身成功', () async {
+      final api = oneUnknownCloudProfile();
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
         removeProfile: (id) async => false,
       );
       await ProfileManager.instance.ensureLoaded();
@@ -1959,8 +2001,6 @@ void main() {
       await flow.unlockWithPassword('right');
 
       expect(flow.lastOutcome, LoginOutcome.ready);
-      final adopted = ProfileManager.instance.profiles.firstWhere((p) => p.cloudId == 'prf_mine_1');
-      expect(adopted.name, '正在恢复的档案');
     });
 
     test('A5:领回了云成员 + 默认「我」从没被用过 → 删掉那个空成员', () async {
@@ -1971,7 +2011,6 @@ void main() {
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
-        firstSyncNewProfile: (p, returnTo) async {},
         removeProfile: (id) async {
           removed.add(id);
           return true;
@@ -2000,7 +2039,6 @@ void main() {
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
-        firstSyncNewProfile: (p, returnTo) async {},
         removeProfile: (id) async {
           removed.add(id);
           return true;
@@ -2030,7 +2068,6 @@ void main() {
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
-        firstSyncNewProfile: (p, returnTo) async {},
         removeProfile: (id) async {
           removed.add(id);
           return true;
@@ -2056,7 +2093,6 @@ void main() {
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
-        firstSyncNewProfile: (p, returnTo) async {},
         removeProfile: (id) async {
           removed.add(id);
           return true;
@@ -2081,7 +2117,6 @@ void main() {
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
-        firstSyncNewProfile: (p, returnTo) async {},
         removeProfile: (id) async {
           removed.add(id);
           return true;

@@ -12,6 +12,7 @@
 // `openVault`/`loadMode` 用假实现(真的那两个要 Rust 原生库 + path_provider,
 // `flutter test` 一调就崩)——同 `wipe_all_data_test.dart`/
 // `switch_profile_and_reopen_test.dart` 抽参数的同一个套路。
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
@@ -23,6 +24,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/main.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/sync_engine.dart';
+import 'package:mobile_flutter/vault_boot.dart' show ProfileLocked;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 只回 `/v1/account/keys`(有密钥)和 `/v1/profiles`(空列表)的假 API——
@@ -141,7 +143,7 @@ void main() {
   });
 
   // ---- B6:新授权/新成员要在**启动时**出现,不必等用户去账号屏重新登录一次 ----
-  test('B6:启动序列会跑一次 restoreProfileKeys,而且排在账号态读回来之后', () async {
+  test('B6:启动序列会跑一次 restoreProfileKeys,而且排在账号态与开箱之后', () async {
     final order = <String>[];
     await runBootSequence(
       restoreAccountSession: () async => order.add('session'),
@@ -149,12 +151,37 @@ void main() {
       loadMode: () async => order.add('mode'),
       restoreProfileKeys: () async => order.add('keys'),
     );
+    // 它是 unawaited 的,所以 `runBootSequence` 返回时可能还没跑 —— 给它一拍。
+    await Future<void>.delayed(Duration.zero);
     expect(order, contains('keys'));
     expect(
       order.indexOf('session') < order.indexOf('keys'),
       isTrue,
       reason: '它要用 session.privateKey 解档案密钥,读回来之前跑就是白跑',
     );
+    expect(
+      order.indexOf('vault') < order.indexOf('keys'),
+      isTrue,
+      reason: '它会 create()/switchTo 动 currentId,而开箱读的正是 current —— '
+          '并发跑有一个真实的窗口会开错箱子(评审 Important 3)',
+    );
+  });
+
+  // 评审 Important 3:`Net.connect` 20s + `Net.idle` 30s —— 单单一个
+  // `GET /v1/profiles` 就能把启动画面按住约 50 秒。
+  test('Important 3:restoreProfileKeys 再慢也不拖住启动(不 await)', () async {
+    var finished = false;
+    final slow = Completer<void>();
+
+    await runBootSequence(
+      restoreAccountSession: () async {},
+      openVault: () async {},
+      loadMode: () async {},
+      restoreProfileKeys: () => slow.future, // 永远不完成 = 最坏的慢网
+    ).then((_) => finished = true);
+
+    expect(finished, isTrue, reason: '启动必须已经走完,哪怕补齐那一步还吊着');
+    slow.complete();
   });
 
   test('B6:restoreProfileKeys 失败不许挡住启动(否则断网就进不去 App)', () async {
@@ -165,7 +192,23 @@ void main() {
       loadMode: () async {},
       restoreProfileKeys: () async => throw StateError('补密钥炸了'),
     );
+    await Future<void>.delayed(Duration.zero);
     expect(opened, isTrue, reason: '"顺手补齐"不是启动的前提');
+  });
+
+  test('Important 3:开箱失败也要跑补齐 —— ProfileLocked 恰恰是最需要它的时候', () async {
+    var restored = false;
+    await expectLater(
+      runBootSequence(
+        restoreAccountSession: () async {},
+        openVault: () async => throw const ProfileLocked('prf_1'),
+        loadMode: () async {},
+        restoreProfileKeys: () async => restored = true,
+      ),
+      throwsA(isA<ProfileLocked>()),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(restored, isTrue, reason: 'ProfileLocked = 本机缺档案密钥,而补密钥正是它干的事');
   });
 
   test('冷启动后后台同步触发器真的会跑(之前 loggedIn 恒 false,永远 no-op)', () async {

@@ -545,10 +545,35 @@ class SyncEngine {
 bool _backgroundSyncRunning = false;
 bool _backgroundSyncRerunRequested = false;
 
+/// A5:领回来了、但首同步还没成功的成员(本机成员 id)。
+///
+/// `AccountFlow.restoreProfileKeys` 只往里**登记**,真正的首同步由
+/// [triggerBackgroundSync] 排空(启动补齐完、回到前台、保险箱有变动时各跑一次)。
+/// 两个理由:
+///
+/// * **不在启动路径上跑**(评审 Important 3):首同步是「拉一整个档案的全部事件 +
+///   逐个下载附件」,每个对象 30s 空闲超时、`putBytes` 90s;而它最典型的触发时机
+///   正是换机后的第一次启动 —— N 个档案串行跑完,启动画面能被按住几十秒。
+/// * **失败要能再试**(评审 Important 2):同步失败的成员**留在集合里**,下一次
+///   触发再试。在这之前那唯一一次尝试里的一次网络抖动,就让用户永久看着一个叫
+///   「正在恢复的档案」、0 份病历的成员 —— 一个承诺了永不会完成的操作的标签。
+///
+/// 只在内存里:`restoreProfileKeys` 每次启动都会照"名字还是占位串吗"重新登记一遍
+/// (见那边的 `adopted`),所以不需要落盘。
+final Set<String> pendingFirstSync = <String>{};
+
+/// 测试专用:[pendingFirstSync] 是模块级单例,用例之间会串。
+@visibleForTesting
+void resetPendingFirstSyncForTest() => pendingFirstSync.clear();
+
 Future<void> triggerBackgroundSync({
   required AccountSession session,
   required Profile? Function() currentProfile,
   required Future<SyncReport> Function(Profile) sync,
+
+  /// 跑一个成员的首同步 + 回填姓名(生产里是 [firstSyncAndName])。为 null 时
+  /// 不碰 [pendingFirstSync] —— 已有的那些只测"普通同步"的用例不用改。
+  Future<void> Function(Profile p, String returnTo)? firstSync,
 }) async {
   if (_backgroundSyncRunning) {
     _backgroundSyncRerunRequested = true;
@@ -558,7 +583,12 @@ Future<void> triggerBackgroundSync({
   try {
     do {
       _backgroundSyncRerunRequested = false;
-      await _runBackgroundSyncOnce(session: session, currentProfile: currentProfile, sync: sync);
+      await _runBackgroundSyncOnce(
+        session: session,
+        currentProfile: currentProfile,
+        sync: sync,
+        firstSync: firstSync,
+      );
     } while (_backgroundSyncRerunRequested);
   } finally {
     _backgroundSyncRunning = false;
@@ -569,14 +599,45 @@ Future<void> _runBackgroundSyncOnce({
   required AccountSession session,
   required Profile? Function() currentProfile,
   required Future<SyncReport> Function(Profile) sync,
+  Future<void> Function(Profile p, String returnTo)? firstSync,
 }) async {
   if (!session.loggedIn.value) return;
+  // 先把「领回来还没同步过」的排空(A5)—— 它们现在顶着占位名、0 份病历,
+  // 看起来像数据丢了,比"当前成员晚同步几秒"要紧得多。
+  if (firstSync != null) await _drainPendingFirstSync(currentProfile, firstSync);
   final profile = currentProfile();
   if (profile == null || profile.cloudId == null) return;
   try {
     await sync(profile);
   } catch (_) {
     // 静默——见上面的文档。
+  }
+}
+
+/// 排空 [pendingFirstSync]。**成功才移出集合**,失败的留着下一次触发再试。
+///
+/// `returnTo` 取排空**开始时**的当前成员:`firstSyncAndName` 会把箱子切到目标成员
+/// 再切回来,一个一个来,全程结束时用户还停在他原来看的那个人身上。
+Future<void> _drainPendingFirstSync(
+  Profile? Function() currentProfile,
+  Future<void> Function(Profile p, String returnTo) firstSync,
+) async {
+  if (pendingFirstSync.isEmpty) return;
+  final returnTo = currentProfile()?.id;
+  if (returnTo == null) return;
+  for (final id in pendingFirstSync.toList()) {
+    final p = ProfileManager.instance.byId(id);
+    // 成员已经不在了(用户删了)——别再惦记它。
+    if (p == null || p.cloudId == null) {
+      pendingFirstSync.remove(id);
+      continue;
+    }
+    try {
+      await firstSync(p, returnTo);
+      pendingFirstSync.remove(id);
+    } catch (_) {
+      // 留在集合里,下一次触发再试(评审 Important 2)。
+    }
   }
 }
 

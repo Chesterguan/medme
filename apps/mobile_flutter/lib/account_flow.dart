@@ -8,7 +8,7 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' as rust;
-import 'package:mobile_flutter/sync_engine.dart' show SyncEngine, firstSyncAndName;
+import 'package:mobile_flutter/sync_engine.dart' show pendingFirstSync;
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
@@ -120,7 +120,6 @@ class AccountFlow {
     this.crypto = const RustCrypto(),
     this.reopenCurrentProfileVault = openCurrentProfileVault,
     this.removeProfile = removeProfileAndReopen,
-    this.firstSyncNewProfile,
   });
 
   final ApiClient api;
@@ -137,11 +136,6 @@ class AccountFlow {
   /// `vault_boot.removeProfileAndReopen`(删目录 + 重开箱,碰真实 Rust/IO)。
   final Future<bool> Function(String id) removeProfile;
 
-  /// A5:换机新建出来的云成员,跑一次首同步 + 按病历里识别到的姓名回填名字。
-  /// 为 null 时用 [_realFirstSync](`sync_engine.firstSyncAndName`,与兑换那条路
-  /// 同一个函数)。**不能做成带默认值的参数**:真实现要闭包捕获 [api]/[session],
-  /// 而默认值必须是常量表达式。
-  final Future<void> Function(Profile p, String returnTo)? firstSyncNewProfile;
 
   /// Argon2id 参数。Task 14 会在真机上实测 `syncKdfBenchMs` 之后回来改这一处——
   /// 全部口令包/解包只从这一个常量取,改一次全生效。
@@ -249,11 +243,12 @@ class AccountFlow {
   ///   成员」全部跳过,于是新手机上一片空白,只有一条邀请链接能救(而 owner
   ///   根本给自己发不出邀请)。
   ///
-  ///   **建完立刻给它跑一次首同步 + 按病历里识别到的姓名回填名字**(A5),走
-  ///   `sync_engine.firstSyncAndName` —— 与兑换授权那条路同一个函数。它确实会把
-  ///   当前成员切走(`SyncEngine` 要求「要同步的档案 == 当前打开的那个 keyed
-  ///   箱子」),所以做完再切回来:整条操作都排在 `vault_boot` 那一条 FIFO 队列
-  ///   上,不会和别的开箱交错。
+  ///   **建完把它登记进 `sync_engine.pendingFirstSync`**(A5),首同步 + 回填姓名
+  ///   交给后台同步触发器去跑。**不在这里直接同步**(评审 Important 3):首同步是
+  ///   「拉一整个档案的事件 + 逐个下载附件」,而这个方法跑在启动序列里 —— N 个
+  ///   档案串行跑完,启动画面会被按住几十秒。失败的留在集合里,下一次触发再试
+  ///   (评审 Important 2:在这之前只试一次,一次网络抖动就把成员永久钉在
+  ///   「正在恢复的档案」上)。
   ///
   ///   在这之前这里什么都不做,等"用户哪天自己切到这个成员"才会有第一次同步。
   ///   于是换了台新手机、解锁完账号,看到的是一个叫「云端档案 a1b2c3」、0 份病历
@@ -304,8 +299,8 @@ class AccountFlow {
     // "顺手补齐",绝不该改变用户此刻正在看哪个成员。新建完统一切回来。
     final currentIdBefore = ProfileManager.instance.currentId.value;
     var restoredCurrent = false;
-    /// 这一轮**新建**出来的成员(不含"本机已有、只是补了密钥"的那些)——它们才
-    /// 需要首同步 + 回填姓名。
+    /// 这一轮需要跑首同步 + 回填姓名的成员:新建出来的,加上**本机已有、但名字
+    /// 还是占位串**(说明首同步从来没成功过)的那些。
     final adopted = <String>[];
     for (final raw in serverProfiles) {
       try {
@@ -315,7 +310,15 @@ class AccountFlow {
         final wrapped = entry['wrapped_profile_key'] as String?;
         if (wrapped == null) continue;
         final hasLocalProfile = ProfileManager.instance.profiles.any((p) => p.cloudId == cloudId);
-        if (hasLocalProfile && await session.profileKey(cloudId) != null) continue; // 这一个已经齐了
+        if (hasLocalProfile && await session.profileKey(cloudId) != null) {
+          // 密钥齐了,但**首同步可能从来没成功过** —— 名字还是我们自己写上去的占位
+          // 串就是证据(首同步成功会把它换成病历里的姓名)。重新排一次(评审
+          // Important 2:密钥是在同步之前就存下的,所以下一次启动这条 `continue`
+          // 会把它整条跳过,于是那唯一一次尝试里的一次网络抖动 = 永久卡住)。
+          final local = ProfileManager.instance.profiles.firstWhere((p) => p.cloudId == cloudId);
+          if (ProfileManager.cloudPlaceholderNames.contains(local.name)) adopted.add(local.id);
+          continue;
+        }
         // **先解密再建成员**:解不开(这条数据坏了 / 不是用这把私钥封的)就整条
         // 跳过,不留下一个永远打不开的空壳成员。
         final key = await crypto.openSealed(priv, base64Decode(wrapped));
@@ -352,19 +355,9 @@ class AccountFlow {
       }
     }
 
-    // A5:新领回来的成员,一个一个跑首同步 + 回填姓名。**一条失败不拖累其它条**,
-    // 也不让它冒泡出去:这整个方法是"顺手补",不该挡住登录/解锁本身成功。没同步上
-    // 的那个会停在占位名「正在恢复的档案」上,下一次启动(`runBootSequence` 也调
-    // 这个方法)或者用户自己切过去时再补。
-    for (final localId in adopted) {
-      final p = ProfileManager.instance.byId(localId);
-      if (p == null) continue;
-      try {
-        await (firstSyncNewProfile ?? _realFirstSync)(p, currentIdBefore);
-      } catch (_) {
-        continue;
-      }
-    }
+    // A5:把"还需要首同步"的成员登记给后台触发器。这里**不跑同步** —— 理由见上面
+    // 文档与 `sync_engine.pendingFirstSync`。
+    pendingFirstSync.addAll(adopted);
 
     // 最后:领回了云成员,而本机那个默认「我」从没被用过 —— 删掉它。
     // `canRemove` 挡住"删到一个不剩"(那时 adopted 的成员已经在表里,所以正常
@@ -380,14 +373,6 @@ class AccountFlow {
     }
   }
 
-  /// [firstSyncNewProfile] 的真实现。[returnTo] 既是开箱失败的回退目标,也是做完
-  /// 之后要切回去的成员 —— 两者在这条路上是同一个:用户原来在看的那个。
-  Future<void> _realFirstSync(Profile p, String returnTo) => firstSyncAndName(
-    p,
-    revertTo: returnTo,
-    returnTo: returnTo,
-    sync: (x) => SyncEngine(api, session).syncProfile(x),
-  );
 
   /// 本屏重建/冷启动时用:如果本机已经有登录 token(`loginOtp`/`loginApple`
   /// 早先存过),照 [_afterLogin] 同一套逻辑重新判一次该走哪个阶段——不重新发

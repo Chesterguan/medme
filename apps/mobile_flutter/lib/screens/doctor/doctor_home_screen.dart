@@ -4,6 +4,9 @@ import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/grants.dart';
+// `expiredGrantNotice` 现在住在 `grants.dart`(两个 purge 调用点共用,见评审
+// Important 4);这条 `export` 让既有的 `doctor_home_screen` 测试照旧 import 得到。
+export 'package:mobile_flutter/grants.dart' show expiredGrantNotice;
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
@@ -22,8 +25,14 @@ import 'package:mobile_flutter/widgets/med_card.dart';
 ///
 /// 快到期的排前面 —— 这一节的用处正是"这几天还能看谁的",不是一张通讯录。
 @visibleForTesting
-List<Profile> patientGrantedProfiles(List<Profile> all) {
-  final rows = all.where((p) => p.role == 'viewer' && p.cloudId != null).toList();
+List<Profile> patientGrantedProfiles(List<Profile> all, {DateTime? now}) {
+  final at = now ?? DateTime.now();
+  // **自己也过滤过期的**(评审 Minor 17):通常 `_refresh` 里的 purge 先跑,但它包在
+  // `catch (_) {}` 里、而 `removeProfileAndReopen` 也可能返回 false —— 那时医生会看到
+  // 一行副标题写着已经过去的日期、还点得进去。这样这一节无论 purge 成不成都说真话。
+  final rows = all
+      .where((p) => p.role == 'viewer' && p.cloudId != null && (p.expiresAt?.isAfter(at) ?? true))
+      .toList();
   rows.sort((a, b) {
     final x = a.expiresAt, y = b.expiresAt;
     if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
@@ -38,14 +47,7 @@ List<Profile> patientGrantedProfiles(List<Profile> all) {
 String patientGrantedSubtitle(Profile p) =>
     p.expiresAt == null ? '只读' : '只读 · 至 ${p.expiresAt!.month}月${p.expiresAt!.day}日';
 
-/// C11:过期被清掉时说一句。原来是**静默消失** —— 昨天还能看的那份病历今天不见
-/// 了,屏上一个字都没有,医生只会以为 App 出了问题。
-@visibleForTesting
-String? expiredGrantNotice(List<Profile> removed) => switch (removed.length) {
-  0 => null,
-  1 => '${removed.single.name} 的授权已到期,已移出',
-  _ => '${removed.map((p) => p.name).join('、')} 的授权已到期,已移出',
-};
+
 
 /// 医生模式主界面——不放进「导出·分享」tab,是独立的应用根(见 `main.dart` 的
 /// `AppRoot`)。「为病人代拍」按钮 + **今日病历表**:代拍过的病人按姓名列在这里,
@@ -117,9 +119,12 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
   Future<void> _openGranted(Profile p) async {
     try {
       await (widget.switchTo ?? switchProfileAndReopen)(p.id);
-    } on ProfileLocked catch (e) {
+    } catch (e) {
+      // **不只接 `ProfileLocked`**(评审 Important 7):`switchProfileAndReopenImpl`
+      // 回退之后会 rethrow 原始开箱错误,所以 FFI 开箱失败、箱子坏了这些也会到这里。
+      // 只接一种的后果是医生点一行「什么都不发生,也没有任何提示」。
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(friendlyApiError(e))));
       return;
     }
     if (!mounted) return;

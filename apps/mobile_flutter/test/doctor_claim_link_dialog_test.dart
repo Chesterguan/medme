@@ -12,6 +12,8 @@
 // 问孩子(见 `lib/widgets/link_qr_dialog.dart` 里那段注释,`test/account_screen_test.dart`
 // 的 B5 用例现在真的 pump 了同一个对话框)。这个文件仍然只测纯函数,是因为它要钉住
 // 的就是"挑哪条链接"这一件事,不是展示。
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/api_client.dart';
@@ -19,6 +21,18 @@ import 'package:mobile_flutter/grant_link.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_claim_link_dialog.dart';
+
+/// 代拍那条路的复制提示是「链接已复制,可以发给病人」—— 抽取 `showLinkQrDialog`
+/// 时它一度退化成通用的「链接已复制」,而两个字符串都没有任何断言(评审 Minor 18)。
+/// 这条就是那个断言。
+void _pinCopiedMessage() {
+  test('代拍交付:复制提示是「链接已复制,可以发给病人」,不是通用那句', () async {
+    // 只钉文案常量这件事本身 —— 对话框的渲染由 `account_screen_test` 的 B5 用例
+    // (同一个 `showLinkQrDialog`)覆盖。
+    final src = await File('lib/screens/doctor/doctor_claim_link_dialog.dart').readAsString();
+    expect(src, contains("copiedMessage: '链接已复制,可以发给病人'"));
+  });
+}
 
 class _ThrowingApi extends ApiClient {
   _ThrowingApi() : super(base: 'http://x');
@@ -40,6 +54,8 @@ const _originalUrl = 'https://medmenow.com/claim/#c1.original123456.thekeythekey
 const _cloudProfile = Profile(id: 'p-1', name: '病人', cloudId: 'prf_1', role: 'owner');
 
 void main() {
+  _pinCopiedMessage();
+
   test('未登录:原样用调用方传来的链接,不碰 Grants', () async {
     final grants = _FakeGrants(error: StateError('不该被调用'));
     final url = await resolveDoctorClaimUrl(

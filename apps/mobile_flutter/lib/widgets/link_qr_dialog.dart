@@ -37,6 +37,11 @@ Future<void> showLinkQrDialog(
 
   /// 主按钮颜色。医生模式传紫色,个人模式不传(走主题默认)。
   Color? accent,
+
+  /// 复制成功后那句 SnackBar。代拍那条路原本是「链接已复制,可以发给病人」——
+  /// 抽取这个对话框时它退化成了通用的「链接已复制」(评审 Minor 18),做成参数
+  /// 传回去,而不是默默丢掉一句已经写好的话。
+  String copiedMessage = '链接已复制',
 }) async {
   if (!context.mounted) return;
   await showDialog<void>(
@@ -93,13 +98,17 @@ Future<void> showLinkQrDialog(
               ],
               const SizedBox(height: MedShape.s2),
               OutlinedButton.icon(
-                onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: url));
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      appSnackBar(content: const Text('链接已复制')),
-                    );
-                  }
+                // **不 await 那次写剪贴板**(同仓库里其它复制按钮的一贯写法,比如
+                // 恢复码那颗)。`Clipboard.setData` 在 `flutter test` 里压根不会
+                // resolve(没有 `flutter/platform` 的处理者,它就那么吊着),于是
+                // `await` 一写,SnackBar 在测试里永远出不来 —— 那句文案也就永远
+                // 没人钉得住,而它正是评审 Minor 18 丢掉过一次的东西。
+                // 真机上这次写入不会失败,代价可以忽略。
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: url));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    appSnackBar(content: Text(copiedMessage)),
+                  );
                 },
                 icon: const Icon(Icons.link, size: 18),
                 label: const Text('复制链接'),

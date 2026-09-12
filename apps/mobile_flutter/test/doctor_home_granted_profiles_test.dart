@@ -27,14 +27,14 @@ void main() {
         const Profile(id: 'p-2', name: '我的云档案', cloudId: 'prf_own', role: 'owner'),
         const Profile(id: 'p-3', name: '老爸', cloudId: 'prf_dad', role: 'editor'),
         _viewer('p-4', '张建国', DateTime(2026, 9, 20)),
-      ]);
+      ], now: DateTime(2026, 9, 12));
       expect(rows.map((p) => p.name), ['张建国']);
     });
 
     test('没有 cloudId 的 viewer 不算(不可能有,但别画一个点不开的行)', () {
       final rows = patientGrantedProfiles([
         const Profile(id: 'p-9', name: '坏数据', role: 'viewer'),
-      ]);
+      ], now: DateTime(2026, 9, 12));
       expect(rows, isEmpty);
     });
 
@@ -42,8 +42,18 @@ void main() {
       final rows = patientGrantedProfiles([
         _viewer('p-2', '后到期', DateTime(2026, 9, 30)),
         _viewer('p-1', '先到期', DateTime(2026, 9, 13)),
-      ]);
+      ], now: DateTime(2026, 9, 12));
       expect(rows.map((p) => p.name), ['先到期', '后到期']);
+    });
+
+    // 评审 Minor 17:purge 包在 `catch (_) {}` 里、`removeProfileAndReopen` 也可能
+    // 返回 false —— 那时这一节会显示一行副标题写着已经过去的日期、还点得进去。
+    test('已经过期的不列(不依赖 purge 成没成)', () {
+      final rows = patientGrantedProfiles([
+        _viewer('p-1', '昨天就到期了', DateTime(2026, 9, 11)),
+        _viewer('p-2', '还有效', DateTime(2026, 9, 30)),
+      ], now: DateTime(2026, 9, 12));
+      expect(rows.map((p) => p.name), ['还有效']);
     });
   });
 

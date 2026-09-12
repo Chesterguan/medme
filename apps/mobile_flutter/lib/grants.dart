@@ -48,6 +48,18 @@ class RustGrants implements GrantsRust {
       rust.syncSealTo(public: public, plaintext: plaintext);
 }
 
+/// 过期授权被清掉时说的那一句。**两个 purge 调用点共用**:医生模式主页那一节、
+/// 以及个人/病人模式的成员切换器(`member_switcher.dart`)。
+///
+/// C11:过期档案原来是**静默消失**的 —— 昨天还能看的那份病历今天不见了、本机目录
+/// 被删,屏上一个字都没有。第一轮只在医生模式说了这句话,个人模式(也就是原来那个
+/// purge 点)照旧静默(评审 Important 4)。
+String? expiredGrantNotice(List<Profile> removed) => switch (removed.length) {
+  0 => null,
+  1 => '${removed.single.name} 的授权已到期,已移出',
+  _ => '${removed.map((p) => p.name).join('、')} 的授权已到期,已移出',
+};
+
 /// 授权落地:家属(手机号,永久 editor)、医生(15 天邀请二维码,viewer)、代拍转移
 /// (owner,老 owner 服务端自动降 editor)、过期清理。
 ///
