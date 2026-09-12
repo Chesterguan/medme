@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_flutter/account_flow.dart';
-import 'package:mobile_flutter/src/rust/api/vault_sync.dart' as rust;
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
@@ -34,6 +33,11 @@ class _AccountScreenState extends State<AccountScreen> {
 
   String? _recoveryCode;
 
+  /// `prepareKeys()` 备好、还没 `commitKeys()` 上传/落盘的那一份——只在
+  /// showRecovery 阶段的内存里活着,confirm 成功后即弃(见 [_confirmRecovery]);
+  /// 没提交之前强杀 App,这份连同它的私钥一起消失,不留任何残留状态。
+  PreparedKeys? _preparedKeys;
+
   final _phoneCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
   final _regPasswordCtrl = TextEditingController();
@@ -42,6 +46,18 @@ class _AccountScreenState extends State<AccountScreen> {
 
   Future<List<dynamic>>? _devicesFuture;
   Future<List<dynamic>>? _grantsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    // 冷启动/本屏重建时,如果本机已经有登录 token,据此判断该落在哪个阶段——
+    // 不重新发 OTP。**没提交的密钥不算数**:`prepareKeys()` 只在内存里,重建
+    // 之后必然读不到,`_afterLogin` 会照实判成 needsKeySetup。
+    widget.flow.resumeIfLoggedIn().then((outcome) {
+      if (!mounted || outcome == null) return;
+      _enterPhaseFor(outcome);
+    });
+  }
 
   @override
   void dispose() {
@@ -95,24 +111,37 @@ class _AccountScreenState extends State<AccountScreen> {
   void _enterReady() {
     setState(() {
       _phase = _Phase.ready;
-      _devicesFuture = widget.flow.api.getJson('/v1/devices').then((v) => v as List<dynamic>);
-      _grantsFuture = widget.flow.api.getJson('/v1/profiles').then((v) => v as List<dynamic>);
+      // `..catchError` 是一个额外的、丢弃结果的旁路监听——只是为了让这个 Future
+      // 从创建的那一刻起就"有人在听",不依赖 `FutureBuilder` 的 `initState`
+      // 抢在它失败之前完成订阅(两者互不影响,Future 支持多个独立监听者;真正的
+      // 加载中/成功/失败三态仍然由 `FutureBuilder` 自己的订阅决定)。
+      _devicesFuture = widget.flow.api.getJson('/v1/devices').then((v) => v as List<dynamic>)
+        ..catchError((_) => const <dynamic>[]);
+      _grantsFuture = widget.flow.api.getJson('/v1/profiles').then((v) => v as List<dynamic>)
+        ..catchError((_) => const <dynamic>[]);
     });
   }
 
   Future<void> _registerKeys() => _run(() async {
-    final code = await widget.flow.registerKeys(_regPasswordCtrl.text);
+    final keys = await widget.flow.prepareKeys(_regPasswordCtrl.text);
     setState(() {
-      _recoveryCode = code;
+      _preparedKeys = keys;
+      _recoveryCode = keys.recoveryCode;
       _phase = _Phase.showRecovery;
     });
   });
 
-  /// 恢复码只在这一次显示。点了才算数——没有别的路能离开这一屏。
-  void _confirmRecovery() {
-    setState(() => _recoveryCode = null);
+  /// 恢复码只在这一次显示。点了才算数——没有别的路能离开这一屏。这一步才真正
+  /// 把密钥传上服务器、存进本机(`commitKeys`);失败(比如服务器 500)不清
+  /// `_preparedKeys`/`_recoveryCode`,恢复码画面原样留着,允许直接重试。
+  Future<void> _confirmRecovery() => _run(() async {
+    await widget.flow.commitKeys(_preparedKeys!);
+    setState(() {
+      _preparedKeys = null;
+      _recoveryCode = null;
+    });
     _enterReady();
-  }
+  });
 
   Future<void> _unlock() => _run(() async {
     if (_useRecoveryUnlock) {
@@ -267,14 +296,9 @@ class _AccountScreenState extends State<AccountScreen> {
         ],
       ),
     ),
+    if (_error != null) _errorText(_error!),
     const SizedBox(height: 20),
-    SizedBox(
-      width: double.infinity,
-      child: FilledButton(
-        onPressed: _confirmRecovery,
-        child: const Text('我已抄下恢复码'),
-      ),
-    ),
+    _asyncButton(label: '我已抄下恢复码', onPressed: _confirmRecovery),
   ];
 
   List<Widget> _unlockContent() => [
@@ -360,9 +384,9 @@ class _AccountScreenState extends State<AccountScreen> {
     final priv = widget.flow.session.privateKey;
     if (priv == null) return;
     try {
-      final sealed = await rust.syncSealTo(
-        public: base64Decode(device['eph_public'] as String),
-        plaintext: priv,
+      final sealed = await widget.flow.crypto.sealTo(
+        base64Decode(device['eph_public'] as String),
+        priv,
       );
       await widget.flow.api.postJson(
         '/v1/devices/approve',

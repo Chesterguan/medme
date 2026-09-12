@@ -54,6 +54,10 @@ abstract class SyncCrypto {
   Future<String> recoveryCodeNew();
   Future<Uint8List> wrapPrivateRc(Uint8List secret, String code);
   Future<Uint8List> unwrapPrivateRc(Uint8List blob, String code);
+
+  /// 设备批准:把 `plaintext`(本机账号私钥)用对方设备的临时公钥封起来,只有
+  /// 那台设备自己的临时私钥能拆开(`sync_open_sealed`,在那台设备上跑,不在这里)。
+  Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext);
 }
 
 class RustCrypto implements SyncCrypto {
@@ -78,7 +82,21 @@ class RustCrypto implements SyncCrypto {
 
   @override
   Future<Uint8List> unwrapPrivateRc(Uint8List blob, String code) => rust.syncUnwrapPrivateRc(blob: blob, code: code);
+
+  @override
+  Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext) => rust.syncSealTo(public: public, plaintext: plaintext);
 }
+
+/// [AccountFlow.prepareKeys] 的返回值——纯内存,不落任何盘。交给
+/// [AccountFlow.commitKeys] 才会真正上传 + 存进本机 secure storage。
+typedef PreparedKeys = ({
+  Uint8List publicKey,
+  Uint8List privateKey,
+  Uint8List wrappedPw,
+  Uint8List wrappedRc,
+  Uint8List salt,
+  String recoveryCode,
+});
 
 /// 注册 / 登录 / 解锁 / 设备批准的编排——不含任何 UI。[AccountScreen] 只负责
 /// 按返回值/异常切状态、画界面。
@@ -136,31 +154,54 @@ class AccountFlow {
     return lastOutcome!;
   }
 
-  /// 首次:生成密钥对、口令包一份、恢复码包一份,上传;返回恢复码给 UI 展示——
-  /// **只有这一次**能看到明文恢复码,之后服务端只存包好的密文,任何人(包括我们)
-  /// 都读不出来。UI 必须强制用户确认已经抄下,见 `account_screen.dart`。
-  Future<String> registerKeys(String password) async {
+  /// 本屏重建/冷启动时用:如果本机已经有登录 token(`loginOtp`/`loginApple`
+  /// 早先存过),照 [_afterLogin] 同一套逻辑重新判一次该走哪个阶段——不重新发
+  /// OTP、不重新走登录。从没登录过(或 `AccountSession.clear()` 过)时
+  /// `session.accountId` 为 null,返回 null,UI 留在最初的登录入口。
+  Future<LoginOutcome?> resumeIfLoggedIn() async {
+    if (session.accountId == null || session.access == null) return null;
+    return _afterLogin();
+  }
+
+  /// 首次注册,第一步:生成密钥对、口令包一份、恢复码包一份——**纯内存操作,
+  /// 不上传、不写本机存储**。恢复码只在返回值里出现这一次。
+  ///
+  /// 与 [commitKeys] 分成两步,是因为中间要插一道「用户必须先抄下恢复码」的
+  /// UI 关卡(见 `account_screen.dart` 的 showRecovery 阶段)——如果这一步就把
+  /// 密钥传上服务器、存进本机,那道关卡就只是摆设:App 在恢复码画面被强杀,
+  /// 账号已经是「有效可用」的了,但恢复码再也拿不出来第二次。拆成两步之后,
+  /// 强杀导致的最坏情况只是「服务端和本机都还没有这个账号的密钥」——用户下次
+  /// 打开重新走一遍注册即可(会生成一把全新的密钥对,这一把从未落过盘、从未
+  /// 上传过,不构成任何残留状态,谈不上"丢失")。
+  Future<PreparedKeys> prepareKeys(String password) async {
     final (pub, sec) = await crypto.accountKeysNew();
     final salt = Uint8List.fromList(List.generate(16, (_) => Random.secure().nextInt(256)));
     final pw = await crypto.wrapPrivate(sec, password, salt, kdf.mKib, kdf.t, kdf.p);
     final code = await crypto.recoveryCodeNew();
     final rc = await crypto.wrapPrivateRc(sec, code);
+    return (publicKey: pub, privateKey: sec, wrappedPw: pw, wrappedRc: rc, salt: salt, recoveryCode: code);
+  }
+
+  /// 第二步,只应该在用户点了「我已抄下恢复码」之后调用:把 [prepareKeys] 备好
+  /// 的密文上传服务器、私钥存进本机 secure storage。这一步失败(比如服务器
+  /// 500)不清 `keys`——UI 应该原样保留恢复码画面,允许用户直接重试这一步,
+  /// 不必重新生成一把新密钥对。
+  Future<void> commitKeys(PreparedKeys keys) async {
     await api.putJson('/v1/account/keys', {
-      'public_key': base64Encode(pub),
-      'wrapped_priv_pw': base64Encode(pw),
-      'wrapped_priv_rc': base64Encode(rc),
-      'kdf_salt': base64Encode(salt),
+      'public_key': base64Encode(keys.publicKey),
+      'wrapped_priv_pw': base64Encode(keys.wrappedPw),
+      'wrapped_priv_rc': base64Encode(keys.wrappedRc),
+      'kdf_salt': base64Encode(keys.salt),
       'kdf_params': {'m_kib': kdf.mKib, 't': kdf.t, 'p': kdf.p},
     });
     await session.save(
       accountId: session.accountId!,
       access: session.access!,
       refresh: session.refresh!,
-      publicKey: pub,
-      privateKey: sec,
+      publicKey: keys.publicKey,
+      privateKey: keys.privateKey,
     );
     lastOutcome = LoginOutcome.ready;
-    return code;
   }
 
   Future<void> unlockWithPassword(String password) async {
