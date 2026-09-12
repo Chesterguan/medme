@@ -172,6 +172,8 @@ class AccountFlow {
         access: r['access'] as String,
         refresh: r['refresh'] as String,
         loginMethod: 'otp',
+        // 只存脱敏串,明文一个字不留(见 `account.dart` 的 `maskPhone`)。
+        phoneMasked: maskPhone(phone),
       );
     } catch (_) {
       Analytics.track(AnalyticsEvent.accountLogin, {'method': 'otp', 'ok': false});

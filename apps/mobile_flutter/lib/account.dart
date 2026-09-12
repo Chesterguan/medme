@@ -3,6 +3,17 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 手机号脱敏:`13800138000` → `138****8000`。
+///
+/// **只存这一串,不存明文**(见 [AccountSession.phoneMasked])。界面需要的只是
+/// "让用户认出这是哪个号",而明文手机号是可辨识个人信息 —— 多存一份就是多一处
+/// 可能泄露的地方。位数不够(不像手机号)一律给 `****`,不露出任何片段。
+String maskPhone(String phone) {
+  final d = phone.replaceAll(RegExp(r'\D'), '');
+  if (d.length < 7) return '****';
+  return '${d.substring(0, 3)}****${d.substring(d.length - 4)}';
+}
+
 /// 账号会话 + 密钥的本机存储。**私钥与档案密钥只进 secure storage**(iOS Keychain
 /// 开 synchronizable = 同一 Apple ID 新机自动拿回,这就是「系统钥匙串」那条换机路;
 /// 安卓用 EncryptedSharedPreferences,不跨机)。token 与 id 在 shared_preferences。
@@ -27,6 +38,12 @@ class AccountSession {
   /// identity token,见 `services/api/app.py` 的 `DELETE /v1/account`),不是
   /// 别的用途。泄露无害(不是密钥),存 shared_preferences 即可。
   String? loginMethod;
+
+  /// 登录时用的手机号,**脱敏之后**的样子(`138****8000`)。账号屏拿它告诉用户
+  /// "你现在登的是哪个号" —— 在这之前那一行显示的是服务端的 `account_id`
+  /// (`acc_7f3a…`),对用户毫无意义,而且那是一个只该出现在 debug 日志里的东西。
+  /// 明文手机号**一个字都不存**,见 [maskPhone]。Apple 登录时为 null。
+  String? phoneMasked;
   bool _loaded = false;
 
   Future<void> ensureLoaded() async {
@@ -36,6 +53,7 @@ class AccountSession {
     access = p.getString('acct_access');
     refresh = p.getString('acct_refresh');
     loginMethod = p.getString('acct_method');
+    phoneMasked = p.getString('acct_phone_masked');
     final pk = await _secure.read(key: 'acct_priv');
     privateKey = pk == null ? null : base64Decode(pk);
     final pub = p.getString('acct_pub');
@@ -51,6 +69,7 @@ class AccountSession {
     Uint8List? publicKey,
     Uint8List? privateKey,
     String? loginMethod,
+    String? phoneMasked,
   }) async {
     final p = await SharedPreferences.getInstance();
     await p.setString('acct_id', accountId);
@@ -59,21 +78,25 @@ class AccountSession {
     if (publicKey != null) await p.setString('acct_pub', base64Encode(publicKey));
     if (privateKey != null) await _secure.write(key: 'acct_priv', value: base64Encode(privateKey));
     if (loginMethod != null) await p.setString('acct_method', loginMethod);
+    if (phoneMasked != null) await p.setString('acct_phone_masked', phoneMasked);
     this.accountId = accountId; this.access = access; this.refresh = refresh;
     if (publicKey != null) this.publicKey = publicKey;
     if (privateKey != null) this.privateKey = privateKey;
     if (loginMethod != null) this.loginMethod = loginMethod;
+    if (phoneMasked != null) this.phoneMasked = phoneMasked;
     loggedIn.value = true;
   }
 
   Future<void> clear() async {
     final p = await SharedPreferences.getInstance();
-    for (final k in ['acct_id', 'acct_access', 'acct_refresh', 'acct_pub', 'acct_method']) { await p.remove(k); }
+    for (final k in ['acct_id', 'acct_access', 'acct_refresh', 'acct_pub', 'acct_method', 'acct_phone_masked']) {
+      await p.remove(k);
+    }
     // `deleteAll` 而不是逐个 delete:AccountSession 是这个 app 里唯一用 secure storage
     // 的地方,它的命名空间下只会有账号私钥(acct_priv)和各档案密钥(pk_<cloudId>)。
     // 换账号必须把上一个账号的档案密钥也清掉,不然共享设备上账号 B 能读到账号 A 的密钥。
     await _secure.deleteAll();
-    accountId = access = refresh = loginMethod = null; publicKey = privateKey = null;
+    accountId = access = refresh = loginMethod = phoneMasked = null; publicKey = privateKey = null;
     loggedIn.value = false;
   }
 
@@ -121,7 +144,7 @@ class AccountSession {
   @visibleForTesting
   void resetForTest() {
     _loaded = false;
-    accountId = access = refresh = loginMethod = null;
+    accountId = access = refresh = loginMethod = phoneMasked = null;
     publicKey = privateKey = null;
     loggedIn.value = false;
   }

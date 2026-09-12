@@ -15,6 +15,7 @@ import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
+import 'package:share_plus/share_plus.dart';
 
 /// Task 14(a):KDF 真机基准——m_kib 梯度 × t 梯度,p 固定 1。只是量,不是选择,
 /// 别在这里加第三个参数当"更全",四台机器等的是这四个数,不是笛卡尔积。
@@ -87,6 +88,33 @@ String _lastSeenLabel(DateTime seen, DateTime now) {
   if (day == today) return '今天';
   if (day == today.subtract(const Duration(days: 1))) return '昨天';
   return '${seen.month}月${seen.day}日';
+}
+
+/// 服务端的角色词 → 中文。`viewer`/`editor`/`owner` 是 API 的词汇,不该出现在
+/// 界面上 —— 「只能看 / 能一起录 / 主人」说的是同一件事,而老人读得懂。
+@visibleForTesting
+String roleLabel(String? role) => switch (role) {
+  'viewer' => '只能看',
+  'editor' => '能一起录',
+  'owner' => '主人',
+  null => '未知',
+  _ => role,
+};
+
+/// 到期时间(服务端给的 ISO 串)→ 「至 M月D日」。**与 `member_switcher.dart` 和
+/// 医生主页那一节逐字相同**,同一件事不该有三种写法。没有到期日(owner)是
+/// 「长期有效」。ISO 串一个字都不露出来。
+@visibleForTesting
+String expiryLabel(Object? iso) {
+  final t = iso == null ? null : DateTime.tryParse(iso.toString())?.toLocal();
+  return t == null ? '长期有效' : '至 ${t.month}月${t.day}日';
+}
+
+/// 创建时间 → 「M月D日添加」。认不出来就不说(不编一个日期)。
+@visibleForTesting
+String? createdLabel(Object? iso) {
+  final t = iso == null ? null : DateTime.tryParse(iso.toString())?.toLocal();
+  return t == null ? null : '${t.month}月${t.day}日添加';
 }
 
 /// Argon2id 在老机器上要几秒(64 MiB/t=3,见 `AccountFlow.kdf`),而转圈时原来
@@ -516,10 +544,25 @@ class _AccountScreenState extends State<AccountScreen> {
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 1.2),
           ),
           const SizedBox(height: 8),
-          TextButton.icon(
-            onPressed: () => Clipboard.setData(ClipboardData(text: _recoveryCode!)),
-            icon: const Icon(Icons.copy, size: 18),
-            label: const Text('复制'),
+          // C6:原来只有「复制」—— 复制到剪贴板等于"存在这台手机上",而上面那段
+          // 红字刚说了"不要只存在这台手机上"。**本机没有"存图到相册"的能力**
+          // (全仓没有任何 gallery/截图保存的依赖或代码),所以给系统分享面板:
+          // 发给自己的微信收藏、邮箱、备忘录 —— 那些才是"别处"。
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TextButton.icon(
+                onPressed: () => Clipboard.setData(ClipboardData(text: _recoveryCode!)),
+                icon: const Icon(Icons.copy, size: 18),
+                label: const Text('复制'),
+              ),
+              TextButton.icon(
+                key: const Key('recovery_share'),
+                onPressed: _shareRecoveryCode,
+                icon: const Icon(Icons.ios_share, size: 18),
+                label: const Text('分享给自己'),
+              ),
+            ],
           ),
         ],
       ),
@@ -528,6 +571,24 @@ class _AccountScreenState extends State<AccountScreen> {
     const SizedBox(height: 20),
     _asyncButton(label: '我已抄下恢复码', onPressed: _confirmRecovery),
   ];
+
+  /// C6。走系统分享面板,让用户把恢复码存到**这台手机之外**的地方(微信收藏、
+  /// 邮箱、备忘录……)。分享的是恢复码本身加一句说明 —— 它就是钥匙,所以文案里
+  /// 必须带上"别人拿到它就能打开你的病历"。
+  Future<void> _shareRecoveryCode() async {
+    final code = _recoveryCode;
+    if (code == null) return;
+    final box = context.findRenderObject() as RenderBox?;
+    await SharePlus.instance.share(ShareParams(
+      text: 'MedMe 恢复码:$code\n\n'
+          '忘记口令时用它找回账号密钥。请存在这台手机之外的地方;'
+          '别人拿到它就能打开你的病历,不要发给任何人。',
+      subject: 'MedMe 恢复码',
+      // iPad 上 `share_plus` 要一个非零锚点,否则抛参数错误(同
+      // `export_screen.dart` 里那条注释)。
+      sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+    ));
+  }
 
   List<Widget> _unlockContent() => [
     const Text('输入口令解锁', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
@@ -619,14 +680,17 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  /// C7:**「云同步」排第一**。用户点进账号屏,十次里九次是为了"我的病历到底备上了
+  /// 没有";而它原来排在第四个区块,要滚过设备、授权、家属三节才看得见。
+  /// 「设备」排最后 —— 它是一年用一次的东西。
   List<Widget> _readyContent() => [
     const Text('已登录', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 4),
-    Text('账号:${widget.flow.session.accountId ?? ''}', style: const TextStyle(color: MedMe.faint)),
+    Text(_accountLabel(), style: const TextStyle(color: MedMe.faint)),
     const SizedBox(height: 24),
-    const Text('设备', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const Text('云同步', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
-    _devicesSection(),
+    _cloudSyncSection(),
     const SizedBox(height: 24),
     const Text('授权', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
@@ -636,18 +700,37 @@ class _AccountScreenState extends State<AccountScreen> {
     const SizedBox(height: 8),
     _familySection(),
     const SizedBox(height: 24),
-    const Text('云同步', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const Text('我授权给谁', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
-    _cloudSyncSection(),
+    _myGrantsSection(),
+    const SizedBox(height: 24),
+    const Text('设备', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    _devicesSection(),
     const SizedBox(height: 24),
     const Text('账号管理', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _accountManagementSection(),
-    const SizedBox(height: 24),
-    const Text('我授权给谁', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-    const SizedBox(height: 8),
-    _myGrantsSection(),
+    if (widget.debugModeOverride ?? kDebugMode) ...[
+      const SizedBox(height: 16),
+      // 内部 id 只在 debug 包里露出来(排查问题要用),正式包里一个字都没有。
+      Text(
+        'debug · accountId=${widget.flow.session.accountId ?? '-'}',
+        style: const TextStyle(color: MedMe.faint, fontSize: 11),
+      ),
+    ],
   ];
+
+  /// C1:这一行原来是 `账号:acc_7f3a…`(服务端内部 id)—— 对用户毫无意义。
+  /// 改成他认得出的东西:脱敏手机号,或者「Apple 登录」。
+  String _accountLabel() =>
+      widget.flow.session.phoneMasked ??
+      (widget.flow.session.loginMethod == 'apple' ? 'Apple 登录' : '已登录');
+
+  /// 云档案 id → 本机那个成员的名字。对不上(刚授权、还没同步下来)时说
+  /// 「一份共享档案」—— 绝不把 `prf_xxx` 摆给用户看。
+  String _profileLabel(Object? cloudId) =>
+      ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull?.name ?? '一份共享档案';
 
   // ---- 云同步:「开通云同步」(当前成员)+「立即同步」+ 上一次结果/错误 ----
 
@@ -686,30 +769,26 @@ class _AccountScreenState extends State<AccountScreen> {
           Text(_syncSummary(_lastSyncReport!), style: const TextStyle(color: MedMe.faint)),
         if (_syncError != null) _errorText(_syncError!),
         if (_cloudError != null) _errorText(_cloudError!),
-        // 「开通到一半」的出口(最终评审 M4):注册那一步成功了(服务端有这个档案、
-        // 本机有密钥、profiles.json 已 markCloud),但重开箱或首同步失败 —— 所以这
-        // 一支显示的是"已开通",缺的只是最后那一步。
+        // C9:**一颗按钮。** 原来这里是两颗:上一次失败时多出一颗「已开通,点击
+        // 重试同步」,旁边常驻一颗「立即同步」。两颗都叫"同步",差别只在前者顺手
+        // 重开一次箱 —— 用户分不出该点哪个,而点错那颗恰恰是死路:箱子还没 keyed
+        // 打开时「立即同步」每点一次撞一次 `VaultMismatch`(最终评审 M4)。
         //
-        // 这时**「立即同步」是死路**:它不重开箱,而箱子还没 keyed 打开,点一次撞
-        // 一次 `VaultMismatch`。以前唯一的出路是重启 App(启动时会重开箱),而屏上
-        // 没有任何字提示这一点。重试走 `enableCloud`:它对已有 cloudId 的档案会跳过
-        // 注册,直接走"重开箱(排进 vault_boot 的 FIFO 队列)+ 首同步"。
-        //
-        // 两种错误都给这个入口:`_cloudError`(开通那一步自己失败)和 `_syncError`
-        // (「立即同步」失败,最典型就是上面那个 `VaultMismatch`)。
-        if (_cloudError != null || _syncError != null) ...[
-          const SizedBox(height: 8),
-          _cloudBusy
-              ? const Center(child: CircularProgressIndicator())
-              : FilledButton(onPressed: _enableCloud, child: const Text('已开通,点击重试同步')),
-        ],
+        // 合成一颗「同步」,由 `_syncOrRecover` 挑路:上一次失败过就走可续做的
+        // `enableCloud`(已有 cloudId 会跳过注册,直接重开箱 + 首同步),否则就是
+        // 一次普通同步。用户只需要知道"点这里同步"。
         const SizedBox(height: 8),
-        _syncBusy
+        (_cloudBusy || _syncBusy)
             ? const Center(child: CircularProgressIndicator())
-            : OutlinedButton(onPressed: _syncNow, child: const Text('立即同步')),
+            : FilledButton(onPressed: _syncOrRecover, child: const Text('同步')),
       ],
     );
   }
+
+  /// 见 C9。上一次同步/开通失败过 → 走会重开箱的那条(`enableCloud` 可续做);
+  /// 否则普通同步。
+  Future<void> _syncOrRecover() =>
+      (_cloudError != null || _syncError != null) ? _enableCloud() : _syncNow();
 
   String _syncSummary(SyncReport r) {
     final parts = ['推送 ${r.pushed} 条', '拉取 ${r.pulled} 条'];
@@ -1148,8 +1227,8 @@ class _AccountScreenState extends State<AccountScreen> {
           for (final g in grants.cast<Map<String, dynamic>>())
             Card(
               child: ListTile(
-                title: Text('档案 ${g['profile_id']}'),
-                subtitle: Text('角色:${g['role']}${g['expires_at'] != null ? ' · 到期 ${g['expires_at']}' : ''}'),
+                title: Text(_profileLabel(g['profile_id'])),
+                subtitle: Text('${roleLabel(g['role'] as String?)} · ${expiryLabel(g['expires_at'])}'),
               ),
             ),
         ],
@@ -1176,8 +1255,15 @@ class _AccountScreenState extends State<AccountScreen> {
           for (final g in rows)
             Card(
               child: ListTile(
-                title: Text('档案 ${g['profile_id']} · ${g['grantee_kind']}'),
-                subtitle: Text('角色:${g['role']}${g['expires_at'] != null ? ' · 到期 ${g['expires_at']}' : ''}'),
+                // `grantee_kind`(account/invite)是服务端的实现细节,不露出来。
+                title: Text(_profileLabel(g['profile_id'])),
+                subtitle: Text(
+                  [
+                    roleLabel(g['role'] as String?),
+                    expiryLabel(g['expires_at']),
+                    ?createdLabel(g['created_at']),
+                  ].join(' · '),
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
