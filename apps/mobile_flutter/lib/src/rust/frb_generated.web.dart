@@ -70,6 +70,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ClaimResultDto dco_decode_claim_result_dto(dynamic raw);
 
   @protected
+  CloudExtractionRequestDto dco_decode_cloud_extraction_request_dto(
+    dynamic raw,
+  );
+
+  @protected
+  CloudExtractionResultDto dco_decode_cloud_extraction_result_dto(dynamic raw);
+
+  @protected
   ConfirmedStatusDto dco_decode_confirmed_status_dto(dynamic raw);
 
   @protected
@@ -130,6 +138,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<DocumentSummaryDto> dco_decode_list_document_summary_dto(dynamic raw);
 
   @protected
+  List<OcrLineDto> dco_decode_list_ocr_line_dto(dynamic raw);
+
+  @protected
   Int32List dco_decode_list_prim_i_32_strict(dynamic raw);
 
   @protected
@@ -152,6 +163,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ProxyProblemDto> dco_decode_list_proxy_problem_dto(dynamic raw);
+
+  @protected
+  List<RectDto> dco_decode_list_rect_dto(dynamic raw);
 
   @protected
   List<SelfMeasuredValueDto> dco_decode_list_self_measured_value_dto(
@@ -178,6 +192,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MergeOutcomeDto dco_decode_merge_outcome_dto(dynamic raw);
+
+  @protected
+  OcrLineDto dco_decode_ocr_line_dto(dynamic raw);
 
   @protected
   OcrPpResultDto dco_decode_ocr_pp_result_dto(dynamic raw);
@@ -224,6 +241,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   (Uint8List, String, PlatformInt64)
   dco_decode_record_list_prim_u_8_strict_string_i_64(dynamic raw);
+
+  @protected
+  RectDto dco_decode_rect_dto(dynamic raw);
 
   @protected
   SelfMeasuredValueDto dco_decode_self_measured_value_dto(dynamic raw);
@@ -316,6 +336,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ClaimResultDto sse_decode_claim_result_dto(SseDeserializer deserializer);
 
   @protected
+  CloudExtractionRequestDto sse_decode_cloud_extraction_request_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudExtractionResultDto sse_decode_cloud_extraction_result_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ConfirmedStatusDto sse_decode_confirmed_status_dto(
     SseDeserializer deserializer,
   );
@@ -396,6 +426,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<OcrLineDto> sse_decode_list_ocr_line_dto(SseDeserializer deserializer);
+
+  @protected
   Int32List sse_decode_list_prim_i_32_strict(SseDeserializer deserializer);
 
   @protected
@@ -422,6 +455,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ProxyProblemDto> sse_decode_list_proxy_problem_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<RectDto> sse_decode_list_rect_dto(SseDeserializer deserializer);
 
   @protected
   List<SelfMeasuredValueDto> sse_decode_list_self_measured_value_dto(
@@ -458,6 +494,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MergeOutcomeDto sse_decode_merge_outcome_dto(SseDeserializer deserializer);
+
+  @protected
+  OcrLineDto sse_decode_ocr_line_dto(SseDeserializer deserializer);
 
   @protected
   OcrPpResultDto sse_decode_ocr_pp_result_dto(SseDeserializer deserializer);
@@ -510,6 +549,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   sse_decode_record_list_prim_u_8_strict_string_i_64(
     SseDeserializer deserializer,
   );
+
+  @protected
+  RectDto sse_decode_rect_dto(SseDeserializer deserializer);
 
   @protected
   SelfMeasuredValueDto sse_decode_self_measured_value_dto(
@@ -624,6 +666,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_extraction_request_dto(
+    CloudExtractionRequestDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_extraction_result_dto(
+    CloudExtractionResultDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_confirmed_status_dto(
     ConfirmedStatusDto self,
     SseSerializer serializer,
@@ -726,6 +780,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_ocr_line_dto(
+    List<OcrLineDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_i_32_strict(
     Int32List self,
     SseSerializer serializer,
@@ -769,6 +829,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     List<ProxyProblemDto> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_list_rect_dto(List<RectDto> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_self_measured_value_dto(
@@ -817,6 +880,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     MergeOutcomeDto self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_ocr_line_dto(OcrLineDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_ocr_pp_result_dto(
@@ -886,6 +952,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     (Uint8List, String, PlatformInt64) self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_rect_dto(RectDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_self_measured_value_dto(

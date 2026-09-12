@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `doc_summary`, `fmt_value`, `format_plausibility_violation`, `home_monitoring_demo_entries`, `ingest_one`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
+// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `doc_summary`, `extraction_json_for`, `fmt_value`, `format_plausibility_violation`, `hex_to_bytes`, `home_monitoring_demo_entries`, `ingest_one`, `known_identity`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `vault_cell`, `with_state_mut`, `with_state`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -400,3 +400,72 @@ Future<void> disableIcloudSync() =>
 /// 任何额外体积或依赖。
 Future<OcrPpResultDto> recognizeImagePp({required List<int> bytes}) =>
     RustLib.instance.api.crateApiVaultRecognizeImagePp(bytes: bytes);
+
+/// 云抽取第一步:本地脱敏 + 发送前硬闸。取该文档的 OCR 全文,按已知身份
+/// (`known_name`/`known_id_number`/`known_phone`,来自 Dart 侧当前档案成员的
+/// `Profile`)+ 档案秘密派生的日期偏移天数跑 `deid::redact_text`;`assert_clean`
+/// 闸不过(身份信息仍在脱敏结果里)直接报错——**错误信息只报类别(姓名/证件号/
+/// 手机号),绝不回显值**,调用方(Dart)据此退回本地正则路径、不发云。
+///
+/// `lines` 非空(图片档,来自 `recognize_image_pp` 的 `OcrPpResultDto::lines`)时
+/// 一并跑 `deid::redact_boxes` 算出要涂黑的框(`page_w`/`page_h` 必须与 `lines`
+/// 同一坐标系——即 `recognize_engine_lines` 那张 working frame 的尺寸);文本档
+/// (`lines` 为空)不产生任何框。
+///
+/// 返回的 `restore_map_json`(占位符/日期偏移 ↔ 原文)只在本机使用
+/// (`commit_cloud_extraction` 拿它做还原)——**经 FFI 到 Dart 只是为了原样带回
+/// 下一次调用,从不上传、从不落盘**。
+Future<CloudExtractionRequestDto> prepareCloudExtraction({
+  required PlatformInt64 documentId,
+  required List<OcrLineDto> lines,
+  required String knownName,
+  String? knownIdNumber,
+  String? knownPhone,
+  required String profileSecretHex,
+  required double pageW,
+  required double pageH,
+}) => RustLib.instance.api.crateApiVaultPrepareCloudExtraction(
+  documentId: documentId,
+  lines: lines,
+  knownName: knownName,
+  knownIdNumber: knownIdNumber,
+  knownPhone: knownPhone,
+  profileSecretHex: profileSecretHex,
+  pageW: pageW,
+  pageH: pageH,
+);
+
+/// 非 iOS/安卓构建的占位实现,理由同 `recognize_image_pp` 的 `cfg(not(pp_ocr))` 分支。
+Future<Uint8List> redactImageBytes({
+  required List<int> bytes,
+  required List<RectDto> paint,
+}) => RustLib.instance.api.crateApiVaultRedactImageBytes(
+  bytes: bytes,
+  paint: paint,
+);
+
+/// 云抽取第二步:LLM 结果回来后校验 + 还原 + 落盘。
+///
+/// 校验基准**必须是本机重新算出的脱敏文本,不能信 Dart 传来的任何文本**——否则
+/// 校验形同虚设(Dart 说校验过就过)。做法:对该文档当前的 OCR 全文重新跑一遍
+/// `deid::redact_text`(空身份,只需要 A/P 层 + 日期偏移,`shift_days` 取自
+/// `restore_map_json` 里记的那个,保证与 `prepare` 那次一致),再用 `restore_map`
+/// 里登记的每一对占位符/原值把原值换回占位符——这样重建出的文本与
+/// `prepare_cloud_extraction` 当时发给 LLM 的 `payload_text` 一致(确定性、不用
+/// 反查 Dart),`deid::verify` 才能诚实地判断 LLM 返回的字段是不是「原文逐字」。
+///
+/// 通过校验后 `deid::restore` 把占位符/偏移日期换回真值,再 `add_extraction`
+/// 落盘(`NewExtraction`,latest-wins,见 `core_model::add_extraction` 文档)。
+Future<CloudExtractionResultDto> commitCloudExtraction({
+  required PlatformInt64 documentId,
+  required String mode,
+  required String modelVersion,
+  required String llmJson,
+  required String restoreMapJson,
+}) => RustLib.instance.api.crateApiVaultCommitCloudExtraction(
+  documentId: documentId,
+  mode: mode,
+  modelVersion: modelVersion,
+  llmJson: llmJson,
+  restoreMapJson: restoreMapJson,
+);

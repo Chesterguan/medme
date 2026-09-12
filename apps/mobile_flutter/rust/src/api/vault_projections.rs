@@ -313,6 +313,9 @@ struct ProjectionDoc {
     text: String,
     doc_type: Option<String>,
     title: Option<String>,
+    /// 云抽取结果(schema v1 JSON);没跑过/离线为 `None`(见 `parser::SourceDoc`
+    /// 同名字段的文档)。
+    extraction_json: Option<String>,
 }
 
 /// 一次 `load_archive` 取到的全部投影输入:文档(带 index→document_id 绑定)+ 就诊记录。
@@ -408,6 +411,7 @@ fn gather() -> anyhow::Result<VaultProjection> {
                 .unwrap_or_default(),
             doc_type: Some(doc_type),
             title,
+            extraction_json: crate::api::vault::extraction_json_for(id),
         })
         .collect();
 
@@ -423,6 +427,7 @@ fn source_docs(docs: &[ProjectionDoc]) -> Vec<parser::SourceDoc<'_>> {
             text: &d.text,
             doc_type: d.doc_type.clone(),
             title: d.title.clone(),
+            extraction_json: d.extraction_json.as_deref(),
         })
         .collect()
 }
@@ -1055,12 +1060,12 @@ fn render_plain_text(
 mod tests {
     use super::*;
     use crate::api::dto::SelfMeasuredValueDto;
-    use std::sync::Mutex;
 
     // 端到端测试跑同一个进程级 `api::vault::VAULT` cell(和生产代码一样,一次只有一个
-    // 打开的保险箱),不能并发跑;用一把粗互斥锁串行化 —— 与 `vault_ephemeral` 的
-    // 测试同一手法。
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    // 打开的保险箱),不能并发跑;必须用 `VAULT_TEST_LOCK`(见其文档)——本模块
+    // 单独一把锁挡不住 `api::vault` 自己的 `cloud_extraction_tests` 同时动同一个
+    // 全局单例(曾经就是两把不共享的锁,复现为本模块用例间歇性失败)。
+    use crate::api::vault::VAULT_TEST_LOCK as TEST_LOCK;
 
     /// 造一批 `ProjectionDoc`(纯函数测试用,不开保险箱)。document_id 故意**不等于**
     /// index —— 从 100 起跳,这样任何把 index 当 document_id 用的 bug 都会立刻暴露。
@@ -1074,6 +1079,7 @@ mod tests {
                 text: (*text).to_string(),
                 doc_type: Some((*doc_type).to_string()),
                 title: None,
+                extraction_json: None,
             })
             .collect()
     }

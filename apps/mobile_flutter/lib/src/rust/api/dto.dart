@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
 ///
@@ -38,6 +38,60 @@ class ClaimResultDto {
           imported == other.imported &&
           deduped == other.deduped &&
           textOnly == other.textOnly;
+}
+
+/// `prepare_cloud_extraction` 的产出:脱敏后待发云端的文本、要涂黑的框(图片档,
+/// 文本档为空)、还原映射(JSON,**永不离开手机**——只用来把云端结果里的占位符/
+/// 偏移日期换回真值,见 `commit_cloud_extraction`)。
+class CloudExtractionRequestDto {
+  final String payloadText;
+  final List<RectDto> paint;
+  final String restoreMapJson;
+
+  const CloudExtractionRequestDto({
+    required this.payloadText,
+    required this.paint,
+    required this.restoreMapJson,
+  });
+
+  @override
+  int get hashCode =>
+      payloadText.hashCode ^ paint.hashCode ^ restoreMapJson.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudExtractionRequestDto &&
+          runtimeType == other.runtimeType &&
+          payloadText == other.payloadText &&
+          paint == other.paint &&
+          restoreMapJson == other.restoreMapJson;
+}
+
+/// `commit_cloud_extraction` 的产出:这次落盘的化验条数、因未过校验被丢弃的条数
+/// (文本档)、未能校验但保留的条数(图片档,见 `deid::verify`)。
+class CloudExtractionResultDto {
+  final PlatformInt64 labs;
+  final PlatformInt64 rejected;
+  final PlatformInt64 unverified;
+
+  const CloudExtractionResultDto({
+    required this.labs,
+    required this.rejected,
+    required this.unverified,
+  });
+
+  @override
+  int get hashCode => labs.hashCode ^ rejected.hashCode ^ unverified.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudExtractionResultDto &&
+          runtimeType == other.runtimeType &&
+          labs == other.labs &&
+          rejected == other.rejected &&
+          unverified == other.unverified;
 }
 
 /// 一份文档当前的「已确认」状态(医生代拍待确认列表)。**不**塞进共享的
@@ -432,6 +486,42 @@ class MergeOutcomeDto {
           mergedCount == other.mergedCount;
 }
 
+/// [`OcrPpResultDto::lines`] 的一行:文本 + 检测框。
+class OcrLineDto {
+  final String text;
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+
+  const OcrLineDto({
+    required this.text,
+    required this.left,
+    required this.top,
+    required this.right,
+    required this.bottom,
+  });
+
+  @override
+  int get hashCode =>
+      text.hashCode ^
+      left.hashCode ^
+      top.hashCode ^
+      right.hashCode ^
+      bottom.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OcrLineDto &&
+          runtimeType == other.runtimeType &&
+          text == other.text &&
+          left == other.left &&
+          top == other.top &&
+          right == other.right &&
+          bottom == other.bottom;
+}
+
 /// **iOS PP-OCRv5 测试路径**结果(feat/ios-pp-ocr-test 分支,探索性——ADR 0005
 /// 尚未 supersede)。镜像 Dart `OcrResult`(`ocr_bridge.dart`),供
 /// `recognize_image_pp` 返回,让真机能对比 Apple Vision vs PP-OCRv5 的识别质量。
@@ -439,10 +529,18 @@ class OcrPpResultDto {
   final String text;
   final double confidence;
 
-  const OcrPpResultDto({required this.text, required this.confidence});
+  /// 每行的检测框(识别引擎 working frame 像素坐标,origin 左上)。云抽取
+  /// 图片档脱敏靠它定位要涂黑的区域(`deid::redact_boxes`);文本档忽略。
+  final List<OcrLineDto> lines;
+
+  const OcrPpResultDto({
+    required this.text,
+    required this.confidence,
+    required this.lines,
+  });
 
   @override
-  int get hashCode => text.hashCode ^ confidence.hashCode;
+  int get hashCode => text.hashCode ^ confidence.hashCode ^ lines.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -450,7 +548,8 @@ class OcrPpResultDto {
       other is OcrPpResultDto &&
           runtimeType == other.runtimeType &&
           text == other.text &&
-          confidence == other.confidence;
+          confidence == other.confidence &&
+          lines == other.lines;
 }
 
 class PatientProfileDto {
@@ -665,6 +764,35 @@ class QrShareDto {
           url == other.url &&
           problemCount == other.problemCount &&
           fitsQr == other.fitsQr;
+}
+
+/// 要涂黑的矩形(与 [`OcrLineDto`] 同一坐标系——同一次识别的 working frame)。
+class RectDto {
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+
+  const RectDto({
+    required this.left,
+    required this.top,
+    required this.right,
+    required this.bottom,
+  });
+
+  @override
+  int get hashCode =>
+      left.hashCode ^ top.hashCode ^ right.hashCode ^ bottom.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RectDto &&
+          runtimeType == other.runtimeType &&
+          left == other.left &&
+          top == other.top &&
+          right == other.right &&
+          bottom == other.bottom;
 }
 
 /// 一次「记录」(手动录入)里的一个数值 —— 血压一次记录有两个(收缩压+舒张压,

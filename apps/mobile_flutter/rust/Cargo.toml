@@ -33,6 +33,9 @@ core-model = { path = "../../../packages/core-model" }
 pipeline = { path = "../../../packages/pipeline" }
 parser = { path = "../../../packages/parser" }
 medme-share = { path = "../../../packages/share" }
+# 云抽取脱敏/闸/校验/还原(纯函数,无 IO)——`prepare_cloud_extraction` /
+# `commit_cloud_extraction` 用它,见 api::vault 里这两个函数的文档。
+deid = { path = "../../../packages/deid" }
 # 趋势页 panel chip(`api::vault_projections::panel_for` 包一层)直接查词典的
 # `panel` 字段。`parser` 已经依赖 `terminology`,但不重新导出它,同一条理由与
 # 上面 `serde_json` 的注释一致:要 `use` 就得是直接依赖。

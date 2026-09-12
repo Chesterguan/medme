@@ -183,6 +183,47 @@ pub struct SelfMeasuredValueDto {
 pub struct OcrPpResultDto {
     pub text: String,
     pub confidence: f32,
+    /// 每行的检测框(识别引擎 working frame 像素坐标,origin 左上)。云抽取
+    /// 图片档脱敏靠它定位要涂黑的区域(`deid::redact_boxes`);文本档忽略。
+    pub lines: Vec<OcrLineDto>,
+}
+
+/// [`OcrPpResultDto::lines`] 的一行:文本 + 检测框。
+#[derive(Debug, Clone)]
+pub struct OcrLineDto {
+    pub text: String,
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+/// 要涂黑的矩形(与 [`OcrLineDto`] 同一坐标系——同一次识别的 working frame)。
+#[derive(Debug, Clone)]
+pub struct RectDto {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+/// `prepare_cloud_extraction` 的产出:脱敏后待发云端的文本、要涂黑的框(图片档,
+/// 文本档为空)、还原映射(JSON,**永不离开手机**——只用来把云端结果里的占位符/
+/// 偏移日期换回真值,见 `commit_cloud_extraction`)。
+#[derive(Debug, Clone)]
+pub struct CloudExtractionRequestDto {
+    pub payload_text: String,
+    pub paint: Vec<RectDto>,
+    pub restore_map_json: String,
+}
+
+/// `commit_cloud_extraction` 的产出:这次落盘的化验条数、因未过校验被丢弃的条数
+/// (文本档)、未能校验但保留的条数(图片档,见 `deid::verify`)。
+#[derive(Debug, Clone)]
+pub struct CloudExtractionResultDto {
+    pub labs: i64,
+    pub rejected: i64,
+    pub unverified: i64,
 }
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。

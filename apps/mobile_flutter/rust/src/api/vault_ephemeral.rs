@@ -442,6 +442,9 @@ pub(crate) struct EphemeralSourceDoc {
     pub(crate) text: String,
     pub(crate) doc_type: Option<String>,
     pub(crate) title: Option<String>,
+    /// 云抽取结果(schema v1 JSON);没跑过/离线为 `None`(见 `parser::SourceDoc`
+    /// 同名字段的文档——`None` 时装配退回对 `text` 跑正则)。
+    pub(crate) extraction_json: Option<String>,
 }
 
 /// 按病程正序(旧→新,无日期最后)遍历临时会话箱,取出每份文档的识别文本 ——
@@ -466,6 +469,7 @@ pub(crate) fn gather_ephemeral_docs(v: &Vault) -> anyhow::Result<Vec<EphemeralSo
             text,
             doc_type: Some(entry.doc_type.as_str().to_lowercase()),
             title: entry.title.clone(),
+            extraction_json: v.extraction_json(entry.document_id).unwrap_or(None),
         });
     }
     Ok(out)
@@ -628,6 +632,7 @@ pub fn ephemeral_summary() -> anyhow::Result<ProxySummaryDto> {
                 text: &d.text,
                 doc_type: d.doc_type.clone(),
                 title: d.title.clone(),
+                extraction_json: d.extraction_json.as_deref(),
             })
             .collect();
         let summary = parser::assemble_summary(&docs);
