@@ -200,12 +200,25 @@ class ProfileManager {
     _profiles = _profiles.map((p) {
       if (p.id != id || p.name == trimmed) return p;
       changed = true;
-      return Profile(id: p.id, name: trimmed);
+      return Profile(id: p.id, name: trimmed, cloudId: p.cloudId, role: p.role, expiresAt: p.expiresAt);
     }).toList();
     if (changed) {
       _autoNamePending = false;
       await _save();
     }
+  }
+
+  /// 记下这个成员已开通云同步:服务端 `profile_id`([cloudId])、本设备对它的
+  /// 角色([role])、这份授权的到期时间([expiresAt],owner 为 null)。
+  /// 调用方(`SyncEngine.enableCloud`)在这之前已经把档案密钥存进
+  /// `AccountSession`——这里只落 profiles.json 里的元数据。
+  Future<void> markCloud(String id, String cloudId, String role, DateTime? expiresAt) async {
+    await ensureLoaded();
+    _profiles = _profiles.map((p) {
+      if (p.id != id) return p;
+      return Profile(id: p.id, name: p.name, cloudId: cloudId, role: role, expiresAt: expiresAt);
+    }).toList();
+    await _save();
   }
 
   /// 能不能删这个成员。成员一律平等,**谁都能删**;删任何一个都只影响它自己
@@ -288,14 +301,33 @@ class ProfileManager {
 }
 
 /// 一个成员:[id] 是主键与目录名(生成后永不变),[name] 只是给人看的标签(随时可改)。
+///
+/// [cloudId]/[role]/[expiresAt] 是开通云同步之后才有的:[cloudId] 是服务端的
+/// `profile_id`,[role] 是这台设备对这个云档案的角色(`owner`/`editor`/`viewer`),
+/// [expiresAt] 是这份授权的到期时间(owner 永不过期,为 null)。三者一起决定
+/// `openCurrentProfileVault` 走 keyed 开箱还是原路径——见 `vault_boot.dart`。
 class Profile {
-  const Profile({required this.id, required this.name});
+  const Profile({required this.id, required this.name, this.cloudId, this.role, this.expiresAt});
 
   final String id;
   final String name;
+  final String? cloudId;
+  final String? role;
+  final DateTime? expiresAt;
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name};
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    if (cloudId != null) 'cloudId': cloudId,
+    if (role != null) 'role': role,
+    if (expiresAt != null) 'expiresAt': expiresAt!.toIso8601String(),
+  };
 
-  static Profile fromJson(Map<String, dynamic> j) =>
-      Profile(id: j['id'] as String, name: j['name'] as String);
+  static Profile fromJson(Map<String, dynamic> j) => Profile(
+    id: j['id'] as String,
+    name: j['name'] as String,
+    cloudId: j['cloudId'] as String?,
+    role: j['role'] as String?,
+    expiresAt: j['expiresAt'] == null ? null : DateTime.parse(j['expiresAt'] as String),
+  );
 }

@@ -25,6 +25,7 @@ class FakeApi extends ApiClient {
     this.failProfiles = false,
     this.failApprove = false,
     this.failRevoke = false,
+    this.failKeys500 = false,
     this.delay = const Duration(milliseconds: 30),
   }) : super(base: 'http://x');
 
@@ -38,6 +39,9 @@ class FakeApi extends ApiClient {
   final bool failProfiles;
   final bool failApprove;
   final bool failRevoke;
+  /// `GET /v1/account/keys` 报 500(不是 404)——`_afterLogin` 只吞 404,
+  /// 非 404 一律 rethrow;用来测 `resumeIfLoggedIn` 冷启动那条路径接不接得住。
+  final bool failKeys500;
   final Duration delay;
   final calls = <String>[];
 
@@ -65,6 +69,7 @@ class FakeApi extends ApiClient {
     calls.add('GET $path');
     await Future<void>.delayed(delay);
     if (path == '/v1/account/keys') {
+      if (failKeys500) throw const ApiFailed(500, 'keys server error');
       if (!hasKeys) throw const ApiFailed(404, 'no keys');
       return {
         'public_key': 'AA==',
@@ -494,6 +499,34 @@ void main() {
       await t.pumpAndSettle();
       expect(find.textContaining('p1'), findsOneWidget);
       expect(find.text('撤销'), findsOneWidget);
+    });
+  });
+
+  group('冷启动恢复登录态(initState 里的 resumeIfLoggedIn)', () {
+    testWidgets('本机已有 token,但账号服务 500:错误可见,不留未处理的 rejection', (t) async {
+      // 模拟"上次登录过、这次冷启动"——本屏重建前就已经有 token 落盘,
+      // `resumeIfLoggedIn` 因此不会因为"从没登录过"提前返回 null,而是真的去
+      // 调 `GET /v1/account/keys`。
+      await AccountSession.instance.save(accountId: 'acc_1', access: 'a', refresh: 'r');
+      final api = FakeApi(failKeys500: true);
+
+      await t.pumpWidget(_app(api));
+      await t.pumpAndSettle();
+
+      // 错误落在 `_error` 上、停在 idle——不是崩溃,也不是安静地卡住。
+      expect(find.textContaining('keys server error'), findsOneWidget);
+      expect(find.text('登录 MedMe 账号'), findsOneWidget);
+      // 没有因为异常而误判成"需要设口令"或"已就绪"。
+      expect(find.text('设置口令'), findsNothing);
+      expect(find.text('已登录'), findsNothing);
+    });
+
+    testWidgets('本机没有 token:安静地停在 idle,不报错', (t) async {
+      final api = FakeApi();
+      await t.pumpWidget(_app(api));
+      await t.pumpAndSettle();
+      expect(find.text('登录 MedMe 账号'), findsOneWidget);
+      expect(api.calls, isEmpty);
     });
   });
 

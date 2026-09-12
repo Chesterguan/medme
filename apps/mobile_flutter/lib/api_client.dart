@@ -24,7 +24,18 @@ class ApiClient {
   final String base;
   final Future<String?> Function()? bearer;
 
-  Future<dynamic> _json(String method, String path, {Object? body, Map<String, String>? query, Map<String, String>? headers}) async {
+  /// 与 [_json] 同一套请求逻辑,多返回一份响应头(小写 key,同名多值用逗号拼接)。
+  /// [_json] 委托给它、丢掉头;[getJsonWithHeaders] 是唯一需要头的调用方——
+  /// `SyncEngine` 拉事件要读 `X-Seq-Map`(见 `services/api/app.py` 的
+  /// `events_pull`:该 profile 每个 device 当前的最大 seq,推送水位就是它,
+  /// 不能从 `since` 反推)。
+  Future<(dynamic, Map<String, String>)> _jsonWithHeaders(
+    String method,
+    String path, {
+    Object? body,
+    Map<String, String>? query,
+    Map<String, String>? headers,
+  }) async {
     final uri = Uri.parse('$base$path').replace(queryParameters: query);
     return Net.run((client) async {
       final req = await client.openUrl(method, uri);
@@ -45,14 +56,24 @@ class ApiClient {
         try { msg = (jsonDecode(text) as Map)['detail']?.toString() ?? text; } catch (_) {}
         throw ApiFailed(res.statusCode, msg);
       }
-      return text.isEmpty ? null : jsonDecode(text);
+      final respHeaders = <String, String>{};
+      res.headers.forEach((name, values) => respHeaders[name.toLowerCase()] = values.join(','));
+      return (text.isEmpty ? null : jsonDecode(text), respHeaders);
     });
+  }
+
+  Future<dynamic> _json(String method, String path, {Object? body, Map<String, String>? query, Map<String, String>? headers}) async {
+    final (data, _) = await _jsonWithHeaders(method, path, body: body, query: query, headers: headers);
+    return data;
   }
 
   Future<Map<String, dynamic>> postJson(String path, Object body, {Map<String, String>? headers}) async =>
       (await _json('POST', path, body: body, headers: headers)) as Map<String, dynamic>;
   Future<dynamic> getJson(String path, {Map<String, String>? query, Map<String, String>? headers}) =>
       _json('GET', path, query: query, headers: headers);
+  /// 同 [getJson],额外把响应头一并返回(小写 key)。
+  Future<(dynamic, Map<String, String>)> getJsonWithHeaders(String path, {Map<String, String>? query, Map<String, String>? headers}) =>
+      _jsonWithHeaders('GET', path, query: query, headers: headers);
   Future<Map<String, dynamic>> putJson(String path, Object body, {Map<String, String>? headers}) async =>
       (await _json('PUT', path, body: body, headers: headers)) as Map<String, dynamic>;
   Future<void> delete(String path, {Map<String, String>? headers}) => _json('DELETE', path, headers: headers);

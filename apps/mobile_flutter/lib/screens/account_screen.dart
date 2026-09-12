@@ -53,10 +53,22 @@ class _AccountScreenState extends State<AccountScreen> {
     // 冷启动/本屏重建时,如果本机已经有登录 token,据此判断该落在哪个阶段——
     // 不重新发 OTP。**没提交的密钥不算数**:`prepareKeys()` 只在内存里,重建
     // 之后必然读不到,`_afterLogin` 会照实判成 needsKeySetup。
-    widget.flow.resumeIfLoggedIn().then((outcome) {
-      if (!mounted || outcome == null) return;
-      _enterPhaseFor(outcome);
-    });
+    //
+    // `resumeIfLoggedIn()` 对非 404 的失败(网络错误、401、500……)会
+    // rethrow——`_afterLogin` 只吞 404。这里必须接住,否则是一次不带 `await`
+    // 的 initState 里的裸 Future,失败就是一次未处理的 rejection:用户停在
+    // idle 却看不到任何错误,像是"卡住了"而不是"网络失败"。停在 idle(不切
+    // phase)、把错误摆到 `_error` 上——idle 的界面本来就会渲染 `_error`。
+    widget.flow
+        .resumeIfLoggedIn()
+        .then((outcome) {
+          if (!mounted || outcome == null) return;
+          _enterPhaseFor(outcome);
+        })
+        .catchError((Object e) {
+          if (!mounted) return;
+          setState(() => _error = e.toString());
+        });
   }
 
   @override

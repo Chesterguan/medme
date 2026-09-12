@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncOpenProfileVault, syncCurrentVaultIsKeyed;
+import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
@@ -34,22 +36,55 @@ Future<void> _serializedOpen(Future<void> Function() open) {
   return done;
 }
 
-/// 打开「当前成员」的保险箱:按 [ProfileManager] 组合本机/iCloud 路径,调 Rust
-/// `open_vault`(Rust 的进程级 vault 会被替换成该成员的)。启动 + 切换成员后都调它。
+/// 这个成员该不该走 keyed(云档案)开箱——纯函数,不碰任何 IO/FFI,只看有没有
+/// [Profile.cloudId] 以及有没有拿到对应的档案密钥。抽出来是为了让「没有 cloudId
+/// 就必须走原路径,一字不改」这条不变量能在不加载 Rust 原生库的 `flutter test`
+/// 里钉住——[openCurrentProfileVault] 本身调 FRB,测试环境一调就崩。
+@visibleForTesting
+bool shouldOpenKeyed(Profile p, Uint8List? profileKey) => p.cloudId != null && profileKey != null;
+
+/// 打开「当前成员」的保险箱:按 [ProfileManager] 组合本机/iCloud 路径。启动 +
+/// 切换成员后都调它,也是 `SyncEngine.enableCloud`(见 `sync_engine.dart`)开通
+/// 云同步后重开箱唯一走的入口——**所有开箱都必须经过这个函数**(从而经过下面的
+/// FIFO 队列),不许在别处直接调 `syncOpenProfileVault`。
+///
+/// 档案有 [Profile.cloudId] 且能取到档案密钥 → keyed 开箱(调 Rust
+/// `open_split_resilient_with_key`),不走 iCloud 容器(两套同步不叠加)。否则走
+/// **原路径,一字不改**(不登录 = 现状)。
 ///
 /// data 目录(设备 id、iCloud 全局开关标记、导入临时文件)所有成员共用——iCloud 是
 /// 全局开关(开了对所有成员生效);派生库则每成员独立(见 Rust `resolve_vault_paths`)。
 Future<void> openCurrentProfileVault() => _serializedOpen(() async {
   await ProfileManager.instance.ensureLoaded();
+  final p = ProfileManager.instance.current;
   final docsRoot = (await getApplicationDocumentsDirectory()).path;
   final support = (await getApplicationSupportDirectory()).path;
-  final containerRoot = await IcloudBridge.containerPath();
+  final key = p.cloudId == null ? null : await AccountSession.instance.profileKey(p.cloudId!);
 
+  if (shouldOpenKeyed(p, key)) {
+    await syncOpenProfileVault(
+      docsDir: ProfileManager.instance.localBase(docsRoot),
+      dataDir: support,
+      profileKey: key!,
+    );
+    // 硬校验:keyed 和原路径开的是同一个目录,唯一能分辨"这次真的走对了分支"的
+    // 办法是问 Rust 自己——同 [ensureProxyVaultOpen] 的思路,不靠调用点的分支
+    // 逻辑自证。
+    if (!await syncCurrentVaultIsKeyed()) {
+      throw StateError('云档案 keyed 开箱后状态核对失败:期望 keyed,实际不是');
+    }
+    return;
+  }
+
+  final containerRoot = await IcloudBridge.containerPath();   // ← 原路径,一字不改
   await openVault(
     docsDir: ProfileManager.instance.localBase(docsRoot),
     dataDir: support,
     icloudContainerDir: ProfileManager.instance.containerBase(containerRoot),
   );
+  if (await syncCurrentVaultIsKeyed()) {
+    throw StateError('本地档案开箱后状态核对失败:不应为 keyed');
+  }
 });
 
 /// 打开某个**代拍病人**的保险箱(医生模式)。与「切成员」不是一回事:代拍病人不在
