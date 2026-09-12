@@ -741,6 +741,33 @@ def test_account_delete_happy_path_deletes_owned_profile_grants_and_oss(monkeypa
         assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (other["account_id"],)).fetchone()[0] == 1
 
 
+# ---- fix round 1 (Task 15 review): item I1 —— OSS 删除失败(含缺环境变量的
+# KeyError)不该在 DB 已提交之后把整个请求炸成 500;账号已经没了,500 只会让
+# 客户端误以为注销失败、可能重试出一堆麻烦。 ----
+
+def test_account_delete_oss_failure_after_commit_still_returns_204(monkeypatch):
+    os.environ.update({"OSS_ACCESS_KEY_ID": "AK", "OSS_ACCESS_KEY_SECRET": "SK", "OSS_BUCKET": "medme-vault", "OSS_ENDPOINT": "oss-cn-hangzhou.aliyuncs.com"})
+
+    def _boom(key):
+        raise KeyError("OSS_ACCESS_KEY_ID")  # 模拟环境变量缺失/网络库炸出任意异常
+
+    monkeypatch.setattr(oss, "delete_object", _boom)
+
+    owner = login("13800000123", "o1")
+    ho = _h(owner["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    oid = "bb" * 32
+    assert client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": oid, "verb": "PUT", "size": 10}, headers=ho).status_code == 200
+
+    assert client.post("/v1/auth/otp", json={"phone": "13800000123"}).status_code == 200
+    r = client.request("DELETE", "/v1/account", json={"phone": "13800000123", "otp_code": "000000"}, headers=ho)
+    assert r.status_code == 204, r.text
+    assert r.headers["x-oss-deleted"] == "0/1"
+
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (owner["account_id"],)).fetchone()[0] == 0
+
+
 def test_account_delete_apple_requires_fresh_identity_token(monkeypatch):
     monkeypatch.setattr(oss, "delete_object", lambda key: True)
     from cryptography.hazmat.primitives.asymmetric import rsa

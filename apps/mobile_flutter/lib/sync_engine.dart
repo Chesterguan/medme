@@ -211,7 +211,12 @@ class SyncEngine {
     }
   }
 
-  Future<SyncReport> syncProfile(Profile p) async {
+  /// 同 [vault_boot.runSerialized] 的队列——同步的整段推拉(含网络往返)排进去,
+  /// 不能只有"开箱"排队(见 Task 15 review I2):同步进行到一半、另一路把箱子
+  /// 切换掉,写入就会落进错的档案。`fetchObject` 也走同一条队列。
+  Future<SyncReport> syncProfile(Profile p) => runSerialized(() => _syncProfileLocked(p));
+
+  Future<SyncReport> _syncProfileLocked(Profile p) async {
     await _assertVaultMatches(p);
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云同步');
@@ -221,7 +226,7 @@ class SyncEngine {
     final canWrite = p.role == 'owner' || p.role == 'editor';
 
     try {
-      await _doSyncProfile(cloudId, key, rep, canWrite);
+      await _doSyncProfile(p, cloudId, key, rep, canWrite);
       Analytics.track(AnalyticsEvent.syncRun, {
         'ok': true,
         'pushed_bucket': Bucket.count(rep.pushed),
@@ -240,7 +245,12 @@ class SyncEngine {
 
   /// [syncProfile] 的实际推拉逻辑,拆出来只是为了让 try/catch 包住的范围
   /// 一眼看清——本身不是独立可调用的公共步骤。
-  Future<void> _doSyncProfile(String cloudId, Uint8List key, SyncReport rep, bool canWrite) async {
+  ///
+  /// 虽然整段已经排进 [runSerialized] 队列(见 [syncProfile]),队列挡住的是
+  /// "同一时刻有两段代码在动 vault";每一次真正落笔写入(`importEvents`/
+  /// `storeObject`)之前仍然**再核一遍身份**(见 Task 15 review I2)——这是
+  /// 防御性的第二道闸,不依赖"这段代码此刻确实排在队列里"这个假设本身永远成立。
+  Future<void> _doSyncProfile(Profile p, String cloudId, Uint8List key, SyncReport rep, bool canWrite) async {
     // 1. 拉:本机水位当 since,服务端只给比它新的;响应头 X-Seq-Map 顺带带回
     // 该 profile 每个 device 当前的最大 seq——第 2 步的推送水位就是它。
     final local = <String, int>{for (final e in await rust.localSeqMap()) e.$1: e.$2};
@@ -250,6 +260,7 @@ class SyncEngine {
     );
     final pulled = _decodeEvents(body);
     if (pulled.isNotEmpty) {
+      await _assertVaultMatches(p); // 网络往返期间箱子可能已经变了,写之前再核一次
       final outcome = await rust.importEvents(key, pulled);
       rep.pulled = outcome.applied;
       rep.untrusted = outcome.untrusted;
@@ -275,6 +286,7 @@ class SyncEngine {
         );
         final pulled2 = _decodeEvents(body2);
         if (pulled2.isNotEmpty) {
+          await _assertVaultMatches(p);
           final outcome2 = await rust.importEvents(key, pulled2);
           rep.pulled += outcome2.applied;
           rep.untrusted += outcome2.untrusted;
@@ -357,7 +369,9 @@ class SyncEngine {
     // 照常跑——上传失败已经被 try/catch 挡住,不会传播到这里。
     for (final (_, oid) in await rust.missingObjects(key)) {
       final s = await api.postJson('/v1/profiles/$cloudId/objects/sign', {'object_id': oid, 'verb': 'GET'});
-      await rust.storeObject(key, oid, await api.getBytes(s['url'] as String));
+      final bytes = await api.getBytes(s['url'] as String);
+      await _assertVaultMatches(p); // 每个对象下载完、真正落盘之前都再核一次
+      await rust.storeObject(key, oid, bytes);
       rep.objectsDown++;
     }
 
@@ -365,8 +379,11 @@ class SyncEngine {
   }
 
   /// 按需拉单个对象(如查看器打开一份还没同步下来的文档时调)。找不到就是本机
-  /// 已经有了,或者根本没有事件引用这个哈希——两种情况都什么也不做。
-  Future<void> fetchObject(Profile p, String hash) async {
+  /// 已经有了,或者根本没有事件引用这个哈希——两种情况都什么也不做。同 [syncProfile],
+  /// 走同一条 [runSerialized] 队列。
+  Future<void> fetchObject(Profile p, String hash) => runSerialized(() => _fetchObjectLocked(p, hash));
+
+  Future<void> _fetchObjectLocked(Profile p, String hash) async {
     await _assertVaultMatches(p);
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云同步');
@@ -377,7 +394,9 @@ class SyncEngine {
     if (match.isEmpty) return;
     final oid = match.first.$2;
     final s = await api.postJson('/v1/profiles/$cloudId/objects/sign', {'object_id': oid, 'verb': 'GET'});
-    await rust.storeObject(key, oid, await api.getBytes(s['url'] as String));
+    final bytes = await api.getBytes(s['url'] as String);
+    await _assertVaultMatches(p); // 写之前再核一次
+    await rust.storeObject(key, oid, bytes);
     bumpVaultRevision();
   }
 
@@ -441,7 +460,38 @@ class SyncEngine {
 /// cloudId 时 no-op"这条契约能在不启动真实 Rust/Flutter 绑定的 `flutter test`
 /// 里被单测钉住;`main.dart` 只负责接线(debounce 计时器 + 生命周期回调),不重复
 /// 这段判断逻辑——所以这是一个正常的公开函数,不是仅供测试用的入口。
+///
+/// **重叠触发合并成"一次在跑 + 最多一次补跑"**(见 Task 15 review I2):
+/// debounced push 和 app-resume pull 可能在极短时间内先后触发。`syncProfile`
+/// 本身已经排进 `vault_boot` 的 FIFO 队列,重叠调用不会真的同时写 vault,但那
+/// 只保证"不乱",不保证"不浪费"——两次触发会各自完整跑一遍推拉,两倍网络往返。
+/// 用一个模块级的"正在跑"标记 + "有没有人等着再来一轮"标记合并:后来者在
+/// 前一轮跑完之前不再单独起一轮,只是把"再补一轮"这件事记下来,前一轮跑完后
+/// 立刻替它跑那一轮——不是无限攒(标记是布尔不是计数),也不是丢弃。
+bool _backgroundSyncRunning = false;
+bool _backgroundSyncRerunRequested = false;
+
 Future<void> triggerBackgroundSync({
+  required AccountSession session,
+  required Profile? Function() currentProfile,
+  required Future<SyncReport> Function(Profile) sync,
+}) async {
+  if (_backgroundSyncRunning) {
+    _backgroundSyncRerunRequested = true;
+    return;
+  }
+  _backgroundSyncRunning = true;
+  try {
+    do {
+      _backgroundSyncRerunRequested = false;
+      await _runBackgroundSyncOnce(session: session, currentProfile: currentProfile, sync: sync);
+    } while (_backgroundSyncRerunRequested);
+  } finally {
+    _backgroundSyncRunning = false;
+  }
+}
+
+Future<void> _runBackgroundSyncOnce({
   required AccountSession session,
   required Profile? Function() currentProfile,
   required Future<SyncReport> Function(Profile) sync,

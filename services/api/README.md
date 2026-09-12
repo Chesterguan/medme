@@ -33,6 +33,7 @@ HMAC 哈希存储,验证码只以哈希存储并带次数上限与过期时间�
    | `PNVS_SIGN_NAME` | 短信签名 |
    | `PNVS_TEMPLATE_CODE` | 短信模板 code |
    | `APPLE_BUNDLE_ID` | `com.medme.mobile` |
+   | `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET` | 阿里云 RAM 用户,签对象上传/下载预签名;注销账号时服务端也用它直接调 OSS DELETE(见下方「自助注销」),不缺这两个不然那一步只能静默失败(计 0) |
    | `OSS_BUCKET` | `medme-vault`(后续同步任务用) |
    | `OSS_ENDPOINT` | 如 `oss-cn-hangzhou.aliyuncs.com` |
    | `DEEPSEEK_API_KEY` | 后续 LLM 代理任务用 |

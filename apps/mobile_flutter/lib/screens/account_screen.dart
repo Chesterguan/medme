@@ -7,6 +7,7 @@ import 'package:mobile_flutter/account_flow.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
@@ -562,6 +563,13 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  /// 见 Task 15 review C1(3):这台手机上已开通云同步的成员,密钥在服务端和
+  /// 本机(`AccountSession.clear()` 同一套 secure storage)一起销毁之后,**永远
+  /// 打不开**——这不是"锁一下、重新登录就能自动补回来"那种(那是退出登录的
+  /// 后果,`AccountFlow.restoreProfileKeys` 已经实现),账号本身没了,没有服务端
+  /// 密钥可补。文案必须把这条说清楚,不能含糊成"锁定"两个字带过;也**不允许**
+  /// 为了让它"看起来还能用"而把这个成员的 vault 从 keyed 降级成 unkeyed——
+  /// 那等于悄悄丢弃了它本该有的加密完整性保证。
   Future<void> _confirmDeleteAccount() async {
     final proceed = await showDialog<bool>(
       context: context,
@@ -571,13 +579,22 @@ class _AccountScreenState extends State<AccountScreen> {
         content: const Text(
           '注销后:账号里的云端病历、家属/医生的授权全部永久删除,他们会立刻'
           '失去访问权限。此操作不可撤销。\n\n'
-          '这台手机上已保存的病历不会被删除——如果也要清空本机数据,'
-          '请到「清空所有数据」里单独操作。',
+          '这台手机上已开通云同步的成员,密钥会随账号一起在服务端和本机销毁——'
+          '之后这个成员在这台手机上永远打不开,不是"重新登录就能恢复"那种锁定,'
+          '我们不托管密钥,没有任何办法找回。\n\n'
+          '这台手机上已保存的病历本身不会被删除——如果也要清空本机数据,'
+          '请到「清空所有数据」里单独操作。建议先导出一份存档,再继续注销。',
           textAlign: TextAlign.center,
           style: TextStyle(height: 1.5),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const ExportScreen()),
+            ),
+            child: const Text('先导出'),
+          ),
           TextButton(
             style: TextButton.styleFrom(foregroundColor: MedMe.danger),
             onPressed: () => Navigator.of(context).pop(true),

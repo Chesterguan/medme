@@ -185,7 +185,17 @@ def account_delete(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep))
 
     oss_keys = db.account_delete(conn, aid)
     conn.commit()  # DB 全部落盘之后才动 OSS——半途失败也不会把云端对象删了却还留着账号
-    deleted = sum(1 for k in oss_keys if oss.delete_object(k))
+    # fix round 1 (Task 15 review) item I1: 这一步无论如何都不能再让请求炸成
+    # 500——账号这会儿已经没了,`oss.delete_object` 内部把已知异常都收了,但这里
+    # 再兜一层(配错的环境变量、`urllib` 抛出没预料到的异常类型……),失败就当
+    # 这一个没删成,继续删下一个,不中断、也不影响这次注销本身的返回值。
+    deleted = 0
+    for k in oss_keys:
+        try:
+            if oss.delete_object(k):
+                deleted += 1
+        except Exception:
+            pass
     return Response(status_code=204, headers={"X-Oss-Deleted": f"{deleted}/{len(oss_keys)}"})
 
 

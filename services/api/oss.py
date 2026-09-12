@@ -80,20 +80,26 @@ def delete_object(key: str) -> bool:
     客户端(之前的评审 Critical 就是一个 viewer 能签出 DELETE),RAM key 只在这里、
     服务端内部直接用。用 OSS 的 header 鉴权(与 `presign` 的查询串鉴权是同一族
     签名,`StringToSign` 换成 header 版本),最佳努力:失败/网络异常都只返回
-    False,调用方按计数汇报,不能让一个对象删不掉就打断账号注销的 DB 事务。"""
-    ak = os.environ["OSS_ACCESS_KEY_ID"].strip()
-    sk = os.environ["OSS_ACCESS_KEY_SECRET"].strip()
-    bucket = os.environ["OSS_BUCKET"].strip()
-    endpoint = os.environ["OSS_ENDPOINT"].strip()
-    date = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
-    string_to_sign = "\n".join(["DELETE", "", "", date, canonical_resource(bucket, key)])
-    sig = _sign(sk, string_to_sign)
-    req = urllib.request.Request(
-        f"https://{bucket}.{endpoint}/{urllib.parse.quote(key, safe='/')}",
-        method="DELETE",
-        headers={"Date": date, "Authorization": f"OSS {ak}:{sig}"},
-    )
+    False,调用方按计数汇报,不能让一个对象删不掉就打断账号注销的 DB 事务。
+
+    fix round 1 (Task 15 review) item I1: 环境变量读取原先在 try 之外——配置
+    漏配一个变量,这里就会抛 `KeyError`,而调用方（`app.py`）在 `conn.commit()`
+    **之后**才跑到这一步,账号已经删完了,异常没接住就是给客户端一个 500,
+    却其实注销本身早已成功。现在整段(含环境变量读取)都在 try 里,任何异常
+    都只返回 False。"""
     try:
+        ak = os.environ["OSS_ACCESS_KEY_ID"].strip()
+        sk = os.environ["OSS_ACCESS_KEY_SECRET"].strip()
+        bucket = os.environ["OSS_BUCKET"].strip()
+        endpoint = os.environ["OSS_ENDPOINT"].strip()
+        date = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+        string_to_sign = "\n".join(["DELETE", "", "", date, canonical_resource(bucket, key)])
+        sig = _sign(sk, string_to_sign)
+        req = urllib.request.Request(
+            f"https://{bucket}.{endpoint}/{urllib.parse.quote(key, safe='/')}",
+            method="DELETE",
+            headers={"Date": date, "Authorization": f"OSS {ak}:{sig}"},
+        )
         with urllib.request.urlopen(req, timeout=10) as r:
             return 200 <= r.status < 300
     except urllib.error.HTTPError as e:

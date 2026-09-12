@@ -6,7 +6,9 @@ import 'dart:typed_data';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' as rust;
+import 'package:mobile_flutter/vault_boot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
@@ -59,6 +61,12 @@ abstract class SyncCrypto {
   /// 设备批准:把 `plaintext`(本机账号私钥)用对方设备的临时公钥封起来,只有
   /// 那台设备自己的临时私钥能拆开(`sync_open_sealed`,在那台设备上跑,不在这里)。
   Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext);
+
+  /// [sealTo] 的反向操作:用自己的私钥拆开别人用自己公钥封的密文。
+  /// [AccountFlow.restoreProfileKeys] 拿它把 `wrapped_profile_key`(账号公钥封的
+  /// 档案密钥)解出来——退出登录/换设备之后"重新登录自动恢复"的真正实现
+  /// (Task 15 review C1:这条路径之前完全没有 Dart 调用点,是一句假文案)。
+  Future<Uint8List> openSealed(Uint8List secret, Uint8List blob);
 }
 
 class RustCrypto implements SyncCrypto {
@@ -86,6 +94,9 @@ class RustCrypto implements SyncCrypto {
 
   @override
   Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext) => rust.syncSealTo(public: public, plaintext: plaintext);
+
+  @override
+  Future<Uint8List> openSealed(Uint8List secret, Uint8List blob) => rust.syncOpenSealed(secret: secret, blob: blob);
 }
 
 /// [AccountFlow.prepareKeys] 的返回值——纯内存,不落任何盘。交给
@@ -102,11 +113,22 @@ typedef PreparedKeys = ({
 /// 注册 / 登录 / 解锁 / 设备批准的编排——不含任何 UI。[AccountScreen] 只负责
 /// 按返回值/异常切状态、画界面。
 class AccountFlow {
-  AccountFlow(this.api, this.session, {this.crypto = const RustCrypto()});
+  AccountFlow(
+    this.api,
+    this.session, {
+    this.crypto = const RustCrypto(),
+    this.reopenCurrentProfileVault = openCurrentProfileVault,
+  });
 
   final ApiClient api;
   final AccountSession session;
   final SyncCrypto crypto;
+
+  /// [restoreProfileKeys] 补完密钥后,如果补的正好是**当前打开的成员**、且它
+  /// 补之前是锁着的,就用这个重开一次——测试注入点,默认真实的
+  /// `vault_boot.openCurrentProfileVault`(`flutter test` 不能跑到它内部的
+  /// FFI 开箱,测试传一个假的进来)。
+  final Future<void> Function() reopenCurrentProfileVault;
 
   /// Argon2id 参数。Task 14 会在真机上实测 `syncKdfBenchMs` 之后回来改这一处——
   /// 全部口令包/解包只从这一个常量取,改一次全生效。
@@ -176,12 +198,88 @@ class AccountFlow {
     try {
       final k = await api.getJson('/v1/account/keys') as Map<String, dynamic>;
       _serverKeys = k;
-      lastOutcome = session.privateKey == null ? LoginOutcome.needsUnlock : LoginOutcome.ready;
+      if (session.privateKey == null) {
+        lastOutcome = LoginOutcome.needsUnlock;
+      } else {
+        // 本机已经有私钥(这台设备之前解锁过)——直接进「已就绪」之前,顺手把
+        // 服务端记着、本机还没补上的档案密钥补一遍,见 [restoreProfileKeys]。
+        await restoreProfileKeys();
+        lastOutcome = LoginOutcome.ready;
+      }
     } on ApiFailed catch (e) {
       if (e.status != 404) rethrow;
       lastOutcome = LoginOutcome.needsKeySetup;
     }
     return lastOutcome!;
+  }
+
+  /// 换设备/重新登录后,把服务端记着的、本机还没有的档案密钥补回来——
+  /// 「退出登录/换设备之后重新登录会自动恢复」这句话的真正实现(Task 15
+  /// review C1:之前 `syncOpenSealed` 压根没有 Dart 调用点,这句话是假的,
+  /// `AccountSession.clear()` 清掉 `pk_<cloudId>` 之后没有任何路径能补回来,
+  /// 云成员会永久锁死)。
+  ///
+  /// `GET /v1/profiles` 拿到这个账号能访问的全部云档案(含用账号公钥封的
+  /// `wrapped_profile_key`),挑出"本地已经有这个成员(有 cloudId),但本机
+  /// secure storage 里没有对应密钥"的那些,用账号私钥拆开、存回去。**不新建
+  /// 本地成员**——只补密钥,新成员的落地是 `Grants.redeem`(邀请链接)的事,
+  /// `/v1/profiles` 里本地没有对应 profile 的条目在这里直接跳过。
+  ///
+  /// 单条数据解不开/格式不对只跳过那一条(见循环里的 try/catch),不让一条坏
+  /// 数据拖累其它成员的恢复;整个 `/v1/profiles` 请求失败也不抛——这一步是
+  /// "顺手补",不该挡住登录/解锁本身成功这件事。
+  ///
+  /// 如果**当前打开的成员**在补之前是锁着的(有 cloudId、没密钥),补上之后用
+  /// [reopenCurrentProfileVault] 重开一次,免得用户还要再手动做一步才能看到
+  /// 自己的档案。
+  ///
+  /// **不调 `ProfileManager.instance.ensureLoaded()`**——这里是唯一一次刻意
+  /// 不调的地方,理由是真的会踩坑:能走到这个方法,说明 App 已经完整启动过
+  /// `VaultBootstrap`(它的 `openCurrentProfileVault()` 第一行就是
+  /// `ensureLoaded()`),`ProfileManager` 早就加载好了,这里再调一次只是
+  /// 白问一次「加载了没」。而它一旦真的在没加载过的时候被调用(这个方法由一次
+  /// 按钮点击的调用链间接触发),会去碰真实文件 I/O——这类调用只有包在
+  /// `tester.runAsync()` 里才能在 `flutter test` 的 widget 测试里跑完,一次
+  /// 平常的 `await tester.tap(...)` 会直接卡死等不到它(踩过的坑,不是猜的)。
+  Future<void> restoreProfileKeys() async {
+    final priv = session.privateKey;
+    if (priv == null) return;
+    final currentCloudId = ProfileManager.instance.current.cloudId;
+    final currentWasLocked = currentCloudId != null && await session.profileKey(currentCloudId) == null;
+
+    List<dynamic> serverProfiles;
+    try {
+      serverProfiles = await api.getJson('/v1/profiles') as List<dynamic>;
+    } catch (_) {
+      return;
+    }
+
+    var restoredCurrent = false;
+    for (final raw in serverProfiles) {
+      try {
+        final entry = raw as Map<String, dynamic>;
+        final cloudId = entry['profile_id'] as String;
+        final wrapped = entry['wrapped_profile_key'] as String?;
+        if (wrapped == null) continue;
+        if (await session.profileKey(cloudId) != null) continue; // 已经有了
+        final hasLocalProfile = ProfileManager.instance.profiles.any((p) => p.cloudId == cloudId);
+        if (!hasLocalProfile) continue;
+        final key = await crypto.openSealed(priv, base64Decode(wrapped));
+        await session.putProfileKey(cloudId, key);
+        if (cloudId == currentCloudId) restoredCurrent = true;
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (currentWasLocked && restoredCurrent) {
+      try {
+        await reopenCurrentProfileVault();
+      } catch (_) {
+        // 重开失败不影响"密钥已经补上了"这件事本身——下次任何触发开箱的路径
+        // (比如用户自己切一下成员、或 `VaultBootstrap` 的重试)都会用上它。
+      }
+    }
   }
 
   /// 本屏重建/冷启动时用:如果本机已经有登录 token(`loginOtp`/`loginApple`
@@ -231,6 +329,10 @@ class AccountFlow {
       publicKey: keys.publicKey,
       privateKey: keys.privateKey,
     );
+    // 全新账号,服务端此刻不会有任何档案(自己刚生成密钥对),调用一次也
+    // 无害(空列表,循环直接跳过)——统一走这条路径,不必单独判断"是不是新
+    // 账号"。
+    await restoreProfileKeys();
     lastOutcome = LoginOutcome.ready;
   }
 
@@ -257,6 +359,7 @@ class AccountFlow {
       publicKey: base64Decode(k['public_key'] as String),
       privateKey: sec,
     );
+    await restoreProfileKeys();
     lastOutcome = LoginOutcome.ready;
   }
 
@@ -301,6 +404,7 @@ class AccountFlow {
       publicKey: base64Decode(k['public_key'] as String),
       privateKey: sec,
     );
+    await restoreProfileKeys();
     lastOutcome = LoginOutcome.ready;
   }
 }

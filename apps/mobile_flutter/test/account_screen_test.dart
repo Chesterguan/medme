@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +14,7 @@ import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/sync_engine.dart';
+import 'package:mobile_flutter/vault_boot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 假 API——每个方法都记进 [calls],方便断言"到底调没调、调了几次"；每个失败
@@ -202,6 +204,14 @@ class FakeCrypto implements SyncCrypto {
     await _wait();
     return Uint8List.fromList([...public, ...plaintext]);
   }
+
+  /// 恒等透传——不追求真实密码学正确性(同这个类其它方法的一贯做法),测试只
+  /// 关心"服务端返回的 wrapped_profile_key 最终原样存进了 `pk_<cloudId>`"。
+  @override
+  Future<Uint8List> openSealed(Uint8List secret, Uint8List blob) async {
+    await _wait();
+    return blob;
+  }
 }
 
 /// 假 `GrantsRust`——只有 `sealTo` 会被「按手机号添加家属」用到,拼接公钥与
@@ -328,11 +338,26 @@ Future<void> _toReady(WidgetTester t, FakeApi api, {SyncCrypto? crypto, Grants? 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() {
+  // fix round 1 (Task 15 review) C1: `AccountFlow.restoreProfileKeys()` 现在
+  // 在每次登录/解锁成功之后都跑,它调 `ProfileManager.instance.ensureLoaded()`
+  // ——这条路径会碰 `path_provider`。之前只有少数几个测试组自己给这个 channel
+  // 挂了 mock(且各起各的临时目录),其余测试组从没需要过;现在**任何**一次
+  // 登录/解锁都会顺带触发它,所以这里把 mock 提到文件级 `setUp`,保证跑到哪个
+  // 测试都有地方落盘,不依赖具体是哪个 channel 调用没接住。
+  late Directory globalSupport;
+
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform({});
     AccountSession.instance.resetForTest();
+    globalSupport = await Directory.systemTemp.createTemp('medme-account-screen-test');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/path_provider'),
+      (call) async => globalSupport.path,
+    );
   });
+
+  tearDown(() async => globalSupport.delete(recursive: true));
 
   group('注册:prepareKeys/commitKeys 两步(恢复码强制确认)', () {
     testWidgets('登录 → 设口令 → 生成密钥展示恢复码(此时未提交)→ 确认后才真正提交', (t) async {
@@ -847,9 +872,92 @@ void main() {
     // `_afterLogin` 失败,不该多报一条 account_login"这条共享逻辑。
   });
 
+  group('AccountFlow.restoreProfileKeys(fix round 1: Task 15 review C1)', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-restore-keys-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    test('退出登录后重新登录:服务端有、本机缺的密钥被补回来;当前锁着的成员补上后自动重开', () async {
+      final wrappedKey = Uint8List.fromList(List.generate(32, (i) => i));
+      final api = FakeApi(hasKeys: true, profiles: [
+        {'profile_id': 'prf_locked', 'role': 'owner', 'expires_at': null, 'wrapped_profile_key': base64Encode(wrappedKey)},
+      ]);
+      var reopened = false;
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async => reopened = true,
+      );
+
+      // 模拟"退出登录"之后的样子:当前成员已经标记了 cloudId,但本机 secure
+      // storage 里没有它的密钥(`AccountSession.clear()` 把它清掉了)。
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, 'prf_locked', 'owner', null);
+      expect(await AccountSession.instance.profileKey('prf_locked'), isNull);
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(await AccountSession.instance.profileKey('prf_locked'), wrappedKey);
+      expect(reopened, isTrue, reason: '当前成员补齐密钥前是锁着的,补完必须自动重开一次');
+      expect(flow.lastOutcome, LoginOutcome.ready);
+    });
+
+    test('当前成员本来就没锁(已有密钥):不触发重开,即便服务端也返回了它的 wrapped_profile_key', () async {
+      final api = FakeApi(hasKeys: true, profiles: [
+        {'profile_id': 'prf_1', 'role': 'owner', 'expires_at': null, 'wrapped_profile_key': base64Encode(Uint8List(32))},
+      ]);
+      var reopened = false;
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async => reopened = true,
+      );
+
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, 'prf_1', 'owner', null);
+      await AccountSession.instance.putProfileKey('prf_1', Uint8List(32)); // 本机已经有密钥,不是锁着的
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(reopened, isFalse, reason: '没有锁着的成员需要补,不该触发重开(不该白跑一次 FFI)');
+    });
+
+    test('/v1/profiles 请求失败:静默跳过,不影响解锁本身成功', () async {
+      final api = FakeApi(hasKeys: true, failProfiles: true);
+      final flow = AccountFlow(api, AccountSession.instance, crypto: FakeCrypto());
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(flow.lastOutcome, LoginOutcome.ready);
+    });
+  });
+
   group('已就绪:开通云同步 + 立即同步(Task 15)', () {
     late Directory support;
 
+    // 注意:这个组每条用例自己在 body 第一行调 `resetVaultQueueForTest()`,
+    // **不放在这个 `setUp()` 里**——`SyncEngine.syncProfile` 现在走
+    // `vault_boot` 的模块级 FIFO 队列(见 Task 15 review I2),而 `setUp()`
+    // 跑在 `package:test` 的正常 zone,`testWidgets` 的用例体跑在
+    // `flutter_test` 自己那套 fake-async zone 里——在 `setUp()` 里创建的
+    // "已完成" `Future` 拿去在 fake zone 里 `.then()`,里头再起的
+    // `Future.delayed` 不会被 `pumpAndSettle()` 推进,整个用例会挂到超时
+    // (真排查过的坑,不是猜的)。
     setUp(() async {
       support = await Directory.systemTemp.createTemp('medme-account-cloud-sync-test');
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -870,6 +978,7 @@ void main() {
     }
 
     testWidgets('还没开通:显示「开通云同步」按钮,没有「立即同步」', (t) async {
+      resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
       await t.runAsync(() async {
         await ProfileManager.instance.ensureLoaded();
@@ -882,6 +991,7 @@ void main() {
     });
 
     testWidgets('开通云同步:加载中显示进度圈', (t) async {
+      resetVaultQueueForTest();
       // `failCreateProfile: true`——绝不能让这一步在 widget 测试里真的成功:
       // 成功会让 `enableCloud()` 继续走到 `openCurrentProfileVault()`(真实
       // FRB + 重开箱),那条路径需要原生库,`flutter test` 里会挂起/崩溃(同
@@ -901,6 +1011,7 @@ void main() {
     });
 
     testWidgets('开通云同步失败(注册阶段,POST /v1/profiles 500):错误可见,仍停在"未开通"分支', (t) async {
+      resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true, failCreateProfile: true);
       await t.runAsync(() async {
         await ProfileManager.instance.ensureLoaded();
@@ -916,6 +1027,7 @@ void main() {
     });
 
     testWidgets('已开通:展示"已开通"分支 + 「立即同步」入口,没有「开通云同步」按钮', (t) async {
+      resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
       await giveCurrentProfileCloudId(t);
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
@@ -926,6 +1038,7 @@ void main() {
     });
 
     testWidgets('立即同步:加载中显示进度圈', (t) async {
+      resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
       await giveCurrentProfileCloudId(t);
       final syncApi = _SyncApi();
@@ -938,6 +1051,7 @@ void main() {
     });
 
     testWidgets('立即同步成功:展示上一次结果摘要', (t) async {
+      resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
       await giveCurrentProfileCloudId(t);
       final syncApi = _SyncApi(delay: const Duration(milliseconds: 1));
@@ -952,6 +1066,7 @@ void main() {
     });
 
     testWidgets('立即同步失败(服务器 500):错误可见,不崩', (t) async {
+      resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
       await giveCurrentProfileCloudId(t);
       final syncApi = _SyncApi(failPull: true, delay: const Duration(milliseconds: 1));
@@ -964,6 +1079,7 @@ void main() {
     });
 
     testWidgets('立即同步失败:VaultMismatch 的中文消息原样展示(vault 身份核对不通过)', (t) async {
+      resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
       await giveCurrentProfileCloudId(t);
       final syncApi = _SyncApi(delay: const Duration(milliseconds: 1));
@@ -1070,6 +1186,32 @@ void main() {
       await t.pumpAndSettle();
 
       expect(find.byKey(const Key('delete_phone')), findsNothing);
+    });
+
+    // fix round 1 (Task 15 review): C1(3) —— 文案必须说清楚"永远打不开",
+    // 不能含糊成"锁定";并且要在确认之前给一条「先导出」的路,不是走完才想起来。
+    testWidgets('确认弹窗文案说清楚"永远打不开"(不是锁定),并提供「先导出」入口', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api);
+
+      await t.ensureVisible(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('注销账号'));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('永远打不开'), findsOneWidget);
+      expect(find.textContaining('没有任何办法找回'), findsOneWidget);
+      expect(find.text('先导出'), findsOneWidget);
+
+      await t.tap(find.text('先导出'));
+      await t.pumpAndSettle();
+      expect(find.text('导出 · 分享'), findsOneWidget); // ExportScreen 的 AppBar 标题
+
+      // 导出完回来,确认弹窗还在,可以接着点「继续注销」——不是走了一趟导出
+      // 就把整个确认流程弄丢。
+      await t.pageBack();
+      await t.pumpAndSettle();
+      expect(find.text('继续注销'), findsOneWidget);
     });
 
     testWidgets('手机账号:确认后展开重新鉴权表单(手机号 + 验证码)', (t) async {

@@ -29,11 +29,36 @@ Future<void> _vaultQueue = Future<void>.value();
 /// 正是为了看见开箱失败才建的。见 `screens/first_run_consent.dart`。
 bool vaultOpenedOkThisLaunch = true;
 
-Future<void> _serializedOpen(Future<void> Function() open) {
-  final done = _vaultQueue.then((_) => open());
-  // 队列本身吞掉异常(否则一次开箱失败会毒死后面所有开箱);异常照常抛给调用方。
+/// 把任意一段"会碰进程级 vault"的操作排进同一条 FIFO 队列——不只是开箱本身。
+/// 见 Task 15 review I2:`SyncEngine` 的推拉、按需补对象也要走这条队列,不能
+/// 只有"开箱"排队;开箱和同步各自独立排队的话,两者之间没有互斥——同步的网络
+/// 往返进行到一半,另一路把箱子切换掉,写入就会落进错的档案。
+///
+/// 排队保证的是**执行顺序**,不是"写之前箱子没变过"这件事本身——后者还要靠
+/// 调用方在真正写入前再核一遍身份(`SyncEngine._assertVaultMatches`),两者
+/// 配合:队列挡住"同一时刻有两段代码在动 vault",身份核对挡住"万一哪天有条
+/// 路径没走队列"这种意外。
+Future<T> runSerialized<T>(Future<T> Function() action) {
+  final done = _vaultQueue.then((_) => action());
+  // 队列本身吞掉异常(否则一次失败会毒死后面所有排队的操作);异常照常抛给调用方。
   _vaultQueue = done.then((_) {}, onError: (_) {});
   return done;
+}
+
+/// 测试专用:把队列砍回一个立即完成的 `Future`,不管上面挂着什么。
+///
+/// `_vaultQueue` 是模块级单例,`flutter test` 里一个测试文件的多个 `testWidgets`
+/// 共用同一份——`SyncEngine` 走 [runSerialized] 之后,一个用例里排的操作即使
+/// 已经"跑完"(该用例自己的 `pumpAndSettle()` 也确实等到了那次调用的结果),
+/// 挂在 `_vaultQueue` 链条尾巴上、把队列本身继续往前推的那个收尾 `.then()`
+/// 仍然可能落在这个用例自己的 fake-async/测试 zone 里没有真正推进——下一个用例
+/// 再调 [runSerialized] 时就会追加在一个再也不会完成的 `Future` 后面,
+/// `pumpAndSettle` 干等到超时(见 Task 15 review 修复 I2 时踩到的坑)。
+/// 会用到 [runSerialized](`SyncEngine`/`vault_boot` 自己)的测试文件,在
+/// `setUp`/`tearDown` 里调一下这个,把队列清成互不相干的状态。
+@visibleForTesting
+void resetVaultQueueForTest() {
+  _vaultQueue = Future<void>.value();
 }
 
 /// 这个成员该走哪条开箱路径——纯函数,不碰任何 IO/FFI,只看有没有
@@ -72,7 +97,7 @@ class ProfileLocked implements Exception {
 ///
 /// data 目录(设备 id、iCloud 全局开关标记、导入临时文件)所有成员共用——iCloud 是
 /// 全局开关(开了对所有成员生效);派生库则每成员独立(见 Rust `resolve_vault_paths`)。
-Future<void> openCurrentProfileVault() => _serializedOpen(() async {
+Future<void> openCurrentProfileVault() => runSerialized(() async {
   await ProfileManager.instance.ensureLoaded();
   final p = ProfileManager.instance.current;
   final docsRoot = (await getApplicationDocumentsDirectory()).path;
@@ -113,7 +138,7 @@ Future<void> openCurrentProfileVault() => _serializedOpen(() async {
 /// `dataDir` 用该病人自己的 `data/`:每个病人一个一次性 device id(不带医生的设备
 /// 身份),且那里没有 `icloud_enabled` 标记 —— 别人的病历永远不进医生的 iCloud。
 Future<void> openProxyPatientVault(String patientId) =>
-    _serializedOpen(() async {
+    runSerialized(() async {
       final base = await ProxyPatientManager.instance.baseDir(patientId);
       await openVault(
         docsDir: base,

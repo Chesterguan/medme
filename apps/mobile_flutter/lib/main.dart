@@ -29,6 +29,7 @@ import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/member_switcher.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -224,6 +225,78 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   return (title: '无法打开你的健康档案', body: '$error\n\n请重启 App 再试。');
 }
 
+/// [ProfileLocked] 错误屏专用的两个动作:「去登录」「切换成员」——见 Task 15
+/// review C1:退出登录/换设备清过 secure storage 之后,已开通云同步的成员会
+/// 变成这个状态,原来这一屏没有任何按钮,用户只能卡死在这儿。
+///
+/// 拆成独立 widget(而不是内联在 `VaultBootstrap.build` 里)是为了让它能在
+/// `flutter test` 里单独测——`VaultBootstrap._open` 会真的调 FFI 开箱,测试
+/// 没法把整个 `VaultBootstrap` 逼进错误状态,但"点了这两个按钮该发生什么"跟
+/// 开箱成不成功无关,可以单独钉住(同 [vaultBootstrapErrorText] 被拆成纯函数
+/// 单测的道理)。
+@visibleForTesting
+class ProfileLockedActions extends StatelessWidget {
+  const ProfileLockedActions({
+    super.key,
+    required this.onDone,
+    this.accountFlow,
+    this.switchTo,
+    this.purgeExpired,
+  });
+
+  /// 「去登录」/「切换成员」那次导航结束(用户返回)之后调——生产代码传
+  /// `_VaultBootstrapState._retry`,让这一屏重跑一次开箱(登录/切换成功的话,
+  /// 这次就该成功了)。
+  final VoidCallback onDone;
+
+  /// 测试注入点,默认为 null——真正用的时候现取现建真实的 [AccountFlow]。
+  final AccountFlow? accountFlow;
+
+  /// 透传给 [showMemberSwitcherSheet] 的测试注入点(同名参数),默认为 null
+  /// 时用它自己的真实默认值。
+  final Future<void> Function(String id)? switchTo;
+  final Future<int> Function()? purgeExpired;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: MedShape.s4),
+        FilledButton(
+          onPressed: () async {
+            await Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => AccountScreen(
+                  flow: accountFlow ??
+                      AccountFlow(
+                        ApiClient(bearer: () async => AccountSession.instance.access),
+                        AccountSession.instance,
+                      ),
+                ),
+              ),
+            );
+            // 登录/解锁成功时 `AccountFlow.restoreProfileKeys` 已经把这个成员
+            // 锁着的密钥补回来了(见 account_flow.dart)——但这一屏自己的
+            // `_open` 早就 resolve 过一次错误,不会自动感知,回来之后必须
+            // 显式重试一次开箱。
+            onDone();
+          },
+          child: const Text('去登录'),
+        ),
+        const SizedBox(height: MedShape.s2),
+        OutlinedButton(
+          onPressed: () async {
+            await showMemberSwitcherSheet(context, switchTo: switchTo, purgeExpired: purgeExpired);
+            onDone();
+          },
+          child: const Text('切换成员'),
+        ),
+      ],
+    );
+  }
+}
+
 /// 启动引导:先在真实沙盒目录打开保险箱(FFI `open_vault`),再进主界面。
 /// 打开是可韧性的(损坏的派生 db 会从 log 重建);目录取自 path_provider。
 /// iCloud 已接入(见 `vault_boot` / `icloud_bridge`):容器可解析且用户在设置里开启
@@ -235,11 +308,24 @@ class VaultBootstrap extends StatefulWidget {
 }
 
 class _VaultBootstrapState extends State<VaultBootstrap> {
-  // 打开「当前成员」的保险箱(多成员见 profile_manager / vault_boot),同时把
+  /// 打开「当前成员」的保险箱(多成员见 profile_manager / vault_boot),同时把
   // 「个人/医生」模式选择读出来(`AppRoot` 据此决定先显示哪个根界面)。两者互不
   // 依赖,并发跑不拖慢启动。IIFE 包一层是因为 `Future.wait` 本身返回
   // `Future<List<void>>`,与这里声明的 `Future<void>` 字段类型不兼容。
-  final Future<void> _open = (() async {
+  late Future<void> _open;
+
+  /// `app_open` 只该报这一次启动的第一次结果——[_retry] 让 `ProfileLocked`
+  /// 错误屏可以在"去登录"/"切换成员"之后重试开箱,但那不是一次新的 App 启动,
+  /// 不该再报一条 `app_open`(那条事件是 DAU 基线,重试会把它污染成好几条)。
+  bool _reportedAppOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _open = _bootOpen();
+  }
+
+  Future<void> _bootOpen() async {
     var ok = true;
     try {
       await Future.wait([
@@ -250,16 +336,36 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
       ok = false;
       rethrow; // 错误界面照旧显示,埋点只是搭个便车
     } finally {
-      vaultOpenedOkThisLaunch = ok; // 首启同意页补发 app_open 时要读(见 vault_boot.dart)
-      // `app_open` 发在这里而不是 `main()`:要带上模式和「箱子开没开成」。
-      // **开箱失败此前是完全不可见的** —— 用户只看到一句红字,我们什么都不知道。
-      await Analytics.init(); // 已在 main 里跑着,这里只是等同一个 Future
-      Analytics.setContext({
-        'mode': AppMode.instance.mode.value?.name ?? 'unset',
-      });
-      Analytics.track(AnalyticsEvent.appOpen, {'vault_ok': ok});
+      if (!_reportedAppOpen) {
+        _reportedAppOpen = true;
+        vaultOpenedOkThisLaunch = ok; // 首启同意页补发 app_open 时要读(见 vault_boot.dart)
+        // `app_open` 发在这里而不是 `main()`:要带上模式和「箱子开没开成」。
+        // **开箱失败此前是完全不可见的** —— 用户只看到一句红字,我们什么都不知道。
+        await Analytics.init(); // 已在 main 里跑着,这里只是等同一个 Future
+        Analytics.setContext({
+          'mode': AppMode.instance.mode.value?.name ?? 'unset',
+        });
+        Analytics.track(AnalyticsEvent.appOpen, {'vault_ok': ok});
+      }
     }
-  })();
+  }
+
+  /// `ProfileLocked` 错误屏「去登录」/「切换成员」返回之后重跑一次开箱——
+  /// 见 Task 15 review C1:原来这颗 `Future` 只在 `initState` 建一次,登录/
+  /// 补密钥或切成员成功之后箱子其实已经能开了,但这一屏靠 `FutureBuilder`
+  /// 监听同一个 `Future`,它早就 resolve(带着错误)了,不会自己刷新——用户
+  /// 会被困死在这一屏里出不去。
+  void _retry() {
+    if (!mounted) return;
+    // 语句块,不是箭头体——`setState(() => _open = _bootOpen())` 是仓库里明确
+    // 禁止的写法(见 `test/known_defect_setstate_future_test.dart`):箭头体的
+    // 赋值在 debug 断言判定"返回了 Future"之前就已经发生,断言抛在
+    // `markNeedsBuild()` 之前,于是这次赋值没有触发任何一次重建。
+    final next = _bootOpen();
+    setState(() {
+      _open = next;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -291,7 +397,14 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
         }
         if (snap.hasError) {
           final c = MedColors.of(context);
-          final text = vaultBootstrapErrorText(snap.error!);
+          final error = snap.error!;
+          final text = vaultBootstrapErrorText(error);
+          // `ProfileLocked` 是一个**可操作**的死胡同(见 Task 15 review C1):
+          // 退出登录/换设备清过 secure storage 之后,已开通云同步的成员会变成
+          // 这个状态——之前这一屏没有任何按钮,用户只能卡在这儿,连"去登录把
+          // 密钥补回来"都做不到,等于把 App 锁死。其它种类的开箱失败(箱子真的
+          // 坏了)不给这两个按钮——它们解决不了"文件系统/数据库坏了"这件事。
+          final locked = error is ProfileLocked;
           return Scaffold(
             body: Center(
               child: Padding(
@@ -319,6 +432,7 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
                       textAlign: TextAlign.center,
                       style: MedType.body.copyWith(color: c.ink2, height: 1.6),
                     ),
+                    if (locked) ProfileLockedActions(onDone: _retry),
                   ],
                 ),
               ),

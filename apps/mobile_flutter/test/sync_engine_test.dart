@@ -19,6 +19,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/sync_engine.dart';
+import 'package:mobile_flutter/vault_boot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 假 API——每个方法都记进 [calls],推的事件记进 [pushedEvents]。[server] 描述
@@ -44,6 +45,10 @@ class RecordingApi extends ApiClient {
   bool dropSeqMapHeader = false;
   /// 带一个解不出来的 `X-Seq-Map`(不是 JSON 对象)——同上,测解析失败的分支。
   String? garbageSeqMapValue;
+  /// `getJsonWithHeaders`(拉事件那一步)人为加的延迟——默认 0,测 I2(排队/
+  /// 重叠触发)时才需要一个真实的时间窗口,让"并发的另一个操作"有机会真的
+  /// 排到队列后面而不是纯凑巧地先后执行。
+  Duration pullDelay = Duration.zero;
 
   final _urlToObjectId = <String, String>{};
 
@@ -61,6 +66,7 @@ class RecordingApi extends ApiClient {
     Map<String, String>? headers,
   }) async {
     calls.add('GET $path');
+    if (pullDelay > Duration.zero) await Future<void>.delayed(pullDelay);
     if (failPullEvents) throw const ApiFailed(500, 'pull failed');
     sinceQueries.add(query?['since'] ?? '');
     final respHeaders = <String, String>{};
@@ -229,6 +235,10 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform({});
     AccountSession.instance.resetForTest();
+    // 见 Task 15 review I2 修复:`vault_boot._vaultQueue` 是模块级单例,不同
+    // 用例共用,不清的话上一个用例排的收尾操作可能没走完,下一个用例的
+    // `runSerialized` 调用会追加在一个不会再完成的 `Future` 后面。
+    resetVaultQueueForTest();
     await AccountSession.instance.putProfileKey(cloudId, key);
 
     // `registerCloudProfile` 测试要用真的 ProfileManager(`markCloud` 落盘)——
@@ -680,6 +690,42 @@ void main() {
     expect(unchanged.cloudId, isNull, reason: 'markCloud 不该被调用');
     // 没有 cloudId 就没法拼 secure storage 的 key,这里只需确认 profile 状态没变。
   });
+
+  group('I2 (fix round 1: Task 15 review) — 同步排进 vault_boot 的 FIFO 队列', () {
+    test('"切成员"类动作必须等 syncProfile 的写操作(importEvents)完成才能执行', () async {
+      final order = <String>[];
+      final api = RecordingApi(server: {
+        'events': [
+          {'device_id': 'd1', 'seq': 1, 'event_id': 'e1', 'ts': 't', 'ciphertext': base64Encode(Uint8List(2))},
+        ],
+        'objects': [],
+      })..pullDelay = const Duration(milliseconds: 20);
+      final rust = _OrderRecordingRust(order);
+      final engine = SyncEngine(api, AccountSession.instance, rust: rust);
+
+      // 不 await——`syncProfile` 内部一调就已经把自己排进 `_vaultQueue`,接下来
+      // 排的任何操作(哪怕是"切成员"这种跟同步毫不相干的动作)都必须等它。
+      final syncFuture = engine.syncProfile(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'viewer'));
+      final switchFuture = runSerialized(() async => order.add('switch'));
+
+      await Future.wait([syncFuture, switchFuture]);
+
+      expect(order, ['write', 'switch'], reason: '切成员必须等同步的写操作完成才轮到,不能在同步进行中间插进来');
+    });
+  });
+}
+
+/// 假 `RustSyncApi`——只在 [FakeRust] 基础上给 `importEvents` 记一笔"写发生了"
+/// (测 I2 的排队顺序),不追求覆盖度。
+class _OrderRecordingRust extends FakeRust {
+  _OrderRecordingRust(this.order);
+  final List<String> order;
+
+  @override
+  Future<SyncImportOutcomeDto> importEvents(Uint8List profileKey, List<SyncEventDto> events) async {
+    order.add('write');
+    return super.importEvents(profileKey, events);
+  }
 }
 
 /// 只用来测「对象体积超过上限」——`encryptObject` 返回一个超过 64 MiB 的
