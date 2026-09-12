@@ -463,6 +463,28 @@ def test_accounts_lookup_distinguishes_unknown_phone_from_keyless_account():
     assert r.status_code == 200 and r.json()["public_key"] == b64(b"K" * 32)
 
 
+def test_accounts_lookup_rate_limit_applies_to_404_and_409_branches():
+    """评审 Minor 19:限流(`app.py` 的 `lookup_rate_ok`)写在**分支之前**,所以
+    三种结果同等消耗配额 —— 但原来只有 200 那条分支被打到过 429,于是把限流那两行
+    和分支顺序调换一下仍然能过 CI。**按 404 枚举是更便宜的攻击形状**(不需要先知道
+    任何一个真实号码),所以这两条分支才更需要被钉住。"""
+    alice = login("13800000160", "a1")
+    ha = _h(alice["access"])
+
+    # ① 只打"查无此人"(404)也会把配额烧完 → 第 21 次是 429,不是 404。
+    for _ in range(dbm.LOOKUP_MAX_PER_HOUR):
+        assert client.post("/v1/accounts/lookup", json={"phone": "13800000161"}, headers=ha).status_code == 404
+    assert client.post("/v1/accounts/lookup", json={"phone": "13800000161"}, headers=ha).status_code == 429
+
+    # ② 换一个调用者(配额按调用者账号算),只打"注册过但没密钥"(409)同理。
+    bob = login("13800000162", "b1")
+    hb = _h(bob["access"])
+    login("13800000163", "k1")  # 有账号、没设过密钥
+    for _ in range(dbm.LOOKUP_MAX_PER_HOUR):
+        assert client.post("/v1/accounts/lookup", json={"phone": "13800000163"}, headers=hb).status_code == 409
+    assert client.post("/v1/accounts/lookup", json={"phone": "13800000163"}, headers=hb).status_code == 429
+
+
 def test_accounts_lookup_get_method_removed():
     """Task 16 item 2:手机号从 GET 查询串换成 POST body,老的 GET 路由不该
     还在——405(方法不存在),不是悄悄换成别的语义。"""

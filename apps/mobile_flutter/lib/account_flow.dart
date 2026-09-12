@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
+import 'package:mobile_flutter/grants.dart' show Grants;
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' as rust;
 import 'package:mobile_flutter/sync_engine.dart' show pendingFirstSync;
@@ -459,7 +460,13 @@ class AccountFlow {
   /// 服务端账号与云端数据原样保留;已开通云同步的成员在这台设备上会因为没有档案
   /// 密钥而变成 [ProfileLocked](`vault_boot.dart`),重新登录后自动恢复。调用方
   /// (`AccountScreen`)在确认弹窗里把这句话说清楚,不是这里的事。
-  Future<void> logout() => session.clear();
+  Future<void> logout() async {
+    // 邀请缓存是静态的,`session.clear()` 不碰它们 —— 不清的话一个只读看诊令牌在
+    // 登出后仍在内存里活最多 10 分钟,而一个**所有权转移**令牌能活 15 天
+    // (评审 Minor 10 / Important 9)。
+    Grants.clearInviteCache();
+    await session.clear();
+  }
 
   /// 注销账号走的服务端路径。**POST 而不是带 body 的 DELETE**(最终评审 I5):
   /// 一些网关/代理会把 DELETE 的请求体丢掉,那边重新鉴权的凭证就永远"缺失"
@@ -474,6 +481,7 @@ class AccountFlow {
   /// 走过确认弹窗。
   Future<void> deleteAccountWithOtp(String phone, String otpCode) async {
     await api.postNoContent(deletePath, {'phone': phone, 'otp_code': otpCode});
+    Grants.clearInviteCache();
     await session.clear();
   }
 
@@ -484,6 +492,7 @@ class AccountFlow {
       scopes: [AppleIDAuthorizationScopes.email],
     );
     await api.postNoContent(deletePath, {'identity_token': cred.identityToken});
+    Grants.clearInviteCache();
     await session.clear();
   }
 

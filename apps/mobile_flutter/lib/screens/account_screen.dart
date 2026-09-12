@@ -102,12 +102,17 @@ String roleLabel(String? role) => switch (role) {
 };
 
 /// 到期时间(服务端给的 ISO 串)→ 「至 M月D日」。**与 `member_switcher.dart` 和
-/// 医生主页那一节逐字相同**,同一件事不该有三种写法。没有到期日(owner)是
-/// 「长期有效」。ISO 串一个字都不露出来。
+/// 医生主页那一节逐字相同**,同一件事不该有三种写法。ISO 串一个字都不露出来。
+///
+/// 三态,不是两态(评审 Minor 16):没有到期日(owner)是「长期有效」;**解析不了**
+/// 是「到期时间不明」。原来两者都说「长期有效」—— 一个格式坏掉的 `expires_at` 会让
+/// 一份有期限的授权读起来像永久的,对一个**权限标签**来说这是朝错误的方向失败。
+/// (紧挨着的 [createdLabel] 解析不了时正确地返回 null。)
 @visibleForTesting
 String expiryLabel(Object? iso) {
-  final t = iso == null ? null : DateTime.tryParse(iso.toString())?.toLocal();
-  return t == null ? '长期有效' : '至 ${t.month}月${t.day}日';
+  if (iso == null) return '长期有效';
+  final t = DateTime.tryParse(iso.toString())?.toLocal();
+  return t == null ? '到期时间不明' : '至 ${t.month}月${t.day}日';
 }
 
 /// 创建时间 → 「M月D日添加」。认不出来就不说(不编一个日期)。
@@ -198,6 +203,10 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// B5:正在生成一条转移链接(防连点;生成链接是会在服务端建 invite 记录的)。
   bool _transferBusy = false;
+
+  /// 正在撤销一份授权(评审 Minor 20:双击会发两个 DELETE,第二个在成功撤销之后
+  /// 立刻显示「撤销失败:没有找到…」—— 一次成功的操作看起来像失败了)。
+  bool _revokeBusy = false;
 
   Grants get _grants => widget.grants ?? Grants(widget.flow.api, widget.flow.session);
   SyncEngine get _sync => widget.syncEngine ?? SyncEngine(widget.flow.api, widget.flow.session);
@@ -832,6 +841,24 @@ class _AccountScreenState extends State<AccountScreen> {
         (_cloudBusy || _syncBusy)
             ? const Center(child: CircularProgressIndicator())
             : FilledButton(onPressed: _syncOrRecover, child: const Text('同步')),
+        // B5 的**真正入口**(评审 Important 8)。原来「转为主人」只作为「我授权给谁」
+        // 里的 per-grantee 行存在 —— 于是"把档案交给父母"要先:(1) 父母装 App 并走完
+        // 口令 + 恢复码(正是 B4 那个卡点);(2) 子女按手机号把他加成家属;(3) 才会
+        // 在那一行里出现按钮。而红队说的恰恰是把档案交给一个**还不是家属**的人。
+        //
+        // 只有 owner 能发转移邀请(服务端 `POST .../invites` 对 editor/viewer 一律
+        // 403),所以这一条按角色挡住 —— 不摸黑试一次注定失败的请求。
+        if (profile.role == 'owner') ...[
+          const SizedBox(height: 4),
+          // 忙的时候只是**禁用**,不换成进度圈:`_transferBusy` 在那张码的对话框开着
+          // 的整段时间里都是 true,底下挂一个永不停的进度圈既无意义,也会让
+          // `pumpAndSettle` 永远 settle 不下来(踩过)。同「我授权给谁」那一行的写法。
+          TextButton(
+            key: const Key('transfer_current_profile'),
+            onPressed: _transferBusy ? null : () => _transferOwnership(profile),
+            child: const Text('把这份档案转给家人(生成链接)'),
+          ),
+        ],
       ],
     );
   }
@@ -1320,10 +1347,13 @@ class _AccountScreenState extends State<AccountScreen> {
                   children: [
                     TextButton(
                       key: Key('transfer_${g['grant_id']}'),
-                      onPressed: _transferBusy ? null : () => _transferOwnership(g),
+                      onPressed: _transferBusy ? null : () => _transferOwnershipOf(g['profile_id']),
                       child: const Text('转为主人'),
                     ),
-                    TextButton(onPressed: () => _revokeMyGrant(g), child: const Text('撤销')),
+                    TextButton(
+                      onPressed: _revokeBusy ? null : () => _revokeMyGrant(g),
+                      child: const Text('撤销'),
+                    ),
                   ],
                 ),
               ),
@@ -1343,8 +1373,7 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 这一步只**生成一条链接**,不改变任何东西 —— 真正的转移发生在对方点开并接受
   /// 那一刻(服务端在兑换时把老 owner 自动降成 editor)。确认弹窗必须把这条说
   /// 清楚,否则用户会以为点下去就已经交出去了。
-  Future<void> _transferOwnership(Map<String, dynamic> grant) async {
-    final cloudId = grant['profile_id'] as String;
+  Future<void> _transferOwnershipOf(Object? cloudId) async {
     final profile = ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull;
     if (profile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1352,6 +1381,10 @@ class _AccountScreenState extends State<AccountScreen> {
       );
       return;
     }
+    await _transferOwnership(profile);
+  }
+
+  Future<void> _transferOwnership(Profile profile) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1359,7 +1392,9 @@ class _AccountScreenState extends State<AccountScreen> {
         content: Text(
           '对方接受之后,「${profile.name}」这份档案就归他所有;'
           '你会降为可以一起录入的家人,不再能把它转给别人、也不能再收回别人的授权。\n\n'
-          '现在这一步只生成一条链接,还不会改变任何东西 —— 对方点开并接受之后才真正生效。',
+          '现在这一步只生成一条链接,还不会改变任何东西 —— 对方点开并接受之后才真正生效。\n\n'
+          '注意:拿到这个码的任何人都能接受(它不绑定某一个人),15 天内有效,'
+          '而且生成之后没有办法收回 —— 只发给你真正要交给的那个人。',
           style: const TextStyle(height: 1.5),
         ),
         actions: [
@@ -1379,7 +1414,11 @@ class _AccountScreenState extends State<AccountScreen> {
         url: link.toUrl(),
         body: '让对方用手机相机拍下这个码,或者把链接发给他。他点开并接受之后,'
             '「${profile.name}」这份档案就归他所有,你降为可以一起录入的家人。',
-        footnote: '只有拿到这个码的人能接受。15 天内有效;在他接受之前,你随时可以不管它 —— 不接受就什么都没发生。',
+        // ⚠️ 这句原来写的是「在他接受之前,你随时可以不管它 —— 不接受就什么都没
+        // 发生」。那是**误导**(评审 Important 9):服务端既没有列出 invite 的端点、
+        // 也没有撤销的端点,所以你既没法"不管它"、也没法收回。照实说。
+        footnote: '拿到这个码的任何人都能接受(它不绑定某一个人),15 天内有效,'
+            '生成之后无法撤回。只发给你真正要交给的那个人。',
         shareSubject: '把这份病历档案交给你',
         shareLabel: '发给他',
       );
@@ -1394,6 +1433,7 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   Future<void> _revokeMyGrant(Map<String, dynamic> grant) async {
+    setState(() => _revokeBusy = true);
     try {
       await widget.flow.api.delete('/v1/profiles/${grant['profile_id']}/grants/${grant['grant_id']}');
       if (!mounted) return;
@@ -1402,6 +1442,8 @@ class _AccountScreenState extends State<AccountScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('撤销失败:${friendlyApiError(e)}')));
+    } finally {
+      if (mounted) setState(() => _revokeBusy = false);
     }
   }
 

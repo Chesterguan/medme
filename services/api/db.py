@@ -192,7 +192,17 @@ def account_lookup_by_phone_hash(conn, h):
 def lookup_rate_ok(conn, aid):
     """按调用者账号复用 otp 表的滑动窗口计数器(phone_hash 列借用存 'lookup:<aid>'——
     不是真手机号,不会和真实 phone_hash 撞:那是定长 hex,这里带前缀)。超过
-    LOOKUP_MAX_PER_HOUR 返回 False。"""
+    LOOKUP_MAX_PER_HOUR 返回 False。
+
+    **自增必须当场 commit**,与 `auth.otp_check` 同一个理由(那边的注释写着这个坑):
+    调用方在这之后会为「查无此人」(404)/「注册过但没设密钥」(409)抛
+    HTTPException,而 `conn_dep` 的 except 分支会 **rollback** —— 把这次自增连同
+    其它未提交的改动一起吞掉。后果不是"少记一次",而是**这两条分支等于完全不限流**:
+    计数永远涨不到上限。
+
+    而这两条分支恰恰是更便宜的攻击形状:按 404 枚举手机号不需要先知道任何一个真实
+    号码。评审只把它当成"没被测到"(Minor 19),而新加的那条用例证明它是真的不生效。
+    """
     key = f"lookup:{aid}"
     row = conn.execute(
         """INSERT INTO otp(phone_hash, code_hash, expires_at, sends_in_window, window_started)
@@ -202,6 +212,7 @@ def lookup_rate_ok(conn, aid):
              window_started = CASE WHEN now() - otp.window_started > interval '1 hour' THEN now() ELSE otp.window_started END
            RETURNING sends_in_window""",
         (key,)).fetchone()
+    conn.commit()  # 见上:调用方随后可能抛 HTTPException → conn_dep 会 rollback
     return row[0] <= LOOKUP_MAX_PER_HOUR
 
 

@@ -2,8 +2,6 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
-
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/analytics.dart';
@@ -120,27 +118,58 @@ class Grants {
   /// 医生的相机前。
   static final _doctorInvites = <String, (GrantLink, DateTime)>{};
 
-  /// 测试专用:[_doctorInvites] 是静态的,用例之间会串。
-  @visibleForTesting
-  static void resetInviteCacheForTest() => _doctorInvites.clear();
+  /// 两个邀请缓存都清掉。
+  ///
+  /// **退出登录/注销账号时必须调**(`AccountFlow.logout`/`deleteAccount*`,
+  /// 评审 Minor 10):它们是静态的,`AccountSession.clear()` 不碰它们 —— 不清的话,
+  /// 一个只读看诊令牌在登出后仍在内存里活最多 10 分钟,而一个**所有权转移**令牌
+  /// 能活 15 天。测试也用它(静态状态在用例之间会串)。
+  static void clearInviteCache() {
+    _doctorInvites.clear();
+    _transferInvites.clear();
+  }
 
   /// 医生的看诊码:viewer、15 天。见 [_doctorInvites] 说明的复用规则。
-  Future<GrantLink> inviteDoctor(Profile p) async {
+  Future<GrantLink> inviteDoctor(Profile p) =>
+      _cachedInvite(p, _doctorInvites, role: 'viewer', days: grantDoctorDays, ttlS: doctorInviteTtlS);
+
+  /// 转移邀请自己的有效期:15 天(对方不一定当场就有空点开)。
+  static const transferInviteTtlS = 15 * 86400;
+
+  /// 所有权转移邀请的复用缓存。**理由比看诊码那条强得多**(评审 Important 9):
+  ///
+  /// 服务端**没有列出、也没有撤销 invite 的端点**(`app.py` 只有
+  /// `POST /v1/profiles/{pid}/invites` 和 `POST /v1/invites/redeem`)。于是三次手忙
+  /// 脚乱的点击 = 三个各自都能把所有权交出去的、不可见、不可撤销的 bearer 令牌,
+  /// 各活 15 天。这是系统里最高风险的授权 —— 它至少得和一个 10 分钟的只读看诊码
+  /// 一样谨慎。
+  ///
+  /// 真正的修法是加一个 revoke 端点(另一个决定,不在这一轮)。
+  static final _transferInvites = <String, (GrantLink, DateTime)>{};
+
+  /// 代拍/家属转移:owner。一旦兑换即刻转移——不像医生邀请那样按天到期。
+  /// 同一个档案在 [transferInviteTtlS] 之内复用同一条邀请,见 [_transferInvites]。
+  Future<GrantLink> inviteTransfer(Profile p) =>
+      _cachedInvite(p, _transferInvites, role: 'owner', days: null, ttlS: transferInviteTtlS);
+
+  /// [inviteDoctor] / [inviteTransfer] 共用的"同一个档案在有效期内复用同一条邀请"。
+  /// 30 秒安全边际:不把一条马上就要过期的码递到对方的相机前。
+  Future<GrantLink> _cachedInvite(
+    Profile p,
+    Map<String, (GrantLink, DateTime)> cache, {
+    required String role,
+    required int? days,
+    required int ttlS,
+  }) async {
     final cloudId = p.cloudId;
-    final cached = cloudId == null ? null : _doctorInvites[cloudId];
+    final cached = cloudId == null ? null : cache[cloudId];
     if (cached != null && cached.$2.isAfter(DateTime.now().add(const Duration(seconds: 30)))) {
       return cached.$1;
     }
-    final link = await _invite(p, role: 'viewer', days: grantDoctorDays, ttlS: doctorInviteTtlS);
-    if (cloudId != null) {
-      _doctorInvites[cloudId] = (link, DateTime.now().add(const Duration(seconds: doctorInviteTtlS)));
-    }
+    final link = await _invite(p, role: role, days: days, ttlS: ttlS);
+    if (cloudId != null) cache[cloudId] = (link, DateTime.now().add(Duration(seconds: ttlS)));
     return link;
   }
-
-  /// 代拍转移:owner。链接本身给足 15 天去扫(病人不一定当场就有空点开),
-  /// 一旦兑换即刻转移——不像医生邀请那样按天到期。
-  Future<GrantLink> inviteTransfer(Profile p) => _invite(p, role: 'owner', days: null, ttlS: 15 * 86400);
 
   /// 兑换一条授权链接:服务端校验 token → 解出 token 包 → 用自己的账号公钥重新
   /// 封一份回填(服务端此后只留得住"封给我的"这一份,原来那份 token 包留着也无妨,

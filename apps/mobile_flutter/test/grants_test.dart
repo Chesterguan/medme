@@ -110,7 +110,7 @@ void main() {
     await ProfileManager.instance.ensureLoaded();
     await ProfileManager.instance.factoryReset();
     // C8 的复用缓存是 `Grants` 的静态字段,用例之间会串。
-    Grants.resetInviteCacheForTest();
+    Grants.clearInviteCache();
   });
 
   tearDown(() async => support.delete(recursive: true));
@@ -186,7 +186,7 @@ void main() {
       const p = Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner');
 
       await grants.inviteDoctor(p);
-      Grants.resetInviteCacheForTest();
+      Grants.clearInviteCache();
       await grants.inviteDoctor(p);
 
       expect(api.calls.where((c) => c.endsWith('/invites')).length, 2);

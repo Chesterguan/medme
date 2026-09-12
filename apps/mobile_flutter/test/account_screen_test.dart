@@ -486,8 +486,10 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform({});
     AccountSession.instance.resetForTest();
-    // `sync_engine.pendingFirstSync` 是模块级单例,用例之间会串。
+    // `sync_engine.pendingFirstSync` 与 `Grants` 的两个邀请缓存都是模块级/静态的,
+    // 用例之间会串 —— 不清的话「生成失败」那条用例会拿到上一条用例缓存的链接。
     resetPendingFirstSyncForTest();
+    Grants.clearInviteCache();
     globalSupport = await Directory.systemTemp.createTemp('medme-account-screen-test');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
       const MethodChannel('plugins.flutter.io/path_provider'),
@@ -1121,7 +1123,9 @@ void main() {
     test('expiryLabel:ISO 串 → 「至 M月D日」;没有到期日是「长期有效」', () {
       expect(expiryLabel('2026-09-20T10:00:00'), '至 9月20日');
       expect(expiryLabel(null), '长期有效');
-      expect(expiryLabel('不是时间'), '长期有效');
+      // 评审 Minor 16:解析不了**不是**「长期有效」—— 一个格式坏掉的 expires_at
+      // 会让一份有期限的授权读起来像永久的,而这是一个权限标签。
+      expect(expiryLabel('不是时间'), '到期时间不明');
       expect(expiryLabel('2026-09-20T10:00:00'), isNot(contains('T')));
     });
 
@@ -1383,6 +1387,30 @@ void main() {
       expect(find.textContaining('撤销失败'), findsNothing);
     });
 
+    // 评审 Minor 20:双击会发两个 DELETE,第二个在成功撤销之后立刻显示
+    // 「撤销失败:没有找到…」—— 一次成功的操作看起来像失败了。
+    testWidgets('Minor 20:连点「撤销」只发一个 DELETE', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 30),
+        profiles: [
+          {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
+        ],
+        myGrants: {'p1': [granteeRow()]},
+      );
+      await _toReady(t, api);
+      await _scrollToMyGrants(t);
+
+      await t.tap(find.text('撤销'));
+      await t.pump(); // busy 起来了,按钮应该已经禁用
+      expect(t.widget<TextButton>(find.widgetWithText(TextButton, '撤销')).onPressed, isNull);
+      await t.tap(find.text('撤销')); // 第二下:打在一个禁用的按钮上
+      await t.pumpAndSettle();
+
+      expect(api.calls.where((c) => c.startsWith('DELETE')).length, 1);
+      expect(find.textContaining('撤销失败'), findsNothing);
+    });
+
     testWidgets('撤销失败:错误可见,列表原样还在', (t) async {
       final api = FakeApi(
         hasKeys: true,
@@ -1493,6 +1521,114 @@ void main() {
       await t.tap(find.text('复制链接'));
       await t.pumpAndSettle();
       expect(find.text('链接已复制'), findsOneWidget);
+    });
+
+    // ---- 评审 Important 8:入口不能只挂在"对方已经是家属"之后 ----
+    testWidgets('Important 8:自有云成员那一块本身就有转移入口,不必对方先成为家属', (t) async {
+      // 只有一个自己拥有的云档案、**没有任何 grantee** —— 「我授权给谁」是空的,
+      // 而红队说的正是"把档案交给一个还不是家属的人"。
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        profiles: [
+          {'profile_id': 'prf_1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
+        ],
+      );
+      await setUpOwnedCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+
+      expect(find.byKey(const Key('transfer_current_profile')), findsOneWidget);
+      await _scrollToMyGrants(t);
+      expect(find.text('还没有授权给任何人'), findsOneWidget, reason: '前提:一个家属都没有');
+      expect(find.text('转为主人'), findsNothing, reason: 'per-grantee 那条路此刻根本不存在');
+    });
+
+    testWidgets('Important 8:那个入口走同一条确认 → 生成 owner 邀请', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        profiles: [
+          {'profile_id': 'prf_1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
+        ],
+      );
+      await setUpOwnedCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+
+      await t.tap(find.byKey(const Key('transfer_current_profile')));
+      await t.pumpAndSettle();
+      expect(find.text('把这份档案交给他?'), findsOneWidget);
+      await t.tap(find.text('生成链接'));
+      await t.pumpAndSettle();
+
+      expect(api.inviteBodies.single['role'], 'owner');
+      expect(find.text('请他扫这个码'), findsOneWidget);
+    });
+
+    testWidgets('不是 owner(被授权的 editor):没有这个入口(服务端本来就 403)', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+        await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, 'prf_1', 'editor', null);
+      });
+      await AccountSession.instance.putProfileKey('prf_1', Uint8List(32));
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+
+      expect(find.byKey(const Key('transfer_current_profile')), findsNothing);
+    });
+
+    // ---- 评审 Important 9:所有权转移令牌没有生命周期 ----
+    testWidgets('Important 9:连点两次只铸一个令牌(服务端没有列出/撤销 invite 的端点)', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        profiles: [
+          {'profile_id': 'prf_1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
+        ],
+      );
+      await setUpOwnedCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+
+      for (var i = 0; i < 2; i++) {
+        await t.tap(find.byKey(const Key('transfer_current_profile')));
+        await t.pumpAndSettle();
+        await t.tap(find.text('生成链接'));
+        await t.pumpAndSettle();
+        await t.tap(find.text('关闭'));
+        await t.pumpAndSettle();
+      }
+
+      expect(
+        api.inviteBodies.length,
+        1,
+        reason: '三次手忙脚乱的点击 = 三个各自都能交出所有权的、不可见、不可撤销的令牌',
+      );
+    });
+
+    testWidgets('Important 9:脚注说真话 —— 不绑定某个人、无法撤回', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        profiles: [
+          {'profile_id': 'prf_1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
+        ],
+      );
+      await setUpOwnedCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+      await t.tap(find.byKey(const Key('transfer_current_profile')));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('拿到这个码的任何人都能接受'), findsOneWidget);
+      expect(find.textContaining('没有办法收回'), findsOneWidget);
+      await t.tap(find.text('生成链接'));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('生成之后无法撤回'), findsOneWidget);
+      expect(
+        find.textContaining('你随时可以不管它'),
+        findsNothing,
+        reason: '那句是误导:服务端既没有列出 invite 的端点,也没有撤销的端点',
+      );
     });
 
     testWidgets('生成失败(服务器 500):中文提示,列表原样还在', (t) async {
