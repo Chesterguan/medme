@@ -142,7 +142,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
         });
         final link = await (widget.grants ??
                 Grants(
-                  ApiClient(bearer: () async => AccountSession.instance.access),
+                  ApiClient.forSession(AccountSession.instance),
                   AccountSession.instance,
                 ))
             .inviteDoctor(profile);

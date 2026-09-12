@@ -149,7 +149,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
     session: AccountSession.instance,
     currentProfile: () => ProfileManager.instance.current,
     sync: (p) => SyncEngine(
-      ApiClient(bearer: () async => AccountSession.instance.access),
+      ApiClient.forSession(AccountSession.instance),
       AccountSession.instance,
     ).syncProfile(p),
   );
@@ -270,7 +270,7 @@ class ProfileLockedActions extends StatelessWidget {
                 builder: (_) => AccountScreen(
                   flow: accountFlow ??
                       AccountFlow(
-                        ApiClient(bearer: () async => AccountSession.instance.access),
+                        ApiClient.forSession(AccountSession.instance),
                         AccountSession.instance,
                       ),
                 ),
@@ -297,6 +297,38 @@ class ProfileLockedActions extends StatelessWidget {
   }
 }
 
+/// 冷启动的顺序本体:**先把本机账号态读回来,再开箱**。三个副作用抽成参数,只为
+/// 让这条顺序契约能在不加载 Rust 原生库的 `flutter test` 里被钉住(同
+/// `vault_boot.runWipeSequence`/`switchProfileAndReopenImpl` 的套路);产品代码里
+/// 唯一的调用点是 [_VaultBootstrapState._bootOpen],传的永远是真实现。
+///
+/// ## 为什么顺序是硬的(最终评审 C1)
+///
+/// `AccountSession.ensureLoaded()` 此前**在产品代码里一次都没有被调用过**——
+/// `accountId`/`access`/`privateKey`/`loggedIn` 全部是进程内的内存态,冷启动后
+/// 一律是 null/false,尽管它们都躺在 shared_preferences / Keychain 里。后果不是
+/// "某个界面显示得不对",而是整套云功能在每次冷启动后**等于不存在**:
+///
+/// * `openCurrentProfileVault` 靠 `AccountSession.profileKey()` 选开箱路径
+///   (见 `vault_boot.planVaultOpen`)——读不到密钥,每个已开通云同步的成员都被
+///   判成 `ProfileLocked`,用户开机看到的是"需要解锁账号"的死胡同;
+/// * `triggerBackgroundSync` 第一句就是 `session.loggedIn.value`——恒 false,
+///   debounce push 和 app-resume pull 永远 no-op;
+/// * `AccountFlow.resumeIfLoggedIn()` 看 `session.accountId == null` 就返回
+///   null,账号屏永远停在"手机号登录"那一屏,哪怕昨天刚登录过。
+///
+/// 所以它必须在**开箱之前**、也就在任何一屏 `resumeIfLoggedIn()` 之前跑完。
+@visibleForTesting
+Future<void> runBootSequence({
+  required Future<void> Function() restoreAccountSession,
+  required Future<void> Function() openVault,
+  required Future<void> Function() loadMode,
+}) async {
+  await restoreAccountSession();
+  // 开箱与读模式互不依赖,并发跑不拖慢启动。
+  await Future.wait([openVault(), loadMode()]);
+}
+
 /// 启动引导:先在真实沙盒目录打开保险箱(FFI `open_vault`),再进主界面。
 /// 打开是可韧性的(损坏的派生 db 会从 log 重建);目录取自 path_provider。
 /// iCloud 已接入(见 `vault_boot` / `icloud_bridge`):容器可解析且用户在设置里开启
@@ -308,10 +340,9 @@ class VaultBootstrap extends StatefulWidget {
 }
 
 class _VaultBootstrapState extends State<VaultBootstrap> {
-  /// 打开「当前成员」的保险箱(多成员见 profile_manager / vault_boot),同时把
-  // 「个人/医生」模式选择读出来(`AppRoot` 据此决定先显示哪个根界面)。两者互不
-  // 依赖,并发跑不拖慢启动。IIFE 包一层是因为 `Future.wait` 本身返回
-  // `Future<List<void>>`,与这里声明的 `Future<void>` 字段类型不兼容。
+  /// 读回账号态、打开「当前成员」的保险箱(多成员见 profile_manager / vault_boot)、
+  // 读「个人/医生」模式选择(`AppRoot` 据此决定先显示哪个根界面)。顺序契约见
+  // [runBootSequence]。
   late Future<void> _open;
 
   /// `app_open` 只该报这一次启动的第一次结果——[_retry] 让 `ProfileLocked`
@@ -328,10 +359,11 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
   Future<void> _bootOpen() async {
     var ok = true;
     try {
-      await Future.wait([
-        openCurrentProfileVault(),
-        AppMode.instance.ensureLoaded(),
-      ]);
+      await runBootSequence(
+        restoreAccountSession: AccountSession.instance.ensureLoaded,
+        openVault: openCurrentProfileVault,
+        loadMode: AppMode.instance.ensureLoaded,
+      );
     } catch (_) {
       ok = false;
       rethrow; // 错误界面照旧显示,埋点只是搭个便车
@@ -675,7 +707,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
         MaterialPageRoute<void>(
           builder: (_) => AccountScreen(
             flow: AccountFlow(
-              ApiClient(bearer: () async => AccountSession.instance.access),
+              ApiClient.forSession(AccountSession.instance),
               AccountSession.instance,
             ),
           ),
@@ -690,7 +722,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
     try {
       final grants = widget.grants ??
           Grants(
-            ApiClient(bearer: () async => AccountSession.instance.access),
+            ApiClient.forSession(AccountSession.instance),
             AccountSession.instance,
           );
       final p = await grants.redeem(widget.link);

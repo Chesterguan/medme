@@ -69,7 +69,7 @@ Future<void> showDoctorClaimLinkDialog(
     cloudProfile: cloudProfile,
     grants: grants ??
         Grants(
-          ApiClient(bearer: () async => AccountSession.instance.access),
+          ApiClient.forSession(AccountSession.instance),
           AccountSession.instance,
         ),
   );

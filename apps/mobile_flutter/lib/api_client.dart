@@ -1,10 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/net.dart';
 
+/// 服务端说这个请求没有有效的登录凭证。[ApiClient] 已经自动拿 refresh token 试过
+/// 一次(见 [ApiClient._refreshTokens]),抛到这里说明连 refresh 都不管用了——
+/// UI 唯一该做的事是让用户重新登录,所以 `toString` 直接就是给人看的那句话。
 class ApiUnauthorized implements Exception {
   const ApiUnauthorized();
+  @override
+  String toString() => '登录状态已过期,请重新登录';
 }
 
 class ApiFailed implements Exception {
@@ -18,11 +24,25 @@ class ApiFailed implements Exception {
 /// 账号 API 的唯一出口。所有请求走 [Net](有读超时);token 由 [bearer] 回调提供,
 /// 于是测试里注入假服务器 + 假 token 即可,不碰 secure storage。
 class ApiClient {
-  ApiClient({String? base, this.bearer}) : base = base ?? defaultBase;
+  ApiClient({String? base, this.bearer, this.session}) : base = base ?? defaultBase;
+
+  /// **生产代码里的标准构造方式**:token 取自 [AccountSession],401 时自动刷新
+  /// 一次再重试(见 [_refreshTokens])。以前每个调用点各写一遍
+  /// `ApiClient(bearer: () async => AccountSession.instance.access)`,八处一模一样
+  /// 的闭包,于是"刷新"这件事没有一个能统一加上去的地方。
+  ApiClient.forSession(AccountSession session, {String? base})
+      : this(base: base, bearer: () async => session.access, session: session);
 
   static const defaultBase = String.fromEnvironment('MEDME_API_BASE', defaultValue: 'https://api.medmenow.com');
   final String base;
   final Future<String?> Function()? bearer;
+
+  /// 有它才有自动刷新:刷新要读 [AccountSession.refresh]、写回新 token、必要时
+  /// 清掉整个账号态。没有(匿名 client / 测试里的假 client)时 401 原样抛出。
+  final AccountSession? session;
+
+  /// 同一个 client 上多个请求同时撞 401 时,合并成一次刷新。
+  Future<bool>? _refreshInFlight;
 
   /// 与 [_json] 同一套请求逻辑,多返回一份响应头(小写 key,同名多值用逗号拼接)。
   /// [_json] 委托给它、丢掉头;[getJsonWithHeaders] 是唯一需要头的调用方——
@@ -30,6 +50,54 @@ class ApiClient {
   /// `events_pull`:该 profile 每个 device 当前的最大 seq,推送水位就是它,
   /// 不能从 `since` 反推)。
   Future<(dynamic, Map<String, String>)> _jsonWithHeaders(
+    String method,
+    String path, {
+    Object? body,
+    Map<String, String>? query,
+    Map<String, String>? headers,
+  }) async {
+    try {
+      return await _send(method, path, body: body, query: query, headers: headers);
+    } on ApiUnauthorized {
+      // access token 只活 1 小时(`services/api/auth.py` 的 `ACCESS_TTL`)。
+      // 刷新不成功就把原来那个 401 原样抛出去——**只重试一次**,不循环。
+      if (path == _refreshPath || !await _refreshTokens()) rethrow;
+      return await _send(method, path, body: body, query: query, headers: headers);
+    }
+  }
+
+  static const _refreshPath = '/v1/auth/refresh';
+
+  /// 用本机存着的 refresh token(30 天)换一对新 token,成功就写回 [session] 并
+  /// 返回 true,调用方据此重试一次原请求。
+  ///
+  /// * 没有 session / 没有 refresh token / 没有 accountId → false(原样 401)。
+  /// * **刷新自己也 401** → refresh 也过期或被吊销了,重试没有任何意义:清掉本机
+  ///   账号态([AccountSession.clear],连档案密钥一起),让 UI 回到登录入口。
+  /// * 网络错误等其它失败 → false,这次请求照原样失败,下次再试(不清账号态:
+  ///   断网不等于被登出)。
+  Future<bool> _refreshTokens() =>
+      _refreshInFlight ??= _refreshOnce().whenComplete(() => _refreshInFlight = null);
+
+  Future<bool> _refreshOnce() async {
+    final s = session;
+    final token = s?.refresh;
+    final accountId = s?.accountId;
+    if (s == null || token == null || accountId == null) return false;
+    try {
+      final (data, _) = await _send('POST', _refreshPath, body: {'refresh': token});
+      final m = data as Map<String, dynamic>;
+      await s.save(accountId: accountId, access: m['access'] as String, refresh: m['refresh'] as String);
+      return true;
+    } on ApiUnauthorized {
+      await s.clear();
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<(dynamic, Map<String, String>)> _send(
     String method,
     String path, {
     Object? body,
@@ -80,6 +148,11 @@ class ApiClient {
       _json('DELETE', path, body: body, headers: headers);
 
   /// 直传 OSS 预签名地址(不带 Bearer)。Content-Type 必须与签名一致。
+  ///
+  /// **这两个不走 401 自动刷新**:它们打的是 OSS 的预签名 URL,压根不带账号
+  /// token——这里的 401/403 意味着"签名过期/不对",换一个 access token 没有任何
+  /// 帮助,要重新去 `/v1/profiles/{pid}/objects/sign` 签一次。签名请求自己走
+  /// [_jsonWithHeaders],该刷新的地方已经刷新了。
   Future<void> putBytes(String url, Uint8List bytes) => Net.run((client) async {
         final req = await client.putUrl(Uri.parse(url));
         req.headers.set('content-type', 'application/octet-stream');

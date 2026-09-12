@@ -362,7 +362,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           MaterialPageRoute<void>(
                             builder: (_) => AccountScreen(
                               flow: AccountFlow(
-                                ApiClient(bearer: () async => AccountSession.instance.access),
+                                ApiClient.forSession(AccountSession.instance),
                                 AccountSession.instance,
                               ),
                             ),

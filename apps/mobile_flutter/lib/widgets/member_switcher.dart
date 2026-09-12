@@ -38,7 +38,7 @@ Future<void> showMemberSwitcherSheet(
   final doSwitch = switchTo ?? switchProfileAndReopen;
   final doPurge = purgeExpired ??
       () => Grants(
-            ApiClient(bearer: () async => AccountSession.instance.access),
+            ApiClient.forSession(AccountSession.instance),
             AccountSession.instance,
           ).purgeExpired();
   // 清理是家务事,不是开关——它失败(网络、FFI……)绝不能挡住"打开切换器"这个
