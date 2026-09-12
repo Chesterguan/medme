@@ -4,6 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_flutter/account_flow.dart';
+import 'package:mobile_flutter/api_client.dart';
+import 'package:mobile_flutter/grants.dart';
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
@@ -13,8 +16,13 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 enum _Phase { idle, otpSent, keySetup, showRecovery, unlock, ready }
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({super.key, required this.flow});
+  const AccountScreen({super.key, required this.flow, this.grants});
   final AccountFlow flow;
+
+  /// 测试注入点,默认为 null——真正用的时候按 [flow] 现取现建(见
+  /// `_AccountScreenState._grants`)。`Grants` 内部按需碰 FRB(`grantFamilyByPhone`
+  /// 的 `sealTo`),测试传一个带假 `GrantsRust` 的实例进来,不碰真实原生库。
+  final Grants? grants;
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
@@ -43,6 +51,12 @@ class _AccountScreenState extends State<AccountScreen> {
   final _regPasswordCtrl = TextEditingController();
   final _unlockPasswordCtrl = TextEditingController();
   final _unlockRecoveryCtrl = TextEditingController();
+  final _familyPhoneCtrl = TextEditingController();
+
+  bool _familyBusy = false;
+  String? _familyError;
+
+  Grants get _grants => widget.grants ?? Grants(widget.flow.api, widget.flow.session);
 
   Future<List<dynamic>>? _devicesFuture;
   Future<List<dynamic>>? _grantsFuture;
@@ -78,6 +92,7 @@ class _AccountScreenState extends State<AccountScreen> {
     _regPasswordCtrl.dispose();
     _unlockPasswordCtrl.dispose();
     _unlockRecoveryCtrl.dispose();
+    _familyPhoneCtrl.dispose();
     super.dispose();
   }
 
@@ -361,6 +376,10 @@ class _AccountScreenState extends State<AccountScreen> {
     const Text('授权', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _grantsSection(),
+    const SizedBox(height: 24),
+    const Text('家属', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    _familySection(),
   ];
 
   Widget _devicesSection() => FutureBuilder<List<dynamic>>(
@@ -451,6 +470,63 @@ class _AccountScreenState extends State<AccountScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('撤销失败:$e')));
+    }
+  }
+
+  /// 按手机号把**当前打开的成员**共享给家属:查号 → 封给对方公钥 → 永久 editor
+  /// (见 `grants.dart` 的 `grantFamilyByPhone`)。这个成员必须已经开通云同步——
+  /// 没有 cloudId 就没有档案密钥可封,`_familySection` 那边不显示表单,直接返回。
+  Widget _familySection() {
+    final profile = ProfileManager.instance.current;
+    if (profile.cloudId == null) {
+      return const Text('当前成员还没开通云同步,暂时不能添加家属', style: TextStyle(color: MedMe.faint));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          key: const Key('family_phone'),
+          controller: _familyPhoneCtrl,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(labelText: '家属手机号'),
+        ),
+        if (_familyError != null) _errorText(_familyError!),
+        const SizedBox(height: 8),
+        _familyBusy
+            ? const Center(child: CircularProgressIndicator())
+            : SizedBox(
+                width: double.infinity,
+                child: FilledButton(onPressed: _addFamily, child: const Text('按手机号添加家属')),
+              ),
+      ],
+    );
+  }
+
+  Future<void> _addFamily() async {
+    final profile = ProfileManager.instance.current;
+    if (profile.cloudId == null) return;
+    final phone = _familyPhoneCtrl.text.replaceAll(' ', '');
+    setState(() {
+      _familyBusy = true;
+      _familyError = null;
+    });
+    try {
+      await _grants.grantFamilyByPhone(profile, phone);
+      if (!mounted) return;
+      _familyPhoneCtrl.clear();
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已添加家属')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _familyError = switch (e) {
+          ApiFailed(status: 404) => '没有找到使用该手机号的账号',
+          ApiFailed(status: 429) => '查询太频繁,稍后再试',
+          ApiFailed(status: 400) => '手机号格式不对',
+          _ => '$e',
+        };
+      });
+    } finally {
+      if (mounted) setState(() => _familyBusy = false);
     }
   }
 

@@ -41,7 +41,12 @@ Future<void> showMemberSwitcherSheet(
             ApiClient(bearer: () async => AccountSession.instance.access),
             AccountSession.instance,
           ).purgeExpired();
-  await doPurge();
+  // 清理是家务事,不是开关——它失败(网络、FFI……)绝不能挡住"打开切换器"这个
+  // 主动作,否则一次瞬时的清理失败就会让切换成员永久打不开。吞掉即可:清不掉的
+  // 过期档案留到下一次打开切换器时再试。
+  try {
+    await doPurge();
+  } catch (_) {}
   await ProfileManager.instance.ensureLoaded();
   final members = ProfileManager.instance.profiles;
   final currentId = ProfileManager.instance.currentId.value;

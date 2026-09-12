@@ -118,10 +118,15 @@ class Grants {
     });
     await session.putProfileKey(profileId, key);
 
-    final localId = await ProfileManager.instance.create('(同步中)', userManaged: false);
+    // 这个云档案本机已经有一个入口——重新兑换同一条链接、或者角色/到期被服务端
+    // 更新过(比如医生邀请续期)——复用它,别再建一个重复的空壳档案出来。
+    await ProfileManager.instance.ensureLoaded();
+    final existing = ProfileManager.instance.profiles.where((p) => p.cloudId == profileId).firstOrNull;
+    final localId = existing?.id ?? await ProfileManager.instance.create('(同步中)', userManaged: false);
     if (localId == null) throw StateError('无法创建本地档案');
     final expiresAt = r['expires_at'] == null ? null : DateTime.parse(r['expires_at'] as String);
     await ProfileManager.instance.markCloud(localId, profileId, r['role'] as String, expiresAt);
+    await ProfileManager.instance.switchTo(localId);
     final stored = ProfileManager.instance.current;
 
     await (afterStored ?? _finishRedeem)(stored);

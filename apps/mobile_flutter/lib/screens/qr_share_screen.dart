@@ -7,6 +7,8 @@
 // 载荷有界(Rust 侧 QrLimits),体积与病历总量无关,永远塞得进一张码。密钥在
 // URL 的 `#` 之后,按 HTTP 规范不会发给服务器 —— 医生扫码后只从静态页下载一个
 // 空壳查看器,病历数据全程只在两台手机之间。
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:screen_brightness/screen_brightness.dart';
@@ -24,11 +26,33 @@ import '../theme.dart';
 const _viewerBase = 'https://medmenow.com/viewer/';
 
 class QrShareScreen extends StatefulWidget {
-  const QrShareScreen({super.key});
+  const QrShareScreen({super.key, this.grants, this.qrShareBlobFn = qrShareBlob});
+
+  /// 测试注入点,默认为 null——真正用的时候现取现建(见
+  /// `_QrShareScreenState._grants`)。`flutter test` 不带原生库,注入一个带假
+  /// `GrantsRust` 的 [Grants] 才能测"邀请创建失败要不要正确回退"这条分支,不必
+  /// 真的跑到原路径的 FFI 调用。
+  final Grants? grants;
+
+  /// 原路径(加密上传)的密文生成函数,默认真实的 [qrShareBlob]。这是**真实
+  /// FRB 调用**——`flutter test` 没有原生库时它不是抛异常,而是真的把整个测试
+  /// 进程卡住退不出去(实测踩过)。测一条"回退确实发生了"的路时,注入一个
+  /// 立即失败的假实现,不必也不能真的跑通这一步。
+  final Future<(Uint8List, String, int)> Function({required int expiresDays}) qrShareBlobFn;
 
   @override
   State<QrShareScreen> createState() => _QrShareScreenState();
 }
+
+/// 该不该尝试授权链接这条路——纯函数,不碰网络/FFI,方便在 `flutter test` 里
+/// 单独钉住这道闸(见 `test/qr_share_screen_test.dart`)。
+///
+/// 三个条件都是硬要求:未登录/未开通云同步没有档案密钥可用;不是 owner 时,
+/// 服务端 `POST .../invites` 本来就会 403(owner-only),不判就是摸黑试一次
+/// 注定失败的请求。
+@visibleForTesting
+bool shouldTryGrantLink({required bool loggedIn, required Profile profile}) =>
+    loggedIn && profile.cloudId != null && profile.role == 'owner';
 
 class _QrShareScreenState extends State<QrShareScreen> {
   String? _url;
@@ -97,11 +121,18 @@ class _QrShareScreenState extends State<QrShareScreen> {
   /// **失败就是失败,不给一个残缺的码。** 医生扫到一个打不开的码,比病人当场知道
   /// 「没传上、再试一次」糟糕得多 —— 前者浪费的是诊室里那几分钟。
   Future<void> _generate() async {
-    // 登录且这个成员已经开通云同步:出授权链接就够了,跳过整套「加密病历、
-    // 上传瞬时云」——医生扫码兑换的是一份 15 天只读授权,内容走的是正常的云同步
-    // 拉取,不是这里的密文上传。未登录/未开通云同步走原路径,一字不改。
+    // 登录、这个成员已经开通云同步、且**是这个档案的 owner**:出授权链接就够了,
+    // 跳过整套「加密病历、上传瞬时云」——医生扫码兑换的是一份 15 天只读授权,内容
+    // 走的是正常的云同步拉取,不是这里的密文上传。
+    //
+    // owner 这道闸是硬要求,不是优化:发邀请是服务端 owner-only 的操作
+    // (`POST /v1/profiles/{pid}/invites` 对 editor/viewer 一律 403),不判就摸黑
+    // 试一次注定失败的请求。而**即使是 owner**,邀请创建仍可能失败(网络、服务端
+    // 500……)——那种情况绝不能停在一个空白/报错的死胡同,必须退回原来的加密
+    // 上传路径,像 `doctor_claim_link_dialog.dart` 处理转移链接失败那样,总有
+    // 一条码能出。未登录/未开通云同步/不是 owner,直接走原路径,一字不改。
     final profile = ProfileManager.instance.current;
-    if (AccountSession.instance.loggedIn.value && profile.cloudId != null) {
+    if (shouldTryGrantLink(loggedIn: AccountSession.instance.loggedIn.value, profile: profile)) {
       try {
         setState(() {
           _error = null;
@@ -109,25 +140,25 @@ class _QrShareScreenState extends State<QrShareScreen> {
           _stage = '正在生成授权链接…';
           _progress = null;
         });
-        final link = await Grants(
-          ApiClient(bearer: () async => AccountSession.instance.access),
-          AccountSession.instance,
-        ).inviteDoctor(profile);
+        final link = await (widget.grants ??
+                Grants(
+                  ApiClient(bearer: () async => AccountSession.instance.access),
+                  AccountSession.instance,
+                ))
+            .inviteDoctor(profile);
         if (!mounted) return;
         setState(() {
           _stage = null;
           _url = link.toUrl();
         });
-      } catch (e) {
-        if (mounted) {
-          setState(() {
-            _stage = null;
-            _progress = null;
-            _error = '$e';
-          });
-        }
+        // 出码成功——同一个事件,授权链接这条路没有份数/体积可报,其余属性都是
+        // 可选的(目录只钉住"允许出现哪些键",不要求每次都全带)。
+        Analytics.track(AnalyticsEvent.shareQrShown, const {});
+        return;
+      } catch (_) {
+        // 退回原路径,不留在这里报错——见上面的文档。
+        if (mounted) setState(() => _grantMode = false);
       }
-      return;
     }
     _grantMode = false;
     try {
@@ -137,7 +168,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
         _stage = '正在准备病历…';
         _progress = null;
       });
-      final (blob, keyB64, recordCount) = await qrShareBlob(expiresDays: 15);
+      final (blob, keyB64, recordCount) = await widget.qrShareBlobFn(expiresDays: 15);
       _upload = ResumableUpload(blob);
       _totalBytes = blob.length;
       _pendingShare = (keyB64, recordCount.toInt());

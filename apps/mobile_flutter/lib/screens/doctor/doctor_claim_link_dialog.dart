@@ -10,6 +10,26 @@ import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart' show Profile;
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
+/// 决定这个对话框最终该显示哪条链接:登录且传入了已开通云同步的档案时,尝试
+/// 换成一条 `role=owner` 的转移邀请;没登录、没传档案、或者换取失败,一律用
+/// [fallbackUrl](调用方原来就准备好的那条,一直有效)。**永不返回空/坏链接**——
+/// 转移失败不该让医生对着一个没法用的码交差。
+@visibleForTesting
+Future<String> resolveDoctorClaimUrl({
+  required String fallbackUrl,
+  required bool loggedIn,
+  required Profile? cloudProfile,
+  required Grants grants,
+}) async {
+  if (!loggedIn || cloudProfile?.cloudId == null) return fallbackUrl;
+  try {
+    final link = await grants.inviteTransfer(cloudProfile!);
+    return link.toUrl();
+  } catch (_) {
+    return fallbackUrl;
+  }
+}
+
 /// 代拍交付成功后的结果:**一条认领链接,直接显示成二维码**。
 ///
 /// 为什么是二维码而不是「发文件」:代拍面对的病人常常没有微信、加不上好友、也不会
@@ -25,26 +45,34 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// 任何一条路径会把已开通云同步的代拍档案传进来(那需要先把代拍病人的临时保险箱
 /// 注册成云档案,是另一块尚未接线的工作),所以这个分支眼下是**前向兼容但还没被
 /// 触发**——保留 `cloudProfile` 为 null 时,行为与改动前逐字节一致。
+///
+/// [grants] 是测试注入点,默认为 null——真正用的时候现取现建。`Grants.inviteTransfer`
+/// 碰真实 Rust 原生库,`flutter test` 传一个假实现进来测"转移失败要不要正确回退"。
+///
+/// 决定最终显示哪条链接的逻辑抽成 [resolveDoctorClaimUrl]——纯粹是异步计算,
+/// 不碰 `BuildContext`/Widget 树,方便单独测试(`AlertDialog` 内嵌 `QrImageView`
+/// 用了 `LayoutBuilder`,在 `flutter test` 里 pump 这个对话框会踩一个已知的
+/// Flutter 渲染坑("intrinsic dimensions"),与本文件的逻辑无关,见
+/// `test/doctor_claim_link_dialog_test.dart` 顶部说明)。
 Future<void> showDoctorClaimLinkDialog(
   BuildContext context,
   String url,
   int recordCount, {
   required Rect Function() shareOrigin,
   Profile? cloudProfile,
+  Grants? grants,
 }) async {
   if (!context.mounted) return;
-  if (AccountSession.instance.loggedIn.value && cloudProfile?.cloudId != null) {
-    try {
-      final link = await Grants(
-        ApiClient(bearer: () async => AccountSession.instance.access),
-        AccountSession.instance,
-      ).inviteTransfer(cloudProfile!);
-      url = link.toUrl();
-    } catch (_) {
-      // 转移链接生成失败:退回调用方传来的原始链接,不让医生空手——那条链接
-      // 依旧有效,只是这一次不是所有权转移。
-    }
-  }
+  final resolvedUrl = await resolveDoctorClaimUrl(
+    fallbackUrl: url,
+    loggedIn: AccountSession.instance.loggedIn.value,
+    cloudProfile: cloudProfile,
+    grants: grants ??
+        Grants(
+          ApiClient(bearer: () async => AccountSession.instance.access),
+          AccountSession.instance,
+        ),
+  );
   if (!context.mounted) return;
   await showDialog<void>(
     context: context,
@@ -73,7 +101,7 @@ Future<void> showDoctorClaimLinkDialog(
                     border: Border.all(color: c.line),
                   ),
                   child: QrImageView(
-                    data: url,
+                    data: resolvedUrl,
                     version: QrVersions.auto,
                     size: 220,
                     backgroundColor: Colors.white,
@@ -91,7 +119,7 @@ Future<void> showDoctorClaimLinkDialog(
               // 能用微信/短信的病人走这条:复制链接直接发。
               OutlinedButton.icon(
                 onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: url));
+                  await Clipboard.setData(ClipboardData(text: resolvedUrl));
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       appSnackBar(content: Text('链接已复制,可以发给病人')),
@@ -113,7 +141,7 @@ Future<void> showDoctorClaimLinkDialog(
             style: FilledButton.styleFrom(backgroundColor: c.proxy),
             onPressed: () => SharePlus.instance.share(
               ShareParams(
-                text: url,
+                text: resolvedUrl,
                 subject: '你的病历',
                 sharePositionOrigin: shareOrigin(),
               ),

@@ -1,11 +1,14 @@
-import 'dart:typed_data';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
 import 'package:flutter_secure_storage_platform_interface/flutter_secure_storage_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/account_flow.dart';
 import 'package:mobile_flutter/api_client.dart';
+import 'package:mobile_flutter/grants.dart';
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -26,6 +29,8 @@ class FakeApi extends ApiClient {
     this.failApprove = false,
     this.failRevoke = false,
     this.failKeys500 = false,
+    this.lookupResult,
+    this.lookupError,
     this.delay = const Duration(milliseconds: 30),
   }) : super(base: 'http://x');
 
@@ -42,6 +47,9 @@ class FakeApi extends ApiClient {
   /// `GET /v1/account/keys` 报 500(不是 404)——`_afterLogin` 只吞 404,
   /// 非 404 一律 rethrow;用来测 `resumeIfLoggedIn` 冷启动那条路径接不接得住。
   final bool failKeys500;
+  /// `GET /v1/accounts/lookup` 的假响应/假失败——测「按手机号添加家属」。
+  final Map<String, dynamic>? lookupResult;
+  final ApiFailed? lookupError;
   final Duration delay;
   final calls = <String>[];
 
@@ -82,6 +90,10 @@ class FakeApi extends ApiClient {
     if (path == '/v1/devices') {
       if (failDevices) throw const ApiFailed(500, 'devices failed');
       return devices;
+    }
+    if (path == '/v1/accounts/lookup') {
+      if (lookupError != null) throw lookupError!;
+      return lookupResult;
     }
     if (path == '/v1/profiles') {
       if (failProfiles) throw const ApiFailed(500, 'profiles failed');
@@ -169,8 +181,31 @@ class FakeCrypto implements SyncCrypto {
   }
 }
 
-Widget _app(FakeApi api, {SyncCrypto? crypto}) =>
-    MaterialApp(home: AccountScreen(flow: AccountFlow(api, AccountSession.instance, crypto: crypto ?? FakeCrypto())));
+/// 假 `GrantsRust`——只有 `sealTo` 会被「按手机号添加家属」用到,拼接公钥与
+/// 明文即可(同 `sync_engine_test.dart`/`grants_test.dart` 的 `FakeRust`/
+/// `FakeGrantsRust` 套路,不追求真实的密码学正确性,只钉住"传对了什么")。
+class FakeGrantsRust implements GrantsRust {
+  final sealedWith = <Uint8List>[];
+
+  @override
+  Future<Uint8List> wrapWithToken(Uint8List plaintext, String token) async => plaintext;
+
+  @override
+  Future<Uint8List> unwrapWithToken(Uint8List blob, String token) async => blob;
+
+  @override
+  Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext) async {
+    sealedWith.add(public);
+    return Uint8List.fromList([...public, ...plaintext]);
+  }
+}
+
+Widget _app(FakeApi api, {SyncCrypto? crypto, Grants? grants}) => MaterialApp(
+      home: AccountScreen(
+        flow: AccountFlow(api, AccountSession.instance, crypto: crypto ?? FakeCrypto()),
+        grants: grants,
+      ),
+    );
 
 /// 手机号 → 发验证码 → 输入验证码 → 登录,落在哪个阶段由 `api.hasKeys` 决定。
 Future<void> _loginUpTo(WidgetTester t) async {
@@ -183,8 +218,8 @@ Future<void> _loginUpTo(WidgetTester t) async {
 }
 
 /// 登录 + 口令解锁,一路落到「已就绪」——要求 `api.hasKeys == true`。
-Future<void> _toReady(WidgetTester t, FakeApi api, {SyncCrypto? crypto}) async {
-  await t.pumpWidget(_app(api, crypto: crypto));
+Future<void> _toReady(WidgetTester t, FakeApi api, {SyncCrypto? crypto, Grants? grants}) async {
+  await t.pumpWidget(_app(api, crypto: crypto, grants: grants));
   await _loginUpTo(t);
   await t.enterText(find.byKey(const Key('password')), 'right');
   await t.tap(find.text('解锁'));
@@ -499,6 +534,128 @@ void main() {
       await t.pumpAndSettle();
       expect(find.textContaining('p1'), findsOneWidget);
       expect(find.text('撤销'), findsOneWidget);
+    });
+  });
+
+  group('已就绪:按手机号添加家属', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-account-family-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    /// 给当前成员(默认档案)一个 cloudId,`_familySection` 才会显示表单而不是
+    /// 「还没开通云同步」的提示。真实文件 IO(`markCloud` 落盘)包进 `runAsync`
+    /// (Task 10 的教训)。
+    Future<void> setUpCloudProfile(WidgetTester t) async {
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+        await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, 'prf_1', 'owner', null);
+      });
+      await AccountSession.instance.putProfileKey('prf_1', Uint8List(32));
+    }
+
+    testWidgets('加载中显示进度圈', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 30),
+        lookupResult: {'account_id': 'acc_family', 'public_key': 'QQ=='},
+      );
+      await setUpCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+
+      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
+      await t.tap(find.text('按手机号添加家属'));
+      await t.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await t.pumpAndSettle();
+    });
+
+    testWidgets('查到账号:成功、清空输入框、按永久 editor 授权', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        lookupResult: {'account_id': 'acc_family', 'public_key': 'QQ=='},
+      );
+      final rust = FakeGrantsRust();
+      await setUpCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: rust));
+
+      await t.enterText(find.byKey(const Key('family_phone')), '138 0000 1111');
+      await t.tap(find.text('按手机号添加家属'));
+      await t.pumpAndSettle();
+
+      expect(api.calls, contains('GET /v1/accounts/lookup'));
+      expect(api.calls, contains('POST /v1/profiles/prf_1/grants'));
+      expect(find.text('138 0000 1111'), findsNothing, reason: '成功后应清空输入框(且已去除空格发送)');
+      expect(rust.sealedWith, isNotEmpty, reason: '应该封给对方公钥');
+    });
+
+    testWidgets('手机号查不到人(404):提示「没有找到使用该手机号的账号」', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        lookupError: const ApiFailed(404, 'not found'),
+      );
+      await setUpCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+
+      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
+      await t.tap(find.text('按手机号添加家属'));
+      await t.pumpAndSettle();
+
+      expect(find.text('没有找到使用该手机号的账号'), findsOneWidget);
+    });
+
+    testWidgets('限流(429):提示「查询太频繁,稍后再试」', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        lookupError: const ApiFailed(429, 'rate_limited'),
+      );
+      await setUpCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+
+      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
+      await t.tap(find.text('按手机号添加家属'));
+      await t.pumpAndSettle();
+
+      expect(find.text('查询太频繁,稍后再试'), findsOneWidget);
+    });
+
+    testWidgets('手机号格式不对(400):提示「手机号格式不对」', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        lookupError: const ApiFailed(400, 'bad phone'),
+      );
+      await setUpCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+
+      await t.enterText(find.byKey(const Key('family_phone')), 'abc'); // 打个不像手机号的
+      await t.tap(find.text('按手机号添加家属'));
+      await t.pumpAndSettle();
+
+      expect(find.text('手机号格式不对'), findsOneWidget);
+    });
+
+    testWidgets('当前成员还没开通云同步:不显示表单', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+      });
+      await _toReady(t, api);
+
+      expect(find.byKey(const Key('family_phone')), findsNothing);
+      expect(find.textContaining('还没开通云同步'), findsOneWidget);
     });
   });
 

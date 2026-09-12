@@ -220,6 +220,56 @@ void main() {
         throwsA(isA<ApiFailed>().having((e) => e.status, 'status', 410)),
       );
     });
+
+    test('token 不对(404)时把失败原样抛出', () async {
+      final api = FakeApi(failures: {'/v1/invites/redeem': const ApiFailed(404, 'not found')});
+      final grants = Grants(api, AccountSession.instance, rust: FakeGrantsRust());
+      final link = GrantLink(inviteId: 'inv_1', token: 'thetesttokenABCDEFGHIJKLMN');
+
+      await expectLater(
+        grants.redeem(link, afterStored: (_) async {}),
+        throwsA(isA<ApiFailed>().having((e) => e.status, 'status', 404)),
+      );
+    });
+
+    test('兑换自己发的邀请(400)时把失败原样抛出', () async {
+      final api = FakeApi(failures: {'/v1/invites/redeem': const ApiFailed(400, 'cannot redeem own invite')});
+      final grants = Grants(api, AccountSession.instance, rust: FakeGrantsRust());
+      final link = GrantLink(inviteId: 'inv_1', token: 'thetesttokenABCDEFGHIJKLMN');
+
+      await expectLater(
+        grants.redeem(link, afterStored: (_) async {}),
+        throwsA(isA<ApiFailed>().having((e) => e.status, 'status', 400)),
+      );
+    });
+
+    test('本机已经有这个云档案的入口:复用它,不再建一个重复的空壳档案', () async {
+      final rust = FakeGrantsRust();
+      const token = 'reuseexistingtokenABCDEFGH';
+      final wrapped = await rust.wrapWithToken(key, token);
+      final api = FakeApi(responses: {
+        '/v1/invites/redeem': {
+          'profile_id': 'prf_9',
+          'role': 'editor',
+          'expires_at': null,
+          'wrapped_key_by_token': base64Encode(wrapped),
+          'grant_id': 'grt_2',
+        },
+      });
+      AccountSession.instance.publicKey = Uint8List.fromList(List.generate(32, (i) => 200 + i));
+      // 本机已经有一个指向同一个云档案的成员(比如之前用 viewer 兑换过一次)。
+      final existingId = await ProfileManager.instance.create('已有的档案', userManaged: false);
+      await ProfileManager.instance.markCloud(existingId!, 'prf_9', 'viewer', DateTime(2026, 1, 1));
+      final before = ProfileManager.instance.profiles.length;
+
+      final grants = Grants(api, AccountSession.instance, rust: rust);
+      final link = GrantLink(inviteId: 'inv_1', token: token);
+      final p = await grants.redeem(link, afterStored: (_) async {});
+
+      expect(ProfileManager.instance.profiles.length, before, reason: '不该多出一个重复档案');
+      expect(p.id, existingId, reason: '应该复用已有的本地入口');
+      expect(p.role, 'editor', reason: '角色应该按新的兑换结果更新');
+    });
   });
 
   group('grantFamilyByPhone', () {

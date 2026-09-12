@@ -464,6 +464,31 @@ def test_invite_days_capped_at_grant_doctor_days():
     assert row[0] == dbm.GRANT_DOCTOR_DAYS == 15
 
 
+# ---- Task 11 review round 1: item 2 —— invite_ttl_s 上限按角色分开(viewer 600s,owner 15 天)----
+
+def test_invite_ttl_s_capped_by_role_viewer_600_owner_15_days():
+    owner = login("13800000113", "o1")
+    ho = _h(owner["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    viewer_inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "viewer", "days": 15,
+        "token_hash": hashlib.sha256(b"viewer-ttl-cap").hexdigest(), "wrapped_key_by_token": b64(b"x"),
+        "invite_ttl_s": 999999}, headers=ho).json()
+    owner_inv = client.post(f"/v1/profiles/{pid}/invites", json={"role": "owner", "days": None,
+        "token_hash": hashlib.sha256(b"owner-ttl-cap").hexdigest(), "wrapped_key_by_token": b64(b"y"),
+        "invite_ttl_s": 999999999}, headers=ho).json()
+    with dbm.connect() as conn:
+        viewer_ttl = conn.execute(
+            "SELECT extract(epoch FROM expires_at - created_at) FROM invites WHERE id=%s", (viewer_inv["invite_id"],)
+        ).fetchone()[0]
+        owner_ttl = conn.execute(
+            "SELECT extract(epoch FROM expires_at - created_at) FROM invites WHERE id=%s", (owner_inv["invite_id"],)
+        ).fetchone()[0]
+    assert dbm.INVITE_TTL_CAP_S == 600
+    assert dbm.INVITE_TTL_CAP_OWNER_S == 15 * 86400
+    assert abs(viewer_ttl - dbm.INVITE_TTL_CAP_S) < 2
+    assert abs(owner_ttl - dbm.INVITE_TTL_CAP_OWNER_S) < 2
+
+
 # ---- Task 6: 事件推拉、对象预签名、LLM 代理 ----
 
 def test_events_push_pull_role_enforced_and_since_filter():

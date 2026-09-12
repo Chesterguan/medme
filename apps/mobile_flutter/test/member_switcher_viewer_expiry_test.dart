@@ -102,4 +102,34 @@ void main() {
 
     expect(purgeCalls, 1);
   });
+
+  testWidgets('清理抛错也不该挡住打开切换器——家务事不是开关', (tester) async {
+    late BuildContext ctx;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) {
+            ctx = context;
+            return Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () => showMemberSwitcherSheet(
+                    ctx,
+                    purgeExpired: () async => throw Exception('purge boom'),
+                  ),
+                  child: const Text('打开切换器'),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开切换器'));
+    await tester.pumpAndSettle();
+
+    // 清理失败没有阻止 sheet 打开——「切换成员」这个标题出现在 sheet 里。
+    expect(find.text('切换成员'), findsOneWidget);
+  });
 }

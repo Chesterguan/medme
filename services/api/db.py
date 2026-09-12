@@ -136,7 +136,11 @@ def device_touch(conn, account_id, device_id, name):
 # ---- 密钥托管、档案/授权/邀请/转移、设备批准 ----
 
 GRANT_DOCTOR_DAYS = 15       # 非永久授权(grants.days / invites.days)的上限——医生邀请的原型场景
-INVITE_TTL_CAP_S = 600       # 邀请链接本身的有效期上限,不管客户端要求多久
+INVITE_TTL_CAP_S = 600       # 邀请链接本身的有效期上限(viewer/普通邀请),不管客户端要求多久
+# owner 邀请(代拍→患者的所有权转移)单独给一个更宽的链接有效期上限:病人不一定
+# 当场就有空扫码,15 天足够医生等一次;普通 viewer 邀请(医生看诊码)没有这个理由,
+# 仍然按 INVITE_TTL_CAP_S 卡在 10 分钟——两者是不同的产品场景,不能共用一个数字。
+INVITE_TTL_CAP_OWNER_S = 15 * 86400
 LOOKUP_MAX_PER_HOUR = 20     # /v1/accounts/lookup 按调用者账号计数的限流
 
 
@@ -239,7 +243,10 @@ def grant_set_key(conn, pid, gid, aid, wrapped_key):
 
 def invite_create(conn, pid, aid, body):
     iid = new_id("inv")
-    ttl = min(int(body.get("invite_ttl_s", 600)), INVITE_TTL_CAP_S)
+    # owner(所有权转移)邀请给足 15 天去扫;其余角色(viewer 的医生看诊码……)
+    # 仍然卡在 10 分钟——两者是不同的产品场景,见上面 INVITE_TTL_CAP_OWNER_S 的注释。
+    cap = INVITE_TTL_CAP_OWNER_S if body.get("role") == "owner" else INVITE_TTL_CAP_S
+    ttl = min(int(body.get("invite_ttl_s", 600)), cap)
     days = body.get("days")
     if days:
         days = min(int(days), GRANT_DOCTOR_DAYS)

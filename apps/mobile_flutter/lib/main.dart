@@ -505,12 +505,17 @@ class _HomeShellState extends State<HomeShell> {
 /// 兑换。**未登录先走账号屏**——兑换需要账号密钥对(封回自己的公钥),没有账号
 /// 无从谈起;登录/解锁完成后回到这一屏继续兑换,不用重新点一次链接。
 class GrantRedeemScreen extends StatefulWidget {
-  const GrantRedeemScreen({super.key, required this.link, this.cold = false});
+  const GrantRedeemScreen({super.key, required this.link, this.cold = false, this.grants});
   final GrantLink link;
 
   /// App 是被这条链接拉起来的(冷启动),而不是已在运行时收到。同 `ClaimScreen`,
   /// 目前只留作将来埋点用,不影响这一屏的行为。
   final bool cold;
+
+  /// 测试注入点,默认为 null——真正用的时候现取现建。`Grants.redeem` 末尾会碰
+  /// 真实 Rust 原生库(开箱、首同步),`flutter test` 没法伪造,测试传一个整体
+  /// 重写了 `redeem` 的子类进来(见 `test/grant_redeem_screen_test.dart`)。
+  final Grants? grants;
 
   @override
   State<GrantRedeemScreen> createState() => _GrantRedeemScreenState();
@@ -540,10 +545,11 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
       _error = null;
     });
     try {
-      final grants = Grants(
-        ApiClient(bearer: () async => AccountSession.instance.access),
-        AccountSession.instance,
-      );
+      final grants = widget.grants ??
+          Grants(
+            ApiClient(bearer: () async => AccountSession.instance.access),
+            AccountSession.instance,
+          );
       final p = await grants.redeem(widget.link);
       if (mounted) setState(() => _done = p);
     } catch (e) {
@@ -571,12 +577,13 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
+        // 这一步只有 inviteId/token,角色(viewer/owner/editor)由服务端在兑换那
+        // 一刻才揭晓(见 `redeem` 的响应)——文案不能替它先猜一个,猜错了(比如
+        // 这其实是一条转移邀请)就是当场说瞎话。角色相关的措辞留到 [_result]。
         const Text(
-          '要把这份病历加进你的 MedMe 吗?',
+          '要接受对方分享的病历档案吗?',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
         ),
-        const SizedBox(height: 8),
-        const Text('只读,15 天后自动失效。', style: TextStyle(color: Colors.black54)),
         if (_error != null) ...[
           const SizedBox(height: 16),
           Text(_error!, style: const TextStyle(color: Colors.redAccent)),
@@ -602,7 +609,13 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
       children: [
         const Icon(Icons.check_circle, color: Colors.teal, size: 56),
         const SizedBox(height: 16),
-        Text('已加入「${p.name}」的档案', textAlign: TextAlign.center),
+        Text(_resultHeadline(p), textAlign: TextAlign.center),
+        const SizedBox(height: 8),
+        Text(
+          _resultSubtitle(p),
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.black54),
+        ),
         const SizedBox(height: 24),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -610,5 +623,17 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
         ),
       ],
     );
+  }
+
+  /// 结果页标题——按**实际拿到的角色**说话,不是兑换前猜的那句。owner(代拍
+  /// 转移)是「成为主人」,其余(viewer/editor)是普通的「加入档案」。
+  String _resultHeadline(Profile p) =>
+      p.role == 'owner' ? '你已成为「${p.name}」档案的主人' : '已加入「${p.name}」的档案';
+
+  String _resultSubtitle(Profile p) {
+    if (p.role == 'owner') return '这份档案现在完全归你所有,原来的账号已自动降为编辑权限。';
+    final exp = p.expiresAt;
+    if (p.role == 'viewer' && exp != null) return '只读,至 ${exp.month}月${exp.day}日';
+    return p.role == 'editor' ? '可以一起录入,长期有效。' : '';
   }
 }
