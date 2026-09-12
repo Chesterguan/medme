@@ -41,8 +41,15 @@ bool vaultOpenedOkThisLaunch = true;
 /// 路径没走队列"这种意外。
 /// 「此刻这段代码是不是正跑在队列里」—— 用 Zone 而不是一个模块级布尔:布尔分不清
 /// 「在 action 的调用栈里又排了一次」(重入,死锁)和「另一路在 action 跑着的时候
-/// 正常排队」(合法,而且是这条队列存在的理由)。Zone 值只传给 action 自己及它
-/// 派生出的异步回调。
+/// 正常排队」(合法,而且是这条队列存在的理由)。
+///
+/// 值是一个**可变的小盒子**而不是 `true`(复审 R2):Zone 值会传进 action 里创建的
+/// `Timer`,而那种回调是在 action **跑完之后**才执行的 —— 它排队是完全合法的,不该
+/// 被当成重入。盒子上的 `done` 区分这两件事。
+class _SerializedMark {
+  bool done = false;
+}
+
 final Object _inSerializedZoneKey = Object();
 
 Future<T> runSerialized<T>(Future<T> Function() action) {
@@ -51,13 +58,26 @@ Future<T> runSerialized<T>(Future<T> Function() action) {
   // 永远转圈",而原因在代码里一个字都不显眼。所以在 debug 下当场炸
   // (`assert` 在 release 里整段剥掉,生产行为一字不变;队列里要顺手开箱的调用方
   // 用不排队的那个本体,见 [openCurrentProfileVaultUnserialized])。
+  //
+  // **`done` 那一半是必需的**(复审 R2,有复现):生产里这条链真的存在 ——
+  // `SyncEngine._syncProfileLocked` 在序列化的 action 里调 `bumpVaultRevision()`,
+  // `main.dart` 的 `_scheduleDebouncedPush` 于是在**这个 zone 里**建了一个 3 秒
+  // Timer;它到点时跑一次后台同步 → `syncProfile` → 又排一次队。那时外面这段早跑完
+  // 了,没有任何重入,而只看"zone 值在不在"会把它判成死锁。debug/profile 包里的后果
+  // 不是一条警告:`AssertionError` 被 `syncProfile` 的 catch 接住 →
+  // `saveLastSync(ok:false)` → **每一次拉到了东西的同步都显示「上次备份失败」**。
+  final outer = Zone.current[_inSerializedZoneKey] as _SerializedMark?;
   assert(
-    Zone.current[_inSerializedZoneKey] == null,
+    outer == null || outer.done,
     'runSerialized 不可重入:已经在 vault 队列里了,再排一次就是自己等自己。'
     '队列里要开箱请调 openCurrentProfileVaultUnserialized。',
   );
+  final mark = _SerializedMark();
   final done = _vaultQueue.then(
-    (_) => runZoned(action, zoneValues: {_inSerializedZoneKey: true}),
+    (_) => runZoned(
+      () => action().whenComplete(() => mark.done = true),
+      zoneValues: {_inSerializedZoneKey: mark},
+    ),
   );
   // 队列本身吞掉异常(否则一次失败会毒死后面所有排队的操作);异常照常抛给调用方。
   _vaultQueue = done.then((_) {}, onError: (_) {});

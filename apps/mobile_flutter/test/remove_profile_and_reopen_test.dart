@@ -8,6 +8,7 @@
 // `switchProfileAndReopenImpl`(见 `switch_profile_and_reopen_test.dart`)的
 // 套路——这样能用一个假的 `reopen` 钉住密钥清理这条契约,不需要加载 Rust 原生库
 // (`openCurrentProfileVault` 本身调 FRB,`flutter test` 里直接调用会崩)。
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -168,6 +169,10 @@ void main() {
     expect(order, ['other-start', 'other-end', 'release', 'reopen']);
   });
 
+  // M15 + R2 的另一半:**真正的重入**(外面那段还在跑的时候从它里面再排一次)必须
+  // 仍然是致命的 —— R2 的修法(zone 值带一个 `done` 标记)只放过"跑完之后的延迟回调",
+  // 不能顺手把这条也放过去。
+  //
   // M15:"`runSerialized` 不可重入"这条约束原来只活在注释里 —— 而违反它的症状是
   // **死锁**(自己排在自己后面等),在真机上看起来是"点了没反应、永远转圈"。
   // 让它在 debug 下当场炸,于是测试套件会替我们守住。
@@ -190,5 +195,29 @@ void main() {
     await runSerialized(() async => order.add(1));
     await runSerialized(() async => order.add(2));
     expect(order, [1, 2]);
+  });
+
+  // R2(复审第 3 轮):Zone 值会**传进 action 里创建的 Timer**。生产里这条链是真的:
+  // `_syncProfileLocked` 在序列化的 action 里调 `bumpVaultRevision()` →
+  // `main.dart` 的 `_scheduleDebouncedPush` 在那个 zone 里建了一个 3 秒 Timer →
+  // 它到点时跑 `runBackgroundSync()` → `syncProfile` → `runSerialized` → assert 炸,
+  // 而此刻**压根没有重入**(外面那段早跑完了)。debug/profile 包里的后果:
+  // `AssertionError` 被 `syncProfile` 的 catch 接住 → `saveLastSync(ok:false)` →
+  // 每一次"拉到了东西"的同步都显示「上次备份失败」,还顺手把下一次推送的水位搞脏。
+  test('R2:action 里建的 Timer 在它跑完之后再排队 —— 合法,不许误报', () async {
+    Timer? deferred;
+    final laterRan = Completer<void>();
+
+    await runSerialized(() async {
+      // 和 `bumpVaultRevision` → `_scheduleDebouncedPush` 同一个形状:在 action 里
+      // 建一个将来才跑的 Timer。
+      deferred = Timer(const Duration(milliseconds: 10), () async {
+        await runSerialized(() async {});
+        laterRan.complete();
+      });
+    });
+
+    await laterRan.future; // 不抛 = 没误报
+    expect(deferred!.isActive, isFalse);
   });
 }
