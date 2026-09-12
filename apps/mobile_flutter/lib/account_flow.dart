@@ -220,10 +220,24 @@ class AccountFlow {
   /// 云成员会永久锁死)。
   ///
   /// `GET /v1/profiles` 拿到这个账号能访问的全部云档案(含用账号公钥封的
-  /// `wrapped_profile_key`),挑出"本地已经有这个成员(有 cloudId),但本机
-  /// secure storage 里没有对应密钥"的那些,用账号私钥拆开、存回去。**不新建
-  /// 本地成员**——只补密钥,新成员的落地是 `Grants.redeem`(邀请链接)的事,
-  /// `/v1/profiles` 里本地没有对应 profile 的条目在这里直接跳过。
+  /// `wrapped_profile_key`),用账号私钥拆开:
+  ///
+  /// * 本地**已经有**这个成员(有同一个 cloudId)、只是缺密钥 → 把密钥补回去;
+  /// * 本地**没有**这个成员 → **新建一个**(最终评审 I3,spec 的「换机」那条路):
+  ///   名字是占位的「云端档案 `<cloudId 前 6 位>`」,`markCloud` 记下
+  ///   role/expiresAt,密钥存进 secure storage。换了台新手机、或者清了 App 数据
+  ///   之后,用户重新登录 + 解锁就能看见自己的档案都在——在这之前这条路完全不
+  ///   存在:服务端明明有这些档案、密钥也解得开,本机却因为「没有对应的本地
+  ///   成员」全部跳过,于是新手机上一片空白,只有一条邀请链接能救(而 owner
+  ///   根本给自己发不出邀请)。
+  ///
+  ///   占位名要用户自己改(成员改名在设置页,只动标签不动数据)——我们这一侧
+  ///   拿不到真名:名字在病历里,而病历此刻还没同步下来。**第一次同步在用户切到
+  ///   这个成员时发生**:切换走 `vault_boot.switchProfileAndReopen`,它会
+  ///   `bumpVaultRevision()`,后台触发器随即给这个成员跑一次推拉
+  ///   (见 `sync_engine.dart` 的 `triggerBackgroundSync`)。这里不自己发起同步:
+  ///   `SyncEngine` 要求「要同步的档案 == 当前打开的那个 keyed 箱子」,而刚新建的
+  ///   成员并不是当前成员,硬要同步就得把用户的当前成员切走。
   ///
   /// 单条数据解不开/格式不对只跳过那一条(见循环里的 try/catch),不让一条坏
   /// 数据拖累其它成员的恢复;整个 `/v1/profiles` 请求失败也不抛——这一步是
@@ -254,6 +268,9 @@ class AccountFlow {
       return;
     }
 
+    // `ProfileManager.create()` 会把 current 切到新建的那个成员——而这里只是
+    // "顺手补齐",绝不该改变用户此刻正在看哪个成员。新建完统一切回来。
+    final currentIdBefore = ProfileManager.instance.currentId.value;
     var restoredCurrent = false;
     for (final raw in serverProfiles) {
       try {
@@ -261,15 +278,32 @@ class AccountFlow {
         final cloudId = entry['profile_id'] as String;
         final wrapped = entry['wrapped_profile_key'] as String?;
         if (wrapped == null) continue;
-        if (await session.profileKey(cloudId) != null) continue; // 已经有了
         final hasLocalProfile = ProfileManager.instance.profiles.any((p) => p.cloudId == cloudId);
-        if (!hasLocalProfile) continue;
+        if (hasLocalProfile && await session.profileKey(cloudId) != null) continue; // 这一个已经齐了
+        // **先解密再建成员**:解不开(这条数据坏了 / 不是用这把私钥封的)就整条
+        // 跳过,不留下一个永远打不开的空壳成员。
         final key = await crypto.openSealed(priv, base64Decode(wrapped));
         await session.putProfileKey(cloudId, key);
+        if (!hasLocalProfile) {
+          final localId = await ProfileManager.instance.create(
+            '云端档案 ${cloudId.length <= 6 ? cloudId : cloudId.substring(0, 6)}',
+            userManaged: false,
+          );
+          if (localId == null) continue;
+          await ProfileManager.instance.markCloud(
+            localId,
+            cloudId,
+            entry['role'] as String? ?? 'viewer',
+            DateTime.tryParse(entry['expires_at'] as String? ?? ''),
+          );
+        }
         if (cloudId == currentCloudId) restoredCurrent = true;
       } catch (_) {
         continue;
       }
+    }
+    if (ProfileManager.instance.currentId.value != currentIdBefore) {
+      await ProfileManager.instance.switchTo(currentIdBefore);
     }
 
     if (currentWasLocked && restoredCurrent) {

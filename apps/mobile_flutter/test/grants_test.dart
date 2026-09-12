@@ -17,6 +17,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grant_link.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/vault_boot.dart' show ProfileLocked;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 假 API:按路径返回预设响应,或按路径抛预设失败;记下每次调用与最后一次的
@@ -240,6 +241,50 @@ void main() {
       await expectLater(
         grants.redeem(link, afterStored: (_) async {}),
         throwsA(isA<ApiFailed>().having((e) => e.status, 'status', 400)),
+      );
+    });
+
+    test('I2:收尾走可回退的切换——把"兑换开始前停在哪"一起传下去,开箱失败原样抛出', () async {
+      final rust = FakeGrantsRust();
+      const token = 'revertabletokenABCDEFGHIJK';
+      final wrapped = await rust.wrapWithToken(key, token);
+      final api = FakeApi(responses: {
+        '/v1/invites/redeem': {
+          'profile_id': 'prf_9',
+          'role': 'viewer',
+          'expires_at': null,
+          'wrapped_key_by_token': base64Encode(wrapped),
+          'grant_id': 'grt_1',
+        },
+      });
+      AccountSession.instance.publicKey = Uint8List.fromList(List.generate(32, (i) => 200 + i));
+      final startedOn = ProfileManager.instance.currentId.value;
+
+      final switchCalls = <(String, String?)>[];
+      final grants = Grants(
+        api,
+        AccountSession.instance,
+        rust: rust,
+        switchAndReopen: (id, {String? revertTo}) async {
+          switchCalls.add((id, revertTo));
+          // 真实世界里最常见的失败:这个云档案的密钥此刻读不出来。
+          throw const ProfileLocked('prf_9');
+        },
+      );
+
+      // 注意:这里**不传** afterStored,走的是真实的 `_finishRedeem`——切换是它的
+      // 第一步,失败在这一步,后面的首同步/改名(都要真实 Rust 原生库)压根跑不到。
+      await expectLater(
+        grants.redeem(GrantLink(inviteId: 'inv_1', token: token)),
+        throwsA(isA<ProfileLocked>()),
+      );
+
+      final newProfile = ProfileManager.instance.profiles.firstWhere((p) => p.cloudId == 'prf_9');
+      expect(switchCalls.single.$1, newProfile.id);
+      expect(
+        switchCalls.single.$2,
+        startedOn,
+        reason: '回退目标必须是兑换开始前那个成员——create() 早就把 currentId 改成新档案了',
       );
     });
 

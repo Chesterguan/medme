@@ -514,6 +514,24 @@ class _AccountScreenState extends State<AccountScreen> {
         if (_lastSyncReport != null)
           Text(_syncSummary(_lastSyncReport!), style: const TextStyle(color: MedMe.faint)),
         if (_syncError != null) _errorText(_syncError!),
+        if (_cloudError != null) _errorText(_cloudError!),
+        // 「开通到一半」的出口(最终评审 M4):注册那一步成功了(服务端有这个档案、
+        // 本机有密钥、profiles.json 已 markCloud),但重开箱或首同步失败 —— 所以这
+        // 一支显示的是"已开通",缺的只是最后那一步。
+        //
+        // 这时**「立即同步」是死路**:它不重开箱,而箱子还没 keyed 打开,点一次撞
+        // 一次 `VaultMismatch`。以前唯一的出路是重启 App(启动时会重开箱),而屏上
+        // 没有任何字提示这一点。重试走 `enableCloud`:它对已有 cloudId 的档案会跳过
+        // 注册,直接走"重开箱(排进 vault_boot 的 FIFO 队列)+ 首同步"。
+        //
+        // 两种错误都给这个入口:`_cloudError`(开通那一步自己失败)和 `_syncError`
+        // (「立即同步」失败,最典型就是上面那个 `VaultMismatch`)。
+        if (_cloudError != null || _syncError != null) ...[
+          const SizedBox(height: 8),
+          _cloudBusy
+              ? const Center(child: CircularProgressIndicator())
+              : FilledButton(onPressed: _enableCloud, child: const Text('已开通,点击重试同步')),
+        ],
         const SizedBox(height: 8),
         _syncBusy
             ? const Center(child: CircularProgressIndicator())
@@ -529,10 +547,16 @@ class _AccountScreenState extends State<AccountScreen> {
     return '上次同步:${parts.join('、')}';
   }
 
+  /// 「开通云同步」,**也是**上面那个「已开通,点击重试同步」按钮走的路径——
+  /// `SyncEngine.enableCloud` 自己是可续做的(已有 cloudId 就跳过注册),所以这里
+  /// 不需要分两个动作。
   Future<void> _enableCloud() async {
     setState(() {
       _cloudBusy = true;
       _cloudError = null;
+      // 这次重试会重开箱 + 重跑一次同步,上一次同步的报错到此作废,不该继续挂在
+      // 屏上(也是"重试入口该不该显示"的判据之一,见 `_cloudSyncSection`)。
+      _syncError = null;
     });
     try {
       await _sync.enableCloud(ProfileManager.instance.current);

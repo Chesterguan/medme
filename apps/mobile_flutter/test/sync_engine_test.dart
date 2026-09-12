@@ -42,6 +42,9 @@ class RecordingApi extends ApiClient {
   bool failObjectDownload = false; // 签名阶段就失败(GET verb)
   /// 签名会成功、但真正的 PUT 会失败的 object_id 集合——测"登记 ≠ 传成功"。
   final failPutForObjectIds = <String>{};
+  /// 签名会成功、但真正的 GET(下载)会失败的 object_id 集合——测 I1(一个对象
+  /// 拉不回来不该作废整次同步)。
+  final failGetBytesForObjectIds = <String>{};
   /// 不带 `X-Seq-Map` 响应头——测 I2(缺水位必须跳过推送,不能当空水位推全量)。
   bool dropSeqMapHeader = false;
   /// 带一个解不出来的 `X-Seq-Map`(不是 JSON 对象)——同上,测解析失败的分支。
@@ -118,6 +121,10 @@ class RecordingApi extends ApiClient {
   Future<Uint8List> getBytes(String url) async {
     calls.add('GET-BYTES $url');
     if (failObjectDownload) throw ApiFailed(500, 'download failed');
+    final oid = _urlToObjectId[url];
+    if (oid != null && failGetBytesForObjectIds.contains(oid)) {
+      throw ApiFailed(500, 'download failed: $oid');
+    }
     return Uint8List.fromList([9, 9, 9]);
   }
 }
@@ -149,6 +156,7 @@ class FakeRust implements RustSyncApi {
     this.importOutcomes,
     this.failImport = false,
     this.keyed = true,
+    this.icloudOn = false,
     String? vaultRoot,
   }) : vaultRoot = vaultRoot ?? '/x/profiles/p-1/vault';
 
@@ -161,6 +169,8 @@ class FakeRust implements RustSyncApi {
   final List<SyncImportOutcomeDto>? importOutcomes;
   final bool failImport;
   final bool keyed;
+  /// 这台设备开着 iCloud 同步——C3(`enableCloud` 必须拒绝)用。
+  final bool icloudOn;
   final String vaultRoot;
 
   final storedObjectIds = <String>[];
@@ -174,6 +184,9 @@ class FakeRust implements RustSyncApi {
   @override
   Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext) async =>
       Uint8List.fromList([...public, ...plaintext]);
+
+  @override
+  Future<bool> icloudEnabled() async => icloudOn;
 
   @override
   Future<bool> currentVaultIsKeyed() async => keyed;
@@ -615,7 +628,9 @@ void main() {
     });
   });
 
-  group('三态:拉/推/对象下行失败时不吞异常(对象上行已改为逐个 try/catch,见 I3)', () {
+  // 事件的拉/推失败仍然整次抛出(没拉到事件 = 这次同步根本没开始);对象上行
+  // (I3)与对象下行(最终评审 I1)都已改成逐个 try/catch,见下一组。
+  group('三态:事件拉/推失败时不吞异常', () {
     test('拉取失败(服务端 500):syncProfile 抛出,不留部分结果', () async {
       final api = RecordingApi(server: {'events': [], 'objects': []})..failPullEvents = true;
       final engine = SyncEngine(api, AccountSession.instance, rust: FakeRust());
@@ -637,14 +652,121 @@ void main() {
       );
     });
 
-    test('对象下载失败:抛出,不吞', () async {
+    test('fetchObject(用户手点「查看原件」)下载失败:照样抛出,要让他看到', () async {
       final api = RecordingApi(server: {'events': [], 'objects': []})..failObjectDownload = true;
       final rust = FakeRust(missing: [('h2', 'o2')]);
       final engine = SyncEngine(api, AccountSession.instance, rust: rust);
       await expectLater(
-        engine.syncProfile(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'owner')),
+        engine.fetchObject(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'owner'), 'h2'),
         throwsA(isA<ApiFailed>()),
       );
+    });
+  });
+
+  group('I1:对象下行也逐个 try/catch——一个对象拉不回来,不能作废整次同步', () {
+    test('三个对象里一个下载失败:另两个照常落盘、objectsFailed==1、revision 照 bump', () async {
+      final api = RecordingApi(server: {'events': [], 'objects': []})..failGetBytesForObjectIds.add('o2');
+      final rust = FakeRust(missing: [('h1', 'o1'), ('h2', 'o2'), ('h3', 'o3')]);
+      final engine = SyncEngine(api, AccountSession.instance, rust: rust);
+      final before = vaultRevision.value;
+
+      final rep = await engine.syncProfile(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'owner'));
+
+      expect(rep.objectsDown, 2);
+      expect(rep.objectsFailed, 1);
+      expect(rust.storedObjectIds, ['o1', 'o3'], reason: 'o2 失败不该拖累后面的 o3');
+      expect(vaultRevision.value, before + 1, reason: '真的补到了两个对象,UI 该刷新');
+    });
+
+    test('签名请求失败(而不是下载本身失败):同样只算这一个对象失败', () async {
+      final api = RecordingApi(server: {'events': [], 'objects': []})..failObjectDownload = true;
+      final rust = FakeRust(missing: [('h2', 'o2')]);
+      final engine = SyncEngine(api, AccountSession.instance, rust: rust);
+
+      final rep = await engine.syncProfile(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'owner'));
+
+      expect(rep.objectsFailed, 1);
+      expect(rep.objectsDown, 0);
+    });
+
+    test('下行途中箱子被换掉(VaultMismatch):立刻停手,不继续拉下一个', () async {
+      final api = RecordingApi(server: {'events': [], 'objects': []});
+      final rust = _FlipKeyedBeforeStore(missing: [('h1', 'o1'), ('h2', 'o2')]);
+      final engine = SyncEngine(api, AccountSession.instance, rust: rust);
+
+      await expectLater(
+        engine.syncProfile(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'owner')),
+        throwsA(isA<VaultMismatch>()),
+      );
+      expect(rust.storedObjectIds, isEmpty, reason: '核对没过 = 零写入');
+    });
+  });
+
+  group('C3:开着 iCloud 同步时不许开通云同步(keyed 开箱会落在一个空的本机目录上)', () {
+    test('enableCloud 拒绝,消息告诉用户去设置里关 iCloud,零 API 调用', () async {
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final p = ProfileManager.instance.current;
+      final api = RecordingApi(server: {'events': [], 'objects': []});
+      final engine = SyncEngine(
+        api,
+        AccountSession.instance,
+        rust: FakeRust(icloudOn: true),
+        reopenVault: () async => fail('不该走到重开箱'),
+      );
+
+      await expectLater(
+        engine.enableCloud(p),
+        throwsA(isA<CloudEnableBlocked>().having((e) => '$e', 'toString', '请先在设置里关闭 iCloud 同步')),
+      );
+      expect(api.calls, isEmpty);
+      expect(ProfileManager.instance.byId(p.id)!.cloudId, isNull, reason: '什么都没落盘');
+    });
+  });
+
+  group('M4:enableCloud 可续做——注册成功、重开箱/首同步失败之后再点一次', () {
+    test('第二次不再重复注册(服务端不会多出一个孤儿档案),直接重开箱 + 首同步', () async {
+      await AccountSession.instance.save(
+        accountId: 'acc',
+        access: 'a',
+        refresh: 'r',
+        publicKey: Uint8List.fromList(List.generate(32, (i) => i)),
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final p = ProfileManager.instance.current;
+      final api = RecordingApi(server: {'events': [], 'objects': []});
+      var reopenCalls = 0;
+      var failReopen = true;
+      final engine = SyncEngine(
+        api,
+        AccountSession.instance,
+        rust: FakeRust(vaultRoot: '/x/profiles/${p.id}/vault'),
+        reopenVault: () async {
+          reopenCalls++;
+          if (failReopen) throw StateError('重开箱失败(比如此刻磁盘满了)');
+        },
+      );
+
+      await expectLater(engine.enableCloud(p), throwsA(isA<StateError>()));
+      // 注册那一步的后果已经落盘了:服务端有档案、本机有密钥、markCloud 过。
+      final half = ProfileManager.instance.byId(p.id)!;
+      expect(half.cloudId, 'prf_new');
+      expect(await AccountSession.instance.profileKey('prf_new'), isNotNull);
+      expect(api.calls.where((c) => c == 'POST /v1/profiles').length, 1);
+
+      // 再点一次:不重新注册,直接重开箱 + 首同步。
+      failReopen = false;
+      final cloudId = await engine.enableCloud(half);
+
+      expect(cloudId, 'prf_new');
+      expect(
+        api.calls.where((c) => c == 'POST /v1/profiles').length,
+        1,
+        reason: '重复注册会在服务端建出第二个档案,第一个从此成了孤儿',
+      );
+      expect(reopenCalls, 2);
+      expect(api.calls, contains('GET /v1/profiles/prf_new/events'), reason: '首同步真的跑了');
     });
   });
 
@@ -817,6 +939,20 @@ class _FlipKeyedAfterFirstCall extends FakeRust {
   Future<SyncImportOutcomeDto> importEvents(Uint8List profileKey, List<SyncEventDto> events) async {
     importCalls++;
     return super.importEvents(profileKey, events);
+  }
+}
+
+/// 只用来测 I1 的 `VaultMismatch` 分支:`currentVaultIsKeyed` 前两次(开头核对 +
+/// 第一个对象落盘前的核对)之间翻脸——第一个对象下载完、写之前核对不过,整次
+/// 同步必须立刻停,而不是"算这个对象失败、继续下一个"。
+class _FlipKeyedBeforeStore extends FakeRust {
+  _FlipKeyedBeforeStore({required super.missing});
+  int _calls = 0;
+
+  @override
+  Future<bool> currentVaultIsKeyed() async {
+    _calls++;
+    return _calls == 1;
   }
 }
 

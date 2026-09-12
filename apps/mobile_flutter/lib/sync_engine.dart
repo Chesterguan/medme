@@ -41,6 +41,11 @@ abstract class RustSyncApi {
   Future<Uint8List> profileKeyNew();
   Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext);
 
+  /// 这台设备有没有开 iCloud 同步(持久标记 `<data_dir>/icloud_enabled`)。
+  /// [SyncEngine.enableCloud] 拿它挡住「两套同步一起开」——见
+  /// [CloudEnableBlocked]。
+  Future<bool> icloudEnabled();
+
   /// 当前打开的保险箱是不是 keyed(云档案)打开的——`SyncEngine` 每次touch vault
   /// 前拿它核对身份(见 [VaultMismatch])。
   Future<bool> currentVaultIsKeyed();
@@ -81,6 +86,9 @@ class RustSync implements RustSyncApi {
       rust.syncSealTo(public: public, plaintext: plaintext);
 
   @override
+  Future<bool> icloudEnabled() async => (await vault_api.icloudStatus()).enabled;
+
+  @override
   Future<bool> currentVaultIsKeyed() => rust.syncCurrentVaultIsKeyed();
 
   @override
@@ -112,6 +120,21 @@ class RustSync implements RustSyncApi {
   @override
   Future<String> storeObject(Uint8List profileKey, String objectId, Uint8List ciphertext) =>
       rust.syncStoreObject(profileKey: profileKey, objectId: objectId, ciphertext: ciphertext);
+}
+
+/// 这台设备开着 iCloud 同步,不能给成员开通账号云同步(最终评审 C3)。
+///
+/// 两套同步搬的是**同一个保险箱的家**:iCloud 开着时,vault 的真相目录在
+/// iCloud 容器里(`<container>/Documents/profiles/<id>/vault`);而 keyed 开箱
+/// (`vault_boot.openCurrentProfileVault` 的 keyed 分支)只认本机沙盒那条路径,
+/// 压根不接容器根。于是「开通云同步」会在一个**空的本机目录**上开出一个空箱子,
+/// 用户眼里就是"我的病历凭空消失了"(真相其实还在容器里,但 App 再也不看那边)。
+///
+/// 宁可不给开,也不能演这一出。`toString` 就是给用户看的那句话。
+class CloudEnableBlocked implements Exception {
+  const CloudEnableBlocked();
+  @override
+  String toString() => '请先在设置里关闭 iCloud 同步';
 }
 
 /// 一次 [SyncEngine.syncProfile] 的结果。
@@ -150,11 +173,17 @@ class SyncReport {
 /// 进程级单例,`Profile p` 只是个参数,两者不天然一致:切换成员没重开箱、或者
 /// 医生模式的代拍病人箱子还开着,都会让"传进来的 p"和"实际写盘读盘的箱子"对不上。
 class SyncEngine {
-  SyncEngine(this.api, this.session, {this.rust = const RustSync()});
+  SyncEngine(this.api, this.session, {this.rust = const RustSync(), this.reopenVault = openCurrentProfileVault});
 
   final ApiClient api;
   final AccountSession session;
   final RustSyncApi rust;
+
+  /// 开通云同步之后重开箱(走 keyed 路径)。测试注入点,默认真实的
+  /// `vault_boot.openCurrentProfileVault`——它内部调 FRB,`flutter test` 跑不到,
+  /// 于是 [enableCloud] 的"注册成功之后"那半截一直没法测(M4 的续开通逻辑正好
+  /// 全在那半截)。同 `AccountFlow.reopenCurrentProfileVault` 的套路。
+  final Future<void> Function() reopenVault;
 
   /// 单次推送最多多少条事件(`services/api/db.py` 的 `MAX_EVENTS_PER_PUSH`)。
   static const maxEventsPerPush = 500;
@@ -177,15 +206,24 @@ class SyncEngine {
   /// 只能给**当前打开的那个成员**开通——`p` 只是调用方传来的一个值对象,真正在
   /// 磁盘上被读写的是 [ProfileManager.currentId] 指向的那个成员;两者不一致时
   /// (比如切换成员的 UI 状态和实际 `currentId` 没同步)拒绝执行,不猜。
+  ///
+  /// **开着 iCloud 同步时拒绝**(最终评审 C3,见 [CloudEnableBlocked])。
+  ///
+  /// **可续做**(最终评审 M4):这件事有三步(注册 → 重开箱 → 首同步),后两步
+  /// 任何一步失败,前面那步的后果都已经落盘了——服务端有了这个档案、本机有了
+  /// 密钥、`profiles.json` 里已经 `markCloud` 过。再点一次不能重新走注册:那会
+  /// 在服务端建出第二个档案、本机第二把密钥,第一个档案从此成了没人认领的孤儿。
+  /// 所以已经有 [Profile.cloudId] 时直接从"重开箱 + 首同步"这一步继续。
   Future<String> enableCloud(Profile p) async {
     if (p.id != ProfileManager.instance.currentId.value) {
       throw VaultMismatch(
         '只能给当前打开的成员开通云同步(当前=${ProfileManager.instance.currentId.value},传入=${p.id})',
       );
     }
-    final cloudId = await registerCloudProfile(p);
-    await openCurrentProfileVault(); // 走 vault_boot 的 FIFO 队列,重开成 keyed
-    await syncProfile(Profile(id: p.id, name: p.name, cloudId: cloudId, role: 'owner'));
+    if (await rust.icloudEnabled()) throw const CloudEnableBlocked();
+    final cloudId = p.cloudId ?? await registerCloudProfile(p);
+    await reopenVault(); // 走 vault_boot 的 FIFO 队列,重开成 keyed
+    await syncProfile(Profile(id: p.id, name: p.name, cloudId: cloudId, role: p.role ?? 'owner'));
     return cloudId;
   }
 
@@ -380,12 +418,27 @@ class SyncEngine {
 
     // 4. 对象下行:事件引用了、本机还没有的。即使第 3 步有对象上传失败,这里
     // 照常跑——上传失败已经被 try/catch 挡住,不会传播到这里。
+    //
+    // **逐个 try/catch,同第 3 步**(最终评审 I1):原来一个对象下载失败(服务端
+    // 还没收到那个对象、签名 403、网络断在中间)会让整次同步抛出去,于是**这一轮
+    // 已经拉回来的事件和前面几个对象都不算数**——`bumpVaultRevision()` 在函数
+    // 末尾,抛出去就跑不到,UI 看到的是"同步失败",而磁盘上其实已经多了东西。
+    // 一份附件缺了就是缺了(下次同步、或者查看器里 `fetchObject` 按需补),不该
+    // 拖累别的附件,更不该让整次同步的成果作废。
     for (final (_, oid) in await rust.missingObjects(key)) {
-      final s = await api.postJson('/v1/profiles/$cloudId/objects/sign', {'object_id': oid, 'verb': 'GET'});
-      final bytes = await api.getBytes(s['url'] as String);
-      await _assertVaultMatches(p); // 每个对象下载完、真正落盘之前都再核一次
-      await rust.storeObject(key, oid, bytes);
-      rep.objectsDown++;
+      try {
+        final s = await api.postJson('/v1/profiles/$cloudId/objects/sign', {'object_id': oid, 'verb': 'GET'});
+        final bytes = await api.getBytes(s['url'] as String);
+        await _assertVaultMatches(p); // 每个对象下载完、真正落盘之前都再核一次
+        await rust.storeObject(key, oid, bytes);
+        rep.objectsDown++;
+      } on VaultMismatch {
+        // 箱子被换掉不是"这一个对象的问题"——继续下一个只会拿错箱子重试,整次
+        // 同步必须立刻停手(同第 1 步写之前那道核对的处理)。
+        rethrow;
+      } catch (_) {
+        rep.objectsFailed++;
+      }
     }
 
     // 只在真的写了东西(拉到新事件/补齐了对象)才通知——`vaultRevision` 挂着

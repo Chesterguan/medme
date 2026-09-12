@@ -176,15 +176,26 @@ Future<void> ensureProxyVaultOpen(String patientId) async {
 /// 「`ProfileManager.currentId` 已经指向 B、但进程里那个箱子其实还是 A 的」这个
 /// 不一致状态——那样接下来任何一次写入(手动录入/导入)都会把 B 的东西写进 A 的
 /// 保险箱。异常照原样抛给调用方(UI 据此展示消息),不吞。
-Future<void> switchProfileAndReopen(String id) => switchProfileAndReopenImpl(id, reopen: openCurrentProfileVault);
+///
+/// [revertTo]:回退到哪个成员。默认是"调用这个函数的那一刻 `currentId` 指着的
+/// 那个",对"从 A 切到 B"这种场景就是对的。但有一类调用方在切换**之前**已经动过
+/// `currentId` 了——`Grants.redeem` 里 `ProfileManager.create()` 自己会把 current
+/// 切到新建的那个成员(见它的文档),于是等走到这里时"原来那个"早就不是 current
+/// 了,默认值会把"回退"变成一次空操作。那种调用方显式把真正的起点传进来。
+Future<void> switchProfileAndReopen(String id, {String? revertTo}) =>
+    switchProfileAndReopenImpl(id, reopen: openCurrentProfileVault, revertTo: revertTo);
 
 /// [switchProfileAndReopen] 的本体,`reopen` 抽成参数是为了让"开箱失败要回退"
 /// 这条契约能在**不带 Rust 原生库**的 `flutter test` 里被钉住(见
 /// `test/switch_profile_and_reopen_test.dart`)——同 [runWipeSequence] 的套路。
 /// 产品代码里的唯一调用点就是 [switchProfileAndReopen],传的永远是真实现。
 @visibleForTesting
-Future<void> switchProfileAndReopenImpl(String id, {required Future<void> Function() reopen}) async {
-  final previousId = ProfileManager.instance.currentId.value;
+Future<void> switchProfileAndReopenImpl(
+  String id, {
+  required Future<void> Function() reopen,
+  String? revertTo,
+}) async {
+  final previousId = revertTo ?? ProfileManager.instance.currentId.value;
   await ProfileManager.instance.switchTo(id);
   try {
     await reopen();

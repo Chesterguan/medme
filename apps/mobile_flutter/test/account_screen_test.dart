@@ -168,8 +168,12 @@ class FakeCrypto implements SyncCrypto {
     this.rightPassword = 'right',
     this.rightRecoveryCode = 'GOODCODE',
     this.failAccountKeysNew = false,
+    this.openSealedFails,
     this.delay = const Duration(milliseconds: 20),
   });
+
+  /// 见 [openSealed]——返回 true 的那些 blob 解不开。
+  final bool Function(Uint8List blob)? openSealedFails;
 
   final String rightPassword;
   final String rightRecoveryCode;
@@ -225,9 +229,12 @@ class FakeCrypto implements SyncCrypto {
 
   /// 恒等透传——不追求真实密码学正确性(同这个类其它方法的一贯做法),测试只
   /// 关心"服务端返回的 wrapped_profile_key 最终原样存进了 `pk_<cloudId>`"。
+  /// [openSealedFails] 为某些 blob 返回 true 时改为抛异常,测 I3 的"解不开就整条
+  /// 跳过、不留空壳成员"。
   @override
   Future<Uint8List> openSealed(Uint8List secret, Uint8List blob) async {
     await _wait();
+    if (openSealedFails?.call(blob) ?? false) throw Exception('open sealed boom');
     return blob;
   }
 }
@@ -260,12 +267,19 @@ class FakeGrantsRust implements GrantsRust {
 /// 那条限制)。所以「开通云同步」的测试只到 `registerCloudProfile` 这一步失败为止,
 /// 成功态改为直接摆一个已有 `cloudId` 的档案,断言 UI 显示"已开通"分支。
 class _FakeSyncRust implements RustSyncApi {
-  _FakeSyncRust({this.keyed = true, String? vaultRoot}) : vaultRoot = vaultRoot ?? '/x/profiles/p-1/vault';
+  _FakeSyncRust({this.keyed = true, this.icloudOn = false, String? vaultRoot})
+      : vaultRoot = vaultRoot ?? '/x/profiles/p-1/vault';
   final bool keyed;
+
+  /// 这台设备开着 iCloud 同步——C3(「开通云同步」必须拒绝并把原因摆出来)用。
+  final bool icloudOn;
   final String vaultRoot;
 
   @override
   Future<Uint8List> profileKeyNew() async => Uint8List(32);
+
+  @override
+  Future<bool> icloudEnabled() async => icloudOn;
 
   @override
   Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext) async =>
@@ -300,6 +314,18 @@ class _FakeSyncRust implements RustSyncApi {
   Future<String> storeObject(Uint8List profileKey, String objectId, Uint8List ciphertext) async => objectId;
 }
 
+/// 「开通到一半」那条用例用的假 Rust 桥:`keyedNow` 一开始是 false(箱子还没
+/// keyed 打开 → 同步撞 `VaultMismatch`),假的 `reopenVault` 把它置 true,于是
+/// 重试之后同步能跑通。单独一个类而不是往 [_FakeSyncRust] 加 setter,是因为只有
+/// 这一条用例需要"中途会变"的行为。
+class _ReopenableFakeSyncRust extends _FakeSyncRust {
+  _ReopenableFakeSyncRust({required String super.vaultRoot});
+  bool keyedNow = false;
+
+  @override
+  Future<bool> currentVaultIsKeyed() async => keyedNow;
+}
+
 /// 假 API——只覆盖「立即同步」用得到的两个方法(拉事件 + 拉对象清单),专测
 /// `_syncNow` 的三态。加一个真延迟(同文件顶部 `FakeApi` 的道理):纯微任务链
 /// 在 `pump()` 单帧内就会跑完,测不出"加载中"这一态。
@@ -307,6 +333,9 @@ class _SyncApi extends ApiClient {
   _SyncApi({this.failPull = false, this.delay = const Duration(milliseconds: 20)}) : super(base: 'http://x');
   final bool failPull;
   final Duration delay;
+
+  /// 成功跑到"拉事件"这一步的次数——测「重试之后同步真的跑起来了」。
+  var pulls = 0;
 
   @override
   Future<(dynamic, Map<String, String>)> getJsonWithHeaders(
@@ -316,6 +345,7 @@ class _SyncApi extends ApiClient {
   }) async {
     await Future<void>.delayed(delay);
     if (failPull) throw const ApiFailed(500, 'pull failed');
+    pulls++;
     return (const [], {'x-seq-map': '{}'});
   }
 
@@ -1074,6 +1104,103 @@ void main() {
 
       expect(flow.lastOutcome, LoginOutcome.ready);
     });
+
+    // ---- 最终评审 I3:换机/清过数据之后,服务端有、本机压根没有的云档案要被"领回来" ----
+
+    test('I3:服务端有一个本机没有的云档案 → 新建本地成员(占位名 + 密钥 + role/到期)', () async {
+      final wrappedKey = Uint8List.fromList(List.generate(32, (i) => 7));
+      final api = FakeApi(hasKeys: true, profiles: [
+        {
+          'profile_id': 'prf_unknown_abcdef',
+          'role': 'editor',
+          'expires_at': '2027-01-02T03:04:05.000Z',
+          'wrapped_profile_key': base64Encode(wrappedKey),
+        },
+      ]);
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final before = ProfileManager.instance.profiles.length;
+      final currentBefore = ProfileManager.instance.currentId.value;
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      final adopted = ProfileManager.instance.profiles.where((p) => p.cloudId == 'prf_unknown_abcdef').toList();
+      expect(adopted.length, 1);
+      expect(adopted.single.name, '云端档案 prf_un', reason: 'cloudId 前 6 位;真名在还没同步下来的病历里,只能占位');
+      expect(adopted.single.role, 'editor');
+      expect(adopted.single.expiresAt, DateTime.parse('2027-01-02T03:04:05.000Z'));
+      expect(await AccountSession.instance.profileKey('prf_unknown_abcdef'), wrappedKey);
+      expect(ProfileManager.instance.profiles.length, before + 1);
+      expect(
+        ProfileManager.instance.currentId.value,
+        currentBefore,
+        reason: '顺手补齐不该把用户正在看的成员切走(ProfileManager.create 自己会切)',
+      );
+    });
+
+    test('I3:改过名之后再解锁一次——名字留着,不再多出一个重复成员', () async {
+      final api = FakeApi(hasKeys: true, profiles: [
+        {
+          'profile_id': 'prf_unknown_abcdef',
+          'role': 'owner',
+          'expires_at': null,
+          'wrapped_profile_key': base64Encode(Uint8List(32)),
+        },
+      ]);
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+      final adoptedId = ProfileManager.instance.profiles.firstWhere((p) => p.cloudId == 'prf_unknown_abcdef').id;
+      await ProfileManager.instance.rename(adoptedId, '张建国');
+      final count = ProfileManager.instance.profiles.length;
+
+      // 第二次解锁(或下一次登录):同一个云档案,本机已经有入口了。
+      await flow.unlockWithPassword('right');
+
+      expect(ProfileManager.instance.profiles.length, count, reason: '不许重复领一次');
+      expect(ProfileManager.instance.byId(adoptedId)!.name, '张建国', reason: '用户改的名字不能被占位名盖回去');
+    });
+
+    test('I3:密钥解不开的那一条整条跳过——不留一个永远打不开的空壳成员', () async {
+      final bad = Uint8List.fromList(List.generate(32, (i) => 0xBA));
+      final good = Uint8List.fromList(List.generate(32, (i) => 0x60));
+      final api = FakeApi(hasKeys: true, profiles: [
+        {'profile_id': 'prf_bad_one', 'role': 'viewer', 'expires_at': null, 'wrapped_profile_key': base64Encode(bad)},
+        {'profile_id': 'prf_good_one', 'role': 'viewer', 'expires_at': null, 'wrapped_profile_key': base64Encode(good)},
+      ]);
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(openSealedFails: (blob) => blob.isNotEmpty && blob.first == 0xBA),
+        reopenCurrentProfileVault: () async {},
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(ProfileManager.instance.profiles.any((p) => p.cloudId == 'prf_bad_one'), isFalse);
+      expect(await AccountSession.instance.profileKey('prf_bad_one'), isNull);
+      expect(ProfileManager.instance.profiles.any((p) => p.cloudId == 'prf_good_one'), isTrue,
+          reason: '一条坏数据不该拖累别的档案');
+      expect(flow.lastOutcome, LoginOutcome.ready);
+    });
   });
 
   group('已就绪:开通云同步 + 立即同步(Task 15)', () {
@@ -1164,6 +1291,66 @@ void main() {
       expect(find.textContaining('已开通云同步'), findsOneWidget);
       expect(find.text('立即同步'), findsOneWidget);
       expect(find.text('开通云同步'), findsNothing);
+    });
+
+    testWidgets('C3:开着 iCloud 同步时点「开通云同步」:原因摆在屏上,仍停在"未开通"分支', (t) async {
+      resetVaultQueueForTest();
+      final api = FakeApi(hasKeys: true);
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+      });
+      await _toReady(
+        t,
+        api,
+        syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust(icloudOn: true)),
+      );
+
+      await t.tap(find.text('开通云同步'));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
+      expect(find.text('开通云同步'), findsOneWidget, reason: '什么都没开通,按钮还在');
+      expect(api.calls, isNot(contains('POST /v1/profiles')), reason: '零服务端调用');
+    });
+
+    testWidgets('M4:已开通但箱子没 keyed 打开(同步撞 VaultMismatch):给重试入口,重试后同步跑通', (t) async {
+      // 「开通到一半」的现场:注册成功(cloudId 已落盘)、重开箱没成。此时
+      // 「立即同步」是死路(不重开箱 → 每次都撞 VaultMismatch),以前唯一的出路
+      // 是重启 App,而屏上没有任何字提示。现在该出现「已开通,点击重试同步」。
+      //
+      // 注册那一步不会再跑(enableCloud 对已有 cloudId 的档案跳过它),所以这条
+      // 用例里没有真实文件 IO —— 不需要 runAsync 包住点击。
+      resetVaultQueueForTest();
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      final rust = _ReopenableFakeSyncRust(
+        vaultRoot: '/x/profiles/${ProfileManager.instance.current.id}/vault',
+      );
+      final syncApi = _SyncApi(delay: const Duration(milliseconds: 1));
+      final engine = SyncEngine(
+        syncApi,
+        AccountSession.instance,
+        rust: rust,
+        reopenVault: () async => rust.keyedNow = true, // 重开箱成功 = 箱子变成 keyed
+      );
+      await _toReady(t, api, syncEngine: engine);
+
+      // 先证明这会儿「立即同步」确实走不通。
+      await t.tap(find.text('立即同步'));
+      await t.pumpAndSettle();
+      expect(find.textContaining('不是这个云档案'), findsOneWidget, reason: 'VaultMismatch 的中文原文');
+      expect(find.text('已开通,点击重试同步'), findsOneWidget);
+
+      // 重试:走 enableCloud → 重开箱(FIFO 队列)+ 首同步,不必重启 App。
+      await t.tap(find.text('已开通,点击重试同步'));
+      await t.pumpAndSettle();
+
+      expect(rust.keyedNow, isTrue, reason: '重开箱走了(FIFO 队列),箱子现在是 keyed 的');
+      expect(syncApi.pulls, 1, reason: '重开箱之后首同步真的跑到了拉事件这一步');
+      expect(find.text('已开通,点击重试同步'), findsNothing, reason: '成功之后错误清掉,重试入口收起来');
+      expect(find.textContaining('不是这个云档案'), findsNothing);
+      expect(find.text('立即同步'), findsOneWidget, reason: '回到正常的"已开通"样子,不必重启 App');
     });
 
     testWidgets('立即同步:加载中显示进度圈', (t) async {

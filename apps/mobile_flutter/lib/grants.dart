@@ -12,7 +12,7 @@ import 'package:mobile_flutter/src/rust/api/vault.dart' show patientProfile;
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' as rust;
 import 'package:mobile_flutter/sync_engine.dart' show SyncEngine;
 import 'package:mobile_flutter/vault_boot.dart'
-    show autoNameCurrentProfileFrom, openCurrentProfileVault, removeProfileAndReopen;
+    show autoNameCurrentProfileFrom, removeProfileAndReopen, switchProfileAndReopen;
 
 /// `token_hash` 用的哈希——与 Rust 侧 `sync::kek_from_token` 的 salt(`medme-invite-v1`)
 /// 是两回事:这里只是让服务端能核对客户端出示的 token 对不对,不参与密钥推导。
@@ -54,11 +54,17 @@ class RustGrants implements GrantsRust {
 /// 服务端全程只见密文——本文件里除了 [GrantsRust] 的调用之外,不得出现任何解密
 /// 调用之外的明文密钥字段(见 `services/api/app.py` 的 invites/grants 端点)。
 class Grants {
-  Grants(this.api, this.session, {this.rust = const RustGrants()});
+  Grants(this.api, this.session, {this.rust = const RustGrants(), this.switchAndReopen = switchProfileAndReopen});
 
   final ApiClient api;
   final AccountSession session;
   final GrantsRust rust;
+
+  /// 兑换收尾时"切到新档案 + 重开箱"走的函数。默认
+  /// `vault_boot.switchProfileAndReopen`——**可回退**的那一条(开箱失败会把
+  /// `currentId` 退回去再 rethrow,见最终评审 I2)。抽成字段只为测试能注入一个
+  /// 假的:真实现里的开箱调 FRB,`flutter test` 跑不到。
+  final Future<void> Function(String id, {String? revertTo}) switchAndReopen;
 
   /// 非永久授权(邀请/家属直发)的天数上限——与 `services/api/db.py` 的
   /// `GRANT_DOCTOR_DAYS` 一致,客户端这边只是不发一个注定被服务端砍掉的数字。
@@ -124,26 +130,38 @@ class Grants {
       // 这个云档案本机已经有一个入口——重新兑换同一条链接、或者角色/到期被服务端
       // 更新过(比如医生邀请续期)——复用它,别再建一个重复的空壳档案出来。
       await ProfileManager.instance.ensureLoaded();
+      // **在 `create()` 之前**记下"原来停在哪个成员":`create()` 自己会把 current
+      // 切到新建的那个(见 `ProfileManager.create`),开箱失败要退回的是这个,不是
+      // 它。见 [_finishRedeem] 与最终评审 I2。
+      final previousId = ProfileManager.instance.currentId.value;
       final existing = ProfileManager.instance.profiles.where((p) => p.cloudId == profileId).firstOrNull;
       final localId = existing?.id ?? await ProfileManager.instance.create('(同步中)', userManaged: false);
       if (localId == null) throw StateError('无法创建本地档案');
       final role = r['role'] as String;
       final expiresAt = r['expires_at'] == null ? null : DateTime.parse(r['expires_at'] as String);
       await ProfileManager.instance.markCloud(localId, profileId, role, expiresAt);
-      await ProfileManager.instance.switchTo(localId);
-      final stored = ProfileManager.instance.current;
+      final stored = ProfileManager.instance.byId(localId)!;
 
-      await (afterStored ?? _finishRedeem)(stored);
+      await (afterStored ?? (p) => _finishRedeem(p, revertTo: previousId))(stored);
       Analytics.track(AnalyticsEvent.grantRedeemed, {'role': role, 'ok': true});
-      return ProfileManager.instance.current;
+      return ProfileManager.instance.byId(localId)!;
     } catch (_) {
       Analytics.track(AnalyticsEvent.grantRedeemed, {'ok': false});
       rethrow;
     }
   }
 
-  Future<void> _finishRedeem(Profile p) async {
-    await openCurrentProfileVault();
+  /// 兑换收尾:切到这个档案 + 重开箱 → 首同步 → 按识别到的姓名命名。
+  ///
+  /// 切换走 [switchAndReopen](默认 `vault_boot.switchProfileAndReopen`)而不是
+  /// 裸的 `ProfileManager.switchTo` + `openCurrentProfileVault`(最终评审 I2):
+  /// 开箱失败时(最常见是 [ProfileLocked]——账号密钥这会儿读不出来)必须把
+  /// `currentId` 退回兑换之前那个成员,否则就停在「current 指着新档案、进程里开着
+  /// 的还是旧档案的箱子」这个状态上,接下来任何一次录入/导入都会把新档案的内容
+  /// 写进旧档案的保险箱。[revertTo] 是兑换开始时那个成员,不能用
+  /// `switchProfileAndReopen` 的默认值——`create()` 早就把 current 改掉了。
+  Future<void> _finishRedeem(Profile p, {required String revertTo}) async {
+    await switchAndReopen(p.id, revertTo: revertTo);
     await SyncEngine(api, session).syncProfile(p);
     // 拉完事件后用识别到的姓名命名——占位名「(同步中)」只在首同步完成前露面。
     await autoNameCurrentProfileFrom((await patientProfile()).name);

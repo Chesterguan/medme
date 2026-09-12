@@ -77,6 +77,29 @@ void main() {
     );
   });
 
+  // 最终评审 I2:`Grants.redeem` 的收尾要用这条路径,但它在切换**之前**已经
+  // 动过 currentId 了(`ProfileManager.create()` 自己会切到新建的成员),所以
+  // "回退到哪"必须能显式传进来——否则默认值取到的是那个新成员,"回退"变成一次
+  // 什么都不做的空操作,照样停在「current 指着新档案、箱子还是旧档案的」那个
+  // 会把数据写错档案的状态上。
+  test('revertTo:显式指定回退目标(调用前 currentId 已被改过的那一类调用方)', () async {
+    final pm = ProfileManager.instance;
+    final originalId = pm.currentId.value;
+    final newId = (await pm.create('刚兑换出来的档案'))!;
+    expect(pm.currentId.value, newId, reason: 'create() 自己就把 current 切过去了——这正是要绕过的那一步');
+
+    Future<void> reopen() async {
+      if (pm.currentId.value == newId) throw const ProfileLocked('prf_x');
+    }
+
+    await expectLater(
+      switchProfileAndReopenImpl(newId, reopen: reopen, revertTo: originalId),
+      throwsA(isA<ProfileLocked>()),
+    );
+
+    expect(pm.currentId.value, originalId, reason: '退回兑换开始前那个成员,不是 create() 留下的那个');
+  });
+
   test('开箱成功:正常切换,不触发任何回退', () async {
     final pm = ProfileManager.instance;
     final newId = (await pm.create('李秀英'))!;
