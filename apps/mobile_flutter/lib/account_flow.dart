@@ -119,6 +119,11 @@ class AccountFlow {
 
   Future<void> sendOtp(String phone) => api.postJson('/v1/auth/otp', {'phone': phone});
 
+  /// `account_login` 只覆盖「认证 + session.save」这一小段——**`_afterLogin()`
+  /// 必须留在这个 try 外面**。它调的 `GET /v1/account/keys` 只吞 404
+  /// (见 `_afterLogin`),非 404 会 rethrow;如果把它包进同一个 try,登录本身
+  /// 明明成功了,却会因为账号密钥服务 500 被这里的 catch 接住,再报一条
+  /// `ok:false`——一次点击变成两条互相矛盾的 `account_login`。
   Future<LoginOutcome> loginOtp(String phone, String code) async {
     try {
       final r = await api.postJson('/v1/auth/login', {
@@ -128,14 +133,16 @@ class AccountFlow {
         'device_name': Platform.operatingSystem,
       });
       await session.save(accountId: r['account_id'] as String, access: r['access'] as String, refresh: r['refresh'] as String);
-      Analytics.track(AnalyticsEvent.accountLogin, {'method': 'otp', 'ok': true});
-      return await _afterLogin();
     } catch (_) {
       Analytics.track(AnalyticsEvent.accountLogin, {'method': 'otp', 'ok': false});
       rethrow;
     }
+    Analytics.track(AnalyticsEvent.accountLogin, {'method': 'otp', 'ok': true});
+    return _afterLogin();
   }
 
+  /// 同 [loginOtp] 的道理:`account_login` 只钉住 Apple 认证 + `session.save`,
+  /// `_afterLogin()` 的失败留给调用方自己处理,不污染登录事件。
   Future<void> loginApple() async {
     try {
       final cred = await SignInWithApple.getAppleIDCredential(
@@ -147,12 +154,12 @@ class AccountFlow {
         'device_name': Platform.operatingSystem,
       });
       await session.save(accountId: r['account_id'] as String, access: r['access'] as String, refresh: r['refresh'] as String);
-      Analytics.track(AnalyticsEvent.accountLogin, {'method': 'apple', 'ok': true});
-      await _afterLogin();
     } catch (_) {
       Analytics.track(AnalyticsEvent.accountLogin, {'method': 'apple', 'ok': false});
       rethrow;
     }
+    Analytics.track(AnalyticsEvent.accountLogin, {'method': 'apple', 'ok': true});
+    await _afterLogin();
   }
 
   Future<LoginOutcome> _afterLogin() async {

@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage_platform_interface/flutter_secure_storage
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/account_flow.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
@@ -714,5 +715,30 @@ void main() {
       expect(AccountSession.instance.privateKey, isNotNull);
       expect(AccountSession.instance.publicKey, isNotNull);
     });
+  });
+
+  group('account_login 埋点:只报登录这一步,不掺 _afterLogin 的失败', () {
+    tearDown(() => Analytics.debugSink = null);
+
+    test('OTP 登录成功,但随后 GET /v1/account/keys 500:只报一次 account_login(ok:true),异常仍然往外抛', () async {
+      final api = FakeApi(failKeys500: true);
+      final flow = AccountFlow(api, AccountSession.instance, crypto: FakeCrypto());
+      final events = <MapEntry<AnalyticsEvent, Map<String, Object>>>[];
+      Analytics.debugSink = (e, p) => events.add(MapEntry(e, p));
+
+      await expectLater(
+        () => flow.loginOtp('13800000001', '000000'),
+        throwsA(isA<ApiFailed>()),
+      );
+
+      final loginEvents = events.where((e) => e.key == AnalyticsEvent.accountLogin).toList();
+      expect(loginEvents, hasLength(1), reason: '_afterLogin 的失败不该再报第二条 account_login');
+      expect(loginEvents.single.value, {'method': 'otp', 'ok': true});
+    });
+
+    // `loginApple` 走的是同一段被拆开的 try/catch 结构,但会真的调
+    // `SignInWithApple.getAppleIDCredential`(无法在 `flutter test` 里注入原生
+    // 实现),不再单独起一条用例——上面这条 OTP 用例已经钉住了"登录成功但
+    // `_afterLogin` 失败,不该多报一条 account_login"这条共享逻辑。
   });
 }

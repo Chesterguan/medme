@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:posthog_flutter/posthog_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -215,6 +216,15 @@ class Analytics {
     }
   }
 
+  /// **仅测试用的钩子。** `track` 没有别的测试seam(真实上报走 Posthog 单例,
+  /// `flutter test` 既不配 Key 也不该真的联网)——调用点想断言"到底报没报、报了
+  /// 几次、带了什么属性",此前只能通过 UI 副作用间接猜。设了它,`track` 每次调用
+  /// 都会把 event/props 转发给它,除此之外**不改变任何行为**(不影响
+  /// `_started`/`_enabled` 判断、不影响真实发送)。测试用完记得置回 `null`,
+  /// 否则会漏到下一个测试里。
+  @visibleForTesting
+  static void Function(AnalyticsEvent event, Map<String, Object> props)? debugSink;
+
   /// 上报一个事件。**fire-and-forget** —— 不 await、不抛错、不阻塞调用方。
   static void track(AnalyticsEvent event, [Map<String, Object>? props]) {
     // 调用点发了 [AnalyticsEvent.props] 里没有的键 = 目录必然漂。只在 debug/测试里
@@ -230,6 +240,7 @@ class Analytics {
       }
       return true;
     }());
+    debugSink?.call(event, props ?? const {});
     if (!_started || !_enabled) return;
     unawaited(_send(event, props ?? const {}));
   }
