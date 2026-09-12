@@ -24,6 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class FakeApi extends ApiClient {
   FakeApi({
     this.failOtp = false,
+    this.otpError,
     this.failLogin = false,
     this.hasKeys = false,
     this.failPut = false,
@@ -46,6 +47,10 @@ class FakeApi extends ApiClient {
   }) : super(base: 'http://x');
 
   final bool failOtp;
+
+  /// 发验证码这一步抛出的异常(默认 null = 不抛)。[failOtp] 只能抛 429,而
+  /// B1 要验的是**网络层**那个异常(`ApiNetworkError`)在屏上长什么样。
+  final Object? otpError;
   final bool failLogin;
   final bool hasKeys;
   final bool failPut;
@@ -87,6 +92,7 @@ class FakeApi extends ApiClient {
     calls.add('POST $path');
     await Future<void>.delayed(delay);
     if (path == '/v1/auth/otp') {
+      if (otpError != null) throw otpError!;
       if (failOtp) throw const ApiFailed(429, 'rate_limited');
       return {'ok': true};
     }
@@ -558,7 +564,7 @@ void main() {
 
       await t.tap(find.text('我已抄下恢复码'));
       await t.pumpAndSettle();
-      expect(find.textContaining('put failed'), findsOneWidget);
+      expect(find.text('服务器开小差了,稍后再试'), findsOneWidget); // B2:不念状态码
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget); // 恢复码原样还在
       expect(find.text('我已抄下恢复码'), findsOneWidget); // 可以直接重试
       expect(AccountSession.instance.privateKey, isNull);
@@ -572,7 +578,7 @@ void main() {
       await t.enterText(find.byKey(const Key('phone')), '13800000001');
       await t.tap(find.text('发送验证码'));
       await t.pumpAndSettle();
-      expect(find.textContaining('rate_limited'), findsOneWidget);
+      expect(find.text('操作太频繁,过一会儿再试'), findsOneWidget); // B2:429 的人话
       expect(find.text('发送验证码'), findsOneWidget); // 可重试
       expect(find.byKey(const Key('code')), findsNothing); // 没有进入下一步
     });
@@ -586,7 +592,7 @@ void main() {
       await t.enterText(find.byKey(const Key('code')), '111111');
       await t.tap(find.text('登录'));
       await t.pumpAndSettle();
-      expect(find.textContaining('bad code'), findsOneWidget); // 失败态
+      expect(find.text('验证码不对或已过期,请重新发送'), findsOneWidget); // B2:不说「重新登录」
       expect(find.text('登录'), findsOneWidget); // 可重试
     });
   });
@@ -671,7 +677,7 @@ void main() {
     testWidgets('加载失败:显示错误,不崩', (t) async {
       final api = FakeApi(hasKeys: true, failDevices: true);
       await _toReady(t, api);
-      expect(find.textContaining('devices failed'), findsOneWidget);
+      expect(find.textContaining('设备列表加载失败:服务器开小差了'), findsOneWidget);
     });
 
     testWidgets('批准成功:调用 devices/approve,不留错误', (t) async {
@@ -923,7 +929,7 @@ void main() {
       await t.tap(find.text('按手机号添加家属'));
       await t.pumpAndSettle();
 
-      expect(find.text('查询太频繁,稍后再试'), findsOneWidget);
+      expect(find.text('操作太频繁,过一会儿再试'), findsOneWidget); // 迁进 friendlyApiError 之后的统一措辞
     });
 
     testWidgets('手机号格式不对(400):提示「手机号格式不对」', (t) async {
@@ -967,7 +973,7 @@ void main() {
       await t.pumpAndSettle();
 
       // 错误落在 `_error` 上、停在 idle——不是崩溃,也不是安静地卡住。
-      expect(find.textContaining('keys server error'), findsOneWidget);
+      expect(find.text('服务器开小差了,稍后再试'), findsOneWidget);
       expect(find.text('登录 MedMe 账号'), findsOneWidget);
       // 没有因为异常而误判成"需要设口令"或"已就绪"。
       expect(find.text('设置口令'), findsNothing);
@@ -980,6 +986,40 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text('登录 MedMe 账号'), findsOneWidget);
       expect(api.calls, isEmpty);
+    });
+  });
+
+  // ---- B1:断网 → 屏上是中文,不是 `SocketException: Connection refused ...` ----
+  //
+  // **分两层验,各验各的:**
+  //   · "真 socket 失败 → `ApiNetworkError`" 在 `test/api_client_test.dart` 里用一个
+  //     真的已关闭端口验过(翻译只在 `ApiClient` 一处,那里是它的家);
+  //   · 这里验"翻完的异常走到屏上长什么样"。
+  //
+  // 不在 widget 测试里真发 socket:`tester.tap` 起的那条 Future 链活在 fake-async
+  // 的时钟里,真实 socket 的回调永远推不进来,`pumpAndSettle` 干等到超时(试过,
+  // 10 分钟)。
+  group('B1:断网 → 账号屏显示中文句子', () {
+    testWidgets('发验证码撞上连不上:屏上「网络连不上,换个网络再试一次。」', (t) async {
+      final api = FakeApi(otpError: ApiNetworkError.offline);
+      await t.pumpWidget(_app(api));
+      await t.enterText(find.byKey(const Key('phone')), '13800000001');
+      await t.tap(find.text('发送验证码'));
+      await t.pumpAndSettle();
+
+      expect(find.text('网络连不上,换个网络再试一次。'), findsOneWidget);
+      expect(find.textContaining('SocketException'), findsNothing);
+      expect(find.text('发送验证码'), findsOneWidget, reason: '可以直接重试');
+    });
+
+    testWidgets('发验证码撞上读超时:屏上「网络太慢…」', (t) async {
+      final api = FakeApi(otpError: ApiNetworkError.slow);
+      await t.pumpWidget(_app(api));
+      await t.enterText(find.byKey(const Key('phone')), '13800000001');
+      await t.tap(find.text('发送验证码'));
+      await t.pumpAndSettle();
+
+      expect(find.text('网络太慢,没能连上服务器。换个网络再试一次。'), findsOneWidget);
     });
   });
 
@@ -1291,7 +1331,7 @@ void main() {
       await t.tap(find.text('开通云同步'));
       await t.pumpAndSettle();
 
-      expect(find.textContaining('create profile failed'), findsOneWidget);
+      expect(find.text('服务器开小差了,稍后再试'), findsOneWidget);
       expect(find.text('开通云同步'), findsOneWidget, reason: '没进入"已开通"分支,按钮还在,可以重试');
     });
 
@@ -1404,7 +1444,7 @@ void main() {
       await t.tap(find.text('立即同步'));
       await t.pumpAndSettle();
 
-      expect(find.textContaining('pull failed'), findsOneWidget);
+      expect(find.text('服务器开小差了,稍后再试'), findsOneWidget);
     });
 
     testWidgets('立即同步失败:VaultMismatch 的中文消息原样展示(vault 身份核对不通过)', (t) async {
@@ -1626,7 +1666,7 @@ void main() {
       await t.tap(find.text('确认注销'));
       await t.pumpAndSettle();
 
-      expect(find.textContaining('reauth required'), findsOneWidget);
+      expect(find.text('登录状态已过期,请重新登录'), findsOneWidget);
       expect(find.byKey(const Key('delete_phone')), findsOneWidget); // 表单还在,可以重试
       expect(AccountSession.instance.loggedIn.value, isTrue, reason: '注销失败不该清掉本机 session');
     });

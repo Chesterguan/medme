@@ -728,7 +728,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
       final p = await grants.redeem(widget.link);
       if (mounted) setState(() => _done = p);
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() { _error = friendlyApiError(e); });
     } finally {
       if (mounted) setState(() => _busy = false);
     }

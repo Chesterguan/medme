@@ -95,6 +95,71 @@ void main() {
     expect(const ApiUnauthorized().toString(), '登录状态已过期,请重新登录');
   });
 
+  // ---- B1:网络层异常不许裸着给用户看 ----
+  //
+  // 在这之前,断网时账号屏/兑换屏/同步那九处 `'$e'` 显示的是
+  // `SocketException: Connection refused (OS Error: ...), address = 127.0.0.1`。
+  group('B1:网络失败翻成中文(ApiNetworkError),翻译只在 ApiClient 一处', () {
+    test('连不上(服务器已关闭 = 断网):抛 ApiNetworkError,文案是中文', () async {
+      // 真的断一次网:把回环服务器关掉,端口上就没人再 listen 了。
+      final port = server.port;
+      await server.close(force: true);
+      final dead = ApiClient(base: 'http://127.0.0.1:$port');
+
+      await expectLater(
+        dead.getJson('/v1/echo'),
+        throwsA(
+          isA<ApiNetworkError>().having((e) => '$e', 'toString', '网络连不上,换个网络再试一次。'),
+        ),
+      );
+      // 重开一个,让 tearDown 的 close 有东西可关。
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+    });
+
+    // 读超时那一支(`on TimeoutException → slow`)不真跑一遍:`Net.idle` 是写死的
+    // 30 秒常量,注不进去,真等一次就是一个 30 秒的测试。上面那条已经证明 `_net`
+    // 确实包住了请求,这里只钉住另一句文案本身。
+    test('「网络太慢」那一句的文案', () {
+      expect(ApiNetworkError.slow.toString(), '网络太慢,没能连上服务器。换个网络再试一次。');
+    });
+  });
+
+  // ---- B2:状态码不许念给用户听 ----
+  group('B2:friendlyApiError —— 一个失败一句中文', () {
+    test('429 / 410 / 403 / 404 / 400 / 5xx 各有一句人话,不出现状态码数字', () {
+      expect(friendlyApiError(const ApiFailed(429, 'rate_limited')), '操作太频繁,过一会儿再试');
+      expect(friendlyApiError(const ApiFailed(410, 'invite expired')), contains('邀请码已经过期或被用过'));
+      expect(friendlyApiError(const ApiFailed(403, 'forbidden')), contains('没有权限'));
+      expect(friendlyApiError(const ApiFailed(404, 'not found')), contains('没有找到'));
+      expect(friendlyApiError(const ApiFailed(400, 'bad request')), contains('填错'));
+      expect(friendlyApiError(const ApiFailed(500, 'boom')), '服务器开小差了,稍后再试');
+      expect(friendlyApiError(const ApiFailed(503, 'unavailable')), '服务器开小差了,稍后再试');
+      for (final s in [429, 410, 403, 404, 400, 500, 503]) {
+        expect(friendlyApiError(ApiFailed(s, 'x')), isNot(contains('$s')));
+      }
+    });
+
+    test('验证码打错/过期(登录那条路上的 401):说「重新发送」,不说「重新登录」', () {
+      expect(friendlyApiError(const ApiUnauthorized('bad code')), '验证码不对或已过期,请重新发送');
+      expect(friendlyApiError(const ApiUnauthorized('expired')), '登录状态已过期,请重新登录');
+    });
+
+    test('网络失败原样透传它自己那句中文', () {
+      expect(friendlyApiError(ApiNetworkError.offline), '网络连不上,换个网络再试一次。');
+    });
+
+    test('不认识的异常不吞:原样展示,不变成「未知错误」', () {
+      expect(friendlyApiError(StateError('这个成员还没开通云同步')), contains('还没开通云同步'));
+    });
+  });
+
+  test('B1:401 带上服务端 detail(验证码错 vs 登录过期要分开)', () async {
+    await expectLater(
+      api.getJson('/v1/nope'),
+      throwsA(isA<ApiUnauthorized>().having((e) => e.detail, 'detail', 'expired')),
+    );
+  });
+
   // ---- C2:access token 只活 1 小时,401 要自动刷新一次再重试 ----
   //
   // 之前 `/v1/auth/refresh` 在客户端**没有任何调用方**:App 在前台连续用满一小时

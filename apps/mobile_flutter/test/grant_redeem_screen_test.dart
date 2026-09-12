@@ -103,7 +103,9 @@ void main() {
     await t.tap(find.text('加入'));
     await t.pumpAndSettle();
 
-    expect(find.textContaining('410'), findsOneWidget);
+    // B2:410 说人话,不把状态码念给用户听。
+    expect(find.textContaining('邀请码已经过期或被用过'), findsOneWidget);
+    expect(find.textContaining('410'), findsNothing);
     expect(find.text('加入'), findsOneWidget); // 按钮还在,可以重试
     expect(find.text('已加入'), findsNothing);
   });

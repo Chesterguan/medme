@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -7,10 +8,17 @@ import 'package:mobile_flutter/net.dart';
 /// 服务端说这个请求没有有效的登录凭证。[ApiClient] 已经自动拿 refresh token 试过
 /// 一次(见 [ApiClient._refreshTokens]),抛到这里说明连 refresh 都不管用了——
 /// UI 唯一该做的事是让用户重新登录,所以 `toString` 直接就是给人看的那句话。
+///
+/// **[detail] 是服务端那句 `detail`**,因为 401 不全是"登录过期":
+/// `POST /v1/auth/login` 的验证码打错/过期也是 401(`services/api/auth.py` 的
+/// `PhoneOtpProvider.login` → `bad code`),而那条路上「登录状态已过期,请重新
+/// 登录」是一句纯粹的错话——用户压根还没登录上,他要做的是重新发一次验证码。
+/// 所以翻译放在这里一处,不让每个调用点各猜一遍。
 class ApiUnauthorized implements Exception {
-  const ApiUnauthorized();
+  const ApiUnauthorized([this.detail = '']);
+  final String detail;
   @override
-  String toString() => '登录状态已过期,请重新登录';
+  String toString() => detail == 'bad code' ? '验证码不对或已过期,请重新发送' : '登录状态已过期,请重新登录';
 }
 
 class ApiFailed implements Exception {
@@ -20,6 +28,56 @@ class ApiFailed implements Exception {
   @override
   String toString() => '服务器返回 $status:$message';
 }
+
+/// 网络层失败(连不上 / 连上了不吐数据 / TLS 握手不成)。
+///
+/// **翻译只在 [ApiClient] 这一处**(见 `ApiClient._net`):在这之前,这九处
+/// 调用点(账号屏、兑换屏、同步……)直接把 `SocketException: Failed host lookup`
+/// 这种英文异常摆给用户看。代拍那条线早就有两句中文(`claim_link.dart` 的
+/// `_fetch`),这里是同两句——只把「没能取回病历」换成「没能连上服务器」,
+/// 因为账号/同步这条路上还谈不到病历。
+class ApiNetworkError implements Exception {
+  const ApiNetworkError(this.message);
+  final String message;
+
+  /// 连上了,但对面不吐数据(进电梯、基站切换时的黑洞连接,见 `net.dart`)。
+  static const slow = ApiNetworkError('网络太慢,没能连上服务器。换个网络再试一次。');
+
+  /// 压根没连上(DNS 解析不了、拒绝连接、飞行模式),以及 TLS 握手失败。
+  static const offline = ApiNetworkError('网络连不上,换个网络再试一次。');
+
+  @override
+  String toString() => message;
+}
+
+/// 一个失败 → 一句用户看得懂、能照着做的中文。**全 App 一份。**
+///
+/// 在这之前:`ApiFailed.toString()` 把状态码念给用户听(「服务器返回 410:
+/// invite expired」),而每个在意某个码的调用点各写一个自己的 switch
+/// (`_addFamily` 曾是唯一一个)。状态码的含义是服务端定的、全 App 一致的,
+/// 所以这层翻译也该只有一份。
+///
+/// 调用点仍然可以在这之上加**自己这条路独有**的解释(比如「按手机号加家属」
+/// 的 404 能说得比"没找到"具体得多,见 `account_screen.dart` 的
+/// `_familyLookupError`)——那是端点语义,不是状态码语义。
+String friendlyApiError(Object e) => switch (e) {
+  // 这两个的 `toString()` 本来就是给人看的那句话。
+  ApiNetworkError() || ApiUnauthorized() => '$e',
+  // 真实的 [ApiClient] 把 401 抛成 [ApiUnauthorized],这两条是给别处构造的
+  // `ApiFailed(401)` 兜底(测试里的假 API、将来某个自己拼状态码的调用点)——
+  // 不兜的话它会落到最下面那条,把「服务器返回 401:bad code」摆给用户。
+  ApiFailed(status: 401, message: 'bad code') => '验证码不对或已过期,请重新发送',
+  ApiFailed(status: 401) => '登录状态已过期,请重新登录',
+  ApiFailed(status: 429) => '操作太频繁,过一会儿再试',
+  ApiFailed(status: 410) => '这个邀请码已经过期或被用过了,请对方重新生成一个',
+  ApiFailed(status: 403) => '没有权限做这件事——这份档案可能不是你的,或者授权已经被收回',
+  ApiFailed(status: 404) => '没有找到——可能已经被删除或撤销了',
+  ApiFailed(status: 400) => '请求里有填错的地方,检查一下再试',
+  ApiFailed(status: >= 500) => '服务器开小差了,稍后再试',
+  // 其余(自定义异常 `UnlockFailed`/`ProfileLocked`/`StateError` 等)本来就是
+  // 中文的,原样展示——**不吞**:吞掉就是把一个没预料到的失败说成"未知错误"。
+  _ => '$e',
+};
 
 /// 账号 API 的唯一出口。所有请求走 [Net](有读超时);token 由 [bearer] 回调提供,
 /// 于是测试里注入假服务器 + 假 token 即可,不碰 secure storage。
@@ -105,7 +163,7 @@ class ApiClient {
     Map<String, String>? headers,
   }) async {
     final uri = Uri.parse('$base$path').replace(queryParameters: query);
-    return Net.run((client) async {
+    return _net(() => Net.run((client) async {
       final req = await client.openUrl(method, uri);
       final tok = await bearer?.call();
       if (tok != null) req.headers.set('authorization', 'Bearer $tok');
@@ -118,16 +176,39 @@ class ApiClient {
       }
       final res = await Net.send(req);
       final text = await Net.text(res);
-      if (res.statusCode == 401) throw const ApiUnauthorized();
       if (res.statusCode < 200 || res.statusCode >= 300) {
         String msg = text;
         try { msg = (jsonDecode(text) as Map)['detail']?.toString() ?? text; } catch (_) {}
+        // 401 带上 detail——「验证码打错」和「登录过期」都是 401,只有这个字段
+        // 能把它们分开(见 [ApiUnauthorized])。
+        if (res.statusCode == 401) throw ApiUnauthorized(msg);
         throw ApiFailed(res.statusCode, msg);
       }
       final respHeaders = <String, String>{};
       res.headers.forEach((name, values) => respHeaders[name.toLowerCase()] = values.join(','));
       return (text.isEmpty ? null : jsonDecode(text), respHeaders);
-    });
+    }));
+  }
+
+  /// `dart:io` 的网络异常 → [ApiNetworkError]。**整个 [ApiClient] 只在这一处翻译**,
+  /// 三个出口([_send]、[putBytes]、[getBytes])都包它。
+  ///
+  /// 为什么不下沉到 `Net.run` 里(那样连代拍线都免费拿到):`Net.retry` 的默认
+  /// `retryIf` 认的就是 `e is SocketException`,而 `claim_link.dart` 也在重试**外面**
+  /// 自己接这两种异常——在 `Net` 里翻译会同时拆掉那两处,换来的只是少写三个包装。
+  static Future<T> _net<T>(Future<T> Function() body) async {
+    try {
+      return await body();
+    } on TimeoutException {
+      throw ApiNetworkError.slow;
+    } on HandshakeException {
+      // `HandshakeException implements IOException`,**不是** `SocketException`
+      // 的子类,所以必须单列一条,否则它会漏到最外面变成裸异常。证书/时间/
+      // 中间人都可能,但用户能做的事和"连不上"一样:换个网络再试。
+      throw ApiNetworkError.offline;
+    } on SocketException {
+      throw ApiNetworkError.offline;
+    }
   }
 
   Future<dynamic> _json(String method, String path, {Object? body, Map<String, String>? query, Map<String, String>? headers}) async {
@@ -163,7 +244,7 @@ class ApiClient {
   /// token——这里的 401/403 意味着"签名过期/不对",换一个 access token 没有任何
   /// 帮助,要重新去 `/v1/profiles/{pid}/objects/sign` 签一次。签名请求自己走
   /// [_jsonWithHeaders],该刷新的地方已经刷新了。
-  Future<void> putBytes(String url, Uint8List bytes) => Net.run((client) async {
+  Future<void> putBytes(String url, Uint8List bytes) => _net(() => Net.run((client) async {
         final req = await client.putUrl(Uri.parse(url));
         req.headers.set('content-type', 'application/octet-stream');
         req.contentLength = bytes.length;
@@ -172,11 +253,11 @@ class ApiClient {
         final res = await Net.send(req, timeout: const Duration(seconds: 90));
         await Net.drain(res);
         if (res.statusCode != 200) throw ApiFailed(res.statusCode, 'upload');
-      });
+      }));
 
-  Future<Uint8List> getBytes(String url) => Net.run((client) async {
+  Future<Uint8List> getBytes(String url) => _net(() => Net.run((client) async {
         final res = await Net.send(await client.getUrl(Uri.parse(url)));
         if (res.statusCode != 200) { await Net.drain(res); throw ApiFailed(res.statusCode, 'download'); }
         return Net.bytes(res);
-      });
+      }));
 }

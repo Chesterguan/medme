@@ -145,7 +145,7 @@ class _AccountScreenState extends State<AccountScreen> {
         })
         .catchError((Object e) {
           if (!mounted) return;
-          setState(() => _error = e.toString());
+          setState(() { _error = friendlyApiError(e); });
         });
   }
 
@@ -170,7 +170,7 @@ class _AccountScreenState extends State<AccountScreen> {
     try {
       await body();
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() { _error = friendlyApiError(e); });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -565,7 +565,7 @@ class _AccountScreenState extends State<AccountScreen> {
       ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已开通云同步')));
     } catch (e) {
       if (!mounted) return;
-      setState(() => _cloudError = '$e');
+      setState(() { _cloudError = friendlyApiError(e); });
     } finally {
       if (mounted) setState(() => _cloudBusy = false);
     }
@@ -588,7 +588,7 @@ class _AccountScreenState extends State<AccountScreen> {
       setState(() => _lastSyncReport = rep);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _syncError = '$e');
+      setState(() { _syncError = friendlyApiError(e); });
     } finally {
       if (mounted) setState(() => _syncBusy = false);
     }
@@ -873,7 +873,7 @@ class _AccountScreenState extends State<AccountScreen> {
       ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('验证码已发送')));
     } catch (e) {
       if (!mounted) return;
-      setState(() => _deleteError = '$e');
+      setState(() { _deleteError = friendlyApiError(e); });
     } finally {
       if (mounted) setState(() => _deleteOtpBusy = false);
     }
@@ -901,7 +901,7 @@ class _AccountScreenState extends State<AccountScreen> {
       ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('账号已注销')));
     } catch (e) {
       if (!mounted) return;
-      setState(() => _deleteError = '$e');
+      setState(() { _deleteError = friendlyApiError(e); });
     } finally {
       if (mounted) setState(() => _deleteBusy = false);
     }
@@ -914,7 +914,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return const Center(child: CircularProgressIndicator());
       }
       if (snap.hasError) {
-        return _errorText('设备列表加载失败:${snap.error}');
+        return _errorText('设备列表加载失败:${friendlyApiError(snap.error!)}');
       }
       final devices = snap.data ?? const [];
       if (devices.isEmpty) return const Text('没有其它设备', style: TextStyle(color: MedMe.faint));
@@ -954,7 +954,7 @@ class _AccountScreenState extends State<AccountScreen> {
       _enterReady();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('批准失败:$e')));
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('批准失败:${friendlyApiError(e)}')));
     }
   }
 
@@ -965,7 +965,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return const Center(child: CircularProgressIndicator());
       }
       if (snap.hasError) {
-        return _errorText('授权列表加载失败:${snap.error}');
+        return _errorText('授权列表加载失败:${friendlyApiError(snap.error!)}');
       }
       final grants = snap.data ?? const [];
       if (grants.isEmpty) return const Text('没有共享档案', style: TextStyle(color: MedMe.faint));
@@ -993,7 +993,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return const Center(child: CircularProgressIndicator());
       }
       if (snap.hasError) {
-        return _errorText('加载失败:${snap.error}');
+        return _errorText('加载失败:${friendlyApiError(snap.error!)}');
       }
       final rows = snap.data ?? const [];
       if (rows.isEmpty) return const Text('还没有授权给任何人', style: TextStyle(color: MedMe.faint));
@@ -1020,7 +1020,7 @@ class _AccountScreenState extends State<AccountScreen> {
       _enterReady();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('撤销失败:$e')));
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('撤销失败:${friendlyApiError(e)}')));
     }
   }
 
@@ -1068,18 +1068,21 @@ class _AccountScreenState extends State<AccountScreen> {
       ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已添加家属')));
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _familyError = switch (e) {
-          ApiFailed(status: 404) => '没有找到使用该手机号的账号',
-          ApiFailed(status: 429) => '查询太频繁,稍后再试',
-          ApiFailed(status: 400) => '手机号格式不对',
-          _ => '$e',
-        };
-      });
+      setState(() { _familyError = _familyLookupError(e) ?? friendlyApiError(e); });
     } finally {
       if (mounted) setState(() => _familyBusy = false);
     }
   }
+
+  /// 「按手机号加家属」这条路**自己**的解释。状态码的通用含义在
+  /// [friendlyApiError] 里(全 App 一份),这里只说它管不到的那一层:这个 404
+  /// 指的是"这个手机号没有账号",不是泛泛的"没找到"。认不出来返回 null,
+  /// 交回通用那一层。
+  String? _familyLookupError(Object e) => switch (e) {
+    ApiFailed(status: 404) => '没有找到使用该手机号的账号',
+    ApiFailed(status: 400) => '手机号格式不对',
+    _ => null,
+  };
 
   Widget _errorText(String text) => Padding(
     padding: const EdgeInsets.only(top: 8),
