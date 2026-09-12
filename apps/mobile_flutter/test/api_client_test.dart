@@ -39,6 +39,8 @@ void main() {
         req.response.write(jsonEncode([
           {'device_id': 'd1', 'seq': 1},
         ]));
+      } else if (req.uri.path == '/v1/nocontent') {
+        req.response.statusCode = 204; // 注销账号那条路由就是 204 空体
       } else if (req.uri.path == '/v1/nope') {
         req.response.statusCode = 401;
         req.response.write('{"detail":"expired"}');
@@ -81,6 +83,12 @@ void main() {
       {'device_id': 'd1', 'seq': 1},
     ]);
     expect(headers['x-seq-map'], jsonEncode({'d1': 3}), reason: '响应头 key 统一转小写,大小写不敏感');
+  });
+
+  test('postNoContent():204 空响应体不炸(注销账号走这条,I5)', () async {
+    await api.postNoContent('/v1/nocontent', {'phone': '13800000001', 'otp_code': '000000'});
+    // 对照:postJson 会把空体强转成 Map 而炸掉——这就是为什么要有上面那个方法。
+    await expectLater(api.postJson('/v1/nocontent', const {}), throwsA(isA<TypeError>()));
   });
 
   test('ApiUnauthorized 的文案是给人看的中文,不是类名', () {

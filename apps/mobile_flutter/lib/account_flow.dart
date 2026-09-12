@@ -403,13 +403,19 @@ class AccountFlow {
   /// (`AccountScreen`)在确认弹窗里把这句话说清楚,不是这里的事。
   Future<void> logout() => session.clear();
 
+  /// 注销账号走的服务端路径。**POST 而不是带 body 的 DELETE**(最终评审 I5):
+  /// 一些网关/代理会把 DELETE 的请求体丢掉,那边重新鉴权的凭证就永远"缺失"
+  /// → 401,用户看到的是「注销失败」且毫无头绪。服务端两条路由同一个 handler,
+  /// 旧的 `DELETE /v1/account` 仍然在(老版本 App 不受影响)。
+  static const deletePath = '/v1/account/delete';
+
   /// 自助注销(手机账号):`otp_code` 必须是**刚发的**验证码(见
-  /// `services/api/app.py` 的 `DELETE /v1/account`——重新证明是本人,偷来的
+  /// `services/api/app.py` 的 `account_delete`——重新证明是本人,偷来的
   /// access token 单独用不了这条路)。成功后服务端账号、其名下云档案、授权全部
   /// 已被删除,这里跟着清掉本机账号态(同 [logout])——不可逆,调用方必须已经
   /// 走过确认弹窗。
   Future<void> deleteAccountWithOtp(String phone, String otpCode) async {
-    await api.delete('/v1/account', body: {'phone': phone, 'otp_code': otpCode});
+    await api.postNoContent(deletePath, {'phone': phone, 'otp_code': otpCode});
     await session.clear();
   }
 
@@ -419,7 +425,7 @@ class AccountFlow {
     final cred = await SignInWithApple.getAppleIDCredential(
       scopes: [AppleIDAuthorizationScopes.email],
     );
-    await api.delete('/v1/account', body: {'identity_token': cred.identityToken});
+    await api.postNoContent(deletePath, {'identity_token': cred.identityToken});
     await session.clear();
   }
 

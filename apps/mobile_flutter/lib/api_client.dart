@@ -147,6 +147,16 @@ class ApiClient {
   Future<void> delete(String path, {Object? body, Map<String, String>? headers}) =>
       _json('DELETE', path, body: body, headers: headers);
 
+  /// POST 一个不关心响应体的请求(服务端回 204)。[postJson] 会把空响应体强转成
+  /// `Map` 而炸掉,所以注销账号那条走这个。
+  ///
+  /// 为什么注销用 POST 而不是带 body 的 DELETE(最终评审 I5):一些网关/代理会把
+  /// DELETE 的请求体丢掉,那边重新鉴权的凭证就永远"缺失" → 401,用户看到的是
+  /// 「注销失败」且毫无头绪。服务端两条路由同一个 handler
+  /// (`services/api/app.py` 的 `account_delete`),DELETE 仍然能用。
+  Future<void> postNoContent(String path, Object body, {Map<String, String>? headers}) =>
+      _json('POST', path, body: body, headers: headers);
+
   /// 直传 OSS 预签名地址(不带 Bearer)。Content-Type 必须与签名一致。
   ///
   /// **这两个不走 401 自动刷新**:它们打的是 OSS 的预签名 URL,压根不带账号

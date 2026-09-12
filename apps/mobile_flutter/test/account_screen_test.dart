@@ -70,7 +70,8 @@ class FakeApi extends ApiClient {
   /// `POST /v1/accounts/lookup` 的假响应/假失败——测「按手机号添加家属」。
   final Map<String, dynamic>? lookupResult;
   final ApiFailed? lookupError;
-  /// `DELETE /v1/account`(注销账号)的假失败,默认成功——测「注销账号」三态。
+  /// 注销账号(`POST /v1/account/delete`,见最终评审 I5)的假失败,默认成功——
+  /// 测「注销账号」三态。
   final bool failDeleteAccount;
   final ApiFailed? failDeleteAccountError;
   /// `POST /v1/profiles`(开通云同步的注册那一步)的假失败——测「开通云同步」
@@ -158,6 +159,18 @@ class FakeApi extends ApiClient {
       return;
     }
     if (failRevoke) throw const ApiFailed(500, 'revoke failed');
+  }
+
+  /// 注销账号现在走 `POST /v1/account/delete`(I5:带 body 的 DELETE 会被网关
+  /// 丢掉 body)。请求体记进同一个 [deleteBodies],断言不必改两处。
+  @override
+  Future<void> postNoContent(String path, Object body, {Map<String, String>? headers}) async {
+    calls.add('POST $path');
+    deleteBodies.add(body);
+    await Future<void>.delayed(delay);
+    if (path == AccountFlow.deletePath && failDeleteAccount) {
+      throw failDeleteAccountError ?? const ApiFailed(401, 'reauth required');
+    }
   }
 }
 
@@ -1585,6 +1598,12 @@ void main() {
       await t.pumpAndSettle();
 
       expect(api.deleteBodies.single, {'phone': '13800000001', 'otp_code': '000000'});
+      expect(
+        api.calls,
+        contains('POST ${AccountFlow.deletePath}'),
+        reason: 'I5:走 POST,不走带 body 的 DELETE(网关会把 body 丢掉 → 永远 401)',
+      );
+      expect(api.calls, isNot(contains('DELETE /v1/account')));
       expect(find.text('登录 MedMe 账号'), findsOneWidget);
       expect(AccountSession.instance.loggedIn.value, isFalse);
       expect(AccountSession.instance.accountId, isNull);
