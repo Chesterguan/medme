@@ -122,6 +122,19 @@ void main() {
     test('「网络太慢」那一句的文案', () {
       expect(ApiNetworkError.slow.toString(), '网络太慢,没能连上服务器。换个网络再试一次。');
     });
+
+    test('HttpException(切网时"header 还没收完连接就断了")也翻成中文', () async {
+      // 真的造一次:服务器收到请求直接把 socket 掐掉,不回任何响应头。
+      final rude = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      rude.listen((req) => req.response.detachSocket().then((s) => s.destroy()));
+      final client = ApiClient(base: 'http://127.0.0.1:${rude.port}');
+
+      await expectLater(
+        client.getJson('/v1/whatever'),
+        throwsA(isA<ApiNetworkError>().having((e) => '$e', 'toString', '网络连不上,换个网络再试一次。')),
+      );
+      await rude.close(force: true);
+    });
   });
 
   // ---- B2:状态码不许念给用户听 ----
@@ -148,8 +161,21 @@ void main() {
       expect(friendlyApiError(ApiNetworkError.offline), '网络连不上,换个网络再试一次。');
     });
 
+    test('StateError:只给 message,不带 `Bad state:` 前缀(精确匹配,别让前缀溜过去)', () {
+      // 全仓 12 处 `throw StateError('中文…')` 都会走到这些错误展示位。
+      expect(friendlyApiError(StateError('这个成员还没开通云同步')), '这个成员还没开通云同步');
+      expect(friendlyApiError(StateError('x')), isNot(contains('Bad state')));
+    });
+
     test('不认识的异常不吞:原样展示,不变成「未知错误」', () {
-      expect(friendlyApiError(StateError('这个成员还没开通云同步')), contains('还没开通云同步'));
+      expect(friendlyApiError(const FormatException('坏数据')), contains('坏数据'));
+    });
+
+    test('自己转给自己:说真话,不说「请求里有填错的地方」', () {
+      expect(
+        friendlyApiError(const ApiFailed(400, 'cannot redeem own invite')),
+        '这条链接是你自己生成的,不能自己接受',
+      );
     });
   });
 

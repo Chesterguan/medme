@@ -76,10 +76,21 @@ String friendlyApiError(Object e) => switch (e) {
   ApiFailed(status: 410) => '这个邀请码已经过期或被用过了,请对方重新生成一个',
   ApiFailed(status: 403) => '没有权限做这件事——这份档案可能不是你的,或者授权已经被收回',
   ApiFailed(status: 404) => '没有找到——可能已经被删除或撤销了',
+  // 自己转给自己(服务端 `db.py` 的 `cannot redeem own invite`)。**必须排在通用
+  // 400 之前** —— switch 表达式按顺序匹配。通用的「请求里有填错的地方」对这件事是
+  // 错的归因:没填错,是这条链接本来就不能自己用。
+  ApiFailed(status: 400, message: 'cannot redeem own invite') => '这条链接是你自己生成的,不能自己接受',
   ApiFailed(status: 400) => '请求里有填错的地方,检查一下再试',
   ApiFailed(status: >= 500) => '服务器开小差了,稍后再试',
-  // 其余(自定义异常 `UnlockFailed`/`ProfileLocked`/`StateError` 等)本来就是
-  // 中文的,原样展示——**不吞**:吞掉就是把一个没预料到的失败说成"未知错误"。
+  // **`StateError` 必须单独拆一条。** 全仓有 12 处 `throw StateError('中文…')`
+  // (`sync_engine.dart`/`grants.dart`)会走到这些错误展示位,而
+  // `StateError.toString()` 是 `'Bad state: $message'` —— 于是「开通云同步」失败时
+  // 屏上是「**Bad state:** 账号公钥未就绪,不能开通云同步」,正是 B1/B2 要消灭的
+  // 那一类。只取 message。
+  StateError(:final message) => message,
+  // 其余(`UnlockFailed`/`ProfileLocked`/`VaultMismatch` 等自定义异常)的
+  // `toString()` 本来就是给人看的中文,原样展示——**不吞**:吞掉就是把一个没预料
+  // 到的失败说成"未知错误"。
   _ => '$e',
 };
 
@@ -205,6 +216,11 @@ class ApiClient {
       return await body();
     } on TimeoutException {
       throw ApiNetworkError.slow;
+    } on HttpException {
+      // `dart:io` 的 `HttpException`(典型消息 "Connection closed before full header
+      // was received")既不是 `SocketException` 也不是 `HandshakeException`,而它是
+      // 运营商/Wi-Fi 切换时最常见的那一类手机故障 —— 不接就是一条裸英文异常。
+      throw ApiNetworkError.offline;
     } on HandshakeException {
       // `HandshakeException implements IOException`,**不是** `SocketException`
       // 的子类,所以必须单列一条,否则它会漏到最外面变成裸异常。证书/时间/
