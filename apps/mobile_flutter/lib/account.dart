@@ -14,6 +14,14 @@ String maskPhone(String phone) {
   return '${d.substring(0, 3)}****${d.substring(d.length - 4)}';
 }
 
+/// 「有账号默认开云」那句一次性告知看过了没(`sync_engine` 读写它)。
+///
+/// 键名定在这里、而不是在用它的那一侧:它要被**两处**认识 —— `sync_engine` 读写,
+/// 以及 [AccountSession.clear] 退出登录时清掉(复审 M16:它跟着账号走,不跟着设备走,
+/// 否则同一台手机上换个账号登录的人从没被告知过"你的病历会自动上云")。
+/// 反过来让本文件 import `sync_engine` 会成环(那边 import 这边)。
+const cloudDefaultNoticeSeenKey = 'cloud_default_notice_seen';
+
 /// 账号会话 + 密钥的本机存储。**私钥与档案密钥只进 secure storage**(iOS Keychain
 /// 开 synchronizable = 同一 Apple ID 新机自动拿回,这就是「系统钥匙串」那条换机路;
 /// 安卓用 EncryptedSharedPreferences,不跨机)。token 与 id 在 shared_preferences。
@@ -89,7 +97,16 @@ class AccountSession {
 
   Future<void> clear() async {
     final p = await SharedPreferences.getInstance();
-    for (final k in ['acct_id', 'acct_access', 'acct_refresh', 'acct_pub', 'acct_method', 'acct_phone_masked']) {
+    for (final k in [
+      'acct_id',
+      'acct_access',
+      'acct_refresh',
+      'acct_pub',
+      'acct_method',
+      'acct_phone_masked',
+      // 见 [cloudDefaultNoticeSeenKey]:那句告知跟着账号走,不跟着设备走(M16)。
+      cloudDefaultNoticeSeenKey,
+    ]) {
       await p.remove(k);
     }
     // `deleteAll` 而不是逐个 delete:AccountSession 是这个 app 里唯一用 secure storage

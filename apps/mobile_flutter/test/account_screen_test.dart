@@ -2658,7 +2658,7 @@ void main() {
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
 
       expect(t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value, isTrue);
-      expect(find.textContaining('已备份到云端'), findsOneWidget);
+      expect(find.textContaining('已开通云备份'), findsOneWidget);
       expect(find.text('同步'), findsOneWidget);
     });
 
@@ -2730,6 +2730,39 @@ void main() {
       await t.pumpAndSettle();
 
       expect(pendingCloudEnable, isNot(contains('p-1')));
+    });
+
+    // N1:屏上那条路也要被挡住 —— I7 之后拨**非当前**成员的开关走的是
+    // `registerCloudProfile`,它原来没有 iCloud 那道闸。
+    testWidgets('N1:开着 iCloud 时拨非当前成员的开关:报错,cloudId 仍是 null', (t) async {
+      resetVaultQueueForTest();
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
+      final other = await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+        final id = await ProfileManager.instance.create('爸爸');
+        await ProfileManager.instance.switchTo('p-1');
+        return id;
+      });
+      await _toReady(
+        t,
+        api,
+        syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust(icloudOn: true)),
+      );
+
+      await t.runAsync(() async {
+        await t.tap(find.byKey(Key('cloud_switch_$other')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
+      expect(
+        ProfileManager.instance.byId(other!)!.cloudId,
+        isNull,
+        reason: 'keyed 开箱不接 iCloud 容器根 —— 真开下去等于让他在容器里的病历够不着',
+      );
+      expect(api.calls, isNot(contains('POST /v1/profiles')));
     });
 
     testWidgets('家里两个成员:两行两个开关,各自独立', (t) async {
@@ -3370,6 +3403,48 @@ void main() {
       expect(api.deviceApproveBodies, isEmpty);
     });
 
+    // M14:`device_approve` 把 `eph_public` 置回 NULL(取走即删那一套),所以**已经
+    // 批准过**的设备再被扫一次,I3 那道核对会说「和服务器记录不一致」—— 而真相是
+    // "你已经批准过了,等那台手机自己来取"。同一个字段的两种含义,得分开说。
+    testWidgets('M14:已经批准过的设备再扫一次:说"已经批准过了",不说"不一致"', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        devices: [
+          // 批准之后的样子:eph_public 被置回 null,approved_priv 还等着被取走。
+          {'device_id': 'dev_new', 'name': 'ios', 'eph_public': null, 'approved': true},
+        ],
+      );
+      await _toReady(t, api, scanQr: (_) async => code('dev_new'));
+      await _scrollToText(t, '扫码批准新设备');
+
+      await t.tap(find.byKey(const Key('scan_approve_device')));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('已经批准过了'), findsOneWidget);
+      expect(find.textContaining('和服务器记录的不一致'), findsNothing);
+      expect(api.deviceApproveBodies, isEmpty);
+    });
+
+    testWidgets('M14:早就可用的设备再扫一次:说"不需要再批准"', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        devices: [
+          // 批准已经被取走:两列都是 null —— 这台设备此刻就是"已可用"。
+          {'device_id': 'dev_new', 'name': 'ios', 'eph_public': null, 'approved': false},
+        ],
+      );
+      await _toReady(t, api, scanQr: (_) async => code('dev_new'));
+      await _scrollToText(t, '扫码批准新设备');
+
+      await t.tap(find.byKey(const Key('scan_approve_device')));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('已经可以用了'), findsOneWidget);
+      expect(api.deviceApproveBodies, isEmpty);
+    });
+
     testWidgets('确认弹窗写明是哪台设备;取消 → 零 approve 请求', (t) async {
       final api = FakeApi(
         hasKeys: true,
@@ -3536,6 +3611,24 @@ void main() {
       expect(await t.runAsync(loadCloudDefaultNoticeSeen), isTrue);
     });
 
+    // M16:那个标记原来是全局的 —— 同一台手机上换一个账号登录,他**从没**被告知过
+    // "你的病历会自动上云",而那正是需要被告知的那一刻。退出登录时清掉它
+    // (`AccountSession.clear()` 本来就在清一串账号态的 key,顺路一条)。
+    testWidgets('M16:退出登录之后换个账号登录 → 这句话还会说一次', (t) async {
+      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
+      await t.tap(find.byKey(const Key('cloud_notice_ack')));
+      await t.pumpAndSettle();
+      expect(await t.runAsync(loadCloudDefaultNoticeSeen), isTrue);
+
+      await t.runAsync(() => AccountSession.instance.clear());
+
+      expect(
+        await t.runAsync(loadCloudDefaultNoticeSeen),
+        isFalse,
+        reason: '下一个用这台手机登录的人也有权在那一刻知道这件事',
+      );
+    });
+
     testWidgets('已经看过:不再出现', (t) async {
       SharedPreferences.setMockInitialValues({'cloud_default_notice_seen': true});
       await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
@@ -3545,8 +3638,12 @@ void main() {
   });
 
   group('cloudRowStatus(纯函数):开关那一行的状态句', () {
-    test('已开通:说角色', () {
-      expect(cloudRowStatus(const Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner')), '已备份到云端 · 主人');
+    // N3:**不能说「已备份」** —— I7 之后非当前成员只"注册"过(服务端一个空档案 +
+    // 本机一把密钥),病历一条都还没上去。「已开通云备份」对两种状态都是真话。
+    test('已开通:说「已开通」+ 角色,不说「已备份」', () {
+      final s = cloudRowStatus(const Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner'));
+      expect(s, '已开通云备份 · 主人');
+      expect(s, isNot(contains('已备份到')), reason: '只注册过的成员云上还没有他的病历');
     });
 
     test('还没开通:说会自动重试,也可以自己打开这个开关', () {

@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:io';
-
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kDebugMode, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
@@ -118,7 +117,7 @@ String expiryLabel(Object? iso) {
   return t == null ? '到期时间不明' : '至 ${t.month}月${t.day}日';
 }
 
-/// 云同步那一行的状态句 —— 纯函数,三态(关了 / 还没备上 / 备好了)。
+/// 云同步那一行的状态句 —— 纯函数,三态(关了 / 还没开通 / 已开通)。
 ///
 /// 关掉那一句是创始人拍板的逐字文案:用户最怕的是"关掉是不是等于删库"。照实说 ——
 /// 本机这边停了,云端已经上去的那些密文留着,直到他注销账号。
@@ -135,7 +134,11 @@ String cloudRowStatus(Profile p, {bool icloudOn = false}) {
   // 「打开这个开关立刻再试一次」是句空话。
   if (icloudOn && p.cloudId == null) return '这台手机开着 iCloud 同步,两套同步不能一起开';
   if (p.cloudId == null) return '还没备份上去 —— 会自动重试,也可以打开这个开关立刻再试一次';
-  return '已备份到云端 · ${roleLabel(p.role)}';
+  // **「已开通」而不是「已备份」**(复审 N3):I7 之后,非当前成员默认开云只做"注册"
+  // (建档案密钥 + 在服务端建一个空档案),它的病历一条都还没上去 —— 那时说"已备份"
+  // 是假话。而「已开通云备份」对两种状态都成立:刚注册的、以及已经同步过的。
+  // "到底备上了没有、什么时候备的"由概览屏顶部那一行按成员回答(见 `backupStatus`)。
+  return '已开通云备份 · ${roleLabel(p.role)}';
 }
 
 /// 创建时间 → 「M月D日添加」。认不出来就不说(不编一个日期)。
@@ -1626,7 +1629,21 @@ class _AccountScreenState extends State<AccountScreen> {
       // 用户扫的是旧的那张 —— 封出去的东西那台手机拆不开,而他只会看到"批准了却还是
       // 进不去",无从下手。
       final onServer = target['eph_public'] as String?;
-      if (onServer == null || !listEquals(base64Decode(onServer), parsed.ephPublic)) {
+      if (onServer == null) {
+        // **`eph_public == null` 不等于"码不对"**(复审 M14):`db.device_approve` 批准
+        // 之后就把它置回 NULL。于是"已经批准过"和"码对不上"在同一个字段上长得一样,
+        // 而对用户要说的是完全不同的两句话。`approved`(= 服务端还存着一份等这台设备
+        // 自己来取的批准密文)把两者分开:
+        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(
+          content: Text(
+            target['approved'] == true
+                ? '这台设备已经批准过了 —— 让它自己再看一眼那张码,就能进来'
+                : '这台设备已经可以用了,不需要再批准',
+          ),
+        ));
+        return;
+      }
+      if (!listEquals(base64Decode(onServer), parsed.ephPublic)) {
         ScaffoldMessenger.of(context).showSnackBar(appSnackBar(
           content: const Text('这个码和服务器记录的不一致,请让新手机重新生成'),
         ));
@@ -1646,8 +1663,6 @@ class _AccountScreenState extends State<AccountScreen> {
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
             FilledButton(
-              // 列表里待批准那一行也有一颗「批准」—— 两颗同名按钮同时在屏上,
-              // 所以弹窗这颗要有自己的 key。
               key: const Key('confirm_approve_device'),
               onPressed: () => Navigator.of(context).pop(true),
               child: const Text('批准'),
