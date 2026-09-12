@@ -1475,6 +1475,10 @@ void main() {
         AccountSession.instance,
         crypto: FakeCrypto(),
         reopenCurrentProfileVault: () async {},
+        // A5 的两步(首同步 + 删空默认成员)都要碰真实 Rust/IO —— 这条用例只管
+        // "成员建对了没",两步都注成空实现。它们自己的行为在下面几条里钉。
+        firstSyncNewProfile: (p, returnTo) async {},
+        removeProfile: (id) async => false,
       );
       await ProfileManager.instance.ensureLoaded();
       await ProfileManager.instance.factoryReset();
@@ -1486,7 +1490,9 @@ void main() {
 
       final adopted = ProfileManager.instance.profiles.where((p) => p.cloudId == 'prf_unknown_abcdef').toList();
       expect(adopted.length, 1);
-      expect(adopted.single.name, '云端档案 prf_un', reason: 'cloudId 前 6 位;真名在还没同步下来的病历里,只能占位');
+      // A5:占位名不再是「云端档案 prf_un」—— 换了台新手机的人第一眼看到的不该
+      // 是一串内部 id。
+      expect(adopted.single.name, '正在恢复的档案');
       expect(adopted.single.role, 'editor');
       expect(adopted.single.expiresAt, DateTime.parse('2027-01-02T03:04:05.000Z'));
       expect(await AccountSession.instance.profileKey('prf_unknown_abcdef'), wrappedKey);
@@ -1496,6 +1502,180 @@ void main() {
         currentBefore,
         reason: '顺手补齐不该把用户正在看的成员切走(ProfileManager.create 自己会切)',
       );
+    });
+
+    // ---- A5:新领回来的成员要立刻同步 + 回填姓名,还要收拾掉那个空的默认成员 ----
+
+    /// 服务端有一个本机没有的云档案。
+    FakeApi oneUnknownCloudProfile() => FakeApi(hasKeys: true, profiles: [
+      {
+        'profile_id': 'prf_mine_1',
+        'role': 'owner',
+        'expires_at': null,
+        'wrapped_profile_key': base64Encode(Uint8List(32)),
+      },
+    ]);
+
+    test('A5:新建的成员立刻跑一次首同步,并且传了"做完切回原成员"', () async {
+      final api = oneUnknownCloudProfile();
+      final synced = <(String, String)>[];
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        firstSyncNewProfile: (p, returnTo) async => synced.add((p.cloudId!, returnTo)),
+        removeProfile: (id) async => false,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final currentBefore = ProfileManager.instance.currentId.value;
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(synced, [('prf_mine_1', currentBefore)],
+          reason: '换机之后不该等"用户哪天自己切过去"才有第一次同步');
+    });
+
+    test('A5:本机已有这个云成员(只是缺密钥)→ 不重复跑首同步', () async {
+      final api = oneUnknownCloudProfile();
+      final synced = <String>[];
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        firstSyncNewProfile: (p, returnTo) async => synced.add(p.id),
+        removeProfile: (id) async => false,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, 'prf_mine_1', 'owner', null);
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(synced, isEmpty, reason: '它不是新建的,用户早就在看它了 —— 首同步是"新成员"才有的事');
+    });
+
+    test('A5:首同步失败不拖累别的、也不让解锁本身失败(占位名留着,下次再补)', () async {
+      final api = oneUnknownCloudProfile();
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        firstSyncNewProfile: (p, returnTo) async => throw Exception('网络炸了'),
+        removeProfile: (id) async => false,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(flow.lastOutcome, LoginOutcome.ready);
+      final adopted = ProfileManager.instance.profiles.firstWhere((p) => p.cloudId == 'prf_mine_1');
+      expect(adopted.name, '正在恢复的档案');
+    });
+
+    test('A5:领回了云成员 + 默认「我」从没被用过 → 删掉那个空成员', () async {
+      final api = oneUnknownCloudProfile();
+      final removed = <String>[];
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        firstSyncNewProfile: (p, returnTo) async {},
+        removeProfile: (id) async {
+          removed.add(id);
+          return true;
+        },
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final defaultId = ProfileManager.instance.currentId.value;
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(removed, [defaultId], reason: '用户从没建过这个空的「我」,新手机上不该多一个它');
+    });
+
+    test('A5:默认成员被用过(改过名)→ 不删', () async {
+      final api = oneUnknownCloudProfile();
+      final removed = <String>[];
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        firstSyncNewProfile: (p, returnTo) async {},
+        removeProfile: (id) async {
+          removed.add(id);
+          return true;
+        },
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final defaultId = ProfileManager.instance.currentId.value;
+      await ProfileManager.instance.rename(defaultId, '张建国');
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(removed, isEmpty);
+      expect(ProfileManager.instance.byId(defaultId)?.name, '张建国');
+    });
+
+    test('A5:默认成员有病历(已知份数 > 0)→ 不删', () async {
+      final api = oneUnknownCloudProfile();
+      final removed = <String>[];
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        firstSyncNewProfile: (p, returnTo) async {},
+        removeProfile: (id) async {
+          removed.add(id);
+          return true;
+        },
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final defaultId = ProfileManager.instance.currentId.value;
+      await ProfileManager.instance.setCount(defaultId, 3);
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(removed, isEmpty, reason: '有病历的成员绝不能被一条启发式删掉');
+    });
+
+    test('A5:什么都没领回来 → 不动默认成员', () async {
+      final api = FakeApi(hasKeys: true, profiles: const []);
+      final removed = <String>[];
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        firstSyncNewProfile: (p, returnTo) async {},
+        removeProfile: (id) async {
+          removed.add(id);
+          return true;
+        },
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(removed, isEmpty);
     });
 
     test('I3:改过名之后再解锁一次——名字留着,不再多出一个重复成员', () async {

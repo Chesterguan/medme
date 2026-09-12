@@ -8,11 +8,9 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grant_link.dart';
 import 'package:mobile_flutter/profile_manager.dart';
-import 'package:mobile_flutter/src/rust/api/vault.dart' show patientProfile;
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' as rust;
-import 'package:mobile_flutter/sync_engine.dart' show SyncEngine;
-import 'package:mobile_flutter/vault_boot.dart'
-    show autoNameCurrentProfileFrom, removeProfileAndReopen, switchProfileAndReopen;
+import 'package:mobile_flutter/sync_engine.dart' show SyncEngine, firstSyncAndName;
+import 'package:mobile_flutter/vault_boot.dart' show removeProfileAndReopen, switchProfileAndReopen;
 
 /// `token_hash` 用的哈希——与 Rust 侧 `sync::kek_from_token` 的 salt(`medme-invite-v1`)
 /// 是两回事:这里只是让服务端能核对客户端出示的 token 对不对,不参与密钥推导。
@@ -139,7 +137,8 @@ class Grants {
       // 它。见 [_finishRedeem] 与最终评审 I2。
       final previousId = ProfileManager.instance.currentId.value;
       final existing = ProfileManager.instance.profiles.where((p) => p.cloudId == profileId).firstOrNull;
-      final localId = existing?.id ?? await ProfileManager.instance.create('(同步中)', userManaged: false);
+      final localId =
+          existing?.id ?? await ProfileManager.instance.create(ProfileManager.redeemingPlaceholderName, userManaged: false);
       if (localId == null) throw StateError('无法创建本地档案');
       final role = r['role'] as String;
       final expiresAt = r['expires_at'] == null ? null : DateTime.parse(r['expires_at'] as String);
@@ -164,12 +163,15 @@ class Grants {
   /// 的还是旧档案的箱子」这个状态上,接下来任何一次录入/导入都会把新档案的内容
   /// 写进旧档案的保险箱。[revertTo] 是兑换开始时那个成员,不能用
   /// `switchProfileAndReopen` 的默认值——`create()` 早就把 current 改掉了。
-  Future<void> _finishRedeem(Profile p, {required String revertTo}) async {
-    await switchAndReopen(p.id, revertTo: revertTo);
-    await SyncEngine(api, session).syncProfile(p);
-    // 拉完事件后用识别到的姓名命名——占位名「(同步中)」只在首同步完成前露面。
-    await autoNameCurrentProfileFrom((await patientProfile()).name);
-  }
+  /// 三步全在 `sync_engine.firstSyncAndName` 里——**换机领回自己的档案走的是同一个
+  /// 函数**(A5:那条路原来一步都没做)。这里不传 `returnTo`:兑换完就该停在新档案
+  /// 上,那正是用户刚点头要加入的东西。
+  Future<void> _finishRedeem(Profile p, {required String revertTo}) => firstSyncAndName(
+    p,
+    revertTo: revertTo,
+    sync: (x) => SyncEngine(api, session).syncProfile(x),
+    switchAndReopen: switchAndReopen,
+  );
 
   /// 家属按手机号加入:查到对方账号公钥 → 把档案密钥封给对方 → 永久 editor
   /// (家属不是「只读」,能一起录入)。找不到这个手机号(404)、限流(429)都

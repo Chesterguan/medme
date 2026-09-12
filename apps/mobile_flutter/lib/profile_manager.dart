@@ -43,6 +43,20 @@ class ProfileManager {
   /// 初始成员的 id。固定值,让全新安装是确定的。
   static const _bootstrapId = 'p-1';
 
+  /// 换机时领回来的云成员的占位名(`AccountFlow.restoreProfileKeys`)。真名在病历
+  /// 里,而病历此刻还没同步下来 —— 所以先摆一个**说明此刻在发生什么**的名字。
+  ///
+  /// 原来是「云端档案 a1b2c3」(cloudId 前 6 位)。用户换了台新手机,解锁完账号,
+  /// 第一眼看到的是一串内部 id:既看不懂,也不知道它会不会变成正常的。
+  static const restoringPlaceholderName = '正在恢复的档案';
+
+  /// 兑换授权时的占位名(`Grants.redeem`)。
+  static const redeemingPlaceholderName = '(同步中)';
+
+  /// 上面两个。首同步拉到病历之后,只有名字还是这两个之一的成员才会被自动改名
+  /// (见 [nameCloudProfileOnFirstSync])—— 用户自己改过的名字绝不覆盖。
+  static const cloudPlaceholderNames = {restoringPlaceholderName, redeemingPlaceholderName};
+
   /// 当前成员 **id** 变化时通知各屏重载(切换成员 = 重开保险箱)。用 id 而不是名字:
   /// 改名不该触发重开,换人才该。
   final ValueNotifier<String> currentId = ValueNotifier<String>(_bootstrapId);
@@ -254,6 +268,40 @@ class ProfileManager {
     await rename(cur.id, name); // rename 内部关掉 _autoNamePending 并落盘
     return name;
   }
+
+  /// 刚领回来/刚兑换到的云成员,首同步把病历拉下来之后用识别到的姓名给它命名。
+  /// 返回是否真的改了。
+  ///
+  /// **不能复用 [maybeAutoNameCurrent]**(A5 的根因就在这儿):那个方法是
+  /// 「首次导入给默认成员命名」,带着两道守卫 —— `_autoNamePending` 和"只有一个
+  /// 成员"。换机这条路上两道**都不成立**:用户家里可能早就有三个成员,默认成员
+  /// 也早被命过名。于是哪怕首同步真的拉到了姓名,名字也永远停在占位串上。
+  ///
+  /// 这里只认一条判据:**这个成员的名字还是我们自己写上去的占位串吗**
+  /// ([cloudPlaceholderNames])。用户自己改过的名字一律不覆盖。
+  Future<bool> nameCloudProfileOnFirstSync(String id, String? detectedName) async {
+    await ensureLoaded();
+    final name = detectedName?.trim() ?? '';
+    final p = byId(id);
+    if (name.isEmpty || p == null || !cloudPlaceholderNames.contains(p.name)) return false;
+    await rename(id, name);
+    return true;
+  }
+
+  /// 这个成员是不是「从没被用过的默认成员」。A5 最后一步拿它决定:换机领回云档案
+  /// 之后,要不要把旁边那个空的「我」删掉 —— 不删的话,用户新手机上永远多一个
+  /// 空成员杵着,而他从没建过它。
+  ///
+  /// 三条都成立才算:还是 bootstrap 那个 id;名字还是占位默认名(没被用户改过、
+  /// 也没被报告里识别到的姓名命过,即 `_autoNamePending` 仍为 true);已知记录数
+  /// 是 0 或者**压根还没人数过**(全新安装就是这样 —— 档案屏还没打开过)。
+  ///
+  /// ponytail: 第三条里的"还没人数过"是个启发式。理论上存在「导入过病历、那份
+  /// 病历里没识别出姓名、而且档案屏从没打开过」这个组合,那样会把有数据的成员
+  /// 判成空的。要杜绝得在这里真开一次它的箱子数一遍(keyed/unkeyed 开箱 +
+  /// loadArchive),而这条路跑在启动序列里。真出现这种投诉再换成那次真数。
+  bool isUntouchedDefaultMember(String id) =>
+      id == _bootstrapId && _autoNamePending && byId(id)?.name == defaultMemberName && (_counts[id] ?? 0) == 0;
 
   /// 改保险箱名字(设置页)。空或没变则忽略。
   Future<void> setVaultName(String name) async {

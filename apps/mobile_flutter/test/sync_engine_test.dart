@@ -407,6 +407,92 @@ void main() {
     expect(api.pushedEvents.single['event_id'], 'ok');
   });
 
+  // ---- A5:`firstSyncAndName` —— 兑换授权与换机领回自己的档案共用的那三步 ----
+  group('firstSyncAndName:切过去 → 同步 → 用病历里的姓名命名 →(可选)切回来', () {
+    /// 建一个带占位名的云成员,返回它。
+    Future<Profile> placeholder(String name) async {
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final id = await ProfileManager.instance.create(name, userManaged: false);
+      await ProfileManager.instance.markCloud(id!, 'prf_new', 'owner', null);
+      return ProfileManager.instance.byId(id)!;
+    }
+
+    test('兑换那条路(returnTo 为 null):做完停在新档案上,只切一次', () async {
+      final p = await placeholder(ProfileManager.redeemingPlaceholderName);
+      final switches = <(String, String?)>[];
+      final synced = <String>[];
+
+      await firstSyncAndName(
+        p,
+        revertTo: 'p-1',
+        sync: (x) async => synced.add(x.id),
+        switchAndReopen: (id, {String? revertTo}) async => switches.add((id, revertTo)),
+        detectedName: () async => '张建国',
+      );
+
+      expect(switches, [(p.id, 'p-1')], reason: '只切过去,不切回来');
+      expect(synced, [p.id]);
+      expect(ProfileManager.instance.byId(p.id)!.name, '张建国');
+    });
+
+    test('换机那条路(带 returnTo):做完切回原成员', () async {
+      final p = await placeholder(ProfileManager.restoringPlaceholderName);
+      final switches = <String>[];
+
+      await firstSyncAndName(
+        p,
+        revertTo: 'p-1',
+        returnTo: 'p-1',
+        sync: (x) async {},
+        switchAndReopen: (id, {String? revertTo}) async => switches.add(id),
+        detectedName: () async => '李秀兰',
+      );
+
+      expect(switches, [p.id, 'p-1'], reason: '"顺手补齐"不该改变用户此刻正在看谁');
+      expect(ProfileManager.instance.byId(p.id)!.name, '李秀兰');
+    });
+
+    test('病历里识别不到姓名:名字留在占位串上,不改成空的', () async {
+      final p = await placeholder(ProfileManager.restoringPlaceholderName);
+      await firstSyncAndName(
+        p,
+        revertTo: 'p-1',
+        sync: (x) async {},
+        switchAndReopen: (id, {String? revertTo}) async {},
+        detectedName: () async => '  ',
+      );
+      expect(ProfileManager.instance.byId(p.id)!.name, ProfileManager.restoringPlaceholderName);
+    });
+
+    test('同步失败:异常照原样抛出,名字不动(调用方决定怎么处理)', () async {
+      final p = await placeholder(ProfileManager.restoringPlaceholderName);
+      await expectLater(
+        firstSyncAndName(
+          p,
+          revertTo: 'p-1',
+          sync: (x) async => throw Exception('pull failed'),
+          switchAndReopen: (id, {String? revertTo}) async {},
+          detectedName: () async => '张建国',
+        ),
+        throwsA(isA<Exception>()),
+      );
+      expect(ProfileManager.instance.byId(p.id)!.name, ProfileManager.restoringPlaceholderName);
+    });
+
+    test('用户自己改过名字:首同步不覆盖它', () async {
+      final p = await placeholder('爸爸');
+      await firstSyncAndName(
+        p,
+        revertTo: 'p-1',
+        sync: (x) async {},
+        switchAndReopen: (id, {String? revertTo}) async {},
+        detectedName: () async => '张建国',
+      );
+      expect(ProfileManager.instance.byId(p.id)!.name, '爸爸');
+    });
+  });
+
   group('C1: vault 身份核对——vault 是进程级单例,Profile 只是个参数,两者必须核对', () {
     test('当前打开的箱子 root 对不上这个档案:syncProfile 拒绝,零 API 调用', () async {
       final api = RecordingApi(server: {'events': [], 'objects': []});

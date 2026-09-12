@@ -579,3 +579,44 @@ Future<void> _runBackgroundSyncOnce({
     // 静默——见上面的文档。
   }
 }
+
+/// 「切到这个云档案的箱子 → 首同步 → 用拉下来的病历里识别到的姓名给它命名」。
+///
+/// **两条路共用**,而在这之前只有第一条真的做了这件事:
+///
+///  * `Grants.redeem`(医生/家属扫码兑换):做完停在新档案上 —— 那正是用户刚
+///    点头要加入的东西。[returnTo] 传 null。
+///  * `AccountFlow.restoreProfileKeys`(换机/清过数据之后领回自己的档案,A5):
+///    做完必须切回用户原来在看的那个成员 —— 这一步是"顺手补齐",不该改变用户
+///    此刻正在看谁。[returnTo] 传原成员。
+///
+/// A5 之前那条路只建一个名叫「云端档案 a1b2c3」的空壳成员就收手:既不同步也不
+/// 改名。用户换了台新手机、解锁完账号,看到的是一串内部 id 和 0 份病历 ——
+/// 看起来就是数据丢了,而其实一次同步就能全拉回来。
+///
+/// [revertTo] 是**开箱失败时** `currentId` 要退回哪个成员。不能用
+/// `switchProfileAndReopen` 的默认值:两条路都是 `ProfileManager.create()` 先把
+/// current 改成新建那个之后才走到这里(见 `vault_boot.switchProfileAndReopenImpl`
+/// 对 `revertTo` 的说明)。
+///
+/// 三个副作用做成参数,理由同 `vault_boot.runWipeSequence`:真实现要碰 Rust 原生
+/// 库(开箱、读病历里的姓名)和网络,`flutter test` 跑不到;而"顺序对不对、
+/// 回退/切回的目标对不对"跟它们成不成功无关,必须能单独钉住。
+Future<void> firstSyncAndName(
+  Profile p, {
+  required String revertTo,
+  required Future<void> Function(Profile) sync,
+  String? returnTo,
+  Future<void> Function(String id, {String? revertTo}) switchAndReopen = switchProfileAndReopen,
+  Future<String?> Function() detectedName = patientNameFromVault,
+}) async {
+  await switchAndReopen(p.id, revertTo: revertTo);
+  await sync(p);
+  // 占位名只在首同步完成前露面。按 **id** 命名,不是"给当前成员命名" —— 这里
+  // 当前成员恰好就是它,但写成 id 之后这件事不再依赖上一行的副作用。
+  await ProfileManager.instance.nameCloudProfileOnFirstSync(p.id, await detectedName());
+  if (returnTo != null && returnTo != p.id) await switchAndReopen(returnTo);
+}
+
+/// [firstSyncAndName] 的默认"真名从哪来":已经拉下来的病历里识别到的患者姓名。
+Future<String?> patientNameFromVault() async => (await vault_api.patientProfile()).name;
