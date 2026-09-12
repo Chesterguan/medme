@@ -325,6 +325,23 @@ void main() {
     );
   });
 
+  test('I4:推上去的事件不带真实时间戳,ts 一律是常量 "0"', () async {
+    final api = RecordingApi(server: {'events': [], 'objects': []});
+    // 假 Rust 故意回一个真实的 ISO 时间戳——这一层必须自己写死常量,不能"因为
+    // Rust 那边已经填了常量"就原样转发(见 sync_engine.dart 里 wireTs 的注释)。
+    final rust = FakeRust(
+      localEvents: [
+        SyncEventDto(deviceId: 'd1', seq: 1, eventId: 'e1', ts: '2026-09-12T08:00:00Z', ciphertext: Uint8List(3)),
+      ],
+    );
+    final engine = SyncEngine(api, AccountSession.instance, rust: rust);
+
+    await engine.syncProfile(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'owner'));
+
+    expect(api.pushedEvents.single['ts'], '0');
+    expect(wireTs, '0');
+  });
+
   test('推送水位来自 X-Seq-Map,不从本机 since 反推', () async {
     final api = RecordingApi(server: {
       'events': [],

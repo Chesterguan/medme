@@ -12,6 +12,15 @@ import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 推上去的事件信封里 `ts` 字段的**唯一**取值(最终评审 I4)。
+///
+/// 事件的真实时间戳只在密文里(随 `LogEntry` 一起加密,见 Rust
+/// `sync_export_events`)。明文带着它没有任何功能价值——服务端排序/去重只看
+/// `(device_id, seq)`——但会在服务端攒出一条「这个账号什么时候、多久一次产生
+/// 病历事件」的时间线。服务端的 schema 仍要求这个字段非空(老客户端发过真
+/// 时间戳),所以发一个占位常量而不是省掉它。
+const wireTs = '0';
+
 /// 当前打开的保险箱和要同步的档案对不上——切换了成员却没重开箱,或者代拍病人的
 /// 箱子(unkeyed)还开着。宁可整次同步失败,也不能把不相关的箱子内容推上/拉进
 /// 这个云档案(见 C1 review:`SyncEngine` 拿到的 `Profile` 只是个参数,真正写盘
@@ -321,7 +330,11 @@ class SyncEngine {
                     'device_id': e.deviceId,
                     'seq': e.seq,
                     'event_id': e.eventId,
-                    'ts': e.ts,
+                    // 不发 `e.ts`,发常量 [wireTs]——见它的文档(最终评审 I4)。
+                    // Rust 侧导出时已经填的就是这个常量,这里**再写死一次**不是
+                    // 重复:这一层是真正拼请求体的地方,哪天 Rust 那边改回去,
+                    // 明文时间戳也出不了这道门。
+                    'ts': wireTs,
                     'ciphertext': base64Encode(e.ciphertext),
                   },
                 )

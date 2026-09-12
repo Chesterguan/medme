@@ -10,6 +10,11 @@ use crate::api::vault::{machine_device_id, vault_cell, with_state, VaultState};
 use core_model::{LogEntry, Vault};
 use std::path::PathBuf;
 
+/// 事件信封上那个明文 `ts` 字段发出去的**唯一**值(最终评审 I4)。不是时间戳,
+/// 就是一个占位常量——服务端的 schema 还要求这个字段非空(老客户端发过真时间戳),
+/// 排序/去重从来只用 `(device_id, seq)`。真实时间在密文里。
+const WIRE_TS: &str = "0";
+
 /// FRB 边界统一按定长密钥收发(`Vec<u8>` 是 Dart `Uint8List` 的唯一对应类型,
 /// 没有定长数组绑定),内部一律转回 `[u8; 32]` 再喂给 `packages/sync`。
 fn key32(v: &[u8]) -> anyhow::Result<[u8; 32]> {
@@ -166,6 +171,11 @@ pub fn sync_local_seq_map() -> anyhow::Result<Vec<(String, i64)>> {
 /// 顾虑(见 `blob.rs` 的文档)。真正的本机 `event_id` 只在加密前的 `plain`
 /// (整条 `LogEntry` 的 JSON)里,随密文一起传输、解密后才重新出现——见
 /// `sync_import_events`,它不读也不校验这个 wire 马甲。
+///
+/// `SyncEventDto.ts` 同理只发一个**常量 `"0"`**(最终评审 I4):服务端排序只用
+/// `(device_id, seq)`,从不读 ts;而明文逐条带上真实时间戳,等于在服务端攒出一条
+/// 「这个账号什么时候、多久一次产生病历事件」的时间线——没有任何功能需要它。真实
+/// 的 `ts` 随 `LogEntry` 一起在密文里,解密后原样恢复。
 pub fn sync_export_events(
     profile_key: Vec<u8>,
     after: Vec<(String, i64)>,
@@ -190,7 +200,7 @@ pub fn sync_export_events(
                 device_id: e.device_id.clone(),
                 seq: e.seq,
                 event_id: wire_id,
-                ts: e.ts.clone(),
+                ts: WIRE_TS.to_string(),
                 ciphertext: ct,
             });
         }
@@ -712,6 +722,61 @@ mod tests {
             events_b.last().unwrap().seq,
             "B 未受影响,全量落盘"
         );
+    }
+
+    /// 最终评审 I4:导出的信封上 `ts` 一律是常量 `"0"`(不再明文泄露事件时间线),
+    /// 而解密后的 `LogEntry` 里那个**真实** `ts` 原样保留——import 到另一台设备、
+    /// 再从那台设备导出一次,内容仍然完整(落盘的是密文里的条目,不是信封字段)。
+    #[test]
+    fn exported_ts_is_constant_and_real_ts_survives_in_ciphertext() {
+        let _guard = VAULT_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let pk = sync_profile_key_new();
+        let a = tempdir().unwrap();
+        sync_open_profile_vault(
+            a.path().to_string_lossy().into(),
+            a.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+        crate::api::vault::ingest_bytes("r.txt".into(), b"WBC 5.0".to_vec()).unwrap();
+
+        let events = sync_export_events(pk.clone(), vec![]).unwrap();
+        assert!(!events.is_empty());
+        for e in &events {
+            assert_eq!(e.ts, "0", "信封上的 ts 必须是常量,不许带真实时间戳");
+        }
+        // 本机日志里的真实 ts 当然不是 "0"——这条断言挡住"把 LogEntry.ts 本身也
+        // 写成常量"那种把真实时间一起丢掉的实现。
+        let real_ts: Vec<String> = with_state(|s| {
+            Ok(s.vault
+                .log_entries()
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .into_iter()
+                .map(|e| e.ts)
+                .collect())
+        })
+        .unwrap();
+        assert!(real_ts.iter().all(|t| t != "0"), "本机日志里的 ts 仍是真实时间戳");
+
+        let b = tempdir().unwrap();
+        sync_open_profile_vault(
+            b.path().to_string_lossy().into(),
+            b.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+        let outcome = sync_import_events(pk.clone(), events.clone()).unwrap();
+        assert_eq!(outcome.applied as usize, events.len());
+        let imported_ts: Vec<String> = with_state(|s| {
+            Ok(s.vault
+                .log_entries()
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .into_iter()
+                .map(|e| e.ts)
+                .collect())
+        })
+        .unwrap();
+        assert_eq!(imported_ts, real_ts, "真实时间戳随密文过去了,不是信封上那个 \"0\"");
     }
 
     /// Task 16 item 5:`SyncEventDto.event_id` 导出时已经是 `event_id_for_wire`

@@ -337,13 +337,18 @@ pub struct ConfirmedStatusDto {
 }
 
 /// 一条云同步事件的加密信封(`api::vault_sync::sync_export_events` 产出 /
-/// `sync_import_events` 消费)。`device_id`/`seq`/`ts` 明文携带(服务端按
+/// `sync_import_events` 消费)。`device_id`/`seq` 明文携带(服务端按
 /// `(device_id, seq)` 去重/排序、Dart 侧按 `device_seq_map` 过滤都不需要解密);
 /// `ciphertext` 是整条 `core_model::LogEntry` 的 JSON 序列化经档案密钥 AEAD
 /// 加密的结果(AAD = `device_id:seq`),真正敏感的内容(含本机真实的
-/// `event_id`)都在这里面。**`event_id` 这个字段本身是服务端看到的 HMAC 马甲**
-/// (`sync::event_id_for_wire`),不是本机内容哈希——服务端只拿它当一个不透明
-/// 校验值存,dedup 靠 `(device_id, seq)`;`sync_import_events` 不读这个字段。
+/// `event_id` 与真实时间戳)都在这里面。**`event_id` 这个字段本身是服务端看到的
+/// HMAC 马甲**(`sync::event_id_for_wire`),不是本机内容哈希——服务端只拿它当一个
+/// 不透明校验值存,dedup 靠 `(device_id, seq)`;`sync_import_events` 不读这个字段。
+///
+/// **`ts` 恒为常量 `"0"`**(最终评审 I4):服务端排序从来只看
+/// `(device_id, seq)`,而一串明文时间戳等于白送一条「这个人什么时候、多久一次
+/// 产生病历事件」的时间线。真实 `ts` 在 `ciphertext` 里的 `LogEntry` 上,解密后
+/// 原样恢复;`sync_import_events` 同样不读信封上的这个字段。
 #[derive(Debug, Clone)]
 pub struct SyncEventDto {
     pub device_id: String,
