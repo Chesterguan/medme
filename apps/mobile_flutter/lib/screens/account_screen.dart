@@ -1249,6 +1249,14 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 指的是"这个手机号没有账号",不是泛泛的"没找到"。认不出来返回 null,
   /// 交回通用那一层。
   String? _familyLookupError(Object e) => switch (e) {
+    // B4:服务端把这两件事分开了(`services/api/app.py` 的 `account_lookup`)。
+    // 在这之前两者都是 404,于是这里只能说一句「没有找到使用该手机号的账号」——
+    // 而最常见的真实情况恰恰是下面这一条(父母装了 App、登录了、卡在设口令那一
+    // 步),那句话是**错误归因**:家属会去确认手机号、重输、放弃,而真正要做的事
+    // 在对方手机上。`404 + no_keys` 也认一下,免得新旧版本对不齐时又掉回错话。
+    ApiFailed(status: 409, message: 'no_keys') ||
+    ApiFailed(status: 404, message: 'no_keys') =>
+      '对方已注册,但还没设置好账号口令 —— 请他在 MedMe 里打开 设置 → 账号,完成最后两步',
     ApiFailed(status: 404) => '没有找到使用该手机号的账号',
     ApiFailed(status: 400) => '手机号格式不对',
     _ => null,

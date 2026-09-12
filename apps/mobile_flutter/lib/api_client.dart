@@ -69,6 +69,10 @@ String friendlyApiError(Object e) => switch (e) {
   ApiFailed(status: 401, message: 'bad code') => '验证码不对或已过期,请重新发送',
   ApiFailed(status: 401) => '登录状态已过期,请重新登录',
   ApiFailed(status: 429) => '操作太频繁,过一会儿再试',
+  // 409 在这套 API 里一律是「这一步已经做过了」(`PUT /v1/account/keys` 的
+  // `keys already set`)。`POST /v1/accounts/lookup` 的 409 另有含义,由那条路
+  // 自己的 `_familyLookupError` 先接走,落不到这里。
+  ApiFailed(status: 409) => '这一步已经做过了,不用再做一次',
   ApiFailed(status: 410) => '这个邀请码已经过期或被用过了,请对方重新生成一个',
   ApiFailed(status: 403) => '没有权限做这件事——这份档案可能不是你的,或者授权已经被收回',
   ApiFailed(status: 404) => '没有找到——可能已经被删除或撤销了',

@@ -435,6 +435,34 @@ def test_accounts_lookup_normalizes_plus86_and_rate_limits():
     assert client.post("/v1/accounts/lookup", json={"phone": "13800000100"}, headers=ha).status_code == 429
 
 
+def test_accounts_lookup_distinguishes_unknown_phone_from_keyless_account():
+    """B4:「查无此人」与「注册过但还没设账号口令」是两件事,客户端要能分开说。
+
+    在这之前两者都是 404,于是家属看到的是「没有找到使用该手机号的账号」——
+    而最常见的真实情况恰恰是后者(父母登录了、卡在设口令那一步),那句话是错误
+    归因:他会去确认手机号、重输、放弃,而真正要做的事在对方手机上。"""
+    alice = login("13800000150", "a1")
+    ha = _h(alice["access"])
+
+    # ① 压根没有这个账号 → 404
+    r = client.post("/v1/accounts/lookup", json={"phone": "13800000199"}, headers=ha)
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == "not found"
+
+    # ② 注册过,但没设过账号密钥 → 409 no_keys(不是 404)
+    keyless = login("13800000151", "k1")
+    r = client.post("/v1/accounts/lookup", json={"phone": "13800000151"}, headers=ha)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == "no_keys"
+
+    # ③ 设完密钥之后就是正常的 200,带公钥
+    keys = {"public_key": b64(b"K" * 32), "wrapped_priv_pw": b64(b"pw"), "wrapped_priv_rc": b64(b"rc"),
+            "kdf_salt": b64(b"s" * 16), "kdf_params": {"m_kib": 65536, "t": 3, "p": 1}}
+    assert client.put("/v1/account/keys", json=keys, headers=_h(keyless["access"])).status_code == 200
+    r = client.post("/v1/accounts/lookup", json={"phone": "13800000151"}, headers=ha)
+    assert r.status_code == 200 and r.json()["public_key"] == b64(b"K" * 32)
+
+
 def test_accounts_lookup_get_method_removed():
     """Task 16 item 2:手机号从 GET 查询串换成 POST body,老的 GET 路由不该
     还在——405(方法不存在),不是悄悄换成别的语义。"""

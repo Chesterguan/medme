@@ -181,7 +181,11 @@ def keys_get(conn, aid):
 
 
 def account_lookup_by_phone_hash(conn, h):
-    r = conn.execute("SELECT id, public_key FROM accounts WHERE phone_hash=%s AND public_key IS NOT NULL", (h,)).fetchone()
+    """按 phone_hash 查账号。**不再在 SQL 里过滤掉没有公钥的账号**——「查无此人」和
+    「注册过、但还没设账号口令(所以没有公钥可以封档案密钥给他)」是两件完全不同
+    的事,路由要能分开说(B4)。没有公钥时 `public_key` 为 None(`b64e` 本来就
+    这么处理)。"""
+    r = conn.execute("SELECT id, public_key FROM accounts WHERE phone_hash=%s", (h,)).fetchone()
     return {"account_id": r[0], "public_key": b64e(r[1])} if r else None
 
 

@@ -237,7 +237,18 @@ def account_delete(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep))
 @app.post("/v1/accounts/lookup")
 def account_lookup(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
     """按手机号查账号(家属授权用)。**POST body 而不是 GET 查询串**——手机号是
-    可辨识个人信息,查询串一路进 access log/代理日志/浏览器历史,POST body 不会。"""
+    可辨识个人信息,查询串一路进 access log/代理日志/浏览器历史,POST body 不会。
+
+    **两种"失败"必须分开说**(B4):
+      · 404 `not found` —— 这个手机号压根没有账号;
+      · 409 `no_keys` —— 注册过了,但还没走完「设置口令 + 抄恢复码」,所以没有
+        账号公钥,没法把档案密钥封给他。
+
+    在这之前两者都是 404,客户端只能说一句「没有找到使用该手机号的账号」——
+    而最常见的真实情况正是第二种(父母装了 App、登录了、卡在设口令那一步),
+    于是家属得到的是一句**错误归因**,他会去确认手机号、重输、放弃,而真正要做的
+    事在对方手机上。存在性预言机本来就是这个端点接受并写进文档的行为(见
+    `Grants.grantFamilyByPhone`),多这一档不构成新的泄露类别。"""
     if not isinstance(body, dict):
         raise HTTPException(400, "bad request")
     try:
@@ -249,6 +260,8 @@ def account_lookup(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep))
     r = db.account_lookup_by_phone_hash(conn, auth.phone_hash(phone))
     if not r:
         raise HTTPException(404, "not found")
+    if r["public_key"] is None:
+        raise HTTPException(409, "no_keys")
     return r
 
 

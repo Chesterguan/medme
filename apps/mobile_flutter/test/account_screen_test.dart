@@ -1216,6 +1216,30 @@ void main() {
       expect(find.text('没有找到使用该手机号的账号'), findsOneWidget);
     });
 
+    testWidgets('B4:对方已注册、但还没设账号口令(409 no_keys):说清楚该他做什么', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        lookupError: const ApiFailed(409, 'no_keys'),
+      );
+      await setUpCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+
+      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
+      await t.tap(find.text('按手机号添加家属'));
+      await t.pumpAndSettle();
+
+      expect(
+        find.text('对方已注册,但还没设置好账号口令 —— 请他在 MedMe 里打开 设置 → 账号,完成最后两步'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('没有找到使用该手机号的账号'),
+        findsNothing,
+        reason: '这是错误归因:家属会去确认手机号、重输、放弃,而真正要做的事在对方手机上',
+      );
+    });
+
     testWidgets('限流(429):提示「查询太频繁,稍后再试」', (t) async {
       final api = FakeApi(
         hasKeys: true,
