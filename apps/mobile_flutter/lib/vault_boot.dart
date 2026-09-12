@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -38,8 +39,26 @@ bool vaultOpenedOkThisLaunch = true;
 /// 调用方在真正写入前再核一遍身份(`SyncEngine._assertVaultMatches`),两者
 /// 配合:队列挡住"同一时刻有两段代码在动 vault",身份核对挡住"万一哪天有条
 /// 路径没走队列"这种意外。
+/// 「此刻这段代码是不是正跑在队列里」—— 用 Zone 而不是一个模块级布尔:布尔分不清
+/// 「在 action 的调用栈里又排了一次」(重入,死锁)和「另一路在 action 跑着的时候
+/// 正常排队」(合法,而且是这条队列存在的理由)。Zone 值只传给 action 自己及它
+/// 派生出的异步回调。
+final Object _inSerializedZoneKey = Object();
+
 Future<T> runSerialized<T>(Future<T> Function() action) {
-  final done = _vaultQueue.then((_) => action());
+  // **不可重入**(复审 M15)。违反它的症状是死锁:新排的这一段挂在 `_vaultQueue`
+  // 尾巴上,而尾巴正是外面那一段 —— 它等里面,里面等它。真机上看起来是"点了没反应、
+  // 永远转圈",而原因在代码里一个字都不显眼。所以在 debug 下当场炸
+  // (`assert` 在 release 里整段剥掉,生产行为一字不变;队列里要顺手开箱的调用方
+  // 用不排队的那个本体,见 [openCurrentProfileVaultUnserialized])。
+  assert(
+    Zone.current[_inSerializedZoneKey] == null,
+    'runSerialized 不可重入:已经在 vault 队列里了,再排一次就是自己等自己。'
+    '队列里要开箱请调 openCurrentProfileVaultUnserialized。',
+  );
+  final done = _vaultQueue.then(
+    (_) => runZoned(action, zoneValues: {_inSerializedZoneKey: true}),
+  );
   // 队列本身吞掉异常(否则一次失败会毒死后面所有排队的操作);异常照常抛给调用方。
   _vaultQueue = done.then((_) {}, onError: (_) {});
   return done;
@@ -113,8 +132,8 @@ Future<void> openCurrentProfileVault() => runSerialized(openCurrentProfileVaultU
 /// `runSerialized` 不可重入:在队列里再调一次 `openCurrentProfileVault`,那次会排在
 /// 自己这一段**后面**,于是互相等,死锁。
 ///
-/// **除了那一处,任何人都该调 [openCurrentProfileVault]**(排队的那个)。
-@visibleForTesting
+/// **除了那一处,任何人都该调 [openCurrentProfileVault]**(排队的那个)。不是
+/// `@visibleForTesting`:`removeProfileAndReopen` 传的就是它(复审 M15)。
 Future<void> openCurrentProfileVaultUnserialized() async {
   await ProfileManager.instance.ensureLoaded();
   final p = ProfileManager.instance.current;

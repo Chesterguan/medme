@@ -167,4 +167,28 @@ void main() {
 
     expect(order, ['other-start', 'other-end', 'release', 'reopen']);
   });
+
+  // M15:"`runSerialized` 不可重入"这条约束原来只活在注释里 —— 而违反它的症状是
+  // **死锁**(自己排在自己后面等),在真机上看起来是"点了没反应、永远转圈"。
+  // 让它在 debug 下当场炸,于是测试套件会替我们守住。
+  test('M15:在队列里再调一次 runSerialized → debug 下当场抛(不是死锁)', () async {
+    await expectLater(
+      runSerialized(() async {
+        // 这一层就是"已经在队列里"——里面再排一次就是自己等自己。
+        await runSerialized(() async {});
+      }),
+      throwsA(isA<AssertionError>()),
+    );
+    // 队列本身没被毒死:后面排进来的照常跑(`runSerialized` 吞掉链上的异常)。
+    var ran = false;
+    await runSerialized(() async => ran = true);
+    expect(ran, isTrue);
+  });
+
+  test('M15:不在队列里时一前一后排两次 —— 合法,不该误报', () async {
+    final order = <int>[];
+    await runSerialized(() async => order.add(1));
+    await runSerialized(() async => order.add(2));
+    expect(order, [1, 2]);
+  });
 }
