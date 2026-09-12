@@ -24,6 +24,11 @@ void main() {
 
   late Directory support;
 
+  /// 「删目录之前先松手」那一步的记录器(评审 Minor 12)。真实现碰
+  /// `currentVaultRoot`/`resetVault` 两个 FRB 调用,`flutter test` 跑不到。
+  final released = <String>[];
+  Future<void> recordRelease(String localBase) async => released.add(localBase);
+
   setUp(() async {
     support = await Directory.systemTemp.createTemp('medme-remove-reopen-test');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -36,6 +41,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform({});
     AccountSession.instance.resetForTest();
+    released.clear();
     await ProfileManager.instance.ensureLoaded();
     await ProfileManager.instance.factoryReset();
   });
@@ -54,7 +60,7 @@ void main() {
     await AccountSession.instance.putProfileKey('prf_cloud_1', key);
     expect(await AccountSession.instance.profileKey('prf_cloud_1'), isNotNull);
 
-    final ok = await removeProfileAndReopenImpl(memberId, reopen: noopReopen);
+    final ok = await removeProfileAndReopenImpl(memberId, reopen: noopReopen, releaseIfOpen: recordRelease);
 
     expect(ok, isTrue);
     expect(pm.byId(memberId), isNull, reason: '成员表里这个成员应该真的没了');
@@ -76,7 +82,7 @@ void main() {
     final key = Uint8List.fromList(List.generate(32, (i) => 100 + i));
     await AccountSession.instance.putProfileKey('prf_cloud_2', key);
 
-    final ok = await removeProfileAndReopenImpl(localOnlyId!, reopen: noopReopen);
+    final ok = await removeProfileAndReopenImpl(localOnlyId!, reopen: noopReopen, releaseIfOpen: recordRelease);
 
     expect(ok, isTrue);
     expect(pm.byId(localOnlyId), isNull);
@@ -94,10 +100,43 @@ void main() {
     await AccountSession.instance.putProfileKey('prf_cloud_3', Uint8List(32));
 
     var reopenCalls = 0;
-    final ok = await removeProfileAndReopenImpl(onlyId, reopen: () async => reopenCalls++);
+    final ok = await removeProfileAndReopenImpl(
+      onlyId,
+      reopen: () async => reopenCalls++,
+      releaseIfOpen: recordRelease,
+    );
 
     expect(ok, isFalse);
     expect(reopenCalls, 0);
     expect(await AccountSession.instance.profileKey('prf_cloud_3'), isNotNull, reason: '被拒绝的删除不许动任何密钥');
+    expect(released, isEmpty, reason: '什么都没删,就不该去松手(那会把用户正在用的箱子关掉)');
+  });
+
+  // 评审 Minor 12:删目录之前必须先松手。POSIX 的 unlink-while-open 让反序也能
+  // 活,但那是巧合不是设计 —— 而这条路径现在跑在启动序列里(A5 删空的默认成员)。
+  test('删目录之前先松手:拿被删成员的本机目录调一次 releaseIfOpen,且排在删盘之前', () async {
+    final pm = ProfileManager.instance;
+    final memberId = await pm.create('要删的那个');
+    expect(memberId, isNotNull);
+
+    // 目录真的建出来,这样"删盘"这一步是可观测的。
+    final order = <String>[];
+    final base = pm.localBaseOf(support.path, memberId!);
+    await Directory('$base/vault').create(recursive: true);
+
+    final ok = await removeProfileAndReopenImpl(
+      memberId,
+      reopen: () async => order.add('reopen'),
+      releaseIfOpen: (b) async {
+        order.add('release');
+        // 松手的那一刻,目录必须还在 —— 否则就是"先删后关"那个反序。
+        expect(await Directory(b).exists(), isTrue, reason: '松手要发生在删盘之前');
+        expect(b, base);
+      },
+    );
+
+    expect(ok, isTrue);
+    expect(order, ['release', 'reopen']);
+    expect(await Directory(base).exists(), isFalse, reason: '松手之后目录该被删掉');
   });
 }

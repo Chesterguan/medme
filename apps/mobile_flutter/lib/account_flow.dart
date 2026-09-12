@@ -293,7 +293,26 @@ class AccountFlow {
   ///   `_bootOpen` 在调它之前先自己 `ensureLoaded()` 了一次。不先问的话,这里会
   ///   读到那份还没从磁盘读回来的内存默认值(单成员 `p-1`),于是 `currentCloudId`
   ///   判错、已有的云成员被当成"本机没有"又建一遍。
-  Future<void> restoreProfileKeys() async {
+  /// 正在跑的那一次。**静态**,不是实例字段:两个会并发的调用方各自 `new` 一个
+  /// `AccountFlow`(`main.dart` 的启动序列一个、账号屏一个),实例级的守卫对真正
+  /// 会撞上的那一对完全无效。
+  static Future<void>? _restoreInFlight;
+
+  /// 测试专用:上一个用例留下的 in-flight future 不该串到下一个。
+  @visibleForTesting
+  static void resetRestoreGuardForTest() => _restoreInFlight = null;
+
+  /// 重入守卫(评审 Minor 13)。并发两次会把同一个 `cloudId` adopt 两遍:两边都
+  /// 看到"本机没有这个成员" → 各 `create()` 一个 → 同一个云档案在本机成了两个成员,
+  /// 而且两边各 `markCloud` 写一遍盘。启动那条路已经是 `unawaited` 的,所以"启动
+  /// 补齐还在跑、用户已经点进账号屏登录"不是理论情形。
+  ///
+  /// 后来者**等前一次的 future**,不是直接返回:调用方的契约是"这句 await 回来
+  /// 之后密钥就补齐了",提前返回会让它在密钥还没落地时就往下走。
+  Future<void> restoreProfileKeys() =>
+      _restoreInFlight ??= _restoreProfileKeys().whenComplete(() => _restoreInFlight = null);
+
+  Future<void> _restoreProfileKeys() async {
     final priv = session.privateKey;
     if (priv == null) return;
     final currentCloudId = ProfileManager.instance.current.cloudId;

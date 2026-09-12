@@ -113,7 +113,7 @@ void main() {
     await AccountSession.instance.putProfileKey('prf_del', key);
 
     // 用户在设置里删掉这个成员。
-    final ok = await removeProfileAndReopenImpl(memberId, reopen: () async {});
+    final ok = await removeProfileAndReopenImpl(memberId, reopen: () async {}, releaseIfOpen: (_) async {});
     expect(ok, isTrue);
     expect(pm.byId(memberId), isNull);
     expect(await AccountSession.instance.deletedCloudProfileIds(), contains('prf_del'));
@@ -163,7 +163,7 @@ void main() {
     final localOnlyId = await pm.create('本地李四');
     expect(localOnlyId, isNotNull);
 
-    final ok = await removeProfileAndReopenImpl(localOnlyId!, reopen: () async {});
+    final ok = await removeProfileAndReopenImpl(localOnlyId!, reopen: () async {}, releaseIfOpen: (_) async {});
 
     expect(ok, isTrue);
     expect(await AccountSession.instance.deletedCloudProfileIds(), isEmpty);

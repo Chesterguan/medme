@@ -511,6 +511,9 @@ void main() {
     // `sync_engine.pendingFirstSync` 与 `Grants` 的两个邀请缓存都是模块级/静态的,
     // 用例之间会串 —— 不清的话「生成失败」那条用例会拿到上一条用例缓存的链接。
     resetPendingFirstSyncForTest();
+    // `restoreProfileKeys` 的重入守卫是静态的(遗留 4) —— 上一个用例留下的
+    // in-flight future(比如那条 `GET /v1/profiles` 永不返回的)不该串到下一个。
+    AccountFlow.resetRestoreGuardForTest();
     Grants.clearInviteCache();
     globalSupport = await Directory.systemTemp.createTemp('medme-account-screen-test');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(

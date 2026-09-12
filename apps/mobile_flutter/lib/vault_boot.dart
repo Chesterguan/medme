@@ -340,8 +340,35 @@ Future<bool> removeProfileAndReopen(String id) => removeProfileAndReopenImpl(id,
 /// `flutter test` 里被钉住(同 [switchProfileAndReopenImpl]/[runWipeSequence]
 /// 的套路)。产品代码里的唯一调用点就是 [removeProfileAndReopen],传的永远是
 /// 真实现。
+/// 删一个成员的目录之前:**如果此刻进程里开着的正是它的箱子,先松手**(评审
+/// Minor 12)。Rust 的 vault 是进程级单例,开着就意味着它攥着
+/// `<localBase>/vault` 下的 sqlite 连接。POSIX 的 unlink-while-open 让"先删后关"
+/// 也能活下来,但那是巧合不是设计 —— 与 [runWipeSequence] 的 ① 步同一条契约
+/// (「先松手,再删盘」);而这条路径现在跑在**启动序列**里(A5 删那个空的默认
+/// 成员),正是最不该靠巧合的地方。
+///
+/// 两个 try 各有理由:没开过任何箱子时 `currentVaultRoot` 会抛(Rust 的「保险箱
+/// 尚未打开」)—— 那只是"不是这个成员的箱子"的一种,不是错误;`resetVault` 失败
+/// 也不能让整个删除半途而废(同 [runWipeSequence] ① 的说明)。
+Future<void> _releaseVaultIfOpen(String localBase) async {
+  try {
+    if (await currentVaultRoot() != '$localBase/vault') return;
+  } catch (_) {
+    return;
+  }
+  try {
+    await resetVault();
+  } catch (_) {}
+}
+
 @visibleForTesting
-Future<bool> removeProfileAndReopenImpl(String id, {required Future<void> Function() reopen}) async {
+Future<bool> removeProfileAndReopenImpl(
+  String id, {
+  required Future<void> Function() reopen,
+  /// 同 `reopen`:真实现碰 Rust 原生库(`currentVaultRoot`/`resetVault`),
+  /// `flutter test` 跑不到,所以抽成注入点。产品代码里永远是默认值。
+  Future<void> Function(String localBase) releaseIfOpen = _releaseVaultIfOpen,
+}) async {
   await ProfileManager.instance.ensureLoaded();
   if (!ProfileManager.instance.canRemove(id)) return false;
 
@@ -360,6 +387,9 @@ Future<bool> removeProfileAndReopenImpl(String id, {required Future<void> Functi
     // 这个档案,把用户刚删掉的成员原样建回来。见 `account.dart` 的说明。
     await AccountSession.instance.tombstoneCloudProfile(cloudId);
   }
+
+  // 先松手,再删盘 —— 见 [_releaseVaultIfOpen]。
+  await releaseIfOpen(localBase);
 
   for (final base in [localBase, ?cloudBase]) {
     final d = Directory(base);
