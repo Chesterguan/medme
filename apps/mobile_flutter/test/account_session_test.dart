@@ -77,4 +77,27 @@ void main() {
   test('iOS secure storage 选项开了 synchronizable(iCloud 钥匙串同步)', () {
     expect(AccountSession.iosOptionsForTest['synchronizable'], 'true');
   });
+
+  // ---- Task 15:loginMethod——注销账号那一步靠它决定要哪种重新鉴权 ----
+
+  test('save(loginMethod: ...) 落盘 + 往返,clear() 清掉', () async {
+    await AccountSession.instance.save(accountId: 'acct-C', access: 'tokC', refresh: 'refC', loginMethod: 'otp');
+    expect(AccountSession.instance.loginMethod, 'otp');
+
+    AccountSession.instance.resetForTest();
+    await AccountSession.instance.ensureLoaded();
+    expect(AccountSession.instance.loginMethod, 'otp', reason: '冷启动后应该能读回上次登录方式');
+
+    await AccountSession.instance.clear();
+    expect(AccountSession.instance.loginMethod, isNull);
+    AccountSession.instance.resetForTest();
+    await AccountSession.instance.ensureLoaded();
+    expect(AccountSession.instance.loginMethod, isNull, reason: 'clear() 也要清掉落盘的那一份,不能读回来');
+  });
+
+  test('save() 不传 loginMethod 时保留原值(同 publicKey/privateKey 的"只在提供时写"约定)', () async {
+    await AccountSession.instance.save(accountId: 'acct-D', access: 'tokD', refresh: 'refD', loginMethod: 'apple');
+    await AccountSession.instance.save(accountId: 'acct-D', access: 'tokD2', refresh: 'refD2');
+    expect(AccountSession.instance.loginMethod, 'apple');
+  });
 }

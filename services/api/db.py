@@ -392,6 +392,41 @@ def objects_list(conn, pid):
     return [r[0] for r in conn.execute("SELECT object_id FROM objects WHERE profile_id=%s ORDER BY created_at", (pid,)).fetchall()]
 
 
+# ---- 自助注销(Task 15) ----
+
+
+def account_delete(conn, aid):
+    """自助注销一个账号,DB 这一半 all-or-nothing(同一个事务,调用方的
+    `conn_dep` 负责提交/回滚)。
+
+    顺序:① 这个账号名下**拥有**的档案——整个删掉,靠外键 `ON DELETE CASCADE`
+    (`grants`/`events`/`objects`/`invites` 的 `profile_id` 都指向 `profiles`)
+    连带清掉,不用在这里逐张表手写;删之前先把这些档案下全部对象的 OSS key
+    (`v/<pid>/<oid>`)记下来返回,调用方在 DB 提交之后再去删 OSS(最佳努力,
+    见 `app.py`)。② 这个账号作为 grantee 分享到的**别人的**档案——只删这一行
+    grant,不碰那个档案本身(它属于别人,别人的数据在别人删号之前不该受影响)。
+    ③ usage/otp(含正常的 phone_hash 那行,和 `lookup_rate_ok` 借用的
+    `lookup:<aid>` 那行)。④ account 行本身——`devices` 有
+    `ON DELETE CASCADE` 到 accounts,顺带清掉,不用单独删。
+    """
+    owned = [r[0] for r in conn.execute("SELECT id FROM profiles WHERE owner_account_id=%s", (aid,)).fetchall()]
+    oss_keys = []
+    if owned:
+        rows = conn.execute(
+            "SELECT profile_id, object_id FROM objects WHERE profile_id = ANY(%s)", (owned,)
+        ).fetchall()
+        oss_keys = [f"v/{pid}/{oid}" for pid, oid in rows]
+        conn.execute("DELETE FROM profiles WHERE owner_account_id=%s", (aid,))
+    conn.execute("DELETE FROM grants WHERE grantee_kind='account' AND grantee_id=%s", (aid,))
+    conn.execute("DELETE FROM usage WHERE account_id=%s", (aid,))
+    r = conn.execute("SELECT phone_hash FROM accounts WHERE id=%s", (aid,)).fetchone()
+    phone_hash = r[0] if r else None
+    otp_keys = [f"lookup:{aid}"] + ([phone_hash] if phone_hash else [])
+    conn.execute("DELETE FROM otp WHERE phone_hash = ANY(%s)", (otp_keys,))
+    conn.execute("DELETE FROM accounts WHERE id=%s", (aid,))
+    return oss_keys
+
+
 def usage_add(conn, aid, *, tokens_in=0, tokens_out=0, storage_bytes=0):
     month = time.strftime("%Y-%m")
     conn.execute(

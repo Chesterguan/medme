@@ -57,6 +57,12 @@ void main() {
     expect(r['auth'], 'Bearer tok');
   });
 
+  test('delete():带 body 的 DELETE(注销账号 DELETE /v1/account 用得到)', () async {
+    // `/v1/echo` 不挑方法,只回显收到的 body——够验证 `delete()` 真的把 body
+    // 编码进请求体发出去了(Task 15 之前 `delete()` 不带 body 参数)。
+    await api.delete('/v1/echo', body: {'phone': '13800000001', 'otp_code': '000000'});
+  });
+
   test('getJsonWithHeaders:同时拿到解出来的 body 和响应头(小写 key)', () async {
     final (body, headers) = await api.getJsonWithHeaders('/v1/events');
     expect(body, [

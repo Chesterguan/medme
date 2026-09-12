@@ -5,7 +5,7 @@ import json
 import os
 import re
 from typing import List
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 import auth, db, extract, oss
 
@@ -143,6 +143,50 @@ def keys_get(aid=Depends(account_dep), conn=Depends(conn_dep)):
     if not k:
         raise HTTPException(404, "no keys")
     return k
+
+
+@app.delete("/v1/account", status_code=204)
+def account_delete(body: dict, aid=Depends(account_dep), conn=Depends(conn_dep)):
+    """自助注销(大陆 App Store 强制要求的自助渠道)。**必须重新证明"是本人"**——
+    偷来的 access token 不该单独就能把账号删了:手机号账号要求 body 带一个刚发的
+    OTP 验证码(`phone` + `otp_code`),Apple 账号要求带一个刚拿到的
+    `identity_token`。任何一步核不过都是 401,不区分"账号不存在"/"验证码不对"
+    (同 `account_dep` 的一贯做法,不给攻击者当存在性预言机)。
+    实际删除见 `db.account_delete`(DB all-or-nothing,由 `conn_dep` 的
+    提交/回滚兜底);OSS 对象在 DB 提交之后才最佳努力删,失败个数放进响应头,
+    不影响这次注销本身是否成功——见 Task 15 brief 的设计约束。"""
+    if not isinstance(body, dict):
+        raise HTTPException(400, "bad request")
+    row = conn.execute("SELECT phone_hash, apple_sub FROM accounts WHERE id=%s", (aid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "not found")
+    phone_hash, apple_sub = row
+    if phone_hash is not None:
+        try:
+            phone = auth.normalize_phone(body.get("phone"))
+        except auth.AuthError:
+            raise HTTPException(401, "reauth required")
+        code = body.get("otp_code")
+        if (
+            not isinstance(code, str)
+            or auth.phone_hash(phone) != phone_hash
+            or not auth.otp_check(conn, phone, code)
+        ):
+            raise HTTPException(401, "reauth required")
+    elif apple_sub is not None:
+        try:
+            sub = auth.apple_verify(body.get("identity_token") or "")
+        except auth.AuthError:
+            raise HTTPException(401, "reauth required")
+        if sub != apple_sub:
+            raise HTTPException(401, "reauth required")
+    else:
+        raise HTTPException(401, "reauth required")  # 没有任何登录方式的账号,理论上不该出现
+
+    oss_keys = db.account_delete(conn, aid)
+    conn.commit()  # DB 全部落盘之后才动 OSS——半途失败也不会把云端对象删了却还留着账号
+    deleted = sum(1 for k in oss_keys if oss.delete_object(k))
+    return Response(status_code=204, headers={"X-Oss-Deleted": f"{deleted}/{len(oss_keys)}"})
 
 
 @app.get("/v1/accounts/lookup")

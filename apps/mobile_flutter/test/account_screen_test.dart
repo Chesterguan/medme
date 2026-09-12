@@ -11,6 +11,8 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
+import 'package:mobile_flutter/src/rust/api/dto.dart';
+import 'package:mobile_flutter/sync_engine.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 假 API——每个方法都记进 [calls],方便断言"到底调没调、调了几次"；每个失败
@@ -32,6 +34,9 @@ class FakeApi extends ApiClient {
     this.failKeys500 = false,
     this.lookupResult,
     this.lookupError,
+    this.failDeleteAccount = false,
+    this.failDeleteAccountError,
+    this.failCreateProfile = false,
     this.delay = const Duration(milliseconds: 30),
   }) : super(base: 'http://x');
 
@@ -51,8 +56,16 @@ class FakeApi extends ApiClient {
   /// `GET /v1/accounts/lookup` 的假响应/假失败——测「按手机号添加家属」。
   final Map<String, dynamic>? lookupResult;
   final ApiFailed? lookupError;
+  /// `DELETE /v1/account`(注销账号)的假失败,默认成功——测「注销账号」三态。
+  final bool failDeleteAccount;
+  final ApiFailed? failDeleteAccountError;
+  /// `POST /v1/profiles`(开通云同步的注册那一步)的假失败——测「开通云同步」
+  /// 失败态,不必也不能真的走到重开箱那一步(`flutter test` 没有原生库)。
+  final bool failCreateProfile;
   final Duration delay;
   final calls = <String>[];
+  /// 每次 `delete()` 收到的 body,按调用顺序——测「注销账号」发对了 phone/otp_code。
+  final deleteBodies = <Object?>[];
 
   @override
   Future<Map<String, dynamic>> postJson(String path, Object body, {Map<String, String>? headers}) async {
@@ -69,6 +82,10 @@ class FakeApi extends ApiClient {
     if (path == '/v1/devices/approve') {
       if (failApprove) throw const ApiFailed(500, 'approve failed');
       return {'ok': true};
+    }
+    if (path == '/v1/profiles') {
+      if (failCreateProfile) throw const ApiFailed(500, 'create profile failed');
+      return {'profile_id': 'prf_new'};
     }
     return {'ok': true};
   }
@@ -112,9 +129,14 @@ class FakeApi extends ApiClient {
   }
 
   @override
-  Future<void> delete(String path, {Map<String, String>? headers}) async {
+  Future<void> delete(String path, {Object? body, Map<String, String>? headers}) async {
     calls.add('DELETE $path');
+    deleteBodies.add(body);
     await Future<void>.delayed(delay);
+    if (path == '/v1/account') {
+      if (failDeleteAccount) throw failDeleteAccountError ?? const ApiFailed(401, 'reauth required');
+      return;
+    }
     if (failRevoke) throw const ApiFailed(500, 'revoke failed');
   }
 }
@@ -201,10 +223,86 @@ class FakeGrantsRust implements GrantsRust {
   }
 }
 
-Widget _app(FakeApi api, {SyncCrypto? crypto, Grants? grants}) => MaterialApp(
+/// 假 `RustSyncApi`——只覆盖「开通云同步」/「立即同步」用得到的方法。
+/// `sync_engine_test.dart` 的 `FakeRust` 已经把 `SyncEngine` 本身的推拉逻辑钉住了,
+/// 这里只需要能让 `AccountScreen` 这一层的三态可控,不追求覆盖度。
+///
+/// **不测 `enableCloud` 成功态**——它内部会重开箱(`vault_boot.openCurrentProfileVault`),
+/// 那条路径调真实 FRB,`flutter test` 没有原生库(同 `sync_engine_test.dart` 顶部
+/// 那条限制)。所以「开通云同步」的测试只到 `registerCloudProfile` 这一步失败为止,
+/// 成功态改为直接摆一个已有 `cloudId` 的档案,断言 UI 显示"已开通"分支。
+class _FakeSyncRust implements RustSyncApi {
+  _FakeSyncRust({this.keyed = true, String? vaultRoot}) : vaultRoot = vaultRoot ?? '/x/profiles/p-1/vault';
+  final bool keyed;
+  final String vaultRoot;
+
+  @override
+  Future<Uint8List> profileKeyNew() async => Uint8List(32);
+
+  @override
+  Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext) async =>
+      Uint8List.fromList([...public, ...plaintext]);
+
+  @override
+  Future<bool> currentVaultIsKeyed() async => keyed;
+
+  @override
+  Future<String> currentVaultRoot() async => vaultRoot;
+
+  @override
+  Future<List<(String, int)>> localSeqMap() async => const [];
+
+  @override
+  Future<List<SyncEventDto>> exportEvents(Uint8List profileKey, List<(String, int)> after) async => const [];
+
+  @override
+  Future<SyncImportOutcomeDto> importEvents(Uint8List profileKey, List<SyncEventDto> events) async =>
+      SyncImportOutcomeDto(applied: events.length, skippedExisting: 0, outOfOrder: 0, untrusted: 0, undecodable: 0);
+
+  @override
+  Future<List<(String, String)>> missingObjects(Uint8List profileKey) async => const [];
+
+  @override
+  Future<List<(String, String)>> allObjectIds(Uint8List profileKey) async => const [];
+
+  @override
+  Future<(String, Uint8List)> encryptObject(Uint8List profileKey, String hash) async => (hash, Uint8List(1));
+
+  @override
+  Future<String> storeObject(Uint8List profileKey, String objectId, Uint8List ciphertext) async => objectId;
+}
+
+/// 假 API——只覆盖「立即同步」用得到的两个方法(拉事件 + 拉对象清单),专测
+/// `_syncNow` 的三态。加一个真延迟(同文件顶部 `FakeApi` 的道理):纯微任务链
+/// 在 `pump()` 单帧内就会跑完,测不出"加载中"这一态。
+class _SyncApi extends ApiClient {
+  _SyncApi({this.failPull = false, this.delay = const Duration(milliseconds: 20)}) : super(base: 'http://x');
+  final bool failPull;
+  final Duration delay;
+
+  @override
+  Future<(dynamic, Map<String, String>)> getJsonWithHeaders(
+    String path, {
+    Map<String, String>? query,
+    Map<String, String>? headers,
+  }) async {
+    await Future<void>.delayed(delay);
+    if (failPull) throw const ApiFailed(500, 'pull failed');
+    return (const [], {'x-seq-map': '{}'});
+  }
+
+  @override
+  Future<dynamic> getJson(String path, {Map<String, String>? query, Map<String, String>? headers}) async => const [];
+
+  @override
+  Future<Map<String, dynamic>> postJson(String path, Object body, {Map<String, String>? headers}) async => {'ok': true};
+}
+
+Widget _app(FakeApi api, {SyncCrypto? crypto, Grants? grants, SyncEngine? syncEngine}) => MaterialApp(
       home: AccountScreen(
         flow: AccountFlow(api, AccountSession.instance, crypto: crypto ?? FakeCrypto()),
         grants: grants,
+        syncEngine: syncEngine,
       ),
     );
 
@@ -219,8 +317,8 @@ Future<void> _loginUpTo(WidgetTester t) async {
 }
 
 /// 登录 + 口令解锁,一路落到「已就绪」——要求 `api.hasKeys == true`。
-Future<void> _toReady(WidgetTester t, FakeApi api, {SyncCrypto? crypto, Grants? grants}) async {
-  await t.pumpWidget(_app(api, crypto: crypto, grants: grants));
+Future<void> _toReady(WidgetTester t, FakeApi api, {SyncCrypto? crypto, Grants? grants, SyncEngine? syncEngine}) async {
+  await t.pumpWidget(_app(api, crypto: crypto, grants: grants, syncEngine: syncEngine));
   await _loginUpTo(t);
   await t.enterText(find.byKey(const Key('password')), 'right');
   await t.tap(find.text('解锁'));
@@ -656,7 +754,7 @@ void main() {
       await _toReady(t, api);
 
       expect(find.byKey(const Key('family_phone')), findsNothing);
-      expect(find.textContaining('还没开通云同步'), findsOneWidget);
+      expect(find.textContaining('暂时不能添加家属'), findsOneWidget);
     });
   });
 
@@ -715,6 +813,13 @@ void main() {
       expect(AccountSession.instance.privateKey, isNotNull);
       expect(AccountSession.instance.publicKey, isNotNull);
     });
+
+    test('loginOtp() 记下 loginMethod=otp——注销账号那一步靠它选重新鉴权方式', () async {
+      final api = FakeApi();
+      final flow = AccountFlow(api, AccountSession.instance, crypto: FakeCrypto());
+      await flow.loginOtp('13800000001', '000000');
+      expect(AccountSession.instance.loginMethod, 'otp');
+    });
   });
 
   group('account_login 埋点:只报登录这一步,不掺 _afterLogin 的失败', () {
@@ -740,5 +845,335 @@ void main() {
     // `SignInWithApple.getAppleIDCredential`(无法在 `flutter test` 里注入原生
     // 实现),不再单独起一条用例——上面这条 OTP 用例已经钉住了"登录成功但
     // `_afterLogin` 失败,不该多报一条 account_login"这条共享逻辑。
+  });
+
+  group('已就绪:开通云同步 + 立即同步(Task 15)', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-account-cloud-sync-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    Future<void> giveCurrentProfileCloudId(WidgetTester t, {String cloudId = 'prf_1', String role = 'owner'}) async {
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+        await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, cloudId, role, null);
+      });
+      await AccountSession.instance.putProfileKey(cloudId, Uint8List(32));
+    }
+
+    testWidgets('还没开通:显示「开通云同步」按钮,没有「立即同步」', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+      });
+      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+
+      expect(find.text('开通云同步'), findsOneWidget);
+      expect(find.text('立即同步'), findsNothing);
+    });
+
+    testWidgets('开通云同步:加载中显示进度圈', (t) async {
+      // `failCreateProfile: true`——绝不能让这一步在 widget 测试里真的成功:
+      // 成功会让 `enableCloud()` 继续走到 `openCurrentProfileVault()`(真实
+      // FRB + 重开箱),那条路径需要原生库,`flutter test` 里会挂起/崩溃(同
+      // `sync_engine_test.dart` 顶部注释的限制)。这里只钉住"点下去先转圈"这
+      // 一态,最终会不会成功由后面那条失败态用例覆盖。
+      final api = FakeApi(hasKeys: true, failCreateProfile: true);
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+      });
+      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+
+      await t.tap(find.text('开通云同步'));
+      await t.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await t.pumpAndSettle();
+    });
+
+    testWidgets('开通云同步失败(注册阶段,POST /v1/profiles 500):错误可见,仍停在"未开通"分支', (t) async {
+      final api = FakeApi(hasKeys: true, failCreateProfile: true);
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+      });
+      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+
+      await t.tap(find.text('开通云同步'));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('create profile failed'), findsOneWidget);
+      expect(find.text('开通云同步'), findsOneWidget, reason: '没进入"已开通"分支,按钮还在,可以重试');
+    });
+
+    testWidgets('已开通:展示"已开通"分支 + 「立即同步」入口,没有「开通云同步」按钮', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+
+      expect(find.textContaining('已开通云同步'), findsOneWidget);
+      expect(find.text('立即同步'), findsOneWidget);
+      expect(find.text('开通云同步'), findsNothing);
+    });
+
+    testWidgets('立即同步:加载中显示进度圈', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      final syncApi = _SyncApi();
+      await _toReady(t, api, syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust()));
+
+      await t.tap(find.text('立即同步'));
+      await t.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await t.pumpAndSettle();
+    });
+
+    testWidgets('立即同步成功:展示上一次结果摘要', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      final syncApi = _SyncApi(delay: const Duration(milliseconds: 1));
+      await _toReady(t, api, syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust()));
+
+      await t.tap(find.text('立即同步'));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('上次同步'), findsOneWidget);
+      expect(find.textContaining('推送 0 条'), findsOneWidget);
+      expect(find.textContaining('拉取 0 条'), findsOneWidget);
+    });
+
+    testWidgets('立即同步失败(服务器 500):错误可见,不崩', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      final syncApi = _SyncApi(failPull: true, delay: const Duration(milliseconds: 1));
+      await _toReady(t, api, syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust()));
+
+      await t.tap(find.text('立即同步'));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('pull failed'), findsOneWidget);
+    });
+
+    testWidgets('立即同步失败:VaultMismatch 的中文消息原样展示(vault 身份核对不通过)', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      final syncApi = _SyncApi(delay: const Duration(milliseconds: 1));
+      await _toReady(
+        t,
+        api,
+        syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust(keyed: false)),
+      );
+
+      await t.tap(find.text('立即同步'));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('拒绝同步'), findsOneWidget);
+    });
+  });
+
+  group('已就绪:退出登录(Task 15)', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-account-logout-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+      // 前面几组测试可能留下带 cloudId 的档案(`ProfileManager` 是单例,跨测试不
+      // 自动重置)——退回一个干净的默认档案,不然这里的"已就绪"screen 会多出
+      // "云同步"分支的内容,把这一屏拉得比这组测试原本假定的更长。
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    testWidgets('确认退出登录后回到登录入口,私钥/token 已清空', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api);
+      expect(find.text('已登录'), findsOneWidget);
+
+      // 「退出登录」在这个新加的"账号管理"分组里,默认视口(800x600)之外——
+      // 先滚到看得见,tap() 打在视口外的位置是个 no-op(不会报错,但也不会真的
+      // 触发 onTap,弹窗永远不出现)。
+      await t.ensureVisible(find.text('退出登录'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('退出登录'));
+      await t.pumpAndSettle();
+      expect(find.text('退出登录?'), findsOneWidget); // 确认弹窗
+      await t.tap(find.text('退出登录').last);
+      await t.pumpAndSettle();
+
+      expect(find.text('登录 MedMe 账号'), findsOneWidget);
+      expect(AccountSession.instance.loggedIn.value, isFalse);
+      expect(AccountSession.instance.privateKey, isNull);
+      expect(AccountSession.instance.accountId, isNull);
+    });
+
+    testWidgets('取消退出登录:仍停在已就绪', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api);
+
+      await t.ensureVisible(find.text('退出登录'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('退出登录'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('取消'));
+      await t.pumpAndSettle();
+
+      // 不用 `find.text('已登录')`——那行标题此刻已经滚出视口,`SliverList`
+      // 懒实现,视口附近之外的元素本来就找不到(flutter_test 的既有行为,不
+      // 代表真的从树上消失)。「退出登录」这一行本身还在(取消不该把它也弄没
+      // 了)+ session 没被清,才是这个用例真正要钉住的事。
+      expect(find.text('退出登录'), findsOneWidget);
+      expect(AccountSession.instance.loggedIn.value, isTrue);
+    });
+  });
+
+  group('已就绪:注销账号(Task 15)', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-account-delete-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    testWidgets('注销确认弹窗取消:不进入重新鉴权表单', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api);
+
+      // 见「退出登录」测试同一条注释:这一行在新加的"账号管理"分组里,默认
+      // 视口之外,tap() 之前必须先滚到看得见。
+      await t.ensureVisible(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('注销账号'));
+      await t.pumpAndSettle();
+      expect(find.text('注销账号?'), findsOneWidget);
+      await t.tap(find.text('取消'));
+      await t.pumpAndSettle();
+
+      expect(find.byKey(const Key('delete_phone')), findsNothing);
+    });
+
+    testWidgets('手机账号:确认后展开重新鉴权表单(手机号 + 验证码)', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api);
+
+      // 见「退出登录」测试同一条注释:这一行在新加的"账号管理"分组里,默认
+      // 视口之外,tap() 之前必须先滚到看得见。
+      await t.ensureVisible(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('继续注销'));
+      await t.pumpAndSettle();
+
+      expect(find.byKey(const Key('delete_phone')), findsOneWidget);
+      expect(find.byKey(const Key('delete_otp_code')), findsOneWidget);
+      expect(find.text('确认注销'), findsOneWidget);
+    });
+
+    testWidgets('确认注销:加载中显示进度圈', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 20));
+      await _toReady(t, api);
+      await t.ensureVisible(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('继续注销'));
+      await t.pumpAndSettle();
+
+      await t.enterText(find.byKey(const Key('delete_phone')), '13800000001');
+      await t.enterText(find.byKey(const Key('delete_otp_code')), '000000');
+      await t.ensureVisible(find.text('确认注销'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('确认注销'));
+      await t.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await t.pumpAndSettle();
+    });
+
+    testWidgets('确认注销成功:发对了 phone/otp_code,session 清空,回到登录入口', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
+      await _toReady(t, api);
+      await t.ensureVisible(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('继续注销'));
+      await t.pumpAndSettle();
+
+      await t.enterText(find.byKey(const Key('delete_phone')), '13800000001');
+      await t.enterText(find.byKey(const Key('delete_otp_code')), '000000');
+      await t.ensureVisible(find.text('确认注销'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('确认注销'));
+      await t.pumpAndSettle();
+
+      expect(api.deleteBodies.single, {'phone': '13800000001', 'otp_code': '000000'});
+      expect(find.text('登录 MedMe 账号'), findsOneWidget);
+      expect(AccountSession.instance.loggedIn.value, isFalse);
+      expect(AccountSession.instance.accountId, isNull);
+    });
+
+    testWidgets('确认注销失败(重新鉴权不通过,401):错误可见,session 原样还在', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5), failDeleteAccount: true);
+      await _toReady(t, api);
+      await t.ensureVisible(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('继续注销'));
+      await t.pumpAndSettle();
+
+      await t.enterText(find.byKey(const Key('delete_phone')), '13800000001');
+      await t.enterText(find.byKey(const Key('delete_otp_code')), '999999');
+      await t.ensureVisible(find.text('确认注销'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('确认注销'));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('reauth required'), findsOneWidget);
+      expect(find.byKey(const Key('delete_phone')), findsOneWidget); // 表单还在,可以重试
+      expect(AccountSession.instance.loggedIn.value, isTrue, reason: '注销失败不该清掉本机 session');
+    });
+
+    testWidgets('取消重新鉴权表单:回到"注销账号"按钮', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api);
+      await t.ensureVisible(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('注销账号'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('继续注销'));
+      await t.pumpAndSettle();
+
+      await t.ensureVisible(find.text('取消').last);
+      await t.pumpAndSettle();
+      await t.tap(find.text('取消').last);
+      await t.pumpAndSettle();
+
+      expect(find.byKey(const Key('delete_phone')), findsNothing);
+      // 不用 `find.text('注销账号')`——按钮此刻多半已经滚出视口(`SliverList`
+      // 懒实现,见上面「取消退出登录」用例的同一条注释)。真正要钉住的是
+      // "表单已经收起、回到了未展开状态",delete_phone 消失就是这件事的证据。
+    });
   });
 }

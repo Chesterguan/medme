@@ -6,7 +6,9 @@ import hashlib
 import hmac
 import os
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 
 
 def _sign(secret: str, string_to_sign: str) -> str:
@@ -71,3 +73,30 @@ def presign(verb: str, key: str, content_type: str = CONTENT_TYPE, ttl: int = PR
         bucket=os.environ["OSS_BUCKET"].strip(), endpoint=os.environ["OSS_ENDPOINT"].strip(), key=key,
         expires_at=int(time.time()) + ttl, content_type=content_type if verb == "PUT" else "",
     )
+
+
+def delete_object(key: str) -> bool:
+    """服务端直接删除一个对象(账号注销用)——**不经过预签名**:DELETE 从不签给
+    客户端(之前的评审 Critical 就是一个 viewer 能签出 DELETE),RAM key 只在这里、
+    服务端内部直接用。用 OSS 的 header 鉴权(与 `presign` 的查询串鉴权是同一族
+    签名,`StringToSign` 换成 header 版本),最佳努力:失败/网络异常都只返回
+    False,调用方按计数汇报,不能让一个对象删不掉就打断账号注销的 DB 事务。"""
+    ak = os.environ["OSS_ACCESS_KEY_ID"].strip()
+    sk = os.environ["OSS_ACCESS_KEY_SECRET"].strip()
+    bucket = os.environ["OSS_BUCKET"].strip()
+    endpoint = os.environ["OSS_ENDPOINT"].strip()
+    date = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+    string_to_sign = "\n".join(["DELETE", "", "", date, canonical_resource(bucket, key)])
+    sig = _sign(sk, string_to_sign)
+    req = urllib.request.Request(
+        f"https://{bucket}.{endpoint}/{urllib.parse.quote(key, safe='/')}",
+        method="DELETE",
+        headers={"Date": date, "Authorization": f"OSS {ak}:{sig}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return 200 <= r.status < 300
+    except urllib.error.HTTPError as e:
+        return e.code == 404  # 已经不在了也算删成功
+    except Exception:
+        return False

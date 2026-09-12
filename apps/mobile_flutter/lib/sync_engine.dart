@@ -430,3 +430,28 @@ class SyncEngine {
     }
   }
 }
+
+/// debounced push(`vaultRevision` 变化 3 秒后)和 app-resume pull 共用的一段
+/// no-op 判断 + 静默失败:没登录、或当前成员没开通云同步(没有 [Profile.cloudId])
+/// 时什么都不做,不发任何请求;真的跑了的话失败也不抛——后台触发器不该弹错误
+/// 打断用户,想看这次到底成没成,去账号屏点「立即同步」(那边会显式展示
+/// [SyncReport]/异常)。
+///
+/// 抽成顶层函数(而不是塞进 `main.dart` 的 `State` 里)是为了让"没登录/没
+/// cloudId 时 no-op"这条契约能在不启动真实 Rust/Flutter 绑定的 `flutter test`
+/// 里被单测钉住;`main.dart` 只负责接线(debounce 计时器 + 生命周期回调),不重复
+/// 这段判断逻辑——所以这是一个正常的公开函数,不是仅供测试用的入口。
+Future<void> triggerBackgroundSync({
+  required AccountSession session,
+  required Profile? Function() currentProfile,
+  required Future<SyncReport> Function(Profile) sync,
+}) async {
+  if (!session.loggedIn.value) return;
+  final profile = currentProfile();
+  if (profile == null || profile.cloudId == null) return;
+  try {
+    await sync(profile);
+  } catch (_) {
+    // 静默——见上面的文档。
+  }
+}

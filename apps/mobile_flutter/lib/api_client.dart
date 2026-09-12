@@ -76,7 +76,8 @@ class ApiClient {
       _jsonWithHeaders('GET', path, query: query, headers: headers);
   Future<Map<String, dynamic>> putJson(String path, Object body, {Map<String, String>? headers}) async =>
       (await _json('PUT', path, body: body, headers: headers)) as Map<String, dynamic>;
-  Future<void> delete(String path, {Map<String, String>? headers}) => _json('DELETE', path, headers: headers);
+  Future<void> delete(String path, {Object? body, Map<String, String>? headers}) =>
+      _json('DELETE', path, body: body, headers: headers);
 
   /// 直传 OSS 预签名地址(不带 Bearer)。Content-Type 必须与签名一致。
   Future<void> putBytes(String url, Uint8List bytes) => Net.run((client) async {

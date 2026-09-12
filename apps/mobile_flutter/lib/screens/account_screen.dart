@@ -7,22 +7,27 @@ import 'package:mobile_flutter/account_flow.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 账号屏的状态机:手机号登录 → OTP → (首次)设口令 + 展示恢复码 / (换设备)口令或
-/// 恢复码解锁 → 就绪(设备批准 + 授权列表)。切状态的判断逻辑全在
+/// 恢复码解锁 → 就绪(设备批准 + 授权列表 + 云同步 + 退出/注销)。切状态的判断逻辑全在
 /// [AccountFlow],本屏只负责按返回值/异常显示对应界面。
 enum _Phase { idle, otpSent, keySetup, showRecovery, unlock, ready }
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({super.key, required this.flow, this.grants});
+  const AccountScreen({super.key, required this.flow, this.grants, this.syncEngine});
   final AccountFlow flow;
 
   /// 测试注入点,默认为 null——真正用的时候按 [flow] 现取现建(见
   /// `_AccountScreenState._grants`)。`Grants` 内部按需碰 FRB(`grantFamilyByPhone`
   /// 的 `sealTo`),测试传一个带假 `GrantsRust` 的实例进来,不碰真实原生库。
   final Grants? grants;
+
+  /// 测试注入点,同 [grants]——「开通云同步」「立即同步」用得到,默认为 null,
+  /// 真正用的时候按 [flow] 现取现建(见 `_AccountScreenState._sync`)。
+  final SyncEngine? syncEngine;
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
@@ -57,9 +62,26 @@ class _AccountScreenState extends State<AccountScreen> {
   String? _familyError;
 
   Grants get _grants => widget.grants ?? Grants(widget.flow.api, widget.flow.session);
+  SyncEngine get _sync => widget.syncEngine ?? SyncEngine(widget.flow.api, widget.flow.session);
 
   Future<List<dynamic>>? _devicesFuture;
   Future<List<dynamic>>? _grantsFuture;
+
+  // ---- 云同步(Task 15):开通 + 触发 + 展示上一次结果 ----
+  bool _cloudBusy = false;
+  String? _cloudError;
+  bool _syncBusy = false;
+  String? _syncError;
+  SyncReport? _lastSyncReport;
+
+  // ---- 退出登录 / 注销账号 ----
+  bool _logoutBusy = false;
+  bool _deleteFormOpen = false;
+  bool _deleteOtpBusy = false;
+  bool _deleteBusy = false;
+  String? _deleteError;
+  final _deletePhoneCtrl = TextEditingController();
+  final _deleteOtpCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -93,6 +115,8 @@ class _AccountScreenState extends State<AccountScreen> {
     _unlockPasswordCtrl.dispose();
     _unlockRecoveryCtrl.dispose();
     _familyPhoneCtrl.dispose();
+    _deletePhoneCtrl.dispose();
+    _deleteOtpCtrl.dispose();
     super.dispose();
   }
 
@@ -380,7 +404,293 @@ class _AccountScreenState extends State<AccountScreen> {
     const Text('家属', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _familySection(),
+    const SizedBox(height: 24),
+    const Text('云同步', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    _cloudSyncSection(),
+    const SizedBox(height: 24),
+    const Text('账号管理', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    _accountManagementSection(),
   ];
+
+  // ---- 云同步:「开通云同步」(当前成员)+「立即同步」+ 上一次结果/错误 ----
+
+  Widget _cloudSyncSection() {
+    final profile = ProfileManager.instance.current;
+    if (profile.cloudId == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '「${profile.name}」还没开通云同步——开通后可以换机恢复、分享给家属/医生。',
+            style: const TextStyle(color: MedMe.faint),
+          ),
+          if (_cloudError != null) _errorText(_cloudError!),
+          const SizedBox(height: 12),
+          _cloudBusy
+              ? const Center(child: CircularProgressIndicator())
+              : FilledButton(onPressed: _enableCloud, child: const Text('开通云同步')),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.cloud_done_outlined, color: MedMe.teal, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('「${profile.name}」已开通云同步', style: const TextStyle(fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (_lastSyncReport != null)
+          Text(_syncSummary(_lastSyncReport!), style: const TextStyle(color: MedMe.faint)),
+        if (_syncError != null) _errorText(_syncError!),
+        const SizedBox(height: 8),
+        _syncBusy
+            ? const Center(child: CircularProgressIndicator())
+            : OutlinedButton(onPressed: _syncNow, child: const Text('立即同步')),
+      ],
+    );
+  }
+
+  String _syncSummary(SyncReport r) {
+    final parts = ['推送 ${r.pushed} 条', '拉取 ${r.pulled} 条'];
+    if (r.objectsFailed > 0) parts.add('${r.objectsFailed} 个附件失败');
+    if (r.pushSkippedNoWatermark) parts.add('本次跳过推送(水位未就绪)');
+    return '上次同步:${parts.join('、')}';
+  }
+
+  Future<void> _enableCloud() async {
+    setState(() {
+      _cloudBusy = true;
+      _cloudError = null;
+    });
+    try {
+      await _sync.enableCloud(ProfileManager.instance.current);
+      if (!mounted) return;
+      setState(() {}); // current 已写回 cloudId,重建切到"已开通"那半支
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已开通云同步')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _cloudError = '$e');
+    } finally {
+      if (mounted) setState(() => _cloudBusy = false);
+    }
+  }
+
+  /// 「立即同步」;触发器(debounce push / app-resume pull,见 `sync_engine.dart`
+  /// 的 `triggerBackgroundSync`)在没登录/没 cloudId 时已经 no-op 了,这里手点的
+  /// 版本同样先挡一道——理论上按钮在 `profile.cloudId == null` 时根本不会画出来,
+  /// 这道判断是双保险,不依赖 UI 没画错。
+  Future<void> _syncNow() async {
+    final profile = ProfileManager.instance.current;
+    if (profile.cloudId == null) return;
+    setState(() {
+      _syncBusy = true;
+      _syncError = null;
+    });
+    try {
+      final rep = await _sync.syncProfile(profile);
+      if (!mounted) return;
+      setState(() => _lastSyncReport = rep);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _syncError = '$e');
+    } finally {
+      if (mounted) setState(() => _syncBusy = false);
+    }
+  }
+
+  // ---- 账号管理:退出登录 / 注销账号 ----
+
+  Widget _accountManagementSection() {
+    final children = <Widget>[
+      _logoutBusy
+          ? const Center(child: CircularProgressIndicator())
+          : OutlinedButton(onPressed: _confirmLogout, child: const Text('退出登录')),
+      const SizedBox(height: 12),
+    ];
+    if (_deleteFormOpen) {
+      children.add(_deleteAccountForm());
+    } else {
+      children.add(
+        OutlinedButton(
+          style: OutlinedButton.styleFrom(foregroundColor: MedMe.danger, side: const BorderSide(color: MedMe.danger)),
+          onPressed: _confirmDeleteAccount,
+          child: const Text('注销账号'),
+        ),
+      );
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
+  }
+
+  Future<void> _confirmLogout() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('退出登录?'),
+        content: const Text(
+          '退出后,已开通云同步的成员会在这台设备上锁定(需要重新登录才能打开)——'
+          '我们不托管密钥,这台设备解不开它就是解不开。这台手机上的病历本身不会被删除。',
+          style: TextStyle(height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('退出登录')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _logoutBusy = true);
+    try {
+      await widget.flow.logout();
+      if (!mounted) return;
+      setState(() {
+        _phase = _Phase.idle;
+        _lastSyncReport = null;
+        _cloudError = null;
+        _syncError = null;
+        _deleteFormOpen = false;
+      });
+    } finally {
+      if (mounted) setState(() => _logoutBusy = false);
+    }
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded, color: MedMe.danger, size: 44),
+        title: const Text('注销账号?', textAlign: TextAlign.center),
+        content: const Text(
+          '注销后:账号里的云端病历、家属/医生的授权全部永久删除,他们会立刻'
+          '失去访问权限。此操作不可撤销。\n\n'
+          '这台手机上已保存的病历不会被删除——如果也要清空本机数据,'
+          '请到「清空所有数据」里单独操作。',
+          textAlign: TextAlign.center,
+          style: TextStyle(height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('继续注销'),
+          ),
+        ],
+      ),
+    );
+    if (proceed != true || !mounted) return;
+    setState(() {
+      _deleteFormOpen = true;
+      _deleteError = null;
+    });
+  }
+
+  /// 注销前的重新鉴权——手机账号要一个刚发的验证码,Apple 账号要一个刚拿到的
+  /// identity token(见 `services/api/app.py` 的 `DELETE /v1/account`)。走哪条
+  /// 由 [AccountSession.loginMethod] 决定(登录时记的,不是猜的)。
+  Widget _deleteAccountForm() {
+    final isApple = widget.flow.session.loginMethod == 'apple';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          isApple ? '需要重新用 Apple 验证一次,确认是本人操作。' : '需要重新验证手机号,确认是本人操作。',
+          style: const TextStyle(color: MedMe.faint),
+        ),
+        const SizedBox(height: 8),
+        if (!isApple) ...[
+          TextField(
+            key: const Key('delete_phone'),
+            controller: _deletePhoneCtrl,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(labelText: '手机号'),
+          ),
+          const SizedBox(height: 8),
+          _deleteOtpBusy
+              ? const Center(child: CircularProgressIndicator())
+              : TextButton(onPressed: _sendDeleteOtp, child: const Text('发送验证码')),
+          TextField(
+            key: const Key('delete_otp_code'),
+            controller: _deleteOtpCtrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: '验证码'),
+          ),
+        ],
+        if (_deleteError != null) _errorText(_deleteError!),
+        const SizedBox(height: 12),
+        _deleteBusy
+            ? const Center(child: CircularProgressIndicator())
+            : FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: MedMe.danger),
+                onPressed: isApple ? _submitDeleteAccountApple : _submitDeleteAccountOtp,
+                child: const Text('确认注销'),
+              ),
+        const SizedBox(height: 8),
+        TextButton(
+          onPressed: _deleteBusy
+              ? null
+              : () => setState(() {
+                  _deleteFormOpen = false;
+                  _deleteError = null;
+                }),
+          child: const Text('取消'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _sendDeleteOtp() async {
+    setState(() {
+      _deleteOtpBusy = true;
+      _deleteError = null;
+    });
+    try {
+      await widget.flow.sendOtp(_deletePhoneCtrl.text.trim());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('验证码已发送')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _deleteError = '$e');
+    } finally {
+      if (mounted) setState(() => _deleteOtpBusy = false);
+    }
+  }
+
+  Future<void> _submitDeleteAccountOtp() => _submitDeleteAccount(
+    () => widget.flow.deleteAccountWithOtp(_deletePhoneCtrl.text.trim(), _deleteOtpCtrl.text.trim()),
+  );
+
+  Future<void> _submitDeleteAccountApple() => _submitDeleteAccount(widget.flow.deleteAccountWithApple);
+
+  Future<void> _submitDeleteAccount(Future<void> Function() body) async {
+    setState(() {
+      _deleteBusy = true;
+      _deleteError = null;
+    });
+    try {
+      await body();
+      if (!mounted) return;
+      setState(() {
+        _phase = _Phase.idle;
+        _deleteFormOpen = false;
+        _lastSyncReport = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('账号已注销')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _deleteError = '$e');
+    } finally {
+      if (mounted) setState(() => _deleteBusy = false);
+    }
+  }
 
   Widget _devicesSection() => FutureBuilder<List<dynamic>>(
     future: _devicesFuture,

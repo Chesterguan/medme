@@ -56,7 +56,7 @@ class FakeApi extends ApiClient {
   }
 
   @override
-  Future<void> delete(String path, {Map<String, String>? headers}) async {
+  Future<void> delete(String path, {Object? body, Map<String, String>? headers}) async {
     calls.add('DELETE $path');
     final f = failures[path];
     if (f != null) throw f;

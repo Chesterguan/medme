@@ -21,6 +21,12 @@ class AccountSession {
   String? refresh;
   Uint8List? publicKey;
   Uint8List? privateKey;
+
+  /// 上一次登录走的是哪条认证方式(`'otp'`/`'apple'`)——**只是为了让「注销账号」
+  /// 那一步知道该要求哪种重新鉴权凭证**(手机账号要新验证码,Apple 账号要新
+  /// identity token,见 `services/api/app.py` 的 `DELETE /v1/account`),不是
+  /// 别的用途。泄露无害(不是密钥),存 shared_preferences 即可。
+  String? loginMethod;
   bool _loaded = false;
 
   Future<void> ensureLoaded() async {
@@ -29,6 +35,7 @@ class AccountSession {
     accountId = p.getString('acct_id');
     access = p.getString('acct_access');
     refresh = p.getString('acct_refresh');
+    loginMethod = p.getString('acct_method');
     final pk = await _secure.read(key: 'acct_priv');
     privateKey = pk == null ? null : base64Decode(pk);
     final pub = p.getString('acct_pub');
@@ -37,27 +44,36 @@ class AccountSession {
     loggedIn.value = accountId != null && access != null;
   }
 
-  Future<void> save({required String accountId, required String access, required String refresh, Uint8List? publicKey, Uint8List? privateKey}) async {
+  Future<void> save({
+    required String accountId,
+    required String access,
+    required String refresh,
+    Uint8List? publicKey,
+    Uint8List? privateKey,
+    String? loginMethod,
+  }) async {
     final p = await SharedPreferences.getInstance();
     await p.setString('acct_id', accountId);
     await p.setString('acct_access', access);
     await p.setString('acct_refresh', refresh);
     if (publicKey != null) await p.setString('acct_pub', base64Encode(publicKey));
     if (privateKey != null) await _secure.write(key: 'acct_priv', value: base64Encode(privateKey));
+    if (loginMethod != null) await p.setString('acct_method', loginMethod);
     this.accountId = accountId; this.access = access; this.refresh = refresh;
     if (publicKey != null) this.publicKey = publicKey;
     if (privateKey != null) this.privateKey = privateKey;
+    if (loginMethod != null) this.loginMethod = loginMethod;
     loggedIn.value = true;
   }
 
   Future<void> clear() async {
     final p = await SharedPreferences.getInstance();
-    for (final k in ['acct_id', 'acct_access', 'acct_refresh', 'acct_pub']) { await p.remove(k); }
+    for (final k in ['acct_id', 'acct_access', 'acct_refresh', 'acct_pub', 'acct_method']) { await p.remove(k); }
     // `deleteAll` 而不是逐个 delete:AccountSession 是这个 app 里唯一用 secure storage
     // 的地方,它的命名空间下只会有账号私钥(acct_priv)和各档案密钥(pk_<cloudId>)。
     // 换账号必须把上一个账号的档案密钥也清掉,不然共享设备上账号 B 能读到账号 A 的密钥。
     await _secure.deleteAll();
-    accountId = access = refresh = null; publicKey = privateKey = null;
+    accountId = access = refresh = loginMethod = null; publicKey = privateKey = null;
     loggedIn.value = false;
   }
 
@@ -72,7 +88,7 @@ class AccountSession {
   @visibleForTesting
   void resetForTest() {
     _loaded = false;
-    accountId = access = refresh = null;
+    accountId = access = refresh = loginMethod = null;
     publicKey = privateKey = null;
     loggedIn.value = false;
   }

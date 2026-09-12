@@ -65,6 +65,20 @@ DATABASE_URL=postgresql://postgres@localhost:5435/medme_api_test python3 -m pyte
 Apple 分支测的是格式错误的 `identity_token`,在 `jwt.get_unverified_header` 那步就
 失败,不会走到拉 JWKS 那步。
 
+## 自助注销(`DELETE /v1/account`)
+
+大陆 App Store 强制要求的自助注销渠道。Bearer 之外**必须再证明一次是本人**:
+手机号账号在 body 里带一个刚发的 OTP 验证码(`{"phone": "...", "otp_code": "..."}`),
+Apple 账号带一个刚拿到的 `identity_token`(`{"identity_token": "..."}`)——任何一步
+核不过都是 401,不区分"账号不存在"/"验证码不对"。
+
+删除范围:这个账号**拥有**的档案(连同其事件、对象登记、授权、邀请,靠外键级联)
+整个删掉;这个账号作为**grantee** 分享到的别人的档案不受影响,只删那一行授权关系。
+DB 这一半是一个事务、all-or-nothing;OSS 对象在 DB 提交之后才删,最佳努力(用
+`oss.delete_object` 直接拿 RAM key 删,**不签 DELETE 给客户端**——viewer 能拿到
+DELETE 预签名是评审 Critical 过的坑),失败个数放进 `X-Oss-Deleted` 响应头,不影响
+这次注销本身成不成功。成功返回 204。
+
 ## 已知缺口
 
 - **微信登录只留位。** `WeChatProvider.login` 直接 `raise NotImplementedError`,路由

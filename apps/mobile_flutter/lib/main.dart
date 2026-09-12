@@ -11,12 +11,13 @@ import 'package:mobile_flutter/claim_link.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/grant_link.dart';
 import 'package:mobile_flutter/grants.dart';
-import 'package:mobile_flutter/profile_manager.dart' show Profile;
+import 'package:mobile_flutter/profile_manager.dart' show Profile, ProfileManager;
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/ephemeral_session.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/claim_screen.dart';
 import 'package:mobile_flutter/src/rust/frb_generated.dart';
+import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
@@ -88,6 +89,11 @@ void pushGrantRedeem(GrantLink link, {required bool cold}) {
 }
 
 class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
+  /// 保险箱内容变化(`vaultRevision`)3 秒后才推——避免连续几次录入/导入各触发
+  /// 一次网络请求;`triggerBackgroundSync` 自己会在没登录/当前成员没开通云同步时
+  /// no-op,这里只管"什么时候跑"。
+  Timer? _pushDebounce;
+
   @override
   void initState() {
     super.initState();
@@ -96,12 +102,20 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
     // didPushRouteInformation。两条路都收敛到 handleIncomingUri。
     final initial = WidgetsBinding.instance.platformDispatcher.defaultRouteName;
     if (initial != '/') _dispatch(initial, cold: true);
+    vaultRevision.addListener(_scheduleDebouncedPush);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    vaultRevision.removeListener(_scheduleDebouncedPush);
+    _pushDebounce?.cancel();
     super.dispose();
+  }
+
+  void _scheduleDebouncedPush() {
+    _pushDebounce?.cancel();
+    _pushDebounce = Timer(const Duration(seconds: 3), () => unawaited(_triggerBackgroundSync()));
   }
 
   /// App 已在运行时,系统把链接送到这里(自定义 scheme / 将来的 Universal Links)。
@@ -121,8 +135,23 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(ProxyPatientManager.instance.ensureLoaded());
+      // 回到前台顺手拉一次云同步(`triggerBackgroundSync` 没登录/没开通云同步
+      // 时 no-op)——见 Task 15 brief:app-resume pull。
+      unawaited(_triggerBackgroundSync());
     }
   }
+
+  /// debounced push 与 app-resume 共用同一个后台触发器(`sync_engine.dart` 的
+  /// [triggerBackgroundSync])——no-op 判断与静默失败都在那边测过,这里只负责
+  /// 接线:用哪个 [AccountSession]/当前成员/真正的 [SyncEngine]。
+  Future<void> _triggerBackgroundSync() => triggerBackgroundSync(
+    session: AccountSession.instance,
+    currentProfile: () => ProfileManager.instance.current,
+    sync: (p) => SyncEngine(
+      ApiClient(bearer: () async => AccountSession.instance.access),
+      AccountSession.instance,
+    ).syncProfile(p),
+  );
 
   /// [cold] = App 是被这条链接**拉起来的**(而不是已在运行时收到)。这个区分是
   /// 认领转化里最关键的一维:冷启动基本意味着「刚装完就来认领」。

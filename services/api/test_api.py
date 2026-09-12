@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import jwt  # noqa: E402
 import db as dbm  # noqa: E402
 import auth  # noqa: E402
+import oss  # noqa: E402 - Task 15 monkeypatch delete_object 用,与 app.py 里的是同一个模块对象
 import app as app_module  # noqa: E402 - 拿模块级常量(如 OBJECT_MAX_BYTES)用,不是重复导入
 from app import app  # noqa: E402
 
@@ -682,6 +683,90 @@ def test_extract_upstream_garbage_is_502_not_400(monkeypatch):
     r = client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers=_h(a["access"]))
     assert r.status_code == 502
     assert "not json" not in r.text
+
+
+# ---- Task 15: 自助注销账号(DELETE /v1/account) ----
+
+def test_account_delete_requires_reauth_401_and_nothing_changes():
+    a = login("13800000120", "a1")
+    ha = _h(a["access"])
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ha).json()["profile_id"]
+    # login() 内部的 otp_check 一成功就把那条 otp 行删了,这里没再发新验证码——
+    # 随便给个 code 都应该 401,而不是悄悄通过。
+    r = client.request("DELETE", "/v1/account", json={"phone": "13800000120", "otp_code": "999999"}, headers=ha)
+    assert r.status_code == 401
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (a["account_id"],)).fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM profiles WHERE id=%s", (pid,)).fetchone()[0] == 1
+
+
+def test_account_delete_happy_path_deletes_owned_profile_grants_and_oss(monkeypatch):
+    os.environ.update({"OSS_ACCESS_KEY_ID": "AK", "OSS_ACCESS_KEY_SECRET": "SK", "OSS_BUCKET": "medme-vault", "OSS_ENDPOINT": "oss-cn-hangzhou.aliyuncs.com"})
+    deleted_keys = []
+    monkeypatch.setattr(oss, "delete_object", lambda key: deleted_keys.append(key) or True)
+
+    owner = login("13800000121", "o1")
+    other = login("13800000122", "x1")
+    ho, hx = _h(owner["access"]), _h(other["access"])
+
+    pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk")}, headers=ho).json()["profile_id"]
+    oid = "aa" * 32
+    assert client.post(f"/v1/profiles/{pid}/objects/sign", json={"object_id": oid, "verb": "PUT", "size": 10}, headers=ho).status_code == 200
+
+    # other 的档案分享给 owner(viewer)——owner 注销后这份"别人拥有"的档案必须原样还在,
+    # 只删 owner 作为 grantee 的那一行 grant。
+    other_pid = client.post("/v1/profiles", json={"wrapped_profile_key": b64(b"wk2")}, headers=hx).json()["profile_id"]
+    assert client.post(f"/v1/profiles/{other_pid}/grants", json={"grantee_account_id": owner["account_id"], "role": "viewer",
+        "days": None, "wrapped_profile_key": b64(b"wk-shared")}, headers=hx).status_code == 200
+
+    assert client.post("/v1/auth/otp", json={"phone": "13800000121"}).status_code == 200
+    r = client.request("DELETE", "/v1/account", json={"phone": "13800000121", "otp_code": "000000"}, headers=ho)
+    assert r.status_code == 204, r.text
+    assert deleted_keys == [f"v/{pid}/{oid}"]
+    assert r.headers["x-oss-deleted"] == "1/1"
+
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (owner["account_id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM profiles WHERE id=%s", (pid,)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM objects WHERE profile_id=%s", (pid,)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM grants WHERE profile_id=%s", (pid,)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM devices WHERE account_id=%s", (owner["account_id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM usage WHERE account_id=%s", (owner["account_id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM otp WHERE phone_hash=%s", (f"lookup:{owner['account_id']}",)).fetchone()[0] == 0
+        # grantee-only 关系被删,但那份档案本身(属于 other,不属于 owner)原样还在
+        assert conn.execute(
+            "SELECT count(*) FROM grants WHERE profile_id=%s AND grantee_id=%s", (other_pid, owner["account_id"])
+        ).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM profiles WHERE id=%s", (other_pid,)).fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (other["account_id"],)).fetchone()[0] == 1
+
+
+def test_account_delete_apple_requires_fresh_identity_token(monkeypatch):
+    monkeypatch.setattr(oss, "delete_object", lambda key: True)
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    kid = "test-kid-delete"
+
+    def _token(sub):
+        payload = {"iss": "https://appleid.apple.com", "aud": os.environ["APPLE_BUNDLE_ID"], "exp": int(time.time()) + 3600, "sub": sub}
+        return jwt.encode(payload, private_key, algorithm="RS256", headers={"kid": kid})
+
+    _install_fake_apple_jwks(private_key.public_key(), kid)
+    r = client.post("/v1/auth/apple", json={"identity_token": _token("apple-delete-1"), "device_id": "d", "device_name": "d"})
+    assert r.status_code == 200, r.text
+    acc = r.json()
+    h = _h(acc["access"])
+
+    assert client.request("DELETE", "/v1/account", json={}, headers=h).status_code == 401
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (acc["account_id"],)).fetchone()[0] == 1
+
+    _install_fake_apple_jwks(private_key.public_key(), kid)  # JWKS 缓存 60 分钟内不过期,重装一下保险
+    r = client.request("DELETE", "/v1/account", json={"identity_token": _token("apple-delete-1")}, headers=h)
+    assert r.status_code == 204, r.text
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM accounts WHERE id=%s", (acc["account_id"],)).fetchone()[0] == 0
 
 
 if __name__ == "__main__":

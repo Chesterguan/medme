@@ -132,7 +132,12 @@ class AccountFlow {
         'device_id': await deviceId(),
         'device_name': Platform.operatingSystem,
       });
-      await session.save(accountId: r['account_id'] as String, access: r['access'] as String, refresh: r['refresh'] as String);
+      await session.save(
+        accountId: r['account_id'] as String,
+        access: r['access'] as String,
+        refresh: r['refresh'] as String,
+        loginMethod: 'otp',
+      );
     } catch (_) {
       Analytics.track(AnalyticsEvent.accountLogin, {'method': 'otp', 'ok': false});
       rethrow;
@@ -153,7 +158,12 @@ class AccountFlow {
         'device_id': await deviceId(),
         'device_name': Platform.operatingSystem,
       });
-      await session.save(accountId: r['account_id'] as String, access: r['access'] as String, refresh: r['refresh'] as String);
+      await session.save(
+        accountId: r['account_id'] as String,
+        access: r['access'] as String,
+        refresh: r['refresh'] as String,
+        loginMethod: 'apple',
+      );
     } catch (_) {
       Analytics.track(AnalyticsEvent.accountLogin, {'method': 'apple', 'ok': false});
       rethrow;
@@ -248,6 +258,32 @@ class AccountFlow {
       privateKey: sec,
     );
     lastOutcome = LoginOutcome.ready;
+  }
+
+  /// 退出登录:清掉本机全部账号态(token、私钥、各档案密钥)。**不是**注销账号——
+  /// 服务端账号与云端数据原样保留;已开通云同步的成员在这台设备上会因为没有档案
+  /// 密钥而变成 [ProfileLocked](`vault_boot.dart`),重新登录后自动恢复。调用方
+  /// (`AccountScreen`)在确认弹窗里把这句话说清楚,不是这里的事。
+  Future<void> logout() => session.clear();
+
+  /// 自助注销(手机账号):`otp_code` 必须是**刚发的**验证码(见
+  /// `services/api/app.py` 的 `DELETE /v1/account`——重新证明是本人,偷来的
+  /// access token 单独用不了这条路)。成功后服务端账号、其名下云档案、授权全部
+  /// 已被删除,这里跟着清掉本机账号态(同 [logout])——不可逆,调用方必须已经
+  /// 走过确认弹窗。
+  Future<void> deleteAccountWithOtp(String phone, String otpCode) async {
+    await api.delete('/v1/account', body: {'phone': phone, 'otp_code': otpCode});
+    await session.clear();
+  }
+
+  /// 自助注销(Apple 账号):需要一个**刚拿到的** identity token,和 [loginApple]
+  /// 同一条系统弹窗,不能复用登录时那一次(那次早就用过、可能已过期)。
+  Future<void> deleteAccountWithApple() async {
+    final cred = await SignInWithApple.getAppleIDCredential(
+      scopes: [AppleIDAuthorizationScopes.email],
+    );
+    await api.delete('/v1/account', body: {'identity_token': cred.identityToken});
+    await session.clear();
   }
 
   Future<void> unlockWithRecovery(String code) async {
