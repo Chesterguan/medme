@@ -24,6 +24,7 @@ import 'package:mobile_flutter/grant_link.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/qr_share_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _ThrowingApi extends ApiClient {
   _ThrowingApi() : super(base: 'http://x');
@@ -69,6 +70,8 @@ void main() {
   late Directory support;
 
   setUp(() async {
+    // 出码屏现在要读「上次选了哪条路」(UX 第二轮),默认旧路径。
+    SharedPreferences.setMockInitialValues({});
     support = await Directory.systemTemp.createTemp('medme-qr-share-test');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
       const MethodChannel('plugins.flutter.io/path_provider'),
@@ -135,6 +138,7 @@ void main() {
   });
 
   testWidgets('owner + 邀请创建失败:不留在授权链接的报错态里,转去尝试原路径', (t) async {
+    SharedPreferences.setMockInitialValues({'qr_share_grant_mode': true});
     await setUpOwnerProfile(t);
 
     await t.pumpWidget(MaterialApp(
@@ -150,6 +154,7 @@ void main() {
   });
 
   testWidgets('owner + 邀请创建成功:出码,不触碰原路径', (t) async {
+    SharedPreferences.setMockInitialValues({'qr_share_grant_mode': true});
     await setUpOwnerProfile(t);
 
     await t.pumpWidget(MaterialApp(
@@ -162,5 +167,77 @@ void main() {
     // 不在目录允许集合之外,断言不炸就是它没违反目录契约)。
     expect(find.text('请医生扫这个码'), findsOneWidget);
     expect(find.text('生成失败'), findsNothing);
+  });
+
+  // ---- UX 第二轮:出码屏二选一,默认旧路径 ----
+  //
+  // 在这之前 `shouldTryGrantLink` 一为真就**自动**切成授权链接,于是"开通云同步"
+  // 顺带改掉了诊室里那条最关键的路:医生拿自己手机扫一下当场看 → 医生必须先装
+  // MedMe 并登录。
+
+  testWidgets('owner 默认走旧路径:压根不发邀请(选择权交回用户)', (t) async {
+    await setUpOwnerProfile(t);
+
+    await t.pumpWidget(MaterialApp(
+      home: QrShareScreen(grants: _NeverInvitedGrants(), qrShareBlobFn: _fakeQrShareBlobFails),
+    ));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 50));
+
+    // `_NeverInvitedGrants.inviteDoctor` 里是 `fail()` —— 走到那儿整条用例就红了。
+    expect(find.text('生成失败'), findsOneWidget);
+  });
+
+  testWidgets('owner:顶部两个选项都在,默认选中「当场看」,说明文案说的是浏览器那条', (t) async {
+    await setUpOwnerProfile(t);
+
+    await t.pumpWidget(MaterialApp(
+      home: QrShareScreen(grants: _SucceedingGrants(), qrShareBlobFn: _fakeQrShareBlobFails),
+    ));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('医生当场看(任何手机)'), findsOneWidget);
+    expect(find.text('医生带走 15 天(医生也需装 MedMe)'), findsOneWidget);
+    expect(
+      find.textContaining('他不用装 App'),
+      findsOneWidget,
+      reason: '默认那条的说明必须说准:医生不需要装任何东西',
+    );
+  });
+
+  testWidgets('未登录:连选项都不给(只有旧路径)', (t) async {
+    await t.runAsync(() async {
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+    });
+
+    await t.pumpWidget(MaterialApp(
+      home: QrShareScreen(grants: _NeverInvitedGrants(), qrShareBlobFn: _fakeQrShareBlobFails),
+    ));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('医生带走 15 天(医生也需装 MedMe)'), findsNothing);
+  });
+
+  testWidgets('拨到「医生带走 15 天」:出授权链接,并把选择记进 prefs', (t) async {
+    await setUpOwnerProfile(t);
+
+    await t.pumpWidget(MaterialApp(
+      home: QrShareScreen(grants: _SucceedingGrants(), qrShareBlobFn: _fakeQrShareBlobFails),
+    ));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 50));
+    expect(find.text('生成失败'), findsOneWidget); // 默认那条的假实现失败态
+
+    await t.tap(find.text('医生带走 15 天(医生也需装 MedMe)'));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('请医生扫这个码'), findsOneWidget);
+    expect(find.textContaining('他需要已经装了 MedMe 并登录'), findsOneWidget);
+    final prefs = await t.runAsync(() => SharedPreferences.getInstance());
+    expect(prefs!.getBool('qr_share_grant_mode'), isTrue, reason: '下次打开该记得这个选择');
   });
 }
