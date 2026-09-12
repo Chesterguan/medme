@@ -81,7 +81,7 @@
 
 ---
 
-## 四、事件全集(27 条)
+## 四、事件全集(31 条)
 
 每条对应**一个决定**。答不出决定的事件不该存在。
 
@@ -302,6 +302,21 @@
 
 ⚠️ 失败原因是 Rust 侧的一段文本、可能带路径,**不上报**(与 `doc_import_failed`
 只报 `reason_code` 同一条规矩)。`data_wiped` 无属性 —— 而且此刻设备上已经什么都不剩了。
+
+### 账号与同步
+
+> 账号登录、云同步、家属/医生授权——这几条路径此前一个事件都没有。
+
+| 事件 | 属性 | 触发点 | 回答什么决定 |
+|---|---|---|---|
+| `account_login` | `method`(otp/apple), `ok` | `account_flow.dart` | 登录走哪种方式、成不成功——`ok=false` 集中在哪个 `method`,决定该修哪条登录路径 |
+| `sync_run` | `ok`, `pushed_bucket`, `pulled_bucket` | `sync_engine.dart` | **云同步到底跑没跑通。** `ok` 的失败率,以及 `pushed_bucket`/`pulled_bucket` 是不是长期为 `0`,决定这套推拉引擎值不值得继续投入 |
+| `grant_created` | `role` | `grants.dart` | 医生看诊码(`viewer`)与代拍转移(`owner`)两条授权路径谁在被用 |
+| `grant_redeemed` | `role`, `ok` | `grants.dart` | 兑换授权成不成功——失败率高说明链接或流程有问题,不是「没人用」 |
+
+⚠️ **不带任何 id、手机号、档案名。** `account_login` 不报手机号/账号 id;`sync_run` 只报
+布尔与分桶后的事件数,不报同步了什么内容;`grant_created`/`grant_redeemed` 只报角色,
+不报邀请 token、profile id、对方账号。
 
 ### 分析自身
 

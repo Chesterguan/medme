@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grant_link.dart';
 import 'package:mobile_flutter/profile_manager.dart';
@@ -82,6 +83,7 @@ class Grants {
       'wrapped_key_by_token': base64Encode(wrapped),
       'invite_ttl_s': ttlS,
     });
+    Analytics.track(AnalyticsEvent.grantCreated, {'role': role});
     return GrantLink(inviteId: r['invite_id'] as String, token: token);
   }
 
@@ -103,34 +105,41 @@ class Grants {
   /// 顶部对 `enableCloud` 的同一条限制)。测试传一个空实现,只钉住网络 + 密钥
   /// 回填 + 建档案这几步可测的逻辑。
   Future<Profile> redeem(GrantLink l, {Future<void> Function(Profile)? afterStored}) async {
-    final r = await api.postJson('/v1/invites/redeem', {
-      'invite_id': l.inviteId,
-      'token': l.token,
-    });
-    final key = await rust.unwrapWithToken(base64Decode(r['wrapped_key_by_token'] as String), l.token);
-    final pub = session.publicKey;
-    if (pub == null) throw StateError('账号公钥未就绪,不能兑换授权');
-    final mine = await rust.sealTo(pub, key);
-    final profileId = r['profile_id'] as String;
-    final grantId = r['grant_id'] as String;
-    await api.putJson('/v1/profiles/$profileId/grants/$grantId/key', {
-      'wrapped_profile_key': base64Encode(mine),
-    });
-    await session.putProfileKey(profileId, key);
+    try {
+      final r = await api.postJson('/v1/invites/redeem', {
+        'invite_id': l.inviteId,
+        'token': l.token,
+      });
+      final key = await rust.unwrapWithToken(base64Decode(r['wrapped_key_by_token'] as String), l.token);
+      final pub = session.publicKey;
+      if (pub == null) throw StateError('账号公钥未就绪,不能兑换授权');
+      final mine = await rust.sealTo(pub, key);
+      final profileId = r['profile_id'] as String;
+      final grantId = r['grant_id'] as String;
+      await api.putJson('/v1/profiles/$profileId/grants/$grantId/key', {
+        'wrapped_profile_key': base64Encode(mine),
+      });
+      await session.putProfileKey(profileId, key);
 
-    // 这个云档案本机已经有一个入口——重新兑换同一条链接、或者角色/到期被服务端
-    // 更新过(比如医生邀请续期)——复用它,别再建一个重复的空壳档案出来。
-    await ProfileManager.instance.ensureLoaded();
-    final existing = ProfileManager.instance.profiles.where((p) => p.cloudId == profileId).firstOrNull;
-    final localId = existing?.id ?? await ProfileManager.instance.create('(同步中)', userManaged: false);
-    if (localId == null) throw StateError('无法创建本地档案');
-    final expiresAt = r['expires_at'] == null ? null : DateTime.parse(r['expires_at'] as String);
-    await ProfileManager.instance.markCloud(localId, profileId, r['role'] as String, expiresAt);
-    await ProfileManager.instance.switchTo(localId);
-    final stored = ProfileManager.instance.current;
+      // 这个云档案本机已经有一个入口——重新兑换同一条链接、或者角色/到期被服务端
+      // 更新过(比如医生邀请续期)——复用它,别再建一个重复的空壳档案出来。
+      await ProfileManager.instance.ensureLoaded();
+      final existing = ProfileManager.instance.profiles.where((p) => p.cloudId == profileId).firstOrNull;
+      final localId = existing?.id ?? await ProfileManager.instance.create('(同步中)', userManaged: false);
+      if (localId == null) throw StateError('无法创建本地档案');
+      final role = r['role'] as String;
+      final expiresAt = r['expires_at'] == null ? null : DateTime.parse(r['expires_at'] as String);
+      await ProfileManager.instance.markCloud(localId, profileId, role, expiresAt);
+      await ProfileManager.instance.switchTo(localId);
+      final stored = ProfileManager.instance.current;
 
-    await (afterStored ?? _finishRedeem)(stored);
-    return ProfileManager.instance.current;
+      await (afterStored ?? _finishRedeem)(stored);
+      Analytics.track(AnalyticsEvent.grantRedeemed, {'role': role, 'ok': true});
+      return ProfileManager.instance.current;
+    } catch (_) {
+      Analytics.track(AnalyticsEvent.grantRedeemed, {'ok': false});
+      rethrow;
+    }
   }
 
   Future<void> _finishRedeem(Profile p) async {

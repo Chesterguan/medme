@@ -512,7 +512,30 @@ enum AnalyticsEvent {
   dataWiped('data_wiped', {}),
 
   /// 用户关掉了分析。**最后一条上报**,发完即停。
-  analyticsOptOut('analytics_opt_out', {});
+  analyticsOptOut('analytics_opt_out', {}),
+
+  // ── 账号与同步 ───────────────────────────────────────────────────────────
+
+  /// 登录尝试(成功或失败)。属性:`method`(otp/apple)、`ok`。
+  /// 回答的决定:登录走哪种方式、成不成功 —— `ok=false` 集中在哪个 `method`,
+  /// 决定该修哪条登录路径。不带手机号、账号 id。
+  accountLogin('account_login', {'method', 'ok'}),
+
+  /// 一次 `syncProfile` 跑完(成功或失败)。属性:`ok`、`pushed_bucket`、
+  /// `pulled_bucket`。
+  ///
+  /// 回答的决定:**云同步到底跑没跑通。** `ok` 的失败率,以及两个分桶是不是
+  /// 长期为 `0`,决定这套推拉引擎值不值得继续投入。不报同步了什么内容。
+  syncRun('sync_run', {'ok', 'pushed_bucket', 'pulled_bucket'}),
+
+  /// 生成了一条授权邀请(医生看诊码 / 代拍转移)。属性:`role`。
+  /// 回答的决定:`viewer`(医生)与 `owner`(代拍转移)两条授权路径谁在被用。
+  grantCreated('grant_created', {'role'}),
+
+  /// 兑换一条授权邀请(成功或失败)。属性:`role`、`ok`。
+  /// 回答的决定:兑换成不成功 —— 失败率高说明链接或流程有问题,不是「没人用」。
+  /// 失败时不知道 `role`,只报 `ok`。
+  grantRedeemed('grant_redeemed', {'role', 'ok'});
 
   const AnalyticsEvent(this.name, this.props);
   final String name;

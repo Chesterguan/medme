@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
@@ -219,6 +220,27 @@ class SyncEngine {
     final rep = SyncReport();
     final canWrite = p.role == 'owner' || p.role == 'editor';
 
+    try {
+      await _doSyncProfile(cloudId, key, rep, canWrite);
+      Analytics.track(AnalyticsEvent.syncRun, {
+        'ok': true,
+        'pushed_bucket': Bucket.count(rep.pushed),
+        'pulled_bucket': Bucket.count(rep.pulled),
+      });
+      return rep;
+    } catch (_) {
+      Analytics.track(AnalyticsEvent.syncRun, {
+        'ok': false,
+        'pushed_bucket': Bucket.count(rep.pushed),
+        'pulled_bucket': Bucket.count(rep.pulled),
+      });
+      rethrow;
+    }
+  }
+
+  /// [syncProfile] 的实际推拉逻辑,拆出来只是为了让 try/catch 包住的范围
+  /// 一眼看清——本身不是独立可调用的公共步骤。
+  Future<void> _doSyncProfile(String cloudId, Uint8List key, SyncReport rep, bool canWrite) async {
     // 1. 拉:本机水位当 since,服务端只给比它新的;响应头 X-Seq-Map 顺带带回
     // 该 profile 每个 device 当前的最大 seq——第 2 步的推送水位就是它。
     final local = <String, int>{for (final e in await rust.localSeqMap()) e.$1: e.$2};
@@ -340,7 +362,6 @@ class SyncEngine {
     }
 
     bumpVaultRevision();
-    return rep;
   }
 
   /// 按需拉单个对象(如查看器打开一份还没同步下来的文档时调)。找不到就是本机

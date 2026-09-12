@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' as rust;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -119,27 +120,39 @@ class AccountFlow {
   Future<void> sendOtp(String phone) => api.postJson('/v1/auth/otp', {'phone': phone});
 
   Future<LoginOutcome> loginOtp(String phone, String code) async {
-    final r = await api.postJson('/v1/auth/login', {
-      'phone': phone,
-      'code': code,
-      'device_id': await deviceId(),
-      'device_name': Platform.operatingSystem,
-    });
-    await session.save(accountId: r['account_id'] as String, access: r['access'] as String, refresh: r['refresh'] as String);
-    return _afterLogin();
+    try {
+      final r = await api.postJson('/v1/auth/login', {
+        'phone': phone,
+        'code': code,
+        'device_id': await deviceId(),
+        'device_name': Platform.operatingSystem,
+      });
+      await session.save(accountId: r['account_id'] as String, access: r['access'] as String, refresh: r['refresh'] as String);
+      Analytics.track(AnalyticsEvent.accountLogin, {'method': 'otp', 'ok': true});
+      return await _afterLogin();
+    } catch (_) {
+      Analytics.track(AnalyticsEvent.accountLogin, {'method': 'otp', 'ok': false});
+      rethrow;
+    }
   }
 
   Future<void> loginApple() async {
-    final cred = await SignInWithApple.getAppleIDCredential(
-      scopes: [AppleIDAuthorizationScopes.email],
-    );
-    final r = await api.postJson('/v1/auth/apple', {
-      'identity_token': cred.identityToken,
-      'device_id': await deviceId(),
-      'device_name': Platform.operatingSystem,
-    });
-    await session.save(accountId: r['account_id'] as String, access: r['access'] as String, refresh: r['refresh'] as String);
-    await _afterLogin();
+    try {
+      final cred = await SignInWithApple.getAppleIDCredential(
+        scopes: [AppleIDAuthorizationScopes.email],
+      );
+      final r = await api.postJson('/v1/auth/apple', {
+        'identity_token': cred.identityToken,
+        'device_id': await deviceId(),
+        'device_name': Platform.operatingSystem,
+      });
+      await session.save(accountId: r['account_id'] as String, access: r['access'] as String, refresh: r['refresh'] as String);
+      Analytics.track(AnalyticsEvent.accountLogin, {'method': 'apple', 'ok': true});
+      await _afterLogin();
+    } catch (_) {
+      Analytics.track(AnalyticsEvent.accountLogin, {'method': 'apple', 'ok': false});
+      rethrow;
+    }
   }
 
   Future<LoginOutcome> _afterLogin() async {
