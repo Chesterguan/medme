@@ -375,7 +375,11 @@ class SyncEngine {
       rep.objectsDown++;
     }
 
-    bumpVaultRevision();
+    // 只在真的写了东西(拉到新事件/补齐了对象)才通知——`vaultRevision` 挂着
+    // debounced push 触发器(见文件末尾 `triggerBackgroundSync`),无条件 bump
+    // 会让"什么都没同步到"的一次同步 3 秒后又触发下一次同步,自己喂自己,
+    // 前台一直转下去(见 Task 16 item 9)。
+    if (rep.pulled > 0 || rep.objectsDown > 0) bumpVaultRevision();
   }
 
   /// 按需拉单个对象(如查看器打开一份还没同步下来的文档时调)。找不到就是本机

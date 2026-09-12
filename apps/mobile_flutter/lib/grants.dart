@@ -158,7 +158,7 @@ class Grants {
     if (cloudId == null) throw StateError('这个成员还没开通云同步');
     final key = await session.profileKey(cloudId);
     if (key == null) throw StateError('没有这个档案的密钥');
-    final looked = await api.getJson('/v1/accounts/lookup', query: {'phone': phone}) as Map<String, dynamic>;
+    final looked = await api.postJson('/v1/accounts/lookup', {'phone': phone});
     final theirPub = base64Decode(looked['public_key'] as String);
     final wrapped = await rust.sealTo(theirPub, key);
     await api.postJson('/v1/profiles/$cloudId/grants', {

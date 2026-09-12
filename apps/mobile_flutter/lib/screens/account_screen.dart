@@ -68,6 +68,9 @@ class _AccountScreenState extends State<AccountScreen> {
   Future<List<dynamic>>? _devicesFuture;
   Future<List<dynamic>>? _grantsFuture;
 
+  /// 「我授权给谁」——见 `_loadMyGrants`。
+  Future<List<Map<String, dynamic>>>? _myGrantsFuture;
+
   // ---- 云同步(Task 15):开通 + 触发 + 展示上一次结果 ----
   bool _cloudBusy = false;
   String? _cloudError;
@@ -171,7 +174,25 @@ class _AccountScreenState extends State<AccountScreen> {
         ..catchError((_) => const <dynamic>[]);
       _grantsFuture = widget.flow.api.getJson('/v1/profiles').then((v) => v as List<dynamic>)
         ..catchError((_) => const <dynamic>[]);
+      _myGrantsFuture = _loadMyGrants()..catchError((_) => const <Map<String, dynamic>>[]);
     });
+  }
+
+  /// 「我授权给谁」:遍历我拥有(role=='owner')的每个云档案,查它的 grantee 列表
+  /// (`GET /v1/profiles/{pid}/grants`,owner-only,服务端不带手机号/姓名)。
+  /// owner 自己那一行由服务端一并返回,这里过滤掉——这个列表只回答"我把这份
+  /// 档案给了谁",不是"我在这份档案里是什么角色"(那是上面「授权」区块的事)。
+  Future<List<Map<String, dynamic>>> _loadMyGrants() async {
+    final profiles = ((await widget.flow.api.getJson('/v1/profiles')) as List).cast<Map<String, dynamic>>();
+    final out = <Map<String, dynamic>>[];
+    for (final p in profiles.where((p) => p['role'] == 'owner')) {
+      final pid = p['profile_id'] as String;
+      final grants = ((await widget.flow.api.getJson('/v1/profiles/$pid/grants')) as List).cast<Map<String, dynamic>>();
+      for (final g in grants.where((g) => g['role'] != 'owner')) {
+        out.add({...g, 'profile_id': pid});
+      }
+    }
+    return out;
   }
 
   Future<void> _registerKeys() => _run(() async {
@@ -413,6 +434,10 @@ class _AccountScreenState extends State<AccountScreen> {
     const Text('账号管理', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _accountManagementSection(),
+    const SizedBox(height: 24),
+    const Text('我授权给谁', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    _myGrantsSection(),
   ];
 
   // ---- 云同步:「开通云同步」(当前成员)+「立即同步」+ 上一次结果/错误 ----
@@ -778,9 +803,6 @@ class _AccountScreenState extends State<AccountScreen> {
               child: ListTile(
                 title: Text('档案 ${g['profile_id']}'),
                 subtitle: Text('角色:${g['role']}${g['expires_at'] != null ? ' · 到期 ${g['expires_at']}' : ''}'),
-                trailing: g['role'] == 'owner'
-                    ? TextButton(onPressed: () => _revokeGrant(g), child: const Text('撤销'))
-                    : null,
               ),
             ),
         ],
@@ -788,7 +810,36 @@ class _AccountScreenState extends State<AccountScreen> {
     },
   );
 
-  Future<void> _revokeGrant(Map<String, dynamic> grant) async {
+  /// 「我授权给谁」——每个我拥有的云档案下面挂着的 grantee(见 `_loadMyGrants`),
+  /// 每行一个真正能用的「撤销」(`DELETE /v1/profiles/{pid}/grants/{gid}`,后端
+  /// 本身就拒绝删 owner 那一行,这里也从不会展示 owner 自己)。
+  Widget _myGrantsSection() => FutureBuilder<List<Map<String, dynamic>>>(
+    future: _myGrantsFuture,
+    builder: (context, snap) {
+      if (snap.connectionState == ConnectionState.waiting) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (snap.hasError) {
+        return _errorText('加载失败:${snap.error}');
+      }
+      final rows = snap.data ?? const [];
+      if (rows.isEmpty) return const Text('还没有授权给任何人', style: TextStyle(color: MedMe.faint));
+      return Column(
+        children: [
+          for (final g in rows)
+            Card(
+              child: ListTile(
+                title: Text('档案 ${g['profile_id']} · ${g['grantee_kind']}'),
+                subtitle: Text('角色:${g['role']}${g['expires_at'] != null ? ' · 到期 ${g['expires_at']}' : ''}'),
+                trailing: TextButton(onPressed: () => _revokeMyGrant(g), child: const Text('撤销')),
+              ),
+            ),
+        ],
+      );
+    },
+  );
+
+  Future<void> _revokeMyGrant(Map<String, dynamic> grant) async {
     try {
       await widget.flow.api.delete('/v1/profiles/${grant['profile_id']}/grants/${grant['grant_id']}');
       if (!mounted) return;

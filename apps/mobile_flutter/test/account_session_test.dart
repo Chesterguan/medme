@@ -74,6 +74,25 @@ void main() {
     expect(await AccountSession.instance.profileKey('cloud-2'), key);
   });
 
+  // ---- Task 16 item 3:成员/授权被移除时,连同它的档案密钥一起清掉 ----
+
+  test('removeProfileKey:只删这一个档案的密钥,不碰别的', () async {
+    final keyA = Uint8List.fromList(List.generate(32, (i) => i));
+    final keyB = Uint8List.fromList(List.generate(32, (i) => 100 + i));
+    await AccountSession.instance.putProfileKey('cloud-a', keyA);
+    await AccountSession.instance.putProfileKey('cloud-b', keyB);
+
+    await AccountSession.instance.removeProfileKey('cloud-a');
+
+    expect(await AccountSession.instance.profileKey('cloud-a'), isNull);
+    expect(await AccountSession.instance.profileKey('cloud-b'), keyB, reason: '不该被连坐删掉');
+  });
+
+  test('removeProfileKey:这个 cloudId 本来就没存过密钥时,不报错', () async {
+    await AccountSession.instance.removeProfileKey('never-existed');
+    expect(await AccountSession.instance.profileKey('never-existed'), isNull);
+  });
+
   test('iOS secure storage 选项开了 synchronizable(iCloud 钥匙串同步)', () {
     expect(AccountSession.iosOptionsForTest['synchronizable'], 'true');
   });

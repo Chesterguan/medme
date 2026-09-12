@@ -20,6 +20,7 @@ import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/vault_boot.dart';
+import 'package:mobile_flutter/vault_events.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 假 API——每个方法都记进 [calls],推的事件记进 [pushedEvents]。[server] 描述
@@ -691,6 +692,59 @@ void main() {
     // 没有 cloudId 就没法拼 secure storage 的 key,这里只需确认 profile 状态没变。
   });
 
+  group('Task 16 item 9:同步不该自己喂自己(vaultRevision 只在真拉到东西时才 bump)', () {
+    test('推了本地事件、但拉/对象下行都是空的:不 bump vaultRevision,不会排下一轮触发器', () async {
+      final api = RecordingApi(server: {'events': [], 'objects': []});
+      final rust = FakeRust(
+        localEvents: [
+          SyncEventDto(deviceId: 'd1', seq: 1, eventId: 'e1', ts: 't', ciphertext: Uint8List(3)),
+        ],
+      );
+      final engine = SyncEngine(api, AccountSession.instance, rust: rust);
+      final before = vaultRevision.value;
+
+      final rep = await engine.syncProfile(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'owner'));
+
+      expect(rep.pulled, 0);
+      expect(rep.objectsDown, 0);
+      expect(vaultRevision.value, before, reason: '什么都没拉到,不该 bump——否则 debounce 触发器会喂出一个永动同步循环');
+    });
+
+    test('拉到了新事件:照常 bump', () async {
+      final api = RecordingApi(server: {
+        'events': [
+          {'device_id': 'd1', 'seq': 1, 'event_id': 'e1', 'ts': 't', 'ciphertext': base64Encode(Uint8List(2))},
+        ],
+        'objects': [],
+      });
+      final engine = SyncEngine(api, AccountSession.instance, rust: FakeRust());
+      final before = vaultRevision.value;
+
+      final rep = await engine.syncProfile(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'owner'));
+
+      expect(rep.pulled, 1);
+      expect(vaultRevision.value, before + 1);
+    });
+  });
+
+  group('Task 16 item 10:写之前的第二道核对(defense-in-depth,不依赖"排进了队列"这个假设本身永远成立)', () {
+    test('拉取网络往返期间箱子被换掉(keyed 状态翻转):写之前的核对拦住,importEvents 零调用', () async {
+      final api = RecordingApi(server: {
+        'events': [
+          {'device_id': 'd1', 'seq': 1, 'event_id': 'e1', 'ts': 't', 'ciphertext': base64Encode(Uint8List(2))},
+        ],
+      });
+      final rust = _FlipKeyedAfterFirstCall();
+      final engine = SyncEngine(api, AccountSession.instance, rust: rust);
+
+      await expectLater(
+        engine.syncProfile(Profile(id: 'p-1', name: 'x', cloudId: cloudId, role: 'owner')),
+        throwsA(isA<VaultMismatch>()),
+      );
+      expect(rust.importCalls, 0, reason: '写之前的核对没过,importEvents 一次都不该被调,零写入');
+    });
+  });
+
   group('I2 (fix round 1: Task 15 review) — 同步排进 vault_boot 的 FIFO 队列', () {
     test('"切成员"类动作必须等 syncProfile 的写操作(importEvents)完成才能执行', () async {
       final order = <String>[];
@@ -724,6 +778,27 @@ class _OrderRecordingRust extends FakeRust {
   @override
   Future<SyncImportOutcomeDto> importEvents(Uint8List profileKey, List<SyncEventDto> events) async {
     order.add('write');
+    return super.importEvents(profileKey, events);
+  }
+}
+
+/// 只用来测 Task 16 item 10(写之前的第二道核对):`currentVaultIsKeyed` 第一次
+/// (`syncProfile` 开头的核对)答 true,从第二次起(拉完事件、写之前的核对)答
+/// false——模拟"网络往返期间箱子被换掉"。`importEvents` 记一下有没有被调,
+/// 断言"核对没过,压根不该走到写这一步"。
+class _FlipKeyedAfterFirstCall extends FakeRust {
+  int _keyedCalls = 0;
+  int importCalls = 0;
+
+  @override
+  Future<bool> currentVaultIsKeyed() async {
+    _keyedCalls++;
+    return _keyedCalls == 1;
+  }
+
+  @override
+  Future<SyncImportOutcomeDto> importEvents(Uint8List profileKey, List<SyncEventDto> events) async {
+    importCalls++;
     return super.importEvents(profileKey, events);
   }
 }

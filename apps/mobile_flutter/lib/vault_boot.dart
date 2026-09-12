@@ -297,7 +297,10 @@ Future<void> autoNameCurrentProfileFrom(String? detectedName) async {
 }
 
 /// 删除一个成员:成员表移除 + **本机与 iCloud 容器两处**的数据目录都删掉,再重开
-/// (删的若是当前成员,`remove` 已把 current 切回第一个)并刷新各屏。
+/// (删的若是当前成员,`remove` 已把 current 切回第一个)并刷新各屏。这是**唯一**
+/// 移除成员的入口(手动删成员的设置页、`Grants.purgeExpired` 清过期授权都走这
+/// 一条),云档案的密钥(`pk_<cloudId>`)也在这里统一清掉——不分别在每个调用方
+/// 补一遍,免得漏掉哪一条路径(见 Task 16 item 3)。
 ///
 /// 两处都删的理由与 [wipeAllData] 第 4 步同源:关掉 iCloud 时容器副本会被保留,
 /// 只删活跃那处的话,数据还在容器里躺着,再开 iCloud 会被 adopt 回来 —— 用户以为
@@ -313,9 +316,11 @@ Future<bool> removeProfileAndReopen(String id) async {
   final containerRoot = await IcloudBridge.containerPath();
   final localBase = ProfileManager.instance.localBaseOf(docsRoot, id);
   final cloudBase = ProfileManager.instance.containerBaseOf(containerRoot, id);
+  final cloudId = ProfileManager.instance.byId(id)?.cloudId;
 
   if (!await ProfileManager.instance.remove(id)) return false;
   await ReviewState.instance.removeMember(id);
+  if (cloudId != null) await AccountSession.instance.removeProfileKey(cloudId);
 
   for (final base in [localBase, ?cloudBase]) {
     final d = Directory(base);

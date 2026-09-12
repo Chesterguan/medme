@@ -39,6 +39,8 @@ class FakeApi extends ApiClient {
     this.failDeleteAccount = false,
     this.failDeleteAccountError,
     this.failCreateProfile = false,
+    this.myGrants = const {},
+    this.failMyGrants = false,
     this.delay = const Duration(milliseconds: 30),
   }) : super(base: 'http://x');
 
@@ -52,10 +54,14 @@ class FakeApi extends ApiClient {
   final bool failProfiles;
   final bool failApprove;
   final bool failRevoke;
+  /// `GET /v1/profiles/{pid}/grants`(「我授权给谁」)的假响应,按 `profile_id`
+  /// 分开;`failMyGrants` 让它统一报错——测「我授权给谁」三态。
+  final Map<String, List<Map<String, dynamic>>> myGrants;
+  final bool failMyGrants;
   /// `GET /v1/account/keys` 报 500(不是 404)——`_afterLogin` 只吞 404,
   /// 非 404 一律 rethrow;用来测 `resumeIfLoggedIn` 冷启动那条路径接不接得住。
   final bool failKeys500;
-  /// `GET /v1/accounts/lookup` 的假响应/假失败——测「按手机号添加家属」。
+  /// `POST /v1/accounts/lookup` 的假响应/假失败——测「按手机号添加家属」。
   final Map<String, dynamic>? lookupResult;
   final ApiFailed? lookupError;
   /// `DELETE /v1/account`(注销账号)的假失败,默认成功——测「注销账号」三态。
@@ -89,6 +95,10 @@ class FakeApi extends ApiClient {
       if (failCreateProfile) throw const ApiFailed(500, 'create profile failed');
       return {'profile_id': 'prf_new'};
     }
+    if (path == '/v1/accounts/lookup') {
+      if (lookupError != null) throw lookupError!;
+      return lookupResult!;
+    }
     return {'ok': true};
   }
 
@@ -111,13 +121,14 @@ class FakeApi extends ApiClient {
       if (failDevices) throw const ApiFailed(500, 'devices failed');
       return devices;
     }
-    if (path == '/v1/accounts/lookup') {
-      if (lookupError != null) throw lookupError!;
-      return lookupResult;
-    }
     if (path == '/v1/profiles') {
       if (failProfiles) throw const ApiFailed(500, 'profiles failed');
       return profiles;
+    }
+    if (path.startsWith('/v1/profiles/') && path.endsWith('/grants')) {
+      if (failMyGrants) throw const ApiFailed(500, 'my grants failed');
+      final pid = path.split('/')[3];
+      return myGrants[pid] ?? const [];
     }
     return [];
   }
@@ -332,6 +343,18 @@ Future<void> _toReady(WidgetTester t, FakeApi api, {SyncCrypto? crypto, Grants? 
   await _loginUpTo(t);
   await t.enterText(find.byKey(const Key('password')), 'right');
   await t.tap(find.text('解锁'));
+  await t.pumpAndSettle();
+}
+
+/// 「我授权给谁」排在「已就绪」页最后一节——`ListView(children: ...)` 底层还是
+/// `SliverChildListDelegate`,只有落在视口 + 缓存区内的子节点才会被挂载,普通
+/// `ensureVisible` 对还没挂载的 widget 无能为力(同 `visit_summary_sheet_test.dart`
+/// 的 `scrollToMedsToggle` 一模一样的坑):先 `scrollUntilVisible` 挂载它,再
+/// `ensureVisible` 把它拉回可点击的范围。
+Future<void> _scrollToMyGrants(WidgetTester t) async {
+  final finder = find.text('我授权给谁');
+  await t.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
+  await t.ensureVisible(finder);
   await t.pumpAndSettle();
 }
 
@@ -611,20 +634,64 @@ void main() {
     });
   });
 
-  group('已就绪:授权列表 + 撤销', () {
-    testWidgets('加载中 → 成功展示(owner 行带「撤销」按钮)', (t) async {
+  group('已就绪:授权列表(只读,不带撤销)', () {
+    testWidgets('加载中 → 成功展示,owner 行不带「撤销」按钮', (t) async {
       final api = FakeApi(hasKeys: true, profiles: [
         {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
       ]);
       await _toReady(t, api);
-      expect(find.textContaining('p1'), findsOneWidget);
-      expect(find.text('撤销'), findsOneWidget);
+      expect(find.textContaining('p1'), findsWidgets);
+      expect(
+        find.text('撤销'),
+        findsNothing,
+        reason: '这一行是"我在 p1 里是 owner",不是"我授权给了谁"——点这里的撤销以前恒 404',
+      );
     });
 
     testWidgets('加载失败:显示错误,不崩', (t) async {
       final api = FakeApi(hasKeys: true, failProfiles: true);
       await _toReady(t, api);
-      expect(find.textContaining('profiles failed'), findsOneWidget);
+      expect(find.textContaining('授权列表加载失败'), findsOneWidget);
+    });
+  });
+
+  group('已就绪:我授权给谁 + 撤销', () {
+    Map<String, dynamic> granteeRow() =>
+        {'grant_id': 'g2', 'grantee_kind': 'account', 'role': 'editor', 'expires_at': null, 'created_at': '2026-01-01T00:00:00Z'};
+
+    testWidgets('加载中 → 成功展示(带「撤销」按钮)', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        profiles: [
+          {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
+        ],
+        myGrants: {'p1': [granteeRow()]},
+      );
+      await _toReady(t, api);
+      await _scrollToMyGrants(t);
+      expect(find.text('还没有授权给任何人'), findsNothing);
+      expect(find.text('撤销'), findsOneWidget);
+    });
+
+    testWidgets('没有拥有任何云档案:显示空态,不发 grants 请求', (t) async {
+      final api = FakeApi(hasKeys: true, profiles: const []);
+      await _toReady(t, api);
+      await _scrollToMyGrants(t);
+      expect(find.text('还没有授权给任何人'), findsOneWidget);
+      expect(api.calls.any((c) => c.contains('/grants')), isFalse, reason: '没有拥有任何档案,不该多打一次 grants 请求');
+    });
+
+    testWidgets('加载失败:显示错误,不崩', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        profiles: [
+          {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
+        ],
+        failMyGrants: true,
+      );
+      await _toReady(t, api);
+      await _scrollToMyGrants(t);
+      expect(find.textContaining('加载失败'), findsOneWidget);
     });
 
     testWidgets('撤销成功:调用 DELETE,不留错误', (t) async {
@@ -634,15 +701,17 @@ void main() {
         profiles: [
           {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
         ],
+        myGrants: {'p1': [granteeRow()]},
       );
       await _toReady(t, api);
+      await _scrollToMyGrants(t);
       await t.tap(find.text('撤销'));
       await t.pumpAndSettle();
-      expect(api.calls, contains('DELETE /v1/profiles/p1/grants/g1'));
+      expect(api.calls, contains('DELETE /v1/profiles/p1/grants/g2'));
       expect(find.textContaining('撤销失败'), findsNothing);
     });
 
-    testWidgets('撤销失败:错误可见,授权列表原样还在', (t) async {
+    testWidgets('撤销失败:错误可见,列表原样还在', (t) async {
       final api = FakeApi(
         hasKeys: true,
         delay: const Duration(milliseconds: 10),
@@ -650,13 +719,14 @@ void main() {
         profiles: [
           {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
         ],
+        myGrants: {'p1': [granteeRow()]},
       );
       await _toReady(t, api);
+      await _scrollToMyGrants(t);
       await t.tap(find.text('撤销'));
       await t.pump(const Duration(milliseconds: 40));
       expect(find.textContaining('撤销失败'), findsOneWidget);
       await t.pumpAndSettle();
-      expect(find.textContaining('p1'), findsOneWidget);
       expect(find.text('撤销'), findsOneWidget);
     });
   });
@@ -716,7 +786,7 @@ void main() {
       await t.tap(find.text('按手机号添加家属'));
       await t.pumpAndSettle();
 
-      expect(api.calls, contains('GET /v1/accounts/lookup'));
+      expect(api.calls, contains('POST /v1/accounts/lookup'));
       expect(api.calls, contains('POST /v1/profiles/prf_1/grants'));
       expect(find.text('138 0000 1111'), findsNothing, reason: '成功后应清空输入框(且已去除空格发送)');
       expect(rust.sealedWith, isNotEmpty, reason: '应该封给对方公钥');
@@ -1139,7 +1209,6 @@ void main() {
     testWidgets('取消退出登录:仍停在已就绪', (t) async {
       final api = FakeApi(hasKeys: true);
       await _toReady(t, api);
-
       await t.ensureVisible(find.text('退出登录'));
       await t.pumpAndSettle();
       await t.tap(find.text('退出登录'));

@@ -285,7 +285,7 @@ void main() {
 
       await grants.grantFamilyByPhone(p, '13800001111');
 
-      expect(api.calls, contains('GET /v1/accounts/lookup'));
+      expect(api.calls, contains('POST /v1/accounts/lookup'));
       expect(api.lastBody?['grantee_account_id'], 'acc_family');
       expect(api.lastBody?['role'], 'editor');
       expect(api.lastBody?.containsKey('days'), isFalse, reason: '家属是永久授权,不带 days');
