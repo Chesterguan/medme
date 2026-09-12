@@ -48,6 +48,7 @@ class FakeApi extends ApiClient {
     this.myGrantsDelay,
     this.approvalSealed,
     this.approvalPending = 0,
+    this.approvalDelay,
     Uint8List? serverPublicKey,
     this.delay = const Duration(milliseconds: 30),
   })  : serverPublicKey = serverPublicKey ?? Uint8List(32),
@@ -64,6 +65,9 @@ class FakeApi extends ApiClient {
 
   /// 被问了几次"批准了吗"——钉住"每 3 秒一次"这件事。
   int approvalPolls = 0;
+
+  /// 让"批准了吗"这一问变慢(M10:慢过 3 秒时轮询不许重叠)。
+  final Duration? approvalDelay;
 
   /// `POST /v1/devices/request` / `POST /v1/devices/approve` 的 body 与 header
   /// (X-Device-Id 是服务端分辨"谁在批准"的唯一依据,见 `app.device_approve`)。
@@ -178,6 +182,7 @@ class FakeApi extends ApiClient {
     if (path == '/v1/devices/approval') {
       approvalPolls++;
       sentHeaders[path] = headers;
+      if (approvalDelay != null) await Future<void>.delayed(approvalDelay!);
       return {'approved_priv': approvalPolls > approvalPending ? approvalSealed : null};
     }
     if (path == '/v1/profiles') {
@@ -3075,7 +3080,14 @@ void main() {
   group('新设备:出码等旧手机批准', () {
     late Directory support;
 
+    /// 轮询的截止时间按真实时钟算(M10:用 tick 计数会在"一轮比 3 秒慢"时跑快),
+    /// 而 `pump(Duration)` 不推进 `DateTime.now()` —— 所以这里换成一个手动拨的时钟。
+    late DateTime fakeNow;
+
     setUp(() async {
+      fakeNow = DateTime(2026, 9, 12, 10);
+      approvalNow = () => fakeNow;
+      addTearDown(() => approvalNow = DateTime.now);
       support = await Directory.systemTemp.createTemp('medme-device-approval-test');
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
         const MethodChannel('plugins.flutter.io/path_provider'),
@@ -3180,10 +3192,11 @@ void main() {
       await t.pump(const Duration(milliseconds: 200));
       expect(find.byType(QrImageView), findsOneWidget);
 
-      for (var i = 0; i < 40; i++) {
-        await t.pump(const Duration(seconds: 3));
-        await t.pump(const Duration(milliseconds: 20));
-      }
+      // 截止时间按真实时钟算(M10),而 `pump(Duration)` 只推进 Flutter 的假时钟 ——
+      // 所以测试自己把那个可注入的时钟往前拨。
+      fakeNow = fakeNow.add(const Duration(seconds: 130));
+      await t.pump(const Duration(seconds: 3));
+      await t.pump(const Duration(milliseconds: 20));
 
       expect(find.textContaining('等了两分钟还没等到批准'), findsOneWidget);
       expect(find.byType(QrImageView), findsNothing, reason: '别让他对着一张已经作废的码继续等');
@@ -3191,6 +3204,34 @@ void main() {
       final polls = api.approvalPolls;
       await t.pump(const Duration(seconds: 6));
       expect(api.approvalPolls, polls);
+      await t.pumpAndSettle();
+    });
+
+    // M10:一轮轮询比 3 秒慢的时候(慢网、服务端卡顿),按 tick 计数的老写法会
+    // ① 在上一轮还没回来时就发下一个请求(重叠),② 把倒计时减快 —— 屏上写着
+    // "还剩 30 秒"而真实只过了 15 秒。
+    testWidgets('M10:上一轮还没回来时不发第二个请求,倒计时按真实时间走', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        approvalDelay: const Duration(seconds: 9), // 一轮 9 秒,比 3 秒的节拍慢得多
+      );
+      await toUnlock(t, api);
+
+      await t.tap(find.byKey(const Key('device_approval_start')));
+      await t.pump(const Duration(milliseconds: 200));
+
+      // 三个节拍过去(9 秒),而第一轮还在路上。
+      for (var i = 0; i < 3; i++) {
+        fakeNow = fakeNow.add(const Duration(seconds: 3));
+        await t.pump(const Duration(seconds: 3));
+      }
+      expect(api.approvalPolls, 1, reason: '上一轮没回来就不发下一个');
+      expect(find.textContaining('还剩 111 秒'), findsOneWidget, reason: '120 - 9,按真实时间走');
+
+      await t.tap(find.byKey(const Key('device_approval_cancel')));
+      // 那一轮 9 秒的请求还挂在路上 —— 等它落地,否则用例结束时留一个 pending timer。
+      await t.pump(const Duration(seconds: 10));
       await t.pumpAndSettle();
     });
 

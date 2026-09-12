@@ -42,6 +42,9 @@ void main() {
     FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform({});
     AccountSession.instance.resetForTest();
     released.clear();
+    // 删成员现在整段排进 `vault_boot` 的 FIFO 队列(M11)—— 那条队列是模块级单例,
+    // 用例之间会串(见 `resetVaultQueueForTest` 的文档)。
+    resetVaultQueueForTest();
     await ProfileManager.instance.ensureLoaded();
     await ProfileManager.instance.factoryReset();
   });
@@ -138,5 +141,30 @@ void main() {
     expect(ok, isTrue);
     expect(order, ['release', 'reopen']);
     expect(await Directory(base).exists(), isFalse, reason: '松手之后目录该被删掉');
+  });
+
+  // M11:release → 删盘 → reopen 必须是**一段不可插入的序列**。`vault` 是进程级单例,
+  // 中间插进另一路的开箱(切成员、同步、代拍)就意味着:要么在一个正被删的目录上开箱,
+  // 要么 reopen 开的是别人刚切过去的那个成员。
+  test('M11:release→删盘→reopen 整段排进 FIFO 队列,中间不许插进别的操作', () async {
+    final pm = ProfileManager.instance;
+    final memberId = (await pm.create('要删的那个'))!;
+    final order = <String>[];
+
+    // 先往队列里排一个慢操作 —— 删除那一段必须整段排在它后面。
+    final other = runSerialized(() async {
+      order.add('other-start');
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      order.add('other-end');
+    });
+    final removal = removeProfileAndReopenImpl(
+      memberId,
+      reopen: () async => order.add('reopen'),
+      releaseIfOpen: (_) async => order.add('release'),
+    );
+
+    await Future.wait([other, removal]);
+
+    expect(order, ['other-start', 'other-end', 'release', 'reopen']);
   });
 }

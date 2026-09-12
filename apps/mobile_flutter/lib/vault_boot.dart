@@ -106,7 +106,16 @@ class ProfileLocked implements Exception {
 ///
 /// data 目录(设备 id、iCloud 全局开关标记、导入临时文件)所有成员共用——iCloud 是
 /// 全局开关(开了对所有成员生效);派生库则每成员独立(见 Rust `resolve_vault_paths`)。
-Future<void> openCurrentProfileVault() => runSerialized(() async {
+Future<void> openCurrentProfileVault() => runSerialized(openCurrentProfileVaultUnserialized);
+
+/// [openCurrentProfileVault] 的本体,**不自己排队**。给"已经在队列里、还要顺手开一次
+/// 箱"的调用方用(见 [removeProfileAndReopenImpl] 的 M11 说明)——
+/// `runSerialized` 不可重入:在队列里再调一次 `openCurrentProfileVault`,那次会排在
+/// 自己这一段**后面**,于是互相等,死锁。
+///
+/// **除了那一处,任何人都该调 [openCurrentProfileVault]**(排队的那个)。
+@visibleForTesting
+Future<void> openCurrentProfileVaultUnserialized() async {
   await ProfileManager.instance.ensureLoaded();
   final p = ProfileManager.instance.current;
   final docsRoot = (await getApplicationDocumentsDirectory()).path;
@@ -144,7 +153,7 @@ Future<void> openCurrentProfileVault() => runSerialized(() async {
         throw StateError('本地档案开箱后状态核对失败:不应为 keyed');
       }
   }
-});
+}
 
 /// 打开某个**代拍病人**的保险箱(医生模式)。与「切成员」不是一回事:代拍病人不在
 /// [ProfileManager] 里,走 [ProxyPatientManager] 的独立命名空间。
@@ -333,7 +342,9 @@ Future<void> autoNameCurrentProfileFrom(String? detectedName) async {
 ///
 /// 删到只剩一个时不给删(见 [ProfileManager.canRemove]),这里再挡一道:`remove`
 /// 返回 false 就直接返回,绝不去删任何目录。
-Future<bool> removeProfileAndReopen(String id) => removeProfileAndReopenImpl(id, reopen: openCurrentProfileVault);
+Future<bool> removeProfileAndReopen(String id) =>
+    // 不是 `openCurrentProfileVault`:那一个自己排队,而这里整段已经在队列里了(M11)。
+    removeProfileAndReopenImpl(id, reopen: openCurrentProfileVaultUnserialized);
 
 /// [removeProfileAndReopen] 的本体,`reopen` 抽成参数是为了让"云档案的密钥
 /// 随成员一起被清掉、本地档案不碰密钥"这条契约能在**不带 Rust 原生库**的
@@ -388,15 +399,23 @@ Future<bool> removeProfileAndReopenImpl(
     await AccountSession.instance.tombstoneCloudProfile(cloudId);
   }
 
-  // 先松手,再删盘 —— 见 [_releaseVaultIfOpen]。
-  await releaseIfOpen(localBase);
+  // **整段排进 FIFO 队列**(复审 M11)。`vault` 是进程级单例,而这三步之间任何一个
+  // 插入点都会出事:另一路的开箱(切成员/同步/代拍)挤在"松手"与"删盘"之间 → 在一个
+  // 正要被删的目录上开出箱子;挤在"删盘"与"reopen"之间 → 这里的 reopen 开的是别人
+  // 刚切过去的那个成员。排队只保证顺序,不代替核对(见 `runSerialized` 的文档)。
+  //
+  // `reopen` 必须是**不自己排队**的那个(生产里是 `openCurrentProfileVaultUnserialized`)
+  // —— `runSerialized` 不可重入:在队列里再排一次就是自己等自己。
+  await runSerialized(() async {
+    await releaseIfOpen(localBase);
 
-  for (final base in [localBase, ?cloudBase]) {
-    final d = Directory(base);
-    if (await d.exists()) await d.delete(recursive: true);
-  }
+    for (final base in [localBase, ?cloudBase]) {
+      final d = Directory(base);
+      if (await d.exists()) await d.delete(recursive: true);
+    }
 
-  await reopen();
+    await reopen();
+  });
   bumpVaultRevision();
   return true;
 }

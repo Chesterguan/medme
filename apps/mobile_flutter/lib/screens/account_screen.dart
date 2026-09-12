@@ -155,6 +155,13 @@ const _kdfWaitHint = '正在生成密钥,老一点的手机可能要等几秒,�
 ///
 /// 三件事都要说到:默认会上传每个成员的密文、可以按成员关掉、关掉之后云端已有的密文
 /// 怎么办(用户最怕的是"关掉是不是等于删库")。后半句与 [cloudRowStatus] 里那句同源。
+/// 等旧手机批准时那个"现在几点"。**不是 `const`**:截止时间必须按真实时间算
+/// (见 `_pollApproval` 的 M10 说明),而 `flutter test` 的 `pump(Duration)` 只推进
+/// Flutter 自己的假时钟、不动 `DateTime.now()` —— 所以做成一个模块级可替换的钩子
+/// (同 `account_flow.profilesFetchBudget` 的套路)。
+@visibleForTesting
+DateTime Function() approvalNow = DateTime.now;
+
 const _cloudDefaultCopy =
     '登录之后,每个成员的病历默认都会加密备份到云端(我们只看得到密文)。'
     '不想备份哪个成员,把它的开关关掉就行 —— 关闭后本机不再上传下载;'
@@ -253,6 +260,15 @@ class _AccountScreenState extends State<AccountScreen> {
   String? _approvalError;
   Timer? _approvalPoll;
   int _approvalSecondsLeft = 0;
+
+  /// 等到这个时刻就放手(M10)。**按时间算,不按 tick 数算**:一轮轮询可能比 3 秒的
+  /// 节拍慢得多(慢网),那时"每个 tick 减 3 秒"会让倒计时跑在真实时间前面。
+  DateTime? _approvalDeadline;
+
+  /// 上一轮还在路上 —— 不发下一个(M10)。重叠的后果不只是多几个请求:
+  /// `GET /v1/devices/approval` 在服务端是**取走即删**,两轮并发意味着一份批准可能
+  /// 被一轮取走、而另一轮拿到 null。
+  bool _approvalPolling = false;
 
   /// 旧设备这一侧:正在扫码/批准(防连点)。
   bool _approveBusy = false;
@@ -880,6 +896,7 @@ class _AccountScreenState extends State<AccountScreen> {
         _approvalCode = req.code;
         _approvalSecret = req.ephSecret;
         _approvalSecondsLeft = _approvalTimeoutSeconds;
+        _approvalDeadline = approvalNow().add(const Duration(seconds: _approvalTimeoutSeconds));
       });
       _approvalPoll?.cancel();
       // 每 3 秒问一次、最多两分钟(`_approvalTimeoutSeconds`)。到点就停 —— 一个
@@ -897,14 +914,24 @@ class _AccountScreenState extends State<AccountScreen> {
 
   Future<void> _pollApproval() async {
     if (!mounted) return _approvalPoll?.cancel();
-    setState(() => _approvalSecondsLeft -= 3);
-    if (_approvalSecondsLeft <= 0) {
+    final deadline = _approvalDeadline;
+    if (deadline == null) return;
+    // 倒计时按**真实剩余时间**算(M10)。原来是每个 tick 减 3 秒 —— 一轮轮询比 3 秒
+    // 慢的时候(慢网),屏上那个数字会跑在真实时间前面,用户看到"还剩 30 秒"而其实
+    // 还有 60 秒。
+    final left = deadline.difference(approvalNow()).inSeconds;
+    setState(() => _approvalSecondsLeft = left < 0 ? 0 : left);
+    if (left <= 0) {
       _stopApprovalPoll();
       if (mounted) setState(() => _approvalError = '等了两分钟还没等到批准。可以再生成一张码,或者用下面的口令/恢复码。');
       return;
     }
     final secret = _approvalSecret;
     if (secret == null) return;
+    // 上一轮还在路上就跳过这一拍(M10)——`GET /v1/devices/approval` 在服务端是
+    // **取走即删**,两轮并发可能让一份批准被一轮取走、另一轮拿到 null。
+    if (_approvalPolling) return;
+    _approvalPolling = true;
     String? sealed;
     try {
       sealed = await widget.flow.fetchDeviceApproval();
@@ -912,6 +939,8 @@ class _AccountScreenState extends State<AccountScreen> {
       // 这一轮没问到(断网/服务端抖动)——**不停轮询**:3 秒后还会再问一次,
       // 而用户此刻正举着手机等,给他看一条错误没有任何用。
       return;
+    } finally {
+      _approvalPolling = false;
     }
     if (sealed == null || !mounted) return;
     _stopApprovalPoll();
@@ -935,6 +964,7 @@ class _AccountScreenState extends State<AccountScreen> {
   void _stopApprovalPoll() {
     _approvalPoll?.cancel();
     _approvalPoll = null;
+    _approvalDeadline = null;
     if (mounted) {
       setState(() {
         _approvalCode = null;
