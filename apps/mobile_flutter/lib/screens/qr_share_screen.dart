@@ -11,8 +11,12 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 
+import '../account.dart';
 import '../analytics.dart';
+import '../api_client.dart';
 import '../claim_upload.dart';
+import '../grants.dart';
+import '../profile_manager.dart';
 import '../src/rust/api/vault.dart';
 import '../theme.dart';
 
@@ -30,6 +34,9 @@ class _QrShareScreenState extends State<QrShareScreen> {
   String? _url;
   int _recordCount = 0;
   int _problemCount = 0;
+  /// 登录且当前档案已开通云同步时,码里装的是一条授权链接(医生扫了自己
+  /// 兑换),不是密文上传——文案与「医生看到的是什么」那段说明都跟着换一套。
+  bool _grantMode = false;
   /// 上传没成功,退回了「只带摘要」的旧码。**必须在界面上说出来** —— 病人得知道
   /// 医生这次看不到原件,否则他会以为都给了。
   bool _degraded = false;
@@ -90,6 +97,39 @@ class _QrShareScreenState extends State<QrShareScreen> {
   /// **失败就是失败,不给一个残缺的码。** 医生扫到一个打不开的码,比病人当场知道
   /// 「没传上、再试一次」糟糕得多 —— 前者浪费的是诊室里那几分钟。
   Future<void> _generate() async {
+    // 登录且这个成员已经开通云同步:出授权链接就够了,跳过整套「加密病历、
+    // 上传瞬时云」——医生扫码兑换的是一份 15 天只读授权,内容走的是正常的云同步
+    // 拉取,不是这里的密文上传。未登录/未开通云同步走原路径,一字不改。
+    final profile = ProfileManager.instance.current;
+    if (AccountSession.instance.loggedIn.value && profile.cloudId != null) {
+      try {
+        setState(() {
+          _error = null;
+          _grantMode = true;
+          _stage = '正在生成授权链接…';
+          _progress = null;
+        });
+        final link = await Grants(
+          ApiClient(bearer: () async => AccountSession.instance.access),
+          AccountSession.instance,
+        ).inviteDoctor(profile);
+        if (!mounted) return;
+        setState(() {
+          _stage = null;
+          _url = link.toUrl();
+        });
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _stage = null;
+            _progress = null;
+            _error = '$e';
+          });
+        }
+      }
+      return;
+    }
+    _grantMode = false;
     try {
       setState(() {
         _error = null;
@@ -330,8 +370,10 @@ class _QrShareScreenState extends State<QrShareScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            // 自动调亮成功了就别再让患者做一遍已经做了的事。
-            _brightnessBoosted ? '对着医生的手机相机' : '把屏幕亮度调高,对着医生的手机相机',
+            _grantMode
+                ? '医生扫码后 15 天内可在自己的 MedMe 里查看'
+                // 自动调亮成功了就别再让患者做一遍已经做了的事。
+                : (_brightnessBoosted ? '对着医生的手机相机' : '把屏幕亮度调高,对着医生的手机相机'),
             style: const TextStyle(fontSize: 13.5, color: MedMe.faint),
           ),
           const SizedBox(height: 20),
@@ -355,8 +397,8 @@ class _QrShareScreenState extends State<QrShareScreen> {
             ),
           ),
           const SizedBox(height: 18),
-          _summaryChip(),
-          const SizedBox(height: 20),
+          if (!_grantMode) _summaryChip(),
+          if (!_grantMode) const SizedBox(height: 20),
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -366,25 +408,29 @@ class _QrShareScreenState extends State<QrShareScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   '医生看到的是什么',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
                 ),
-                SizedBox(height: 6),
+                const SizedBox(height: 6),
                 Text(
-                  _degraded
-                      ? '当前在治的疾病、关键指标趋势、正在吃的药。'
-                      '这次没能上传,所以不含原件 —— 医生要看原件,请当场用手机翻给他。'
-                      : '你的完整病历:在治的疾病、化验趋势、正在吃的药,以及每一份原件。',
+                  _grantMode
+                      ? '医生扫码后,这份病历会出现在他自己的 MedMe 里——只读,15 天后自动看不到。'
+                      : (_degraded
+                          ? '当前在治的疾病、关键指标趋势、正在吃的药。'
+                          '这次没能上传,所以不含原件 —— 医生要看原件,请当场用手机翻给他。'
+                          : '你的完整病历:在治的疾病、化验趋势、正在吃的药,以及每一份原件。'),
                   style: const TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.ink),
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  _degraded
-                      ? '这张码就是钥匙:被拍下就等于把这份摘要给了对方,看完收起手机即可。'
-                      '这次的内容全在码里,没有上传到任何地方。'
-                      : '这张码就是钥匙:被拍下就等于把这份病历给了对方,看完收起手机即可。'
-                      '内容已加密临时存放,保留期结束后自动删除 —— 密钥只在这张码里,我们解不开。',
+                  _grantMode
+                      ? '这张码就是钥匙:被拍下就等于给了这份只读权限,15 天后自动失效,你随时可以提前收回。'
+                      : (_degraded
+                          ? '这张码就是钥匙:被拍下就等于把这份摘要给了对方,看完收起手机即可。'
+                          '这次的内容全在码里,没有上传到任何地方。'
+                          : '这张码就是钥匙:被拍下就等于把这份病历给了对方,看完收起手机即可。'
+                          '内容已加密临时存放,保留期结束后自动删除 —— 密钥只在这张码里,我们解不开。'),
                   style: const TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.faint),
                 ),
               ],

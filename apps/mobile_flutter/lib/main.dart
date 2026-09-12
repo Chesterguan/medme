@@ -2,12 +2,19 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/account_flow.dart';
 import 'package:mobile_flutter/analytics.dart';
+import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/claim_link.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/grant_link.dart';
+import 'package:mobile_flutter/grants.dart';
+import 'package:mobile_flutter/profile_manager.dart' show Profile;
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/ephemeral_session.dart';
+import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/claim_screen.dart';
 import 'package:mobile_flutter/src/rust/frb_generated.dart';
 import 'package:mobile_flutter/theme.dart';
@@ -62,6 +69,24 @@ void pushClaimScreen(ClaimLink link, {required bool cold}) {
   );
 }
 
+/// 同意门之前到达的授权链接(家属/医生扫码进来的那条)。同 [_pendingClaim],
+/// 一次性交接,取走即清空。
+(GrantLink, bool)? _pendingGrant;
+
+(GrantLink, bool)? takePendingGrant() {
+  final p = _pendingGrant;
+  _pendingGrant = null;
+  return p;
+}
+
+void pushGrantRedeem(GrantLink link, {required bool cold}) {
+  appNavigatorKey.currentState?.push(
+    MaterialPageRoute(
+      builder: (_) => GrantRedeemScreen(link: link, cold: cold),
+    ),
+  );
+}
+
 class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   @override
   void initState() {
@@ -104,6 +129,19 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   bool _dispatch(String raw, {bool cold = false}) {
     final uri = Uri.tryParse(raw);
     if (uri == null) return false;
+    // 授权链接(`g1.`)先试——两种深链共用同一个 `/claim/` 路径,谁认得算谁的,
+    // 互不影响(见 `grant_link.dart` 顶部文档)。
+    final g = GrantLink.tryParse(uri);
+    if (g != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!await FirstRunConsent.hasAgreed()) {
+          _pendingGrant = (g, cold);
+          return;
+        }
+        pushGrantRedeem(g, cold: cold);
+      });
+      return true;
+    }
     final link = ClaimLink.tryParse(uri);
     if (link == null) return false;
     // 保险箱可能还没打开完(冷启动),推迟到下一帧再导航。
@@ -303,6 +341,10 @@ class _AppRootState extends State<AppRoot> {
           if (pending != null) {
             pushClaimScreen(pending.$1, cold: pending.$2);
           }
+          final pendingGrant = takePendingGrant();
+          if (pendingGrant != null) {
+            pushGrantRedeem(pendingGrant.$1, cold: pendingGrant.$2);
+          }
         });
         return _modeRoot();
       },
@@ -455,6 +497,118 @@ class _HomeShellState extends State<HomeShell> {
           destinations: HomeShell.tabDestinations,
         ),
       ),
+    );
+  }
+}
+
+/// 授权链接落地屏:家属/医生扫码进来,问一句「要不要加进你的 MedMe」,答应了才
+/// 兑换。**未登录先走账号屏**——兑换需要账号密钥对(封回自己的公钥),没有账号
+/// 无从谈起;登录/解锁完成后回到这一屏继续兑换,不用重新点一次链接。
+class GrantRedeemScreen extends StatefulWidget {
+  const GrantRedeemScreen({super.key, required this.link, this.cold = false});
+  final GrantLink link;
+
+  /// App 是被这条链接拉起来的(冷启动),而不是已在运行时收到。同 `ClaimScreen`,
+  /// 目前只留作将来埋点用,不影响这一屏的行为。
+  final bool cold;
+
+  @override
+  State<GrantRedeemScreen> createState() => _GrantRedeemScreenState();
+}
+
+class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
+  bool _busy = false;
+  String? _error;
+  Profile? _done;
+
+  Future<void> _accept() async {
+    if (!AccountSession.instance.loggedIn.value) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => AccountScreen(
+            flow: AccountFlow(
+              ApiClient(bearer: () async => AccountSession.instance.access),
+              AccountSession.instance,
+            ),
+          ),
+        ),
+      );
+      if (!mounted || !AccountSession.instance.loggedIn.value) return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final grants = Grants(
+        ApiClient(bearer: () async => AccountSession.instance.access),
+        AccountSession.instance,
+      );
+      final p = await grants.redeem(widget.link);
+      if (mounted) setState(() => _done = p);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('加入档案')),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: _done != null ? _result(_done!) : _confirm(),
+        ),
+      ),
+    );
+  }
+
+  Widget _confirm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Text(
+          '要把这份病历加进你的 MedMe 吗?',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        const Text('只读,15 天后自动失效。', style: TextStyle(color: Colors.black54)),
+        if (_error != null) ...[
+          const SizedBox(height: 16),
+          Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+        ],
+        const SizedBox(height: 24),
+        FilledButton(
+          onPressed: _busy ? null : _accept,
+          child: _busy
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('加入'),
+        ),
+      ],
+    );
+  }
+
+  Widget _result(Profile p) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Icon(Icons.check_circle, color: Colors.teal, size: 56),
+        const SizedBox(height: 16),
+        Text('已加入「${p.name}」的档案', textAlign: TextAlign.center),
+        const SizedBox(height: 24),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('好'),
+        ),
+      ],
     );
   }
 }

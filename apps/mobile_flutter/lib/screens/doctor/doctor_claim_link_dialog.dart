@@ -3,7 +3,11 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/grants.dart';
+import 'package:mobile_flutter/profile_manager.dart' show Profile;
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 代拍交付成功后的结果:**一条认领链接,直接显示成二维码**。
@@ -14,12 +18,33 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 ///
 /// 与「病人自己出码给医生看」(`qr_share_screen.dart`)方向相反:那是给医生**当场看**,
 /// 这是给病人**带走**。所以这里必须给可复制的链接,那边不需要。
+///
+/// [cloudProfile] 有值(且医生已登录)时,认领链接改发一条 `role=owner` 的授权
+/// 邀请——这是一次真正的所有权转移(服务端在兑换时把老 owner 自动降成
+/// editor),不再是"密文躺在瞬时云、谁截到密钥谁能看"那种链接。调用方目前还没有
+/// 任何一条路径会把已开通云同步的代拍档案传进来(那需要先把代拍病人的临时保险箱
+/// 注册成云档案,是另一块尚未接线的工作),所以这个分支眼下是**前向兼容但还没被
+/// 触发**——保留 `cloudProfile` 为 null 时,行为与改动前逐字节一致。
 Future<void> showDoctorClaimLinkDialog(
   BuildContext context,
   String url,
   int recordCount, {
   required Rect Function() shareOrigin,
+  Profile? cloudProfile,
 }) async {
+  if (!context.mounted) return;
+  if (AccountSession.instance.loggedIn.value && cloudProfile?.cloudId != null) {
+    try {
+      final link = await Grants(
+        ApiClient(bearer: () async => AccountSession.instance.access),
+        AccountSession.instance,
+      ).inviteTransfer(cloudProfile!);
+      url = link.toUrl();
+    } catch (_) {
+      // 转移链接生成失败:退回调用方传来的原始链接,不让医生空手——那条链接
+      // 依旧有效,只是这一次不是所有权转移。
+    }
+  }
   if (!context.mounted) return;
   await showDialog<void>(
     context: context,

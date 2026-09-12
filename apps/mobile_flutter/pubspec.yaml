@@ -36,6 +36,9 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  # 授权邀请的 token_hash(sha256)。此前只是别的插件的传递依赖,`grants.dart`
+  # 直接 import 它,升格成直接依赖。
+  crypto: ^3.0.3
   rust_lib_mobile_flutter:
     path: rust_builder
   flutter_rust_bridge: 2.12.0

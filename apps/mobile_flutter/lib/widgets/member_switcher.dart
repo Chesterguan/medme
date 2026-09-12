@@ -7,7 +7,10 @@
 // 选中成员」的本地状态,避免出现两份状态不同步。
 import 'package:flutter/material.dart';
 
+import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
@@ -22,12 +25,23 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// [switchTo] 是测试注入点,默认就是真实的 [switchProfileAndReopen]——
 /// `flutter test` 不能跑到它内部的 FFI 开箱,所以测试传一个包了假 `reopen` 的
 /// 替身进来(见 `test/member_switcher_locked_test.dart`)。
+///
+/// [purgeExpired] 同一个道理:默认是真实的 [Grants.purgeExpired](被授权的成员
+/// 过期后,打开切换器就是"下一次看到列表"的时机,顺手清掉);没有过期档案时
+/// 它什么也不碰(不触达 FFI),所以已有的测试不用注入什么就能照常通过。
 Future<void> showMemberSwitcherSheet(
   BuildContext context, {
   VoidCallback? onChanged,
   Future<void> Function(String id)? switchTo,
+  Future<int> Function()? purgeExpired,
 }) async {
   final doSwitch = switchTo ?? switchProfileAndReopen;
+  final doPurge = purgeExpired ??
+      () => Grants(
+            ApiClient(bearer: () async => AccountSession.instance.access),
+            AccountSession.instance,
+          ).purgeExpired();
+  await doPurge();
   await ProfileManager.instance.ensureLoaded();
   final members = ProfileManager.instance.profiles;
   final currentId = ProfileManager.instance.currentId.value;
@@ -66,6 +80,14 @@ Future<void> showMemberSwitcherSheet(
                   ),
                 ),
                 title: Text(m.name, style: MedType.subtitle.copyWith(color: c.ink)),
+                // 只读授权(医生扫码兑换的那种)带到期日——过期由 [doPurge] 清掉,
+                // 这里显示的永远是"还剩多久",不是"曾经有过"。
+                subtitle: (m.role == 'viewer' && m.expiresAt != null)
+                    ? Text(
+                        '只读 · 至 ${m.expiresAt!.month}月${m.expiresAt!.day}日',
+                        style: MedType.secondary.copyWith(color: c.ink3),
+                      )
+                    : null,
                 trailing: m.id == currentId
                     ? Icon(Icons.check, color: c.seal)
                     : null,
