@@ -326,11 +326,20 @@ class _SyncApi extends ApiClient {
   Future<Map<String, dynamic>> postJson(String path, Object body, {Map<String, String>? headers}) async => {'ok': true};
 }
 
-Widget _app(FakeApi api, {SyncCrypto? crypto, Grants? grants, SyncEngine? syncEngine}) => MaterialApp(
+Widget _app(
+  FakeApi api, {
+  SyncCrypto? crypto,
+  Grants? grants,
+  SyncEngine? syncEngine,
+  bool? debugModeOverride,
+  KdfBenchFn? kdfBenchFn,
+}) => MaterialApp(
       home: AccountScreen(
         flow: AccountFlow(api, AccountSession.instance, crypto: crypto ?? FakeCrypto()),
         grants: grants,
         syncEngine: syncEngine,
+        debugModeOverride: debugModeOverride,
+        kdfBenchFn: kdfBenchFn,
       ),
     );
 
@@ -345,8 +354,23 @@ Future<void> _loginUpTo(WidgetTester t) async {
 }
 
 /// 登录 + 口令解锁,一路落到「已就绪」——要求 `api.hasKeys == true`。
-Future<void> _toReady(WidgetTester t, FakeApi api, {SyncCrypto? crypto, Grants? grants, SyncEngine? syncEngine}) async {
-  await t.pumpWidget(_app(api, crypto: crypto, grants: grants, syncEngine: syncEngine));
+Future<void> _toReady(
+  WidgetTester t,
+  FakeApi api, {
+  SyncCrypto? crypto,
+  Grants? grants,
+  SyncEngine? syncEngine,
+  bool? debugModeOverride,
+  KdfBenchFn? kdfBenchFn,
+}) async {
+  await t.pumpWidget(_app(
+    api,
+    crypto: crypto,
+    grants: grants,
+    syncEngine: syncEngine,
+    debugModeOverride: debugModeOverride,
+    kdfBenchFn: kdfBenchFn,
+  ));
   await _loginUpTo(t);
   await t.enterText(find.byKey(const Key('password')), 'right');
   await t.tap(find.text('解锁'));
@@ -1420,6 +1444,70 @@ void main() {
       // 不用 `find.text('注销账号')`——按钮此刻多半已经滚出视口(`SliverList`
       // 懒实现,见上面「取消退出登录」用例的同一条注释)。真正要钉住的是
       // "表单已经收起、回到了未展开状态",delete_phone 消失就是这件事的证据。
+    });
+  });
+
+  group('KDF 真机基准(Task 14a,debug-only)', () {
+    Future<void> scrollToBench(WidgetTester t) async {
+      final finder = find.text('KDF 基准测试(仅 debug)');
+      await t.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
+      await t.ensureVisible(finder);
+      await t.pumpAndSettle();
+    }
+
+    testWidgets('非 debug:这一行不显示', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api, debugModeOverride: false);
+      await t.ensureVisible(find.text('注销账号'));
+      await t.pumpAndSettle();
+      expect(find.text('KDF 基准测试(仅 debug)'), findsNothing);
+      expect(find.byKey(const Key('kdf_bench_run')), findsNothing);
+    });
+
+    testWidgets('debug:这一行显示;点「运行」用假 bench 函数渲染出表格', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(
+        t,
+        api,
+        debugModeOverride: true,
+        kdfBenchFn: ({required int mKib, required int t, required int p}) async => BigInt.from(mKib ~/ 100 + t),
+      );
+      await scrollToBench(t);
+      expect(find.text('KDF 基准测试(仅 debug)'), findsOneWidget);
+
+      await t.tap(find.byKey(const Key('kdf_bench_run')));
+      await t.pumpAndSettle();
+
+      // 4 档 m_kib × 2 档 t = 8 格结果,外加表头一行。
+      expect(find.byKey(const Key('kdf_bench_table')), findsOneWidget);
+      final table = t.widget<Table>(find.byKey(const Key('kdf_bench_table')));
+      expect(table.children.length, 1 + 4 * 2);
+      expect(find.text('16384'), findsNWidgets(2)); // t=2、t=3 两行
+      expect(find.text('131072'), findsNWidgets(2));
+
+      await scrollToBench(t);
+      expect(find.byKey(const Key('kdf_bench_copy')), findsOneWidget);
+    });
+
+    testWidgets('某一格 bench 报错:那一格显示 ERROR,其它格照常继续', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(
+        t,
+        api,
+        debugModeOverride: true,
+        kdfBenchFn: ({required int mKib, required int t, required int p}) async {
+          if (mKib == 16384) throw Exception('below argon2 floor');
+          return BigInt.from(mKib ~/ 100 + t);
+        },
+      );
+      await scrollToBench(t);
+      await t.tap(find.byKey(const Key('kdf_bench_run')));
+      await t.pumpAndSettle();
+
+      final table = t.widget<Table>(find.byKey(const Key('kdf_bench_table')));
+      expect(table.children.length, 1 + 4 * 2, reason: '报错的两格(t=2/3)照样有行,不是被跳过');
+      expect(find.textContaining('ERROR'), findsNWidgets(2));
+      expect(find.text('32768'), findsNWidgets(2)); // 其它 m_kib 正常跑完(t=2、t=3)
     });
   });
 }

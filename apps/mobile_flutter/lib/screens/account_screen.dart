@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_flutter/account_flow.dart';
@@ -8,9 +9,26 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/export_screen.dart';
+import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncKdfBenchMs;
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+
+/// Task 14(a):KDF 真机基准——m_kib 梯度 × t 梯度,p 固定 1。只是量,不是选择,
+/// 别在这里加第三个参数当"更全",四台机器等的是这四个数,不是笛卡尔积。
+const _kdfBenchMKibLadder = [16384, 32768, 65536, 131072];
+const _kdfBenchTLadder = [2, 3];
+
+/// [syncKdfBenchMs] 的签名——测试注入一个假实现时用这个别名对齐类型。
+typedef KdfBenchFn = Future<BigInt> Function({required int mKib, required int t, required int p});
+
+class _KdfBenchResult {
+  _KdfBenchResult({required this.mKib, required this.t, this.ms, this.error});
+  final int mKib;
+  final int t;
+  final int? ms;
+  final String? error;
+}
 
 /// 账号屏的状态机:手机号登录 → OTP → (首次)设口令 + 展示恢复码 / (换设备)口令或
 /// 恢复码解锁 → 就绪(设备批准 + 授权列表 + 云同步 + 退出/注销)。切状态的判断逻辑全在
@@ -18,7 +36,14 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 enum _Phase { idle, otpSent, keySetup, showRecovery, unlock, ready }
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({super.key, required this.flow, this.grants, this.syncEngine});
+  const AccountScreen({
+    super.key,
+    required this.flow,
+    this.grants,
+    this.syncEngine,
+    this.debugModeOverride,
+    this.kdfBenchFn,
+  });
   final AccountFlow flow;
 
   /// 测试注入点,默认为 null——真正用的时候按 [flow] 现取现建(见
@@ -29,6 +54,15 @@ class AccountScreen extends StatefulWidget {
   /// 测试注入点,同 [grants]——「开通云同步」「立即同步」用得到,默认为 null,
   /// 真正用的时候按 [flow] 现取现建(见 `_AccountScreenState._sync`)。
   final SyncEngine? syncEngine;
+
+  /// 测试注入点——`flutter test` 下 `kDebugMode` 恒为 true,没法测「非 debug
+  /// 不显示这一行」,这里给一个显式覆盖;真正用的时候为 null,落到真的
+  /// `kDebugMode`。
+  final bool? debugModeOverride;
+
+  /// 测试注入点——同上,默认为 null 落到真的 [syncKdfBenchMs](碰 FRB,
+  /// `flutter test` 跑不了)。
+  final KdfBenchFn? kdfBenchFn;
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
@@ -86,6 +120,10 @@ class _AccountScreenState extends State<AccountScreen> {
   String? _deleteError;
   final _deletePhoneCtrl = TextEditingController();
   final _deleteOtpCtrl = TextEditingController();
+
+  // ---- KDF 真机基准(Task 14a,仅 debug)----
+  bool _kdfBenchRunning = false;
+  final List<_KdfBenchResult> _kdfBenchResults = [];
 
   @override
   void initState() {
@@ -552,7 +590,118 @@ class _AccountScreenState extends State<AccountScreen> {
         ),
       );
     }
+    if (widget.debugModeOverride ?? kDebugMode) {
+      children.add(const SizedBox(height: 12));
+      children.add(const Divider());
+      children.add(_kdfBenchSection());
+    }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
+  }
+
+  /// Task 14(a):debug-only 真机基准。只跑、只显示、只能复制——不落盘、不上传、
+  /// 不碰 `AccountFlow.kdf`/`KDF_DEFAULT`(那两处的改动是 Task 14 后续步骤,
+  /// 要等真机数字回来才能定,这里绝不能替用户猜一个)。
+  Widget _kdfBenchSection() {
+    final rows = <Widget>[
+      const Text('KDF 基准测试(仅 debug)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 4),
+      Text(
+        '${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
+        style: const TextStyle(color: MedMe.faint, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+    ];
+    if (_kdfBenchRunning || _kdfBenchResults.isNotEmpty) {
+      rows.add(_kdfBenchTable());
+      rows.add(const SizedBox(height: 8));
+    }
+    if (_kdfBenchRunning) {
+      rows.add(const Center(child: CircularProgressIndicator()));
+    } else {
+      rows.add(
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                key: const Key('kdf_bench_run'),
+                onPressed: _runKdfBench,
+                child: Text(_kdfBenchResults.isEmpty ? '运行 KDF 基准测试' : '重新运行'),
+              ),
+            ),
+            if (_kdfBenchResults.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              TextButton(
+                key: const Key('kdf_bench_copy'),
+                onPressed: _copyKdfBenchResults,
+                child: const Text('复制结果'),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows);
+  }
+
+  Widget _kdfBenchTable() => Table(
+    key: const Key('kdf_bench_table'),
+    columnWidths: const {0: FlexColumnWidth(2), 1: FlexColumnWidth(1), 2: FlexColumnWidth(2)},
+    children: [
+      const TableRow(
+        children: [
+          Text('m_kib', style: TextStyle(fontWeight: FontWeight.w600)),
+          Text('t', style: TextStyle(fontWeight: FontWeight.w600)),
+          Text('min ms', style: TextStyle(fontWeight: FontWeight.w600)),
+        ],
+      ),
+      for (final r in _kdfBenchResults)
+        TableRow(
+          children: [
+            Text('${r.mKib}'),
+            Text('${r.t}'),
+            r.error != null
+                ? Text('ERROR: ${r.error}', style: const TextStyle(color: MedMe.danger, fontSize: 12))
+                : Text('${r.ms}'),
+          ],
+        ),
+    ],
+  );
+
+  /// 顺序跑完 m_kib × t 梯度(p 固定 1),每格测 2 次取更小值——`await` 串行,
+  /// 不并发:老机器本来就是这条路径要测的对象,并发跑只会互相抢内存/CPU,
+  /// 量出来的数字没有意义。FRB 调用本身是 async(见 `vault_sync.dart` 顶部
+  /// 注释),不会冻住 UI 线程;每格一 `setState`,进度看得见。单格报错(低于
+  /// argon2 crate 自己的下限会抛)不中断整轮,其余格照跑。
+  Future<void> _runKdfBench() async {
+    final bench = widget.kdfBenchFn ?? syncKdfBenchMs;
+    setState(() {
+      _kdfBenchRunning = true;
+      _kdfBenchResults.clear();
+    });
+    for (final mKib in _kdfBenchMKibLadder) {
+      for (final t in _kdfBenchTLadder) {
+        try {
+          final a = (await bench(mKib: mKib, t: t, p: 1)).toInt();
+          final b = (await bench(mKib: mKib, t: t, p: 1)).toInt();
+          if (!mounted) return;
+          setState(() => _kdfBenchResults.add(_KdfBenchResult(mKib: mKib, t: t, ms: a < b ? a : b)));
+        } catch (e) {
+          if (!mounted) return;
+          setState(() => _kdfBenchResults.add(_KdfBenchResult(mKib: mKib, t: t, error: '$e')));
+        }
+      }
+    }
+    if (mounted) setState(() => _kdfBenchRunning = false);
+  }
+
+  void _copyKdfBenchResults() {
+    final lines = [
+      'KDF 基准测试 · ${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
+      'm_kib\tt\tp\tmin_ms',
+      for (final r in _kdfBenchResults) '${r.mKib}\t${r.t}\t1\t${r.error != null ? 'ERROR: ${r.error}' : r.ms}',
+    ];
+    Clipboard.setData(ClipboardData(text: lines.join('\n')));
+    ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已复制')));
   }
 
   Future<void> _confirmLogout() async {
