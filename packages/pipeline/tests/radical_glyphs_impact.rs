@@ -127,6 +127,7 @@ fn source_docs<'a>(docs: &'a [Doc], texts: &'a [String]) -> Vec<parser::SourceDo
             text: &texts[i],
             doc_type: Some(d.doc_type.clone()),
             title: d.title.clone(),
+            extraction_json: None,
         })
         .collect()
 }

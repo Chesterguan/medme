@@ -240,6 +240,7 @@ pub fn build_qr_share(
             text: &rec.text,
             doc_type: Some(rec.doc.doc_type.as_str().to_lowercase()),
             title: rec.doc.title.clone(),
+            extraction_json: rec.extraction_json.as_deref(),
         })
         .collect();
     let summary = parser::assemble_summary(&docs);
@@ -429,6 +430,35 @@ mod tests {
                 }
             )
             .is_err());
+    }
+
+    /// `assemble_summary` 现在可能给一个点带上第三格 needsReview 标记
+    /// (`[date, value, true]`)。`trim_summary` 按点在数组里的位置整段裁剪
+    /// (`pts[start..]`),不逐点拆解,因此 3 元素点应被原样保留、裁剪行为不变。
+    #[test]
+    fn point_truncation_preserves_three_element_needs_review_points() {
+        let lim = QrLimits {
+            max_points_per_lab: 2,
+            ..QrLimits::default()
+        };
+        let mut summary = sample_summary(1, 3);
+        // 把该 problem 第一个 lab 的最后一个点换成带 needsReview 标记的 3 元素点。
+        let pts = summary["problems"][0]["labs"][0]["pts"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let mut new_pts = pts;
+        let last = new_pts.last().unwrap().as_array().unwrap().clone();
+        new_pts.pop();
+        new_pts.push(json!([last[0].clone(), last[1].clone(), true]));
+        summary["problems"][0]["labs"][0]["pts"] = json!(new_pts);
+
+        let t = trim_summary(&summary, lim);
+        let pts = t["problems"][0]["labs"][0]["pts"].as_array().unwrap();
+        assert_eq!(pts.len(), lim.max_points_per_lab, "仍按上限裁剪点数");
+        let kept = pts.last().unwrap().as_array().unwrap();
+        assert_eq!(kept.len(), 3, "3 元素点应原样保留,不被截成 2 元素");
+        assert_eq!(kept[2], json!(true), "needsReview 标记不能在裁剪中丢失");
     }
 
     #[test]

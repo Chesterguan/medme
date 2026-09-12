@@ -31,6 +31,9 @@ pub(crate) struct GatheredRecord {
     pub doc: core_model::Document,
     pub source_file: SourceFile,
     pub text: String,
+    /// 云抽取结果(deid schema v1 JSON),来自 `vault.extraction_json(doc.id)`;
+    /// 老文档/离线/未跑抽取时为 `None`,`SourceDoc` 据此退回正则路径。
+    pub extraction_json: Option<String>,
 }
 
 /// 按病程正序(旧→新,无日期最后)遍历 vault,取出每条文档的原件与 OCR 文本。
@@ -57,10 +60,12 @@ pub(crate) fn gather_records(vault: &Vault) -> Result<Vec<GatheredRecord>, Strin
             continue;
         };
         let text = vault.ocr_text(doc.id).map_err(|e| e.to_string())?;
+        let extraction_json = vault.extraction_json(doc.id).map_err(|e| e.to_string())?;
         out.push(GatheredRecord {
             doc,
             source_file: sf,
             text,
+            extraction_json,
         });
     }
     Ok(out)

@@ -313,6 +313,7 @@ fn build_share_blob_inner(
             text: &rec.text,
             doc_type: Some(rec.doc.doc_type.as_str().to_lowercase()),
             title: rec.doc.title.clone(),
+            extraction_json: rec.extraction_json.as_deref(),
         })
         .collect();
     let summary = parser::assemble_summary(&docs);
@@ -1524,6 +1525,88 @@ mod tests {
         assert!(
             !problems.iter().any(|p| p["term"] == "甲状腺结节"),
             "未确认文档的诊断不应进摘要"
+        );
+    }
+
+    /// 云抽取结果透传(Task 12):一份文档写了 `add_extraction`,分享摘要应优先吃
+    /// 抽取值而不是对 OCR 文本跑正则(证据是抽取里的 11.8 而非文本里的其他值);
+    /// 另一份没有抽取结果的文档仍走正则老路径,行为不受影响。
+    #[test]
+    fn share_summary_prefers_extraction_json_over_regex_when_present() {
+        use core_model::{DocType, NewDocument, NewExtraction, NewOcr, OcrBackendKind};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+
+        // 有云抽取结果的文档:OCR 文本里放一个不同的值,证明摘要没有对它跑正则。
+        let imp1 = vault.import("血常规1.txt", "text/plain", b"data1").unwrap();
+        let doc1 = vault
+            .add_document(NewDocument {
+                source_file_id: imp1.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: Some(chrono::Utc::now()),
+                doc_date_end: None,
+                title: Some("血常规1".into()),
+                language: Some("zh".into()),
+                page_count: 1,
+            })
+            .unwrap();
+        vault
+            .add_ocr(NewOcr {
+                document_id: doc1.id,
+                page_no: 1,
+                backend: OcrBackendKind::Native,
+                model_version: "text-layer".into(),
+                text: "白细胞计数 999".into(),
+                confidence: None,
+            })
+            .unwrap();
+        vault
+            .add_extraction(NewExtraction {
+                document_id: doc1.id,
+                backend: "test".into(),
+                model_version: "v1".into(),
+                mode: "text".into(),
+                result_json: r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0"}]}"#.into(),
+            })
+            .unwrap();
+
+        // 没有云抽取结果的文档:退回正则路径。
+        let imp2 = vault.import("血常规2.txt", "text/plain", b"data2").unwrap();
+        let doc2 = vault
+            .add_document(NewDocument {
+                source_file_id: imp2.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: Some(chrono::Utc::now()),
+                doc_date_end: None,
+                title: Some("血常规2".into()),
+                language: Some("zh".into()),
+                page_count: 1,
+            })
+            .unwrap();
+        vault
+            .add_ocr(NewOcr {
+                document_id: doc2.id,
+                page_no: 1,
+                backend: OcrBackendKind::Native,
+                model_version: "text-layer".into(),
+                text: "血红蛋白 140 g/L 130-175 未见 减低".into(),
+                confidence: None,
+            })
+            .unwrap();
+
+        let (html, pass, n) =
+            build_encrypted_share(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
+        assert_eq!(n, 2);
+        let payload = decrypt_payload(&html, &pass);
+        let summary = payload["summary"].to_string();
+        assert!(
+            summary.contains("11.8"),
+            "有云抽取结果的文档应优先用抽取值,而不是 OCR 文本里的 999: {summary}"
+        );
+        assert!(!summary.contains("999"), "不应对已有抽取结果的文本跑正则");
+        assert!(
+            summary.contains("140"),
+            "没有云抽取结果的文档应仍能走正则退回路径: {summary}"
         );
     }
 }
