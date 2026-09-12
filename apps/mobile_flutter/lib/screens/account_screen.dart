@@ -14,6 +14,7 @@ import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncKdfBenchMs
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 
 /// Task 14(a):KDF 真机基准——m_kib 梯度 × t 梯度,p 固定 1。只是量,不是选择,
 /// 别在这里加第三个参数当"更全",四台机器等的是这四个数,不是笛卡尔积。
@@ -166,6 +167,9 @@ class _AccountScreenState extends State<AccountScreen> {
 
   bool _familyBusy = false;
   String? _familyError;
+
+  /// B5:正在生成一条转移链接(防连点;生成链接是会在服务端建 invite 记录的)。
+  bool _transferBusy = false;
 
   Grants get _grants => widget.grants ?? Grants(widget.flow.api, widget.flow.session);
   SyncEngine get _sync => widget.syncEngine ?? SyncEngine(widget.flow.api, widget.flow.session);
@@ -1174,13 +1178,83 @@ class _AccountScreenState extends State<AccountScreen> {
               child: ListTile(
                 title: Text('档案 ${g['profile_id']} · ${g['grantee_kind']}'),
                 subtitle: Text('角色:${g['role']}${g['expires_at'] != null ? ' · 到期 ${g['expires_at']}' : ''}'),
-                trailing: TextButton(onPressed: () => _revokeMyGrant(g), child: const Text('撤销')),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      key: Key('transfer_${g['grant_id']}'),
+                      onPressed: _transferBusy ? null : () => _transferOwnership(g),
+                      child: const Text('转为主人'),
+                    ),
+                    TextButton(onPressed: () => _revokeMyGrant(g), child: const Text('撤销')),
+                  ],
+                ),
               ),
             ),
         ],
       );
     },
   );
+
+  /// B5:「把这份档案交给他」。
+  ///
+  /// `Grants.inviteTransfer` 在这之前**一个调用方都没有** —— 代拍那条路的
+  /// `cloudProfile` 分支还没接线(见 `doctor_claim_link_dialog.dart` 的说明)。
+  /// 也就是说"把档案交给父母/子女"这件事在产品里根本不存在,而它恰恰是「替父母
+  /// 管病历」这条主线的终局:老人自己装了 App、自己成为主人,子女退回家人。
+  ///
+  /// 这一步只**生成一条链接**,不改变任何东西 —— 真正的转移发生在对方点开并接受
+  /// 那一刻(服务端在兑换时把老 owner 自动降成 editor)。确认弹窗必须把这条说
+  /// 清楚,否则用户会以为点下去就已经交出去了。
+  Future<void> _transferOwnership(Map<String, dynamic> grant) async {
+    final cloudId = grant['profile_id'] as String;
+    final profile = ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull;
+    if (profile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        appSnackBar(content: const Text('这台手机上找不到这份档案,先同步一次再试')),
+      );
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('把这份档案交给他?'),
+        content: Text(
+          '对方接受之后,「${profile.name}」这份档案就归他所有;'
+          '你会降为可以一起录入的家人,不再能把它转给别人、也不能再收回别人的授权。\n\n'
+          '现在这一步只生成一条链接,还不会改变任何东西 —— 对方点开并接受之后才真正生效。',
+          style: const TextStyle(height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('生成链接')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _transferBusy = true);
+    try {
+      final link = await _grants.inviteTransfer(profile);
+      if (!mounted) return;
+      await showLinkQrDialog(
+        context,
+        title: '请他扫这个码',
+        url: link.toUrl(),
+        body: '让对方用手机相机拍下这个码,或者把链接发给他。他点开并接受之后,'
+            '「${profile.name}」这份档案就归他所有,你降为可以一起录入的家人。',
+        footnote: '只有拿到这个码的人能接受。15 天内有效;在他接受之前,你随时可以不管它 —— 不接受就什么都没发生。',
+        shareSubject: '把这份病历档案交给你',
+        shareLabel: '发给他',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        appSnackBar(content: Text('生成转移链接失败:${friendlyApiError(e)}')),
+      );
+    } finally {
+      if (mounted) setState(() => _transferBusy = false);
+    }
+  }
 
   Future<void> _revokeMyGrant(Map<String, dynamic> grant) async {
     try {

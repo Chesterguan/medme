@@ -86,6 +86,11 @@ class FakeApi extends ApiClient {
   final calls = <String>[];
   /// 每次 `delete()` 收到的 body,按调用顺序——测「注销账号」发对了 phone/otp_code。
   final deleteBodies = <Object?>[];
+  /// `POST /v1/profiles/{pid}/invites` 的 body——B5 测「转为主人」发的是 owner、
+  /// 而且不带 days。
+  final inviteBodies = <Map<String, dynamic>>[];
+  /// 让建邀请这一步 500,测 B5 的失败态。
+  bool failInvite = false;
 
   @override
   Future<Map<String, dynamic>> postJson(String path, Object body, {Map<String, String>? headers}) async {
@@ -107,6 +112,11 @@ class FakeApi extends ApiClient {
     if (path == '/v1/profiles') {
       if (failCreateProfile) throw const ApiFailed(500, 'create profile failed');
       return {'profile_id': 'prf_new'};
+    }
+    if (path.startsWith('/v1/profiles/') && path.endsWith('/invites')) {
+      if (failInvite) throw const ApiFailed(500, 'invite failed');
+      inviteBodies.add(body as Map<String, dynamic>);
+      return {'invite_id': 'inv_transfer_1'};
     }
     if (path == '/v1/accounts/lookup') {
       if (lookupError != null) throw lookupError!;
@@ -1136,6 +1146,103 @@ void main() {
       expect(find.textContaining('撤销失败'), findsOneWidget);
       await t.pumpAndSettle();
       expect(find.text('撤销'), findsOneWidget);
+    });
+  });
+
+  // ---- B5:`inviteTransfer` 在这之前一个调用方都没有 ----
+  group('B5:「转为主人」', () {
+    Map<String, dynamic> granteeRow() => {
+      'grant_id': 'g2',
+      'grantee_kind': 'account',
+      'role': 'editor',
+      'expires_at': null,
+      'created_at': '2026-01-01T00:00:00Z',
+    };
+
+    FakeApi apiWithGrantee() => FakeApi(
+      hasKeys: true,
+      delay: const Duration(milliseconds: 5),
+      profiles: [
+        {'profile_id': 'prf_1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
+      ],
+      myGrants: {'prf_1': [granteeRow()]},
+    );
+
+    /// 让当前成员对应云档案 prf_1(`inviteTransfer` 要档案密钥)。
+    Future<void> setUpOwnedCloudProfile(WidgetTester t) async {
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+        await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, 'prf_1', 'owner', null);
+      });
+      await AccountSession.instance.putProfileKey('prf_1', Uint8List(32));
+    }
+
+    testWidgets('每行都有「转为主人」,点了先弹确认,说明"现在还不会改变任何东西"', (t) async {
+      final api = apiWithGrantee();
+      await setUpOwnedCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+      await _scrollToMyGrants(t);
+
+      expect(find.text('转为主人'), findsOneWidget);
+      await t.tap(find.byKey(const Key('transfer_g2')));
+      await t.pumpAndSettle();
+
+      expect(find.text('把这份档案交给他?'), findsOneWidget);
+      expect(find.textContaining('降为可以一起录入的家人'), findsOneWidget);
+      expect(find.textContaining('还不会改变任何东西'), findsOneWidget);
+      expect(find.text('生成链接'), findsOneWidget);
+      expect(find.text('取消'), findsOneWidget);
+    });
+
+    testWidgets('取消:不发任何请求', (t) async {
+      final api = apiWithGrantee();
+      await setUpOwnedCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+      await _scrollToMyGrants(t);
+      await t.tap(find.byKey(const Key('transfer_g2')));
+      await t.pumpAndSettle();
+      api.calls.clear();
+      await t.tap(find.text('取消'));
+      await t.pumpAndSettle();
+
+      expect(api.calls.any((c) => c.contains('/invites')), isFalse);
+    });
+
+    testWidgets('确认:调 inviteTransfer(owner、不按天到期),弹出可分享的码', (t) async {
+      final api = apiWithGrantee();
+      await setUpOwnedCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+      await _scrollToMyGrants(t);
+      await t.tap(find.byKey(const Key('transfer_g2')));
+      await t.pumpAndSettle();
+      await t.tap(find.text('生成链接'));
+      await t.pumpAndSettle();
+
+      expect(api.calls, contains('POST /v1/profiles/prf_1/invites'));
+      expect(api.inviteBodies.single['role'], 'owner');
+      expect(
+        api.inviteBodies.single.containsKey('days'),
+        isFalse,
+        reason: '转移一旦兑换即刻生效,不像医生邀请那样按天到期',
+      );
+      expect(find.text('请他扫这个码'), findsOneWidget);
+      expect(find.text('复制链接'), findsOneWidget);
+      expect(find.text('发给他'), findsOneWidget);
+    });
+
+    testWidgets('生成失败(服务器 500):中文提示,列表原样还在', (t) async {
+      final api = apiWithGrantee()..failInvite = true;
+      await setUpOwnedCloudProfile(t);
+      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+      await _scrollToMyGrants(t);
+      await t.tap(find.byKey(const Key('transfer_g2')));
+      await t.pumpAndSettle();
+      await t.tap(find.text('生成链接'));
+      await t.pumpAndSettle();
+
+      expect(find.text('生成转移链接失败:服务器开小差了,稍后再试'), findsOneWidget);
+      expect(find.text('转为主人'), findsOneWidget);
     });
   });
 
