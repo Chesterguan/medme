@@ -266,6 +266,16 @@ class _AccountScreenState extends State<AccountScreen> {
     super.dispose();
   }
 
+  /// 跑一步异步操作,期间按钮换成进度圈,失败把原因摆在按钮上方。
+  ///
+  /// **三处 `mounted` 守卫都是必需的**(评审 Important 10,带复现):`body()` 里
+  /// await 之后的 `setState` 在屏已经 dispose 时会抛,`catch` 随即跑、它自己那次
+  /// `setState` 再抛一次 —— 而**后面这一次**没人接,变成一个未处理的异步错误
+  /// (`setState() called after dispose()`)。
+  ///
+  /// 可达性不是理论:`PopScope` 只在恢复码那一阶段挡返回,所以在**长达几秒的
+  /// Argon2 转圈**里退出就会撞上 —— 正是 [_kdfWaitHint] 那句「请不要退出」所描述的
+  /// 等待。加了警告文案却不让这个隐患变得可承受,等于没修。
   Future<void> _run(Future<void> Function() body) async {
     setState(() {
       _busy = true;
@@ -273,8 +283,9 @@ class _AccountScreenState extends State<AccountScreen> {
     });
     try {
       await body();
+      if (!mounted) return;
     } catch (e) {
-      setState(() { _error = friendlyApiError(e); });
+      if (mounted) setState(() { _error = friendlyApiError(e); });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -285,11 +296,19 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 「登录」,撞一次 401,还以为是新码也不对。
   Future<void> _sendOtp() => _run(() async {
     final resend = _phase == _Phase.otpSent;
-    await widget.flow.sendOtp(_phoneCtrl.text.trim());
+    try {
+      await widget.flow.sendOtp(_phoneCtrl.text.trim());
+    } finally {
+      // 重发:**成没成都进冷却**(评审 Minor 21)。重发失败最常见的原因正是服务端
+      // 在限流(429,一小时 5 条),而按钮保持可点只会让用户继续猛戳一个已经在限
+      // 流他的服务端 —— 越戳越回不来。
+      if (resend && mounted) _startOtpCountdown();
+    }
+    if (!mounted) return;
     if (resend) _codeCtrl.clear();
     setState(() => _phase = _Phase.otpSent);
-    _startOtpCountdown();
-    if (resend && mounted) {
+    if (!resend) _startOtpCountdown();
+    if (resend) {
       ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('验证码已重新发送')));
     }
   });
@@ -573,21 +592,53 @@ class _AccountScreenState extends State<AccountScreen> {
   ];
 
   /// C6。走系统分享面板,让用户把恢复码存到**这台手机之外**的地方(微信收藏、
-  /// 邮箱、备忘录……)。分享的是恢复码本身加一句说明 —— 它就是钥匙,所以文案里
+  /// 邮箱、备忘录……)。分享的是恢复码本身加一句说明 —— 它就是钥匙,所以那段文字
   /// 必须带上"别人拿到它就能打开你的病历"。
+  ///
+  /// **先弹一句确认**(评审 Important 11):这是账号密钥唯一一条刻意离开这台设备的
+  /// 路径,而原来点下去**直接**就是系统分享面板 —— 屏上没有任何一个字说"它正要
+  /// 经第三方 App 传出去"。那句警告原来只跟着内容到达目的地,而不是在决定之前
+  /// 到达用户。
+  ///
+  /// **整段包 try/catch**:`SharePlus` 会抛 `PlatformException`(iPad 锚点拿不到、
+  /// 系统里没有可分享的目标),而这是一个 `onPressed` 里的 async —— 不接就是一个
+  /// 未处理的异步错误,用户点了「分享给自己」什么都看不到。
   Future<void> _shareRecoveryCode() async {
     final code = _recoveryCode;
     if (code == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('要把恢复码发出去?'),
+        content: const Text(
+          '恢复码会经你选的那个 App 离开这台手机(微信、邮件、备忘录……)。'
+          '它就是你账号的钥匙 —— 只发给自己,别发给任何人,也别发在群里。',
+          style: TextStyle(height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('发给自己')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
     final box = context.findRenderObject() as RenderBox?;
-    await SharePlus.instance.share(ShareParams(
-      text: 'MedMe 恢复码:$code\n\n'
-          '忘记口令时用它找回账号密钥。请存在这台手机之外的地方;'
-          '别人拿到它就能打开你的病历,不要发给任何人。',
-      subject: 'MedMe 恢复码',
-      // iPad 上 `share_plus` 要一个非零锚点,否则抛参数错误(同
-      // `export_screen.dart` 里那条注释)。
-      sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
-    ));
+    try {
+      await SharePlus.instance.share(ShareParams(
+        text: 'MedMe 恢复码:$code\n\n'
+            '忘记口令时用它找回账号密钥。请存在这台手机之外的地方;'
+            '别人拿到它就能打开你的病历,不要发给任何人。',
+        subject: 'MedMe 恢复码',
+        // iPad 上 `share_plus` 要一个非零锚点,否则抛参数错误(同
+        // `export_screen.dart` 里那条注释)。
+        sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        appSnackBar(content: Text('分享没打开:${friendlyApiError(e)}。可以改用上面的「复制」。')),
+      );
+    }
   }
 
   List<Widget> _unlockContent() => [

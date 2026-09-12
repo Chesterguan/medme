@@ -190,6 +190,23 @@ class FakeApi extends ApiClient {
   }
 }
 
+/// 第一次发验证码成功、之后按 [failNext] 决定失不失败 —— 专测"重发"那条路
+/// (评审 Minor 21:原来那条用例在一块全新的屏上点最初那个按钮,从没走过重发)。
+class _FlakyOtpApi extends FakeApi {
+  _FlakyOtpApi() : super(delay: const Duration(milliseconds: 5));
+  bool failNext = false;
+
+  @override
+  Future<Map<String, dynamic>> postJson(String path, Object body, {Map<String, String>? headers}) async {
+    if (path == '/v1/auth/otp' && failNext) {
+      calls.add('POST $path');
+      await Future<void>.delayed(delay);
+      throw const ApiFailed(429, 'rate_limited');
+    }
+    return super.postJson(path, body, headers: headers);
+  }
+}
+
 /// 假加密——同样真的 delay 一下(Argon2id 本来就该花时间),口令/恢复码只有
 /// 配置的那一个值判"对"，方便同时测成功和失败分支。
 class FakeCrypto implements SyncCrypto {
@@ -636,23 +653,37 @@ void main() {
       expect(find.text('输入验证码'), findsOneWidget, reason: '仍在这一屏,不退回手机号那一步');
     });
 
-    testWidgets('重发失败(429):错误可见,仍停在这一屏', (t) async {
-      final api = FakeApi();
+    testWidgets('首次发送失败(429):错误可见,不进下一屏', (t) async {
+      final api = FakeApi(failOtp: true);
       await t.pumpWidget(_app(api));
       await t.enterText(find.byKey(const Key('phone')), '13800000001');
       await t.tap(find.text('发送验证码'));
       await t.pumpAndSettle();
 
-      // 换一个只会 429 的屏,模拟"重发撞上一小时 5 条的上限"。
-      await t.pumpWidget(const SizedBox.shrink());
-      final limited = FakeApi(failOtp: true);
-      await t.pumpWidget(_app(limited));
-      await t.pumpAndSettle();
+      expect(find.text('操作太频繁,过一会儿再试'), findsOneWidget);
+      expect(find.text('输入验证码'), findsNothing, reason: '没发出去就不该进下一屏');
+    });
+
+    // 评审 Minor 21:上面那条用例原来叫「重发失败」,但它在一块全新的屏上点**最初**
+    // 那个「发送验证码」—— 从没走过重发路径。于是下面这件事对测试套件是隐形的:
+    // 重发失败时倒计时不跑,按钮保持可点,用户可以继续猛戳一个已经在限流他的服务端。
+    testWidgets('重发失败(429):也要进冷却 —— 不许继续猛戳一个正在限流你的服务端', (t) async {
+      final api = _FlakyOtpApi();
+      await t.pumpWidget(_app(api));
       await t.enterText(find.byKey(const Key('phone')), '13800000001');
       await t.tap(find.text('发送验证码'));
       await t.pumpAndSettle();
+      await t.pump(const Duration(seconds: 60)); // 第一轮冷却走完
+
+      expect(find.text('重新发送'), findsOneWidget);
+      api.failNext = true;
+      await t.tap(find.byKey(const Key('otp_resend')));
+      await t.pumpAndSettle();
+
       expect(find.text('操作太频繁,过一会儿再试'), findsOneWidget);
-      expect(find.text('输入验证码'), findsNothing, reason: '没发出去就不该进下一屏');
+      expect(find.text('输入验证码'), findsOneWidget, reason: '仍在这一屏');
+      expect(find.text('60 秒后可重新发送'), findsOneWidget, reason: '失败也要进冷却');
+      expect(t.widget<TextButton>(find.byKey(const Key('otp_resend'))).onPressed, isNull);
     });
 
     testWidgets('验证码打错/过期:说「重新发送」,不说「重新登录」', (t) async {
@@ -766,6 +797,105 @@ void main() {
       await t.pump();
       expect(find.text('正在生成密钥,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
       await t.pumpAndSettle();
+    });
+  });
+
+  // ---- 评审 Important 10:Argon2 转圈时退出会 setState after dispose ----
+  group('Important 10:转圈时离开这一屏不崩', () {
+    testWidgets('「生成密钥」转圈中把屏拆掉:不留未处理的异步错误', (t) async {
+      // 这正是 `_kdfWaitHint`(「请不要等…请不要退出」)所描述的那几秒等待 ——
+      // 而 `PopScope` 只在恢复码那一阶段挡返回,所以这几秒里真的走得掉。
+      final api = FakeApi(delay: const Duration(milliseconds: 5));
+      await t.pumpWidget(_app(api, crypto: FakeCrypto(delay: const Duration(milliseconds: 300))));
+      await _loginUpTo(t);
+      await t.enterText(find.byKey(const Key('password')), 'right1');
+      await t.pump();
+      await t.tap(find.text('生成密钥'));
+      await t.pump(); // 转圈起来了,Argon2 还在跑
+
+      await t.pumpWidget(const SizedBox.shrink()); // 整棵树 dispose
+      // 把假 Argon2 那串 delayed timer 排空 —— 它们 resolve 的那一刻正是原来
+      // `setState after dispose` 抛出来的时刻。`pumpAndSettle` 自己不推进它们
+      // (没有帧在排队),所以要显式给时间;`prepareKeys` 里是**四次**串行的
+      // 300ms(生成密钥对 / 口令包 / 恢复码 / 恢复码包),一次给足。
+      await t.pump(const Duration(seconds: 3));
+      await t.pumpAndSettle();
+
+      expect(t.takeException(), isNull, reason: 'setState() called after dispose() 会从这里冒出来');
+    });
+
+    testWidgets('「解锁」失败那一刻屏已经拆掉:catch 里的 setState 也不许抛', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
+      await t.pumpWidget(_app(api, crypto: FakeCrypto(delay: const Duration(milliseconds: 300))));
+      await _loginUpTo(t);
+      await t.enterText(find.byKey(const Key('password')), 'wrong');
+      await t.pump();
+      await t.tap(find.text('解锁'));
+      await t.pump();
+
+      await t.pumpWidget(const SizedBox.shrink());
+      await t.pump(const Duration(milliseconds: 500));
+      await t.pumpAndSettle();
+
+      expect(t.takeException(), isNull);
+    });
+  });
+
+  // ---- 评审 Important 11:恢复码离开设备之前要先说一句 ----
+  group('Important 11:「分享给自己」先确认', () {
+    Future<void> toRecoveryScreen(WidgetTester t) async {
+      await t.pumpWidget(_app(FakeApi()));
+      await _loginUpTo(t);
+      await t.enterText(find.byKey(const Key('password')), 'right1');
+      await t.pump();
+      await t.tap(find.text('生成密钥'));
+      await t.pumpAndSettle();
+    }
+
+    testWidgets('点「分享给自己」先弹确认,说清它会经第三方 App 传出去', (t) async {
+      await toRecoveryScreen(t);
+      await t.tap(find.byKey(const Key('recovery_share')));
+      await t.pumpAndSettle();
+
+      expect(find.text('要把恢复码发出去?'), findsOneWidget);
+      expect(find.textContaining('会经你选的那个 App 离开这台手机'), findsOneWidget);
+      expect(find.textContaining('只发给自己'), findsOneWidget);
+      expect(find.text('取消'), findsOneWidget);
+    });
+
+    testWidgets('取消:不打开分享面板,恢复码画面原样留着', (t) async {
+      await toRecoveryScreen(t);
+      await t.tap(find.byKey(const Key('recovery_share')));
+      await t.pumpAndSettle();
+      await t.tap(find.text('取消'));
+      await t.pumpAndSettle();
+
+      expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
+      expect(find.text('我已抄下恢复码'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
+
+    testWidgets('确认之后分享面板打不开:中文提示,不是未处理异常', (t) async {
+      // 真的让它失败一次:mock 掉 share_plus 自己那条 channel,让它抛
+      // `PlatformException` —— 正是 iPad 拿不到锚点、或系统里没有可分享目标时的形状。
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('dev.fluttercommunity.plus/share'),
+        (call) async => throw PlatformException(code: 'no_target', message: '没有可分享的目标'),
+      );
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(const MethodChannel('dev.fluttercommunity.plus/share'), null));
+
+      await toRecoveryScreen(t);
+      await t.tap(find.byKey(const Key('recovery_share')));
+      await t.pumpAndSettle();
+      await t.tap(find.text('发给自己'));
+      await t.pumpAndSettle();
+
+      expect(t.takeException(), isNull, reason: 'onPressed 里的 async 必须自己接住');
+      expect(find.textContaining('分享没打开'), findsOneWidget);
+      expect(find.textContaining('可以改用上面的「复制」'), findsOneWidget);
+      // 恢复码画面原样留着,用户还能走「复制」那条。
+      expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
     });
   });
 
