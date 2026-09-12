@@ -207,9 +207,9 @@ pub struct RectDto {
     pub bottom: f32,
 }
 
-/// `prepare_cloud_extraction` 的产出:脱敏后待发云端的文本、要涂黑的框(图片档,
-/// 文本档为空)、还原映射(JSON,**永不离开手机**——只用来把云端结果里的占位符/
-/// 偏移日期换回真值,见 `commit_cloud_extraction`)。
+/// `vault_cloud_prepare_extraction` 的产出:脱敏后待发云端的文本、要涂黑的框
+/// (图片档,文本档为空)、还原映射(JSON,**永不离开手机**——只用来把云端结果里
+/// 的占位符/偏移日期换回真值,见 `vault_cloud_commit_extraction`)。
 #[derive(Debug, Clone)]
 pub struct CloudExtractionRequestDto {
     pub payload_text: String,
@@ -217,8 +217,8 @@ pub struct CloudExtractionRequestDto {
     pub restore_map_json: String,
 }
 
-/// `commit_cloud_extraction` 的产出:这次落盘的化验条数、因未过校验被丢弃的条数
-/// (文本档)、未能校验但保留的条数(图片档,见 `deid::verify`)。
+/// `vault_cloud_commit_extraction` 的产出:这次落盘的化验条数、因未过校验被丢弃的
+/// 条数(文本档)、未能校验但保留的条数(图片档,见 `deid::verify`)。
 #[derive(Debug, Clone)]
 pub struct CloudExtractionResultDto {
     pub labs: i64,

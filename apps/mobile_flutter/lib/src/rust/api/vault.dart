@@ -413,9 +413,9 @@ Future<OcrPpResultDto> recognizeImagePp({required List<int> bytes}) =>
 /// (`lines` 为空)不产生任何框。
 ///
 /// 返回的 `restore_map_json`(占位符/日期偏移 ↔ 原文)只在本机使用
-/// (`commit_cloud_extraction` 拿它做还原)——**经 FFI 到 Dart 只是为了原样带回
+/// (`vault_cloud_commit_extraction` 拿它做还原)——**经 FFI 到 Dart 只是为了原样带回
 /// 下一次调用,从不上传、从不落盘**。
-Future<CloudExtractionRequestDto> prepareCloudExtraction({
+Future<CloudExtractionRequestDto> vaultCloudPrepareExtraction({
   required PlatformInt64 documentId,
   required List<OcrLineDto> lines,
   required String knownName,
@@ -424,7 +424,7 @@ Future<CloudExtractionRequestDto> prepareCloudExtraction({
   required String profileSecretHex,
   required double pageW,
   required double pageH,
-}) => RustLib.instance.api.crateApiVaultPrepareCloudExtraction(
+}) => RustLib.instance.api.crateApiVaultVaultCloudPrepareExtraction(
   documentId: documentId,
   lines: lines,
   knownName: knownName,
@@ -436,10 +436,10 @@ Future<CloudExtractionRequestDto> prepareCloudExtraction({
 );
 
 /// 非 iOS/安卓构建的占位实现,理由同 `recognize_image_pp` 的 `cfg(not(pp_ocr))` 分支。
-Future<Uint8List> redactImageBytes({
+Future<Uint8List> vaultCloudRedactImage({
   required List<int> bytes,
   required List<RectDto> paint,
-}) => RustLib.instance.api.crateApiVaultRedactImageBytes(
+}) => RustLib.instance.api.crateApiVaultVaultCloudRedactImage(
   bytes: bytes,
   paint: paint,
 );
@@ -451,18 +451,18 @@ Future<Uint8List> redactImageBytes({
 /// `deid::redact_text`(空身份,只需要 A/P 层 + 日期偏移,`shift_days` 取自
 /// `restore_map_json` 里记的那个,保证与 `prepare` 那次一致),再用 `restore_map`
 /// 里登记的每一对占位符/原值把原值换回占位符——这样重建出的文本与
-/// `prepare_cloud_extraction` 当时发给 LLM 的 `payload_text` 一致(确定性、不用
+/// `vault_cloud_prepare_extraction` 当时发给 LLM 的 `payload_text` 一致(确定性、不用
 /// 反查 Dart),`deid::verify` 才能诚实地判断 LLM 返回的字段是不是「原文逐字」。
 ///
 /// 通过校验后 `deid::restore` 把占位符/偏移日期换回真值,再 `add_extraction`
 /// 落盘(`NewExtraction`,latest-wins,见 `core_model::add_extraction` 文档)。
-Future<CloudExtractionResultDto> commitCloudExtraction({
+Future<CloudExtractionResultDto> vaultCloudCommitExtraction({
   required PlatformInt64 documentId,
   required String mode,
   required String modelVersion,
   required String llmJson,
   required String restoreMapJson,
-}) => RustLib.instance.api.crateApiVaultCommitCloudExtraction(
+}) => RustLib.instance.api.crateApiVaultVaultCloudCommitExtraction(
   documentId: documentId,
   mode: mode,
   modelVersion: modelVersion,

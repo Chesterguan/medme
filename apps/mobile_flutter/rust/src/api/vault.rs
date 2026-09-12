@@ -1687,7 +1687,7 @@ pub fn recognize_image_pp(bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
     let data_dir = with_state(|state| Ok(state.data_dir.clone()))?;
     ensure_pp_models_ready(&data_dir)?;
     // 换成 `recognize_engine_lines`(而不是 `recognize_engine_layout`):后者只吐
-    // 拼好的文本,前者连检测框一起交出来——云抽取图片档脱敏(`prepare_cloud_extraction`
+    // 拼好的文本,前者连检测框一起交出来——云抽取图片档脱敏(`vault_cloud_prepare_extraction`
     // → `deid::redact_boxes`)要按框涂黑,必须要有框。文本仍用同一个
     // `rebuild_layout_text` 拼,逐字节不变。
     let (engine_lines, confidence) =
@@ -1752,9 +1752,9 @@ fn hex_to_bytes(s: &str) -> Vec<u8> {
 /// (`lines` 为空)不产生任何框。
 ///
 /// 返回的 `restore_map_json`(占位符/日期偏移 ↔ 原文)只在本机使用
-/// (`commit_cloud_extraction` 拿它做还原)——**经 FFI 到 Dart 只是为了原样带回
+/// (`vault_cloud_commit_extraction` 拿它做还原)——**经 FFI 到 Dart 只是为了原样带回
 /// 下一次调用,从不上传、从不落盘**。
-pub fn prepare_cloud_extraction(
+pub fn vault_cloud_prepare_extraction(
     document_id: i64,
     lines: Vec<OcrLineDto>,
     known_name: String,
@@ -1802,7 +1802,7 @@ pub fn prepare_cloud_extraction(
 }
 
 /// 云抽取结果回来后按框涂黑(图片档)。`bytes` 是原始图片字节;`paint` 来自
-/// `prepare_cloud_extraction` 的 `paint`,坐标系是识别引擎的 working frame,不是
+/// `vault_cloud_prepare_extraction` 的 `paint`,坐标系是识别引擎的 working frame,不是
 /// `bytes` 原始朝向帧(`ocr::redact_image_bytes` 的坐标系警告)——所以这里**重新
 /// 跑一次 `recognize_engine_lines` 只取它的 `frame`**(丢弃这次重新识别出的行,
 /// 只要那张预处理过的图),保证涂黑用的图跟算框时是同一张。preprocess 是纯函数,
@@ -1810,7 +1810,7 @@ pub fn prepare_cloud_extraction(
 /// ponytail:这样会多跑一次检测推理(只为拿 frame);涂黑只在云抽取确认后跑一次,
 /// 不是高频路径,暂不做「prepare 时把 frame 存住等 commit 再用」的缓存。
 #[cfg(pp_ocr)]
-pub fn redact_image_bytes(bytes: Vec<u8>, paint: Vec<RectDto>) -> anyhow::Result<Vec<u8>> {
+pub fn vault_cloud_redact_image(bytes: Vec<u8>, paint: Vec<RectDto>) -> anyhow::Result<Vec<u8>> {
     let data_dir = with_state(|state| Ok(state.data_dir.clone()))?;
     ensure_pp_models_ready(&data_dir)?;
     let (engine_lines, _confidence) =
@@ -1823,7 +1823,7 @@ pub fn redact_image_bytes(bytes: Vec<u8>, paint: Vec<RectDto>) -> anyhow::Result
 }
 /// 非 iOS/安卓构建的占位实现,理由同 `recognize_image_pp` 的 `cfg(not(pp_ocr))` 分支。
 #[cfg(not(pp_ocr))]
-pub fn redact_image_bytes(_bytes: Vec<u8>, _paint: Vec<RectDto>) -> anyhow::Result<Vec<u8>> {
+pub fn vault_cloud_redact_image(_bytes: Vec<u8>, _paint: Vec<RectDto>) -> anyhow::Result<Vec<u8>> {
     anyhow::bail!("图片涂黑仅 iOS/安卓构建可用")
 }
 
@@ -1834,12 +1834,12 @@ pub fn redact_image_bytes(_bytes: Vec<u8>, _paint: Vec<RectDto>) -> anyhow::Resu
 /// `deid::redact_text`(空身份,只需要 A/P 层 + 日期偏移,`shift_days` 取自
 /// `restore_map_json` 里记的那个,保证与 `prepare` 那次一致),再用 `restore_map`
 /// 里登记的每一对占位符/原值把原值换回占位符——这样重建出的文本与
-/// `prepare_cloud_extraction` 当时发给 LLM 的 `payload_text` 一致(确定性、不用
+/// `vault_cloud_prepare_extraction` 当时发给 LLM 的 `payload_text` 一致(确定性、不用
 /// 反查 Dart),`deid::verify` 才能诚实地判断 LLM 返回的字段是不是「原文逐字」。
 ///
 /// 通过校验后 `deid::restore` 把占位符/偏移日期换回真值,再 `add_extraction`
 /// 落盘(`NewExtraction`,latest-wins,见 `core_model::add_extraction` 文档)。
-pub fn commit_cloud_extraction(
+pub fn vault_cloud_commit_extraction(
     document_id: i64,
     mode: String,
     model_version: String,
@@ -2080,7 +2080,7 @@ mod measured_at_timezone_tests {
 mod cloud_extraction_tests {
     use super::*;
 
-    // `prepare_cloud_extraction`/`commit_cloud_extraction`/`ingest_image_with_text`
+    // `vault_cloud_prepare_extraction`/`vault_cloud_commit_extraction`/`ingest_image_with_text`
     // 都经全局 `VAULT` cell(与生产代码一样一次只有一个打开的保险箱),不能并发跑;
     // 必须用 `VAULT_TEST_LOCK`(见其文档)——本模块单独一把锁挡不住
     // `vault_projections` 的端到端测试同时动同一个全局单例。
@@ -2111,7 +2111,7 @@ mod cloud_extraction_tests {
         .unwrap();
         let doc_id = outcome.document_id.expect("应建出文档");
 
-        let req = prepare_cloud_extraction(
+        let req = vault_cloud_prepare_extraction(
             doc_id,
             vec![],
             "张建国".into(),
@@ -2127,7 +2127,7 @@ mod cloud_extraction_tests {
         assert!(req.paint.is_empty(), "文本档不该产生涂黑框");
 
         let llm_json = r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0"}]}"#;
-        let result = commit_cloud_extraction(
+        let result = vault_cloud_commit_extraction(
             doc_id,
             "text".into(),
             "v4".into(),
@@ -2175,7 +2175,7 @@ mod cloud_extraction_tests {
             ingest_image_with_text("b.jpg".into(), vec![1, 2, 3, 4], text, 0.9).unwrap();
         let doc_id = outcome.document_id.expect("应建出文档");
 
-        let err = prepare_cloud_extraction(
+        let err = vault_cloud_prepare_extraction(
             doc_id,
             vec![],
             String::new(),
@@ -2206,7 +2206,7 @@ mod cloud_extraction_tests {
         .unwrap();
         let doc_id = outcome.document_id.expect("应建出文档");
 
-        let req = prepare_cloud_extraction(
+        let req = vault_cloud_prepare_extraction(
             doc_id,
             vec![],
             String::new(),
@@ -2220,7 +2220,7 @@ mod cloud_extraction_tests {
 
         // "999" 不在原文里——文本档会整条丢弃,图片档应保留并标 unverified。
         let llm_json = r#"{"labs":[{"name":"白细胞计数","value":"999","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0"}]}"#;
-        let result = commit_cloud_extraction(
+        let result = vault_cloud_commit_extraction(
             doc_id,
             "image".into(),
             "v4".into(),
