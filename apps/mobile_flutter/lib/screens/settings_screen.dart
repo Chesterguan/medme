@@ -50,8 +50,11 @@ bool shouldShowIcloudSection(IcloudStatusDto? icloud) => _showIcloudSync || (icl
 @visibleForTesting
 String? cloudRemovalNotice(Profile p) => p.cloudId == null
     ? null
-    : '从这台手机上删除;云端副本和其他设备不受影响,本机不会再自动拉回;'
-        '要彻底删除请注销账号或撤销授权';
+    // C10:末尾原来还挂着「要彻底删除请注销账号或撤销授权」。那是一句**错的指路**:
+    // 注销账号删的是整个账号(连同其它成员、所有授权),不是"彻底删掉这一个成员";
+    // 把它摆在删除单个成员的弹窗里,等于建议一个破坏性大得多的操作。撤销授权也只
+    // 管"我给别人的",管不了自己这份 owner 档案。说清楚"这一步做了什么"就够了。
+    : '从这台手机上删除;云端副本和其他设备不受影响,本机不会再自动拉回';
 
 /// 分组卡片列表,视觉还原自 `apps/mobile/src/App.tsx` 的设置区(sect + group + row)。
 /// 保险箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。

@@ -86,8 +86,17 @@ VaultOpenPlan planVaultOpen(Profile p, Uint8List? profileKey) {
 class ProfileLocked implements Exception {
   const ProfileLocked(this.cloudId);
   final String cloudId;
+
+  /// C4:这句话原来是「这个档案已绑定云同步,但本机还没有它的密钥——需要解锁账号
+  /// 才能打开(cloudId=prf_7f3a…)」。它**是启动时那块白屏上最显眼的一段字**,而
+  /// 它里面每一个词都是我们自己的词汇:"绑定云同步"、"档案密钥"、"解锁账号",
+  /// 末尾还挂着一串服务端内部 id。老人看完只知道打不开,不知道该做什么。
+  ///
+  /// 现在说两件事:为什么打不开(在云端是加密的)、要他做什么(输口令)。
+  /// [cloudId] 仍然留在字段里(排查时用、也是这个异常的身份),但**只进 debug
+  /// 日志**(见 [openCurrentProfileVault] 的 locked 分支),不进给用户看的字。
   @override
-  String toString() => '这个档案已绑定云同步,但本机还没有它的密钥——需要解锁账号才能打开(cloudId=$cloudId)。';
+  String toString() => '你的病历在云端是加密的,需要你的口令才能打开。';
 }
 
 /// 打开「当前成员」的保险箱:按 [ProfileManager] 组合本机/iCloud 路径。启动 +
@@ -106,6 +115,11 @@ Future<void> openCurrentProfileVault() => runSerialized(() async {
 
   switch (planVaultOpen(p, key)) {
     case VaultOpenPlan.locked:
+      // cloudId 只进 debug 日志(C4)——`assert` 的表达式在 release 里整个被剥掉。
+      assert(() {
+        debugPrint('ProfileLocked: cloudId=${p.cloudId}');
+        return true;
+      }());
       throw ProfileLocked(p.cloudId!);
     case VaultOpenPlan.keyed:
       await syncOpenProfileVault(

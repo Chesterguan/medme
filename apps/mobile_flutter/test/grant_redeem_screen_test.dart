@@ -45,6 +45,23 @@ void main() {
     AccountSession.instance.loggedIn.value = true; // 默认已登录,未登录场景单独测
   });
 
+  // ---- C5:这一屏原来只有一句问话,用户不知道点下去会发生什么 ----
+  testWidgets('C5:确认页说清楚"会看到对方的病历",权限留给下一步(因为此刻真的还不知道)', (t) async {
+    await t.pumpWidget(MaterialApp(
+      home: GrantRedeemScreen(
+        link: _link,
+        grants: _FakeGrants(result: const Profile(id: 'p-2', name: '张三', role: 'viewer')),
+      ),
+    ));
+
+    expect(find.text('要接受对方分享的病历档案吗?'), findsOneWidget);
+    expect(find.textContaining('这份病历会出现在你的 MedMe 里'), findsOneWidget);
+    expect(find.textContaining('下一步告诉你'), findsOneWidget);
+    // 角色由服务端在兑换那一刻才揭晓,这一步**不许**替它猜一个。
+    expect(find.textContaining('只读'), findsNothing);
+    expect(find.textContaining('主人'), findsNothing);
+  });
+
   testWidgets('加载中显示进度圈', (t) async {
     await t.pumpWidget(MaterialApp(
       home: GrantRedeemScreen(

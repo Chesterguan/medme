@@ -216,11 +216,14 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
 ///
 /// [ProfileLocked] 是一个**已知、可操作**的状态(账号没解锁),不是"箱子坏了"——
 /// 「请重启 App 再试」对它是错误建议(重启不会解锁账号),所以单独给一条不带那句
-/// 建议的文案,把「需要解锁账号」直接摆在标题上。
+/// 建议的文案。
+///
+/// C4:标题原来是「需要解锁账号」—— "解锁"和"账号"都是我们自己的词。用户要做的
+/// 事只有一件:输口令。正文由 [ProfileLocked] 自己说(它也改过了,见那边的注释)。
 @visibleForTesting
 ({String title, String body}) vaultBootstrapErrorText(Object error) {
   if (error is ProfileLocked) {
-    return (title: '需要解锁账号', body: '$error');
+    return (title: '需要你的口令', body: '$error');
   }
   return (title: '无法打开你的健康档案', body: '$error\n\n请重启 App 再试。');
 }
@@ -787,6 +790,16 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
         const Text(
           '要接受对方分享的病历档案吗?',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        // C5:这一屏原来只有上面那一句问话 —— 用户不知道点下去会发生什么。
+        // 说得出的只有"会看到对方的病历"这一件事;**具体权限真的还不知道**
+        // (见上面的注释:角色由服务端在兑换那一刻才揭晓),所以照实说"下一步
+        // 告知",而不是替它猜一个。
+        const Text(
+          '接受之后,这份病历会出现在你的 MedMe 里;具体是只能看还是能一起录,'
+          '下一步告诉你。',
+          style: TextStyle(color: Colors.black54, height: 1.5),
         ),
         if (_error != null) ...[
           const SizedBox(height: 16),

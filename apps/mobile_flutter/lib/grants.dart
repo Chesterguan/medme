@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/analytics.dart';
@@ -91,9 +93,38 @@ class Grants {
     return GrantLink(inviteId: r['invite_id'] as String, token: token);
   }
 
-  /// 医生的看诊码:viewer、15 天、二维码本身 10 分钟内必须扫(`invite_ttl_s`——
-  /// 邀请链接自己的有效期,与「兑换后能看多久」的 15 天是两个概念)。
-  Future<GrantLink> inviteDoctor(Profile p) => _invite(p, role: 'viewer', days: grantDoctorDays, ttlS: 600);
+  /// 看诊码自己的有效期:10 分钟内必须被扫(与「兑换后能看多久」的 15 天是两个
+  /// 概念)。
+  static const doctorInviteTtlS = 600;
+
+  /// C8:同一个档案、[doctorInviteTtlS] 之内,复用同一条看诊邀请。
+  ///
+  /// 原来**每进一次出码屏就在服务端多建一条 invite**。病人在诊室里退出去又进来很
+  /// 常见(医生说"等下再给我看"、切去翻别的东西),而新建出来的那条码和上一条没有
+  /// 任何区别 —— 白在服务端攒记录、白发一次请求、白让病人多等一次转圈。
+  ///
+  /// **只记在内存里**:`token` 是明文凭证(谁拿到它就能兑换这份只读授权),不落盘;
+  /// App 重启后重新建一条,无害。30 秒安全边际 —— 不把一条马上就要过期的码递到
+  /// 医生的相机前。
+  static final _doctorInvites = <String, (GrantLink, DateTime)>{};
+
+  /// 测试专用:[_doctorInvites] 是静态的,用例之间会串。
+  @visibleForTesting
+  static void resetInviteCacheForTest() => _doctorInvites.clear();
+
+  /// 医生的看诊码:viewer、15 天。见 [_doctorInvites] 说明的复用规则。
+  Future<GrantLink> inviteDoctor(Profile p) async {
+    final cloudId = p.cloudId;
+    final cached = cloudId == null ? null : _doctorInvites[cloudId];
+    if (cached != null && cached.$2.isAfter(DateTime.now().add(const Duration(seconds: 30)))) {
+      return cached.$1;
+    }
+    final link = await _invite(p, role: 'viewer', days: grantDoctorDays, ttlS: doctorInviteTtlS);
+    if (cloudId != null) {
+      _doctorInvites[cloudId] = (link, DateTime.now().add(const Duration(seconds: doctorInviteTtlS)));
+    }
+    return link;
+  }
 
   /// 代拍转移:owner。链接本身给足 15 天去扫(病人不一定当场就有空点开),
   /// 一旦兑换即刻转移——不像医生邀请那样按天到期。

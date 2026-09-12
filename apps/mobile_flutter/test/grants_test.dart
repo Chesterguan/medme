@@ -109,6 +109,8 @@ void main() {
     );
     await ProfileManager.instance.ensureLoaded();
     await ProfileManager.instance.factoryReset();
+    // C8 的复用缓存是 `Grants` 的静态字段,用例之间会串。
+    Grants.resetInviteCacheForTest();
   });
 
   tearDown(() async => support.delete(recursive: true));
@@ -139,6 +141,55 @@ void main() {
 
       await expectLater(grants.inviteDoctor(p), throwsA(isA<StateError>()));
       expect(api.calls, isEmpty);
+    });
+
+    // ---- C8:每进一次出码屏就新建一条 invite ----
+    test('C8:同一个档案连着出两次码 —— 复用同一条邀请,不在服务端多建一条', () async {
+      await AccountSession.instance.putProfileKey('prf_1', key);
+      final api = FakeApi(responses: {'/v1/profiles/prf_1/invites': {'invite_id': 'inv_abc'}});
+      final grants = Grants(api, AccountSession.instance, rust: FakeGrantsRust());
+      const p = Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner');
+
+      final first = await grants.inviteDoctor(p);
+      final second = await grants.inviteDoctor(p);
+
+      expect(second.inviteId, first.inviteId);
+      expect(second.token, first.token, reason: '同一条邀请 = 同一个 token,不是新建一条一样的');
+      expect(
+        api.calls.where((c) => c.endsWith('/invites')).length,
+        1,
+        reason: '病人在诊室里退出去又进来很常见,新建出来的码和上一条没有任何区别',
+      );
+    });
+
+    test('C8:换一个档案出码 —— 不复用别人的那条', () async {
+      await AccountSession.instance.putProfileKey('prf_1', key);
+      await AccountSession.instance.putProfileKey('prf_2', key);
+      final api = FakeApi(responses: {
+        '/v1/profiles/prf_1/invites': {'invite_id': 'inv_1'},
+        '/v1/profiles/prf_2/invites': {'invite_id': 'inv_2'},
+      });
+      final grants = Grants(api, AccountSession.instance, rust: FakeGrantsRust());
+
+      final a = await grants.inviteDoctor(const Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner'));
+      final b = await grants.inviteDoctor(const Profile(id: 'p-2', name: '爸', cloudId: 'prf_2', role: 'owner'));
+
+      expect(a.inviteId, 'inv_1');
+      expect(b.inviteId, 'inv_2');
+      expect(api.calls.where((c) => c.endsWith('/invites')).length, 2);
+    });
+
+    test('C8:缓存清掉之后(相当于 App 重启)重新建一条', () async {
+      await AccountSession.instance.putProfileKey('prf_1', key);
+      final api = FakeApi(responses: {'/v1/profiles/prf_1/invites': {'invite_id': 'inv_abc'}});
+      final grants = Grants(api, AccountSession.instance, rust: FakeGrantsRust());
+      const p = Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner');
+
+      await grants.inviteDoctor(p);
+      Grants.resetInviteCacheForTest();
+      await grants.inviteDoctor(p);
+
+      expect(api.calls.where((c) => c.endsWith('/invites')).length, 2);
     });
   });
 

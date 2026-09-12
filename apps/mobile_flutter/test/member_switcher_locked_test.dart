@@ -103,7 +103,7 @@ void main() {
     });
     await tester.pumpAndSettle(); // 让 SnackBar 的入场动画走完
 
-    expect(find.textContaining('解锁账号'), findsOneWidget, reason: 'ProfileLocked 的消息应该出现在 SnackBar 里');
+    expect(find.textContaining('需要你的口令'), findsOneWidget, reason: 'ProfileLocked 的消息应该出现在 SnackBar 里');
     expect(pm.currentId.value, originalId, reason: '锁定失败之后必须还停在原成员上,不能停在锁定成员上');
   });
 
@@ -151,6 +151,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(pm.currentId.value, newId);
-    expect(find.textContaining('解锁账号'), findsNothing);
+    expect(find.textContaining('需要你的口令'), findsNothing);
   });
 }

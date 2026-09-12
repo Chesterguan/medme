@@ -11,13 +11,16 @@ import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 
 void main() {
-  test('云成员:多说一句"本机删除、云端不受影响、要彻底删走注销/撤销"', () {
+  test('云成员:多说一句"本机删除、云端不受影响、不会再自动拉回"', () {
     const p = Profile(id: 'p-1', name: '张三', cloudId: 'prf_1', role: 'owner');
     final notice = cloudRemovalNotice(p);
     expect(notice, isNotNull);
     expect(notice, contains('云端副本和其他设备不受影响'));
     expect(notice, contains('本机不会再自动拉回'));
-    expect(notice, contains('注销账号或撤销授权'));
+    // C10:末尾那半句「要彻底删除请注销账号或撤销授权」是错的指路 —— 注销账号删的是
+    // 整个账号(连同其它成员、所有授权),不是"彻底删掉这一个成员";把它摆在删除
+    // 单个成员的弹窗里,等于建议一个破坏性大得多的操作。
+    expect(notice, isNot(contains('注销账号')));
   });
 
   test('纯本地成员:不多说这句(原文案已经如实描述"彻底删除")', () {

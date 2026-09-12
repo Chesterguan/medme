@@ -37,10 +37,13 @@ void main() {
     expect(planVaultOpen(p, Uint8List(32)), VaultOpenPlan.keyed);
   });
 
-  test('ProfileLocked 的提示文本里带「解锁账号」——main.dart 的 VaultBootstrap 直接展示 '
-      'snap.error 的原文,文案得靠异常自己说清楚', () {
+  test('C4:ProfileLocked 的提示说人话 —— 为什么打不开 + 要他做什么,不露 cloudId', () {
+    // `main.dart` 的 `VaultBootstrap` 直接把 `snap.error` 的原文摆在屏上(那是
+    // 启动时最显眼的一段字),所以文案得靠异常自己说清楚。
     const e = ProfileLocked('prf_1');
-    expect(e.toString(), contains('解锁账号'));
-    expect(e.toString(), contains('prf_1'));
+    expect(e.toString(), '你的病历在云端是加密的,需要你的口令才能打开。');
+    expect(e.toString(), isNot(contains('prf_1')), reason: 'cloudId 是服务端内部 id,只进 debug 日志');
+    // 字段仍然留着(排查用、也是这个异常的身份)。
+    expect(e.cloudId, 'prf_1');
   });
 }
