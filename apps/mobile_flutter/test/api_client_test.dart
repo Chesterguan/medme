@@ -19,6 +19,14 @@ void main() {
           'got': jsonDecode(body),
           'deviceId': req.headers.value('x-device-id'),
         }));
+      } else if (req.uri.path == '/v1/events') {
+        // 模拟 `GET /v1/profiles/{pid}/events`:响应头带 X-Seq-Map(SyncEngine
+        // 拿它当推送水位,见 sync_engine.dart)。
+        req.response.headers.set('X-Seq-Map', jsonEncode({'d1': 3}));
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode([
+          {'device_id': 'd1', 'seq': 1},
+        ]));
       } else if (req.uri.path == '/v1/nope') {
         req.response.statusCode = 401;
         req.response.write('{"detail":"expired"}');
@@ -47,5 +55,13 @@ void main() {
     expect(r['deviceId'], 'd1');
     // bearer 仍然在,headers 是加的不是替换的。
     expect(r['auth'], 'Bearer tok');
+  });
+
+  test('getJsonWithHeaders:同时拿到解出来的 body 和响应头(小写 key)', () async {
+    final (body, headers) = await api.getJsonWithHeaders('/v1/events');
+    expect(body, [
+      {'device_id': 'd1', 'seq': 1},
+    ]);
+    expect(headers['x-seq-map'], jsonEncode({'d1': 3}), reason: '响应头 key 统一转小写,大小写不敏感');
   });
 }

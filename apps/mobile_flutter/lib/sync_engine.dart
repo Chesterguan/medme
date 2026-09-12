@@ -5,9 +5,22 @@ import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
+import 'package:mobile_flutter/src/rust/api/vault.dart' as vault_api;
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' as rust;
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// 当前打开的保险箱和要同步的档案对不上——切换了成员却没重开箱,或者代拍病人的
+/// 箱子(unkeyed)还开着。宁可整次同步失败,也不能把不相关的箱子内容推上/拉进
+/// 这个云档案(见 C1 review:`SyncEngine` 拿到的 `Profile` 只是个参数,真正写盘
+/// 读盘的是进程级单例 vault,两者必须显式核对,不能靠调用顺序自证)。
+class VaultMismatch implements Exception {
+  const VaultMismatch(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
 
 /// 对 `sync_*` FRB 调用的薄包装,纯粹是为了让 [SyncEngine] 在测试里可以注入假实现
 /// (同 `AccountFlow`/`SyncCrypto` 的套路,`flutter test` 不加载 Rust 原生库)。
@@ -17,6 +30,13 @@ import 'package:mobile_flutter/vault_events.dart';
 abstract class RustSyncApi {
   Future<Uint8List> profileKeyNew();
   Future<Uint8List> sealTo(Uint8List public, Uint8List plaintext);
+
+  /// 当前打开的保险箱是不是 keyed(云档案)打开的——`SyncEngine` 每次touch vault
+  /// 前拿它核对身份(见 [VaultMismatch])。
+  Future<bool> currentVaultIsKeyed();
+
+  /// 当前打开的保险箱的真相根目录——同上,核对"这真的是要同步的那个档案"。
+  Future<String> currentVaultRoot();
 
   /// 本机每个 device 段当前可信的最大 seq——拉取水位。
   Future<List<(String, int)>> localSeqMap();
@@ -51,6 +71,12 @@ class RustSync implements RustSyncApi {
       rust.syncSealTo(public: public, plaintext: plaintext);
 
   @override
+  Future<bool> currentVaultIsKeyed() => rust.syncCurrentVaultIsKeyed();
+
+  @override
+  Future<String> currentVaultRoot() => vault_api.currentVaultRoot();
+
+  @override
   Future<List<(String, int)>> localSeqMap() => rust.syncLocalSeqMap();
 
   @override
@@ -78,18 +104,41 @@ class RustSync implements RustSyncApi {
       rust.syncStoreObject(profileKey: profileKey, objectId: objectId, ciphertext: ciphertext);
 }
 
-/// 一次 [SyncEngine.syncProfile] 的结果:推了几条事件、拉了几条(落盘成功的,
-/// 即 [SyncImportOutcomeDto.applied])、上传/下载了几个对象。
+/// 一次 [SyncEngine.syncProfile] 的结果。
 class SyncReport {
   int pushed = 0;
   int pulled = 0;
   int objectsUp = 0;
   int objectsDown = 0;
+
+  /// 对象上传失败的个数(签名失败、加密失败、PUT 失败、体积超限都算)——不再让
+  /// 一个对象的失败拖累整次同步,详见 [SyncEngine.syncProfile] 第 3 步。
+  int objectsFailed = 0;
+
+  /// 拉回来的事件里,MAC/链校验没通过、被隔离的条目数——非零说明有台设备的
+  /// 密钥不对或被篡改,不代表这次同步本身失败,但值得留意。
+  int untrusted = 0;
+
+  /// 撞到需要重排/暂时接不上的乱序条目数。`syncProfile` 内部已经自动重拉过一次
+  /// (见该方法文档),这里的值是重拉之后仍然剩下的——非零说明这台设备的空洞还在。
+  int outOfOrder = 0;
+
+  /// 解不开/反序列化失败的条目数(每个设备最多算一条)。
+  int undecodable = 0;
+
+  /// 拉取事件时响应头里没有可信的 `X-Seq-Map`(缺失或解析失败)——本轮跳过了
+  /// 事件推送:宁可这次不推,也不能把"本机 since"错当推送水位,那等于把整条本机
+  /// 日志当成服务端从没见过、重推一遍。
+  bool pushSkippedNoWatermark = false;
 }
 
 /// 档案上云之后的推拉引擎:事件按水位增量推拉,对象按需上下行(服务端没有的才
 /// 传、本机缺的才拉)。服务端全程只见密文——本文件里不得出现任何解密调用之外的
 /// 明文病历字段。
+///
+/// **每个会碰进程级 vault 的方法开头都核对身份**(见 [VaultMismatch])——vault 是
+/// 进程级单例,`Profile p` 只是个参数,两者不天然一致:切换成员没重开箱、或者
+/// 医生模式的代拍病人箱子还开着,都会让"传进来的 p"和"实际写盘读盘的箱子"对不上。
 class SyncEngine {
   SyncEngine(this.api, this.session, {this.rust = const RustSync()});
 
@@ -107,10 +156,23 @@ class SyncEngine {
   // (正常病历文本不会),这里需要一个专门的失败反馈通道,而不是默默不推。
   static const maxEventBytes = 1024 * 1024;
 
+  /// 单个对象体积上限(`services/api/app.py` 的 `OBJECT_MAX_BYTES`)——签名前先
+  /// 挡一道,别为一个注定被服务端拒收的 PUT 走一趟签名请求。
+  static const objectMaxBytes = 64 * 1024 * 1024;
+
   /// 开通云同步:建一把新的档案密钥,用账号公钥封起来上传给自己(服务端只存
   /// 密文),登记为 owner,存进本机 secure storage,写回 [ProfileManager],
   /// 重开箱(走 keyed 路径)后立刻跑一次首同步。
+  ///
+  /// 只能给**当前打开的那个成员**开通——`p` 只是调用方传来的一个值对象,真正在
+  /// 磁盘上被读写的是 [ProfileManager.currentId] 指向的那个成员;两者不一致时
+  /// (比如切换成员的 UI 状态和实际 `currentId` 没同步)拒绝执行,不猜。
   Future<String> enableCloud(Profile p) async {
+    if (p.id != ProfileManager.instance.currentId.value) {
+      throw VaultMismatch(
+        '只能给当前打开的成员开通云同步(当前=${ProfileManager.instance.currentId.value},传入=${p.id})',
+      );
+    }
     final cloudId = await registerCloudProfile(p);
     await openCurrentProfileVault(); // 走 vault_boot 的 FIFO 队列,重开成 keyed
     await syncProfile(Profile(id: p.id, name: p.name, cloudId: cloudId, role: 'owner'));
@@ -134,7 +196,22 @@ class SyncEngine {
     return cloudId;
   }
 
+  /// 核对"此刻进程里开着的箱子"确实是 [p](keyed 打开、且根目录对应 `p.id`)。
+  /// 不通过就抛 [VaultMismatch],什么都不做——不发一次网络请求,不碰任何本地
+  /// 状态。keyed 和原路径开的是同一套目录规则,唯一能分辨"这箱子到底是谁的"
+  /// 只能问 Rust 自己(同 `vault_boot.ensureProxyVaultOpen` 的思路)。
+  Future<void> _assertVaultMatches(Profile p) async {
+    if (!await rust.currentVaultIsKeyed()) {
+      throw VaultMismatch('当前打开的保险箱不是这个云档案(keyed)——可能是本地档案或代拍病人的箱子还开着,拒绝同步');
+    }
+    final actual = await rust.currentVaultRoot();
+    if (!actual.endsWith('/profiles/${p.id}/vault')) {
+      throw VaultMismatch('当前打开的保险箱($actual)与要同步的档案(id=${p.id})不一致,拒绝同步');
+    }
+  }
+
   Future<SyncReport> syncProfile(Profile p) async {
+    await _assertVaultMatches(p);
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云同步');
     final key = await session.profileKey(cloudId);
@@ -149,67 +226,113 @@ class SyncEngine {
       '/v1/profiles/$cloudId/events',
       query: {'since': jsonEncode(local)},
     );
-    final pulled = (body as List)
-        .map(
-          (e) => SyncEventDto(
-            deviceId: e['device_id'] as String,
-            seq: e['seq'] as int,
-            eventId: e['event_id'] as String,
-            ts: e['ts'] as String,
-            ciphertext: base64Decode(e['ciphertext'] as String),
-          ),
-        )
-        .toList();
+    final pulled = _decodeEvents(body);
     if (pulled.isNotEmpty) {
-      rep.pulled = (await rust.importEvents(key, pulled)).applied;
+      final outcome = await rust.importEvents(key, pulled);
+      rep.pulled = outcome.applied;
+      rep.untrusted = outcome.untrusted;
+      rep.undecodable = outcome.undecodable;
+      rep.outOfOrder = outcome.outOfOrder;
+      if (outcome.outOfOrder > 0 || outcome.untrusted > 0 || outcome.undecodable > 0) {
+        debugPrint(
+          'SyncEngine.syncProfile($cloudId): import 异常 applied=${outcome.applied} '
+          'outOfOrder=${outcome.outOfOrder} untrusted=${outcome.untrusted} undecodable=${outcome.undecodable}',
+        );
+      }
+      if (outcome.outOfOrder > 0) {
+        // 重拉一次:把这批事件涉及的设备从 since 里摘掉,逼服务端把这些设备的
+        // 历史整段重发,弥合乱序造成的缺口。只重试这一次——再不行就如实报出去
+        // (`rep.outOfOrder` 留着重拉后的值),不无限重试卡住整次同步。
+        final retrySince = Map<String, int>.from(local);
+        for (final e in pulled) {
+          retrySince.remove(e.deviceId);
+        }
+        final (body2, _) = await api.getJsonWithHeaders(
+          '/v1/profiles/$cloudId/events',
+          query: {'since': jsonEncode(retrySince)},
+        );
+        final pulled2 = _decodeEvents(body2);
+        if (pulled2.isNotEmpty) {
+          final outcome2 = await rust.importEvents(key, pulled2);
+          rep.pulled += outcome2.applied;
+          rep.untrusted += outcome2.untrusted;
+          rep.undecodable += outcome2.undecodable;
+          rep.outOfOrder = outcome2.outOfOrder;
+          if (outcome2.outOfOrder > 0) {
+            debugPrint('SyncEngine.syncProfile($cloudId): 重拉后 outOfOrder 仍为 ${outcome2.outOfOrder},持续存在');
+          }
+        }
+      }
     }
 
     if (canWrite) {
       // 2. 推:服务端水位来自 X-Seq-Map,不能从 since 反推(since 只是本机已有
       // 到哪,推不出"服务端已有到哪"——本机自己这台设备的段服务端可能还没有)。
-      final serverWatermark = <String, int>{};
-      final seqMapHeader = headers['x-seq-map'];
-      if (seqMapHeader != null) {
-        (jsonDecode(seqMapHeader) as Map).forEach((k, v) => serverWatermark[k as String] = v as int);
-      }
-      final toPush = (await rust.exportEvents(
-        key,
-        serverWatermark.entries.map((e) => (e.key, e.value)).toList(),
-      )).where((e) => e.ciphertext.length <= maxEventBytes).toList();
-      for (final chunk in _chunk(toPush, maxEventsPerPush)) {
-        await api.postJson(
-          '/v1/profiles/$cloudId/events',
-          chunk
-              .map(
-                (e) => {
-                  'device_id': e.deviceId,
-                  'seq': e.seq,
-                  'event_id': e.eventId,
-                  'ts': e.ts,
-                  'ciphertext': base64Encode(e.ciphertext),
-                },
-              )
-              .toList(),
-        );
-        rep.pushed += chunk.length;
+      // 头缺失/解不出来一律当错误处理,不能悄悄退化成"当空水位推",那等于把
+      // 整条本机日志当成服务端从没见过、重推一遍。
+      final serverWatermark = _parseSeqMap(headers['x-seq-map']);
+      if (serverWatermark == null) {
+        rep.pushSkippedNoWatermark = true;
+      } else {
+        final toPush = (await rust.exportEvents(
+          key,
+          serverWatermark.entries.map((e) => (e.key, e.value)).toList(),
+        )).where((e) => e.ciphertext.length <= maxEventBytes).toList();
+        for (final chunk in _chunk(toPush, maxEventsPerPush)) {
+          await api.postJson(
+            '/v1/profiles/$cloudId/events',
+            chunk
+                .map(
+                  (e) => {
+                    'device_id': e.deviceId,
+                    'seq': e.seq,
+                    'event_id': e.eventId,
+                    'ts': e.ts,
+                    'ciphertext': base64Encode(e.ciphertext),
+                  },
+                )
+                .toList(),
+          );
+          rep.pushed += chunk.length;
+        }
       }
 
-      // 3. 对象上行:本机有、服务端还没有的。
+      // 3. 对象上行:本机有、服务端还没有的才传;逐个 try/catch,一个对象的
+      // 失败不拖累其它对象、也不拖累后面的对象下行。服务端在**签名时**就登记了
+      // object_id(见 `db.object_register`)——这只代表"打算传",不代表"真的传
+      // 成功了"。PUT 真失败时把这个 object_id 记进本地"待重传"清单(按 cloudId
+      // 分开存在 SharedPreferences 里),下次同步哪怕服务端清单里已经有它,也照
+      // 样重传,直到真的传成功才从清单里摘掉。
+      final retry = await _loadObjectRetrySet(cloudId);
+      var retryChanged = false;
       final serverObjs = ((await api.getJson('/v1/profiles/$cloudId/objects')) as List).cast<String>().toSet();
       for (final (hash, oid) in await rust.allObjectIds(key)) {
-        if (serverObjs.contains(oid)) continue;
-        final (_, ct) = await rust.encryptObject(key, hash);
-        final s = await api.postJson('/v1/profiles/$cloudId/objects/sign', {
-          'object_id': oid,
-          'verb': 'PUT',
-          'size': ct.length,
-        });
-        await api.putBytes(s['url'] as String, ct);
-        rep.objectsUp++;
+        final needsUpload = !serverObjs.contains(oid) || retry.contains(oid);
+        if (!needsUpload) continue;
+        try {
+          final (_, ct) = await rust.encryptObject(key, hash);
+          if (ct.length > objectMaxBytes) {
+            rep.objectsFailed++;
+            continue;
+          }
+          final s = await api.postJson('/v1/profiles/$cloudId/objects/sign', {
+            'object_id': oid,
+            'verb': 'PUT',
+            'size': ct.length,
+          });
+          await api.putBytes(s['url'] as String, ct);
+          rep.objectsUp++;
+          if (retry.remove(oid)) retryChanged = true;
+        } catch (_) {
+          rep.objectsFailed++;
+          if (retry.add(oid)) retryChanged = true;
+        }
       }
+      if (retryChanged) await _saveObjectRetrySet(cloudId, retry);
     }
 
-    // 4. 对象下行:事件引用了、本机还没有的。
+    // 4. 对象下行:事件引用了、本机还没有的。即使第 3 步有对象上传失败,这里
+    // 照常跑——上传失败已经被 try/catch 挡住,不会传播到这里。
     for (final (_, oid) in await rust.missingObjects(key)) {
       final s = await api.postJson('/v1/profiles/$cloudId/objects/sign', {'object_id': oid, 'verb': 'GET'});
       await rust.storeObject(key, oid, await api.getBytes(s['url'] as String));
@@ -223,6 +346,7 @@ class SyncEngine {
   /// 按需拉单个对象(如查看器打开一份还没同步下来的文档时调)。找不到就是本机
   /// 已经有了,或者根本没有事件引用这个哈希——两种情况都什么也不做。
   Future<void> fetchObject(Profile p, String hash) async {
+    await _assertVaultMatches(p);
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云同步');
     final key = await session.profileKey(cloudId);
@@ -234,6 +358,49 @@ class SyncEngine {
     final s = await api.postJson('/v1/profiles/$cloudId/objects/sign', {'object_id': oid, 'verb': 'GET'});
     await rust.storeObject(key, oid, await api.getBytes(s['url'] as String));
     bumpVaultRevision();
+  }
+
+  List<SyncEventDto> _decodeEvents(dynamic body) => (body as List)
+      .map(
+        (e) => SyncEventDto(
+          deviceId: e['device_id'] as String,
+          seq: e['seq'] as int,
+          eventId: e['event_id'] as String,
+          ts: e['ts'] as String,
+          ciphertext: base64Decode(e['ciphertext'] as String),
+        ),
+      )
+      .toList();
+
+  /// 把 `X-Seq-Map` 响应头解成 `{device_id: seq}`。缺失、不是 JSON 对象、或者
+  /// 有任何一条不是 `字符串 -> 整数` 都视为"没有可信水位",返回 null——调用方据
+  /// 此跳过推送,而不是悄悄退化成空 map(那等于把整条本机日志当全新的推一遍)。
+  Map<String, int>? _parseSeqMap(String? header) {
+    if (header == null) return null;
+    try {
+      final decoded = jsonDecode(header);
+      if (decoded is! Map) return null;
+      final out = <String, int>{};
+      for (final entry in decoded.entries) {
+        if (entry.key is! String || entry.value is! int) return null;
+        out[entry.key as String] = entry.value as int;
+      }
+      return out;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _retryPrefsKey(String cloudId) => 'sync_retry_objects_$cloudId';
+
+  Future<Set<String>> _loadObjectRetrySet(String cloudId) async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_retryPrefsKey(cloudId)) ?? const <String>[]).toSet();
+  }
+
+  Future<void> _saveObjectRetrySet(String cloudId, Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_retryPrefsKey(cloudId), ids.toList());
   }
 
   Iterable<List<T>> _chunk<T>(List<T> items, int size) sync* {
