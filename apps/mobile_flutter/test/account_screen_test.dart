@@ -16,6 +16,7 @@ import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/vault_boot.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 假 API——每个方法都记进 [calls],方便断言"到底调没调、调了几次"；每个失败
@@ -44,8 +45,24 @@ class FakeApi extends ApiClient {
     this.myGrants = const {},
     this.failMyGrants = false,
     this.myGrantsDelay,
+    this.approvalSealed,
+    this.approvalPending = 0,
     this.delay = const Duration(milliseconds: 30),
   }) : super(base: 'http://x');
+
+  /// `GET /v1/devices/approval` 的假响应:头 [approvalPending] 次回 null(旧手机
+  /// 还没扫),之后回这串密文。null = 永远没人批准(测超时那条)。
+  final String? approvalSealed;
+  final int approvalPending;
+
+  /// 被问了几次"批准了吗"——钉住"每 3 秒一次"这件事。
+  int approvalPolls = 0;
+
+  /// `POST /v1/devices/request` / `POST /v1/devices/approve` 的 body 与 header
+  /// (X-Device-Id 是服务端分辨"谁在批准"的唯一依据,见 `app.device_approve`)。
+  final deviceRequestBodies = <Map<String, dynamic>>[];
+  final deviceApproveBodies = <Map<String, dynamic>>[];
+  final sentHeaders = <String, Map<String, String>?>{};
 
   final bool failOtp;
 
@@ -96,6 +113,9 @@ class FakeApi extends ApiClient {
   @override
   Future<Map<String, dynamic>> postJson(String path, Object body, {Map<String, String>? headers}) async {
     calls.add('POST $path');
+    sentHeaders[path] = headers;
+    if (path == '/v1/devices/request') deviceRequestBodies.add(body as Map<String, dynamic>);
+    if (path == '/v1/devices/approve') deviceApproveBodies.add(body as Map<String, dynamic>);
     await Future<void>.delayed(delay);
     if (path == '/v1/auth/otp') {
       if (otpError != null) throw otpError!;
@@ -144,6 +164,11 @@ class FakeApi extends ApiClient {
     if (path == '/v1/devices') {
       if (failDevices) throw const ApiFailed(500, 'devices failed');
       return devices;
+    }
+    if (path == '/v1/devices/approval') {
+      approvalPolls++;
+      sentHeaders[path] = headers;
+      return {'approved_priv': approvalPolls > approvalPending ? approvalSealed : null};
     }
     if (path == '/v1/profiles') {
       if (failProfiles) throw const ApiFailed(500, 'profiles failed');
@@ -209,6 +234,21 @@ class _HangingProfilesApi extends FakeApi {
       return _hang.future;
     }
     return super.getJson(path, query: query, headers: headers);
+  }
+}
+
+/// `POST /v1/devices/request` 报 500 —— 测"生成二维码失败"那一态。
+class _FailingRequestApi extends FakeApi {
+  _FailingRequestApi() : super(hasKeys: true, delay: const Duration(milliseconds: 5));
+
+  @override
+  Future<Map<String, dynamic>> postJson(String path, Object body, {Map<String, String>? headers}) async {
+    if (path == '/v1/devices/request') {
+      calls.add('POST $path');
+      await Future<void>.delayed(delay);
+      throw const ApiFailed(500, 'request failed');
+    }
+    return super.postJson(path, body, headers: headers);
   }
 }
 
@@ -431,6 +471,7 @@ Widget _app(
   SyncEngine? syncEngine,
   bool? debugModeOverride,
   KdfBenchFn? kdfBenchFn,
+  Future<String?> Function(BuildContext)? scanQr,
 }) => MaterialApp(
       home: AccountScreen(
         flow: AccountFlow(api, AccountSession.instance, crypto: crypto ?? FakeCrypto()),
@@ -438,6 +479,7 @@ Widget _app(
         syncEngine: syncEngine,
         debugModeOverride: debugModeOverride,
         kdfBenchFn: kdfBenchFn,
+        scanQr: scanQr,
       ),
     );
 
@@ -460,6 +502,7 @@ Future<void> _toReady(
   SyncEngine? syncEngine,
   bool? debugModeOverride,
   KdfBenchFn? kdfBenchFn,
+  Future<String?> Function(BuildContext)? scanQr,
 }) async {
   await t.pumpWidget(_app(
     api,
@@ -468,6 +511,7 @@ Future<void> _toReady(
     syncEngine: syncEngine,
     debugModeOverride: debugModeOverride,
     kdfBenchFn: kdfBenchFn,
+    scanQr: scanQr,
   ));
   await _loginUpTo(t);
   await t.enterText(find.byKey(const Key('password')), 'right');
@@ -1104,7 +1148,7 @@ void main() {
       );
       await _toReady(t, api);
       await _scrollToText(t, '批准');
-      await t.tap(find.text('批准'));
+      await t.tap(find.widgetWithText(TextButton, '批准'));
       await t.pumpAndSettle();
       expect(api.calls, contains('POST /v1/devices/approve'));
       expect(find.textContaining('批准失败'), findsNothing);
@@ -2993,6 +3037,334 @@ void main() {
       // 不用 `find.text('注销账号')`——按钮此刻多半已经滚出视口(`SliverList`
       // 懒实现,见上面「取消退出登录」用例的同一条注释)。真正要钉住的是
       // "表单已经收起、回到了未展开状态",delete_phone 消失就是这件事的证据。
+    });
+  });
+
+  // ---- UX 第二轮:旧设备扫码批准新设备(spec A2 的「旧设备批准」)----
+  //
+  // 在这之前 `POST /v1/devices/request` 与 `GET /v1/devices/approval` 两个端点零
+  // Dart 调用方:服务端、Rust 的封/拆、设备列表里那颗「批准」按钮全都在,而没有任何
+  // 路径会把 `eph_public` 写上去 —— 那颗按钮是一段永不触发的 UI,而新设备上唯一的
+  // 出路是口令或恢复码(正是最容易两样都想不起来的时刻)。
+
+  group('新设备:出码等旧手机批准', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-device-approval-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    /// 落到解锁屏(服务端有密钥、本机没有私钥)。
+    Future<void> toUnlock(WidgetTester t, FakeApi api) async {
+      await t.pumpWidget(_app(api));
+      await _loginUpTo(t);
+      expect(find.text('输入口令解锁'), findsOneWidget);
+    }
+
+    testWidgets('解锁屏顶部有这一块,口令/恢复码兜底一个都没拿掉', (t) async {
+      await toUnlock(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
+
+      expect(find.text('用旧手机扫码批准'), findsOneWidget);
+      expect(find.byKey(const Key('device_approval_start')), findsOneWidget);
+      // 兜底还在。
+      expect(find.text('解锁'), findsOneWidget);
+      expect(find.text('口令忘了?改用恢复码解锁'), findsOneWidget);
+      expect(find.byKey(const Key('lost_everything')), findsOneWidget);
+    });
+
+    testWidgets('加载中:点「生成二维码」先转圈', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 30));
+      await toUnlock(t, api);
+
+      await t.tap(find.byKey(const Key('device_approval_start')));
+      await t.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await t.pump(const Duration(milliseconds: 200));
+    });
+
+    testWidgets('成功出码:登记 eph_public(带 X-Device-Id),屏上是码 + 倒计时 + "码里没有秘密"', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
+      await toUnlock(t, api);
+
+      await t.tap(find.byKey(const Key('device_approval_start')));
+      await t.pump(const Duration(milliseconds: 200));
+
+      expect(api.calls, contains('POST /v1/devices/request'));
+      expect(api.deviceRequestBodies.single['eph_public'], isNotNull);
+      expect(
+        api.sentHeaders['/v1/devices/request']!['X-Device-Id'],
+        isNotNull,
+        reason: '服务端靠这个头认"谁在请求批准"',
+      );
+      expect(find.byType(QrImageView), findsOneWidget);
+      expect(find.textContaining('等旧手机扫码批准'), findsOneWidget);
+      expect(find.textContaining('这张码里没有你的病历也没有密钥'), findsOneWidget);
+
+      await t.tap(find.byKey(const Key('device_approval_cancel')));
+      await t.pumpAndSettle();
+    });
+
+    testWidgets('旧手机批准了:轮询拿到 → 不用口令直接进"已登录"', (t) async {
+      // 头一次轮询回 null(旧手机还没扫),第二次才给 —— 钉住"它真的在轮询",
+      // 不是靠第一次侥幸命中。
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        approvalSealed: 'AAAA',
+        approvalPending: 1,
+      );
+      await toUnlock(t, api);
+
+      await t.tap(find.byKey(const Key('device_approval_start')));
+      await t.pump(const Duration(milliseconds: 200));
+
+      for (var i = 0; i < 2; i++) {
+        await t.pump(const Duration(seconds: 3));
+        await t.pump(const Duration(milliseconds: 200));
+      }
+
+      expect(api.approvalPolls, 2);
+      expect(find.text('已登录'), findsOneWidget);
+      expect(AccountSession.instance.privateKey, isNotNull, reason: '账号私钥是从那份批准里拆出来的');
+      await t.pumpAndSettle();
+    });
+
+    testWidgets('失败:生成二维码撞 500 → 中文错误,按钮还在可以再试', (t) async {
+      final api = _FailingRequestApi();
+      await toUnlock(t, api);
+
+      await t.tap(find.byKey(const Key('device_approval_start')));
+      await t.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('服务器开小差了,稍后再试'), findsOneWidget);
+      expect(find.byKey(const Key('device_approval_start')), findsOneWidget);
+      expect(find.byType(QrImageView), findsNothing);
+    });
+
+    testWidgets('两分钟没人批准:停轮询、收起码、指回口令那条路', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
+      await toUnlock(t, api);
+
+      await t.tap(find.byKey(const Key('device_approval_start')));
+      await t.pump(const Duration(milliseconds: 200));
+      expect(find.byType(QrImageView), findsOneWidget);
+
+      for (var i = 0; i < 40; i++) {
+        await t.pump(const Duration(seconds: 3));
+        await t.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(find.textContaining('等了两分钟还没等到批准'), findsOneWidget);
+      expect(find.byType(QrImageView), findsNothing, reason: '别让他对着一张已经作废的码继续等');
+      // 轮询真的停了:再等一轮,请求数不涨。
+      final polls = api.approvalPolls;
+      await t.pump(const Duration(seconds: 6));
+      expect(api.approvalPolls, polls);
+      await t.pumpAndSettle();
+    });
+
+    testWidgets('拿到的批准拆不开:说清要重新生成一张,码清掉', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        approvalSealed: 'AAAA',
+      );
+      // `openSealed` 对这份 blob 抛异常 —— 模拟"用户中途重新生成过一张码",
+      // 旧手机封的是上一把临时公钥。
+      await t.pumpWidget(_app(api, crypto: FakeCrypto(openSealedFails: (_) => true)));
+      await _loginUpTo(t);
+      expect(find.text('输入口令解锁'), findsOneWidget);
+
+      await t.tap(find.byKey(const Key('device_approval_start')));
+      await t.pump(const Duration(milliseconds: 200));
+      await t.pump(const Duration(seconds: 3));
+      await t.pump(const Duration(milliseconds: 200));
+
+      expect(find.textContaining('请重新生成二维码'), findsOneWidget);
+      expect(find.byType(QrImageView), findsNothing);
+      expect(find.text('已登录'), findsNothing, reason: '拆不开就不该进去');
+      await t.pumpAndSettle();
+    });
+  });
+
+  group('旧设备:扫码批准新设备', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-scan-approve-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    /// 新设备那张码(device_id 固定,公钥 32 字节)。
+    String code(String deviceId) =>
+        'mdv1.$deviceId.${base64UrlEncode(Uint8List(32)).replaceAll('=', '')}';
+
+    testWidgets('入口在「设备」那一节最上面', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
+      await _toReady(t, api);
+      await _scrollToText(t, '扫码批准新设备');
+
+      expect(find.byKey(const Key('scan_approve_device')), findsOneWidget);
+    });
+
+    testWidgets('扫到别的码(地铁广告、付款码):说清这不是批准码,零服务端调用', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
+      await _toReady(t, api, scanQr: (_) async => 'https://example.com/whatever');
+      await _scrollToText(t, '扫码批准新设备');
+
+      await t.tap(find.byKey(const Key('scan_approve_device')));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('这不是 MedMe 的批准码'), findsOneWidget);
+      expect(api.deviceApproveBodies, isEmpty);
+    });
+
+    testWidgets('扫到的设备不在这个账号下:不批,照实说该怎么办', (t) async {
+      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5), devices: const []);
+      await _toReady(t, api, scanQr: (_) async => code('dev_unknown'));
+      await _scrollToText(t, '扫码批准新设备');
+
+      await t.tap(find.byKey(const Key('scan_approve_device')));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('这台设备不在你的账号下'), findsOneWidget);
+      expect(api.deviceApproveBodies, isEmpty);
+    });
+
+    testWidgets('确认弹窗写明是哪台设备;取消 → 零 approve 请求', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        devices: [
+          {'device_id': 'dev_new', 'name': 'android', 'eph_public': 'AA==', 'approved': false},
+        ],
+      );
+      await _toReady(t, api, scanQr: (_) async => code('dev_new'));
+      await _scrollToText(t, '扫码批准新设备');
+
+      await t.tap(find.byKey(const Key('scan_approve_device')));
+      await t.pumpAndSettle();
+
+      expect(find.text('批准这台新设备?'), findsOneWidget);
+      expect(
+        find.textContaining('安卓手机 · 新设备,等你批准'),
+        findsOneWidget,
+        reason: '弹窗要写清是哪台设备、什么时候出现的;给用户看「android」毫无意义',
+      );
+      await t.tap(find.text('取消'));
+      await t.pumpAndSettle();
+
+      expect(api.deviceApproveBodies, isEmpty);
+    });
+
+    testWidgets('确认批准:封给那把临时公钥,带上 X-Device-Id', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        devices: [
+          {'device_id': 'dev_new', 'name': 'ios', 'eph_public': 'AA==', 'approved': false},
+        ],
+      );
+      await _toReady(t, api, scanQr: (_) async => code('dev_new'));
+      await _scrollToText(t, '扫码批准新设备');
+
+      await t.tap(find.byKey(const Key('scan_approve_device')));
+      await t.pumpAndSettle();
+      await t.tap(find.byKey(const Key('confirm_approve_device')));
+      await t.pumpAndSettle();
+
+      expect(api.deviceApproveBodies.single['device_id'], 'dev_new');
+      expect(api.deviceApproveBodies.single['approved_priv'], isNotNull);
+      expect(api.sentHeaders['/v1/devices/approve']!['X-Device-Id'], isNotNull);
+      expect(find.textContaining('已批准'), findsOneWidget);
+    });
+
+    testWidgets('批准失败(服务端 500):中文错误可见,不崩', (t) async {
+      final api = FakeApi(
+        hasKeys: true,
+        delay: const Duration(milliseconds: 5),
+        failApprove: true,
+        devices: [
+          {'device_id': 'dev_new', 'name': 'ios', 'eph_public': 'AA==', 'approved': false},
+        ],
+      );
+      await _toReady(t, api, scanQr: (_) async => code('dev_new'));
+      await _scrollToText(t, '扫码批准新设备');
+
+      await t.tap(find.byKey(const Key('scan_approve_device')));
+      await t.pumpAndSettle();
+      await t.tap(find.byKey(const Key('confirm_approve_device')));
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('批准失败'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    });
+  });
+
+  group('AccountFlow.requestDeviceApproval:码的内容', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-approval-code-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    test('`mdv1.<device_id>.<临时公钥>`:解得回来,而且公钥与登记上去的那把是同一把', () async {
+      final api = FakeApi(delay: Duration.zero);
+      final flow = AccountFlow(api, AccountSession.instance, crypto: FakeCrypto(delay: Duration.zero));
+
+      final req = await flow.requestDeviceApproval();
+
+      final parsed = parseDeviceApprovalCode(req.code);
+      expect(parsed, isNotNull);
+      expect(parsed!.ephPublic.length, 32);
+      expect(
+        base64Encode(parsed.ephPublic),
+        api.deviceRequestBodies.single['eph_public'],
+        reason: '码里那把公钥必须就是服务端登记的那把,否则旧设备封出来的东西谁也拆不开',
+      );
+      expect(parsed.deviceId, await deviceId());
+      // 码里一个秘密都没有:临时私钥只在返回值里,从不进那串字。
+      expect(req.code.contains(base64UrlEncode(req.ephSecret)), isFalse);
+    });
+  });
+
+  group('parseDeviceApprovalCode(纯函数)', () {
+    String pub() => base64UrlEncode(Uint8List(32)).replaceAll('=', '');
+
+    test('正常的码:认出 device_id 与 32 字节公钥', () {
+      final p = parseDeviceApprovalCode('mdv1.devA.${pub()}');
+      expect(p!.deviceId, 'devA');
+      expect(p.ephPublic.length, 32);
+    });
+
+    test('别的二维码一律返回 null(不是错误,只是不是我要的东西)', () {
+      expect(parseDeviceApprovalCode('https://medmenow.com/claim/#g1.x.y'), isNull);
+      expect(parseDeviceApprovalCode('mdv0.devA.${pub()}'), isNull, reason: '版本不对');
+      expect(parseDeviceApprovalCode('mdv1.devA'), isNull, reason: '少一段');
+      expect(parseDeviceApprovalCode('mdv1..${pub()}'), isNull, reason: '空 device_id');
+      expect(parseDeviceApprovalCode('mdv1.devA.not-base64!!'), isNull);
+      expect(
+        parseDeviceApprovalCode('mdv1.devA.${base64UrlEncode(Uint8List(16))}'),
+        isNull,
+        reason: 'X25519 公钥恒为 32 字节 —— 长度不对就别拿去调服务端',
+      );
     });
   });
 

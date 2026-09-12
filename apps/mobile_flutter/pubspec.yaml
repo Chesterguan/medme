@@ -56,6 +56,11 @@ dependencies:
   photo_view: ^0.15.0
   # 面对面二维码分享:把「当下病情」编成码给医生扫(纯本地绘制,不联网)
   qr_flutter: ^4.1.0
+  # 扫码(旧手机批准新设备,见 `widgets/qr_scanner_sheet.dart`)。**固定版本**,
+  # 不用 `^`:它带原生相机实现(iOS AVFoundation / 安卓 MLKit barcode),一次小版本
+  # 跳动就可能换掉相机行为,而这条路径的失败形态是"用户举着码扫不上"。
+  # 全仓只有这一处需要读码(`qr_flutter` 只会画码),没有可复用的现成能力。
+  mobile_scanner: 7.4.1
   pdfx: ^2.9.2
   share_plus: ^11.0.0
   url_launcher: ^6.3.2

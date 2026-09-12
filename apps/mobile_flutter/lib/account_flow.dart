@@ -55,6 +55,39 @@ enum LoginOutcome {
 @visibleForTesting
 Duration profilesFetchBudget = const Duration(seconds: 10);
 
+/// 新设备出的那张「请用旧手机扫我」的码,前缀 + 版本。
+///
+/// 内容是 `mdv1.<device_id>.<临时公钥 b64url>` —— **一个秘密都不含**:device_id 只是
+/// 一个设备标识符(泄露无害,见 [deviceId]),临时公钥是公钥。旁人拍到这张码能做的
+/// 事只有"也给这台设备发一份批准",而发批准需要**旧设备上已解锁的账号私钥**,他没有。
+const deviceApprovalPrefix = 'mdv1';
+
+/// 解析上面那张码。认不出来返回 null —— 旧设备扫到别的二维码(地铁广告、微信付款码)
+/// 是最常见的情形,那不是错误,只是"这不是我要的东西"。
+///
+/// 纯函数(不碰网络/FFI),所以"什么算一张合法的批准码"这条判断能单独钉住;
+/// 生产调用方是 `account_screen.dart` 的 `_scanApproveDevice`。
+({String deviceId, Uint8List ephPublic})? parseDeviceApprovalCode(String raw) {
+  final parts = raw.trim().split('.');
+  if (parts.length != 3 || parts[0] != deviceApprovalPrefix) return null;
+  if (parts[1].isEmpty) return null;
+  try {
+    final pub = base64Url.decode(base64Url.normalize(parts[2]));
+    // X25519 公钥恒为 32 字节。长度不对的一律当作"不是这种码",不拿它去调服务端。
+    if (pub.length != 32) return null;
+    return (deviceId: parts[1], ephPublic: Uint8List.fromList(pub));
+  } catch (_) {
+    return null;
+  }
+}
+
+/// [AccountFlow.requestDeviceApproval] 的返回值:要显示成二维码的那串字 + **只在
+/// 内存里**的临时私钥(用来拆开旧设备封回来的账号私钥)。
+///
+/// 临时私钥刻意不落盘:它的生命周期就是用户举着这张码的那两分钟,落盘只是多一处
+/// 能解开账号私钥的材料躺在一台**还没被批准**的设备上。
+typedef DeviceApprovalRequest = ({String code, Uint8List ephSecret});
+
 /// 口令/恢复码解不开私钥。**绝不吞掉、绝不清 session**——调用方只应据此展示
 /// 错误并允许重试,账号登录态本身不受影响。
 class UnlockFailed implements Exception {
@@ -566,6 +599,80 @@ class AccountFlow {
     await api.postNoContent(deletePath, {'identity_token': cred.identityToken});
     Grants.clearInviteCache();
     await session.clear();
+  }
+
+  // ---- 旧设备扫码批准新设备(spec A2 的「旧设备批准」这条路)----
+  //
+  // 在这之前 `POST /v1/devices/request` 与 `GET /v1/devices/approval` 两个端点
+  // **零 Dart 调用方**:服务端、Rust 的封/拆、设备列表里那颗「批准」按钮全都在,
+  // 而没有任何路径会把 `eph_public` 写上去 —— 于是那颗按钮是一段永不触发的 UI,
+  // 而新设备上唯一的出路是口令或恢复码(正是最容易两样都想不起来的时刻)。
+
+  /// 新设备这一侧第一步:生成一对**临时** X25519 密钥,把公钥登记到服务端,返回
+  /// 要画成二维码的那串字和只在内存里的临时私钥。
+  ///
+  /// 复用 `sync_account_keys_new`(就是一对 X25519 密钥),不新加 FRB 函数。
+  Future<DeviceApprovalRequest> requestDeviceApproval() async {
+    final (pub, sec) = await crypto.accountKeysNew();
+    final did = await deviceId();
+    await api.postJson(
+      '/v1/devices/request',
+      {'device_id': did, 'eph_public': base64Encode(pub)},
+      headers: {'X-Device-Id': did},
+    );
+    return (code: '$deviceApprovalPrefix.$did.${base64UrlEncode(pub).replaceAll('=', '')}', ephSecret: sec);
+  }
+
+  /// 新设备这一侧第二步:问一次"旧手机批准了吗"。没有就返回 null(轮询的调用方
+  /// 据此继续等),有就是那份**用本机临时公钥封好的账号私钥**(服务端取走即删,
+  /// 见 `db.device_take_approval`)。
+  Future<String?> fetchDeviceApproval() async {
+    final did = await deviceId();
+    final r = await api.getJson(
+      '/v1/devices/approval',
+      query: {'device_id': did},
+      headers: {'X-Device-Id': did},
+    ) as Map<String, dynamic>;
+    return r['approved_priv'] as String?;
+  }
+
+  /// 新设备这一侧第三步:用临时私钥拆开,走和口令解锁**完全相同**的后半截
+  /// (存 session → 补齐档案密钥 → ready)。不需要口令。
+  Future<void> unlockWithDeviceApproval(Uint8List ephSecret, String sealed) async {
+    final k = _serverKeys!;
+    final Uint8List sec;
+    try {
+      sec = await crypto.openSealed(ephSecret, base64Decode(sealed));
+    } catch (_) {
+      // 拆不开 = 这份批准不是封给这台设备此刻这把临时密钥的(比如用户中途重新
+      // 生成过一张码)。让他重来一次,别把账号态搞脏。
+      throw const UnlockFailed('这份批准打不开,请重新生成二维码再让旧手机扫一次');
+    }
+    await session.save(
+      accountId: session.accountId!,
+      access: session.access!,
+      refresh: session.refresh!,
+      publicKey: base64Decode(k['public_key'] as String),
+      privateKey: sec,
+    );
+    await restoreProfileKeys();
+    lastOutcome = LoginOutcome.ready;
+  }
+
+  /// 旧设备这一侧:把本机**已解锁的账号私钥**用新设备的临时公钥封起来交给服务端
+  /// (服务端只见密文,拆得开它的只有那台设备自己的临时私钥)。
+  ///
+  /// 设备列表里那颗「批准」按钮和「扫码批准新设备」走的是同一条 —— 同一件事不该
+  /// 有两个实现。
+  Future<void> approveDevice(String targetDeviceId, Uint8List ephPublic) async {
+    final priv = session.privateKey;
+    if (priv == null) throw StateError('本机账号还没解锁,不能批准别的设备');
+    final sealed = await crypto.sealTo(ephPublic, priv);
+    await api.postJson(
+      '/v1/devices/approve',
+      {'device_id': targetDeviceId, 'approved_priv': base64Encode(sealed)},
+      headers: {'X-Device-Id': await deviceId()},
+    );
   }
 
   Future<void> unlockWithRecovery(String code) async {

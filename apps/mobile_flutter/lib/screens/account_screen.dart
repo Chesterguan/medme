@@ -15,6 +15,8 @@ import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
+import 'package:mobile_flutter/widgets/qr_scanner_sheet.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 /// Task 14(a):KDF 真机基准——m_kib 梯度 × t 梯度,p 固定 1。只是量,不是选择,
@@ -148,6 +150,7 @@ class AccountScreen extends StatefulWidget {
     this.syncEngine,
     this.debugModeOverride,
     this.kdfBenchFn,
+    this.scanQr,
   });
   final AccountFlow flow;
 
@@ -168,6 +171,11 @@ class AccountScreen extends StatefulWidget {
   /// 测试注入点——同上,默认为 null 落到真的 [syncKdfBenchMs](碰 FRB,
   /// `flutter test` 跑不了)。
   final KdfBenchFn? kdfBenchFn;
+
+  /// 扫一张二维码(旧设备批准新设备那条路)。测试注入点,默认真实的
+  /// `widgets/qr_scanner_sheet.dart` 的 `scanQrCode` —— 它要开相机,
+  /// `flutter test` 里既开不了也不该开。
+  final Future<String?> Function(BuildContext)? scanQr;
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
@@ -216,6 +224,20 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// B5:正在生成一条转移链接(防连点;生成链接是会在服务端建 invite 记录的)。
   bool _transferBusy = false;
+
+  // ---- 旧设备扫码批准新设备(spec A2)----
+  /// 新设备这一侧:要画成二维码的那串字(`mdv1.<device_id>.<临时公钥>`,不含秘密)。
+  String? _approvalCode;
+
+  /// 那张码对应的**临时私钥,只在内存里**——它的寿命就是用户举着码的这两分钟。
+  Uint8List? _approvalSecret;
+  bool _approvalBusy = false;
+  String? _approvalError;
+  Timer? _approvalPoll;
+  int _approvalSecondsLeft = 0;
+
+  /// 旧设备这一侧:正在扫码/批准(防连点)。
+  bool _approveBusy = false;
 
   /// 正在撤销一份授权(评审 Minor 20:双击会发两个 DELETE,第二个在成功撤销之后
   /// 立刻显示「撤销失败:没有找到…」—— 一次成功的操作看起来像失败了)。
@@ -277,6 +299,7 @@ class _AccountScreenState extends State<AccountScreen> {
   @override
   void dispose() {
     _otpTimer?.cancel();
+    _approvalPoll?.cancel();
     _phoneCtrl.dispose();
     _codeCtrl.dispose();
     _regPasswordCtrl.dispose();
@@ -664,6 +687,11 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   List<Widget> _unlockContent() => [
+    // **先给这条**(spec A2 的「旧设备批准」):换手机的人口袋里通常还揣着旧手机,
+    // 而口令是他最可能想不起来的东西 —— 那正是 A6 那条「两样都丢了怎么办」存在的
+    // 理由。口令/恢复码仍然在下面,一个都没拿掉。
+    ..._deviceApprovalBlock(),
+    const Divider(height: 32),
     const Text('输入口令解锁', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     const Text(
@@ -750,6 +778,138 @@ class _AccountScreenState extends State<AccountScreen> {
       });
     } finally {
       if (mounted) setState(() => _logoutBusy = false);
+    }
+  }
+
+  // ---- 新设备这一侧:出一张码,等旧手机扫 ----
+
+  /// 解锁屏顶部那一块。三态都在这儿:还没生成(一颗按钮)/ 举着码等批准(码 +
+  /// 倒计时 + 取消)/ 失败(红字 + 按钮还在,可以再来一次)。
+  List<Widget> _deviceApprovalBlock() {
+    final code = _approvalCode;
+    return [
+      const Text('用旧手机扫码批准', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 8),
+      const Text(
+        '手里还有另一台登录过这个账号的手机?不用口令也能进:在那台手机上打开'
+        '设置 → 账号 → 设备 → 「扫码批准新设备」,扫一下这张码就行。',
+        style: TextStyle(color: MedMe.faint, height: 1.5),
+      ),
+      if (_approvalError != null) _errorText(_approvalError!),
+      const SizedBox(height: 12),
+      if (code == null)
+        _approvalBusy
+            ? const Center(child: CircularProgressIndicator())
+            : SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  key: const Key('device_approval_start'),
+                  onPressed: _startDeviceApproval,
+                  child: const Text('生成二维码'),
+                ),
+              )
+      else ...[
+        Center(
+          // 紧约束 —— 见 `link_qr_dialog.dart`:没有它,`QrImageView` 在可滚动的
+          // 父级里会走到 `LayoutBuilder does not support returning intrinsic
+          // dimensions`。
+          child: SizedBox(
+            width: 220,
+            height: 220,
+            child: QrImageView(data: code, version: QrVersions.auto, backgroundColor: Colors.white),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _approvalSecondsLeft > 0 ? '等旧手机扫码批准…(还剩 $_approvalSecondsLeft 秒)' : '正在等旧手机批准…',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: MedMe.faint),
+        ),
+        const SizedBox(height: 4),
+        // 这张码里一个秘密都没有,说出来 —— 否则用户会以为自己正举着一把钥匙。
+        const Text(
+          '这张码里没有你的病历也没有密钥,被别人拍到也打不开任何东西。',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: MedMe.faint, fontSize: 12, height: 1.5),
+        ),
+        TextButton(key: const Key('device_approval_cancel'), onPressed: _stopApprovalPoll, child: const Text('取消')),
+      ],
+    ];
+  }
+
+  Future<void> _startDeviceApproval() async {
+    setState(() {
+      _approvalBusy = true;
+      _approvalError = null;
+    });
+    try {
+      final req = await widget.flow.requestDeviceApproval();
+      if (!mounted) return;
+      setState(() {
+        _approvalCode = req.code;
+        _approvalSecret = req.ephSecret;
+        _approvalSecondsLeft = _approvalTimeoutSeconds;
+      });
+      _approvalPoll?.cancel();
+      // 每 3 秒问一次、最多两分钟(`_approvalTimeoutSeconds`)。到点就停 —— 一个
+      // 永不停的周期 Timer 既白耗电,也会让 `pumpAndSettle` 永远等不到静止。
+      _approvalPoll = Timer.periodic(const Duration(seconds: 3), (_) => _pollApproval());
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _approvalError = friendlyApiError(e); });
+    } finally {
+      if (mounted) setState(() => _approvalBusy = false);
+    }
+  }
+
+  static const _approvalTimeoutSeconds = 120;
+
+  Future<void> _pollApproval() async {
+    if (!mounted) return _approvalPoll?.cancel();
+    setState(() => _approvalSecondsLeft -= 3);
+    if (_approvalSecondsLeft <= 0) {
+      _stopApprovalPoll();
+      if (mounted) setState(() => _approvalError = '等了两分钟还没等到批准。可以再生成一张码,或者用下面的口令/恢复码。');
+      return;
+    }
+    final secret = _approvalSecret;
+    if (secret == null) return;
+    String? sealed;
+    try {
+      sealed = await widget.flow.fetchDeviceApproval();
+    } catch (_) {
+      // 这一轮没问到(断网/服务端抖动)——**不停轮询**:3 秒后还会再问一次,
+      // 而用户此刻正举着手机等,给他看一条错误没有任何用。
+      return;
+    }
+    if (sealed == null || !mounted) return;
+    _stopApprovalPoll();
+    try {
+      await widget.flow.unlockWithDeviceApproval(secret, sealed);
+      if (!mounted) return;
+      _enterReady();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _approvalError = friendlyApiError(e);
+        // 拆不开那份批准 = 这张码作废了,让他重新生成一张(而不是对着一张
+        // 已经没用的码继续等)。
+        _approvalCode = null;
+        _approvalSecret = null;
+      });
+    }
+  }
+
+  /// 停轮询 + 把那张码和临时私钥一起丢掉(取消 = 这对临时密钥到此结束)。
+  void _stopApprovalPoll() {
+    _approvalPoll?.cancel();
+    _approvalPoll = null;
+    if (mounted) {
+      setState(() {
+        _approvalCode = null;
+        _approvalSecret = null;
+        _approvalSecondsLeft = 0;
+      });
     }
   }
 
@@ -1299,7 +1459,98 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  Widget _devicesSection() => FutureBuilder<List<dynamic>>(
+  Widget _devicesSection() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      // 「扫码批准新设备」排在列表**上面**:用户来这一节十次里九次就是为了这件事
+      // (另一台手机正举着一张码等他),而设备列表是用来核对的,不是用来操作的。
+      const Text(
+        '换了新手机、又想不起口令?在新手机的解锁屏点「用旧手机扫码批准」,'
+        '然后用这里扫它那张码。',
+        style: TextStyle(color: MedMe.faint, height: 1.5),
+      ),
+      const SizedBox(height: 8),
+      // 忙的时候只是**禁用**,不换成进度圈:`_approveBusy` 在确认弹窗开着的整段时间
+      // 里都是 true,底下挂一个不定式动画会让 `pumpAndSettle` 永远 settle 不下来
+      // (与「转为主人」那颗按钮同一条教训,踩过两次)。
+      OutlinedButton.icon(
+        key: const Key('scan_approve_device'),
+        onPressed: _approveBusy ? null : _scanApproveDevice,
+        icon: const Icon(Icons.qr_code_scanner),
+        label: const Text('扫码批准新设备'),
+      ),
+      const SizedBox(height: 12),
+      _devicesList(),
+    ],
+  );
+
+  /// 旧设备这一侧:扫码 → 看清是哪台设备 → 确认 → 把账号私钥封给它。
+  ///
+  /// **确认弹窗不是礼貌用语**:批准一台设备等于把这个账号的全部病历交给它,而"刚刚
+  /// 扫到的那张码"到底是谁的,只有屏上写出设备名和它最近出现的时间,用户才有机会
+  /// 发现不对。所以这里多走一次 `GET /v1/devices` 去查这台设备 —— 查不到就**不批**
+  /// (那意味着这张码不是这个账号下的设备生成的)。
+  Future<void> _scanApproveDevice() async {
+    final raw = await (widget.scanQr ?? scanQrCode)(context);
+    if (raw == null || !mounted) return;
+    final parsed = parseDeviceApprovalCode(raw);
+    if (parsed == null) {
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(
+        content: const Text('这不是 MedMe 的批准码 —— 请在新手机的解锁屏上点「用旧手机扫码批准」'),
+      ));
+      return;
+    }
+    setState(() => _approveBusy = true);
+    try {
+      final list = (await widget.flow.api.getJson('/v1/devices')) as List<dynamic>;
+      final target = list
+          .cast<Map<String, dynamic>>()
+          .where((d) => d['device_id'] == parsed.deviceId)
+          .firstOrNull;
+      if (!mounted) return;
+      if (target == null) {
+        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(
+          content: const Text('这台设备不在你的账号下 —— 让它先用你的手机号在那台手机上登录一次'),
+        ));
+        return;
+      }
+      final row = deviceRow(target);
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('批准这台新设备?'),
+          content: Text(
+            '${row.name} · ${row.status}\n\n'
+            '批准之后,那台手机不用口令就能打开你的账号和已经上云的病历。'
+            '只有你自己那台手机才该被批准 —— 如果这不是你刚拿在手里的那台,点取消。',
+            style: const TextStyle(height: 1.5),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+            FilledButton(
+              // 列表里待批准那一行也有一颗「批准」—— 两颗同名按钮同时在屏上,
+              // 所以弹窗这颗要有自己的 key。
+              key: const Key('confirm_approve_device'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('批准'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+      await widget.flow.approveDevice(parsed.deviceId, parsed.ephPublic);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已批准,那台手机马上就能进')));
+      _enterReady();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('批准失败:${friendlyApiError(e)}')));
+    } finally {
+      if (mounted) setState(() => _approveBusy = false);
+    }
+  }
+
+  Widget _devicesList() => FutureBuilder<List<dynamic>>(
     future: _devicesFuture,
     builder: (context, snap) {
       if (snap.connectionState == ConnectionState.waiting) {
@@ -1332,17 +1583,12 @@ class _AccountScreenState extends State<AccountScreen> {
   );
 
   Future<void> _approveDevice(Map<String, dynamic> device) async {
-    final priv = widget.flow.session.privateKey;
-    if (priv == null) return;
     try {
-      final sealed = await widget.flow.crypto.sealTo(
-        base64Decode(device['eph_public'] as String),
-        priv,
-      );
-      await widget.flow.api.postJson(
-        '/v1/devices/approve',
-        {'device_id': device['device_id'], 'approved_priv': base64Encode(sealed)},
-        headers: {'X-Device-Id': await deviceId()},
+      // 与「扫码批准新设备」走同一条(`AccountFlow.approveDevice`)—— 同一件事
+      // 不该有两个实现,尤其不该有两处各自 `sealTo` + 拼 body 的地方。
+      await widget.flow.approveDevice(
+        device['device_id'] as String,
+        Uint8List.fromList(base64Decode(device['eph_public'] as String)),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已批准该设备')));
