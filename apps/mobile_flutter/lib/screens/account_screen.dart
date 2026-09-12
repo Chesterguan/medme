@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -155,6 +156,14 @@ class _AccountScreenState extends State<AccountScreen> {
   final _unlockRecoveryCtrl = TextEditingController();
   final _familyPhoneCtrl = TextEditingController();
 
+  /// 验证码重发冷却。**这是给"没收到短信就连点"准备的,不是服务端规则的镜像**——
+  /// 服务端那两条是:一小时最多 5 条(`auth.OTP_MAX_SENDS_PER_HOUR`)、验证码本身
+  /// 5 分钟过期(`OTP_TTL`)。原来这一屏既没有倒计时也没有重发按钮,短信没来的人
+  /// 只能返回上一屏重走一遍。
+  static const _otpResendCooldown = 60;
+  int _otpSecondsLeft = 0;
+  Timer? _otpTimer;
+
   bool _familyBusy = false;
   String? _familyError;
 
@@ -213,6 +222,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
   @override
   void dispose() {
+    _otpTimer?.cancel();
     _phoneCtrl.dispose();
     _codeCtrl.dispose();
     _regPasswordCtrl.dispose();
@@ -238,10 +248,37 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  /// 「发送验证码」与「重新发送」是同一条路:后者只是在已经到了验证码屏之后再点
+  /// 一次。重发要把上一次打进去的码清掉——否则用户会对着新短信、拿旧的那串去点
+  /// 「登录」,撞一次 401,还以为是新码也不对。
   Future<void> _sendOtp() => _run(() async {
+    final resend = _phase == _Phase.otpSent;
     await widget.flow.sendOtp(_phoneCtrl.text.trim());
+    if (resend) _codeCtrl.clear();
     setState(() => _phase = _Phase.otpSent);
+    _startOtpCountdown();
+    if (resend && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('验证码已重新发送')));
+    }
   });
+
+  /// 倒计时用**周期 Timer + setState**,到 0 自己取消。
+  ///
+  /// 到 0 就取消这件事不只是省电:`flutter test` 里一个永不停的周期 Timer 会让
+  /// `pumpAndSettle` 永远等不到"没有新帧要画"(它会一直跑到 10 分钟超时),
+  /// 而且用例结束时还会留下一个 pending timer 报错。
+  void _startOtpCountdown() {
+    _otpTimer?.cancel();
+    setState(() => _otpSecondsLeft = _otpResendCooldown);
+    _otpTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() => _otpSecondsLeft--);
+      if (_otpSecondsLeft <= 0) timer.cancel();
+    });
+  }
 
   Future<void> _login() => _run(() async {
     final outcome = await widget.flow.loginOtp(_phoneCtrl.text.trim(), _codeCtrl.text.trim());
@@ -411,6 +448,12 @@ class _AccountScreenState extends State<AccountScreen> {
     if (_error != null) _errorText(_error!),
     const SizedBox(height: 16),
     _asyncButton(label: '登录', onPressed: _login),
+    const SizedBox(height: 4),
+    TextButton(
+      key: const Key('otp_resend'),
+      onPressed: (_busy || _otpSecondsLeft > 0) ? null : _sendOtp,
+      child: Text(_otpSecondsLeft > 0 ? '$_otpSecondsLeft 秒后可重新发送' : '重新发送'),
+    ),
   ];
 
   List<Widget> _keySetupContent() => [

@@ -578,6 +578,85 @@ void main() {
     });
   });
 
+  // ---- 验证码屏:原来既没有倒计时也没有重发按钮 ----
+  group('验证码屏:60 秒倒计时 + 重新发送', () {
+    testWidgets('刚发完:倒计时 60 秒,「重新发送」此刻不可点', (t) async {
+      final api = FakeApi();
+      await t.pumpWidget(_app(api));
+      await t.enterText(find.byKey(const Key('phone')), '13800000001');
+      await t.tap(find.text('发送验证码'));
+      // 不用 pumpAndSettle:它会把 60 秒虚拟时间一次走完,倒计时就看不到了。
+      await t.pump(const Duration(milliseconds: 60));
+
+      expect(find.text('输入验证码'), findsOneWidget);
+      expect(find.text('60 秒后可重新发送'), findsOneWidget);
+      expect(t.widget<TextButton>(find.byKey(const Key('otp_resend'))).onPressed, isNull);
+
+      await t.pump(const Duration(seconds: 1));
+      expect(find.text('59 秒后可重新发送'), findsOneWidget);
+    });
+
+    testWidgets('60 秒后:变成「重新发送」且可点;点了重新发一次 OTP、清掉旧码', (t) async {
+      final api = FakeApi();
+      await t.pumpWidget(_app(api));
+      await t.enterText(find.byKey(const Key('phone')), '13800000001');
+      await t.tap(find.text('发送验证码'));
+      await t.pumpAndSettle();
+      // `pumpAndSettle` 只画到"没有新帧要排队"为止,不会替你把 60 秒走完 ——
+      // 倒计时要自己推(一次 pump 推 60 秒,周期 timer 在这一跳里全部触发)。
+      await t.pump(const Duration(seconds: 60));
+
+      expect(find.text('重新发送'), findsOneWidget);
+      expect(t.widget<TextButton>(find.byKey(const Key('otp_resend'))).onPressed, isNotNull);
+
+      await t.enterText(find.byKey(const Key('code')), '111111');
+      await t.pump();
+      api.calls.clear();
+      await t.tap(find.byKey(const Key('otp_resend')));
+      await t.pump(const Duration(milliseconds: 60));
+
+      expect(api.calls, contains('POST /v1/auth/otp'));
+      expect(find.text('111111'), findsNothing, reason: '旧码要清掉,否则用户会拿旧码去点登录');
+      expect(find.text('验证码已重新发送'), findsOneWidget);
+      expect(find.text('输入验证码'), findsOneWidget, reason: '仍在这一屏,不退回手机号那一步');
+    });
+
+    testWidgets('重发失败(429):错误可见,仍停在这一屏', (t) async {
+      final api = FakeApi();
+      await t.pumpWidget(_app(api));
+      await t.enterText(find.byKey(const Key('phone')), '13800000001');
+      await t.tap(find.text('发送验证码'));
+      await t.pumpAndSettle();
+
+      // 换一个只会 429 的屏,模拟"重发撞上一小时 5 条的上限"。
+      await t.pumpWidget(const SizedBox.shrink());
+      final limited = FakeApi(failOtp: true);
+      await t.pumpWidget(_app(limited));
+      await t.pumpAndSettle();
+      await t.enterText(find.byKey(const Key('phone')), '13800000001');
+      await t.tap(find.text('发送验证码'));
+      await t.pumpAndSettle();
+      expect(find.text('操作太频繁,过一会儿再试'), findsOneWidget);
+      expect(find.text('输入验证码'), findsNothing, reason: '没发出去就不该进下一屏');
+    });
+
+    testWidgets('验证码打错/过期:说「重新发送」,不说「重新登录」', (t) async {
+      final api = FakeApi(failLogin: true);
+      await t.pumpWidget(_app(api));
+      await t.enterText(find.byKey(const Key('phone')), '13800000001');
+      await t.tap(find.text('发送验证码'));
+      await t.pumpAndSettle();
+      await t.enterText(find.byKey(const Key('code')), '111111');
+      await t.pump();
+      await t.tap(find.text('登录'));
+      await t.pumpAndSettle();
+
+      expect(find.text('验证码不对或已过期,请重新发送'), findsOneWidget);
+      expect(find.textContaining('重新登录'), findsNothing);
+      expect(find.byKey(const Key('otp_resend')), findsOneWidget, reason: '出路就在下面这颗按钮上');
+    });
+  });
+
   // ---- A4:口令只输一次、看不见、无长度下限 ----
   group('A4:口令屏的眼睛 + 最短 6 位', () {
     /// 当前那个口令输入框是不是遮着的。
