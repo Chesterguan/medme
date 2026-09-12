@@ -57,6 +57,10 @@ class ProfileManager {
   /// (见 [nameCloudProfileOnFirstSync])—— 用户自己改过的名字绝不覆盖。
   static const cloudPlaceholderNames = {restoringPlaceholderName, redeemingPlaceholderName};
 
+  /// 首同步成功了、但病历里**抽不出姓名**时给的中性名字(空档案,或者正则一个都
+  /// 没命中)。见 [nameCloudProfileOnFirstSync] 对"为什么必须改掉占位名"的说明。
+  static const restoredFallbackName = '云端成员';
+
   /// 当前成员 **id** 变化时通知各屏重载(切换成员 = 重开保险箱)。用 id 而不是名字:
   /// 改名不该触发重开,换人才该。
   final ValueNotifier<String> currentId = ValueNotifier<String>(_bootstrapId);
@@ -279,13 +283,31 @@ class ProfileManager {
   ///
   /// 这里只认一条判据:**这个成员的名字还是我们自己写上去的占位串吗**
   /// ([cloudPlaceholderNames])。用户自己改过的名字一律不覆盖。
+  ///
+  /// **抽不出姓名也要改名**(复审新问题 2)。这个方法只在首同步**成功之后**被调用
+  /// (`sync_engine.firstSyncAndName`:同步抛异常就走不到这儿),所以"名字还是占位
+  /// 串"这条证据在这一刻必须被消费掉 —— 留着的后果是一个死循环:空档案(或者正则
+  /// 一个都没命中)的成员名字永远停在「正在恢复的档案」→ 每次启动
+  /// `restoreProfileKeys` 都把它重新排进首同步队列 → 反复切成员、屏幕闪烁,切换器
+  /// 一直显示「正在恢复…点这里重试」,而它其实早就同步好了。
+  /// 抽不出来就给一个中性的 [restoredFallbackName] —— 用户随时可以在设置里改名。
   Future<bool> nameCloudProfileOnFirstSync(String id, String? detectedName) async {
     await ensureLoaded();
-    final name = detectedName?.trim() ?? '';
     final p = byId(id);
-    if (name.isEmpty || p == null || !cloudPlaceholderNames.contains(p.name)) return false;
-    await rename(id, name);
+    if (p == null || !cloudPlaceholderNames.contains(p.name)) return false;
+    final name = detectedName?.trim() ?? '';
+    await rename(id, name.isEmpty ? _nextRestoredFallbackName() : name);
     return true;
+  }
+
+  /// 「云端成员」/「云端成员 2」/…… —— 挑一个本机还没用过的,免得两个空档案撞成
+  /// 同一个名字(名字只是标签、同名本来不违法,但两行一样的字用户分不出哪个是哪个)。
+  String _nextRestoredFallbackName() {
+    final used = _profiles.map((p) => p.name).toSet();
+    for (var i = 1;; i++) {
+      final candidate = i == 1 ? restoredFallbackName : '$restoredFallbackName $i';
+      if (!used.contains(candidate)) return candidate;
+    }
   }
 
   /// 这个成员是不是「从没被用过的默认成员」。A5 最后一步拿它决定:换机领回云档案

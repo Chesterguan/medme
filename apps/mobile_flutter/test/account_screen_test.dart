@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -187,6 +188,27 @@ class FakeApi extends ApiClient {
     if (path == AccountFlow.deletePath && failDeleteAccount) {
       throw failDeleteAccountError ?? const ApiFailed(401, 'reauth required');
     }
+  }
+}
+
+/// `GET /v1/profiles` 永远不返回 —— 专测 `restoreProfileKeys` 那一次请求的超时预算
+/// (复审新问题 4)。其余路径照旧。
+class _HangingProfilesApi extends FakeApi {
+  _HangingProfilesApi() : super(hasKeys: true, delay: const Duration(milliseconds: 5));
+  final _hang = Completer<dynamic>();
+
+  /// 用例收尾时调 —— 别留一个永远挂着的 Future。
+  void release() {
+    if (!_hang.isCompleted) _hang.complete(const <dynamic>[]);
+  }
+
+  @override
+  Future<dynamic> getJson(String path, {Map<String, String>? query, Map<String, String>? headers}) {
+    if (path == '/v1/profiles') {
+      calls.add('GET $path');
+      return _hang.future;
+    }
+    return super.getJson(path, query: query, headers: headers);
   }
 }
 
@@ -1564,6 +1586,12 @@ void main() {
       expect(find.text('请他扫这个码'), findsOneWidget);
     });
 
+    // 复审新问题 3 的 UI 面**拆成两条已有用例来保证**,不另起一条 widget 用例:
+    //  · 「服务端报 editor → 本机 role 被刷成 editor」在上面的
+    //    `AccountFlow.restoreProfileKeys` 组里(纯逻辑,`test()`);
+    //  · 「role != owner → 没有这个入口」就是紧接着下面这一条。
+    // 合起来跑不了:刷新角色会写 profiles.json,而真实文件 I/O 在
+    // `pumpAndSettle` 下等不到(本文件顶部那条一贯的限制,试过,超时)。
     testWidgets('不是 owner(被授权的 editor):没有这个入口(服务端本来就 403)', (t) async {
       final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
       await t.runAsync(() async {
@@ -2119,6 +2147,132 @@ void main() {
       await flow.unlockWithPassword('right');
 
       expect(pendingFirstSync, contains(id), reason: '一次网络抖动不该把成员永久钉在占位名上');
+    });
+
+    // 复审新问题 2 的另一半:首同步成功、但病历里抽不出姓名的成员,不许每次启动
+    // 都被重新排队(那会让它反复切成员、屏幕闪烁,而它其实早就同步好了)。
+    test('新问题 2:空档案首同步成功(名字已变中性回退)→ 不再排队', () async {
+      final api = oneUnknownCloudProfile();
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        removeProfile: (id) async => false,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      // 上一次启动的结果:首同步跑成功了,但病历里没姓名,于是名字是中性回退。
+      final id = (await ProfileManager.instance.create(
+        ProfileManager.restoredFallbackName,
+        userManaged: false,
+      ))!;
+      await ProfileManager.instance.markCloud(id, 'prf_mine_1', 'owner', null);
+      await ProfileManager.instance.switchTo('p-1');
+      await AccountSession.instance.putProfileKey('prf_mine_1', Uint8List(32));
+      resetPendingFirstSyncForTest();
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(pendingFirstSync, isEmpty, reason: '它已经同步好了 —— 再排一次就是反复闪屏');
+    });
+
+    // 复审新问题 3:转移完成之后服务端把我从 owner 降成 editor,本机不刷新就会
+    // 一直以为自己还是 owner —— 账号屏那颗「把这份档案转给家人」还在,点一次 403。
+    test('新问题 3:服务端的 role 变了(owner → editor)→ 本机跟着更新', () async {
+      final api = FakeApi(hasKeys: true, profiles: [
+        {
+          'profile_id': 'prf_mine_1',
+          'role': 'editor', // 已经被转走了
+          'expires_at': null,
+          'wrapped_profile_key': base64Encode(Uint8List(32)),
+        },
+      ]);
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        removeProfile: (id) async => false,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final id = ProfileManager.instance.current.id;
+      await ProfileManager.instance.markCloud(id, 'prf_mine_1', 'owner', null); // 本机还以为是 owner
+      await ProfileManager.instance.rename(id, '张建国');
+      await AccountSession.instance.putProfileKey('prf_mine_1', Uint8List(32));
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(ProfileManager.instance.byId(id)!.role, 'editor');
+    });
+
+    test('新问题 3:被授权档案的到期被服务端改了 → 本机跟着更新', () async {
+      final newExpiry = DateTime.utc(2027, 3, 4, 5);
+      final api = FakeApi(hasKeys: true, profiles: [
+        {
+          'profile_id': 'prf_shared',
+          'role': 'viewer',
+          'expires_at': newExpiry.toIso8601String(),
+          'wrapped_profile_key': base64Encode(Uint8List(32)),
+        },
+      ]);
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        removeProfile: (id) async => false,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final id = (await ProfileManager.instance.create('老爸', userManaged: false))!;
+      await ProfileManager.instance.markCloud(id, 'prf_shared', 'viewer', DateTime.utc(2026, 1, 1));
+      await ProfileManager.instance.switchTo('p-1');
+      await AccountSession.instance.putProfileKey('prf_shared', Uint8List(32));
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(ProfileManager.instance.byId(id)!.expiresAt, newExpiry);
+      expect(ProfileManager.instance.byId(id)!.name, '老爸', reason: '刷新授权不该动名字');
+    });
+
+    // 复审新问题 4:超时原来套在调用方(`main.dart` 启动序列)外面,而那个 Future
+    // 是 `unawaited` 的 —— 纯装饰,只留下一个没人取消的 pending Timer。现在它在
+    // `getJson` 这一句上,是真的。
+    test('新问题 4:拉云档案清单卡住 → 到了预算就放手,不挡住解锁(也不留 pending timer)', () async {
+      // 真等 10 秒就是真慢 10 秒(这是一个真实 Timer,不在 fake-async 里)——
+      // 把预算改小,验的是"超时确实接在那一句上",不是那个具体秒数。
+      final realBudget = profilesFetchBudget;
+      profilesFetchBudget = const Duration(milliseconds: 200);
+      addTearDown(() => profilesFetchBudget = realBudget);
+      final api = _HangingProfilesApi();
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        removeProfile: (id) async => false,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+
+      await flow.loginOtp('13800000001', '000000');
+      final sw = Stopwatch()..start();
+      await flow.unlockWithPassword('right');
+      sw.stop();
+
+      expect(flow.lastOutcome, LoginOutcome.ready, reason: '拿不到清单只是"这次没补齐"');
+      expect(
+        sw.elapsed,
+        lessThan(const Duration(seconds: 5)),
+        reason: '到了预算就放手 —— 不是 Net 那最坏 50 秒',
+      );
+      expect(pendingFirstSync, isEmpty);
+      api.release();
     });
 
     test('A5:登记首同步不影响解锁本身成功', () async {

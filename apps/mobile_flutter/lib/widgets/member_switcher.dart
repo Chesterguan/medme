@@ -49,13 +49,6 @@ Future<void> showMemberSwitcherSheet(
   try {
     purged = await doPurge();
   } catch (_) {}
-  // C11 在个人模式:这里原来把返回值**扔掉**了,于是家人那份过期的共享档案照旧
-  // 从列表里消失、本机目录被删,屏上一个字都没有 —— 而这正是 C11 的原话,
-  // 且发生在原来那个 purge 点上(评审 Important 4)。
-  final notice = expiredGrantNotice(purged);
-  if (notice != null && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(notice)));
-  }
   await ProfileManager.instance.ensureLoaded();
   final members = ProfileManager.instance.profiles;
   final currentId = ProfileManager.instance.currentId.value;
@@ -110,6 +103,16 @@ Future<void> showMemberSwitcherSheet(
       );
     },
   );
+  // C11 在个人模式:`purgeExpired` 的返回值原来被**扔掉**了,于是家人那份过期的
+  // 共享档案照旧从列表里消失、本机目录被删,屏上一个字都没有(评审 Important 4)。
+  //
+  // ⚠️ **必须等 `showModalBottomSheet` 返回之后再弹。** 第一轮把它放在打开弹窗
+  // **之前**,SnackBar 从屏幕底部升起、而底部弹窗整块盖在它上面 —— 那 4 秒里用户
+  // 一个字都看不见(复审用 hitTest 证明)。这句话只有在弹窗收起之后才真的"说出口"。
+  final notice = expiredGrantNotice(purged);
+  if (notice != null && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(notice)));
+  }
   if (action == null || !context.mounted) return;
   if (action.startsWith('member:')) {
     // action 里带的是**成员 id**,不是名字——名字可改、可重复,不能拿来寻址。

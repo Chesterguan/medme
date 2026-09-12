@@ -554,7 +554,11 @@ void main() {
       expect(ProfileManager.instance.byId(p.id)!.name, '李秀兰');
     });
 
-    test('病历里识别不到姓名:名字留在占位串上,不改成空的', () async {
+    // 复审新问题 2:这条原来断言"名字留在占位串上"—— 而那恰恰是一个死循环的入口:
+    // 名字还是占位串 → 每次启动 `restoreProfileKeys` 都把它重新排进首同步队列 →
+    // 反复切成员、屏幕闪烁,切换器一直显示「正在恢复…点这里重试」,而它其实早就
+    // 同步好了。空档案和正则一个都没命中都会走到这儿,不是边角情形。
+    test('同步成功但病历里抽不出姓名:换成中性名字,把"还是占位名"这条证据消费掉', () async {
       final p = await placeholder(ProfileManager.restoringPlaceholderName);
       await firstSyncAndName(
         p,
@@ -563,7 +567,38 @@ void main() {
         switchAndReopen: (id, {String? revertTo}) async {},
         detectedName: () async => '  ',
       );
-      expect(ProfileManager.instance.byId(p.id)!.name, ProfileManager.restoringPlaceholderName);
+      expect(ProfileManager.instance.byId(p.id)!.name, ProfileManager.restoredFallbackName);
+      expect(
+        ProfileManager.cloudPlaceholderNames,
+        isNot(contains(ProfileManager.instance.byId(p.id)!.name)),
+        reason: '不再是占位名 = 下次启动不会被重新排队',
+      );
+    });
+
+    test('两个都抽不出姓名的:名字不撞(「云端成员」/「云端成员 2」)', () async {
+      final a = await placeholder(ProfileManager.restoringPlaceholderName);
+      await firstSyncAndName(
+        a,
+        revertTo: 'p-1',
+        sync: (x) async {},
+        switchAndReopen: (id, {String? revertTo}) async {},
+        detectedName: () async => null,
+      );
+      final bId = (await ProfileManager.instance.create(
+        ProfileManager.restoringPlaceholderName,
+        userManaged: false,
+      ))!;
+      await ProfileManager.instance.markCloud(bId, 'prf_new_2', 'owner', null);
+      await firstSyncAndName(
+        ProfileManager.instance.byId(bId)!,
+        revertTo: 'p-1',
+        sync: (x) async {},
+        switchAndReopen: (id, {String? revertTo}) async {},
+        detectedName: () async => null,
+      );
+
+      expect(ProfileManager.instance.byId(a.id)!.name, '云端成员');
+      expect(ProfileManager.instance.byId(bId)!.name, '云端成员 2');
     });
 
     test('同步失败:异常照原样抛出,名字不动(调用方决定怎么处理)', () async {

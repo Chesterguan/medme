@@ -347,8 +347,12 @@ class ProfileLockedActions extends StatelessWidget {
 ///
 /// **不 await 它**(评审 Important 3)。它第一件事是一次网络请求,而 `Net.connect`
 /// 是 20 秒、`Net.idle` 是 30 秒 —— 单单一个 `GET /v1/profiles` 就能把启动画面按住
-/// 约 50 秒,而且没有任何进度提示。`unawaited` + [restoreProfileKeysBudget] 的超时:
-/// 超时只是"不再把它算作启动的一部分",里头的活继续干完。
+/// 约 50 秒,而且没有任何进度提示。
+///
+/// 这里**不再包一层 `.timeout()`**(复审新问题 4):既然没人 await 这个 Future,
+/// 那个超时不改变任何行为,只留下一个没人取消的 pending Timer。真正的超时下沉到
+/// `AccountFlow.restoreProfileKeys` 里那一次 `getJson` 上(见
+/// `account_flow.profilesFetchBudget`),在那儿它是真的。
 ///
 /// 排在开箱**之后**(而不是和它并发):它会 `create()`/`switchTo` 动
 /// `ProfileManager.currentId`,而 `openCurrentProfileVault` 读的正是 `current` ——
@@ -370,14 +374,9 @@ Future<void> runBootSequence({
     // 开箱与读模式互不依赖,并发跑不拖慢启动。
     await Future.wait([openVault(), loadMode()]);
   } finally {
-    unawaited(
-      restoreProfileKeys().timeout(restoreProfileKeysBudget, onTimeout: () {}).catchError((_) {}),
-    );
+    unawaited(restoreProfileKeys().catchError((_) {}));
   }
 }
-
-/// 「补齐云成员」这件事最多还算作启动的一部分多久。超过就不等了(它自己继续跑完)。
-const restoreProfileKeysBudget = Duration(seconds: 10);
 
 /// 启动引导:先在真实沙盒目录打开保险箱(FFI `open_vault`),再进主界面。
 /// 打开是可韧性的(损坏的派生 db 会从 log 重建);目录取自 path_provider。

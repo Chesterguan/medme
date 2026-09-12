@@ -61,24 +61,39 @@ void main() {
 
   // ---- 评审 Important 4:C11 的提示原来只落在医生模式 ----
   group('C11 在个人模式:过期被清掉也要说一句', () {
-    testWidgets('清掉了一份:SnackBar 说「X 的授权已到期,已移出」', (tester) async {
+    /// 关掉底部弹窗(点一下它外面的遮罩)—— SnackBar 只有在弹窗收起之后才说得出口。
+    Future<void> dismissSheet(WidgetTester tester) async {
+      await tester.tapAt(const Offset(400, 20));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('清掉了一份:弹窗收起后 SnackBar **可见**地说「X 的授权已到期,已移出」', (tester) async {
       await pumpSwitcher(
         tester,
         purgeExpired: () async => const [
           Profile(id: 'p-9', name: '李秀兰', cloudId: 'prf_gone', role: 'viewer'),
         ],
       );
-      expect(find.text('李秀兰 的授权已到期,已移出'), findsOneWidget);
+      // 第一轮把这句话弹在**打开弹窗之前** —— SnackBar 从底部升起,而底部弹窗整块
+      // 盖在它上面,那 4 秒里用户一个字都看不见。所以这里用 `hitTestable()`:
+      // `findsOneWidget` 对"在树里但被盖住"是过得去的,而那正是当时的 bug。
+      expect(find.text('李秀兰 的授权已到期,已移出').hitTestable(), findsNothing,
+          reason: '弹窗还开着,此刻不该(也盖不住地)显示');
+
+      await dismissSheet(tester);
+      expect(find.text('李秀兰 的授权已到期,已移出').hitTestable(), findsOneWidget);
     });
 
     testWidgets('什么都没清掉:不说话(不骚扰每一次打开切换器)', (tester) async {
       await pumpSwitcher(tester);
+      await dismissSheet(tester);
       expect(find.textContaining('已到期'), findsNothing);
     });
 
     testWidgets('清理本身失败:吞掉,切换器照常打开、也不乱说一句到期', (tester) async {
       await pumpSwitcher(tester, purgeExpired: () async => throw Exception('purge boom'));
       expect(find.text('切换成员'), findsOneWidget);
+      await dismissSheet(tester);
       expect(find.textContaining('已到期'), findsNothing);
       expect(find.textContaining('purge boom'), findsNothing);
     });

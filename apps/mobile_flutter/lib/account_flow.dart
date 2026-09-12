@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
@@ -40,6 +42,18 @@ enum LoginOutcome {
   /// 本机已经有私钥,可以直接用。
   ready,
 }
+
+/// 「把云端档案清单拉回来」最多等多久(`AccountFlow.restoreProfileKeys`)。
+///
+/// 比 `Net` 自己那两个超时(连接 20s + 空闲 30s)短得多是刻意的:这一步跑在启动
+/// 序列里,拿不到清单只是"这次没补齐",下一次启动/登录还会再来;而让它最坏吊 50 秒
+/// 会把后面整条链(解密、建成员、排首同步队列)一起堵住。
+///
+/// **不是 `const`**:测试要把它改小。这是一个真实的 `Timer`,在 `test()` 里等 10 秒
+/// 就是等 10 秒真实时间 —— 为一条用例把整个套件拖慢一半不值得(同
+/// `Analytics.debugSink` 的套路:一个模块级可替换的钩子)。
+@visibleForTesting
+Duration profilesFetchBudget = const Duration(seconds: 10);
 
 /// 口令/恢复码解不开私钥。**绝不吞掉、绝不清 session**——调用方只应据此展示
 /// 错误并允许重试,账号登录态本身不受影响。
@@ -287,7 +301,16 @@ class AccountFlow {
 
     List<dynamic> serverProfiles;
     try {
-      serverProfiles = await api.getJson('/v1/profiles') as List<dynamic>;
+      // **超时要加在这儿**(复审新问题 4)。它原来套在调用方(`main.dart` 的启动
+      // 序列)外面,而那个 Future 是 `unawaited` 的 —— 于是那个 `.timeout()` 纯属
+      // 装饰:没人等它的结果,只留下一个没人取消的 pending Timer。
+      //
+      // 放在这一句上它是真的:`Net.connect` 20s + `Net.idle` 30s 意味着单单这一次
+      // 请求最坏能吊 50 秒,而后面整条链(解密、建成员、排队)都堵在它后面。
+      // `TimeoutException` 被下面同一个 `catch` 接住 —— 与"断网"同等对待:这一步
+      // 是"顺手补",拿不到清单就下次再说。
+      serverProfiles =
+          await api.getJson('/v1/profiles').timeout(profilesFetchBudget) as List<dynamic>;
     } catch (_) {
       return;
     }
@@ -310,33 +333,37 @@ class AccountFlow {
         if (tombstoned.contains(cloudId)) continue;
         final wrapped = entry['wrapped_profile_key'] as String?;
         if (wrapped == null) continue;
-        final hasLocalProfile = ProfileManager.instance.profiles.any((p) => p.cloudId == cloudId);
-        if (hasLocalProfile && await session.profileKey(cloudId) != null) {
-          // 密钥齐了,但**首同步可能从来没成功过** —— 名字还是我们自己写上去的占位
-          // 串就是证据(首同步成功会把它换成病历里的姓名)。重新排一次(评审
-          // Important 2:密钥是在同步之前就存下的,所以下一次启动这条 `continue`
-          // 会把它整条跳过,于是那唯一一次尝试里的一次网络抖动 = 永久卡住)。
-          final local = ProfileManager.instance.profiles.firstWhere((p) => p.cloudId == cloudId);
+        final role = entry['role'] as String? ?? 'viewer';
+        final expiresAt = DateTime.tryParse(entry['expires_at'] as String? ?? '');
+        final local = ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull;
+        if (local != null && await session.profileKey(cloudId) != null) {
+          // 密钥齐了 —— 但还有两件事要做,不能直接 `continue`:
+          await _refreshLocalGrant(local, cloudId, role, expiresAt);
+          // **首同步可能从来没成功过** —— 名字还是我们自己写上去的占位串就是证据
+          // (首同步成功必然把它换掉,哪怕病历里抽不出姓名也会换成
+          // `restoredFallbackName`,见 `nameCloudProfileOnFirstSync`)。重新排一次
+          // (评审 Important 2:密钥是在同步之前就存下的,所以下一次启动这条
+          // `continue` 会把它整条跳过,于是那唯一一次尝试里的一次网络抖动 =
+          // 永久卡住)。
           if (ProfileManager.cloudPlaceholderNames.contains(local.name)) adopted.add(local.id);
+          if (cloudId == currentCloudId) restoredCurrent = true;
           continue;
         }
         // **先解密再建成员**:解不开(这条数据坏了 / 不是用这把私钥封的)就整条
         // 跳过,不留下一个永远打不开的空壳成员。
         final key = await crypto.openSealed(priv, base64Decode(wrapped));
         await session.putProfileKey(cloudId, key);
-        if (!hasLocalProfile) {
+        if (local == null) {
           final localId = await ProfileManager.instance.create(
             ProfileManager.restoringPlaceholderName,
             userManaged: false,
           );
           if (localId == null) continue;
-          await ProfileManager.instance.markCloud(
-            localId,
-            cloudId,
-            entry['role'] as String? ?? 'viewer',
-            DateTime.tryParse(entry['expires_at'] as String? ?? ''),
-          );
+          await ProfileManager.instance.markCloud(localId, cloudId, role, expiresAt);
           adopted.add(localId);
+        } else {
+          await _refreshLocalGrant(local, cloudId, role, expiresAt);
+          if (ProfileManager.cloudPlaceholderNames.contains(local.name)) adopted.add(local.id);
         }
         if (cloudId == currentCloudId) restoredCurrent = true;
       } catch (_) {
@@ -374,6 +401,19 @@ class AccountFlow {
     }
   }
 
+
+  /// 服务端那边的角色/到期变了就写回本机。
+  ///
+  /// 最典型的那一次变化是**所有权转移**:对方接受了我的转移链接,服务端在兑换时
+  /// 把我从 owner 自动降成 editor(见 `services/api/db.py`)。本机不刷新的话会一直
+  /// 以为自己还是 owner —— 账号屏那颗「把这份档案转给家人」还在,点一次撞一个 403
+  /// (复审新问题 3)。被授权档案续期/缩期是同一件事的另一面。
+  ///
+  /// 没变就不写盘(`markCloud` 每次都会 `_save()`,而这个方法在每次启动的循环里)。
+  Future<void> _refreshLocalGrant(Profile local, String cloudId, String role, DateTime? expiresAt) async {
+    if (local.role == role && local.expiresAt == expiresAt) return;
+    await ProfileManager.instance.markCloud(local.id, cloudId, role, expiresAt);
+  }
 
   /// 本屏重建/冷启动时用:如果本机已经有登录 token(`loginOtp`/`loginApple`
   /// 早先存过),照 [_afterLogin] 同一套逻辑重新判一次该走哪个阶段——不重新发
