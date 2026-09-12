@@ -222,6 +222,9 @@ class AccountFlow {
   /// `GET /v1/profiles` 拿到这个账号能访问的全部云档案(含用账号公钥封的
   /// `wrapped_profile_key`),用账号私钥拆开:
   ///
+  /// * cloudId 在本机的删除黑名单里(`AccountSession.deletedCloudProfileIds`)
+  ///   → 整条跳过,密钥不补、成员不建——这个成员是被用户在本机主动删掉的,
+  ///   owner 授权服务端删不掉,不跳过就是"删了又自动长回来"。
   /// * 本地**已经有**这个成员(有同一个 cloudId)、只是缺密钥 → 把密钥补回去;
   /// * 本地**没有**这个成员 → **新建一个**(最终评审 I3,spec 的「换机」那条路):
   ///   名字是占位的「云端档案 `<cloudId 前 6 位>`」,`markCloud` 记下
@@ -267,6 +270,10 @@ class AccountFlow {
     } catch (_) {
       return;
     }
+    // 本机主动删过的云成员——owner 授权服务端删不掉,`GET /v1/profiles` 还会照样
+    // 报回来。不跳过的话,这里就是"删了又自动长回来"的元凶(见 `account.dart` /
+    // `vault_boot.removeProfileAndReopenImpl` 的说明)。
+    final tombstoned = await session.deletedCloudProfileIds();
 
     // `ProfileManager.create()` 会把 current 切到新建的那个成员——而这里只是
     // "顺手补齐",绝不该改变用户此刻正在看哪个成员。新建完统一切回来。
@@ -276,6 +283,7 @@ class AccountFlow {
       try {
         final entry = raw as Map<String, dynamic>;
         final cloudId = entry['profile_id'] as String;
+        if (tombstoned.contains(cloudId)) continue;
         final wrapped = entry['wrapped_profile_key'] as String?;
         if (wrapped == null) continue;
         final hasLocalProfile = ProfileManager.instance.profiles.any((p) => p.cloudId == cloudId);

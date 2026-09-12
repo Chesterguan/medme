@@ -339,7 +339,13 @@ Future<bool> removeProfileAndReopenImpl(String id, {required Future<void> Functi
 
   if (!await ProfileManager.instance.remove(id)) return false;
   await ReviewState.instance.removeMember(id);
-  if (cloudId != null) await AccountSession.instance.removeProfileKey(cloudId);
+  if (cloudId != null) {
+    await AccountSession.instance.removeProfileKey(cloudId);
+    // owner 授权服务端删不掉(`DELETE` 没有这个端点)——不记这一笔,换机/重新
+    // 登录时 `AccountFlow.restoreProfileKeys` 拿 `GET /v1/profiles` 还是会看到
+    // 这个档案,把用户刚删掉的成员原样建回来。见 `account.dart` 的说明。
+    await AccountSession.instance.tombstoneCloudProfile(cloudId);
+  }
 
   for (final base in [localBase, ?cloudBase]) {
     final d = Directory(base);

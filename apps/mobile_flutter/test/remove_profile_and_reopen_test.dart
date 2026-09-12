@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +30,10 @@ void main() {
       const MethodChannel('plugins.flutter.io/path_provider'),
       (call) async => support.path,
     );
+    // `removeProfileAndReopenImpl` 现在还会给云成员记一笔删除黑名单(见
+    // `cloud_profile_tombstone_test.dart`),那一步落在 shared_preferences——不
+    // mock 这个 channel 就会 `MissingPluginException`。
+    SharedPreferences.setMockInitialValues({});
     FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform({});
     AccountSession.instance.resetForTest();
     await ProfileManager.instance.ensureLoaded();

@@ -36,6 +36,23 @@ const _appBuildNumber = '56';
 /// 同步先不投入。底层能力未删,改回 true 即恢复。
 const bool _showIcloudSync = false;
 
+/// 这一节到底该不该露出来:总开关收着的情况下,如果这台设备**已经**开着 iCloud
+/// 同步(老用户,在总开关收起之前开的),照样要露出来——不然这些用户在设置里
+/// 找不到任何入口关掉它(C3:「请先在设置里关闭 iCloud 同步」这句提示指向的正是
+/// 这个开关)。`icloud` 为 null(状态还没查回来)时按未开处理。
+@visibleForTesting
+bool shouldShowIcloudSection(IcloudStatusDto? icloud) => _showIcloudSync || (icloud?.enabled ?? false);
+
+/// 删除确认弹窗里,云成员比纯本地成员多出来的一句提醒——`removeProfileAndReopen`
+/// 对云成员做的其实是"从这台手机摘掉"(见 `vault_boot.dart` 的说明:owner 授权
+/// 服务端删不掉,只是本机记一笔黑名单不再自动拉回),不是原文案暗示的"彻底删除"。
+/// 纯本地成员(`p.cloudId == null`)没有这个落差,返回 null 不多说这句。
+@visibleForTesting
+String? cloudRemovalNotice(Profile p) => p.cloudId == null
+    ? null
+    : '从这台手机上删除;云端副本和其他设备不受影响,本机不会再自动拉回;'
+        '要彻底删除请注销账号或撤销授权';
+
 /// 分组卡片列表,视觉还原自 `apps/mobile/src/App.tsx` 的设置区(sect + group + row)。
 /// 保险箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。
 class SettingsScreen extends StatefulWidget {
@@ -456,7 +473,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           //
           // 原来的注释保留备查:iCloud 同步是 iOS 原生能力,安卓无 iCloud,所以这一节
           // 本来就只对 iOS 显示,否则安卓用户会看到一个永远开不了的死开关。
-          if (_showIcloudSync && Platform.isIOS) ...[
+          if (shouldShowIcloudSection(_icloud) && Platform.isIOS) ...[
             _SectionLabel('iCloud 同步(实验性)'),
             _SettingsGroup(
               children: [
@@ -635,11 +652,12 @@ class _VaultCard extends StatelessWidget {
                 ),
               ),
             const SizedBox(height: 14),
-            const Text(
-              '连同拍摄的原件一起,从这台手机上彻底删除。\n'
-              '删除后无法恢复,我们也帮不了你。',
+            Text(
+              cloudRemovalNotice(p) ??
+                  '连同拍摄的原件一起,从这台手机上彻底删除。\n'
+                      '删除后无法恢复,我们也帮不了你。',
               textAlign: TextAlign.center,
-              style: TextStyle(height: 1.5),
+              style: const TextStyle(height: 1.5),
             ),
           ],
         ),

@@ -423,12 +423,13 @@ def extract_route(body: dict, aid=Depends(extract_account_dep), conn=Depends(con
     if not isinstance(body, dict):
         raise HTTPException(400, "bad request")
     payload = body.get("payload")
-    if isinstance(payload, str):
-        if body.get("mode") == "image":
-            if len(payload) > EXTRACT_IMAGE_MAX_BYTES:
-                raise HTTPException(413, "payload too large")
-        elif len(payload.encode()) > EXTRACT_TEXT_MAX_BYTES:
+    if not isinstance(payload, str):
+        raise HTTPException(400, "payload must be a string")
+    if body.get("mode") == "image":
+        if len(payload) > EXTRACT_IMAGE_MAX_BYTES:
             raise HTTPException(413, "payload too large")
+    elif len(payload.encode()) > EXTRACT_TEXT_MAX_BYTES:
+        raise HTTPException(413, "payload too large")
     if db.usage_tokens_this_month(conn, aid) >= EXTRACT_MONTHLY_TOKEN_CAP:
         raise HTTPException(429, "monthly token cap reached")
     try:

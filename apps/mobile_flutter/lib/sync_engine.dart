@@ -240,6 +240,10 @@ class SyncEngine {
     final r = await api.postJson('/v1/profiles', {'wrapped_profile_key': base64Encode(wrapped)});
     final cloudId = r['profile_id'] as String;
     await session.putProfileKey(cloudId, key);
+    // 同 `Grants.redeem` 的道理:这个 cloudId 万一命中过之前本机删过的黑名单,
+    // 这次重新开通是合法的,得清掉,不然下次 `restoreProfileKeys` 会把它当历史
+    // 删除跳过。
+    await session.clearCloudProfileTombstone(cloudId);
     await ProfileManager.instance.markCloud(p.id, cloudId, 'owner', null);
     return cloudId;
   }

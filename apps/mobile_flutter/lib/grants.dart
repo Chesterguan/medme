@@ -126,6 +126,10 @@ class Grants {
         'wrapped_profile_key': base64Encode(mine),
       });
       await session.putProfileKey(profileId, key);
+      // 这次兑换是合法领回——即便这个 cloudId 之前在本机被删过(见
+      // `account.dart`/`vault_boot.removeProfileAndReopenImpl`),这次重新拿到
+      // 的授权也该生效,不能被 `AccountFlow.restoreProfileKeys` 当成历史删除跳过。
+      await session.clearCloudProfileTombstone(profileId);
 
       // 这个云档案本机已经有一个入口——重新兑换同一条链接、或者角色/到期被服务端
       // 更新过(比如医生邀请续期)——复用它,别再建一个重复的空壳档案出来。

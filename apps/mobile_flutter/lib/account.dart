@@ -89,6 +89,34 @@ class AccountSession {
   /// 留着只是白占 Keychain 位置、多一份"看起来还有效"的敏感材料。
   Future<void> removeProfileKey(String cloudId) => _secure.delete(key: 'pk_$cloudId');
 
+  static const _tombstoneKey = 'deleted_cloud_profiles';
+
+  /// 本机主动删过的云成员(cloudId 集合)——owner 授权服务端删不掉(见
+  /// `vault_boot.removeProfileAndReopenImpl` 的说明),`AccountFlow.restoreProfileKeys`
+  /// 换机/重新登录时拿 `GET /v1/profiles` 一样会看到这些还挂着的档案,不认这份
+  /// 名单就会把用户刚删掉的成员原样建回来。存 shared_preferences——不是密钥,
+  /// 泄露无害。
+  Future<Set<String>> deletedCloudProfileIds() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getStringList(_tombstoneKey) ?? const <String>[]).toSet();
+  }
+
+  /// 删成员时记一笔(只在被删的是云成员、即有 `cloudId` 时调用)。
+  Future<void> tombstoneCloudProfile(String cloudId) async {
+    final p = await SharedPreferences.getInstance();
+    final ids = (p.getStringList(_tombstoneKey) ?? const <String>[]).toSet()..add(cloudId);
+    await p.setStringList(_tombstoneKey, ids.toList());
+  }
+
+  /// 这个 cloudId 又被合法地领回来了(`Grants.redeem` 兑换到同一个档案 /
+  /// `SyncEngine.enableCloud` 注册到同一个档案)——之前的"本机主动删过"不再成立,
+  /// 清掉,免得下次 `restoreProfileKeys` 把这次合法领回的档案也当成历史删除跳过。
+  Future<void> clearCloudProfileTombstone(String cloudId) async {
+    final p = await SharedPreferences.getInstance();
+    final ids = (p.getStringList(_tombstoneKey) ?? const <String>[]).toSet()..remove(cloudId);
+    await p.setStringList(_tombstoneKey, ids.toList());
+  }
+
   /// 测试专用:把内存态重置成刚启动、还没 `ensureLoaded()` 的样子,不碰底层存储。
   @visibleForTesting
   void resetForTest() {

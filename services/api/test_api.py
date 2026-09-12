@@ -964,6 +964,24 @@ def test_extract_rejects_oversize_payloads_413(monkeypatch):
     assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x" * app_module.EXTRACT_TEXT_MAX_BYTES}, headers=ha).status_code == 200
 
 
+def test_extract_rejects_non_str_payload_400(monkeypatch):
+    """size 上限只在 `isinstance(payload, str)` 时才生效(app.py ~426)——payload
+    不是 str(dict/list/int/None)时那段体积检查整个被跳过,请求会带着一个没被
+    量过体积的东西继续往下走。必须在做任何事之前先拒收非 str payload。"""
+    import extract
+    calls = []
+    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: calls.append(model) or {
+        "choices": [{"message": {"content": "{}"}}], "usage": {}})
+    a = login("13800000138", "x4")
+    ha = _h(a["access"])
+    for bad_payload in [{"a": "b"}, ["x"], 123, None]:
+        r = client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": bad_payload}, headers=ha)
+        assert r.status_code == 400, bad_payload
+    assert calls == [], "非法 payload 不该打到上游"
+    with dbm.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM usage WHERE account_id=%s", (a["account_id"],)).fetchone()[0] == 0
+
+
 def test_extract_monthly_token_cap_429(monkeypatch):
     """I7:月度 token 天花板——已用量到顶就 429,不再打上游;按账号算,不是全局。"""
     import extract
