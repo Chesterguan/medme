@@ -35,6 +35,17 @@ class _KdfBenchResult {
 /// [AccountFlow],本屏只负责按返回值/异常显示对应界面。
 enum _Phase { idle, otpSent, keySetup, showRecovery, unlock, ready }
 
+/// A4:注册口令的最短长度。打错一个字要到换机那天才暴露,唯一的出路是恢复码——
+/// 所以这一步要做的是**让人看见自己打的是什么**(眼睛)加**挡住手滑**(长度下限),
+/// 不是加更多规则。6 位是下限不是建议,不强制数字/符号:强制复杂度只会让老人
+/// 把它写在手机壳上。
+const _minPasswordLen = 6;
+
+/// Argon2id 在老机器上要几秒(64 MiB/t=3,见 `AccountFlow.kdf`),而转圈时原来
+/// 一句话都没有——用户会以为卡死了、切走、甚至杀掉 App(那一刻杀掉正好是
+/// `prepareKeys` 还没 commit 的窗口,等于白做一遍)。
+const _kdfWaitHint = '正在生成密钥,老一点的手机可能要等几秒,请不要退出';
+
 class AccountScreen extends StatefulWidget {
   const AccountScreen({
     super.key,
@@ -78,6 +89,11 @@ class _AccountScreenState extends State<AccountScreen> {
   String? _error;
 
   bool _useRecoveryUnlock = false;
+
+  /// A4:口令眼睛。注册和解锁各一个——两屏不会同时在,但把它们合成一个字段会让
+  /// 「注册时点过显示」莫名其妙地带到换机那天的解锁屏上。
+  bool _showRegPassword = false;
+  bool _showUnlockPassword = false;
 
   String? _recoveryCode;
 
@@ -362,15 +378,23 @@ class _AccountScreenState extends State<AccountScreen> {
       style: TextStyle(color: MedMe.faint, height: 1.5),
     ),
     const SizedBox(height: 20),
-    TextField(
-      key: const Key('password'),
+    _passwordField(
       controller: _regPasswordCtrl,
-      obscureText: true,
-      decoration: const InputDecoration(labelText: '设置一个口令'),
+      label: '设置一个口令',
+      helper: '至少 $_minPasswordLen 位。记不住就写下来收好,别只记在脑子里。',
+      visible: _showRegPassword,
+      onToggle: () => setState(() => _showRegPassword = !_showRegPassword),
     ),
+    if (_regPasswordCtrl.text.isNotEmpty && _regPasswordCtrl.text.length < _minPasswordLen)
+      _errorText('还差 ${_minPasswordLen - _regPasswordCtrl.text.length} 位'),
     if (_error != null) _errorText(_error!),
     const SizedBox(height: 16),
-    _asyncButton(label: '生成密钥', onPressed: _registerKeys),
+    _asyncButton(
+      label: '生成密钥',
+      onPressed: _registerKeys,
+      enabled: _regPasswordCtrl.text.length >= _minPasswordLen,
+      busyHint: _kdfWaitHint,
+    ),
   ];
 
   List<Widget> _recoveryContent() => [
@@ -427,15 +451,19 @@ class _AccountScreenState extends State<AccountScreen> {
         decoration: const InputDecoration(labelText: '输入恢复码'),
       )
     else
-      TextField(
-        key: const Key('password'),
+      _passwordField(
         controller: _unlockPasswordCtrl,
-        obscureText: true,
-        decoration: const InputDecoration(labelText: '输入口令'),
+        label: '输入口令',
+        visible: _showUnlockPassword,
+        onToggle: () => setState(() => _showUnlockPassword = !_showUnlockPassword),
       ),
     if (_error != null) _errorText(_error!),
     const SizedBox(height: 16),
-    _asyncButton(label: _useRecoveryUnlock ? '用恢复码解锁' : '解锁', onPressed: _unlock),
+    _asyncButton(
+      label: _useRecoveryUnlock ? '用恢复码解锁' : '解锁',
+      onPressed: _unlock,
+      busyHint: _useRecoveryUnlock ? null : _kdfWaitHint,
+    ),
     const SizedBox(height: 8),
     TextButton(
       onPressed: _busy
@@ -446,7 +474,57 @@ class _AccountScreenState extends State<AccountScreen> {
             }),
       child: Text(_useRecoveryUnlock ? '改用口令解锁' : '口令忘了?改用恢复码解锁'),
     ),
+    // A6:两样都丢了的人原来**卡死在这一屏**——注册时的警告到位,丢了之后反而
+    // 一句话都没有、一个出口都没有。
+    if (_logoutBusy)
+      const Center(child: CircularProgressIndicator())
+    else
+      TextButton(
+        key: const Key('lost_everything'),
+        onPressed: _busy ? null : _lostEverything,
+        child: const Text('口令和恢复码都丢了,怎么办?'),
+      ),
   ];
+
+  /// A6。照实说:我们不托管密钥,所以云端那份数据谁都解不开,我们也一样。
+  /// 唯一真实存在的出路是退出登录、从头开始——取消则一切原样。
+  Future<void> _lostEverything() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('两样都丢了的话'),
+        content: const Text(
+          '我们不托管你的密钥。口令和恢复码是唯一能解开账号密钥的两把钥匙——'
+          '两样都没有了,云端那份数据谁都打不开,我们也没有任何办法帮你找回。\n\n'
+          '还能做的事:退出登录、重新开始。这台手机上没开通云同步的病历不会被'
+          '删除;已经开通过云同步的那些成员,在这台手机上会一直锁着。',
+          style: TextStyle(height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('退出登录,重新开始'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _logoutBusy = true);
+    try {
+      await widget.flow.logout();
+      if (!mounted) return;
+      setState(() {
+        _phase = _Phase.idle;
+        _error = null;
+        _useRecoveryUnlock = false;
+        _showUnlockPassword = false;
+      });
+    } finally {
+      if (mounted) setState(() => _logoutBusy = false);
+    }
+  }
 
   List<Widget> _readyContent() => [
     const Text('已登录', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
@@ -1089,11 +1167,62 @@ class _AccountScreenState extends State<AccountScreen> {
     child: Text(text, style: const TextStyle(color: MedMe.danger)),
   );
 
-  Widget _asyncButton({required String label, required VoidCallback onPressed}) {
-    if (_busy) return const Center(child: CircularProgressIndicator());
+  /// 口令输入框 + A4 的「显示/隐藏」眼睛。注册与解锁共用(两屏不同时在,所以
+  /// 共用 `Key('password')`——已有测试按这个键找它)。
+  ///
+  /// `onChanged` 里那一次 `setState` 不是多余的:注册屏的「还差几位」和「生成
+  /// 密钥」能不能点,都得跟着每一次按键走。
+  Widget _passwordField({
+    required TextEditingController controller,
+    required String label,
+    required bool visible,
+    required VoidCallback onToggle,
+    String? helper,
+  }) => TextField(
+    key: const Key('password'),
+    controller: controller,
+    obscureText: !visible,
+    onChanged: (_) => setState(() {}),
+    decoration: InputDecoration(
+      labelText: label,
+      helperText: helper,
+      helperMaxLines: 2,
+      suffixIcon: IconButton(
+        key: const Key('password_eye'),
+        icon: Icon(visible ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+        tooltip: visible ? '隐藏口令' : '显示口令',
+        onPressed: onToggle,
+      ),
+    ),
+  );
+
+  /// [enabled] 为 false 时按钮画出来但不可点(`onPressed: null`)——不是把它藏
+  /// 起来:用户得看见下一步在哪、为什么还不能点(提示就在按钮上方)。
+  /// [busyHint] 是转圈时那句话,见 [_kdfWaitHint]。
+  Widget _asyncButton({
+    required String label,
+    required VoidCallback onPressed,
+    bool enabled = true,
+    String? busyHint,
+  }) {
+    if (_busy) {
+      return Column(
+        children: [
+          const Center(child: CircularProgressIndicator()),
+          if (busyHint != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              busyHint,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: MedMe.faint, height: 1.5),
+            ),
+          ],
+        ],
+      );
+    }
     return SizedBox(
       width: double.infinity,
-      child: FilledButton(onPressed: onPressed, child: Text(label)),
+      child: FilledButton(onPressed: enabled ? onPressed : null, child: Text(label)),
     );
   }
 }
