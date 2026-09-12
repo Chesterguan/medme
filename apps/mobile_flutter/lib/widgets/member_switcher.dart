@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 弹出成员切换器:列出全部成员,点即切换。**不含「添加成员」** —— 新建成员
 /// 只在档案屏那颗「+」一个入口,见下方注释。
@@ -17,10 +18,16 @@ import 'package:mobile_flutter/vault_boot.dart';
 /// [onChanged] 供调用方在异步重开完成前先做一次同步 UI 反馈(比如 tab 条的
 /// 高亮),不是必需的——各屏本就监听 `vaultRevision`,重开完成后会自动刷新;
 /// 这个回调只是让调用方自己的屏幕反应快半拍。
+///
+/// [switchTo] 是测试注入点,默认就是真实的 [switchProfileAndReopen]——
+/// `flutter test` 不能跑到它内部的 FFI 开箱,所以测试传一个包了假 `reopen` 的
+/// 替身进来(见 `test/member_switcher_locked_test.dart`)。
 Future<void> showMemberSwitcherSheet(
   BuildContext context, {
   VoidCallback? onChanged,
+  Future<void> Function(String id)? switchTo,
 }) async {
+  final doSwitch = switchTo ?? switchProfileAndReopen;
   await ProfileManager.instance.ensureLoaded();
   final members = ProfileManager.instance.profiles;
   final currentId = ProfileManager.instance.currentId.value;
@@ -79,8 +86,15 @@ Future<void> showMemberSwitcherSheet(
     // action 里带的是**成员 id**,不是名字——名字可改、可重复,不能拿来寻址。
     final id = action.substring('member:'.length);
     if (id != currentId) {
-      await switchProfileAndReopen(id);
-      onChanged?.call();
+      try {
+        await doSwitch(id);
+        onChanged?.call();
+      } on ProfileLocked catch (e) {
+        // 目标是个锁着的云档案(cloudId 有、本机没解锁密钥)——`switchProfileAndReopen`
+        // 已经把 currentId 退回原成员了,这里只需要让用户知道发生了什么。
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(e.toString())));
+      }
     }
   }
 }

@@ -142,6 +142,21 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   }
 }
 
+/// [VaultBootstrap] 开箱失败时该显示的标题/正文——纯函数,不碰 UI/IO,方便在
+/// 不加载 Rust 原生库的 `flutter test` 里钉住(见
+/// `test/vault_bootstrap_error_text_test.dart`)。
+///
+/// [ProfileLocked] 是一个**已知、可操作**的状态(账号没解锁),不是"箱子坏了"——
+/// 「请重启 App 再试」对它是错误建议(重启不会解锁账号),所以单独给一条不带那句
+/// 建议的文案,把「需要解锁账号」直接摆在标题上。
+@visibleForTesting
+({String title, String body}) vaultBootstrapErrorText(Object error) {
+  if (error is ProfileLocked) {
+    return (title: '需要解锁账号', body: '$error');
+  }
+  return (title: '无法打开你的健康档案', body: '$error\n\n请重启 App 再试。');
+}
+
 /// 启动引导:先在真实沙盒目录打开保险箱(FFI `open_vault`),再进主界面。
 /// 打开是可韧性的(损坏的派生 db 会从 log 重建);目录取自 path_provider。
 /// iCloud 已接入(见 `vault_boot` / `icloud_bridge`):容器可解析且用户在设置里开启
@@ -209,6 +224,7 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
         }
         if (snap.hasError) {
           final c = MedColors.of(context);
+          final text = vaultBootstrapErrorText(snap.error!);
           return Scaffold(
             body: Center(
               child: Padding(
@@ -222,13 +238,17 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
                     // 原先四行挤在同一个 15px 里,最要紧的那句读不出来。
                     // ⚠️ 这里**不加**任何「你的记录没有丢」之类的安慰:箱子都没
                     // 打开,我们并不知道里面怎么样,不能替它打包票。
+                    //
+                    // `ProfileLocked`(账号没解锁)单独一套文案——见
+                    // [vaultBootstrapErrorText]:「请重启 App 再试」对这个状态是
+                    // 错误建议,重启解决不了没解锁账号这件事。
                     Text(
-                      '无法打开你的健康档案',
+                      text.title,
                       style: MedType.subtitle.copyWith(color: c.ink),
                     ),
                     const SizedBox(height: MedShape.s1),
                     Text(
-                      '${snap.error}\n\n请重启 App 再试。',
+                      text.body,
                       textAlign: TextAlign.center,
                       style: MedType.body.copyWith(color: c.ink2, height: 1.6),
                     ),

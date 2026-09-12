@@ -146,9 +146,33 @@ Future<void> ensureProxyVaultOpen(String patientId) async {
 }
 
 /// 切换到某成员(按 id)并重开其保险箱,然后通知各屏刷新。
-Future<void> switchProfileAndReopen(String id) async {
+///
+/// **开箱失败(最常见是 [ProfileLocked])必须把"当前是谁"也退回去**,不能留在
+/// 「`ProfileManager.currentId` 已经指向 B、但进程里那个箱子其实还是 A 的」这个
+/// 不一致状态——那样接下来任何一次写入(手动录入/导入)都会把 B 的东西写进 A 的
+/// 保险箱。异常照原样抛给调用方(UI 据此展示消息),不吞。
+Future<void> switchProfileAndReopen(String id) => switchProfileAndReopenImpl(id, reopen: openCurrentProfileVault);
+
+/// [switchProfileAndReopen] 的本体,`reopen` 抽成参数是为了让"开箱失败要回退"
+/// 这条契约能在**不带 Rust 原生库**的 `flutter test` 里被钉住(见
+/// `test/switch_profile_and_reopen_test.dart`)——同 [runWipeSequence] 的套路。
+/// 产品代码里的唯一调用点就是 [switchProfileAndReopen],传的永远是真实现。
+@visibleForTesting
+Future<void> switchProfileAndReopenImpl(String id, {required Future<void> Function() reopen}) async {
+  final previousId = ProfileManager.instance.currentId.value;
   await ProfileManager.instance.switchTo(id);
-  await openCurrentProfileVault();
+  try {
+    await reopen();
+  } catch (_) {
+    // 回退:把 currentId 换回原来那个、重开它的箱子——这一步本身也可能失败
+    // (比如原成员这会儿也解不开了),但不能因此掩盖**原始**错误,所以吞掉回退
+    // 失败、原样 rethrow 第一次的异常。
+    try {
+      await ProfileManager.instance.switchTo(previousId);
+      await reopen();
+    } catch (_) {}
+    rethrow;
+  }
   bumpVaultRevision();
 }
 
