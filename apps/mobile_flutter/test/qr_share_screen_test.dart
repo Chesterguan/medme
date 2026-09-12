@@ -107,6 +107,12 @@ void main() {
     test('没有 cloudId(未开通云同步) → false', () {
       expect(shouldTryGrantLink(loggedIn: true, profile: noCloud), isFalse);
     });
+
+    test('F2:把云备份关掉了的 owner → false(「已开通云备份」的定义含 !cloudPaused)', () {
+      const paused = Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner', cloudPaused: true);
+      expect(shouldTryGrantLink(loggedIn: true, profile: paused), isFalse);
+      expect(shouldTryGrantLink(loggedIn: true, profile: owner), isTrue, reason: '没关的还得是 true');
+    });
   });
 
   /// owner 档案就绪(登录 + 有公钥 + 当前成员 cloudId/role 已设),role 由调用方

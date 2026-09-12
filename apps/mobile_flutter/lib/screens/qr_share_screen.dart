@@ -52,6 +52,11 @@ class QrShareScreen extends StatefulWidget {
 /// 服务端 `POST .../invites` 本来就会 403(owner-only),不判就是摸黑试一次
 /// 注定失败的请求。
 ///
+/// **「已开通云备份」= `cloudId != null && !cloudPaused`**(F2),与 `cloudRowStatus`
+/// 同一个定义。把云备份关掉的成员原来照样能拿到这个选项,而且真的会建出一条 15 天
+/// 授权 —— 他刚刚明确关掉的恰恰是"让病历上云"这件事,这条路却绕过开关把密文送上去
+/// (隐私政策里也是按"开通了云备份才有这个选项"写的)。
+///
 /// ⚠️ **它不再决定走哪条路**(UX 第二轮,创始人拍板)。在这之前它一为真就**自动**
 /// 切成授权链接,于是「开通云同步」这件事顺带改掉了诊室里那条最关键的路:医生
 /// 拿自己的手机扫一下就能看 → 变成医生必须先装 MedMe 并登录。那不是一个该由
@@ -59,7 +64,7 @@ class QrShareScreen extends StatefulWidget {
 /// [_QrShareScreenState._grantChoice] 决定,默认旧路径。
 @visibleForTesting
 bool shouldTryGrantLink({required bool loggedIn, required Profile profile}) =>
-    loggedIn && profile.cloudId != null && profile.role == 'owner';
+    loggedIn && profile.cloudId != null && !profile.cloudPaused && profile.role == 'owner';
 
 /// 上次在出码屏选了哪条路(shared_preferences)。记住它:同一个人大概率每次
 /// 看病都用同一种方式,不该每次都重新选。
