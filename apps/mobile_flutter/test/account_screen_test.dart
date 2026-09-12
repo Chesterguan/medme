@@ -1980,11 +1980,46 @@ void main() {
       await ProfileManager.instance.ensureLoaded();
       await ProfileManager.instance.factoryReset();
       final defaultId = ProfileManager.instance.currentId.value;
+      // **必须是"已知的 0"**(评审 Important 1)。这一行原来不在,于是这条用例钉住的
+      // 正是那个不安全的分支(「份数未知」被当成「空」)——而
+      // `claim_target.dart` 的无姓名分支会往 p-1 写病历却不改名,三条判据里的前两条
+      // 照样成立。生产里这个 0 由 `ArchiveScreen` 首帧填上。
+      await ProfileManager.instance.setCount(defaultId, 0);
 
       await flow.loginOtp('13800000001', '000000');
       await flow.unlockWithPassword('right');
 
       expect(removed, [defaultId], reason: '用户从没建过这个空的「我」,新手机上不该多一个它');
+    });
+
+    test('A5:份数**还没人数过** → 不删(读不到这个数就不许动手)', () async {
+      final api = oneUnknownCloudProfile();
+      final removed = <String>[];
+      final flow = AccountFlow(
+        api,
+        AccountSession.instance,
+        crypto: FakeCrypto(),
+        reopenCurrentProfileVault: () async {},
+        firstSyncNewProfile: (p, returnTo) async {},
+        removeProfile: (id) async {
+          removed.add(id);
+          return true;
+        },
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset(); // 清掉 counts,于是"未知"
+      final defaultId = ProfileManager.instance.currentId.value;
+      expect(ProfileManager.instance.countFor(defaultId), isNull);
+
+      await flow.loginOtp('13800000001', '000000');
+      await flow.unlockWithPassword('right');
+
+      expect(
+        removed,
+        isEmpty,
+        reason: 'claim_target 的「这份病历里没有姓名,存进你当前的档案」分支会往 p-1 '
+            '写病历而不改名 —— 份数未知时删它就是删病历,无确认无撤销',
+      );
     });
 
     test('A5:默认成员被用过(改过名)→ 不删', () async {

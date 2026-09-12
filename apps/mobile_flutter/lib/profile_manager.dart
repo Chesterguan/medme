@@ -293,15 +293,23 @@ class ProfileManager {
   /// 空成员杵着,而他从没建过它。
   ///
   /// 三条都成立才算:还是 bootstrap 那个 id;名字还是占位默认名(没被用户改过、
-  /// 也没被报告里识别到的姓名命过,即 `_autoNamePending` 仍为 true);已知记录数
-  /// 是 0 或者**压根还没人数过**(全新安装就是这样 —— 档案屏还没打开过)。
+  /// 也没被报告里识别到的姓名命过,即 `_autoNamePending` 仍为 true);**已知记录数
+  /// 确认是 0**。
   ///
-  /// ponytail: 第三条里的"还没人数过"是个启发式。理论上存在「导入过病历、那份
-  /// 病历里没识别出姓名、而且档案屏从没打开过」这个组合,那样会把有数据的成员
-  /// 判成空的。要杜绝得在这里真开一次它的箱子数一遍(keyed/unkeyed 开箱 +
-  /// loadArchive),而这条路跑在启动序列里。真出现这种投诉再换成那次真数。
+  /// ⚠️ 第三条原来写的是 `(_counts[id] ?? 0) == 0` —— 把「**还没人数过**」也当成
+  /// 「空」。评审证明那不是理论情形:`claim_target.dart` 的 `ClaimHow.current`
+  /// 分支(「这份病历里没有姓名,存进你当前的档案」)是一条真实产品路径,它把认领
+  /// 到的病历写进 `p-1` 并且**刻意不改名** —— 于是 `_autoNamePending` 仍为 true、
+  /// 名字仍是「我」,前两条全部成立。此刻挡在这些病历和一次
+  /// `Directory.delete(recursive: true)`(本机 + iCloud 两处,无确认、无撤销、
+  /// 无声、发生在启动序列里)之间的,只剩那个缓存有没有恰好被填上。
+  ///
+  /// 要一个**已知的 0**,实践上什么都不损失:`ArchiveScreen` 是 `IndexedStack` 五个
+  /// 孩子之一(`main.dart` 的 `HomeShell.tabScreens`),所以首次启动它就会 build 并
+  /// 调一次 `setCount(p-1, 0)`,远早于用户能走到账号屏登录。读不到这个数(比如
+  /// 启动序列比首帧还快)就**不删** —— 多一个空成员远好过删掉一份病历。
   bool isUntouchedDefaultMember(String id) =>
-      id == _bootstrapId && _autoNamePending && byId(id)?.name == defaultMemberName && (_counts[id] ?? 0) == 0;
+      id == _bootstrapId && _autoNamePending && byId(id)?.name == defaultMemberName && _counts[id] == 0;
 
   /// 改保险箱名字(设置页)。空或没变则忽略。
   Future<void> setVaultName(String name) async {
