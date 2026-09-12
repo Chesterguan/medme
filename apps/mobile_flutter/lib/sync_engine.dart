@@ -265,7 +265,19 @@ class SyncEngine {
   /// 同 [vault_boot.runSerialized] 的队列——同步的整段推拉(含网络往返)排进去,
   /// 不能只有"开箱"排队(见 Task 15 review I2):同步进行到一半、另一路把箱子
   /// 切换掉,写入就会落进错的档案。`fetchObject` 也走同一条队列。
-  Future<SyncReport> syncProfile(Profile p) => runSerialized(() => _syncProfileLocked(p));
+  /// 每一次同步的结果都记一笔(持久化,见 [saveLastSync])——概览屏顶部那行备份
+  /// 状态读它。**包在这一层而不是 `_syncProfileLocked` 里面**:手点的「同步」、
+  /// 后台触发器、`enableCloud` 的首同步三条路都经过这里,一处就够。
+  Future<SyncReport> syncProfile(Profile p) async {
+    try {
+      final rep = await runSerialized(() => _syncProfileLocked(p));
+      await saveLastSync(ok: true);
+      return rep;
+    } catch (_) {
+      await saveLastSync(ok: false);
+      rethrow;
+    }
+  }
 
   Future<SyncReport> _syncProfileLocked(Profile p) async {
     await _assertVaultMatches(p);
@@ -566,6 +578,56 @@ final Set<String> pendingFirstSync = <String>{};
 @visibleForTesting
 void resetPendingFirstSyncForTest() => pendingFirstSync.clear();
 
+/// 「有账号就默认开云」的待办队列(本机成员 id)——UX 第二轮,创始人拍板。
+///
+/// `AccountFlow.restoreProfileKeys` 只**登记**(每次登录/解锁/启动补齐都照
+/// "还没有 cloudId 且用户没关过它"重新登记一遍),真正的开通由
+/// [triggerBackgroundSync] 排空。理由与 [pendingFirstSync] 同源:开通 = 注册云档案 +
+/// 重开箱 + 一整次首同步,N 个成员串行跑完能把启动画面按住几十秒;失败的留在集合
+/// 里下一次触发再试(这就是 brief 要的"重试队列",UI 那一面见账号屏的开关列表与
+/// 概览屏顶部那行)。
+///
+/// **代拍病人不在这里面** —— 他们压根不在 `ProfileManager` 里(走
+/// `ProxyPatientManager` 的独立命名空间),所以这条路天然碰不到别人的病历。
+final Set<String> pendingCloudEnable = <String>{};
+
+/// 测试专用:同 [resetPendingFirstSyncForTest]。
+@visibleForTesting
+void resetPendingCloudEnableForTest() => pendingCloudEnable.clear();
+
+/// 最近一次同步的时间与结果。概览屏顶部那行备份状态读它(「已备份 · 3 分钟前」/
+/// 「上次备份失败 · 点这里重试」)。
+typedef LastSync = ({DateTime at, bool ok});
+
+const _lastSyncAtKey = 'last_sync_at';
+const _lastSyncOkKey = 'last_sync_ok';
+
+/// 变了就通知 UI —— 概览屏那行是 app 启动后一直在屏上的东西,不能等下一次
+/// 整屏重建才更新。
+final ValueNotifier<int> lastSyncRevision = ValueNotifier<int>(0);
+
+Future<void> saveLastSync({required bool ok}) async {
+  try {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_lastSyncAtKey, DateTime.now().toIso8601String());
+    await p.setBool(_lastSyncOkKey, ok);
+  } catch (_) {
+    // 记不上就记不上 —— 绝不能让"写一行状态"把一次成功的同步变成失败。
+  }
+  lastSyncRevision.value++;
+}
+
+Future<LastSync?> loadLastSync() async {
+  try {
+    final p = await SharedPreferences.getInstance();
+    final at = DateTime.tryParse(p.getString(_lastSyncAtKey) ?? '');
+    if (at == null) return null;
+    return (at: at, ok: p.getBool(_lastSyncOkKey) ?? false);
+  } catch (_) {
+    return null;
+  }
+}
+
 Future<void> triggerBackgroundSync({
   required AccountSession session,
   required Profile? Function() currentProfile,
@@ -574,6 +636,10 @@ Future<void> triggerBackgroundSync({
   /// 跑一个成员的首同步 + 回填姓名(生产里是 [firstSyncAndName])。为 null 时
   /// 不碰 [pendingFirstSync] —— 已有的那些只测"普通同步"的用例不用改。
   Future<void> Function(Profile p, String returnTo)? firstSync,
+
+  /// 给一个还没开通云同步的成员开通(生产里是 [enableCloudAndReturn])。为 null
+  /// 时不碰 [pendingCloudEnable] —— 同 [firstSync] 的道理。
+  Future<void> Function(Profile p, String returnTo)? enableCloud,
 }) async {
   if (_backgroundSyncRunning) {
     _backgroundSyncRerunRequested = true;
@@ -588,6 +654,7 @@ Future<void> triggerBackgroundSync({
         currentProfile: currentProfile,
         sync: sync,
         firstSync: firstSync,
+        enableCloud: enableCloud,
       );
     } while (_backgroundSyncRerunRequested);
   } finally {
@@ -600,13 +667,18 @@ Future<void> _runBackgroundSyncOnce({
   required Profile? Function() currentProfile,
   required Future<SyncReport> Function(Profile) sync,
   Future<void> Function(Profile p, String returnTo)? firstSync,
+  Future<void> Function(Profile p, String returnTo)? enableCloud,
 }) async {
   if (!session.loggedIn.value) return;
   // 先把「领回来还没同步过」的排空(A5)—— 它们现在顶着占位名、0 份病历,
   // 看起来像数据丢了,比"当前成员晚同步几秒"要紧得多。
   if (firstSync != null) await _drainPendingFirstSync(currentProfile, firstSync);
+  // 再把「有账号了、但这个成员还没上云」的排空(UX 第二轮)。
+  if (enableCloud != null) await _drainPendingCloudEnable(currentProfile, enableCloud);
   final profile = currentProfile();
-  if (profile == null || profile.cloudId == null) return;
+  // `cloudPaused` = 用户手动关了这个成员的云同步 —— 触发器跳过它(创始人拍板的
+  // 那条:「关闭后本机不再上传下载」)。
+  if (profile == null || profile.cloudId == null || profile.cloudPaused) return;
   try {
     await sync(profile);
   } catch (_) {
@@ -627,8 +699,9 @@ Future<void> _drainPendingFirstSync(
   if (returnTo == null) return;
   for (final id in pendingFirstSync.toList()) {
     final p = ProfileManager.instance.byId(id);
-    // 成员已经不在了(用户删了)——别再惦记它。
-    if (p == null || p.cloudId == null) {
+    // 成员已经不在了(用户删了)、或者用户把它的云同步关了——别再惦记它。
+    // 关掉之后还去跑首同步,正是"关闭后本机不再上传下载"这句话的反面。
+    if (p == null || p.cloudId == null || p.cloudPaused) {
       pendingFirstSync.remove(id);
       continue;
     }
@@ -639,6 +712,99 @@ Future<void> _drainPendingFirstSync(
       // 留在集合里,下一次触发再试(评审 Important 2)。
     }
   }
+}
+
+/// 排空 [pendingCloudEnable](UX 第二轮:有账号默认开云)。
+///
+/// **当前成员排最后**:给别人开通要「切过去 → 开通 → 切回来」,而当前成员这一步
+/// 根本不用切。放最后,用户眼前那一串切换就少一次来回、也不会在开通自己这个成员
+/// 之后又被切走再切回来(闪屏)。
+///
+/// 失败留在集合里、下一次触发再试 —— 唯一的例外是 [CloudEnableBlocked](这台设备
+/// 开着 iCloud 同步):它不是"这次不巧",在用户去设置里关掉 iCloud 之前,重试一万
+/// 次都是同一个结果,而每次重试都是一轮真实的成员切换 + 开箱(用户眼里的闪屏)。
+/// 移出队列,让"还没开通"这件事由 UI 去说(账号屏的开关、概览屏顶部那行)。
+Future<void> _drainPendingCloudEnable(
+  Profile? Function() currentProfile,
+  Future<void> Function(Profile p, String returnTo) enableCloud,
+) async {
+  if (pendingCloudEnable.isEmpty) return;
+  final returnTo = currentProfile()?.id;
+  if (returnTo == null) return;
+  final ids = pendingCloudEnable.toList();
+  final ordered = [...ids.where((id) => id != returnTo), ...ids.where((id) => id == returnTo)];
+  for (final id in ordered) {
+    final p = ProfileManager.instance.byId(id);
+    // 已经不在了 / 已经开通了 / 用户把它关了 —— 都别再惦记。
+    if (p == null || p.cloudId != null || p.cloudPaused) {
+      pendingCloudEnable.remove(id);
+      continue;
+    }
+    try {
+      await enableCloud(p, returnTo);
+      pendingCloudEnable.remove(id);
+    } on CloudEnableBlocked catch (_) {
+      pendingCloudEnable.remove(id);
+    } catch (_) {
+      // 留着,下一次触发再试。
+    }
+  }
+}
+
+/// 「(必要时)切到这个成员 → 开通云同步 → 切回去」。
+///
+/// `SyncEngine.enableCloud` 只肯给**当前打开的那个成员**开通(它重开的是进程级
+/// 单例 vault,见那边的文档),所以给别的成员开通必须真的切过去。
+///
+/// 失败也要切回来(`finally`)—— 否则一次失败的后台开通会把用户悄悄留在另一个
+/// 成员身上,而他压根没动过成员切换器。
+///
+/// 副作用做成参数,理由同 [firstSyncAndName]:真实现碰 Rust 原生库与网络。
+Future<void> enableCloudAndReturn(
+  Profile p, {
+  required String returnTo,
+  required Future<void> Function(Profile) enable,
+  Future<void> Function(String id, {String? revertTo}) switchAndReopen = switchProfileAndReopen,
+}) async {
+  final needsSwitch = p.id != returnTo;
+  if (needsSwitch) await switchAndReopen(p.id);
+  try {
+    await enable(p);
+  } finally {
+    if (needsSwitch) await switchAndReopen(returnTo);
+  }
+}
+
+/// 后台同步触发器的**接线**:用哪个 [AccountSession]、哪个当前成员、哪个真正的
+/// [SyncEngine]。三处共用:`vaultRevision` 的 debounced push、回到前台的 pull、
+/// 以及启动补齐完之后那一次(见 `main.dart`)。
+///
+/// 住在这里而不是 `main.dart`,是因为概览屏顶部那行备份状态的「点这里重试」也要用
+/// 它 —— 一个界面去 import `main.dart` 既别扭,也会把同一段接线抄成两份。
+Future<void> runBackgroundSync() {
+  SyncEngine engine() => SyncEngine(
+    ApiClient.forSession(AccountSession.instance),
+    AccountSession.instance,
+  );
+  return triggerBackgroundSync(
+    session: AccountSession.instance,
+    currentProfile: () => ProfileManager.instance.current,
+    sync: (p) => engine().syncProfile(p),
+    // 与兑换授权那条路同一个函数:切过去 → 首同步 → 用病历里识别到的姓名命名 →
+    // 切回用户原来在看的那个成员。
+    firstSync: (p, returnTo) => firstSyncAndName(
+      p,
+      revertTo: returnTo,
+      returnTo: returnTo,
+      sync: (x) => engine().syncProfile(x),
+    ),
+    // 有账号默认开云(UX 第二轮):还没上云的成员一个一个开通,当前成员最后。
+    enableCloud: (p, returnTo) => enableCloudAndReturn(
+      p,
+      returnTo: returnTo,
+      enable: (x) => engine().enableCloud(x),
+    ),
+  );
 }
 
 /// 「切到这个云档案的箱子 → 首同步 → 用拉下来的病历里识别到的姓名给它命名」。

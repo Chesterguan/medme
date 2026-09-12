@@ -115,6 +115,19 @@ String expiryLabel(Object? iso) {
   return t == null ? '到期时间不明' : '至 ${t.month}月${t.day}日';
 }
 
+/// 云同步那一行的状态句 —— 纯函数,三态(关了 / 还没备上 / 备好了)。
+///
+/// 关掉那一句是创始人拍板的逐字文案:用户最怕的是"关掉是不是等于删库"。照实说 ——
+/// 本机这边停了,云端已经上去的那些密文留着,直到他注销账号。
+@visibleForTesting
+String cloudRowStatus(Profile p) {
+  if (p.cloudPaused) {
+    return '云同步已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号';
+  }
+  if (p.cloudId == null) return '还没备份上去 —— 会自动重试,也可以打开这个开关立刻再试一次';
+  return '已备份到云端 · ${roleLabel(p.role)}';
+}
+
 /// 创建时间 → 「M月D日添加」。认不出来就不说(不编一个日期)。
 @visibleForTesting
 String? createdLabel(Object? iso) {
@@ -792,38 +805,39 @@ class _AccountScreenState extends State<AccountScreen> {
   String _profileLabel(Object? cloudId) =>
       ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull?.name ?? '一份共享档案';
 
-  // ---- 云同步:「开通云同步」(当前成员)+「立即同步」+ 上一次结果/错误 ----
+  // ---- 云同步:每成员一个开关 +「同步」+ 上一次结果/错误 ----
 
+  /// 每成员一个「云同步」开关(UX 第二轮,创始人拍板:**有账号默认开云,可手动关**)。
+  ///
+  /// 原来这里是一颗「开通云同步」按钮,只管**当前成员**:于是家里三个人,用户得
+  /// 切三次成员、各点一次,而"我登录了账号"在他心里早就等于"我的病历备上了"。
+  /// 现在默认开(`AccountFlow.restoreProfileKeys` 登记 → 后台排空,见
+  /// `sync_engine.pendingCloudEnable`),这里只负责**看见状态 + 手动关掉某一个**。
+  ///
+  /// 开关的值是「这个成员此刻真的在同步吗」(`cloudId != null && !cloudPaused`),
+  /// 不是「用户想不想同步」—— 还没开通成功时它是 OFF,于是"打开它"天然就是那条
+  /// 重试入口(失败的成员留在重试队列里,下一次触发也会自己再试)。
   Widget _cloudSyncSection() {
     final profile = ProfileManager.instance.current;
-    if (profile.cloudId == null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            '「${profile.name}」还没开通云同步——开通后可以换机恢复、分享给家属/医生。',
-            style: const TextStyle(color: MedMe.faint),
-          ),
-          if (_cloudError != null) _errorText(_cloudError!),
-          const SizedBox(height: 12),
-          _cloudBusy
-              ? const Center(child: CircularProgressIndicator())
-              : FilledButton(onPressed: _enableCloud, child: const Text('开通云同步')),
-        ],
-      );
-    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            const Icon(Icons.cloud_done_outlined, color: MedMe.teal, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text('「${profile.name}」已开通云同步', style: const TextStyle(fontWeight: FontWeight.w600)),
-            ),
-          ],
+        const Text(
+          '登录之后,每个成员的病历默认都会加密备份到云端(我们只看得到密文)。'
+          '不想备份哪个成员,把它的开关关掉就行。',
+          style: TextStyle(color: MedMe.faint, height: 1.5),
         ),
+        const SizedBox(height: 8),
+        for (final m in ProfileManager.instance.profiles) _cloudMemberRow(m),
+        // 开通要注册云档案 + 重开箱 + 跑一次首同步,几秒到几十秒 —— 屏上必须有
+        // 东西在转,否则用户会以为开关没拨动。做完就没了(`_cloudBusy` 回 false),
+        // 不会把 `pumpAndSettle` 钉死。
+        if (_cloudBusy) ...[
+          const SizedBox(height: 8),
+          const Center(child: CircularProgressIndicator()),
+          const SizedBox(height: 8),
+          const Text('正在开通云同步…', textAlign: TextAlign.center, style: TextStyle(color: MedMe.faint)),
+        ],
         const SizedBox(height: 8),
         if (_lastSyncReport != null)
           Text(_syncSummary(_lastSyncReport!), style: const TextStyle(color: MedMe.faint)),
@@ -838,9 +852,12 @@ class _AccountScreenState extends State<AccountScreen> {
         // `enableCloud`(已有 cloudId 会跳过注册,直接重开箱 + 首同步),否则就是
         // 一次普通同步。用户只需要知道"点这里同步"。
         const SizedBox(height: 8),
-        (_cloudBusy || _syncBusy)
-            ? const Center(child: CircularProgressIndicator())
-            : FilledButton(onPressed: _syncOrRecover, child: const Text('同步')),
+        // 关掉了云同步的成员没有「同步」可点 —— 那正是"关闭后本机不再上传下载"
+        // 这句话的意思;还没开通成功的成员,重试入口是它自己那个开关。
+        if (profile.cloudId != null && !profile.cloudPaused)
+          (_cloudBusy || _syncBusy)
+              ? const Center(child: CircularProgressIndicator())
+              : FilledButton(onPressed: _syncOrRecover, child: const Text('同步')),
         // B5 的**真正入口**(评审 Important 8)。原来「转为主人」只作为「我授权给谁」
         // 里的 per-grantee 行存在 —— 于是"把档案交给父母"要先:(1) 父母装 App 并走完
         // 口令 + 恢复码(正是 B4 那个卡点);(2) 子女按手机号把他加成家属;(3) 才会
@@ -848,7 +865,7 @@ class _AccountScreenState extends State<AccountScreen> {
         //
         // 只有 owner 能发转移邀请(服务端 `POST .../invites` 对 editor/viewer 一律
         // 403),所以这一条按角色挡住 —— 不摸黑试一次注定失败的请求。
-        if (profile.role == 'owner') ...[
+        if (profile.role == 'owner' && profile.cloudId != null) ...[
           const SizedBox(height: 4),
           // 忙的时候只是**禁用**,不换成进度圈:`_transferBusy` 在那张码的对话框开着
           // 的整段时间里都是 true,底下挂一个永不停的进度圈既无意义,也会让
@@ -861,6 +878,53 @@ class _AccountScreenState extends State<AccountScreen> {
         ],
       ],
     );
+  }
+
+  /// 一个成员一行:名字 + 此刻的状态 + 「云同步」开关。
+  Widget _cloudMemberRow(Profile m) {
+    final on = m.cloudId != null && !m.cloudPaused;
+    return Card(
+      child: SwitchListTile(
+        key: Key('cloud_switch_${m.id}'),
+        title: Text(m.name),
+        subtitle: Text(cloudRowStatus(m), style: const TextStyle(fontSize: 12.5, height: 1.4)),
+        value: on,
+        // 开通要重开箱 + 跑一次首同步,期间不许再拨别的开关(vault 是进程级单例)。
+        onChanged: _cloudBusy ? null : (v) => _toggleCloud(m, v),
+      ),
+    );
+  }
+
+  /// 拨开关:**关**只是记一个标记(不删云端密文、不清本机密钥);**开**在还没开通
+  /// 的成员身上顺手就把开通跑了 —— 用户拨这个开关的意思是"我要它备份",不该还要
+  /// 再找一个别的按钮。
+  Future<void> _toggleCloud(Profile m, bool on) async {
+    setState(() {
+      _cloudBusy = true;
+      _cloudError = null;
+      _syncError = null;
+    });
+    try {
+      await ProfileManager.instance.setCloudPaused(m.id, !on);
+      if (!on) {
+        // 关掉的成员别留在"默认开云"的待办队列里,否则下一次后台触发又把它开回来。
+        pendingCloudEnable.remove(m.id);
+      } else if (m.cloudId == null) {
+        final current = ProfileManager.instance.currentId.value;
+        // `SyncEngine.enableCloud` 只肯给当前打开的成员开通 —— 给别人开通要真的
+        // 切过去再切回来(见 `sync_engine.enableCloudAndReturn`)。
+        await enableCloudAndReturn(m, returnTo: current, enable: _sync.enableCloud);
+        pendingCloudEnable.remove(m.id);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('已给「${m.name}」开通云同步')));
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _cloudError = friendlyApiError(e); });
+    } finally {
+      if (mounted) setState(() => _cloudBusy = false);
+    }
   }
 
   /// 见 C9。上一次同步/开通失败过 → 走会重开箱的那条(`enableCloud` 可续做);

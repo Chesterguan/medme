@@ -508,6 +508,225 @@ void main() {
     });
   });
 
+  // ---- UX 第二轮:有账号默认开云(`pendingCloudEnable` + `enableCloudAndReturn`)----
+  group('pendingCloudEnable:默认给每个成员开云,当前成员最后,失败进重试队列', () {
+    setUp(() async {
+      resetPendingCloudEnableForTest();
+      resetPendingFirstSyncForTest();
+      await AccountSession.instance.save(accountId: 'acc_1', access: 'a', refresh: 'r');
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+    });
+
+    tearDown(resetPendingCloudEnableForTest);
+
+    /// 建一个还没上云的成员并登记进队列(停在 `p-1` 上当"当前成员")。
+    Future<String> queued(String name) async {
+      final id = (await ProfileManager.instance.create(name))!;
+      await ProfileManager.instance.switchTo('p-1');
+      pendingCloudEnable.add(id);
+      return id;
+    }
+
+    Future<void> trigger(List<(String, String)> ran, {bool Function(String id)? fail}) =>
+        triggerBackgroundSync(
+          session: AccountSession.instance,
+          currentProfile: () => ProfileManager.instance.current,
+          sync: (p) async => SyncReport(),
+          enableCloud: (p, returnTo) async {
+            if (fail?.call(p.id) ?? false) throw const ApiFailed(500, 'boom');
+            ran.add((p.id, returnTo));
+            // 真实现会 markCloud —— 队列的判据认的就是"有没有 cloudId 了"。
+            await ProfileManager.instance.markCloud(p.id, 'prf_${p.id}', 'owner', null);
+          },
+        );
+
+    test('当前成员排最后:先给别人开,最后才轮到眼前这个(少一次来回切换)', () async {
+      final other = await queued('爸爸');
+      pendingCloudEnable.add('p-1');
+      final ran = <(String, String)>[];
+
+      await trigger(ran);
+
+      expect(ran.map((e) => e.$1).toList(), [other, 'p-1']);
+      expect(ran.every((e) => e.$2 == 'p-1'), isTrue, reason: 'returnTo 始终是排空开始时的当前成员');
+      expect(pendingCloudEnable, isEmpty);
+    });
+
+    test('失败:留在队列里,下一次触发再试(这就是"重试队列")', () async {
+      final id = await queued('妈妈');
+      final ran = <(String, String)>[];
+
+      await trigger(ran, fail: (_) => true);
+      expect(ran, isEmpty);
+      expect(pendingCloudEnable, contains(id));
+
+      await trigger(ran);
+      expect(ran.map((e) => e.$1), [id]);
+      expect(pendingCloudEnable, isEmpty);
+    });
+
+    test('开着 iCloud 同步(CloudEnableBlocked):移出队列,不每次触发都闪一遍屏', () async {
+      final id = await queued('奶奶');
+      final ran = <(String, String)>[];
+
+      await triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async => SyncReport(),
+        enableCloud: (p, returnTo) async => throw const CloudEnableBlocked(),
+      );
+
+      expect(ran, isEmpty);
+      expect(
+        pendingCloudEnable,
+        isEmpty,
+        reason: '在用户去关 iCloud 之前重试一万次都是同一个结果,而每次重试都是一轮真实的切换 + 开箱',
+      );
+      expect(ProfileManager.instance.byId(id)!.cloudId, isNull);
+    });
+
+    test('用户关掉了这个成员的云同步:一次都不开(也不留在队列里)', () async {
+      final id = await queued('爷爷');
+      await ProfileManager.instance.setCloudPaused(id, true);
+      final ran = <(String, String)>[];
+
+      await trigger(ran);
+
+      expect(ran, isEmpty, reason: '关过的东西不许下次启动又替他打开');
+      expect(pendingCloudEnable, isEmpty);
+    });
+
+    test('不传 enableCloud(只测普通同步的老用例):队列一个字都不动', () async {
+      final id = await queued('姑姑');
+      await triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async => SyncReport(),
+      );
+      expect(pendingCloudEnable, contains(id));
+    });
+  });
+
+  group('cloudPaused:关掉的成员,触发器跳过', () {
+    setUp(() async {
+      resetPendingFirstSyncForTest();
+      resetPendingCloudEnableForTest();
+      await AccountSession.instance.save(accountId: 'acc_1', access: 'a', refresh: 'r');
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      await ProfileManager.instance.markCloud('p-1', 'prf_1', 'owner', null);
+    });
+
+    test('关掉 → 后台触发器不同步它', () async {
+      await ProfileManager.instance.setCloudPaused('p-1', true);
+      final synced = <String>[];
+
+      await triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async {
+          synced.add(p.id);
+          return SyncReport();
+        },
+      );
+
+      expect(synced, isEmpty, reason: '「关闭后本机不再上传下载」');
+    });
+
+    test('再打开 → 照常同步', () async {
+      await ProfileManager.instance.setCloudPaused('p-1', true);
+      await ProfileManager.instance.setCloudPaused('p-1', false);
+      final synced = <String>[];
+
+      await triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async {
+          synced.add(p.id);
+          return SyncReport();
+        },
+      );
+
+      expect(synced, ['p-1']);
+    });
+
+    test('关掉的成员也不跑首同步(否则"不再上传下载"就是句空话)', () async {
+      final id = (await ProfileManager.instance.create('关掉的那个', userManaged: false))!;
+      await ProfileManager.instance.markCloud(id, 'prf_2', 'owner', null);
+      await ProfileManager.instance.setCloudPaused(id, true);
+      await ProfileManager.instance.switchTo('p-1');
+      pendingFirstSync.add(id);
+      final ran = <String>[];
+
+      await triggerBackgroundSync(
+        session: AccountSession.instance,
+        currentProfile: () => ProfileManager.instance.current,
+        sync: (p) async => SyncReport(),
+        firstSync: (p, returnTo) async => ran.add(p.id),
+      );
+
+      expect(ran, isEmpty);
+      expect(pendingFirstSync, isEmpty);
+    });
+  });
+
+  group('enableCloudAndReturn:给别的成员开通要真的切过去,失败也要切回来', () {
+    setUp(() async {
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+    });
+
+    test('当前成员:一次切换都不做', () async {
+      final switches = <String>[];
+      final p = ProfileManager.instance.current;
+
+      await enableCloudAndReturn(
+        p,
+        returnTo: p.id,
+        enable: (_) async {},
+        switchAndReopen: (id, {String? revertTo}) async => switches.add(id),
+      );
+
+      expect(switches, isEmpty);
+    });
+
+    test('别的成员:切过去 → 开通 → 切回来', () async {
+      final id = (await ProfileManager.instance.create('弟弟'))!;
+      await ProfileManager.instance.switchTo('p-1');
+      final switches = <String>[];
+      final enabled = <String>[];
+
+      await enableCloudAndReturn(
+        ProfileManager.instance.byId(id)!,
+        returnTo: 'p-1',
+        enable: (x) async => enabled.add(x.id),
+        switchAndReopen: (i, {String? revertTo}) async => switches.add(i),
+      );
+
+      expect(switches, [id, 'p-1']);
+      expect(enabled, [id]);
+    });
+
+    test('开通失败:仍然切回原成员(不把用户悄悄留在别人的档案上)', () async {
+      final id = (await ProfileManager.instance.create('妹妹'))!;
+      await ProfileManager.instance.switchTo('p-1');
+      final switches = <String>[];
+
+      await expectLater(
+        enableCloudAndReturn(
+          ProfileManager.instance.byId(id)!,
+          returnTo: 'p-1',
+          enable: (_) async => throw const ApiFailed(500, 'boom'),
+          switchAndReopen: (i, {String? revertTo}) async => switches.add(i),
+        ),
+        throwsA(isA<ApiFailed>()),
+      );
+
+      expect(switches, [id, 'p-1'], reason: '他压根没动过成员切换器');
+    });
+  });
+
   // ---- A5:`firstSyncAndName` —— 兑换授权与换机领回自己的档案共用的那三步 ----
   group('firstSyncAndName:切过去 → 同步 → 用病历里的姓名命名 →(可选)切回来', () {
     /// 建一个带占位名的云成员,返回它。

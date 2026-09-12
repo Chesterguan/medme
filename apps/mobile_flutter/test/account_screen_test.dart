@@ -1103,6 +1103,7 @@ void main() {
         ],
       );
       await _toReady(t, api);
+      await _scrollToText(t, '批准');
       await t.tap(find.text('批准'));
       await t.pumpAndSettle();
       expect(api.calls, contains('POST /v1/devices/approve'));
@@ -1119,6 +1120,7 @@ void main() {
         ],
       );
       await _toReady(t, api);
+      await _scrollToText(t, '批准');
       await t.tap(find.text('批准'));
       await t.pump(const Duration(milliseconds: 40));
       expect(find.textContaining('批准失败'), findsOneWidget);
@@ -1712,6 +1714,7 @@ void main() {
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
+      await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
@@ -1729,6 +1732,7 @@ void main() {
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: rust));
 
       await t.enterText(find.byKey(const Key('family_phone')), '138 0000 1111');
+      await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
       await t.pumpAndSettle();
 
@@ -1748,6 +1752,7 @@ void main() {
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
+      await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
       await t.pumpAndSettle();
 
@@ -1764,6 +1769,7 @@ void main() {
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
+      await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
       await t.pumpAndSettle();
 
@@ -1788,6 +1794,7 @@ void main() {
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
+      await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
       await t.pumpAndSettle();
 
@@ -1804,6 +1811,7 @@ void main() {
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
       await t.enterText(find.byKey(const Key('family_phone')), 'abc'); // 打个不像手机号的
+      await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
       await t.pumpAndSettle();
 
@@ -2482,7 +2490,7 @@ void main() {
     });
   });
 
-  group('已就绪:开通云同步 + 同步(Task 15)', () {
+  group('已就绪:云同步开关 + 同步(Task 15 / UX 第二轮)', () {
     late Directory support;
 
     // 注意:这个组每条用例自己在 body 第一行调 `resetVaultQueueForTest()`,
@@ -2512,7 +2520,7 @@ void main() {
       await AccountSession.instance.putProfileKey(cloudId, Uint8List(32));
     }
 
-    testWidgets('还没开通:显示「开通云同步」按钮,没有「同步」', (t) async {
+    testWidgets('还没开通:这个成员的开关是关的,没有「同步」', (t) async {
       resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
       await t.runAsync(() async {
@@ -2521,7 +2529,12 @@ void main() {
       });
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
 
-      expect(find.text('开通云同步'), findsOneWidget);
+      expect(
+        t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value,
+        isFalse,
+        reason: '开关的值是"此刻真的在同步吗",还没开通成功就是关的 —— 打开它就是重试',
+      );
+      expect(find.textContaining('还没备份上去'), findsOneWidget);
       expect(find.text('同步'), findsNothing);
     });
 
@@ -2539,9 +2552,10 @@ void main() {
       });
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
 
-      await t.tap(find.text('开通云同步'));
+      await t.tap(find.byKey(const Key('cloud_switch_p-1')));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('正在开通云同步…'), findsOneWidget);
       await t.pumpAndSettle();
     });
 
@@ -2554,22 +2568,26 @@ void main() {
       });
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
 
-      await t.tap(find.text('开通云同步'));
+      await t.tap(find.byKey(const Key('cloud_switch_p-1')));
       await t.pumpAndSettle();
 
       expect(find.text('服务器开小差了,稍后再试'), findsOneWidget);
-      expect(find.text('开通云同步'), findsOneWidget, reason: '没进入"已开通"分支,按钮还在,可以重试');
+      expect(
+        t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value,
+        isFalse,
+        reason: '什么都没开通成功,开关得照实回到关的位置(它就是重试入口)',
+      );
     });
 
-    testWidgets('已开通:展示"已开通"分支 + 唯一那颗「同步」,没有「开通云同步」按钮', (t) async {
+    testWidgets('已开通:开关是开的 + 唯一那颗「同步」', (t) async {
       resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
       await giveCurrentProfileCloudId(t);
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
 
-      expect(find.textContaining('已开通云同步'), findsOneWidget);
+      expect(t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value, isTrue);
+      expect(find.textContaining('已备份到云端'), findsOneWidget);
       expect(find.text('同步'), findsOneWidget);
-      expect(find.text('开通云同步'), findsNothing);
     });
 
     testWidgets('C3:开着 iCloud 同步时点「开通云同步」:原因摆在屏上,仍停在"未开通"分支', (t) async {
@@ -2585,12 +2603,79 @@ void main() {
         syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust(icloudOn: true)),
       );
 
-      await t.tap(find.text('开通云同步'));
+      await t.tap(find.byKey(const Key('cloud_switch_p-1')));
       await t.pumpAndSettle();
 
       expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
-      expect(find.text('开通云同步'), findsOneWidget, reason: '什么都没开通,按钮还在');
+      expect(
+        t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value,
+        isFalse,
+        reason: '什么都没开通,开关回到关的位置',
+      );
       expect(api.calls, isNot(contains('POST /v1/profiles')), reason: '零服务端调用');
+    });
+
+    // ---- UX 第二轮:关掉某个成员的云同步 ----
+
+    testWidgets('关掉开关:落盘 cloudPaused、「同步」消失、文案说清云端密文怎么办', (t) async {
+      resetVaultQueueForTest();
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+      expect(find.text('同步'), findsOneWidget);
+
+      // `setCloudPaused` 要写 profiles.json —— 真实文件 I/O 在 `pumpAndSettle` 的
+      // 假时钟里跑不完(本仓库一贯的限制),所以这一跳包进 `runAsync`。
+      await t.runAsync(() async {
+        await t.tap(find.byKey(const Key('cloud_switch_p-1')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await t.pumpAndSettle();
+
+      expect(ProfileManager.instance.byId('p-1')!.cloudPaused, isTrue);
+      expect(t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value, isFalse);
+      expect(
+        find.textContaining('云端已有的密文会保留到你注销账号'),
+        findsOneWidget,
+        reason: '用户最怕的是"关掉是不是等于删库" —— 这句必须在屏上',
+      );
+      expect(find.text('同步'), findsNothing, reason: '「关闭后本机不再上传下载」');
+    });
+
+    testWidgets('关掉了的成员:不在"默认开云"的待办队列里(否则下次触发又开回来)', (t) async {
+      resetVaultQueueForTest();
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+      pendingCloudEnable.add('p-1');
+
+      await t.runAsync(() async {
+        await t.tap(find.byKey(const Key('cloud_switch_p-1')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await t.pumpAndSettle();
+
+      expect(pendingCloudEnable, isNot(contains('p-1')));
+    });
+
+    testWidgets('家里两个成员:两行两个开关,各自独立', (t) async {
+      resetVaultQueueForTest();
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      final other = await t.runAsync(() async {
+        final id = await ProfileManager.instance.create('爸爸');
+        await ProfileManager.instance.switchTo('p-1');
+        return id;
+      });
+      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+
+      expect(t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value, isTrue);
+      expect(
+        t.widget<SwitchListTile>(find.byKey(Key('cloud_switch_$other'))).value,
+        isFalse,
+        reason: '爸爸还没开通成功 —— 开关照实是关的,打开它就是重试',
+      );
+      expect(find.text('爸爸'), findsOneWidget);
     });
 
     testWidgets('M4:已开通但箱子没 keyed 打开(同步撞 VaultMismatch):同一颗「同步」再点一次就重开箱', (t) async {

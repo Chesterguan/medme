@@ -47,32 +47,9 @@ Future<void> main() async {
 /// 深链投递需要一个跨界面可用的导航器 —— 认领链接可能在任何界面(甚至冷启动)到达。
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
-/// 后台同步触发器的**接线**(`sync_engine.dart` 的 [triggerBackgroundSync] 负责
-/// no-op 判断、合并重叠触发、静默失败,那些都在那边单测过;这里只说用哪个
-/// [AccountSession]、哪个当前成员、哪个真正的 [SyncEngine])。
-///
-/// 三处共用:`vaultRevision` 的 debounced push、回到前台的 pull、以及**启动补齐完
-/// 之后那一次**(它负责把 `pendingFirstSync` 排空 —— 换机领回来的成员的首同步,
-/// 见 `sync_engine.pendingFirstSync`)。
-Future<void> runBackgroundSync() {
-  SyncEngine engine() => SyncEngine(
-    ApiClient.forSession(AccountSession.instance),
-    AccountSession.instance,
-  );
-  return triggerBackgroundSync(
-    session: AccountSession.instance,
-    currentProfile: () => ProfileManager.instance.current,
-    sync: (p) => engine().syncProfile(p),
-    // 与兑换授权那条路同一个函数:切过去 → 首同步 → 用病历里识别到的姓名命名 →
-    // 切回用户原来在看的那个成员。
-    firstSync: (p, returnTo) => firstSyncAndName(
-      p,
-      revertTo: returnTo,
-      returnTo: returnTo,
-      sync: (x) => engine().syncProfile(x),
-    ),
-  );
-}
+// 后台同步触发器的接线(`sync_engine.dart` 的 `runBackgroundSync`)**不在这个文件
+// 里**:概览屏顶部那行备份状态的「点这里重试」也要用它,放这儿会逼一个界面去
+// import `main.dart`。本文件只负责"什么时候跑"(debounce 计时器 + 生命周期回调)。
 
 class MedMeApp extends StatefulWidget {
   const MedMeApp({super.key});

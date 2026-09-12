@@ -11,7 +11,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grants.dart' show Grants;
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' as rust;
-import 'package:mobile_flutter/sync_engine.dart' show pendingFirstSync;
+import 'package:mobile_flutter/sync_engine.dart' show pendingCloudEnable, pendingFirstSync;
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
@@ -418,6 +418,19 @@ class AccountFlow {
         // 删不掉就留着 —— 一个多余的空成员远好过一次失败的启动。
       }
     }
+
+    // **有账号就默认开云**(UX 第二轮,创始人拍板)。这个方法是"本机账号密钥就绪"
+    // 的唯一汇流处(`commitKeys` 注册完、口令/恢复码解锁完、每次启动补齐都经过
+    // 它),所以登记这件事只挂这一处。
+    //
+    // 真正的开通交给后台触发器排空(见 `sync_engine.pendingCloudEnable`):开通 =
+    // 注册云档案 + 重开箱 + 一整次首同步,N 个成员串行跑完会把启动画面按住几十秒。
+    //
+    // `cloudPaused` 的成员一律不碰 —— 用户手动关过的东西,不许下次启动又替他打开。
+    // 代拍病人不在 `ProfileManager` 里(独立命名空间),这里天然碰不到。
+    pendingCloudEnable.addAll(
+      ProfileManager.instance.profiles.where((p) => p.cloudId == null && !p.cloudPaused).map((p) => p.id),
+    );
   }
 
 

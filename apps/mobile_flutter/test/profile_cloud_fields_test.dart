@@ -41,6 +41,17 @@ void main() {
       expect(restored.expiresAt, isNull);
     });
 
+    test('cloudPaused 往返;默认(没关过)不写出这个 key', () {
+      const on = Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner');
+      expect(on.toJson().containsKey('cloudPaused'), isFalse);
+      expect(Profile.fromJson(jsonDecode(jsonEncode(on.toJson())) as Map<String, dynamic>).cloudPaused, isFalse);
+
+      const off = Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner', cloudPaused: true);
+      final restored = Profile.fromJson(jsonDecode(jsonEncode(off.toJson())) as Map<String, dynamic>);
+      expect(restored.cloudPaused, isTrue);
+      expect(restored.cloudId, 'prf_1');
+    });
+
     test('expiresAt 为 null(owner 永不过期)但 cloudId/role 有值:分别往返', () {
       const p = Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner');
       final restored = Profile.fromJson(jsonDecode(jsonEncode(p.toJson())) as Map<String, dynamic>);
@@ -84,6 +95,25 @@ void main() {
       expect(renamed.name, '张建国(改)');
       expect(renamed.cloudId, 'prf_9', reason: '改名不该把云同步字段弄丢');
       expect(renamed.role, 'owner');
+    });
+
+    // UX 第二轮:`cloudPaused`(用户手动关掉了这个成员的云同步)。改名/markCloud
+    // 都曾经是"重建一个 Profile"的地方 —— 每加一个字段就多一处能被静默清空的可能,
+    // 所以这几条和上面那条是同一件事的延续。
+    test('关掉云同步:落盘,而且改名/markCloud 都不把它弄丢', () async {
+      final pm = ProfileManager.instance;
+      final id = (await pm.create('爸爸'))!;
+      await pm.setCloudPaused(id, true);
+      expect(pm.byId(id)!.cloudPaused, isTrue);
+
+      await pm.rename(id, '爸爸(改)');
+      expect(pm.byId(id)!.cloudPaused, isTrue, reason: '改名不该把"我关过它"这件事弄丢');
+
+      await pm.markCloud(id, 'prf_8', 'owner', null);
+      expect(pm.byId(id)!.cloudPaused, isTrue, reason: 'markCloud 也不许替用户打开');
+
+      await pm.setCloudPaused(id, false);
+      expect(pm.byId(id)!.cloudPaused, isFalse);
     });
 
     test('markCloud 写入 cloudId/role/expiresAt,不影响 name', () async {

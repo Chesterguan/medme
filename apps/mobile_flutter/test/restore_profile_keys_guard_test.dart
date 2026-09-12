@@ -74,6 +74,7 @@ void main() {
     AccountSession.instance.resetForTest();
     AccountFlow.resetRestoreGuardForTest();
     resetPendingFirstSyncForTest();
+    resetPendingCloudEnableForTest();
     await ProfileManager.instance.ensureLoaded();
     await ProfileManager.instance.factoryReset();
     AccountSession.instance.accountId = 'acc_1';
@@ -112,5 +113,35 @@ void main() {
 
     expect(api.profileGets, 2);
     expect(ProfileManager.instance.profiles.where((p) => p.cloudId == 'prf_1').length, 1);
+  });
+
+  // ---- UX 第二轮:有账号默认开云 —— `restoreProfileKeys` 是"本机密钥就绪"的唯一
+  // 汇流处(注册完 / 口令解锁完 / 每次启动补齐都经过它),所以登记只挂那一处。----
+
+  test('补齐完:还没上云的成员全部进"默认开云"队列', () async {
+    final api = _CountingApi();
+    await ProfileManager.instance.create('爸爸');
+    await flow(api).restoreProfileKeys();
+
+    final ids = ProfileManager.instance.profiles.where((p) => p.cloudId == null).map((p) => p.id).toSet();
+    expect(ids, isNotEmpty);
+    expect(pendingCloudEnable, containsAll(ids));
+  });
+
+  test('用户关过的成员不进队列(不许下次启动又替他打开)', () async {
+    final api = _CountingApi();
+    final id = (await ProfileManager.instance.create('爸爸'))!;
+    await ProfileManager.instance.setCloudPaused(id, true);
+
+    await flow(api).restoreProfileKeys();
+
+    expect(pendingCloudEnable, isNot(contains(id)));
+  });
+
+  test('已经上云的成员不进队列', () async {
+    final api = _CountingApi();
+    await flow(api).restoreProfileKeys(); // 领回 prf_1,建出那个成员
+    final adopted = ProfileManager.instance.profiles.firstWhere((p) => p.cloudId == 'prf_1');
+    expect(pendingCloudEnable, isNot(contains(adopted.id)));
   });
 }

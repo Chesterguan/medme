@@ -218,7 +218,7 @@ class ProfileManager {
     _profiles = _profiles.map((p) {
       if (p.id != id || p.name == trimmed) return p;
       changed = true;
-      return Profile(id: p.id, name: trimmed, cloudId: p.cloudId, role: p.role, expiresAt: p.expiresAt);
+      return p.copyWith(name: trimmed);
     }).toList();
     if (changed) {
       _autoNamePending = false;
@@ -234,8 +234,22 @@ class ProfileManager {
     await ensureLoaded();
     _profiles = _profiles.map((p) {
       if (p.id != id) return p;
-      return Profile(id: p.id, name: p.name, cloudId: cloudId, role: role, expiresAt: expiresAt);
+      // `expiresAt` 是"owner 没有到期日"这件事的载体,必须能被写成 null ——
+      // 所以这里不用 `copyWith`(那个分不清"不传"和"传 null")。
+      return Profile(id: p.id, name: p.name, cloudId: cloudId, role: role, expiresAt: expiresAt, cloudPaused: p.cloudPaused);
     }).toList();
+    await _save();
+  }
+
+  /// 这个成员的「云同步」开关(UX 第二轮,创始人拍板:**有账号默认开云,可手动关**)。
+  ///
+  /// `true` = 用户把它关了:后台触发器、「同步」按钮、以及"默认给没开通的成员开通"
+  /// 那条队列都跳过它。**不删云端已有的密文**(那是注销账号才做的事),也不清本机
+  /// 密钥 —— 用户随时可以再打开,而且已经同步过的内容照样能在别的设备上看。
+  Future<void> setCloudPaused(String id, bool paused) async {
+    await ensureLoaded();
+    if (byId(id)?.cloudPaused == paused) return;
+    _profiles = _profiles.map((p) => p.id == id ? p.copyWith(cloudPaused: paused) : p).toList();
     await _save();
   }
 
@@ -385,7 +399,14 @@ class ProfileManager {
 /// [expiresAt] 是这份授权的到期时间(owner 永不过期,为 null)。三者一起决定
 /// `openCurrentProfileVault` 走 keyed 开箱还是原路径——见 `vault_boot.dart`。
 class Profile {
-  const Profile({required this.id, required this.name, this.cloudId, this.role, this.expiresAt});
+  const Profile({
+    required this.id,
+    required this.name,
+    this.cloudId,
+    this.role,
+    this.expiresAt,
+    this.cloudPaused = false,
+  });
 
   final String id;
   final String name;
@@ -393,12 +414,29 @@ class Profile {
   final String? role;
   final DateTime? expiresAt;
 
+  /// 用户手动关掉了这个成员的云同步(见 [ProfileManager.setCloudPaused])。
+  /// 默认 false = 开着 —— "有账号默认开云"是产品决定,不是用户要逐个打开的东西。
+  final bool cloudPaused;
+
+  /// 只动给得出的那几个字段。**不带 `expiresAt`**:它需要能被写成 null
+  /// (owner 没有到期日),而 `copyWith` 的 `?? this.x` 表达不了"显式 null" ——
+  /// 那条路走 `markCloud` 里的显式构造。
+  Profile copyWith({String? name, bool? cloudPaused}) => Profile(
+    id: id,
+    name: name ?? this.name,
+    cloudId: cloudId,
+    role: role,
+    expiresAt: expiresAt,
+    cloudPaused: cloudPaused ?? this.cloudPaused,
+  );
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
     if (cloudId != null) 'cloudId': cloudId,
     if (role != null) 'role': role,
     if (expiresAt != null) 'expiresAt': expiresAt!.toIso8601String(),
+    if (cloudPaused) 'cloudPaused': true,
   };
 
   static Profile fromJson(Map<String, dynamic> j) => Profile(
@@ -407,5 +445,6 @@ class Profile {
     cloudId: j['cloudId'] as String?,
     role: j['role'] as String?,
     expiresAt: j['expiresAt'] == null ? null : DateTime.parse(j['expiresAt'] as String),
+    cloudPaused: j['cloudPaused'] as bool? ?? false,
   );
 }
