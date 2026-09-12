@@ -708,8 +708,9 @@ class AccountFlow {
   /// 旧设备这一侧:把本机**已解锁的账号私钥**用新设备的临时公钥封起来交给服务端
   /// (服务端只见密文,拆得开它的只有那台设备自己的临时私钥)。
   ///
-  /// 设备列表里那颗「批准」按钮和「扫码批准新设备」走的是同一条 —— 同一件事不该
-  /// 有两个实现。
+  /// **唯一的入口是「扫码批准新设备」**(复审 C2:设备列表里那颗「批准」按钮已经
+  /// 删掉了,列表只用来核对)。批准必须看见新设备那张码里的临时公钥 —— 照着列表里
+  /// 的一行按一下,封出去的公钥只能信服务端给的那个值。
   Future<void> approveDevice(String targetDeviceId, Uint8List ephPublic) async {
     final priv = session.privateKey;
     if (priv == null) throw StateError('本机账号还没解锁,不能批准别的设备');
