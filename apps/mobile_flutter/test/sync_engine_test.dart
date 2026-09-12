@@ -1184,6 +1184,37 @@ void main() {
       expect(ProfileManager.instance.byId(p.id)!.cloudId, isNull);
       expect(await AccountSession.instance.profileKey('prf_any'), isNull);
     });
+
+    // R1:N1 把闸挪到 `registerCloudProfile` 之后漏了**可续做**那一支 ——
+    // `p.cloudId ?? await registerCloudProfile(p)` 在已经有 cloudId 时压根不调它。
+    // 而那一支是屏上那颗「同步」在上次失败后走的路(`_syncOrRecover` → `_enableCloud`):
+    // 开着 iCloud 时它会去重开箱 + 同步(keyed 开箱不接容器根),而且
+    // `saveIcloudBlocksCloud(true)` 永远不会被触发,概览那一行继续说错话。
+    test('R1:已经有 cloudId 的那一支(「同步」重试走的路)也要拒绝,不重开箱不同步', () async {
+      await AccountSession.instance.save(
+        accountId: 'acc',
+        access: 'a',
+        refresh: 'r',
+        publicKey: Uint8List.fromList(List.generate(32, (i) => i)),
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final id = ProfileManager.instance.current.id;
+      await ProfileManager.instance.markCloud(id, 'prf_existing', 'owner', null);
+      final p = ProfileManager.instance.byId(id)!;
+      expect(p.cloudId, isNotNull, reason: '这条用例测的就是"已经开通过一半"那个现场');
+
+      final api = RecordingApi(server: {'events': [], 'objects': []});
+      final engine = SyncEngine(
+        api,
+        AccountSession.instance,
+        rust: FakeRust(icloudOn: true),
+        reopenVault: () async => fail('不该重开箱'),
+      );
+
+      await expectLater(engine.enableCloud(p), throwsA(isA<CloudEnableBlocked>()));
+      expect(api.calls, isEmpty, reason: '不该发任何请求 —— 连同步那一趟也不该起步');
+    });
   });
 
   group('M4:enableCloud 可续做——注册成功、重开箱/首同步失败之后再点一次', () {

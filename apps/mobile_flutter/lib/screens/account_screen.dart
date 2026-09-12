@@ -1186,9 +1186,8 @@ class _AccountScreenState extends State<AccountScreen> {
       }
       if (mounted) setState(() {});
     } catch (e) {
-      // 开着 iCloud 同步时记一笔(复审 I5)—— 概览屏那一行据此说真正的原因,
-      // 而不是一条点不动的「点这里重试」。
-      if (e is CloudEnableBlocked) await saveIcloudBlocksCloud(true);
+      // "开着 iCloud 所以开不了"这一笔由 `SyncEngine` 在抛出的那一刻记(复审 R1:
+      // 原来记在这儿,于是「同步」重试那条路撞墙之后没人记,概览屏那一行继续说错话)。
       if (!mounted) return;
       setState(() { _cloudError = friendlyApiError(e); });
     } finally {

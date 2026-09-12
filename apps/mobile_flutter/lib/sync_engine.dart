@@ -207,7 +207,11 @@ class SyncEngine {
   /// 磁盘上被读写的是 [ProfileManager.currentId] 指向的那个成员;两者不一致时
   /// (比如切换成员的 UI 状态和实际 `currentId` 没同步)拒绝执行,不猜。
   ///
-  /// **开着 iCloud 同步时拒绝**(最终评审 C3,见 [CloudEnableBlocked])。
+  /// **开着 iCloud 同步时拒绝**(最终评审 C3,见 [CloudEnableBlocked])。这道闸
+  /// **两处都要有**(复审 R1):这里一道挡住下面那条"可续做"的支路(那一支压根不调
+  /// [registerCloudProfile]),[registerCloudProfile] 里那一道挡住直接调它的调用方
+  /// (I7 之后给非当前成员默认开云走的就是那条)。两处都不是多余的 —— 少任何一处都有
+  /// 一条真实路径绕过去。
   ///
   /// **可续做**(最终评审 M4):这件事有三步(注册 → 重开箱 → 首同步),后两步
   /// 任何一步失败,前面那步的后果都已经落盘了——服务端有了这个档案、本机有了
@@ -220,7 +224,13 @@ class SyncEngine {
         '只能给当前打开的成员开通云同步(当前=${ProfileManager.instance.currentId.value},传入=${p.id})',
       );
     }
-    // iCloud 那道闸在 [registerCloudProfile] 里(复审 N1:两个调用方都要被挡住)。
+    // **在 `reopenVault()` 之前**(复审 R1)。不能只靠 [registerCloudProfile] 里那一道:
+    // 下面那句是 `p.cloudId ?? …`,已经有 cloudId 时它根本不调注册 —— 而那一支正是
+    // 屏上那颗「同步」在上次失败之后走的路(`_syncOrRecover` → `_enableCloud`)。
+    // 少了这一道,开着 iCloud 的用户点「同步」会真的去 keyed 重开箱(那条路不接 iCloud
+    // 容器根),而且 `saveIcloudBlocksCloud(true)` 永远不会被触发 —— 概览屏那一行继续
+    // 说错话。
+    if (await rust.icloudEnabled()) await _refuseForIcloud();
     final cloudId = p.cloudId ?? await registerCloudProfile(p);
     await reopenVault(); // 走 vault_boot 的 FIFO 队列,重开成 keyed
     await syncProfile(Profile(id: p.id, name: p.name, cloudId: cloudId, role: p.role ?? 'owner'));
@@ -246,7 +256,7 @@ class SyncEngine {
     // 放在真正动手的那一步上,两个调用方(手动开关 + 后台默认开云)一起被挡住;
     // 排空队列前那次 `icloudEnabled()` 仍然留着,它是**优化**(少跑 N 轮注定失败的
     // 尝试),不是唯一的防线。
-    if (await rust.icloudEnabled()) throw const CloudEnableBlocked();
+    if (await rust.icloudEnabled()) await _refuseForIcloud();
     final key = await rust.profileKeyNew();
     final pub = session.publicKey;
     if (pub == null) throw StateError('账号公钥未就绪,不能开通云同步');
@@ -260,6 +270,18 @@ class SyncEngine {
     await session.clearCloudProfileTombstone(cloudId);
     await ProfileManager.instance.markCloud(p.id, cloudId, 'owner', null);
     return cloudId;
+  }
+
+  /// 拒绝开通,并**把原因记下来**([saveIcloudBlocksCloud])。
+  ///
+  /// 记在这一处、而不是在每个 catch 里(复审 R1):屏上有两条路会撞到它
+  /// (按成员的开关 → `registerCloudProfile`;「同步」重试 → `enableCloud` 的可续做
+  /// 支路),而原来只有前者的 catch 记了这一笔 —— 后者撞墙之后概览屏那一行继续说
+  /// 「还没开始备份 · 点这里重试」,而那条重试永远不可能成功。放在抛出的地方,
+  /// 所有调用方(包括将来新加的)自动都对。
+  Future<Never> _refuseForIcloud() async {
+    await saveIcloudBlocksCloud(true);
+    throw const CloudEnableBlocked();
   }
 
   /// 核对"此刻进程里开着的箱子"确实是 [p](keyed 打开、且根目录对应 `p.id`)。

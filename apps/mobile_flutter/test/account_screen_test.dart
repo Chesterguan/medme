@@ -2828,6 +2828,48 @@ void main() {
       expect(find.text('同步'), findsOneWidget);
     });
 
+    // R1:屏上那条路 —— 上次失败过之后,「同步」走的是可续做的 `enableCloud`,而那一支
+    // (已经有 cloudId)原来绕过了 iCloud 那道闸:开着 iCloud 时它会真的去 keyed 重开箱
+    // (那条路不接 iCloud 容器根),而且 `saveIcloudBlocksCloud(true)` 永远不触发 ——
+    // 概览屏那一行继续说错话。
+    testWidgets('R1:上次失败过 +「同步」重试,开着 iCloud:拒绝、不重开箱、把原因记下来', (t) async {
+      resetVaultQueueForTest();
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      final rust = _FakeSyncRust(
+        icloudOn: true,
+        keyed: false, // 第一次普通同步撞 VaultMismatch,于是第二次点会走 enableCloud
+        vaultRoot: '/x/profiles/${ProfileManager.instance.current.id}/vault',
+      );
+      final syncApi = _SyncApi(delay: const Duration(milliseconds: 1));
+      final engine = SyncEngine(
+        syncApi,
+        AccountSession.instance,
+        rust: rust,
+        reopenVault: () async => fail('开着 iCloud 就不该重开箱'),
+      );
+      await _toReady(t, api, syncEngine: engine);
+
+      await t.tap(find.text('同步'));
+      await t.pumpAndSettle();
+      expect(find.textContaining('不是这个云档案'), findsOneWidget);
+
+      // 第二次点同一颗:走 enableCloud 那条可续做的支路。
+      await t.runAsync(() async {
+        await t.tap(find.text('同步'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await t.pumpAndSettle();
+
+      expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
+      expect(syncApi.pulls, 0, reason: '一趟同步都不该起步');
+      expect(
+        await t.runAsync(loadIcloudBlocksCloud),
+        isTrue,
+        reason: '概览屏那一行要据此说真正的原因,而不是一条点不动的「点这里重试」',
+      );
+    });
+
     testWidgets('同步:加载中显示进度圈', (t) async {
       resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
