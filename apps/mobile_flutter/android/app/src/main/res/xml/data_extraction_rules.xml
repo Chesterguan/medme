@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ 的备份/迁移规则。MedMe 的沙盒里躺着**明文的病历保险箱**(vault 的
+  真相目录与派生库)和账号 refresh token —— 安卓系统自动备份会把它们整包传进用户的
+  Google Drive(境外、我们看不见也控制不了的一份副本),设备到设备迁移同理。
+
+  所以这里把**每一个** domain 都排除:云备份与 D2D 迁移都不带走任何东西。
+  AndroidManifest 里同时写了 android:allowBackup="false"(12 以下的系统只认那一条),
+  两处是互补的,不是重复。
+
+  换机恢复的路不是系统备份,而是账号云同步(见 docs/ADR 与 services/api):
+  密文上云、密钥只在用户自己的设备/钥匙串里。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
