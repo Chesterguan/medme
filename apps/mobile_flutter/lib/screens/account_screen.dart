@@ -123,10 +123,17 @@ String expiryLabel(Object? iso) {
 /// 关掉那一句是创始人拍板的逐字文案:用户最怕的是"关掉是不是等于删库"。照实说 ——
 /// 本机这边停了,云端已经上去的那些密文留着,直到他注销账号。
 @visibleForTesting
-String cloudRowStatus(Profile p) {
+String cloudRowStatus(Profile p, {bool icloudOn = false}) {
   if (p.cloudPaused) {
-    return '云同步已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号';
+    // M9:**从来没上过云**的成员没有"云端已有的密文"可保留 —— 那句话会让用户以为
+    // 云上躺着一份他的病历。只有真的上过云才说后半句。
+    return p.cloudId == null
+        ? '云同步已关闭 —— 关闭后本机不再上传下载'
+        : '云同步已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号';
   }
+  // I5:开着 iCloud 同步时云同步压根开不了(见 `CloudEnableBlocked`),
+  // 「打开这个开关立刻再试一次」是句空话。
+  if (icloudOn && p.cloudId == null) return '这台手机开着 iCloud 同步,两套同步不能一起开';
   if (p.cloudId == null) return '还没备份上去 —— 会自动重试,也可以打开这个开关立刻再试一次';
   return '已备份到云端 · ${roleLabel(p.role)}';
 }
@@ -142,6 +149,16 @@ String? createdLabel(Object? iso) {
 /// 一句话都没有——用户会以为卡死了、切走、甚至杀掉 App(那一刻杀掉正好是
 /// `prepareKeys` 还没 commit 的窗口,等于白做一遍)。
 const _kdfWaitHint = '正在生成密钥,老一点的手机可能要等几秒,请不要退出';
+
+/// 「有账号默认开云」这件事的**唯一一份措辞**:云同步那一节的说明、以及登录成功那一刻
+/// 的一次性告知(复审 I8)都用它 —— 同一件事在两处各写一遍,迟早会漂成两句不一样的话。
+///
+/// 三件事都要说到:默认会上传每个成员的密文、可以按成员关掉、关掉之后云端已有的密文
+/// 怎么办(用户最怕的是"关掉是不是等于删库")。后半句与 [cloudRowStatus] 里那句同源。
+const _cloudDefaultCopy =
+    '登录之后,每个成员的病历默认都会加密备份到云端(我们只看得到密文)。'
+    '不想备份哪个成员,把它的开关关掉就行 —— 关闭后本机不再上传下载;'
+    '云端已有的密文会保留到你注销账号。';
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({
@@ -240,6 +257,13 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 旧设备这一侧:正在扫码/批准(防连点)。
   bool _approveBusy = false;
 
+  /// I8:那句一次性告知还要不要显示(`initState` 从 prefs 读回来)。
+  bool _showCloudNotice = false;
+
+  /// 这台手机开着 iCloud 同步吗 —— 读 `sync_engine` 记下来的那个布尔(复审 I5:
+  /// 查 FRB 的事由后台那条队列做,账号屏不碰原生库,它跑在 widget 测试里)。
+  bool _icloudBlocks = false;
+
   /// 正在撤销一份授权(评审 Minor 20:双击会发两个 DELETE,第二个在成功撤销之后
   /// 立刻显示「撤销失败:没有找到…」—— 一次成功的操作看起来像失败了)。
   bool _revokeBusy = false;
@@ -285,6 +309,12 @@ class _AccountScreenState extends State<AccountScreen> {
     // 的 initState 里的裸 Future,失败就是一次未处理的 rejection:用户停在
     // idle 却看不到任何错误,像是"卡住了"而不是"网络失败"。停在 idle(不切
     // phase)、把错误摆到 `_error` 上——idle 的界面本来就会渲染 `_error`。
+    loadIcloudBlocksCloud().then((v) {
+      if (mounted && v != _icloudBlocks) setState(() => _icloudBlocks = v);
+    });
+    loadCloudDefaultNoticeSeen().then((v) {
+      if (mounted && !v) setState(() => _showCloudNotice = true);
+    });
     widget.flow
         .resumeIfLoggedIn()
         .then((outcome) {
@@ -918,6 +948,7 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 没有";而它原来排在第四个区块,要滚过设备、授权、家属三节才看得见。
   /// 「设备」排最后 —— 它是一年用一次的东西。
   List<Widget> _readyContent() => [
+    if (_showCloudNotice) ...[_cloudNoticeBanner(), const SizedBox(height: 16)],
     const Text('已登录', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 4),
     Text(_accountLabel(), style: const TextStyle(color: MedMe.faint)),
@@ -955,6 +986,45 @@ class _AccountScreenState extends State<AccountScreen> {
     ],
   ];
 
+  /// I8。登录/设完密钥那一刻把"默认开云"这件事说出来,一次性、可关闭。
+  ///
+  /// 不做成弹窗:那一刻用户刚走完"输手机号 → 验证码 →(设口令 → 抄恢复码)"四步,
+  /// 再弹一个需要点掉的东西只会被无脑点掉。一条摆在屏顶、带「知道了」的横幅能被读到,
+  /// 而且在他点掉之前一直在。
+  Widget _cloudNoticeBanner() => Container(
+    key: const Key('cloud_notice'),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(color: MedMe.tealSoft, borderRadius: BorderRadius.circular(12)),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '你的病历会自动备份到云端',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          _cloudDefaultCopy,
+          key: Key('cloud_notice_text'),
+          style: TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.ink),
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            key: const Key('cloud_notice_ack'),
+            onPressed: _ackCloudNotice,
+            child: const Text('知道了'),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _ackCloudNotice() async {
+    setState(() => _showCloudNotice = false);
+    await saveCloudDefaultNoticeSeen();
+  }
+
   /// C1:这一行原来是 `账号:acc_7f3a…`(服务端内部 id)—— 对用户毫无意义。
   /// 改成他认得出的东西:脱敏手机号,或者「Apple 登录」。
   String _accountLabel() =>
@@ -983,11 +1053,7 @@ class _AccountScreenState extends State<AccountScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          '登录之后,每个成员的病历默认都会加密备份到云端(我们只看得到密文)。'
-          '不想备份哪个成员,把它的开关关掉就行。',
-          style: TextStyle(color: MedMe.faint, height: 1.5),
-        ),
+        const Text(_cloudDefaultCopy, style: TextStyle(color: MedMe.faint, height: 1.5)),
         const SizedBox(height: 8),
         for (final m in ProfileManager.instance.profiles) _cloudMemberRow(m),
         // 开通要注册云档案 + 重开箱 + 跑一次首同步,几秒到几十秒 —— 屏上必须有
@@ -1048,7 +1114,10 @@ class _AccountScreenState extends State<AccountScreen> {
       child: SwitchListTile(
         key: Key('cloud_switch_${m.id}'),
         title: Text(m.name),
-        subtitle: Text(cloudRowStatus(m), style: const TextStyle(fontSize: 12.5, height: 1.4)),
+        subtitle: Text(
+          cloudRowStatus(m, icloudOn: _icloudBlocks),
+          style: const TextStyle(fontSize: 12.5, height: 1.4),
+        ),
         value: on,
         // 开通要重开箱 + 跑一次首同步,期间不许再拨别的开关(vault 是进程级单例)。
         onChanged: _cloudBusy ? null : (v) => _toggleCloud(m, v),
@@ -1071,16 +1140,22 @@ class _AccountScreenState extends State<AccountScreen> {
         // 关掉的成员别留在"默认开云"的待办队列里,否则下一次后台触发又把它开回来。
         pendingCloudEnable.remove(m.id);
       } else if (m.cloudId == null) {
-        final current = ProfileManager.instance.currentId.value;
-        // `SyncEngine.enableCloud` 只肯给当前打开的成员开通 —— 给别人开通要真的
-        // 切过去再切回来(见 `sync_engine.enableCloudAndReturn`)。
-        await enableCloudAndReturn(m, returnTo: current, enable: _sync.enableCloud);
+        // 同后台那条队列的分工(复审 I7):当前成员走完整路径(注册 → 重开箱 →
+        // 首同步),别人**只注册** —— 那一步不碰进程级 vault,所以不必把用户切过去。
+        if (m.id == ProfileManager.instance.currentId.value) {
+          await _sync.enableCloud(m);
+        } else {
+          await _sync.registerCloudProfile(m);
+        }
         pendingCloudEnable.remove(m.id);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('已给「${m.name}」开通云同步')));
       }
       if (mounted) setState(() {});
     } catch (e) {
+      // 开着 iCloud 同步时记一笔(复审 I5)—— 概览屏那一行据此说真正的原因,
+      // 而不是一条点不动的「点这里重试」。
+      if (e is CloudEnableBlocked) await saveIcloudBlocksCloud(true);
       if (!mounted) return;
       setState(() { _cloudError = friendlyApiError(e); });
     } finally {

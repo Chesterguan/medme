@@ -1154,6 +1154,7 @@ void main() {
         {'device_id': 'dev2', 'name': 'iPhone 15', 'eph_public': 'AA==', 'approved': false},
       ]);
       await _toReady(t, api);
+      await _scrollToText(t, '设备');
       expect(find.text('iPhone 15'), findsOneWidget);
       expect(find.text('新设备,等你批准'), findsOneWidget, reason: '状态照实显示,只是不给这条操作入口');
       expect(
@@ -1168,6 +1169,7 @@ void main() {
     testWidgets('加载失败:显示错误,不崩', (t) async {
       final api = FakeApi(hasKeys: true, failDevices: true);
       await _toReady(t, api);
+      await _scrollToText(t, '设备');
       expect(find.textContaining('设备列表加载失败:服务器开小差了'), findsOneWidget);
     });
 
@@ -1350,6 +1352,7 @@ void main() {
         {'device_id': 'dev2', 'name': 'android', 'eph_public': 'AA==', 'approved': false, 'last_seen': '2026-01-01T00:00:00.000Z'},
       ]);
       await _toReady(t, api);
+      await _scrollToText(t, '设备');
       expect(find.text('iPhone/iPad'), findsOneWidget);
       expect(find.text('安卓手机'), findsOneWidget);
       expect(find.text('新设备,等你批准'), findsOneWidget);
@@ -1770,6 +1773,7 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
+      await _scrollToText(t, '家属');
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
       await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
@@ -1788,6 +1792,7 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: rust));
 
+      await _scrollToText(t, '家属');
       await t.enterText(find.byKey(const Key('family_phone')), '138 0000 1111');
       await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
@@ -1808,6 +1813,7 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
+      await _scrollToText(t, '家属');
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
       await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
@@ -1825,6 +1831,7 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
+      await _scrollToText(t, '家属');
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
       await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
@@ -1850,6 +1857,7 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
+      await _scrollToText(t, '家属');
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
       await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
@@ -1867,6 +1875,7 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
+      await _scrollToText(t, '家属');
       await t.enterText(find.byKey(const Key('family_phone')), 'abc'); // 打个不像手机号的
       await _scrollToText(t, '按手机号添加家属');
       await t.tap(find.text('按手机号添加家属'));
@@ -1884,6 +1893,7 @@ void main() {
       await _toReady(t, api);
 
       expect(find.byKey(const Key('family_phone')), findsNothing);
+      await _scrollToText(t, '家属');
       expect(find.textContaining('暂时不能添加家属'), findsOneWidget);
     });
   });
@@ -2692,9 +2702,11 @@ void main() {
       expect(ProfileManager.instance.byId('p-1')!.cloudPaused, isTrue);
       expect(t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value, isFalse);
       expect(
-        find.textContaining('云端已有的密文会保留到你注销账号'),
+        // 精确匹配这一行的状态句:同一句话现在也出现在那节说明和 I8 的告知横幅里
+        // (它们共用 `_cloudDefaultCopy`),`textContaining` 会一次找到三个。
+        find.text('云同步已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号'),
         findsOneWidget,
-        reason: '用户最怕的是"关掉是不是等于删库" —— 这句必须在屏上',
+        reason: '用户最怕的是"关掉是不是等于删库" —— 这句必须在那一行上',
       );
       expect(find.text('同步'), findsNothing, reason: '「关闭后本机不再上传下载」');
     });
@@ -3446,6 +3458,78 @@ void main() {
       expect(parsed.deviceId, await deviceId());
       // 码里一个秘密都没有:临时私钥只在返回值里,从不进那串字。
       expect(req.code.contains(base64UrlEncode(req.ephSecret)), isFalse);
+    });
+  });
+
+  // I8:登录/设完密钥那一刻,屏上必须把"默认开云"这件事说出来 —— 默认上传是一个
+  // **代替用户做的决定**,他至少有权在发生的那一刻知道,并且知道怎么关。
+  group('I8:默认开云的一次性告知', () {
+    late Directory support;
+
+    setUp(() async {
+      support = await Directory.systemTemp.createTemp('medme-cloud-notice-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+    });
+
+    tearDown(() async => support.delete(recursive: true));
+
+    testWidgets('第一次进到「已登录」:三件事都在屏上(默认上传 / 可按成员关 / 关了云端密文留着)', (t) async {
+      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
+
+      expect(find.byKey(const Key('cloud_notice')), findsOneWidget);
+      final text = t.widget<Text>(find.byKey(const Key('cloud_notice_text'))).data!;
+      expect(text, contains('默认都会加密备份到云端'));
+      expect(text, contains('把它的开关关掉'));
+      expect(text, contains('云端已有的密文会保留到你注销账号'));
+    });
+
+    testWidgets('点「知道了」:收起来,而且落盘 —— 下次不再出现', (t) async {
+      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
+
+      await t.tap(find.byKey(const Key('cloud_notice_ack')));
+      await t.pumpAndSettle();
+      expect(find.byKey(const Key('cloud_notice')), findsNothing);
+      expect(await t.runAsync(loadCloudDefaultNoticeSeen), isTrue);
+    });
+
+    testWidgets('已经看过:不再出现', (t) async {
+      SharedPreferences.setMockInitialValues({'cloud_default_notice_seen': true});
+      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
+
+      expect(find.byKey(const Key('cloud_notice')), findsNothing);
+    });
+  });
+
+  group('cloudRowStatus(纯函数):开关那一行的状态句', () {
+    test('已开通:说角色', () {
+      expect(cloudRowStatus(const Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner')), '已备份到云端 · 主人');
+    });
+
+    test('还没开通:说会自动重试,也可以自己打开这个开关', () {
+      expect(cloudRowStatus(const Profile(id: 'p-1', name: '我')), contains('还没备份上去'));
+    });
+
+    // M9:关掉一个**从来没上过云**的成员时,"云端已有的密文"根本不存在 ——
+    // 那句话会让用户以为云上躺着一份他的病历。
+    test('M9:关掉的成员从没上过云 → 不许提"云端已有的密文会保留"', () {
+      final s = cloudRowStatus(const Profile(id: 'p-1', name: '我', cloudPaused: true));
+      expect(s, contains('云同步已关闭'));
+      expect(s, isNot(contains('云端已有的密文')));
+    });
+
+    test('关掉的成员上过云 → 照实说云端那份密文怎么办', () {
+      final s = cloudRowStatus(const Profile(id: 'p-1', name: '我', cloudId: 'prf_1', cloudPaused: true));
+      expect(s, contains('云端已有的密文会保留到你注销账号'));
+    });
+
+    // I5:开着 iCloud 同步时"打开这个开关立刻再试一次"是句空话。
+    test('I5:开着 iCloud 同步 → 说真正的原因,不说"再试一次"', () {
+      final s = cloudRowStatus(const Profile(id: 'p-1', name: '我'), icloudOn: true);
+      expect(s, contains('iCloud 同步'));
+      expect(s, isNot(contains('再试一次')));
     });
   });
 

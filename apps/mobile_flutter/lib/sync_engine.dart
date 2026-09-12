@@ -231,7 +231,10 @@ class SyncEngine {
   /// `/v1/profiles`、密钥存本机、[ProfileManager.markCloud]。拆出来单独可测——
   /// `flutter test` 不能跑到 `openCurrentProfileVault`(需要真实 Rust 原生库),
   /// 但这半截的逻辑用假 API/假 Rust 就能钉住。返回新的 `cloudId`。
-  @visibleForTesting
+  ///
+  /// **它现在也是一条生产路径**(复审 I7):给**非当前**成员默认开云只做这一步 ——
+  /// 不碰进程级 vault,于是不必把用户切过去(那是一次开箱 + 一次闪屏)。内容的首次
+  /// 推送等用户下次打开那个成员时由既有路径自然发生。所以不再是 `@visibleForTesting`。
   Future<String> registerCloudProfile(Profile p) async {
     final key = await rust.profileKeyNew();
     final pub = session.publicKey;
@@ -271,10 +274,10 @@ class SyncEngine {
   Future<SyncReport> syncProfile(Profile p) async {
     try {
       final rep = await runSerialized(() => _syncProfileLocked(p));
-      await saveLastSync(ok: true);
+      await saveLastSync(ok: true, cloudId: p.cloudId);
       return rep;
     } catch (_) {
-      await saveLastSync(ok: false);
+      await saveLastSync(ok: false, cloudId: p.cloudId);
       rethrow;
     }
   }
@@ -599,30 +602,76 @@ void resetPendingCloudEnableForTest() => pendingCloudEnable.clear();
 /// 「上次备份失败 · 点这里重试」)。
 typedef LastSync = ({DateTime at, bool ok});
 
-const _lastSyncAtKey = 'last_sync_at';
-const _lastSyncOkKey = 'last_sync_ok';
+/// **按成员**(复审 I6)。在这之前这一笔是全局的,于是给 A 同步完之后切到从没同步过
+/// 的 B,概览屏那一行照样写着「已备份 · 刚刚」—— 对"我这个人的病历备上了没"这个问题,
+/// 那是一句假话。键用 `cloudId`(不是本机成员 id):同一个云档案在几台设备上是同一件事。
+String _lastSyncAtKey(String cloudId) => 'last_sync_at_$cloudId';
+String _lastSyncOkKey(String cloudId) => 'last_sync_ok_$cloudId';
 
 /// 变了就通知 UI —— 概览屏那行是 app 启动后一直在屏上的东西,不能等下一次
 /// 整屏重建才更新。
 final ValueNotifier<int> lastSyncRevision = ValueNotifier<int>(0);
 
-Future<void> saveLastSync({required bool ok}) async {
+Future<void> saveLastSync({required bool ok, required String? cloudId}) async {
+  if (cloudId == null) return;
   try {
     final p = await SharedPreferences.getInstance();
-    await p.setString(_lastSyncAtKey, DateTime.now().toIso8601String());
-    await p.setBool(_lastSyncOkKey, ok);
+    await p.setString(_lastSyncAtKey(cloudId), DateTime.now().toIso8601String());
+    await p.setBool(_lastSyncOkKey(cloudId), ok);
   } catch (_) {
     // 记不上就记不上 —— 绝不能让"写一行状态"把一次成功的同步变成失败。
   }
   lastSyncRevision.value++;
 }
 
-Future<LastSync?> loadLastSync() async {
+/// 「这台手机开着 iCloud 同步,所以云同步开不了」(见 [CloudEnableBlocked])。
+///
+/// 由 [_drainPendingCloudEnable] 每次排空前问一次 Rust 并记在这儿,**界面只读这个
+/// 布尔**(复审 I5)。这样"查 iCloud 开没开"这件事只有一处碰 FRB,概览屏那一行和
+/// 账号屏的开关列表都不必自己调原生库 —— 它们跑在 widget 测试里。
+const _icloudBlocksKey = 'icloud_blocks_cloud';
+
+Future<void> saveIcloudBlocksCloud(bool blocked) async {
+  try {
+    await (await SharedPreferences.getInstance()).setBool(_icloudBlocksKey, blocked);
+  } catch (_) {}
+  lastSyncRevision.value++;
+}
+
+Future<bool> loadIcloudBlocksCloud() async {
+  try {
+    return (await SharedPreferences.getInstance()).getBool(_icloudBlocksKey) ?? false;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// 「默认开云」那句一次性告知看过了没(复审 I8)。默认上传是一个**代替用户做的
+/// 决定** —— 他至少有权在它发生的那一刻知道这件事、并且知道怎么关。
+const _cloudNoticeSeenKey = 'cloud_default_notice_seen';
+
+Future<bool> loadCloudDefaultNoticeSeen() async {
+  try {
+    return (await SharedPreferences.getInstance()).getBool(_cloudNoticeSeenKey) ?? false;
+  } catch (_) {
+    // 读不到就当没看过 —— 多说一次远好过漏说。
+    return false;
+  }
+}
+
+Future<void> saveCloudDefaultNoticeSeen() async {
+  try {
+    await (await SharedPreferences.getInstance()).setBool(_cloudNoticeSeenKey, true);
+  } catch (_) {}
+}
+
+Future<LastSync?> loadLastSync(String? cloudId) async {
+  if (cloudId == null) return null;
   try {
     final p = await SharedPreferences.getInstance();
-    final at = DateTime.tryParse(p.getString(_lastSyncAtKey) ?? '');
+    final at = DateTime.tryParse(p.getString(_lastSyncAtKey(cloudId)) ?? '');
     if (at == null) return null;
-    return (at: at, ok: p.getBool(_lastSyncOkKey) ?? false);
+    return (at: at, ok: p.getBool(_lastSyncOkKey(cloudId)) ?? false);
   } catch (_) {
     return null;
   }
@@ -637,9 +686,14 @@ Future<void> triggerBackgroundSync({
   /// 不碰 [pendingFirstSync] —— 已有的那些只测"普通同步"的用例不用改。
   Future<void> Function(Profile p, String returnTo)? firstSync,
 
-  /// 给一个还没开通云同步的成员开通(生产里是 [enableCloudAndReturn])。为 null
-  /// 时不碰 [pendingCloudEnable] —— 同 [firstSync] 的道理。
-  Future<void> Function(Profile p, String returnTo)? enableCloud,
+  /// 给一个还没开通云同步的成员开通。`current` = 这是不是用户此刻打开着的那个成员:
+  /// **只有它走完整路径**(注册 → 重开箱 → 首同步),别人只做"注册"那一步
+  /// (复审 I7,见 [_drainPendingCloudEnable])。为 null 时不碰 [pendingCloudEnable]。
+  Future<void> Function(Profile p, {required bool current})? enableCloud,
+
+  /// 这台设备开着 iCloud 同步吗(生产里是 `RustSync().icloudEnabled()`)。
+  /// 开着就一个成员都别试 —— 见 [_drainPendingCloudEnable]。
+  Future<bool> Function()? icloudEnabled,
 }) async {
   if (_backgroundSyncRunning) {
     _backgroundSyncRerunRequested = true;
@@ -655,6 +709,7 @@ Future<void> triggerBackgroundSync({
         sync: sync,
         firstSync: firstSync,
         enableCloud: enableCloud,
+        icloudEnabled: icloudEnabled,
       );
     } while (_backgroundSyncRerunRequested);
   } finally {
@@ -667,14 +722,15 @@ Future<void> _runBackgroundSyncOnce({
   required Profile? Function() currentProfile,
   required Future<SyncReport> Function(Profile) sync,
   Future<void> Function(Profile p, String returnTo)? firstSync,
-  Future<void> Function(Profile p, String returnTo)? enableCloud,
+  Future<void> Function(Profile p, {required bool current})? enableCloud,
+  Future<bool> Function()? icloudEnabled,
 }) async {
   if (!session.loggedIn.value) return;
   // 先把「领回来还没同步过」的排空(A5)—— 它们现在顶着占位名、0 份病历,
   // 看起来像数据丢了,比"当前成员晚同步几秒"要紧得多。
   if (firstSync != null) await _drainPendingFirstSync(currentProfile, firstSync);
   // 再把「有账号了、但这个成员还没上云」的排空(UX 第二轮)。
-  if (enableCloud != null) await _drainPendingCloudEnable(currentProfile, enableCloud);
+  if (enableCloud != null) await _drainPendingCloudEnable(currentProfile, enableCloud, icloudEnabled);
   final profile = currentProfile();
   // `cloudPaused` = 用户手动关了这个成员的云同步 —— 触发器跳过它(创始人拍板的
   // 那条:「关闭后本机不再上传下载」)。
@@ -716,23 +772,46 @@ Future<void> _drainPendingFirstSync(
 
 /// 排空 [pendingCloudEnable](UX 第二轮:有账号默认开云)。
 ///
-/// **当前成员排最后**:给别人开通要「切过去 → 开通 → 切回来」,而当前成员这一步
-/// 根本不用切。放最后,用户眼前那一串切换就少一次来回、也不会在开通自己这个成员
-/// 之后又被切走再切回来(闪屏)。
+/// **开着 iCloud 同步就一个都不试**(复审 I5):那时 `SyncEngine.enableCloud` 必然抛
+/// [CloudEnableBlocked],而在这之前是"逐个成员切过去、开箱、撞墙、再切回来"才发现的 ——
+/// N 个成员 = N 轮真实开箱 = 用户眼里 N 次闪屏,而答案在第一轮之前就能知道。把结论记进
+/// [saveIcloudBlocksCloud],界面据此说出真正的原因(而不是一条点不动的「点这里重试」)。
 ///
-/// 失败留在集合里、下一次触发再试 —— 唯一的例外是 [CloudEnableBlocked](这台设备
-/// 开着 iCloud 同步):它不是"这次不巧",在用户去设置里关掉 iCloud 之前,重试一万
-/// 次都是同一个结果,而每次重试都是一轮真实的成员切换 + 开箱(用户眼里的闪屏)。
-/// 移出队列,让"还没开通"这件事由 UI 去说(账号屏的开关、概览屏顶部那行)。
+/// **只有当前成员走完整路径**(复审 I7 裁定):`SyncEngine.enableCloud` 的三步里,
+/// 只有"注册"(`registerCloudProfile`:生成档案密钥、封给账号公钥、POST /v1/profiles、
+/// `markCloud`)与箱子无关;"重开箱 + 首同步"必须是当前成员。于是给别人开通只做注册 ——
+/// 不切成员、不开箱、不闪屏;内容的首次推送等用户下次打开那个成员时由既有路径自然发生
+/// (切成员本身就 `bumpVaultRevision` → debounced push)。当前成员仍然走完整的三步。
+///
+/// 当前成员**排最后**:它那一步会重开箱 + 跑一次完整同步,放最后意味着前面那些注册
+/// 不会被它的耗时挡住。
+///
+/// 失败留在集合里、下一次触发再试 —— 例外仍是 [CloudEnableBlocked](上面那道闸之后
+/// 理论上到不了这里,留着是因为"iCloud 刚好在这几秒里被打开"不是不可能)。
 Future<void> _drainPendingCloudEnable(
   Profile? Function() currentProfile,
-  Future<void> Function(Profile p, String returnTo) enableCloud,
+  Future<void> Function(Profile p, {required bool current}) enableCloud,
+  Future<bool> Function()? icloudEnabled,
 ) async {
   if (pendingCloudEnable.isEmpty) return;
-  final returnTo = currentProfile()?.id;
-  if (returnTo == null) return;
+  final currentId = currentProfile()?.id;
+  if (currentId == null) return;
+  if (icloudEnabled != null) {
+    bool blocked;
+    try {
+      blocked = await icloudEnabled();
+    } catch (_) {
+      // 问不出来就当没开(不因为一次读取失败把"默认开云"整条停掉)。
+      blocked = false;
+    }
+    await saveIcloudBlocksCloud(blocked);
+    if (blocked) {
+      pendingCloudEnable.clear();
+      return;
+    }
+  }
   final ids = pendingCloudEnable.toList();
-  final ordered = [...ids.where((id) => id != returnTo), ...ids.where((id) => id == returnTo)];
+  final ordered = [...ids.where((id) => id != currentId), ...ids.where((id) => id == currentId)];
   for (final id in ordered) {
     final p = ProfileManager.instance.byId(id);
     // 已经不在了 / 已经开通了 / 用户把它关了 —— 都别再惦记。
@@ -741,37 +820,14 @@ Future<void> _drainPendingCloudEnable(
       continue;
     }
     try {
-      await enableCloud(p, returnTo);
+      await enableCloud(p, current: id == currentId);
       pendingCloudEnable.remove(id);
     } on CloudEnableBlocked catch (_) {
       pendingCloudEnable.remove(id);
+      await saveIcloudBlocksCloud(true);
     } catch (_) {
       // 留着,下一次触发再试。
     }
-  }
-}
-
-/// 「(必要时)切到这个成员 → 开通云同步 → 切回去」。
-///
-/// `SyncEngine.enableCloud` 只肯给**当前打开的那个成员**开通(它重开的是进程级
-/// 单例 vault,见那边的文档),所以给别的成员开通必须真的切过去。
-///
-/// 失败也要切回来(`finally`)—— 否则一次失败的后台开通会把用户悄悄留在另一个
-/// 成员身上,而他压根没动过成员切换器。
-///
-/// 副作用做成参数,理由同 [firstSyncAndName]:真实现碰 Rust 原生库与网络。
-Future<void> enableCloudAndReturn(
-  Profile p, {
-  required String returnTo,
-  required Future<void> Function(Profile) enable,
-  Future<void> Function(String id, {String? revertTo}) switchAndReopen = switchProfileAndReopen,
-}) async {
-  final needsSwitch = p.id != returnTo;
-  if (needsSwitch) await switchAndReopen(p.id);
-  try {
-    await enable(p);
-  } finally {
-    if (needsSwitch) await switchAndReopen(returnTo);
   }
 }
 
@@ -798,12 +854,16 @@ Future<void> runBackgroundSync() {
       returnTo: returnTo,
       sync: (x) => engine().syncProfile(x),
     ),
-    // 有账号默认开云(UX 第二轮):还没上云的成员一个一个开通,当前成员最后。
-    enableCloud: (p, returnTo) => enableCloudAndReturn(
-      p,
-      returnTo: returnTo,
-      enable: (x) => engine().enableCloud(x),
-    ),
+    // 有账号默认开云(UX 第二轮),当前成员最后。**非当前成员只注册**(复审 I7):
+    // 注册那一步不碰进程级 vault,所以不必把用户切过去;重开箱 + 首同步只对当前成员做。
+    enableCloud: (p, {required bool current}) async {
+      if (current) {
+        await engine().enableCloud(p);
+      } else {
+        await engine().registerCloudProfile(p);
+      }
+    },
+    icloudEnabled: () => const RustSync().icloudEnabled(),
   );
 }
 

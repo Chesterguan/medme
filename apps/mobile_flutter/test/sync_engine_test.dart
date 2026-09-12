@@ -528,34 +528,83 @@ void main() {
       return id;
     }
 
-    Future<void> trigger(List<(String, String)> ran, {bool Function(String id)? fail}) =>
+    /// 记一笔 `(成员 id, 这是不是当前成员)` —— I7 之后"是不是当前成员"决定走哪条路。
+    Future<void> trigger(List<(String, bool)> ran, {bool Function(String id)? fail, Future<bool> Function()? icloud}) =>
         triggerBackgroundSync(
           session: AccountSession.instance,
           currentProfile: () => ProfileManager.instance.current,
           sync: (p) async => SyncReport(),
-          enableCloud: (p, returnTo) async {
+          icloudEnabled: icloud,
+          enableCloud: (p, {required bool current}) async {
             if (fail?.call(p.id) ?? false) throw const ApiFailed(500, 'boom');
-            ran.add((p.id, returnTo));
-            // 真实现会 markCloud —— 队列的判据认的就是"有没有 cloudId 了"。
+            ran.add((p.id, current));
+            // 真实现(两条路都)会 markCloud —— 队列的判据认的就是"有没有 cloudId 了"。
             await ProfileManager.instance.markCloud(p.id, 'prf_${p.id}', 'owner', null);
           },
         );
 
-    test('当前成员排最后:先给别人开,最后才轮到眼前这个(少一次来回切换)', () async {
+    test('当前成员排最后,而且只有它标成 current(I7:别人只注册,不切箱子)', () async {
       final other = await queued('爸爸');
       pendingCloudEnable.add('p-1');
-      final ran = <(String, String)>[];
+      final ran = <(String, bool)>[];
 
       await trigger(ran);
 
-      expect(ran.map((e) => e.$1).toList(), [other, 'p-1']);
-      expect(ran.every((e) => e.$2 == 'p-1'), isTrue, reason: 'returnTo 始终是排空开始时的当前成员');
+      expect(ran, [(other, false), ('p-1', true)]);
       expect(pendingCloudEnable, isEmpty);
+      expect(
+        ProfileManager.instance.currentId.value,
+        'p-1',
+        reason: 'I7:给别人开通不再切过去 —— 用户眼前的成员从头到尾没动过',
+      );
+    });
+
+    test('I7:三个成员一次登录 —— 只有当前成员是 current,其余 cloudId 已设且没被关掉', () async {
+      final dad = await queued('爸爸');
+      final mum = await queued('妈妈');
+      pendingCloudEnable.add('p-1');
+      final ran = <(String, bool)>[];
+
+      await trigger(ran);
+
+      expect(ran.where((e) => e.$2).map((e) => e.$1).toList(), ['p-1']);
+      expect(ran.length, 3);
+      for (final id in [dad, mum, 'p-1']) {
+        final p = ProfileManager.instance.byId(id)!;
+        expect(p.cloudId, isNotNull, reason: '三个都登记到云上了');
+        expect(p.cloudPaused, isFalse);
+      }
+      expect(ProfileManager.instance.currentId.value, 'p-1');
+    });
+
+    // I5:开着 iCloud 同步时,不该逐个成员切过去才发现 `CloudEnableBlocked` ——
+    // 那是 N 轮真实的开箱(用户眼里 N 次闪屏),而答案在第一轮之前就能知道。
+    test('I5:开着 iCloud 同步 → 一个都不开,队列当场清空(零次尝试)', () async {
+      await queued('爸爸');
+      pendingCloudEnable.add('p-1');
+      final ran = <(String, bool)>[];
+
+      await trigger(ran, icloud: () async => true);
+
+      expect(ran, isEmpty, reason: '连第一轮都不该试');
+      expect(pendingCloudEnable, isEmpty);
+      expect(await loadIcloudBlocksCloud(), isTrue, reason: 'UI 要据此说出真正的原因');
+    });
+
+    test('I5:没开 iCloud → 照常开通,并把那个标记清掉', () async {
+      await saveIcloudBlocksCloud(true); // 上一次启动时开着,这次关了
+      await queued('爸爸');
+      final ran = <(String, bool)>[];
+
+      await trigger(ran, icloud: () async => false);
+
+      expect(ran.length, 1);
+      expect(await loadIcloudBlocksCloud(), isFalse);
     });
 
     test('失败:留在队列里,下一次触发再试(这就是"重试队列")', () async {
       final id = await queued('妈妈');
-      final ran = <(String, String)>[];
+      final ran = <(String, bool)>[];
 
       await trigger(ran, fail: (_) => true);
       expect(ran, isEmpty);
@@ -568,13 +617,13 @@ void main() {
 
     test('开着 iCloud 同步(CloudEnableBlocked):移出队列,不每次触发都闪一遍屏', () async {
       final id = await queued('奶奶');
-      final ran = <(String, String)>[];
+      final ran = <(String, bool)>[];
 
       await triggerBackgroundSync(
         session: AccountSession.instance,
         currentProfile: () => ProfileManager.instance.current,
         sync: (p) async => SyncReport(),
-        enableCloud: (p, returnTo) async => throw const CloudEnableBlocked(),
+        enableCloud: (p, {required bool current}) async => throw const CloudEnableBlocked(),
       );
 
       expect(ran, isEmpty);
@@ -589,7 +638,7 @@ void main() {
     test('用户关掉了这个成员的云同步:一次都不开(也不留在队列里)', () async {
       final id = await queued('爷爷');
       await ProfileManager.instance.setCloudPaused(id, true);
-      final ran = <(String, String)>[];
+      final ran = <(String, bool)>[];
 
       await trigger(ran);
 
@@ -668,62 +717,6 @@ void main() {
 
       expect(ran, isEmpty);
       expect(pendingFirstSync, isEmpty);
-    });
-  });
-
-  group('enableCloudAndReturn:给别的成员开通要真的切过去,失败也要切回来', () {
-    setUp(() async {
-      await ProfileManager.instance.ensureLoaded();
-      await ProfileManager.instance.factoryReset();
-    });
-
-    test('当前成员:一次切换都不做', () async {
-      final switches = <String>[];
-      final p = ProfileManager.instance.current;
-
-      await enableCloudAndReturn(
-        p,
-        returnTo: p.id,
-        enable: (_) async {},
-        switchAndReopen: (id, {String? revertTo}) async => switches.add(id),
-      );
-
-      expect(switches, isEmpty);
-    });
-
-    test('别的成员:切过去 → 开通 → 切回来', () async {
-      final id = (await ProfileManager.instance.create('弟弟'))!;
-      await ProfileManager.instance.switchTo('p-1');
-      final switches = <String>[];
-      final enabled = <String>[];
-
-      await enableCloudAndReturn(
-        ProfileManager.instance.byId(id)!,
-        returnTo: 'p-1',
-        enable: (x) async => enabled.add(x.id),
-        switchAndReopen: (i, {String? revertTo}) async => switches.add(i),
-      );
-
-      expect(switches, [id, 'p-1']);
-      expect(enabled, [id]);
-    });
-
-    test('开通失败:仍然切回原成员(不把用户悄悄留在别人的档案上)', () async {
-      final id = (await ProfileManager.instance.create('妹妹'))!;
-      await ProfileManager.instance.switchTo('p-1');
-      final switches = <String>[];
-
-      await expectLater(
-        enableCloudAndReturn(
-          ProfileManager.instance.byId(id)!,
-          returnTo: 'p-1',
-          enable: (_) async => throw const ApiFailed(500, 'boom'),
-          switchAndReopen: (i, {String? revertTo}) async => switches.add(i),
-        ),
-        throwsA(isA<ApiFailed>()),
-      );
-
-      expect(switches, [id, 'p-1'], reason: '他压根没动过成员切换器');
     });
   });
 

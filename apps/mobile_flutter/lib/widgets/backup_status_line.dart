@@ -22,10 +22,16 @@ import 'package:mobile_flutter/sync_engine.dart';
   required bool loggedIn,
   required Profile profile,
   required LastSync? last,
+  bool icloudOn = false,
   DateTime? now,
 }) {
   if (!loggedIn) return (text: '未登录 · 病历只在这台手机上', canRetry: false);
   if (profile.cloudPaused) return (text: '云同步已关闭', canRetry: false);
+  // 复审 I5:开着 iCloud 同步时云同步压根开不了(见 `CloudEnableBlocked`),
+  // 那时说「点这里重试」是一条点不动的提示 —— 说真正的原因。
+  if (icloudOn && profile.cloudId == null) {
+    return (text: '这台手机开着 iCloud 同步,两套同步不能一起开', canRetry: false);
+  }
   // 还没开通成功(默认开云那条队列还没排到它、或者上次开通失败了)。
   if (profile.cloudId == null) return (text: '还没开始备份 · 点这里重试', canRetry: true);
   if (last == null) return (text: '还没备份过 · 点这里立刻备份', canRetry: true);
@@ -60,6 +66,10 @@ class BackupStatusLine extends StatefulWidget {
 
 class _BackupStatusLineState extends State<BackupStatusLine> {
   LastSync? _last;
+
+  /// 这台手机开着 iCloud 同步吗 —— 读的是 `sync_engine` 记下来的那个布尔
+  /// (复审 I5:查 FRB 的事只有后台那条队列做一次,界面不碰原生库)。
+  bool _icloudOn = false;
   bool _busy = false;
 
   @override
@@ -81,13 +91,21 @@ class _BackupStatusLineState extends State<BackupStatusLine> {
     super.dispose();
   }
 
+  /// 切成员 / 登录态变了都要**重读**那一笔 —— 它是按成员存的(I6)。
   void _onChanged() {
-    if (mounted) setState(() {});
+    if (mounted) _reload();
   }
 
   Future<void> _reload() async {
-    final l = await loadLastSync();
-    if (mounted) setState(() => _last = l);
+    // **按成员**(复审 I6):键是当前成员的 cloudId,切成员要重读。
+    final l = await loadLastSync(ProfileManager.instance.current.cloudId);
+    final icloud = await loadIcloudBlocksCloud();
+    if (mounted) {
+      setState(() {
+        _last = l;
+        _icloudOn = icloud;
+      });
+    }
   }
 
   Future<void> _retry() async {
@@ -122,6 +140,7 @@ class _BackupStatusLineState extends State<BackupStatusLine> {
       loggedIn: AccountSession.instance.loggedIn.value,
       profile: ProfileManager.instance.current,
       last: _last,
+      icloudOn: _icloudOn,
     );
     final failed = s.canRetry && s.text.contains('失败');
     return Material(
