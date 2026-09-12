@@ -220,7 +220,7 @@ class SyncEngine {
         '只能给当前打开的成员开通云同步(当前=${ProfileManager.instance.currentId.value},传入=${p.id})',
       );
     }
-    if (await rust.icloudEnabled()) throw const CloudEnableBlocked();
+    // iCloud 那道闸在 [registerCloudProfile] 里(复审 N1:两个调用方都要被挡住)。
     final cloudId = p.cloudId ?? await registerCloudProfile(p);
     await reopenVault(); // 走 vault_boot 的 FIFO 队列,重开成 keyed
     await syncProfile(Profile(id: p.id, name: p.name, cloudId: cloudId, role: p.role ?? 'owner'));
@@ -236,6 +236,17 @@ class SyncEngine {
   /// 不碰进程级 vault,于是不必把用户切过去(那是一次开箱 + 一次闪屏)。内容的首次
   /// 推送等用户下次打开那个成员时由既有路径自然发生。所以不再是 `@visibleForTesting`。
   Future<String> registerCloudProfile(Profile p) async {
+    // **这道闸在这儿,不在 `enableCloud` 里**(复审 N1)。I7 之后"给非当前成员默认
+    // 开云"直接调这个方法,而它原来没有这道检查 —— 于是开着 iCloud 同步时拨一下别人
+    // 的开关会**成功**:`markCloud` 写下 cloudId、密钥存进 secure storage、一声不响。
+    // 下次切到那个成员,`planVaultOpen` 判成 keyed,而 keyed 分支压根不接 iCloud 容器
+    // 根(见 `vault_boot.openCurrentProfileVaultUnserialized` 两个分支的差别)——
+    // 他在容器里的那些病历从此够不着,用户眼里就是"病历凭空消失"。
+    //
+    // 放在真正动手的那一步上,两个调用方(手动开关 + 后台默认开云)一起被挡住;
+    // 排空队列前那次 `icloudEnabled()` 仍然留着,它是**优化**(少跑 N 轮注定失败的
+    // 尝试),不是唯一的防线。
+    if (await rust.icloudEnabled()) throw const CloudEnableBlocked();
     final key = await rust.profileKeyNew();
     final pub = session.publicKey;
     if (pub == null) throw StateError('账号公钥未就绪,不能开通云同步');
@@ -648,7 +659,9 @@ Future<bool> loadIcloudBlocksCloud() async {
 
 /// 「默认开云」那句一次性告知看过了没(复审 I8)。默认上传是一个**代替用户做的
 /// 决定** —— 他至少有权在它发生的那一刻知道这件事、并且知道怎么关。
-const _cloudNoticeSeenKey = 'cloud_default_notice_seen';
+/// 键名定在 `account.dart`(见 [cloudDefaultNoticeSeenKey]):`AccountSession.clear()`
+/// 退出登录时也要清它,两边必须认同一个字符串。
+const _cloudNoticeSeenKey = cloudDefaultNoticeSeenKey;
 
 Future<bool> loadCloudDefaultNoticeSeen() async {
   try {

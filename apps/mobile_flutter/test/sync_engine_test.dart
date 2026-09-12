@@ -1156,6 +1156,34 @@ void main() {
       expect(api.calls, isEmpty);
       expect(ProfileManager.instance.byId(p.id)!.cloudId, isNull, reason: '什么都没落盘');
     });
+
+    // N1:这道闸原来只在 `enableCloud` 里。I7 之后"给非当前成员默认开云"走的是
+    // `registerCloudProfile` —— 它没这道检查,于是开着 iCloud 时拨一下别人的开关会
+    // **成功**:cloudId 落盘、密钥存下。下次切到那个成员,`planVaultOpen` 判成 keyed,
+    // 而 keyed 分支压根不接 iCloud 容器根 —— 他在容器里的病历从此够不着。
+    test('N1:registerCloudProfile 自己也要拒绝(非当前成员那条路绕不过去)', () async {
+      await AccountSession.instance.save(
+        accountId: 'acc',
+        access: 'a',
+        refresh: 'r',
+        publicKey: Uint8List.fromList(List.generate(32, (i) => i)),
+      );
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+      final p = ProfileManager.instance.current;
+      final api = RecordingApi(server: {'events': [], 'objects': []});
+      final engine = SyncEngine(
+        api,
+        AccountSession.instance,
+        rust: FakeRust(icloudOn: true),
+        reopenVault: () async => fail('不该走到重开箱'),
+      );
+
+      await expectLater(engine.registerCloudProfile(p), throwsA(isA<CloudEnableBlocked>()));
+      expect(api.calls, isEmpty, reason: '一次服务端调用都不该发出去');
+      expect(ProfileManager.instance.byId(p.id)!.cloudId, isNull);
+      expect(await AccountSession.instance.profileKey('prf_any'), isNull);
+    });
   });
 
   group('M4:enableCloud 可续做——注册成功、重开箱/首同步失败之后再点一次', () {
