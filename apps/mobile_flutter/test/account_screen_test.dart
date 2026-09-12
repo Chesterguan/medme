@@ -875,6 +875,65 @@ void main() {
     });
   });
 
+  // ---- A2:设备列表三态 ----
+  group('A2:设备列表不再把自己的手机标成「等待批准」', () {
+    test('正常设备(eph_public 为 null):「这台设备已可用」,没有批准按钮', () {
+      final now = DateTime(2026, 9, 12, 12);
+      final row = deviceRow({
+        'device_id': 'dev1',
+        'name': 'ios',
+        'eph_public': null,
+        // `approved` 是 `approved_priv IS NOT NULL` —— 正常设备就是 false,
+        // 这正是旧文案把它写成「等待批准」的来源。
+        'approved': false,
+        'last_seen': '2026-09-12T11:00:00.000Z',
+      }, now: now);
+      expect(row.pending, isFalse);
+      expect(row.status, startsWith('这台设备已可用'));
+      expect(row.status, isNot(contains('等待批准')));
+    });
+
+    test('新设备(有 eph_public):「新设备,等你批准」+ 可批准', () {
+      final row = deviceRow({'device_id': 'dev2', 'name': 'android', 'eph_public': 'AA==', 'approved': false});
+      expect(row.pending, isTrue);
+      expect(row.status, '新设备,等你批准');
+    });
+
+    test('设备名中文化:android / ios 不直接给用户看', () {
+      expect(deviceRow({'device_id': 'd', 'name': 'android'}).name, '安卓手机');
+      expect(deviceRow({'device_id': 'd', 'name': 'ios'}).name, 'iPhone/iPad');
+      expect(deviceRow({'device_id': 'd', 'name': 'Pixel 8'}).name, 'Pixel 8', reason: '认不出的原样显示');
+      expect(deviceRow({'device_id': 'dev9'}).name, 'dev9', reason: '没有名字才退回 device_id');
+    });
+
+    test('last_seen 本地化:刚刚 / 今天 / 昨天 / M月D日,不给 ISO 串', () {
+      final now = DateTime(2026, 9, 12, 12);
+      String at(DateTime t) => deviceRow({
+        'device_id': 'd',
+        'name': 'ios',
+        'last_seen': t.toUtc().toIso8601String(),
+      }, now: now).status;
+      expect(at(DateTime(2026, 9, 12, 11, 30)), contains('刚刚'));
+      expect(at(DateTime(2026, 9, 12, 1)), contains('今天'));
+      expect(at(DateTime(2026, 9, 11, 23)), contains('昨天'));
+      expect(at(DateTime(2026, 8, 3, 9)), contains('8月3日'));
+      expect(at(DateTime(2026, 8, 3, 9)), isNot(contains('T')));
+    });
+
+    testWidgets('屏上:自己的设备不带「批准」,待批准的那台带', (t) async {
+      final api = FakeApi(hasKeys: true, devices: [
+        {'device_id': 'dev1', 'name': 'ios', 'eph_public': null, 'approved': false, 'last_seen': '2026-01-01T00:00:00.000Z'},
+        {'device_id': 'dev2', 'name': 'android', 'eph_public': 'AA==', 'approved': false, 'last_seen': '2026-01-01T00:00:00.000Z'},
+      ]);
+      await _toReady(t, api);
+      expect(find.text('iPhone/iPad'), findsOneWidget);
+      expect(find.text('安卓手机'), findsOneWidget);
+      expect(find.text('新设备,等你批准'), findsOneWidget);
+      expect(find.text('批准'), findsOneWidget, reason: '只有真在等批准的那台有按钮');
+      expect(find.textContaining('等待批准'), findsNothing);
+    });
+  });
+
   group('已就绪:授权列表(只读,不带撤销)', () {
     testWidgets('加载中 → 成功展示,owner 行不带「撤销」按钮', (t) async {
       final api = FakeApi(hasKeys: true, profiles: [

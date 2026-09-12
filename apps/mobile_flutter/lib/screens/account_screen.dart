@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_flutter/account_flow.dart';
@@ -40,6 +40,52 @@ enum _Phase { idle, otpSent, keySetup, showRecovery, unlock, ready }
 /// 不是加更多规则。6 位是下限不是建议,不强制数字/符号:强制复杂度只会让老人
 /// 把它写在手机壳上。
 const _minPasswordLen = 6;
+
+/// 设备列表一行该怎么写 —— 纯函数,不碰 IO/网络,于是这条判断能在
+/// `flutter test` 里单独钉住。
+///
+/// ## A2:这里曾经把用户自己正在用的手机标成「等待批准」
+///
+/// `GET /v1/devices` 的 `approved` 字段是 `approved_priv IS NOT NULL`(见
+/// `services/api/db.py` 的 `devices_list`):它的意思是「服务端存着一份**等这台
+/// 设备自己来取**的批准密文」,**不是**「这台设备可用」。一台正常工作的设备
+/// ——包括全新账号的第一台(见 `db.device_is_trusted`)——两列都是 NULL,
+/// 于是 `approved == false`,旧文案就把它写成「等待批准」。用户打开账号屏看见
+/// 自己手里这台手机写着"等待批准",而屏上没有任何东西可以批准。
+///
+/// 真正区分「新设备在等批准」的只有 `eph_public`:只有调过
+/// `POST /v1/devices/request` 的设备才有它,批准之后服务端把它置回 NULL
+/// (`db.device_approve`)。所以三态收敛成两支,判据只看这一个字段。
+@visibleForTesting
+({String name, String status, bool pending}) deviceRow(Map<String, dynamic> d, {DateTime? now}) {
+  final raw = d['name']?.toString() ?? '';
+  // 服务端存的是 `Platform.operatingSystem`(见 `account_flow.dart` 的
+  // `device_name`)—— 给用户看「android」毫无意义。
+  final name = switch (raw) {
+    'android' => '安卓手机',
+    'ios' => 'iPhone/iPad',
+    '' => d['device_id']?.toString() ?? '未知设备',
+    _ => raw,
+  };
+  if (d['eph_public'] != null) return (name: name, status: '新设备,等你批准', pending: true);
+  final seen = DateTime.tryParse(d['last_seen']?.toString() ?? '');
+  if (seen == null) return (name: name, status: '这台设备已可用', pending: false);
+  return (
+    name: name,
+    status: '这台设备已可用 · 最近${_lastSeenLabel(seen.toLocal(), now ?? DateTime.now())}',
+    pending: false,
+  );
+}
+
+/// ISO8601 的 `last_seen` → 一句人话。不给「2026-09-12T03:04:05.000Z」那种东西。
+String _lastSeenLabel(DateTime seen, DateTime now) {
+  if (now.difference(seen).inMinutes < 60) return '刚刚';
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(seen.year, seen.month, seen.day);
+  if (day == today) return '今天';
+  if (day == today.subtract(const Duration(days: 1))) return '昨天';
+  return '${seen.month}月${seen.day}日';
+}
 
 /// Argon2id 在老机器上要几秒(64 MiB/t=3,见 `AccountFlow.kdf`),而转圈时原来
 /// 一句话都没有——用户会以为卡死了、切走、甚至杀掉 App(那一刻杀掉正好是
@@ -999,16 +1045,19 @@ class _AccountScreenState extends State<AccountScreen> {
       return Column(
         children: [
           for (final d in devices.cast<Map<String, dynamic>>())
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.smartphone_outlined),
-                title: Text(d['name']?.toString() ?? d['device_id'].toString()),
-                subtitle: Text((d['approved'] as bool? ?? false) ? '已批准' : '等待批准'),
-                trailing: (d['eph_public'] != null && d['approved'] != true)
-                    ? TextButton(onPressed: () => _approveDevice(d), child: const Text('批准'))
-                    : null,
-              ),
-            ),
+            Builder(builder: (context) {
+              final row = deviceRow(d);
+              return Card(
+                child: ListTile(
+                  leading: Icon(row.pending ? Icons.phonelink_setup_outlined : Icons.smartphone_outlined),
+                  title: Text(row.name),
+                  subtitle: Text(row.status),
+                  trailing: row.pending
+                      ? TextButton(onPressed: () => _approveDevice(d), child: const Text('批准'))
+                      : null,
+                ),
+              );
+            }),
         ],
       );
     },
