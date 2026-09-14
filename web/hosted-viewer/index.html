@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <!-- SECURITY (GHSA-j7fx): 本页只运行三段固定的内联脚本(首屏防闪 + 内联 dicom-parser + 查看器逻辑),
-     故 script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk=';并加 form-action/base-uri/
+     故 CSP 只放行它们各自的脚本哈希 ——**唯一一份**写在下面那个 meta 里,这里不再抄:
+     抄来的那份会悄悄过期,而 share.rs 的 CSP 测试读的是本文件里第一段出现的那个
+     指令,于是过期的注释会把测试变成在校验注释;并加 form-action/base-uri/
      frame-ancestors 'none' 锁死导航/表单/框架,断掉潜在注入外泄 DECRYPTED PHI 的路径。
      connect-src 只放行认领密文所在的那一个源(CLAIM_BASE):托管查看器要按 id 取回医生
      代拍的密文,别的地方一概连不上,解密后的 PHI 仍无处可外泄。**离线分享文件不吃这条**
@@ -15,7 +17,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-fkPvK7crxmWmfHvILknpej/yDeKVAvYcnBlEwkQjVPQ='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -233,6 +235,9 @@
   .rn { font-weight: 600; font-size: 14px; } .rf { color: #94a3b8; font-size: 11.5px; font-variant-numeric: tabular-nums; }
   .rv { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 15px; } .rv.bad { color: #be123c; }
   .ev2 { cursor: pointer; color: #1560a8; font-size: 11.5px; border: 1px solid #c8ebf1; background: #f0fafe; border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
+  /* 「需核对」——不可点(不跳原件),也**不用**偏高/偏低那套红:那是化验结论的颜色,
+     借来会被读成一档临床判断。这枚 chip 说的是"MedMe 没能替你核对这个数"。 */
+  .nr2 { color: #92400e; font-size: 11.5px; border: 1px solid #fcd9a4; background: #fffaf0; border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
   .med2 { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
   .md { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; } .md.on { background: #1789c1; } .md.off { background: #94a3b8; }
   .mn { font-weight: 600; font-size: 14px; } .mn.off { color: #94a3b8; text-decoration: line-through; }
@@ -875,6 +880,18 @@ function renderSummary(sm, asOf, patient) {
   const STEP = 12 / SPAN * 100;
   const gridBg = "repeating-linear-gradient(90deg,#eef2f6 0 1px,transparent 1px " + STEP.toFixed(3) + "%)";
   const evChip = ev => (ev && ev.length) ? '<span class="ev2" data-ev="' + (ev[0] | 0) + '">原件</span>' : "";
+  // 「需核对」:一条点是 [日期, 值],第三格 === true 表示这个值是云端整理出来的、
+  // 本机**没能逐字核对上**(spec §4;`handoff.rs` 的 points_json)。手机端对这样的
+  // 值加了同名 chip,医生这端不能让它看起来和已核实的值一模一样。
+  // `needsReviewCount` 是整条序列里这样的点数:最新那个值自己核实过、但更早的没有
+  // 时,标记照样要出——否则只看最新值的人会以为整条都核实过——并用计数说明有几个。
+  // 这枚 chip 不可点(不是 `.ev2` 那种跳原件的链接),说的是 MedMe 自己的话。
+  const nrChip = (L, last) => {
+    const n = L.needsReviewCount | 0;
+    if (last[2] !== true && !n) return "";
+    return '<span class="nr2" title="这个值由云端整理得出,MedMe 没能逐字核对上,请以原件为准">需核对'
+      + (n > 1 ? " ×" + n : "") + '</span>';
+  };
 
   let axis = "";
   for (let y = minYear; y <= maxYear; y++) { const xp = Math.max(2, Math.min(98, X(y * 12))); axis += '<div class="sum-yr" style="left:' + xp.toFixed(2) + '%">' + y + '</div>'; }
@@ -911,7 +928,7 @@ function renderSummary(sm, asOf, patient) {
           const refTxt = L.refLow != null ? "≥" + L.refLow : (L.refHigh != null ? "<" + L.refHigh : "");
           db += '<div class="lr2"><div style="flex:1;min-width:0"><div class="rn">' + esc(L.name) + '</div><div class="rf">参考 ' + esc(refTxt) + ' ' + esc(L.unit || "") + '</div></div>'
             + sparkSVG(L)
-            + '<div style="text-align:right;min-width:52px"><span class="rv' + (bad ? " bad" : "") + '">' + last[1] + '</span><div class="rf">' + esc(last[0]) + " " + evChip(L.evidence) + '</div></div></div>';
+            + '<div style="text-align:right;min-width:52px"><span class="rv' + (bad ? " bad" : "") + '">' + last[1] + '</span><div class="rf">' + esc(last[0]) + " " + nrChip(L, last) + " " + evChip(L.evidence) + '</div></div></div>';
         });
       }
       if ((pr.meds || []).length) {
