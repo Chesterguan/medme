@@ -175,6 +175,12 @@ const _cloudDefaultCopy =
     '不想备份哪个成员,把它的开关关掉就行 —— 关闭后本机不再上传下载;'
     '云端已有的密文会保留到你注销账号。';
 
+/// Task 19 友好度 #5:一次性告知横幅原来逐字复用 [_cloudDefaultCopy]——与它正下方
+/// 「云同步」小节的说明**一字不差**,用户点「知道了」之后发现同一段话还在,像是
+/// 没点上。横幅只说一句最要紧的话(默认会备份 + 能按成员关),完整的三件事仍然
+/// 只在 [_cloudDefaultCopy] 里说一遍。
+const _cloudNoticeBannerCopy = '登录后病历会自动加密备份到云端;下面可以按成员关掉。';
+
 class AccountScreen extends StatefulWidget {
   const AccountScreen({
     super.key,
@@ -184,6 +190,7 @@ class AccountScreen extends StatefulWidget {
     this.debugModeOverride,
     this.kdfBenchFn,
     this.scanQr,
+    this.onReadyCloudSync,
   });
   final AccountFlow flow;
 
@@ -209,6 +216,18 @@ class AccountScreen extends StatefulWidget {
   /// `widgets/qr_scanner_sheet.dart` 的 `scanQrCode` —— 它要开相机,
   /// `flutter test` 里既开不了也不该开。
   final Future<String?> Function(BuildContext)? scanQr;
+
+  /// 测试注入点,默认为 null(不碰真实 FRB/网络)——生产传 `sync_engine.runBackgroundSync`
+  /// (同 `backup_status_line.dart` 的 `retry` 套路)。
+  ///
+  /// Task 19 友好度 #4:「有账号默认开云」原来只靠三处既有触发点排空
+  /// `pendingCloudEnable`(导入 debounce / 回前台 / 冷启动补齐,见 `sync_engine.dart`
+  /// `runBackgroundSync` 的文档),唯独没有"刚登录/解锁完这一刻"——于是新账号在空
+  /// 保险箱上会先看到「还没开始备份 · 点这里重试」和「还没开通云同步,暂时不能添加
+  /// 家属」,直到用户导入第一份文档才自动跑完那几秒的注册。这里在进入「已就绪」时
+  /// 顺手触发一次同一个触发器,不重新发明"注册 → 重开箱 → 首同步"那一套(`enableCloud`
+  /// 已经是原子的、当前成员专属的那条路,见 `_drainPendingCloudEnable` 的文档)。
+  final Future<void> Function()? onReadyCloudSync;
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
@@ -470,6 +489,15 @@ class _AccountScreenState extends State<AccountScreen> {
         ..catchError((_) => const <dynamic>[]);
       _myGrantsFuture = _loadMyGrants()..catchError((_) => const <Map<String, dynamic>>[]);
     });
+    // 见 [AccountScreen.onReadyCloudSync]:登录/解锁那一刻顺手补一次触发,别等下一次
+    // 导入/回前台。跑完刷新一下这一屏(用户很可能还在看着它),失败静默——同
+    // `triggerBackgroundSync` 本身的纪律,下一次触发自然会重试。
+    final cloudSync = widget.onReadyCloudSync;
+    if (cloudSync != null) {
+      unawaited(cloudSync().then((_) {
+        if (mounted) setState(() {});
+      }));
+    }
   }
 
   /// 「我授权给谁」:遍历我拥有(role=='owner')的每个云档案,查它的 grantee 列表
@@ -1048,7 +1076,7 @@ class _AccountScreenState extends State<AccountScreen> {
         ),
         const SizedBox(height: 6),
         const Text(
-          _cloudDefaultCopy,
+          _cloudNoticeBannerCopy,
           key: Key('cloud_notice_text'),
           style: TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.ink),
         ),

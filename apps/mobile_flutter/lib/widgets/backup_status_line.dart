@@ -134,6 +134,7 @@ class _BackupStatusLineState extends State<BackupStatusLine> {
       MaterialPageRoute<void>(
         builder: (_) => AccountScreen(
           flow: AccountFlow(ApiClient.forSession(AccountSession.instance), AccountSession.instance),
+          onReadyCloudSync: runBackgroundSync,
         ),
       ),
     );

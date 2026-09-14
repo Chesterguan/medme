@@ -1,6 +1,8 @@
 PODS:
   - CocoaAsyncSocket (7.6.5)
   - Flutter (1.0.0)
+  - flutter_secure_storage (6.0.0):
+    - Flutter
   - patrol (0.0.1):
     - CocoaAsyncSocket (~> 7.6)
     - Flutter
@@ -9,12 +11,16 @@ PODS:
     - Flutter
   - rust_lib_mobile_flutter (0.0.1):
     - Flutter
+  - sign_in_with_apple (0.0.1):
+    - Flutter
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
+  - flutter_secure_storage (from `.symlinks/plugins/flutter_secure_storage/ios`)
   - patrol (from `.symlinks/plugins/patrol/darwin`)
   - pdfx (from `.symlinks/plugins/pdfx/ios`)
   - rust_lib_mobile_flutter (from `.symlinks/plugins/rust_lib_mobile_flutter/ios`)
+  - sign_in_with_apple (from `.symlinks/plugins/sign_in_with_apple/ios`)
 
 SPEC REPOS:
   trunk:
@@ -23,19 +29,25 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
+  flutter_secure_storage:
+    :path: ".symlinks/plugins/flutter_secure_storage/ios"
   patrol:
     :path: ".symlinks/plugins/patrol/darwin"
   pdfx:
     :path: ".symlinks/plugins/pdfx/ios"
   rust_lib_mobile_flutter:
     :path: ".symlinks/plugins/rust_lib_mobile_flutter/ios"
+  sign_in_with_apple:
+    :path: ".symlinks/plugins/sign_in_with_apple/ios"
 
 SPEC CHECKSUMS:
   CocoaAsyncSocket: 065fd1e645c7abab64f7a6a2007a48038fdc6a99
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_secure_storage: 1ed9476fba7e7a782b22888f956cce43e2c62f13
   patrol: cea8074f183a2a4232d0ebd10569ae05149ada42
   pdfx: 77f4dddc48361fbb01486fa2bdee4532cbb97ef3
   rust_lib_mobile_flutter: 2fdf063e6b93c144f4104119733a3420b921c739
+  sign_in_with_apple: c5dcc141574c8c54d5ac99dd2163c0c72ad22418
 
 PODFILE CHECKSUM: 3d1eba09fad8dd00b529290ebedd4cc49b9d9db9
 

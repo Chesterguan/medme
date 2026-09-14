@@ -269,6 +269,7 @@ class ProfileLockedActions extends StatelessWidget {
                         ApiClient.forSession(AccountSession.instance),
                         AccountSession.instance,
                       ),
+                  onReadyCloudSync: runBackgroundSync,
                 ),
               ),
             );
@@ -750,6 +751,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
               ApiClient.forSession(AccountSession.instance),
               AccountSession.instance,
             ),
+            onReadyCloudSync: runBackgroundSync,
           ),
         ),
       );
