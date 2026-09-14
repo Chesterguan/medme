@@ -714,6 +714,18 @@ def test_object_sign_forbidden_without_grant():
         assert row is None
 
 
+def test_extract_system_prompt_matches_eval_fixture():
+    # 两边(这里的代理 + 评测臂 packages/ocr/examples/medrep_llm.rs)必须发同一段
+    # prompt 给 DeepSeek,否则线上抽取和评测数字量的不是同一个模型行为。两边都从
+    # packages/deid/prompts/ 的同一份文件读,这里核对读到的确实是那份文件。
+    import extract
+    prompts_dir = os.path.join(os.path.dirname(extract.__file__), "..", "..", "packages", "deid", "prompts")
+    with open(os.path.join(prompts_dir, "extract_v1_system.txt"), encoding="utf-8") as f:
+        assert extract.SYSTEM_PROMPT_V1 == f.read()
+    with open(os.path.join(prompts_dir, "extract_v1_image_user.txt"), encoding="utf-8") as f:
+        assert extract.IMAGE_USER_TEXT == f.read()
+
+
 def test_extract_proxies_and_counts_tokens(monkeypatch):
     import extract
     monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {"choices": [{"message": {"content": '{"doc_type":"lab","labs":[]}'}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})

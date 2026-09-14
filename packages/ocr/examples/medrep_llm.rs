@@ -32,14 +32,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
-/// 抽取用的系统提示词(schema v1)。云端抽取路径(`services/api/extract.py`,
-/// 另一个 worktree)复用同一段文字——改这里就是改两处的行为,不要各写各的。
-const SYSTEM: &str = "你是医疗单据结构化抽取器。只输出一个 JSON 对象,不要解释、不要 markdown 围栏。\
-所有字符串必须是单据上的原文逐字,缺失留空字符串,不许推断或换算。schema:\
-{\"doc_type\":\"lab|discharge|outpatient|imaging|prescription|other\",\"doc_date\":\"YYYY-MM-DD\",\
-\"labs\":[{\"name\":\"\",\"value\":\"\",\"unit\":\"\",\"ref_low\":\"\",\"ref_high\":\"\",\"flag\":\"H|L|\"}],\
-\"meds\":[{\"name\":\"\",\"dose\":\"\",\"freq\":\"\",\"route\":\"\"}],\
-\"diagnoses\":[{\"text\":\"\",\"icd\":\"\"}],\"impression\":\"\",\"notes\":\"\"}";
+/// 抽取用的系统提示词(schema v1)。云端抽取路径(`services/api/extract.py`)
+/// 复用同一份文件——改这里就是改两处的行为,不要各写各的(两边 byte-identical
+/// 由 `services/api/test_api.py` 的 `test_extract_system_prompt_matches_eval_fixture`
+/// 兜底)。
+const SYSTEM: &str = include_str!("../../deid/prompts/extract_v1_system.txt");
+/// 图片档 user message 里的提示文本,同样与 `services/api/extract.py` 共享一份文件。
+const IMAGE_USER_TEXT: &str = include_str!("../../deid/prompts/extract_v1_image_user.txt");
 
 const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
 /// 模型**默认值**,不是硬绑定:`DEEPSEEK_MODEL_TEXT` / `DEEPSEEK_MODEL_VISION`
@@ -299,7 +298,7 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
             let jpg = redact_image(&el.frame, &rects)?;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&jpg);
             serde_json::json!([
-                {"type": "text", "text": "请抽取这张单据。"},
+                {"type": "text", "text": IMAGE_USER_TEXT},
                 {"type": "image_url", "image_url": {"url": format!("data:image/jpeg;base64,{b64}")}}
             ])
         }

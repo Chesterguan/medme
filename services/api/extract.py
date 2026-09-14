@@ -5,9 +5,15 @@ DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE", "https://api.deepseek.com/v1")
 MODEL_TEXT = os.environ.get("DEEPSEEK_MODEL_TEXT", "deepseek-flash")
 MODEL_VISION = os.environ.get("DEEPSEEK_MODEL_VISION", "deepseek-flash")
 
-# 输出 schema v1 逐字来自 spec A §3;子项目 A 负责调 prompt 措辞,schema 字段不改。
-SYSTEM_PROMPT_V1 = """你是医疗单据结构化助手。只输出一个 JSON 对象,不要任何解释。所有字符串必须是输入原文的逐字子串;不确定的留空字符串,绝不推断或补全。
-{"doc_type":"lab|discharge|outpatient|imaging|prescription|other","doc_date":"YYYY-MM-DD","labs":[{"name":"","value":"","unit":"","ref_low":"","ref_high":"","flag":"H|L|"}],"meds":[{"name":"","dose":"","freq":"","route":""}],"diagnoses":[{"text":"","icd":""}],"impression":"","notes":""}"""
+# 输出 schema v1 逐字来自 spec A §3;prompt 措辞与评测臂
+# `packages/ocr/examples/medrep_llm.rs` 共用同一份文件(`packages/deid/prompts/`),
+# 改哪边的行为都只改那份文件——两边 byte-identical 由
+# `test_api.py::test_extract_system_prompt_matches_eval_fixture` 兜底。
+_PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "deid", "prompts")
+with open(os.path.join(_PROMPTS_DIR, "extract_v1_system.txt"), encoding="utf-8") as _f:
+    SYSTEM_PROMPT_V1 = _f.read()
+with open(os.path.join(_PROMPTS_DIR, "extract_v1_image_user.txt"), encoding="utf-8") as _f:
+    IMAGE_USER_TEXT = _f.read()
 
 
 class SchemaError(Exception):
@@ -38,7 +44,7 @@ def run(body: dict) -> tuple[dict, int, int]:
         payload = body.get("payload")
         if not payload:
             raise SchemaError("payload")
-        content = [{"type": "text", "text": "请按 schema 输出这份单据的内容。"},
+        content = [{"type": "text", "text": IMAGE_USER_TEXT},
                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{payload}"}}]
         model = MODEL_VISION
     else:
