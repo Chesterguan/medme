@@ -2,14 +2,17 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show DebugPrintCallback, debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 一条真实的 OCR 行框(数值随意,只要是正数矩形)。
 const _line = OcrLineDto(text: '白细胞 5.6', left: 10, top: 20, right: 300, bottom: 60);
@@ -258,6 +261,75 @@ void main() {
         ocr,
       );
       expect(r, isNull);
+    });
+  });
+
+  group('「云端整理」开关(Task 17):runCloudExtractions 入口的门', () {
+    // 拿 debugPrint 有没有响当"这一份到底进没进 `runCloudExtraction` 内部"的信号——
+    // host 测试环境没有真实 FRB,不管开关开没开,最终都是 hits==0、`vaultRevision`
+    // 不变(见上面「三态」组的注释),这两个数分不出"被新开关拦在
+    // `runCloudExtractions` 入口"和"照旧走、只是在更里面的 FRB 那步失败"。而
+    // `runCloudExtraction` 唯一的 catch 块**必打一行 debugPrint**(不管是 FRB 没
+    // 初始化、还是别的什么异常)——只要这份文档被送进 `runCloudExtraction`,这行
+    // 就一定响;没被送进去,这行就一定不响。
+    final captured = <String?>[];
+    late DebugPrintCallback originalDebugPrint;
+
+    setUp(() {
+      captured.clear();
+      originalDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) => captured.add(message);
+      final support = Directory.systemTemp.path;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support,
+      );
+      // `runCloudExtractions` 不接受注入 `api`,要走到"没登录 = 没这个功能"那道门
+      // 之后的代码,必须真的登录——否则不管新开关开没开,都会在那道更早的门前
+      // 一样返回 null,测不出这道新开关到底起没起作用。
+      AccountSession.instance.access = 'test-token';
+      AccountSession.instance.accountId = 'acc-test';
+    });
+    tearDown(() {
+      debugPrint = originalDebugPrint;
+      AccountSession.instance.access = null;
+      AccountSession.instance.accountId = null;
+    });
+
+    test('关掉(cloud_extract_enabled=false)→ 这份文档没被送进 runCloudExtraction,文档不受影响', () async {
+      SharedPreferences.setMockInitialValues({'cloud_extract_enabled': false});
+      final before = vaultRevision.value;
+      await runCloudExtractions([
+        (outcome: _stored(21, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9)),
+      ]);
+      expect(captured, isEmpty, reason: '开关关了在 runCloudExtractions 入口就该返回,压根没进到每一份的处理里');
+      expect(vaultRevision.value, before, reason: '没跑就没有新结果,文档保持导入时落盘的样子');
+    });
+
+    test('开着(cloud_extract_enabled=true)→ 这份文档照旧被送进 runCloudExtraction(老行为不变)', () async {
+      SharedPreferences.setMockInitialValues({'cloud_extract_enabled': true});
+      await runCloudExtractions([
+        (outcome: _stored(22, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9)),
+      ]);
+      expect(captured, isNotEmpty, reason: '开关开着,新加的这道门不该拦下原来就会跑的那条路');
+      expect(captured.single, contains('文档 22 退回本地正则'));
+    });
+
+    test('没写过这个键(默认)→ 当作开着,跟老版本行为一致', () async {
+      SharedPreferences.setMockInitialValues({});
+      expect(await loadCloudExtractEnabled(), isTrue);
+      await runCloudExtractions([
+        (outcome: _stored(23, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9)),
+      ]);
+      expect(captured, isNotEmpty);
+    });
+
+    test('存读一致:save(false) 之后 load 读到 false;save(true) 之后读到 true', () async {
+      SharedPreferences.setMockInitialValues({});
+      await saveCloudExtractEnabled(false);
+      expect(await loadCloudExtractEnabled(), isFalse);
+      await saveCloudExtractEnabled(true);
+      expect(await loadCloudExtractEnabled(), isTrue);
     });
   });
 }

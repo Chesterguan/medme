@@ -15,6 +15,7 @@ library;
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/api_client.dart';
@@ -23,6 +24,25 @@ import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart' as rust_vault;
 import 'package:mobile_flutter/vault_events.dart';
+
+/// 「云端整理」开关(键定在 `account.dart`,见 [cloudExtractEnabledKey])。默认
+/// true——关掉这台设备的云抽取,不是关登录。读不到就当开着,跟别的"读不到"
+/// 兜底不一样:这个开关一旦被用户关过,漏读成"开"会把用户已经关掉的东西又发出去。
+/// 但 `getBool` 只会在真没写过时返回 null(未写=从没关过=default true 成立),
+/// 写过之后一定读得到那次写的值,所以这条兜底是安全的。
+Future<bool> loadCloudExtractEnabled() async {
+  try {
+    return (await SharedPreferences.getInstance()).getBool(cloudExtractEnabledKey) ?? true;
+  } catch (_) {
+    return true;
+  }
+}
+
+Future<void> saveCloudExtractEnabled(bool enabled) async {
+  try {
+    await (await SharedPreferences.getInstance()).setBool(cloudExtractEnabledKey, enabled);
+  } catch (_) {}
+}
 
 /// 服务端对图片档 payload(base64 串本身)的上限,与 `services/api/app.py` 的
 /// `EXTRACT_IMAGE_MAX_BYTES` 是同一个数。**在本机先量一次**:超了服务端回 413,
@@ -105,6 +125,9 @@ typedef PendingCloudExtraction = ({ImportOutcomeDto outcome, OcrResult ocr});
 /// 一份一份**长出来**的,而不是等整批跑完才一起出现。失败的那份不 bump(没有新东西
 /// 可看),也不打断后面的。
 Future<void> runCloudExtractions(List<PendingCloudExtraction> pending) async {
+  // 开关关了 = 这台设备只用本机识别,连队列都不排——不是"每份都拒发"那种
+  // 一次一次的静默失败,是压根不碰网络。
+  if (!await loadCloudExtractEnabled()) return;
   for (final p in pending) {
     if (await runCloudExtraction(p.outcome, p.ocr) != null) bumpVaultRevision();
   }

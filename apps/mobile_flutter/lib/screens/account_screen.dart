@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_flutter/account_flow.dart';
 import 'package:mobile_flutter/api_client.dart';
+import 'package:mobile_flutter/cloud_extract.dart' show loadCloudExtractEnabled, saveCloudExtractEnabled;
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/export_screen.dart';
@@ -287,6 +288,9 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 查 FRB 的事由后台那条队列做,账号屏不碰原生库,它跑在 widget 测试里)。
   bool _icloudBlocks = false;
 
+  /// 「云端整理」开关(Task 17)——跟设备走,默认开,`initState` 从 prefs 读回来。
+  bool _cloudExtractEnabled = true;
+
   /// 正在撤销一份授权(评审 Minor 20:双击会发两个 DELETE,第二个在成功撤销之后
   /// 立刻显示「撤销失败:没有找到…」—— 一次成功的操作看起来像失败了)。
   bool _revokeBusy = false;
@@ -337,6 +341,9 @@ class _AccountScreenState extends State<AccountScreen> {
     });
     loadCloudDefaultNoticeSeen().then((v) {
       if (mounted && !v) setState(() => _showCloudNotice = true);
+    });
+    loadCloudExtractEnabled().then((v) {
+      if (mounted && v != _cloudExtractEnabled) setState(() => _cloudExtractEnabled = v);
     });
     widget.flow
         .resumeIfLoggedIn()
@@ -1093,6 +1100,8 @@ class _AccountScreenState extends State<AccountScreen> {
         const Text(_cloudDefaultCopy, style: TextStyle(color: MedMe.faint, height: 1.5)),
         const SizedBox(height: 8),
         for (final m in ProfileManager.instance.profiles) _cloudMemberRow(m),
+        const SizedBox(height: 8),
+        _cloudExtractSwitch(),
         // 开通要注册云档案 + 重开箱 + 跑一次首同步,几秒到几十秒 —— 屏上必须有
         // 东西在转,否则用户会以为开关没拨动。做完就没了(`_cloudBusy` 回 false),
         // 不会把 `pumpAndSettle` 钉死。
@@ -1161,6 +1170,25 @@ class _AccountScreenState extends State<AccountScreen> {
       ),
     );
   }
+
+  /// 「云端整理」开关(Task 17)——跟设备走,不按成员分,所以只有一行,摆在
+  /// 每成员的「云同步」开关下面。关掉只影响 `cloud_extract.runCloudExtractions`
+  /// 要不要发网络请求,不影响 [_cloudMemberRow] 那些"要不要备份密文"的开关。
+  Widget _cloudExtractSwitch() => Card(
+    child: SwitchListTile(
+      key: const Key('cloud_extract_switch'),
+      title: const Text('云端整理'),
+      subtitle: const Text(
+        '导入后把脱敏、涂黑的单据图交给云端模型整理成表;关掉后只用本机识别',
+        style: TextStyle(fontSize: 12.5, height: 1.4),
+      ),
+      value: _cloudExtractEnabled,
+      onChanged: (v) async {
+        setState(() => _cloudExtractEnabled = v);
+        await saveCloudExtractEnabled(v);
+      },
+    ),
+  );
 
   /// 拨开关:**关**只是记一个标记(不删云端密文、不清本机密钥);**开**在还没开通
   /// 的成员身上顺手就把开通跑了 —— 用户拨这个开关的意思是"我要它备份",不该还要

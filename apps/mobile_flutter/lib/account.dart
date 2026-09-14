@@ -22,6 +22,12 @@ String maskPhone(String phone) {
 /// 反过来让本文件 import `sync_engine` 会成环(那边 import 这边)。
 const cloudDefaultNoticeSeenKey = 'cloud_default_notice_seen';
 
+/// 「云端整理」开关(`cloud_extract.dart` 读,账号屏的开关行写)——**跟设备走,
+/// 不跟账号走**:默认 true,`AccountSession.clear()` 不清它(不像
+/// [cloudDefaultNoticeSeenKey])。换个账号登录,这台设备"要不要把涂黑的单据图
+/// 交给云端模型整理"的选择不该因为换了个人登录就重置回默认。
+const cloudExtractEnabledKey = 'cloud_extract_enabled';
+
 /// 账号会话 + 密钥的本机存储。**私钥与档案密钥只进 secure storage**(iOS Keychain
 /// 开 synchronizable = 同一 Apple ID 新机自动拿回,这就是「系统钥匙串」那条换机路;
 /// 安卓用 EncryptedSharedPreferences,不跨机)。token 与 id 在 shared_preferences。

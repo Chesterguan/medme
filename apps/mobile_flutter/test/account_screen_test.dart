@@ -1376,6 +1376,9 @@ void main() {
         {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
       ]);
       await _toReady(t, api);
+      // Task 17 在「云同步」那节加了一行「云端整理」开关,「授权」这节的挂载点
+      // 被挤出首屏——`SliverList` 懒实现,没挂载的 widget 找不到,先滚过去。
+      await _scrollToText(t, '授权');
       // C:`prf_xxx` 是服务端内部 id,不给用户看;对不上本机成员时说「一份共享档案」。
       expect(find.text('一份共享档案'), findsOneWidget);
       expect(find.textContaining('p1'), findsNothing);
@@ -1390,6 +1393,7 @@ void main() {
     testWidgets('加载失败:显示错误,不崩', (t) async {
       final api = FakeApi(hasKeys: true, failProfiles: true);
       await _toReady(t, api);
+      await _scrollToText(t, '授权');
       expect(find.textContaining('授权列表加载失败'), findsOneWidget);
     });
   });
@@ -1646,6 +1650,9 @@ void main() {
       await setUpOwnedCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
+      // Task 17 在「云同步」那节加了一行「云端整理」开关,把这颗按钮挤出了首屏。
+      await t.ensureVisible(find.byKey(const Key('transfer_current_profile')));
+      await t.pumpAndSettle();
       await t.tap(find.byKey(const Key('transfer_current_profile')));
       await t.pumpAndSettle();
       expect(find.text('把这份档案交给他?'), findsOneWidget);
@@ -1688,6 +1695,9 @@ void main() {
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
       for (var i = 0; i < 2; i++) {
+        // Task 17 的「云端整理」开关把这颗按钮挤出了首屏。
+        await t.ensureVisible(find.byKey(const Key('transfer_current_profile')));
+        await t.pumpAndSettle();
         await t.tap(find.byKey(const Key('transfer_current_profile')));
         await t.pumpAndSettle();
         await t.tap(find.text('生成链接'));
@@ -1713,6 +1723,9 @@ void main() {
       );
       await setUpOwnedCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
+      // Task 17 的「云端整理」开关把这颗按钮挤出了首屏。
+      await t.ensureVisible(find.byKey(const Key('transfer_current_profile')));
+      await t.pumpAndSettle();
       await t.tap(find.byKey(const Key('transfer_current_profile')));
       await t.pumpAndSettle();
 
@@ -2662,6 +2675,27 @@ void main() {
       expect(find.text('同步'), findsOneWidget);
     });
 
+    testWidgets('Task 17:「云端整理」开关默认开,摆在每成员云备份行下面,关掉能存住', (t) async {
+      resetVaultQueueForTest();
+      final api = FakeApi(hasKeys: true);
+      await giveCurrentProfileCloudId(t);
+      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+
+      final extractSwitch = find.byKey(const Key('cloud_extract_switch'));
+      expect(extractSwitch, findsOneWidget);
+      expect(find.text('云端整理'), findsOneWidget);
+      expect(t.widget<SwitchListTile>(extractSwitch).value, isTrue, reason: '默认开——只是关了才用纯本机识别');
+
+      await t.tap(extractSwitch);
+      await t.pumpAndSettle();
+
+      expect(t.widget<SwitchListTile>(extractSwitch).value, isFalse);
+      // 持久化:不是只改了内存里的 State,prefs 里那把键也得真的写成 false——
+      // 下次 `runCloudExtractions` 读的正是这把键。
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('cloud_extract_enabled'), isFalse);
+    });
+
     testWidgets('C3:开着 iCloud 同步时点「开通云同步」:原因摆在屏上,仍停在"未开通"分支', (t) async {
       resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
@@ -2818,7 +2852,10 @@ void main() {
       expect(find.text('同步'), findsOneWidget, reason: '同一颗按钮,不多出第二颗');
 
       // 第二次点同一颗:上次失败过,于是走 enableCloud → 重开箱(FIFO 队列)+
-      // 首同步,不必重启 App。
+      // 首同步,不必重启 App。Task 17 在「云同步」这节里加了一行「云端整理」
+      // 开关,第一次点出的错误横幅把「同步」按钮挤到了视口外——先滚回可点范围。
+      await t.ensureVisible(find.text('同步'));
+      await t.pumpAndSettle();
       await t.tap(find.text('同步'));
       await t.pumpAndSettle();
 
@@ -2854,7 +2891,10 @@ void main() {
       await t.pumpAndSettle();
       expect(find.textContaining('不是这个云档案'), findsOneWidget);
 
-      // 第二次点同一颗:走 enableCloud 那条可续做的支路。
+      // 第二次点同一颗:走 enableCloud 那条可续做的支路。同 M4:先滚回可点范围
+      // (Task 17 新加的「云端整理」开关把错误横幅之后的「同步」按钮挤出了视口)。
+      await t.ensureVisible(find.text('同步'));
+      await t.pumpAndSettle();
       await t.runAsync(() async {
         await t.tap(find.text('同步'));
         await Future<void>.delayed(const Duration(milliseconds: 50));
