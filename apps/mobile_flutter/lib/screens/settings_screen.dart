@@ -10,6 +10,7 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/export_screen.dart';
+import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -385,6 +386,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ApiClient.forSession(AccountSession.instance),
                                 AccountSession.instance,
                               ),
+                              onReadyCloudSync: runBackgroundSync,
                             ),
                           ),
                         ),

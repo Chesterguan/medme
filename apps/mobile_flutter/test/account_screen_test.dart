@@ -493,6 +493,7 @@ Widget _app(
   bool? debugModeOverride,
   KdfBenchFn? kdfBenchFn,
   Future<String?> Function(BuildContext)? scanQr,
+  Future<void> Function()? onReadyCloudSync,
 }) => MaterialApp(
       home: AccountScreen(
         flow: AccountFlow(api, AccountSession.instance, crypto: crypto ?? FakeCrypto()),
@@ -501,6 +502,7 @@ Widget _app(
         debugModeOverride: debugModeOverride,
         kdfBenchFn: kdfBenchFn,
         scanQr: scanQr,
+        onReadyCloudSync: onReadyCloudSync,
       ),
     );
 
@@ -524,6 +526,7 @@ Future<void> _toReady(
   bool? debugModeOverride,
   KdfBenchFn? kdfBenchFn,
   Future<String?> Function(BuildContext)? scanQr,
+  Future<void> Function()? onReadyCloudSync,
 }) async {
   await t.pumpWidget(_app(
     api,
@@ -533,6 +536,7 @@ Future<void> _toReady(
     debugModeOverride: debugModeOverride,
     kdfBenchFn: kdfBenchFn,
     scanQr: scanQr,
+    onReadyCloudSync: onReadyCloudSync,
   ));
   await _loginUpTo(t);
   await t.enterText(find.byKey(const Key('password')), 'right');
@@ -1092,6 +1096,33 @@ void main() {
       await t.pumpAndSettle();
     });
 
+    // Task 19 友好度 #3(冒烟报告):Argon2 在老手机/debug 构建下能跑到几分钟,
+    // 那几分钟里屏上必须说清楚在干什么,而且两个出口(改用恢复码 / 两样都丢了)
+    // 得是**禁用**而不是**消失**——用户此刻正等着,消失比灰掉更容易让人以为
+    // 死机、直接退出 App(退出正是 `_kdfWaitHint` 那句警告最怕的事)。
+    testWidgets('口令解锁转圈期间:提示语在,两个出口仍在(禁用,不是不见)', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await t.pumpWidget(_app(api));
+      await _loginUpTo(t);
+      await t.enterText(find.byKey(const Key('password')), 'right');
+      await t.pump();
+      await t.tap(find.text('解锁'));
+      await t.pump();
+
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('正在生成密钥,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
+
+      final escape1 = find.widgetWithText(TextButton, '口令忘了?改用恢复码解锁');
+      expect(escape1, findsOneWidget, reason: '转圈时这条出口不该消失');
+      expect(t.widget<TextButton>(escape1).onPressed, isNull, reason: '而是禁用');
+
+      final escape2 = find.byKey(const Key('lost_everything'));
+      expect(escape2, findsOneWidget, reason: '这条出口也不该消失');
+      expect(t.widget<TextButton>(escape2).onPressed, isNull, reason: '而是禁用');
+
+      await t.pumpAndSettle();
+    });
+
     testWidgets('口令解锁成功:进入已就绪,私钥写入 session', (t) async {
       final api = FakeApi(hasKeys: true);
       await t.pumpWidget(_app(api));
@@ -1145,6 +1176,36 @@ void main() {
       expect(AccountSession.instance.accountId, isNotNull);
       expect(AccountSession.instance.access, isNotNull);
       expect(AccountSession.instance.privateKey, isNull);
+    });
+  });
+
+  // Task 19 友好度 #4:登录/解锁那一刻(`_enterReady`)顺手补一次后台同步触发器,
+  // 别等下一次导入/回前台才排空 `pendingCloudEnable`。这里只钉住"进了已就绪就调用
+  // 一次、跑完会刷新这一屏"——`onReadyCloudSync` 本身是不是真的注册成功属于
+  // `sync_engine_test.dart` 的 `triggerBackgroundSync` 测试范围,不在这里重复。
+  group('Task 19:登录/解锁完顺手触发一次后台同步(不等下一次导入/回前台)', () {
+    testWidgets('进入已就绪 → 调用一次 onReadyCloudSync', (t) async {
+      var calls = 0;
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api, onReadyCloudSync: () async => calls++);
+      expect(calls, 1);
+    });
+
+    testWidgets('onReadyCloudSync 跑完之后刷新这一屏(用户很可能还看着它)', (t) async {
+      final done = Completer<void>();
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api, onReadyCloudSync: () => done.future);
+      // 还没跑完:不该假装已经处理过 —— 这里只断言没有崩溃、屏还在正常状态。
+      expect(find.text('已登录'), findsOneWidget);
+      done.complete();
+      await t.pumpAndSettle();
+      expect(find.text('已登录'), findsOneWidget, reason: '跑完之后 setState 一次,屏应仍然完好');
+    });
+
+    testWidgets('没注入(默认 null,生产场景):不调用任何东西,不影响正常流程', (t) async {
+      final api = FakeApi(hasKeys: true);
+      await _toReady(t, api);
+      expect(find.text('已登录'), findsOneWidget);
     });
   });
 
@@ -3674,14 +3735,31 @@ void main() {
 
     tearDown(() async => support.delete(recursive: true));
 
-    testWidgets('第一次进到「已登录」:三件事都在屏上(默认上传 / 可按成员关 / 关了云端密文留着)', (t) async {
+    // Task 19 友好度 #5:横幅原来逐字复用下面「云同步」小节的说明,点「知道了」
+    // 之后用户会发现同一段话还在屏上,像是没点上。横幅现在是独立的一句短话,
+    // 完整的三件事(默认上传 / 可按成员关 / 关了云端密文留着)只在小节说明里说
+    // 一遍——不在横幅里重复。
+    testWidgets('第一次进到「已登录」:横幅是独立短句(不逐字复用云同步小节的说明)', (t) async {
       await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
 
       expect(find.byKey(const Key('cloud_notice')), findsOneWidget);
-      final text = t.widget<Text>(find.byKey(const Key('cloud_notice_text'))).data!;
-      expect(text, contains('默认都会加密备份到云端'));
-      expect(text, contains('把它的开关关掉'));
-      expect(text, contains('云端已有的密文会保留到你注销账号'));
+      final bannerText = t.widget<Text>(find.byKey(const Key('cloud_notice_text'))).data!;
+      expect(bannerText, contains('自动加密备份到云端'));
+      expect(bannerText, contains('按成员关掉'));
+      expect(
+        bannerText,
+        isNot(contains('云端已有的密文会保留到你注销账号')),
+        reason: '这句细节留给下面的云同步小节说,横幅点完「知道了」不该让人觉得什么都没变',
+      );
+    });
+
+    testWidgets('云同步小节的完整说明(三件事)仍然只在小节里,不受横幅精简影响', (t) async {
+      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
+
+      const fullCopy = '登录之后,每个成员的病历默认都会加密备份到云端(我们只看得到密文)。'
+          '不想备份哪个成员,把它的开关关掉就行 —— 关闭后本机不再上传下载;'
+          '云端已有的密文会保留到你注销账号。';
+      expect(find.text(fullCopy), findsOneWidget);
     });
 
     testWidgets('点「知道了」:收起来,而且落盘 —— 下次不再出现', (t) async {
