@@ -218,7 +218,8 @@ pub fn sync_export_events(
 /// **一条解不开就按设备截断,不是整批放弃**:先按 `(device_id, seq)` 排序
 /// (与 `append_peer_entries` 自己的排序口径一致,不依赖调用方传入顺序),
 /// 逐条尝试解密+反序列化+信封一致性校验;某个设备撞到第一条解不开的
-/// (密文损坏、或对方用了本地还不认识的 `Event` 变体导致反序列化失败)就停止
+/// (密文损坏、或对方用了本地还不认识的 `Event` 变体——后者现在**解得开**成
+/// `Event::Unknown`,由下面那道显式的 `bail!` 重新算回「解不开」)就停止
 /// 收它后面的条目——即使后面的条目本身能解开也不收,因为 `append_peer_entries`
 /// 要求同一设备段严格按 seq 递增落盘,跳过中间一条去接后面的会在这个设备段里
 /// 留一个洞,读回来时被判定成链断裂而整体隔离(比这里主动跳过更糟)。**其它
@@ -243,6 +244,19 @@ pub fn sync_import_events(
             let aad = format!("{}:{}", ev.device_id, ev.seq);
             let plain = sync::decrypt_blob(&pk, &aad, &ev.ciphertext)?;
             let entry: LogEntry = serde_json::from_slice(&plain)?;
+            // **必须在这里拦掉本机不认识的事件类型。**`Event` 有
+            // `#[serde(other)] Unknown` 兜底(前向兼容,见 `event.rs`),于是
+            // 新版本写的条目在这里**解得开**了——而下游 `append_sealed`
+            // (`log.rs`)是把条目**重新序列化**写盘的,写进去就成了
+            // `{"type":"Unknown"}`:原字段永久销毁,升级 App 也救不回来,而且
+            // 这条的 MAC 从此永远验不过 → 每次同步都报 `untrusted > 0`。
+            // 算作「解不开」正是我们要的:该设备就地截断、计一笔 `undecodable`、
+            // 水位不推进,升级到认识这个变体的版本之后原样重拉即可。
+            // `Unknown` 只服务于**本机磁盘读**(降级运行/桌面共享目录),
+            // 从来不该被写出去。
+            if matches!(entry.event, core_model::Event::Unknown) {
+                anyhow::bail!("事件类型本机不认识(对方是更新的版本),按解不开处理");
+            }
             if entry.device_id != ev.device_id || entry.seq != ev.seq {
                 anyhow::bail!("事件信封与内容不一致,拒收");
             }
@@ -865,6 +879,80 @@ mod tests {
         );
         assert_eq!(outcome.untrusted, 0);
         assert_eq!(outcome.undecodable, 0);
+    }
+
+    /// 复审 round 2(Critical):`Event` 加了 `#[serde(other)] Unknown` 之后,
+    /// 新版本设备写的条目在这条拉取路径上**解得开**了 —— 而这条路径原本正是靠
+    /// 「解不开」来实现「按设备截断 + 计 `undecodable`」。解得开就会被
+    /// `append_sealed` 重新序列化成 `{"type":"Unknown"}` 落盘:原字段永久销毁
+    /// (升级 App 也救不回),MAC 从此验不过,每次同步都报 `untrusted > 0`。
+    ///
+    /// 要的行为是改动前那个:**一行都不写**、`undecodable` 记一笔、该设备就地
+    /// 截断、水位不推进 —— 于是升级到认识这个变体的版本之后,原样重拉还能应用
+    /// (这里用"再拉一次同一条、只是这次是本机认识的变体"来模拟那次升级)。
+    #[test]
+    fn unknown_event_type_from_a_newer_peer_is_undecodable_not_written() {
+        let _guard = VAULT_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let pk = sync_profile_key_new();
+        let a = tempdir().unwrap();
+        sync_open_profile_vault(
+            a.path().to_string_lossy().into(),
+            a.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+        crate::api::vault::ingest_bytes("r.txt".into(), b"WBC 5.0".to_vec()).unwrap();
+        let mut events = sync_export_events(pk.clone(), vec![]).unwrap();
+        events.sort_by(|x, y| (x.device_id.as_str(), x.seq).cmp(&(y.device_id.as_str(), y.seq)));
+        assert!(events.len() > 1, "一次导入不止一条日志,才测得出「截断」");
+
+        // 把**第一条**(seq 1,那次 import 的 `FileImported`)改成本机不认识的
+        // 事件类型 —— 与线上真实情形(新版本写的合法条目)在本二进制看来完全
+        // 一样。内容变了,密文要按同一个 AAD 重新封。
+        let k = key32(&pk).unwrap();
+        let aad = format!("{}:{}", events[0].device_id, events[0].seq);
+        let plain = sync::decrypt_blob(&k, &aad, &events[0].ciphertext).unwrap();
+        let text = String::from_utf8(plain).unwrap();
+        let future = text.replace(
+            "\"type\":\"FileImported\"",
+            "\"type\":\"SomethingFromTheFuture\"",
+        );
+        assert_ne!(future, text, "第一条应该是 FileImported");
+        let mut tampered = events.clone();
+        tampered[0].ciphertext = sync::encrypt_blob(&k, &aad, future.as_bytes()).unwrap();
+
+        let b = tempdir().unwrap();
+        sync_open_profile_vault(
+            b.path().to_string_lossy().into(),
+            b.path().join("data").to_string_lossy().into(),
+            pk.clone(),
+        )
+        .unwrap();
+        let outcome = sync_import_events(pk.clone(), tampered).unwrap();
+        assert_eq!(outcome.undecodable, 1, "算作「解不开」,记一笔");
+        assert_eq!(
+            outcome.applied, 0,
+            "第一条就撞上 → 这台设备后面的一条都不收(截断)"
+        );
+        assert_eq!(outcome.untrusted, 0, "什么都没写,就没有可疑条目");
+
+        // 磁盘上一行都没有 —— 尤其不能有被重写成 `{"type":"Unknown"}` 的那条。
+        let log_dir = b.path().join("vault").join("log");
+        assert!(
+            !any_file_under(&log_dir),
+            "一条都不该落盘,日志目录必须还是空的"
+        );
+
+        // 「升级之后」:同一批事件(这次每条都是本机认识的变体)再拉一次,照常
+        // 全部应用 —— 上一次没写盘、水位没推进,所以这些 seq 还空着。
+        let outcome2 = sync_import_events(pk, events.clone()).unwrap();
+        assert_eq!(
+            outcome2.applied as usize,
+            events.len(),
+            "升级之后原样重拉,那条事件仍然救得回来"
+        );
+        assert_eq!(outcome2.undecodable, 0);
+        assert_eq!(outcome2.untrusted, 0);
     }
 
     /// review round 1 修复(item 3):AAD 现在绑定的是 `device_id:seq`(不再是

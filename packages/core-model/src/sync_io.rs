@@ -66,8 +66,29 @@ impl Vault {
 
         let mut outcome = PeerAppendOutcome::default();
         let mut existing: HashMap<String, HashSet<i64>> = HashMap::new();
+        // 撞到本机不认识的事件类型之后,这台设备**后面的条目一律不收**(同
+        // `sync_import_events` 的截断契约):跳过中间一条去接后面的会在该设备段
+        // 里留一个洞,读回来时整段被判链断。
+        let mut stopped: HashSet<&str> = HashSet::new();
 
         for e in &sorted {
+            // **任何路径都不许把 `Event::Unknown` 写进日志。**`append_sealed` 是把
+            // 条目**重新序列化**落盘的,而 `Unknown` 是空变体(`event.rs`):写进去
+            // 就是 `{"type":"Unknown"}`,原字段永久销毁、MAC 从此验不过。正常路径
+            // 上到不了这里(FRB 的 `sync_import_events` 解码后就把它算作"解不开"),
+            // 这一道是兜底 —— 不计 `applied`,于是水位不推进,升级到认识这个变体的
+            // 版本之后原样重拉即可。
+            if stopped.contains(e.device_id.as_str()) {
+                continue;
+            }
+            if matches!(e.event, Event::Unknown) {
+                eprintln!(
+                    "[sync] refuse to append an event type this build doesn't know (device={}, seq={}); truncating this device",
+                    e.device_id, e.seq
+                );
+                stopped.insert(e.device_id.as_str());
+                continue;
+            }
             if !existing.contains_key(&e.device_id) {
                 let seqs = self.log.existing_seqs_of_device(&e.device_id)?;
                 existing.insert(e.device_id.clone(), seqs);
@@ -286,6 +307,54 @@ mod tests {
         assert_eq!(second.applied, 0);
         assert_eq!(second.skipped_existing, entries.len());
         assert_eq!(second.untrusted, entries.len());
+    }
+
+    /// 别的设备推来的、本机**不认识的事件类型**,一行都不许落盘。
+    ///
+    /// `Event` 有 `#[serde(other)] Unknown` 兜底(前向兼容),于是这样的条目在
+    /// 拉取路径上解得开了 —— 而 `append_sealed` 是把条目**重新序列化**写盘的,
+    /// 写进去就是 `{"type":"Unknown"}`:原字段永久销毁,升级 App 也救不回来,
+    /// 那条的 MAC 从此永远验不过(每次同步都报 `untrusted`)。不收 = 水位不推进
+    /// = 升级之后原样重拉还能应用。撞到之后该设备后面的条目也不收(跳过中间
+    /// 一条会在该设备段里留个洞,读回来时整段被判链断)。
+    #[test]
+    fn peer_entries_with_an_unknown_event_type_are_never_written() {
+        use crate::event::{Event, LogEntry};
+
+        let a = tempdir().unwrap();
+        let va = keyed(a.path(), "dev-a");
+
+        let mk = |dev: &str, seq: i64, ev: Event| {
+            LogEntry::new(seq, format!("2026-09-14T00:00:0{seq}Z"), dev.into(), ev).unwrap()
+        };
+        let known = |dev: &str, seq: i64| {
+            mk(
+                dev,
+                seq,
+                Event::FileImported {
+                    content_hash: "a".repeat(64),
+                    original_name: format!("{dev}-{seq}.txt"),
+                    mime_type: "text/plain".into(),
+                    byte_size: 1,
+                    imported_at: "2026-09-14T00:00:00Z".into(),
+                },
+            )
+        };
+
+        let outcome = va
+            .append_peer_entries(&[
+                mk("dev-新版本", 1, Event::Unknown),
+                known("dev-新版本", 2),
+                known("dev-老实人", 1),
+            ])
+            .unwrap();
+        assert_eq!(outcome.applied, 1, "只有那台没问题的设备的条目被收下");
+
+        let seg = a.path().join("log/dev-新版本-000001.jsonl");
+        assert!(!seg.exists(), "认不出的那条一行都不许落盘");
+        assert!(a.path().join("log/dev-老实人-000001.jsonl").is_file());
+        // 水位没推进 → 升级到认识这个变体的版本之后原样重拉还能应用。
+        assert_eq!(va.device_seq_map().unwrap().get("dev-新版本"), None);
     }
 
     /// 抽取结果的 CAS 对象必须和原件、OCR 文本一样进同步清单。
