@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
@@ -699,7 +700,14 @@ Future<ImportRunResult> _runImport(
         // 云抽取只在这里**排队**,不在循环里跑 —— 见下面 `pendingExtractions`
         // 的声明。ocr 要整份带走(涂黑用它的 bytes/lines,拿不到第二次)。
         if (outcome.documentId != null) {
-          pendingExtractions.add((outcome: outcome, ocr: ocr));
+          // 连**落库时的成员**一起排队:`documentId` 是这个库自增的 rowid,抽取
+          // 跑到一半用户切了成员,同一个 id 就指向别人库里的另一份文档
+          // (见 [PendingCloudExtraction])。
+          pendingExtractions.add((
+            outcome: outcome,
+            ocr: ocr,
+            profile: ProfileManager.instance.current,
+          ));
         }
       } else {
         stage = 'save';

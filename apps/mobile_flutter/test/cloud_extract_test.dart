@@ -11,6 +11,7 @@ import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
+import 'package:mobile_flutter/vault_boot.dart' show resetVaultQueueForTest;
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -30,11 +31,24 @@ ImportOutcomeDto _stored(int docId, {String? detectedName}) => ImportOutcomeDto(
   pagesWithoutText: _noPages,
 );
 
+/// 「落库那一刻的成员」——真实路径上由 `import_flow` 从 [ProfileManager] 捕获,
+/// 所以测试也得拿**当前**那个,否则每一份都会被新加的身份核对跳掉。
+Future<Profile> _currentProfile() async {
+  await ProfileManager.instance.ensureLoaded();
+  return ProfileManager.instance.current;
+}
+
 void main() {
   // 同 api_client_test.dart:测试 binding 会装一个假的 HttpOverrides,装上之后
   // 回环服务器收不到任何请求,所以初始化完立刻摘掉。
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = null;
+
+  // 云抽取现在把 prepare/commit 排进 `vault_boot` 的 FIFO 队列(评审 C2),而那条
+  // 队列是模块级单例——上一个用例挂在它尾巴上的收尾 `.then()` 可能永远不在这个
+  // 用例的 zone 里推进,下一个用例就会干等到超时(见 `resetVaultQueueForTest`)。
+  setUp(resetVaultQueueForTest);
+  tearDown(resetVaultQueueForTest);
 
   group('postExtract', () {
     late HttpServer server;
@@ -167,10 +181,11 @@ void main() {
     // 的不是抽取本身,而是**这个批量入口不抛、不 bump、跑完整批**。
     test('整批跑完不抛;一份都没成功就一次都不 bump', () async {
       final before = vaultRevision.value;
+      final me = await _currentProfile();
       await runCloudExtractions([
-        (outcome: _stored(1), ocr: const OcrResult('a', 0.9)),
-        (outcome: _stored(2), ocr: const OcrResult('b', 0.9)),
-        (outcome: _stored(3), ocr: const OcrResult('c', 0.9)),
+        (outcome: _stored(1), ocr: const OcrResult('a', 0.9), profile: me),
+        (outcome: _stored(2), ocr: const OcrResult('b', 0.9), profile: me),
+        (outcome: _stored(3), ocr: const OcrResult('c', 0.9), profile: me),
       ]);
       expect(vaultRevision.value, before, reason: '没有新结果就没有要刷新的东西');
     });
@@ -212,16 +227,22 @@ void main() {
     tearDown(() => server.close(force: true));
 
     test('闸拒发 / FRB 不可用 → null,而且一个请求都没发出去', () async {
-      final r = await runCloudExtraction(_stored(11, detectedName: '张建国'), const OcrResult('白细胞 5.6', 0.9), api: api);
+      final r = await runCloudExtraction(
+        _stored(11, detectedName: '张建国'),
+        const OcrResult('白细胞 5.6', 0.9),
+        profile: await _currentProfile(),
+        api: api,
+      );
       expect(r, isNull, reason: '不抛,只是没有云抽取结果');
       expect(hits, 0, reason: '拒发就是拒发:prepare 没过,代理那一步压根不该发生');
     });
 
     test('整批里有一份拒发,后面的照样跑完,也不 bump', () async {
       final before = vaultRevision.value;
+      final me = await _currentProfile();
       await runCloudExtractions([
-        (outcome: _stored(12), ocr: const OcrResult('a', 0.9)),
-        (outcome: _stored(13), ocr: const OcrResult('b', 0.9)),
+        (outcome: _stored(12), ocr: const OcrResult('a', 0.9), profile: me),
+        (outcome: _stored(13), ocr: const OcrResult('b', 0.9), profile: me),
       ]);
       expect(vaultRevision.value, before);
       expect(hits, 0);
@@ -249,6 +270,7 @@ void main() {
       final r = await runCloudExtraction(
         ImportOutcomeDto(name: 'a.jpg', sourceFileId: 1, status: 'duplicate', pagesWithoutText: _noPages),
         ocr,
+        profile: await _currentProfile(),
       );
       expect(r, isNull);
     });
@@ -259,6 +281,16 @@ void main() {
       final r = await runCloudExtraction(
         ImportOutcomeDto(name: 'a.jpg', sourceFileId: 1, status: 'stored', documentId: 7, pagesWithoutText: _noPages),
         ocr,
+        profile: await _currentProfile(),
+      );
+      expect(r, isNull);
+    });
+
+    test('捕获的成员没有 secretHex → null(没有稳定的日期偏移就不发)', () async {
+      final r = await runCloudExtraction(
+        _stored(9),
+        ocr,
+        profile: const Profile(id: 'p-x', name: '张建国'),
       );
       expect(r, isNull);
     });
@@ -300,7 +332,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'cloud_extract_enabled': false});
       final before = vaultRevision.value;
       await runCloudExtractions([
-        (outcome: _stored(21, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9)),
+        (outcome: _stored(21, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile()),
       ]);
       expect(captured, isEmpty, reason: '开关关了在 runCloudExtractions 入口就该返回,压根没进到每一份的处理里');
       expect(vaultRevision.value, before, reason: '没跑就没有新结果,文档保持导入时落盘的样子');
@@ -309,7 +341,7 @@ void main() {
     test('开着(cloud_extract_enabled=true)→ 这份文档照旧被送进 runCloudExtraction(老行为不变)', () async {
       SharedPreferences.setMockInitialValues({'cloud_extract_enabled': true});
       await runCloudExtractions([
-        (outcome: _stored(22, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9)),
+        (outcome: _stored(22, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile()),
       ]);
       expect(captured, isNotEmpty, reason: '开关开着,新加的这道门不该拦下原来就会跑的那条路');
       expect(captured.single, contains('文档 22 退回本地正则'));
@@ -319,7 +351,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       expect(await loadCloudExtractEnabled(), isTrue);
       await runCloudExtractions([
-        (outcome: _stored(23, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9)),
+        (outcome: _stored(23, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile()),
       ]);
       expect(captured, isNotEmpty);
     });
@@ -330,6 +362,79 @@ void main() {
       expect(await loadCloudExtractEnabled(), isFalse);
       await saveCloudExtractEnabled(true);
       expect(await loadCloudExtractEnabled(), isTrue);
+    });
+  });
+
+  /// 评审 C2:整批抽取要跑好几分钟(每份一次 LLM 往返,最长 90 秒),这中间用户
+  /// 切一次成员——而 `documentId` 是**每个 vault 各自自增的 rowid**,vault 又是
+  /// 进程级单例。旧代码每轮重读「当前成员」,于是 prepare 会拿**新成员**库里同号
+  /// 文档的 OCR 原文、配**旧成员**的 knownName 脱敏后发出去,commit 也写进新成员
+  /// 的库。现在捕获的成员一路带到 prepare/commit 前核对。
+  ///
+  /// 同上一组:host 上没有 Rust 库,`vault_cloud_*` 一律抛 → 只要这份进到了
+  /// `runCloudExtraction` 的 FRB 那步,那条 catch 的 debugPrint 就一定响。于是
+  /// 「有没有响」正好区分「被身份核对挡在动 vault 之前」和「照常走到了 vault」。
+  group('C2 成员切换:捕获的成员对不上就不碰 vault', () {
+    final captured = <String?>[];
+    late DebugPrintCallback originalDebugPrint;
+    late String originalCurrentId;
+
+    setUp(() async {
+      captured.clear();
+      originalDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) => captured.add(message);
+      SharedPreferences.setMockInitialValues({'cloud_extract_enabled': true});
+      final support = await Directory.systemTemp.createTemp('medme-cloud-extract-c2');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+      await ProfileManager.instance.ensureLoaded();
+      originalCurrentId = ProfileManager.instance.currentId.value;
+      AccountSession.instance.access = 'test-token';
+      AccountSession.instance.accountId = 'acc-test';
+    });
+    tearDown(() async {
+      debugPrint = originalDebugPrint;
+      AccountSession.instance.access = null;
+      AccountSession.instance.accountId = null;
+      // `ProfileManager` 是单例,别把"当前是谁"留给下一个用例。
+      await ProfileManager.instance.switchTo(originalCurrentId);
+    });
+
+    test('prepare 之前切走 → 不碰 vault、不发网络', () async {
+      final captured0 = await _currentProfile();
+      // `create` 会把 current 切到新建的那个成员(见它的文档)= 用户切了成员。
+      final other = await ProfileManager.instance.create('李秀英');
+      expect(ProfileManager.instance.current.id, other);
+
+      final r = await runCloudExtraction(
+        _stored(31, detectedName: '张建国'),
+        const OcrResult('白细胞 5.6', 0.9),
+        profile: captured0,
+      );
+      expect(r, isNull);
+      expect(
+        captured.single,
+        contains('成员已从 ${captured0.id} 切到 $other,跳过文档 31'),
+      );
+      expect(
+        captured.any((m) => m!.contains('退回本地正则')),
+        isFalse,
+        reason: '压根没走到 FRB/vault 那一步,不是"跑了但失败了"',
+      );
+    });
+
+    test('整批里只跳过成员对不上的那几份,当前成员那份照常跑', () async {
+      final me = await _currentProfile();
+      final stale = const Profile(id: 'p-已经不是当前', name: '张建国', secretHex: 'ab');
+      await runCloudExtractions([
+        (outcome: _stored(32, detectedName: '张建国'), ocr: const OcrResult('a', 0.9), profile: me),
+        (outcome: _stored(33, detectedName: '张建国'), ocr: const OcrResult('b', 0.9), profile: stale),
+      ]);
+      expect(captured.any((m) => m!.contains('文档 32')), isTrue, reason: '当前成员那份照常跑');
+      expect(captured.any((m) => m!.contains('文档 33')), isFalse, reason: '对不上的那份连网络都不用跑');
+      expect(captured.last, contains('成员已切换,跳过 1 份'));
     });
   });
 }

@@ -23,6 +23,7 @@ import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart' as rust_vault;
+import 'package:mobile_flutter/vault_boot.dart' show runSerialized;
 import 'package:mobile_flutter/vault_events.dart';
 
 /// 「云端整理」开关(键定在 `account.dart`,见 [cloudExtractEnabledKey])。默认
@@ -112,8 +113,20 @@ Future<Map<String, dynamic>> postExtract(
 );
 
 /// 排队等云抽取的一份文档:落库结果 + 它**当次**的 OCR 结果(涂黑要用其中的
-/// `bytes`/`lines`,拿不到第二次)。
-typedef PendingCloudExtraction = ({ImportOutcomeDto outcome, OcrResult ocr});
+/// `bytes`/`lines`,拿不到第二次)+ **落库时的那个成员**。
+///
+/// [profile] 不是冗余信息:`outcome.documentId` 是**每个 vault 各自自增的 rowid**,
+/// 而 Rust 侧的 vault 是进程级单例。整批抽取要跑好几分钟(每份一次 LLM 往返,最长
+/// 90 秒),这中间用户切一次成员,同一个 id 就指向**另一个成员库里同号的文档** ——
+/// prepare 会拿新成员的 OCR 原文配旧成员的 knownName 脱敏后发出去,commit 把结果
+/// 写进新成员的库。所以捕获的这一份身份要一路带到 prepare/commit 前核对
+/// (见 [runCloudExtraction] 里的 `_ifStillCurrent`),脱敏用的姓名和日期偏移
+/// 秘密也一律取自它,不再重读「当前成员」。
+typedef PendingCloudExtraction = ({
+  ImportOutcomeDto outcome,
+  OcrResult ocr,
+  Profile profile,
+});
 
 /// 把这一批排队的文档逐份跑完。**导入流程不等它**(`unawaited`),用户点完
 /// 「完成」就走人,结果自己回来。
@@ -125,26 +138,71 @@ typedef PendingCloudExtraction = ({ImportOutcomeDto outcome, OcrResult ocr});
 /// 一份一份**长出来**的,而不是等整批跑完才一起出现。失败的那份不 bump(没有新东西
 /// 可看),也不打断后面的。
 Future<void> runCloudExtractions(List<PendingCloudExtraction> pending) async {
+  if (pending.isEmpty) return;
   // 开关关了 = 这台设备只用本机识别,连队列都不排——不是"每份都拒发"那种
   // 一次一次的静默失败,是压根不碰网络。
   if (!await loadCloudExtractEnabled()) return;
+  await ProfileManager.instance.ensureLoaded();
+  var skipped = 0;
   for (final p in pending) {
-    if (await runCloudExtraction(p.outcome, p.ocr) != null) bumpVaultRevision();
+    // 便宜的预检:已经切走了就连 LLM 那一趟都不用跑。**挡住写错库的不是这一行**,
+    // 是 `runCloudExtraction` 里排在 vault 队列内的那两道核对 —— 这里只是省一趟网络
+    // 并且把"跳过了几份"数出来。
+    if (ProfileManager.instance.current.id != p.profile.id) {
+      skipped++;
+      continue;
+    }
+    if (await runCloudExtraction(p.outcome, p.ocr, profile: p.profile) != null) {
+      bumpVaultRevision();
+    }
   }
+  if (skipped > 0) debugPrint('[cloud-extract] 成员已切换,跳过 $skipped 份');
 }
+
+/// 只在「当前成员仍是捕获时那个」的前提下,把 [action] 排进 **vault 队列**跑。
+/// 切走了就返回 null,一个字节都不碰那个箱子。
+///
+/// 两件事缺一不可:
+/// * **排队**([runSerialized]):开箱(切成员/同步/代拍)也走这条 FIFO,排进去
+///   才能保证核对完到动手之间没有另一路把箱子换掉。
+/// * **核对**:队列只保证顺序,不保证"箱子没变过"——身份得自己再看一眼。
+///   同 `SyncEngine._assertVaultMatches` 的思路。
+///
+/// 网络往返**留在队列外**:一次 LLM 最长 90 秒,塞进 vault 队列会把开箱、同步、
+/// 代拍统统堵住。所以 prepare 和 commit 各排一次,中间那趟自己在外面跑。
+///
+/// ⚠️ 不可重入:`runSerialized` 里不许再排队,所以 [action] 必须是直接的 FRB 调用。
+Future<T?> _ifStillCurrent<T>(
+  Profile captured,
+  int docId,
+  Future<T> Function() action,
+) => runSerialized(() async {
+  final now = ProfileManager.instance.current.id;
+  if (now != captured.id) {
+    // 只有成员 id,没有任何病历内容(同 `runCloudExtraction` 的 catch 那条纪律)。
+    debugPrint('[cloud-extract] 成员已从 ${captured.id} 切到 $now,跳过文档 $docId');
+    return null;
+  }
+  return action();
+});
 
 /// 一份文档落库之后跑云抽取。成功返回这次落盘的条数统计,**任何一步不成都返回
 /// null**,调用方不必处理失败——摘要退回本地正则,导入结果不变。
 ///
 /// [ocr] 必须是这份文档**当次**的 OCR 结果(涂黑要用它的 `bytes`/`lines`);
-/// [api] 只给测试注入,生产留空走当前账号会话。
+/// [profile] 是**落库那一刻的成员**(见 [PendingCloudExtraction]),脱敏用的姓名、
+/// 日期偏移秘密、以及动 vault 之前的身份核对全都认它,过程中一次都不重读「当前
+/// 成员」;[api] 只给测试注入,生产留空走当前账号会话。
 Future<CloudExtractionResultDto?> runCloudExtraction(
   ImportOutcomeDto outcome,
   OcrResult ocr, {
+  required Profile profile,
   ApiClient? api,
 }) async {
   final docId = outcome.documentId;
   if (docId == null) return null;
+  // 秘密缺了就没有稳定的日期偏移(`ProfileManager.ensureLoaded` 会补,这里只是不赌)。
+  if (profile.secretHex.isEmpty) return null;
   // 没登录 = 没这个功能。不是错误,不提示,照常走本地那条路。
   final session = AccountSession.instance;
   // `background`,不是 `forSession`:抽取失败了最多是"这份文档没有云抽取结果",
@@ -154,13 +212,9 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
   if (client == null) return null;
 
   try {
-    await ProfileManager.instance.ensureLoaded();
-    final p = ProfileManager.instance.current;
-    // 秘密缺了就没有稳定的日期偏移(`ensureLoaded` 会补,这里只是不赌)。
-    if (p.secretHex.isEmpty) return null;
-
-    // 一个值,prepare 和 commit 共用(见 [knownNameFor] 的 ⚠️)。
-    final knownName = knownNameFor(outcome, p);
+    // 一个值,prepare 和 commit 共用(见 [knownNameFor] 的 ⚠️)。取自**捕获的**
+    // 那个成员:重读「当前成员」的话,切了成员就会拿甲的名字给乙的报告脱敏。
+    final knownName = knownNameFor(outcome, profile);
 
     final image = canRedactImage(ocr);
     // **一次 prepare 供两条臂用**:`payload_text` 与 `lines` 无关,`lines` 只影响
@@ -170,14 +224,19 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
     // 身份只给得出名字:App 目前不存证件号/手机号(`Profile` 里没有,病历解析出的
     // `PatientProfileDto` 也没有),所以 K 层只认名字,证件号/手机号由 deid 的 A/P
     // 层按锚点和模式兜。哪天真有了这两项,补在这两个参数上即可。
-    final req = await rust_vault.vaultCloudPrepareExtraction(
-      documentId: docId,
-      lines: image ? ocr.lines : const [],
-      knownName: knownName,
-      profileSecretHex: p.secretHex,
-      pageW: image ? ocr.frameW : 0,
-      pageH: image ? ocr.frameH : 0,
+    final req = await _ifStillCurrent(
+      profile,
+      docId,
+      () => rust_vault.vaultCloudPrepareExtraction(
+        documentId: docId,
+        lines: image ? ocr.lines : const [],
+        knownName: knownName,
+        profileSecretHex: profile.secretHex,
+        pageW: image ? ocr.frameW : 0,
+        pageH: image ? ocr.frameH : 0,
+      ),
     );
+    if (req == null) return null;
 
     String? redacted;
     if (image) {
@@ -201,18 +260,23 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
       return null;
     }
 
+    // 这一趟(最长 90 秒)在 vault 队列**外面**跑,见 [_ifStillCurrent]。
     final result = await postExtract(client, mode: mode, payload: payload);
     // 校验基准由 Rust 侧自己重算(不信这里传的任何文本),身份参数必须与 prepare
     // 那次逐字相同,否则占位符编号对不上、校验就不诚实了。
-    return await rust_vault.vaultCloudCommitExtraction(
-      documentId: docId,
-      mode: mode,
-      // 这次真正跑抽取的模型由服务端说了算(环境变量,运维随时能换);老版本
-      // 服务端不回这个字段时才退到本地兜底值。
-      modelVersion: (result['model'] as String?) ?? extractModelVersion,
-      llmJson: jsonEncode(result),
-      restoreMapJson: req.restoreMapJson,
-      knownName: knownName,
+    return await _ifStillCurrent(
+      profile,
+      docId,
+      () => rust_vault.vaultCloudCommitExtraction(
+        documentId: docId,
+        mode: mode,
+        // 这次真正跑抽取的模型由服务端说了算(环境变量,运维随时能换);老版本
+        // 服务端不回这个字段时才退到本地兜底值。
+        modelVersion: (result['model'] as String?) ?? extractModelVersion,
+        llmJson: jsonEncode(result),
+        restoreMapJson: req.restoreMapJson,
+        knownName: knownName,
+      ),
     );
   } catch (e) {
     // ⚠️ **绝不进埋点**(异常文本可能带文档内容片段)。`debugPrint` 在 release 里
