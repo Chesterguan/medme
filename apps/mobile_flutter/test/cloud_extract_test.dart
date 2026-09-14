@@ -356,6 +356,34 @@ void main() {
       expect(captured, isNotEmpty);
     });
 
+    /// 评审 I3:开关原先只在**每批开头**读一次 —— 用户在一批导入跑到一半时去设置里
+    /// 关掉,剩下的几份照发。现在每份都重读。
+    test('一批跑到一半关掉 → 后面那份不再送出去(按份读,不是按批读)', () async {
+      SharedPreferences.setMockInitialValues({'cloud_extract_enabled': true});
+      final prefs = await SharedPreferences.getInstance();
+      final me = await _currentProfile();
+      // 第一份进到 `runCloudExtraction` 内部时必打那行 debugPrint(见组注释)——
+      // 就在那一刻关掉开关,正是"用户在一批跑到一半时去设置里关了云端整理"。
+      // 不 await:`setBool` 同步更新 SharedPreferences 的本地缓存,下一份读到的
+      // 就是 false(见 shared_preferences 的 `_setValue`)。
+      debugPrint = (String? message, {int? wrapWidth}) {
+        captured.add(message);
+        if (message != null && message.contains('文档 26')) {
+          prefs.setBool(cloudExtractEnabledKey, false);
+        }
+      };
+      await runCloudExtractions([
+        (outcome: _stored(26, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: me),
+        (outcome: _stored(27, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: me),
+      ]);
+      expect(captured.where((m) => m!.contains('文档 26')), hasLength(1), reason: '第一份照常跑');
+      expect(
+        captured.any((m) => m!.contains('文档 27')),
+        isFalse,
+        reason: '开关在这一批中途被关掉,第二份就不该再被送进 runCloudExtraction',
+      );
+    });
+
     test('存读一致:save(false) 之后 load 读到 false;save(true) 之后读到 true', () async {
       SharedPreferences.setMockInitialValues({});
       await saveCloudExtractEnabled(false);

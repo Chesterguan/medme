@@ -139,12 +139,13 @@ typedef PendingCloudExtraction = ({
 /// 可看),也不打断后面的。
 Future<void> runCloudExtractions(List<PendingCloudExtraction> pending) async {
   if (pending.isEmpty) return;
-  // 开关关了 = 这台设备只用本机识别,连队列都不排——不是"每份都拒发"那种
-  // 一次一次的静默失败,是压根不碰网络。
-  if (!await loadCloudExtractEnabled()) return;
   await ProfileManager.instance.ensureLoaded();
   var skipped = 0;
   for (final p in pending) {
+    // 开关**每份都重读**(评审 I3):整批要跑好几分钟,用户跑到一半去设置里关掉
+    // 「云端整理」,剩下的几份就不该再发出去。关了 = 这台设备只用本机识别,压根
+    // 不碰网络。
+    if (!await loadCloudExtractEnabled()) continue;
     // 便宜的预检:已经切走了就连 LLM 那一趟都不用跑。**挡住写错库的不是这一行**,
     // 是 `runCloudExtraction` 里排在 vault 队列内的那两道核对 —— 这里只是省一趟网络
     // 并且把"跳过了几份"数出来。
