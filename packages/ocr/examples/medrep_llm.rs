@@ -13,10 +13,11 @@
 // ```
 //
 // 每份文档写两个文件:`{doc}.txt`(校验后的化验行,score() 用
-// `parser::extract_labs` 读)、`{doc}.halluc.json`
-// (`{"total":N,"rejected":R,"unverified":U}`,N 是 LLM 原始产出的化验条数,
-// R/U 是 `deid::verify` 判定的丢弃/待核数——medrep.rs 的 `score()` 跨全部文档
-// 累加算幻觉率)。可续跑:`{doc}.txt` 已存在的文档直接跳过。
+// `parser::extract_labs` 读)、`{doc}.halluc.json`(`labs_*` / `all_*` 两组
+// total/rejected/unverified + token 用量 + 本份 LLM 毫秒数——medrep.rs 的
+// `score()` 跨全部文档累加,打成两条**分别标注**的幻觉率)。
+// 顺带把 ② 几何重建臂的文本写进 `<out>/arm2_geo/`(同一遍 OCR 的产物,见
+// 循环里的注释)。可续跑:两个产出都在的文档直接跳过。
 
 use anyhow::{bail, Context, Result};
 use base64::Engine;
@@ -26,7 +27,10 @@ use deid::{
 };
 use image::GenericImageView;
 use ocr::{rebuild_layout_text, recognize_engine_lines, redact_image, PaintRect};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::time::Instant;
 
 /// 抽取用的系统提示词(schema v1)。云端抽取路径(`services/api/extract.py`,
 /// 另一个 worktree)复用同一段文字——改这里就是改两处的行为,不要各写各的。
@@ -38,8 +42,13 @@ const SYSTEM: &str = "你是医疗单据结构化抽取器。只输出一个 JSO
 \"diagnoses\":[{\"text\":\"\",\"icd\":\"\"}],\"impression\":\"\",\"notes\":\"\"}";
 
 const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
-const MODEL_TEXT: &str = "deepseek-v4-flash";
-const MODEL_IMAGE: &str = "deepseek-v4-flash-vision-exp";
+/// 计划里写的是 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`,**这两个
+/// 模型 id 在 DeepSeek 上不存在**:2026-09-14 用真 key 打 `GET /models`,返回的
+/// 只有 `deepseek-flash` 和 `deepseek-v4-pro`。`deepseek-flash` 自己就吃
+/// `image_url`(实测读得出化验单),所以两档共用它——不是"随便挑了一个",是
+/// flash 档只剩这一个。换模型前先自己打一次 /models,别照抄计划里的名字。
+const MODEL_TEXT: &str = "deepseek-flash";
+const MODEL_IMAGE: &str = "deepseek-flash";
 
 fn root() -> String {
     std::env::var("MEDREP_ROOT").expect("设置 MEDREP_ROOT=<medrepbench 目录>(见 medrep.rs 头注释)")
@@ -77,8 +86,23 @@ fn response_content(resp: &serde_json::Value) -> Option<&str> {
     resp["choices"][0]["message"]["content"].as_str()
 }
 
+/// 纯函数:从响应里取 token 用量。DeepSeek 不保证带 `usage`,缺了按 0 算——
+/// 报告里的每份 token 只能是"这批里报了用量的那些"的和,别把缺失当成 0 用量。
+fn response_usage(resp: &serde_json::Value) -> (u64, u64) {
+    let u = &resp["usage"];
+    (
+        u["prompt_tokens"].as_u64().unwrap_or(0),
+        u["completion_tokens"].as_u64().unwrap_or(0),
+    )
+}
+
 /// 唯一碰网络的函数。`key` 由调用方传入,绝不打印(错误信息里也不带)。
-fn call_deepseek(key: &str, model: &str, user_content: serde_json::Value) -> Result<String> {
+/// 返回:模型文本 + (prompt_tokens, completion_tokens)。
+fn call_deepseek(
+    key: &str,
+    model: &str,
+    user_content: serde_json::Value,
+) -> Result<(String, (u64, u64))> {
     let body = request_body(model, user_content);
     let mut resp = ureq::post(DEEPSEEK_URL)
         .header("Authorization", &format!("Bearer {key}"))
@@ -88,9 +112,10 @@ fn call_deepseek(key: &str, model: &str, user_content: serde_json::Value) -> Res
         .body_mut()
         .read_json()
         .context("deepseek 响应不是合法 json")?;
-    response_content(&v)
+    let content = response_content(&v)
         .map(str::to_string)
-        .context("deepseek 响应里没有 choices[0].message.content")
+        .context("deepseek 响应里没有 choices[0].message.content")?;
+    Ok((content, response_usage(&v)))
 }
 
 /// verify 后的 labs → `name value unit low-high` 一行,score() 用
@@ -112,6 +137,201 @@ fn render_rows(e: &Extraction) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// 一次调用里累计的计数。**每个 worker 线程各持一份**,跑完合并一次——
+/// 逐份抢锁没必要。失败分五类,不许混成一个"整份失败":OCR 炸了、
+/// **脱敏门拦下**、API 失败、模型回的不是合法 JSON、落盘出错。脱敏门那一类
+/// 必须单独报(spec:拦下就跳过,绝不绕过),混进去就看不出门拦了几份。
+#[derive(Default)]
+struct Stats {
+    labs_total: usize,
+    labs_rejected: usize,
+    labs_unverified: usize,
+    all_total: usize,
+    all_rejected: usize,
+    all_unverified: usize,
+    ocr_failed: usize,
+    deid_blocked: usize,
+    api_failed: usize,
+    parse_failed: usize,
+    io_failed: usize,
+    done: usize,
+    prompt_tok: u64,
+    completion_tok: u64,
+    /// 各线程耗时之和(不是墙钟);除以 `done` 得每份延迟,这才是要报的数。
+    ocr_secs: f64,
+    llm_secs: f64,
+}
+
+impl Stats {
+    fn merge(&mut self, o: Stats) {
+        self.labs_total += o.labs_total;
+        self.labs_rejected += o.labs_rejected;
+        self.labs_unverified += o.labs_unverified;
+        self.all_total += o.all_total;
+        self.all_rejected += o.all_rejected;
+        self.all_unverified += o.all_unverified;
+        self.ocr_failed += o.ocr_failed;
+        self.deid_blocked += o.deid_blocked;
+        self.api_failed += o.api_failed;
+        self.parse_failed += o.parse_failed;
+        self.io_failed += o.io_failed;
+        self.done += o.done;
+        self.prompt_tok += o.prompt_tok;
+        self.completion_tok += o.completion_tok;
+        self.ocr_secs += o.ocr_secs;
+        self.llm_secs += o.llm_secs;
+    }
+}
+
+/// 每份文档都要的只读上下文(线程间共享)。
+struct Ctx<'a> {
+    root: &'a str,
+    dir: &'a Path,
+    arm2_dir: &'a Path,
+    key: &'a str,
+    model: &'a str,
+    mode: Mode,
+    known: &'a KnownIdentity,
+}
+
+/// 一份文档的整条路:读图 → 本地 OCR → 脱敏 → **过门** → DeepSeek → 逐字校验
+/// → 落盘。`Err` 只用于"落盘/编码这类本不该失败的事",各类业务失败都记进
+/// `s` 后正常返回。
+fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
+    let img_path = PathBuf::from(c.root).join("images").join(doc);
+    let Ok(bytes) = std::fs::read(&img_path) else {
+        return Ok(());
+    };
+    if bytes.is_empty() {
+        return Ok(()); // 上游 LFS 空对象
+    }
+    let row_path = c.dir.join(format!("{doc}.txt"));
+    let arm2_path = c.arm2_dir.join(format!("{doc}.txt"));
+    if row_path.exists() && arm2_path.exists() {
+        return Ok(()); // 可续跑
+    }
+
+    let t_ocr = Instant::now();
+    let Ok((el, _conf)) = recognize_engine_lines(&bytes) else {
+        s.ocr_failed += 1;
+        return Ok(());
+    };
+    let text = rebuild_layout_text(&el.lines);
+    s.ocr_secs += t_ocr.elapsed().as_secs_f64();
+    // ② 几何重建臂:`recognize_engine_layout` 就是 `recognize_engine_lines`
+    // + `rebuild_layout_text`(lib.rs:960),上面两行已经把它算完了。基线和
+    // ④ 臂共用这一遍 OCR,而不是让 `medrep --produce` 对同一批图再跑一遍
+    // (全库一遍 OCR 按小时算)。产出逐字等价,`--produce` 那条路仍然可用。
+    if !arm2_path.exists() {
+        std::fs::write(&arm2_path, &text)?;
+    }
+    if row_path.exists() {
+        return Ok(()); // ④ 臂这份跑过了,刚才只是补基线
+    }
+
+    let red = redact_text(&text, c.known, 0);
+    if assert_clean(&red.text, c.known).is_err() {
+        // 脱敏门拦下:计数并跳过,**不送云**。
+        s.deid_blocked += 1;
+        return Ok(());
+    }
+
+    let content = match c.mode {
+        Mode::Text => serde_json::json!(red.text),
+        Mode::Image => {
+            // 坐标系必须是 `el.frame`(recognize_engine_lines 内部预处理后的
+            // working frame),不能重新解码原始字节——那是另一套坐标系,见
+            // ocr::redact_image_bytes 的坐标系警告。
+            let (w, h) = el.frame.dimensions();
+            let boxes: Vec<DBox> = el
+                .lines
+                .iter()
+                .map(|l| DBox {
+                    text: l.text.clone(),
+                    left: l.left,
+                    top: l.top,
+                    right: l.right,
+                    bottom: l.top + l.height,
+                })
+                .collect();
+            let rects: Vec<PaintRect> = redact_boxes(&boxes, c.known, w as f32, h as f32)
+                .into_iter()
+                .map(|r| PaintRect {
+                    left: r.left,
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom,
+                })
+                .collect();
+            let jpg = redact_image(&el.frame, &rects)?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&jpg);
+            serde_json::json!([
+                {"type": "text", "text": "请抽取这张单据。"},
+                {"type": "image_url", "image_url": {"url": format!("data:image/jpeg;base64,{b64}")}}
+            ])
+        }
+    };
+
+    let t_llm = Instant::now();
+    let (raw, (ptok, ctok)) = match call_deepseek(c.key, c.model, content) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{doc}: deepseek 调用失败:{e:#}");
+            s.api_failed += 1;
+            return Ok(());
+        }
+    };
+    s.llm_secs += t_llm.elapsed().as_secs_f64();
+    let llm_ms = t_llm.elapsed().as_millis() as u64;
+    s.prompt_tok += ptok;
+    s.completion_tok += ctok;
+
+    let parsed = match parse_extraction(&raw) {
+        Ok(p) => p,
+        Err(_) => {
+            s.parse_failed += 1;
+            std::fs::write(&row_path, "")?;
+            return Ok(());
+        }
+    };
+    // 两个分母,分开报(评审:原来分子跨全字段、分母只算 labs,比出来没意义)。
+    // labs_*:只看化验条目,与三条指标同一批对象。
+    // all_*:`verify` 真正校验的全部对象 —— labs + meds + diagnoses 三类条目,
+    //        外加 doc_date/impression/notes 三个顶层标量字段(空值算通过)。
+    let n_labs = parsed.labs.len();
+    let n_all = n_labs + parsed.meds.len() + parsed.diagnoses.len() + 3;
+    let v = verify(parsed, &red.text, c.mode);
+    // 文本档不过 = 条目被丢掉;图片档不过 = 留着但打 unverified。一条式子两档都对。
+    let labs_rejected = n_labs - v.extraction.labs.len();
+    let labs_unverified = v.extraction.labs.iter().filter(|l| l.unverified).count();
+    s.labs_total += n_labs;
+    s.labs_rejected += labs_rejected;
+    s.labs_unverified += labs_unverified;
+    s.all_total += n_all;
+    s.all_rejected += v.rejected;
+    s.all_unverified += v.unverified;
+    s.done += 1;
+
+    std::fs::write(&row_path, render_rows(&v.extraction))?;
+    std::fs::write(
+        c.dir.join(format!("{doc}.halluc.json")),
+        serde_json::json!({
+            "labs_total": n_labs,
+            "labs_rejected": labs_rejected,
+            "labs_unverified": labs_unverified,
+            "all_total": n_all,
+            "all_rejected": v.rejected,
+            "all_unverified": v.unverified,
+            "prompt_tokens": ptok,
+            "completion_tokens": ctok,
+            "llm_ms": llm_ms,
+        })
+        .to_string(),
+    )?;
+    eprintln!("{doc}: labs {n_labs},丢 {labs_rejected},待核 {labs_unverified}");
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -162,100 +382,83 @@ fn main() -> Result<()> {
         phone: None,
     };
 
-    let (mut total, mut rejected, mut unverified, mut failed) = (0usize, 0usize, 0usize, 0usize);
-    for doc in &docs {
-        let img_path = PathBuf::from(&root).join("images").join(doc);
-        let Ok(bytes) = std::fs::read(&img_path) else {
-            continue;
-        };
-        if bytes.is_empty() {
-            continue; // 上游 LFS 空对象
-        }
-        let row_path = dir.join(format!("{doc}.txt"));
-        if row_path.exists() {
-            continue; // 可续跑
-        }
+    // ② 几何重建(基线臂)的产出目录。见 process_doc 里写入处的注释:与
+    // `medrep --produce` 的 arm2 逐字同源,顺手落盘省一遍全库 OCR。
+    let arm2_dir = PathBuf::from(&root).join(&out).join("arm2_geo");
+    std::fs::create_dir_all(&arm2_dir)?;
 
-        let (el, _conf) = match recognize_engine_lines(&bytes) {
-            Ok(x) => x,
-            Err(_) => {
-                failed += 1;
-                continue;
-            }
-        };
-        let text = rebuild_layout_text(&el.lines);
-        let red = redact_text(&text, &known, 0);
-        if assert_clean(&red.text, &known).is_err() {
-            failed += 1;
-            continue;
+    let ctx = Ctx {
+        root: &root,
+        dir: &dir,
+        arm2_dir: &arm2_dir,
+        key: &key,
+        model,
+        mode,
+        known: &known,
+    };
+
+    // 并发只为**等网络**:单份 LLM 往返实测 ~12s,683 份串着跑一条臂就两个半
+    // 小时。8 条线程把它压到二十来分钟。OCR 也在线程里跑——引擎是 `&'static`
+    // 单例(lib.rs 的 `static PIPELINE: OnceLock<OAROCR>`,静态量本身就要求
+    // `Sync`),多线程调用安全。落盘各写各的文件,不冲突。
+    let jobs: usize = arg("--jobs")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8)
+        .max(1);
+    let next = AtomicUsize::new(0);
+    let merged = Mutex::new(Stats::default());
+    let wall = Instant::now();
+
+    std::thread::scope(|sc| {
+        for _ in 0..jobs {
+            sc.spawn(|| {
+                let mut s = Stats::default();
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(doc) = docs.get(i) else { break };
+                    if let Err(e) = process_doc(&ctx, doc, &mut s) {
+                        eprintln!("{doc}: 落盘失败:{e:#}");
+                        s.io_failed += 1;
+                    }
+                }
+                // 只有 panic 会毒化这把锁,而 panic 本来就该让整轮作废。
+                merged
+                    .lock()
+                    .expect("统计锁被毒化 = 某个 worker panic 了,这轮数据不可信")
+                    .merge(s);
+            });
         }
+    });
 
-        let content = match mode {
-            Mode::Text => serde_json::json!(red.text),
-            Mode::Image => {
-                // 坐标系必须是 `el.frame`(recognize_engine_lines 内部预处理后的
-                // working frame),不能重新解码原始字节——那是另一套坐标系,见
-                // ocr::redact_image_bytes 的坐标系警告。
-                let (w, h) = el.frame.dimensions();
-                let boxes: Vec<DBox> = el
-                    .lines
-                    .iter()
-                    .map(|l| DBox {
-                        text: l.text.clone(),
-                        left: l.left,
-                        top: l.top,
-                        right: l.right,
-                        bottom: l.top + l.height,
-                    })
-                    .collect();
-                let rects: Vec<PaintRect> = redact_boxes(&boxes, &known, w as f32, h as f32)
-                    .into_iter()
-                    .map(|r| PaintRect {
-                        left: r.left,
-                        top: r.top,
-                        right: r.right,
-                        bottom: r.bottom,
-                    })
-                    .collect();
-                let jpg = redact_image(&el.frame, &rects)?;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&jpg);
-                serde_json::json!([
-                    {"type": "text", "text": "请抽取这张单据。"},
-                    {"type": "image_url", "image_url": {"url": format!("data:image/jpeg;base64,{b64}")}}
-                ])
-            }
-        };
-
-        let raw = match call_deepseek(&key, model, content) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("{doc}: deepseek 调用失败:{e:#}");
-                failed += 1;
-                continue;
-            }
-        };
-        let parsed = match parse_extraction(&raw) {
-            Ok(p) => p,
-            Err(_) => {
-                failed += 1;
-                std::fs::write(&row_path, "")?;
-                continue;
-            }
-        };
-        let n = parsed.labs.len();
-        let v = verify(parsed, &red.text, mode);
-        total += n;
-        rejected += v.rejected;
-        unverified += v.unverified;
-        std::fs::write(&row_path, render_rows(&v.extraction))?;
-        std::fs::write(
-            dir.join(format!("{doc}.halluc.json")),
-            serde_json::json!({"total": n, "rejected": v.rejected, "unverified": v.unverified})
-                .to_string(),
-        )?;
-        eprintln!("{doc}: labs {n},丢 {},待核 {}", v.rejected, v.unverified);
-    }
-    eprintln!("总计 labs {total},幻觉(丢弃){rejected},待核 {unverified},整份失败 {failed}");
+    let s = merged
+        .into_inner()
+        .expect("统计锁被毒化 = 某个 worker panic 了,这轮数据不可信");
+    let per = |x: f64| if s.done > 0 { x / s.done as f64 } else { 0.0 };
+    eprintln!(
+        "跑完 {} 份({jobs} 并发,墙钟 {:.0}s):labs {} 条(丢 {},待核 {});\
+         全字段 {} 项(丢 {},待核 {})",
+        s.done,
+        wall.elapsed().as_secs_f64(),
+        s.labs_total,
+        s.labs_rejected,
+        s.labs_unverified,
+        s.all_total,
+        s.all_rejected,
+        s.all_unverified
+    );
+    eprintln!(
+        "失败:OCR {},脱敏门拦下 {},API {},JSON 不合法 {},落盘 {}",
+        s.ocr_failed, s.deid_blocked, s.api_failed, s.parse_failed, s.io_failed
+    );
+    eprintln!(
+        "token:prompt {} + completion {},每份 {:.0};\
+         每份延迟:OCR {:.2}s,LLM {:.2}s",
+        s.prompt_tok,
+        s.completion_tok,
+        per((s.prompt_tok + s.completion_tok) as f64),
+        per(s.ocr_secs),
+        per(s.llm_secs)
+    );
     Ok(())
 }
 
@@ -293,6 +496,16 @@ mod tests {
         let content = response_content(&resp).expect("content 应该能取到");
         let e = parse_extraction(content).unwrap();
         assert_eq!(e.doc_type, "lab");
+    }
+
+    #[test]
+    fn response_usage_reads_tokens_and_defaults_to_zero() {
+        let resp: serde_json::Value =
+            serde_json::from_str(r#"{"usage":{"prompt_tokens":428,"completion_tokens":231}}"#)
+                .unwrap();
+        assert_eq!(response_usage(&resp), (428, 231));
+        // 缺 usage 不该 panic,按 0 算(报告里说明这是"没报用量",不是"0 用量")
+        assert_eq!(response_usage(&serde_json::json!({})), (0, 0));
     }
 
     #[test]

@@ -490,6 +490,26 @@ fn score(out: &str) -> Result<()> {
         }
     }
 
+    // 样本为空必须**报错**,不能安静地打一张 0/0 的表。0/0 在 `pct` 里是 0.0%,
+    // 在「幻觉率 = 丢弃/总数」里也是 0.0% —— 后者会被读成"一条幻觉都没有",
+    // 而实际情况是一条都没跑到(典型原因:某条臂目录空、图片路径不对、产出
+    // 文件名与 gt.tsv 第一列对不上)。门是拿这些数字过的,宁可炸,不许给一个
+    // 好看的空数。
+    anyhow::ensure!(
+        counted_docs > 0,
+        "没有一份文档是**所有臂都产出**的(各臂目录:{}),分母为 0,拒绝出分。\
+         先确认每条臂的 <doc>.txt 都写出来了、文件名与 gt.tsv 第一列一致。",
+        arms.iter()
+            .map(|(n, d)| format!("{n}={}", d.display()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    anyhow::ensure!(
+        tally[0].recall.1 > 0,
+        "{counted_docs} 份文档里没有一条**可比条目**(词典认得 + 数值是纯数字),\
+         三条指标的分母为 0,拒绝出分。"
+    );
+
     let pct = |h: usize, d: usize| {
         if d == 0 {
             0.0
@@ -632,35 +652,85 @@ fn score(out: &str) -> Result<()> {
     }
 
     println!();
-    println!("## 第 ④ 臂(LLM)幻觉率——逐字校验后被丢弃的条目占比");
+    println!("## 第 ④ 臂(LLM)幻觉率——逐字校验不过的条目占比");
     println!();
-    // 每份文档的 {doc}.halluc.json 由 medrep_llm.rs 写(deid::verify 的
-    // rejected/total),这里跨全部文档累加,不重新跑校验。
+    // 每份文档的 {doc}.halluc.json 由 medrep_llm.rs 写,这里跨全部文档累加,
+    // 不重新跑校验。
+    //
+    // **两个分母必须分开标注**(评审:原来分子跨全字段、分母只算 labs,比出来的
+    // 数没有意义):
+    //   - `labs_rejected/labs_total`:只看化验条目,与上面三条指标同一批对象。
+    //   - `all_rejected/all_total`:`deid::verify` 真正校验的全部对象 ——
+    //     labs + meds + diagnoses 三类条目,加 doc_date/impression/notes 三个
+    //     顶层标量字段。
+    // 文本档不过 = 丢弃(rejected);图片档不过 = 保留但标 unverified(待核)。
     for (n, dir) in &arms {
         if !n.starts_with("④") {
             continue;
         }
-        let (mut t, mut r, mut u) = (0u64, 0u64, 0u64);
+        let mut s: BTreeMap<&str, u64> = BTreeMap::new();
+        let mut docs_with_usage = 0u64;
         for e in std::fs::read_dir(dir)?.flatten() {
             let p = e.path();
             if p.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&p)?)
-            {
-                t += v["total"].as_u64().unwrap_or(0);
-                r += v["rejected"].as_u64().unwrap_or(0);
-                u += v["unverified"].as_u64().unwrap_or(0);
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&p)?)
+            else {
+                continue;
+            };
+            for k in [
+                "labs_total",
+                "labs_rejected",
+                "labs_unverified",
+                "all_total",
+                "all_rejected",
+                "all_unverified",
+                "prompt_tokens",
+                "completion_tokens",
+                "llm_ms",
+            ] {
+                *s.entry(k).or_default() += v[k].as_u64().unwrap_or(0);
             }
+            docs_with_usage += 1;
         }
-        println!(
-            "{n} 幻觉率(逐字校验不过被丢弃)= {r}/{t} = {:.1}%;待核 {u}",
+        let g = |k: &str| *s.get(k).unwrap_or(&0);
+        let rate = |r: u64, t: u64| {
             if t > 0 {
                 r as f64 * 100.0 / t as f64
             } else {
                 0.0
             }
+        };
+        println!("### {n}");
+        println!();
+        println!(
+            "- 化验条目(labs_rejected/labs_total)= {}/{} = {:.1}%;待核 {}",
+            g("labs_rejected"),
+            g("labs_total"),
+            rate(g("labs_rejected"), g("labs_total")),
+            g("labs_unverified")
         );
+        println!(
+            "- 全部校验对象(all_rejected/all_total)= {}/{} = {:.1}%;待核 {}",
+            g("all_rejected"),
+            g("all_total"),
+            rate(g("all_rejected"), g("all_total")),
+            g("all_unverified")
+        );
+        if docs_with_usage > 0 {
+            let d = docs_with_usage as f64;
+            println!(
+                "- 用量:{} 份,prompt {} + completion {} token(每份 {:.0});\
+                 LLM 每份 {:.2}s",
+                docs_with_usage,
+                g("prompt_tokens"),
+                g("completion_tokens"),
+                (g("prompt_tokens") + g("completion_tokens")) as f64 / d,
+                g("llm_ms") as f64 / 1000.0 / d
+            );
+        }
+        println!();
     }
     Ok(())
 }
