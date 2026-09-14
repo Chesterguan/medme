@@ -35,8 +35,7 @@ String _groupTitle(TimelineGroupDto g) {
       encounter.provider != null
           ? '${kindLabel[encounter.kind] ?? encounter.kind} · ${encounter.provider}'
           : (kindLabel[encounter.kind] ?? encounter.kind),
-    TimelineGroupDto_Document(:final doc) =>
-      doc.title ?? docLabel[doc.docType] ?? '记录',
+    TimelineGroupDto_Document(:final doc) => doc.title ?? docRowLabel(doc),
   };
 }
 
@@ -63,7 +62,7 @@ String _groupDesc(TimelineGroupDto g) {
       return parts.join(' · ');
     }(),
     TimelineGroupDto_Document(:final doc) => [
-      docLabel[doc.docType] ?? doc.docType,
+      docRowLabel(doc),
       if (doc.sliceCount != null) '影像 ${doc.sliceCount} 张',
     ].join(' · '),
   };
@@ -913,7 +912,7 @@ class _PendingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final label = doc.title ?? docLabel[doc.docType] ?? '记录';
+    final label = doc.title ?? docRowLabel(doc);
     final card = MedCard(
       // 这张卡背后就是刚导入的那份原件,点开即达 → 画骑缝线。
       perforated: true,
@@ -980,7 +979,7 @@ class _PendingCard extends StatelessWidget {
                           const SizedBox(height: 3),
                           Text(
                             [
-                              docLabel[doc.docType] ?? doc.docType,
+                              docRowLabel(doc),
                               '点开核对并确认',
                             ].join(' · '),
                             style: MedType.secondary.copyWith(color: c.ink2),

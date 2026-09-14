@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:mobile_flutter/src/rust/api/dto.dart';
+
 /// 文档类型 / 就诊类型的中文标签与图标 —— 全 app **唯一**一份。
 ///
 /// 这些映射原本私有在 `screens/archive_screen.dart` 里。信息架构改成五个 tab 之后,
@@ -23,6 +25,21 @@ const Map<String, String> docLabel = {
   'other': '其他',
   'unknown': '待归类',
 };
+
+/// 档案行上那句「这是什么」。类型认得出就用 [docLabel];认不出(`unknown`)时
+/// 再看云抽取三态([DocumentSummaryDto.extractionItemCount]),把「待归类」拆开:
+///
+/// - `null`(还没跑过 / 离线 / 被拒发)→ 「待归类」,如实说还没轮到它。
+/// - `0`(跑过了,一条都没读出来)→ 「云端整理没有读出内容」。
+/// - `>0` → 读出了东西却仍然分不出类型,这是分类本身的事,还是「待归类」。
+///
+/// 冒烟 friction 2:前两态原先都显示「待归类」,用户看到的是一份永远停在待归类
+/// 的文档,分不清是还在跑、还是跑完白跑了。
+String docRowLabel(DocumentSummaryDto doc) {
+  if (doc.docType != 'unknown') return docLabel[doc.docType] ?? doc.docType;
+  if (doc.extractionItemCount == 0) return '云端整理没有读出内容';
+  return docLabel['unknown']!;
+}
 
 /// 就诊组 `kind` → 中文标签。
 const Map<String, String> kindLabel = {

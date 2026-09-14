@@ -17,7 +17,7 @@
 //! 的 git diff 恒为 0。
 use crate::api::dto::*;
 use crate::diagnostics::warn as log_warn;
-use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind, Vault};
+use core_model::{NewDocument, NewOcr, OcrBackendKind, Vault};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -346,20 +346,6 @@ pub fn ephemeral_ingest_image_with_text(
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(outcome)
     })
-}
-
-/// 影像 study 文档在时间线上显示切片数;与 `vault.rs::doc_summary` 同逻辑
-/// (逐字复制)。
-fn doc_summary(v: &Vault, d: &core_model::Document) -> DocumentSummaryDto {
-    let mut s = DocumentSummaryDto::from(d);
-    if d.doc_type == DocType::ImagingReport {
-        if let Ok(n) = v.imaging_instance_count(d.id) {
-            if n > 0 {
-                s.slice_count = Some(n as i32);
-            }
-        }
-    }
-    s
 }
 
 /// 预览时间线:与 `vault.rs::load_archive` 同逻辑(逐段复制),给医生在交付前

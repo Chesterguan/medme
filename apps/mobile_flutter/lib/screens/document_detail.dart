@@ -4,7 +4,9 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
+import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
@@ -14,23 +16,6 @@ import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-
-// doc_type → 中文标签,与 archive_screen.dart 保持同一份映射(桌面/旧移动端
-// 同构,来自 core-model types.rs)。
-const Map<String, String> _docLabel = {
-  'lab_report': '化验',
-  'imaging_report': '影像',
-  'discharge_summary': '出院小结',
-  'prescription': '处方',
-  'clinical_note': '病历',
-  'pathology': '病理',
-  'surgery': '手术',
-  // 手动录入(「记录」入口产出,没有原件——见 MANUAL-ENTRY-DESIGN.md)。
-  'self_measurement': '自测记录',
-  'note': '笔记',
-  'other': '其他',
-  'unknown': '待归类',
-};
 
 /// 手动录入的两个 doc_type(与 `doc.dart`/`core_model::DocType` 的取值一致)——
 /// 这两类文档没有原件(合成文本本身当"文件"存进 CAS),详情页要换一套展示。
@@ -219,20 +204,12 @@ class _DetailBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final doc = detail.document;
     final sf = detail.sourceFile;
-    final typeLabel = _docLabel[doc.docType] ?? doc.docType;
+    // 与档案行同一句话(`docRowLabel`):这里原先抄了一份 `docLabel` 映射,
+    // 于是「待归类」在详情页永远只有一种说法。
+    final typeLabel = docRowLabel(doc);
     final isManualEntry = _isManualEntry(doc.docType);
 
-    // OCR 置信度:换算成患者能看懂的三档,而非裸百分比(与旧 App.tsx 一致)。
-    // 手动录入没有 OCR 这一步,`ocrConfidence` 恒为 null,这里自然算不出档位,
-    // 不需要额外判断。
-    final conf = detail.ocrConfidence;
-    final confTier = conf == null
-        ? null
-        : conf >= 0.9
-        ? _ConfTier.high
-        : conf >= 0.75
-        ? _ConfTier.mid
-        : _ConfTier.low;
+    final confTier = confTierFor(detail.ocrConfidence, detail.ocrText);
 
     final c = MedColors.of(context);
 
@@ -306,7 +283,7 @@ class _DetailBody extends StatelessWidget {
 
                 if (confTier != null) ...[
                   const SizedBox(height: MedShape.s3),
-                  _ConfBadge(tier: confTier),
+                  ConfBadge(tier: confTier),
                 ],
 
                 const SizedBox(height: MedShape.s3),
@@ -448,39 +425,61 @@ class _DetailBody extends StatelessWidget {
   }
 }
 
-enum _ConfTier { high, mid, low }
+enum ConfTier { high, mid, low, lowYield }
 
-/// 识别质量徽标:高/中/低三档,比裸百分比更易懂(与旧 App.tsx .conf 一致)。
+/// OCR 置信度 + 识别产出 → 患者看得懂的档位。手动录入没有 OCR 这一步
+/// (`ocrConfidence` 恒为 null),返回 null,不画徽标。
+///
+/// **光看 `confidence` 会撒谎**:它是逐行均值,一页纸只认出红章那一行、
+/// 十来个字,均值照样很高,徽标就写「识别质量:高」——旁边却只有 14 个字。
+/// 所以先过一道产出闸:门槛直接复用云抽取那条 [isLowOcrYield](40 字 / 3 行,
+/// 阈值来历见它的文档),低于它一律 [ConfTier.lowYield],与「这一份不许上云」
+/// 的判断口径一致——不该出现「质量高、但没资格上云」这种自相矛盾的一屏。
+ConfTier? confTierFor(double? confidence, String ocrText) {
+  if (confidence == null) return null;
+  if (isLowOcrYield(ocrText)) return ConfTier.lowYield;
+  if (confidence >= 0.9) return ConfTier.high;
+  if (confidence >= 0.75) return ConfTier.mid;
+  return ConfTier.low;
+}
+
+/// 识别质量徽标:档位由 [confTierFor] 定,比裸百分比更易懂(与旧 App.tsx .conf 一致)。
 ///
 /// 「高」原先是 emerald 绿(#ECFDF5/#047857)。绿不在规范色板里,而且规范 §二
 /// 明确不要「绿=没问题」这层暗示 —— 识别质量高**不代表**化验结果正常,两件事
 /// 用同一种「放心色」讲容易混。改成主色的极浅底:是一条中性的状态说明,不是
 /// 一句安慰。中/低两档接规范的 `high` / `critical`。
-class _ConfBadge extends StatelessWidget {
-  final _ConfTier tier;
-  const _ConfBadge({required this.tier});
+class ConfBadge extends StatelessWidget {
+  final ConfTier tier;
+  const ConfBadge({required this.tier});
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     final (bg, fg, icon, text) = switch (tier) {
-      _ConfTier.high => (
+      ConfTier.high => (
         c.sealWash,
         c.sealInk,
         Icons.check_circle_outline,
         '识别质量:高',
       ),
-      _ConfTier.mid => (
+      ConfTier.mid => (
         c.highWash,
         c.high,
         Icons.error_outline,
         '识别质量:中 · 个别字可能有误,可核对原件',
       ),
-      _ConfTier.low => (
+      ConfTier.low => (
         c.criticalWash,
         c.critical,
         Icons.error_outline,
         '识别质量:低 · 建议重新拍摄',
+      ),
+      ConfTier.lowYield => (
+        c.criticalWash,
+        c.critical,
+        Icons.error_outline,
+        '识别质量:低 · 几乎没认出字,建议重拍',
       ),
     };
     return Container(

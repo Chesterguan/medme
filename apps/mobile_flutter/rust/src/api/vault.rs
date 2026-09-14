@@ -120,19 +120,6 @@ pub(crate) fn machine_device_id(data_dir: &Path) -> anyhow::Result<String> {
     Ok(id)
 }
 
-/// 影像 study 文档在时间线上显示切片数;非影像文档 slice_count 为 None。
-fn doc_summary(v: &Vault, d: &core_model::Document) -> DocumentSummaryDto {
-    let mut s = DocumentSummaryDto::from(d);
-    if d.doc_type == DocType::ImagingReport {
-        if let Ok(n) = v.imaging_instance_count(d.id) {
-            if n > 0 {
-                s.slice_count = Some(n as i32);
-            }
-        }
-    }
-    s
-}
-
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
 /// (`icloud_container_dir`,容器根目录;不可用/非 iOS 传 `None`)——避免 Rust 框架
 /// 反向链接 app target 的 Swift 符号(Flutter 插件框架不允许,会 archive linker 失败)。
@@ -2224,6 +2211,75 @@ mod cloud_extraction_tests {
     // 必须用 `VAULT_TEST_LOCK`(见其文档)——本模块单独一把锁挡不住
     // `vault_projections` 的端到端测试同时动同一个全局单例。
     use super::VAULT_TEST_LOCK as TEST_LOCK;
+
+    /// 三态钉死:没跑过 = `None`,跑过零条 = `Some(0)`,跑出内容 = `Some(n)`。
+    /// 前端只有靠这三态才能把「待归类」拆成「还没轮到」和「整理过但白跑」
+    /// (`doc_labels.dart` 的 `docRowLabel`)——两者显示同一句话正是冒烟 friction 2。
+    #[test]
+    fn archive_reports_extraction_item_count_in_three_states() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let mut ingest = |name: &str, byte: u8| {
+            ingest_image_with_text(
+                name.into(),
+                vec![0xFF, 0xD8, byte, 0xD9],
+                "北京协和医院 姓名:张建国 白细胞计数 11.8 10^9/L 4.0-10.0".into(),
+                0.9,
+            )
+            .unwrap()
+            .document_id
+            .expect("应建出文档")
+        };
+        let never_ran = ingest("never.jpg", 0x01);
+        let found_nothing = ingest("nothing.jpg", 0x02);
+        let found_one = ingest("one.jpg", 0x03);
+
+        let mut commit = |doc_id: i64, llm_json: &str| {
+            let req = vault_cloud_prepare_extraction(
+                doc_id,
+                vec![],
+                "张建国".into(),
+                None,
+                None,
+                "00ff".into(),
+                0.0,
+                0.0,
+            )
+            .unwrap();
+            vault_cloud_commit_extraction(
+                doc_id,
+                "text".into(),
+                "v4".into(),
+                llm_json.into(),
+                req.restore_map_json,
+                "张建国".into(),
+                None,
+                None,
+            )
+            .unwrap();
+        };
+        // 模型返回了合法 JSON、但一条都没读出来 —— 这正是要和「还没跑」分开的那一态。
+        commit(found_nothing, "{}");
+        commit(
+            found_one,
+            r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0"}]}"#,
+        );
+
+        let counts: std::collections::HashMap<i64, Option<i32>> = load_archive()
+            .unwrap()
+            .iter()
+            .flat_map(|g| match g {
+                TimelineGroupDto::Encounter { docs, .. } => docs.clone(),
+                TimelineGroupDto::Document { doc } => vec![doc.clone()],
+            })
+            .map(|d| (d.id, d.extraction_item_count))
+            .collect();
+
+        assert_eq!(counts[&never_ran], None, "没跑过云抽取的文档应为 None");
+        assert_eq!(counts[&found_nothing], Some(0), "跑过但零条应为 Some(0)");
+        assert_eq!(counts[&found_one], Some(1), "读出一条化验应为 Some(1)");
+    }
 
     fn open_test_vault() -> tempfile::TempDir {
         let home = tempfile::tempdir().unwrap();
