@@ -119,8 +119,10 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
   if (docId == null) return null;
   // 没登录 = 没这个功能。不是错误,不提示,照常走本地那条路。
   final session = AccountSession.instance;
+  // `background`,不是 `forSession`:抽取失败了最多是"这份文档没有云抽取结果",
+  // **没有资格把用户整个账号态清掉**(见 `ApiClient.background`)。
   final client = api ??
-      (session.access == null ? null : ApiClient.forSession(session, timeout: extractTimeout));
+      (session.access == null ? null : ApiClient.background(session, timeout: extractTimeout));
   if (client == null) return null;
 
   try {

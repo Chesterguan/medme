@@ -97,7 +97,13 @@ String friendlyApiError(Object e) => switch (e) {
 /// 账号 API 的唯一出口。所有请求走 [Net](有读超时);token 由 [bearer] 回调提供,
 /// 于是测试里注入假服务器 + 假 token 即可,不碰 secure storage。
 class ApiClient {
-  ApiClient({String? base, this.bearer, this.session, this.timeout = Net.idle}) : base = base ?? defaultBase;
+  ApiClient({
+    String? base,
+    this.bearer,
+    this.session,
+    this.timeout = Net.idle,
+    this.mayClearSession = true,
+  }) : base = base ?? defaultBase;
 
   /// **生产代码里的标准构造方式**:token 取自 [AccountSession],401 时自动刷新
   /// 一次再重试(见 [_refreshTokens])。以前每个调用点各写一遍
@@ -105,6 +111,23 @@ class ApiClient {
   /// 的闭包,于是"刷新"这件事没有一个能统一加上去的地方。
   ApiClient.forSession(AccountSession session, {String? base, Duration timeout = Net.idle})
       : this(base: base, bearer: () async => session.access, session: session, timeout: timeout);
+
+  /// **用户没有主动发起**的调用走这个(目前:导入之后的云抽取)。与
+  /// [ApiClient.forSession] 唯一的区别是 [mayClearSession] 为 false。
+  ///
+  /// 为什么必须有这个区别:一次后台的、尽力而为的、失败了也只是"这份文档没有云抽取
+  /// 结果"的请求,**没有资格把用户整个账号态清掉**。而它会 —— refresh 也过期时
+  /// [_refreshOnce] 调 [AccountSession.clear],连档案密钥一起清,用户下次打开 App
+  /// 发现自己被登出了,而他什么都没做过。用户自己点的那些(登录、同步、授权)该清
+  /// 就清:那时他正看着屏幕,一句「登录状态已过期」是有意义的。
+  ApiClient.background(AccountSession session, {String? base, Duration timeout = Net.idle})
+      : this(
+          base: base,
+          bearer: () async => session.access,
+          session: session,
+          timeout: timeout,
+          mayClearSession: false,
+        );
 
   static const defaultBase = String.fromEnvironment('MEDME_API_BASE', defaultValue: 'https://api.medmenow.com');
   final String base;
@@ -122,6 +145,10 @@ class ApiClient {
   /// 有它才有自动刷新:刷新要读 [AccountSession.refresh]、写回新 token、必要时
   /// 清掉整个账号态。没有(匿名 client / 测试里的假 client)时 401 原样抛出。
   final AccountSession? session;
+
+  /// refresh 也 401 时,允不允许这个 client 清掉本机账号态。默认 true;后台的
+  /// 尽力而为调用要传 false —— 见 [ApiClient.background]。
+  final bool mayClearSession;
 
   /// 同一个 client 上多个请求同时撞 401 时,合并成一次刷新。
   Future<bool>? _refreshInFlight;
@@ -156,6 +183,7 @@ class ApiClient {
   /// * 没有 session / 没有 refresh token / 没有 accountId → false(原样 401)。
   /// * **刷新自己也 401** → refresh 也过期或被吊销了,重试没有任何意义:清掉本机
   ///   账号态([AccountSession.clear],连档案密钥一起),让 UI 回到登录入口。
+  ///   除非这个 client 是 [background] 建的——见那个构造函数。
   /// * 网络错误等其它失败 → false,这次请求照原样失败,下次再试(不清账号态:
   ///   断网不等于被登出)。
   Future<bool> _refreshTokens() =>
@@ -172,7 +200,9 @@ class ApiClient {
       await s.save(accountId: accountId, access: m['access'] as String, refresh: m['refresh'] as String);
       return true;
     } on ApiUnauthorized {
-      await s.clear();
+      // 「清掉整个账号态」是一件**只有用户自己发起的请求才有资格触发**的事,见
+      // [mayClearSession]。后台的尽力而为调用到这里只是放弃这一次。
+      if (mayClearSession) await s.clear();
       return false;
     } catch (_) {
       return false;

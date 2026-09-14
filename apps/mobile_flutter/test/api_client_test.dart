@@ -278,6 +278,22 @@ void main() {
       expect(refreshBodies, isEmpty);
     });
 
+    // 「把用户踢下线」是一件只有**用户自己发起的请求**才有资格触发的事。导入之后的
+    // 云抽取是后台的、尽力而为的:它失败了最多是"这份文档没有云抽取结果",绝不该
+    // 让用户下次打开 App 发现自己被登出、档案密钥也没了 —— 而他什么都没做过。
+    test('后台 client(ApiClient.background):刷新也 401 时放手,但不清账号态', () async {
+      await AccountSession.instance.save(accountId: 'acc_1', access: 'stale-access', refresh: 'dead-refresh');
+      final bg = ApiClient.background(AccountSession.instance, base: 'http://127.0.0.1:${authServer.port}');
+
+      await expectLater(bg.getJson('/v1/guarded'), throwsA(isA<ApiUnauthorized>()));
+
+      expect(AccountSession.instance.accountId, 'acc_1', reason: '后台调用没资格清账号');
+      expect(AccountSession.instance.access, 'stale-access');
+      expect(AccountSession.instance.loggedIn.value, isTrue, reason: '用户什么都没做,不该被登出');
+      expect(refreshBodies.length, 1, reason: '照样试了一次刷新,只是失败后不清');
+      expect(guardedHits.length, 1, reason: '刷新失败就放手,不重试');
+    });
+
     test('刷新成功、但重试又 401:只重试一次就放手,不无限循环', () async {
       // `/v1/always401` 不管带什么 token 都 401(真实世界里对应"这个账号在服务端
       // 被吊销了")。刷新本身是成功的,所以不能清账号态,但也绝不能一直重试。
