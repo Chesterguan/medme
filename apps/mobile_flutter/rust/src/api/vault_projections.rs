@@ -149,6 +149,16 @@ pub struct TrendPointDto {
     /// 这个点来自哪份文档 —— **真正的 document_id**,可直接喂
     /// `api::vault::get_document` / `read_source_bytes` 跳回原件。
     pub document_id: i64,
+    /// 这个值**本机没能逐字核对上**(云抽取图片档,`parser::LabPoint::unverified`
+    /// 原样透传)。OCR/正则那条路、以及手动录入的自测值恒为 `false`。
+    ///
+    /// `true` 的行仍然**照常显示、绝不丢弃**(spec §4),但 UI 必须标出来:这个
+    /// 数字是模型从涂黑后的图上读的,本机拿不到原文来逐字比对。见
+    /// `lib/widgets/lab_status.dart` 的「需核对」chip。
+    ///
+    /// **追加在结尾**,理由同 `TrendSeriesDto::ref_source` 那条注释(FRB 按字段声明
+    /// 顺序编解码,新字段放最后不挪动既有形状)。
+    pub unverified: bool,
 }
 
 /// 应急卡:过敏史 + 在用药 + 确诊慢病,每一项都带来源。
@@ -248,6 +258,8 @@ pub struct VisitLabDto {
     /// 见 `TrendSeriesDto::self_measured` 的文档 —— 同一份透传,就诊单据此在
     /// 「复制给医生」纯文本里追加"(家测)"(`render_plain_text`)。
     pub self_measured: bool,
+    /// 见 [`TrendPointDto::unverified`] —— 同一份透传。**追加在结尾**。
+    pub unverified: bool,
 }
 
 /// 摘要单上的一行就诊记录 —— 一个就诊组,或一份不属于任何就诊的独立文档。
@@ -729,6 +741,7 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
                     unit: p.unit.clone(),
                     flag: p.flag.clone(),
                     document_id,
+                    unverified: p.unverified,
                 })
             })
             .collect(),
@@ -821,6 +834,7 @@ pub fn view_visit_summary() -> anyhow::Result<VisitSummaryDto> {
                 values_converted: s.values_converted,
                 document_id: projection.docs.get(p.source)?.document_id,
                 self_measured: s.self_measured,
+                unverified: p.unverified,
             })
         })
         .collect();
@@ -1681,6 +1695,7 @@ mod tests {
             values_converted: false,
             document_id: 102,
             self_measured: false,
+            unverified: false,
         }];
         let text = render_plain_text(&patient, &allergies, &[], &labs, &[]);
 

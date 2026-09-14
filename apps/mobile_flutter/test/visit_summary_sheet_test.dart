@@ -91,6 +91,7 @@ VisitSummaryDto richSummary() => VisitSummaryDto(
       valuesConverted: false,
       documentId: 200,
       selfMeasured: true,
+      unverified: false,
     ),
     const VisitLabDto(
       name: '糖化血红蛋白',
@@ -103,6 +104,7 @@ VisitSummaryDto richSummary() => VisitSummaryDto(
       refHigh: 6.5,
       documentId: 201,
       selfMeasured: false,
+      unverified: false,
     ),
   ],
   recentVisits: const [],

@@ -3960,12 +3960,14 @@ impl SseDecode for crate::api::vault_projections::TrendPointDto {
         let mut var_unit = <Option<String>>::sse_decode(deserializer);
         let mut var_flag = <Option<String>>::sse_decode(deserializer);
         let mut var_documentId = <i64>::sse_decode(deserializer);
+        let mut var_unverified = <bool>::sse_decode(deserializer);
         return crate::api::vault_projections::TrendPointDto {
             date: var_date,
             value: var_value,
             unit: var_unit,
             flag: var_flag,
             document_id: var_documentId,
+            unverified: var_unverified,
         };
     }
 }
@@ -4042,6 +4044,7 @@ impl SseDecode for crate::api::vault_projections::VisitLabDto {
         let mut var_valuesConverted = <bool>::sse_decode(deserializer);
         let mut var_documentId = <i64>::sse_decode(deserializer);
         let mut var_selfMeasured = <bool>::sse_decode(deserializer);
+        let mut var_unverified = <bool>::sse_decode(deserializer);
         return crate::api::vault_projections::VisitLabDto {
             name: var_name,
             date: var_date,
@@ -4053,6 +4056,7 @@ impl SseDecode for crate::api::vault_projections::VisitLabDto {
             values_converted: var_valuesConverted,
             document_id: var_documentId,
             self_measured: var_selfMeasured,
+            unverified: var_unverified,
         };
     }
 }
@@ -5179,6 +5183,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::TrendPoint
             self.unit.into_into_dart().into_dart(),
             self.flag.into_into_dart().into_dart(),
             self.document_id.into_into_dart().into_dart(),
+            self.unverified.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5239,6 +5244,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::VisitLabDt
             self.values_converted.into_into_dart().into_dart(),
             self.document_id.into_into_dart().into_dart(),
             self.self_measured.into_into_dart().into_dart(),
+            self.unverified.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6101,6 +6107,7 @@ impl SseEncode for crate::api::vault_projections::TrendPointDto {
         <Option<String>>::sse_encode(self.unit, serializer);
         <Option<String>>::sse_encode(self.flag, serializer);
         <i64>::sse_encode(self.document_id, serializer);
+        <bool>::sse_encode(self.unverified, serializer);
     }
 }
 
@@ -6161,6 +6168,7 @@ impl SseEncode for crate::api::vault_projections::VisitLabDto {
         <bool>::sse_encode(self.values_converted, serializer);
         <i64>::sse_encode(self.document_id, serializer);
         <bool>::sse_encode(self.self_measured, serializer);
+        <bool>::sse_encode(self.unverified, serializer);
     }
 }
 

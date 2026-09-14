@@ -209,12 +209,24 @@ class TrendPointDto {
   /// `api::vault::get_document` / `read_source_bytes` 跳回原件。
   final PlatformInt64 documentId;
 
+  /// 这个值**本机没能逐字核对上**(云抽取图片档,`parser::LabPoint::unverified`
+  /// 原样透传)。OCR/正则那条路、以及手动录入的自测值恒为 `false`。
+  ///
+  /// `true` 的行仍然**照常显示、绝不丢弃**(spec §4),但 UI 必须标出来:这个
+  /// 数字是模型从涂黑后的图上读的,本机拿不到原文来逐字比对。见
+  /// `lib/widgets/lab_status.dart` 的「需核对」chip。
+  ///
+  /// **追加在结尾**,理由同 `TrendSeriesDto::ref_source` 那条注释(FRB 按字段声明
+  /// 顺序编解码,新字段放最后不挪动既有形状)。
+  final bool unverified;
+
   const TrendPointDto({
     this.date,
     required this.value,
     this.unit,
     this.flag,
     required this.documentId,
+    required this.unverified,
   });
 
   @override
@@ -223,7 +235,8 @@ class TrendPointDto {
       value.hashCode ^
       unit.hashCode ^
       flag.hashCode ^
-      documentId.hashCode;
+      documentId.hashCode ^
+      unverified.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -234,7 +247,8 @@ class TrendPointDto {
           value == other.value &&
           unit == other.unit &&
           flag == other.flag &&
-          documentId == other.documentId;
+          documentId == other.documentId &&
+          unverified == other.unverified;
 }
 
 /// 一条化验序列的**全保真**投影(趋势图)。与 `ProxyLabDto` 的区别:点不截断、
@@ -380,6 +394,9 @@ class VisitLabDto {
   /// 「复制给医生」纯文本里追加"(家测)"(`render_plain_text`)。
   final bool selfMeasured;
 
+  /// 见 [`TrendPointDto::unverified`] —— 同一份透传。**追加在结尾**。
+  final bool unverified;
+
   const VisitLabDto({
     required this.name,
     required this.date,
@@ -391,6 +408,7 @@ class VisitLabDto {
     required this.valuesConverted,
     required this.documentId,
     required this.selfMeasured,
+    required this.unverified,
   });
 
   @override
@@ -404,7 +422,8 @@ class VisitLabDto {
       refHigh.hashCode ^
       valuesConverted.hashCode ^
       documentId.hashCode ^
-      selfMeasured.hashCode;
+      selfMeasured.hashCode ^
+      unverified.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -420,7 +439,8 @@ class VisitLabDto {
           refHigh == other.refHigh &&
           valuesConverted == other.valuesConverted &&
           documentId == other.documentId &&
-          selfMeasured == other.selfMeasured;
+          selfMeasured == other.selfMeasured &&
+          unverified == other.unverified;
 }
 
 /// 就诊摘要单「我想问医生的」一节的一条笔记。

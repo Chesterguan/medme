@@ -178,6 +178,7 @@ class LabLine extends StatelessWidget {
     this.refHigh,
     this.meta,
     this.onTap,
+    this.unverified = false,
   });
 
   final String name;
@@ -197,11 +198,25 @@ class LabLine extends StatelessWidget {
   /// 点进原件。为 null 时不显示箭头 —— **不给点不动的行画箭头**,那是假承诺。
   final VoidCallback? onTap;
 
+  /// 这个值**本机没能逐字核对上**(云抽取图片档;`VisitLabDto.unverified` /
+  /// `TrendPointDto.unverified` 透传)。
+  ///
+  /// `true` 时这一行**照常显示**,只是多一枚「需核对」chip —— 丢掉它更糟:用户
+  /// 看不到这个数,也就无从核对。这条是 spec §4 定的:图片档校验不过的行保留、
+  /// 标记,不丢弃(文本档才整条丢)。
+  final bool unverified;
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     final status = labStatusOf(flag);
     final pill = labStatusPill(context, flag);
+    // 「需核对」用主色的极浅底,**不用** low/high/critical 那三套 —— 那三套是化验
+    // 状态专用,借来会让人读成一档临床结论。这枚 chip 说的是"MedMe 没能替你核对
+    // 这个数",是 App 在说话,不是化验单在说话。
+    final reviewPill = unverified
+        ? MedPill(text: '需核对', foreground: c.sealInk, background: c.sealWash)
+        : null;
     final ref = refRangeText(refLow, refHigh);
     final sub = [
       if (meta case final m? when m.isNotEmpty) m,
@@ -273,7 +288,9 @@ class LabLine extends StatelessWidget {
               )..layout(maxWidth: double.infinity);
               return tp.width;
             }
-            final pillW = pill == null ? 0.0 : 56.0; // pill 的保守估宽,宁可早换行
+            // pill 的保守估宽,宁可早换行。「需核对」三个字比「偏高」宽一档。
+            final pillW =
+                (pill == null ? 0.0 : 56.0) + (reviewPill == null ? 0.0 : 64.0);
             final chevronW = chevron == null ? 0.0 : 20.0;
             final needed =
                 probe(nameText) +
@@ -298,6 +315,10 @@ class LabLine extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (pill != null) ...[pill, const SizedBox(width: MedShape.s1)],
+                if (reviewPill != null) ...[
+                  reviewPill,
+                  const SizedBox(width: MedShape.s1),
+                ],
                 Flexible(child: nameText),
               ],
             );

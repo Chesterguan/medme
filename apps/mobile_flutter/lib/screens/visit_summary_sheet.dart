@@ -733,6 +733,8 @@ class _LabRow extends StatelessWidget {
         if (lab.selfMeasured) '家测',
         if (lab.valuesConverted) unitConvertedNote(lab.unit),
       ].join(' · '),
+      // 云抽取图片档没能逐字核对上的行:照常显示,标出来。
+      unverified: lab.unverified,
       onTap: () => onOpenDoc(lab.documentId),
     );
   }

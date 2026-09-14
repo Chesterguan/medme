@@ -526,6 +526,8 @@ class _LabSnapshot extends StatelessWidget {
                               if (labs[i].valuesConverted)
                                 unitConvertedNote(labs[i].unit),
                             ].join(' · '),
+                            // 云抽取图片档没能逐字核对上的行:照常显示,标出来。
+                            unverified: labs[i].unverified,
                             onTap: () => onOpenDoc(labs[i].documentId),
                           ),
                         ),

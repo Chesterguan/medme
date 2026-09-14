@@ -3794,14 +3794,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TrendPointDto dco_decode_trend_point_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return TrendPointDto(
       date: dco_decode_opt_String(arr[0]),
       value: dco_decode_f_64(arr[1]),
       unit: dco_decode_opt_String(arr[2]),
       flag: dco_decode_opt_String(arr[3]),
       documentId: dco_decode_i_64(arr[4]),
+      unverified: dco_decode_bool(arr[5]),
     );
   }
 
@@ -3855,8 +3856,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   VisitLabDto dco_decode_visit_lab_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return VisitLabDto(
       name: dco_decode_String(arr[0]),
       date: dco_decode_String(arr[1]),
@@ -3868,6 +3869,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       valuesConverted: dco_decode_bool(arr[7]),
       documentId: dco_decode_i_64(arr[8]),
       selfMeasured: dco_decode_bool(arr[9]),
+      unverified: dco_decode_bool(arr[10]),
     );
   }
 
@@ -5002,12 +5004,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_unit = sse_decode_opt_String(deserializer);
     var var_flag = sse_decode_opt_String(deserializer);
     var var_documentId = sse_decode_i_64(deserializer);
+    var var_unverified = sse_decode_bool(deserializer);
     return TrendPointDto(
       date: var_date,
       value: var_value,
       unit: var_unit,
       flag: var_flag,
       documentId: var_documentId,
+      unverified: var_unverified,
     );
   }
 
@@ -5078,6 +5082,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_valuesConverted = sse_decode_bool(deserializer);
     var var_documentId = sse_decode_i_64(deserializer);
     var var_selfMeasured = sse_decode_bool(deserializer);
+    var var_unverified = sse_decode_bool(deserializer);
     return VisitLabDto(
       name: var_name,
       date: var_date,
@@ -5089,6 +5094,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       valuesConverted: var_valuesConverted,
       documentId: var_documentId,
       selfMeasured: var_selfMeasured,
+      unverified: var_unverified,
     );
   }
 
@@ -6071,6 +6077,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.unit, serializer);
     sse_encode_opt_String(self.flag, serializer);
     sse_encode_i_64(self.documentId, serializer);
+    sse_encode_bool(self.unverified, serializer);
   }
 
   @protected
@@ -6129,6 +6136,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.valuesConverted, serializer);
     sse_encode_i_64(self.documentId, serializer);
     sse_encode_bool(self.selfMeasured, serializer);
+    sse_encode_bool(self.unverified, serializer);
   }
 
   @protected

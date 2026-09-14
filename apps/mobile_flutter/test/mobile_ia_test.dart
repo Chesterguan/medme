@@ -48,8 +48,8 @@ Widget wrapScreen(Widget screen, {double textScale = 1.0}) => MaterialApp(
 
 Int64List ids(List<int> xs) => Int64List.fromList(xs);
 
-TrendPointDto pt(String? date, double v, {String? flag}) =>
-    TrendPointDto(date: date, value: v, flag: flag, documentId: 1);
+TrendPointDto pt(String? date, double v, {String? flag, bool unverified = false}) =>
+    TrendPointDto(date: date, value: v, flag: flag, documentId: 1, unverified: unverified);
 
 TrendSeriesDto series(List<TrendPointDto> points, {double? lo, double? hi}) =>
     TrendSeriesDto(
@@ -131,6 +131,48 @@ void main() {
         wrap(const LabLine(name: '血钾', value: 7.1, unit: 'mmol/L', flag: 'HH')),
       );
       expect(find.text('HH'), findsOneWidget);
+    });
+
+    // 云抽取图片档:本机拿不到原文逐字比对的那些值。规矩是**保留 + 标记**
+    // (spec §4),不是丢弃 —— 丢掉的话用户连"有这么个数"都不知道,更无从核对。
+    testWidgets('unverified 的行:照常显示数值,多一枚「需核对」', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          const LabLine(
+            name: '肌酐',
+            value: 1.2,
+            unit: 'mg/dL',
+            refLow: 0.6,
+            refHigh: 1.3,
+            unverified: true,
+          ),
+        ),
+      );
+      expect(find.text('需核对'), findsOneWidget);
+      expect(find.text('1.2 mg/dL'), findsOneWidget, reason: '标记归标记,值照常显示');
+      // 用主色系,不借 high/low/critical —— 那三套是化验状态专用,借来会被读成
+      // 一档临床结论。
+      final ctx = tester.element(find.byType(LabLine));
+      final chip = tester.widget<MedPill>(find.byType(MedPill));
+      expect(chip.background, MedColors.of(ctx).sealWash);
+      expect(chip.foreground, isNot(MedColors.of(ctx).high));
+    });
+
+    testWidgets('核对过的行:没有这枚 chip', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          const LabLine(name: '肌酐', value: 1.2, unit: 'mg/dL', refLow: 0.6, refHigh: 1.3),
+        ),
+      );
+      expect(find.text('需核对'), findsNothing);
+    });
+
+    testWidgets('既偏高又需核对:两枚 chip 并排,各说各的', (tester) async {
+      await tester.pumpWidget(
+        wrap(const LabLine(name: '肌酐', value: 2.0, flag: 'H', unverified: true)),
+      );
+      expect(find.text('偏高'), findsOneWidget, reason: '化验单说的');
+      expect(find.text('需核对'), findsOneWidget, reason: 'MedMe 说的');
     });
 
     test('认不出的标记不吞掉,原样成为 unknown', () {
