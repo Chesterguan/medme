@@ -670,9 +670,20 @@ fn score(out: &str) -> Result<()> {
         }
         let mut s: BTreeMap<&str, u64> = BTreeMap::new();
         let mut docs_with_usage = 0u64;
+        // 每份产出自报是哪个模型跑的(medrep_llm 的模型可由环境变量换)。
+        // 一个目录里出现两个模型名 = 两轮结果混在一起了,必须看得见。
+        let mut models: std::collections::BTreeSet<String> = Default::default();
         for e in std::fs::read_dir(dir)?.flatten() {
             let p = e.path();
-            if p.extension().and_then(|s| s.to_str()) != Some("json") {
+            // **只认 `.halluc.json`**,不是"任何 .json"。同目录下还有
+            // `{doc}.raw.json`(模型原话),按扩展名收会把它也数成一份产出,
+            // 分子全是 0、分母翻倍 —— 每份 token / 每份延迟直接砍半。
+            // (亲手踩过:第一版打出"用量 1363 份",实际 683 份。)
+            if !p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|f| f.ends_with(".halluc.json"))
+            {
                 continue;
             }
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&p)?)
@@ -692,7 +703,23 @@ fn score(out: &str) -> Result<()> {
             ] {
                 *s.entry(k).or_default() += v[k].as_u64().unwrap_or(0);
             }
+            if let Some(m) = v["model"].as_str() {
+                models.insert(m.to_string());
+            }
             docs_with_usage += 1;
+        }
+        // 没有 halluc.json 的 ④ 目录 = **派生列**(如 `-verified`:同一批调用换个
+        // 渲染口径重写的行)。它没有自己的 API 调用,打 0/0 会被读成"一条幻觉都
+        // 没有" —— 正是零样本守卫要挡的那种假好数。指回母列,不出数。
+        if docs_with_usage == 0 {
+            println!("### {n}");
+            println!();
+            println!(
+                "- 派生列(没有自己的 API 调用,不单独计幻觉率/用量);\
+                 幻觉率与 token 见它的母列。"
+            );
+            println!();
+            continue;
         }
         let g = |k: &str| *s.get(k).unwrap_or(&0);
         let rate = |r: u64, t: u64| {
@@ -704,6 +731,14 @@ fn score(out: &str) -> Result<()> {
         };
         println!("### {n}");
         println!();
+        println!(
+            "- 模型:{}",
+            if models.is_empty() {
+                "未记录于产出(这批是加 model 字段之前跑的,见 docs/log)".to_string()
+            } else {
+                models.iter().cloned().collect::<Vec<_>>().join(" + ")
+            }
+        );
         println!(
             "- 化验条目(labs_rejected/labs_total)= {}/{} = {:.1}%;待核 {}",
             g("labs_rejected"),

@@ -42,11 +42,14 @@ const SYSTEM: &str = "你是医疗单据结构化抽取器。只输出一个 JSO
 \"diagnoses\":[{\"text\":\"\",\"icd\":\"\"}],\"impression\":\"\",\"notes\":\"\"}";
 
 const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
-/// 计划里写的是 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`,**这两个
-/// 模型 id 在 DeepSeek 上不存在**:2026-09-14 用真 key 打 `GET /models`,返回的
-/// 只有 `deepseek-flash` 和 `deepseek-v4-pro`。`deepseek-flash` 自己就吃
-/// `image_url`(实测读得出化验单),所以两档共用它——不是"随便挑了一个",是
-/// flash 档只剩这一个。换模型前先自己打一次 /models,别照抄计划里的名字。
+/// 模型**默认值**,不是硬绑定:`DEEPSEEK_MODEL_TEXT` / `DEEPSEEK_MODEL_VISION`
+/// 可以覆盖,跑出来的每个数字都在运行头和 `{doc}.halluc.json` 里带着它是哪个
+/// 模型跑的 —— 换了模型的数字不许和旧数字混在一张表里。
+///
+/// 计划里写的是 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`:这两个名字
+/// `GET /models` 已经不列(只剩 `deepseek-flash` 和 `deepseek-v4-pro`),但官方
+/// 定价文档写明它们是旧名、仍然受理、同一档价钱,指向的就是 `deepseek-flash`。
+/// `deepseek-flash` 自己吃 `image_url`,两档共用它。换模型前先自己打一次 /models。
 const MODEL_TEXT: &str = "deepseek-flash";
 const MODEL_IMAGE: &str = "deepseek-flash";
 
@@ -54,11 +57,17 @@ fn root() -> String {
     std::env::var("MEDREP_ROOT").expect("设置 MEDREP_ROOT=<medrepbench 目录>(见 medrep.rs 头注释)")
 }
 
-fn model_for(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Text => MODEL_TEXT,
-        Mode::Image => MODEL_IMAGE,
-    }
+/// 该模式用哪个模型:环境变量优先,空串当没设(别让一个手滑的 `export X=`
+/// 把模型名变成空字符串送出去)。
+fn model_for(mode: Mode) -> String {
+    let (var, default) = match mode {
+        Mode::Text => ("DEEPSEEK_MODEL_TEXT", MODEL_TEXT),
+        Mode::Image => ("DEEPSEEK_MODEL_VISION", MODEL_IMAGE),
+    };
+    std::env::var(var)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 fn mode_dir_name(mode: Mode) -> &'static str {
@@ -139,6 +148,23 @@ fn render_rows(e: &Extraction) -> String {
         .join("\n")
 }
 
+/// 只渲染**逐字校验通过**的化验行。
+///
+/// 图片档的 `verify` 是"打标不丢弃"(verify.rs:122-129:图片才是原件,OCR 文本
+/// 只是旁证,对不上算"待核"而不是"编的"),所以图片档的 `{doc}.txt` 里混着没过
+/// 校验的行;文本档的 `verify` 直接丢,`{doc}.txt` 本来就只剩过了校验的。两边
+/// **处置规则不同**,拿一张表比就是比错了对象(评审 F1)。图片档因此多写一份
+/// `-verified` 目录,score() 把它当独立一列,与文本档同口径。
+///
+/// 文本档不写这份:`verify` 已经丢过一轮,再写只是同一批数字的第二列。
+fn render_rows_verified(e: &Extraction) -> String {
+    let kept = Extraction {
+        labs: e.labs.iter().filter(|l| !l.unverified).cloned().collect(),
+        ..Default::default()
+    };
+    render_rows(&kept)
+}
+
 /// 一次调用里累计的计数。**每个 worker 线程各持一份**,跑完合并一次——
 /// 逐份抢锁没必要。失败分五类,不许混成一个"整份失败":OCR 炸了、
 /// **脱敏门拦下**、API 失败、模型回的不是合法 JSON、落盘出错。脱敏门那一类
@@ -189,6 +215,9 @@ impl Stats {
 struct Ctx<'a> {
     root: &'a str,
     dir: &'a Path,
+    /// 只有图片档有:同一批产出里"只留校验通过的行"的那一份(见
+    /// `render_rows_verified`)。文本档是 `None`。
+    verified_dir: Option<&'a Path>,
     arm2_dir: &'a Path,
     key: &'a str,
     model: &'a str,
@@ -209,7 +238,9 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
     }
     let row_path = c.dir.join(format!("{doc}.txt"));
     let arm2_path = c.arm2_dir.join(format!("{doc}.txt"));
-    if row_path.exists() && arm2_path.exists() {
+    let verified_path = c.verified_dir.map(|d| d.join(format!("{doc}.txt")));
+    let verified_done = verified_path.as_ref().is_none_or(|p| p.exists());
+    if row_path.exists() && arm2_path.exists() && verified_done {
         return Ok(()); // 可续跑
     }
 
@@ -227,7 +258,7 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
     if !arm2_path.exists() {
         std::fs::write(&arm2_path, &text)?;
     }
-    if row_path.exists() {
+    if row_path.exists() && verified_done {
         return Ok(()); // ④ 臂这份跑过了,刚才只是补基线
     }
 
@@ -315,6 +346,13 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
     s.done += 1;
 
     std::fs::write(&row_path, render_rows(&v.extraction))?;
+    if let Some(p) = &verified_path {
+        std::fs::write(p, render_rows_verified(&v.extraction))?;
+    }
+    // 留一份模型原话。这一轮之所以要**重跑整条图片臂**才能算"只看校验通过的行",
+    // 就是因为上一轮没存它——校验结果重算不出来,行渲染时 flag/ref 已经压扁了。
+    // 一个 write 换一次重跑,值。
+    std::fs::write(c.dir.join(format!("{doc}.raw.json")), &raw)?;
     std::fs::write(
         c.dir.join(format!("{doc}.halluc.json")),
         serde_json::json!({
@@ -327,6 +365,7 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
             "prompt_tokens": ptok,
             "completion_tokens": ctok,
             "llm_ms": llm_ms,
+            "model": c.model,
         })
         .to_string(),
     )?;
@@ -387,12 +426,24 @@ fn main() -> Result<()> {
     let arm2_dir = PathBuf::from(&root).join(&out).join("arm2_geo");
     std::fs::create_dir_all(&arm2_dir)?;
 
+    // 图片档多一份"只留校验通过的行"的产出目录。沿用「第 ④ 列按模型分子目录」
+    // 的约定,score() 自动把它当成独立一列,不用改打分器的取文件逻辑。
+    let verified_dir = match mode {
+        Mode::Image => {
+            let d = dir.with_file_name(format!("deepseek-{}-verified", mode_dir_name(mode)));
+            std::fs::create_dir_all(&d)?;
+            Some(d)
+        }
+        Mode::Text => None,
+    };
+
     let ctx = Ctx {
         root: &root,
         dir: &dir,
+        verified_dir: verified_dir.as_deref(),
         arm2_dir: &arm2_dir,
         key: &key,
-        model,
+        model: &model,
         mode,
         known: &known,
     };
@@ -405,6 +456,14 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(8)
         .max(1);
+    // 运行头:模式 + **模型** + 并发 + 产出目录。每一轮的数字都得说清是哪个
+    // 模型跑的 —— 模型可由环境变量换,换了还混在一张表里就是比错了。
+    eprintln!(
+        "④ 臂:模式 {} / 模型 {model} / 并发 {jobs} / 产出 {}",
+        mode_dir_name(mode),
+        dir.display()
+    );
+
     let next = AtomicUsize::new(0);
     let merged = Mutex::new(Stats::default());
     let wall = Instant::now();
@@ -537,6 +596,34 @@ mod tests {
         };
         let rendered = render_rows(&e);
         assert_eq!(rendered, "白细胞计数 5.6 10^9/L 4.0-10.0\n血糖 7.1 mmol/L");
+    }
+
+    #[test]
+    fn render_rows_verified_drops_only_the_flagged_labs() {
+        // 图片档 verify 打标不丢弃,所以 `-verified` 这一列必须自己滤一遍;
+        // 滤错了整条 F1 修复就白做(数字照样混着待核行)。
+        let e = Extraction {
+            labs: vec![
+                deid::LabItem {
+                    name: "白细胞计数".into(),
+                    value: "5.6".into(),
+                    unit: "10^9/L".into(),
+                    ref_low: "4.0".into(),
+                    ref_high: "10.0".into(),
+                    ..Default::default()
+                },
+                deid::LabItem {
+                    name: "血糖".into(),
+                    value: "7.1".into(),
+                    unit: "mmol/L".into(),
+                    unverified: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(render_rows(&e).lines().count(), 2, "全量列保持两行不变");
+        assert_eq!(render_rows_verified(&e), "白细胞计数 5.6 10^9/L 4.0-10.0");
     }
 
     #[test]
