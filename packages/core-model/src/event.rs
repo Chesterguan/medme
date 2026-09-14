@@ -108,6 +108,20 @@ pub enum Event {
         source_file_hash: String,
         deleted_at: String,
     },
+    /// **本二进制不认识的事件类型**——新版本 App 写的事件,被老版本读到。
+    ///
+    /// 存在的唯一理由是前向兼容:没有这一支,这样的一行整个**解不开**,于是在
+    /// `log::read_segment_entries` 就被跳过,后面那条的 `prev_hash` 指着一条
+    /// 「不存在」的条目 → 链断 → **它也被隔离**(实测 3 条只剩 1 条,用户看到
+    /// 的是整份病历消失)。有了这一支,代价压回「只丢它自己」。
+    ///
+    /// 它**只在反序列化时出现**,任何地方都不构造它(`#[serde(other)]` 只管
+    /// 读)。读到之后 `log::EventLog::verify_segment` 就地丢弃、并让链从它这里
+    /// 重新同步 —— 它的 canonical bytes 无法重建(原字段已经丢了),MAC 和链
+    /// 哈希都算不回去,所以既不可能当可信条目留下,也不该按「伪造」报警。原始
+    /// 行留在磁盘上一个字节不动(`migrate_and_seal` 见到它就整段放弃重写)。
+    #[serde(other)]
+    Unknown,
 }
 
 /// One line in the append-only log: an `Event` plus the envelope needed for

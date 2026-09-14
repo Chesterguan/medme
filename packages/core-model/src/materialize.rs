@@ -781,6 +781,10 @@ fn apply_event(
         // 审计事件:纯粹的日志留痕(见 crate::audit),对 DB 投影是 no-op —— 不
         // 建任何表行,`rebuild_from_log` 重放时必须能安全跳过而不报错。
         Event::ExportPerformed { .. } | Event::ShareCreated { .. } => {}
+        // 本二进制不认识的事件类型(新版本写的,见 `Event::Unknown`)。实际走不到
+        // 这里 —— `EventLog::read_all` 在 verify 阶段就把它丢了 —— 但重放路径不许
+        // 靠"上游应该已经挡住了"活着:投影里当 no-op,绝不 panic。
+        Event::Unknown => {}
     }
     Ok(ApplyOutcome::Applied)
 }

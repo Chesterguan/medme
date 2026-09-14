@@ -13,7 +13,7 @@
 //! merged set reproduces a consistent state regardless of how many devices
 //! contributed or in what filesystem order the segments were enumerated.
 
-use crate::event::{LogEntry, GENESIS_HASH};
+use crate::event::{Event, LogEntry, GENESIS_HASH};
 use crate::MedmeError;
 use std::collections::HashSet;
 use std::fs::OpenOptions;
@@ -165,6 +165,18 @@ impl EventLog {
         let mut expected_prev: Option<String> = Some(GENESIS_HASH.to_string());
 
         for entry in entries {
+            // 0) 本二进制不认识的事件类型(新版本写的,见 `Event::Unknown`):它的
+            // canonical bytes 重建不出来,MAC 和链哈希都算不回去 —— 既不能当可信
+            // 条目留下,也不是"伪造"。丢它自己,并把链置为「重新同步」,这样**后面
+            // 那一条**照常被接受(老行为是连它一起隔离 = 整份病历消失)。
+            if matches!(entry.event, Event::Unknown) {
+                eprintln!(
+                    "[log] skip seq={} in {seg}: unknown event type (written by a newer build)",
+                    entry.seq
+                );
+                expected_prev = None;
+                continue;
+            }
             // 1) Authenticate the entry itself (skipped in chain-only mode).
             if let Some(k) = key {
                 let ok = entry.verify_mac(k).unwrap_or(false);
@@ -235,6 +247,17 @@ impl EventLog {
                 MigrationParse::AbortUnparsableLine => continue,
             };
             if entries.is_empty() {
+                continue;
+            }
+            // 同一条理由的另一半:`Event::Unknown` 让新版本写的条目**能解开**了,
+            // 而解开之后再原样写回去就会把它的字段全部丢掉(`Unknown` 是个空变体)。
+            // 迁移是**重写**,所以见到它就整段放弃 —— 与上面那条"解不开就别重写"
+            // 同一条契约,文件保持逐字节不变。
+            if entries.iter().any(|e| matches!(e.event, Event::Unknown)) {
+                eprintln!(
+                    "[log] migrate: ABORT sealing {} — segment holds an event type this build doesn't know",
+                    path.display()
+                );
                 continue;
             }
             // Needs sealing if any entry lacks a chain link, or lacks a MAC
@@ -724,6 +747,42 @@ mod tests {
         let events = log.read_all().unwrap();
         let seqs: Vec<i64> = events.iter().map(|e| e.seq).collect();
         assert_eq!(seqs, vec![1, 3], "tampered entry quarantined, others kept");
+    }
+
+    /// 前向兼容:老版本二进制读到**新版本写的事件类型**,只能丢它自己,
+    /// **不许连带丢掉它后面那一条**。
+    ///
+    /// 老行为(I1):未知 type 整行解不开 → 在 `read_segment_entries` 就被跳过 →
+    /// 后面那条的 `prev_hash` 指着一条"不存在"的条目 → 链断 → **它也被隔离**。
+    /// 实测是 3 条变 1 条:用户在老手机上看到的是**整份病历消失**,而痕迹只有
+    /// stderr。B 的多设备同步让"两台设备版本不一致"变成常态,所以这条必须兜住。
+    ///
+    /// 这里改的是中间那条的 `type`,与线上真实情形(新版本写的合法条目)在本
+    /// 二进制看来完全一样:都是"认得出是一条日志行,但不认识这个事件"。
+    #[test]
+    fn unknown_event_type_drops_only_itself_not_the_entry_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = keyed_log(dir.path());
+        append_n(&log, 3);
+
+        let mut lines = read_lines(&seg_path(dir.path()));
+        lines[1] = lines[1].replace(
+            "\"type\":\"FileImported\"",
+            "\"type\":\"SomethingFromTheFuture\"",
+        );
+        write_lines(&seg_path(dir.path()), &lines);
+
+        let events = log.read_all().unwrap();
+        let seqs: Vec<i64> = events.iter().map(|e| e.seq).collect();
+        assert_eq!(
+            seqs,
+            vec![1, 3],
+            "未知事件只丢它自己;后面那条(seq 3)必须还在"
+        );
+
+        // 磁盘上一行都不许少 —— 老版本只是"读不懂"它,不是"可以删掉"它:
+        // 用户升级回新版本、或者把这台设备的日志同步给别的设备时,它还要在。
+        assert_eq!(read_lines(&seg_path(dir.path())).len(), 3);
     }
 
     #[test]
