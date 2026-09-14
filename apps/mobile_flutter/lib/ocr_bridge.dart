@@ -3,13 +3,36 @@ import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show MethodChannel;
 
+import 'package:mobile_flutter/src/rust/api/dto.dart' show OcrLineDto;
 import 'package:mobile_flutter/src/rust/api/vault.dart' as rust_vault;
 
 /// 一张图片的 OCR 结果:识别文本 + 平均置信度(0~1)。
+///
+/// [lines]/[frameW]/[frameH]/[bytes] 四个是**云抽取图片档**专用(`cloud_extract.dart`),
+/// 其余调用方一律忽略,所以都给了空默认值(`const OcrResult('x', 0.9)` 这类既有
+/// 构造点一字不用改)。四个必须**同进同出**——它们描述的是同一张图:
+/// * [lines] 每行的检测框,坐标系是识别引擎的 working frame;
+/// * [frameW]/[frameH] 那张 working frame 的尺寸(**不是原图宽高**,见
+///   `OcrPpResultDto.frameW` 的说明:传原图尺寸会让涂黑框整体错位、静默漏涂 PHI);
+/// * [bytes] **喂给识别引擎的那一份字节**——iOS 上是 Vision 拉正之后的,不是磁盘上
+///   那份原图。`vaultCloudRedactImage` 靠重跑一次预处理复现同一张 frame,喂错字节
+///   就是另一张图、另一套坐标。
 class OcrResult {
   final String text;
   final double confidence;
-  const OcrResult(this.text, this.confidence);
+  final List<OcrLineDto> lines;
+  final double frameW;
+  final double frameH;
+  final List<int> bytes;
+
+  const OcrResult(
+    this.text,
+    this.confidence, {
+    this.lines = const [],
+    this.frameW = 0,
+    this.frameH = 0,
+    this.bytes = const [],
+  });
 }
 
 /// 置信度拿不到时的兜底值(空文本/引擎不给),让导入流程照常继续。
@@ -47,7 +70,16 @@ Future<OcrResult> recognizeImageText(String path) async {
           ? await _rectifyDocument(path, original)
           : original;
       final res = await rust_vault.recognizeImagePp(bytes: bytes);
-      return OcrResult(res.text, res.confidence);
+      // `bytes` 就是刚喂进去的那一份(iOS 已拉正)——云抽取涂黑必须拿到它,拿磁盘
+      // 上的原图会和 `lines` 的坐标系对不上。
+      return OcrResult(
+        res.text,
+        res.confidence,
+        lines: res.lines,
+        frameW: res.frameW,
+        frameH: res.frameH,
+        bytes: bytes,
+      );
     } catch (_) {
       return const OcrResult('', _confFallback);
     }

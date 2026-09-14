@@ -97,18 +97,27 @@ String friendlyApiError(Object e) => switch (e) {
 /// 账号 API 的唯一出口。所有请求走 [Net](有读超时);token 由 [bearer] 回调提供,
 /// 于是测试里注入假服务器 + 假 token 即可,不碰 secure storage。
 class ApiClient {
-  ApiClient({String? base, this.bearer, this.session}) : base = base ?? defaultBase;
+  ApiClient({String? base, this.bearer, this.session, this.timeout = Net.idle}) : base = base ?? defaultBase;
 
   /// **生产代码里的标准构造方式**:token 取自 [AccountSession],401 时自动刷新
   /// 一次再重试(见 [_refreshTokens])。以前每个调用点各写一遍
   /// `ApiClient(bearer: () async => AccountSession.instance.access)`,八处一模一样
   /// 的闭包,于是"刷新"这件事没有一个能统一加上去的地方。
-  ApiClient.forSession(AccountSession session, {String? base})
-      : this(base: base, bearer: () async => session.access, session: session);
+  ApiClient.forSession(AccountSession session, {String? base, Duration timeout = Net.idle})
+      : this(base: base, bearer: () async => session.access, session: session, timeout: timeout);
 
   static const defaultBase = String.fromEnvironment('MEDME_API_BASE', defaultValue: 'https://api.medmenow.com');
   final String base;
   final Future<String?> Function()? bearer;
+
+  /// 这个 client 的**空闲超时**(见 `Net`:等响应头 / 两块数据之间 / 写不动)。
+  /// 默认 [Net.idle] 30 秒,对账号/同步这些"服务端自己就能答"的请求足够。
+  ///
+  /// 云抽取(`POST /v1/extract`)是唯一要放宽的一条:那边服务端还要等 DeepSeek
+  /// 出结果(它自己的上游超时就是 60 秒),30 秒会在模型还在想的时候把请求掐掉,
+  /// 于是每一次抽取都"失败"退回正则——不是网络问题,是我们自己等不及。
+  /// 见 `cloud_extract.dart` 的 `extractTimeout`。
+  final Duration timeout;
 
   /// 有它才有自动刷新:刷新要读 [AccountSession.refresh]、写回新 token、必要时
   /// 清掉整个账号态。没有(匿名 client / 测试里的假 client)时 401 原样抛出。
@@ -187,10 +196,10 @@ class ApiClient {
       if (body != null) {
         req.headers.contentType = ContentType.json;
         req.write(jsonEncode(body));
-        await Net.flush(req);
+        await Net.flush(req, timeout: timeout);
       }
-      final res = await Net.send(req);
-      final text = await Net.text(res);
+      final res = await Net.send(req, timeout: timeout);
+      final text = await Net.text(res, timeout: timeout);
       if (res.statusCode < 200 || res.statusCode >= 300) {
         String msg = text;
         try { msg = (jsonDecode(text) as Map)['detail']?.toString() ?? text; } catch (_) {}

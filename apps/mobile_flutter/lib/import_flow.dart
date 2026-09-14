@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
@@ -675,7 +676,7 @@ Future<ImportRunResult> _runImport(
     try {
       final ImportOutcomeDto outcome;
       if (item.isImage) {
-        // 各平台原生最强 OCR:iOS Apple Vision / 安卓 ML Kit(见 ocr_bridge.dart)。
+        // iOS + 安卓统一 PP-OCRv5(见 ocr_bridge.dart;iOS 多一步 Vision 拉正)。
         stage = 'ocr';
         final ocr = await recognizeImageText(item.path);
         stage = 'save';
@@ -686,6 +687,10 @@ Future<ImportRunResult> _runImport(
           ocrText: ocr.text,
           confidence: ocr.confidence,
         );
+        // 云抽取:本机脱敏 → 代理 → 本机校验落盘。**不成就是没有**,返回 null、
+        // 不抛,导入结果与摘要照常走本地正则(见 cloud_extract.dart)。
+        stage = 'extract';
+        await runCloudExtraction(outcome, ocr);
       } else {
         stage = 'save';
         final bytes = await File(item.path).readAsBytes();

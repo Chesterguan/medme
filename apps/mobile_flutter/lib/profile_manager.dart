@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -139,6 +140,15 @@ class ProfileManager {
       // 读坏了不致命:退回单成员默认档案。
     }
     _loaded = true;
+    // 补 [Profile.secretHex]:老档案没有这个字段,全新安装的那个 const 默认成员也
+    // 没有。**补完立刻落盘**——秘密只有稳定才有意义,每次启动重生成等于同一个人的
+    // 云端时间线每次都换一套偏移。`_loaded` 必须先置 true,否则 `_save` 走不通。
+    if (_profiles.any((p) => p.secretHex.isEmpty)) {
+      _profiles = _profiles
+          .map((p) => p.secretHex.isEmpty ? p.copyWith(secretHex: Profile.newSecretHex()) : p)
+          .toList();
+      await _save();
+    }
     _publishMemberCount();
   }
 
@@ -197,7 +207,7 @@ class ProfileManager {
     await ensureLoaded();
     final trimmed = name.trim();
     if (trimmed.isEmpty) return null;
-    final p = Profile(id: _newId(), name: trimmed);
+    final p = Profile(id: _newId(), name: trimmed, secretHex: Profile.newSecretHex());
     _profiles = [..._profiles, p];
     if (userManaged) _autoNamePending = false;
     currentId.value = p.id;
@@ -236,7 +246,7 @@ class ProfileManager {
       if (p.id != id) return p;
       // `expiresAt` 是"owner 没有到期日"这件事的载体,必须能被写成 null ——
       // 所以这里不用 `copyWith`(那个分不清"不传"和"传 null")。
-      return Profile(id: p.id, name: p.name, cloudId: cloudId, role: role, expiresAt: expiresAt, cloudPaused: p.cloudPaused);
+      return Profile(id: p.id, name: p.name, cloudId: cloudId, role: role, expiresAt: expiresAt, cloudPaused: p.cloudPaused, secretHex: p.secretHex);
     }).toList();
     await _save();
   }
@@ -367,7 +377,8 @@ class ProfileManager {
   /// 恢复出厂:成员表清回单一默认、清份数缓存、保险箱名回默认、允许自动命名。
   /// 「清空所有数据」调它(配合删各成员目录),而不是只清当前成员。
   Future<void> factoryReset() async {
-    _profiles = const [Profile(id: _bootstrapId, name: defaultMemberName)];
+    // 恢复出厂顺带换一把新秘密——旧秘密属于被清掉的那份档案。
+    _profiles = [Profile(id: _bootstrapId, name: defaultMemberName, secretHex: Profile.newSecretHex())];
     _vaultName = defaultVaultName;
     _counts.clear();
     _autoNamePending = true;
@@ -406,6 +417,7 @@ class Profile {
     this.role,
     this.expiresAt,
     this.cloudPaused = false,
+    this.secretHex = '',
   });
 
   final String id;
@@ -418,16 +430,30 @@ class Profile {
   /// 默认 false = 开着 —— "有账号默认开云"是产品决定,不是用户要逐个打开的东西。
   final bool cloudPaused;
 
+  /// 这个成员的 32 字节随机秘密(hex)。**只有一个用途**:云抽取脱敏时派生这份档案
+  /// 的日期偏移天数(`deid::dates::shift_days_from_secret`)——同一个人的所有报告
+  /// 偏移同样的天数,时间间隔因此保持真实,而绝对日期出不去。
+  ///
+  /// 所以它必须**跨启动稳定**:换一个秘密 = 换一个偏移 = 同一个人的病历时间线在
+  /// 云端断成两截。落在 `profiles.json` 里,由 [ProfileManager.ensureLoaded] 保证
+  /// 每个成员都有(老档案缺就补一次并落盘)。
+  ///
+  /// 默认空串只是为了让既有的 `const Profile(...)` 构造点不用全改;真实成员经
+  /// [ProfileManager] 之后一律非空,空串的成员不走云抽取(见 `cloud_extract.dart`)。
+  /// 子项目 B 落地后换成档案密钥,这个字段随之退休。
+  final String secretHex;
+
   /// 只动给得出的那几个字段。**不带 `expiresAt`**:它需要能被写成 null
   /// (owner 没有到期日),而 `copyWith` 的 `?? this.x` 表达不了"显式 null" ——
   /// 那条路走 `markCloud` 里的显式构造。
-  Profile copyWith({String? name, bool? cloudPaused}) => Profile(
+  Profile copyWith({String? name, bool? cloudPaused, String? secretHex}) => Profile(
     id: id,
     name: name ?? this.name,
     cloudId: cloudId,
     role: role,
     expiresAt: expiresAt,
     cloudPaused: cloudPaused ?? this.cloudPaused,
+    secretHex: secretHex ?? this.secretHex,
   );
 
   Map<String, dynamic> toJson() => {
@@ -437,6 +463,7 @@ class Profile {
     if (role != null) 'role': role,
     if (expiresAt != null) 'expiresAt': expiresAt!.toIso8601String(),
     if (cloudPaused) 'cloudPaused': true,
+    if (secretHex.isNotEmpty) 'secretHex': secretHex,
   };
 
   static Profile fromJson(Map<String, dynamic> j) => Profile(
@@ -446,5 +473,15 @@ class Profile {
     role: j['role'] as String?,
     expiresAt: j['expiresAt'] == null ? null : DateTime.parse(j['expiresAt'] as String),
     cloudPaused: j['cloudPaused'] as bool? ?? false,
+    secretHex: j['secretHex'] as String? ?? '',
   );
+
+  /// 新成员的秘密:`Random.secure()` 32 字节 hex。
+  static String newSecretHex() {
+    final r = Random.secure();
+    return List.generate(
+      32,
+      (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+  }
 }

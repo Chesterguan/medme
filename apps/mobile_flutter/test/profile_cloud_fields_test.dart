@@ -70,18 +70,26 @@ void main() {
     // `factoryReset()` + `create()` 这两个公开 API 保证每个 test 都是独立的一个
     // 全新成员,不依赖"这是不是第一次 ensureLoaded"。`factoryReset`/`create`
     // 仍然会调 `_save()` 落盘,所以 path_provider 的 mock 还是需要的。
-    setUp(() async {
+    //
+    // 目录是**整组共用一个**(setUpAll),不是每个 test 一个:`ProfileManager` 把
+    // `profiles.json` 的 `File` 缓存在 `_file` 里,第一次解析之后就不再问
+    // path_provider 了 —— 每个 test 换一个新目录的话,第一个 test 结束时那个目录被
+    // 删掉,之后所有 `_save()` 都写进一个不存在的目录(而 `_save` 吞异常,悄无声息)。
+    setUpAll(() async {
       support = await Directory.systemTemp.createTemp('medme-profile-cloud-test');
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
         const MethodChannel('plugins.flutter.io/path_provider'),
         (call) async => support.path,
       );
+    });
+
+    setUp(() async {
       final pm = ProfileManager.instance;
       await pm.ensureLoaded();
       await pm.factoryReset();
     });
 
-    tearDown(() async => support.delete(recursive: true));
+    tearDownAll(() async => support.delete(recursive: true));
 
     test('改名不清空 cloudId/role/expiresAt', () async {
       final pm = ProfileManager.instance;
@@ -127,6 +135,52 @@ void main() {
       expect(updated.cloudId, 'prf_7');
       expect(updated.role, 'owner');
       expect(updated.expiresAt, isNull);
+    });
+
+    // `secretHex` 派生云抽取的日期偏移天数(`deid::dates::shift_days_from_secret`)。
+    // **它变了 = 同一个人的病历在云端换了一套偏移**,时间线断成两截 —— 所以和上面
+    // 那几条是同一件事:每一个"重建 Profile"的地方都不许把它弄丢。
+    test('每个成员都有 secretHex,改名/markCloud 都不换掉它', () async {
+      final pm = ProfileManager.instance;
+      final id = (await pm.create('张建国'))!;
+      final secret = pm.byId(id)!.secretHex;
+      expect(secret, hasLength(64), reason: '32 字节 hex');
+
+      await pm.rename(id, '张建国(改)');
+      expect(pm.byId(id)!.secretHex, secret, reason: '改名不该换一把新秘密');
+
+      await pm.markCloud(id, 'prf_6', 'owner', null);
+      expect(pm.byId(id)!.secretHex, secret, reason: '开云同步也不该换');
+    });
+
+    test('两个成员的 secretHex 不同', () async {
+      final pm = ProfileManager.instance;
+      final a = (await pm.create('爸爸'))!;
+      final b = (await pm.create('妈妈'))!;
+      expect(pm.byId(a)!.secretHex, isNot(pm.byId(b)!.secretHex));
+    });
+
+    // 补出来的秘密**必须当场落盘**:留在内存里的话,每次启动都会重新生成一把,
+    // 于是同一份档案每次导入用的日期偏移都不一样。
+    test('落盘的就是内存里那一把', () async {
+      final pm = ProfileManager.instance;
+      await pm.factoryReset();
+      final inMemory = pm.current.secretHex;
+      expect(inMemory, hasLength(64));
+
+      final onDisk = jsonDecode(await File('${support.path}/profiles.json').readAsString()) as Map<String, dynamic>;
+      final saved = (onDisk['profiles'] as List).single as Map<String, dynamic>;
+      expect(saved['secretHex'], inMemory, reason: '落盘的必须就是内存里那一把,否则重启就换了偏移');
+    });
+  });
+
+  group('Profile.secretHex 往返', () {
+    test('有值写出 key,没值不写出多余的 key', () {
+      const p = Profile(id: 'p-1', name: '我', secretHex: 'abababababababababababababababababababababababababababababababab');
+      expect(Profile.fromJson(jsonDecode(jsonEncode(p.toJson())) as Map<String, dynamic>).secretHex, 'abababababababababababababababababababababababababababababababab');
+      const none = Profile(id: 'p-1', name: '我');
+      expect(none.toJson().containsKey('secretHex'), isFalse);
+      expect(Profile.fromJson(jsonDecode(jsonEncode(none.toJson())) as Map<String, dynamic>).secretHex, '');
     });
   });
 }
