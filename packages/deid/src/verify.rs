@@ -134,13 +134,19 @@ fn strip_ws(s: &str) -> String {
 //   * 名字放到编辑距离 1,但**两边都能被词典解析成不同术语**时立刻收回
 //     ——「红细胞计数」和「白细胞计数」正好差一个字,那不是误读,是另一个指标。
 //
-// fix round 1(评审抓出三处「无锚点子串 ⇒ 近乎恒真」)补的三条硬边界:
-//   * 数值解析得出数时**只**跟切好词的 `src.numbers` 比 —— 全文子串会让 `1.5`
-//     被 `11.5` "包含"下来;
+// fix round 1(评审抓出三处「无锚点子串 ⇒ 近乎恒真」)补的硬边界:
+//   * 数值:图片档只跟切好词的 `src.numbers` 比;文本档仍逐字子串,但两侧不许
+//     再是数字(round 2 补)—— 全文子串会让 `1.5` 被 `11.5` "包含"下来;
 //   * 单位要在某个词里整段落下、左右都不是字母 —— `mg/L` 里抠不出 `g/L`;
 //   * 名字两边都查不到词典时,再看差的那一个字(钾/钠、左/右);
 //   * 异常标志只跟独立成词、长度 ≤2 的词比,且**不走 [`fold_char`]** ——
 //     那里 `L→1`、`↑→h`,全文任意一个 `1` 都能验真一个凭空的低值标志。
+//
+// fix round 2:**异常标志是推导数据,不是证据**。图片档里背书不了的 `flag` 直接
+// 清空、这一行照常算验真(值和区间才决定待不待核),由 `parser::labs_from_json`
+// 在 `flag` 为空时拿值比区间自己算 H/L。头一版拿标志把整行打成待核,代价是
+// 待核里标志类 57 → 327 条,而那批行的**值本身是验真的** —— 用推导数据否定证据,
+// 方向反了。文本档不吃这一套:对不上照旧整条丢。
 // ---------------------------------------------------------------------------
 
 /// 单字符折叠:全角→半角、小写、把常见 OCR 混淆并进同一个代表字符。
@@ -236,6 +242,21 @@ fn unit_token_match(text: &str, value: &str, tolerant: bool) -> bool {
                 && !(i > 0 && raw[i - 1].is_alphabetic())
                 && !(i + want.len() < raw.len() && raw[i + want.len()].is_alphabetic())
         })
+    })
+}
+
+/// 文本档的数值:仍是逐字子串,但**两侧不许再是数字**。
+/// `1.5` 不许从 `11.5` 里抠出来、`0.5` 不许从 `10.5` 里抠出来 —— 图片档那条
+/// 「只跟切好词的数字比」的文本档版本。同样是收紧,不是放宽。
+fn digit_bounded_contains(text: &str, value: &str) -> bool {
+    let (t, v): (Vec<char>, Vec<char>) = (text.chars().collect(), value.chars().collect());
+    if v.is_empty() || v.len() > t.len() {
+        return false;
+    }
+    (0..=t.len() - v.len()).any(|i| {
+        t[i..i + v.len()] == v[..]
+            && !(i > 0 && t[i - 1].is_ascii_digit())
+            && !(i + v.len() < t.len() && t[i + v.len()].is_ascii_digit())
     })
 }
 
@@ -435,7 +456,11 @@ fn field_ok(value: &str, src: &Src, mode: Mode, kind: FieldKind) -> bool {
         return unit_token_match(src.text, value, matches!(mode, Mode::Image));
     }
     if let Mode::Text = mode {
-        return src.text.contains(value);
+        return match kind {
+            // 数值同样要锚点:逐字子串会让 `1.5` 被 `11.5` 收下(fix round 2)
+            FieldKind::Numeric => digit_bounded_contains(src.text, value),
+            _ => src.text.contains(value),
+        };
     }
     match kind {
         FieldKind::Unit => unreachable!("单位在 mode 分流之前已经返回"),
@@ -551,9 +576,21 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
             && field_ok(&l.value, &src, mode, FieldKind::Numeric)
             && field_ok(&l.unit, &src, mode, FieldKind::Unit)
             && field_ok(&l.ref_low, &src, mode, FieldKind::Numeric)
-            && field_ok(&l.ref_high, &src, mode, FieldKind::Numeric)
-            && field_ok(&l.flag, &src, mode, FieldKind::Flag);
-        keep(ok, &mut l.unverified)
+            && field_ok(&l.ref_high, &src, mode, FieldKind::Numeric);
+        let flag_ok = field_ok(&l.flag, &src, mode, FieldKind::Flag);
+        match mode {
+            // 图片档:异常标志是**推导数据**,值和区间才是证据。原文背书不了的标志
+            // 直接清空,让 `parser::labs_from_json` 拿值比区间自己算 H/L —— 不因为
+            // 一个推导不出处的标志把整行打成待核。值没过的行照样待核,与标志无关。
+            Mode::Image => {
+                if !flag_ok {
+                    l.flag.clear();
+                }
+                keep(ok, &mut l.unverified)
+            }
+            // 文本档一个字都没放宽:标志对不上,整条照丢。
+            Mode::Text => keep(ok && flag_ok, &mut l.unverified),
+        }
     });
     e.meds.retain_mut(|m| {
         let ok = field_ok(&m.name, &src, mode, FieldKind::Name)
