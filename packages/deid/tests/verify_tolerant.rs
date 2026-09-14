@@ -102,9 +102,21 @@ fn case_folding_does_not_excuse_a_different_unit() {
 #[test]
 fn ocr_confusable_letters_and_digits_are_one_class() {
     assert!(lab_ok(unit("1O^9/L"), "白细胞计数 5.6 10^9/L")); // 字母 O ↔ 数字 0
-    assert!(lab_ok(value("S.6"), "白细胞计数 5.6 10^9/L")); // S ↔ 5
-    assert!(lab_ok(value("8.6"), "白细胞计数 B.6 10^9/L")); // B ↔ 8
-    assert!(lab_ok(value("1.6"), "白细胞计数 l.6 10^9/L")); // l ↔ 1
+    assert!(lab_ok(value("S.6"), "白细胞计数 5.6 10^9/L")); // S ↔ 5(折的是模型给的值)
+}
+
+/// 混淆表只折**模型给的值**,不拿来读原文的数字串。原文那一侧字母一律**结束**
+/// 一个数(fix round 3):不然 `2.5L` 会被读成 `2.51`,凭空造出一个能对上假值的数。
+#[test]
+fn the_confusion_table_does_not_rewrite_the_source_number_bag() {
+    assert!(lab_ok(value("2.5"), "尿量 2.5L"), "真值 2.5 该验真");
+    assert!(
+        !lab_ok(value("2.51"), "尿量 2.5L"),
+        "2.51 是字母折出来的,不该验真"
+    );
+    assert!(!lab_ok(value("51"), "尿量 5L"));
+    // 代价:原文那一侧的字母不再被"修回"数字
+    assert!(!lab_ok(value("8.6"), "白细胞计数 B.6 10^9/L"));
 }
 
 #[test]
@@ -235,6 +247,47 @@ fn up_arrow_does_not_match_a_low_flag() {
     );
 }
 
+/// OCR 把单位拆成 `10^9 / L` 时,那个 `L` 是半截单位,不是低值标志(fix round 3)。
+#[test]
+fn a_split_unit_token_does_not_endorse_a_flag() {
+    assert_eq!(
+        flag_after(
+            LabItem {
+                name: "白细胞计数".into(),
+                flag: "L".into(),
+                ..Default::default()
+            },
+            "白细胞计数 WBC 5.6 10^9 / L 4.0-10.0"
+        ),
+        (false, String::new())
+    );
+    // `g / L` 同理
+    assert_eq!(
+        flag_after(
+            LabItem {
+                name: "血红蛋白".into(),
+                flag: "↓".into(),
+                ..Default::default()
+            },
+            "血红蛋白 98 g / L 115-150"
+        ),
+        (false, String::new())
+    );
+    // 反向:真的独立标志照样验真,别把这条收过头
+    assert_eq!(
+        flag_after(
+            LabItem {
+                name: "血红蛋白".into(),
+                flag: "L".into(),
+                ..Default::default()
+            },
+            "血红蛋白 98 g / L L"
+        )
+        .1,
+        "L"
+    );
+}
+
 // ---------- 规则 8b:标志是推导数据,清空而不是把整行打待核 ----------
 
 /// 值(和有区间时的区间)都验真、只有标志没验真 → 清空标志,这一行**算验真**。
@@ -333,6 +386,24 @@ fn a_shorter_number_is_not_verified_by_a_longer_one() {
         ..Default::default()
     });
     assert!(!lab_ok(e, "某项 5.0 10.115-20.0"));
+}
+
+/// 解析不出数的"数字形状"字段(`0-3`、`1.5%`、`<0.5`)在图片档也要锚点 ——
+/// 之前这一类落回无边界的全文 `contains`,比文本档还松(fix round 3)。
+#[test]
+fn numeric_shaped_fields_that_do_not_parse_still_need_boundaries() {
+    let bad = lab(LabItem {
+        ref_high: "0-3".into(),
+        ..Default::default()
+    });
+    assert!(!lab_ok(bad, "尿白细胞 高倍视野 10-30"));
+    let good = lab(LabItem {
+        ref_high: "0-3".into(),
+        ..Default::default()
+    });
+    assert!(lab_ok(good, "尿白细胞 高倍视野 0-3"));
+    assert!(!lab_ok(value("1.5%"), "糖化血红蛋白 11.5%"));
+    assert!(lab_ok(value("1.5%"), "糖化血红蛋白 1.5%"));
 }
 
 // ---------- 规则 9b:单位要落在词边界上 ----------
