@@ -1900,6 +1900,13 @@ pub fn vault_cloud_prepare_extraction(
 /// 同样的字节必然产出同样的 frame,不会因为重跑而跟原来的框错位。
 /// ponytail:这样会多跑一次检测推理(只为拿 frame);涂黑只在云抽取确认后跑一次,
 /// 不是高频路径,暂不做「prepare 时把 frame 存住等 commit 再用」的缓存。
+///
+/// 画在哪张图上,按「**框能对得上的最高画质**」选(Task 18):working frame 只是
+/// `preprocess` 的等比降采样时,框按比例放大、画回**原分辨率彩色原图**
+/// (`ocr::redact_image_full_res`);一旦这次预处理还做了 90°/270° 摆正或去斜
+/// (几何不再是纯缩放),就退回画在 frame 上——**宁可送画质差一点的,也绝不把框
+/// 画到几何对不上的图上**(那是静默漏涂 PHI)。两条路都按 `ocr::REDACT_MAX_BYTES`
+/// 压:先降 JPEG 质量、再降长边,且绝不低于识别时的分辨率。
 #[cfg(pp_ocr)]
 pub fn vault_cloud_redact_image(bytes: Vec<u8>, paint: Vec<RectDto>) -> anyhow::Result<Vec<u8>> {
     let data_dir = with_state(|state| Ok(state.data_dir.clone()))?;
@@ -1915,7 +1922,16 @@ pub fn vault_cloud_redact_image(bytes: Vec<u8>, paint: Vec<RectDto>) -> anyhow::
             bottom: r.bottom,
         })
         .collect();
-    ocr::redact_image(&engine_lines.frame, &rects).map_err(|e| anyhow::anyhow!(e.to_string()))
+    let frame_w = engine_lines.frame.width() as f32;
+    let frame_h = engine_lines.frame.height() as f32;
+    // 原图这条路出错(解不开/编码不了)不算致命:静默退回 frame 那条,照样有图可送。
+    if let Ok(Some(full)) =
+        ocr::redact_image_full_res(&bytes, frame_w, frame_h, &rects, ocr::REDACT_MAX_BYTES)
+    {
+        return Ok(full);
+    }
+    ocr::redact_image_capped(&engine_lines.frame, &rects, ocr::REDACT_MAX_BYTES)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 /// 非 iOS/安卓构建的占位实现,理由同 `recognize_image_pp` 的 `cfg(not(pp_ocr))` 分支。
 #[cfg(not(pp_ocr))]

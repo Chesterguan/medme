@@ -991,26 +991,126 @@ pub struct PaintRect {
 /// 典型来源是 [`recognize_engine_lines`] 返回的 `EngineLines`);越界矩形会被
 /// 裁到图内、不会 panic。
 pub fn redact_image(frame: &DynamicImage, rects: &[PaintRect]) -> Result<Vec<u8>> {
+    redact_image_capped(frame, rects, usize::MAX)
+}
+
+/// 与 [`redact_image`] 同一条涂黑,但把产出压进 `max_bytes`:**先降 JPEG 质量**
+/// (85 → 70 → 55),还不够再按长边逐档缩(每档 ×0.8),**绝不缩到比这张 `frame`
+/// 本身还小**——那是识别真正看过的分辨率,低于它就是把云端模型的输入降到连本机
+/// 都不如。都试完仍超限就返回最后(最小)那一份,由调用方的限额检查决定弃用与否。
+pub fn redact_image_capped(
+    frame: &DynamicImage,
+    rects: &[PaintRect],
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
+    let mut img = frame.to_rgb8();
+    paint_rects(&mut img, rects);
+    encode_jpeg_capped(image::DynamicImage::ImageRgb8(img), max_bytes, 0)
+}
+
+/// 把 `rects` 涂成黑块。越界矩形裁到图内、不会 panic;left/top 向下取整、
+/// right/bottom 向上取整 —— 两头都**朝外**取,宁可多盖一个像素,也不要因为取整
+/// 少盖半个字。
+fn paint_rects(img: &mut image::RgbImage, rects: &[PaintRect]) {
     use imageproc::drawing::draw_filled_rect_mut;
     use imageproc::rect::Rect;
-    let mut img = frame.to_rgb8();
     let (w, h) = (img.width() as f32, img.height() as f32);
     for r in rects {
-        let l = r.left.max(0.0).min(w) as i32;
-        let t = r.top.max(0.0).min(h) as i32;
-        let rw = (r.right.min(w) - l as f32).max(1.0) as u32;
-        let rh = (r.bottom.min(h) - t as f32).max(1.0) as u32;
-        draw_filled_rect_mut(
-            &mut img,
-            Rect::at(l, t).of_size(rw, rh),
-            image::Rgb([0u8, 0, 0]),
+        let l = r.left.max(0.0).min(w).floor() as i32;
+        let t = r.top.max(0.0).min(h).floor() as i32;
+        let rw = (r.right.min(w).ceil() - l as f32).max(1.0) as u32;
+        let rh = (r.bottom.min(h).ceil() - t as f32).max(1.0) as u32;
+        draw_filled_rect_mut(img, Rect::at(l, t).of_size(rw, rh), image::Rgb([0u8, 0, 0]));
+    }
+}
+
+/// 送云端那份涂黑图的**原始字节**上限。Dart 侧 `extractImageMaxBytes` 量的是
+/// base64 之后的 2 MiB,base64 涨 4/3,所以这边的上限是它的 3/4。
+pub const REDACT_MAX_BYTES: usize = 2 * 1024 * 1024 / 4 * 3;
+
+/// JPEG 质量 → 长边的两级退让,见 [`redact_image_capped`]。`min_long_side` 是长边
+/// 的下限(0 = 不缩)。返回第一份塞得进 `max_bytes` 的;都塞不进就返回最后一份。
+fn encode_jpeg_capped(
+    img: DynamicImage,
+    max_bytes: usize,
+    min_long_side: u32,
+) -> Result<Vec<u8>> {
+    let encode = |img: &DynamicImage, q: u8| -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, q)
+            .encode_image(img)
+            .context("redact_image: encode jpeg")?;
+        Ok(out)
+    };
+    let mut current = img;
+    let mut last = encode(&current, 85)?;
+    loop {
+        for q in [85u8, 70, 55] {
+            last = encode(&current, q)?;
+            if last.len() <= max_bytes {
+                return Ok(last);
+            }
+        }
+        let long = current.width().max(current.height());
+        let next_long = (long as f32 * 0.8) as u32;
+        if next_long <= min_long_side || next_long < 16 {
+            return Ok(last);
+        }
+        let scale = next_long as f32 / long as f32;
+        current = current.resize(
+            ((current.width() as f32 * scale) as u32).max(1),
+            ((current.height() as f32 * scale) as u32).max(1),
+            image::imageops::FilterType::Triangle,
         );
     }
-    let mut out = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)
-        .encode_image(&image::DynamicImage::ImageRgb8(img))
-        .context("redact_image: encode jpeg")?;
-    Ok(out)
+}
+
+/// 在**原始分辨率**上涂黑:`rects` 是在 `frame_w`×`frame_h` 那张 working frame 上
+/// 量的,这里按比例放大后画回 `image_bytes` 解出来的整张图,再按 `max_bytes` 压。
+/// 送云端的图因此是原分辨率、彩色、没被 [`preprocess`] 的去阴影/拉对比改过的那张。
+///
+/// **只在 working frame 是原图的纯等比缩放时才成立**——也就是 [`preprocess`] 这次
+/// 只降了采样,没有 90°/270° 摆正、没有去斜旋转。判据是两个方向的缩放比一致
+/// (1% 容差)且 frame 不大于原图。对不上返回 `Ok(None)`,调用方老老实实退回
+/// [`redact_image_capped`] 画在 frame 上——**绝不允许**把框画到一张几何对不上的图上,
+/// 那是静默漏涂 PHI(同 [`redact_image_bytes`] 的坐标系警告)。
+pub fn redact_image_full_res(
+    image_bytes: &[u8],
+    frame_w: f32,
+    frame_h: f32,
+    rects: &[PaintRect],
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>> {
+    if !(frame_w > 0.0 && frame_h > 0.0) {
+        return Ok(None);
+    }
+    let full = decode_image_bounded(image_bytes).context("redact_image_full_res: decode")?;
+    let (ow, oh) = (full.width() as f32, full.height() as f32);
+    let (sx, sy) = (ow / frame_w, oh / frame_h);
+    // frame 比原图还大,或两个方向缩放比不一致(摆正/去斜过)→ 几何对不上。
+    if sx < 1.0 || sy < 1.0 || (sx - sy).abs() > 0.01 * sx.max(sy) {
+        return Ok(None);
+    }
+    // 已经是同一分辨率就没必要走这条路(画出来的与 frame 版只差灰度/去阴影,
+    // 但彩色原图对视觉模型更好,所以仍然走)。
+    let scaled: Vec<PaintRect> = rects
+        .iter()
+        .map(|r| PaintRect {
+            left: r.left * sx,
+            top: r.top * sy,
+            right: r.right * sx,
+            bottom: r.bottom * sy,
+        })
+        .collect();
+    // 长边下限 = frame 的长边:压缩再狠也不会让云端看到的比本机识别时还糊。
+    let min_long_side = frame_w.max(frame_h) as u32;
+    let mut img = full.to_rgb8();
+    paint_rects(&mut img, &scaled);
+    Ok(Some(encode_jpeg_capped(
+        image::DynamicImage::ImageRgb8(img),
+        max_bytes,
+        min_long_side,
+    )?))
 }
 
 /// 只有原始字节、没有 [`recognize_engine_lines`] 产出的 frame 时的便捷封装:
@@ -2170,6 +2270,113 @@ mod tests {
         let back = image::load_from_memory(&out).unwrap().to_rgb8();
         assert!(back.get_pixel(20, 20)[0] < 30, "框内应为黑");
         assert!(back.get_pixel(80, 50)[0] > 220, "框外应为白");
+    }
+
+    /// 造一张 `w`×`h` 的白底 PNG。`noisy` 时铺一层棋盘格 —— JPEG 对纯白图能压到
+    /// 几百字节,限额那条测试必须有真实内容才逼得出「降长边」那一步。
+    #[cfg(test)]
+    fn white_png(w: u32, h: u32, noisy: bool) -> Vec<u8> {
+        use image::{ImageBuffer, Rgb};
+        let mut img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+            ImageBuffer::from_pixel(w, h, Rgb([255u8, 255, 255]));
+        if noisy {
+            for y in 0..h {
+                for x in 0..w {
+                    if (x / 3 + y / 3) % 2 == 0 {
+                        img.put_pixel(x, y, Rgb([12u8, 34, 56]));
+                    }
+                }
+            }
+        }
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        png
+    }
+
+    /// working frame 是原图的纯等比缩放时,框按比例放大画回**原分辨率**那张图:
+    /// 产出必须还是原尺寸,且缩放后的位置确实黑了(Task 18 步骤 3)。
+    #[test]
+    fn redact_image_full_res_paints_at_original_resolution() {
+        let png = white_png(800, 1200, false);
+        // frame 是原图的一半 —— `preprocess` 只降采样的那种情况。
+        let out = redact_image_full_res(
+            &png,
+            400.0,
+            600.0,
+            &[PaintRect {
+                left: 50.0,
+                top: 100.0,
+                right: 150.0,
+                bottom: 200.0,
+            }],
+            usize::MAX,
+        )
+        .unwrap()
+        .expect("纯等比缩放应当走原图这条路");
+        let back = image::load_from_memory(&out).unwrap().to_rgb8();
+        assert_eq!((back.width(), back.height()), (800, 1200), "应是原分辨率");
+        // 框 ×2 之后覆盖 (100,200)-(300,400)。
+        assert!(back.get_pixel(200, 300)[0] < 40, "放大后的框内应为黑");
+        assert!(back.get_pixel(600, 900)[0] > 40, "框外不该被涂");
+    }
+
+    /// 几何对不上(frame 被 90° 摆正过 → 两个方向缩放比不同)时必须返回 `None`,
+    /// 让调用方退回画在 frame 上 —— 硬画上去就是静默漏涂 PHI。
+    #[test]
+    fn redact_image_full_res_refuses_mismatched_geometry() {
+        let png = white_png(800, 1200, false);
+        let r = [PaintRect {
+            left: 10.0,
+            top: 10.0,
+            right: 20.0,
+            bottom: 20.0,
+        }];
+        // 摆正过:frame 是 600×400,宽高比与原图相反。
+        assert!(redact_image_full_res(&png, 600.0, 400.0, &r, usize::MAX)
+            .unwrap()
+            .is_none());
+        // frame 比原图还大:同样不可信。
+        assert!(redact_image_full_res(&png, 1600.0, 2400.0, &r, usize::MAX)
+            .unwrap()
+            .is_none());
+        // frame 尺寸没给。
+        assert!(redact_image_full_res(&png, 0.0, 0.0, &r, usize::MAX)
+            .unwrap()
+            .is_none());
+    }
+
+    /// 限额:先降质量、再降长边,且**绝不低于识别时用的那张 frame 的长边**。
+    /// 给一个小到质量档压不下去的上限,逼它走到降长边那一步,再核下限确实守住了。
+    #[test]
+    fn redact_image_full_res_caps_bytes_but_not_below_frame_resolution() {
+        let png = white_png(1600, 1200, true);
+        let out = redact_image_full_res(&png, 800.0, 600.0, &[], 4_000)
+            .unwrap()
+            .expect("纯等比缩放");
+        let back = image::load_from_memory(&out).unwrap().to_rgb8();
+        assert!(
+            back.width() < 1600,
+            "4KB 塞不下 1600px 的噪声图,应当已经降过长边(实际 {}px)",
+            back.width()
+        );
+        assert!(
+            back.width() >= 800,
+            "长边不许降到比识别时的 frame(800px)还小,实际 {}px",
+            back.width()
+        );
+    }
+
+    /// `redact_image` 仍是「q85、不限大小」的老行为——评测(`examples/medrep_llm.rs`)
+    /// 靠它产出与历史可比的那份图,加了限额不能顺手把它改了。
+    #[test]
+    fn redact_image_stays_uncapped() {
+        let png = white_png(1200, 900, false);
+        let frame = image::load_from_memory(&png).unwrap();
+        let out = redact_image(&frame, &[]).unwrap();
+        let back = image::load_from_memory(&out).unwrap();
+        assert_eq!((back.width(), back.height()), (1200, 900));
     }
 
     /// `redact_image_bytes` is just decode-then-`redact_image`; a bytes-in

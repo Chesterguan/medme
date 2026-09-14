@@ -260,6 +260,20 @@ import Vision
   /// 保守取值。
   private static let documentMinConfidence: Float = 0.3
 
+  /// 检测到的四角必须覆盖画面的这个比例,才算「一张拍歪的整页」、值得拉正;低于它
+  /// 一律回退原图。**这不是调参,是防丢页**:平铺的扫描件/电子单据整幅都是纸,没有
+  /// 纸张边缘可找,Vision 于是常把页内的**正文块**当成「文档」——按那四角裁下去是
+  /// 把半页扔掉,不是拉正。而四角的面积对「裁上半页」和「裁下半页」是同一个数,所以
+  /// 这道闸对两种走向都拦得住。
+  ///
+  /// 依据(2026-09-14,冒烟用的四张化验单,均 1653×2339,见 task-18-report.md):
+  /// macOS Vision 对其中三张给出 confidence 0.83/0.94/0.99 的四角,面积只占画面
+  /// 0.44/0.44/0.38 —— 裁完印章和「检验者/审核者」整段没了;而在 iOS 模拟器上真实
+  /// 跑出来的那三份,`ocr_result` 里只剩 14/16/16 个字(只有红章),同一批原图直接喂
+  /// PP-OCR 则是 866~1104 字。第四张 Vision 自己 confidence=0.0、本来就跳过拉正,
+  /// 于是它成了四张里唯一识别正常的那份。0.75 留出真实斜拍(整页占画面大半)的余量。
+  private static let documentMinCoverage: CGFloat = 0.75
+
   /// `rectifyDocument` 复用的 Core Image 渲染上下文;GPU/Metal 资源较重,进程内共享
   /// 一份,不必每次调用都新建。
   private static let ciContext = CIContext()
@@ -273,7 +287,8 @@ import Vision
   /// 喂 PP 识别差。这里把导入路径补齐到和拍照同质,发生在喂 PP **之前**、原生 Swift
   /// 层,不进 Rust `ocr` crate、不碰 PP 引擎本身(见 `ocr_bridge.dart` 的接线)。
   ///
-  /// 任何一步失败/没检测到文档/结果置信度过低 → 返回原图字节;只有连原图都读不到
+  /// 任何一步失败/没检测到文档/结果置信度过低/**四角覆盖不到画面的
+  /// [documentMinCoverage]**(那是裁走半页,不是拉正)→ 返回原图字节;只有连原图都读不到
   /// 才返回 `nil`(上层已经单独读过原始字节,可以自己兜底)——绝不让识别效果比
   /// 现在差。相机拍的照片本就来自文档扫描器(已经裁正),这里再跑一遍近似恒等
   /// (整幅即文档),无害。
@@ -297,6 +312,16 @@ import Vision
     guard let rect = request.results?.first, rect.confidence >= documentMinConfidence else {
       return original
     }
+    // 覆盖率闸(见 [documentMinCoverage])。归一化坐标下整幅画面面积 = 1,所以四角
+    // 多边形的鞋带面积直接就是占比。四角按 TL→TR→BR→BL 绕一圈才是这个四边形本身
+    // (顺序错会算成自交的「蝴蝶」,面积偏小)。
+    let quad = [rect.topLeft, rect.topRight, rect.bottomRight, rect.bottomLeft]
+    let coverage = abs(
+      quad.indices.reduce(CGFloat(0)) { acc, i in
+        let a = quad[i], b = quad[(i + 1) % quad.count]
+        return acc + (a.x * b.y - b.x * a.y)
+      }) / 2
+    guard coverage >= documentMinCoverage else { return original }
 
     // Vision 的四角是归一化坐标(原点左下);Core Image 透视校正要的是画面像素坐标
     // (同样原点左下——`oriented` 之后的 `extent` 就是这套坐标系),按 extent 换算。

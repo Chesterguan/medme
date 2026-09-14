@@ -18,6 +18,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// 一条真实的 OCR 行框(数值随意,只要是正数矩形)。
 const _line = OcrLineDto(text: '白细胞 5.6', left: 10, top: 20, right: 300, bottom: 60);
 
+/// 一份**产出正常**的 OCR 结果。
+///
+/// ⚠️ 别再换回「白细胞 5.6」那种一行几个字的样本:低产出闸([isLowOcrYield])
+/// 排在 `runCloudExtraction` 的最前面,短文本会在那里就被挡掉,下面这些用例各自
+/// 要钉的那道门(没登录 / 没 secretHex / 成员切走 …)就再也走不到了 —— 测试照样绿,
+/// 钉的却已经不是它写的那件事。
+const _ocr = OcrResult(
+  '北京协和医院\n检验科血常规检验报告单\n姓名:张建国 性别:男 年龄:60岁\n'
+  'WBC 白细胞计数 11.8 10^9/L 3.5-9.5 ↑\nHGB 血红蛋白 139 g/L 130-175 正常\n'
+  'PLT 血小板计数 203 10^9/L 125-350 正常\n',
+  0.9,
+);
+
 /// 图片导入没有"缺文本层的页"(那是 PDF 专属),`ImportOutcomeDto` 却要求给一个。
 final _noPages = Int32List(0);
 
@@ -192,9 +205,9 @@ void main() {
       final before = vaultRevision.value;
       final me = await _currentProfile();
       await runCloudExtractions([
-        (outcome: _stored(1), ocr: const OcrResult('a', 0.9), profile: me, vaultRoot: _root),
-        (outcome: _stored(2), ocr: const OcrResult('b', 0.9), profile: me, vaultRoot: _root),
-        (outcome: _stored(3), ocr: const OcrResult('c', 0.9), profile: me, vaultRoot: _root),
+        (outcome: _stored(1), ocr: _ocr, profile: me, vaultRoot: _root),
+        (outcome: _stored(2), ocr: _ocr, profile: me, vaultRoot: _root),
+        (outcome: _stored(3), ocr: _ocr, profile: me, vaultRoot: _root),
       ]);
       expect(vaultRevision.value, before, reason: '没有新结果就没有要刷新的东西');
     });
@@ -238,7 +251,7 @@ void main() {
     test('闸拒发 / FRB 不可用 → null,而且一个请求都没发出去', () async {
       final r = await runCloudExtraction(
         _stored(11, detectedName: '张建国'),
-        const OcrResult('白细胞 5.6', 0.9),
+        _ocr,
         profile: await _currentProfile(),
         vaultRoot: _root,
         api: api,
@@ -251,8 +264,8 @@ void main() {
       final before = vaultRevision.value;
       final me = await _currentProfile();
       await runCloudExtractions([
-        (outcome: _stored(12), ocr: const OcrResult('a', 0.9), profile: me, vaultRoot: _root),
-        (outcome: _stored(13), ocr: const OcrResult('b', 0.9), profile: me, vaultRoot: _root),
+        (outcome: _stored(12), ocr: _ocr, profile: me, vaultRoot: _root),
+        (outcome: _stored(13), ocr: _ocr, profile: me, vaultRoot: _root),
       ]);
       expect(vaultRevision.value, before);
       expect(hits, 0);
@@ -274,7 +287,7 @@ void main() {
   });
 
   group('runCloudExtraction 不阻断导入', () {
-    const ocr = OcrResult('白细胞 5.6', 0.9);
+    const ocr = _ocr;
 
     test('没建文档(去重/失败)→ null,一个字节都不发', () async {
       final r = await runCloudExtraction(
@@ -306,6 +319,50 @@ void main() {
         vaultRoot: _root,
       );
       expect(r, isNull);
+    });
+  });
+
+  group('低产出闸(Task 18):本机识别太少就两条臂都不发', () {
+    // 阈值的依据见 `isLowOcrYield` 文档:2026-09-14 那次冒烟里,坏掉的三份
+    // `ocr_result` 分别是 14/16/16 个字(只剩一行红章),识别正常的四份是
+    // 866~1104 字。下面两组样本就是这两群的真实代表。
+    test('只剩一行红章(14 字)→ 低产出', () {
+      expect(isLowOcrYield('北京协和医院医\n疗文书专用章'), isTrue);
+      expect(isLowOcrYield('四川大学华西医院  医疗文书专用章'), isTrue);
+    });
+
+    test('空 / 全空白 → 低产出', () {
+      expect(isLowOcrYield(''), isTrue);
+      expect(isLowOcrYield('   \n \n  '), isTrue);
+    });
+
+    test('字数够但只有一两行 → 仍算低产出(整页塌成一行就是识别坏了)', () {
+      expect(isLowOcrYield('姓名张建国性别男年龄60岁门诊号20251105检测日期20251105样本类型全血'), isTrue);
+    });
+
+    test('正常的化验单 → 不是低产出', () {
+      expect(isLowOcrYield(_ocr.text), isFalse);
+    });
+
+    test('低产出的那份连"没登录"这道门都不用问,直接不发', () async {
+      final captured = <String?>[];
+      final DebugPrintCallback real = debugPrint;
+      debugPrint = (m, {wrapWidth}) => captured.add(m);
+      addTearDown(() => debugPrint = real);
+
+      final r = await runCloudExtraction(
+        _stored(41, detectedName: '张建国'),
+        const OcrResult('北京协和医院医\n疗文书专用章', 0.9, lines: [_line], frameW: 800, frameH: 1200, bytes: [1, 2, 3]),
+        profile: await _currentProfile(),
+        vaultRoot: _root,
+      );
+      expect(r, isNull);
+      expect(captured.single, contains('文档 41 本机识别太少,没有送云端整理'));
+      expect(
+        captured.any((m) => m!.contains('退回本地正则')),
+        isFalse,
+        reason: '不是"跑了但失败了",是压根没送',
+      );
     });
   });
 
@@ -345,7 +402,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'cloud_extract_enabled': false});
       final before = vaultRevision.value;
       await runCloudExtractions([
-        (outcome: _stored(21, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile(), vaultRoot: _root),
+        (outcome: _stored(21, detectedName: '张建国'), ocr: _ocr, profile: await _currentProfile(), vaultRoot: _root),
       ]);
       expect(captured, isEmpty, reason: '开关关了在 runCloudExtractions 入口就该返回,压根没进到每一份的处理里');
       expect(vaultRevision.value, before, reason: '没跑就没有新结果,文档保持导入时落盘的样子');
@@ -354,7 +411,7 @@ void main() {
     test('开着(cloud_extract_enabled=true)→ 这份文档照旧被送进 runCloudExtraction(老行为不变)', () async {
       SharedPreferences.setMockInitialValues({'cloud_extract_enabled': true});
       await runCloudExtractions([
-        (outcome: _stored(22, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile(), vaultRoot: _root),
+        (outcome: _stored(22, detectedName: '张建国'), ocr: _ocr, profile: await _currentProfile(), vaultRoot: _root),
       ]);
       expect(captured, isNotEmpty, reason: '开关开着,新加的这道门不该拦下原来就会跑的那条路');
       expect(captured.single, contains('文档 22 退回本地正则'));
@@ -364,7 +421,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       expect(await loadCloudExtractEnabled(), isTrue);
       await runCloudExtractions([
-        (outcome: _stored(23, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile(), vaultRoot: _root),
+        (outcome: _stored(23, detectedName: '张建国'), ocr: _ocr, profile: await _currentProfile(), vaultRoot: _root),
       ]);
       expect(captured, isNotEmpty);
     });
@@ -386,8 +443,8 @@ void main() {
         }
       };
       await runCloudExtractions([
-        (outcome: _stored(26, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: me, vaultRoot: _root),
-        (outcome: _stored(27, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: me, vaultRoot: _root),
+        (outcome: _stored(26, detectedName: '张建国'), ocr: _ocr, profile: me, vaultRoot: _root),
+        (outcome: _stored(27, detectedName: '张建国'), ocr: _ocr, profile: me, vaultRoot: _root),
       ]);
       expect(captured.where((m) => m!.contains('文档 26')), hasLength(1), reason: '第一份照常跑');
       expect(
@@ -451,7 +508,7 @@ void main() {
 
       final r = await runCloudExtraction(
         _stored(31, detectedName: '张建国'),
-        const OcrResult('白细胞 5.6', 0.9),
+        _ocr,
         profile: captured0,
         vaultRoot: _root,
       );
@@ -471,8 +528,8 @@ void main() {
       final me = await _currentProfile();
       final stale = const Profile(id: 'p-已经不是当前', name: '张建国', secretHex: 'ab');
       await runCloudExtractions([
-        (outcome: _stored(32, detectedName: '张建国'), ocr: const OcrResult('a', 0.9), profile: me, vaultRoot: _root),
-        (outcome: _stored(33, detectedName: '张建国'), ocr: const OcrResult('b', 0.9), profile: stale, vaultRoot: _root),
+        (outcome: _stored(32, detectedName: '张建国'), ocr: _ocr, profile: me, vaultRoot: _root),
+        (outcome: _stored(33, detectedName: '张建国'), ocr: _ocr, profile: stale, vaultRoot: _root),
       ]);
       expect(captured.any((m) => m!.contains('文档 32')), isTrue, reason: '当前成员那份照常跑');
       expect(captured.any((m) => m!.contains('文档 33')), isFalse, reason: '对不上的那份连网络都不用跑');
@@ -489,7 +546,7 @@ void main() {
 
       final r = await runCloudExtraction(
         _stored(34, detectedName: '张建国'),
-        const OcrResult('白细胞 5.6', 0.9),
+        _ocr,
         profile: me,
         vaultRoot: _root,
       );
@@ -509,7 +566,7 @@ void main() {
 
       final r = await runCloudExtraction(
         _stored(35, detectedName: '张建国'),
-        const OcrResult('白细胞 5.6', 0.9),
+        _ocr,
         profile: me,
         vaultRoot: _root,
       );

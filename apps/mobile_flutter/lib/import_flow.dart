@@ -676,6 +676,9 @@ Future<ImportRunResult> _runImport(
   // 就是让用户盯着「正在导入 i/N」的进度条多等最长 90 秒 × 张数。整批导完之后再
   // 一份一份跑(见循环后面的 `unawaited`),结果自己长出来。
   final pendingExtractions = <PendingCloudExtraction>[];
+  // 本机只认出几个字、因此**不送云端整理**的份数(闸本身在 `runCloudExtraction`
+  // 里,这里只是同一个判据算一遍,好在导入结果里说一句,见 `_showImportSummary`)。
+  var lowOcrYield = 0;
 
   for (var i = 0; i < items.length; i++) {
     final item = items[i];
@@ -697,6 +700,9 @@ Future<ImportRunResult> _runImport(
           ocrText: ocr.text,
           confidence: ocr.confidence,
         );
+        if (outcome.documentId != null && isLowOcrYield(ocr.text)) {
+          lowOcrYield++;
+        }
         // 云抽取只在这里**排队**,不在循环里跑 —— 见下面 `pendingExtractions`
         // 的声明。ocr 要整份带走(涂黑用它的 bytes/lines,拿不到第二次)。
         if (outcome.documentId != null) {
@@ -807,7 +813,7 @@ Future<ImportRunResult> _runImport(
   // 函数末尾才构造,始终反映最终状态。）
   if (!context.mounted) return ImportRunResult(newDocs.keys.toList());
   Navigator.of(context).pop(); // 关进度对话框
-  await _showImportSummary(context, rows);
+  await _showImportSummary(context, rows, lowOcrYield: lowOcrYield);
 
   // 这次一起导入的照片里有 ≥2 张各自建了文档:问要不要合并成一份——见
   // `_offerPhotoMerge` 文档注释(为什么每次都问、不自动合并)。只在这里问一次,
@@ -1099,8 +1105,9 @@ Future<Map<int, OcrResult>> _ocrScannedPdfPages(
 
 Future<void> _showImportSummary(
   BuildContext context,
-  List<ImportResultRow> rows,
-) async {
+  List<ImportResultRow> rows, {
+  int lowOcrYield = 0,
+}) async {
   final success = rows.where((r) => r.kind == ImportRowKind.success).length;
   final duplicate = rows.where((r) => r.kind == ImportRowKind.duplicate).length;
   final storedNoText = rows
@@ -1160,6 +1167,16 @@ Future<void> _showImportSummary(
                   Icons.error_outline,
                   c.critical,
                   '未能处理 $failed 份',
+                ),
+              // 本机只认出几个字的那几份:云端整理这一步**主动没做**(见
+              // `cloud_extract.isLowOcrYield`)。不说这一句,用户看到的就是一份
+              // 停在「待归类」、什么都没发生的文档,分不清是还在跑还是失败了。
+              if (lowOcrYield > 0)
+                _summaryLine(
+                  context,
+                  Icons.warning_amber_rounded,
+                  c.high,
+                  '$lowOcrYield 份本机识别太少,没有送云端整理 —— 建议重拍',
                 ),
               const SizedBox(height: MedShape.s2),
               const Divider(),

@@ -80,6 +80,33 @@ bool canRedactImage(OcrResult ocr) =>
     ocr.frameW > 0 &&
     ocr.frameH > 0;
 
+/// 「本机只认出这么点字」的门槛(空白不算)。低于它,**两条臂都不发**。
+const int minOcrYieldChars = 40;
+
+/// 同上,行数那条。
+const int minOcrYieldLines = 3;
+
+/// 本机识别产出太少 → 这一份不许上云(图片档、文本档都不许)。
+///
+/// **这是脱敏闸,不是画质偏好。** 脱敏靠的就是 OCR:文本层按识别出的文字打码,
+/// 图片层按识别出的**框**涂黑。一页纸只识别出十几个字,意味着这页上绝大多数字符
+/// 既没进脱敏文本、也没有对应的框——把这张图发出去,等于把没被任何一条规则看过的
+/// 整页 PHI 原样送走,而 `deid::assert_clean` 只会说「干净」,因为它看的是那十几个字。
+///
+/// 阈值取自 2026-09-14 冒烟那批(见 task-18-report.md):识别正常的四份是
+/// 866/887/1104/1025 字,坏掉的三份是 14/16/16 字(只剩红章那一行)。两群之间差两个
+/// 数量级,40 字 / 3 行落在中间空档,既拦得住「只剩一个章」,也不会误伤真的很短的
+/// 单子(挂号条、缴费凭证都不止 40 字)。
+bool isLowOcrYield(String text) {
+  final t = text.trim();
+  if (t.runes.where((r) => r != 0x20 && r != 0x0a && r != 0x09).length <
+      minOcrYieldChars) {
+    return true;
+  }
+  return t.split('\n').where((l) => l.trim().isNotEmpty).length <
+      minOcrYieldLines;
+}
+
 /// 脱敏的 K 层和发送前那道终闸(`deid::assert_clean`)要认的名字。
 ///
 /// **是化验单上印的那个名字,不是成员标签。** 成员名是用户给档案起的标签:默认就是
@@ -234,6 +261,13 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
 }) async {
   final docId = outcome.documentId;
   if (docId == null) return null;
+  // 本机识别产出太少 → 两条臂都不发(见 [isLowOcrYield]:脱敏没有依据,发出去
+  // 等于把整页未脱敏的 PHI 送走)。**这道门排在最前面**,连"登录了没"都不必问。
+  if (isLowOcrYield(ocr.text)) {
+    // 只报字数,不报内容。
+    debugPrint('[cloud-extract] 文档 $docId 本机识别太少,没有送云端整理');
+    return null;
+  }
   // 秘密缺了就没有稳定的日期偏移(`ProfileManager.ensureLoaded` 会补,这里只是不赌)。
   if (profile.secretHex.isEmpty) return null;
   // 没登录 = 没这个功能。不是错误,不提示,照常走本地那条路。
