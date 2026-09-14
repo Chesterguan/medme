@@ -704,12 +704,21 @@ Future<ImportRunResult> _runImport(
           // 抽取跑到一半箱子被换掉(用户切成员,或者医生切去代拍 —— 后者压根
           // 不碰 `ProfileManager`),同一个 id 就指向别的库里的另一份文档
           // (见 [PendingCloudExtraction])。
-          pendingExtractions.add((
-            outcome: outcome,
-            ocr: ocr,
-            profile: ProfileManager.instance.current,
-            vaultRoot: await currentVaultRoot(),
-          ));
+          // 根路径拿不到就**不排队**,不能让一份已经入库的文档因此记成失败。
+          String? root;
+          try {
+            root = await currentVaultRoot();
+          } catch (_) {
+            root = null;
+          }
+          if (root != null) {
+            pendingExtractions.add((
+              outcome: outcome,
+              ocr: ocr,
+              profile: ProfileManager.instance.current,
+              vaultRoot: root,
+            ));
+          }
         }
       } else {
         stage = 'save';
