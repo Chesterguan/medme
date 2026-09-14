@@ -85,11 +85,12 @@ pub fn parse_extraction(llm_json: &str) -> Result<Extraction, DeidError> {
     Ok(serde_json::from_str(s)?)
 }
 
-/// 字段属于数值(化验的 value/ref_low/ref_high)还是文本(其余所有字段)。
-/// 图片档下两者归一方式不同——数值只许 `,`→`.`,文本才许去空白(spec 修订轮 1)。
+/// 字段属于数值(化验的 value/ref_low/ref_high)、名字(化验/药品的 name)还是
+/// 普通文本(其余所有字段)。三类在图片档下的可接受等价不同,见 [`field_ok`]。
 #[derive(Clone, Copy)]
 enum FieldKind {
     Numeric,
+    Name,
     Text,
 }
 
@@ -115,26 +116,243 @@ fn strip_ws(s: &str) -> String {
     s.split_whitespace().collect()
 }
 
+// ---------------------------------------------------------------------------
+// 图片档容错(Task 9b)。**只作用于 `Mode::Image`**,文本档一个字都没放宽。
+//
+// 为什么放宽:图片档里模型看的是原件,本地 OCR 文本只是旁证。683 份实测下来
+// 35.8% 的化验行过不了逐字子串,而这批行单独对真值比是 95.6% 正确——对不上的
+// 是旁证,不是模型。逐字校验在这里量的是本地 OCR 的错字率,不是幻觉率。
+//
+// 放宽到哪为止:
+//   * 数值一律要求**解析后相等**,永不"接近"(5.6 ≠ 5.61,一位小数点之差在
+//     临床上可以是两个完全不同的结论);
+//   * 名字放到编辑距离 1,但**两边都能被词典解析成不同术语**时立刻收回
+//     ——「红细胞计数」和「白细胞计数」正好差一个字,那不是误读,是另一个指标。
+// ---------------------------------------------------------------------------
+
+/// 单字符折叠:全角→半角、小写、把常见 OCR 混淆并进同一个代表字符。
+/// 空白原样留着(去空白由调用方决定,数值那条路**必须**先按空白切词,
+/// 否则 `115 150` 会被拼成 `115150` 而误判为验真)。
+fn fold_char(c: char) -> char {
+    let c = match c {
+        '\u{3000}' => ' ',
+        // 全角 ！..～ → ASCII 0x21..0x7E
+        '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+        _ => c,
+    };
+    let c = c.to_lowercase().next().unwrap_or(c);
+    match c {
+        'o' => '0',
+        // ↓ 和 L 归一类:化验单上「偏低」既写 ↓ 也写 L,而 l/I/| 与 1 本就难分
+        'l' | 'i' | '|' | '↓' => '1',
+        's' => '5',
+        'b' => '8',
+        ',' => '.',
+        '−' | '—' | '–' => '-',
+        '×' | '✕' => 'x',
+        // ↑ 和 H:同上,「偏高」的两种写法
+        '↑' => 'h',
+        other => other,
+    }
+}
+
+/// 折叠 + 去空白。文本字段用。
+fn fold(s: &str) -> String {
+    s.chars()
+        .map(fold_char)
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+/// 把一个字段解析成数。折叠后必须**原串里本来就有阿拉伯数字**才算数——
+/// 否则 `SOS` 会被折成 `505`,凭空变出一个能对上的数值。
+fn parse_num(s: &str) -> Option<f64> {
+    if !s.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    fold(s)
+        .trim_start_matches('+')
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
+}
+
+/// 原文里出现过的数值。**先按空白切词**再在词内找数字串:空白分开的两个数字
+/// 不许拼成一个更长的数(旧注释里的跨行拼接误判,同一个坑)。
+fn source_numbers(text: &str) -> Vec<f64> {
+    let mut out = Vec::new();
+    for tok in text.split_whitespace() {
+        let (mut run, mut had_digit) = (String::new(), false);
+        // 末尾补一个哨兵字符,让最后一段数字也走一次收尾
+        for c in tok.chars().chain(std::iter::once('\u{0}')) {
+            let f = fold_char(c);
+            if f.is_ascii_digit() || f == '.' {
+                run.push(f);
+                had_digit |= c.is_ascii_digit();
+            } else {
+                if had_digit {
+                    if let Some(n) = run
+                        .trim_matches('.')
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|v: &f64| v.is_finite())
+                    {
+                        out.push(n);
+                    }
+                }
+                run.clear();
+                had_digit = false;
+            }
+        }
+    }
+    out
+}
+
+/// 编辑距离 ≤ 1(含相等)。只要判「≤1」,不需要整张 DP 表:长度差 >1 直接否,
+/// 否则一次扫描,第二处不同就返回 false。
+fn within_one(a: &[char], b: &[char]) -> bool {
+    if a.len().abs_diff(b.len()) > 1 {
+        return false;
+    }
+    let (s, t) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let (mut i, mut j, mut diff) = (0usize, 0usize, 0usize);
+    while i < s.len() && j < t.len() {
+        if s[i] == t[j] {
+            i += 1;
+            j += 1;
+            continue;
+        }
+        diff += 1;
+        if diff > 1 {
+            return false;
+        }
+        if s.len() == t.len() {
+            i += 1; // 替换
+        }
+        j += 1; // 替换或删除(长的那边多吃一个)
+    }
+    diff + (t.len() - j) <= 1
+}
+
+/// 名字的模糊下限,与 `terminology` 的 `FUZZY_MIN_LEN` 同值同理由:三字及以下
+/// 不做模糊(钾/钠/氯、牛奶/小麦这类,字太少,分不开"同一个词的误读"和
+/// "同一张单子上的另一项")。
+const NAME_FUZZY_MIN_LEN: usize = 4;
+
+/// 每份文档算一次的原文索引。`keys` 是懒的:只有名字连折叠比对和模糊都没过
+/// 的时候才会去建,建一次全文档共用(`terminology::resolve` 未命中时要扫词典,
+/// 不值得每个字段重来一遍)。
+struct Src<'a> {
+    text: &'a str,
+    num: String,
+    ws: String,
+    folded: String,
+    /// 模糊比对的落点:每一行 + 行内按空白切出的每个词,各自折叠。
+    /// **只拿它们的前缀比**,不拿任意内部窗口——「红细胞计数」与「细胞计数」
+    /// 也差一个字,可原文那一段是「白细胞计数」,放行就是把值安到了别的指标上。
+    /// 留着"整行"这一项是因为化验名常在行首、而 OCR 会把名字断成两段
+    /// (「白细胞 计数」),按词切就拼不回来了。
+    folded_cands: Vec<Vec<char>>,
+    numbers: Vec<f64>,
+    keys: std::cell::OnceCell<std::collections::HashSet<String>>,
+}
+
+impl<'a> Src<'a> {
+    fn new(text: &'a str) -> Src<'a> {
+        Src {
+            text,
+            num: comma_between_digits_to_dot(text),
+            ws: strip_ws(text),
+            folded: fold(text),
+            folded_cands: text
+                .lines()
+                .flat_map(|l| std::iter::once(l).chain(l.split_whitespace()))
+                .map(|s| fold(s).chars().collect())
+                .collect(),
+            numbers: source_numbers(text),
+            keys: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// 原文里能被词典解析出来的术语 key 全集(整行 + 按空白切出的词)。
+    fn keys(&self) -> &std::collections::HashSet<String> {
+        self.keys.get_or_init(|| {
+            let mut set = std::collections::HashSet::new();
+            for line in self.text.lines() {
+                for cand in std::iter::once(line).chain(line.split_whitespace()) {
+                    if let Some(m) = terminology::resolve(cand, None) {
+                        set.insert(m.key);
+                    }
+                }
+            }
+            set
+        })
+    }
+
+    /// 名字:折叠后与原文某个落点的**前缀**相差 ≤1 个字。
+    /// **护栏**:那段前缀本身能被词典解析成另一个术语时不放行(红细胞/白细胞)。
+    fn name_near_miss(&self, folded_value: &str, value_key: Option<&str>) -> bool {
+        let v: Vec<char> = folded_value.chars().collect();
+        if v.len() < NAME_FUZZY_MIN_LEN {
+            return false;
+        }
+        for cand in &self.folded_cands {
+            for w in v.len().saturating_sub(1)..=v.len() + 1 {
+                if w == 0 || w > cand.len() || !within_one(&v, &cand[..w]) {
+                    continue;
+                }
+                let s: String = cand[..w].iter().collect();
+                match (terminology::resolve(&s, None), value_key) {
+                    // 两边都是词典里的真术语,而且不是同一个 → 是邻项,不是误读
+                    (Some(m), Some(k)) if m.key != k => continue,
+                    _ => return true,
+                }
+            }
+        }
+        false
+    }
+}
+
 /// 文本档:逐字子串,对所有字段一视同仁。
-/// 图片档:数值字段只做 `,`→`.` 归一(不去空白,防跨行数字拼接误判);文本字段允许去空白后比对。
-/// 空字段视为通过——LLM 没提取到不算错。
-fn field_ok(
-    value: &str,
-    src: &str,
-    src_num: &str,
-    src_ws: &str,
-    mode: Mode,
-    kind: FieldKind,
-) -> bool {
+///
+/// 图片档:先走原来的逐字路(数值只做 `,`→`.`,文本去空白),没过再按字段类别
+/// 试容错等价——数值要解析后**相等**,名字额外给编辑距离 1 与「词典解析到同一
+/// 术语」两条,其余文本只做字符折叠。空字段视为通过——LLM 没提取到不算错。
+fn field_ok(value: &str, src: &Src, mode: Mode, kind: FieldKind) -> bool {
     if value.is_empty() {
         return true;
     }
-    match mode {
-        Mode::Text => src.contains(value),
-        Mode::Image => match kind {
-            FieldKind::Numeric => src_num.contains(&comma_between_digits_to_dot(value)),
-            FieldKind::Text => src_ws.contains(&strip_ws(value)),
-        },
+    if let Mode::Text = mode {
+        return src.text.contains(value);
+    }
+    match kind {
+        FieldKind::Numeric => {
+            if src.num.contains(&comma_between_digits_to_dot(value)) {
+                return true;
+            }
+            match parse_num(value) {
+                // 相等,不是接近:`==` 是这条规则的全部内容,别换成 eps 比较
+                Some(n) => src.numbers.contains(&n),
+                // 不是数(阴性、+、未见异常……)就按普通文本比
+                None => src.folded.contains(&fold(value)),
+            }
+        }
+        FieldKind::Text => src.ws.contains(&strip_ws(value)) || src.folded.contains(&fold(value)),
+        FieldKind::Name => {
+            if src.ws.contains(&strip_ws(value)) {
+                return true;
+            }
+            let folded = fold(value);
+            if src.folded.contains(&folded) {
+                return true;
+            }
+            let key = terminology::resolve(value, None).map(|m| m.key);
+            // 原文印缩写、模型输出规范名(WBC ↔ 白细胞计数):编辑距离很远,同一个指标
+            if key.as_deref().is_some_and(|k| src.keys().contains(k)) {
+                return true;
+            }
+            src.name_near_miss(&folded, key.as_deref())
+        }
     }
 }
 
@@ -165,19 +383,11 @@ fn check_top_field(
 }
 
 pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
-    let src_num = comma_between_digits_to_dot(source_text);
-    let src_ws = strip_ws(source_text);
+    let src = Src::new(source_text);
     let (mut rejected, mut unverified) = (0usize, 0usize);
     let mut unverified_fields = Vec::new();
 
-    let ok = field_ok(
-        &e.doc_date,
-        source_text,
-        &src_num,
-        &src_ws,
-        mode,
-        FieldKind::Text,
-    );
+    let ok = field_ok(&e.doc_date, &src, mode, FieldKind::Text);
     check_top_field(
         "doc_date",
         &mut e.doc_date,
@@ -187,14 +397,7 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
         &mut unverified,
         &mut unverified_fields,
     );
-    let ok = field_ok(
-        &e.impression,
-        source_text,
-        &src_num,
-        &src_ws,
-        mode,
-        FieldKind::Text,
-    );
+    let ok = field_ok(&e.impression, &src, mode, FieldKind::Text);
     check_top_field(
         "impression",
         &mut e.impression,
@@ -204,14 +407,7 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
         &mut unverified,
         &mut unverified_fields,
     );
-    let ok = field_ok(
-        &e.notes,
-        source_text,
-        &src_num,
-        &src_ws,
-        mode,
-        FieldKind::Text,
-    );
+    let ok = field_ok(&e.notes, &src, mode, FieldKind::Text);
     check_top_field(
         "notes",
         &mut e.notes,
@@ -237,99 +433,24 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
         }
     };
     e.labs.retain_mut(|l| {
-        let ok = field_ok(
-            &l.name,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Text,
-        ) && field_ok(
-            &l.value,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Numeric,
-        ) && field_ok(
-            &l.unit,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Text,
-        ) && field_ok(
-            &l.ref_low,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Numeric,
-        ) && field_ok(
-            &l.ref_high,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Numeric,
-        ) && field_ok(
-            &l.flag,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Text,
-        );
+        let ok = field_ok(&l.name, &src, mode, FieldKind::Name)
+            && field_ok(&l.value, &src, mode, FieldKind::Numeric)
+            && field_ok(&l.unit, &src, mode, FieldKind::Text)
+            && field_ok(&l.ref_low, &src, mode, FieldKind::Numeric)
+            && field_ok(&l.ref_high, &src, mode, FieldKind::Numeric)
+            && field_ok(&l.flag, &src, mode, FieldKind::Text);
         keep(ok, &mut l.unverified)
     });
     e.meds.retain_mut(|m| {
-        let ok = field_ok(
-            &m.name,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Text,
-        ) && field_ok(
-            &m.dose,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Text,
-        ) && field_ok(
-            &m.freq,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Text,
-        ) && field_ok(
-            &m.route,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Text,
-        );
+        let ok = field_ok(&m.name, &src, mode, FieldKind::Name)
+            && field_ok(&m.dose, &src, mode, FieldKind::Text)
+            && field_ok(&m.freq, &src, mode, FieldKind::Text)
+            && field_ok(&m.route, &src, mode, FieldKind::Text);
         keep(ok, &mut m.unverified)
     });
     e.diagnoses.retain_mut(|d| {
-        let ok = field_ok(
-            &d.text,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Text,
-        ) && field_ok(
-            &d.icd,
-            source_text,
-            &src_num,
-            &src_ws,
-            mode,
-            FieldKind::Text,
-        );
+        let ok = field_ok(&d.text, &src, mode, FieldKind::Text)
+            && field_ok(&d.icd, &src, mode, FieldKind::Text);
         keep(ok, &mut d.unverified)
     });
 

@@ -372,6 +372,221 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
     Ok(())
 }
 
+/// MedRepBench 已去标识,没有真实身份可填 K 层;给一个绝不会出现在报告图里的
+/// 占位名,让 K 层照常跑(no-op)、A/P 两层正常生效。**跑和重算必须用同一个**,
+/// 否则重算出来的 `red.text` 与当初送云、当初校验的那份对不上。
+fn eval_known() -> KnownIdentity {
+    KnownIdentity {
+        name: "＿评测占位＿".into(),
+        id_number: None,
+        phone: None,
+    }
+}
+
+/// 离线重算图片档「校验通过」的那一列(Task 9b),**不碰网络**。
+///
+/// 输入全在盘上:`{doc}.raw.json`(模型原话,fix round 1 起落盘)+
+/// `arm2_geo/{doc}.txt`(同一遍本地 OCR 的文本)。`redact_text` 是纯函数,
+/// 重跑逐字节复现当初送去校验的那份原文,所以换了校验规则不需要重调一次 API。
+///
+/// 产出写进**另一个**目录 `deepseek-image-verified-tol/`,旧的
+/// `deepseek-image-verified/` 原样留着 —— `score()` 于是把新旧两列并排打出来,
+/// 两列相减就是「这一轮新放行的行」对真值的表现,不用另写一套打分逻辑。
+///
+/// stdout:`NEW\t{doc}\t{行}`(新放行)、`PEND\t{doc}\t{行}`(仍待核),供抽样手看。
+/// stderr:汇总数字。
+fn reverify(root: &str, out: &str) -> Result<()> {
+    let base = PathBuf::from(root).join(out).join("arm4_llm");
+    let (src_dir, old_dir) = (
+        base.join("deepseek-image"),
+        base.join("deepseek-image-verified"),
+    );
+    let new_dir = base.join("deepseek-image-verified-tol");
+    std::fs::create_dir_all(&new_dir)?;
+    let arm2 = PathBuf::from(root).join(out).join("arm2_geo");
+    let known = eval_known();
+
+    let mut raws: Vec<PathBuf> = std::fs::read_dir(&src_dir)
+        .with_context(|| format!("读 {}", src_dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.to_string_lossy().ends_with(".raw.json"))
+        .collect();
+    raws.sort();
+    anyhow::ensure!(
+        !raws.is_empty(),
+        "{} 下没有 .raw.json(round 0 的产出没存模型原话,重算不了)",
+        src_dir.display()
+    );
+
+    let (mut docs, mut labs, mut before, mut after) = (0usize, 0usize, 0usize, 0usize);
+    let (mut released, mut withdrawn, mut parse_failed, mut no_ocr) =
+        (0usize, 0usize, 0usize, 0usize);
+    for p in &raws {
+        let doc = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.strip_suffix(".raw.json"))
+            .context("文件名不是 {doc}.raw.json")?
+            .to_string();
+        let raw = std::fs::read_to_string(p)?;
+        let Ok(parsed) = parse_extraction(&raw) else {
+            parse_failed += 1;
+            std::fs::write(new_dir.join(format!("{doc}.txt")), "")?;
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(arm2.join(format!("{doc}.txt"))) else {
+            no_ocr += 1;
+            continue;
+        };
+        let red = redact_text(&text, &known, 0);
+        let n = parsed.labs.len();
+        let v = verify(parsed, &red.text, Mode::Image);
+        docs += 1;
+        labs += n;
+        after += v.extraction.labs.iter().filter(|l| l.unverified).count();
+        // before 用当初记下的数,不是我这轮推算的——那才是「改之前」的事实。
+        if let Ok(h) = std::fs::read_to_string(src_dir.join(format!("{doc}.halluc.json"))) {
+            if let Ok(j) = serde_json::from_str::<serde_json::Value>(&h) {
+                before += j["labs_unverified"].as_u64().unwrap_or(0) as usize;
+            }
+        }
+
+        let rows = render_rows_verified(&v.extraction);
+        // 行集合按**重数**比,同名同值的两行不许互相抵消
+        let mut delta: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
+        for l in rows.lines() {
+            *delta.entry(l).or_default() += 1;
+        }
+        let old = std::fs::read_to_string(old_dir.join(format!("{doc}.txt"))).unwrap_or_default();
+        for l in old.lines() {
+            *delta.entry(l).or_default() -= 1;
+        }
+        for (line, d) in &delta {
+            if *d > 0 {
+                released += *d as usize;
+                for _ in 0..*d {
+                    println!("NEW\t{doc}\t{line}");
+                }
+            } else if *d < 0 {
+                withdrawn += (-*d) as usize;
+                eprintln!("WITHDRAWN\t{doc}\t{line}"); // 不该出现:新规则是旧规则的超集
+            }
+        }
+        let pending = Extraction {
+            labs: v
+                .extraction
+                .labs
+                .iter()
+                .filter(|l| l.unverified)
+                .cloned()
+                .collect(),
+            ..Default::default()
+        };
+        let pending_rows = render_rows(&pending);
+        for line in pending_rows.lines() {
+            println!("PEND\t{doc}\t{line}");
+        }
+        // 每条待核行是**哪个字段**没过:把该行拆成 6 份"只填一个字段"的条目分别
+        // 过一遍校验(空字段一律算通过,所以剩下的那个字段就是结论)。用的是同一个
+        // 公开的 `verify`,没有为了诊断而把内部判定暴露出去。
+        for l in &pending.labs {
+            let fails = |one: deid::LabItem| {
+                let probe = Extraction {
+                    labs: vec![one],
+                    ..Default::default()
+                };
+                verify(probe, &red.text, Mode::Image).extraction.labs[0].unverified
+            };
+            let d = deid::LabItem::default;
+            let probes: [(&str, deid::LabItem); 6] = [
+                (
+                    "name",
+                    deid::LabItem {
+                        name: l.name.clone(),
+                        ..d()
+                    },
+                ),
+                (
+                    "value",
+                    deid::LabItem {
+                        value: l.value.clone(),
+                        ..d()
+                    },
+                ),
+                (
+                    "unit",
+                    deid::LabItem {
+                        unit: l.unit.clone(),
+                        ..d()
+                    },
+                ),
+                (
+                    "ref_low",
+                    deid::LabItem {
+                        ref_low: l.ref_low.clone(),
+                        ..d()
+                    },
+                ),
+                (
+                    "ref_high",
+                    deid::LabItem {
+                        ref_high: l.ref_high.clone(),
+                        ..d()
+                    },
+                ),
+                (
+                    "flag",
+                    deid::LabItem {
+                        flag: l.flag.clone(),
+                        ..d()
+                    },
+                ),
+            ];
+            let bad: Vec<&str> = probes
+                .into_iter()
+                .filter(|(_, one)| fails(one.clone()))
+                .map(|(n, _)| n)
+                .collect();
+            println!(
+                "WHY\t{doc}\t{}\t{} | {} | {} | {}-{} | {}",
+                bad.join(","),
+                l.name,
+                l.value,
+                l.unit,
+                l.ref_low,
+                l.ref_high,
+                l.flag
+            );
+        }
+        // 还有待核行的文档,把**校验真正比对的那份原文**(脱敏后的)一起打出来:
+        // 手看「为什么还待核」时,看 arm2 的原始 OCR 文本会漏掉一整类原因 ——
+        // 脱敏层把某些串涂了(日期偏移、疑似证件号),值自然就对不上了。
+        if !pending_rows.is_empty() {
+            for line in red.text.lines() {
+                println!("RED\t{doc}\t{line}");
+            }
+        }
+        std::fs::write(new_dir.join(format!("{doc}.txt")), rows)?;
+    }
+
+    let pct = |a: usize, b: usize| {
+        if b == 0 {
+            0.0
+        } else {
+            a as f64 / b as f64 * 100.0
+        }
+    };
+    eprintln!(
+        "重算 {docs} 份(JSON 不合法 {parse_failed},缺 OCR 文本 {no_ocr}):\
+         labs {labs} 条;待核 {before} → {after}({:.1}% → {:.1}%);\
+         新放行 {released} 行,收回 {withdrawn} 行",
+        pct(before, labs),
+        pct(after, labs),
+    );
+    eprintln!("新的一列写在 {}", new_dir.display());
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let arg = |k: &str| {
@@ -386,6 +601,11 @@ fn main() -> Result<()> {
     };
     let limit: Option<usize> = arg("--limit").and_then(|s| s.parse().ok());
     let out = arg("--out").unwrap_or_else(|| "out".into());
+
+    // 离线重算:只读盘,不要 key,也不该被误当成"又跑了一轮"。
+    if args.iter().any(|a| a == "--reverify") {
+        return reverify(&root(), &out);
+    }
 
     // 提前失败,别跑到一半才发现 key 没设——绝不打印 key 本身,连报错信息里都不带。
     let key = std::env::var("DEEPSEEK_API_KEY")
@@ -411,14 +631,8 @@ fn main() -> Result<()> {
         docs.truncate(n);
     }
 
-    // MedRepBench 已去标识,没有真实身份信息可填 K 层;给一个绝不会出现在报告图
-    // 里的占位名,让 K 层照常跑(no-op)、A/P 两层正常生效——测的是脱敏管线本身,
-    // 不是找不到身份信息就绕过它。
-    let known = KnownIdentity {
-        name: "＿评测占位＿".into(),
-        id_number: None,
-        phone: None,
-    };
+    // 测的是脱敏管线本身,不是找不到身份信息就绕过它。占位名见 `eval_known`。
+    let known = eval_known();
 
     // ② 几何重建(基线臂)的产出目录。见 process_doc 里写入处的注释:与
     // `medrep --produce` 的 arm2 逐字同源,顺手落盘省一遍全库 OCR。
