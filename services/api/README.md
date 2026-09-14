@@ -37,6 +37,7 @@ HMAC 哈希存储,验证码只以哈希存储并带次数上限与过期时间�
    | `OSS_BUCKET` | `medme-vault`(后续同步任务用) |
    | `OSS_ENDPOINT` | 如 `oss-cn-hangzhou.aliyuncs.com` |
    | `DEEPSEEK_API_KEY` | 后续 LLM 代理任务用 |
+   | `DEEPSEEK_MODEL_TEXT` / `DEEPSEEK_MODEL_VISION` | 模型名,默认 `deepseek-flash`;不绑死,换模型只改环境变量 |
    | `MEDME_EXTRACT_TOKEN` | 可选,子项目 A 评测期的静态 token,与 claim-signer 的 `MEDME_UPLOAD_TOKEN` 同一模式 |
    | `EXTRACT_MONTHLY_TOKEN_CAP` | 可选,`/v1/extract` 每账号每月 LLM token(in+out)上限,默认 `2000000`;超过返回 429。单次请求的体积上限是代码里的常量(文本 64 KiB / 图片 base64 2 MiB),不走环境变量 |
    | `OTP_DRY_RUN` | 可选,测试/联调用,设了就不真发短信、验证码固定 `000000` —— **绝不能在生产设置** |

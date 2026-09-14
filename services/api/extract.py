@@ -2,8 +2,8 @@
 import json, os, urllib.request
 
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE", "https://api.deepseek.com/v1")
-MODEL_TEXT = "deepseek-flash"
-MODEL_VISION = "deepseek-flash"
+MODEL_TEXT = os.environ.get("DEEPSEEK_MODEL_TEXT", "deepseek-flash")
+MODEL_VISION = os.environ.get("DEEPSEEK_MODEL_VISION", "deepseek-flash")
 
 # 输出 schema v1 逐字来自 spec A §3;子项目 A 负责调 prompt 措辞,schema 字段不改。
 SYSTEM_PROMPT_V1 = """你是医疗单据结构化助手。只输出一个 JSON 对象,不要任何解释。所有字符串必须是输入原文的逐字子串;不确定的留空字符串,绝不推断或补全。
