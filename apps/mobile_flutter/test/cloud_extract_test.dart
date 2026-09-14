@@ -38,6 +38,10 @@ Future<Profile> _currentProfile() async {
   return ProfileManager.instance.current;
 }
 
+/// 「落库那一刻的箱子」。默认 `readCurrentVaultRoot` 仍是 FRB 那个(host 上必抛),
+/// 所以这个值只在**显式注入** reader 的那几条用例里才真的被比较。
+const _root = '/docs/profiles/p-1/vault';
+
 void main() {
   // 同 api_client_test.dart:测试 binding 会装一个假的 HttpOverrides,装上之后
   // 回环服务器收不到任何请求,所以初始化完立刻摘掉。
@@ -49,6 +53,11 @@ void main() {
   // 用例的 zone 里推进,下一个用例就会干等到超时(见 `resetVaultQueueForTest`)。
   setUp(resetVaultQueueForTest);
   tearDown(resetVaultQueueForTest);
+
+  // 「箱子还是不是导入时那个」这道核对要问 Rust(host 上必抛),只有注入才钉得住。
+  // 谁注入谁负责还回去,别漏给下一个用例。
+  final realRootReader = readCurrentVaultRoot;
+  tearDown(() => readCurrentVaultRoot = realRootReader);
 
   group('postExtract', () {
     late HttpServer server;
@@ -183,9 +192,9 @@ void main() {
       final before = vaultRevision.value;
       final me = await _currentProfile();
       await runCloudExtractions([
-        (outcome: _stored(1), ocr: const OcrResult('a', 0.9), profile: me),
-        (outcome: _stored(2), ocr: const OcrResult('b', 0.9), profile: me),
-        (outcome: _stored(3), ocr: const OcrResult('c', 0.9), profile: me),
+        (outcome: _stored(1), ocr: const OcrResult('a', 0.9), profile: me, vaultRoot: _root),
+        (outcome: _stored(2), ocr: const OcrResult('b', 0.9), profile: me, vaultRoot: _root),
+        (outcome: _stored(3), ocr: const OcrResult('c', 0.9), profile: me, vaultRoot: _root),
       ]);
       expect(vaultRevision.value, before, reason: '没有新结果就没有要刷新的东西');
     });
@@ -231,6 +240,7 @@ void main() {
         _stored(11, detectedName: '张建国'),
         const OcrResult('白细胞 5.6', 0.9),
         profile: await _currentProfile(),
+        vaultRoot: _root,
         api: api,
       );
       expect(r, isNull, reason: '不抛,只是没有云抽取结果');
@@ -241,8 +251,8 @@ void main() {
       final before = vaultRevision.value;
       final me = await _currentProfile();
       await runCloudExtractions([
-        (outcome: _stored(12), ocr: const OcrResult('a', 0.9), profile: me),
-        (outcome: _stored(13), ocr: const OcrResult('b', 0.9), profile: me),
+        (outcome: _stored(12), ocr: const OcrResult('a', 0.9), profile: me, vaultRoot: _root),
+        (outcome: _stored(13), ocr: const OcrResult('b', 0.9), profile: me, vaultRoot: _root),
       ]);
       expect(vaultRevision.value, before);
       expect(hits, 0);
@@ -271,6 +281,7 @@ void main() {
         ImportOutcomeDto(name: 'a.jpg', sourceFileId: 1, status: 'duplicate', pagesWithoutText: _noPages),
         ocr,
         profile: await _currentProfile(),
+        vaultRoot: _root,
       );
       expect(r, isNull);
     });
@@ -282,6 +293,7 @@ void main() {
         ImportOutcomeDto(name: 'a.jpg', sourceFileId: 1, status: 'stored', documentId: 7, pagesWithoutText: _noPages),
         ocr,
         profile: await _currentProfile(),
+        vaultRoot: _root,
       );
       expect(r, isNull);
     });
@@ -291,6 +303,7 @@ void main() {
         _stored(9),
         ocr,
         profile: const Profile(id: 'p-x', name: '张建国'),
+        vaultRoot: _root,
       );
       expect(r, isNull);
     });
@@ -332,7 +345,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'cloud_extract_enabled': false});
       final before = vaultRevision.value;
       await runCloudExtractions([
-        (outcome: _stored(21, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile()),
+        (outcome: _stored(21, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile(), vaultRoot: _root),
       ]);
       expect(captured, isEmpty, reason: '开关关了在 runCloudExtractions 入口就该返回,压根没进到每一份的处理里');
       expect(vaultRevision.value, before, reason: '没跑就没有新结果,文档保持导入时落盘的样子');
@@ -341,7 +354,7 @@ void main() {
     test('开着(cloud_extract_enabled=true)→ 这份文档照旧被送进 runCloudExtraction(老行为不变)', () async {
       SharedPreferences.setMockInitialValues({'cloud_extract_enabled': true});
       await runCloudExtractions([
-        (outcome: _stored(22, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile()),
+        (outcome: _stored(22, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile(), vaultRoot: _root),
       ]);
       expect(captured, isNotEmpty, reason: '开关开着,新加的这道门不该拦下原来就会跑的那条路');
       expect(captured.single, contains('文档 22 退回本地正则'));
@@ -351,7 +364,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       expect(await loadCloudExtractEnabled(), isTrue);
       await runCloudExtractions([
-        (outcome: _stored(23, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile()),
+        (outcome: _stored(23, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: await _currentProfile(), vaultRoot: _root),
       ]);
       expect(captured, isNotEmpty);
     });
@@ -373,8 +386,8 @@ void main() {
         }
       };
       await runCloudExtractions([
-        (outcome: _stored(26, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: me),
-        (outcome: _stored(27, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: me),
+        (outcome: _stored(26, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: me, vaultRoot: _root),
+        (outcome: _stored(27, detectedName: '张建国'), ocr: const OcrResult('白细胞 5.6', 0.9), profile: me, vaultRoot: _root),
       ]);
       expect(captured.where((m) => m!.contains('文档 26')), hasLength(1), reason: '第一份照常跑');
       expect(
@@ -440,6 +453,7 @@ void main() {
         _stored(31, detectedName: '张建国'),
         const OcrResult('白细胞 5.6', 0.9),
         profile: captured0,
+        vaultRoot: _root,
       );
       expect(r, isNull);
       expect(
@@ -457,12 +471,50 @@ void main() {
       final me = await _currentProfile();
       final stale = const Profile(id: 'p-已经不是当前', name: '张建国', secretHex: 'ab');
       await runCloudExtractions([
-        (outcome: _stored(32, detectedName: '张建国'), ocr: const OcrResult('a', 0.9), profile: me),
-        (outcome: _stored(33, detectedName: '张建国'), ocr: const OcrResult('b', 0.9), profile: stale),
+        (outcome: _stored(32, detectedName: '张建国'), ocr: const OcrResult('a', 0.9), profile: me, vaultRoot: _root),
+        (outcome: _stored(33, detectedName: '张建国'), ocr: const OcrResult('b', 0.9), profile: stale, vaultRoot: _root),
       ]);
       expect(captured.any((m) => m!.contains('文档 32')), isTrue, reason: '当前成员那份照常跑');
       expect(captured.any((m) => m!.contains('文档 33')), isFalse, reason: '对不上的那份连网络都不用跑');
       expect(captured.last, contains('成员已切换,跳过 1 份'));
+    });
+
+    /// 复审 round 2(Important):只比成员 id 还留着一扇门 —— `openProxyPatientVault`
+    /// (医生代拍)换掉的是进程级 vault,**根本不碰 `ProfileManager`**;A→B→A
+    /// 连切两次同理。患者模式导入 → 后台抽取跑着 → 医生切去代拍开始采集,排在队列里
+    /// 的 prepare 就会打在**病人的箱子**上(`documentId` 是各库自增 rowid)。
+    test('成员没变但箱子被换掉(代拍)→ 不碰 vault', () async {
+      final me = await _currentProfile();
+      readCurrentVaultRoot = () async => '/docs/proxy/patient-7/vault';
+
+      final r = await runCloudExtraction(
+        _stored(34, detectedName: '张建国'),
+        const OcrResult('白细胞 5.6', 0.9),
+        profile: me,
+        vaultRoot: _root,
+      );
+      expect(r, isNull);
+      expect(captured.single, contains('保险箱已不是导入时那个'));
+      expect(captured.single, contains('跳过文档 34'));
+      expect(
+        captured.any((m) => m!.contains('退回本地正则')),
+        isFalse,
+        reason: '连 FRB 都没调:被队列里那道核对挡在动手之前',
+      );
+    });
+
+    test('箱子没换 → 这道新核对不拦原来就会跑的那条路', () async {
+      final me = await _currentProfile();
+      readCurrentVaultRoot = () async => _root;
+
+      final r = await runCloudExtraction(
+        _stored(35, detectedName: '张建国'),
+        const OcrResult('白细胞 5.6', 0.9),
+        profile: me,
+        vaultRoot: _root,
+      );
+      expect(r, isNull, reason: 'host 上没有 Rust 库,prepare 照样抛');
+      expect(captured.single, contains('文档 35 退回本地正则'), reason: '走到了 FRB 那一步');
     });
   });
 }

@@ -14,7 +14,7 @@ library;
 
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mobile_flutter/account.dart';
@@ -113,20 +113,33 @@ Future<Map<String, dynamic>> postExtract(
 );
 
 /// 排队等云抽取的一份文档:落库结果 + 它**当次**的 OCR 结果(涂黑要用其中的
-/// `bytes`/`lines`,拿不到第二次)+ **落库时的那个成员**。
+/// `bytes`/`lines`,拿不到第二次)+ **落库时的那个成员和那个箱子**。
 ///
-/// [profile] 不是冗余信息:`outcome.documentId` 是**每个 vault 各自自增的 rowid**,
-/// 而 Rust 侧的 vault 是进程级单例。整批抽取要跑好几分钟(每份一次 LLM 往返,最长
-/// 90 秒),这中间用户切一次成员,同一个 id 就指向**另一个成员库里同号的文档** ——
-/// prepare 会拿新成员的 OCR 原文配旧成员的 knownName 脱敏后发出去,commit 把结果
-/// 写进新成员的库。所以捕获的这一份身份要一路带到 prepare/commit 前核对
-/// (见 [runCloudExtraction] 里的 `_ifStillCurrent`),脱敏用的姓名和日期偏移
-/// 秘密也一律取自它,不再重读「当前成员」。
+/// [profile] 与 [vaultRoot] 都不是冗余信息:`outcome.documentId` 是**每个 vault
+/// 各自自增的 rowid**,而 Rust 侧的 vault 是进程级单例。整批抽取要跑好几分钟
+/// (每份一次 LLM 往返,最长 90 秒),这中间箱子被换掉,同一个 id 就指向**另一个
+/// 库里同号的文档** —— prepare 会拿那个库的 OCR 原文配这份的 knownName 脱敏后发
+/// 出去,commit 也写进那个库。
+///
+/// 两个字段各挡一类换箱:
+/// * [profile] —— 用户切成员(`switchProfileAndReopen`)。脱敏用的姓名和日期偏移
+///   秘密也一律取自它,不再重读「当前成员」。
+/// * [vaultRoot] —— **成员没变、箱子却变了**:`openProxyPatientVault`
+///   (医生代拍)开的是病人的箱子,根本不碰 `ProfileManager`;A→B→A 连切两次也
+///   会让「当前成员 id」假通过。唯一能分辨的办法是问 Rust 自己此刻开着的是哪个
+///   根目录(同 `SyncEngine._assertVaultMatches` / `ensureProxyVaultOpen`)。
 typedef PendingCloudExtraction = ({
   ImportOutcomeDto outcome,
   OcrResult ocr,
   Profile profile,
+  String vaultRoot,
 });
+
+/// 「此刻进程里开着的是哪个箱子」。**只给测试注入**:host 上没有 Rust 库,
+/// `currentVaultRoot` 一调就抛,「箱子被换掉了」这条路径否则钉不住。
+/// 生产里永远是 FRB 那个。
+@visibleForTesting
+Future<String> Function() readCurrentVaultRoot = rust_vault.currentVaultRoot;
 
 /// 把这一批排队的文档逐份跑完。**导入流程不等它**(`unawaited`),用户点完
 /// 「完成」就走人,结果自己回来。
@@ -153,15 +166,21 @@ Future<void> runCloudExtractions(List<PendingCloudExtraction> pending) async {
       skipped++;
       continue;
     }
-    if (await runCloudExtraction(p.outcome, p.ocr, profile: p.profile) != null) {
+    if (await runCloudExtraction(
+          p.outcome,
+          p.ocr,
+          profile: p.profile,
+          vaultRoot: p.vaultRoot,
+        ) !=
+        null) {
       bumpVaultRevision();
     }
   }
   if (skipped > 0) debugPrint('[cloud-extract] 成员已切换,跳过 $skipped 份');
 }
 
-/// 只在「当前成员仍是捕获时那个」的前提下,把 [action] 排进 **vault 队列**跑。
-/// 切走了就返回 null,一个字节都不碰那个箱子。
+/// 只在「箱子还是导入时那个」的前提下,把 [action] 排进 **vault 队列**跑。
+/// 换掉了就返回 null,一个字节都不碰那个箱子。
 ///
 /// 两件事缺一不可:
 /// * **排队**([runSerialized]):开箱(切成员/同步/代拍)也走这条 FIFO,排进去
@@ -169,12 +188,17 @@ Future<void> runCloudExtractions(List<PendingCloudExtraction> pending) async {
 /// * **核对**:队列只保证顺序,不保证"箱子没变过"——身份得自己再看一眼。
 ///   同 `SyncEngine._assertVaultMatches` 的思路。
 ///
+/// 核对**两层**,少一层都留着门(见 [PendingCloudExtraction] 的两个字段):先比成员
+/// id(纯内存,便宜),再问 Rust 此刻开着的根目录是不是捕获的那个 —— 代拍开箱不碰
+/// `ProfileManager`,只比成员 id 会假通过。
+///
 /// 网络往返**留在队列外**:一次 LLM 最长 90 秒,塞进 vault 队列会把开箱、同步、
 /// 代拍统统堵住。所以 prepare 和 commit 各排一次,中间那趟自己在外面跑。
 ///
 /// ⚠️ 不可重入:`runSerialized` 里不许再排队,所以 [action] 必须是直接的 FRB 调用。
 Future<T?> _ifStillCurrent<T>(
   Profile captured,
+  String capturedVaultRoot,
   int docId,
   Future<T> Function() action,
 ) => runSerialized(() async {
@@ -184,6 +208,12 @@ Future<T?> _ifStillCurrent<T>(
     debugPrint('[cloud-extract] 成员已从 ${captured.id} 切到 $now,跳过文档 $docId');
     return null;
   }
+  // 路径不进日志:里面有成员 / 代拍病人的 id 和沙盒路径,而"换没换"这一个事实
+  // 就够定位了。
+  if (await readCurrentVaultRoot() != capturedVaultRoot) {
+    debugPrint('[cloud-extract] 保险箱已不是导入时那个(代拍/连切两次),跳过文档 $docId');
+    return null;
+  }
   return action();
 });
 
@@ -191,13 +221,15 @@ Future<T?> _ifStillCurrent<T>(
 /// null**,调用方不必处理失败——摘要退回本地正则,导入结果不变。
 ///
 /// [ocr] 必须是这份文档**当次**的 OCR 结果(涂黑要用它的 `bytes`/`lines`);
-/// [profile] 是**落库那一刻的成员**(见 [PendingCloudExtraction]),脱敏用的姓名、
-/// 日期偏移秘密、以及动 vault 之前的身份核对全都认它,过程中一次都不重读「当前
-/// 成员」;[api] 只给测试注入,生产留空走当前账号会话。
+/// [profile] 与 [vaultRoot] 是**落库那一刻的成员和箱子**(见
+/// [PendingCloudExtraction]),脱敏用的姓名、日期偏移秘密、以及动 vault 之前的身份
+/// 核对全都认它们,过程中一次都不重读「当前成员」;[api] 只给测试注入,生产留空走
+/// 当前账号会话。
 Future<CloudExtractionResultDto?> runCloudExtraction(
   ImportOutcomeDto outcome,
   OcrResult ocr, {
   required Profile profile,
+  required String vaultRoot,
   ApiClient? api,
 }) async {
   final docId = outcome.documentId;
@@ -227,6 +259,7 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
     // 层按锚点和模式兜。哪天真有了这两项,补在这两个参数上即可。
     final req = await _ifStillCurrent(
       profile,
+      vaultRoot,
       docId,
       () => rust_vault.vaultCloudPrepareExtraction(
         documentId: docId,
@@ -267,6 +300,7 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
     // 那次逐字相同,否则占位符编号对不上、校验就不诚实了。
     return await _ifStillCurrent(
       profile,
+      vaultRoot,
       docId,
       () => rust_vault.vaultCloudCommitExtraction(
         documentId: docId,

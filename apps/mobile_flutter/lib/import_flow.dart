@@ -700,13 +700,15 @@ Future<ImportRunResult> _runImport(
         // 云抽取只在这里**排队**,不在循环里跑 —— 见下面 `pendingExtractions`
         // 的声明。ocr 要整份带走(涂黑用它的 bytes/lines,拿不到第二次)。
         if (outcome.documentId != null) {
-          // 连**落库时的成员**一起排队:`documentId` 是这个库自增的 rowid,抽取
-          // 跑到一半用户切了成员,同一个 id 就指向别人库里的另一份文档
+          // 连**落库时的成员和箱子**一起排队:`documentId` 是这个库自增的 rowid,
+          // 抽取跑到一半箱子被换掉(用户切成员,或者医生切去代拍 —— 后者压根
+          // 不碰 `ProfileManager`),同一个 id 就指向别的库里的另一份文档
           // (见 [PendingCloudExtraction])。
           pendingExtractions.add((
             outcome: outcome,
             ocr: ocr,
             profile: ProfileManager.instance.current,
+            vaultRoot: await currentVaultRoot(),
           ));
         }
       } else {
