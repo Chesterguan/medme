@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
@@ -175,6 +176,66 @@ void main() {
       final before = vaultRevision.value;
       await runCloudExtractions([]);
       expect(vaultRevision.value, before);
+    });
+  });
+
+  // 三态里剩下的两条(memory `test-all-three-states`)。真机上这两条分别是「闸拒发」
+  // 和「云不可用」;host 上没有 Rust 库,`vault_cloud_*` 一律抛 —— 而**闸拒发走的就是
+  // 同一条 catch**(`vault.rs` 的 `assert_clean` 失败是 `bail!`,到 Dart 是异常),
+  // 所以这里钉住的是那条 catch 真的在、且在它之前一个字节都没发出去。
+  group('三态:云不可用 / 闸拒发', () {
+    late HttpServer server;
+    late ApiClient api;
+    late int hits;
+
+    setUp(() async {
+      hits = 0;
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      api = ApiClient(base: 'http://127.0.0.1:${server.port}', bearer: () async => 'tok');
+      server.listen((req) async {
+        hits++;
+        req.response.statusCode = 500;
+        req.response.write('{"detail":"boom"}');
+        await req.response.close();
+      });
+      // ensureLoaded 要落盘 profiles.json;不 mock 的话会在 FRB 之前就炸,
+      // 那样这条测试钉的就不是我们想钉的东西了。
+      final support = await Directory.systemTemp.createTemp('medme-cloud-extract-test');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (call) async => support.path,
+      );
+    });
+    tearDown(() => server.close(force: true));
+
+    test('闸拒发 / FRB 不可用 → null,而且一个请求都没发出去', () async {
+      final r = await runCloudExtraction(_stored(11, detectedName: '张建国'), const OcrResult('白细胞 5.6', 0.9), api: api);
+      expect(r, isNull, reason: '不抛,只是没有云抽取结果');
+      expect(hits, 0, reason: '拒发就是拒发:prepare 没过,代理那一步压根不该发生');
+    });
+
+    test('整批里有一份拒发,后面的照样跑完,也不 bump', () async {
+      final before = vaultRevision.value;
+      await runCloudExtractions([
+        (outcome: _stored(12), ocr: const OcrResult('a', 0.9)),
+        (outcome: _stored(13), ocr: const OcrResult('b', 0.9)),
+      ]);
+      expect(vaultRevision.value, before);
+      expect(hits, 0);
+    });
+
+    test('本机先量体积:两条上限与服务端 app.py 的那两个数一致', () {
+      // 量错了就是白跑一趟上行换一个 413(手机上那是用户的流量和等待时间)。
+      expect(extractTextMaxBytes, 64 * 1024);
+      expect(extractImageMaxBytes, 2 * 1024 * 1024);
+    });
+
+    test('云不可用(服务端 500)→ postExtract 抛 ApiFailed,由上面那条 catch 吞掉', () async {
+      await expectLater(
+        postExtract(api, mode: 'text', payload: 'x'),
+        throwsA(isA<ApiFailed>()),
+      );
+      expect(hits, 1);
     });
   });
 

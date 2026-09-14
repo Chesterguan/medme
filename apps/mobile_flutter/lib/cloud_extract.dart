@@ -29,6 +29,11 @@ import 'package:mobile_flutter/vault_events.dart';
 /// 白跑一趟几百 KB 的上行——而这一趟在手机上是用户流量和等待时间。
 const int extractImageMaxBytes = 2 * 1024 * 1024;
 
+/// 同上,文本档那条(`EXTRACT_TEXT_MAX_BYTES`,按 UTF-8 字节算)。超了没有别的办法
+/// ——**不能截断**:`deid::verify` 认的是"原文逐字",截一半只会让整份都过不了校验。
+/// 所以直接不发,退回正则。
+const int extractTextMaxBytes = 64 * 1024;
+
 /// 抽取用的空闲超时(见 [ApiClient.timeout])。服务端自己等 DeepSeek 的上游超时是
 /// 60 秒(`services/api/extract.py` 的 `urlopen(..., timeout=60)`),所以这边必须比
 /// 它宽,否则模型还在想、我们先把请求掐了,每次抽取都"失败"退回正则。
@@ -166,12 +171,14 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
       }
     }
     final mode = redacted == null ? 'text' : 'image';
+    final payload = redacted ?? req.payloadText;
+    // 图片档在涂黑那一步已经量过;文本档在这里量。超限的话服务端一律 413
+    // (`app.py` 的 `_MAX_BYTES` 两条),白跑一趟上行。
+    if (mode == 'text' && utf8.encode(payload).length > extractTextMaxBytes) {
+      return null;
+    }
 
-    final result = await postExtract(
-      client,
-      mode: mode,
-      payload: redacted ?? req.payloadText,
-    );
+    final result = await postExtract(client, mode: mode, payload: payload);
     // 校验基准由 Rust 侧自己重算(不信这里传的任何文本),身份参数必须与 prepare
     // 那次逐字相同,否则占位符编号对不上、校验就不诚实了。
     return await rust_vault.vaultCloudCommitExtraction(
@@ -185,7 +192,10 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
       knownName: knownName,
     );
   } catch (e) {
-    // ⚠️ 只进本地 debug 日志,不进埋点:异常消息里可能带文档内容片段。
+    // ⚠️ **绝不进埋点**(异常文本可能带文档内容片段)。`debugPrint` 在 release 里
+    // 并不会被剥离,一样会进系统日志 —— 这里打印的东西必须自己就是安全的:闸的错误
+    // 只报类别不回显身份(`deid/gate.rs` 有测试钉),网络/解析异常带的是**脱敏后**的
+    // 响应片段。要往这行里加内容的话,先确认新加的东西也满足这一条。
     debugPrint('[cloud-extract] 文档 $docId 退回本地正则:$e');
     return null;
   }
