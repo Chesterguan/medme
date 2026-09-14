@@ -34,10 +34,9 @@ const int extractImageMaxBytes = 2 * 1024 * 1024;
 /// 它宽,否则模型还在想、我们先把请求掐了,每次抽取都"失败"退回正则。
 const Duration extractTimeout = Duration(seconds: 90);
 
-/// 落盘记的模型版本。服务端不回报实际用的模型(`/v1/extract` 只返回抽取结果),
-/// 这里记的是 `services/api/extract.py` 的 `DEEPSEEK_MODEL_TEXT`/`_VISION` 默认值;
-/// 运维把那个环境变量改成别的模型时,这个字符串会**说谎**——真要准确得让代理把模型
-/// 名回在响应里,那是服务端的改动(不在本任务范围)。
+/// 落盘记的模型版本**兜底值**。正常路径上用的是服务端在响应里回的 `model`
+/// (`services/api/extract.py` 的 `run()`,那才是真正跑这次抽取的模型);老版本
+/// 服务端不回这个字段时退到这里,值是那两个环境变量的默认值。
 const String extractModelVersion = 'deepseek-flash';
 
 /// 这次能不能走**图片档**(把涂黑后的图发出去),生产默认就是它。
@@ -72,22 +71,20 @@ String knownNameFor(ImportOutcomeDto outcome, Profile profile) {
   return detected.isNotEmpty ? detected : profile.name;
 }
 
-/// 把一份**已经脱敏**的 payload 发给代理,返回 LLM 的抽取结果 JSON 字符串。
+/// 把一份**已经脱敏**的 payload 发给代理,返回响应体原样。
 ///
-/// `/v1/extract` 直接返回抽取结果对象本身(`services/api/extract.py` 的
-/// `run()` 返回 `parsed`),所以这里原样再编回字符串交给
-/// `vault_cloud_commit_extraction` 校验——Dart 不解读、不改写其中任何一个字段。
-Future<String> postExtract(
+/// `/v1/extract` 直接返回抽取结果对象本身(`services/api/extract.py` 的 `run()`
+/// 返回 `parsed`),外加一个 `model`(这次真正用的模型名)。Dart **不解读、不改写**
+/// 其中任何一个字段:`model` 拿去当落盘的模型版本,其余原样 `jsonEncode` 交给
+/// `vault_cloud_commit_extraction` 校验。
+Future<Map<String, dynamic>> postExtract(
   ApiClient api, {
   required String mode,
   required String payload,
-}) async {
-  final result = await api.postJson(
-    '/v1/extract',
-    {'mode': mode, 'schema': 1, 'payload': payload},
-  );
-  return jsonEncode(result);
-}
+}) => api.postJson(
+  '/v1/extract',
+  {'mode': mode, 'schema': 1, 'payload': payload},
+);
 
 /// 排队等云抽取的一份文档:落库结果 + 它**当次**的 OCR 结果(涂黑要用其中的
 /// `bytes`/`lines`,拿不到第二次)。
@@ -168,7 +165,7 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
     }
     final mode = redacted == null ? 'text' : 'image';
 
-    final llmJson = await postExtract(
+    final result = await postExtract(
       client,
       mode: mode,
       payload: redacted ?? req.payloadText,
@@ -178,8 +175,10 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
     return await rust_vault.vaultCloudCommitExtraction(
       documentId: docId,
       mode: mode,
-      modelVersion: extractModelVersion,
-      llmJson: llmJson,
+      // 这次真正跑抽取的模型由服务端说了算(环境变量,运维随时能换);老版本
+      // 服务端不回这个字段时才退到本地兜底值。
+      modelVersion: (result['model'] as String?) ?? extractModelVersion,
+      llmJson: jsonEncode(result),
       restoreMapJson: req.restoreMapJson,
       knownName: knownName,
     );

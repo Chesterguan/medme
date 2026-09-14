@@ -59,4 +59,13 @@ def run(body: dict) -> tuple[dict, int, int]:
         parsed = json.loads(text)
     except Exception as e:  # 上游 HTTP 失败 / 返回形状不对 / 内容不是合法 JSON,统统算上游的错
         raise UpstreamError("upstream") from e
+    # 实际用的模型名回给客户端。抽取结果要连模型版本一起落进保险箱(溯源:这条结果
+    # 是谁抽的),而那个名字只有这里知道 —— MODEL_TEXT/MODEL_VISION 都是环境变量,
+    # 运维随时能换,客户端硬编码一个默认值就是在溯源上说谎。
+    # 多出来的这个 key 不会进保险箱:`deid::verify` 的结构体没有 deny_unknown_fields,
+    # 落盘的 result_json 是由校验后的 extraction 重新序列化出来的。
+    # 上游吐出来的 JSON 不是对象(数组/字面量)时不硬塞 —— 那本来就是坏数据,
+    # 客户端的 commit 会拒,别在这儿多炸一个 500。
+    if isinstance(parsed, dict):
+        parsed["model"] = model
     return parsed, int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))

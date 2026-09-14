@@ -49,11 +49,13 @@ void main() {
           'body': jsonDecode(await utf8.decodeStream(req)),
         });
         req.response.headers.contentType = ContentType.json;
-        // `/v1/extract` 直接回抽取结果对象本身(services/api/extract.py 的 run())。
+        // `/v1/extract` 直接回抽取结果对象本身 + 这次真正用的模型名
+        // (services/api/extract.py 的 run())。
         req.response.write(jsonEncode({
           'labs': [
             {'name': '白细胞', 'value': '5.6'},
           ],
+          'model': 'deepseek-vision-y',
         }));
         await req.response.close();
       });
@@ -70,15 +72,26 @@ void main() {
       });
     });
 
-    test('返回的是抽取结果 JSON 字符串,原样不改写', () async {
+    test('返回响应体原样,一个字段都不改写', () async {
       final out = await postExtract(api, mode: 'image', payload: 'AAAA');
-      // commit 要的是字符串;Dart 不解读其中任何字段,只是编回去。
-      expect(jsonDecode(out), {
+      expect(out, {
         'labs': [
           {'name': '白细胞', 'value': '5.6'},
         ],
+        'model': 'deepseek-vision-y',
       });
       expect((seen.single['body'] as Map)['mode'], 'image');
+    });
+
+    // 落盘的模型版本必须是**服务端说的那个**:模型名是环境变量,运维随时能换,
+    // 客户端硬编码一个默认值就是在结果溯源上说谎。
+    test('模型版本取服务端回的 model;没有这个字段才退兜底值', () async {
+      final out = await postExtract(api, mode: 'text', payload: 'x');
+      expect(out['model'], 'deepseek-vision-y');
+      expect(out['model'], isNot(extractModelVersion), reason: '不是兜底值,是服务端说的那个');
+      // 老版本服务端不回 model 时的表达式(与 runCloudExtraction 里那行同形)。
+      const noModel = <String, dynamic>{'labs': []};
+      expect((noModel['model'] as String?) ?? extractModelVersion, extractModelVersion);
     });
   });
 

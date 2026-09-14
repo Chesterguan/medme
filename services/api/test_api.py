@@ -738,6 +738,21 @@ def test_extract_proxies_and_counts_tokens(monkeypatch):
     assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers={"Authorization": "Bearer dev-token"}).status_code == 200
 
 
+def test_extract_response_carries_the_model_actually_used(monkeypatch):
+    """客户端要把模型版本连同抽取结果一起落进保险箱(溯源)。模型名只有服务端知道
+    (环境变量,运维随时能换),所以必须回在响应里 —— 客户端硬编码一个默认值就是
+    在溯源上说谎。文本档和图片档各走一个环境变量,两条都要回对。"""
+    import extract
+    monkeypatch.setattr(extract, "MODEL_TEXT", "deepseek-text-x")
+    monkeypatch.setattr(extract, "MODEL_VISION", "deepseek-vision-y")
+    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {
+        "choices": [{"message": {"content": '{"doc_type":"lab","labs":[]}'}}], "usage": {}})
+    a = login("13800000061", "a")
+    h = _h(a["access"])
+    assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers=h).json()["model"] == "deepseek-text-x"
+    assert client.post("/v1/extract", json={"mode": "image", "schema": 1, "payload": "AAAA"}, headers=h).json()["model"] == "deepseek-vision-y"
+
+
 def test_extract_dev_token_scoped_cannot_touch_profiles():
     os.environ["MEDME_EXTRACT_TOKEN"] = "dev-token-scope"
     hdev = {"Authorization": "Bearer dev-token-scope"}
