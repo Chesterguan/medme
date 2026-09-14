@@ -54,6 +54,23 @@ bool canRedactImage(OcrResult ocr) =>
     ocr.frameW > 0 &&
     ocr.frameH > 0;
 
+/// 脱敏的 K 层和发送前那道终闸(`deid::assert_clean`)要认的名字。
+///
+/// **是化验单上印的那个名字,不是成员标签。** 成员名是用户给档案起的标签:默认就是
+/// 一个字的「我」(`ProfileManager.defaultMemberName`),而 `deid/gate.rs` 要求
+/// `chars().count() >= 2` —— 传「我」进去等于整条姓名闸空转;家里叫「爸爸」的成员
+/// 同理,闸检的是「爸爸」,纸上印的是「张建国」。
+///
+/// [ImportOutcomeDto.detectedName] 是 `parser::extract_demographics` 从这份报告文本
+/// 里抽出来的患者姓名,就在手边。抽不到才退回成员名(总比什么都不给强)。
+///
+/// ⚠️ prepare 和 commit **必须拿到同一个值**:commit 那边要用同样的已知身份重算校验
+/// 基准,身份不一致 → 占位符编号对不上 → 校验不诚实(见 `vault.rs` 那段长注释)。
+String knownNameFor(ImportOutcomeDto outcome, Profile profile) {
+  final detected = outcome.detectedName?.trim() ?? '';
+  return detected.isNotEmpty ? detected : profile.name;
+}
+
 /// 把一份**已经脱敏**的 payload 发给代理,返回 LLM 的抽取结果 JSON 字符串。
 ///
 /// `/v1/extract` 直接返回抽取结果对象本身(`services/api/extract.py` 的
@@ -95,6 +112,9 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
     // 秘密缺了就没有稳定的日期偏移(`ensureLoaded` 会补,这里只是不赌)。
     if (p.secretHex.isEmpty) return null;
 
+    // 一个值,prepare 和 commit 共用(见 [knownNameFor] 的 ⚠️)。
+    final knownName = knownNameFor(outcome, p);
+
     final image = canRedactImage(ocr);
     // **一次 prepare 供两条臂用**:`payload_text` 与 `lines` 无关,`lines` 只影响
     // `paint`。所以图片档中途退回文本档时,直接用这次的 `payload_text` 即可——它与
@@ -106,7 +126,7 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
     final req = await rust_vault.vaultCloudPrepareExtraction(
       documentId: docId,
       lines: image ? ocr.lines : const [],
-      knownName: p.name,
+      knownName: knownName,
       profileSecretHex: p.secretHex,
       pageW: image ? ocr.frameW : 0,
       pageH: image ? ocr.frameH : 0,
@@ -141,7 +161,7 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
       modelVersion: extractModelVersion,
       llmJson: llmJson,
       restoreMapJson: req.restoreMapJson,
-      knownName: p.name,
+      knownName: knownName,
     );
   } catch (e) {
     // ⚠️ 只进本地 debug 日志,不进埋点:异常消息里可能带文档内容片段。

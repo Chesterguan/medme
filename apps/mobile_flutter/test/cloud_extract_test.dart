@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 
 /// 一条真实的 OCR 行框(数值随意,只要是正数矩形)。
@@ -104,6 +105,32 @@ void main() {
         canRedactImage(const OcrResult('t', 0.9, lines: [_line], frameW: 800, frameH: 0, bytes: bytes)),
         isFalse,
       );
+    });
+  });
+
+  group('knownNameFor:闸要认的是纸上印的名字,不是成员标签', () {
+    ImportOutcomeDto outcome(String? detected) => ImportOutcomeDto(
+      name: 'a.jpg',
+      sourceFileId: 1,
+      status: 'stored',
+      documentId: 7,
+      detectedName: detected,
+      pagesWithoutText: _noPages,
+    );
+
+    test('成员标签是默认的「我」、报告里认出张建国 → 用张建国', () {
+      // 「我」只有一个字,`deid/gate.rs` 的 `chars().count() >= 2` 会整条跳过它 ——
+      // 传成员标签等于姓名闸空转,这正是这个函数存在的理由。
+      expect(knownNameFor(outcome('张建国'), const Profile(id: 'p-1', name: '我')), '张建国');
+    });
+
+    test('成员叫「爸爸」(够两个字、但不是纸上那个名字)→ 仍用报告里认出的', () {
+      expect(knownNameFor(outcome('张建国'), const Profile(id: 'p-2', name: '爸爸')), '张建国');
+    });
+
+    test('报告里认不出姓名 → 退回成员标签(总比什么都不给强)', () {
+      expect(knownNameFor(outcome(null), const Profile(id: 'p-2', name: '爸爸')), '爸爸');
+      expect(knownNameFor(outcome('   '), const Profile(id: 'p-2', name: '爸爸')), '爸爸');
     });
   });
 
