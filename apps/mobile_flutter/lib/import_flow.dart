@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cunning_document_scanner/cunning_document_scanner.dart';
@@ -664,8 +665,16 @@ Future<ImportRunResult> _runImport(
   String? failStage;
   ImportFailReason? failReason;
   // 每份耗时的累计(仅成功的份),用来算单份平均 —— 那才是引擎质量指标。
+  //
+  // ⚠️ 这个数**只能包含 OCR + 落库**。云抽取一次 LLM 往返最长能等 90 秒
+  // (`cloud_extract.extractTimeout`),混进来这个数就不再回答"OCR 引擎快不快"
+  // 那个问题了 —— 这正是把抽取移出循环的第二个理由。
   var okElapsedMs = 0;
   var okCount = 0;
+  // 排队等云抽取的照片。**循环里只排队、不跑**:每份都是一次 LLM 往返,串在循环里
+  // 就是让用户盯着「正在导入 i/N」的进度条多等最长 90 秒 × 张数。整批导完之后再
+  // 一份一份跑(见循环后面的 `unawaited`),结果自己长出来。
+  final pendingExtractions = <PendingCloudExtraction>[];
 
   for (var i = 0; i < items.length; i++) {
     final item = items[i];
@@ -687,10 +696,11 @@ Future<ImportRunResult> _runImport(
           ocrText: ocr.text,
           confidence: ocr.confidence,
         );
-        // 云抽取:本机脱敏 → 代理 → 本机校验落盘。**不成就是没有**,返回 null、
-        // 不抛,导入结果与摘要照常走本地正则(见 cloud_extract.dart)。
-        stage = 'extract';
-        await runCloudExtraction(outcome, ocr);
+        // 云抽取只在这里**排队**,不在循环里跑 —— 见下面 `pendingExtractions`
+        // 的声明。ocr 要整份带走(涂黑用它的 bytes/lines,拿不到第二次)。
+        if (outcome.documentId != null) {
+          pendingExtractions.add((outcome: outcome, ocr: ocr));
+        }
       } else {
         stage = 'save';
         final bytes = await File(item.path).readAsBytes();
@@ -737,6 +747,11 @@ Future<ImportRunResult> _runImport(
   if (rows.any((r) => r.kind != ImportRowKind.failed)) {
     bumpVaultRevision();
   }
+
+  // 云抽取从这里开始,**不等它**:导入到此已经全部落库,摘要有正则版本可看;
+  // 抽取成功的那几份会各自 bump 一次,屏上自己换成更好的结果。
+  // 失败(没登录/没网/闸拒发)全部在 `runCloudExtraction` 里吞掉,不弹任何东西。
+  unawaited(runCloudExtractions(pendingExtractions));
 
   // 埋点:成功几份、失败几份、总共花了多久。**耗时是判断要不要优化 OCR 引擎的唯一
   // 客观依据**;失败只报计数,不报任何异常消息(那里面常有文件名和路径)。

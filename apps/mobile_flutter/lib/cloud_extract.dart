@@ -22,6 +22,7 @@ import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart' as rust_vault;
+import 'package:mobile_flutter/vault_events.dart';
 
 /// 服务端对图片档 payload(base64 串本身)的上限,与 `services/api/app.py` 的
 /// `EXTRACT_IMAGE_MAX_BYTES` 是同一个数。**在本机先量一次**:超了服务端回 413,
@@ -86,6 +87,25 @@ Future<String> postExtract(
     {'mode': mode, 'schema': 1, 'payload': payload},
   );
   return jsonEncode(result);
+}
+
+/// 排队等云抽取的一份文档:落库结果 + 它**当次**的 OCR 结果(涂黑要用其中的
+/// `bytes`/`lines`,拿不到第二次)。
+typedef PendingCloudExtraction = ({ImportOutcomeDto outcome, OcrResult ocr});
+
+/// 把这一批排队的文档逐份跑完。**导入流程不等它**(`unawaited`),用户点完
+/// 「完成」就走人,结果自己回来。
+///
+/// **串行,不并发**:每份都是一次 LLM 往返,并发发只会一起变慢,还更容易撞到服务端
+/// 的月度 token 天花板(`app.py` 的 `EXTRACT_MONTHLY_TOKEN_CAP`,超了整个账号 429)。
+///
+/// 每成功落盘一份就 [bumpVaultRevision] —— 概览/趋势/档案屏监听它,于是抽取结果是
+/// 一份一份**长出来**的,而不是等整批跑完才一起出现。失败的那份不 bump(没有新东西
+/// 可看),也不打断后面的。
+Future<void> runCloudExtractions(List<PendingCloudExtraction> pending) async {
+  for (final p in pending) {
+    if (await runCloudExtraction(p.outcome, p.ocr) != null) bumpVaultRevision();
+  }
 }
 
 /// 一份文档落库之后跑云抽取。成功返回这次落盘的条数统计,**任何一步不成都返回

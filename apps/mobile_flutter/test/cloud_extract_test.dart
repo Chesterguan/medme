@@ -8,12 +8,23 @@ import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
+import 'package:mobile_flutter/vault_events.dart';
 
 /// 一条真实的 OCR 行框(数值随意,只要是正数矩形)。
 const _line = OcrLineDto(text: '白细胞 5.6', left: 10, top: 20, right: 300, bottom: 60);
 
 /// 图片导入没有"缺文本层的页"(那是 PDF 专属),`ImportOutcomeDto` 却要求给一个。
 final _noPages = Int32List(0);
+
+/// 一份已落库的图片文档。
+ImportOutcomeDto _stored(int docId, {String? detectedName}) => ImportOutcomeDto(
+  name: 'a$docId.jpg',
+  sourceFileId: docId,
+  status: 'stored',
+  documentId: docId,
+  detectedName: detectedName,
+  pagesWithoutText: _noPages,
+);
 
 void main() {
   // 同 api_client_test.dart:测试 binding 会装一个假的 HttpOverrides,装上之后
@@ -131,6 +142,26 @@ void main() {
     test('报告里认不出姓名 → 退回成员标签(总比什么都不给强)', () {
       expect(knownNameFor(outcome(null), const Profile(id: 'p-2', name: '爸爸')), '爸爸');
       expect(knownNameFor(outcome('   '), const Profile(id: 'p-2', name: '爸爸')), '爸爸');
+    });
+  });
+
+  group('runCloudExtractions:整批在导入循环之外跑', () {
+    // 未登录,所以每一份都在 `runCloudExtraction` 的第一道门就返回 null —— 这里要钉
+    // 的不是抽取本身,而是**这个批量入口不抛、不 bump、跑完整批**。
+    test('整批跑完不抛;一份都没成功就一次都不 bump', () async {
+      final before = vaultRevision.value;
+      await runCloudExtractions([
+        (outcome: _stored(1), ocr: const OcrResult('a', 0.9)),
+        (outcome: _stored(2), ocr: const OcrResult('b', 0.9)),
+        (outcome: _stored(3), ocr: const OcrResult('c', 0.9)),
+      ]);
+      expect(vaultRevision.value, before, reason: '没有新结果就没有要刷新的东西');
+    });
+
+    test('空队列:什么都不做', () async {
+      final before = vaultRevision.value;
+      await runCloudExtractions([]);
+      expect(vaultRevision.value, before);
     });
   });
 
