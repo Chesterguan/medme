@@ -81,17 +81,20 @@ pub fn labs_from_json(json: &str) -> Result<LabsFromJson, deid::DeidError> {
                 dropped_unparseable += 1;
                 return None;
             }
-            let flag = explicit_flag.or_else(|| {
+            // 有参考区间时**自算的比较压过模型给的字面 H/L**:值和区间是证据,
+            // 标志是从它们推出来的。两者矛盾时信证据(683 份实测有 7 条矛盾)。
+            // 没有区间才回落到字面标志。只改这条 LLM 路,正则路(`labs.rs`)不动。
+            let flag = if ref_low.is_some() || ref_high.is_some() {
                 if ref_high.is_some_and(|h| value_num > h) {
                     Some("H".into())
                 } else if ref_low.is_some_and(|lo| value_num < lo) {
                     Some("L".into())
-                } else if ref_low.is_some() || ref_high.is_some() {
-                    Some("N".into())
                 } else {
-                    None
+                    Some("N".into())
                 }
-            });
+            } else {
+                explicit_flag
+            };
             let (value_canonical, unit_canonical, ref_low_canonical, ref_high_canonical) =
                 canonicalize(m.as_ref(), unit.as_deref(), value_num, ref_low, ref_high);
             if l.unverified {
@@ -148,6 +151,36 @@ mod tests {
         assert_eq!(
             v[1].confidence, 1.0,
             "confidence 只反映词典匹配把握,不因 unverified 而降低——两者是两件事"
+        );
+    }
+
+    /// 有参考区间时,自算的比较**压过**模型给的字面 H/L —— 值和区间是证据,
+    /// 标志是从它们推出来的。没有区间才认字面标志。
+    #[test]
+    fn computed_flag_beats_the_literal_one_when_a_range_is_present() {
+        // 值落在区间内,模型却给了 H:信区间,出 N
+        let j = r#"{"labs":[{"name":"白细胞计数","value":"5.6","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0","flag":"H"}]}"#;
+        assert_eq!(
+            labs_from_json(j).expect("valid json").labs[0]
+                .flag
+                .as_deref(),
+            Some("N")
+        );
+        // 值确实超上限,模型给了 L:同样信区间,出 H
+        let j = r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0","flag":"L"}]}"#;
+        assert_eq!(
+            labs_from_json(j).expect("valid json").labs[0]
+                .flag
+                .as_deref(),
+            Some("H")
+        );
+        // 没有区间可算,字面标志仍然作数
+        let j = r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"","ref_high":"","flag":"H"}]}"#;
+        assert_eq!(
+            labs_from_json(j).expect("valid json").labs[0]
+                .flag
+                .as_deref(),
+            Some("H")
         );
     }
 

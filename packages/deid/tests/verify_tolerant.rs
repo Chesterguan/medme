@@ -25,6 +25,17 @@ fn lab_ok(e: Extraction, src: &str) -> bool {
     !v.extraction.labs[0].unverified
 }
 
+/// 图片档跑一条化验,回「(是否待核, 校验后剩下的 flag)」—— 标志那条规则改的
+/// 是**字段内容**,不只是待核位,两样都得钉住。
+fn flag_after(l: LabItem, src: &str) -> (bool, String) {
+    let v = verify(lab(l), src, Mode::Image);
+    assert_eq!(v.extraction.labs.len(), 1, "图片档从不丢条目,只打标");
+    (
+        v.extraction.labs[0].unverified,
+        v.extraction.labs[0].flag.clone(),
+    )
+}
+
 /// 只填被测字段,其余留空(空字段一律算通过),这样断言指向的就是这一条规则。
 fn value(v: &str) -> Extraction {
     lab(LabItem {
@@ -91,9 +102,21 @@ fn case_folding_does_not_excuse_a_different_unit() {
 #[test]
 fn ocr_confusable_letters_and_digits_are_one_class() {
     assert!(lab_ok(unit("1O^9/L"), "白细胞计数 5.6 10^9/L")); // 字母 O ↔ 数字 0
-    assert!(lab_ok(value("S.6"), "白细胞计数 5.6 10^9/L")); // S ↔ 5
-    assert!(lab_ok(value("8.6"), "白细胞计数 B.6 10^9/L")); // B ↔ 8
-    assert!(lab_ok(value("1.6"), "白细胞计数 l.6 10^9/L")); // l ↔ 1
+    assert!(lab_ok(value("S.6"), "白细胞计数 5.6 10^9/L")); // S ↔ 5(折的是模型给的值)
+}
+
+/// 混淆表只折**模型给的值**,不拿来读原文的数字串。原文那一侧字母一律**结束**
+/// 一个数(fix round 3):不然 `2.5L` 会被读成 `2.51`,凭空造出一个能对上假值的数。
+#[test]
+fn the_confusion_table_does_not_rewrite_the_source_number_bag() {
+    assert!(lab_ok(value("2.5"), "尿量 2.5L"), "真值 2.5 该验真");
+    assert!(
+        !lab_ok(value("2.51"), "尿量 2.5L"),
+        "2.51 是字母折出来的,不该验真"
+    );
+    assert!(!lab_ok(value("51"), "尿量 5L"));
+    // 代价:原文那一侧的字母不再被"修回"数字
+    assert!(!lab_ok(value("8.6"), "白细胞计数 B.6 10^9/L"));
 }
 
 #[test]
@@ -178,14 +201,160 @@ fn arrow_flag_matches_letter_flag() {
     assert!(lab_ok(down, "血红蛋白 98 g/L L"));
 }
 
+/// **红线**:标志位只跟原文里独立成词、长度 ≤2 的词比。整行折叠着比的话
+/// `HGB` 就够"验真"一个凭空的 ↑,而下游对字面 H/L 是优先采信的。
+/// 背书不了的标志被**清空**(见 `flag`-as-derived-data 那组用例),不是整行打待核。
+#[test]
+fn a_flag_is_not_verified_by_a_letter_inside_a_longer_token() {
+    assert_eq!(
+        flag_after(
+            LabItem {
+                name: "血红蛋白".into(),
+                flag: "↑".into(),
+                ..Default::default()
+            },
+            "血红蛋白 HGB 130 g/L 115-150"
+        ),
+        (false, String::new())
+    );
+    // ↓ 同理:全文那些 `1`(10^9/L、11.8)不许把一个低值标志验真
+    assert_eq!(
+        flag_after(
+            LabItem {
+                name: "白细胞计数".into(),
+                flag: "↓".into(),
+                ..Default::default()
+            },
+            "白细胞计数 11.8 10^9/L 4.0-10.0"
+        ),
+        (false, String::new())
+    );
+}
+
 #[test]
 fn up_arrow_does_not_match_a_low_flag() {
-    let up = lab(LabItem {
+    assert_eq!(
+        flag_after(
+            LabItem {
+                name: "血红蛋白".into(),
+                flag: "↑".into(),
+                ..Default::default()
+            },
+            "血红蛋白 98 g/L L"
+        ),
+        (false, String::new()),
+        "原文只有低值标志,凭空的 ↑ 要被清掉"
+    );
+}
+
+/// OCR 把单位拆成 `10^9 / L` 时,那个 `L` 是半截单位,不是低值标志(fix round 3)。
+#[test]
+fn a_split_unit_token_does_not_endorse_a_flag() {
+    assert_eq!(
+        flag_after(
+            LabItem {
+                name: "白细胞计数".into(),
+                flag: "L".into(),
+                ..Default::default()
+            },
+            "白细胞计数 WBC 5.6 10^9 / L 4.0-10.0"
+        ),
+        (false, String::new())
+    );
+    // `g / L` 同理
+    assert_eq!(
+        flag_after(
+            LabItem {
+                name: "血红蛋白".into(),
+                flag: "↓".into(),
+                ..Default::default()
+            },
+            "血红蛋白 98 g / L 115-150"
+        ),
+        (false, String::new())
+    );
+    // 反向:真的独立标志照样验真,别把这条收过头
+    assert_eq!(
+        flag_after(
+            LabItem {
+                name: "血红蛋白".into(),
+                flag: "L".into(),
+                ..Default::default()
+            },
+            "血红蛋白 98 g / L L"
+        )
+        .1,
+        "L"
+    );
+}
+
+// ---------- 规则 8b:标志是推导数据,清空而不是把整行打待核 ----------
+
+/// 值(和有区间时的区间)都验真、只有标志没验真 → 清空标志,这一行**算验真**。
+/// 下游 `parser::labs_from_json` 在 `flag` 为空时自己拿值比区间算 H/L。
+#[test]
+fn an_unsupported_flag_is_cleared_and_the_row_stays_verified() {
+    let (unverified, flag) = flag_after(
+        LabItem {
+            name: "血红蛋白".into(),
+            value: "130".into(),
+            unit: "g/L".into(),
+            ref_low: "115".into(),
+            ref_high: "150".into(),
+            flag: "↑".into(),
+            ..Default::default()
+        },
+        "血红蛋白 HGB 130 g/L 115-150",
+    );
+    assert!(!unverified, "标志没背书不该把整行打成待核");
+    assert_eq!(flag, "", "没背书的标志要清掉,不能原样发到界面");
+}
+
+/// 反过来:**值**没验真的行照旧待核,跟标志没关系。
+#[test]
+fn a_row_whose_value_failed_stays_pending_regardless_of_the_flag() {
+    let (unverified, flag) = flag_after(
+        LabItem {
+            name: "血红蛋白".into(),
+            value: "131".into(), // 原文是 130
+            unit: "g/L".into(),
+            flag: "↑".into(),
+            ..Default::default()
+        },
+        "血红蛋白 HGB 130 g/L 115-150",
+    );
+    assert!(unverified, "值没过就待核");
+    assert_eq!(flag, "", "待核行上那个没背书的标志同样清掉");
+}
+
+/// 验真了的标志原样留着,不许被这条规则顺手抹掉。
+#[test]
+fn a_verified_flag_is_kept() {
+    let (unverified, flag) = flag_after(
+        LabItem {
+            name: "白细胞计数".into(),
+            value: "11.8".into(),
+            flag: "↑".into(),
+            ..Default::default()
+        },
+        "白细胞计数 11.8 10^9/L H",
+    );
+    assert!(!unverified);
+    assert_eq!(flag, "↑");
+}
+
+/// 文本档不吃这一套:标志对不上,整条照丢(一个字都没放宽)。
+#[test]
+fn text_mode_still_drops_the_whole_row_on_a_bad_flag() {
+    let e = lab(LabItem {
         name: "血红蛋白".into(),
+        value: "130".into(),
         flag: "↑".into(),
         ..Default::default()
     });
-    assert!(!lab_ok(up, "血红蛋白 98 g/L L"));
+    let v = verify(e, "血红蛋白 HGB 130 g/L 115-150", Mode::Text);
+    assert_eq!(v.extraction.labs.len(), 0);
+    assert_eq!(v.rejected, 1);
 }
 
 // ---------- 规则 9:数值解析后相等 ----------
@@ -203,6 +372,83 @@ fn numeric_closeness_never_passes() {
     assert!(!lab_ok(value("5.61"), "白细胞计数 5.6 10^9/L"));
     assert!(!lab_ok(value("5.7"), "白细胞计数 5.6 10^9/L"));
     assert!(!lab_ok(value("56"), "白细胞计数 5.6 10^9/L"));
+}
+
+/// **红线**:数值判定没有锚点就会被"包含"下来 —— `1.5` ⊂ `11.5`。
+/// 解析得出数的字段只跟切好词的原文数字比,不跟全文子串比。
+#[test]
+fn a_shorter_number_is_not_verified_by_a_longer_one() {
+    assert!(!lab_ok(value("1.5"), "血糖 GLU 11.5 mmol/L"));
+    assert!(lab_ok(value("11.5"), "血糖 GLU 11.5 mmol/L"));
+    // 参考区间同理:0.11 不许被 10.115 收下
+    let e = lab(LabItem {
+        ref_low: "0.11".into(),
+        ..Default::default()
+    });
+    assert!(!lab_ok(e, "某项 5.0 10.115-20.0"));
+}
+
+/// 解析不出数的"数字形状"字段(`0-3`、`1.5%`、`<0.5`)在图片档也要锚点 ——
+/// 之前这一类落回无边界的全文 `contains`,比文本档还松(fix round 3)。
+#[test]
+fn numeric_shaped_fields_that_do_not_parse_still_need_boundaries() {
+    let bad = lab(LabItem {
+        ref_high: "0-3".into(),
+        ..Default::default()
+    });
+    assert!(!lab_ok(bad, "尿白细胞 高倍视野 10-30"));
+    let good = lab(LabItem {
+        ref_high: "0-3".into(),
+        ..Default::default()
+    });
+    assert!(lab_ok(good, "尿白细胞 高倍视野 0-3"));
+    assert!(!lab_ok(value("1.5%"), "糖化血红蛋白 11.5%"));
+    assert!(lab_ok(value("1.5%"), "糖化血红蛋白 1.5%"));
+}
+
+// ---------- 规则 9b:单位要落在词边界上 ----------
+
+#[test]
+fn unit_matches_when_neither_side_is_a_letter() {
+    assert!(lab_ok(unit("g/L"), "血红蛋白 HGB 130 g/L 115-150")); // 整词
+    assert!(lab_ok(unit("g/L"), "血红蛋白 HGB 130g/L 115-150")); // 紧跟数字
+    assert!(lab_ok(unit("10^9/L"), "白细胞计数 5.6 ×10^9/L")); // 符号前缀不算边界
+    assert!(lab_ok(unit("um/s"), "线速度VCL 54.6 (um/s)")); // 括号同理
+}
+
+/// **红线**:`g/L` 不许从 `mg/L` 里抠出来 —— 那是 1000 倍之差。
+/// 量级前缀一律是字母,所以「左边不是字母」这一条正好盖住整类。
+#[test]
+fn unit_is_not_verified_by_a_longer_unit_whose_prefix_is_a_letter() {
+    assert!(!lab_ok(unit("g/L"), "血红蛋白 HGB 130 mg/L 115-150"));
+    assert!(!lab_ok(unit("mol/L"), "血糖 GLU 6.1 mmol/L"));
+    assert!(!lab_ok(unit("IU/L"), "促甲状腺素 1.18 mIU/L"));
+    assert!(!lab_ok(unit("g/L"), "血清铁 8.54 μg/L")); // 希腊字母 μ 也是字母
+}
+
+/// 文本档的数值也要锚点:逐字子串一样会让短数被长数收下(fix round 2)。
+#[test]
+fn text_mode_numbers_need_non_digit_boundaries() {
+    for (v, src) in [("1.5", "血糖 GLU 11.5 mmol/L"), ("0.5", "尿酸 10.5 mmol/L")] {
+        let r = verify(value(v), src, Mode::Text);
+        assert_eq!(r.extraction.labs.len(), 0, "{v} ⊄ {src}");
+        assert_eq!(r.rejected, 1);
+    }
+    // 真的整段出现就照过,收紧不许误伤
+    let r = verify(value("11.5"), "血糖 GLU 11.5 mmol/L", Mode::Text);
+    assert_eq!(r.extraction.labs.len(), 1);
+    assert_eq!(r.rejected, 0);
+}
+
+/// 文本档同样中招过,所以词边界这条**两档都管**(收紧,不是放宽)。
+#[test]
+fn text_mode_unit_also_needs_a_token_boundary() {
+    let v = verify(unit("g/L"), "血红蛋白 HGB 130 mg/L 115-150", Mode::Text);
+    assert_eq!(v.extraction.labs.len(), 0);
+    assert_eq!(v.rejected, 1);
+    let v = verify(unit("mg/L"), "血红蛋白 HGB 130 mg/L 115-150", Mode::Text);
+    assert_eq!(v.extraction.labs.len(), 1);
+    assert_eq!(v.rejected, 0);
 }
 
 // ---------- 规则 10:名字 —— 归一化后编辑距离 ≤ 1 ----------
@@ -223,6 +469,26 @@ fn name_two_edits_away_stays_flagged() {
 #[test]
 fn name_one_edit_away_but_a_different_real_term_stays_flagged() {
     assert!(!lab_ok(name("红细胞计数"), "白细胞计数 5.6 10^9/L"));
+}
+
+/// 距离 1、**两边都不在词典里**,但差的那一个字各自是不同的术语(钾 / 钠)——
+/// 词典外的名字正是风险最高的那批,护栏不能在那里失效。
+#[test]
+fn name_one_edit_away_stays_flagged_when_the_differing_char_is_another_term() {
+    assert!(!lab_ok(name("血清钾测定"), "血清钠测定 4.5 mmol/L"));
+    assert!(!lab_ok(name("尿钠浓度测定"), "尿钾浓度测定 30 mmol/L"));
+}
+
+/// 同上,但差的是一对对立修饰字(左 / 右):词典查不到,换一个就是另一处。
+#[test]
+fn name_one_edit_away_stays_flagged_for_opposite_modifier_chars() {
+    assert!(!lab_ok(name("左侧肾上腺"), "右侧肾上腺 未见异常"));
+}
+
+/// 收紧只针对**替换**:OCR 断字多识/漏识一个字(插入/删除)照旧算误读。
+#[test]
+fn an_inserted_or_deleted_char_is_still_a_misread() {
+    assert!(lab_ok(name("血清钾测定"), "血清钾测测定 4.5 mmol/L"));
 }
 
 /// 三字及以下不做模糊(钾/钠/氯之类,字太少分不开误读与邻项)。

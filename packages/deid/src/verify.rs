@@ -85,12 +85,16 @@ pub fn parse_extraction(llm_json: &str) -> Result<Extraction, DeidError> {
     Ok(serde_json::from_str(s)?)
 }
 
-/// 字段属于数值(化验的 value/ref_low/ref_high)、名字(化验/药品的 name)还是
-/// 普通文本(其余所有字段)。三类在图片档下的可接受等价不同,见 [`field_ok`]。
+/// 字段属于数值(化验的 value/ref_low/ref_high)、名字(化验/药品的 name)、
+/// 单位、异常标志,还是普通文本(其余所有字段)。各类的可接受等价不同,见 [`field_ok`]。
+/// 单位和标志单列出来,是因为它们短到用"全文子串"判定近乎恒真
+/// (`g/L` ⊂ `mg/L`,差 1000 倍;`L` ⊂ 任何一个 `1`)。
 #[derive(Clone, Copy)]
 enum FieldKind {
     Numeric,
     Name,
+    Unit,
+    Flag,
     Text,
 }
 
@@ -117,7 +121,8 @@ fn strip_ws(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// 图片档容错(Task 9b)。**只作用于 `Mode::Image`**,文本档一个字都没放宽。
+// 图片档容错(Task 9b)。容错**只作用于 `Mode::Image`**,文本档一个字都没放宽;
+// 反过来,下面那几条**收紧**(单位词边界)两档都管 —— 收紧不是放宽。
 //
 // 为什么放宽:图片档里模型看的是原件,本地 OCR 文本只是旁证。683 份实测下来
 // 35.8% 的化验行过不了逐字子串,而这批行单独对真值比是 95.6% 正确——对不上的
@@ -128,6 +133,29 @@ fn strip_ws(s: &str) -> String {
 //     临床上可以是两个完全不同的结论);
 //   * 名字放到编辑距离 1,但**两边都能被词典解析成不同术语**时立刻收回
 //     ——「红细胞计数」和「白细胞计数」正好差一个字,那不是误读,是另一个指标。
+//
+// fix round 1(评审抓出三处「无锚点子串 ⇒ 近乎恒真」)补的硬边界:
+//   * 数值:图片档只跟切好词的 `src.numbers` 比;文本档仍逐字子串,但两侧不许
+//     再是数字(round 2 补)—— 全文子串会让 `1.5` 被 `11.5` "包含"下来;
+//   * 单位要在某个词里整段落下、左右都不是字母 —— `mg/L` 里抠不出 `g/L`;
+//   * 名字两边都查不到词典时,再看差的那一个字(钾/钠、左/右);
+//   * 异常标志只跟独立成词、长度 ≤2 的词比,且**不走 [`fold_char`]** ——
+//     那里 `L→1`、`↑→h`,全文任意一个 `1` 都能验真一个凭空的低值标志。
+//
+// fix round 2:**异常标志是推导数据,不是证据**。图片档里背书不了的 `flag` 直接
+// 清空、这一行照常算验真(值和区间才决定待不待核),由 `parser::labs_from_json`
+// 在 `flag` 为空时拿值比区间自己算 H/L。头一版拿标志把整行打成待核,代价是
+// 待核里标志类 57 → 327 条,而那批行的**值本身是验真的** —— 用推导数据否定证据,
+// 方向反了。文本档不吃这一套:对不上照旧整条丢。
+//
+// fix round 3(复核抓出的三处残留):
+//   * 解析不出数的"数字形状"字段(`0-3`、`1.5%`、`<0.5`)之前落回无边界的
+//     `contains`,图片档反倒比文本档松 —— 改走 [`digit_bounded_contains`];
+//   * 拆开的单位会伪装成独立的 `L`/`H` 词(`10^9 / L`),见 [`is_unit_fragment`];
+//     同一条的下游对策在 `parser::labs_from_json`:**有参考区间时自算的比较压过
+//     模型给的字面 H/L**;
+//   * 原文那一侧的数字串按**未折叠**的字符切(见 [`number_char`]):`fold_char`
+//     把字母折成数字,会把 `2.5L` 读成 `2.51` —— 既假验真,又让真的 `2.5` 假待核。
 // ---------------------------------------------------------------------------
 
 /// 单字符折叠:全角→半角、小写、把常见 OCR 混淆并进同一个代表字符。
@@ -164,10 +192,112 @@ fn fold(s: &str) -> String {
         .collect()
 }
 
+/// 异常标志专用归一:只认「↑=H、↓=L」这一对写法,**绝不走 [`fold_char`]**。
+/// 那里 `L→1`、`↑→h`,于是全文任意一个 `1`(`10^9/L`、`11.8`、日期)都能"验真"
+/// 一个凭空的低值标志,而下游 `parser::extraction` 对字面 H/L 是优先采信的。
+fn fold_flag(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| match c {
+            '↑' => 'H',
+            '↓' => 'L',
+            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            other => other,
+        })
+        .flat_map(char::to_uppercase)
+        .collect()
+}
+
+/// 单位被 OCR 拆开时,半截单位会伪装成一个独立的 `L`/`H` 词(`10^9 / L`、`g / L`)。
+/// 判据放在**紧挨着的那个词**上:它以 `/ ^ * ×` 收尾(`g/`、`10^9/`),或者它含这些
+/// 符号又以数字结尾(`10^9`、`x10`)—— 那就是一截还没写完的单位。
+/// 不能只看"前一个词以数字结尾":`血红蛋白 98 L` 里的 `L` 是**真**标志。
+fn is_unit_fragment(t: &str) -> bool {
+    const GLUE: [char; 5] = ['/', '^', '*', '×', '✕'];
+    let last = t.chars().next_back();
+    last.is_some_and(|c| GLUE.contains(&c))
+        || (t.chars().any(|c| GLUE.contains(&c)) && last.is_some_and(|c| c.is_ascii_digit()))
+}
+
+/// 异常标志只跟原文里**独立成词、长度 ≤2** 的词比(H / L / ↑ / ↓ / HH / LL),
+/// 不跟全文比 —— 否则 `HGB` 就够"验真"一个 ↑;而且那个词不能是被拆开的单位的
+/// 半截(见 [`is_unit_fragment`])。
+fn flag_token_match(text: &str, value: &str) -> bool {
+    let want = fold_flag(value);
+    if want.is_empty() {
+        return false;
+    }
+    let toks: Vec<&str> = text.split_whitespace().collect();
+    toks.iter().enumerate().any(|(i, t)| {
+        t.chars().count() <= 2
+            && fold_flag(t) == want
+            && !(i > 0 && is_unit_fragment(toks[i - 1]))
+            && !toks
+                .get(i + 1)
+                .is_some_and(|n| n.starts_with(['/', '^', '*', '×', '✕']))
+    })
+}
+
+/// 单位必须在原文某个词里**整段**落下,而且紧挨着的左右两边都不是字母。
+/// 挡的正是量级前缀:`mg/L` 里抠不出 `g/L`、`mIU/L` 里抠不出 `IU/L`
+/// —— 那是 1000 倍之差。符号前缀(`×10^9/L`、`*10^9/L`、`(um/s)`)不算破坏边界,
+/// 所以判定看的是**折叠前**的字符(`fold_char` 会把 `×` 折成字母 `x`)。
+/// 文本档与图片档都走这条,区别只在图片档比之前先折叠一次。
+fn unit_token_match(text: &str, value: &str, tolerant: bool) -> bool {
+    let norm = |s: &str| {
+        if tolerant {
+            fold(s)
+        } else {
+            s.to_string()
+        }
+    };
+    let want: Vec<char> = norm(value).chars().collect();
+    if want.is_empty() {
+        return false;
+    }
+    text.split_whitespace().any(|t| {
+        // `fold_char` 一进一出,词内又没有空白,所以 raw 与 f 逐位对齐
+        let raw: Vec<char> = t.chars().collect();
+        let f: Vec<char> = if tolerant {
+            raw.iter().map(|&c| fold_char(c)).collect()
+        } else {
+            raw.clone()
+        };
+        if want.len() > f.len() {
+            return false;
+        }
+        (0..=f.len() - want.len()).any(|i| {
+            f[i..i + want.len()] == want[..]
+                && !(i > 0 && raw[i - 1].is_alphabetic())
+                && !(i + want.len() < raw.len() && raw[i + want.len()].is_alphabetic())
+        })
+    })
+}
+
+/// 文本档的数值:仍是逐字子串,但**两侧不许再是数字**。
+/// `1.5` 不许从 `11.5` 里抠出来、`0.5` 不许从 `10.5` 里抠出来 —— 图片档那条
+/// 「只跟切好词的数字比」的文本档版本。同样是收紧,不是放宽。
+fn digit_bounded_contains(text: &str, value: &str) -> bool {
+    let (t, v): (Vec<char>, Vec<char>) = (text.chars().collect(), value.chars().collect());
+    if v.is_empty() || v.len() > t.len() {
+        return false;
+    }
+    (0..=t.len() - v.len()).any(|i| {
+        t[i..i + v.len()] == v[..]
+            && !(i > 0 && t[i - 1].is_ascii_digit())
+            && !(i + v.len() < t.len() && t[i + v.len()].is_ascii_digit())
+    })
+}
+
 /// 把一个字段解析成数。折叠后必须**原串里本来就有阿拉伯数字**才算数——
 /// 否则 `SOS` 会被折成 `505`,凭空变出一个能对上的数值。
 fn parse_num(s: &str) -> Option<f64> {
-    if !s.chars().any(|c| c.is_ascii_digit()) {
+    // 全角数字也算"本来就有数字"——否则 `５.６` 走不进数值相等那条路,
+    // 会掉到下面按文本比的分支上(fix round 3 发现)。
+    if !s
+        .chars()
+        .any(|c| c.is_ascii_digit() || ('\u{FF10}'..='\u{FF19}').contains(&c))
+    {
         return None;
     }
     fold(s)
@@ -177,20 +307,36 @@ fn parse_num(s: &str) -> Option<f64> {
         .filter(|v| v.is_finite())
 }
 
+/// 数字串里能出现的字符,**全角归一,但字母一律不算**。
+/// 这是与 [`fold_char`] 的关键区别:那张表把 `l/I/O/S/B` 折成数字,用来读原文的
+/// 数字串就会把 `2.5L` 读成 `2.51`、`5L` 读成 `51` —— 既凭空造出一个能被假值对上的
+/// 数,又让真正的 `2.5` 对不上。字母**结束**一个数,不参与组成它。
+fn number_char(c: char) -> Option<char> {
+    let c = match c {
+        '\u{FF10}'..='\u{FF19}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c), // 全角数字
+        '\u{FF0E}' => '.',
+        '\u{FF0C}' => ',',
+        other => other,
+    };
+    match c {
+        '0'..='9' | '.' => Some(c),
+        ',' => Some('.'), // 化验单上 `13,5` 就是 13.5
+        _ => None,
+    }
+}
+
 /// 原文里出现过的数值。**先按空白切词**再在词内找数字串:空白分开的两个数字
-/// 不许拼成一个更长的数(旧注释里的跨行拼接误判,同一个坑)。
+/// 不许拼成一个更长的数(旧注释里的跨行拼接误判,同一个坑);词内遇到字母或
+/// 别的符号也断开(`2.5L` 给的是 `2.5`,不是 `2.51`)。
 fn source_numbers(text: &str) -> Vec<f64> {
     let mut out = Vec::new();
     for tok in text.split_whitespace() {
-        let (mut run, mut had_digit) = (String::new(), false);
+        let mut run = String::new();
         // 末尾补一个哨兵字符,让最后一段数字也走一次收尾
         for c in tok.chars().chain(std::iter::once('\u{0}')) {
-            let f = fold_char(c);
-            if f.is_ascii_digit() || f == '.' {
-                run.push(f);
-                had_digit |= c.is_ascii_digit();
-            } else {
-                if had_digit {
+            match number_char(c) {
+                Some(n) => run.push(n),
+                None => {
                     if let Some(n) = run
                         .trim_matches('.')
                         .parse::<f64>()
@@ -199,9 +345,8 @@ fn source_numbers(text: &str) -> Vec<f64> {
                     {
                         out.push(n);
                     }
+                    run.clear();
                 }
-                run.clear();
-                had_digit = false;
             }
         }
     }
@@ -239,6 +384,34 @@ fn within_one(a: &[char], b: &[char]) -> bool {
 /// "同一张单子上的另一项")。
 const NAME_FUZZY_MIN_LEN: usize = 4;
 
+/// 对立修饰字:`terminology` 查不到,但换一个就是另一处/另一种结果。
+/// ponytail: 手列四对,不是通用规则;要真覆盖全,得给词典补解剖部位与修饰词。
+const OPPOSITE_CHARS: &[(char, char)] = &[('左', '右'), ('上', '下'), ('内', '外'), ('阴', '阳')];
+
+/// 编辑距离 1 的那一处**替换**是不是换了意思:两个字各自能被词典解析成**不同**
+/// 术语(钾→potassium / 钠→sodium),或本身就是一对对立字(左/右)。
+/// 插入/删除(OCR 断字、多识一个字)不算 —— 那才是误读的典型形状。
+fn substitution_changes_meaning(a: &[char], b: &[char]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diffs = a.iter().zip(b).filter(|(x, y)| x != y);
+    let Some((&x, &y)) = diffs.next() else {
+        return false;
+    };
+    if diffs.next().is_some() {
+        return false;
+    }
+    if OPPOSITE_CHARS
+        .iter()
+        .any(|&(p, q)| (p, q) == (x, y) || (p, q) == (y, x))
+    {
+        return true;
+    }
+    let key = |c: char| terminology::resolve(&c.to_string(), None).map(|m| m.key);
+    matches!((key(x), key(y)), (Some(kx), Some(ky)) if kx != ky)
+}
+
 /// 每份文档算一次的原文索引。`keys` 是懒的:只有名字连折叠比对和模糊都没过
 /// 的时候才会去建,建一次全文档共用(`terminology::resolve` 未命中时要扫词典,
 /// 不值得每个字段重来一遍)。
@@ -247,6 +420,9 @@ struct Src<'a> {
     num: String,
     ws: String,
     folded: String,
+    /// 折叠但**保留空白**:数值那条带锚点的比对要靠空白撑住词边界,
+    /// 拿去空白的 `folded` 比,`5.6` 和 `10^9/L` 会粘成 `5.610^9/1` 而假待核。
+    folded_spaced: String,
     /// 模糊比对的落点:每一行 + 行内按空白切出的每个词,各自折叠。
     /// **只拿它们的前缀比**,不拿任意内部窗口——「红细胞计数」与「细胞计数」
     /// 也差一个字,可原文那一段是「白细胞计数」,放行就是把值安到了别的指标上。
@@ -264,6 +440,7 @@ impl<'a> Src<'a> {
             num: comma_between_digits_to_dot(text),
             ws: strip_ws(text),
             folded: fold(text),
+            folded_spaced: text.chars().map(fold_char).collect(),
             folded_cands: text
                 .lines()
                 .flat_map(|l| std::iter::once(l).chain(l.split_whitespace()))
@@ -290,7 +467,10 @@ impl<'a> Src<'a> {
     }
 
     /// 名字:折叠后与原文某个落点的**前缀**相差 ≤1 个字。
-    /// **护栏**:那段前缀本身能被词典解析成另一个术语时不放行(红细胞/白细胞)。
+    /// **两道护栏**:
+    /// 1. 那段前缀本身能被词典解析成另一个术语时不放行(红细胞/白细胞);
+    /// 2. 两边都查不到词典时(词典外的名字恰恰是风险最高的那批),退一步看
+    ///    差的那一个字 —— 钾/钠、左/右 各自就是不同的东西,不是误读。
     fn name_near_miss(&self, folded_value: &str, value_key: Option<&str>) -> bool {
         let v: Vec<char> = folded_value.chars().collect();
         if v.len() < NAME_FUZZY_MIN_LEN {
@@ -302,9 +482,11 @@ impl<'a> Src<'a> {
                     continue;
                 }
                 let s: String = cand[..w].iter().collect();
-                match (terminology::resolve(&s, None), value_key) {
+                let src_key = terminology::resolve(&s, None).map(|m| m.key);
+                match (src_key.as_deref(), value_key) {
                     // 两边都是词典里的真术语,而且不是同一个 → 是邻项,不是误读
-                    (Some(m), Some(k)) if m.key != k => continue,
+                    (Some(m), Some(k)) if m != k => continue,
+                    _ if substitution_changes_meaning(&v, &cand[..w]) => continue,
                     _ => return true,
                 }
             }
@@ -322,21 +504,33 @@ fn field_ok(value: &str, src: &Src, mode: Mode, kind: FieldKind) -> bool {
     if value.is_empty() {
         return true;
     }
+    // 单位两档都走词边界:`g/L` 不许从 `mg/L` 里抠出来,文本档同样中招过。
+    if let FieldKind::Unit = kind {
+        return unit_token_match(src.text, value, matches!(mode, Mode::Image));
+    }
     if let Mode::Text = mode {
-        return src.text.contains(value);
+        return match kind {
+            // 数值同样要锚点:逐字子串会让 `1.5` 被 `11.5` 收下(fix round 2)
+            FieldKind::Numeric => digit_bounded_contains(src.text, value),
+            _ => src.text.contains(value),
+        };
     }
     match kind {
-        FieldKind::Numeric => {
-            if src.num.contains(&comma_between_digits_to_dot(value)) {
-                return true;
+        FieldKind::Unit => unreachable!("单位在 mode 分流之前已经返回"),
+        FieldKind::Flag => flag_token_match(src.text, value),
+        FieldKind::Numeric => match parse_num(value) {
+            // 相等,不是接近:`==` 是这条规则的全部内容,别换成 eps 比较。
+            // **只**跟切好词的 `src.numbers` 比:全文子串没有锚点,`1.5` 会被
+            // `11.5` "包含"下来而验真。
+            Some(n) => src.numbers.contains(&n),
+            // 解析不出数(`阴性`、`<2.00`、`0-3`、`2.61*`)就按文本比,但**同样要锚点**
+            // —— 光 `contains` 会让 `0-3` 被 `10-30`、`1.5%` 被 `11.5%` 验真,
+            // 那正是图片档比文本档还松的一处(fix round 3)。
+            None => {
+                digit_bounded_contains(&src.num, &comma_between_digits_to_dot(value))
+                    || digit_bounded_contains(&src.folded_spaced, &fold(value))
             }
-            match parse_num(value) {
-                // 相等,不是接近:`==` 是这条规则的全部内容,别换成 eps 比较
-                Some(n) => src.numbers.contains(&n),
-                // 不是数(阴性、+、未见异常……)就按普通文本比
-                None => src.folded.contains(&fold(value)),
-            }
-        }
+        },
         FieldKind::Text => src.ws.contains(&strip_ws(value)) || src.folded.contains(&fold(value)),
         FieldKind::Name => {
             if src.ws.contains(&strip_ws(value)) {
@@ -435,11 +629,23 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
     e.labs.retain_mut(|l| {
         let ok = field_ok(&l.name, &src, mode, FieldKind::Name)
             && field_ok(&l.value, &src, mode, FieldKind::Numeric)
-            && field_ok(&l.unit, &src, mode, FieldKind::Text)
+            && field_ok(&l.unit, &src, mode, FieldKind::Unit)
             && field_ok(&l.ref_low, &src, mode, FieldKind::Numeric)
-            && field_ok(&l.ref_high, &src, mode, FieldKind::Numeric)
-            && field_ok(&l.flag, &src, mode, FieldKind::Text);
-        keep(ok, &mut l.unverified)
+            && field_ok(&l.ref_high, &src, mode, FieldKind::Numeric);
+        let flag_ok = field_ok(&l.flag, &src, mode, FieldKind::Flag);
+        match mode {
+            // 图片档:异常标志是**推导数据**,值和区间才是证据。原文背书不了的标志
+            // 直接清空,让 `parser::labs_from_json` 拿值比区间自己算 H/L —— 不因为
+            // 一个推导不出处的标志把整行打成待核。值没过的行照样待核,与标志无关。
+            Mode::Image => {
+                if !flag_ok {
+                    l.flag.clear();
+                }
+                keep(ok, &mut l.unverified)
+            }
+            // 文本档一个字都没放宽:标志对不上,整条照丢。
+            Mode::Text => keep(ok && flag_ok, &mut l.unverified),
+        }
     });
     e.meds.retain_mut(|m| {
         let ok = field_ok(&m.name, &src, mode, FieldKind::Name)
