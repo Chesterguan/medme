@@ -288,7 +288,8 @@ pub fn sync_missing_objects(profile_key: Vec<u8>) -> anyhow::Result<Vec<(String,
     })
 }
 
-/// 从一条事件里取出它引用的对象哈希——只认 `FileImported`/`OcrAdded`,并且
+/// 从一条事件里取出它引用的对象哈希——只认 `FileImported`/`OcrAdded`/
+/// `ExtractionAdded`,并且
 /// 必须是合法的 64 位小写 hex(`cas::is_object_hash`)。**这道闸不是多余的**:
 /// 同一把档案密钥的另一台设备也能造出通过 MAC 校验的合法条目(它拥有同一把
 /// 密钥,不需要伪造 MAC),所以哈希字段本身仍是不可信输入——下游
@@ -298,6 +299,10 @@ fn object_hash_from_event(event: &core_model::Event) -> Option<String> {
     let h = match event {
         core_model::Event::FileImported { content_hash, .. } => content_hash,
         core_model::Event::OcrAdded { text_hash, .. } => text_hash,
+        // 抽取结果 JSON 同样在 CAS 里:漏了这一支,推送(`sync_all_object_ids`)和
+        // 拉取(`sync_missing_objects`)都看不见它,对端永远 materialize 不出
+        // `extraction` 行,而备份状态显示「已同步」。
+        core_model::Event::ExtractionAdded { result_hash, .. } => result_hash,
         _ => return None,
     };
     core_model::cas::is_object_hash(h).then(|| h.clone())
@@ -604,6 +609,27 @@ mod tests {
             deleted_at: "2024-01-01T00:00:00Z".into(),
         };
         assert_eq!(object_hash_from_event(&unrelated), None);
+    }
+
+    /// 抽取结果的 CAS 对象必须和原件、OCR 文本走同一条推拉清单——漏了这一支,
+    /// 第二台设备上 `extraction` 表永远是空的,而备份状态显示「已同步」。
+    /// 口径与 `core_model::Vault::missing_object_hashes` 一致(那边有端到端的
+    /// 两库往返测试)。
+    #[test]
+    fn object_hash_from_event_includes_extraction_result() {
+        let h = "c".repeat(64);
+        let ev = core_model::Event::ExtractionAdded {
+            document_ref: core_model::DocRef {
+                source_file_hash: "d".repeat(64),
+            },
+            backend: "cloud".into(),
+            model_version: "deepseek-flash".into(),
+            mode: "image".into(),
+            schema: 1,
+            result_hash: h.clone(),
+            created_at: "2024-01-01T00:00:00Z".into(),
+        };
+        assert_eq!(object_hash_from_event(&ev), Some(h));
     }
 
     fn any_file_under(dir: &std::path::Path) -> bool {

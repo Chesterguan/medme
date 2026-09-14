@@ -134,6 +134,9 @@ impl Vault {
             let h = match &e.event {
                 Event::FileImported { content_hash, .. } => content_hash,
                 Event::OcrAdded { text_hash, .. } => text_hash,
+                // 抽取结果的 JSON 也在 CAS 里,漏了这一支 = 抽取结果在第二台设备上
+                // 永远 `Deferred`,而备份状态照样显示「已同步」(静默丢数据)。
+                Event::ExtractionAdded { result_hash, .. } => result_hash,
                 _ => continue,
             };
             if cas::is_object_hash(h)
@@ -283,5 +286,75 @@ mod tests {
         assert_eq!(second.applied, 0);
         assert_eq!(second.skipped_existing, entries.len());
         assert_eq!(second.untrusted, entries.len());
+    }
+
+    /// 抽取结果的 CAS 对象必须和原件、OCR 文本一样进同步清单。
+    ///
+    /// 漏掉这一支的后果是**静默丢数据**:事件本身推拉验 MAC 全都正常,
+    /// `missing_object_hashes` 却不列 `result_hash`,于是备份状态显示「已同步」,
+    /// 而对端 `materialize` 永远停在 `Deferred`——第二台设备/换机恢复之后
+    /// `extraction` 表是空的,抽取结果全丢。所以这条测试**只走同步引擎的口径**
+    /// (`missing_object_hashes`),绝不手工 copy 对象。
+    #[test]
+    fn extraction_object_is_enumerated_and_materializes_on_peer() {
+        use crate::{DocType, NewDocument, NewExtraction};
+
+        let a = tempdir().unwrap();
+        let b = tempdir().unwrap();
+        let va = keyed(a.path(), "dev-a");
+        let imp = va
+            .import("r.txt", "text/plain", "血红蛋白 130 g/L".as_bytes())
+            .unwrap();
+        let doc_id = va
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("r.txt".into()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap()
+            .id;
+        va.add_extraction(NewExtraction {
+            document_id: doc_id,
+            backend: "cloud".into(),
+            model_version: "deepseek-flash".into(),
+            mode: "image".into(),
+            result_json: r#"{"labs":[{"name":"血红蛋白","value":"130","unit":"g/L"}]}"#.into(),
+        })
+        .unwrap();
+
+        let vb = keyed(b.path(), "dev-b");
+        let entries = va.log_entries().unwrap();
+        let out = vb.append_peer_entries(&entries).unwrap();
+        assert_eq!(out.applied, entries.len());
+        assert_eq!(out.untrusted, 0);
+
+        // 按同步引擎的口径搬对象:`missing_object_hashes` 是唯一的待拉清单。
+        for _ in 0..4 {
+            let missing = vb.missing_object_hashes().unwrap();
+            if missing.is_empty() {
+                break;
+            }
+            for h in missing {
+                let bytes = va.read_object(&h).unwrap();
+                vb.store_object(&bytes).unwrap();
+            }
+            vb.materialize().unwrap();
+        }
+        assert!(
+            vb.missing_object_hashes().unwrap().is_empty(),
+            "清单搬完之后不该还有缺的对象"
+        );
+
+        let doc_b = vb.standalone_documents().unwrap()[0].id;
+        assert_eq!(
+            vb.extraction_json(doc_b).unwrap(),
+            va.extraction_json(doc_id).unwrap(),
+            "ExtractionAdded 应在第二台设备上 materialize 成 extraction 行"
+        );
+        assert!(vb.extraction_json(doc_b).unwrap().is_some());
     }
 }
