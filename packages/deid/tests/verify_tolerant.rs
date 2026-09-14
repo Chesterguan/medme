@@ -178,6 +178,25 @@ fn arrow_flag_matches_letter_flag() {
     assert!(lab_ok(down, "血红蛋白 98 g/L L"));
 }
 
+/// **红线**:标志位只跟原文里独立成词、长度 ≤2 的词比。整行折叠着比的话
+/// `HGB` 就够"验真"一个凭空的 ↑,而下游对字面 H/L 是优先采信的。
+#[test]
+fn a_flag_is_not_verified_by_a_letter_inside_a_longer_token() {
+    let up = lab(LabItem {
+        name: "血红蛋白".into(),
+        flag: "↑".into(),
+        ..Default::default()
+    });
+    assert!(!lab_ok(up, "血红蛋白 HGB 130 g/L 115-150"));
+    // ↓ 同理:全文那些 `1`(10^9/L、11.8)不许把一个低值标志验真
+    let down = lab(LabItem {
+        name: "白细胞计数".into(),
+        flag: "↓".into(),
+        ..Default::default()
+    });
+    assert!(!lab_ok(down, "白细胞计数 11.8 10^9/L 4.0-10.0"));
+}
+
 #[test]
 fn up_arrow_does_not_match_a_low_flag() {
     let up = lab(LabItem {
@@ -205,6 +224,51 @@ fn numeric_closeness_never_passes() {
     assert!(!lab_ok(value("56"), "白细胞计数 5.6 10^9/L"));
 }
 
+/// **红线**:数值判定没有锚点就会被"包含"下来 —— `1.5` ⊂ `11.5`。
+/// 解析得出数的字段只跟切好词的原文数字比,不跟全文子串比。
+#[test]
+fn a_shorter_number_is_not_verified_by_a_longer_one() {
+    assert!(!lab_ok(value("1.5"), "血糖 GLU 11.5 mmol/L"));
+    assert!(lab_ok(value("11.5"), "血糖 GLU 11.5 mmol/L"));
+    // 参考区间同理:0.11 不许被 10.115 收下
+    let e = lab(LabItem {
+        ref_low: "0.11".into(),
+        ..Default::default()
+    });
+    assert!(!lab_ok(e, "某项 5.0 10.115-20.0"));
+}
+
+// ---------- 规则 9b:单位要落在词边界上 ----------
+
+#[test]
+fn unit_matches_when_neither_side_is_a_letter() {
+    assert!(lab_ok(unit("g/L"), "血红蛋白 HGB 130 g/L 115-150")); // 整词
+    assert!(lab_ok(unit("g/L"), "血红蛋白 HGB 130g/L 115-150")); // 紧跟数字
+    assert!(lab_ok(unit("10^9/L"), "白细胞计数 5.6 ×10^9/L")); // 符号前缀不算边界
+    assert!(lab_ok(unit("um/s"), "线速度VCL 54.6 (um/s)")); // 括号同理
+}
+
+/// **红线**:`g/L` 不许从 `mg/L` 里抠出来 —— 那是 1000 倍之差。
+/// 量级前缀一律是字母,所以「左边不是字母」这一条正好盖住整类。
+#[test]
+fn unit_is_not_verified_by_a_longer_unit_whose_prefix_is_a_letter() {
+    assert!(!lab_ok(unit("g/L"), "血红蛋白 HGB 130 mg/L 115-150"));
+    assert!(!lab_ok(unit("mol/L"), "血糖 GLU 6.1 mmol/L"));
+    assert!(!lab_ok(unit("IU/L"), "促甲状腺素 1.18 mIU/L"));
+    assert!(!lab_ok(unit("g/L"), "血清铁 8.54 μg/L")); // 希腊字母 μ 也是字母
+}
+
+/// 文本档同样中招过,所以词边界这条**两档都管**(收紧,不是放宽)。
+#[test]
+fn text_mode_unit_also_needs_a_token_boundary() {
+    let v = verify(unit("g/L"), "血红蛋白 HGB 130 mg/L 115-150", Mode::Text);
+    assert_eq!(v.extraction.labs.len(), 0);
+    assert_eq!(v.rejected, 1);
+    let v = verify(unit("mg/L"), "血红蛋白 HGB 130 mg/L 115-150", Mode::Text);
+    assert_eq!(v.extraction.labs.len(), 1);
+    assert_eq!(v.rejected, 0);
+}
+
 // ---------- 规则 10:名字 —— 归一化后编辑距离 ≤ 1 ----------
 
 #[test]
@@ -223,6 +287,26 @@ fn name_two_edits_away_stays_flagged() {
 #[test]
 fn name_one_edit_away_but_a_different_real_term_stays_flagged() {
     assert!(!lab_ok(name("红细胞计数"), "白细胞计数 5.6 10^9/L"));
+}
+
+/// 距离 1、**两边都不在词典里**,但差的那一个字各自是不同的术语(钾 / 钠)——
+/// 词典外的名字正是风险最高的那批,护栏不能在那里失效。
+#[test]
+fn name_one_edit_away_stays_flagged_when_the_differing_char_is_another_term() {
+    assert!(!lab_ok(name("血清钾测定"), "血清钠测定 4.5 mmol/L"));
+    assert!(!lab_ok(name("尿钠浓度测定"), "尿钾浓度测定 30 mmol/L"));
+}
+
+/// 同上,但差的是一对对立修饰字(左 / 右):词典查不到,换一个就是另一处。
+#[test]
+fn name_one_edit_away_stays_flagged_for_opposite_modifier_chars() {
+    assert!(!lab_ok(name("左侧肾上腺"), "右侧肾上腺 未见异常"));
+}
+
+/// 收紧只针对**替换**:OCR 断字多识/漏识一个字(插入/删除)照旧算误读。
+#[test]
+fn an_inserted_or_deleted_char_is_still_a_misread() {
+    assert!(lab_ok(name("血清钾测定"), "血清钾测测定 4.5 mmol/L"));
 }
 
 /// 三字及以下不做模糊(钾/钠/氯之类,字太少分不开误读与邻项)。

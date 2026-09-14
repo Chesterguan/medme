@@ -389,7 +389,8 @@ fn eval_known() -> KnownIdentity {
 /// `arm2_geo/{doc}.txt`(同一遍本地 OCR 的文本)。`redact_text` 是纯函数,
 /// 重跑逐字节复现当初送去校验的那份原文,所以换了校验规则不需要重调一次 API。
 ///
-/// 产出写进**另一个**目录 `deepseek-image-verified-tol/`,旧的
+/// 产出写进**另一个**目录(默认 `deepseek-image-verified-tol/`,
+/// 用 `REVERIFY_OUT_DIR=` 换名字以免盖掉上一轮的产出),旧的
 /// `deepseek-image-verified/` 原样留着 —— `score()` 于是把新旧两列并排打出来,
 /// 两列相减就是「这一轮新放行的行」对真值的表现,不用另写一套打分逻辑。
 ///
@@ -401,7 +402,9 @@ fn reverify(root: &str, out: &str) -> Result<()> {
         base.join("deepseek-image"),
         base.join("deepseek-image-verified"),
     );
-    let new_dir = base.join("deepseek-image-verified-tol");
+    let new_dir = base.join(
+        std::env::var("REVERIFY_OUT_DIR").unwrap_or_else(|_| "deepseek-image-verified-tol".into()),
+    );
     std::fs::create_dir_all(&new_dir)?;
     let arm2 = PathBuf::from(root).join(out).join("arm2_geo");
     let known = eval_known();
@@ -469,7 +472,9 @@ fn reverify(root: &str, out: &str) -> Result<()> {
                 }
             } else if *d < 0 {
                 withdrawn += (-*d) as usize;
-                eprintln!("WITHDRAWN\t{doc}\t{line}"); // 不该出现:新规则是旧规则的超集
+                // fix round 1 起会出现:单位词边界/数值锚点/标志独立词三条是**收紧**,
+                // 新规则不再是旧规则的超集。收回的都要能说清是哪条挡的。
+                eprintln!("WITHDRAWN\t{doc}\t{line}");
             }
         }
         let pending = Extraction {
