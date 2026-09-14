@@ -34,7 +34,7 @@ Status: Accepted · Date: 2026-09-14
    (`gate.rs:4-25`,拦下即退回正则)→ 按同一批检测框把**喂给识别引擎的那份画面**涂黑
    (`redact_boxes` 四类矩形含页眉带/页脚带,`redact.rs:331-401`;`ocr::redact_image`
    画黑框后重编码 q85 JPEG,`packages/ocr/src/lib.rs:993-1014`)→ 经**账号会话**
-   `POST /v1/extract`(`cloud_extract.dart:105-112`)→ 我们的代理 → DeepSeek。
+   `POST /v1/extract`(`cloud_extract.dart:106-113`)→ 我们的代理 → DeepSeek。
    **文本档只是退路**(涂黑不可用 / 没有检测框 / 图片超 2 MiB 时),不是默认。
 
 3. **保留与偏移**:年龄、性别、科室、检验值保留(`anchors.rs:64-67` 把这三个词钉成硬停止点);
@@ -92,18 +92,29 @@ spec 不改(spec 是当时的决定,不是活文档)。
 - **名字那 332 条待核是 OCR 问题**,不是校验能解决的(跨行切开、整段漏识、错两个字以上)。
 - **文本字段(`MedItem.dose/freq/route`、`impression`、`notes`)只有逐字子串**
   (`verify.rs:534`,`FieldKind::Text`),没有数值那种解析后相等的强规则。
-- **有一个开关,跟设备走。**「设置 → 账号 → 云端整理」(`account_screen.dart:1174-1190`),
-  默认开(`cloud_extract.dart:28-45`,键 `cloud_extract_enabled`,`account.dart:29`)。
-  关掉之后 `runCloudExtractions` 入口即返回,连网络都不碰(`cloud_extract.dart:126-131`)。
-  退出登录也会让这条通道停下来(没登录 = 没这个功能,`cloud_extract.dart:148-154`)——
+- **有一个开关,跟设备走。**「设置 → 账号 → 云端整理」(`account_screen.dart:1177-1192`),
+  默认开(`cloud_extract.dart:34-46`,键 `cloud_extract_enabled`,`account.dart:29`)。
+  **每份文档发出去之前都重读一次**(`cloud_extract.dart:161`):一批导入要跑好几分钟,
+  用户跑到一半关掉,剩下的几份就不发了,连网络都不碰。
+  退出登录也会让这条通道停下来(没登录 = 没这个功能,`cloud_extract.dart:239-245`)——
   但那是因为 `session.access` 没了,不是这个开关本身被清掉:它跟设备走,
   `AccountSession.clear()` 不动它(`account.dart:25-29`),下次登录仍是上次留下的状态。
   成员的「云同步」开关**管不到它**——那条路只看 `session.access` 与这个独立开关
-  (`cloud_extract.dart:127-134`)。
+  (`cloud_extract.dart:153-180`)。
 - **换机「旧设备扫码批准」的密钥对探针挡不住整对替换**
   (`docs/superpowers/specs/2026-09-11-account-keys-sync-design.md:89-110`):
   服务端自造一对真密钥即可通过探针。堵法是双向指纹确认,**没做**;口令 / 恢复码两条路没有这个缺口。
 - 依赖网络;离线、闸拒发、上游失败一律静默退回本地正则,导入本身不受影响。
+
+### 发版顺序(多设备兼容)
+
+**先把新版本铺到该账号的所有设备,再开云端整理。** `ExtractionAdded` 是新事件类型,
+老版本的二进制不认识它:本机读到只会跳过这一条(不再连累它后面那条,见
+`core-model/src/log.rs` 的 `Event::Unknown` 兜底),而同步拉取路径会把它算作「解不开」
+——就地截断那台设备、计一笔 `undecodable`、水位不推进(`vault_sync.rs` 的
+`sync_import_events`)。**数据不会坏、也不会丢**(升级之后原样重拉即可),但在升级之前,
+老版本设备上**永远看不到任何抽取结果**,而且每次同步都会在那个设备段上停住。
+反过来也一样:老设备写的事件新版本全认得,所以顺序只有这一条约束。
 
 ### DeepSeek 侧(2026-09-14 核查,见报告引用)
 
