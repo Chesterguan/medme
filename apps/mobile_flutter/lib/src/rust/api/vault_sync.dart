@@ -143,6 +143,11 @@ Future<List<(String, PlatformInt64)>> syncLocalSeqMap() =>
 /// 顾虑(见 `blob.rs` 的文档)。真正的本机 `event_id` 只在加密前的 `plain`
 /// (整条 `LogEntry` 的 JSON)里,随密文一起传输、解密后才重新出现——见
 /// `sync_import_events`,它不读也不校验这个 wire 马甲。
+///
+/// `SyncEventDto.ts` 同理只发一个**常量 `"0"`**(最终评审 I4):服务端排序只用
+/// `(device_id, seq)`,从不读 ts;而明文逐条带上真实时间戳,等于在服务端攒出一条
+/// 「这个账号什么时候、多久一次产生病历事件」的时间线——没有任何功能需要它。真实
+/// 的 `ts` 随 `LogEntry` 一起在密文里,解密后原样恢复。
 Future<List<SyncEventDto>> syncExportEvents({
   required List<int> profileKey,
   required List<(String, PlatformInt64)> after,

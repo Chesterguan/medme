@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
 ///
@@ -909,6 +909,98 @@ class SourceFileMetaDto {
           mimeType == other.mimeType &&
           byteSize == other.byteSize &&
           importedAt == other.importedAt;
+}
+
+/// 一条云同步事件的加密信封(`api::vault_sync::sync_export_events` 产出 /
+/// `sync_import_events` 消费)。`device_id`/`seq` 明文携带(服务端按
+/// `(device_id, seq)` 去重/排序、Dart 侧按 `device_seq_map` 过滤都不需要解密);
+/// `ciphertext` 是整条 `core_model::LogEntry` 的 JSON 序列化经档案密钥 AEAD
+/// 加密的结果(AAD = `device_id:seq`),真正敏感的内容(含本机真实的
+/// `event_id` 与真实时间戳)都在这里面。**`event_id` 这个字段本身是服务端看到的
+/// HMAC 马甲**(`sync::event_id_for_wire`),不是本机内容哈希——服务端只拿它当一个
+/// 不透明校验值存,dedup 靠 `(device_id, seq)`;`sync_import_events` 不读这个字段。
+///
+/// **`ts` 恒为常量 `"0"`**(最终评审 I4):服务端排序从来只看
+/// `(device_id, seq)`,而一串明文时间戳等于白送一条「这个人什么时候、多久一次
+/// 产生病历事件」的时间线。真实 `ts` 在 `ciphertext` 里的 `LogEntry` 上,解密后
+/// 原样恢复;`sync_import_events` 同样不读信封上的这个字段。
+class SyncEventDto {
+  final String deviceId;
+  final PlatformInt64 seq;
+  final String eventId;
+  final String ts;
+  final Uint8List ciphertext;
+
+  const SyncEventDto({
+    required this.deviceId,
+    required this.seq,
+    required this.eventId,
+    required this.ts,
+    required this.ciphertext,
+  });
+
+  @override
+  int get hashCode =>
+      deviceId.hashCode ^
+      seq.hashCode ^
+      eventId.hashCode ^
+      ts.hashCode ^
+      ciphertext.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncEventDto &&
+          runtimeType == other.runtimeType &&
+          deviceId == other.deviceId &&
+          seq == other.seq &&
+          eventId == other.eventId &&
+          ts == other.ts &&
+          ciphertext == other.ciphertext;
+}
+
+/// `core_model::sync_io::PeerAppendOutcome` 的 FRB 镜像,外加 `undecodable`。
+/// 五个计数不互斥,Dart 侧都要看:`applied`/`skipped_existing`/`out_of_order`
+/// 是磁盘层面的去重/排序结果,`out_of_order` 提示调用方该把这个 device 的拉取
+/// 水位下调重推;`untrusted` 是 MAC/链校验层面的隔离计数(错误账号密钥或被
+/// 篡改),不看这个字段、只盯 `device_seq_map`(可信水位)会导致"越推越推不动"
+/// 的死循环。`undecodable` 是 `sync_import_events` 自己这一层的计数(在交给
+/// `append_peer_entries` 之前就没能解密/反序列化/信封校验通过的条目数,按设备
+/// 只算撞到的第一条——见该函数文档),非零说明有台设备卡在了某条解不开的事件
+/// 上,该设备后面还有条目排队等着,不是"已经全部同步完"。
+class SyncImportOutcomeDto {
+  final int applied;
+  final int skippedExisting;
+  final int outOfOrder;
+  final int untrusted;
+  final int undecodable;
+
+  const SyncImportOutcomeDto({
+    required this.applied,
+    required this.skippedExisting,
+    required this.outOfOrder,
+    required this.untrusted,
+    required this.undecodable,
+  });
+
+  @override
+  int get hashCode =>
+      applied.hashCode ^
+      skippedExisting.hashCode ^
+      outOfOrder.hashCode ^
+      untrusted.hashCode ^
+      undecodable.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncImportOutcomeDto &&
+          runtimeType == other.runtimeType &&
+          applied == other.applied &&
+          skippedExisting == other.skippedExisting &&
+          outOfOrder == other.outOfOrder &&
+          untrusted == other.untrusted &&
+          undecodable == other.undecodable;
 }
 
 @freezed
