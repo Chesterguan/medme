@@ -3,7 +3,9 @@ pub mod blob;
 pub mod error;
 pub mod keys;
 
-pub use blob::{date_shift_days, decrypt_blob, encrypt_blob, event_id_for_wire, object_id, profile_key_new};
+pub use blob::{
+    date_shift_days, decrypt_blob, encrypt_blob, event_id_for_wire, object_id, profile_key_new,
+};
 pub use error::SyncError;
 pub use keys::{
     account_keys_new, kek_from_password, kek_from_recovery, kek_from_token, open_sealed,
@@ -18,10 +20,31 @@ mod tests {
     fn password_kek_round_trips_private_key() {
         let keys = account_keys_new();
         let salt = [7u8; 16];
-        let kek = kek_from_password("正确的口令", &salt, &KdfParams { m_kib: 8192, t: 1, p: 1 }).unwrap();
+        let kek = kek_from_password(
+            "正确的口令",
+            &salt,
+            &KdfParams {
+                m_kib: 8192,
+                t: 1,
+                p: 1,
+            },
+        )
+        .unwrap();
         let blob = wrap(&kek, &keys.secret, b"account-priv-v1").unwrap();
-        assert_eq!(unwrap(&kek, &blob, b"account-priv-v1").unwrap(), keys.secret);
-        let wrong = kek_from_password("错的", &salt, &KdfParams { m_kib: 8192, t: 1, p: 1 }).unwrap();
+        assert_eq!(
+            unwrap(&kek, &blob, b"account-priv-v1").unwrap(),
+            keys.secret
+        );
+        let wrong = kek_from_password(
+            "错的",
+            &salt,
+            &KdfParams {
+                m_kib: 8192,
+                t: 1,
+                p: 1,
+            },
+        )
+        .unwrap();
         assert!(unwrap(&wrong, &blob, b"account-priv-v1").is_err());
         assert!(unwrap(&kek, &blob, b"other-aad").is_err());
     }
@@ -120,14 +143,19 @@ mod tests {
         for _ in 0..200 {
             let code = recovery_code_new();
             for c in code.chars().filter(|c| *c != '-') {
-                let idx = ALPHABET.find(c).expect("symbol must be in the 30-char alphabet");
+                let idx = ALPHABET
+                    .find(c)
+                    .expect("symbol must be in the 30-char alphabet");
                 counts[idx] += 1;
             }
         }
         let total: u32 = counts.iter().sum();
         assert_eq!(total, 200 * 20);
         for (i, &n) in counts.iter().enumerate() {
-            assert!((60..240).contains(&n), "symbol {i} count {n} looks non-uniform");
+            assert!(
+                (60..240).contains(&n),
+                "symbol {i} count {n} looks non-uniform"
+            );
         }
     }
 

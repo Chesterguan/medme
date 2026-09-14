@@ -52,7 +52,9 @@ fn long_digits_re() -> &'static Regex {
 /// 化验单位标记:数字串后面紧跟着任意一个,就当化验值处理,不掩。
 /// `pub(crate)`:`redact::looks_like_lab_row` 复用这份词表判断整框是不是化验行,
 /// 不再另建一份重复列表(那份少了 `U/L`,两处各自漂移迟早对不上)。
-pub(crate) const UNIT_TOKENS: &[&str] = &["/L", "U/L", "10^", "×10", "x10", "g/L", "%", "mmol", "umol", "μmol"];
+pub(crate) const UNIT_TOKENS: &[&str] = &[
+    "/L", "U/L", "10^", "×10", "x10", "g/L", "%", "mmol", "umol", "μmol",
+];
 
 /// 紧邻外侧是 `.`/`-`/`~`,且再外一层是数字 → 这段数字是小数或区间的一部分,不当证件号。
 /// 只看匹配区间**外**的字符;比如座机号自己内部的那个 `-` 在匹配范围之内,不受影响。
@@ -75,8 +77,14 @@ fn is_decimal_or_range(text: &str, start: usize, end: usize) -> bool {
 /// 紧邻外侧就是另一个 ASCII 数字 → 这段只是更长数字串中间凑巧长得像证件号/手机号的
 /// 一截,不能单独掩码,得留给 6 位以上兜底规则把整段一起处理。
 fn embedded_in_digits(text: &str, start: usize, end: usize) -> bool {
-    let before = text[..start].chars().next_back().is_some_and(|c| c.is_ascii_digit());
-    let after = text[end..].chars().next().is_some_and(|c| c.is_ascii_digit());
+    let before = text[..start]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_ascii_digit());
+    let after = text[end..]
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_digit());
     before || after
 }
 
@@ -102,7 +110,9 @@ fn followed_by_unit_or_reference(text: &str, end: usize) -> bool {
 fn apply_shape(text: &str, re: &Regex, kind: &str, map: &mut RestoreMap) -> String {
     re.replace_all(text, |c: &regex::Captures| {
         let m = c.get(0).expect("group 0");
-        if is_decimal_or_range(text, m.start(), m.end()) || embedded_in_digits(text, m.start(), m.end()) {
+        if is_decimal_or_range(text, m.start(), m.end())
+            || embedded_in_digits(text, m.start(), m.end())
+        {
             m.as_str().to_string()
         } else {
             map.placeholder(kind, m.as_str())
@@ -188,11 +198,19 @@ mod tests {
         let mut map = RestoreMap::default();
         apply("样本 2023139123456789", &mut map);
         assert_eq!(map.placeholders.len(), 1, "{:?}", map.placeholders);
-        assert_eq!(map.placeholders[0].1, "2023139123456789", "{:?}", map.placeholders);
+        assert_eq!(
+            map.placeholders[0].1, "2023139123456789",
+            "{:?}",
+            map.placeholders
+        );
 
         let mut map2 = RestoreMap::default();
         apply("12345678901234567890", &mut map2);
         assert_eq!(map2.placeholders.len(), 1, "{:?}", map2.placeholders);
-        assert_eq!(map2.placeholders[0].1, "12345678901234567890", "{:?}", map2.placeholders);
+        assert_eq!(
+            map2.placeholders[0].1, "12345678901234567890",
+            "{:?}",
+            map2.placeholders
+        );
     }
 }

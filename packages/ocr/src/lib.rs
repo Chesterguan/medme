@@ -2576,7 +2576,9 @@ mod tests {
             })
             .collect();
         let out = redact_image(&engine_lines.frame, &rects).expect("redact");
-        let painted = image::load_from_memory(&out).expect("decode jpeg").to_rgb8();
+        let painted = image::load_from_memory(&out)
+            .expect("decode jpeg")
+            .to_rgb8();
         let px = painted.get_pixel(expect_cx, expect_cy);
         assert!(
             px[0] < 30,

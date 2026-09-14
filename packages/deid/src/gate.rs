@@ -5,10 +5,20 @@ pub fn assert_clean(payload: &str, known: &KnownIdentity) -> Result<(), DeidErro
     if known.name.chars().count() >= 2 && payload.contains(known.name.as_str()) {
         return Err(DeidError::IdentityLeak("姓名".into()));
     }
-    if known.id_number.as_deref().filter(|s| !s.is_empty()).is_some_and(|id| payload.contains(id)) {
+    if known
+        .id_number
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .is_some_and(|id| payload.contains(id))
+    {
         return Err(DeidError::IdentityLeak("证件号".into()));
     }
-    if known.phone.as_deref().filter(|s| !s.is_empty()).is_some_and(|p| payload.contains(p)) {
+    if known
+        .phone
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .is_some_and(|p| payload.contains(p))
+    {
         return Err(DeidError::IdentityLeak("手机号".into()));
     }
     Ok(())
@@ -20,7 +30,11 @@ mod tests {
     use crate::KnownIdentity;
 
     fn k() -> KnownIdentity {
-        KnownIdentity { name: "张建国".into(), id_number: Some("110101199001011234".into()), phone: None }
+        KnownIdentity {
+            name: "张建国".into(),
+            id_number: Some("110101199001011234".into()),
+            phone: None,
+        }
     }
 
     #[test]

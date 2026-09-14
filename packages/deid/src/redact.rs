@@ -17,7 +17,12 @@ impl RestoreMap {
         if let Some((p, _)) = self.placeholders.iter().find(|(_, v)| v == value) {
             return p.clone();
         }
-        let n = self.placeholders.iter().filter(|(p, _)| p.starts_with(&format!("[{kind}"))).count() + 1;
+        let n = self
+            .placeholders
+            .iter()
+            .filter(|(p, _)| p.starts_with(&format!("[{kind}")))
+            .count()
+            + 1;
         let p = format!("[{kind}{n}]");
         self.placeholders.push((p.clone(), value.to_string()));
         p
@@ -30,7 +35,10 @@ pub struct Redacted {
 }
 
 pub fn redact_text(text: &str, known: &KnownIdentity, shift_days: i64) -> Redacted {
-    let mut map = RestoreMap { placeholders: Vec::new(), shift_days };
+    let mut map = RestoreMap {
+        placeholders: Vec::new(),
+        shift_days,
+    };
     let t = known::apply(text, known, &mut map);
     let t = anchors::apply(&t, &mut map);
     let t = patterns::apply(&t, &mut map);
@@ -77,7 +85,9 @@ pub struct Rect {
 /// 「区间后面只能跟空白/标记/单位」的收尾检查误判成不合法的尾巴)。
 fn digit_range_re() -> &'static regex::Regex {
     static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r"\d+(\.\d+)?\s*[-~]\s*\d+(\.\d+)?").expect("digit range re"))
+    R.get_or_init(|| {
+        regex::Regex::new(r"\d+(\.\d+)?\s*[-~]\s*\d+(\.\d+)?").expect("digit range re")
+    })
 }
 
 /// 座机号形状(`patterns::landline_re` 同形,那边是私有的——两条正则字面量,不值得
@@ -85,7 +95,8 @@ fn digit_range_re() -> &'static regex::Regex {
 /// 010-69156114」这种数字区间形状的座机号从「化验区间」候选里摘出去。
 fn looks_like_landline(s: &str) -> bool {
     static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r"^0\d{2,3}-\d{7,8}$").expect("landline shape re")).is_match(s)
+    R.get_or_init(|| regex::Regex::new(r"^0\d{2,3}-\d{7,8}$").expect("landline shape re"))
+        .is_match(s)
 }
 
 /// 在 `t` 里、从 `at` 这个字节偏移开始,是不是一个 `YYYY-MM-DD`/`YYYY/MM/DD` 形状的
@@ -94,8 +105,10 @@ fn looks_like_landline(s: &str) -> bool {
 /// 4 位数字的「年份」。
 fn looks_like_iso_date_at(t: &str, at: usize) -> bool {
     static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r"^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}").expect("iso date shape re"))
-        .is_match(&t[at..])
+    R.get_or_init(|| {
+        regex::Regex::new(r"^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}").expect("iso date shape re")
+    })
+    .is_match(&t[at..])
 }
 
 /// 这一行有没有出现任何一个身份锚点词(`anchors::ANCHORS`,姓名/证件号/地址等标签)。
@@ -122,7 +135,9 @@ fn range_tail_ok(rest: &str) -> bool {
     if s.is_empty() {
         return true;
     }
-    patterns::UNIT_TOKENS.iter().any(|u| s.strip_prefix(u).is_some_and(|t| t.trim_start().is_empty()))
+    patterns::UNIT_TOKENS
+        .iter()
+        .any(|u| s.strip_prefix(u).is_some_and(|t| t.trim_start().is_empty()))
 }
 
 /// 像不像一条化验行:含单位标记(`patterns::UNIT_TOKENS`,与 P 层共用同一份词表,
@@ -147,7 +162,16 @@ fn looks_like_lab_row(t: &str) -> bool {
 
 /// 像不像页脚锚点行(检验者/审核者/打印时间/报告医生等)。
 fn looks_like_footer(t: &str) -> bool {
-    ["检验者", "审核者", "打印时间", "报告医生", "报告医师", "审核医生"].iter().any(|a| t.contains(a))
+    [
+        "检验者",
+        "审核者",
+        "打印时间",
+        "报告医生",
+        "报告医师",
+        "审核医生",
+    ]
+    .iter()
+    .any(|a| t.contains(a))
 }
 
 /// 把 `t` 尾部的分隔符/冒号去掉之后,是不是恰好以一个身份锚点词结尾(fix round 2
@@ -180,8 +204,16 @@ fn clip(r: Rect, page_w: f32, page_h: f32) -> Rect {
 /// 框的几何量,顺带纠正 OCR 偶尔给出的「倒装」框(`right<left` / `bottom<top`,
 /// fix round 1 item 6)——只在读取时纠正,不改调用方传入的 `Box`。
 fn norm_rect(b: &Box) -> (f32, f32, f32, f32) {
-    let (left, right) = if b.left <= b.right { (b.left, b.right) } else { (b.right, b.left) };
-    let (top, bottom) = if b.top <= b.bottom { (b.top, b.bottom) } else { (b.bottom, b.top) };
+    let (left, right) = if b.left <= b.right {
+        (b.left, b.right)
+    } else {
+        (b.right, b.left)
+    };
+    let (top, bottom) = if b.top <= b.bottom {
+        (b.top, b.bottom)
+    } else {
+        (b.bottom, b.top)
+    };
     (left, top, right, bottom)
 }
 
@@ -189,12 +221,22 @@ fn norm_rect(b: &Box) -> (f32, f32, f32, f32) {
 fn push_painted(out: &mut Vec<Rect>, b: &Box, page_w: f32, page_h: f32) {
     let (left, top, right, bottom) = norm_rect(b);
     let m = margin_for(bottom - top);
-    let clipped = clip(Rect { left: left - m, top: top - m, right: right + m, bottom: bottom + m }, page_w, page_h);
+    let clipped = clip(
+        Rect {
+            left: left - m,
+            top: top - m,
+            right: right + m,
+            bottom: bottom + m,
+        },
+        page_w,
+        page_h,
+    );
     // 健全性检查(fix round 1 item 5):框本身有面积、且跟 page_w/page_h 同一坐标系时,
     // 裁剪后不该整个塌成 0 面积——塌成 0 通常意味着调用方传错了坐标系(比如拿了没做
     // preprocess 的原始朝向帧的框,配 EngineLines 那张 preprocess 过的 working frame)。
     debug_assert!(
-        !(right > left && bottom > top) || (clipped.right > clipped.left && clipped.bottom > clipped.top),
+        !(right > left && bottom > top)
+            || (clipped.right > clipped.left && clipped.bottom > clipped.top),
         "redact_boxes: 有面积的框裁剪后塌成 0 面积——多半是 boxes 和 page_w/page_h 不是同一坐标系"
     );
     out.push(clipped);
@@ -303,10 +345,23 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
         }
     }
 
-    if let Some(first) = boxes.iter().filter(|b| looks_like_lab_row(&b.text)).min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1)) {
+    if let Some(first) = boxes
+        .iter()
+        .filter(|b| looks_like_lab_row(&b.text))
+        .min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1))
+    {
         let (_, top, _, bottom) = norm_rect(first);
         let m = margin_for(bottom - top);
-        out.push(clip(Rect { left: 0.0, top: 0.0, right: page_w, bottom: top + m }, page_w, page_h));
+        out.push(clip(
+            Rect {
+                left: 0.0,
+                top: 0.0,
+                right: page_w,
+                bottom: top + m,
+            },
+            page_w,
+            page_h,
+        ));
     }
 
     if let Some(foot) = boxes
@@ -314,13 +369,24 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
         .filter(|b| looks_like_footer(&b.text))
         .filter(|cand| {
             let cand_top = norm_rect(cand).1;
-            boxes.iter().any(|lb| is_real_lab_row(lb) && norm_rect(lb).1 <= cand_top)
+            boxes
+                .iter()
+                .any(|lb| is_real_lab_row(lb) && norm_rect(lb).1 <= cand_top)
         })
         .min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1))
     {
         let (_, top, _, bottom) = norm_rect(foot);
         let m = margin_for(bottom - top);
-        out.push(clip(Rect { left: 0.0, top: top - m, right: page_w, bottom: page_h }, page_w, page_h));
+        out.push(clip(
+            Rect {
+                left: 0.0,
+                top: top - m,
+                right: page_w,
+                bottom: page_h,
+            },
+            page_w,
+            page_h,
+        ));
     }
 
     // fix round 2:去重——同一矩形被多条规则各推一次的情况(命中 + 悬空锚点前瞻都
@@ -339,12 +405,20 @@ mod tests {
     use super::*;
 
     fn known() -> KnownIdentity {
-        KnownIdentity { name: "孟丁".into(), id_number: Some("110101199001011234".into()), phone: Some("13800138000".into()) }
+        KnownIdentity {
+            name: "孟丁".into(),
+            id_number: Some("110101199001011234".into()),
+            phone: Some("13800138000".into()),
+        }
     }
 
     #[test]
     fn known_name_is_removed_even_when_glued() {
-        let r = redact_text("姓名孟丁性别男 年龄2岁 门诊号90051065 科室儿科", &known(), 0);
+        let r = redact_text(
+            "姓名孟丁性别男 年龄2岁 门诊号90051065 科室儿科",
+            &known(),
+            0,
+        );
         assert!(!r.text.contains("孟丁"), "{}", r.text);
         assert!(r.text.contains("性别男"), "性别保留:{}", r.text);
         assert!(r.text.contains("年龄2岁"), "年龄保留:{}", r.text);
@@ -355,8 +429,19 @@ mod tests {
     #[test]
     fn anchors_mask_value_and_doctor_names() {
         let r = redact_text("北京协和医院检验报告\n姓名:张建国  性别:男  年龄:60岁 病案号:62198842\n审核者樊笋  检验者:王涛", &known(), 0);
-        assert!(!r.text.contains("张建国") && !r.text.contains("62198842") && !r.text.contains("樊笋") && !r.text.contains("王涛"), "{}", r.text);
-        assert!(!r.text.contains("北京协和医院"), "医院名掩成 [H1]:{}", r.text);
+        assert!(
+            !r.text.contains("张建国")
+                && !r.text.contains("62198842")
+                && !r.text.contains("樊笋")
+                && !r.text.contains("王涛"),
+            "{}",
+            r.text
+        );
+        assert!(
+            !r.text.contains("北京协和医院"),
+            "医院名掩成 [H1]:{}",
+            r.text
+        );
         assert!(r.text.contains("[H1]"), "{}", r.text);
         assert!(r.text.contains("年龄:60岁"), "{}", r.text);
     }
@@ -364,10 +449,20 @@ mod tests {
     #[test]
     fn patterns_catch_id_phone_long_digits_url() {
         let r = redact_text("条码 2023061512345 电话 010-69156114 手机13912345678 身份证 44010519850101123X 网址 www.pumch.cn 白细胞 5.6 4.0-10.0", &known(), 0);
-        for leak in ["2023061512345", "69156114", "13912345678", "44010519850101123X", "www.pumch.cn"] {
+        for leak in [
+            "2023061512345",
+            "69156114",
+            "13912345678",
+            "44010519850101123X",
+            "www.pumch.cn",
+        ] {
             assert!(!r.text.contains(leak), "{leak} 漏了:{}", r.text);
         }
-        assert!(r.text.contains("白细胞 5.6 4.0-10.0"), "检验值与区间不动:{}", r.text);
+        assert!(
+            r.text.contains("白细胞 5.6 4.0-10.0"),
+            "检验值与区间不动:{}",
+            r.text
+        );
     }
 
     #[test]
@@ -393,14 +488,22 @@ mod tests {
         );
         assert!(!r.text.contains("69156114"), "座机号漏了:{}", r.text);
         assert!(!r.text.contains("2023061512345"), "条码号漏了:{}", r.text);
-        assert!(r.text.contains("100000-300000"), "参考区间不该被掩:{}", r.text);
+        assert!(
+            r.text.contains("100000-300000"),
+            "参考区间不该被掩:{}",
+            r.text
+        );
     }
 
     #[test]
     fn adjacent_long_digit_runs_are_all_masked_not_just_the_first() {
         // 旧实现:消费型正则把分隔符吃进上一个匹配,下一个数字串就找不到合法起点了。
         let r = redact_text("90051065/62198842", &known(), 0);
-        assert!(!r.text.contains("90051065") && !r.text.contains("62198842"), "{}", r.text);
+        assert!(
+            !r.text.contains("90051065") && !r.text.contains("62198842"),
+            "{}",
+            r.text
+        );
 
         let r2 = redact_text("111111 222222 333333", &known(), 0);
         for leak in ["111111", "222222", "333333"] {
@@ -426,14 +529,22 @@ mod tests {
     fn compact_date_is_shifted_not_masked_and_round_trips() {
         let src = "采集时间20240305";
         let r = redact_text(src, &known(), 7);
-        assert!(r.text.contains("20240312"), "紧凑日期该偏移而不是掩码:{}", r.text);
+        assert!(
+            r.text.contains("20240312"),
+            "紧凑日期该偏移而不是掩码:{}",
+            r.text
+        );
         let back = restore(&r.text, &r.map);
         assert_eq!(back, src);
     }
 
     #[test]
     fn name_anchor_value_stops_at_next_anchor_word_even_when_glued() {
-        let unrelated = KnownIdentity { name: "赵六".into(), id_number: None, phone: None };
+        let unrelated = KnownIdentity {
+            name: "赵六".into(),
+            id_number: None,
+            phone: None,
+        };
         let r = redact_text("姓名孟丁性别男门诊号90051065", &unrelated, 0);
         assert_eq!(r.text, "姓名[P1]性别男门诊号[N1]");
     }
@@ -449,8 +560,17 @@ mod tests {
     #[test]
     fn repeated_value_reuses_the_same_numbered_placeholder() {
         let r = redact_text("审核者樊笋 复核 审核者樊笋", &known(), 0);
-        let p_count = r.map.placeholders.iter().filter(|(p, _)| p.starts_with("[P")).count();
-        assert_eq!(p_count, 1, "同一个值该只分配一个占位符:{:?}", r.map.placeholders);
+        let p_count = r
+            .map
+            .placeholders
+            .iter()
+            .filter(|(p, _)| p.starts_with("[P"))
+            .count();
+        assert_eq!(
+            p_count, 1,
+            "同一个值该只分配一个占位符:{:?}",
+            r.map.placeholders
+        );
         assert_eq!(r.text.matches("[P1]").count(), 2, "{}", r.text);
     }
 
@@ -461,7 +581,14 @@ mod tests {
             &known(),
             0,
         );
-        for keep in ["性别:男", "年龄:45岁", "白细胞 5.6", "10^9/L", "血小板 120000", "100000-300000"] {
+        for keep in [
+            "性别:男",
+            "年龄:45岁",
+            "白细胞 5.6",
+            "10^9/L",
+            "血小板 120000",
+            "100000-300000",
+        ] {
             assert!(r.text.contains(keep), "{keep} 应保留:{}", r.text);
         }
     }
@@ -484,17 +611,29 @@ mod tests {
         // ——这样才真正堵住"两头明文残留"这个漏洞,只看 text 里还含不含完整原串堵不住。
         let r = redact_text("样本 2023139123456789", &known(), 0);
         assert_eq!(r.map.placeholders.len(), 1, "{:?}", r.map.placeholders);
-        assert_eq!(r.map.placeholders[0].1, "2023139123456789", "{:?}", r.map.placeholders);
+        assert_eq!(
+            r.map.placeholders[0].1, "2023139123456789",
+            "{:?}",
+            r.map.placeholders
+        );
 
         let r2 = redact_text("12345678901234567890", &known(), 0);
         assert_eq!(r2.map.placeholders.len(), 1, "{:?}", r2.map.placeholders);
-        assert_eq!(r2.map.placeholders[0].1, "12345678901234567890", "{:?}", r2.map.placeholders);
+        assert_eq!(
+            r2.map.placeholders[0].1, "12345678901234567890",
+            "{:?}",
+            r2.map.placeholders
+        );
     }
 
     #[test]
     fn six_character_name_is_not_truncated() {
         // item C:4 字上限把「乌力吉巴图」这样 5 个字的名字截断,尾字「图」明文残留。
-        let unrelated = KnownIdentity { name: "赵六".into(), id_number: None, phone: None };
+        let unrelated = KnownIdentity {
+            name: "赵六".into(),
+            id_number: None,
+            phone: None,
+        };
         let r = redact_text("姓名乌力吉巴图 性别男", &unrelated, 0);
         assert_eq!(r.text, "姓名[P1] 性别男");
     }
@@ -503,7 +642,12 @@ mod tests {
     fn n_kind_value_stops_at_digit_to_cjk_boundary_even_when_glued_to_narrative() {
         // item D:不设上限的号码取值会把紧贴着、没有分隔符的叙述文字也吞进去。
         let r = redact_text("婚姻已婚 门诊号90051065病区三", &known(), 0);
-        let n1 = r.map.placeholders.iter().find(|(p, _)| p == "[N1]").map(|(_, v)| v.as_str());
+        let n1 = r
+            .map
+            .placeholders
+            .iter()
+            .find(|(p, _)| p == "[N1]")
+            .map(|(_, v)| v.as_str());
         assert_eq!(n1, Some("90051065"), "{:?}", r.map.placeholders);
         assert!(r.text.contains("病区三"), "{}", r.text);
     }
@@ -512,7 +656,11 @@ mod tests {
     fn wechat_official_account_handle_is_masked() {
         // 微信公众号句柄标识的是医院/科室账号,不是号码/URL/邮箱形状,P 层三个模式都
         // 逮不到它;补一个 U 类锚点,和 A 类一样自由取值到下一个分隔符/锚点词为止。
-        let r = redact_text("微信公众号 pumch_official 咨询电话010-69156114", &known(), 0);
+        let r = redact_text(
+            "微信公众号 pumch_official 咨询电话010-69156114",
+            &known(),
+            0,
+        );
         assert!(!r.text.contains("pumch_official"), "{}", r.text);
         assert!(r.text.contains("咨询电话"), "{}", r.text);
 
@@ -552,7 +700,11 @@ mod tests {
     fn a_kind_value_stops_at_a_full_stop_too() {
         // is_sep 加了「。」之后,不只是 U 类受益——A 类(民族/职业等)一样不该把全角句号
         // 后面的下一句吞进去。
-        let unrelated = KnownIdentity { name: "赵六".into(), id_number: None, phone: None };
+        let unrelated = KnownIdentity {
+            name: "赵六".into(),
+            id_number: None,
+            phone: None,
+        };
         let r = redact_text("民族汉族。职业教师", &unrelated, 0);
         assert_eq!(r.text, "民族[A1]。职业[A2]");
     }
@@ -561,8 +713,18 @@ mod tests {
 
     #[test]
     fn redact_boxes_paints_hits_and_header_footer_bands() {
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
-        let b = |t: &str, top: f32| Box { text: t.into(), left: 10.0, top, right: 300.0, bottom: top + 20.0 };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, top: f32| Box {
+            text: t.into(),
+            left: 10.0,
+            top,
+            right: 300.0,
+            bottom: top + 20.0,
+        };
         let boxes = vec![
             b("北京协和医院检验报告", 0.0),
             b("姓名:张建国 性别:男 年龄:60岁", 30.0),
@@ -572,58 +734,138 @@ mod tests {
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         // 页眉带:0..100 整宽;页脚带:400..500 整宽;命中框各一
-        assert!(rects.iter().any(|r| r.top == 0.0 && r.bottom >= 100.0 && r.left == 0.0 && r.right == 400.0), "{rects:?}");
-        assert!(rects.iter().any(|r| r.top <= 400.0 && r.bottom == 500.0 && r.left == 0.0), "{rects:?}");
+        assert!(
+            rects
+                .iter()
+                .any(|r| r.top == 0.0 && r.bottom >= 100.0 && r.left == 0.0 && r.right == 400.0),
+            "{rects:?}"
+        );
+        assert!(
+            rects
+                .iter()
+                .any(|r| r.top <= 400.0 && r.bottom == 500.0 && r.left == 0.0),
+            "{rects:?}"
+        );
         // 化验行不涂(整框——右边界还是 300,不是页眉/页脚那种整宽带)
-        assert!(!rects.iter().any(|r| (r.top - 100.0).abs() < 1.0 && r.right == 300.0), "{rects:?}");
-        assert!(!rects.iter().any(|r| (r.top - 130.0).abs() < 1.0 && r.right == 300.0), "{rects:?}");
+        assert!(
+            !rects
+                .iter()
+                .any(|r| (r.top - 100.0).abs() < 1.0 && r.right == 300.0),
+            "{rects:?}"
+        );
+        assert!(
+            !rects
+                .iter()
+                .any(|r| (r.top - 130.0).abs() < 1.0 && r.right == 300.0),
+            "{rects:?}"
+        );
     }
 
     #[test]
     fn redact_boxes_no_lab_row_means_no_header_band_not_whole_page() {
         // 没有任何一行「像化验行」——不该拿整页兜底涂黑。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
         let boxes = vec![
-            Box { text: "北京协和医院检验报告".into(), left: 0.0, top: 0.0, right: 300.0, bottom: 20.0 },
-            Box { text: "姓名:张建国".into(), left: 0.0, top: 30.0, right: 300.0, bottom: 50.0 },
+            Box {
+                text: "北京协和医院检验报告".into(),
+                left: 0.0,
+                top: 0.0,
+                right: 300.0,
+                bottom: 20.0,
+            },
+            Box {
+                text: "姓名:张建国".into(),
+                left: 0.0,
+                top: 30.0,
+                right: 300.0,
+                bottom: 50.0,
+            },
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         // 只有命中框(姓名那行),没有 left=0/right=page_w 的整宽页眉带
-        assert!(!rects.iter().any(|r| r.left == 0.0 && r.right == 400.0 && r.top == 0.0));
+        assert!(!rects
+            .iter()
+            .any(|r| r.left == 0.0 && r.right == 400.0 && r.top == 0.0));
         assert!(rects.iter().any(|r| r.top < 30.0)); // 命中框加了 margin,能往上探一点,但不到 0
     }
 
     #[test]
     fn redact_boxes_no_footer_anchor_means_no_footer_band() {
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
-        let boxes = vec![Box { text: "白细胞 5.6 10^9/L 4.0-10.0".into(), left: 0.0, top: 100.0, right: 300.0, bottom: 120.0 }];
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let boxes = vec![Box {
+            text: "白细胞 5.6 10^9/L 4.0-10.0".into(),
+            left: 0.0,
+            top: 100.0,
+            right: 300.0,
+            bottom: 120.0,
+        }];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         assert!(!rects.iter().any(|r| r.bottom == 500.0), "{rects:?}");
     }
 
     #[test]
     fn redact_boxes_margin_is_two_percent_of_line_height_min_2px() {
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
         // 行高 20 → 2% = 0.4,取下限 2px。
-        let boxes = vec![Box { text: "姓名:张建国".into(), left: 50.0, top: 100.0, right: 200.0, bottom: 120.0 }];
+        let boxes = vec![Box {
+            text: "姓名:张建国".into(),
+            left: 50.0,
+            top: 100.0,
+            right: 200.0,
+            bottom: 120.0,
+        }];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
-        let r = rects.iter().find(|r| (r.top - 98.0).abs() < 0.01).expect("命中框应扩 2px 边距");
+        let r = rects
+            .iter()
+            .find(|r| (r.top - 98.0).abs() < 0.01)
+            .expect("命中框应扩 2px 边距");
         assert_eq!(r.left, 48.0);
         assert_eq!(r.right, 202.0);
         assert_eq!(r.bottom, 122.0);
 
         // 行高 200 → 2% = 4px,超过下限,应按 4px 算。
-        let boxes2 = vec![Box { text: "姓名:张建国".into(), left: 50.0, top: 100.0, right: 200.0, bottom: 300.0 }];
+        let boxes2 = vec![Box {
+            text: "姓名:张建国".into(),
+            left: 50.0,
+            top: 100.0,
+            right: 200.0,
+            bottom: 300.0,
+        }];
         let rects2 = redact_boxes(&boxes2, &k, 400.0, 500.0);
-        let r2 = rects2.iter().find(|r| (r.top - 96.0).abs() < 0.01).expect("大行高按 2% 扩边距");
+        let r2 = rects2
+            .iter()
+            .find(|r| (r.top - 96.0).abs() < 0.01)
+            .expect("大行高按 2% 扩边距");
         assert_eq!(r2.bottom, 304.0);
     }
 
     #[test]
     fn redact_boxes_clips_to_page_bounds() {
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
         // 贴着页面边缘的命中框,加了 margin 之后不能越界。
-        let boxes = vec![Box { text: "姓名:张建国".into(), left: 0.0, top: 0.0, right: 400.0, bottom: 20.0 }];
+        let boxes = vec![Box {
+            text: "姓名:张建国".into(),
+            left: 0.0,
+            top: 0.0,
+            right: 400.0,
+            bottom: 20.0,
+        }];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         assert_eq!(rects.len(), 1);
         assert_eq!(rects[0].left, 0.0);
@@ -637,8 +879,18 @@ mod tests {
     fn footer_anchor_above_lab_rows_does_not_paint_whole_page() {
         // item 1:旧实现拿「所有页脚关键词框里 top 最小的那个」当页脚带起点——页眉里的
         // 「打印时间」本身就是全篇 top 最小的锚点词框之一,于是页脚带从 0 涂到底,整页涂黑。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
-        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, top: f32| Box {
+            text: t.into(),
+            left: 0.0,
+            top,
+            right: 300.0,
+            bottom: top + 20.0,
+        };
         let boxes = vec![
             b("北京协和医院检验报告 打印时间:2024-03-06 09:12", 0.0),
             b("白细胞计数 WBC 5.6 10^9/L 4.0-10.0", 100.0),
@@ -646,9 +898,14 @@ mod tests {
             b("审核者:樊笋", 400.0),
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
-        assert!(!rects.iter().any(|r| r.top == 0.0 && r.bottom == 500.0), "整页涂黑了:{rects:?}");
         assert!(
-            rects.iter().any(|r| r.bottom == 500.0 && r.top > 130.0 && r.top <= 400.0),
+            !rects.iter().any(|r| r.top == 0.0 && r.bottom == 500.0),
+            "整页涂黑了:{rects:?}"
+        );
+        assert!(
+            rects
+                .iter()
+                .any(|r| r.bottom == 500.0 && r.top > 130.0 && r.top <= 400.0),
             "页脚带该从化验行下面的审核者框开始:{rects:?}"
         );
     }
@@ -657,8 +914,18 @@ mod tests {
     fn header_band_is_not_collapsed_by_phone_or_date_shaped_lines() {
         // item 2:旧的 looks_like_lab_row 只看「有数字 + 有 -/~」,电话号码、ISO 日期这类
         // 页眉常见行会被误判成化验行,把页眉带收缩到只剩 2px 边距。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
-        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, top: f32| Box {
+            text: t.into(),
+            left: 0.0,
+            top,
+            right: 300.0,
+            bottom: top + 20.0,
+        };
         let boxes = vec![
             b("北京协和医院 电话 010-69156114", 0.0),
             b("打印日期 2024-03-06", 30.0),
@@ -666,7 +933,9 @@ mod tests {
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         assert!(
-            rects.iter().any(|r| r.top == 0.0 && r.right == 400.0 && r.bottom >= 100.0 && r.bottom < 130.0),
+            rects
+                .iter()
+                .any(|r| r.top == 0.0 && r.right == 400.0 && r.bottom >= 100.0 && r.bottom < 130.0),
             "页眉带被电话/日期行提前收尾了:{rects:?}"
         );
     }
@@ -675,37 +944,94 @@ mod tests {
     fn dangling_anchor_and_its_value_in_the_next_box_to_the_right_are_both_painted() {
         // item 3:「联系人」单独一框、姓名被 OCR 切进右边那一框——旧实现只看本框文本
         // 有没有变化,取不到值的锚点框和它右边那个裸姓名框都不会被判定为命中。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
         let boxes = vec![
-            Box { text: "联系人".into(), left: 0.0, top: 200.0, right: 60.0, bottom: 220.0 },
-            Box { text: "李秀兰".into(), left: 70.0, top: 200.0, right: 140.0, bottom: 220.0 },
+            Box {
+                text: "联系人".into(),
+                left: 0.0,
+                top: 200.0,
+                right: 60.0,
+                bottom: 220.0,
+            },
+            Box {
+                text: "李秀兰".into(),
+                left: 70.0,
+                top: 200.0,
+                right: 140.0,
+                bottom: 220.0,
+            },
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         assert!(
-            rects.iter().any(|r| r.left <= 0.0 && r.right >= 58.0 && r.top <= 200.0 && r.bottom >= 220.0),
+            rects
+                .iter()
+                .any(|r| r.left <= 0.0 && r.right >= 58.0 && r.top <= 200.0 && r.bottom >= 220.0),
             "联系人 框未涂:{rects:?}"
         );
-        assert!(rects.iter().any(|r| r.left <= 70.0 && r.right >= 138.0), "李秀兰 框未涂:{rects:?}");
+        assert!(
+            rects.iter().any(|r| r.left <= 70.0 && r.right >= 138.0),
+            "李秀兰 框未涂:{rects:?}"
+        );
     }
 
     #[test]
     fn dangling_anchor_and_its_value_on_the_next_line_below_are_both_painted() {
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
         let boxes = vec![
-            Box { text: "联系人".into(), left: 0.0, top: 200.0, right: 60.0, bottom: 220.0 },
-            Box { text: "李秀兰".into(), left: 0.0, top: 230.0, right: 70.0, bottom: 250.0 },
+            Box {
+                text: "联系人".into(),
+                left: 0.0,
+                top: 200.0,
+                right: 60.0,
+                bottom: 220.0,
+            },
+            Box {
+                text: "李秀兰".into(),
+                left: 0.0,
+                top: 230.0,
+                right: 70.0,
+                bottom: 250.0,
+            },
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
-        assert!(rects.iter().any(|r| r.top <= 200.0 && r.bottom >= 220.0 && r.right >= 58.0), "{rects:?}");
-        assert!(rects.iter().any(|r| r.top >= 228.0 && r.bottom >= 250.0 && r.right >= 68.0), "{rects:?}");
+        assert!(
+            rects
+                .iter()
+                .any(|r| r.top <= 200.0 && r.bottom >= 220.0 && r.right >= 58.0),
+            "{rects:?}"
+        );
+        assert!(
+            rects
+                .iter()
+                .any(|r| r.top >= 228.0 && r.bottom >= 250.0 && r.right >= 68.0),
+            "{rects:?}"
+        );
     }
 
     #[test]
     fn date_format_normalization_alone_is_not_a_hit() {
         // item 4:旧实现拿原文和 redact_text 的结果直接比——纯格式归一(斜杠转横杠,
         // 偏移量 0)也算「变了」,把没有任何 K/A/P 命中的化验行整框涂黑。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
-        let boxes = vec![Box { text: "检测日期 2024/03/06".into(), left: 10.0, top: 50.0, right: 200.0, bottom: 70.0 }];
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let boxes = vec![Box {
+            text: "检测日期 2024/03/06".into(),
+            left: 10.0,
+            top: 50.0,
+            right: 200.0,
+            bottom: 70.0,
+        }];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         assert!(rects.is_empty(), "纯日期格式归一不该被当命中涂黑:{rects:?}");
     }
@@ -714,8 +1040,18 @@ mod tests {
     fn inverted_box_coordinates_are_normalized_before_margins() {
         // item 6:OCR 偶尔给出 right<left / bottom<top 的倒装框,归一化之后应该和正常框
         // 算出同一个矩形,而不是让负的宽高把 margin 算错。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
-        let boxes = vec![Box { text: "姓名:张建国".into(), left: 200.0, top: 120.0, right: 50.0, bottom: 100.0 }];
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let boxes = vec![Box {
+            text: "姓名:张建国".into(),
+            left: 200.0,
+            top: 120.0,
+            right: 50.0,
+            bottom: 100.0,
+        }];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         assert_eq!(rects.len(), 1);
         assert_eq!(rects[0].left, 48.0);
@@ -726,9 +1062,19 @@ mod tests {
 
     #[test]
     fn empty_text_and_empty_box_list_paint_nothing() {
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
         assert!(redact_boxes(&[], &k, 400.0, 500.0).is_empty());
-        let boxes = vec![Box { text: String::new(), left: 0.0, top: 0.0, right: 100.0, bottom: 20.0 }];
+        let boxes = vec![Box {
+            text: String::new(),
+            left: 0.0,
+            top: 0.0,
+            right: 100.0,
+            bottom: 20.0,
+        }];
         assert!(redact_boxes(&boxes, &k, 400.0, 500.0).is_empty());
     }
 
@@ -740,14 +1086,36 @@ mod tests {
         // 用 `else if` 只在**没命中**时才检查悬空锚点,于是「联系人」后面另一框里的
         // 「李秀兰」(不是户主、也不在已知身份表里)就没人管了。改成命中判断和悬空锚点
         // 判断互不排斥,各自独立触发。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
         let boxes = vec![
-            Box { text: "姓名:张建国 性别:男 联系人".into(), left: 0.0, top: 200.0, right: 260.0, bottom: 220.0 },
-            Box { text: "李秀兰".into(), left: 270.0, top: 200.0, right: 340.0, bottom: 220.0 },
+            Box {
+                text: "姓名:张建国 性别:男 联系人".into(),
+                left: 0.0,
+                top: 200.0,
+                right: 260.0,
+                bottom: 220.0,
+            },
+            Box {
+                text: "李秀兰".into(),
+                left: 270.0,
+                top: 200.0,
+                right: 340.0,
+                bottom: 220.0,
+            },
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
-        assert!(rects.iter().any(|r| r.left <= 0.0 && r.right >= 258.0), "第一框未涂:{rects:?}");
-        assert!(rects.iter().any(|r| r.left <= 270.0 && r.right >= 338.0), "李秀兰 框未涂:{rects:?}");
+        assert!(
+            rects.iter().any(|r| r.left <= 0.0 && r.right >= 258.0),
+            "第一框未涂:{rects:?}"
+        );
+        assert!(
+            rects.iter().any(|r| r.left <= 270.0 && r.right >= 338.0),
+            "李秀兰 框未涂:{rects:?}"
+        );
     }
 
     #[test]
@@ -755,13 +1123,32 @@ mod tests {
         // item 2:OCR 切出来的相邻两框水平方向经常有一两像素重叠,严格要求
         // `右邻框.left >= 本框.right` 会把这种正常邻框漏掉——两个分支都进不去,
         // 「联系人」单独一框、右边紧挨着(略微重叠)的姓名框就不会被前瞻到。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
         let boxes = vec![
-            Box { text: "联系人".into(), left: 0.0, top: 200.0, right: 60.0, bottom: 220.0 },
-            Box { text: "李秀兰".into(), left: 58.0, top: 200.0, right: 140.0, bottom: 220.0 },
+            Box {
+                text: "联系人".into(),
+                left: 0.0,
+                top: 200.0,
+                right: 60.0,
+                bottom: 220.0,
+            },
+            Box {
+                text: "李秀兰".into(),
+                left: 58.0,
+                top: 200.0,
+                right: 140.0,
+                bottom: 220.0,
+            },
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
-        assert!(rects.iter().any(|r| r.left <= 58.0 && r.right >= 138.0), "重叠邻框未被前瞻到:{rects:?}");
+        assert!(
+            rects.iter().any(|r| r.left <= 58.0 && r.right >= 138.0),
+            "重叠邻框未被前瞻到:{rects:?}"
+        );
     }
 
     #[test]
@@ -769,15 +1156,28 @@ mod tests {
         // item 3 case A:「审核者:樊笋 结果单位 mmol/L」这一框自己就含单位标记,会被
         // `looks_like_lab_row` 判定成化验行——旧代码拿它自己的 bottom 去更新
         // last_lab_bottom,导致它自己的 top 必然小于自己的 bottom,自己把自己排除掉。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
-        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, top: f32| Box {
+            text: t.into(),
+            left: 0.0,
+            top,
+            right: 300.0,
+            bottom: top + 20.0,
+        };
         let boxes = vec![
             b("白细胞计数 WBC 5.6 10^9/L 4.0-10.0", 100.0),
             b("血红蛋白 HGB 135 g/L 115-150", 130.0),
             b("审核者:樊笋 结果单位 mmol/L", 400.0),
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
-        assert!(rects.iter().any(|r| r.bottom == 500.0 && r.top <= 400.0), "页脚带没出现:{rects:?}");
+        assert!(
+            rects.iter().any(|r| r.bottom == 500.0 && r.top <= 400.0),
+            "页脚带没出现:{rects:?}"
+        );
     }
 
     #[test]
@@ -787,8 +1187,18 @@ mod tests {
         // 这条声明的位置比真正的页脚还靠下,会把 last_lab_bottom 推到页脚的 top 之后,
         // 页脚反而因为「在化验行之上」被排除。改成按候选页脚框各自检查:只要它之上有
         // 一条真化验行(排除页脚框自己)就够,不管它下面还有什么。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
-        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, top: f32| Box {
+            text: t.into(),
+            left: 0.0,
+            top,
+            right: 300.0,
+            bottom: top + 20.0,
+        };
         let boxes = vec![
             b("白细胞计数 WBC 5.6 10^9/L 4.0-10.0", 100.0),
             b("血红蛋白 HGB 135 g/L 115-150", 130.0),
@@ -797,7 +1207,9 @@ mod tests {
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         assert!(
-            rects.iter().any(|r| r.bottom == 500.0 && r.top <= 400.0 && r.top > 130.0),
+            rects
+                .iter()
+                .any(|r| r.bottom == 500.0 && r.top <= 400.0 && r.top > 130.0),
             "页脚带被后面的免责声明挤没了:{rects:?}"
         );
     }
@@ -807,8 +1219,18 @@ mod tests {
         // item 4:「标本编号 24-03-1234」里的「24-03」形状也像化验区间,但后面还跟着
         // 「-1234」——不是区间应有的收尾方式(空白/标记/单位到行尾),不该被当成化验行。
         // 反例:真化验行(带单位,或区间后只跟异常标记)必须继续被认出来。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
-        let b = |t: &str, top: f32| Box { text: t.into(), left: 0.0, top, right: 300.0, bottom: top + 20.0 };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, top: f32| Box {
+            text: t.into(),
+            left: 0.0,
+            top,
+            right: 300.0,
+            bottom: top + 20.0,
+        };
         let boxes = vec![
             b("北京协和医院检验报告", 0.0),
             b("标本编号 24-03-1234", 30.0),
@@ -818,7 +1240,9 @@ mod tests {
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         // 页眉带得撑到第 100 行才收尾,不能在「标本编号」那行(top 30)就提前结束
         assert!(
-            rects.iter().any(|r| r.top == 0.0 && r.right == 400.0 && r.bottom >= 100.0 && r.bottom < 130.0),
+            rects
+                .iter()
+                .any(|r| r.top == 0.0 && r.right == 400.0 && r.bottom >= 100.0 && r.bottom < 130.0),
             "页眉带被「标本编号 24-03-1234」提前收尾了:{rects:?}"
         );
         assert!(looks_like_lab_row("血红蛋白 130 g/L 115-150"));
@@ -831,10 +1255,26 @@ mod tests {
         // 「姓名:张建国 性别:男 联系人」这一框会被命中规则(K 层命中「张建国」)和悬空
         // 锚点规则(以「联系人」结尾)各推一次同一个矩形——去重之后只留一份;加上前瞻
         // 推给「李秀兰」的那一份,一共 2 个不重复的矩形,不是 3 个。
-        let k = KnownIdentity { name: "张建国".into(), id_number: None, phone: None };
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
         let boxes = vec![
-            Box { text: "姓名:张建国 性别:男 联系人".into(), left: 0.0, top: 200.0, right: 260.0, bottom: 220.0 },
-            Box { text: "李秀兰".into(), left: 270.0, top: 200.0, right: 340.0, bottom: 220.0 },
+            Box {
+                text: "姓名:张建国 性别:男 联系人".into(),
+                left: 0.0,
+                top: 200.0,
+                right: 260.0,
+                bottom: 220.0,
+            },
+            Box {
+                text: "李秀兰".into(),
+                left: 270.0,
+                top: 200.0,
+                right: 340.0,
+                bottom: 220.0,
+            },
         ];
         let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
         assert_eq!(rects.len(), 2, "去重后应该只剩 2 个矩形:{rects:?}");

@@ -20,7 +20,11 @@ pub struct KdfParams {
 
 /// 起始参数(Task 14 按 Mate 9 实测后可能下调)。参数随包好的私钥一起存服务端
 /// (`accounts.kdf_params`),所以改默认值不影响老账号。
-pub const KDF_DEFAULT: KdfParams = KdfParams { m_kib: 65536, t: 3, p: 1 };
+pub const KDF_DEFAULT: KdfParams = KdfParams {
+    m_kib: 65536,
+    t: 3,
+    p: 1,
+};
 
 fn random32() -> [u8; 32] {
     let mut b = [0u8; 32];
@@ -31,11 +35,15 @@ fn random32() -> [u8; 32] {
 pub fn account_keys_new() -> AccountKeys {
     let secret = StaticSecret::from(random32());
     let public = PublicKey::from(&secret);
-    AccountKeys { public: public.to_bytes(), secret: secret.to_bytes() }
+    AccountKeys {
+        public: public.to_bytes(),
+        secret: secret.to_bytes(),
+    }
 }
 
 pub fn kek_from_password(pw: &str, salt: &[u8; 16], p: &KdfParams) -> Result<[u8; 32], SyncError> {
-    let params = Params::new(p.m_kib, p.t, p.p, Some(32)).map_err(|e| SyncError::Kdf(e.to_string()))?;
+    let params =
+        Params::new(p.m_kib, p.t, p.p, Some(32)).map_err(|e| SyncError::Kdf(e.to_string()))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; 32];
     argon
@@ -52,7 +60,8 @@ pub fn recovery_code_new() -> String {
     let mut i = 0usize;
     while i < 20 {
         let mut b = [0u8; 1];
-        getrandom::fill(&mut b).expect("OS entropy source is always available on supported targets");
+        getrandom::fill(&mut b)
+            .expect("OS entropy source is always available on supported targets");
         // 拒绝采样:256 不是 30 的整数倍(256 = 8*30 + 16),直接 `% 30` 会让
         // 0..15 比 16..29 多被选中一次——舍弃 >= 240 的字节,剩下的 0..239 按
         // 30 均分,字母表才是真均匀的。
@@ -109,10 +118,17 @@ fn gcm(key: &[u8; 32]) -> Aes256Gcm {
 /// `nonce(12) || ciphertext+tag`。
 pub fn wrap(kek: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, SyncError> {
     let mut nonce_bytes = [0u8; 12];
-    getrandom::fill(&mut nonce_bytes).expect("OS entropy source is always available on supported targets");
+    getrandom::fill(&mut nonce_bytes)
+        .expect("OS entropy source is always available on supported targets");
     let nonce: &Nonce<_> = (&nonce_bytes).into();
     let ct = gcm(kek)
-        .encrypt(nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| SyncError::Crypto)?;
     let mut out = nonce_bytes.to_vec();
     out.extend_from_slice(&ct);
@@ -168,6 +184,7 @@ fn derive_box_key(shared: &[u8], eph: &[u8], recipient: &[u8]) -> Result<[u8; 32
     salt.extend_from_slice(recipient);
     let hk = Hkdf::<Sha256>::new(Some(&salt), shared);
     let mut out = [0u8; 32];
-    hk.expand(b"medme-sealed-v1", &mut out).map_err(|_| SyncError::Crypto)?;
+    hk.expand(b"medme-sealed-v1", &mut out)
+        .map_err(|_| SyncError::Crypto)?;
     Ok(out)
 }

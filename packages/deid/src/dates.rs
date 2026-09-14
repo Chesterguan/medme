@@ -8,8 +8,8 @@ use std::sync::OnceLock;
 
 /// HMAC-SHA256(secret, "date-shift") 前 4 字节 mod 181 − 90 ∈ [−90, 90]。
 pub fn shift_days_from_secret(secret: &[u8]) -> i64 {
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret)
-        .expect("HMAC-SHA256 accepts a key of any length");
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret).expect("HMAC-SHA256 accepts a key of any length");
     mac.update(b"date-shift");
     let out = mac.finalize().into_bytes();
     let x = u32::from_be_bytes([out[0], out[1], out[2], out[3]]);
@@ -23,7 +23,9 @@ fn iso_re() -> &'static Regex {
 }
 fn cn_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日").expect("cn date re"))
+    R.get_or_init(|| {
+        Regex::new(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日").expect("cn date re")
+    })
 }
 fn compact_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
@@ -55,7 +57,11 @@ fn shifted_compact(s: &str, days: i64) -> Option<String> {
     if !is_compact_date(s) {
         return None;
     }
-    let date = NaiveDate::from_ymd_opt(s[0..4].parse().ok()?, s[4..6].parse().ok()?, s[6..8].parse().ok()?)?;
+    let date = NaiveDate::from_ymd_opt(
+        s[0..4].parse().ok()?,
+        s[4..6].parse().ok()?,
+        s[6..8].parse().ok()?,
+    )?;
     Some((date + Duration::days(days)).format("%Y%m%d").to_string())
 }
 
@@ -77,7 +83,10 @@ fn apply_compact(text: &str, days: i64) -> String {
 
 /// 两侧紧邻数字 = 嵌在更长数字串里(住院号 HS-2024-08-2201),不当日期。
 fn embedded_in_digits(s: &str, start: usize, end: usize) -> bool {
-    let before = s[..start].chars().next_back().is_some_and(|c| c.is_ascii_digit());
+    let before = s[..start]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_ascii_digit());
     let after = s[end..].chars().next().is_some_and(|c| c.is_ascii_digit());
     before || after
 }
@@ -145,7 +154,10 @@ mod tests {
         // 嵌在长数字串里的“日期”(住院号)不动
         assert!(s.contains("HS-2024-08-2201"), "{s}");
         let back = unshift_dates(&s, 10);
-        assert!(back.contains("2024-03-05") && back.contains("2024-03-06"), "{back}");
+        assert!(
+            back.contains("2024-03-05") && back.contains("2024-03-06"),
+            "{back}"
+        );
     }
 
     #[test]

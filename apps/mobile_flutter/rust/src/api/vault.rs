@@ -1758,7 +1758,11 @@ fn known_identity(
     id_number: Option<String>,
     phone: Option<String>,
 ) -> deid::KnownIdentity {
-    deid::KnownIdentity { name, id_number, phone }
+    deid::KnownIdentity {
+        name,
+        id_number,
+        phone,
+    }
 }
 
 /// 十六进制字符串 → 字节(`profile_secret_hex` → `deid::dates::shift_days_from_secret`
@@ -1788,7 +1792,10 @@ fn wrap_restore_map(document_id: i64, map: &deid::RestoreMap) -> anyhow::Result<
 /// [`wrap_restore_map`] 的逆操作。`document_id` 对不上直接 `bail!`——类型化错误,
 /// 不 panic;调用方(`vault_cloud_commit_extraction`)在任何 `add_extraction` 之前
 /// 就退出,不落盘。
-fn unwrap_restore_map(document_id: i64, restore_map_json: &str) -> anyhow::Result<deid::RestoreMap> {
+fn unwrap_restore_map(
+    document_id: i64,
+    restore_map_json: &str,
+) -> anyhow::Result<deid::RestoreMap> {
     let envelope: serde_json::Value = serde_json::from_str(restore_map_json)?;
     if envelope.get("document_id").and_then(|v| v.as_i64()) != Some(document_id) {
         anyhow::bail!("还原映射与目标文档不匹配,拒绝提交");
@@ -1868,7 +1875,12 @@ pub fn vault_cloud_prepare_extraction(
         } else {
             deid::redact_boxes(&boxes, &known, page_w, page_h)
                 .into_iter()
-                .map(|r| RectDto { left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+                .map(|r| RectDto {
+                    left: r.left,
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom,
+                })
                 .collect()
         };
 
@@ -1896,7 +1908,12 @@ pub fn vault_cloud_redact_image(bytes: Vec<u8>, paint: Vec<RectDto>) -> anyhow::
         ocr::recognize_engine_lines(&bytes).map_err(|e| anyhow::anyhow!(e.to_string()))?;
     let rects: Vec<ocr::PaintRect> = paint
         .iter()
-        .map(|r| ocr::PaintRect { left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+        .map(|r| ocr::PaintRect {
+            left: r.left,
+            top: r.top,
+            right: r.right,
+            bottom: r.bottom,
+        })
         .collect();
     ocr::redact_image(&engine_lines.frame, &rects).map_err(|e| anyhow::anyhow!(e.to_string()))
 }
@@ -1961,7 +1978,11 @@ pub fn vault_cloud_commit_extraction(
         let known = known_identity(known_name, known_id_number, known_phone);
         let seen = deid::redact_text(&text, &known, map.shift_days);
 
-        let m = if mode == "image" { deid::Mode::Image } else { deid::Mode::Text };
+        let m = if mode == "image" {
+            deid::Mode::Image
+        } else {
+            deid::Mode::Text
+        };
         let parsed = deid::parse_extraction(&llm_json).map_err(|e| anyhow::anyhow!("{e}"))?;
         let v = deid::verify(parsed, &seen.text, m);
         let restored = deid::restore(&serde_json::to_string(&v.extraction)?, &map);
@@ -1990,8 +2011,7 @@ pub fn vault_cloud_commit_extraction(
 /// 之外再单独取一次(那边的 `gather()` 不在任何 `with_state` 闭包里)。取不到就当
 /// 没有,不让整张投影因为一份文档的抽取结果读取失败而打不开。
 pub(crate) fn extraction_json_for(document_id: i64) -> Option<String> {
-    with_state(|state| Ok(state.vault.extraction_json(document_id).unwrap_or(None)))
-        .unwrap_or(None)
+    with_state(|state| Ok(state.vault.extraction_json(document_id).unwrap_or(None))).unwrap_or(None)
 }
 
 #[cfg(test)]
@@ -2247,7 +2267,10 @@ mod cloud_extraction_tests {
 
         let stored = extraction_json_for(doc_id).expect("落盘后应能读到抽取结果");
         assert!(stored.contains("11.8"), "{stored}");
-        assert!(!stored.contains("[H1]"), "落盘结果应已还原,不该残留占位符:{stored}");
+        assert!(
+            !stored.contains("[H1]"),
+            "落盘结果应已还原,不该残留占位符:{stored}"
+        );
     }
 
     /// 闸失败路径:身份不是靠 K 层字面命中,而是**日期偏移的巧合副作用**——一个跟
@@ -2277,8 +2300,7 @@ mod cloud_extraction_tests {
         let text = format!(
             "北京协和医院 住院号:{id_number}\n检测日期 {base_str} 白细胞计数 5.6 10^9/L 4.0-10.0"
         );
-        let outcome =
-            ingest_image_with_text("b.jpg".into(), vec![1, 2, 3, 4], text, 0.9).unwrap();
+        let outcome = ingest_image_with_text("b.jpg".into(), vec![1, 2, 3, 4], text, 0.9).unwrap();
         let doc_id = outcome.document_id.expect("应建出文档");
 
         let err = vault_cloud_prepare_extraction(
@@ -2356,8 +2378,7 @@ mod cloud_extraction_tests {
         let text = format!(
             "北京协和医院 门诊号:20230615 身份证号:{id_number} 白细胞计数 11.8 10^9/L 4.0-10.0"
         );
-        let outcome =
-            ingest_image_with_text("g.jpg".into(), vec![1, 2], text, 0.9).unwrap();
+        let outcome = ingest_image_with_text("g.jpg".into(), vec![1, 2], text, 0.9).unwrap();
         let doc_id = outcome.document_id.expect("应建出文档");
 
         let req = vault_cloud_prepare_extraction(
@@ -2389,7 +2410,10 @@ mod cloud_extraction_tests {
             None,
         )
         .unwrap();
-        assert_eq!(result.rejected, 0, "同身份重算应逐字节相同,notes 字段该通过校验");
+        assert_eq!(
+            result.rejected, 0,
+            "同身份重算应逐字节相同,notes 字段该通过校验"
+        );
 
         let stored = extraction_json_for(doc_id).expect("应已落盘");
         assert!(
@@ -2411,8 +2435,7 @@ mod cloud_extraction_tests {
         let text = format!(
             "北京协和医院 门诊号:20230615 身份证号:{id_number} 白细胞计数 11.8 10^9/L 4.0-10.0"
         );
-        let outcome =
-            ingest_image_with_text("h.jpg".into(), vec![1, 2], text, 0.9).unwrap();
+        let outcome = ingest_image_with_text("h.jpg".into(), vec![1, 2], text, 0.9).unwrap();
         let doc_id = outcome.document_id.expect("应建出文档");
 
         let req = vault_cloud_prepare_extraction(
@@ -2441,9 +2464,13 @@ mod cloud_extraction_tests {
             None,
         )
         .unwrap();
-        assert_eq!(result.rejected, 1, "身份不一致,notes 字段应被拒,而不是被错误接受");
+        assert_eq!(
+            result.rejected, 1,
+            "身份不一致,notes 字段应被拒,而不是被错误接受"
+        );
 
-        let stored = extraction_json_for(doc_id).expect("commit 本身仍应成功落盘(只是这个字段被拒)");
+        let stored =
+            extraction_json_for(doc_id).expect("commit 本身仍应成功落盘(只是这个字段被拒)");
         assert!(
             !stored.contains(id_number),
             "被拒字段清空后不该残留真实证件号:{stored}"
@@ -2490,12 +2517,17 @@ mod cloud_extraction_tests {
         let _home = open_test_vault();
 
         let text = "姓名:张建国\n白细胞 5.6 10^9/L 4.0-10.0";
-        let outcome =
-            ingest_image_with_text("i.jpg".into(), vec![1], text.into(), 0.9).unwrap();
+        let outcome = ingest_image_with_text("i.jpg".into(), vec![1], text.into(), 0.9).unwrap();
         let doc_id = outcome.document_id.expect("应建出文档");
 
         let lines = vec![
-            OcrLineDto { text: "姓名:张建国".into(), left: 10.0, top: 30.0, right: 300.0, bottom: 50.0 },
+            OcrLineDto {
+                text: "姓名:张建国".into(),
+                left: 10.0,
+                top: 30.0,
+                right: 300.0,
+                bottom: 50.0,
+            },
             OcrLineDto {
                 text: "白细胞 5.6 10^9/L 4.0-10.0".into(),
                 left: 10.0,
@@ -2517,12 +2549,16 @@ mod cloud_extraction_tests {
         .unwrap();
 
         assert!(
-            req.paint.iter().any(|r| r.top <= 30.0 && r.bottom >= 50.0 && r.right >= 300.0),
+            req.paint
+                .iter()
+                .any(|r| r.top <= 30.0 && r.bottom >= 50.0 && r.right >= 300.0),
             "身份框(含姓名)应被涂黑:{:?}",
             req.paint
         );
         assert!(
-            !req.paint.iter().any(|r| (r.top - 100.0).abs() < 5.0 && r.right <= 310.0),
+            !req.paint
+                .iter()
+                .any(|r| (r.top - 100.0).abs() < 5.0 && r.right <= 310.0),
             "化验行不该被单独涂黑:{:?}",
             req.paint
         );
@@ -2581,7 +2617,10 @@ mod cloud_extraction_tests {
         )
         .expect_err("B 文档的还原映射不该被 A 文档接受");
         assert!(err.to_string().contains("不匹配"), "{err}");
-        assert!(extraction_json_for(doc_a).is_none(), "校验失败前应已拒绝,不落盘");
+        assert!(
+            extraction_json_for(doc_a).is_none(),
+            "校验失败前应已拒绝,不落盘"
+        );
     }
 
     /// fix round 1 item 4(前半):文档没有任何 OCR 文字(`ocr_text` 是空串——比如
@@ -2633,6 +2672,9 @@ mod cloud_extraction_tests {
         )
         .expect_err("没有 OCR 文字,commit 也该拒绝");
         assert!(err.to_string().contains("OCR"), "{err}");
-        assert!(extraction_json_for(doc_id).is_none(), "不该落盘一条空抽取结果");
+        assert!(
+            extraction_json_for(doc_id).is_none(),
+            "不该落盘一条空抽取结果"
+        );
     }
 }

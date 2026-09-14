@@ -334,7 +334,10 @@ pub fn sync_all_object_ids(profile_key: Vec<u8>) -> anyhow::Result<Vec<(String, 
 
 /// 读本地 CAS 对象 + 加密(AAD = `object_id`)供上传;`object_id` 一并带回,
 /// 调用方(Dart)不需要在本地重算一遍。
-pub fn sync_encrypt_object(profile_key: Vec<u8>, hash: String) -> anyhow::Result<(String, Vec<u8>)> {
+pub fn sync_encrypt_object(
+    profile_key: Vec<u8>,
+    hash: String,
+) -> anyhow::Result<(String, Vec<u8>)> {
     let pk = key32(&profile_key)?;
     with_state(|s| {
         let bytes = s
@@ -515,7 +518,10 @@ mod tests {
         )
         .unwrap();
         crate::api::vault::ingest_bytes("r.txt".into(), b"WBC 5.0".to_vec()).unwrap();
-        assert!(!sync_current_vault_is_keyed(), "普通 open_vault 打开的不是 keyed");
+        assert!(
+            !sync_current_vault_is_keyed(),
+            "普通 open_vault 打开的不是 keyed"
+        );
 
         let log_dir = docs_dir.join("vault").join("log");
         let segment_names = |dir: &std::path::Path| -> Vec<std::ffi::OsString> {
@@ -639,7 +645,10 @@ mod tests {
         let claimed_id = "claimed-id-does-not-match-content";
         let ct = sync::encrypt_blob(&pk, claimed_id, b"some object bytes").unwrap();
         let result = sync_store_object(pk_bytes, claimed_id.to_string(), ct);
-        assert!(result.is_err(), "内容哈希算出的 object_id 应该跟声称的对不上");
+        assert!(
+            result.is_err(),
+            "内容哈希算出的 object_id 应该跟声称的对不上"
+        );
 
         let objects_dir = home.path().join("vault").join("objects");
         assert!(
@@ -756,7 +765,10 @@ mod tests {
                 .collect())
         })
         .unwrap();
-        assert!(real_ts.iter().all(|t| t != "0"), "本机日志里的 ts 仍是真实时间戳");
+        assert!(
+            real_ts.iter().all(|t| t != "0"),
+            "本机日志里的 ts 仍是真实时间戳"
+        );
 
         let b = tempdir().unwrap();
         sync_open_profile_vault(
@@ -776,7 +788,10 @@ mod tests {
                 .collect())
         })
         .unwrap();
-        assert_eq!(imported_ts, real_ts, "真实时间戳随密文过去了,不是信封上那个 \"0\"");
+        assert_eq!(
+            imported_ts, real_ts,
+            "真实时间戳随密文过去了,不是信封上那个 \"0\""
+        );
     }
 
     /// Task 16 item 5:`SyncEventDto.event_id` 导出时已经是 `event_id_for_wire`
@@ -797,7 +812,11 @@ mod tests {
         let mut events = sync_export_events(pk.clone(), vec![]).unwrap();
         assert!(!events.is_empty());
         for e in &events {
-            assert_eq!(e.event_id.len(), 64, "wire event_id 仍是 64 位 hex,只是内容换了");
+            assert_eq!(
+                e.event_id.len(),
+                64,
+                "wire event_id 仍是 64 位 hex,只是内容换了"
+            );
         }
 
         // 篡改 wire event_id(服务端/网络层不该被信任的字段),import 仍应成功。
@@ -813,7 +832,11 @@ mod tests {
         )
         .unwrap();
         let outcome = sync_import_events(pk, events.clone()).unwrap();
-        assert_eq!(outcome.applied as usize, events.len(), "篡改 wire event_id 不该拦住 import");
+        assert_eq!(
+            outcome.applied as usize,
+            events.len(),
+            "篡改 wire event_id 不该拦住 import"
+        );
         assert_eq!(outcome.untrusted, 0);
         assert_eq!(outcome.undecodable, 0);
     }
@@ -844,7 +867,10 @@ mod tests {
         crate::api::vault::ingest_bytes("a.txt".into(), b"WBC 5.0".to_vec()).unwrap();
         let mut events_a = sync_export_events(pk.clone(), vec![]).unwrap();
         events_a.sort_by_key(|e| e.seq);
-        assert!(events_a.len() >= 2, "需要至少两条才能验证'篡改最后一条,前面的仍然应用'");
+        assert!(
+            events_a.len() >= 2,
+            "需要至少两条才能验证'篡改最后一条,前面的仍然应用'"
+        );
         let device_a_id = events_a[0].device_id.clone();
         let kept_seq_a = events_a[events_a.len() - 2].seq; // 篡改前应该还留得住的那条
 
@@ -903,14 +929,30 @@ mod tests {
             expected_a_applied + expected_b_applied + count_c,
             "A/B 各自被篡改的最后一条不应用,前面未篡改的、以及完全没被碰的 C 都照常应用"
         );
-        assert_eq!(outcome.undecodable, 2, "A(改 seq)、B(改 device_id)各算一次,互不影响对方");
-        assert_eq!(outcome.untrusted, 0, "AAD 不对导致的是解密失败(undecodable),不是 MAC 校验层面的 untrusted");
+        assert_eq!(
+            outcome.undecodable, 2,
+            "A(改 seq)、B(改 device_id)各算一次,互不影响对方"
+        );
+        assert_eq!(
+            outcome.untrusted, 0,
+            "AAD 不对导致的是解密失败(undecodable),不是 MAC 校验层面的 untrusted"
+        );
 
         let local_seq = sync_local_seq_map().unwrap();
-        let seq_of = |dev: &str| -> Option<i64> { local_seq.iter().find(|(d, _)| d == dev).map(|(_, s)| *s) };
-        assert_eq!(seq_of(&device_a_id), Some(kept_seq_a), "A 只落到被篡改那条之前那一条,篡改的那条没被应用");
+        let seq_of = |dev: &str| -> Option<i64> {
+            local_seq.iter().find(|(d, _)| d == dev).map(|(_, s)| *s)
+        };
+        assert_eq!(
+            seq_of(&device_a_id),
+            Some(kept_seq_a),
+            "A 只落到被篡改那条之前那一条,篡改的那条没被应用"
+        );
         assert_eq!(seq_of(&device_b_id), Some(kept_seq_b), "B 同上");
-        assert_eq!(seq_of(&device_c_id), Some(max_seq_c), "C 完全没被碰,全量落盘");
+        assert_eq!(
+            seq_of(&device_c_id),
+            Some(max_seq_c),
+            "C 完全没被碰,全量落盘"
+        );
     }
 
     #[test]
@@ -936,7 +978,8 @@ mod tests {
     fn wrap_unwrap_private_pw_and_rc_and_token_round_trip() {
         let (_public, secret) = sync_account_keys_new();
         let salt = vec![3u8; 16];
-        let wrapped = sync_wrap_private(secret.clone(), "口令".into(), salt.clone(), 8192, 1, 1).unwrap();
+        let wrapped =
+            sync_wrap_private(secret.clone(), "口令".into(), salt.clone(), 8192, 1, 1).unwrap();
         let back = sync_unwrap_private_pw(wrapped, "口令".into(), salt, 8192, 1, 1).unwrap();
         assert_eq!(back, secret);
 

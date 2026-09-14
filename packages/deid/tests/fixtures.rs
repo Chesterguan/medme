@@ -12,7 +12,11 @@ fn parse_known(first_line: &str) -> KnownIdentity {
     let mut it = body.split('|').map(str::trim);
     let name = it.next().unwrap_or("").to_string();
     let opt = |s: Option<&str>| s.filter(|v| *v != "-" && !v.is_empty()).map(str::to_string);
-    KnownIdentity { name, id_number: opt(it.next()), phone: opt(it.next()) }
+    KnownIdentity {
+        name,
+        id_number: opt(it.next()),
+        phone: opt(it.next()),
+    }
 }
 
 #[test]
@@ -58,10 +62,17 @@ fn known_gaps_are_pinned_not_enforced() {
         let changed = r.text != expected;
         println!(
             "[known-gap {name}] {} | in: {rest:?} out: {:?}",
-            if changed { "已改变(核实是修好了还是换了种漏法)" } else { "仍是记录的老样子,盲区还在" },
+            if changed {
+                "已改变(核实是修好了还是换了种漏法)"
+            } else {
+                "仍是记录的老样子,盲区还在"
+            },
             r.text
         );
-        assert_eq!(r.text, expected, "{name}: 盲区输出变了 — 核实是修好了(提升为主 fixture)还是换了种漏法");
+        assert_eq!(
+            r.text, expected,
+            "{name}: 盲区输出变了 — 核实是修好了(提升为主 fixture)还是换了种漏法"
+        );
         n += 1;
     }
     assert!(n >= 1, "known-gaps 目录应至少有 1 对");

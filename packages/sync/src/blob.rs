@@ -24,14 +24,18 @@ fn derive_subkey(profile_key: &[u8; 32], info: &[u8]) -> Result<[u8; 32], SyncEr
 }
 
 fn is_lowercase_sha256_hex(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// 服务端看到的对象名。明文哈希(须为 64 位小写 hex)经档案密钥派生的 `object-id`
 /// 子密钥 HMAC:同一份文件在两个档案里名字不同,服务端无法跨用户比对内容。
 pub fn object_id(profile_key: &[u8; 32], plaintext_sha256_hex: &str) -> Result<String, SyncError> {
     if !is_lowercase_sha256_hex(plaintext_sha256_hex) {
-        return Err(SyncError::Format("plaintext_sha256_hex 应为 64 位小写 hex".into()));
+        return Err(SyncError::Format(
+            "plaintext_sha256_hex 应为 64 位小写 hex".into(),
+        ));
     }
     let key = derive_subkey(profile_key, b"object-id")?;
     let mut mac =
@@ -47,7 +51,10 @@ pub fn object_id(profile_key: &[u8; 32], plaintext_sha256_hex: &str) -> Result<S
 /// 顾虑,见上面的注释)。用档案密钥派生的 `event-id` 子密钥重新 HMAC 一遍,
 /// 本机日志里的 `event_id` 本身不变(只在传输时换个马甲),import 也不依赖这个
 /// 值——见 `vault_sync.rs`。
-pub fn event_id_for_wire(profile_key: &[u8; 32], local_event_id_hex: &str) -> Result<String, SyncError> {
+pub fn event_id_for_wire(
+    profile_key: &[u8; 32],
+    local_event_id_hex: &str,
+) -> Result<String, SyncError> {
     let key = derive_subkey(profile_key, b"event-id")?;
     let mut mac =
         Hmac::<Sha256>::new_from_slice(&key).expect("HMAC-SHA256 accepts a key of any length");
@@ -57,7 +64,11 @@ pub fn event_id_for_wire(profile_key: &[u8; 32], local_event_id_hex: &str) -> Re
 
 /// 密文/HMAC 密钥经 `object-enc` 子密钥派生,与 `object_id` 用的 `object-id` 子密钥
 /// 互相独立(见 `derive_subkey`)。
-pub fn encrypt_blob(profile_key: &[u8; 32], id: &str, plaintext: &[u8]) -> Result<Vec<u8>, SyncError> {
+pub fn encrypt_blob(
+    profile_key: &[u8; 32],
+    id: &str,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, SyncError> {
     let key = derive_subkey(profile_key, b"object-enc")?;
     wrap(&key, plaintext, id.as_bytes())
 }
@@ -104,9 +115,21 @@ mod tests {
         let wire = event_id_for_wire(&pk, &local_id).unwrap();
         assert_eq!(wire.len(), 64);
         assert_ne!(wire, local_id, "上线的 event_id 不能是本机内容哈希原样");
-        assert_eq!(wire, event_id_for_wire(&pk, &local_id).unwrap(), "同密钥同输入必须确定性");
+        assert_eq!(
+            wire,
+            event_id_for_wire(&pk, &local_id).unwrap(),
+            "同密钥同输入必须确定性"
+        );
         let other_pk = profile_key_new();
-        assert_ne!(wire, event_id_for_wire(&other_pk, &local_id).unwrap(), "换一把档案密钥,wire id 必须不同");
-        assert_ne!(wire, object_id(&pk, &local_id).unwrap(), "event-id 子密钥必须独立于 object-id 子密钥");
+        assert_ne!(
+            wire,
+            event_id_for_wire(&other_pk, &local_id).unwrap(),
+            "换一把档案密钥,wire id 必须不同"
+        );
+        assert_ne!(
+            wire,
+            object_id(&pk, &local_id).unwrap(),
+            "event-id 子密钥必须独立于 object-id 子密钥"
+        );
     }
 }

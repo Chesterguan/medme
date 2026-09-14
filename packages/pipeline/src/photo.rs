@@ -26,11 +26,15 @@ fn decode_with_orientation(bytes: &[u8], fmt: ImageFormat) -> ImageResult<Dynami
 }
 
 pub fn compress_photo(bytes: &[u8]) -> Vec<u8> {
-    let Ok(fmt) = image::guess_format(bytes) else { return bytes.to_vec() };
+    let Ok(fmt) = image::guess_format(bytes) else {
+        return bytes.to_vec();
+    };
     if !matches!(fmt, image::ImageFormat::Jpeg | image::ImageFormat::Png) {
         return bytes.to_vec();
     }
-    let Ok(img) = decode_with_orientation(bytes, fmt) else { return bytes.to_vec() };
+    let Ok(img) = decode_with_orientation(bytes, fmt) else {
+        return bytes.to_vec();
+    };
     let (w, h) = img.dimensions();
     if w.max(h) <= PHOTO_LONG_EDGE {
         return bytes.to_vec();
@@ -50,9 +54,13 @@ mod tests {
     use image::{ImageBuffer, Rgb};
 
     fn big_jpeg() -> Vec<u8> {
-        let img = ImageBuffer::from_fn(4000, 3000, |x, y| Rgb([(x % 256) as u8, (y % 256) as u8, 7]));
+        let img = ImageBuffer::from_fn(4000, 3000, |x, y| {
+            Rgb([(x % 256) as u8, (y % 256) as u8, 7])
+        });
         let mut out = std::io::Cursor::new(Vec::new());
-        image::DynamicImage::ImageRgb8(img).write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut out, image::ImageFormat::Jpeg)
+            .unwrap();
         out.into_inner()
     }
 
@@ -69,7 +77,9 @@ mod tests {
         assert_eq!(compress_photo(b"not an image"), b"not an image");
         let img = ImageBuffer::from_fn(800, 600, |_, _| Rgb([1u8, 2, 3]));
         let mut out = std::io::Cursor::new(Vec::new());
-        image::DynamicImage::ImageRgb8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut out, image::ImageFormat::Png)
+            .unwrap();
         let small = out.into_inner();
         assert_eq!(compress_photo(&small), small);
     }
@@ -95,11 +105,15 @@ mod tests {
     /// 3000×2000(横向像素)+ 给定 EXIF Orientation 标签的 JPEG。
     fn landscape_jpeg_with_orientation(orientation: u16) -> Vec<u8> {
         use image::{ExtendedColorType, ImageEncoder};
-        let img = ImageBuffer::from_fn(3000, 2000, |x, y| Rgb([(x % 256) as u8, (y % 256) as u8, 7]));
+        let img = ImageBuffer::from_fn(3000, 2000, |x, y| {
+            Rgb([(x % 256) as u8, (y % 256) as u8, 7])
+        });
         let mut out = Vec::new();
         let mut enc = JpegEncoder::new_with_quality(&mut out, 90);
-        enc.set_exif_metadata(exif_orientation_bytes(orientation)).unwrap();
-        enc.write_image(&img, 3000, 2000, ExtendedColorType::Rgb8).unwrap();
+        enc.set_exif_metadata(exif_orientation_bytes(orientation))
+            .unwrap();
+        enc.write_image(&img, 3000, 2000, ExtendedColorType::Rgb8)
+            .unwrap();
         out
     }
 
