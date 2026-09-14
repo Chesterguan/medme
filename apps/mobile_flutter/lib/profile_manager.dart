@@ -43,6 +43,24 @@ class ProfileManager {
   /// 初始成员的 id。固定值,让全新安装是确定的。
   static const _bootstrapId = 'p-1';
 
+  /// 换机时领回来的云成员的占位名(`AccountFlow.restoreProfileKeys`)。真名在病历
+  /// 里,而病历此刻还没同步下来 —— 所以先摆一个**说明此刻在发生什么**的名字。
+  ///
+  /// 原来是「云端档案 a1b2c3」(cloudId 前 6 位)。用户换了台新手机,解锁完账号,
+  /// 第一眼看到的是一串内部 id:既看不懂,也不知道它会不会变成正常的。
+  static const restoringPlaceholderName = '正在恢复的档案';
+
+  /// 兑换授权时的占位名(`Grants.redeem`)。
+  static const redeemingPlaceholderName = '(同步中)';
+
+  /// 上面两个。首同步拉到病历之后,只有名字还是这两个之一的成员才会被自动改名
+  /// (见 [nameCloudProfileOnFirstSync])—— 用户自己改过的名字绝不覆盖。
+  static const cloudPlaceholderNames = {restoringPlaceholderName, redeemingPlaceholderName};
+
+  /// 首同步成功了、但病历里**抽不出姓名**时给的中性名字(空档案,或者正则一个都
+  /// 没命中)。见 [nameCloudProfileOnFirstSync] 对"为什么必须改掉占位名"的说明。
+  static const restoredFallbackName = '云端成员';
+
   /// 当前成员 **id** 变化时通知各屏重载(切换成员 = 重开保险箱)。用 id 而不是名字:
   /// 改名不该触发重开,换人才该。
   final ValueNotifier<String> currentId = ValueNotifier<String>(_bootstrapId);
@@ -200,12 +218,39 @@ class ProfileManager {
     _profiles = _profiles.map((p) {
       if (p.id != id || p.name == trimmed) return p;
       changed = true;
-      return Profile(id: p.id, name: trimmed);
+      return p.copyWith(name: trimmed);
     }).toList();
     if (changed) {
       _autoNamePending = false;
       await _save();
     }
+  }
+
+  /// 记下这个成员已开通云同步:服务端 `profile_id`([cloudId])、本设备对它的
+  /// 角色([role])、这份授权的到期时间([expiresAt],owner 为 null)。
+  /// 调用方(`SyncEngine.enableCloud`)在这之前已经把档案密钥存进
+  /// `AccountSession`——这里只落 profiles.json 里的元数据。
+  Future<void> markCloud(String id, String cloudId, String role, DateTime? expiresAt) async {
+    await ensureLoaded();
+    _profiles = _profiles.map((p) {
+      if (p.id != id) return p;
+      // `expiresAt` 是"owner 没有到期日"这件事的载体,必须能被写成 null ——
+      // 所以这里不用 `copyWith`(那个分不清"不传"和"传 null")。
+      return Profile(id: p.id, name: p.name, cloudId: cloudId, role: role, expiresAt: expiresAt, cloudPaused: p.cloudPaused);
+    }).toList();
+    await _save();
+  }
+
+  /// 这个成员的「云同步」开关(UX 第二轮,创始人拍板:**有账号默认开云,可手动关**)。
+  ///
+  /// `true` = 用户把它关了:后台触发器、「同步」按钮、以及"默认给没开通的成员开通"
+  /// 那条队列都跳过它。**不删云端已有的密文**(那是注销账号才做的事),也不清本机
+  /// 密钥 —— 用户随时可以再打开,而且已经同步过的内容照样能在别的设备上看。
+  Future<void> setCloudPaused(String id, bool paused) async {
+    await ensureLoaded();
+    if (byId(id)?.cloudPaused == paused) return;
+    _profiles = _profiles.map((p) => p.id == id ? p.copyWith(cloudPaused: paused) : p).toList();
+    await _save();
   }
 
   /// 能不能删这个成员。成员一律平等,**谁都能删**;删任何一个都只影响它自己
@@ -241,6 +286,66 @@ class ProfileManager {
     await rename(cur.id, name); // rename 内部关掉 _autoNamePending 并落盘
     return name;
   }
+
+  /// 刚领回来/刚兑换到的云成员,首同步把病历拉下来之后用识别到的姓名给它命名。
+  /// 返回是否真的改了。
+  ///
+  /// **不能复用 [maybeAutoNameCurrent]**(A5 的根因就在这儿):那个方法是
+  /// 「首次导入给默认成员命名」,带着两道守卫 —— `_autoNamePending` 和"只有一个
+  /// 成员"。换机这条路上两道**都不成立**:用户家里可能早就有三个成员,默认成员
+  /// 也早被命过名。于是哪怕首同步真的拉到了姓名,名字也永远停在占位串上。
+  ///
+  /// 这里只认一条判据:**这个成员的名字还是我们自己写上去的占位串吗**
+  /// ([cloudPlaceholderNames])。用户自己改过的名字一律不覆盖。
+  ///
+  /// **抽不出姓名也要改名**(复审新问题 2)。这个方法只在首同步**成功之后**被调用
+  /// (`sync_engine.firstSyncAndName`:同步抛异常就走不到这儿),所以"名字还是占位
+  /// 串"这条证据在这一刻必须被消费掉 —— 留着的后果是一个死循环:空档案(或者正则
+  /// 一个都没命中)的成员名字永远停在「正在恢复的档案」→ 每次启动
+  /// `restoreProfileKeys` 都把它重新排进首同步队列 → 反复切成员、屏幕闪烁,切换器
+  /// 一直显示「正在恢复…点这里重试」,而它其实早就同步好了。
+  /// 抽不出来就给一个中性的 [restoredFallbackName] —— 用户随时可以在设置里改名。
+  Future<bool> nameCloudProfileOnFirstSync(String id, String? detectedName) async {
+    await ensureLoaded();
+    final p = byId(id);
+    if (p == null || !cloudPlaceholderNames.contains(p.name)) return false;
+    final name = detectedName?.trim() ?? '';
+    await rename(id, name.isEmpty ? _nextRestoredFallbackName() : name);
+    return true;
+  }
+
+  /// 「云端成员」/「云端成员 2」/…… —— 挑一个本机还没用过的,免得两个空档案撞成
+  /// 同一个名字(名字只是标签、同名本来不违法,但两行一样的字用户分不出哪个是哪个)。
+  String _nextRestoredFallbackName() {
+    final used = _profiles.map((p) => p.name).toSet();
+    for (var i = 1;; i++) {
+      final candidate = i == 1 ? restoredFallbackName : '$restoredFallbackName $i';
+      if (!used.contains(candidate)) return candidate;
+    }
+  }
+
+  /// 这个成员是不是「从没被用过的默认成员」。A5 最后一步拿它决定:换机领回云档案
+  /// 之后,要不要把旁边那个空的「我」删掉 —— 不删的话,用户新手机上永远多一个
+  /// 空成员杵着,而他从没建过它。
+  ///
+  /// 三条都成立才算:还是 bootstrap 那个 id;名字还是占位默认名(没被用户改过、
+  /// 也没被报告里识别到的姓名命过,即 `_autoNamePending` 仍为 true);**已知记录数
+  /// 确认是 0**。
+  ///
+  /// ⚠️ 第三条原来写的是 `(_counts[id] ?? 0) == 0` —— 把「**还没人数过**」也当成
+  /// 「空」。评审证明那不是理论情形:`claim_target.dart` 的 `ClaimHow.current`
+  /// 分支(「这份病历里没有姓名,存进你当前的档案」)是一条真实产品路径,它把认领
+  /// 到的病历写进 `p-1` 并且**刻意不改名** —— 于是 `_autoNamePending` 仍为 true、
+  /// 名字仍是「我」,前两条全部成立。此刻挡在这些病历和一次
+  /// `Directory.delete(recursive: true)`(本机 + iCloud 两处,无确认、无撤销、
+  /// 无声、发生在启动序列里)之间的,只剩那个缓存有没有恰好被填上。
+  ///
+  /// 要一个**已知的 0**,实践上什么都不损失:`ArchiveScreen` 是 `IndexedStack` 五个
+  /// 孩子之一(`main.dart` 的 `HomeShell.tabScreens`),所以首次启动它就会 build 并
+  /// 调一次 `setCount(p-1, 0)`,远早于用户能走到账号屏登录。读不到这个数(比如
+  /// 启动序列比首帧还快)就**不删** —— 多一个空成员远好过删掉一份病历。
+  bool isUntouchedDefaultMember(String id) =>
+      id == _bootstrapId && _autoNamePending && byId(id)?.name == defaultMemberName && _counts[id] == 0;
 
   /// 改保险箱名字(设置页)。空或没变则忽略。
   Future<void> setVaultName(String name) async {
@@ -288,14 +393,58 @@ class ProfileManager {
 }
 
 /// 一个成员:[id] 是主键与目录名(生成后永不变),[name] 只是给人看的标签(随时可改)。
+///
+/// [cloudId]/[role]/[expiresAt] 是开通云同步之后才有的:[cloudId] 是服务端的
+/// `profile_id`,[role] 是这台设备对这个云档案的角色(`owner`/`editor`/`viewer`),
+/// [expiresAt] 是这份授权的到期时间(owner 永不过期,为 null)。三者一起决定
+/// `openCurrentProfileVault` 走 keyed 开箱还是原路径——见 `vault_boot.dart`。
 class Profile {
-  const Profile({required this.id, required this.name});
+  const Profile({
+    required this.id,
+    required this.name,
+    this.cloudId,
+    this.role,
+    this.expiresAt,
+    this.cloudPaused = false,
+  });
 
   final String id;
   final String name;
+  final String? cloudId;
+  final String? role;
+  final DateTime? expiresAt;
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name};
+  /// 用户手动关掉了这个成员的云同步(见 [ProfileManager.setCloudPaused])。
+  /// 默认 false = 开着 —— "有账号默认开云"是产品决定,不是用户要逐个打开的东西。
+  final bool cloudPaused;
 
-  static Profile fromJson(Map<String, dynamic> j) =>
-      Profile(id: j['id'] as String, name: j['name'] as String);
+  /// 只动给得出的那几个字段。**不带 `expiresAt`**:它需要能被写成 null
+  /// (owner 没有到期日),而 `copyWith` 的 `?? this.x` 表达不了"显式 null" ——
+  /// 那条路走 `markCloud` 里的显式构造。
+  Profile copyWith({String? name, bool? cloudPaused}) => Profile(
+    id: id,
+    name: name ?? this.name,
+    cloudId: cloudId,
+    role: role,
+    expiresAt: expiresAt,
+    cloudPaused: cloudPaused ?? this.cloudPaused,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    if (cloudId != null) 'cloudId': cloudId,
+    if (role != null) 'role': role,
+    if (expiresAt != null) 'expiresAt': expiresAt!.toIso8601String(),
+    if (cloudPaused) 'cloudPaused': true,
+  };
+
+  static Profile fromJson(Map<String, dynamic> j) => Profile(
+    id: j['id'] as String,
+    name: j['name'] as String,
+    cloudId: j['cloudId'] as String?,
+    role: j['role'] as String?,
+    expiresAt: j['expiresAt'] == null ? null : DateTime.parse(j['expiresAt'] as String),
+    cloudPaused: j['cloudPaused'] as bool? ?? false,
+  );
 }

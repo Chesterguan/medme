@@ -382,3 +382,43 @@ pub struct ConfirmedStatusDto {
     pub document_id: i64,
     pub confirmed: bool,
 }
+
+/// 一条云同步事件的加密信封(`api::vault_sync::sync_export_events` 产出 /
+/// `sync_import_events` 消费)。`device_id`/`seq` 明文携带(服务端按
+/// `(device_id, seq)` 去重/排序、Dart 侧按 `device_seq_map` 过滤都不需要解密);
+/// `ciphertext` 是整条 `core_model::LogEntry` 的 JSON 序列化经档案密钥 AEAD
+/// 加密的结果(AAD = `device_id:seq`),真正敏感的内容(含本机真实的
+/// `event_id` 与真实时间戳)都在这里面。**`event_id` 这个字段本身是服务端看到的
+/// HMAC 马甲**(`sync::event_id_for_wire`),不是本机内容哈希——服务端只拿它当一个
+/// 不透明校验值存,dedup 靠 `(device_id, seq)`;`sync_import_events` 不读这个字段。
+///
+/// **`ts` 恒为常量 `"0"`**(最终评审 I4):服务端排序从来只看
+/// `(device_id, seq)`,而一串明文时间戳等于白送一条「这个人什么时候、多久一次
+/// 产生病历事件」的时间线。真实 `ts` 在 `ciphertext` 里的 `LogEntry` 上,解密后
+/// 原样恢复;`sync_import_events` 同样不读信封上的这个字段。
+#[derive(Debug, Clone)]
+pub struct SyncEventDto {
+    pub device_id: String,
+    pub seq: i64,
+    pub event_id: String,
+    pub ts: String,
+    pub ciphertext: Vec<u8>,
+}
+
+/// `core_model::sync_io::PeerAppendOutcome` 的 FRB 镜像,外加 `undecodable`。
+/// 五个计数不互斥,Dart 侧都要看:`applied`/`skipped_existing`/`out_of_order`
+/// 是磁盘层面的去重/排序结果,`out_of_order` 提示调用方该把这个 device 的拉取
+/// 水位下调重推;`untrusted` 是 MAC/链校验层面的隔离计数(错误账号密钥或被
+/// 篡改),不看这个字段、只盯 `device_seq_map`(可信水位)会导致"越推越推不动"
+/// 的死循环。`undecodable` 是 `sync_import_events` 自己这一层的计数(在交给
+/// `append_peer_entries` 之前就没能解密/反序列化/信封校验通过的条目数,按设备
+/// 只算撞到的第一条——见该函数文档),非零说明有台设备卡在了某条解不开的事件
+/// 上,该设备后面还有条目排队等着,不是"已经全部同步完"。
+#[derive(Debug, Clone)]
+pub struct SyncImportOutcomeDto {
+    pub applied: u32,
+    pub skipped_existing: u32,
+    pub out_of_order: u32,
+    pub untrusted: u32,
+    pub undecodable: u32,
+}

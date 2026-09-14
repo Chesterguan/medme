@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncOpenProfileVault, syncCurrentVaultIsKeyed;
+import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
@@ -27,30 +30,169 @@ Future<void> _vaultQueue = Future<void>.value();
 /// 正是为了看见开箱失败才建的。见 `screens/first_run_consent.dart`。
 bool vaultOpenedOkThisLaunch = true;
 
-Future<void> _serializedOpen(Future<void> Function() open) {
-  final done = _vaultQueue.then((_) => open());
-  // 队列本身吞掉异常(否则一次开箱失败会毒死后面所有开箱);异常照常抛给调用方。
+/// 把任意一段"会碰进程级 vault"的操作排进同一条 FIFO 队列——不只是开箱本身。
+/// 见 Task 15 review I2:`SyncEngine` 的推拉、按需补对象也要走这条队列,不能
+/// 只有"开箱"排队;开箱和同步各自独立排队的话,两者之间没有互斥——同步的网络
+/// 往返进行到一半,另一路把箱子切换掉,写入就会落进错的档案。
+///
+/// 排队保证的是**执行顺序**,不是"写之前箱子没变过"这件事本身——后者还要靠
+/// 调用方在真正写入前再核一遍身份(`SyncEngine._assertVaultMatches`),两者
+/// 配合:队列挡住"同一时刻有两段代码在动 vault",身份核对挡住"万一哪天有条
+/// 路径没走队列"这种意外。
+/// 「此刻这段代码是不是正跑在队列里」—— 用 Zone 而不是一个模块级布尔:布尔分不清
+/// 「在 action 的调用栈里又排了一次」(重入,死锁)和「另一路在 action 跑着的时候
+/// 正常排队」(合法,而且是这条队列存在的理由)。
+///
+/// 值是一个**可变的小盒子**而不是 `true`(复审 R2):Zone 值会传进 action 里创建的
+/// `Timer`,而那种回调是在 action **跑完之后**才执行的 —— 它排队是完全合法的,不该
+/// 被当成重入。盒子上的 `done` 区分这两件事。
+class _SerializedMark {
+  bool done = false;
+}
+
+final Object _inSerializedZoneKey = Object();
+
+Future<T> runSerialized<T>(Future<T> Function() action) {
+  // **不可重入**(复审 M15)。违反它的症状是死锁:新排的这一段挂在 `_vaultQueue`
+  // 尾巴上,而尾巴正是外面那一段 —— 它等里面,里面等它。真机上看起来是"点了没反应、
+  // 永远转圈",而原因在代码里一个字都不显眼。所以在 debug 下当场炸
+  // (`assert` 在 release 里整段剥掉,生产行为一字不变;队列里要顺手开箱的调用方
+  // 用不排队的那个本体,见 [openCurrentProfileVaultUnserialized])。
+  //
+  // **`done` 那一半是必需的**(复审 R2,有复现):生产里这条链真的存在 ——
+  // `SyncEngine._syncProfileLocked` 在序列化的 action 里调 `bumpVaultRevision()`,
+  // `main.dart` 的 `_scheduleDebouncedPush` 于是在**这个 zone 里**建了一个 3 秒
+  // Timer;它到点时跑一次后台同步 → `syncProfile` → 又排一次队。那时外面这段早跑完
+  // 了,没有任何重入,而只看"zone 值在不在"会把它判成死锁。debug/profile 包里的后果
+  // 不是一条警告:`AssertionError` 被 `syncProfile` 的 catch 接住 →
+  // `saveLastSync(ok:false)` → **每一次拉到了东西的同步都显示「上次备份失败」**。
+  final outer = Zone.current[_inSerializedZoneKey] as _SerializedMark?;
+  assert(
+    outer == null || outer.done,
+    'runSerialized 不可重入:已经在 vault 队列里了,再排一次就是自己等自己。'
+    '队列里要开箱请调 openCurrentProfileVaultUnserialized。',
+  );
+  final mark = _SerializedMark();
+  final done = _vaultQueue.then(
+    (_) => runZoned(
+      () => action().whenComplete(() => mark.done = true),
+      zoneValues: {_inSerializedZoneKey: mark},
+    ),
+  );
+  // 队列本身吞掉异常(否则一次失败会毒死后面所有排队的操作);异常照常抛给调用方。
   _vaultQueue = done.then((_) {}, onError: (_) {});
   return done;
 }
 
-/// 打开「当前成员」的保险箱:按 [ProfileManager] 组合本机/iCloud 路径,调 Rust
-/// `open_vault`(Rust 的进程级 vault 会被替换成该成员的)。启动 + 切换成员后都调它。
+/// 测试专用:把队列砍回一个立即完成的 `Future`,不管上面挂着什么。
+///
+/// `_vaultQueue` 是模块级单例,`flutter test` 里一个测试文件的多个 `testWidgets`
+/// 共用同一份——`SyncEngine` 走 [runSerialized] 之后,一个用例里排的操作即使
+/// 已经"跑完"(该用例自己的 `pumpAndSettle()` 也确实等到了那次调用的结果),
+/// 挂在 `_vaultQueue` 链条尾巴上、把队列本身继续往前推的那个收尾 `.then()`
+/// 仍然可能落在这个用例自己的 fake-async/测试 zone 里没有真正推进——下一个用例
+/// 再调 [runSerialized] 时就会追加在一个再也不会完成的 `Future` 后面,
+/// `pumpAndSettle` 干等到超时(见 Task 15 review 修复 I2 时踩到的坑)。
+/// 会用到 [runSerialized](`SyncEngine`/`vault_boot` 自己)的测试文件,在
+/// `setUp`/`tearDown` 里调一下这个,把队列清成互不相干的状态。
+@visibleForTesting
+void resetVaultQueueForTest() {
+  _vaultQueue = Future<void>.value();
+}
+
+/// 这个成员该走哪条开箱路径——纯函数,不碰任何 IO/FFI,只看有没有
+/// [Profile.cloudId] 以及有没有拿到对应的档案密钥。抽出来是为了让这条判断能在
+/// 不加载 Rust 原生库的 `flutter test` 里钉住——[openCurrentProfileVault] 本身
+/// 调 FRB,测试环境一调就崩。
+///
+/// **没有 [Profile.cloudId]** → [VaultOpenPlan.unkeyed](原路径,一字不改,
+/// 不登录 = 现状)。**有 cloudId 但拿不到密钥**(账号没解锁/密钥被清过)→
+/// [VaultOpenPlan.locked]——这是一个必须显式拒绝的状态,**不能**悄悄退化成
+/// unkeyed 打开:那样写进去的事件没有账号密钥的 MAC,下次真正 keyed 打开时会被
+/// `probe_key_mismatch`/校验链判定为「不可信」,永久隔离在这台设备上写的这一段
+/// 历史。**有 cloudId 且有密钥** → [VaultOpenPlan.keyed]。
+enum VaultOpenPlan { unkeyed, keyed, locked }
+
+@visibleForTesting
+VaultOpenPlan planVaultOpen(Profile p, Uint8List? profileKey) {
+  if (p.cloudId == null) return VaultOpenPlan.unkeyed;
+  return profileKey == null ? VaultOpenPlan.locked : VaultOpenPlan.keyed;
+}
+
+/// 档案有 [Profile.cloudId] 但本机解不出对应的档案密钥(账号还没解锁,或密钥被
+/// 清过)——[openCurrentProfileVault] 显式拒绝打开,而不是悄悄退回不加密的本地
+/// 打开(见 [VaultOpenPlan] 文档)。调用方(账号屏/设置页)应该提示用户去解锁账号。
+class ProfileLocked implements Exception {
+  const ProfileLocked(this.cloudId);
+  final String cloudId;
+
+  /// C4:这句话原来是「这个档案已绑定云同步,但本机还没有它的密钥——需要解锁账号
+  /// 才能打开(cloudId=prf_7f3a…)」。它**是启动时那块白屏上最显眼的一段字**,而
+  /// 它里面每一个词都是我们自己的词汇:"绑定云同步"、"档案密钥"、"解锁账号",
+  /// 末尾还挂着一串服务端内部 id。老人看完只知道打不开,不知道该做什么。
+  ///
+  /// 现在说两件事:为什么打不开(在云端是加密的)、要他做什么(输口令)。
+  /// [cloudId] 仍然留在字段里(排查时用、也是这个异常的身份),但**只进 debug
+  /// 日志**(见 [openCurrentProfileVault] 的 locked 分支),不进给用户看的字。
+  @override
+  String toString() => '你的病历在云端是加密的,需要你的口令才能打开。';
+}
+
+/// 打开「当前成员」的保险箱:按 [ProfileManager] 组合本机/iCloud 路径。启动 +
+/// 切换成员后都调它,也是 `SyncEngine.enableCloud`(见 `sync_engine.dart`)开通
+/// 云同步后重开箱唯一走的入口——**所有开箱都必须经过这个函数**(从而经过下面的
+/// FIFO 队列),不许在别处直接调 `syncOpenProfileVault`。
 ///
 /// data 目录(设备 id、iCloud 全局开关标记、导入临时文件)所有成员共用——iCloud 是
 /// 全局开关(开了对所有成员生效);派生库则每成员独立(见 Rust `resolve_vault_paths`)。
-Future<void> openCurrentProfileVault() => _serializedOpen(() async {
+Future<void> openCurrentProfileVault() => runSerialized(openCurrentProfileVaultUnserialized);
+
+/// [openCurrentProfileVault] 的本体,**不自己排队**。给"已经在队列里、还要顺手开一次
+/// 箱"的调用方用(见 [removeProfileAndReopenImpl] 的 M11 说明)——
+/// `runSerialized` 不可重入:在队列里再调一次 `openCurrentProfileVault`,那次会排在
+/// 自己这一段**后面**,于是互相等,死锁。
+///
+/// **除了那一处,任何人都该调 [openCurrentProfileVault]**(排队的那个)。不是
+/// `@visibleForTesting`:`removeProfileAndReopen` 传的就是它(复审 M15)。
+Future<void> openCurrentProfileVaultUnserialized() async {
   await ProfileManager.instance.ensureLoaded();
+  final p = ProfileManager.instance.current;
   final docsRoot = (await getApplicationDocumentsDirectory()).path;
   final support = (await getApplicationSupportDirectory()).path;
-  final containerRoot = await IcloudBridge.containerPath();
+  final key = p.cloudId == null ? null : await AccountSession.instance.profileKey(p.cloudId!);
 
-  await openVault(
-    docsDir: ProfileManager.instance.localBase(docsRoot),
-    dataDir: support,
-    icloudContainerDir: ProfileManager.instance.containerBase(containerRoot),
-  );
-});
+  switch (planVaultOpen(p, key)) {
+    case VaultOpenPlan.locked:
+      // cloudId 只进 debug 日志(C4)——`assert` 的表达式在 release 里整个被剥掉。
+      assert(() {
+        debugPrint('ProfileLocked: cloudId=${p.cloudId}');
+        return true;
+      }());
+      throw ProfileLocked(p.cloudId!);
+    case VaultOpenPlan.keyed:
+      await syncOpenProfileVault(
+        docsDir: ProfileManager.instance.localBase(docsRoot),
+        dataDir: support,
+        profileKey: key!,
+      );
+      // 硬校验:keyed 和原路径开的是同一个目录,唯一能分辨"这次真的走对了分支"
+      // 的办法是问 Rust 自己——同 [ensureProxyVaultOpen] 的思路,不靠调用点的
+      // 分支逻辑自证。
+      if (!await syncCurrentVaultIsKeyed()) {
+        throw StateError('云档案 keyed 开箱后状态核对失败:期望 keyed,实际不是');
+      }
+    case VaultOpenPlan.unkeyed:
+      final containerRoot = await IcloudBridge.containerPath();   // ← 原路径,一字不改
+      await openVault(
+        docsDir: ProfileManager.instance.localBase(docsRoot),
+        dataDir: support,
+        icloudContainerDir: ProfileManager.instance.containerBase(containerRoot),
+      );
+      if (await syncCurrentVaultIsKeyed()) {
+        throw StateError('本地档案开箱后状态核对失败:不应为 keyed');
+      }
+  }
+}
 
 /// 打开某个**代拍病人**的保险箱(医生模式)。与「切成员」不是一回事:代拍病人不在
 /// [ProfileManager] 里,走 [ProxyPatientManager] 的独立命名空间。
@@ -58,7 +200,7 @@ Future<void> openCurrentProfileVault() => _serializedOpen(() async {
 /// `dataDir` 用该病人自己的 `data/`:每个病人一个一次性 device id(不带医生的设备
 /// 身份),且那里没有 `icloud_enabled` 标记 —— 别人的病历永远不进医生的 iCloud。
 Future<void> openProxyPatientVault(String patientId) =>
-    _serializedOpen(() async {
+    runSerialized(() async {
       final base = await ProxyPatientManager.instance.baseDir(patientId);
       await openVault(
         docsDir: base,
@@ -91,9 +233,44 @@ Future<void> ensureProxyVaultOpen(String patientId) async {
 }
 
 /// 切换到某成员(按 id)并重开其保险箱,然后通知各屏刷新。
-Future<void> switchProfileAndReopen(String id) async {
+///
+/// **开箱失败(最常见是 [ProfileLocked])必须把"当前是谁"也退回去**,不能留在
+/// 「`ProfileManager.currentId` 已经指向 B、但进程里那个箱子其实还是 A 的」这个
+/// 不一致状态——那样接下来任何一次写入(手动录入/导入)都会把 B 的东西写进 A 的
+/// 保险箱。异常照原样抛给调用方(UI 据此展示消息),不吞。
+///
+/// [revertTo]:回退到哪个成员。默认是"调用这个函数的那一刻 `currentId` 指着的
+/// 那个",对"从 A 切到 B"这种场景就是对的。但有一类调用方在切换**之前**已经动过
+/// `currentId` 了——`Grants.redeem` 里 `ProfileManager.create()` 自己会把 current
+/// 切到新建的那个成员(见它的文档),于是等走到这里时"原来那个"早就不是 current
+/// 了,默认值会把"回退"变成一次空操作。那种调用方显式把真正的起点传进来。
+Future<void> switchProfileAndReopen(String id, {String? revertTo}) =>
+    switchProfileAndReopenImpl(id, reopen: openCurrentProfileVault, revertTo: revertTo);
+
+/// [switchProfileAndReopen] 的本体,`reopen` 抽成参数是为了让"开箱失败要回退"
+/// 这条契约能在**不带 Rust 原生库**的 `flutter test` 里被钉住(见
+/// `test/switch_profile_and_reopen_test.dart`)——同 [runWipeSequence] 的套路。
+/// 产品代码里的唯一调用点就是 [switchProfileAndReopen],传的永远是真实现。
+@visibleForTesting
+Future<void> switchProfileAndReopenImpl(
+  String id, {
+  required Future<void> Function() reopen,
+  String? revertTo,
+}) async {
+  final previousId = revertTo ?? ProfileManager.instance.currentId.value;
   await ProfileManager.instance.switchTo(id);
-  await openCurrentProfileVault();
+  try {
+    await reopen();
+  } catch (_) {
+    // 回退:把 currentId 换回原来那个、重开它的箱子——这一步本身也可能失败
+    // (比如原成员这会儿也解不开了),但不能因此掩盖**原始**错误,所以吞掉回退
+    // 失败、原样 rethrow 第一次的异常。
+    try {
+      await ProfileManager.instance.switchTo(previousId);
+      await reopen();
+    } catch (_) {}
+    rethrow;
+  }
   bumpVaultRevision();
 }
 
@@ -193,7 +370,10 @@ Future<void> autoNameCurrentProfileFrom(String? detectedName) async {
 }
 
 /// 删除一个成员:成员表移除 + **本机与 iCloud 容器两处**的数据目录都删掉,再重开
-/// (删的若是当前成员,`remove` 已把 current 切回第一个)并刷新各屏。
+/// (删的若是当前成员,`remove` 已把 current 切回第一个)并刷新各屏。这是**唯一**
+/// 移除成员的入口(手动删成员的设置页、`Grants.purgeExpired` 清过期授权都走这
+/// 一条),云档案的密钥(`pk_<cloudId>`)也在这里统一清掉——不分别在每个调用方
+/// 补一遍,免得漏掉哪一条路径(见 Task 16 item 3)。
 ///
 /// 两处都删的理由与 [wipeAllData] 第 4 步同源:关掉 iCloud 时容器副本会被保留,
 /// 只删活跃那处的话,数据还在容器里躺着,再开 iCloud 会被 adopt 回来 —— 用户以为
@@ -201,7 +381,44 @@ Future<void> autoNameCurrentProfileFrom(String? detectedName) async {
 ///
 /// 删到只剩一个时不给删(见 [ProfileManager.canRemove]),这里再挡一道:`remove`
 /// 返回 false 就直接返回,绝不去删任何目录。
-Future<bool> removeProfileAndReopen(String id) async {
+Future<bool> removeProfileAndReopen(String id) =>
+    // 不是 `openCurrentProfileVault`:那一个自己排队,而这里整段已经在队列里了(M11)。
+    removeProfileAndReopenImpl(id, reopen: openCurrentProfileVaultUnserialized);
+
+/// [removeProfileAndReopen] 的本体,`reopen` 抽成参数是为了让"云档案的密钥
+/// 随成员一起被清掉、本地档案不碰密钥"这条契约能在**不带 Rust 原生库**的
+/// `flutter test` 里被钉住(同 [switchProfileAndReopenImpl]/[runWipeSequence]
+/// 的套路)。产品代码里的唯一调用点就是 [removeProfileAndReopen],传的永远是
+/// 真实现。
+/// 删一个成员的目录之前:**如果此刻进程里开着的正是它的箱子,先松手**(评审
+/// Minor 12)。Rust 的 vault 是进程级单例,开着就意味着它攥着
+/// `<localBase>/vault` 下的 sqlite 连接。POSIX 的 unlink-while-open 让"先删后关"
+/// 也能活下来,但那是巧合不是设计 —— 与 [runWipeSequence] 的 ① 步同一条契约
+/// (「先松手,再删盘」);而这条路径现在跑在**启动序列**里(A5 删那个空的默认
+/// 成员),正是最不该靠巧合的地方。
+///
+/// 两个 try 各有理由:没开过任何箱子时 `currentVaultRoot` 会抛(Rust 的「保险箱
+/// 尚未打开」)—— 那只是"不是这个成员的箱子"的一种,不是错误;`resetVault` 失败
+/// 也不能让整个删除半途而废(同 [runWipeSequence] ① 的说明)。
+Future<void> _releaseVaultIfOpen(String localBase) async {
+  try {
+    if (await currentVaultRoot() != '$localBase/vault') return;
+  } catch (_) {
+    return;
+  }
+  try {
+    await resetVault();
+  } catch (_) {}
+}
+
+@visibleForTesting
+Future<bool> removeProfileAndReopenImpl(
+  String id, {
+  required Future<void> Function() reopen,
+  /// 同 `reopen`:真实现碰 Rust 原生库(`currentVaultRoot`/`resetVault`),
+  /// `flutter test` 跑不到,所以抽成注入点。产品代码里永远是默认值。
+  Future<void> Function(String localBase) releaseIfOpen = _releaseVaultIfOpen,
+}) async {
   await ProfileManager.instance.ensureLoaded();
   if (!ProfileManager.instance.canRemove(id)) return false;
 
@@ -209,16 +426,35 @@ Future<bool> removeProfileAndReopen(String id) async {
   final containerRoot = await IcloudBridge.containerPath();
   final localBase = ProfileManager.instance.localBaseOf(docsRoot, id);
   final cloudBase = ProfileManager.instance.containerBaseOf(containerRoot, id);
+  final cloudId = ProfileManager.instance.byId(id)?.cloudId;
 
   if (!await ProfileManager.instance.remove(id)) return false;
   await ReviewState.instance.removeMember(id);
-
-  for (final base in [localBase, ?cloudBase]) {
-    final d = Directory(base);
-    if (await d.exists()) await d.delete(recursive: true);
+  if (cloudId != null) {
+    await AccountSession.instance.removeProfileKey(cloudId);
+    // owner 授权服务端删不掉(`DELETE` 没有这个端点)——不记这一笔,换机/重新
+    // 登录时 `AccountFlow.restoreProfileKeys` 拿 `GET /v1/profiles` 还是会看到
+    // 这个档案,把用户刚删掉的成员原样建回来。见 `account.dart` 的说明。
+    await AccountSession.instance.tombstoneCloudProfile(cloudId);
   }
 
-  await openCurrentProfileVault();
+  // **整段排进 FIFO 队列**(复审 M11)。`vault` 是进程级单例,而这三步之间任何一个
+  // 插入点都会出事:另一路的开箱(切成员/同步/代拍)挤在"松手"与"删盘"之间 → 在一个
+  // 正要被删的目录上开出箱子;挤在"删盘"与"reopen"之间 → 这里的 reopen 开的是别人
+  // 刚切过去的那个成员。排队只保证顺序,不代替核对(见 `runSerialized` 的文档)。
+  //
+  // `reopen` 必须是**不自己排队**的那个(生产里是 `openCurrentProfileVaultUnserialized`)
+  // —— `runSerialized` 不可重入:在队列里再排一次就是自己等自己。
+  await runSerialized(() async {
+    await releaseIfOpen(localBase);
+
+    for (final base in [localBase, ?cloudBase]) {
+      final d = Directory(base);
+      if (await d.exists()) await d.delete(recursive: true);
+    }
+
+    await reopen();
+  });
   bumpVaultRevision();
   return true;
 }

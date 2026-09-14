@@ -16,6 +16,7 @@ import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/backup_status_line.dart';
 
 /// 底部导航一级 tab「概览」—— 使用时刻:**日常打开,看一眼「我现在怎么样」**
 /// (设计系统 §八)。
@@ -169,7 +170,21 @@ class _OverviewScreenState extends State<OverviewScreen> {
           child: Container(height: 1, color: c.line),
         ),
       ),
-      body: FutureBuilder<VisitSummaryDto>(
+      // 备份状态那一行在 `FutureBuilder` **外面**:它是常驻的(创始人拍板的
+      // 「概览屏顶部常驻一行」),不该在概览数据加载中/加载失败时消失 —— 而
+      // 「加载概览失败」恰恰是用户最想知道"我的病历到底还在不在云上"的时刻。
+      body: Column(
+        children: [
+          const BackupStatusLine(),
+          Expanded(child: _summary(context)),
+        ],
+      ),
+    );
+  }
+
+  Widget _summary(BuildContext context) {
+    final c = MedColors.of(context);
+    return FutureBuilder<VisitSummaryDto>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
@@ -255,8 +270,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
             ),
           );
         },
-      ),
-    );
+      );
   }
 }
 

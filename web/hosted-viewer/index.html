@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- SECURITY (GHSA-j7fx): 本页只运行三段固定的内联脚本(首屏防闪 + 内联 dicom-parser + 查看器逻辑),
-     故 script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk=';并加 form-action/base-uri/
+     故 script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk=';并加 form-action/base-uri/
      frame-ancestors 'none' 锁死导航/表单/框架,断掉潜在注入外泄 DECRYPTED PHI 的路径。
      connect-src 只放行认领密文所在的那一个源(CLAIM_BASE):托管查看器要按 id 取回医生
      代拍的密文,别的地方一概连不上,解密后的 PHI 仍无处可外泄。**离线分享文件不吃这条**
@@ -15,7 +15,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -28,16 +28,30 @@
     border-radius:50%;animation:pw-spin .9s linear infinite}
   @keyframes pw-spin{to{transform:rotate(360deg)}}
   @media (prefers-reduced-motion:reduce){#payload-wait .sp{animation:none}}
+  /* 授权链接(`#g1.`):这张网页打不开也不该去打开它 —— 只给一句能照做的话。 */
+  #grant-hint{display:none}
+  html.grantlink #gate{display:none}
+  html.grantlink #grant-hint{display:flex}
+  #grant-hint{min-height:100vh;flex-direction:column;align-items:center;justify-content:center;
+    gap:12px;padding:24px;text-align:center;color:#334155}
+  #grant-hint h1{font-size:19px;color:#1560a8;margin:0}
+  #grant-hint p{font-size:14px;color:#64748b;line-height:1.7;margin:0;max-width:30em}
+  #grant-hint a{color:#1789c1}
 </style>
 <script>
 // 首屏防闪:二维码/认领链接进来时,载荷在 `#` 后面,根本不需要口令屏。若等到 body
 // 末尾的主脚本才隐藏它,医生扫码会先看到「请输入口令」一闪 —— 会让他以为要向病人
 // 要口令。这里在**首次绘制之前**就按 fragment 前缀判定并藏掉。
 // 只读 location.hash、只加一个 class,不碰任何数据。
+// `g1.` 是授权链接(邀请号 + 令牌),网页这边**不解析、不读取、不发送**它:
+// 只认出前缀、亮出「请用 MedMe App 打开」那一屏。下面的主脚本不认这个前缀,
+// 托管查看器里会原样 return(见 `if (!selfContained) return;`)。
 (function () {
   var h = location.hash;
   if (h && /^#(q1\.|q2\.|c1\.)/.test(h)) {
     document.documentElement.className += " payload";
+  } else if (h && h.indexOf("#g1.") === 0) {
+    document.documentElement.className += " grantlink";
   }
 })();
 </script>
@@ -232,6 +246,13 @@
 <!-- 等待态:静态写在页面里,首帧即可见。内容出现或出错时由脚本移除 .payload 收起。
      这不是装样子 —— 取几 MB 密文 + 本地解密确实要时间,用户有权知道在等什么。 -->
 <div id="payload-wait"><div class="sp"></div><div>正在取回病历…</div></div>
+<!-- 授权链接(`#g1.`)落到网页上时的唯一出口:这条链接只有 MedMe App 能兑换,
+     网页既不读它、也不向任何地方发送它。由首屏那段脚本按前缀加 class 显示。 -->
+<div id="grant-hint">
+  <h1>这是一个 MedMe 授权链接</h1>
+  <p>请用 <b>MedMe App</b> 打开这条链接:在手机上装好 MedMe 之后,重新点开给你的那条链接(或在 App 里扫一次那个二维码),就能接受这份病历授权。</p>
+  <p>还没有 MedMe?<a href="../download.html">下载 MedMe →</a></p>
+</div>
 <div id="gate" class="gate">
   <div class="gate-card">
     <div class="brand-row" style="margin-bottom:6px">

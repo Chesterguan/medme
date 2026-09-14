@@ -1,0 +1,223 @@
+// 钉住 `removeProfileAndReopenImpl` 的密钥清理契约(Task 16 review 修复第一轮
+// item 5):被移除的成员如果开通过云同步,连同它的档案密钥(`pk_<cloudId>`)
+// 一起从 secure storage 清掉;被移除的是纯本地成员(没有 cloudId)时,不该碰
+// secure storage 里任何东西——尤其不能因为"这个成员没有 cloudId"就误删了别的
+// 成员的密钥。
+//
+// `removeProfileAndReopenImpl` 把真正重开箱的动作(`reopen`)抽成参数,同
+// `switchProfileAndReopenImpl`(见 `switch_profile_and_reopen_test.dart`)的
+// 套路——这样能用一个假的 `reopen` 钉住密钥清理这条契约,不需要加载 Rust 原生库
+// (`openCurrentProfileVault` 本身调 FRB,`flutter test` 里直接调用会崩)。
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
+import 'package:flutter_secure_storage_platform_interface/flutter_secure_storage_platform_interface.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/vault_boot.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  late Directory support;
+
+  /// 「删目录之前先松手」那一步的记录器(评审 Minor 12)。真实现碰
+  /// `currentVaultRoot`/`resetVault` 两个 FRB 调用,`flutter test` 跑不到。
+  final released = <String>[];
+  Future<void> recordRelease(String localBase) async => released.add(localBase);
+
+  setUp(() async {
+    support = await Directory.systemTemp.createTemp('medme-remove-reopen-test');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/path_provider'),
+      (call) async => support.path,
+    );
+    // `removeProfileAndReopenImpl` 现在还会给云成员记一笔删除黑名单(见
+    // `cloud_profile_tombstone_test.dart`),那一步落在 shared_preferences——不
+    // mock 这个 channel 就会 `MissingPluginException`。
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform({});
+    AccountSession.instance.resetForTest();
+    released.clear();
+    // 删成员现在整段排进 `vault_boot` 的 FIFO 队列(M11)—— 那条队列是模块级单例,
+    // 用例之间会串(见 `resetVaultQueueForTest` 的文档)。
+    resetVaultQueueForTest();
+    await ProfileManager.instance.ensureLoaded();
+    await ProfileManager.instance.factoryReset();
+  });
+
+  tearDown(() async => support.delete(recursive: true));
+
+  Future<void> noopReopen() async {}
+
+  test('移除已开通云同步的成员:连同它的 pk_<cloudId> 一起从 secure storage 清掉', () async {
+    final pm = ProfileManager.instance;
+    final survivorId = pm.currentId.value; // factoryReset 后仅有的默认成员
+    final memberId = await pm.create('云端张三');
+    expect(memberId, isNotNull);
+    await pm.markCloud(memberId!, 'prf_cloud_1', 'owner', null);
+    final key = Uint8List.fromList(List.generate(32, (i) => i));
+    await AccountSession.instance.putProfileKey('prf_cloud_1', key);
+    expect(await AccountSession.instance.profileKey('prf_cloud_1'), isNotNull);
+
+    final ok = await removeProfileAndReopenImpl(memberId, reopen: noopReopen, releaseIfOpen: recordRelease);
+
+    expect(ok, isTrue);
+    expect(pm.byId(memberId), isNull, reason: '成员表里这个成员应该真的没了');
+    expect(
+      await AccountSession.instance.profileKey('prf_cloud_1'),
+      isNull,
+      reason: '云档案的密钥必须随成员一起清掉,不能留在 Keychain 里当作还有效的敏感材料',
+    );
+    expect(pm.byId(survivorId), isNotNull, reason: '幸存成员不该被连坐');
+  });
+
+  test('移除纯本地成员(没有 cloudId):不碰 secure storage,别的成员的密钥原样还在', () async {
+    final pm = ProfileManager.instance;
+    final localOnlyId = await pm.create('本地李四'); // 从没 markCloud 过,没有 cloudId
+    expect(localOnlyId, isNotNull);
+    final cloudSurvivorId = await pm.create('云端王五');
+    expect(cloudSurvivorId, isNotNull);
+    await pm.markCloud(cloudSurvivorId!, 'prf_cloud_2', 'owner', null);
+    final key = Uint8List.fromList(List.generate(32, (i) => 100 + i));
+    await AccountSession.instance.putProfileKey('prf_cloud_2', key);
+
+    final ok = await removeProfileAndReopenImpl(localOnlyId!, reopen: noopReopen, releaseIfOpen: recordRelease);
+
+    expect(ok, isTrue);
+    expect(pm.byId(localOnlyId), isNull);
+    expect(
+      await AccountSession.instance.profileKey('prf_cloud_2'),
+      key,
+      reason: '被删的是纯本地成员——没有 cloudId 可清,更不该误删别的成员的密钥',
+    );
+  });
+
+  test('删到只剩一个:canRemove 拒绝,reopen 不该被调用,更不碰密钥', () async {
+    final pm = ProfileManager.instance;
+    final onlyId = pm.currentId.value;
+    await pm.markCloud(onlyId, 'prf_cloud_3', 'owner', null);
+    await AccountSession.instance.putProfileKey('prf_cloud_3', Uint8List(32));
+
+    var reopenCalls = 0;
+    final ok = await removeProfileAndReopenImpl(
+      onlyId,
+      reopen: () async => reopenCalls++,
+      releaseIfOpen: recordRelease,
+    );
+
+    expect(ok, isFalse);
+    expect(reopenCalls, 0);
+    expect(await AccountSession.instance.profileKey('prf_cloud_3'), isNotNull, reason: '被拒绝的删除不许动任何密钥');
+    expect(released, isEmpty, reason: '什么都没删,就不该去松手(那会把用户正在用的箱子关掉)');
+  });
+
+  // 评审 Minor 12:删目录之前必须先松手。POSIX 的 unlink-while-open 让反序也能
+  // 活,但那是巧合不是设计 —— 而这条路径现在跑在启动序列里(A5 删空的默认成员)。
+  test('删目录之前先松手:拿被删成员的本机目录调一次 releaseIfOpen,且排在删盘之前', () async {
+    final pm = ProfileManager.instance;
+    final memberId = await pm.create('要删的那个');
+    expect(memberId, isNotNull);
+
+    // 目录真的建出来,这样"删盘"这一步是可观测的。
+    final order = <String>[];
+    final base = pm.localBaseOf(support.path, memberId!);
+    await Directory('$base/vault').create(recursive: true);
+
+    final ok = await removeProfileAndReopenImpl(
+      memberId,
+      reopen: () async => order.add('reopen'),
+      releaseIfOpen: (b) async {
+        order.add('release');
+        // 松手的那一刻,目录必须还在 —— 否则就是"先删后关"那个反序。
+        expect(await Directory(b).exists(), isTrue, reason: '松手要发生在删盘之前');
+        expect(b, base);
+      },
+    );
+
+    expect(ok, isTrue);
+    expect(order, ['release', 'reopen']);
+    expect(await Directory(base).exists(), isFalse, reason: '松手之后目录该被删掉');
+  });
+
+  // M11:release → 删盘 → reopen 必须是**一段不可插入的序列**。`vault` 是进程级单例,
+  // 中间插进另一路的开箱(切成员、同步、代拍)就意味着:要么在一个正被删的目录上开箱,
+  // 要么 reopen 开的是别人刚切过去的那个成员。
+  test('M11:release→删盘→reopen 整段排进 FIFO 队列,中间不许插进别的操作', () async {
+    final pm = ProfileManager.instance;
+    final memberId = (await pm.create('要删的那个'))!;
+    final order = <String>[];
+
+    // 先往队列里排一个慢操作 —— 删除那一段必须整段排在它后面。
+    final other = runSerialized(() async {
+      order.add('other-start');
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      order.add('other-end');
+    });
+    final removal = removeProfileAndReopenImpl(
+      memberId,
+      reopen: () async => order.add('reopen'),
+      releaseIfOpen: (_) async => order.add('release'),
+    );
+
+    await Future.wait([other, removal]);
+
+    expect(order, ['other-start', 'other-end', 'release', 'reopen']);
+  });
+
+  // M15 + R2 的另一半:**真正的重入**(外面那段还在跑的时候从它里面再排一次)必须
+  // 仍然是致命的 —— R2 的修法(zone 值带一个 `done` 标记)只放过"跑完之后的延迟回调",
+  // 不能顺手把这条也放过去。
+  //
+  // M15:"`runSerialized` 不可重入"这条约束原来只活在注释里 —— 而违反它的症状是
+  // **死锁**(自己排在自己后面等),在真机上看起来是"点了没反应、永远转圈"。
+  // 让它在 debug 下当场炸,于是测试套件会替我们守住。
+  test('M15:在队列里再调一次 runSerialized → debug 下当场抛(不是死锁)', () async {
+    await expectLater(
+      runSerialized(() async {
+        // 这一层就是"已经在队列里"——里面再排一次就是自己等自己。
+        await runSerialized(() async {});
+      }),
+      throwsA(isA<AssertionError>()),
+    );
+    // 队列本身没被毒死:后面排进来的照常跑(`runSerialized` 吞掉链上的异常)。
+    var ran = false;
+    await runSerialized(() async => ran = true);
+    expect(ran, isTrue);
+  });
+
+  test('M15:不在队列里时一前一后排两次 —— 合法,不该误报', () async {
+    final order = <int>[];
+    await runSerialized(() async => order.add(1));
+    await runSerialized(() async => order.add(2));
+    expect(order, [1, 2]);
+  });
+
+  // R2(复审第 3 轮):Zone 值会**传进 action 里创建的 Timer**。生产里这条链是真的:
+  // `_syncProfileLocked` 在序列化的 action 里调 `bumpVaultRevision()` →
+  // `main.dart` 的 `_scheduleDebouncedPush` 在那个 zone 里建了一个 3 秒 Timer →
+  // 它到点时跑 `runBackgroundSync()` → `syncProfile` → `runSerialized` → assert 炸,
+  // 而此刻**压根没有重入**(外面那段早跑完了)。debug/profile 包里的后果:
+  // `AssertionError` 被 `syncProfile` 的 catch 接住 → `saveLastSync(ok:false)` →
+  // 每一次"拉到了东西"的同步都显示「上次备份失败」,还顺手把下一次推送的水位搞脏。
+  test('R2:action 里建的 Timer 在它跑完之后再排队 —— 合法,不许误报', () async {
+    Timer? deferred;
+    final laterRan = Completer<void>();
+
+    await runSerialized(() async {
+      // 和 `bumpVaultRevision` → `_scheduleDebouncedPush` 同一个形状:在 action 里
+      // 建一个将来才跑的 Timer。
+      deferred = Timer(const Duration(milliseconds: 10), () async {
+        await runSerialized(() async {});
+        laterRan.complete();
+      });
+    });
+
+    await laterRan.future; // 不抛 = 没误报
+    expect(deferred!.isActive, isFalse);
+  });
+}

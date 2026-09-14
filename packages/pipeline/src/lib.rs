@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 mod merge;
+pub mod photo;
+pub use photo::compress_photo;
 
 /// 原件真实页数(多页 TIFF → >1,其余一律 1)。转出给移动端 crate 用:它在
 /// 宿主/安卓构建下并**不**直接依赖 `ocr`(见 `apps/mobile_flutter/rust/Cargo.toml`

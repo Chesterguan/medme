@@ -13,3 +13,13 @@ pub mod vault_ephemeral;
 // 因此统一用 `view_` 前缀——排在现存最末的 `source_file_object_path` 之后,新增只会
 // 追加在生成代码末尾,`recognize_image_pp` 的序号纹丝不动。
 pub mod vault_projections;
+// 本模块函数全部 `sync_` 前缀。**这条纪律真正钉住的只有一件事**:`sync_` 在
+// 字典序上排在 `recognize_image_pp` 之后,所以它(以及字典序更早的一切)序号
+// 不变——这是唯一的硬约束(见 `apps/mobile_flutter/CLAUDE.md`)。它**不能**
+// 保证"新增不挪动任何既有函数的序号":序号是按全 crate**函数名**字典序分配
+// 的(不是按模块/声明顺序,见上面 `vault_projections` 那条注释),`sync_` 排在
+// `view_`(`vault_projections` 的三个函数)前面——新增这一批 `sync_*` 符号后,
+// `view_*` 系列的序号确实整体往后挪了。这是可接受的(FRB 序号本来就只需要
+// 一次生成内部自洽,不需要跨版本稳定),只是不要在这里重复"最末、不挪号"这个
+// 已经被证伪的说法。
+pub mod vault_sync;

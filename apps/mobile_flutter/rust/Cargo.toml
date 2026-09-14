@@ -36,6 +36,9 @@ medme-share = { path = "../../../packages/share" }
 # 云抽取脱敏/闸/校验/还原(纯函数,无 IO)——`prepare_cloud_extraction` /
 # `commit_cloud_extraction` 用它,见 api::vault 里这两个函数的文档。
 deid = { path = "../../../packages/deid" }
+# 云同步密码学层(账号密钥/口令与恢复码 KEK/档案密钥封装/对象与事件加密),见
+# `api::vault_sync`。纯计算、无 IO,和桌面/CLI 共用同一份 crate。
+sync = { path = "../../../packages/sync" }
 # 趋势页 panel chip(`api::vault_projections::panel_for` 包一层)直接查词典的
 # `panel` 字段。`parser` 已经依赖 `terminology`,但不重新导出它,同一条理由与
 # 上面 `serde_json` 的注释一致:要 `use` 就得是直接依赖。

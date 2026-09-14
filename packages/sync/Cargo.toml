@@ -1,0 +1,15 @@
+[package]
+name = "sync"
+version = "0.1.0"
+edition = "2021"
+description = "账号密钥对、口令/恢复码 KEK、档案密钥封装、对象/事件加密。纯密码学,不碰 IO。"
+
+[dependencies]
+aes-gcm = "0.11"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+argon2 = "0.5"
+hkdf = "0.13"
+sha2 = { workspace = true }
+hmac = { workspace = true }
+getrandom = "0.4"
+thiserror = { workspace = true }

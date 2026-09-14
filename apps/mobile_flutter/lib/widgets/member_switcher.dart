@@ -6,10 +6,15 @@
 // vaultRevision 的屏(概览、档案都在监听)自动重载。这里不额外维护「当前
 // 选中成员」的本地状态,避免出现两份状态不同步。
 import 'package:flutter/material.dart';
+import 'package:mobile_flutter/sync_engine.dart' show pendingFirstSync;
 
+import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 弹出成员切换器:列出全部成员,点即切换。**不含「添加成员」** —— 新建成员
 /// 只在档案屏那颗「+」一个入口,见下方注释。
@@ -17,10 +22,33 @@ import 'package:mobile_flutter/vault_boot.dart';
 /// [onChanged] 供调用方在异步重开完成前先做一次同步 UI 反馈(比如 tab 条的
 /// 高亮),不是必需的——各屏本就监听 `vaultRevision`,重开完成后会自动刷新;
 /// 这个回调只是让调用方自己的屏幕反应快半拍。
+///
+/// [switchTo] 是测试注入点,默认就是真实的 [switchProfileAndReopen]——
+/// `flutter test` 不能跑到它内部的 FFI 开箱,所以测试传一个包了假 `reopen` 的
+/// 替身进来(见 `test/member_switcher_locked_test.dart`)。
+///
+/// [purgeExpired] 同一个道理:默认是真实的 [Grants.purgeExpired](被授权的成员
+/// 过期后,打开切换器就是"下一次看到列表"的时机,顺手清掉);没有过期档案时
+/// 它什么也不碰(不触达 FFI),所以已有的测试不用注入什么就能照常通过。
 Future<void> showMemberSwitcherSheet(
   BuildContext context, {
   VoidCallback? onChanged,
+  Future<void> Function(String id)? switchTo,
+  Future<List<Profile>> Function()? purgeExpired,
 }) async {
+  final doSwitch = switchTo ?? switchProfileAndReopen;
+  final doPurge = purgeExpired ??
+      () => Grants(
+            ApiClient.forSession(AccountSession.instance),
+            AccountSession.instance,
+          ).purgeExpired();
+  // 清理是家务事,不是开关——它失败(网络、FFI……)绝不能挡住"打开切换器"这个
+  // 主动作,否则一次瞬时的清理失败就会让切换成员永久打不开。吞掉即可:清不掉的
+  // 过期档案留到下一次打开切换器时再试。
+  var purged = const <Profile>[];
+  try {
+    purged = await doPurge();
+  } catch (_) {}
   await ProfileManager.instance.ensureLoaded();
   final members = ProfileManager.instance.profiles;
   final currentId = ProfileManager.instance.currentId.value;
@@ -59,6 +87,7 @@ Future<void> showMemberSwitcherSheet(
                   ),
                 ),
                 title: Text(m.name, style: MedType.subtitle.copyWith(color: c.ink)),
+                subtitle: _memberSubtitle(m, MedType.secondary.copyWith(color: c.ink3)),
                 trailing: m.id == currentId
                     ? Icon(Icons.check, color: c.seal)
                     : null,
@@ -74,15 +103,51 @@ Future<void> showMemberSwitcherSheet(
       );
     },
   );
+  // C11 在个人模式:`purgeExpired` 的返回值原来被**扔掉**了,于是家人那份过期的
+  // 共享档案照旧从列表里消失、本机目录被删,屏上一个字都没有(评审 Important 4)。
+  //
+  // ⚠️ **必须等 `showModalBottomSheet` 返回之后再弹。** 第一轮把它放在打开弹窗
+  // **之前**,SnackBar 从屏幕底部升起、而底部弹窗整块盖在它上面 —— 那 4 秒里用户
+  // 一个字都看不见(复审用 hitTest 证明)。这句话只有在弹窗收起之后才真的"说出口"。
+  final notice = expiredGrantNotice(purged);
+  if (notice != null && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(notice)));
+  }
   if (action == null || !context.mounted) return;
   if (action.startsWith('member:')) {
     // action 里带的是**成员 id**,不是名字——名字可改、可重复,不能拿来寻址。
     final id = action.substring('member:'.length);
     if (id != currentId) {
-      await switchProfileAndReopen(id);
-      onChanged?.call();
+      try {
+        await doSwitch(id);
+        onChanged?.call();
+      } catch (e) {
+        // 最常见是 [ProfileLocked](目标是个锁着的云档案);但
+        // `switchProfileAndReopenImpl` 回退之后会 **rethrow 原始开箱错误**,所以
+        // 别的失败(FFI 开箱失败、箱子坏了)也会到这里 —— 只接 `ProfileLocked`
+        // 就等于"点了没反应,也没有任何提示"(评审 Important 7)。
+        // `currentId` 已经被退回原成员了,这里只需要让用户知道发生了什么。
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(friendlyApiError(e))));
+      }
     }
   }
+}
+
+/// 成员那一行的小字。优先级:**正在恢复** → 只读授权的到期日 → 没有。
+///
+/// 「正在恢复…点这里重试」是评审 Important 2 的可见出口:首同步没成功过的成员
+/// (换机领回来的那些)原来只是静静地叫「正在恢复的档案」、0 份病历,用户没有任何
+/// 办法让它再试一次,也不知道还能不能好。**点这一行就是重试** —— 切过去会
+/// `bumpVaultRevision()`,后台触发器随即把 `sync_engine.pendingFirstSync` 排空。
+Widget? _memberSubtitle(Profile m, TextStyle style) {
+  if (pendingFirstSync.contains(m.id)) return Text('正在恢复…点这里重试', style: style);
+  // 只读授权(医生扫码兑换的那种)带到期日——过期由 `purgeExpired` 清掉,
+  // 这里显示的永远是"还剩多久",不是"曾经有过"。
+  if (m.role == 'viewer' && m.expiresAt != null) {
+    return Text('只读 · 至 ${m.expiresAt!.month}月${m.expiresAt!.day}日', style: style);
+  }
+  return null;
 }
 
 /// 添加成员对话框:输个名字 → 建新成员并切过去。

@@ -1062,9 +1062,11 @@ mod tests {
     use crate::api::dto::SelfMeasuredValueDto;
 
     // 端到端测试跑同一个进程级 `api::vault::VAULT` cell(和生产代码一样,一次只有一个
-    // 打开的保险箱),不能并发跑;必须用 `VAULT_TEST_LOCK`(见其文档)——本模块
-    // 单独一把锁挡不住 `api::vault` 自己的 `cloud_extraction_tests` 同时动同一个
-    // 全局单例(曾经就是两把不共享的锁,复现为本模块用例间歇性失败)。
+    // 打开的保险箱),不能并发跑;串行化用 `api::vault::VAULT_TEST_LOCK`——一把
+    // 全 crate 共享的锁,而不是本模块自己再开一把(`api::vault` 自己的
+    // `cloud_extraction_tests`、`api::vault_sync` 的测试也会打开同一个 `VAULT`,
+    // 各开各的锁互相不认识,锁了也白锁;曾经就是两把不共享的锁,复现为本模块
+    // 用例间歇性失败)。
     use crate::api::vault::VAULT_TEST_LOCK as TEST_LOCK;
 
     /// 造一批 `ProjectionDoc`(纯函数测试用,不开保险箱)。document_id 故意**不等于**

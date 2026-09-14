@@ -1,11 +1,53 @@
 import 'package:flutter/material.dart';
 
+import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/grants.dart';
+// `expiredGrantNotice` 现在住在 `grants.dart`(两个 purge 调用点共用,见评审
+// Important 4);这条 `export` 让既有的 `doctor_home_screen` 测试照旧 import 得到。
+export 'package:mobile_flutter/grants.dart' show expiredGrantNotice;
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
+import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_delivery_count.dart';
 import 'package:mobile_flutter/screens/doctor/proxy_intake_flow.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
+import 'package:mobile_flutter/vault_boot.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+
+/// A3b:「病人授权给我的档案」列哪些成员 —— 纯函数,好单独钉住。
+///
+/// 只要 `role == 'viewer'`:那正是病人出码、医生扫码兑换拿到的角色(见
+/// `Grants.inviteDoctor`)。医生自己的档案(owner)和与家人共管的(editor)不属于
+/// "病人授权给我的",混进来这一节就变成了第二个成员列表。
+///
+/// 快到期的排前面 —— 这一节的用处正是"这几天还能看谁的",不是一张通讯录。
+@visibleForTesting
+List<Profile> patientGrantedProfiles(List<Profile> all, {DateTime? now}) {
+  final at = now ?? DateTime.now();
+  // **自己也过滤过期的**(评审 Minor 17):通常 `_refresh` 里的 purge 先跑,但它包在
+  // `catch (_) {}` 里、而 `removeProfileAndReopen` 也可能返回 false —— 那时医生会看到
+  // 一行副标题写着已经过去的日期、还点得进去。这样这一节无论 purge 成不成都说真话。
+  final rows = all
+      .where((p) => p.role == 'viewer' && p.cloudId != null && (p.expiresAt?.isAfter(at) ?? true))
+      .toList();
+  rows.sort((a, b) {
+    final x = a.expiresAt, y = b.expiresAt;
+    if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
+    return x.compareTo(y);
+  });
+  return rows;
+}
+
+/// 「只读 · 至 M月D日」—— 与成员切换器里那一行逐字相同(`member_switcher.dart`),
+/// 同一件事不该有两种说法。没有到期日(理论上 viewer 总有)就只说「只读」。
+@visibleForTesting
+String patientGrantedSubtitle(Profile p) =>
+    p.expiresAt == null ? '只读' : '只读 · 至 ${p.expiresAt!.month}月${p.expiresAt!.day}日';
+
+
 
 /// 医生模式主界面——不放进「导出·分享」tab,是独立的应用根(见 `main.dart` 的
 /// `AppRoot`)。「为病人代拍」按钮 + **今日病历表**:代拍过的病人按姓名列在这里,
@@ -16,7 +58,14 @@ import 'package:mobile_flutter/widgets/med_card.dart';
 /// 的每一屏都靠这个颜色宣告「这不是你自己的档案」。除主色外的一切(中性色、字阶、
 /// 圆角、阴影、卡片)与个人模式同源。
 class DoctorHomeScreen extends StatefulWidget {
-  const DoctorHomeScreen({super.key});
+  const DoctorHomeScreen({super.key, this.switchTo, this.purgeExpired});
+
+  /// 测试注入点,默认真实的 `vault_boot.switchProfileAndReopen`(内部开箱调 FFI,
+  /// `flutter test` 跑不到)。同 `showMemberSwitcherSheet` 的同名参数。
+  final Future<void> Function(String id)? switchTo;
+
+  /// 测试注入点,默认真实的 [Grants.purgeExpired]。
+  final Future<List<Profile>> Function()? purgeExpired;
 
   @override
   State<DoctorHomeScreen> createState() => _DoctorHomeScreenState();
@@ -25,6 +74,7 @@ class DoctorHomeScreen extends StatefulWidget {
 class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
   int? _todayCount;
   List<ProxyPatient> _patients = const [];
+  List<Profile> _granted = const [];
 
   @override
   void initState() {
@@ -34,14 +84,54 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
 
   /// 每次回到这一屏都重读:`ensureLoaded` 顺手执行 12 小时 TTL,所以过期的病人是在
   /// 这里消失的——不需要后台定时器。
+  ///
+  /// 「病人授权给我的档案」同理:清过期 + 重算列表都挂在这一次刷新上。清理失败
+  /// (网络、FFI)**绝不能挡住这一屏**——吞掉,下次回来再试(同
+  /// `showMemberSwitcherSheet` 里那段的理由)。
   Future<void> _refresh() async {
     final n = await DoctorDeliveryCount.instance.todayCount();
     await ProxyPatientManager.instance.ensureLoaded();
+    await ProfileManager.instance.ensureLoaded();
+    var removed = const <Profile>[];
+    try {
+      removed = await (widget.purgeExpired ??
+          () => Grants(
+                ApiClient.forSession(AccountSession.instance),
+                AccountSession.instance,
+              ).purgeExpired())();
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       _todayCount = n;
       _patients = ProxyPatientManager.instance.patients;
+      _granted = patientGrantedProfiles(ProfileManager.instance.profiles);
     });
+    final notice = expiredGrantNotice(removed);
+    if (notice != null) {
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(notice)));
+    }
+  }
+
+  /// 点一份病人授权给我的档案:切过去 + 重开箱,然后直接打开档案屏。
+  ///
+  /// 在这之前医生得**切回个人模式、去家人列表里找** —— 诊室里没人会这么做,
+  /// 于是"病人扫码授权"这件事在医生那一侧基本等于没有落地(A3b)。
+  Future<void> _openGranted(Profile p) async {
+    try {
+      await (widget.switchTo ?? switchProfileAndReopen)(p.id);
+    } catch (e) {
+      // **不只接 `ProfileLocked`**(评审 Important 7):`switchProfileAndReopenImpl`
+      // 回退之后会 rethrow 原始开箱错误,所以 FFI 开箱失败、箱子坏了这些也会到这里。
+      // 只接一种的后果是医生点一行「什么都不发生,也没有任何提示」。
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(friendlyApiError(e))));
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const ArchiveScreen()),
+    );
+    await _refresh();
   }
 
   Future<void> _startCapture() async {
@@ -177,6 +267,7 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                 ],
               ),
             ),
+            PatientGrantedSection(profiles: _granted, onTap: _openGranted),
             Expanded(child: _buildList()),
             Padding(
               padding: const EdgeInsets.only(bottom: MedShape.s2, top: 4),
@@ -234,6 +325,56 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// A3b:「病人授权给我的档案」那一节。**不碰任何 IO** —— 成员表由
+/// [DoctorHomeScreen] 读好传进来,于是这一节的渲染与点击能在 `flutter test` 里
+/// 单独钉住(整屏不行:它的 `initState` 要穿过三个单例的真实文件 I/O)。
+///
+/// 列表为空时整节不画:医生模式的主角是代拍,没有被授权的档案时不该多一个空标题。
+class PatientGrantedSection extends StatelessWidget {
+  const PatientGrantedSection({super.key, required this.profiles, required this.onTap});
+
+  final List<Profile> profiles;
+  final void Function(Profile) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (profiles.isEmpty) return const SizedBox.shrink();
+    final c = MedColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(MedShape.s3, MedShape.s1, MedShape.s3, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, MedShape.s1),
+            child: Text('病人授权给我的档案', style: MedType.caption.copyWith(color: c.ink3)),
+          ),
+          for (final p in profiles)
+            MedCard(
+              child: Material(
+                color: Colors.transparent,
+                child: ListTile(
+                  key: Key('granted_${p.id}'),
+                  leading: CircleAvatar(
+                    backgroundColor: c.proxyWash,
+                    child: Icon(Icons.folder_shared_outlined, size: 19, color: c.proxy),
+                  ),
+                  title: Text(p.name, style: MedType.subtitle.copyWith(color: c.ink)),
+                  subtitle: Text(
+                    patientGrantedSubtitle(p),
+                    style: MedType.secondary.copyWith(color: c.ink2),
+                  ),
+                  trailing: Icon(Icons.chevron_right, color: c.ink3),
+                  onTap: () => onTap(p),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -15,6 +15,7 @@
 
 use crate::event::{LogEntry, GENESIS_HASH};
 use crate::MedmeError;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -274,8 +275,104 @@ impl EventLog {
         Ok(self.segments()?.is_empty() || self.read_all()?.is_empty())
     }
 
+    /// Read-only probe: does `vault_root` already hold raw log lines that were
+    /// sealed under SOME key (at least one carries a `mac`), none of which
+    /// verify under the given `key`? `false` for a genuinely fresh vault (no
+    /// `log/` dir yet — nothing to mismatch against) and `false` for a
+    /// genuinely legacy chain-only log (every entry lacks `mac` — it was never
+    /// sealed under ANY key, so there is nothing to compare `key` against; a
+    /// real keyed open's `migrate_and_seal` will seal it under `key` for the
+    /// first time — this is the supported "enable cloud sync on an existing
+    /// local vault" upgrade path, not a wrong-key situation).
+    ///
+    /// Callers that open a vault with an EXTERNALLY-supplied key (e.g. cloud
+    /// sync's profile key, never generated/confirmed locally) must run this
+    /// BEFORE `Vault::open_*_with_key`: on a genuinely wrong key (the log WAS
+    /// already sealed under some key, just not this one), `open_inner` sees
+    /// `read_all()` come back empty (every entry quarantined for MAC failure)
+    /// and — when the derived db still has its rows from a PRIOR correct-key
+    /// open — takes the `migrate_db_to_log` branch, synthesizing a duplicate
+    /// log from those rows under the new (wrong) device id. That mutates the
+    /// on-disk log (a new segment file, `next_seq` reset) and is not
+    /// reversible by returning an error afterward — the check must happen
+    /// first, without ever constructing the full `Vault`.
+    ///
+    /// Never writes: returns early (without touching disk) when `log/` is
+    /// absent — `EventLog::open` would otherwise create it as a side effect,
+    /// which would corrupt `Vault::open_split_resilient_with_key`'s own
+    /// `truth_present` check (it looks at whether `log/`/`objects/` already
+    /// existed to decide whether a subsequent open failure is a fresh vault
+    /// or a rebuildable one) — everything past that early return is a read.
+    pub fn probe_key_mismatch(vault_root: &Path, key: &[u8]) -> Result<bool, MedmeError> {
+        let dir = vault_root.join("log");
+        if !dir.is_dir() {
+            return Ok(false);
+        }
+        let mut log = EventLog::open(vault_root)?;
+        log.set_key(Some(key.to_vec()));
+        let mut has_mac = false;
+        for path in log.segments()? {
+            if read_segment_entries(&path)?.iter().any(|e| e.mac.is_some()) {
+                has_mac = true;
+                break;
+            }
+        }
+        if !has_mac {
+            return Ok(false);
+        }
+        Ok(log.read_all()?.is_empty())
+    }
+
     pub fn max_seq(&self) -> Result<i64, MedmeError> {
         Ok(self.read_all()?.iter().map(|e| e.seq).max().unwrap_or(0))
+    }
+
+    /// 某设备段当前最大 seq(无段 = 0)。推送水位用。
+    pub fn tail_seq_of_device(&self, device_id: &str) -> Result<i64, MedmeError> {
+        let path = self.device_segment(device_id);
+        if !path.exists() {
+            return Ok(0);
+        }
+        Ok(read_segment_entries(&path)?
+            .iter()
+            .map(|e| e.seq)
+            .max()
+            .unwrap_or(0))
+    }
+
+    /// 某设备段**磁盘上现存**的全部 seq(含未通过 MAC/链校验、被隔离的条目)。
+    /// `append_peer_entries` 的去重要按「磁盘上确实有这个 (device_id, seq)」精确
+    /// 判断,而不是只看 `seq <= tail`——否则一条中间被跳过的 seq 会被误判成
+    /// "已经有了"而永久丢失(见 sync_io 的 `PeerAppendOutcome::out_of_order`)。
+    pub(crate) fn existing_seqs_of_device(
+        &self,
+        device_id: &str,
+    ) -> Result<HashSet<i64>, MedmeError> {
+        let path = self.device_segment(device_id);
+        if !path.exists() {
+            return Ok(HashSet::new());
+        }
+        Ok(read_segment_entries(&path)?.iter().map(|e| e.seq).collect())
+    }
+
+    /// 原样落盘一条**已封好**的 peer 条目(其 `prev_hash`/`mac` 由源设备在自己那次
+    /// `append` 时算好,通常用账号共享密钥)——不重新封链、不用本机 key 重算 MAC。
+    ///
+    /// 这一点是同步安全性的关键:如果这里像 [`EventLog::append`] 一样用本机 key
+    /// 重新 `seal`,那么本机随便攒一条假 peer 条目也能通过本机验证(反正封/验用的
+    /// 是同一把本机 key,自己骗自己必然通过)——MAC 想证明的"这条确实是持有正确
+    /// 密钥的设备写的"这件事就彻底失效了。原样写入则不同:段落链哈希只由条目内容
+    /// 决定(与 key 无关),原样转发能完整保留链;而 MAC 仍是源设备当时用的那把
+    /// key 算出来的,`read_all`/`verify_segment` 用本机 key 重新验证时,key 不对
+    /// 就验不过 → 该条目被隔离,不会被当作可信数据吃进来。
+    pub(crate) fn append_sealed(&self, entry: &LogEntry) -> Result<(), MedmeError> {
+        let path = self.device_segment(&entry.device_id);
+        let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+        let line = serde_json::to_string(entry)?;
+        writeln!(f, "{line}")?;
+        f.flush()?;
+        f.sync_all()?;
+        Ok(())
     }
 }
 
@@ -510,6 +607,81 @@ mod tests {
 
     fn write_lines(p: &Path, lines: &[String]) {
         std::fs::write(p, format!("{}\n", lines.join("\n"))).unwrap();
+    }
+
+    #[test]
+    fn probe_key_mismatch_is_false_for_a_fresh_vault_regardless_of_key() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!EventLog::probe_key_mismatch(dir.path(), KEY).unwrap());
+        assert!(!EventLog::probe_key_mismatch(dir.path(), &[9u8; 32]).unwrap());
+        // 探测本身不能有副作用:`log/` 目录不存在时不该被创建出来——否则
+        // `open_split_resilient_with_key` 的 `truth_present` 判断会被探测这一步
+        // 悄悄改变(见该函数对"真相是否已存在"的判断依据)。
+        assert!(
+            !dir.path().join("log").exists(),
+            "全新 vault 上探测不该创建 log/ 目录"
+        );
+    }
+
+    /// review round 2:先前的实现把"有原始行、但在这把 key 下一行都验不过"
+    /// 当成"密钥不匹配"——但一个**从未被任何密钥封过**的纯 chain-only 日志
+    /// (`prev_hash` 有、`mac` 没有,典型场景:已有的本机保险箱第一次开云同步)
+    /// 在任何 key 下都会走到这个分支(`verify_mac` 见 `mac` 是 `None` 直接
+    /// 返回 `false`),把合法的"第一次升级云同步"错判成"密钥不对"、挡住了
+    /// `chain_only_migration_then_key_upgrade_adds_macs` 钉住的那条支持路径。
+    /// 必须先看是否**存在任何一条已经封过 mac 的条目**,一条都没有就是遗留
+    /// 日志、不是密钥问题,交给真正开箱时的 `migrate_and_seal` 去封。
+    #[test]
+    fn probe_key_mismatch_false_for_chain_only_legacy_log_lets_real_open_reseal_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write_legacy_segment(dir.path(), 2);
+        // 先用不带 key 迁移一次,模拟"已有的本机保险箱"——只加链、不加 mac。
+        {
+            let log = EventLog::open(dir.path()).unwrap();
+            log.migrate_and_seal().unwrap();
+        }
+        let seg = dir.path().join("log/legacydev-000001.jsonl");
+        let before = read_lines(&seg);
+        assert!(before.iter().all(|l| l.contains("prev_hash")));
+        assert!(
+            before.iter().all(|l| !l.contains("\"mac\":\"")),
+            "迁移时没给 key,不该有 mac"
+        );
+
+        // 任何 key 探测都不该判定为"密钥不匹配"——这是遗留日志,不是密钥问题。
+        assert!(!EventLog::probe_key_mismatch(dir.path(), KEY).unwrap());
+        assert!(!EventLog::probe_key_mismatch(dir.path(), &[1u8; 32]).unwrap());
+
+        // 真正的开箱(带 key)随后应该能正常把它升级封 mac,条目数不变。
+        let log = keyed_log(dir.path());
+        log.migrate_and_seal().unwrap();
+        let events = log.read_all().unwrap();
+        assert_eq!(events.len(), 2, "重封前后条目数不变");
+        for e in &events {
+            assert!(e.mac.is_some(), "升级后每条都该有 mac");
+            assert!(e.verify_mac(KEY).unwrap());
+        }
+    }
+
+    #[test]
+    fn probe_key_mismatch_true_for_wrong_key_false_for_the_real_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = keyed_log(dir.path());
+        append_n(&log, 3);
+
+        assert!(
+            !EventLog::probe_key_mismatch(dir.path(), KEY).unwrap(),
+            "correct key: entries verify, no mismatch"
+        );
+        let wrong_key = [1u8; 32];
+        assert!(
+            EventLog::probe_key_mismatch(dir.path(), &wrong_key).unwrap(),
+            "wrong key: raw lines exist but none verify"
+        );
+
+        // Read-only: the probe itself must not have mutated the segment.
+        let raw = read_lines(&seg_path(dir.path()));
+        assert_eq!(raw.len(), 3);
     }
 
     #[test]

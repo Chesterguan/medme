@@ -47,37 +47,47 @@ static DEMO_DATA: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIF
 /// Vault 一起存(`reset_vault` 需要同时读写这几样)。`data_dir` 是 App 沙盒 data
 /// 目录,存 `device_id` 文件,也是 `ingest_bytes`/`load_demo_data` 的临时文件落点
 /// (镜像 Tauri 版用 `app_cache_dir()` 存一次性导入临时文件的做法)。
-struct VaultState {
-    vault: Vault,
+// `pub(crate)`(struct + 全部字段):`api::vault_sync` 的 keyed open
+// (`sync_open_profile_vault`)需要直接构造这个结构体、其余 `sync_*` 函数经
+// `with_state` 读 `vault`/`device_id` 等字段——它们跟本模块是兄弟模块而非子
+// 模块,私有字段(默认可见性)在那边看不到。
+pub(crate) struct VaultState {
+    pub(crate) vault: Vault,
     /// 真相(`objects/` + `log/`)所在目录:本机 `<docs_dir>/vault`,或(开了 iCloud
     /// 同步且容器可用时)iCloud 容器 `<container>/Documents/vault`。
-    truth_root: PathBuf,
-    db_path: PathBuf,
-    device_id: String,
+    pub(crate) truth_root: PathBuf,
+    pub(crate) db_path: PathBuf,
+    pub(crate) device_id: String,
     /// App 沙盒 Documents 目录;本机保险箱固定 `<docs_dir>/vault`(关 iCloud 时复制回这)。
-    docs_dir: PathBuf,
-    data_dir: PathBuf,
+    pub(crate) docs_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
+    /// 云同步档案密钥(仅 `sync_open_profile_vault` 打开的 keyed vault 有值)。
+    /// 普通 `open_vault` 恒为 `None`——不影响本机专用的既有能力。读取方见
+    /// `api::vault_sync::sync_current_vault_is_keyed`。
+    pub(crate) profile_key: Option<[u8; 32]>,
 }
 
 static VAULT: OnceLock<Mutex<Option<VaultState>>> = OnceLock::new();
 
-fn vault_cell() -> &'static Mutex<Option<VaultState>> {
+pub(crate) fn vault_cell() -> &'static Mutex<Option<VaultState>> {
     VAULT.get_or_init(|| Mutex::new(None))
 }
 
-/// 一把跨文件共享的粗互斥锁,给所有需要 `open_vault` 这个全局 `VAULT` cell 的测试
-/// 用(本文件的 `cloud_extraction_tests` 以及 `vault_projections` 的端到端测试)。
-/// 必须共享同一把锁——`cargo test` 默认多线程并发跑各文件的测试,两个模块各自
-/// 建一把互不相干的锁挡不住彼此同时 `open_vault`/操作同一个进程级单例,会相互
-/// 冲掉对方的保险箱状态(曾经就是两把不共享的锁,复现为 `vault_projections` 的
-/// 用例间歇性失败)。
+/// 一把跨文件共享的粗互斥锁,给所有需要打开/替换真实进程级 `VAULT`(经
+/// `open_vault` 或 `vault_sync::sync_open_profile_vault`)的测试用(本文件的
+/// `cloud_extraction_tests`、`vault_projections` 的端到端测试、`vault_sync`)。
+/// 必须共享同一把锁——`cargo test` 默认多线程并发跑各文件的测试,`VAULT` 是
+/// 货真价实的进程单例,各模块各建一把互不相干的锁挡不住彼此同时
+/// `open_vault`/`ingest_bytes` 操作同一个单例,会相互冲掉对方的保险箱状态、
+/// 断言随机失败(曾经就是两把不共享的锁,复现为 `vault_projections` 的用例
+/// 间歇性失败)。
 #[cfg(test)]
 pub(crate) static VAULT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// 在已打开的 vault 状态上跑 `f`。恢复被污染的锁而不是让此后每次调用都失败——
 /// 镜像 Tauri 版 `commands::lock()` 的理由:Vault 的「真相」是追加式日志 + CAS,
 /// 一把被 panic 污染过的锁里的 Vault 仍然可用。
-fn with_state<T>(f: impl FnOnce(&VaultState) -> anyhow::Result<T>) -> anyhow::Result<T> {
+pub(crate) fn with_state<T>(f: impl FnOnce(&VaultState) -> anyhow::Result<T>) -> anyhow::Result<T> {
     let guard = vault_cell().lock().unwrap_or_else(|p| p.into_inner());
     let state = guard
         .as_ref()
@@ -97,7 +107,7 @@ fn with_state_mut<T>(f: impl FnOnce(&mut VaultState) -> anyhow::Result<T>) -> an
 /// 本机持久设备 id,存在 `<data_dir>/device_id`(沙盒 data 目录,不进保险箱本身——
 /// 保险箱可能是个跨设备共享/同步的文件夹,设备 id 必须留在本机)。首次打开时生成
 /// 并落盘。镜像 Tauri 版 `lib.rs::machine_device_id`。
-fn machine_device_id(data_dir: &Path) -> anyhow::Result<String> {
+pub(crate) fn machine_device_id(data_dir: &Path) -> anyhow::Result<String> {
     let file = data_dir.join("device_id");
     if let Ok(s) = std::fs::read_to_string(&file) {
         let trimmed = s.trim();
@@ -157,6 +167,7 @@ pub fn open_vault(
         device_id,
         docs_dir,
         data_dir,
+        profile_key: None,
     });
     Ok(())
 }
@@ -517,6 +528,15 @@ pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOut
         format!("{base}.jpg")
     };
 
+    // 导入前压图(长边 2000px、JPEG q85):这条路径也接 PDF/TXT/DICOM,只对图片
+    // 压(按扩展名判 mime,与 `pipeline::ingest` 判类型的口径一致)。
+    // HEIC/多页 TIFF/已经够小的一律原样返回(见 `pipeline::compress_photo`)。
+    let data = if pipeline::mime_for(Path::new(&safe_name)).starts_with("image/") {
+        pipeline::compress_photo(&data)
+    } else {
+        data
+    };
+
     with_state(|state| {
         let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S%f");
         let tmp_dir = state.data_dir.join("medme-ingest").join(stamp.to_string());
@@ -617,6 +637,10 @@ pub fn ingest_image_with_text(
     } else {
         format!("{base}.jpg")
     };
+
+    // 导入前压图(长边 2000px、JPEG q85):这条路径全是图片,直接压,不用按
+    // mime 判断。HEIC/多页 TIFF/已经够小的一律原样返回(见 `pipeline::compress_photo`)。
+    let bytes = pipeline::compress_photo(&bytes);
 
     // 原件真实页数(多页 TIFF>1,其余一律 1)。`ocr_text` 只可能是第 1 页的,
     // 故 2..=n 是「没读到的页」;一页文字都没识别出来时 1..=n 全都没读到。
