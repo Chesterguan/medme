@@ -321,6 +321,17 @@ import Vision
         let a = quad[i], b = quad[(i + 1) % quad.count]
         return acc + (a.x * b.y - b.x * a.y)
       }) / 2
+    // Task 18 留下的疑问:真机检出的四角是不是和 macOS 上跑同一张图不一样(那次
+    // 拉正裁走了半页)。没有数据就只能猜,所以在 debug build 里把判据本身打出来:
+    // 四角 + 覆盖率 + 这一次的去留。**只有几何数字,没有任何图像字节/文字内容**,
+    // release 编译掉。
+    #if DEBUG
+      let q = quad.map { String(format: "(%.3f,%.3f)", $0.x, $0.y) }.joined(separator: " ")
+      print(
+        "[medme/rectify] quad(TL TR BR BL,归一化原点左下)=\(q) "
+          + String(format: "coverage=%.3f conf=%.3f ", coverage, rect.confidence)
+          + (coverage >= documentMinCoverage ? "decision=crop" : "decision=keep(覆盖率不足)"))
+    #endif
     guard coverage >= documentMinCoverage else { return original }
 
     // Vision 的四角是归一化坐标(原点左下);Core Image 透视校正要的是画面像素坐标
