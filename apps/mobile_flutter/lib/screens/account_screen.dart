@@ -496,6 +496,9 @@ class _AccountScreenState extends State<AccountScreen> {
     if (cloudSync != null) {
       unawaited(cloudSync().then((_) {
         if (mounted) setState(() {});
+      }, onError: (Object e, StackTrace _) {
+        // 登录后那次后台同步失败不该变成未处理的异步错误;状态行自己会显示「上次备份失败」。
+        debugPrint('onReadyCloudSync failed: $e');
       }));
     }
   }
