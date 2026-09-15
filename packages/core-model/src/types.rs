@@ -80,6 +80,22 @@ impl OcrBackendKind {
             OcrBackendKind::MlKit => "mlkit",
         }
     }
+
+    /// `ocr_result.backend` 里存的字符串反解回来(与 [`as_str`](Self::as_str)
+    /// 互为逆)。认不出的值一律 `Native` —— 溯源信息读坏了不该让调用方失败,
+    /// 但也绝不能猜成某个具体引擎。`pipeline::merge_documents_into_pdf` 把原
+    /// 文档的 OCR 行带到合并后的文档上时要用它。
+    #[allow(clippy::should_implement_trait)] // inherent infallible mapping (Native fallback), not std::str::FromStr
+    pub fn from_str(s: &str) -> OcrBackendKind {
+        match s {
+            "onnx" => OcrBackendKind::Onnx,
+            "vlm" => OcrBackendKind::Vlm,
+            "apple_vision" => OcrBackendKind::AppleVision,
+            "windows_ocr" => OcrBackendKind::WindowsOcr,
+            "mlkit" => OcrBackendKind::MlKit,
+            _ => OcrBackendKind::Native,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

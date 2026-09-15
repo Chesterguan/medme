@@ -219,6 +219,36 @@ void main() {
     });
   });
 
+  group('pendingForMergedDocument:合并之后改跑合并出来的那一份', () {
+    // 2026-09-15 冒烟 A:合并把原来那几份墓碑掉,排着的抽取打在不存在的文档上,
+    // 日志两行「该文档没有 OCR 文字」,合并出来的那份一条结果都没有。
+    const me = Profile(id: 'p-1', name: '我');
+    final sources = [
+      (outcome: _stored(1, detectedName: '张建国'), ocr: _ocr, profile: me, vaultRoot: _root),
+      (outcome: _stored(2), ocr: _ocr, profile: me, vaultRoot: _root),
+    ];
+
+    test('排的是合并出来的那份,姓名/成员/箱子都从原来那几份带过来', () {
+      final p = pendingForMergedDocument(documentId: 9, detectedName: '张建国', sources: sources)!;
+      expect(p.outcome.documentId, 9);
+      expect(knownNameFor(p.outcome, me), '张建国', reason: '脱敏认的是纸上那个名字');
+      expect(p.profile.id, 'p-1');
+      expect(p.vaultRoot, _root);
+    });
+
+    test('走文本档:合并后没有"这一页的那张原图"可涂黑', () {
+      final p = pendingForMergedDocument(documentId: 9, detectedName: null, sources: sources)!;
+      expect(canRedactImage(p.ocr), isFalse);
+      // 但文字要够,否则会被低产出闸挡在门外,合并出来的那份又白跑一趟。
+      expect(isLowOcrYield(p.ocr.text), isFalse);
+      expect(p.ocr.text.contains('白细胞计数 11.8'), isTrue, reason: '两页的字都要在');
+    });
+
+    test('一份都没排上队 → 不排(没有成员/箱子可捕获)', () {
+      expect(pendingForMergedDocument(documentId: 9, detectedName: null, sources: []), isNull);
+    });
+  });
+
   // 三态里剩下的两条(memory `test-all-three-states`)。真机上这两条分别是「闸拒发」
   // 和「云不可用」;host 上没有 Rust 库,`vault_cloud_*` 一律抛 —— 而**闸拒发走的就是
   // 同一条 catch**(`vault.rs` 的 `assert_clean` 失败是 `bail!`,到 Dart 是异常),

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use core_model::{DocType, NewDocument, NewImagingInstance, NewOcr, OcrBackendKind, Vault};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 mod merge;
@@ -404,7 +404,7 @@ pub fn ingest_with_dicom_parser(
     // PDF 走独立分支(逐页判定文本层,而非整份拼接后的长度——见 `ingest_pdf`
     // 文档注释里的"混合页 PDF 静默丢数据"缺陷)。
     if is_pdf(path) {
-        return ingest_pdf(vault, sid, &name, &bytes, imp.deduped);
+        return ingest_pdf(vault, sid, &name, &bytes, imp.deduped, &BTreeMap::new());
     }
 
     match parser::extract(path) {
@@ -503,6 +503,17 @@ fn ingest_image(
     }
 }
 
+/// 合并时从**原文档**带到合并后那份文档上的一页 OCR(见
+/// `merge_documents_into_pdf` 与 [`ingest_pdf`] 的 `carried` 参数)。溯源字段
+/// 一并带,不重新编:这几行就是用户在「文档内容」里读到的字,也是「识别质量」
+/// 徽标的依据。
+struct CarriedOcr {
+    text: String,
+    backend: OcrBackendKind,
+    model_version: String,
+    confidence: Option<f32>,
+}
+
 /// PDF 专用导入分支:逐页判定文本层(不再对整份文档拼接后的字符数判定)。
 ///
 /// **修的缺陷**:旧版本把 `parser::extract` 抽出的**整份文档**文本长度拿去和
@@ -517,24 +528,50 @@ fn ingest_image(
 /// `IngestOutcome::pages_without_text`——调用方(尤其移动端 UI)必须显式告知
 /// 用户"这些页未能识别",不能让人以为整份都读了。桌面/CLI 目前还没有对应的
 /// UI 横幅(不在本次改动范围),至少落一条 `eprintln!` 留痕。
+///
+/// [`carried`](CarriedOcr) 是**合并**专用的入口(`merge_documents_into_pdf`):
+/// 页码 → 那一页已经在别处识别好的文字。合并出来的 PDF 每一页都是一张照片,
+/// 而这些照片的文字端上早就识别过了(iOS 还先过了一遍 Vision 拉正),重新去
+/// OCR 内嵌图只会更差、甚至一个字都拿不到。带过来的页**优先**于本函数自己
+/// 认出来的结果;普通导入传空表,行为与从前逐字一致。
 fn ingest_pdf(
     vault: &Vault,
     sid: i64,
     name: &str,
     bytes: &[u8],
     deduped: bool,
+    carried: &BTreeMap<i32, CarriedOcr>,
 ) -> anyhow::Result<IngestOutcome> {
     let mixed = match ocr::recognize_pdf_mixed(bytes) {
         Ok(m) => m,
         // 连 lopdf 都解析不了(畸形/损坏 PDF):和旧版行为一致——不致命,退回
         // 「已存但无文本」而不是让整次 ingest 报错(原文件已进 CAS,时间线仍
         // 可见,留待后续处理)。页数未知,沿用非 PDF 分支的默认值 1。
+        //
+        // 例外:合并带了文字过来(`carried` 非空)。这时候退回 `store_no_text`
+        // 等于把用户已经看到的文字丢掉——那正是这条路要修的缺陷。当成「每页都
+        // 没认出来」继续往下走,带过来的文字照样落库。
         Err(e) => {
             eprintln!("ingest_pdf: {name}: failed to parse PDF, storing without text: {e:#}");
-            return store_no_text(vault, sid, name, 1);
+            if carried.is_empty() {
+                return store_no_text(vault, sid, name, 1);
+            }
+            ocr::MixedPdfOutcome {
+                pages: (1..=*carried.keys().max().unwrap_or(&1))
+                    .map(|page_no| ocr::PdfPage {
+                        page_no,
+                        result: ocr::PdfPageText::Unrecognized,
+                    })
+                    .collect(),
+            }
         }
     };
-    let pages_without_text = mixed.unrecognized_pages();
+    // 带过来的页不算「没认出来」——那一页是有文字的,只是文字不是这次 OCR 出来的。
+    let pages_without_text: Vec<i32> = mixed
+        .unrecognized_pages()
+        .into_iter()
+        .filter(|p| !carried.contains_key(p))
+        .collect();
     if !pages_without_text.is_empty() {
         eprintln!(
             "ingest_pdf: {name}: {} page(s) had no usable text layer and could not be OCR'd: {pages_without_text:?}",
@@ -589,13 +626,38 @@ fn ingest_pdf(
     // 分解**,现有手写表只覆盖 12 个。`⻉贝 ⻋车 ⻘青 ⻚页 ⻢马 ⻥鱼 ⻦鸟 ⻮齿 ⻰龙`
     // 都还不折,`⻮`(齿)对口腔科文档是实打实的风险。补全要从 Unicode
     // `CJKRadicals.txt` 一次性来,见 `text.rs` 里那条覆盖面测试。
-    let text = core_model::text::normalize_cjk_radicals(&mixed.text());
+    //
+    // 逐页取文本:**带过来的那一页优先**(见本函数 `carried` 的文档),其余用这次
+    // 自己认出来的。两边都没有的页不贡献文本(它已经在 `pages_without_text` 里)。
+    // `mixed.text()` 不能直接用了——它不知道 carried 的存在。
+    let page_count = mixed
+        .page_count()
+        .max(carried.keys().copied().max().unwrap_or(0));
+    let mut parts: Vec<&str> = Vec::new();
+    for page_no in 1..=page_count {
+        if let Some(c) = carried.get(&page_no) {
+            parts.push(&c.text);
+            continue;
+        }
+        match mixed.pages.iter().find(|p| p.page_no == page_no) {
+            Some(ocr::PdfPage {
+                result: ocr::PdfPageText::TextLayer(t),
+                ..
+            }) => parts.push(t),
+            Some(ocr::PdfPage {
+                result: ocr::PdfPageText::Ocr { text, .. },
+                ..
+            }) => parts.push(text),
+            _ => {}
+        }
+    }
+    let text = core_model::text::normalize_cjk_radicals(&parts.join("\n"));
     if text.trim().is_empty() {
         // 一页可用文本都没拿到:和旧版"扫描 PDF 全篇无文本"行为一致(#55)——
         // 降级为 StoredNoText 而非建一个空文档冒充成功,但页数如实带上真实
         // page_count(不再退化成 1),且仍把 pages_without_text 带回去,供
         // 移动端后续针对性补 OCR。
-        let mut outcome = store_no_text(vault, sid, name, mixed.page_count())?;
+        let mut outcome = store_no_text(vault, sid, name, page_count)?;
         outcome.pages_without_text = pages_without_text;
         return Ok(outcome);
     }
@@ -608,9 +670,29 @@ fn ingest_pdf(
         doc_date_end,
         title: Some(name.to_string()),
         language: parser::detect_language(&text),
-        page_count: mixed.page_count(),
+        page_count,
     })?;
-    add_ocr_pages(vault, doc.id, mixed.pages.iter())?;
+    add_ocr_pages(
+        vault,
+        doc.id,
+        mixed
+            .pages
+            .iter()
+            .filter(|p| !carried.contains_key(&p.page_no)),
+    )?;
+    // 带过来的页:连**溯源**一起带(哪个引擎、哪个版本、当时的置信度)。落一行
+    // 假的 `native/text-layer` 等于在事件日志里撒谎,而这几行正是用户在「文档
+    // 内容」里读到的字、也是「识别质量」徽标的依据。
+    for (&page_no, c) in carried {
+        vault.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no,
+            backend: c.backend.clone(),
+            model_version: c.model_version.clone(),
+            text: core_model::text::normalize_cjk_radicals(&c.text),
+            confidence: c.confidence,
+        })?;
+    }
     let status = if deduped {
         IngestStatus::Backfilled
     } else {
@@ -820,7 +902,8 @@ pub fn merge_documents_into_pdf(
     );
 
     let mut photos = Vec::with_capacity(document_ids.len());
-    for &doc_id in document_ids {
+    let mut carried: BTreeMap<i32, CarriedOcr> = BTreeMap::new();
+    for (i, &doc_id) in document_ids.iter().enumerate() {
         let doc = vault
             .document_by_id(doc_id)?
             .ok_or_else(|| anyhow::anyhow!("文档 {doc_id} 不存在"))?;
@@ -848,6 +931,28 @@ pub fn merge_documents_into_pdf(
         // "先物化 iCloud 占位符"那层平台特判要顾,直接要最强的读法)。
         let bytes = vault.read_object(&sf.content_hash)?;
         photos.push(bytes);
+
+        // **把这一页已经识别出来的文字带走。** 这几份文档马上要被墓碑掉,它们的
+        // `ocr_result` 行会随之从投影里消失(见 `delete_document`);不带走,用户
+        // 刚刚在「文档内容」里读到的整页文字、以及据此跑出来的摘要就在一次点击里
+        // 归零(冒烟 2026-09-15 实测:2135 字 + 两份云抽取全没)。
+        //
+        // 源文档一律单页(上面刚校验过),所以 `ocr_text` 就是这一页的全文;新
+        // PDF 的第 `i + 1` 页就是这张照片(见本函数文档注释里的 v1 范围说明)。
+        let page_text = vault.ocr_text(doc_id).unwrap_or_default();
+        if !page_text.trim().is_empty() {
+            carried.insert(
+                (i + 1) as i32,
+                CarriedOcr {
+                    text: page_text,
+                    backend: vault
+                        .ocr_backend(doc_id)?
+                        .map_or(OcrBackendKind::Native, |b| OcrBackendKind::from_str(&b)),
+                    model_version: vault.ocr_model_version(doc_id)?.unwrap_or_default(),
+                    confidence: vault.ocr_confidence(doc_id)?,
+                },
+            );
+        }
     }
 
     let merged_bytes = merge::build_pdf_from_photos(&photos)?;
@@ -861,6 +966,7 @@ pub fn merge_documents_into_pdf(
         merged_name,
         &merged_bytes,
         imp.deduped,
+        &carried,
     )?;
 
     // 新文档确认建成(上面两行没有提前返回 Err)才轮到删旧的——见本函数文档
@@ -1723,6 +1829,73 @@ trailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n";
                 "重放后原始照片字节仍应逐字节不变"
             );
         }
+    }
+
+    /// 合并**不许**把已经识别出来的文字弄丢(2026-09-15 冒烟 A:两张协和合并后
+    /// `ocr_result` 空表、文档详情「无文本内容」、成员 0 份记录 —— 2135 字一次
+    /// 点击归零)。合成的 PDF 里那两张图在这个测试环境里 OCR 不出任何东西(没
+    /// 链接引擎),正是线上那条路:文字只可能来自原文档带过来的那两行。
+    ///
+    /// 一并钉住 `doc_type`:它在 `DocumentAdded` 事件里就定死、事后不自愈(见
+    /// `ingest_pdf` 里那段康熙部首注释),所以文字必须赶在建档**之前**接上,
+    /// 只在事后补 `ocr_result` 行是不够的 —— 那样档案行上仍然是「待归类」。
+    #[test]
+    fn merge_carries_each_photos_ocr_text_onto_the_merged_document() {
+        let vdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+
+        let page1 = "北京协和医院\n检验科血常规检验报告单\n姓名:张建国 性别:男 年龄:60岁\n\
+                     WBC 白细胞计数 11.8 10^9/L 3.5-9.5 ↑\n";
+        let page2 = "北京协和医院\n检验科肾功能检验报告单\n姓名:张建国\n\
+                     肌酐 Creatinine 112 umol/L 57-97 ↑\n";
+        let mut doc_ids = Vec::new();
+        for (i, text) in [page1, page2].iter().enumerate() {
+            let bytes = merge::fake_photo(60 + i as u32 * 10, 80);
+            let (doc_id, _) = seed_single_page_photo_doc(&v, &format!("photo{i}.jpg"), &bytes);
+            v.add_ocr(NewOcr {
+                document_id: doc_id,
+                page_no: 1,
+                backend: OcrBackendKind::Onnx,
+                model_version: "ppocr-v5".into(),
+                text: (*text).to_string(),
+                confidence: Some(if i == 0 { 0.9 } else { 0.75 }),
+            })
+            .unwrap();
+            doc_ids.push(doc_id);
+        }
+
+        let outcome = merge_documents_into_pdf(&v, "合并文档.pdf", &doc_ids).unwrap();
+        let merged = v
+            .document_by_source_file_id(outcome.source_file_id)
+            .unwrap()
+            .expect("合并应建出新文档");
+
+        let merged_text = v.ocr_text(merged.id).unwrap();
+        assert!(merged_text.contains("白细胞计数 11.8"), "第 1 页的字丢了");
+        assert!(
+            merged_text.contains("肌酐 Creatinine 112"),
+            "第 2 页的字丢了"
+        );
+        assert_eq!(
+            v.ocr_page_numbers(merged.id).unwrap(),
+            vec![1, 2],
+            "两页各自一行 ocr_result,不是拼成一行"
+        );
+        assert!(
+            outcome.pages_without_text.is_empty(),
+            "带过来文字的页不该再被报成「没识别出文字」:{:?}",
+            outcome.pages_without_text
+        );
+
+        // 文字接上了,分类/日期才有依据 —— 否则档案行上是「待归类」。
+        assert_eq!(merged.doc_type, DocType::LabReport, "合并后应仍是化验");
+        // 溯源与「识别质量」徽标的依据一并带过来(取各页最小值,见 ocr_confidence)。
+        assert_eq!(v.ocr_backend(merged.id).unwrap().as_deref(), Some("onnx"));
+        assert_eq!(v.ocr_confidence(merged.id).unwrap(), Some(0.75));
+
+        // 重放后仍在:带过来的文字走的是普通 `OcrAdded` 事件,没有新事件类型。
+        v.rebuild_from_log().unwrap();
+        assert_eq!(v.ocr_text(merged.id).unwrap(), merged_text);
     }
 
     #[test]

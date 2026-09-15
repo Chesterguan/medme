@@ -13,6 +13,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -161,6 +162,52 @@ typedef PendingCloudExtraction = ({
   Profile profile,
   String vaultRoot,
 });
+
+/// 「合并成一份」之后,改成给**合并出来的那一份**排一次云抽取:[sources] 是这
+/// 几张照片原本各自排好的队,它们的文档已经被墓碑掉了(见
+/// `pipeline::merge_documents_into_pdf`),再跑只会打在不存在的文档上 —— 2026-09-15
+/// 冒烟里日志那两行「该文档没有 OCR 文字,无法云抽取」就是这么来的,白花两次
+/// LLM 往返、合并出来的那份反而一条结果都没有。
+///
+/// **走文本档,不走图片档**:合并后是一份多页 PDF,没有"这一页的那张原图"可以
+/// 涂黑(`lines`/`bytes` 是逐张照片的,拼不成一页)。所以这里给的 [OcrResult] 只
+/// 有文本 —— [canRedactImage] 因此为 false,`runCloudExtraction` 自己就退到文本档,
+/// 发出去的是 Rust 侧脱敏过的文本。文本取各页 OCR 拼起来,只用来过
+/// [isLowOcrYield] 那道闸(真正发出去的文本由 Rust 从保险箱里重读)。
+///
+/// [sources] 为空(比如根本没排上队)返回 null:没有成员/箱子可捕获,就不排。
+PendingCloudExtraction? pendingForMergedDocument({
+  required int documentId,
+  required String? detectedName,
+  required List<PendingCloudExtraction> sources,
+}) {
+  if (sources.isEmpty) return null;
+  final text = sources.map((p) => p.ocr.text).join('\n');
+  // 置信度取最低的那张(同 `Vault::ocr_confidence` 的口径:有一页差就按差的算)。
+  final confidence = sources
+      .map((p) => p.ocr.confidence)
+      .reduce((a, b) => a < b ? a : b);
+  return (
+    outcome: ImportOutcomeDto(
+      name: mergedDocumentName,
+      // `runCloudExtraction` 只读 `documentId` 与 `detectedName`;合并出来那份的
+      // source_file id 前端拿不到(`MergeOutcomeDto` 不带),也没人会读它,所以
+      // 给一个**不可能是真 id** 的 -1,而不是编一个看起来像真的数。
+      sourceFileId: -1,
+      status: 'new',
+      documentId: documentId,
+      detectedName: detectedName,
+      pagesWithoutText: Int32List(0),
+    ),
+    ocr: OcrResult(text, confidence),
+    profile: sources.first.profile,
+    vaultRoot: sources.first.vaultRoot,
+  );
+}
+
+/// 合并出来那份文档的文件名 —— `import_flow` 调 FFI 时用它,排云抽取时也用它,
+/// 两处别各写一个字符串。
+const String mergedDocumentName = '合并文档.pdf';
 
 /// 「此刻进程里开着的是哪个箱子」。**只给测试注入**:host 上没有 Rust 库,
 /// `currentVaultRoot` 一调就抛,「箱子被换掉了」这条路径否则钉不住。
