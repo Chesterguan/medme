@@ -1889,13 +1889,14 @@ pub fn vault_cloud_prepare_extraction(
 /// 不是高频路径,暂不做「prepare 时把 frame 存住等 commit 再用」的缓存。
 ///
 /// 画在哪张图上,按「**框能对得上的最高画质**」选(Task 18):框按比例放大、画回
-/// **原分辨率彩色原图**(`ocr::redact_image_full_res`),这次预处理转过的角度
-/// (`EngineLines::rotation_deg`,就在上面这次 `recognize_engine_lines` 的产出里,
-/// **不经 FRB**)在原图上原样转回来,绕中心旋转与绕中心等比缩放可交换,映射是精确的。
-/// 角度拿不到/不可信(非有限、超过 20°)或几何对不上(90°/270° 摆正换了尺寸)时
-/// 退回画在 frame 上——**宁可送画质差一点的,也绝不把框画到几何对不上的图上**
-/// (那是静默漏涂 PHI)。两条路都按 `ocr::REDACT_MAX_BYTES` 压:先降 JPEG 质量、
-/// 再降长边,且绝不低于识别时的分辨率。
+/// **原分辨率彩色原图**(`ocr::redact_image_full_res`),这次预处理转过的两个角度
+/// (`EngineLines::rotation_deg` 去斜残量 + `EngineLines::orient_deg` 侧拍摆正,就在
+/// 上面这次 `recognize_engine_lines` 的产出里,**不经 FRB**)在原图上原样转回来:
+/// 摆正走精确整数转向、去斜走绕中心旋转,绕中心旋转与绕中心等比缩放可交换,映射是
+/// 精确的。去斜角拿不到/不可信(非有限、超过 20°)或几何对不上时退回画在 frame 上
+/// ——**宁可送画质差一点的,也绝不把框画到几何对不上的图上**(那是静默漏涂 PHI)。
+/// 两条路都按 `ocr::REDACT_MAX_BYTES` 压:先降 JPEG 质量、再降长边,且绝不低于识别
+/// 时的分辨率。
 #[cfg(pp_ocr)]
 pub fn vault_cloud_redact_image(bytes: Vec<u8>, paint: Vec<RectDto>) -> anyhow::Result<Vec<u8>> {
     let data_dir = with_state(|state| Ok(state.data_dir.clone()))?;
@@ -1919,6 +1920,7 @@ pub fn vault_cloud_redact_image(bytes: Vec<u8>, paint: Vec<RectDto>) -> anyhow::
         frame_w,
         frame_h,
         engine_lines.rotation_deg,
+        engine_lines.orient_deg,
         &rects,
         ocr::REDACT_MAX_BYTES,
     ) {
