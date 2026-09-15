@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `doc_summary`, `extraction_json_for`, `fmt_value`, `format_plausibility_violation`, `hex_to_bytes`, `home_monitoring_demo_entries`, `ingest_one`, `known_identity`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `unwrap_restore_map`, `vault_cell`, `with_state_mut`, `with_state`, `wrap_restore_map`
+// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `collect_demo_files`, `detected_name_for`, `extraction_json_for`, `fmt_value`, `format_plausibility_violation`, `hex_to_bytes`, `home_monitoring_demo_entries`, `ingest_one`, `known_identity`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `unwrap_restore_map`, `vault_cell`, `with_state_mut`, `with_state`, `wrap_restore_map`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**

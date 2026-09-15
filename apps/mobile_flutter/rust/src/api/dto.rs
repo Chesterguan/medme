@@ -48,6 +48,14 @@ pub struct DocumentSummaryDto {
     pub page_count: i32,
     /// 影像检查文档的切片数;非影像文档为 None。
     pub slice_count: Option<i32>,
+    /// 云抽取(`extraction` 表,schema v6)读出的条目数,**三态**:
+    /// `None` = 还没跑过 / 被拒发 / 离线;`Some(0)` = 跑过了,一条都没读出来;
+    /// `Some(n)` = 读出 n 条。
+    ///
+    /// 前端(`doc_labels.dart` 的 `docRowLabel`)靠它区分「待归类」的两种成因:
+    /// 还没轮到 vs 整理过但白跑。原先两种都显示「待归类」,用户看到的是一份
+    /// 永远停在待归类的文档,分不清是还在跑还是失败了(冒烟 friction 2)。
+    pub extraction_item_count: Option<i32>,
 }
 impl From<&Document> for DocumentSummaryDto {
     fn from(d: &Document) -> Self {
@@ -59,8 +67,44 @@ impl From<&Document> for DocumentSummaryDto {
             title: d.title.clone(),
             page_count: d.page_count,
             slice_count: None,
+            extraction_item_count: None,
         }
     }
+}
+
+/// 一份云抽取结果 JSON 里「读出了多少条」。labs/meds/diagnoses 各算一条,
+/// `impression` 非空再算一条 —— 只给了一句印象也是读出了内容,报 0 就是在
+/// 对用户说谎。
+///
+/// JSON 解析不出来(格式不对/被拒收/老 schema)同样返回 0:抽取确实跑过,
+/// 但没产出任何能用的东西,下游 `parser` 那边也一样会退回正则。
+fn extraction_item_count(json: &str) -> i32 {
+    let Ok(e) = deid::parse_extraction(json) else {
+        return 0;
+    };
+    let n = e.labs.len() + e.meds.len() + e.diagnoses.len();
+    (n + usize::from(!e.impression.trim().is_empty())) as i32
+}
+
+/// 时间线/档案列表用的文档摘要:影像 study 补切片数,再补云抽取条目数。
+///
+/// `vault.rs` 与 `vault_ephemeral.rs` 原先各抄了一份逐字相同的实现;合并成这一份,
+/// 免得下次加字段又只加在其中一边(医生预览时间线和病人档案列表就会不一致)。
+pub(crate) fn doc_summary(v: &core_model::Vault, d: &Document) -> DocumentSummaryDto {
+    let mut s = DocumentSummaryDto::from(d);
+    if d.doc_type == core_model::DocType::ImagingReport {
+        if let Ok(n) = v.imaging_instance_count(d.id) {
+            if n > 0 {
+                s.slice_count = Some(n as i32);
+            }
+        }
+    }
+    s.extraction_item_count = v
+        .extraction_json(d.id)
+        .ok()
+        .flatten()
+        .map(|j| extraction_item_count(&j));
+    s
 }
 
 #[derive(Debug, Clone)]

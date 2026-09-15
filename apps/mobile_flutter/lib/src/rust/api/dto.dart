@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `from_encounter`
+// These functions are ignored because they are not marked as `pub`: `doc_summary`, `extraction_item_count`, `from_encounter`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
@@ -260,6 +260,15 @@ class DocumentSummaryDto {
   /// 影像检查文档的切片数;非影像文档为 None。
   final int? sliceCount;
 
+  /// 云抽取(`extraction` 表,schema v6)读出的条目数,**三态**:
+  /// `None` = 还没跑过 / 被拒发 / 离线;`Some(0)` = 跑过了,一条都没读出来;
+  /// `Some(n)` = 读出 n 条。
+  ///
+  /// 前端(`doc_labels.dart` 的 `docRowLabel`)靠它区分「待归类」的两种成因:
+  /// 还没轮到 vs 整理过但白跑。原先两种都显示「待归类」,用户看到的是一份
+  /// 永远停在待归类的文档,分不清是还在跑还是失败了(冒烟 friction 2)。
+  final int? extractionItemCount;
+
   const DocumentSummaryDto({
     required this.id,
     required this.docType,
@@ -268,6 +277,7 @@ class DocumentSummaryDto {
     this.title,
     required this.pageCount,
     this.sliceCount,
+    this.extractionItemCount,
   });
 
   @override
@@ -278,7 +288,8 @@ class DocumentSummaryDto {
       docDateEnd.hashCode ^
       title.hashCode ^
       pageCount.hashCode ^
-      sliceCount.hashCode;
+      sliceCount.hashCode ^
+      extractionItemCount.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -291,7 +302,8 @@ class DocumentSummaryDto {
           docDateEnd == other.docDateEnd &&
           title == other.title &&
           pageCount == other.pageCount &&
-          sliceCount == other.sliceCount;
+          sliceCount == other.sliceCount &&
+          extractionItemCount == other.extractionItemCount;
 }
 
 class EncounterSummaryDto {

@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `detected_name_for`, `doc_summary`, `ephemeral_cell`, `gather_ephemeral_docs`, `ingest_one`, `proxy_lab_from_json`, `proxy_med_from_json`, `proxy_summary_from_json`, `with_ephemeral`
+// These functions are ignored because they are not marked as `pub`: `detected_name_for`, `ephemeral_cell`, `gather_ephemeral_docs`, `ingest_one`, `proxy_lab_from_json`, `proxy_med_from_json`, `proxy_summary_from_json`, `with_ephemeral`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `EphemeralSourceDoc`, `EphemeralState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`
 
