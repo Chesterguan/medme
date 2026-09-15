@@ -188,11 +188,61 @@ fn looks_like_lab_name(t: &str) -> bool {
     !name.is_empty() && terminology::normalize(name).is_some_and(|m| m.confidence >= 1.0)
 }
 
+/// 框里带不带「数值或化验单位」——`3.3`、`10^3/uL`、`4.5-11` 这类。用来给**短的拉丁
+/// 缩写项目名**找旁证(见 [`lab_name_is_trustworthy`])。
+///
+/// 数字要求是**整个 token** 都由数字/小数点/区间号组成:`PAC001`、`B165AAF4` 这种
+/// 编号里虽然有数字,但不是独立的数值 token,不算旁证 —— 否则 `Patient ID PAC001`
+/// 就会给旁边的 `Ana` 背书。
+fn carries_value_or_unit(t: &str) -> bool {
+    if patterns::UNIT_TOKENS.iter().any(|u| t.contains(u)) {
+        return true;
+    }
+    t.split(|c: char| c.is_whitespace() || c == '|')
+        .map(|tok| {
+            tok.trim_matches(|c: char| matches!(c, ':' | '：' | ',' | '，' | ';' | '；' | '、'))
+        })
+        .any(|tok| {
+            !tok.is_empty()
+                && tok.chars().any(|c| c.is_ascii_digit())
+                && tok
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '~' | '%'))
+        })
+}
+
+/// 一个「像项目名」的框,可不可信到能用来**收住页眉带 / 顶住页脚带**。
+///
+/// 词典里有一批**三字母缩写**(`ana` 抗核抗体、`alt`、`cea`…)会和真实人名撞车:
+/// 布局重建在斜页上本来就会把 `Name  Ana Betz` 切成 `Ana` / `Betz` 两框,而
+/// `normalize("Ana")` 置信度就是 1.0。一旦认了,GNU_Health 的页眉带会从 `0..202`
+/// 收到 `0..42`,`Ana`/`Betz`/`Patient ID PAC001` 全部露出 —— 而这张英文单子上,
+/// 页眉带是唯一一道防线(review-21-22.md Important 3)。
+///
+/// 三选一才算可信:
+/// * 含 CJK —— 中文项目名不会和英文人名撞车;
+/// * 拉丁字母 ≥ 4 个 —— `Hemoglobin`/`MCHC`/`RDW-CV` 过,`Ana`/`Alt`/`Cea` 不过;
+/// * 本框或**右邻框**带数值/单位 —— `RBC` `3.3`、`WBC` `6.7` 这类三字母缩写靠这条
+///   过关,而 `Ana` 右边是 `Betz`(没有数值),过不了。
+fn lab_name_is_trustworthy(boxes: &[Box], i: usize) -> bool {
+    let t = &boxes[i].text;
+    if t.chars().any(|c| ('\u{4e00}'..='\u{9fa5}').contains(&c)) {
+        return true;
+    }
+    if t.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 4 {
+        return true;
+    }
+    carries_value_or_unit(t)
+        || next_box_in_reading_order(boxes, i).is_some_and(|n| carries_value_or_unit(&n.text))
+}
+
 /// 像不像化验表的内容框:整行(`looks_like_lab_row`)或只有项目名
-/// (`looks_like_lab_name`)。页眉带的终点、页脚带的下界都按它算——两条带子都是
-/// 「不许盖住表格」,用的必须是同一套「什么算表格」。
-fn looks_like_lab_content(t: &str) -> bool {
-    looks_like_lab_row(t) || looks_like_lab_name(t)
+/// (`looks_like_lab_name`,且过得了 [`lab_name_is_trustworthy`] 那道旁证)。
+/// 页眉带的终点、页脚带的下界都按它算——两条带子都是「不许盖住表格」,用的必须是
+/// 同一套「什么算表格」。
+fn is_lab_content_box(boxes: &[Box], i: usize) -> bool {
+    looks_like_lab_row(&boxes[i].text)
+        || (looks_like_lab_name(&boxes[i].text) && lab_name_is_trustworthy(boxes, i))
 }
 
 /// 英文报告的页脚锚点。`Digitally signed by Dr. Cameron Cordara` 这一行实测原样上云
@@ -229,13 +279,20 @@ fn looks_like_footer(t: &str) -> bool {
 /// 往下让,它们就露在送出的图上了。锚点词本身就是「这框里有个人名」的证据,取值成不成功
 /// 不该决定涂不涂。
 ///
-/// 只收 `P` 类:`N`(各种单号)/`A`(住址籍贯)/`U` 类该涂的形状,P 层和第 1 类本来就
-/// 抓得住;而 `性别`/`年龄`/`科室` 是**保留字段**(见 `anchors::EXTRA_STOPS` 的注释),
-/// 本来就不该涂。化验行也不会误伤 —— `looks_like_lab_row` 自己就把带锚点词的行排除在外。
-fn mentions_person_anchor(t: &str) -> bool {
+/// 收 `P`(人名)与 `N`(各类单号/ID)两类。`N` 是这一轮补的:英文报告的
+/// `Test id B165AAF4` / `MRN 0012345` 这类框,A 层的取值同样可能因为大小写或 OCR 噪声
+/// 落空,而它们此前唯一的遮盖也是整宽页脚带(review-21-22.md Critical 2)。
+/// `A`(住址籍贯)/`U` 类不收 —— 那两类是自由文本,按词命中会把正常叙述整框涂掉。
+/// `性别`/`年龄`/`科室` 是**保留字段**(见 `anchors::EXTRA_STOPS` 的注释),不在锚点表里,
+/// 本来就不会被涂。化验行也不会误伤 —— `looks_like_lab_row` 自己就把带锚点词的行排除在外。
+///
+/// **按小写比**:真实英文报告里大小写不定(`Digitally signed by` 的 `signed` 是小写,
+/// `Test id` 有时印成 `TEST ID`)。CJK 不受大小写影响,中文那批行为一字不变。
+fn mentions_identity_anchor(t: &str) -> bool {
+    let lower = t.to_lowercase();
     anchors::ANCHORS
         .iter()
-        .any(|(a, kind)| *kind == "P" && t.contains(a))
+        .any(|(a, kind)| matches!(*kind, "P" | "N") && lower.contains(&a.to_lowercase()))
 }
 
 /// 把 `t` 尾部的分隔符/冒号去掉之后,是不是恰好以一个身份锚点词结尾(fix round 2
@@ -243,11 +300,19 @@ fn mentions_person_anchor(t: &str) -> bool {
 /// 不同的是,这里要求锚点词就是(去掉尾部标点后)整框的结尾,不是随便出现在框里
 /// 的某个位置,不然「审核者已复核」这类锚点词出现在句中、值就在本框里的正常行也会
 /// 被误判成悬空。
+///
+/// 同样按小写比:`Digitally signed by` 这一框就是靠这条抓住的(它以锚点词
+/// `Signed by` 结尾),然后连带把阅读顺序上的下一框 `Dr. Cameron Cordara` 一起涂掉。
 fn ends_with_anchor_word(t: &str) -> bool {
-    let trimmed = t.trim_end_matches(|c: char| {
-        c.is_whitespace() || matches!(c, ':' | '：' | ',' | '，' | ';' | '；' | '、' | '|' | '。')
-    });
-    anchors::ANCHORS.iter().any(|(a, _)| trimmed.ends_with(a))
+    let trimmed = t
+        .trim_end_matches(|c: char| {
+            c.is_whitespace()
+                || matches!(c, ':' | '：' | ',' | '，' | ';' | '；' | '、' | '|' | '。')
+        })
+        .to_lowercase();
+    anchors::ANCHORS
+        .iter()
+        .any(|(a, _)| trimmed.ends_with(&a.to_lowercase()))
 }
 
 /// 涂黑边距:线框高度的 2%,至少 2px——盖住反走样的笔画毛边。
@@ -363,8 +428,8 @@ fn next_box_in_reading_order<'a>(boxes: &'a [Box], i: usize) -> Option<&'a Box> 
 /// (比如「审核者:樊笋 结果单位 mmol/L」,`审核者` 是页脚锚点、`mmol/L` 又是化验单位),
 /// 这时候不能让页脚框自己的存在把自己算作「最后一条化验行」,从而拿自己的位置来
 /// 卡自己(fix round 2 item 3)。
-fn is_real_lab_row(b: &Box) -> bool {
-    looks_like_lab_content(&b.text) && !looks_like_footer(&b.text)
+fn is_real_lab_row(boxes: &[Box], i: usize) -> bool {
+    is_lab_content_box(boxes, i) && !looks_like_footer(&boxes[i].text)
 }
 
 /// 决定哪些 OCR 行框要涂黑(图片档脱敏,spec §1)。
@@ -376,8 +441,8 @@ fn is_real_lab_row(b: &Box) -> bool {
 /// 四类矩形,均按各自参考行的行高留 2%(至少 2px)边距、裁到页面范围,最后去重
 /// (同一个矩形被两条规则各推了一次的情况——比如某框既是命中又是悬空锚点——只留一份):
 /// 1. 逐框跑 `redact_text(...,0)`,与 `dates::shift_dates(...,0)` 的基准比较——文本
-///    发生变化(命中 K/A/P 三层任一)的整框涂黑;**提到人名类锚点词的框一律涂黑**,
-///    哪怕 A 层没取到值(见 [`mentions_person_anchor`])。基准用日期归一化过的文本而不是原文,
+///    发生变化(命中 K/A/P 三层任一)的整框涂黑;**提到身份锚点词(人名/单号)的框一律涂黑**,
+///    哪怕 A 层没取到值(见 [`mentions_identity_anchor`])。基准用日期归一化过的文本而不是原文,
 ///    这样单纯的日期写法归一(`2024年3月5日`→`2024-03-05`,偏移量 0)不会被误判成命中
 ///    (fix round 1 item 4);命中判定的层次与 `redact_text` 完全一致,不另建第二份判断。
 /// 2. 页眉带:从页面顶部到第一个「像化验表内容」的框顶(整行,**或只有项目名**——
@@ -402,7 +467,7 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
     for (i, b) in boxes.iter().enumerate() {
         let r = redact_text(&b.text, known, 0);
         let baseline = dates::shift_dates(&b.text, 0);
-        if r.text != baseline || mentions_person_anchor(&b.text) {
+        if r.text != baseline || mentions_identity_anchor(&b.text) {
             push_painted(&mut out, b, page_w, page_h);
         }
         if ends_with_anchor_word(&b.text) {
@@ -413,9 +478,9 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
         }
     }
 
-    if let Some(first) = boxes
-        .iter()
-        .filter(|b| looks_like_lab_content(&b.text))
+    if let Some(first) = (0..boxes.len())
+        .filter(|i| is_lab_content_box(boxes, *i))
+        .map(|i| &boxes[i])
         .min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1))
     {
         let (_, top, _, bottom) = norm_rect(first);
@@ -437,9 +502,8 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
         .filter(|b| looks_like_footer(&b.text))
         .filter(|cand| {
             let cand_top = norm_rect(cand).1;
-            boxes
-                .iter()
-                .any(|lb| is_real_lab_row(lb) && norm_rect(lb).1 <= cand_top)
+            (0..boxes.len())
+                .any(|j| is_real_lab_row(boxes, j) && norm_rect(&boxes[j]).1 <= cand_top)
         })
         .min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1))
     {
@@ -454,11 +518,10 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
         // 只推起点、**不取消**带子:页脚下面跟着「结果仅供参考 mmol/L」这类含单位标记
         // 的免责声明时(它也会被算成化验行),带子照样存在,只是从那条声明之下开始
         // ——页脚锚点框自己带的 PHI 仍由第 1 类逐框命中涂黑,不依赖这条带子。
-        let lab_floor = boxes
-            .iter()
-            .filter(|b| is_real_lab_row(b))
-            .map(|b| {
-                let (_, lab_top, _, lab_bottom) = norm_rect(b);
+        let lab_floor = (0..boxes.len())
+            .filter(|i| is_real_lab_row(boxes, *i))
+            .map(|i| {
+                let (_, lab_top, _, lab_bottom) = norm_rect(&boxes[i]);
                 lab_bottom + margin_for(lab_bottom - lab_top)
             })
             .fold(f32::NEG_INFINITY, f32::max);
@@ -1386,6 +1449,90 @@ mod tests {
                 "{t} 是保留字段,不该涂"
             );
         }
+    }
+
+    /// review-21-22.md Critical 2 的原样反例:左栏页脚三框(y400/430/455)排在右栏
+    /// 化验行(y470)**之上**,页脚带的起点因此被顶到 492 —— 三框一个都盖不住。
+    /// 逐框兜底必须让它们**不依赖带子**各自被涂黑。
+    #[test]
+    fn english_footer_boxes_are_painted_even_when_the_band_moves_below_them() {
+        let k = KnownIdentity {
+            name: "Ana Betz".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, left: f32, top: f32| Box {
+            text: t.into(),
+            left,
+            top,
+            right: left + 180.0,
+            bottom: top + 20.0,
+        };
+        let boxes = vec![
+            b("Hemoglobin 12 g/dL 11.0 - 16.0", 10.0, 100.0),
+            b("Digitally signed by", 10.0, 400.0),
+            b("Dr. Cameron Cordara", 10.0, 430.0),
+            b("Test id B165AAF4", 10.0, 455.0),
+            // 右栏还没读完的化验行,比左栏页脚更靠下 → 把带子顶到 492
+            b("WBC 6.7 10^3/uL 4.5-11", 210.0, 470.0),
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        for (i, bx) in boxes.iter().enumerate().take(4).skip(1) {
+            let (l, t, r, bot) = (bx.left, bx.top, bx.right, bx.bottom);
+            assert!(
+                rects
+                    .iter()
+                    .any(|rc| rc.left <= l && rc.right >= r && rc.top <= t && rc.bottom >= bot),
+                "第 {i} 框 {:?} 没被盖住(COVERED=false):{rects:?}",
+                bx.text
+            );
+        }
+    }
+
+    /// review-21-22.md Important 3:斜页上布局重建把 `Name  Ana Betz` 切成两框,
+    /// `Ana` 单独一框而 `normalize("Ana")` = ana(抗核抗体)置信度 1.0 —— 页眉带会被
+    /// 收到 y42,把整块英文患者信息露出来。真正的项目名从 `Hemoglobin` 那一行才开始。
+    #[test]
+    fn a_short_latin_name_token_does_not_collapse_the_header_band() {
+        let k = KnownIdentity {
+            name: "我".into(), // 姓名闸空转的情形:带子是唯一防线
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, left: f32, top: f32| Box {
+            text: t.into(),
+            left,
+            top,
+            right: left + 60.0,
+            bottom: top + 14.0,
+        };
+        let boxes = vec![
+            b("LABORATORY REPORT", 200.0, 90.0),
+            b("Ana", 98.0, 109.0),
+            b("Betz", 160.0, 109.0),
+            b("Patient ID PAC001", 372.0, 109.0),
+            b("Cameron Cordara", 97.0, 143.0),
+            b("Hemoglobin", 46.0, 215.0),
+            b("12", 226.0, 215.0),
+            b("RBC", 46.0, 234.0),
+            b("3.3", 225.0, 234.0),
+        ];
+        let rects = redact_boxes(&boxes, &k, 576.0, 627.0);
+        let band = rects
+            .iter()
+            .find(|r| r.left == 0.0 && r.right == 576.0 && r.top == 0.0)
+            .unwrap_or_else(|| panic!("页眉带没出现:{rects:?}"));
+        assert!(
+            band.bottom >= 202.0,
+            "页眉带被 `Ana` 收上去了(应 ≥202,实际 {}):{rects:?}",
+            band.bottom
+        );
+        // 而真的三字母缩写项目名(右邻框有数值)仍然算表格内容 —— 带子不许盖到它。
+        assert!(
+            band.bottom <= 220.0,
+            "页眉带盖住了 Hemoglobin/RBC 那几行(实际 {}):{rects:?}",
+            band.bottom
+        );
     }
 
     #[test]

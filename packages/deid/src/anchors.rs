@@ -59,6 +59,35 @@ pub const ANCHORS: &[(&str, &str)] = &[
     ("婚姻", "A"),
     ("微信公众号", "U"),
     ("公众号", "U"),
+    // --- 英文报告(review-21-22.md Critical 2)-------------------------------
+    // 这批词的**主要用途是图片档逐框涂黑**:`redact_boxes` 的
+    // `mentions_identity_anchor` / `ends_with_anchor_word` 按它们判「这框里有身份信息」,
+    // 不依赖取值成不成功 —— 页脚带一旦按化验行往下让,英文页脚此前一点兜底都没有
+    // (实测反例:`Digitally signed by` / `Dr. Cameron Cordara` / `Test id B165AAF4`
+    // 三框 COVERED 全 false)。
+    //
+    // 对文本档(`apply`)的影响很小且**只增不减**:P 类取值走 `take_name_value`,那是
+    // 只认 CJK 的,所以 `Dr. Cameron Cordara` 不会被它掩(英文人名仍靠 K 层的已知身份
+    // + 这里的逐框涂黑);N 类走 `take_free_value`,`Test id : B165AAF4` 这类编号会被
+    // 掩成 [N*],是净收益。
+    //
+    // 上面那条「裸的医生/患者不当锚点」的顾虑在这里不成立:`Doctor`/`Physician` 的值
+    // 是 CJK-only 的 `take_name_value`,取不到英文值,吃不掉整句话;它们在这里的作用
+    // 只是「这一框要涂黑」。
+    ("Digitally signed by", "P"),
+    ("Signed by", "P"),
+    ("Reported by", "P"),
+    ("Verified by", "P"),
+    ("Reviewed by", "P"),
+    ("Physician", "P"),
+    ("Doctor", "P"),
+    ("Patient ID", "N"),
+    ("Test id", "N"),
+    ("Sample id", "N"),
+    ("Specimen id", "N"),
+    ("Accession", "N"),
+    ("Report id", "N"),
+    ("MRN", "N"),
 ];
 
 /// 年龄/性别/科室是**保留字段**,锚点表里没有它们,但 OCR 常常把它们和前一个字段粘在
