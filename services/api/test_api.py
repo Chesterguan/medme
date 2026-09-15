@@ -726,6 +726,39 @@ def test_extract_system_prompt_matches_eval_fixture():
         assert extract.IMAGE_USER_TEXT == f.read()
 
 
+def test_extract_request_bounds_the_model_output(monkeypatch):
+    # `deepseek-flash` 是推理模型:不封顶时 reasoning_tokens 自己跑飞,整趟抽取顶爆
+    # 上游超时,用户侧就是「什么都没有」(extract-repro-report.md §1)。实测同一张图
+    # 60.7 s 超时失败 → 3.8 s / 887 completion token / 19 条 lab。两个参数缺一不可:
+    # 只加 max_tokens 会在推理中途被截断(实测 reasoning_effort=high 配 6000 上限,
+    # 24 s 后 content 是空的),所以请求体里两个都得在。
+    import extract
+    sent = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": '{"doc_type":"lab","labs":[]}'}}], "usage": {}}).encode()
+
+    def _fake_urlopen(req, timeout=None):
+        sent["body"] = json.loads(req.data)
+        sent["timeout"] = timeout
+        return _Resp()
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.setattr(extract.urllib.request, "urlopen", _fake_urlopen)
+    extract.run({"mode": "text", "schema": 1, "payload": "x"})
+    assert sent["body"]["max_tokens"] == extract.MAX_TOKENS == 6000
+    assert sent["body"]["reasoning_effort"] == extract.REASONING_EFFORT == "low"
+    # 客户端的 extractTimeout(cloud_extract.dart)必须比这个宽。
+    assert sent["timeout"] == 120
+
+
 def test_extract_proxies_and_counts_tokens(monkeypatch):
     import extract
     monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {"choices": [{"message": {"content": '{"doc_type":"lab","labs":[]}'}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})

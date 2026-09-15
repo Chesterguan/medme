@@ -16,6 +16,21 @@ with open(os.path.join(_PROMPTS_DIR, "extract_v1_image_user.txt"), encoding="utf
     IMAGE_USER_TEXT = _f.read()
 
 
+# 输出长度上界。`deepseek-flash` 是推理模型,不封顶时 `reasoning_tokens` 会自己跑飞
+# ——实测一张血常规照片烧掉 10124 个 completion token(其中 9354 是 reasoning),
+# 外推 >70 s,正好顶爆下面那个上游超时,用户侧就是「抽了两分钟,什么都没有」
+# (extract-repro-report.md §1)。22 行的化验表正文实测只要 ~800 token,6000 足够宽,
+# 砍掉的只有失控的那部分。
+MAX_TOKENS = 6000
+
+# 思考预算。`none` 会整个关掉推理(表格读数会掉条),`low` 只是把预算收紧——这是
+# DeepSeek 文档里 `/chat/completions` 唯一能约束推理长度的参数
+# (`reasoning_effort`: none/low/high/max)。与 MAX_TOKENS 是两道独立的闸:前者限
+# 「想多久」,后者限「最多吐多少」,单靠后者只会让请求在推理中途被截断、依然拿不到
+# 结果。
+REASONING_EFFORT = "low"
+
+
 class SchemaError(Exception):
     """请求本身不满足 schema v1(client 的错,对应 400)。"""
 
@@ -28,11 +43,15 @@ class UpstreamError(Exception):
 def _call_deepseek(model: str, messages: list) -> dict:
     req = urllib.request.Request(
         f"{DEEPSEEK_BASE}/chat/completions",
-        data=json.dumps({"model": model, "messages": messages, "response_format": {"type": "json_object"}, "temperature": 0}).encode(),
+        data=json.dumps({"model": model, "messages": messages, "response_format": {"type": "json_object"}, "temperature": 0,
+                         "max_tokens": MAX_TOKENS, "reasoning_effort": REASONING_EFFORT}).encode(),
         headers={"Authorization": f"Bearer {os.environ['DEEPSEEK_API_KEY']}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as r:
+    # 120 s 而不是 60 s:上面两道闸把正常延迟压到 ~20 s,但慢一点的图仍会在 60 s 附近
+    # 徘徊,而这一趟失败的代价是整份文档「没内容」。客户端那边 `extractTimeout`
+    # (`cloud_extract.dart`)必须比这个宽。
+    with urllib.request.urlopen(req, timeout=120) as r:
         return json.loads(r.read())
 
 

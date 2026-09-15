@@ -56,9 +56,9 @@ const int extractImageMaxBytes = 2 * 1024 * 1024;
 const int extractTextMaxBytes = 64 * 1024;
 
 /// 抽取用的空闲超时(见 [ApiClient.timeout])。服务端自己等 DeepSeek 的上游超时是
-/// 60 秒(`services/api/extract.py` 的 `urlopen(..., timeout=60)`),所以这边必须比
+/// 120 秒(`services/api/extract.py` 的 `urlopen(..., timeout=120)`),所以这边必须比
 /// 它宽,否则模型还在想、我们先把请求掐了,每次抽取都"失败"退回正则。
-const Duration extractTimeout = Duration(seconds: 90);
+const Duration extractTimeout = Duration(seconds: 150);
 
 /// 落盘记的模型版本**兜底值**。正常路径上用的是服务端在响应里回的 `model`
 /// (`services/api/extract.py` 的 `run()`,那才是真正跑这次抽取的模型);老版本
