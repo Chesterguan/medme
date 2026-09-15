@@ -1462,6 +1462,19 @@ mod tests {
             phone: None,
         };
         let masked = |s: &str| redact_text(s, &k, 0).text;
+        // 名字后面跟日期/编号(连续 ≥4 位数字)不是化验行:医生名必须照掩。
+        let dated = masked("Signed by Dr. Smith 2011-08-25");
+        assert!(
+            dated.contains("[P1]") && !dated.contains("Smith"),
+            "{dated}"
+        );
+        let dotted = masked("Reviewed by Mary Jane 2011.08.25");
+        assert!(
+            dotted.contains("[P1]") && !dotted.contains("Mary"),
+            "{dotted}"
+        );
+        // 但真正的化验值(短数)仍然让行留下。
+        assert_eq!(masked("Reviewed by Hb 12.0"), "Reviewed by Hb 12.0");
         assert_eq!(masked("Doctor    Cameron Cordara"), "Doctor    [P1]");
         assert_eq!(
             masked("Digitally signed by\nD1. Cameron Cordara"),

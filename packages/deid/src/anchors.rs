@@ -212,11 +212,29 @@ fn is_lab_term_token(t: &str) -> bool {
 /// 这个 token 是不是**纯数值**(`12.0`、`2.3`、`140`、`0.9`、`4.5-11`)。
 /// 用来认「候选后面紧跟着一个数」这个形状 —— 那是化验行,不是人名。
 fn is_numeric_token(t: &str) -> bool {
-    !t.is_empty()
-        && t.chars().any(|c| c.is_ascii_digit())
-        && t.chars().all(|c| {
+    if t.is_empty()
+        || !t.chars().any(|c| c.is_ascii_digit())
+        || !t.chars().all(|c| {
             c.is_ascii_digit() || matches!(c, '.' | '-' | '~' | '<' | '>' | '%' | '+' | ',')
         })
+    {
+        return false;
+    }
+    // 连续 4 位以上数字(`2011-08-25`、`2011.08.25`、`20160824`)是日期/编号的形状,
+    // 不是化验值——签名后面跟日期是常态,这时人名必须照掩。宁可多掩一个人名,
+    // 不能因为后面有个年份就把医生名放出去。
+    let mut run = 0usize;
+    for c in t.chars() {
+        if c.is_ascii_digit() {
+            run += 1;
+            if run >= 4 {
+                return false;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    true
 }
 
 /// P 类的**拉丁人名**分支:英文报告里 `Doctor` / `Signed by` / `Reported by` 这些锚点
