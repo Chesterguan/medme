@@ -659,6 +659,21 @@ impl Vault {
         Ok(v)
     }
 
+    /// 文档的 OCR 模型版本(如 "ppocr-v5"/"apple-vision"/"text-layer"):同
+    /// [`ocr_backend`](Self::ocr_backend) 的口径,取第一页那条。合并文档时要把
+    /// 原文档的溯源(哪个引擎、哪个版本认出来的)一并带到新文档上,不能编。
+    pub fn ocr_model_version(&self, document_id: i64) -> Result<Option<String>, MedmeError> {
+        let row = self
+            .conn()
+            .query_row(
+                "SELECT model_version FROM ocr_result WHERE document_id = ?1 ORDER BY page_no ASC LIMIT 1",
+                [document_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     /// 文档的 OCR 后端(如 "onnx"/"native"/"vlm"):取该文档 ocr_result 的第一条
     /// 记录(按 page_no)。无 ocr_result 行时返回 None。
     pub fn ocr_backend(&self, document_id: i64) -> Result<Option<String>, MedmeError> {

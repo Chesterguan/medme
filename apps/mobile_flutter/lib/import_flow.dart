@@ -773,11 +773,6 @@ Future<ImportRunResult> _runImport(
     bumpVaultRevision();
   }
 
-  // 云抽取从这里开始,**不等它**:导入到此已经全部落库,摘要有正则版本可看;
-  // 抽取成功的那几份会各自 bump 一次,屏上自己换成更好的结果。
-  // 失败(没登录/没网/闸拒发)全部在 `runCloudExtraction` 里吞掉,不弹任何东西。
-  unawaited(runCloudExtractions(pendingExtractions));
-
   // 埋点:成功几份、失败几份、总共花了多久。**耗时是判断要不要优化 OCR 引擎的唯一
   // 客观依据**;失败只报计数,不报任何异常消息(那里面常有文件名和路径)。
   final failedCount = rows.where((r) => r.kind == ImportRowKind.failed).length;
@@ -811,7 +806,11 @@ Future<ImportRunResult> _runImport(
   // ReviewState.markPending,这里不重算,只是把同一份数据也交给调用方。
   // （若下面发生了合并,`newDocs` 会在合并后就地更新,`ImportRunResult` 在
   // 函数末尾才构造,始终反映最终状态。）
-  if (!context.mounted) return ImportRunResult(newDocs.keys.toList());
+  if (!context.mounted) {
+    // 屏没了就没有合并这一问,照旧把整批发出去(见下面那段为什么平时要等)。
+    unawaited(runCloudExtractions(pendingExtractions));
+    return ImportRunResult(newDocs.keys.toList());
+  }
   Navigator.of(context).pop(); // 关进度对话框
   await _showImportSummary(context, rows, lowOcrYield: lowOcrYield);
 
@@ -838,8 +837,31 @@ Future<ImportRunResult> _runImport(
       newDocs[mergedId] = mergedDetectedName;
       await ReviewState.instance.markPending({mergedId: mergedDetectedName});
       bumpVaultRevision();
+      // 云抽取改成跑合并出来的这一份:原来那几份已经墓碑掉了,排着的请求只会
+      // 打在不存在的文档上(见 [pendingForMergedDocument])。
+      final merged = pendingForMergedDocument(
+        documentId: mergedId,
+        detectedName: mergedDetectedName,
+        sources: pendingExtractions
+            .where((p) => imageDocIds.contains(p.outcome.documentId))
+            .toList(),
+      );
+      pendingExtractions.removeWhere(
+        (p) => imageDocIds.contains(p.outcome.documentId),
+      );
+      if (merged != null) pendingExtractions.add(merged);
     }
   }
+
+  // 云抽取从这里开始,**不等它**:导入到此已经全部落库,摘要有正则版本可看;
+  // 抽取成功的那几份会各自 bump 一次,屏上自己换成更好的结果。
+  // 失败(没登录/没网/闸拒发)全部在 `runCloudExtraction` 里吞掉,不弹任何东西。
+  //
+  // **为什么排在合并问完之后**:合并会把原来那几份墓碑掉。抽取先跑起来的话,
+  // 那几趟 LLM 往返要么打在已经不存在的文档上(白花钱、日志刷「该文档没有 OCR
+  // 文字」),要么结果落在马上就要消失的文档上 —— 用户那边看到的是「整理了半天
+  // 什么都没有」。多等的只是用户点两下弹窗那几秒。
+  unawaited(runCloudExtractions(pendingExtractions));
 
   progress.dispose();
   return ImportRunResult(newDocs.keys.toList());
@@ -858,6 +880,11 @@ Future<ImportRunResult> _runImport(
 /// 情况下原来的文档都原样保留(合并失败时的这条保证来自 Rust 侧
 /// `merge_documents_into_pdf` 的顺序保证:任何校验/解码失败都发生在删除任何
 /// 原文档之前)。
+///
+/// **合并成功时也不许丢东西**:每张照片已经识别出来的文字由
+/// `merge_documents_into_pdf` 逐页带到合并出的这份上(否则原文档一墓碑,
+/// `ocr_result` 就跟着没了——2026-09-15 冒烟里 2135 字一次点击归零);云抽取
+/// 由调用方改排到新文档上(见 [pendingForMergedDocument])。
 Future<int?> _offerPhotoMerge(
   BuildContext context,
   List<int> imageDocIds,
@@ -867,25 +894,31 @@ Future<int?> _offerPhotoMerge(
     builder: (context) {
       final c = MedColors.of(context);
       return AlertDialog(
-        title: const Text('合并成一份?'),
+        title: const Text('要合并成一份吗?'),
         content: Text(
           '刚才这 ${imageDocIds.length} 张,如果是同一份病历的连续页,可以合并'
-          '成一份多页文档,时间线上只显示一条。原始照片仍然保留,只是不再各自'
-          '显示成一条记录。',
+          '成一份多页文档,时间线上只显示一条。原始照片仍然保留,已经识别出的'
+          '文字也会一并带进合并后的这一份,云端整理重新跑一次。\n\n'
+          '合并不可撤销:要拆开得重新导入这几张照片。',
           style: MedType.body.copyWith(color: c.ink2),
         ),
+        // ⚠️ 顺序是**故意**这样的:主按钮(右下角)必须是「分开保存」。这一问
+        // 紧跟在导入结果弹窗后面,那一个的「知道了」也是右下角的 FilledButton
+        // —— 两次点在同一个位置,第二次就被合并弹窗接住了(2026-09-15 冒烟里
+        // 真的这么误触了一次)。误触落在「分开保存」上什么都不会发生;落在
+        // 「合并成一份」上则是一次不可撤销的操作。
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('分开保存'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('合并成一份'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(context).pop(false),
             style: FilledButton.styleFrom(
               backgroundColor: c.sealInk,
               foregroundColor: c.surface,
             ),
-            child: const Text('合并成一份'),
+            child: const Text('分开保存'),
           ),
         ],
       );
@@ -896,7 +929,7 @@ Future<int?> _offerPhotoMerge(
   final messenger = ScaffoldMessenger.of(context);
   try {
     final outcome = await mergePhotosIntoDocument(
-      name: '合并文档.pdf',
+      name: mergedDocumentName,
       documentIds: Int64List.fromList(imageDocIds),
     );
     return outcome.documentId;
