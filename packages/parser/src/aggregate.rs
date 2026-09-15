@@ -705,9 +705,17 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         let doc_labs: Vec<LabObservation> = if let Some(parsed) = doc
             .extraction_json
             .and_then(|j| crate::extraction::labs_from_json(j).ok())
+            .filter(|p| !p.labs.is_empty())
         {
-            // 有云抽取结果且能解析(哪怕零条 lab)就用它,不再对 text 跑正则;
+            // 有云抽取结果、能解析、**且真读出了东西**才用它,不再对 text 跑正则;
             // `Err`(格式不对/被拒收)才落到下面几条分支,退回正则。
+            //
+            // 零条 lab 也退回正则(extract-repro-report.md §4):云端漏读一份单子
+            // (上游超时、图被涂黑带盖住、模型返回 `labs: []`)时,旧代码把「正则本来
+            // 能读出 8–18 条」变成**整份空白**;而这个空结果是无条件落盘的
+            // (`vault_cloud_commit_extraction`),此后每次投影都读它 —— 一次失败永久
+            // 生效。落盘行为不变(那份文档仍要能显示「云端整理没有读出内容」),只是
+            // summary 不再拿它当准。
             parsed.labs
         } else if dt == Some("self_measurement") {
             self_entry::parse_self_measurement_payload(doc.text)
@@ -1030,11 +1038,12 @@ mod tests {
         );
     }
 
-    /// `extraction_json: Some("{}")`(有效 JSON,但 LLM 没给出任何 lab)——仍然
-    /// 算「用抽取结果」,不因为零条就退回对 text 跑正则;这份文档的 labs 应该
-    /// 是空的,即使 text 本身写着一条正则能抽出来的化验。
+    /// `extraction_json: Some("{}")`(有效 JSON,但 LLM 一条 lab 都没给)——**退回
+    /// 正则**。这条曾经断言的是反面(零条也算「用抽取结果」),而那正是把「云端漏读
+    /// 一份单子」放大成「整份文档永久空白」的那个放大器:空结果是无条件落盘的,之后
+    /// 每次投影都读它(extract-repro-report.md §4)。
     #[test]
-    fn extraction_json_valid_but_empty_yields_no_labs_from_text() {
+    fn extraction_json_valid_but_empty_falls_back_to_regex() {
         let docs = vec![SourceDoc {
             index: 0,
             doc_type: Some("lab_report".into()),
@@ -1044,10 +1053,11 @@ mod tests {
             text: "肌酐: 1.2 mg/dL (参考 0.6-1.3)",
         }];
         let agg = aggregate(&docs);
-        assert!(
-            agg.labs.is_empty(),
-            "有效但零条的抽取结果不该退回正则去读 text: {:?}",
-            agg.labs.iter().map(|s| &s.group_name).collect::<Vec<_>>()
+        let s = series(&agg, "creatinine");
+        assert_eq!(
+            s.points.len(),
+            1,
+            "零条的云结果不许把正则读得出来的那条也抹掉"
         );
     }
 
