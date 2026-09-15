@@ -42,6 +42,10 @@ const IMAGE_USER_TEXT: &str = include_str!("../../deid/prompts/extract_v1_image_
 /// 请求参数(`max_tokens` / `reasoning_effort`)与线上代理 `services/api/extract.py`
 /// 共用同一份文件,理由与上面两份 prompt 完全一样:**两边发的请求必须逐字段相同,
 /// 否则评测数字量的不是线上那个模型行为**。`extract.py` 读同一个路径。
+///
+/// 文件**按臂分两块**,键名就是 [`mode_dir_name`] 的返回值(`"text"` / `"image"`):
+/// 文本档的截断风险比图片档高一个量级(合并后的多页文本),两条臂的 `max_tokens`
+/// 因此不同 —— 理由见 `extract.py` 里那段注释。
 const REQUEST_PARAMS: &str = include_str!("../../deid/prompts/extract_v1_params.json");
 
 const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
@@ -81,7 +85,7 @@ fn mode_dir_name(mode: Mode) -> &'static str {
 }
 
 /// 纯函数:拼 DeepSeek 请求体。不碰网络,单测直接验证形状。
-fn request_body(model: &str, user_content: serde_json::Value) -> serde_json::Value {
+fn request_body(mode: Mode, model: &str, user_content: serde_json::Value) -> serde_json::Value {
     let mut body = serde_json::json!({
         "model": model,
         "temperature": 0,
@@ -90,11 +94,17 @@ fn request_body(model: &str, user_content: serde_json::Value) -> serde_json::Val
             {"role": "user", "content": user_content}
         ]
     });
-    // 共用参数逐字段并进去(`max_tokens` / `reasoning_effort`),不在这里重复写死。
+    // 本臂的共用参数逐字段并进去(`max_tokens` / `reasoning_effort`),不在这里重复写死。
     let params: serde_json::Value =
         serde_json::from_str(REQUEST_PARAMS).expect("extract_v1_params.json 不是合法 JSON");
+    let arm = &params[mode_dir_name(mode)];
     let obj = body.as_object_mut().expect("body is object");
-    for (k, v) in params.as_object().expect("params is object") {
+    for (k, v) in arm.as_object().unwrap_or_else(|| {
+        panic!(
+            "extract_v1_params.json 里没有 {} 这一臂",
+            mode_dir_name(mode)
+        )
+    }) {
         obj.insert(k.clone(), v.clone());
     }
     body
@@ -128,10 +138,11 @@ fn response_usage(resp: &serde_json::Value) -> (u64, u64) {
 /// 返回:模型文本 + (prompt_tokens, completion_tokens)。
 fn call_deepseek(
     key: &str,
+    mode: Mode,
     model: &str,
     user_content: serde_json::Value,
 ) -> Result<(String, (u64, u64))> {
-    let body = request_body(model, user_content);
+    let body = request_body(mode, model, user_content);
     let mut resp = ureq::post(DEEPSEEK_URL)
         .header("Authorization", &format!("Bearer {key}"))
         .send_json(&body)
@@ -328,7 +339,7 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
     };
 
     let t_llm = Instant::now();
-    let (raw, (ptok, ctok)) = match call_deepseek(c.key, c.model, content) {
+    let (raw, (ptok, ctok)) = match call_deepseek(c.key, c.mode, c.model, content) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{doc}: deepseek 调用失败:{e:#}");
@@ -777,12 +788,14 @@ mod tests {
 
     #[test]
     fn request_body_has_system_and_user_messages() {
-        let body = request_body(MODEL_TEXT, serde_json::json!("待抽取文本"));
+        let body = request_body(Mode::Text, MODEL_TEXT, serde_json::json!("待抽取文本"));
         assert_eq!(body["model"], MODEL_TEXT);
         assert_eq!(body["temperature"], 0);
         // 与 `services/api/extract.py` 共用的那两个参数必须真的发出去
         // (review-21-22.md Important 4:评测臂不带封顶时,量的不是线上的模型行为)。
-        assert_eq!(body["max_tokens"], 8192);
+        // **按臂取**:文本档 16384(task-23:8192 在 50 份抽样上截断 5 份),
+        // 图片档 8192。取错臂 = 评测和线上发的不是同一个请求。
+        assert_eq!(body["max_tokens"], 16384);
         assert_eq!(body["reasoning_effort"], "low");
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][0]["content"], SYSTEM);
@@ -796,8 +809,10 @@ mod tests {
             {"type": "text", "text": "请抽取这张单据。"},
             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}
         ]);
-        let body = request_body(MODEL_IMAGE, content.clone());
+        let body = request_body(Mode::Image, MODEL_IMAGE, content.clone());
         assert_eq!(body["messages"][1]["content"], content);
+        assert_eq!(body["max_tokens"], 8192);
+        assert_eq!(body["reasoning_effort"], "low");
     }
 
     #[test]

@@ -449,6 +449,11 @@ def extract_route(body: dict, aid=Depends(extract_account_dep), conn=Depends(con
         result, tin, tout = extract.run(body)
     except extract.SchemaError as e:
         raise HTTPException(400, str(e))
+    # 截断这条要排在前面:`TruncatedError` 是 `UpstreamError` 的子类。两者都回 502
+    # (客户端处置一样:重试一次,不成退回正则),但 detail 不同 —— 「模型把预算
+    # 烧光了」和「上游宕机」的修法完全不同,日志里得分得开。
+    except extract.TruncatedError:
+        raise HTTPException(502, "upstream_truncated")
     except extract.UpstreamError:  # 上游失败如实报 502,不回显上游内容(也不进日志)
         raise HTTPException(502, "upstream")
     db.usage_add(conn, aid, tokens_in=tin, tokens_out=tout)

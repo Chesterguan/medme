@@ -59,7 +59,14 @@ const int extractTextMaxBytes = 64 * 1024;
 /// 抽取用的空闲超时(见 [ApiClient.timeout])。服务端自己等 DeepSeek 的上游超时是
 /// 120 秒(`services/api/extract.py` 的 `urlopen(..., timeout=120)`),所以这边必须比
 /// 它宽,否则模型还在想、我们先把请求掐了,每次抽取都"失败"退回正则。
+///
+/// 这**同时是 [postExtractRetrying] 里两次尝试共用的总预算**(墙钟),见那边。
 const Duration extractTimeout = Duration(seconds: 150);
+
+/// 重试之前至少得剩这么多时间。低于它就不重试了 —— 一趟文本档抽取实测 13~40 秒
+/// (task-23:50 份抽样每份 13.5 s,长表 39 s),剩不到这个数发出去也是半路被掐,
+/// 白花一次上行流量。
+const Duration minRetryBudget = Duration(seconds: 30);
 
 /// 落盘记的模型版本**兜底值**。正常路径上用的是服务端在响应里回的 `model`
 /// (`services/api/extract.py` 的 `run()`,那才是真正跑这次抽取的模型);老版本
@@ -139,6 +146,39 @@ Future<Map<String, dynamic>> postExtract(
   '/v1/extract',
   {'mode': mode, 'schema': 1, 'payload': payload},
 );
+
+/// 同 [postExtract],但 **502 再发一次**。
+///
+/// 为什么要重试:502 里有一类是上游把回答截断在 `max_tokens` 上
+/// (`upstream_truncated`)—— 模型把预算全烧在推理上、正文 0 字。这一类**同一份
+/// payload 换一次采样就可能一次过**:2026-09-15 冒烟里合并后那三页文本重放 3 次
+/// 2 次截断 1 次成功(sim-smoke-3-report.md §4),而客户端只发一次,于是合并出来
+/// 的那份文档永久只有正则结果。上游瞬时故障那一类(`upstream`)同样值得再试一次,
+/// 所以这里按状态码重试,不按 detail 分叉。
+///
+/// **两次共用 [extractTimeout] 这一个预算(墙钟)。** `ApiClient.timeout` 是*空闲*
+/// 超时,不封总时长 —— 不看表的话两次各等 150 秒就是 300 秒,用户的导入后台任务
+/// 会拖五分钟。所以第二趟只给剩下的时间,剩得不够 [minRetryBudget] 就不发了。
+///
+/// 超时/网络错一律**不重试**:那两类要么是真没网(再发一次还是没网),要么是这次
+/// 已经把预算用光了。
+Future<Map<String, dynamic>> postExtractRetrying(
+  ApiClient api, {
+  required String mode,
+  required String payload,
+}) async {
+  final deadline = DateTime.now().add(extractTimeout);
+  try {
+    return await postExtract(api, mode: mode, payload: payload);
+  } on ApiFailed catch (e) {
+    final left = deadline.difference(DateTime.now());
+    if (e.status != 502 || left < minRetryBudget) rethrow;
+    // `e.message` 是服务端的 detail(`upstream` / `upstream_truncated`),是我们
+    // 自己的常量,不含任何文档内容 —— 可以进日志(同下面 catch 那条纪律)。
+    debugPrint('[cloud-extract] 上游 502:${e.message},剩 ${left.inSeconds}s,重试一次');
+    return postExtract(api, mode: mode, payload: payload).timeout(left);
+  }
+}
 
 /// 排队等云抽取的一份文档:落库结果 + 它**当次**的 OCR 结果(涂黑要用其中的
 /// `bytes`/`lines`,拿不到第二次)+ **落库时的那个成员和那个箱子**。
@@ -375,8 +415,9 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
       return null;
     }
 
-    // 这一趟(最长 90 秒)在 vault 队列**外面**跑,见 [_ifStillCurrent]。
-    final result = await postExtract(client, mode: mode, payload: payload);
+    // 这一趟(502 会重试一次,两次共用 [extractTimeout] 的预算)在 vault 队列
+    // **外面**跑,见 [_ifStillCurrent] 与 [postExtractRetrying]。
+    final result = await postExtractRetrying(client, mode: mode, payload: payload);
     // 校验基准由 Rust 侧自己重算(不信这里传的任何文本),身份参数必须与 prepare
     // 那次逐字相同,否则占位符编号对不上、校验就不诚实了。
     return await _ifStillCurrent(

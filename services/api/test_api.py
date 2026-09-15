@@ -752,9 +752,15 @@ def test_extract_request_bounds_the_model_output(monkeypatch):
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
     monkeypatch.setattr(extract.urllib.request, "urlopen", _fake_urlopen)
+    # **按臂取参数**:文本档 16384,图片档 8192。取错臂 = 线上和评测发的不是同一个
+    # 请求。文本档那一档是 task-23 实测比出来的:8192 在 50 份抽样上截断了 5 份
+    # (10%),抬到 16384 后那 5 份全部一次过。
     extract.run({"mode": "text", "schema": 1, "payload": "x"})
-    assert sent["body"]["max_tokens"] == extract.MAX_TOKENS == 8192
-    assert sent["body"]["reasoning_effort"] == extract.REASONING_EFFORT == "low"
+    assert sent["body"]["max_tokens"] == extract.REQUEST_PARAMS["text"]["max_tokens"] == 16384
+    assert sent["body"]["reasoning_effort"] == extract.REQUEST_PARAMS["text"]["reasoning_effort"] == "low"
+    extract.run({"mode": "image", "schema": 1, "payload": "AAAA"})
+    assert sent["body"]["max_tokens"] == extract.REQUEST_PARAMS["image"]["max_tokens"] == 8192
+    assert sent["body"]["reasoning_effort"] == extract.REQUEST_PARAMS["image"]["reasoning_effort"] == "low"
     # 客户端的 extractTimeout(cloud_extract.dart)必须比这个宽。
     assert sent["timeout"] == 120
 
@@ -764,14 +770,18 @@ def test_extract_truncated_by_max_tokens_is_502_not_a_half_table(monkeypatch):
     # JSON 位置上,于是一份**缺了后半张表**的抽取会被当成完整结果落进保险箱。
     # 必须算上游错误(502),让客户端退回正则。
     import extract
-    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {
+    monkeypatch.setattr(extract, "_call_deepseek", lambda arm, model, messages: {
         "choices": [{"finish_reason": "length", "message": {"content": '{"doc_type":"lab","labs":[]}'}}],
         "usage": {"prompt_tokens": 1, "completion_tokens": 6000},
     })
     a = login("13800000067", "a")
-    assert client.post("/v1/extract", json={"mode": "image", "schema": 1, "payload": "AAAA"}, headers=_h(a["access"])).status_code == 502
+    r = client.post("/v1/extract", json={"mode": "image", "schema": 1, "payload": "AAAA"}, headers=_h(a["access"]))
+    assert r.status_code == 502
+    # 截断有**自己的码**:客户端对两者的处置一样(重试一次,不成退回正则),但
+    # 「模型把预算烧光了」和「上游宕机」的修法完全不同,日志里得分得开。
+    assert r.json()["detail"] == "upstream_truncated"
     # 同一份内容,没被截断 → 照常 200。
-    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {
+    monkeypatch.setattr(extract, "_call_deepseek", lambda arm, model, messages: {
         "choices": [{"finish_reason": "stop", "message": {"content": '{"doc_type":"lab","labs":[]}'}}],
         "usage": {},
     })
@@ -780,7 +790,7 @@ def test_extract_truncated_by_max_tokens_is_502_not_a_half_table(monkeypatch):
 
 def test_extract_proxies_and_counts_tokens(monkeypatch):
     import extract
-    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {"choices": [{"message": {"content": '{"doc_type":"lab","labs":[]}'}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+    monkeypatch.setattr(extract, "_call_deepseek", lambda arm, model, messages: {"choices": [{"message": {"content": '{"doc_type":"lab","labs":[]}'}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
     a = login("13800000060", "a")
     r = client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "血红蛋白 130 g/L", "hints": {}}, headers=_h(a["access"]))
     assert r.status_code == 200 and r.json()["doc_type"] == "lab"
@@ -797,7 +807,7 @@ def test_extract_response_carries_the_model_actually_used(monkeypatch):
     import extract
     monkeypatch.setattr(extract, "MODEL_TEXT", "deepseek-text-x")
     monkeypatch.setattr(extract, "MODEL_VISION", "deepseek-vision-y")
-    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {
+    monkeypatch.setattr(extract, "_call_deepseek", lambda arm, model, messages: {
         "choices": [{"message": {"content": '{"doc_type":"lab","labs":[]}'}}], "usage": {}})
     a = login("13800000061", "a")
     h = _h(a["access"])
@@ -907,12 +917,14 @@ def test_events_pull_rejects_malformed_since():
 
 def test_extract_upstream_garbage_is_502_not_400(monkeypatch):
     import extract
-    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {
+    monkeypatch.setattr(extract, "_call_deepseek", lambda arm, model, messages: {
         "choices": [{"message": {"content": "not json at all"}}], "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
     a = login("13800000078", "a")
     r = client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers=_h(a["access"]))
     assert r.status_code == 502
     assert "not json" not in r.text
+    # 不是截断,所以走的是通用码 —— 两个码别混。
+    assert r.json()["detail"] == "upstream"
 
 
 # ---- Task 15: 自助注销账号(DELETE /v1/account) ----
@@ -1105,7 +1117,7 @@ def test_extract_rejects_oversize_payloads_413(monkeypatch):
     """I7:体积上限——超了就 413,连上游都不打(假上游一旦被调到 calls 就非空)。"""
     import extract
     calls = []
-    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: calls.append(model) or {
+    monkeypatch.setattr(extract, "_call_deepseek", lambda arm, model, messages: calls.append(model) or {
         "choices": [{"message": {"content": "{}"}}], "usage": {}})
     a = login("13800000135", "x1")
     ha = _h(a["access"])
@@ -1126,7 +1138,7 @@ def test_extract_rejects_non_str_payload_400(monkeypatch):
     量过体积的东西继续往下走。必须在做任何事之前先拒收非 str payload。"""
     import extract
     calls = []
-    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: calls.append(model) or {
+    monkeypatch.setattr(extract, "_call_deepseek", lambda arm, model, messages: calls.append(model) or {
         "choices": [{"message": {"content": "{}"}}], "usage": {}})
     a = login("13800000138", "x4")
     ha = _h(a["access"])
@@ -1142,7 +1154,7 @@ def test_extract_monthly_token_cap_429(monkeypatch):
     """I7:月度 token 天花板——已用量到顶就 429,不再打上游;按账号算,不是全局。"""
     import extract
     calls = []
-    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: calls.append(model) or {
+    monkeypatch.setattr(extract, "_call_deepseek", lambda arm, model, messages: calls.append(model) or {
         "choices": [{"message": {"content": '{"doc_type":"lab"}'}}], "usage": {"prompt_tokens": 7, "completion_tokens": 3}})
     monkeypatch.setattr(app_module, "EXTRACT_MONTHLY_TOKEN_CAP", 10)
     a = login("13800000136", "x2")

@@ -135,6 +135,70 @@ void main() {
     });
   });
 
+  // 上游把回答截断在 max_tokens 上(502 `upstream_truncated`)是**换一次采样就
+  // 可能一次过**的那一类:2026-09-15 冒烟里合并后的三页文本重放 3 次 2 次截断
+  // (sim-smoke-3-report.md §4),而客户端只发一次,那份文档就永久只有正则结果。
+  group('postExtractRetrying', () {
+    late HttpServer server;
+    late ApiClient api;
+    late List<String> hits;
+
+    /// 起一个按 [codes] 逐次回状态码的假服务端:`null` = 成功回抽取结果。
+    Future<void> serve(List<int?> codes) async {
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      api = ApiClient(base: 'http://127.0.0.1:${server.port}', bearer: () async => 'tok');
+      var i = 0;
+      server.listen((req) async {
+        await utf8.decodeStream(req);
+        final code = i < codes.length ? codes[i] : null;
+        hits.add('$i:${code ?? 200}');
+        i++;
+        req.response.headers.contentType = ContentType.json;
+        if (code == null) {
+          req.response.write(jsonEncode({'labs': <Object>[], 'model': 'deepseek-flash'}));
+        } else {
+          req.response.statusCode = code;
+          req.response.write(jsonEncode({'detail': 'upstream_truncated'}));
+        }
+        await req.response.close();
+      });
+    }
+
+    setUp(() => hits = []);
+    tearDown(() => server.close(force: true));
+
+    test('502 之后重试一次,第二次成功就当成功', () async {
+      await serve([502, null]);
+      final out = await postExtractRetrying(api, mode: 'text', payload: 'x');
+      expect(out['model'], 'deepseek-flash');
+      expect(hits, ['0:502', '1:200'], reason: '正好两趟,不是一趟也不是三趟');
+    });
+
+    test('只重试一次:第二次还是 502 就抛出去,由 runCloudExtraction 退回正则', () async {
+      await serve([502, 502, null]);
+      await expectLater(
+        postExtractRetrying(api, mode: 'text', payload: 'x'),
+        throwsA(isA<ApiFailed>()),
+      );
+      expect(hits, ['0:502', '1:502'], reason: '第三趟不许发');
+    });
+
+    test('不是 502 的失败不重试(413 重发一次也是同一个结果)', () async {
+      await serve([413, null]);
+      await expectLater(
+        postExtractRetrying(api, mode: 'text', payload: 'x'),
+        throwsA(isA<ApiFailed>()),
+      );
+      expect(hits, ['0:413']);
+    });
+
+    test('一次成功就只发一趟', () async {
+      await serve([null]);
+      await postExtractRetrying(api, mode: 'text', payload: 'x');
+      expect(hits, ['0:200']);
+    });
+  });
+
   group('canRedactImage 是「能不能把图发出去」的闸', () {
     // 喂给识别引擎的那份字节(iOS 上是拉正后的),内容无所谓,非空即可。
     const bytes = [1, 2, 3];
