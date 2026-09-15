@@ -1451,6 +1451,47 @@ mod tests {
         }
     }
 
+    /// A 层 P 类的拉丁人名分支:英文报告里 `Doctor` / `Signed by` 后面跟的是 ASCII
+    /// 名字,老的 `take_name_value` 只认 CJK,**文本档一个字都掩不到**(图片档那边这一
+    /// 框已经被逐框涂黑,两条路不一致)。
+    #[test]
+    fn english_doctor_names_are_masked_in_text_mode() {
+        let k = KnownIdentity {
+            name: "我".into(),
+            id_number: None,
+            phone: None,
+        };
+        let masked = |s: &str| redact_text(s, &k, 0).text;
+        assert_eq!(masked("Doctor    Cameron Cordara"), "Doctor    [P1]");
+        assert_eq!(
+            masked("Digitally signed by\nD1. Cameron Cordara"),
+            "Digitally signed by\n[P1]"
+        );
+        assert_eq!(masked("Physician: John Smith"), "Physician: [P1]");
+        assert_eq!(masked("Reported by  Mary Jane O'Neil"), "Reported by  [P1]");
+        assert_eq!(masked("Reviewed by Smith-Jones"), "Reviewed by [P1]");
+        // 列对齐:值到本列结束就收尾,不吞下一列
+        assert_eq!(
+            masked("Doctor    Cameron Cordara          Test id B165AAF4"),
+            "Doctor    [P1]          Test id [N1]"
+        );
+
+        // **不许把表格内容当人名吃掉**:全大写的项目缩写、段落标题、词典认得的项目名
+        for t in [
+            "Physician\nHemoglobin                12        11.0 - 16.0     g/dL",
+            "Doctor\nWBC   6.7   4.5-11   10^3/uL",
+            "Reported by\nCreatinine 88 umol/L",
+            "Doctor\n\nCOMPLETE BLOOD COUNT",
+            "Doctor  attending physician on call",
+        ] {
+            assert_eq!(masked(t), t, "{t} 里的表格内容被当成人名掩掉了");
+        }
+
+        // 中文那条路一字未动
+        assert_eq!(masked("审核者:樊笋 检验者:王涛"), "审核者:[P1] 检验者:[P2]");
+        assert_eq!(masked("姓名:张建国 性别:男"), "姓名:[P1] 性别:男");
+    }
+
     /// review-21-22.md Critical 2 的原样反例:左栏页脚三框(y400/430/455)排在右栏
     /// 化验行(y470)**之上**,页脚带的起点因此被顶到 492 —— 三框一个都盖不住。
     /// 逐框兜底必须让它们**不依赖带子**各自被涂黑。

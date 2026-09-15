@@ -66,14 +66,15 @@ pub const ANCHORS: &[(&str, &str)] = &[
     // (实测反例:`Digitally signed by` / `Dr. Cameron Cordara` / `Test id B165AAF4`
     // 三框 COVERED 全 false)。
     //
-    // 对文本档(`apply`)的影响很小且**只增不减**:P 类取值走 `take_name_value`,那是
-    // 只认 CJK 的,所以 `Dr. Cameron Cordara` 不会被它掩(英文人名仍靠 K 层的已知身份
-    // + 这里的逐框涂黑);N 类走 `take_free_value`,`Test id : B165AAF4` 这类编号会被
-    // 掩成 [N*],是净收益。
+    // 文本档(`apply`)这边**只增不减**:N 类走 `take_free_value`,`Test id : B165AAF4`
+    // 这类编号掩成 [N*];P 类走 `take_name_value`,它在取不到中文名时会再试
+    // `take_latin_name_value`,于是 `Doctor  Cameron Cordara` / `Signed by Dr. X` 这些
+    // 英文人名也掩得到了(在此之前只有图片档那边逐框涂黑,文本档原样发出去)。
     //
-    // 上面那条「裸的医生/患者不当锚点」的顾虑在这里不成立:`Doctor`/`Physician` 的值
-    // 是 CJK-only 的 `take_name_value`,取不到英文值,吃不掉整句话;它们在这里的作用
-    // 只是「这一框要涂黑」。
+    // 上面那条「裸的医生/患者不当锚点、会把后面一整句话吃掉」的顾虑,在拉丁分支里由
+    // 三道边界挡住(见 `take_latin_name_value`):token 间只许一个空格、碰到锚点/停止词
+    // 收尾、首 token 是词典认得的化验项目名就整个判否。实测 `Doctor` 换行后跟着表格
+    // (`WBC 6.7 …` / `Hemoglobin 12 …` / `COMPLETE BLOOD COUNT`)一个字都不会被吃掉。
     ("Digitally signed by", "P"),
     ("Signed by", "P"),
     ("Reported by", "P"),
@@ -140,6 +141,9 @@ fn kind_of(anchor: &str) -> &'static str {
 
 /// P 类(人名):2~6 个中文字符(部分少数民族/复姓名字有 5~6 字);一碰到任意锚点词或
 /// 性别/年龄/科室 开头,立刻收尾——即使中间没有分隔符。
+///
+/// 取不到中文名时再试**拉丁人名**([`take_latin_name_value`])。中文那条路一字未动:
+/// 只有它返回 `None` 时才走拉丁那条,所以对既有语料**不可能掩得比以前少**。
 fn take_name_value(rest: &str) -> Option<&str> {
     let mut end = 0;
     let mut count = 0;
@@ -150,7 +154,88 @@ fn take_name_value(rest: &str) -> Option<&str> {
         end += c.len_utf8();
         count += 1;
     }
-    (count >= 2).then(|| &rest[..end])
+    if count >= 2 {
+        return Some(&rest[..end]);
+    }
+    take_latin_name_value(rest)
+}
+
+/// 一个 token 像不像**拉丁人名的一节**。
+///
+/// **必须是 Title-case,不能是全大写** —— 化验表里的项目缩写(`WBC`/`RBC`/`HCT`)和
+/// 段落标题(`COMPLETE BLOOD COUNT`)都是全大写,放行它们就会把表格内容当人名掩掉
+/// (实测 `Doctor\nWBC 6.7 …` 把 `WBC` 掩成了 `[P1]`)。两个例外:
+/// * **称谓/缩写**:3 字符以内且以 `.` 结尾(`Dr.`、`J.`,以及 OCR 把 `Dr.` 认成的 `D1.`);
+/// * **中间名缩写**:单个大写字母,且**不能是第一个 token** —— 第一个位置留给
+///   `H`/`L` 这类化验异常标记,不许它开头就命中。
+fn is_latin_name_token(t: &str, is_first: bool) -> bool {
+    let mut cs = t.chars();
+    if !cs.next().is_some_and(|c| c.is_ascii_uppercase()) {
+        return false;
+    }
+    let rest: Vec<char> = cs.collect();
+    if !rest
+        .iter()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '\'' | '-'))
+    {
+        return false;
+    }
+    if rest.iter().any(|c| c.is_ascii_lowercase()) {
+        return true; // Cameron / O'Neil / Smith-Jones
+    }
+    (t.len() <= 3 && t.ends_with('.')) || (t.len() == 1 && !is_first)
+}
+
+/// 这个 token 是不是词典认得的化验项目名。用来挡「标签后面没有值、紧跟着就是表格」
+/// 的情形(`Physician` 换行之后是 `Hemoglobin 12 g/dL`)—— 那一行不是人名,吃掉它
+/// 就是把化验内容掩掉了。**只对 4 个字母以上的词判**:词典里 `ana`/`alt`/`cea`
+/// 这类三字母缩写与真实人名撞车(`Ana Betz`),短缩写不是可靠证据。
+fn is_lab_term_token(t: &str) -> bool {
+    let word = t.trim_matches(|c: char| matches!(c, '.' | '\'' | '-'));
+    word.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 4
+        && terminology::normalize(&word.to_lowercase()).is_some_and(|m| m.confidence >= 1.0)
+}
+
+/// P 类的**拉丁人名**分支:英文报告里 `Doctor` / `Signed by` / `Reported by` 这些锚点
+/// 后面跟的是 ASCII 名字,老的 `take_name_value` 只认 CJK,一个字都掩不到 —— 图片档
+/// 那边这一框已经被逐框涂黑,文本档却原样发出去(review-21-22.md 之后的遗留缺口)。
+///
+/// 取**最多 3 个**首字母大写的 token(`Dr. Cameron Cordara`、`Mary Jane O'Neil`),
+/// 三条边界,都是为了不把表格内容当人名吃掉:
+/// * token 之间只允许**一个空格**。列对齐的报告里字段之间是 2 个以上空格
+///   (`Doctor    Cameron Cordara          Test id B165AAF4`),所以值到
+///   `Cordara` 就收尾,不会把后面那列的 `Test` 吞进来。
+/// * 碰到任意锚点词/停止词立刻收尾(与中文分支同一条规则)。
+/// * 第一个 token 若是词典认得的化验项目名,整个判否、一个字都不取。
+fn take_latin_name_value(rest: &str) -> Option<&str> {
+    let mut end = 0;
+    let mut taken = 0;
+    while taken < 3 {
+        let at = &rest[end..];
+        if at.is_empty() || starts_with_stop_word(at) {
+            break;
+        }
+        // 第二个 token 起:前面必须恰好一个空格(列对齐的 2 空格即字段边界)。
+        let start = if taken == 0 {
+            0
+        } else if at.starts_with(' ') && !at[1..].starts_with(' ') {
+            1
+        } else {
+            break;
+        };
+        let body = &at[start..];
+        if starts_with_stop_word(body) {
+            break;
+        }
+        let tok_len = body.find(|c: char| c.is_whitespace()).unwrap_or(body.len());
+        let tok = &body[..tok_len];
+        if tok.is_empty() || !is_latin_name_token(tok, taken == 0) || is_lab_term_token(tok) {
+            break;
+        }
+        end += start + tok_len;
+        taken += 1;
+    }
+    (taken >= 1).then(|| &rest[..end])
 }
 
 /// N/A 类(号码/地址):不设字符数上限,一直取到下一个空白/标点分隔符或下一个锚点词为止

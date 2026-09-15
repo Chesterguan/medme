@@ -1,0 +1,12 @@
+# known: Ana Betz | - | -
+Patient Name   Ana Betz          MRN 0012345
+Accession  A2011-0825-77        Specimen id SP-4412
+COMPLETE BLOOD COUNT
+Test Name                      Result        Normal Range        Units
+Hemoglobin                        12         11.0 - 16.0         g/dL
+WBC                              6.7             4.5-11          10^3/uL
+Creatinine                        88             59-104          umol/L
+Reviewed by   Mary Jane O'Neil
+Reported by   Dr. Alan Whitfield
+Digitally signed by
+D1. Cameron Cordara

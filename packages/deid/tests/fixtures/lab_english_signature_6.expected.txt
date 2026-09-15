@@ -1,0 +1,11 @@
+Patient Name   [P1]          MRN [N1]
+Accession  [N2]        Specimen id [N3]
+COMPLETE BLOOD COUNT
+Test Name                      Result        Normal Range        Units
+Hemoglobin                        12         11.0 - 16.0         g/dL
+WBC                              6.7             4.5-11          10^3/uL
+Creatinine                        88             59-104          umol/L
+Reviewed by   [P2]
+Reported by   [P3]
+Digitally signed by
+[P4]

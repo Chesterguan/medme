@@ -2,10 +2,10 @@ GNU Solidario Hospital
 LABORATORY REPORT
 Name      [P1]                                           Patient ID [N1]
 Date      2011-08-25 08:32                         Age 25y 10m 26d        Sex Female
-Doctor    Cameron Cordara                                               Test id [N2]
+Doctor    [P2]                                               Test id [N2]
 COMPLETE BLOOD COUNT
 Hemoglobin                        12                 11.0 - 16.0                g/dL
 WBC                              6.7                    4.5-11              10^3/uL
 Digitally signed by
-Dr. Cameron Cordara
+[P3]
 GNU Public Key : E44311F4
