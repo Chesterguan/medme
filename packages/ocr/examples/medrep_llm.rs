@@ -39,6 +39,10 @@ use std::time::Instant;
 const SYSTEM: &str = include_str!("../../deid/prompts/extract_v1_system.txt");
 /// 图片档 user message 里的提示文本,同样与 `services/api/extract.py` 共享一份文件。
 const IMAGE_USER_TEXT: &str = include_str!("../../deid/prompts/extract_v1_image_user.txt");
+/// 请求参数(`max_tokens` / `reasoning_effort`)与线上代理 `services/api/extract.py`
+/// 共用同一份文件,理由与上面两份 prompt 完全一样:**两边发的请求必须逐字段相同,
+/// 否则评测数字量的不是线上那个模型行为**。`extract.py` 读同一个路径。
+const REQUEST_PARAMS: &str = include_str!("../../deid/prompts/extract_v1_params.json");
 
 const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
 /// 模型**默认值**,不是硬绑定:`DEEPSEEK_MODEL_TEXT` / `DEEPSEEK_MODEL_VISION`
@@ -78,20 +82,36 @@ fn mode_dir_name(mode: Mode) -> &'static str {
 
 /// 纯函数:拼 DeepSeek 请求体。不碰网络,单测直接验证形状。
 fn request_body(model: &str, user_content: serde_json::Value) -> serde_json::Value {
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "model": model,
         "temperature": 0,
         "messages": [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": user_content}
         ]
-    })
+    });
+    // 共用参数逐字段并进去(`max_tokens` / `reasoning_effort`),不在这里重复写死。
+    let params: serde_json::Value =
+        serde_json::from_str(REQUEST_PARAMS).expect("extract_v1_params.json 不是合法 JSON");
+    let obj = body.as_object_mut().expect("body is object");
+    for (k, v) in params.as_object().expect("params is object") {
+        obj.insert(k.clone(), v.clone());
+    }
+    body
 }
 
 /// 纯函数:从 DeepSeek 响应 JSON 里取出 `choices[0].message.content`。不碰网络,
 /// 单测用一份罐头 JSON 验证。
 fn response_content(resp: &serde_json::Value) -> Option<&str> {
     resp["choices"][0]["message"]["content"].as_str()
+}
+
+/// 这次回答是不是被 `max_tokens` 截断了。与 `services/api/extract.py` 同一条判据:
+/// 截断的内容**不是结果**(JSON 断在半截,偶尔还会恰好断在一个合法位置上,于是一份
+/// 缺了后半张表的抽取被当成完整结果)。评测臂必须和线上一样把它算失败,否则量出来的
+/// 就不是线上的行为。
+fn response_truncated(resp: &serde_json::Value) -> bool {
+    resp["choices"][0]["finish_reason"] == "length"
 }
 
 /// 纯函数:从响应里取 token 用量。DeepSeek 不保证带 `usage`,缺了按 0 算——
@@ -120,6 +140,9 @@ fn call_deepseek(
         .body_mut()
         .read_json()
         .context("deepseek 响应不是合法 json")?;
+    if response_truncated(&v) {
+        bail!("deepseek 回答被 max_tokens 截断(finish_reason=length)");
+    }
     let content = response_content(&v)
         .map(str::to_string)
         .context("deepseek 响应里没有 choices[0].message.content")?;
@@ -744,10 +767,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn truncated_response_is_a_failure_not_a_result() {
+        let cut = serde_json::json!({"choices":[{"finish_reason":"length","message":{"content":"{\"labs\":["}}]});
+        assert!(response_truncated(&cut));
+        let ok =
+            serde_json::json!({"choices":[{"finish_reason":"stop","message":{"content":"{}"}}]});
+        assert!(!response_truncated(&ok));
+    }
+
+    #[test]
     fn request_body_has_system_and_user_messages() {
         let body = request_body(MODEL_TEXT, serde_json::json!("待抽取文本"));
         assert_eq!(body["model"], MODEL_TEXT);
         assert_eq!(body["temperature"], 0);
+        // 与 `services/api/extract.py` 共用的那两个参数必须真的发出去
+        // (review-21-22.md Important 4:评测臂不带封顶时,量的不是线上的模型行为)。
+        assert_eq!(body["max_tokens"], 6000);
+        assert_eq!(body["reasoning_effort"], "low");
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][0]["content"], SYSTEM);
         assert_eq!(body["messages"][1]["role"], "user");
