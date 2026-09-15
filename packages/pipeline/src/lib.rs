@@ -404,7 +404,15 @@ pub fn ingest_with_dicom_parser(
     // PDF 走独立分支(逐页判定文本层,而非整份拼接后的长度——见 `ingest_pdf`
     // 文档注释里的"混合页 PDF 静默丢数据"缺陷)。
     if is_pdf(path) {
-        return ingest_pdf(vault, sid, &name, &bytes, imp.deduped, &BTreeMap::new());
+        return ingest_pdf(
+            vault,
+            sid,
+            &name,
+            &bytes,
+            imp.deduped,
+            &BTreeMap::new(),
+            (None, None),
+        );
     }
 
     match parser::extract(path) {
@@ -534,6 +542,11 @@ struct CarriedOcr {
 /// 而这些照片的文字端上早就识别过了(iOS 还先过了一遍 Vision 拉正),重新去
 /// OCR 内嵌图只会更差、甚至一个字都拿不到。带过来的页**优先**于本函数自己
 /// 认出来的结果;普通导入传空表,行为与从前逐字一致。
+///
+/// `date_span`(起, 止)同样是合并专用:非空就直接当这份文档的日期,不再从拼起来
+/// 的长文本里猜。理由见 `merge_documents_into_pdf` 里那段注释。普通导入传
+/// `(None, None)`,照旧走 `parser::guess_date_range` —— 两头都空本来就是「不知道」,
+/// 与「没传」是同一件事,不必再包一层 `Option`。
 fn ingest_pdf(
     vault: &Vault,
     sid: i64,
@@ -541,6 +554,7 @@ fn ingest_pdf(
     bytes: &[u8],
     deduped: bool,
     carried: &BTreeMap<i32, CarriedOcr>,
+    date_span: (Option<DateTime<Utc>>, Option<DateTime<Utc>>),
 ) -> anyhow::Result<IngestOutcome> {
     let mixed = match ocr::recognize_pdf_mixed(bytes) {
         Ok(m) => m,
@@ -662,7 +676,10 @@ fn ingest_pdf(
         return Ok(outcome);
     }
     let doc_type = parser::classify(&text);
-    let (doc_date, doc_date_end) = parser::guess_date_range(&text);
+    let (doc_date, doc_date_end) = match date_span {
+        (None, None) => parser::guess_date_range(&text),
+        span => span,
+    };
     let doc = vault.add_document(NewDocument {
         source_file_id: sid,
         doc_type: doc_type.clone(),
@@ -903,6 +920,8 @@ pub fn merge_documents_into_pdf(
 
     let mut photos = Vec::with_capacity(document_ids.len());
     let mut carried: BTreeMap<i32, CarriedOcr> = BTreeMap::new();
+    // 源文档各自的日期,合并后要收成一个区间——见下面 `date_span` 那段。
+    let mut source_dates: Vec<DateTime<Utc>> = Vec::new();
     for (i, &doc_id) in document_ids.iter().enumerate() {
         let doc = vault
             .document_by_id(doc_id)?
@@ -931,6 +950,7 @@ pub fn merge_documents_into_pdf(
         // "先物化 iCloud 占位符"那层平台特判要顾,直接要最强的读法)。
         let bytes = vault.read_object(&sf.content_hash)?;
         photos.push(bytes);
+        source_dates.extend([doc.doc_date, doc.doc_date_end].into_iter().flatten());
 
         // **把这一页已经识别出来的文字带走。** 这几份文档马上要被墓碑掉,它们的
         // `ocr_result` 行会随之从投影里消失(见 `delete_document`);不带走,用户
@@ -955,6 +975,27 @@ pub fn merge_documents_into_pdf(
         }
     }
 
+    // **合并那份的日期跨页取区间,不再让 `guess_date_range` 猜。** 它在拼起来的
+    // 长文本里只认得到第一页那个带标签的日期,于是整份塌成一天:2026-09-15 冒烟
+    // §C 实测三页分别是 2024-01-15 / 2025-11-05 / 2026-02-14,合并后 `doc_date`
+    // 变成 2025-11-05,概览把三页的化验**全部**挂在这一天,趋势图拿到的是错日期。
+    // 源文档各自建档时已经各猜过一次,这里直接取它们的最早→最晚。
+    //
+    // ⚠️ **局限,说在明处**:`Event::DocumentAdded` 只有 `doc_date` /
+    // `doc_date_end` 两个字段,存不下「第 k 页是哪天」。按本轮约束**不新增事件
+    // 类型**(= 不动 vault 格式),所以逐页日期做不到:概览里这几页化验挂的是
+    // 同一个区间,显示的那一天是**最早**的那天。真要逐页,得给 `OcrAdded` 加
+    // 字段,不在本轮范围。
+    source_dates.sort_unstable();
+    let date_span = match (source_dates.first(), source_dates.last()) {
+        // 跨了不止一天 → 区间(与住院 入院→出院 同一套字段)。
+        (Some(&a), Some(&b)) if a != b => (Some(a), Some(b)),
+        // 只有一天 → 单点(`doc_date_end` 留空,与 `guess_date_range` 的口径一致)。
+        (Some(&a), _) => (Some(a), None),
+        // 源文档一个日期都没有 → 不越俎代庖,让 `ingest_pdf` 自己从合并文本里猜。
+        _ => (None, None),
+    };
+
     let merged_bytes = merge::build_pdf_from_photos(&photos)?;
     let imp = vault.import(merged_name, "application/pdf", &merged_bytes)?;
     // 走与桌面上传扫描版 PDF 完全相同的入库路径——这就是"合并后怎么重新 OCR
@@ -967,6 +1008,7 @@ pub fn merge_documents_into_pdf(
         &merged_bytes,
         imp.deduped,
         &carried,
+        date_span,
     )?;
 
     // 新文档确认建成(上面两行没有提前返回 Err)才轮到删旧的——见本函数文档
@@ -989,29 +1031,49 @@ pub struct PatientProfile {
 
 /// 从所有文档 OCR 文本派生病人档案:各字段取众数(最常出现值)。
 /// 年龄随时间变,取众数为近似;身份靠姓名+性别(稳定)。
+///
+/// **一份文档一票,不是一页一票**,而且按 `timeline()` 的顺序(最近的在前)走。
+/// 两件事都是 2026-09-15 冒烟 §D 逼出来的:
+/// * `record_count` 以前数的是 `ocr_result` 行(= OCR 页数),合并出的一份三页
+///   文档在成员卡上写成「3 份记录」,而档案屏只有 1 行。数**文档**。
+/// * 众数平票时 `HashMap` 的迭代顺序不定,同一份数据在不同屏上把年龄显示成
+///   60 / 59 / 61。合并让「一份文档里有好几个年龄」成了常态,这条不确定性就
+///   天天看得见了。平票改成**取最近那份文档里的值**(还平就取字面量最大的),
+///   于是同一个保险箱永远给同一个答案。
 pub fn patient_profile(vault: &Vault) -> anyhow::Result<PatientProfile> {
-    let texts = vault.all_ocr_texts()?;
-    let record_count = texts.len() as i64;
-    let mut names: HashMap<String, i32> = HashMap::new();
-    let mut genders: HashMap<String, i32> = HashMap::new();
-    let mut births: HashMap<String, i32> = HashMap::new();
-    let mut ages: HashMap<String, i32> = HashMap::new();
-    for t in &texts {
-        let d = parser::extract_demographics(t);
-        if let Some(n) = d.name {
-            *names.entry(n).or_insert(0) += 1;
+    // `timeline()` 已按 doc_date DESC(NULL 最后)、id DESC 排好 —— 下标就是
+    // 「第几近」,越小越近。
+    let docs = vault.timeline()?;
+    let record_count = docs.len() as i64;
+    // 值 → (票数, 第一次出现时的下标 = 见过它的最近那份文档)。
+    let mut names: HashMap<String, (i32, usize)> = HashMap::new();
+    let mut genders: HashMap<String, (i32, usize)> = HashMap::new();
+    let mut births: HashMap<String, (i32, usize)> = HashMap::new();
+    let mut ages: HashMap<String, (i32, usize)> = HashMap::new();
+    let vote = |m: &mut HashMap<String, (i32, usize)>, v: Option<String>, rank: usize| {
+        if let Some(v) = v {
+            let e = m.entry(v).or_insert((0, rank));
+            e.0 += 1;
         }
-        if let Some(g) = d.gender {
-            *genders.entry(g).or_insert(0) += 1;
-        }
-        if let Some(b) = d.birth_date {
-            *births.entry(b).or_insert(0) += 1;
-        }
-        if let Some(a) = d.age {
-            *ages.entry(a).or_insert(0) += 1;
-        }
+    };
+    for (rank, entry) in docs.iter().enumerate() {
+        let d = parser::extract_demographics(&vault.ocr_text(entry.document_id)?);
+        vote(&mut names, d.name, rank);
+        vote(&mut genders, d.gender, rank);
+        vote(&mut births, d.birth_date, rank);
+        vote(&mut ages, d.age, rank);
     }
-    let mode = |m: HashMap<String, i32>| m.into_iter().max_by_key(|(_, c)| *c).map(|(k, _)| k);
+    // 票多的赢;平票取**最近**那份文档里的值(rank 小);再平(不可能,rank 唯一)
+    // 取字面量大的 —— 让这个比较是全序,别把确定性寄托在"不可能"上。
+    let mode = |m: HashMap<String, (i32, usize)>| {
+        m.into_iter()
+            .max_by(|(ka, (ca, ra)), (kb, (cb, rb))| {
+                ca.cmp(cb)
+                    .then(rb.cmp(ra))
+                    .then_with(|| ka.as_str().cmp(kb.as_str()))
+            })
+            .map(|(k, _)| k)
+    };
     Ok(PatientProfile {
         name: mode(names),
         gender: mode(genders),
@@ -1708,18 +1770,102 @@ trailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n";
         assert_eq!(prof.record_count, 2);
     }
 
+    /// `record_count` 数的是**文档**,不是 OCR 页(2026-09-15 冒烟 §D:合并出的
+    /// 一份三页文档在成员卡上写着「3 份记录」,档案屏却只有 1 行)。
+    #[test]
+    fn patient_profile_record_count_counts_documents_not_ocr_pages() {
+        let vdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+
+        let mut doc_ids = Vec::new();
+        for (i, text) in [
+            "北京协和医院\n血常规检验报告单\n姓名:张建国 性别:男 年龄:60岁\nWBC 11.8 10^9/L 3.5-9.5 ↑\n",
+            "北京协和医院\n肾功能检验报告单\n姓名:张建国 性别:男 年龄:60岁\n肌酐 112 umol/L 57-97 ↑\n",
+            "四川大学华西医院\n生化检验报告单\n姓名:张建国 性别:男 年龄:60岁\n总胆固醇 6.42 mmol/L 0-5.18 ↑\n",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let bytes = merge::fake_photo(60 + i as u32 * 10, 80);
+            let (doc_id, _) = seed_single_page_photo_doc(&v, &format!("photo{i}.jpg"), &bytes);
+            v.add_ocr(NewOcr {
+                document_id: doc_id,
+                page_no: 1,
+                backend: OcrBackendKind::Onnx,
+                model_version: "ppocr-v5".into(),
+                text: (*text).to_string(),
+                confidence: Some(0.9),
+            })
+            .unwrap();
+            doc_ids.push(doc_id);
+        }
+        assert_eq!(patient_profile(&v).unwrap().record_count, 3, "合并前 3 份");
+
+        merge_documents_into_pdf(&v, "合并文档.pdf", &doc_ids).unwrap();
+        assert_eq!(
+            patient_profile(&v).unwrap().record_count,
+            1,
+            "合并后档案只有 1 行,成员卡也该是 1 份 —— 数 OCR 页会写成 3"
+        );
+    }
+
+    /// 平票不许随机(2026-09-15 冒烟 §D:同一份数据把年龄在不同屏上显示成
+    /// 60 / 59 / 61)。两份文档各投一票 = 死平,取**最近那份**里的值。
+    ///
+    /// 循环跑是必须的:`HashMap` 每个实例的迭代顺序都不同,跑一次的「对了」
+    /// 完全可能是撞上的 —— 旧实现在这个测试里是随机过/不过。
+    #[test]
+    fn patient_profile_breaks_age_ties_by_most_recent_document() {
+        let vdir = tempfile::tempdir().unwrap();
+        let fdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+        for (i, body) in [
+            "检验报告\n姓名:张建国 性别:男 年龄:59岁\n日期 2024-01-01 肌酐 90",
+            "检验报告\n姓名:张建国 性别:男 年龄:61岁\n日期 2026-02-14 肌酐 95",
+            "出院记录\n姓名:张建国 性别:男 年龄:60岁\n日期 2025-02-02 脑梗死",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let p = fdir.path().join(format!("r{i}.txt"));
+            std::fs::write(&p, body).unwrap();
+            ingest(&v, &p).unwrap();
+        }
+        for _ in 0..20 {
+            assert_eq!(
+                patient_profile(&v).unwrap().age.as_deref(),
+                Some("61"),
+                "三个年龄各一票,该取最近那份(2026-02-14)里的 61"
+            );
+        }
+    }
+
     /// 造一份「已入库的单页照片文档」——不经完整 `ingest_image`(需要一个真的
     /// OCR 引擎),直接用 `import` + `add_document` 组出与 `ingest_image` 落库
     /// 后完全同构的状态(见 `types.rs` 里同一手法的 `add_document_and_ocr_populates_fts`
     /// 测试)。`merge_documents_into_pdf` 只关心 `page_count`/`mime_type`,不关心
     /// 文档是怎么建出来的。
     fn seed_single_page_photo_doc(v: &Vault, name: &str, bytes: &[u8]) -> (i64, i64) {
+        seed_single_page_photo_doc_dated(v, name, bytes, None)
+    }
+
+    /// 同上,多一个 `doc_date`(`YYYY-MM-DD`)—— 合并的日期区间要用。
+    fn seed_single_page_photo_doc_dated(
+        v: &Vault,
+        name: &str,
+        bytes: &[u8],
+        doc_date: Option<&str>,
+    ) -> (i64, i64) {
         let imp = v.import(name, "image/jpeg", bytes).unwrap();
         let doc = v
             .add_document(NewDocument {
                 source_file_id: imp.source_file.id,
                 doc_type: DocType::Unknown,
-                doc_date: None,
+                doc_date: doc_date.map(|d| {
+                    DateTime::parse_from_rfc3339(&format!("{d}T00:00:00Z"))
+                        .unwrap()
+                        .with_timezone(&Utc)
+                }),
                 doc_date_end: None,
                 title: Some(name.to_string()),
                 language: None,
@@ -1896,6 +2042,100 @@ trailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n";
         // 重放后仍在:带过来的文字走的是普通 `OcrAdded` 事件,没有新事件类型。
         v.rebuild_from_log().unwrap();
         assert_eq!(v.ocr_text(merged.id).unwrap(), merged_text);
+    }
+
+    /// 合并**不许**把三页各自的日期压成一天(2026-09-15 冒烟 §C:三页分别是
+    /// 2024-01-15 / 2025-11-05 / 2026-02-14,合并后整份 `doc_date` 变成
+    /// 2025-11-05 —— `guess_date_range` 在拼起来的长文本里只认第一个带标签的
+    /// 日期,于是三页化验在概览里全挂到了那一天)。
+    ///
+    /// 现在取**源文档的最早 → 最晚**,落进 `doc_date` / `doc_date_end`。
+    /// 逐页日期做不到(`DocumentAdded` 只有这两个字段,本轮不新增事件类型),
+    /// 这个测试同时是那条局限的留痕:显示的那一天是**最早**的那天。
+    #[test]
+    fn merge_keeps_the_span_of_the_source_pages_dates() {
+        let vdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+
+        // 页内文本自己也带日期,而且**故意与源文档的 doc_date 不同** —— 用来证明
+        // 合并走的是源文档的日期区间,不是又去拼起来的长文本里猜一次。
+        let pages = [
+            ("2024-01-15", "四川大学华西医院\n生化检验报告单\n日期 2099-09-09\n总胆固醇 TC 6.42 mmol/L 0-5.18 ↑\n"),
+            ("2025-11-05", "北京协和医院\n血常规检验报告单\n中性粒细胞百分比 79.2 % 40-75 ↑\n"),
+            ("2026-02-14", "北京协和医院\n肾功能检验报告单\n肌酐 Creatinine 112 umol/L 57-97 ↑\n"),
+        ];
+        let mut doc_ids = Vec::new();
+        for (i, (date, text)) in pages.iter().enumerate() {
+            let bytes = merge::fake_photo(60 + i as u32 * 10, 80);
+            let (doc_id, _) =
+                seed_single_page_photo_doc_dated(&v, &format!("photo{i}.jpg"), &bytes, Some(date));
+            v.add_ocr(NewOcr {
+                document_id: doc_id,
+                page_no: 1,
+                backend: OcrBackendKind::Onnx,
+                model_version: "ppocr-v5".into(),
+                text: (*text).to_string(),
+                confidence: Some(0.9),
+            })
+            .unwrap();
+            doc_ids.push(doc_id);
+        }
+
+        let outcome = merge_documents_into_pdf(&v, "合并文档.pdf", &doc_ids).unwrap();
+        let merged = v
+            .document_by_source_file_id(outcome.source_file_id)
+            .unwrap()
+            .expect("合并应建出新文档");
+        assert_eq!(
+            merged.doc_date.unwrap().format("%Y-%m-%d").to_string(),
+            "2024-01-15",
+            "合并后应显示最早那一页的日期,不是第一页的"
+        );
+        assert_eq!(
+            merged.doc_date_end.unwrap().format("%Y-%m-%d").to_string(),
+            "2026-02-14",
+            "最晚那一页的日期应落进 doc_date_end,整份是个区间"
+        );
+    }
+
+    /// 源文档一个日期都没有时不越俎代庖:仍旧让 `ingest_pdf` 从合并后的文本里猜。
+    #[test]
+    fn merge_falls_back_to_guessing_when_sources_have_no_dates() {
+        let vdir = tempfile::tempdir().unwrap();
+        let v = Vault::open(vdir.path()).unwrap();
+
+        let mut doc_ids = Vec::new();
+        for (i, text) in [
+            "北京协和医院\n血常规检验报告单\n检验日期 2025-03-04\nWBC 白细胞计数 11.8 10^9/L 3.5-9.5 ↑\n",
+            "北京协和医院\n肾功能检验报告单\n肌酐 Creatinine 112 umol/L 57-97 ↑\n",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let bytes = merge::fake_photo(60 + i as u32 * 10, 80);
+            let (doc_id, _) = seed_single_page_photo_doc(&v, &format!("photo{i}.jpg"), &bytes);
+            v.add_ocr(NewOcr {
+                document_id: doc_id,
+                page_no: 1,
+                backend: OcrBackendKind::Onnx,
+                model_version: "ppocr-v5".into(),
+                text: (*text).to_string(),
+                confidence: Some(0.9),
+            })
+            .unwrap();
+            doc_ids.push(doc_id);
+        }
+
+        let outcome = merge_documents_into_pdf(&v, "合并文档.pdf", &doc_ids).unwrap();
+        let merged = v
+            .document_by_source_file_id(outcome.source_file_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            merged.doc_date.unwrap().format("%Y-%m-%d").to_string(),
+            "2025-03-04",
+            "源文档没日期时应回退到从合并文本里猜"
+        );
     }
 
     #[test]
