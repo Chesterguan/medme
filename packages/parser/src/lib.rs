@@ -252,8 +252,10 @@ pub fn extract_demographics(text: &str) -> Demographics {
     static GENDER: OnceLock<Regex> = OnceLock::new();
     static AGE: OnceLock<Regex> = OnceLock::new();
     static BIRTH: OnceLock<Regex> = OnceLock::new();
+    static NAME_EN: OnceLock<Regex> = OnceLock::new();
     let name = NAME.get_or_init(|| {
-        Regex::new(r"(?:姓名|名字)[:：]\s*([^\s，,;；、\d]{1,10})").expect("name regex")
+        Regex::new(r"(?:姓名|名字|Patient Name|Name)[:：]\s*([^\s，,;；、\d]{1,10})")
+            .expect("name regex")
     });
     // 无冒号的兜底:纸质报告里「姓名 / 性别 / 年龄」是靠**表格对齐**排的,拍照 OCR
     // 之后冒号往往根本不存在(实测华西/独墅湖等报告单,识别出来是「姓名孟丁 性别男」)。
@@ -261,6 +263,20 @@ pub fn extract_demographics(text: &str) -> Demographics {
     // 所以「姓名孟丁性别男」这种粘连的情况宁可提不出,也不会把「孟丁性别」当成名字。
     let name_loose = NAME_LOOSE.get_or_init(|| {
         Regex::new(r"(?:姓名|名字)\s*([\u{4e00}-\u{9fa5}]{2,4})(?:\s|$)").expect("loose name regex")
+    });
+    // 英文报告的同一件事(extract-repro-report.md §5):`Name      Ana Betz` 靠**列对齐**
+    // 排版,冒号同样不存在,而整条姓名闸(`deid/gate.rs` 要求 >= 2 字)就靠这里抽到的
+    // 名字 —— 抽不到就退回成员名「我」,闸直接空转,患者姓名原样上云。
+    //
+    // 两处收紧,都是为了不把**字段标签**当成名字:
+    // * 标签后必须是 **2 个以上空格**(列对齐的证据)。`Patient ID PAC001` 只隔一个
+    //   空格,不匹配 —— 否则会把 `ID` 当成患者名。同理不收裸的 `Patient`,只收
+    //   `Patient Name`。
+    // * 取值必须是 1–4 个**首字母大写**的词(`Ana Betz`、`Mary Jane O'Neil`),不含
+    //   数字 —— 报告里的编号/日期列因此进不来。
+    let name_en = NAME_EN.get_or_init(|| {
+        Regex::new(r"(?:Patient Name|Name)\s{2,}([A-Z][A-Za-z.'\-]*(?:\s[A-Z][A-Za-z.'\-]*){0,3})")
+            .expect("english name regex")
     });
     let gender = GENDER.get_or_init(|| Regex::new(r"性别[:：]?\s*([男女])").expect("gender regex"));
     let age = AGE.get_or_init(|| Regex::new(r"年龄[:：]?\s*(\d{1,3})").expect("age regex"));
@@ -277,8 +293,10 @@ pub fn extract_demographics(text: &str) -> Demographics {
         .captures(text)
         .map(|c| format!("{}-{:0>2}-{:0>2}", &c[1], &c[2], &c[3]));
     Demographics {
-        // 带冒号的优先;提不出再用无冒号兜底(拍照 OCR 的表格式报告)。
-        name: cap1(name).or_else(|| cap1(name_loose)),
+        // 带冒号的优先;提不出再用无冒号兜底(拍照 OCR 的表格式报告),中文兜底优先于英文。
+        name: cap1(name)
+            .or_else(|| cap1(name_loose))
+            .or_else(|| cap1(name_en)),
         gender: cap1(gender),
         birth_date,
         age: cap1(age),

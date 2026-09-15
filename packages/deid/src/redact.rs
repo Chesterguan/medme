@@ -195,8 +195,18 @@ fn looks_like_lab_content(t: &str) -> bool {
     looks_like_lab_row(t) || looks_like_lab_name(t)
 }
 
-/// 像不像页脚锚点行(检验者/审核者/打印时间/报告医生等)。
+/// 英文报告的页脚锚点。`Digitally signed by Dr. Cameron Cordara` 这一行实测原样上云
+/// (extract-repro-report.md §5):这张表里 6 个中文词一个都不命中,GNU_Health 送出去的
+/// 图底部签名、公钥、Test id 全在。按**小写**比较——真实报告里大小写不定
+/// (`Digitally signed by` 的 `signed` 就是小写)。
+const FOOTER_ANCHORS_EN: &[&str] = &["signed by", "reported by", "reviewed by", "physician"];
+
+/// 像不像页脚锚点行(检验者/审核者/打印时间/报告医生等,以及 [`FOOTER_ANCHORS_EN`])。
 fn looks_like_footer(t: &str) -> bool {
+    let lower = t.to_lowercase();
+    if FOOTER_ANCHORS_EN.iter().any(|a| lower.contains(a)) {
+        return true;
+    }
     [
         "检验者",
         "审核者",
@@ -1374,6 +1384,44 @@ mod tests {
             assert!(
                 redact_boxes(&boxes, &k, 400.0, 500.0).is_empty(),
                 "{t} 是保留字段,不该涂"
+            );
+        }
+    }
+
+    #[test]
+    fn english_report_gets_a_footer_band_too() {
+        // extract-repro-report.md §5:页脚锚点表原本全是中文,GNU_Health 送出去的图底部
+        // `Digitally signed by Dr. Cameron Cordara` / `GNU Public Key` / `Test id` 一个字
+        // 没涂。真实报告里大小写不定(`signed` 是小写),所以比较必须不区分大小写。
+        let k = KnownIdentity {
+            name: "Ana Betz".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, top: f32| Box {
+            text: t.into(),
+            left: 10.0,
+            top,
+            right: 300.0,
+            bottom: top + 20.0,
+        };
+        for anchor in [
+            "Digitally signed by",
+            "Reported by K. Lee",
+            "Reviewed by J. Doe",
+            "Physician: J. Doe",
+        ] {
+            let boxes = vec![
+                b("Hemoglobin 12 g/dL 11.0 - 16.0", 100.0),
+                b(anchor, 400.0),
+                b("Dr. Cameron Cordara", 430.0),
+            ];
+            let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+            assert!(
+                rects
+                    .iter()
+                    .any(|r| r.left == 0.0 && r.right == 400.0 && r.bottom == 500.0),
+                "{anchor} 没触发页脚带:{rects:?}"
             );
         }
     }
