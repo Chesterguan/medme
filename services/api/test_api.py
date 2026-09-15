@@ -759,6 +759,25 @@ def test_extract_request_bounds_the_model_output(monkeypatch):
     assert sent["timeout"] == 120
 
 
+def test_extract_truncated_by_max_tokens_is_502_not_a_half_table(monkeypatch):
+    # `finish_reason == "length"` = 被 MAX_TOKENS 截断。内容偶尔会恰好断在一个合法的
+    # JSON 位置上,于是一份**缺了后半张表**的抽取会被当成完整结果落进保险箱。
+    # 必须算上游错误(502),让客户端退回正则。
+    import extract
+    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {
+        "choices": [{"finish_reason": "length", "message": {"content": '{"doc_type":"lab","labs":[]}'}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 6000},
+    })
+    a = login("13800000067", "a")
+    assert client.post("/v1/extract", json={"mode": "image", "schema": 1, "payload": "AAAA"}, headers=_h(a["access"])).status_code == 502
+    # 同一份内容,没被截断 → 照常 200。
+    monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {
+        "choices": [{"finish_reason": "stop", "message": {"content": '{"doc_type":"lab","labs":[]}'}}],
+        "usage": {},
+    })
+    assert client.post("/v1/extract", json={"mode": "image", "schema": 1, "payload": "AAAA"}, headers=_h(a["access"])).status_code == 200
+
+
 def test_extract_proxies_and_counts_tokens(monkeypatch):
     import extract
     monkeypatch.setattr(extract, "_call_deepseek", lambda model, messages: {"choices": [{"message": {"content": '{"doc_type":"lab","labs":[]}'}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})

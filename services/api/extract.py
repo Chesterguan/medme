@@ -73,10 +73,17 @@ def run(body: dict) -> tuple[dict, int, int]:
         model = MODEL_TEXT
     try:
         out = _call_deepseek(model, [{"role": "system", "content": SYSTEM_PROMPT_V1}, {"role": "user", "content": content}])
-        text = out["choices"][0]["message"]["content"]
+        choice = out["choices"][0]
+        # 被 MAX_TOKENS 截断的回答**不是**结果:JSON 断在半截,`json.loads` 多半会炸,
+        # 但偶尔也会恰好断在一个合法的位置上,于是我们把一份**缺了后半张表**的抽取
+        # 当成完整结果落进保险箱。显式判掉,归为上游错误(502),让客户端退回正则 ——
+        # 少几条总比悄悄少半张表强。
+        if choice.get("finish_reason") == "length":
+            raise ValueError("truncated by max_tokens")
+        text = choice["message"]["content"]
         usage = out.get("usage", {})
         parsed = json.loads(text)
-    except Exception as e:  # 上游 HTTP 失败 / 返回形状不对 / 内容不是合法 JSON,统统算上游的错
+    except Exception as e:  # 上游 HTTP 失败 / 返回形状不对 / 被截断 / 内容不是合法 JSON,统统算上游的错
         raise UpstreamError("upstream") from e
     # 实际用的模型名回给客户端。抽取结果要连模型版本一起落进保险箱(溯源:这条结果
     # 是谁抽的),而那个名字只有这里知道 —— MODEL_TEXT/MODEL_VISION 都是环境变量,
