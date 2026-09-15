@@ -371,11 +371,22 @@ fn downscale_to_working_dim(img: DynamicImage) -> DynamicImage {
 /// unreliable skew estimate, etc.) causes that step to be skipped, and if
 /// something still goes wrong the original image is returned unchanged.
 pub fn preprocess(img: DynamicImage) -> DynamicImage {
+    preprocess_with_angle(img).0
+}
+
+/// [`preprocess`] 外加**它这次实际转了多少度**(顺时针,没转就是 0)。
+///
+/// 为什么非要把这个数交出来:[`deskew`] 走的是 `rotate_about_center`,**不改尺寸**
+/// ——于是「frame 只是原图的等比缩放」这个判据对一张转过的 frame 也成立。
+/// [`redact_image_full_res`] 要是信了它,就会把在**转过的** frame 上量出来的框画到
+/// **没转过的**原图上:1653×2339 上偏 1° 就是 ~25px,正好一行字,静默漏涂 PHI
+/// (task-18-19-review.md 的 critical)。拿到角度才能在原图上把同一下旋转补回去。
+pub fn preprocess_with_angle(img: DynamicImage) -> (DynamicImage, f32) {
     let (w, h) = img.dimensions();
     // Too small for the blur radii / rotation search below to mean anything;
     // just pass it through rather than risk degrading a tiny image.
     if w < 16 || h < 16 {
-        return img;
+        return (img, 0.0);
     }
 
     // Bound the working resolution before the amplifying f32 passes below
@@ -386,11 +397,13 @@ pub fn preprocess(img: DynamicImage) -> DynamicImage {
     let gray = img.to_luma8();
     let flattened = flatten_illumination(&gray);
     let stretched = stretch_contrast(&flattened);
-    let result = match estimate_skew_deg(&stretched) {
-        Some(angle) if angle.abs() >= 0.5 && angle.is_finite() => deskew(&stretched, angle),
-        _ => stretched,
+    let (result, applied) = match estimate_skew_deg(&stretched) {
+        Some(angle) if angle.abs() >= 0.5 && angle.is_finite() => {
+            (deskew(&stretched, angle), angle)
+        }
+        _ => (stretched, 0.0),
     };
-    DynamicImage::ImageLuma8(result)
+    (DynamicImage::ImageLuma8(result), applied)
 }
 
 /// De-shadows / normalizes uneven lighting by dividing the image by a
@@ -767,11 +780,15 @@ fn measure_ocr_box_tilt(lines: &[OcrLine]) -> Option<(f32, f32, f32)> {
 /// returned boxes (redaction) must paint on this same frame, not on a fresh
 /// [`decode_image_bounded`] of the original bytes, or the rectangles land on the
 /// wrong pixels. Shared by [`recognize_engine`] and [`recognize_engine_layout`].
+///
+/// 第三个返回值是**这一路对画面累计转了多少度**(顺时针,正数;下面两步 deskew
+/// 之和,再加上摆正那步的 ±90)。给 [`redact_image_full_res`] 用:它要在原分辨率
+/// 那张图上把同一下旋转补回去,否则框会整体偏(见 [`preprocess_with_angle`])。
 #[cfg(feature = "engine")]
-fn predict_lines(image_bytes: &[u8]) -> Result<(Vec<OcrLine>, DynamicImage)> {
+fn predict_lines(image_bytes: &[u8]) -> Result<(Vec<OcrLine>, DynamicImage, f32)> {
     let dynamic =
         decode_image_bounded(image_bytes).context("ocr::recognize_platform_best: decode image")?;
-    let dynamic = preprocess(dynamic);
+    let (dynamic, mut rotation_deg) = preprocess_with_angle(dynamic);
 
     // 1) Orientation. OCR once; if the page reads sideways (predominantly tall line
     //    boxes), OCR the 90°/270° rotations too and keep the upright one (horizontal
@@ -783,10 +800,19 @@ fn predict_lines(image_bytes: &[u8]) -> Result<(Vec<OcrLine>, DynamicImage)> {
     let mut best_img = dynamic;
     let mut best_lines = lines0;
     let mut best_conf = mean_line_confidence(&best_lines);
+    let mut orient_deg = 0.0f32;
     if tall_fraction(&best_lines) > ORIENT_TALL_THRESHOLD {
-        for rotated in [
-            DynamicImage::ImageRgba8(image::imageops::rotate90(&best_img)),
-            DynamicImage::ImageRgba8(image::imageops::rotate270(&best_img)),
+        // `rotate90` 是顺时针 90°、`rotate270` 是顺时针 270°(= 逆时针 90°),与
+        // `deskew`「顺时针 angle_deg」同一套符号,可以直接相加。
+        for (rotated, deg) in [
+            (
+                DynamicImage::ImageRgba8(image::imageops::rotate90(&best_img)),
+                90.0f32,
+            ),
+            (
+                DynamicImage::ImageRgba8(image::imageops::rotate270(&best_img)),
+                -90.0f32,
+            ),
         ] {
             if let Ok(cand) = predict_lines_core(&rotated) {
                 let cc = mean_line_confidence(&cand);
@@ -794,9 +820,14 @@ fn predict_lines(image_bytes: &[u8]) -> Result<(Vec<OcrLine>, DynamicImage)> {
                     best_conf = cc;
                     best_lines = cand;
                     best_img = rotated;
+                    // **赋值不是累加**:两个候选都是从同一张 `best_img` 转出来的
+                    // (数组在进循环前就建好了),90° 先赢、270° 再赢的话累加会
+                    // 抵消成 0,而画面其实是 270° 那张。
+                    orient_deg = deg;
                 }
             }
         }
+        rotation_deg += orient_deg;
     }
 
     // 2) Deskew (in-plane tilt). A tilted photo leaves text rows slanted even once
@@ -836,12 +867,12 @@ fn predict_lines(image_bytes: &[u8]) -> Result<(Vec<OcrLine>, DynamicImage)> {
                 let kept_lines = dl.len() * 10 >= best_lines.len() * 8;
                 let improved = measure_ocr_box_tilt(&dl).is_none_or(|(d, _, _)| d < drift);
                 if kept_lines && improved {
-                    return Ok((dl, deskewed));
+                    return Ok((dl, deskewed, rotation_deg + correction_deg));
                 }
             }
         }
     }
-    Ok((best_lines, best_img))
+    Ok((best_lines, best_img, rotation_deg))
 }
 
 /// Recognize text in image bytes (png/jpg/tiff/...). Returns recognized text
@@ -862,7 +893,7 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
     let mut confidences = Vec::new();
     // predict_lines already drops empty text and returns lines in reading order
     // (top-to-bottom across bands), so a plain "\n" join matches the old output.
-    let (line_list, _frame) = predict_lines(image_bytes)?;
+    let (line_list, _frame, _rotation) = predict_lines(image_bytes)?;
     for line in line_list {
         if let Some(c) = line.confidence {
             confidences.push(c);
@@ -890,7 +921,7 @@ fn recognize_engine(image_bytes: &[u8]) -> Result<OcrOutcome> {
 pub fn recognize_engine_lines(image_bytes: &[u8]) -> Result<(EngineLines, f32)> {
     let mut confidences = Vec::new();
     let mut out = Vec::new();
-    let (lines, frame) = predict_lines(image_bytes)?;
+    let (lines, frame, rotation_deg) = predict_lines(image_bytes)?;
     for line in lines {
         if let Some(c) = line.confidence {
             confidences.push(c);
@@ -904,7 +935,11 @@ pub fn recognize_engine_lines(image_bytes: &[u8]) -> Result<(EngineLines, f32)> 
         });
     }
     Ok((
-        EngineLines { lines: out, frame },
+        EngineLines {
+            lines: out,
+            frame,
+            rotation_deg,
+        },
         mean_confidence(&confidences),
     ))
 }
@@ -973,6 +1008,13 @@ pub fn recognize_engine_layout(image_bytes: &[u8]) -> Result<OcrOutcome> {
 pub struct EngineLines {
     pub lines: Vec<LayoutLine>,
     pub frame: DynamicImage,
+    /// 从原图到 `frame` 这一路**顺时针累计转了多少度**(没转 = 0)。
+    ///
+    /// `frame` 的尺寸**不反映**这次旋转——[`deskew`] 走的是 `rotate_about_center`,
+    /// 不改尺寸。所以想把 `lines` 的框换算回原图,光有缩放比是不够的,必须带上这个
+    /// 角度,否则框整体偏(1653×2339 上 1° ≈ 25px ≈ 一整行)。见
+    /// [`redact_image_full_res`]。
+    pub rotation_deg: f32,
 }
 
 /// 要涂黑的矩形。像素坐标,必须与所画的那张图同一坐标系——来自
@@ -1065,34 +1107,50 @@ fn encode_jpeg_capped(
     }
 }
 
+/// [`redact_image_full_res`] 肯替原图补回来的最大旋转角(度)。去斜的两步按构造都是
+/// 小角度(`estimate_skew_deg` 自己就顶在 ±10°),超出这个范围的只可能是 90°/270°
+/// 摆正——那一步**改尺寸**,补回来还要跟着换画布,不值当:一律退回画在 frame 上。
+const FULL_RES_MAX_ROTATION_DEG: f32 = 20.0;
+
 /// 在**原始分辨率**上涂黑:`rects` 是在 `frame_w`×`frame_h` 那张 working frame 上
 /// 量的,这里按比例放大后画回 `image_bytes` 解出来的整张图,再按 `max_bytes` 压。
 /// 送云端的图因此是原分辨率、彩色、没被 [`preprocess`] 的去阴影/拉对比改过的那张。
 ///
-/// **只在 working frame 是原图的纯等比缩放时才成立**——也就是 [`preprocess`] 这次
-/// 只降了采样,没有 90°/270° 摆正、没有去斜旋转。判据是两个方向的缩放比一致
-/// (1% 容差)且 frame 不大于原图。对不上返回 `Ok(None)`,调用方老老实实退回
-/// [`redact_image_capped`] 画在 frame 上——**绝不允许**把框画到一张几何对不上的图上,
-/// 那是静默漏涂 PHI(同 [`redact_image_bytes`] 的坐标系警告)。
+/// `rotation_deg` 必须是 [`EngineLines::rotation_deg`] —— 从原图到那张 frame 顺时针
+/// 累计转过的角度。**不是 0 的话这里会先把原图按同一个角度绕中心转一下再放大框**:
+/// 绕中心旋转与绕中心等比缩放可交换,所以「先转后缩」与 OCR 那边「先缩后转」落点
+/// 完全一致,映射是精确的,不是近似。
+///
+/// ⚠️ **光看尺寸判断不出转没转**:[`deskew`] 走 `rotate_about_center`,尺寸原样不动
+/// ——所以「两个方向缩放比一致」对一张转过的 frame 同样成立。早先这里只查缩放比,
+/// 一张去过斜的 frame 会被当成纯缩放,框就画到没转过的原图上,1653×2339 上偏 1°
+/// 就是 ~25px、正好一整行字没盖住(task-18-19-review.md 的 critical)。
+///
+/// 返回 `Ok(None)`(调用方退回 [`redact_image_capped`] 画在 frame 上,**绝不硬画**)
+/// 的情形:frame 尺寸非正;frame 比原图大;两个方向缩放比差超过 1%(90°/270° 摆正
+/// 过);`rotation_deg` 非有限或超过 [`FULL_RES_MAX_ROTATION_DEG`]。
 pub fn redact_image_full_res(
     image_bytes: &[u8],
     frame_w: f32,
     frame_h: f32,
+    rotation_deg: f32,
     rects: &[PaintRect],
     max_bytes: usize,
 ) -> Result<Option<Vec<u8>>> {
     if !(frame_w > 0.0 && frame_h > 0.0) {
         return Ok(None);
     }
+    // 角度拿不到/不可信就退回去,不猜。
+    if !rotation_deg.is_finite() || rotation_deg.abs() > FULL_RES_MAX_ROTATION_DEG {
+        return Ok(None);
+    }
     let full = decode_image_bounded(image_bytes).context("redact_image_full_res: decode")?;
     let (ow, oh) = (full.width() as f32, full.height() as f32);
     let (sx, sy) = (ow / frame_w, oh / frame_h);
-    // frame 比原图还大,或两个方向缩放比不一致(摆正/去斜过)→ 几何对不上。
+    // frame 比原图还大,或两个方向缩放比不一致(摆正过,尺寸被换)→ 几何对不上。
     if sx < 1.0 || sy < 1.0 || (sx - sy).abs() > 0.01 * sx.max(sy) {
         return Ok(None);
     }
-    // 已经是同一分辨率就没必要走这条路(画出来的与 frame 版只差灰度/去阴影,
-    // 但彩色原图对视觉模型更好,所以仍然走)。
     let scaled: Vec<PaintRect> = rects
         .iter()
         .map(|r| PaintRect {
@@ -1105,6 +1163,17 @@ pub fn redact_image_full_res(
     // 长边下限 = frame 的长边:压缩再狠也不会让云端看到的比本机识别时还糊。
     let min_long_side = frame_w.max(frame_h) as u32;
     let mut img = full.to_rgb8();
+    // OCR 那边转过多少,这里在原分辨率上原样转回来 —— 用的是同一个
+    // `rotate_about_center` + 双线性 + 白底(与 `deskew` 逐参数一致),
+    // 只是像素格式从灰度换成 RGB。
+    if rotation_deg != 0.0 {
+        img = rotate_about_center(
+            &img,
+            rotation_deg.to_radians(),
+            Interpolation::Bilinear,
+            Border::Constant(image::Rgb([255u8, 255, 255])),
+        );
+    }
     paint_rects(&mut img, &scaled);
     Ok(Some(encode_jpeg_capped(
         image::DynamicImage::ImageRgb8(img),
@@ -2305,6 +2374,7 @@ mod tests {
             &png,
             400.0,
             600.0,
+            0.0,
             &[PaintRect {
                 left: 50.0,
                 top: 100.0,
@@ -2322,6 +2392,80 @@ mod tests {
         assert!(back.get_pixel(600, 900)[0] > 40, "框外不该被涂");
     }
 
+    /// **fix round 1 的 critical**:`deskew` 走 `rotate_about_center`,**不改尺寸**,
+    /// 所以一张去过斜的 frame 照样满足「两个方向缩放比一致」。只按缩放比换算,框就会
+    /// 画到没转过的原图上,PHI 原样留在图里。
+    ///
+    /// 这条测试造一块**红色**标记当 PHI:原图 400×600、红块在 (60,420)-(140,470);
+    /// frame 按生产同一条路造 —— 先等比缩到 200×300、再 `deskew` 6°;框则是在那张
+    /// frame 上**量**出来的(扫暗像素取外接框),等同于检测器给的框。
+    /// 判据:补回旋转之后产出里**一个显著红像素都不剩**;对照组(把角度当 0 传)
+    /// 必须**留下**红像素 —— 它要是也全黑,这条测试就没在证明任何东西。
+    #[test]
+    fn redact_image_full_res_replays_the_deskew_rotation() {
+        use image::{ImageBuffer, Rgb};
+        const ANGLE: f32 = 6.0;
+        let mut orig: ImageBuffer<Rgb<u8>, Vec<u8>> =
+            ImageBuffer::from_pixel(400, 600, Rgb([255u8, 255, 255]));
+        for y in 420..470u32 {
+            for x in 60..140u32 {
+                orig.put_pixel(x, y, Rgb([255u8, 0, 0]));
+            }
+        }
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(orig.clone())
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+
+        // 生产那条路:降采样 → deskew。frame 尺寸与降采样后一致(旋转不改尺寸)。
+        let small = image::DynamicImage::ImageRgb8(orig)
+            .resize(200, 300, image::imageops::FilterType::Triangle)
+            .to_luma8();
+        let frame = deskew(&small, ANGLE);
+        assert_eq!((frame.width(), frame.height()), (200, 300), "旋转不改尺寸");
+
+        // 「检测器量出来的框」= 红块在 frame 上的外接框(红转灰约 54,远低于 200)。
+        let (mut l, mut t, mut r, mut b) = (u32::MAX, u32::MAX, 0u32, 0u32);
+        for y in 0..frame.height() {
+            for x in 0..frame.width() {
+                if frame.get_pixel(x, y)[0] < 200 {
+                    l = l.min(x);
+                    t = t.min(y);
+                    r = r.max(x);
+                    b = b.max(y);
+                }
+            }
+        }
+        assert!(l != u32::MAX, "frame 上应当找得到那块标记");
+        let box_on_frame = [PaintRect {
+            left: l as f32,
+            top: t as f32,
+            right: r as f32 + 1.0,
+            bottom: b as f32 + 1.0,
+        }];
+
+        let strong_red = |bytes: &[u8]| -> usize {
+            let img = image::load_from_memory(bytes).unwrap().to_rgb8();
+            img.pixels()
+                .filter(|p| p[0] > 200 && p[1] < 80 && p[2] < 80)
+                .count()
+        };
+
+        let painted = redact_image_full_res(&png, 200.0, 300.0, ANGLE, &box_on_frame, usize::MAX)
+            .unwrap()
+            .expect("纯等比缩放 + 小角度 → 走原图这条路");
+        assert_eq!(strong_red(&painted), 0, "补回旋转之后,标记必须被完全盖住");
+
+        // 对照:同样的框、同样的图,只是假装没转过 —— 必须盖不住。
+        let control = redact_image_full_res(&png, 200.0, 300.0, 0.0, &box_on_frame, usize::MAX)
+            .unwrap()
+            .expect("角度 0 也是合法入参,只是这次是错的");
+        assert!(
+            strong_red(&control) > 0,
+            "忽略角度还能全盖住的话,这条测试证明不了任何东西"
+        );
+    }
+
     /// 几何对不上(frame 被 90° 摆正过 → 两个方向缩放比不同)时必须返回 `None`,
     /// 让调用方退回画在 frame 上 —— 硬画上去就是静默漏涂 PHI。
     #[test]
@@ -2334,17 +2478,26 @@ mod tests {
             bottom: 20.0,
         }];
         // 摆正过:frame 是 600×400,宽高比与原图相反。
-        assert!(redact_image_full_res(&png, 600.0, 400.0, &r, usize::MAX)
+        assert!(redact_image_full_res(&png, 600.0, 400.0, 0.0, &r, usize::MAX)
             .unwrap()
             .is_none());
         // frame 比原图还大:同样不可信。
-        assert!(redact_image_full_res(&png, 1600.0, 2400.0, &r, usize::MAX)
+        assert!(redact_image_full_res(&png, 1600.0, 2400.0, 0.0, &r, usize::MAX)
             .unwrap()
             .is_none());
         // frame 尺寸没给。
-        assert!(redact_image_full_res(&png, 0.0, 0.0, &r, usize::MAX)
+        assert!(redact_image_full_res(&png, 0.0, 0.0, 0.0, &r, usize::MAX)
             .unwrap()
             .is_none());
+        // 角度不可信(90°/270° 摆正、或 NaN)一律退回,不猜。
+        assert!(redact_image_full_res(&png, 400.0, 600.0, 90.0, &r, usize::MAX)
+            .unwrap()
+            .is_none());
+        assert!(
+            redact_image_full_res(&png, 400.0, 600.0, f32::NAN, &r, usize::MAX)
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// 限额:先降质量、再降长边,且**绝不低于识别时用的那张 frame 的长边**。
@@ -2352,7 +2505,7 @@ mod tests {
     #[test]
     fn redact_image_full_res_caps_bytes_but_not_below_frame_resolution() {
         let png = white_png(1600, 1200, true);
-        let out = redact_image_full_res(&png, 800.0, 600.0, &[], 4_000)
+        let out = redact_image_full_res(&png, 800.0, 600.0, 0.0, &[], 4_000)
             .unwrap()
             .expect("纯等比缩放");
         let back = image::load_from_memory(&out).unwrap().to_rgb8();
@@ -2616,7 +2769,7 @@ mod tests {
         let bytes = std::fs::read(path).expect("photo present");
         // predict_lines already applies geometric orientation, so boxes are in the
         // uprighted frame — the same frame rebuild_layout_text groups.
-        let (mut lines, _frame) = predict_lines(&bytes).expect("ocr");
+        let (mut lines, _frame, _rotation) = predict_lines(&bytes).expect("ocr");
         lines.sort_by(|a, b| a.top.partial_cmp(&b.top).unwrap());
         eprintln!("total lines = {}", lines.len());
         for l in &lines {
