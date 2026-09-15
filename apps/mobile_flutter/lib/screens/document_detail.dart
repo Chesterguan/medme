@@ -451,7 +451,7 @@ ConfTier? confTierFor(double? confidence, String ocrText) {
 /// 一句安慰。中/低两档接规范的 `high` / `critical`。
 class ConfBadge extends StatelessWidget {
   final ConfTier tier;
-  const ConfBadge({required this.tier});
+  const ConfBadge({super.key, required this.tier});
 
   @override
   Widget build(BuildContext context) {
