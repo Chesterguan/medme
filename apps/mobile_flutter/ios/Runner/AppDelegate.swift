@@ -310,6 +310,15 @@ import Vision
       return original
     }
     guard let rect = request.results?.first, rect.confidence >= documentMinConfidence else {
+      // 这条早退**也要留痕**:没有它,"Vision 压根没检出文档"和"检出了但被覆盖率
+      // 闸拦下"在日志里长得一模一样(两种都是一行不打),线上只能靠猜。
+      #if DEBUG
+        NSLog(
+          "%@",
+          String(
+            format: "[medme/rectify] 未检出文档或置信度不足 conf=%.3f(阈值 %.2f)decision=keep",
+            request.results?.first?.confidence ?? -1, documentMinConfidence))
+      #endif
       return original
     }
     // 覆盖率闸(见 [documentMinCoverage])。归一化坐标下整幅画面面积 = 1,所以四角
@@ -327,7 +336,12 @@ import Vision
     // release 编译掉。
     #if DEBUG
       let q = quad.map { String(format: "(%.3f,%.3f)", $0.x, $0.y) }.joined(separator: " ")
-      print(
+      // `NSLog` 而不是 `print`:`print` 只进进程 stdout,`flutter run` 的控制台和
+      // `log show` 都抓不到(2026-09-15 冒烟实测 `grep -c medme/rectify` = 0,同一
+      // 轮 Dart 的 `debugPrint` 有 5 条)—— 那样这个探针只有 Xcode Console 看得见,
+      // 用命令行驱动模拟器时等于不存在。仍然只有几何数字,release 照旧编译掉。
+      NSLog(
+        "%@",
         "[medme/rectify] quad(TL TR BR BL,归一化原点左下)=\(q) "
           + String(format: "coverage=%.3f conf=%.3f ", coverage, rect.confidence)
           + (coverage >= documentMinCoverage ? "decision=crop" : "decision=keep(覆盖率不足)"))
