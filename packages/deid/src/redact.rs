@@ -160,6 +160,41 @@ fn looks_like_lab_row(t: &str) -> bool {
     }
 }
 
+/// 像不像**一条化验行的项目名**——只有名字、值和区间被切进了别的框。
+///
+/// 斜着拍的单子上布局重建必然这样切:实测血常规报告1 的 `1白细胞计数`(y42–124)、
+/// 报告4 的 `12红细胞计数`(y723–781)都是纯名字框,`looks_like_lab_row` 一条都不认
+/// (没单位、没区间),页眉带于是越过它们继续往下、页脚带的下界也够不到它们,两头
+/// 各吃掉 2 行(extract-repro-report.md §3)。
+///
+/// 判定交给词典(`terminology`,deid 本来就依赖它,见 Cargo.toml)。
+///
+/// **必须用 `normalize`(整串精确命中)而不是 `resolve`。** `resolve` 会
+/// `term_candidates` 按空格拆词再逐个查,还带模糊匹配 —— GNU_Health 那张单子上
+/// 患者姓名 **`Ana Betz` 因此以置信度 1.0 命中 `ana`(抗核抗体)**,页眉带被收到
+/// y111,把 `Ana Betz`/`Cameron Cordara`/`Patient ID` 整块患者信息露在送出的图上
+/// (deid 的 A 层锚点是中文的,这张英文单子上除了页眉带没有第二道防线)。
+/// `normalize` 只认整串,`Ana Betz` 归一化后查无此词,真项目名
+/// (白细胞计数/12红细胞计数/Hemoglobin/RDW-CV/LYM%…)一个不少 —— 7 张单子实测。
+///
+/// 置信度仍卡 1.0:OCR 混淆表命中(0.5)和药名剥壳(0.8)都不算。**误判的方向是
+/// 危险的** —— 页眉里冒出一个假项目名就会把页眉带收到它上面去,露出患者信息,
+/// 所以这里宁可漏、不可错。
+fn looks_like_lab_name(t: &str) -> bool {
+    // 行号前缀(`12红细胞计数`、`1 白细胞计数`)去掉再查。
+    let name = t
+        .trim()
+        .trim_start_matches(|c: char| c.is_ascii_digit() || c.is_whitespace() || c == '.');
+    !name.is_empty() && terminology::normalize(name).is_some_and(|m| m.confidence >= 1.0)
+}
+
+/// 像不像化验表的内容框:整行(`looks_like_lab_row`)或只有项目名
+/// (`looks_like_lab_name`)。页眉带的终点、页脚带的下界都按它算——两条带子都是
+/// 「不许盖住表格」,用的必须是同一套「什么算表格」。
+fn looks_like_lab_content(t: &str) -> bool {
+    looks_like_lab_row(t) || looks_like_lab_name(t)
+}
+
 /// 像不像页脚锚点行(检验者/审核者/打印时间/报告医生等)。
 fn looks_like_footer(t: &str) -> bool {
     [
@@ -172,6 +207,25 @@ fn looks_like_footer(t: &str) -> bool {
     ]
     .iter()
     .any(|a| t.contains(a))
+}
+
+/// 这一框有没有提到**人名类**锚点(`anchors::ANCHORS` 里 kind = `P` 的那批:姓名/
+/// 检验者/审核者/送检医生…)。提到了就整框涂黑,**不管 A 层有没有真的取到值**。
+///
+/// 为什么不能只靠第 1 类的「redact_text 改了就涂」:A 层要取到值才算命中,而 OCR 把
+/// 名字糊掉一半的时候取不到 —— 实测血常规报告4 的 `审核者贸`(名字被认成一个「贸」)、
+/// `检验者29028` 两框,`redact_text` 一个都不动,`ends_with_anchor_word` 也不认(锚点词
+/// 不在框尾)。这两框此前**唯一**的遮盖就是那条整宽页脚带;页脚带一旦按真化验行的位置
+/// 往下让,它们就露在送出的图上了。锚点词本身就是「这框里有个人名」的证据,取值成不成功
+/// 不该决定涂不涂。
+///
+/// 只收 `P` 类:`N`(各种单号)/`A`(住址籍贯)/`U` 类该涂的形状,P 层和第 1 类本来就
+/// 抓得住;而 `性别`/`年龄`/`科室` 是**保留字段**(见 `anchors::EXTRA_STOPS` 的注释),
+/// 本来就不该涂。化验行也不会误伤 —— `looks_like_lab_row` 自己就把带锚点词的行排除在外。
+fn mentions_person_anchor(t: &str) -> bool {
+    anchors::ANCHORS
+        .iter()
+        .any(|(a, kind)| *kind == "P" && t.contains(a))
 }
 
 /// 把 `t` 尾部的分隔符/冒号去掉之后,是不是恰好以一个身份锚点词结尾(fix round 2
@@ -300,7 +354,7 @@ fn next_box_in_reading_order<'a>(boxes: &'a [Box], i: usize) -> Option<&'a Box> 
 /// 这时候不能让页脚框自己的存在把自己算作「最后一条化验行」,从而拿自己的位置来
 /// 卡自己(fix round 2 item 3)。
 fn is_real_lab_row(b: &Box) -> bool {
-    looks_like_lab_row(&b.text) && !looks_like_footer(&b.text)
+    looks_like_lab_content(&b.text) && !looks_like_footer(&b.text)
 }
 
 /// 决定哪些 OCR 行框要涂黑(图片档脱敏,spec §1)。
@@ -312,11 +366,13 @@ fn is_real_lab_row(b: &Box) -> bool {
 /// 四类矩形,均按各自参考行的行高留 2%(至少 2px)边距、裁到页面范围,最后去重
 /// (同一个矩形被两条规则各推了一次的情况——比如某框既是命中又是悬空锚点——只留一份):
 /// 1. 逐框跑 `redact_text(...,0)`,与 `dates::shift_dates(...,0)` 的基准比较——文本
-///    发生变化(命中 K/A/P 三层任一)的整框涂黑。基准用日期归一化过的文本而不是原文,
+///    发生变化(命中 K/A/P 三层任一)的整框涂黑;**提到人名类锚点词的框一律涂黑**,
+///    哪怕 A 层没取到值(见 [`mentions_person_anchor`])。基准用日期归一化过的文本而不是原文,
 ///    这样单纯的日期写法归一(`2024年3月5日`→`2024-03-05`,偏移量 0)不会被误判成命中
 ///    (fix round 1 item 4);命中判定的层次与 `redact_text` 完全一致,不另建第二份判断。
-/// 2. 页眉带:从页面顶部到第一条「像化验行」的框顶,整宽涂黑。没有化验行 → 不产生页眉带
-///    (不是整页兜底涂黑)。
+/// 2. 页眉带:从页面顶部到第一个「像化验表内容」的框顶(整行,**或只有项目名**——
+///    布局重建会把名字和数值切进不同框,见 [`looks_like_lab_name`]),整宽涂黑。
+///    没有化验内容 → 不产生页眉带(不是整页兜底涂黑)。
 /// 3. 页脚带:从第一条**在某条(排除页脚框自己的)化验行之下**、含检验者/审核者/
 ///    打印时间/报告医生等锚点的框顶到页面底部,整宽涂黑;起点再往下推到**最后一条**
 ///    真化验行的底边之下,保证带子不横切表格(斜着拍的单子上左栏页脚会排在右栏化验行
@@ -336,7 +392,7 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
     for (i, b) in boxes.iter().enumerate() {
         let r = redact_text(&b.text, known, 0);
         let baseline = dates::shift_dates(&b.text, 0);
-        if r.text != baseline {
+        if r.text != baseline || mentions_person_anchor(&b.text) {
             push_painted(&mut out, b, page_w, page_h);
         }
         if ends_with_anchor_word(&b.text) {
@@ -349,7 +405,7 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
 
     if let Some(first) = boxes
         .iter()
-        .filter(|b| looks_like_lab_row(&b.text))
+        .filter(|b| looks_like_lab_content(&b.text))
         .min_by(|a, c| norm_rect(a).1.total_cmp(&norm_rect(c).1))
     {
         let (_, top, _, bottom) = norm_rect(first);
@@ -1231,6 +1287,95 @@ mod tests {
                 .any(|r| r.bottom == 500.0 && r.top > 130.0 && r.top <= 475.0),
             "页脚带被后面的免责声明挤没了:{rects:?}"
         );
+    }
+
+    #[test]
+    fn header_band_ends_at_a_name_only_lab_box() {
+        // fix round 3 / extract-repro-report.md §3:布局重建把项目名和数值切进不同框
+        // (斜页上必然如此),`1白细胞计数` 这种纯名字框不含单位也不含区间,
+        // `looks_like_lab_row` 不认,页眉带于是越过它继续往下 —— 实测血常规报告1 带到
+        // y155,把 y42 起的头两条化验行盖掉;报告5 同样吃掉前两行。
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, top: f32| Box {
+            text: t.into(),
+            left: 10.0,
+            top,
+            right: 300.0,
+            bottom: top + 20.0,
+        };
+        let boxes = vec![
+            b("北京协和医院检验报告", 0.0),
+            b("姓名:张建国", 30.0),
+            b("1白细胞计数", 100.0),         // 纯名字框:没有单位、没有区间
+            b("5.6 10^9/L 4.0-10.0", 130.0), // 值被切到另一框
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        let band = rects
+            .iter()
+            .find(|r| r.left == 0.0 && r.right == 400.0 && r.top == 0.0)
+            .unwrap_or_else(|| panic!("页眉带没出现:{rects:?}"));
+        assert!(
+            band.bottom <= 104.0,
+            "页眉带盖住了纯名字的化验行(应 ≤104,实际 {}):{rects:?}",
+            band.bottom
+        );
+    }
+
+    #[test]
+    fn a_patient_name_that_is_also_a_dictionary_alias_is_not_a_lab_name() {
+        // GNU_Health 那张单子上患者叫 `Ana Betz`,而 `ana`(抗核抗体)是词典里的别名。
+        // `terminology::resolve` 会按空格拆词、拿 `Ana` 以置信度 1.0 命中,页眉带于是
+        // 收到患者信息之上,把 `Ana Betz`/`Cameron Cordara` 露在送出的图上。
+        // `looks_like_lab_name` 只认整串精确命中,所以必须判 false。
+        assert!(!looks_like_lab_name("Ana Betz"));
+        assert!(looks_like_lab_name("Hemoglobin"));
+        assert!(looks_like_lab_name("1白细胞计数"));
+        assert!(looks_like_lab_name("12红细胞计数"));
+        // 表头/页眉词一个都不许算项目名
+        for t in ["检验项目", "结果", "参考范围", "Test Name", "科室儿科"] {
+            assert!(!looks_like_lab_name(t), "{t} 不该算项目名");
+        }
+    }
+
+    #[test]
+    fn a_name_anchor_box_is_painted_even_when_the_value_cannot_be_parsed() {
+        // fix round 3:OCR 把审核者的名字糊成一个字(实测血常规报告4 的「审核者贸」)时
+        // A 层取不到值,`redact_text` 不动这框,`ends_with_anchor_word` 也不认(锚点词不在
+        // 框尾)。此前唯一的遮盖是整宽页脚带 —— 页脚带按真化验行往下让之后就露了。
+        let k = KnownIdentity {
+            name: "我".into(), // 成员名,姓名闸空转(gate.rs 要求 >= 2 字)
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, top: f32| Box {
+            text: t.into(),
+            left: 10.0,
+            top,
+            right: 300.0,
+            bottom: top + 20.0,
+        };
+        for t in ["审核者贸", "检验者29028", "送检医生董"] {
+            let boxes = vec![b(t, 400.0)];
+            let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+            assert!(
+                rects
+                    .iter()
+                    .any(|r| r.top <= 400.0 && r.bottom >= 420.0 && r.right < 400.0),
+                "{t} 没被逐框涂黑:{rects:?}"
+            );
+        }
+        // 保留字段不受影响:性别/年龄/科室不是人名锚点,不该因为这条规则被涂掉。
+        for t in ["性别男", "年龄2岁", "科室儿科"] {
+            let boxes = vec![b(t, 400.0)];
+            assert!(
+                redact_boxes(&boxes, &k, 400.0, 500.0).is_empty(),
+                "{t} 是保留字段,不该涂"
+            );
+        }
     }
 
     #[test]
