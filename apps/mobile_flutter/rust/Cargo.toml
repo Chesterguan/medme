@@ -83,3 +83,12 @@ tempfile = "3"
 # `pp_ocr` 由 build.rs 按目标平台产出(见那里的说明);声明出来,免得
 # `unexpected_cfgs` 把它当成拼错的 cfg 报警。
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(pp_ocr)'] }
+
+# Debug 档也把依赖按优化编译(ONNX Runtime、Argon2、image 等算力活在 opt-level 0 下慢 10 倍+,
+# 模拟器/调试包上 OCR 和解锁根本没法测)。只对依赖和 ocr 生效,自己的代码仍是快编译 + 调试断言。
+# 依赖只编一次就缓存,不影响日常增量构建。WORKLIST A26。
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.ocr]
+opt-level = 3
