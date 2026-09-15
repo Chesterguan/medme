@@ -36,7 +36,7 @@ const Map<String, String> docLabel = {
 /// 冒烟 friction 2:前两态原先都显示「待归类」,用户看到的是一份永远停在待归类
 /// 的文档,分不清是还在跑、还是跑完白跑了。
 String docRowLabel(DocumentSummaryDto doc) {
-  if (doc.docType != 'unknown') return docLabel[doc.docType] ?? doc.docType;
+  if (doc.docType != 'unknown') return docLabel[doc.docType] ?? '记录';
   if (doc.extractionItemCount == 0) return '云端整理没有读出内容';
   return docLabel['unknown']!;
 }

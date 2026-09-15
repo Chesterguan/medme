@@ -1072,11 +1072,7 @@ pub const REDACT_MAX_BYTES: usize = 2 * 1024 * 1024 / 4 * 3;
 
 /// JPEG 质量 → 长边的两级退让,见 [`redact_image_capped`]。`min_long_side` 是长边
 /// 的下限(0 = 不缩)。返回第一份塞得进 `max_bytes` 的;都塞不进就返回最后一份。
-fn encode_jpeg_capped(
-    img: DynamicImage,
-    max_bytes: usize,
-    min_long_side: u32,
-) -> Result<Vec<u8>> {
+fn encode_jpeg_capped(img: DynamicImage, max_bytes: usize, min_long_side: u32) -> Result<Vec<u8>> {
     let encode = |img: &DynamicImage, q: u8| -> Result<Vec<u8>> {
         let mut out = Vec::new();
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, q)
@@ -2478,21 +2474,27 @@ mod tests {
             bottom: 20.0,
         }];
         // 摆正过:frame 是 600×400,宽高比与原图相反。
-        assert!(redact_image_full_res(&png, 600.0, 400.0, 0.0, &r, usize::MAX)
-            .unwrap()
-            .is_none());
+        assert!(
+            redact_image_full_res(&png, 600.0, 400.0, 0.0, &r, usize::MAX)
+                .unwrap()
+                .is_none()
+        );
         // frame 比原图还大:同样不可信。
-        assert!(redact_image_full_res(&png, 1600.0, 2400.0, 0.0, &r, usize::MAX)
-            .unwrap()
-            .is_none());
+        assert!(
+            redact_image_full_res(&png, 1600.0, 2400.0, 0.0, &r, usize::MAX)
+                .unwrap()
+                .is_none()
+        );
         // frame 尺寸没给。
         assert!(redact_image_full_res(&png, 0.0, 0.0, 0.0, &r, usize::MAX)
             .unwrap()
             .is_none());
         // 角度不可信(90°/270° 摆正、或 NaN)一律退回,不猜。
-        assert!(redact_image_full_res(&png, 400.0, 600.0, 90.0, &r, usize::MAX)
-            .unwrap()
-            .is_none());
+        assert!(
+            redact_image_full_res(&png, 400.0, 600.0, 90.0, &r, usize::MAX)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             redact_image_full_res(&png, 400.0, 600.0, f32::NAN, &r, usize::MAX)
                 .unwrap()
