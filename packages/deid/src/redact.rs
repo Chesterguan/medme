@@ -317,8 +317,10 @@ fn is_real_lab_row(b: &Box) -> bool {
 ///    (fix round 1 item 4);命中判定的层次与 `redact_text` 完全一致,不另建第二份判断。
 /// 2. 页眉带:从页面顶部到第一条「像化验行」的框顶,整宽涂黑。没有化验行 → 不产生页眉带
 ///    (不是整页兜底涂黑)。
-/// 3. 页脚带:从第一条**在最后一条(排除页脚框自己的)化验行之下**、含检验者/审核者/
-///    打印时间/报告医生等锚点的框顶到页面底部,整宽涂黑。要求「在化验行之下」是因为
+/// 3. 页脚带:从第一条**在某条(排除页脚框自己的)化验行之下**、含检验者/审核者/
+///    打印时间/报告医生等锚点的框顶到页面底部,整宽涂黑;起点再往下推到**最后一条**
+///    真化验行的底边之下,保证带子不横切表格(斜着拍的单子上左栏页脚会排在右栏化验行
+///    之前)。要求「在化验行之下」是因为
 ///    这类词也可能出现在页眉(报告抬头的打印时间),不加这道顺序保护会把页眉当成页脚、
 ///    整页涂黑(fix round 1 item 1)。没有化验行,或化验行下面没有这类锚点行 → 不产生
 ///    页脚带(页眉/正文里的医生姓名仍然会被第 1 类逐框命中涂黑,只是不再触发整条页脚带)。
@@ -377,10 +379,27 @@ pub fn redact_boxes(boxes: &[Box], known: &KnownIdentity, page_w: f32, page_h: f
     {
         let (_, top, _, bottom) = norm_rect(foot);
         let m = margin_for(bottom - top);
+        // 带子的起点再往下推,直到不横切**任何**一条真化验行(fix round 3)。锚点框
+        // 「在某一条化验行之下」只保证它不在页眉,不保证它在**最后**一条之下:斜着拍的
+        // 单子上(实测血常规报告4 rotation_deg=−100,即摆正 −90 之后还剩 ~10°),左栏的
+        // 「审核者」比右栏还没读完的化验行更靠上,整宽带从它那里一刀切到底,连着两行
+        // 化验一起黑掉 —— 实测少 4 条 lab(extract-repro-report.md §2)。
+        //
+        // 只推起点、**不取消**带子:页脚下面跟着「结果仅供参考 mmol/L」这类含单位标记
+        // 的免责声明时(它也会被算成化验行),带子照样存在,只是从那条声明之下开始
+        // ——页脚锚点框自己带的 PHI 仍由第 1 类逐框命中涂黑,不依赖这条带子。
+        let lab_floor = boxes
+            .iter()
+            .filter(|b| is_real_lab_row(b))
+            .map(|b| {
+                let (_, lab_top, _, lab_bottom) = norm_rect(b);
+                lab_bottom + margin_for(lab_bottom - lab_top)
+            })
+            .fold(f32::NEG_INFINITY, f32::max);
         out.push(clip(
             Rect {
                 left: 0.0,
-                top: top - m,
+                top: (top - m).max(lab_floor),
                 right: page_w,
                 bottom: page_h,
             },
@@ -1183,10 +1202,10 @@ mod tests {
     #[test]
     fn footer_band_survives_when_a_unit_bearing_note_sits_below_it() {
         // item 3 case B:页脚下面还跟着一条「结果仅供参考 mmol/L」之类的免责声明,本身
-        // 含单位标记、会被算成化验行——旧的「整页最后一条化验行的 bottom」是全局最大值,
-        // 这条声明的位置比真正的页脚还靠下,会把 last_lab_bottom 推到页脚的 top 之后,
-        // 页脚反而因为「在化验行之上」被排除。改成按候选页脚框各自检查:只要它之上有
-        // 一条真化验行(排除页脚框自己)就够,不管它下面还有什么。
+        // 含单位标记、会被算成化验行。曾经用「整页最后一条化验行的 bottom」做**筛选**
+        // 条件,这条声明会把页脚整条带子筛没。现在它只做**起点下推**(fix round 3),
+        // 带子照样存在,只是从这条声明之下开始 —— 声明本身没有 PHI,页脚锚点框自己的
+        // 姓名仍由第 1 类逐框命中涂黑。
         let k = KnownIdentity {
             name: "张建国".into(),
             id_number: None,
@@ -1209,8 +1228,46 @@ mod tests {
         assert!(
             rects
                 .iter()
-                .any(|r| r.bottom == 500.0 && r.top <= 400.0 && r.top > 130.0),
+                .any(|r| r.bottom == 500.0 && r.top > 130.0 && r.top <= 475.0),
             "页脚带被后面的免责声明挤没了:{rects:?}"
+        );
+    }
+
+    #[test]
+    fn footer_band_starts_below_the_last_lab_row_on_a_tilted_page() {
+        // fix round 3 / extract-repro-report.md §2:斜着拍的单子上,左栏的「审核者」
+        // (y400)比右栏还没读完的两条化验行(y430/y460)更靠上。旧代码只要求锚点在
+        // **某一条**化验行之下,整宽带从 400 一刀切到底,把那两行一起黑掉 —— 实测
+        // 血常规报告4 因此少 4 条 lab。带子的起点必须推到最后一条化验行的底边之下。
+        let k = KnownIdentity {
+            name: "张建国".into(),
+            id_number: None,
+            phone: None,
+        };
+        let b = |t: &str, left: f32, top: f32| Box {
+            text: t.into(),
+            left,
+            top,
+            right: left + 180.0,
+            bottom: top + 20.0,
+        };
+        let boxes = vec![
+            b("白细胞计数 WBC 5.6 10^9/L 4.0-10.0", 10.0, 100.0),
+            b("血红蛋白 HGB 135 g/L 115-150", 10.0, 130.0),
+            // 左栏页脚,比右栏剩下的两行更靠上(页面是斜的)
+            b("审核者:樊笋 检验者:王涛", 10.0, 400.0),
+            b("红细胞计数 RBC 4.35 10^12/L 3.8-5.1", 210.0, 430.0),
+            b("血小板计数 PLT 210 10^9/L 100-300", 210.0, 460.0),
+        ];
+        let rects = redact_boxes(&boxes, &k, 400.0, 500.0);
+        let band = rects
+            .iter()
+            .find(|r| r.left == 0.0 && r.right == 400.0 && r.bottom == 500.0)
+            .unwrap_or_else(|| panic!("页脚带没出现:{rects:?}"));
+        assert!(
+            band.top >= 480.0,
+            "页脚带横切了最后两条化验行(应 ≥480,实际 {}):{rects:?}",
+            band.top
         );
     }
 
