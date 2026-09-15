@@ -782,7 +782,7 @@ mod tests {
         assert_eq!(body["temperature"], 0);
         // 与 `services/api/extract.py` 共用的那两个参数必须真的发出去
         // (review-21-22.md Important 4:评测臂不带封顶时,量的不是线上的模型行为)。
-        assert_eq!(body["max_tokens"], 6000);
+        assert_eq!(body["max_tokens"], 8192);
         assert_eq!(body["reasoning_effort"], "low");
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][0]["content"], SYSTEM);

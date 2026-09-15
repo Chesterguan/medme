@@ -23,13 +23,17 @@ with open(os.path.join(_PROMPTS_DIR, "extract_v1_image_user.txt"), encoding="utf
 # `max_tokens`:`deepseek-flash` 是推理模型,不封顶时 `reasoning_tokens` 会自己跑飞
 # ——实测一张血常规照片烧掉 10124 个 completion token(其中 9354 是 reasoning),
 # 外推 >70 s,正好顶爆下面那个上游超时,用户侧就是「抽了两分钟,什么都没有」
-# (extract-repro-report.md §1)。22 行的化验表正文实测只要 ~800 token,6000 足够宽。
+# (extract-repro-report.md §1)。22 行的化验表正文实测只要 ~800 token。
+# **8192 而不是 6000**:6000 那一版在 MedRepBench 683 份里有 **6 份稳定截断**
+# (`finish_reason == "length"`,重试三轮都截断,项目多的大表实测到 ~5000 token 正文),
+# 按新规则算失败、整份退回正则。8192 给长表留出余量,同时仍然拦得住失控的推理
+# (那一类实测烧到 10000+)。
 #
 # `reasoning_effort`:`none` 会整个关掉推理(表格读数会掉条),`low` 只是把预算收紧
 # ——这是 DeepSeek 文档里 `/chat/completions` 唯一能约束推理长度的参数
 # (none/low/high/max)。与 `max_tokens` 是两道独立的闸:前者限「想多久」,后者限
 # 「最多吐多少」,单靠后者只会让请求在推理中途被截断、依然拿不到结果(实测
-# high + 6000 上限 = 24 s 后 content 为空)。
+# high 配 6000 上限 = 24 s 后 content 为空)。
 with open(os.path.join(_PROMPTS_DIR, "extract_v1_params.json"), encoding="utf-8") as _f:
     REQUEST_PARAMS = json.load(_f)
 MAX_TOKENS = REQUEST_PARAMS["max_tokens"]

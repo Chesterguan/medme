@@ -753,7 +753,7 @@ def test_extract_request_bounds_the_model_output(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
     monkeypatch.setattr(extract.urllib.request, "urlopen", _fake_urlopen)
     extract.run({"mode": "text", "schema": 1, "payload": "x"})
-    assert sent["body"]["max_tokens"] == extract.MAX_TOKENS == 6000
+    assert sent["body"]["max_tokens"] == extract.MAX_TOKENS == 8192
     assert sent["body"]["reasoning_effort"] == extract.REASONING_EFFORT == "low"
     # 客户端的 extractTimeout(cloud_extract.dart)必须比这个宽。
     assert sent["timeout"] == 120
