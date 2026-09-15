@@ -386,7 +386,7 @@ fn vertical_overlap_frac(a: (f32, f32, f32, f32), c: (f32, f32, f32, f32)) -> f3
 /// 「同一行右侧」的松弛量是 `max(4px, 本框行高的 20%)`(fix round 2 item 2):OCR
 /// 切出来的相邻两框水平方向经常有一两像素的重叠(比如「联系人」和紧跟着的姓名框),
 /// 严格要求 `右邻框.left >= 本框.right` 会把这种边界擦边的正常邻框漏掉。
-fn next_box_in_reading_order<'a>(boxes: &'a [Box], i: usize) -> Option<&'a Box> {
+fn next_box_in_reading_order(boxes: &[Box], i: usize) -> Option<&Box> {
     let bi = norm_rect(&boxes[i]);
     let slack = ((bi.3 - bi.1) * 0.2).max(4.0);
     let mut same_line: Option<(&Box, f32)> = None;
@@ -1476,13 +1476,29 @@ mod tests {
             "Doctor    [P1]          Test id [N1]"
         );
 
-        // **不许把表格内容当人名吃掉**:全大写的项目缩写、段落标题、词典认得的项目名
+        // 两 token 的正例必须赢过「头一个词恰好是三字母词典缩写」:`Ana` 撞
+        // `ana`(抗核抗体)只是巧合,`Ana Betz` 是人名(review-21-fix.md Important 1)。
+        assert_eq!(masked("Reported by  Ana Betz"), "Reported by  [P1]");
+
+        // **不许把表格内容当人名吃掉**:全大写的项目缩写、段落标题、词典认得的项目名,
+        // 以及 2–3 字母的 Title-case 项目缩写(`Hb`/`Ca`/`Na`/`Mg`/`Fe`/`Cl`/`Zn`)——
+        // 后面这一批夹在「全大写」与「≥4 字母查词典」两条规则中间,曾经全部命中
+        // (review-21-fix.md Important 1:`Reviewed by Hb 12.0` → `Reviewed by [P1] 12.0`)。
         for t in [
             "Physician\nHemoglobin                12        11.0 - 16.0     g/dL",
             "Doctor\nWBC   6.7   4.5-11   10^3/uL",
             "Reported by\nCreatinine 88 umol/L",
             "Doctor\n\nCOMPLETE BLOOD COUNT",
             "Doctor  attending physician on call",
+            "Reviewed by Hb 12.0",
+            "Physician: Ca 2.3 mmol/L",
+            "Reported by Na 140 mmol/L",
+            "Verified by Mg 0.9",
+            "Signed by Fe 14.0",
+            "Reviewed by Cl 101 mmol/L",
+            "Reported by Zn 0.8",
+            // 两个 token,但后面紧跟着数值 → 还是化验行,不是人名
+            "Physician\nGlucose Fasting 5.6 mmol/L",
         ] {
             assert_eq!(masked(t), t, "{t} 里的表格内容被当成人名掩掉了");
         }

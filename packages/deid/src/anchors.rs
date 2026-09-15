@@ -72,9 +72,9 @@ pub const ANCHORS: &[(&str, &str)] = &[
     // 英文人名也掩得到了(在此之前只有图片档那边逐框涂黑,文本档原样发出去)。
     //
     // 上面那条「裸的医生/患者不当锚点、会把后面一整句话吃掉」的顾虑,在拉丁分支里由
-    // 三道边界挡住(见 `take_latin_name_value`):token 间只许一个空格、碰到锚点/停止词
-    // 收尾、首 token 是词典认得的化验项目名就整个判否。实测 `Doctor` 换行后跟着表格
-    // (`WBC 6.7 …` / `Hemoglobin 12 …` / `COMPLETE BLOOD COUNT`)一个字都不会被吃掉。
+    // 五道边界挡住(见 `take_latin_name_value`)。实测 `Doctor`/`Physician` 换行后紧跟
+    // 表格第一行 —— `WBC 6.7 …` / `Hemoglobin 12 …` / `COMPLETE BLOOD COUNT` /
+    // `Hb 12.0` / `Ca 2.3 mmol/L` —— 一个字都不会被吃掉。
     ("Digitally signed by", "P"),
     ("Signed by", "P"),
     ("Reported by", "P"),
@@ -186,14 +186,37 @@ fn is_latin_name_token(t: &str, is_first: bool) -> bool {
     (t.len() <= 3 && t.ends_with('.')) || (t.len() == 1 && !is_first)
 }
 
-/// 这个 token 是不是词典认得的化验项目名。用来挡「标签后面没有值、紧跟着就是表格」
-/// 的情形(`Physician` 换行之后是 `Hemoglobin 12 g/dL`)—— 那一行不是人名,吃掉它
-/// 就是把化验内容掩掉了。**只对 4 个字母以上的词判**:词典里 `ana`/`alt`/`cea`
-/// 这类三字母缩写与真实人名撞车(`Ana Betz`),短缩写不是可靠证据。
-fn is_lab_term_token(t: &str) -> bool {
+/// 把一个 token 去掉首尾的 `.`/`'`/`-` 之后拿去查词典。
+fn lookup_token(t: &str) -> Option<f32> {
     let word = t.trim_matches(|c: char| matches!(c, '.' | '\'' | '-'));
-    word.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 4
-        && terminology::normalize(&word.to_lowercase()).is_some_and(|m| m.confidence >= 1.0)
+    terminology::normalize(&word.to_lowercase()).map(|m| m.confidence)
+}
+
+/// 这个 token 是不是词典**精确命中**的化验项目名(置信度 1.0 = 字典别名逐字命中)。
+/// 不卡长度:`Hb`/`Ca`/`Na`/`Mg`/`Fe` 这些两三字母的项目缩写必须挡得住
+/// (review-21-fix.md Important 1)。**只在「整个候选就这一个 token」时使用** ——
+/// 词典里 `ana`/`alt`/`cea` 与真人名撞车,`Ana Betz` 那种两 token 的候选不能因为
+/// 头一个词恰好是缩写就整个判否。
+fn is_exact_lab_term(t: &str) -> bool {
+    lookup_token(t).is_some_and(|c| c >= 1.0)
+}
+
+/// 这个 token 像不像化验项目名,**用在逐 token 那一关**。这里保留 4 字母门槛:
+/// 模糊/归一化的非精确命中(OCR 混淆表 0.5、药名剥壳 0.8)本来就不可靠,短词更不可靠,
+/// 拿它判否会误杀真人名。精确命中留给 [`is_exact_lab_term`] 在候选整体那一关判。
+fn is_lab_term_token(t: &str) -> bool {
+    let letters = t.chars().filter(|c| c.is_ascii_alphabetic()).count();
+    letters >= 4 && lookup_token(t).is_some()
+}
+
+/// 这个 token 是不是**纯数值**(`12.0`、`2.3`、`140`、`0.9`、`4.5-11`)。
+/// 用来认「候选后面紧跟着一个数」这个形状 —— 那是化验行,不是人名。
+fn is_numeric_token(t: &str) -> bool {
+    !t.is_empty()
+        && t.chars().any(|c| c.is_ascii_digit())
+        && t.chars().all(|c| {
+            c.is_ascii_digit() || matches!(c, '.' | '-' | '~' | '<' | '>' | '%' | '+' | ',')
+        })
 }
 
 /// P 类的**拉丁人名**分支:英文报告里 `Doctor` / `Signed by` / `Reported by` 这些锚点
@@ -201,12 +224,18 @@ fn is_lab_term_token(t: &str) -> bool {
 /// 那边这一框已经被逐框涂黑,文本档却原样发出去(review-21-22.md 之后的遗留缺口)。
 ///
 /// 取**最多 3 个**首字母大写的 token(`Dr. Cameron Cordara`、`Mary Jane O'Neil`),
-/// 三条边界,都是为了不把表格内容当人名吃掉:
+/// 五条边界,都是为了不把表格内容当人名吃掉。`apply` 的 `skip` 连换行一起吃,所以
+/// 「`Physician` 在行尾、下一行就是表格第一行」这种极常见的版式一定会撞上来:
 /// * token 之间只允许**一个空格**。列对齐的报告里字段之间是 2 个以上空格
 ///   (`Doctor    Cameron Cordara          Test id B165AAF4`),所以值到
 ///   `Cordara` 就收尾,不会把后面那列的 `Test` 吞进来。
 /// * 碰到任意锚点词/停止词立刻收尾(与中文分支同一条规则)。
-/// * 第一个 token 若是词典认得的化验项目名,整个判否、一个字都不取。
+/// * 逐 token:4 个字母以上、且词典认得的,判否(`Hemoglobin`/`Creatinine`/`Glucose`)。
+/// * **整个候选只有一个 token、且它精确命中词典** → 判否。挡住 `Hb`/`Ca`/`Na`/`Mg`
+///   这些两三字母的项目缩写(review-21-fix.md Important 1);而 `Ana Betz` 是两个
+///   token,不受影响 —— `Ana` 撞 `ana`(抗核抗体)只是三字母缩写的巧合。
+/// * **候选后面紧跟着一个纯数值** → 判否。`Hb 12.0` / `Ca 2.3 mmol/L` /
+///   `Glucose Fasting 5.6` 都是这个形状:后面跟着数的不是人名,是化验行。
 fn take_latin_name_value(rest: &str) -> Option<&str> {
     let mut end = 0;
     let mut taken = 0;
@@ -235,7 +264,23 @@ fn take_latin_name_value(rest: &str) -> Option<&str> {
         end += start + tok_len;
         taken += 1;
     }
-    (taken >= 1).then(|| &rest[..end])
+    if taken == 0 {
+        return None;
+    }
+    let value = &rest[..end];
+    // 整个候选就一个 token、且精确命中词典 → 是项目缩写,不是人名。
+    if taken == 1 && is_exact_lab_term(value.trim()) {
+        return None;
+    }
+    // 候选后面紧跟着一个纯数值 → 这是化验行(`Hb 12.0`),不是人名。
+    let after = rest[end..].trim_start_matches([' ', '\t']);
+    let next_tok = &after[..after
+        .find(|c: char| c.is_whitespace())
+        .unwrap_or(after.len())];
+    if is_numeric_token(next_tok) {
+        return None;
+    }
+    Some(value)
 }
 
 /// N/A 类(号码/地址):不设字符数上限,一直取到下一个空白/标点分隔符或下一个锚点词为止
