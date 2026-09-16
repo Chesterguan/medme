@@ -84,6 +84,31 @@ void main() {
       expect(openedArchive, isTrue);
     });
 
+    // 患者模式的导入现在一律走后台队列(task-24 A27):`runImport` 在采集一结束
+    // 就返回,那时一份都还没识别完,所以 `newDocumentIds` 恒为空 —— 该不该带用户
+    // 去核对改由 `queuedCount` 说了算。这两条钉住那个改动:排了队就去档案(那儿
+    // 有「识别中」和置顶的待确认),一份都没排上就照旧不跳。
+    test('排进了后台队列 → 去档案(哪怕此刻还没有任何新文档 id)', () {
+      var openedArchive = false;
+      dispatchImportReview(
+        const ImportRunResult([], queuedCount: 3),
+        openSingleDocument: (_) => fail('此刻一份都还没识别完,没有"那一份"可进'),
+        openArchive: () => openedArchive = true,
+      );
+      expect(openedArchive, isTrue);
+      expect(
+        reviewDestinationFor(const ImportRunResult([], queuedCount: 1)),
+        ImportReviewDestination.archive,
+      );
+    });
+
+    test('一份都没排上(取消/读不到保险箱)→ 不跳', () {
+      expect(
+        reviewDestinationFor(const ImportRunResult([], queuedCount: 0)),
+        ImportReviewDestination.none,
+      );
+    });
+
     test('reviewDestinationFor 与份数一一对应', () {
       expect(
         reviewDestinationFor(const ImportRunResult([1])),

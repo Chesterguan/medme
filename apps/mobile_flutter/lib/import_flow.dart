@@ -6,21 +6,19 @@ import 'package:file_picker/file_picker.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:google_api_availability/google_api_availability.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
 import 'package:image_picker/image_picker.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/import_queue.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/review_state.dart';
-import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 一次导入运行的结果,供调用方判断要不要、往哪儿带用户去核对新东西。
@@ -31,12 +29,18 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// 疏漏,是一整套写好的核对机制在这条路上悄悄失效。这个结果类型就是让调用方
 /// 接住「这次是不是真的有新东西要核对」,自己决定带不带用户过去、去哪儿。
 class ImportRunResult {
-  const ImportRunResult(this.newDocumentIds);
+  const ImportRunResult(this.newDocumentIds, {this.queuedCount = 0});
 
-  /// 本次真正新入库的文档 id——与 [ReviewState.markPending] 标记的是同一批
-  /// (见下方 `_runImport` 里的 `newDocs`)。去重、失败的文档不落库,不在这里面;
-  /// 空列表 = 没有新东西要核对,用户取消、全部失败、全部是重复都落在这里。
+  /// 本次真正新入库的文档 id——与 [ReviewState.markPending] 标记的是同一批。
+  /// 去重、失败的文档不落库,不在这里面;空列表 = 没有新东西要核对。
+  ///
+  /// **走后台队列的导入(现在患者模式的全部导入)这里恒为空**:采集一结束就返回,
+  /// 那时一份都还没识别完,自然也没有 id。要不要带用户去核对由 [queuedCount] 说了
+  /// 算。医生代拍那条路不走队列,仍然按 id 走。
   final List<int> newDocumentIds;
+
+  /// 这次**排进队列**的份数(见 `import_queue.enqueueImport`)。
+  final int queuedCount;
 
   bool get hasNewDocs => newDocumentIds.isNotEmpty;
 }
@@ -59,7 +63,11 @@ enum ImportReviewDestination {
 /// 过程中失效」两种情况(`runImport` / `showImportSheet` 在这些分支上返回
 /// `null`)——语义上与「有结果但没有新文档」一样:都不该跳。
 ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
-  if (result == null || !result.hasNewDocs) return ImportReviewDestination.none;
+  if (result == null) return ImportReviewDestination.none;
+  // 排进了后台队列 → 一律去档案:那几行「识别中」和识别完长出来的文档都在那儿,
+  // 置顶的「待确认」节也在那儿。此刻还没有任何一份识别完,谈不上"进哪一份的详情"。
+  if (result.queuedCount > 0) return ImportReviewDestination.archive;
+  if (!result.hasNewDocs) return ImportReviewDestination.none;
   return result.newDocumentIds.length == 1
       ? ImportReviewDestination.singleDocument
       : ImportReviewDestination.archive;
@@ -90,14 +98,14 @@ void dispatchImportReview(
 }
 
 /// 「健康档案」右上角「+ 导入」触发的采集流程:弹三选一(拍照 / 相册 / 选文件),
-/// 选定后逐个采集→(图片先 ML Kit 中文 OCR)→落库,期间显示进度对话框,结束弹汇总,
-/// 并 [bumpVaultRevision] 通知档案自动刷新看到新记录。
+/// 选定后**把这一批交给后台队列就返回**(见 `import_queue.dart`)——识别不再把用户
+/// 钉在一个模态进度框里等,档案屏顶部那几行「识别中」替代了它,每识别完一份,
+/// 那份文档就自己长到时间线上。
 ///
-/// 采集/OCR/落库逻辑与原「导入导出」屏一致,只是进度改用模态对话框(从档案触发,
-/// 不再挂在某个屏的持久状态上)。医疗判断全在 Rust core,这里只搬字节 + 调 FFI。
+/// 这一层只管**采集**(拉起原生取件器)和**问一句合不合并**;OCR、落库、补页、
+/// 云抽取全在队列那边。医疗判断全在 Rust core,这里只搬字节 + 调 FFI。
 ///
-/// 返回值见 [ImportRunResult]:取消/未选文件返回 `null`,否则是这次运行的结果
-/// (可能没有新文档——全部失败或全部重复)。
+/// 返回值见 [ImportRunResult]:取消/未选文件返回 `null`,否则带上这次排了几份。
 Future<ImportRunResult?> showImportSheet(BuildContext context) async {
   final choice = await showModalBottomSheet<ImportChoice>(
     context: context,
@@ -613,261 +621,48 @@ Future<ImportRunResult> _runImport(
   List<PendingImport> items,
   ImportChoice source,
 ) async {
-  // 埋点:只报「从哪来、开始了、几份」——**份数分桶**,不报文件名、不报内容。
-  final startedAt = DateTime.now();
-  // 导入前的库存:0 就是首次导入。**首次导入成功率是最重要的一个数**,而它端上
-  // 就能判断,不需要任何 ID。读不到(冷启动早期)就不报,绝不猜。
-  final sizeBefore = Analytics.librarySize;
-  Analytics.track(AnalyticsEvent.docImportStarted, {
-    'source': source.name,
-    'count_bucket': Bucket.count(items.length),
-  });
-  final progress = ValueNotifier<String>('正在导入 1/${items.length}…');
-  // 模态进度对话框(不可点走);导入结束后由本函数关闭。
-  showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      content: Row(
-        children: [
-          const SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
-          ),
-          const SizedBox(width: MedShape.s3),
-          Expanded(
-            child: ValueListenableBuilder<String>(
-              valueListenable: progress,
-              // 「3/12」这类进度数字用等宽 —— 否则每换一份文字宽度都在抖。
-              builder: (context, text, _) => Text(
-                text,
-                style: MedType.body.copyWith(
-                  color: MedColors.of(context).ink,
-                  fontFeatures: MedType.tabular,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
+  // 「合并成一份」**问在识别之前**。改造前它问在整批识别完之后 —— 那时用户还被
+  // 一个模态进度框钉在原地,所以问得到。识别搬去后台之后人早就走了,只剩两条路:
+  // 要么让队列跑到一半再弹一个框(要多一套「识别中 N/M」的等待态,而且会在用户
+  // 正在别的屏上操作时突然打断他),要么在他还站在这儿的时候问掉。选后者:
+  // **状态最少**(没有等待态、没有中途打断),代价是万一这几张里有重复/失败,
+  // 实际能合并的份数会少于问的时候说的那个数 —— 队列在收尾时按真正入库的照片
+  // 份数再判一次(`imageDocIds.length >= 2`),少于两份就不合并。
+  final imageCount = items.where((i) => i.isImage).length;
+  var mergePhotos = false;
+  if (shouldOfferPhotoMerge(imageCount) && context.mounted) {
+    mergePhotos = await askPhotoMerge(context, imageCount);
+  }
 
-  final rows = <ImportResultRow>[];
-  // 本次新建文档 id → 报告里识别到的患者姓名(识别不到为 null),进「待确认」队列;
-  // 姓名与当前成员不符者会被标红,识别到的姓名还用来自动命名默认档案。
-  final newDocs = <int, String?>{};
-  // 本次新建的**照片**文档 id(`newDocs` 的子集,排除 PDF/TXT 等非图片来源)——
-  // 「合并成一份」只对着这批照片问,见循环末尾与 `_offerPhotoMerge`。
-  final imageDocIds = <int>[];
-  // 埋点用:整批里**第一次**失败发生在哪一步、归到哪个原因码。只留第一条 ——
-  // 一次批量导入报一条事件,报第一个失败足以定位;报全部会把事件量和基数都吹起来。
-  String? failStage;
-  ImportFailReason? failReason;
-  // 每份耗时的累计(仅成功的份),用来算单份平均 —— 那才是引擎质量指标。
-  //
-  // ⚠️ 这个数**只能包含 OCR + 落库**。云抽取一次 LLM 往返最长能等 90 秒
-  // (`cloud_extract.extractTimeout`),混进来这个数就不再回答"OCR 引擎快不快"
-  // 那个问题了 —— 这正是把抽取移出循环的第二个理由。
-  var okElapsedMs = 0;
-  var okCount = 0;
-  // 排队等云抽取的照片。**循环里只排队、不跑**:每份都是一次 LLM 往返,串在循环里
-  // 就是让用户盯着「正在导入 i/N」的进度条多等最长 90 秒 × 张数。整批导完之后再
-  // 一份一份跑(见循环后面的 `unawaited`),结果自己长出来。
-  final pendingExtractions = <PendingCloudExtraction>[];
-  // 本机只认出几个字、因此**不送云端整理**的份数(闸本身在 `runCloudExtraction`
-  // 里,这里只是同一个判据算一遍,好在导入结果里说一句,见 `_showImportSummary`)。
-  var lowOcrYield = 0;
-
-  for (var i = 0; i < items.length; i++) {
-    final item = items[i];
-    progress.value = '正在导入 ${i + 1}/${items.length}…';
-    // 每份从「采集完、待处理」开始;下面逐步推进,失败时它就是失败所在的步骤。
-    var stage = 'capture';
-    final itemStartedAt = DateTime.now();
-    try {
-      final ImportOutcomeDto outcome;
-      if (item.isImage) {
-        // iOS + 安卓统一 PP-OCRv5(见 ocr_bridge.dart;iOS 多一步 Vision 拉正)。
-        stage = 'ocr';
-        final ocr = await recognizeImageText(item.path);
-        stage = 'save';
-        final bytes = await File(item.path).readAsBytes();
-        outcome = await ingestImageWithText(
-          name: item.name,
-          bytes: bytes,
-          ocrText: ocr.text,
-          confidence: ocr.confidence,
-        );
-        if (outcome.documentId != null && isLowOcrYield(ocr.text)) {
-          lowOcrYield++;
-        }
-        // 云抽取只在这里**排队**,不在循环里跑 —— 见下面 `pendingExtractions`
-        // 的声明。ocr 要整份带走(涂黑用它的 bytes/lines,拿不到第二次)。
-        if (outcome.documentId != null) {
-          // 连**落库时的成员和箱子**一起排队:`documentId` 是这个库自增的 rowid,
-          // 抽取跑到一半箱子被换掉(用户切成员,或者医生切去代拍 —— 后者压根
-          // 不碰 `ProfileManager`),同一个 id 就指向别的库里的另一份文档
-          // (见 [PendingCloudExtraction])。
-          // 根路径拿不到就**不排队**,不能让一份已经入库的文档因此记成失败。
-          String? root;
-          try {
-            root = await currentVaultRoot();
-          } catch (_) {
-            root = null;
-          }
-          if (root != null) {
-            pendingExtractions.add((
-              outcome: outcome,
-              ocr: ocr,
-              profile: ProfileManager.instance.current,
-              vaultRoot: root,
-            ));
-          }
-        }
-      } else {
-        stage = 'save';
-        final bytes = await File(item.path).readAsBytes();
-        outcome = await ingestBytes(filename: item.name, data: bytes);
-      }
-
-      // 按页补 OCR:哪些页缺文本层由 `outcome.pagesWithoutText` 点名。逻辑本身
-      // 见 [backfillPagesWithoutText] —— 医生代拍(`proxy_intake_flow.dart`)
-      // 共用同一个函数,两条路不许各写一份。
-      final stillMissingPages = await backfillPagesWithoutText(
-        outcome,
-        item.path,
-        onStage: (s) => stage = s,
+  // 落库那一刻的成员与箱子,就地捕获交给队列 —— 整批都认它们(见
+  // `import_queue._Batch`)。根路径拿不到就只能放弃这一批:没有它,后台跑到一半
+  // 用户切了成员/医生切去代拍,这几张就会写进**别人的**箱子。
+  final String root;
+  try {
+    root = await currentVaultRoot();
+  } catch (e) {
+    debugPrint('[import] 读不到当前保险箱根目录,这一批没有排队: $e');
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        appSnackBar(content: const Text('保险箱没打开,这次没能导入')),
       );
-
-      if (outcome.documentId case final id?) {
-        newDocs[id] = outcome.detectedName;
-        if (item.isImage) imageDocIds.add(id);
-      }
-      rows.add(rowForOutcome(outcome, stillMissingPages: stillMissingPages));
-      okElapsedMs += DateTime.now().difference(itemStartedAt).inMilliseconds;
-      okCount++;
-    } catch (e) {
-      // 原始错误留日志给开发者;用户看到的是 rowFromError 里的简单提示。
-      debugPrint('[import] ${item.name} 导入失败: $e');
-      rows.add(rowFromError(item.name, e));
-      // ⚠️ 只记步骤和**原因码**,绝不记 `e` 本身 —— 异常文本里常带文件名和路径。
-      failStage ??= stage;
-      failReason ??= ImportFailReason.of(e);
     }
+    return const ImportRunResult([]);
   }
 
-  // 本次新建的文档显式加入「待确认」队列(健康档案顶部据此置顶让用户核对)。
-  if (newDocs.isNotEmpty) {
-    // 默认档案还没定过名字时,用识别到的第一个患者姓名自动命名它(迁移待确认键)。
-    final detected = newDocs.values.firstWhere(
-      (n) => n != null && n.trim().isNotEmpty,
-      orElse: () => null,
-    );
-    await autoNameCurrentProfileFrom(detected);
-    await ReviewState.instance.markPending(newDocs);
-  }
-  // 有任一份成功落库,通知「健康档案」屏自动刷新。
-  if (rows.any((r) => r.kind != ImportRowKind.failed)) {
-    bumpVaultRevision();
-  }
-
-  // 埋点:成功几份、失败几份、总共花了多久。**耗时是判断要不要优化 OCR 引擎的唯一
-  // 客观依据**;失败只报计数,不报任何异常消息(那里面常有文件名和路径)。
-  final failedCount = rows.where((r) => r.kind == ImportRowKind.failed).length;
-  final allFailed = failedCount == rows.length;
-  Analytics.track(
-    allFailed
-        ? AnalyticsEvent.docImportFailed
-        : AnalyticsEvent.docImportCompleted,
-    {
-      'source': source.name,
-      'count_bucket': Bucket.count(rows.length),
-      'failed_bucket': Bucket.count(failedCount),
-      // 总时长 = 用户要等多久(决定要不要做后台导入)。
-      'duration_bucket': Bucket.duration(DateTime.now().difference(startedAt)),
-      // 单份平均 = 引擎快不快(决定换不换 OCR)。两个数回答两个不同的决定,
-      // 只报总时长的话前一个问题根本答不出来 —— 它被份数主导了。
-      if (okCount > 0)
-        'per_doc_duration_bucket': Bucket.perDoc(
-          Duration(milliseconds: okElapsedMs ~/ okCount),
-        ),
-      // 首次导入成功率。库存读不到时**不报**,不猜。
-      if (sizeBefore != null) 'is_first': sizeBefore == 0,
-      if (allFailed) ...{
-        'stage': failStage ?? 'capture',
-        'reason_code': (failReason ?? ImportFailReason.unknown).name,
-      },
-    },
+  final queued = enqueueImport(
+    items: items,
+    profile: ProfileManager.instance.current,
+    vaultRoot: root,
+    source: source,
+    mergePhotos: mergePhotos,
   );
-
-  // newDocs 的 key 就是 ImportRunResult 要交出去的东西——早前几行已经把它喂给
-  // ReviewState.markPending,这里不重算,只是把同一份数据也交给调用方。
-  // （若下面发生了合并,`newDocs` 会在合并后就地更新,`ImportRunResult` 在
-  // 函数末尾才构造,始终反映最终状态。）
-  if (!context.mounted) {
-    // 屏没了就没有合并这一问,照旧把整批发出去(见下面那段为什么平时要等)。
-    unawaited(runCloudExtractions(pendingExtractions));
-    return ImportRunResult(newDocs.keys.toList());
-  }
-  Navigator.of(context).pop(); // 关进度对话框
-  await _showImportSummary(context, rows, lowOcrYield: lowOcrYield);
-
-  // 这次一起导入的照片里有 ≥2 张各自建了文档:问要不要合并成一份——见
-  // `_offerPhotoMerge` 文档注释(为什么每次都问、不自动合并)。只在这里问一次,
-  // 用户选「分开保存」或合并失败都保持原状,不重复打扰。
-  if (shouldOfferPhotoMerge(imageDocIds.length) && context.mounted) {
-    final mergedId = await _offerPhotoMerge(context, imageDocIds);
-    if (mergedId != null) {
-      // 姓名核对(「导错人」标红)要接着起作用:合并前几份里第一个识别到的
-      // 姓名带到合并后这一份上——内容是同一批照片的文字,姓名不会因为合并
-      // 变化,但 `ReviewState` 是按文档 id 记的,原 id 已经不存在了,必须
-      // 显式搬一次。
-      final mergedDetectedName = imageDocIds
-          .map((id) => newDocs[id])
-          .firstWhere(
-            (n) => n != null && n.trim().isNotEmpty,
-            orElse: () => null,
-          );
-      for (final id in imageDocIds) {
-        newDocs.remove(id);
-        await ReviewState.instance.markReviewed(id);
-      }
-      newDocs[mergedId] = mergedDetectedName;
-      await ReviewState.instance.markPending({mergedId: mergedDetectedName});
-      bumpVaultRevision();
-      // 云抽取改成跑合并出来的这一份:原来那几份已经墓碑掉了,排着的请求只会
-      // 打在不存在的文档上(见 [pendingForMergedDocument])。
-      final merged = pendingForMergedDocument(
-        documentId: mergedId,
-        detectedName: mergedDetectedName,
-        sources: pendingExtractions
-            .where((p) => imageDocIds.contains(p.outcome.documentId))
-            .toList(),
-      );
-      pendingExtractions.removeWhere(
-        (p) => imageDocIds.contains(p.outcome.documentId),
-      );
-      if (merged != null) pendingExtractions.add(merged);
-    }
-  }
-
-  // 云抽取从这里开始,**不等它**:导入到此已经全部落库,摘要有正则版本可看;
-  // 抽取成功的那几份会各自 bump 一次,屏上自己换成更好的结果。
-  // 失败(没登录/没网/闸拒发)全部在 `runCloudExtraction` 里吞掉,不弹任何东西。
-  //
-  // **为什么排在合并问完之后**:合并会把原来那几份墓碑掉。抽取先跑起来的话,
-  // 那几趟 LLM 往返要么打在已经不存在的文档上(白花钱、日志刷「该文档没有 OCR
-  // 文字」),要么结果落在马上就要消失的文档上 —— 用户那边看到的是「整理了半天
-  // 什么都没有」。多等的只是用户点两下弹窗那几秒。
-  unawaited(runCloudExtractions(pendingExtractions));
-
-  progress.dispose();
-  return ImportRunResult(newDocs.keys.toList());
+  return ImportRunResult(const [], queuedCount: queued);
 }
 
-/// 合并前的确认弹窗 + 实际调用合并 FFI(`mergePhotosIntoDocument`)。
+/// 「要合并成一份吗?」这一问 —— **只问,不合并**:真正调 `mergePhotosIntoDocument`
+/// 的是后台队列(`import_queue._mergeBatchPhotos`),因为那时候这几张才刚识别完、
+/// 有了文档 id,而用户早就走了。
 ///
 /// **为什么每次都问,不自动合并**:一批拍进来的照片不保证真的是同一份文件的
 /// 连续页——顺手把上次剩的一张也扫进来、或者一次选了两份不同的化验单,都是
@@ -885,10 +680,7 @@ Future<ImportRunResult> _runImport(
 /// `merge_documents_into_pdf` 逐页带到合并出的这份上(否则原文档一墓碑,
 /// `ocr_result` 就跟着没了——2026-09-15 冒烟里 2135 字一次点击归零);云抽取
 /// 由调用方改排到新文档上(见 [pendingForMergedDocument])。
-Future<int?> _offerPhotoMerge(
-  BuildContext context,
-  List<int> imageDocIds,
-) async {
+Future<bool> askPhotoMerge(BuildContext context, int photoCount) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) {
@@ -896,7 +688,7 @@ Future<int?> _offerPhotoMerge(
       return AlertDialog(
         title: const Text('要合并成一份吗?'),
         content: Text(
-          '刚才这 ${imageDocIds.length} 张,如果是同一份病历的连续页,可以合并'
+          '刚才这 $photoCount 张,如果是同一份病历的连续页,可以合并'
           '成一份多页文档,时间线上只显示一条。原始照片仍然保留,已经识别出的'
           '文字也会一并带进合并后的这一份,云端整理重新跑一次。\n\n'
           '合并不可撤销:要拆开得重新导入这几张照片。',
@@ -924,22 +716,7 @@ Future<int?> _offerPhotoMerge(
       );
     },
   );
-  if (confirmed != true || !context.mounted) return null;
-
-  final messenger = ScaffoldMessenger.of(context);
-  try {
-    final outcome = await mergePhotosIntoDocument(
-      name: mergedDocumentName,
-      documentIds: Int64List.fromList(imageDocIds),
-    );
-    return outcome.documentId;
-  } catch (e) {
-    debugPrint('[import] 合并失败: $e');
-    messenger.showSnackBar(
-      appSnackBar(content: Text('合并失败,原来的 ${imageDocIds.length} 份都还在:$e')),
-    );
-    return null;
-  }
+  return confirmed == true;
 }
 
 /// 该不该在导入完成后主动问「是否合并成一份」——纯判断,方便单测。至少 2 张
@@ -1135,136 +912,6 @@ Future<Map<int, OcrResult>> _ocrScannedPdfPages(
   }
   return byPage;
 }
-
-Future<void> _showImportSummary(
-  BuildContext context,
-  List<ImportResultRow> rows, {
-  int lowOcrYield = 0,
-}) async {
-  final success = rows.where((r) => r.kind == ImportRowKind.success).length;
-  final duplicate = rows.where((r) => r.kind == ImportRowKind.duplicate).length;
-  final storedNoText = rows
-      .where((r) => r.kind == ImportRowKind.storedNoText)
-      .length;
-  final partial = rows.where((r) => r.kind == ImportRowKind.partial).length;
-  final failed = rows.where((r) => r.kind == ImportRowKind.failed).length;
-
-  if (!context.mounted) return;
-  await showDialog<void>(
-    context: context,
-    builder: (context) {
-      final c = MedColors.of(context);
-      return AlertDialog(
-        title: Text(failed == rows.length ? '导入未成功' : '导入完成'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 四条汇总各占一档语义色:成功=主色,去重=三级墨(不是问题,
-              // 只是没事发生),仅存原件=`high`(要你回头补一张),失败=`critical`。
-              // 原先「仅存原件」用的是 Material 的 `Colors.orange`,不在色板里。
-              if (success > 0)
-                _summaryLine(
-                  context,
-                  Icons.check_circle,
-                  c.seal,
-                  '成功识别入库 $success 份',
-                ),
-              if (duplicate > 0)
-                _summaryLine(
-                  context,
-                  Icons.content_copy,
-                  c.ink3,
-                  '重复,已跳过 $duplicate 份',
-                ),
-              if (storedNoText > 0)
-                _summaryLine(
-                  context,
-                  Icons.warning_amber_rounded,
-                  c.high,
-                  ImportIncompleteNotice.storedNoText(storedNoText),
-                ),
-              // 部分识别:PDF 有些页认出来了、有些没有——同样是 `high`(要你
-              // 回头核对/补拍),但和「彻底没识别」用不同文案,别混在一起。
-              if (partial > 0)
-                _summaryLine(
-                  context,
-                  Icons.warning_amber_rounded,
-                  c.high,
-                  ImportIncompleteNotice.partialPages(partial),
-                ),
-              if (failed > 0)
-                _summaryLine(
-                  context,
-                  Icons.error_outline,
-                  c.critical,
-                  '未能处理 $failed 份',
-                ),
-              // 本机只认出几个字的那几份:云端整理这一步**主动没做**(见
-              // `cloud_extract.isLowOcrYield`)。不说这一句,用户看到的就是一份
-              // 停在「待归类」、什么都没发生的文档,分不清是还在跑还是失败了。
-              if (lowOcrYield > 0)
-                _summaryLine(
-                  context,
-                  Icons.warning_amber_rounded,
-                  c.high,
-                  '$lowOcrYield 份本机识别太少,没有送云端整理 —— 建议重拍',
-                ),
-              const SizedBox(height: MedShape.s2),
-              const Divider(),
-              const SizedBox(height: MedShape.s1),
-              for (final row in rows)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Text(
-                    '${row.name} —— ${row.statusLabel}',
-                    style: MedType.secondary.copyWith(color: c.ink2),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
-            style: FilledButton.styleFrom(
-              backgroundColor: c.sealInk,
-              foregroundColor: c.surface,
-            ),
-            child: const Text('知道了'),
-          ),
-        ],
-      );
-    },
-  );
-}
-
-Widget _summaryLine(
-  BuildContext context,
-  IconData icon,
-  Color color,
-  String text,
-) => Padding(
-  padding: const EdgeInsets.symmetric(vertical: 4),
-  child: Row(
-    children: [
-      Icon(icon, color: color, size: 20),
-      const SizedBox(width: MedShape.s1),
-      Expanded(
-        child: Text(
-          text,
-          // 份数是数字 —— 等宽,四行汇总的数字才在同一列上。
-          style: MedType.body.copyWith(
-            fontWeight: FontWeight.w600,
-            color: MedColors.of(context).ink,
-            fontFeatures: MedType.tabular,
-          ),
-        ),
-      ),
-    ],
-  ),
-);
 
 class _SheetTile extends StatelessWidget {
   const _SheetTile({

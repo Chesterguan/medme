@@ -609,7 +609,7 @@ void main() {
       expect(r, isNull);
       expect(
         captured.single,
-        contains('成员已从 ${captured0.id} 切到 $other,跳过文档 31'),
+        contains('成员已从 ${captured0.id} 切到 $other,跳过 文档 31'),
       );
       expect(
         captured.any((m) => m!.contains('退回本地正则')),
@@ -645,8 +645,8 @@ void main() {
         vaultRoot: _root,
       );
       expect(r, isNull);
-      expect(captured.single, contains('保险箱已不是导入时那个'));
-      expect(captured.single, contains('跳过文档 34'));
+      expect(captured.single, contains('保险箱已不是当初那个'));
+      expect(captured.single, contains('跳过 文档 34'));
       expect(
         captured.any((m) => m!.contains('退回本地正则')),
         isFalse,

@@ -293,7 +293,8 @@ Future<void> runCloudExtractions(List<PendingCloudExtraction> pending) async {
   if (skipped > 0) debugPrint('[cloud-extract] 成员已切换,跳过 $skipped 份');
 }
 
-/// 只在「箱子还是导入时那个」的前提下,把 [action] 排进 **vault 队列**跑。
+/// 只在「箱子还是当初那个」的前提下,把 [action] 排进 **vault 队列**跑。
+/// [what] 只进日志(「文档 12」「照片」这类),不许带病历内容。
 /// 换掉了就返回 null,一个字节都不碰那个箱子。
 ///
 /// 两件事缺一不可:
@@ -310,22 +311,22 @@ Future<void> runCloudExtractions(List<PendingCloudExtraction> pending) async {
 /// 代拍统统堵住。所以 prepare 和 commit 各排一次,中间那趟自己在外面跑。
 ///
 /// ⚠️ 不可重入:`runSerialized` 里不许再排队,所以 [action] 必须是直接的 FRB 调用。
-Future<T?> _ifStillCurrent<T>(
+Future<T?> ifVaultUnchanged<T>(
   Profile captured,
   String capturedVaultRoot,
-  int docId,
+  String what,
   Future<T> Function() action,
 ) => runSerialized(() async {
   final now = ProfileManager.instance.current.id;
   if (now != captured.id) {
     // 只有成员 id,没有任何病历内容(同 `runCloudExtraction` 的 catch 那条纪律)。
-    debugPrint('[cloud-extract] 成员已从 ${captured.id} 切到 $now,跳过文档 $docId');
+    debugPrint('[vault-guard] 成员已从 ${captured.id} 切到 $now,跳过 $what');
     return null;
   }
   // 路径不进日志:里面有成员 / 代拍病人的 id 和沙盒路径,而"换没换"这一个事实
   // 就够定位了。
   if (await readCurrentVaultRoot() != capturedVaultRoot) {
-    debugPrint('[cloud-extract] 保险箱已不是导入时那个(代拍/连切两次),跳过文档 $docId');
+    debugPrint('[vault-guard] 保险箱已不是当初那个(代拍/连切两次),跳过 $what');
     return null;
   }
   return action();
@@ -378,10 +379,10 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
     // 身份只给得出名字:App 目前不存证件号/手机号(`Profile` 里没有,病历解析出的
     // `PatientProfileDto` 也没有),所以 K 层只认名字,证件号/手机号由 deid 的 A/P
     // 层按锚点和模式兜。哪天真有了这两项,补在这两个参数上即可。
-    final req = await _ifStillCurrent(
+    final req = await ifVaultUnchanged(
       profile,
       vaultRoot,
-      docId,
+      '文档 $docId',
       () => rust_vault.vaultCloudPrepareExtraction(
         documentId: docId,
         lines: image ? ocr.lines : const [],
@@ -416,14 +417,14 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
     }
 
     // 这一趟(502 会重试一次,两次共用 [extractTimeout] 的预算)在 vault 队列
-    // **外面**跑,见 [_ifStillCurrent] 与 [postExtractRetrying]。
+    // **外面**跑,见 [ifVaultUnchanged] 与 [postExtractRetrying]。
     final result = await postExtractRetrying(client, mode: mode, payload: payload);
     // 校验基准由 Rust 侧自己重算(不信这里传的任何文本),身份参数必须与 prepare
     // 那次逐字相同,否则占位符编号对不上、校验就不诚实了。
-    return await _ifStillCurrent(
+    return await ifVaultUnchanged(
       profile,
       vaultRoot,
-      docId,
+      '文档 $docId',
       () => rust_vault.vaultCloudCommitExtraction(
         documentId: docId,
         mode: mode,

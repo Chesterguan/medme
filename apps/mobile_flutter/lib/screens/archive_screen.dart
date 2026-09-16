@@ -5,6 +5,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/widgets/import_queue_card.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
@@ -367,6 +368,10 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                       : null,
                 ),
                 const SizedBox(height: MedShape.s4),
+                // 后台识别队列:导入点完就回到这一屏,这几行是「东西确实在处理」
+                // 的唯一去处(见 `import_queue.dart`)。它自己监听模块级的
+                // `importJobs`,不进本屏的 FutureBuilder —— 切走再切回来还在。
+                const ImportQueueCard(),
                 // 待确认:琥珀框卡片,点开进详情核对 + 确认;左滑删除。
                 for (final d in pending) ...[
                   _PendingCard(
