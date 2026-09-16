@@ -788,11 +788,25 @@ Future<void> _defaultBackfill({
 /// 返回了空表」就把它混成一次失败的补救。判据用的是 [isImageName],与调用方
 /// 当初把这份文件判成图片(`PendingImport.isImage`)时是同一个谓词、同一个文件。
 ///
+/// ⚠️ [profile] / [vaultRoot] 是**落库那一刻的成员和箱子**,必填。回填不是只读的
+/// 补救,它是一条**写事件**:`backfill_pdf_text` → `add_ocr` →
+/// `append_event(OcrAdded)`,写下去就进历史、会同步。而 Rust 侧的 vault 是进程级
+/// 单例、每个箱子的 rowid 都从 1 开始 —— 拿甲库的 `documentId` 写进乙库,大概率
+/// 正好命中乙的另一份文档,甲的扫描页文字就追加进了**别人的病历**。
+///
+/// 这段渲染 + OCR 最长跑 20 页([_kMaxPdfOcrPagesPerImport]),分钟级。导入还钉在
+/// 模态进度框里时这个窗口打不开;搬到后台队列之后,用户点完就回到档案屏,成员
+/// tab 条就在眼前。所以每页写之前都过一遍 [ifVaultUnchanged](与落库、云抽取
+/// 同一道闸、同一条 vault 队列);换掉了就**一页都不写**,剩下的如实计回返回值
+/// —— 补不上就说补不上,绝不悄悄算成补上了。
+///
 /// [ocrPages] / [backfill] 只为测试注入替身:真实实现要碰 `pdfx` 渲染和 Rust
 /// FFI,在 `flutter test` 的纯 dart 进程里都跑不起来。生产调用一律用默认值。
 Future<int> backfillPagesWithoutText(
   ImportOutcomeDto outcome,
   String path, {
+  required Profile profile,
+  required String vaultRoot,
   void Function(String stage)? onStage,
   PdfPageOcr ocrPages = _ocrScannedPdfPages,
   PdfTextBackfill backfill = _defaultBackfill,
@@ -804,15 +818,28 @@ Future<int> backfillPagesWithoutText(
   final targetPages = outcome.pagesWithoutText.toList();
   final scan = await ocrPages(path, targetPages);
   onStage?.call('save');
+  var written = 0;
   for (final entry in scan.entries) {
-    await backfill(
-      documentId: outcome.documentId!,
-      pageNo: entry.key,
-      text: entry.value.text,
-      confidence: entry.value.confidence,
+    // 渲染/OCR 留在 vault 队列**外**(它慢),只有这一行写入进队列 + 核身份。
+    final ok = await ifVaultUnchanged(
+      profile,
+      vaultRoot,
+      '补第 ${entry.key} 页',
+      () async {
+        await backfill(
+          documentId: outcome.documentId!,
+          pageNo: entry.key,
+          text: entry.value.text,
+          confidence: entry.value.confidence,
+        );
+        return true;
+      },
     );
+    // 换箱子了:后面几页同样不许写,直接收手(闸只会越来越不成立)。
+    if (ok == null) break;
+    written++;
   }
-  return targetPages.length - scan.length;
+  return targetPages.length - written;
 }
 
 /// 一次导入单份文件时,`_ocrScannedPdfPages` 实际会渲染 + OCR 的页数上限

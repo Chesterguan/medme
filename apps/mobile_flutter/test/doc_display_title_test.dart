@@ -37,10 +37,10 @@ void main() {
       );
     });
 
-    test('文档里没有机构(自测记录)→ 只报类型', () {
+    test('文档里没有机构(处方)→ 只报类型', () {
       expect(
-        docDisplayTitle(_doc(docType: 'self_measurement', title: 'IMG_0042.JPG')),
-        '自测记录',
+        docDisplayTitle(_doc(docType: 'prescription', title: 'IMG_0042.JPG')),
+        '处方',
       );
     });
 
@@ -93,6 +93,36 @@ void main() {
         ),
         '北京协和医院 · 2026-04-30',
       );
+    });
+  });
+
+  // 「记录」入口产出的两类文档,`title` **不是文件名,是内容**:
+  //   `add_note`(vault.rs)写的是笔记首行前 30 字;
+  //   `self_measured_title`(vault.rs)写的是「血压」/「血糖」这类。
+  // 把类型标签排在它们前面,结果是所有笔记都叫「笔记」、所有自测都叫「自测记录」,
+  // 彼此再也分不开 —— 改造前显示的是真内容,这条不许退化。
+  group('手动录入的真标题不许被类型标签吃掉', () {
+    test('笔记:显示笔记自己的首行', () {
+      expect(
+        docDisplayTitle(_doc(docType: 'note', title: '出院后每天早上头晕,想问医生')),
+        '出院后每天早上头晕,想问医生',
+      );
+    });
+
+    test('自测记录:显示「血压」而不是一律「自测记录」', () {
+      expect(
+        docDisplayTitle(_doc(docType: 'self_measurement', title: '血压')),
+        '血压',
+      );
+      expect(
+        docDisplayTitle(_doc(docType: 'self_measurement', title: '血糖')),
+        '血糖',
+      );
+    });
+
+    test('这两类没有 title 时才退回类型标签', () {
+      expect(docDisplayTitle(_doc(docType: 'note')), '笔记');
+      expect(docDisplayTitle(_doc(docType: 'self_measurement')), '自测记录');
     });
   });
 

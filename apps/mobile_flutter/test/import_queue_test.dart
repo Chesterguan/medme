@@ -10,6 +10,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/cloud_extract.dart' show readCurrentVaultRoot;
 import 'package:mobile_flutter/import_flow.dart' show ImportChoice;
 import 'package:mobile_flutter/import_queue.dart';
@@ -66,6 +67,7 @@ void main() {
   tearDown(() {
     resetImportQueueForTest();
     resetVaultQueueForTest();
+    Analytics.debugSink = null;
   });
 
   /// 排一批并等队列跑干净。队列是「发了就走」的,测试得自己等 ——
@@ -246,4 +248,80 @@ void main() {
     expect(job.needsAttention, isTrue);
   });
 
+  test('I1 有一张没入库 → **不合并**,并且把这件事说出来', () async {
+    importItemProcessor = (job, onStage) async {
+      if (job.item.name == 'b.jpg') throw StateError('这一份坏了');
+      return _ok(job.item.name, job.item.name == 'a.jpg' ? 1 : 2);
+    };
+
+    await enqueueAndSettle([
+      _photo('a.jpg'),
+      _photo('b.jpg'),
+      _photo('c.jpg'),
+    ], mergePhotos: true);
+
+    // 合并不可撤销:少一页的多页 PDF 修不回来,而重试产出的是**另一份**独立文档,
+    // 永远进不了那份合并件。所以宁可不合,把话说清楚。
+    final notice = importQueueNotice.value;
+    expect(notice, isNotNull);
+    expect(notice, contains('3'));
+    expect(notice, contains('没有合并'));
+  });
+
+  test('I1 三张全进去了 → 照常走合并(不因为这条新闸而不合)', () async {
+    var docId = 1;
+    importItemProcessor = (job, onStage) async => _ok(job.item.name, docId++);
+
+    await enqueueAndSettle([
+      _photo('a.jpg'),
+      _photo('b.jpg'),
+      _photo('c.jpg'),
+    ], mergePhotos: true);
+
+    // host 上没有 Rust 库,`mergePhotosIntoDocument` 必抛 —— 抛出来本身就证明这条
+    // 路真的走到了合并(而上一条用例根本没走到)。文案是合并失败那一条,不是
+    // 「没有合并」那一条。
+    expect(importQueueNotice.value, contains('没能合并'));
+  });
+
+  test('S1 重试不再发一遍导入埋点(否则份数和 is_first 会被重试灌水)', () async {
+    var attempts = 0;
+    importItemProcessor = (job, onStage) async {
+      attempts++;
+      if (attempts == 1) throw StateError('第一次故意炸');
+      return _ok(job.item.name, 7);
+    };
+    final events = <AnalyticsEvent>[];
+    Analytics.debugSink = (e, _) => events.add(e);
+
+    await enqueueAndSettle([_photo('a.jpg')]);
+    expect(events, [
+      AnalyticsEvent.docImportStarted,
+      AnalyticsEvent.docImportFailed,
+    ]);
+
+    events.clear();
+    retryImportJob(importJobs.value.single);
+    for (var i = 0; i < 200 && importJobs.value.isNotEmpty; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(events, isEmpty, reason: '重试是同一次导入的续命,不是新的一次导入');
+  });
+
+  test('S2 因切成员失败的那一行,文案要说「切回去再试」', () async {
+    importItemProcessor = (job, onStage) async => _ok(job.item.name, 1);
+    enqueueImport(
+      items: [_photo('a.jpg')],
+      profile: const Profile(id: 'someone-else', name: '别人'),
+      vaultRoot: _root,
+      source: ImportChoice.gallery,
+      mergePhotos: false,
+    );
+    for (var i = 0; i < 200; i++) {
+      if (importJobs.value.every((j) => j.state == ImportJobState.failed)) break;
+      await Future<void>.delayed(Duration.zero);
+    }
+    // 重试仍然认捕获的那个成员 —— 不切回去,重试必然再失败一次。别让用户空点。
+    expect(importJobs.value.single.error, contains('切回'));
+  });
 }

@@ -56,9 +56,10 @@ pub struct DocumentSummaryDto {
     /// 还没轮到 vs 整理过但白跑。原先两种都显示「待归类」,用户看到的是一份
     /// 永远停在待归类的文档,分不清是还在跑还是失败了(冒烟 friction 2)。
     pub extraction_item_count: Option<i32>,
-    /// 这份病历上印的**机构名**(「北京协和医院」),取自它自己的 OCR 文本,用的
-    /// 是 `rebuild_encounters` 给就诊组取 provider 的同一个 `extract_provider`。
-    /// 文档里确实没有机构(自测记录、笔记)时为 `None` —— 编一个院名比空着糟。
+    /// 这份病历上印的**机构名**(「北京协和医院」),取自它自己的 OCR 文本,用的是
+    /// `extract_provider_clean` —— 就诊组头上那个 `extract_provider` 的**不带噪**变体
+    /// (页脚签名切不准时它返回 `None`,而不是「王涛北京协和医院」)。
+    /// 文档里确实没有机构(自测记录、笔记)时也是 `None` —— 编一个院名比空着糟。
     ///
     /// 存在的理由:`document` 表里没有这一列,而档案行此前显示的是
     /// `image_picker_….jpg`。前端(`doc_labels.dart` 的 `docDisplayTitle`)拿它
@@ -120,7 +121,9 @@ pub(crate) fn doc_summary(v: &core_model::Vault, d: &Document) -> DocumentSummar
         .ocr_text(d.id)
         .ok()
         .as_deref()
-        .and_then(core_model::extract_provider);
+        // `_clean`,不是带噪那个:标题抽不到院名还有「化验」顶着,不会塌 ——
+        // 那就别把页脚签名里的审核医师名字当成这份病历的名字(见那边的文档)。
+        .and_then(core_model::extract_provider_clean);
     s
 }
 
@@ -527,5 +530,17 @@ mod tests {
             Some("北京协和医院"),
         );
         assert_eq!(by_id(b.document_id.expect("建了文档")).provider, None);
+
+        // 页脚签名那一串切不准(`审核者:王涛北京协和医院`)——**标题宁可不要院名**。
+        // 就诊卡那条路仍然接受带噪(见 `core_model::extract_provider` 的取舍),
+        // 这里走的是 `_clean`,两条路要的东西不一样。
+        let signature_only = "血常规检验报告单\n检验日期 2023-05-12\n\
+白细胞 6.1 10^9/L 3.5-9.5\n审核者:王涛北京协和医院医疗文书专用章\n";
+        let c = crate::api::vault::ingest_bytes(
+            "IMG_0042.txt".into(),
+            signature_only.as_bytes().to_vec(),
+        )
+        .unwrap();
+        assert_eq!(by_id(c.document_id.expect("建了文档")).provider, None);
     }
 }

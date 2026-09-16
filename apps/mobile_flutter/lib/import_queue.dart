@@ -79,9 +79,8 @@ class ImportJob {
 
   /// 屏上这一行叫什么。相册/相机给的临时名一个字的信息量都没有
   /// (见 [isTempCaptureName]),那种就报「照片」/「文件」。
-  String get label => isTempCaptureName(item.name)
-      ? (item.isImage ? '照片' : '文件')
-      : item.name;
+  String get label =>
+      isTempCaptureName(item.name) ? (item.isImage ? '照片' : '文件') : item.name;
 
   /// 跑完了还值不值得占着一行:失败的当然要,「仅存原件」「有页没识别」也要
   /// (那是让用户回头补拍的唯一提示),识别成功和重复的就撤掉 —— 文档自己已经
@@ -96,9 +95,8 @@ class ImportJob {
 }
 
 /// 队列里**全部**的行(排队中 / 正在跑 / 跑完了还有话说的)。档案屏监听它。
-final ValueNotifier<List<ImportJob>> importJobs = ValueNotifier<List<ImportJob>>(
-  const [],
-);
+final ValueNotifier<List<ImportJob>> importJobs =
+    ValueNotifier<List<ImportJob>>(const []);
 
 /// 合并失败这类「整批层面」的坏消息 —— 它不属于任何一行(源文档那几行早就撤了)。
 /// 档案屏把它显示成一条可关掉的提示;`null` = 没话说。
@@ -124,6 +122,8 @@ class _Batch {
     required this.source,
     required this.mergePhotos,
     required this.total,
+    required this.imageTotal,
+    required this.countInAnalytics,
     required this.sizeBefore,
   });
 
@@ -138,6 +138,14 @@ class _Batch {
   /// 就走了,没法等识别完再弹一个框问他。
   final bool mergePhotos;
   final int total;
+
+  /// 这一批里**照片**有几张。合并要拿它跟真正入库的份数比:少一张就不合(见
+  /// [_finishBatch])。
+  final int imageTotal;
+
+  /// 这一批算不算一次「导入」。重试是**同一次导入的续命**,不是新的一次 ——
+  /// 再发一遍 `doc_import_started/completed` 会把份数和 `is_first` 灌水。
+  final bool countInAnalytics;
   final int? sizeBefore;
   final DateTime startedAt = DateTime.now();
 
@@ -161,19 +169,24 @@ int enqueueImport({
   required String vaultRoot,
   required ImportChoice source,
   required bool mergePhotos,
+  bool countInAnalytics = true,
 }) {
   if (items.isEmpty) return 0;
   // 埋点:只报「从哪来、开始了、几份」——**份数分桶**,不报文件名、不报内容。
-  Analytics.track(AnalyticsEvent.docImportStarted, {
-    'source': source.name,
-    'count_bucket': Bucket.count(items.length),
-  });
+  if (countInAnalytics) {
+    Analytics.track(AnalyticsEvent.docImportStarted, {
+      'source': source.name,
+      'count_bucket': Bucket.count(items.length),
+    });
+  }
   final batch = _Batch(
     profile: profile,
     vaultRoot: vaultRoot,
     source: source,
     mergePhotos: mergePhotos,
     total: items.length,
+    imageTotal: items.where((i) => i.isImage).length,
+    countInAnalytics: countInAnalytics,
     // 导入前的库存:0 就是首次导入。读不到(冷启动早期)就不报,绝不猜。
     sizeBefore: Analytics.librarySize,
   );
@@ -186,7 +199,11 @@ int enqueueImport({
 }
 
 /// 失败的那一份再来一次:**另起一个单份批次**,不回原来那批。原批的账
-/// (埋点、合并、云抽取)早就结了,把一份塞回去只会让它再结一次。
+/// (合并、云抽取)早就结了,把一份塞回去只会让它再结一次。
+///
+/// **不发埋点**:重试是同一次导入的续命,不是新的一次导入 —— 再报一次
+/// `doc_import_started` 会让「一次导入几份」和「是不是首次导入」两个数被重试次数
+/// 灌水,而那两个数正是这条埋点存在的理由。
 void retryImportJob(ImportJob job) {
   dismissImportJob(job);
   enqueueImport(
@@ -195,6 +212,7 @@ void retryImportJob(ImportJob job) {
     vaultRoot: job._batch.vaultRoot,
     source: job._batch.source,
     mergePhotos: false,
+    countInAnalytics: false,
   );
 }
 
@@ -301,8 +319,10 @@ Future<void> _runJob(ImportJob job) async {
     // 原始错误留日志给开发者;用户看到的是一句人话。
     debugPrint('[import-queue] ${job.label} 导入失败: $e');
     job.state = ImportJobState.failed;
+    // 切成员那一条要说**怎么办**:重试仍然认捕获的那个成员(闸就是这么设计的),
+    // 不切回去点多少次都还是这一行。
     job.error = e is ImportVaultSwitched
-        ? '已经切换了成员或保险箱,这一份没有导入'
+        ? '已经切换了成员或保险箱,这一份没有导入 —— 切回原来那位成员再试'
         : '没能处理这一份';
     batch.rows.add(rowFromError(job.item.name, e));
     // ⚠️ 只记步骤和**原因码**,绝不记 `e` 本身 —— 异常文本里常带文件名和路径。
@@ -318,18 +338,32 @@ Future<void> _runJob(ImportJob job) async {
 Future<void> _finishBatch(_Batch batch) async {
   // 成员已经切走 → 「待确认」队列和档案自动命名都是**写在当前成员名下**的,
   // 写下去就是把甲的新文档记进乙的待办。不写,文档本身照常在它自己的箱子里。
-  final sameProfile = ProfileManager.instance.current.id == batch.profile.id;
-  if (batch.newDocs.isNotEmpty && sameProfile) {
+  //
+  // **每一步之前都重新问一次**,不是开头问一次就一路用到底:下面每个 `await`
+  // 都是一个可以切成员的窗口(窄,但它就在用户眼前的 tab 条上)。
+  bool sameProfile() => ProfileManager.instance.current.id == batch.profile.id;
+  if (batch.newDocs.isNotEmpty && sameProfile()) {
     // 默认档案还没定过名字时,用识别到的第一个患者姓名自动命名它。
     final detected = batch.newDocs.values.firstWhere(
       (n) => n != null && n.trim().isNotEmpty,
       orElse: () => null,
     );
     await autoNameCurrentProfileFrom(detected);
-    await ReviewState.instance.markPending(batch.newDocs);
+    if (sameProfile()) await ReviewState.instance.markPending(batch.newDocs);
   }
-  if (batch.mergePhotos && batch.imageDocIds.length >= 2 && sameProfile) {
-    await _mergeBatchPhotos(batch);
+  if (batch.mergePhotos && sameProfile()) {
+    // **少一张就不合。** 合并不可撤销(见 `import_flow.askPhotoMerge`):拿剩下
+    // 那几张合出来的是一份**少一页**的多页 PDF,修不回来;而失败那张重试产出的
+    // 是另一份独立文档,永远进不了那份合并件。宁可让它们分开躺着 —— 一页不少,
+    // 用户想合就重新导入这几张再合一次。
+    if (batch.imageDocIds.length == batch.imageTotal && batch.imageTotal >= 2) {
+      await _mergeBatchPhotos(batch);
+    } else {
+      final missing = batch.imageTotal - batch.imageDocIds.length;
+      importQueueNotice.value =
+          '刚才那 ${batch.imageTotal} 张里有 $missing 张没能入库,所以没有合并成一份'
+          ' —— 合并不可撤销,少一页不如不合。已入库的都在档案里。';
+    }
   }
   bumpVaultRevision();
 
@@ -339,34 +373,36 @@ Future<void> _finishBatch(_Batch batch) async {
       .where((r) => r.kind == ImportRowKind.failed)
       .length;
   final allFailed = failedCount == batch.rows.length;
-  Analytics.track(
-    allFailed
-        ? AnalyticsEvent.docImportFailed
-        : AnalyticsEvent.docImportCompleted,
-    {
-      'source': batch.source.name,
-      'count_bucket': Bucket.count(batch.rows.length),
-      'failed_bucket': Bucket.count(failedCount),
-      // 改造后这个数**不再是「用户要等多久」**(用户点完就走了),而是「这批在
-      // 后台跑了多久」,含排在别的批次后面干等的时间。要判断引擎快不快看下面
-      // 那个单份平均,那个仍然只含 OCR + 落库。
-      'duration_bucket': Bucket.duration(
-        DateTime.now().difference(batch.startedAt),
-      ),
-      // 单份平均 = 引擎快不快(决定换不换 OCR)。口径与改造前逐字一致:只含
-      // OCR + 落库,不含云抽取。
-      if (batch.okCount > 0)
-        'per_doc_duration_bucket': Bucket.perDoc(
-          Duration(milliseconds: batch.okElapsedMs ~/ batch.okCount),
+  if (batch.countInAnalytics) {
+    Analytics.track(
+      allFailed
+          ? AnalyticsEvent.docImportFailed
+          : AnalyticsEvent.docImportCompleted,
+      {
+        'source': batch.source.name,
+        'count_bucket': Bucket.count(batch.rows.length),
+        'failed_bucket': Bucket.count(failedCount),
+        // 改造后这个数**不再是「用户要等多久」**(用户点完就走了),而是「这批在
+        // 后台跑了多久」,含排在别的批次后面干等的时间。要判断引擎快不快看下面
+        // 那个单份平均,那个仍然只含 OCR + 落库。
+        'duration_bucket': Bucket.duration(
+          DateTime.now().difference(batch.startedAt),
         ),
-      // 首次导入成功率。库存读不到时**不报**,不猜。
-      if (batch.sizeBefore != null) 'is_first': batch.sizeBefore == 0,
-      if (allFailed) ...{
-        'stage': batch.failStage ?? 'capture',
-        'reason_code': (batch.failReason ?? ImportFailReason.unknown).name,
+        // 单份平均 = 引擎快不快(决定换不换 OCR)。口径与改造前逐字一致:只含
+        // OCR + 落库,不含云抽取。
+        if (batch.okCount > 0)
+          'per_doc_duration_bucket': Bucket.perDoc(
+            Duration(milliseconds: batch.okElapsedMs ~/ batch.okCount),
+          ),
+        // 首次导入成功率。库存读不到时**不报**,不猜。
+        if (batch.sizeBefore != null) 'is_first': batch.sizeBefore == 0,
+        if (allFailed) ...{
+          'stage': batch.failStage ?? 'capture',
+          'reason_code': (batch.failReason ?? ImportFailReason.unknown).name,
+        },
       },
-    },
-  );
+    );
+  }
 
   // 云抽取从这里开始,**不等它**:整批已经全部落库,摘要有正则版本可看;抽取
   // 成功的那几份会各自 bump 一次,屏上自己换成更好的结果。失败(没登录/没网/
@@ -486,6 +522,9 @@ Future<ImportItemOutcome> _processImportItem(
   final stillMissingPages = await backfillPagesWithoutText(
     outcome,
     item.path,
+    // 回填是**写事件**,同样只认采集那一刻的成员和箱子(见那边的 ⚠️)。
+    profile: batch.profile,
+    vaultRoot: batch.vaultRoot,
     onStage: onStage,
   );
   return ImportItemOutcome(

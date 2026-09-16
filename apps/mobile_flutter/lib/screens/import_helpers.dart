@@ -2,7 +2,7 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 
 /// 「导入导出」屏的纯逻辑小工具:与 Widget 树无关,方便单独看清楚。
 /// 文档类型中文标签,与桌面 / 旧 Tauri 移动端 `DOC_LABEL` 保持一致
-/// (见 `apps/mobile/src/App.tsx`),汇总弹窗里「归类为」文案用它。
+/// (见 `apps/mobile/src/App.tsx`),结果行里「归类为」文案用它。
 const Map<String, String> kDocTypeLabel = {
   'lab_report': '化验',
   'imaging_report': '影像',
@@ -41,7 +41,7 @@ class PendingImport {
 }
 
 /// 单份文件导入结果的展示态:区分「FFI 落库但状态非全新成功」与
-/// 「处理过程中直接抛异常」,汇总弹窗按此分类计数。
+/// 「处理过程中直接抛异常」,结果行按此分类,队列行据此决定跑完要不要留在屏上。
 ///
 /// `partial`:PDF 有部分页(混合页里有文本层的页,和/或移动端补 OCR 成功的页)
 /// 识别成功,但还有页始终没能拿到文本——不同于 `success`(全部拿到)或
@@ -111,7 +111,7 @@ ImportResultRow rowFromOutcome(ImportOutcomeDto outcome) {
 /// 文本层——都是这条路径,直接退化成 `rowFromOutcome`)。
 ///
 /// **不能静默**是这个函数存在的唯一理由:哪怕补救之后仍有页没识别,也必须让
-/// 用户在汇总弹窗里看到"不是全部",而不是回退成看起来完整的「已识别入库」——
+/// 用户看到"不是全部",而不是回退成看起来完整的「已识别入库」——
 /// 这正是混合页 PDF 曾经静默丢数据的用户可见症状(修复见
 /// `pipeline::ingest_pdf` 与本文件调用方 `import_flow.dart::_runImport`)。
 ImportResultRow rowForOutcome(
@@ -150,8 +150,9 @@ ImportResultRow rowForOutcome(
 
 /// 「这一批没收全」的提示文案 —— **唯一来源**。
 ///
-/// 患者模式的导入汇总弹窗(`import_flow.dart::_showImportSummary`)和医生代拍
-/// 采集完的提示条(`proxy_intake_flow.dart::_ingest`)都从这里取字符串。这个项目
+/// 患者模式档案屏上的队列行(`widgets/import_queue_card.dart`,取的是
+/// `rowForOutcome` 产出的 `statusLabel`)和医生代拍采集完的提示条
+/// (`proxy_intake_flow.dart::_ingest`)都从这里取字符串。这个项目
 /// 有一条硬约束:同一件事在不同屏上不能长成两个略微不同的意思 —— 「有几页没识别
 /// 出来」在患者那儿叫「部分页未能识别」,在医生那儿就不许改口叫别的。要改文案,
 /// 改这里一处,两屏一起变。
@@ -165,7 +166,7 @@ abstract final class ImportIncompleteNotice {
 
 /// 把一批结果行汇总成「没收全」的提示行,没有任何一份不完整时返回**空列表**。
 ///
-/// 行序与患者模式汇总弹窗里的一致(先「仅存原件」后「部分页未能识别」),用的也是
+/// 行序与患者模式一致(先「仅存原件」后「部分页未能识别」),用的也是
 /// [ImportIncompleteNotice] 里同一份字符串。失败份数**不在这里**:那是另一回事
 /// (根本没落库,不是「落了但漏页」),各屏本来就各有自己的报法。
 List<String> incompleteNoticesFor(Iterable<ImportResultRow> rows) {
@@ -181,7 +182,7 @@ List<String> incompleteNoticesFor(Iterable<ImportResultRow> rows) {
 
 /// 医生代拍采集完那一条提示条的全文;没有任何要说的事时返回 `null`(不弹)。
 ///
-/// 代拍不弹患者模式那种汇总弹窗(诊室里多一次「知道了」是多一次点击),但
+/// 代拍不像患者模式那样把结果摊在档案屏上(诊室里没那一屏),但
 /// **「没收全」必须说出来**:医生当场拍完以为收全了,病人一走就再也补不上。
 /// 「没能处理」(压根没落库)和「落库了但有页没识别」是两件事,分行各说各的,
 /// 后者的措辞直接取自 [incompleteNoticesFor] —— 与患者模式同一份字符串。

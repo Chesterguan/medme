@@ -11,6 +11,7 @@ import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/import_flow.dart'
     show ImportChoice, backfillPagesWithoutText, pickImportItems;
 import 'package:mobile_flutter/ocr_bridge.dart';
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/doctor/consent_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_delivery_count.dart';
@@ -373,6 +374,17 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       if (mounted) await _showError('采集已中止', '$e');
       return;
     }
+    // 补页那一步是**写事件**,要认「此刻开的是哪个箱子」(见
+    // `backfillPagesWithoutText` 的 ⚠️)。代拍开的是病人的箱子、压根不碰
+    // `ProfileManager`,所以真正分得清的是这个根目录;成员一并捕获,两道闸缺一不可。
+    final capturedProfile = ProfileManager.instance.current;
+    final String capturedRoot;
+    try {
+      capturedRoot = await vault.currentVaultRoot();
+    } catch (e) {
+      if (mounted) await _showError('采集已中止', '读不到当前保险箱:$e');
+      return;
+    }
     setState(() {
       _busy = true;
       _progress = '正在处理 1/${items.length}…';
@@ -391,8 +403,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     ImportFailReason? failReason;
 
     var failed = 0;
-    // 每份的展示态(与患者模式同一个 `rowForOutcome`)。代拍不弹汇总弹窗——诊室里
-    // 多一次「知道了」是多一次点击——但「哪几份没收全」必须留下来,采集完汇总成一条
+    // 每份的展示态(与患者模式同一个 `rowForOutcome`)。代拍不在屏上留结果行——
+    // 诊室里多一次点击都是多的——但「哪几份没收全」必须留下来,采集完汇总成一条
     // 提示条说出去。
     final rows = <ImportResultRow>[];
     for (var i = 0; i < items.length; i++) {
@@ -425,6 +437,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         final stillMissingPages = await backfillPagesWithoutText(
           outcome,
           item.path,
+          profile: capturedProfile,
+          vaultRoot: capturedRoot,
           onStage: (s) => stage = s,
         );
         rows.add(rowForOutcome(outcome, stillMissingPages: stillMissingPages));

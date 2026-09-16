@@ -71,6 +71,9 @@ final List<RegExp> _tempNamePatterns = [
 
 /// 档案行 / 详情页上这份文档**叫什么**。取名顺位(高的先):
 ///
+/// 0. 笔记 / 自测记录的 `title` —— 那是 Rust 写的**内容**(笔记首行、「血压」),
+///    不是文件名,谁也不该盖掉它。
+///
 /// 1. `<医院> · <类型>` —— 两样都认出来了,这是最有用的一行。
 /// 2. `<类型>`(没有机构的自测记录、笔记)。
 /// 3. `<医院> · <日期>` —— 认得出在哪看的,类型还没分出来。
@@ -81,6 +84,15 @@ final List<RegExp> _tempNamePatterns = [
 /// 日期只在类型缺位时进标题:档案行本来就单独有一列日期(`_groupDate`),两边都
 /// 印就成了「化验 · 2026-04-30    2026-04-30」。
 String docDisplayTitle(DocumentSummaryDto doc) {
+  final title = doc.title?.trim() ?? '';
+  // 「记录」入口产出的两类文档,`title` **不是文件名,是内容**:`add_note` 写的是
+  // 笔记首行前 30 字,`self_measured_title` 写的是「血压」/「血糖」。拿类型标签盖掉
+  // 它,列表上所有笔记就都叫「笔记」、所有自测都叫「自测记录」,彼此再也分不开。
+  // 这两类没有原件、没有机构,标题只有这一个来源。
+  if (title.isNotEmpty &&
+      (doc.docType == 'note' || doc.docType == 'self_measurement')) {
+    return title;
+  }
   final provider = doc.provider?.trim() ?? '';
   // `unknown` 不是一种类型,是「还没分出来」—— 它的说法归 [docRowLabel] 管。
   final label = doc.docType == 'unknown'
@@ -92,7 +104,6 @@ String docDisplayTitle(DocumentSummaryDto doc) {
   ].where((p) => p.isNotEmpty);
   if (parts.isNotEmpty) return parts.join(' · ');
 
-  final title = doc.title?.trim() ?? '';
   if (title.isNotEmpty && !isTempCaptureName(title)) return title;
   return docRowLabel(doc);
 }
