@@ -269,6 +269,15 @@ class DocumentSummaryDto {
   /// 永远停在待归类的文档,分不清是还在跑还是失败了(冒烟 friction 2)。
   final int? extractionItemCount;
 
+  /// 这份病历上印的**机构名**(「北京协和医院」),取自它自己的 OCR 文本,用的
+  /// 是 `rebuild_encounters` 给就诊组取 provider 的同一个 `extract_provider`。
+  /// 文档里确实没有机构(自测记录、笔记)时为 `None` —— 编一个院名比空着糟。
+  ///
+  /// 存在的理由:`document` 表里没有这一列,而档案行此前显示的是
+  /// `image_picker_….jpg`。前端(`doc_labels.dart` 的 `docDisplayTitle`)拿它
+  /// 拼出「协和医院 · 化验」,不用再把一个临时文件名端给用户看。
+  final String? provider;
+
   const DocumentSummaryDto({
     required this.id,
     required this.docType,
@@ -278,6 +287,7 @@ class DocumentSummaryDto {
     required this.pageCount,
     this.sliceCount,
     this.extractionItemCount,
+    this.provider,
   });
 
   @override
@@ -289,7 +299,8 @@ class DocumentSummaryDto {
       title.hashCode ^
       pageCount.hashCode ^
       sliceCount.hashCode ^
-      extractionItemCount.hashCode;
+      extractionItemCount.hashCode ^
+      provider.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -303,7 +314,8 @@ class DocumentSummaryDto {
           title == other.title &&
           pageCount == other.pageCount &&
           sliceCount == other.sliceCount &&
-          extractionItemCount == other.extractionItemCount;
+          extractionItemCount == other.extractionItemCount &&
+          provider == other.provider;
 }
 
 class EncounterSummaryDto {

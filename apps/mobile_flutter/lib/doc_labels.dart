@@ -41,6 +41,62 @@ String docRowLabel(DocumentSummaryDto doc) {
   return docLabel['unknown']!;
 }
 
+/// 这个文件名是**机器起的**(相册/相机/落库兜底),不是用户起的。
+///
+/// 相册和相机交给我们的是 `image_picker_1A2B….jpg`、`IMG_0042.JPG` 这类临时名,
+/// 它一路被当成 `document.title` 存下来,于是档案里排着一列看不懂的字符串 ——
+/// 这些名字**一个字的信息量都没有**,宁可显示「化验」也不显示它们。用户自己起的
+/// 名(「出院小结扫描件.pdf」)反过来是有信息的,那种要留。
+///
+/// 只影响**显示**:存下来的文件名一个字节都不动(原件永远按原名躺在 CAS 里)。
+bool isTempCaptureName(String name) {
+  final n = name.trim();
+  if (n.isEmpty) return true;
+  // image_picker 的临时名,含 `scaled_` 前缀那种压缩产物。
+  if (n.toLowerCase().contains('image_picker')) return true;
+  return _tempNamePatterns.any((re) => re.hasMatch(n));
+}
+
+final List<RegExp> _tempNamePatterns = [
+  // 相机/相册的序号名:iOS `IMG_0042`、安卓 `CAP_`/`PXL_`/`DSC`。
+  RegExp(r'^(img|cap|pxl|dsc|dcim)[_-]?\d', caseSensitive: false),
+  // `ingest_image_with_text` 拿不到文件名时的兜底(vault.rs)。
+  RegExp(r'^capture\.', caseSensitive: false),
+  // 裸 UUID(iOS 相册导出、部分安卓 ROM 就这么命名)。
+  RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.\w+)?$',
+    caseSensitive: false,
+  ),
+];
+
+/// 档案行 / 详情页上这份文档**叫什么**。取名顺位(高的先):
+///
+/// 1. `<医院> · <类型>` —— 两样都认出来了,这是最有用的一行。
+/// 2. `<类型>`(没有机构的自测记录、笔记)。
+/// 3. `<医院> · <日期>` —— 认得出在哪看的,类型还没分出来。
+/// 4. `<日期>` —— 只知道什么时候。
+/// 5. 文件名,**且只在它是用户自己起的时候**(见 [isTempCaptureName])。
+/// 6. [docRowLabel] 的三态说法(「待归类」/「云端整理没有读出内容」)。
+///
+/// 日期只在类型缺位时进标题:档案行本来就单独有一列日期(`_groupDate`),两边都
+/// 印就成了「化验 · 2026-04-30    2026-04-30」。
+String docDisplayTitle(DocumentSummaryDto doc) {
+  final provider = doc.provider?.trim() ?? '';
+  // `unknown` 不是一种类型,是「还没分出来」—— 它的说法归 [docRowLabel] 管。
+  final label = doc.docType == 'unknown'
+      ? ''
+      : (docLabel[doc.docType] ?? '记录');
+  final parts = [
+    if (provider.isNotEmpty) provider,
+    if (label.isNotEmpty) label else fmtDate(doc.docDate),
+  ].where((p) => p.isNotEmpty);
+  if (parts.isNotEmpty) return parts.join(' · ');
+
+  final title = doc.title?.trim() ?? '';
+  if (title.isNotEmpty && !isTempCaptureName(title)) return title;
+  return docRowLabel(doc);
+}
+
 /// 就诊组 `kind` → 中文标签。
 const Map<String, String> kindLabel = {
   'inpatient': '住院',

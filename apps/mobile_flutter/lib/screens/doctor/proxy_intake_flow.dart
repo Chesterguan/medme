@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/import_flow.dart'
     show ImportChoice, backfillPagesWithoutText, pickImportItems;
 import 'package:mobile_flutter/ocr_bridge.dart';
@@ -1196,7 +1197,7 @@ class _PendingRow extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        doc.title ?? label,
+                        docDisplayTitle(doc),
                         style: MedType.subtitle.copyWith(color: c.ink),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

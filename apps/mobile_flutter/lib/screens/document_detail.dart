@@ -257,7 +257,7 @@ class _DetailBody extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            doc.title ?? typeLabel,
+                            docDisplayTitle(doc),
                             style: MedType.title.copyWith(color: c.ink),
                           ),
                           const SizedBox(height: 2),

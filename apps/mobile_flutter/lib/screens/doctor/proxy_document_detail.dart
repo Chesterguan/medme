@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart' show kDocTypeLabel;
 import 'package:mobile_flutter/src/rust/api/vault.dart' as vault;
@@ -333,7 +334,7 @@ class _ProxyDetailBody extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            doc.title ?? typeLabel,
+                            docDisplayTitle(doc),
                             style: MedType.title.copyWith(color: c.ink),
                           ),
                           const SizedBox(height: 2),

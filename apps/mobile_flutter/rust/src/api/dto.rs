@@ -56,6 +56,14 @@ pub struct DocumentSummaryDto {
     /// 还没轮到 vs 整理过但白跑。原先两种都显示「待归类」,用户看到的是一份
     /// 永远停在待归类的文档,分不清是还在跑还是失败了(冒烟 friction 2)。
     pub extraction_item_count: Option<i32>,
+    /// 这份病历上印的**机构名**(「北京协和医院」),取自它自己的 OCR 文本,用的
+    /// 是 `rebuild_encounters` 给就诊组取 provider 的同一个 `extract_provider`。
+    /// 文档里确实没有机构(自测记录、笔记)时为 `None` —— 编一个院名比空着糟。
+    ///
+    /// 存在的理由:`document` 表里没有这一列,而档案行此前显示的是
+    /// `image_picker_….jpg`。前端(`doc_labels.dart` 的 `docDisplayTitle`)拿它
+    /// 拼出「协和医院 · 化验」,不用再把一个临时文件名端给用户看。
+    pub provider: Option<String>,
 }
 impl From<&Document> for DocumentSummaryDto {
     fn from(d: &Document) -> Self {
@@ -68,6 +76,7 @@ impl From<&Document> for DocumentSummaryDto {
             page_count: d.page_count,
             slice_count: None,
             extraction_item_count: None,
+            provider: None,
         }
     }
 }
@@ -104,6 +113,14 @@ pub(crate) fn doc_summary(v: &core_model::Vault, d: &Document) -> DocumentSummar
         .ok()
         .flatten()
         .map(|j| extraction_item_count(&j));
+    // ponytail: 每份文档读一次全文再跑一遍正则(上面读 extraction_json 已经是每份
+    // 一次查询)。档案列表撑到上千份还嫌慢的话,把院名在落库时算好存进
+    // `document`——那是加一列 + 一次迁移,现在还不值得。
+    s.provider = v
+        .ocr_text(d.id)
+        .ok()
+        .as_deref()
+        .and_then(core_model::extract_provider);
     s
 }
 
@@ -465,4 +482,50 @@ pub struct SyncImportOutcomeDto {
     pub out_of_order: u32,
     pub untrusted: u32,
     pub undecodable: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::api::vault::VAULT_TEST_LOCK as TEST_LOCK;
+
+    /// 档案行上的标题要能说出「在哪家医院」——而院名只印在纸上,`document` 表里
+    /// 没有这一列。这里钉住 `doc_summary` 真的从这份文档自己的 OCR 文本里把它捞
+    /// 出来(同 `rebuild_encounters` 给就诊组取 provider 的那个函数),而不是
+    /// 让前端只能显示一个 `image_picker_xxx.jpg`。
+    ///
+    /// 第二份文档(自测记录那种没有机构的文本)必须是 `None` —— 编一个医院名比
+    /// 空着糟得多。
+    #[test]
+    fn doc_summary_reads_the_hospital_off_the_documents_own_text() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        let with_provider = "北京协和医院\n生化检验报告单\n检验日期 2023-05-10\n\
+糖化血红蛋白 7.1 % H 4-6.5\n";
+        let without = "血压记录\n2023-05-11 收缩压 128 mmHg 舒张压 82 mmHg\n";
+        let a = crate::api::vault::ingest_bytes(
+            "image_picker_A1B2.txt".into(),
+            with_provider.as_bytes().to_vec(),
+        )
+        .unwrap();
+        let b = crate::api::vault::ingest_bytes("自测.txt".into(), without.as_bytes().to_vec())
+            .unwrap();
+
+        let by_id = |id: i64| {
+            crate::api::vault::get_document(id)
+                .unwrap_or_else(|e| panic!("读文档 {id} 失败:{e}"))
+                .document
+        };
+        assert_eq!(
+            by_id(a.document_id.expect("建了文档")).provider.as_deref(),
+            Some("北京协和医院"),
+        );
+        assert_eq!(by_id(b.document_id.expect("建了文档")).provider, None);
+    }
 }

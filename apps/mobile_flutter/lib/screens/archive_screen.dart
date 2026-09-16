@@ -35,7 +35,7 @@ String _groupTitle(TimelineGroupDto g) {
       encounter.provider != null
           ? '${kindLabel[encounter.kind] ?? encounter.kind} · ${encounter.provider}'
           : (kindLabel[encounter.kind] ?? encounter.kind),
-    TimelineGroupDto_Document(:final doc) => doc.title ?? docRowLabel(doc),
+    TimelineGroupDto_Document(:final doc) => docDisplayTitle(doc),
   };
 }
 
@@ -826,7 +826,7 @@ class _SubDocList extends StatelessWidget {
             direction: DismissDirection.endToStart,
             background: swipeDeleteBackground(context),
             confirmDismiss: (_) async {
-              await onDelete(d.id, d.title ?? docLabel[d.docType] ?? '记录');
+              await onDelete(d.id, docRowLabel(d));
               return false;
             },
             child: Container(
@@ -861,7 +861,7 @@ class _SubDocList extends StatelessWidget {
                       const SizedBox(width: MedShape.s2),
                       Expanded(
                         child: Text(
-                          d.title ?? docLabel[d.docType] ?? '记录',
+                          docRowLabel(d),
                           style: MedType.body.copyWith(color: c.ink),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -912,7 +912,7 @@ class _PendingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final label = doc.title ?? docRowLabel(doc);
+    final label = docDisplayTitle(doc);
     final card = MedCard(
       // 这张卡背后就是刚导入的那份原件,点开即达 → 画骑缝线。
       perforated: true,
