@@ -65,6 +65,180 @@ fn another_glucocorticoid_is_not_silently_converted_while_the_table_is_unverifie
 }
 
 #[test]
+fn prednisolone_does_not_get_a_hard_coded_factor_of_one() {
+    // 泼尼松龙临床上确实按 1:1 算(DORIS Box 1 原文用的就是 prednisolone),但那是
+    // 一个**没有出处 id 的临床数值**;写进引擎就违反了 global-constraints「包里每个
+    // 数值都带出处 id」。系数 1 只留给规范名逐字等于「泼尼松」的那一个。
+    let b = status(
+        &[(TODAY, rx_doc("泼尼松龙片 10mg 每日一次 口服"))],
+        vec![enable()],
+    );
+    assert!(b["gc"]["daily_pred_equiv_mg"].is_null());
+    assert_eq!(b["gc"]["unconvertible"][0]["name"], "泼尼松龙片");
+    assert_eq!(b["gc"]["unconvertible"][0]["reason"], "换算表待核");
+}
+
+#[test]
+fn methylprednisolone_spelled_the_other_way_is_still_unconvertible() {
+    // 「甲泼尼松龙」是甲泼尼龙在中国处方上的另一种写法,词典里没有,逐字含
+    // 「泼尼松」。按「规范名 == 泼尼松」判就不会误伤。
+    let b = status(
+        &[(TODAY, rx_doc("甲泼尼松龙片 8mg 每日一次 口服"))],
+        vec![enable()],
+    );
+    assert!(b["gc"]["daily_pred_equiv_mg"].is_null());
+    assert_eq!(b["gc"]["unconvertible"][0]["reason"], "换算表待核");
+}
+
+#[test]
+fn a_steroid_neither_the_package_nor_the_dictionary_knows_still_shows_up() {
+    // 倍他米松 / 曲安西龙 / 可的松今天既不在词典的 H02A* 里(只有 4 个),也不在包的
+    // `drugs[gc].names` 里。认不出**不等于**可以让它从界面上消失 —— 医生至少要看见
+    // 「他还在吃这个」。
+    let b = status(
+        &[(TODAY, rx_doc("倍他米松片 0.5mg 每日一次 口服"))],
+        vec![enable()],
+    );
+    assert!(b["gc"]["drug"].is_null(), "认不出就别当成现行激素方案");
+    let o = b["others"].as_array().unwrap();
+    let row = o
+        .iter()
+        .find(|x| x["name"] == "倍他米松片")
+        .expect("认不出的药也要列出来");
+    assert!(row["class"].is_null(), "不知道是哪一类就写 null,不编一个");
+    assert_eq!(row["latest_dose"], "0.5mg qd");
+}
+
+#[test]
+fn the_regimen_says_which_day_it_is_from() {
+    // 引擎不设时效(与 PGA 同一条:多久算过期由包/渲染层说),但**日期必须说出来**:
+    // 没有它,一张 2019 年的处方在界面上就是「现行方案:泼尼松 4 mg/天」。
+    // `since` 是起始日期,读起来像「一直吃到现在」,答不了这个问题。
+    let b = status(
+        &[("2019-06-01", rx_doc("泼尼松片 4mg 每日一次 口服"))],
+        vec![enable()],
+    );
+    assert_eq!(b["gc"]["daily_pred_equiv_mg"], 4.0);
+    assert_eq!(b["gc"]["as_of"], "2019-06-01", "最后一次见到是哪天");
+    assert_eq!(b["gc"]["since"], "2019-06-01");
+}
+
+#[test]
+fn the_headline_doses_carry_their_own_evidence() {
+    // 这两个是卡上最重的数,之前反而是 body 里唯一不带原剂量串和出处文档的。
+    let b = status(
+        &[(
+            TODAY,
+            rx_doc("泼尼松片 5mg 每日一次 口服\n硫酸羟氯喹片 0.2g 每日两次 口服"),
+        )],
+        vec![enable()],
+    );
+    assert_eq!(b["gc"]["dose"], "5mg qd");
+    assert_eq!(b["gc"]["sources"], serde_json::json!([0]));
+    assert_eq!(b["hcq"]["dose"], "0.2g bid");
+    assert_eq!(b["hcq"]["sources"], serde_json::json!([0]));
+}
+
+#[test]
+fn hcq_says_which_day_the_dose_is_from_separately_from_the_weight() {
+    // 一张 2019 年的处方配今天的体重,算出来的 mg/kg 看着像今天的。两个日期各带各的。
+    let b = status(
+        &[("2019-06-01", rx_doc("硫酸羟氯喹片 0.2g 每日两次 口服"))],
+        vec![enable(), weight(TODAY, 60.0)],
+    );
+    assert!((b["hcq"]["mg_per_kg"].as_f64().unwrap() - 6.667).abs() < 0.01);
+    assert_eq!(b["hcq"]["dose_at"], "2019-06-01");
+    assert_eq!(b["hcq"]["weight_at"], TODAY);
+}
+
+#[test]
+fn two_steroids_on_the_same_day_are_never_summed_or_picked_between() {
+    // 同一天两条激素:可能是换药、可能是冲击后减量、也可能是 OCR 把一行读成两行。
+    // 求和得出一个谁也没开过的剂量,挑一个是替医生猜 —— 而少算的方向正好制造
+    // DORIS 的假 ✔(10 + 20 里挑 10,就落在 <5 那条线的同一侧逻辑上被当成真值)。
+    let b = status(
+        &[(
+            TODAY,
+            rx_doc("泼尼松片 10mg 每日一次 口服\n泼尼松龙片 20mg 每日一次 口服"),
+        )],
+        vec![enable()],
+    );
+    assert!(b["gc"]["daily_pred_equiv_mg"].is_null());
+    assert!(b["gc"]["drug"].is_null());
+    assert_eq!(b["gc"]["as_of"], TODAY, "日期照样说出来:要核对的是哪天");
+    let u = b["gc"]["unconvertible"].as_array().unwrap();
+    assert_eq!(u.len(), 2, "那天的每一条都要列出来,不能静悄悄丢一条");
+    assert!(u
+        .iter()
+        .all(|x| x["reason"] == "同一天有多条激素记录,请核对"));
+    assert!(u.iter().any(|x| x["name"] == "泼尼松"));
+    assert!(u.iter().any(|x| x["name"] == "泼尼松龙片"));
+}
+
+#[test]
+fn a_topical_steroid_is_not_a_systemic_regimen() {
+    // 复方地塞米松乳膏按口服等效表换算是几十毫克泼尼松等效,直接进 DORIS/LLDAS;
+    // 在那之前它还会因为「最近」把真正在吃的口服激素挤掉。
+    let b = status(
+        &[(
+            TODAY,
+            rx_doc("复方地塞米松乳膏 5mg 每日一次 外用\n泼尼松片 5mg 每日一次 口服"),
+        )],
+        vec![enable()],
+    );
+    assert_eq!(b["gc"]["drug"], "泼尼松", "口服那条才是现行方案");
+    assert_eq!(b["gc"]["daily_pred_equiv_mg"], 5.0);
+    let o = b["others"].as_array().unwrap();
+    let cream = o
+        .iter()
+        .find(|x| x["name"] == "复方地塞米松乳膏")
+        .expect("外用的也要列出来,只是不计入全身剂量");
+    assert_eq!(cream["class"], "gc_nonsystemic");
+    // 外用那条不该出现在「没算进日剂量的激素」里 —— 它压根不是全身激素。
+    assert!(b["gc"]["unconvertible"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn an_injection_written_into_the_drug_name_is_not_converted_as_an_oral_dose() {
+    // 冲击治疗一次 500 mg 与口服 5 mg/天不是一回事,等效表(待核)覆盖的也只是口服。
+    let b = status(
+        &[(TODAY, rx_doc("泼尼松龙注射液 500mg 每日一次"))],
+        vec![enable()],
+    );
+    assert!(b["gc"]["daily_pred_equiv_mg"].is_null());
+    assert_eq!(
+        b["gc"]["unconvertible"][0]["reason"],
+        "注射剂型,不按口服换算"
+    );
+}
+
+#[test]
+fn a_route_the_parser_already_swallowed_is_invisible_to_this_layer() {
+    // ⚠️ **已知边界,不是期望行为 —— 这是给 Task 19 的绊线。**
+    // 剂型/途径在到达这一层之前就没了,两条路各丢一半:
+    //  - 写在剂量**后面**的(「甲泼尼龙 40mg 静滴」)被 `meds.rs` 的
+    //    `strip_trailing_route` 剥掉,`dose_string` 也只拼「剂量 频次」;
+    //  - 写在**药名里**的(「地塞米松注射液」)被词典归一成规范名「地塞米松」。
+    // 所以这道门只挡得住**词典认不出**的那些注射剂型(上一条测试)。今天靠
+    // 「换算表待核」兜住,一旦 Task 19 把 pred_equiv 填上,这一条就会按口服换算出
+    // 一个几倍于实际的泼尼松等效剂量并直接进 DORIS —— **填表之前必须先让途径到达
+    // 这一层**(交接清单)。这条测试到时候会红,那正是它的作用。
+    let b = status(
+        &[(TODAY, rx_doc("地塞米松注射液 5mg 每日一次"))],
+        vec![enable()],
+    );
+    assert!(b["gc"]["daily_pred_equiv_mg"].is_null());
+    assert_eq!(
+        b["gc"]["unconvertible"][0]["name"], "地塞米松",
+        "词典把「注射液」三个字归一掉了"
+    );
+    assert_eq!(
+        b["gc"]["unconvertible"][0]["reason"], "换算表待核",
+        "**不是**「注射剂型」—— 剂型门根本没看见它"
+    );
+}
+
+#[test]
 fn a_verified_conversion_table_turns_that_same_steroid_into_a_number() {
     // Task 19 把 §G 那张表核到原始出处、填进包之后,这条分支自然生效,引擎代码
     // 一个字都不用改 —— 这就是「等效系数放包里、不放引擎里」的全部意义。

@@ -673,18 +673,13 @@ fn latest_pga<'e>(ctx: &Ctx<'e>, package_id: &str) -> Option<(f64, &'e str)> {
     Some((v, e.at.as_str()))
 }
 
-/// 最近一次泼尼松**等效**日剂量(mg/天),算不出来时 `None`(每条 `pred_*` 如实
-/// 显示未知)。
-///
-/// 不在这儿垫一张等效换算表:spec §2 里 `pred_equiv` 自己标着「待核」,
-/// global-constraints 说没核实的数值一律 `null`。垫一个数出来,界面上就会出现一句
-/// 「泼尼松 4 mg/天 < 5,达标」—— 而那个 4 是引擎编的。细则见 [`gc_eval`]。
-pub fn latest_pred_equiv_mg(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> Option<f64> {
-    gc_eval(ctx, pkg).daily_mg
-}
-
 /// 达标检查表(spec §5.3)。`activity` 是 [`activity_eval`] 已经算好的那一次求值 ——
-/// 分数从 `hits` 来,**算全了没有**从 `unscored` 来。
+/// 分数从 `hits` 来,**算全了没有**从 `unscored` 来;`regimen` 同理来自
+/// [`regimen_eval`],`pred_*` 两条读它的 `daily_mg` / `as_of` / `blocked_reason`。
+///
+/// 泼尼松等效日剂量**不在这儿另算一遍**:算两遍就有算出两个不同答案的机会,而卡片
+/// 上那个「泼尼松 5 mg/天」和达标表里判 `<5` 用的必须是同一个数(与活动度卡和
+/// cSLEDAI 同一条理由)。
 ///
 /// `body` 的形状(Task 21 的渲染引擎按这一份读):
 /// ```text
@@ -700,12 +695,12 @@ pub fn states_section(
     ctx: &Ctx<'_>,
     pkg: &crate::package::Package,
     activity: &Activity,
+    regimen: &Regimen,
 ) -> Option<crate::view::Section> {
     if pkg.rules.states.is_empty() {
         return None;
     }
     let pga = latest_pga(ctx, &pkg.manifest.id);
-    let pred = latest_pred_equiv_mg(ctx, pkg);
     // `exclude` 里的 id 要能在活动度规则里找得到,不然减项会静悄悄失效。
     let known: Vec<&str> = pkg
         .rules
@@ -725,7 +720,7 @@ pub fn states_section(
             .into_iter()
             .flatten()
         {
-            let o = eval_state_item(it, activity, &known, pga, pred);
+            let o = eval_state_item(it, activity, &known, pga, &regimen.gc);
             if o.verdict == Verdict::No {
                 worst = Verdict::No;
             } else if o.verdict == Verdict::Unknown && worst != Verdict::No {
@@ -830,7 +825,7 @@ fn eval_state_item(
     activity: &Activity,
     known_ids: &[&str],
     pga: Option<(f64, &str)>,
-    pred: Option<f64>,
+    gc: &Gc,
 ) -> ItemOutcome {
     match (
         str_field(it, "kind"),
@@ -875,12 +870,24 @@ fn eval_state_item(
                 )
             },
         },
-        (k @ ("pred_lt" | "pred_le"), Some(v)) => match pred {
-            None => ItemOutcome::unknown("还没读到用药记录"),
-            Some(p) => ItemOutcome::judged(
-                if k == "pred_lt" { p < v } else { p <= v },
-                serde_json::json!(p),
+        (k @ ("pred_lt" | "pred_le"), Some(v)) => match gc.daily_mg {
+            // 理由来自 `regimen_eval`:「一条激素都没读到」和「读到了甲泼尼龙、
+            // 换算表待核」在界面上必须是两句不同的话。
+            None => ItemOutcome::unknown(
+                gc.blocked_reason
+                    .clone()
+                    .unwrap_or_else(|| "还没读到用药记录".into()),
             ),
+            // **日期必须带出去**(与 PGA 的 `actual_at` 一字不差的理由):一张 2019
+            // 年的处方今天照样能判出「泼尼松 4 mg < 5 ✔」,日期是唯一能让医生看出
+            // 这件事的东西。引擎不设时效,多久算过期由包/渲染层说。
+            Some(p) => ItemOutcome {
+                actual_at: gc.as_of.map(|d| d.to_string()),
+                ..ItemOutcome::judged(
+                    if k == "pred_lt" { p < v } else { p <= v },
+                    serde_json::json!(p),
+                )
+            },
         },
         // 只有人能答的条目(「无重要脏器活动」「与上次比无新活动」)。二期由医生在
         // 授权查看器里录(spec §7),此刻恒为未知 —— 诚实,不猜。
@@ -895,8 +902,60 @@ fn eval_state_item(
 // 上次就诊。**一个临床数字都不写死** —— 等效系数、目标值、说明书原文全在包里。
 // ---------------------------------------------------------------------------
 
+/// 换算表未核实时的逐字理由(卡上原样显示;Task 21 的 status_card 断言同一串)。
+const GC_TABLE_PENDING: &str = "换算表待核";
+
+/// 达标表那边对「读到了激素、但换不出等效日剂量」的说法。卡上那句是短标签
+/// ([`GC_TABLE_PENDING`]),达标表要的是一句完整的话 —— 之前这里恒为「还没读到
+/// 用药记录」,而那是一句不实的话:记录读到了,换不出来的是剂量。
+const GC_TABLE_PENDING_CHECKLIST: &str = "等效换算表待核,这一项没算进去";
+
+/// 同一天有多条激素记录时的逐字理由。**不求和、也不挑一个**:同一天出现两个激素,
+/// 可能是换药、可能是冲击后减量、也可能是 OCR 把一行读成两行,三种情况的日剂量
+/// 完全不同。求和会得出一个谁也没开过的剂量,挑一个是替医生猜 —— 而少算的方向
+/// 正好制造 DORIS 的假 ✔。
+const GC_MULTI_SAME_DAY: &str = "同一天有多条激素记录,请核对";
+
+/// **外用/局部剂型**:压根不是全身激素,不进日剂量、也不占「现行方案」那一格,
+/// 整条移到 `others[]`(`class: "gc_nonsystemic"`)。
+///
+/// 一支复方地塞米松乳膏按口服等效表换算出来是几十毫克泼尼松等效,直接进 DORIS /
+/// LLDAS 的判定;在那之前它还会因为「最近」把真正在吃的那个口服激素挤掉。
+const GC_NONSYSTEMIC: [&str; 10] = [
+    "乳膏",
+    "软膏",
+    "凝胶",
+    "滴眼液",
+    "眼膏",
+    "喷雾",
+    "吸入",
+    "鼻喷",
+    "外用",
+    "滴耳",
+];
+
+/// **注射剂型**:进 `unconvertible`,不按口服换算 —— 冲击治疗一次 500 mg 与口服
+/// 5 mg/天不是一回事,等效表(待核)覆盖的也只是口服。
+const GC_INJECTION: [&str; 7] = ["注射", "针", "静滴", "静脉", "肌注", "iv", "im"];
+
+/// 剂型/途径关键词要找的那片干草:**药名 + 剂量串**,小写。
+///
+/// ⚠️ 能看到的只有这两处。`parser` 把写在剂量**之后**的给药途径直接剥掉了
+/// (`meds.rs::strip_trailing_route`,而 `dose_string` 只拼「剂量 频次」),所以
+/// 「甲泼尼龙 40mg 静滴」到这一层时「静滴」已经没了。这道门挡得住把剂型写进
+/// **药名**里的那些(复方地塞米松乳膏、注射用甲泼尼龙琥珀酸钠),挡不住写在后面
+/// 的 —— 剩下那半要等 parser 把途径也带出来(见 Task 18/19 交接清单)。
+fn form_haystack(m: &parser::MedSpan) -> String {
+    format!(
+        "{} {}",
+        m.name,
+        m.latest_dose.as_deref().unwrap_or_default()
+    )
+    .to_ascii_lowercase()
+}
+
 /// 把 `MedSpan` 归到包里的某个 `drugs[]` 类(先按 `atc_prefix`,再按 `names` 逐字含)。
-/// 包不认得的药(降压药、钙片……)返回 `None`,不进这张卡。
+/// 包不认得的药返回 `None` —— 它们**不会消失**,照样以 `class: null` 进 `others[]`。
 fn drug_class<'p>(
     pkg: &'p crate::package::Package,
     m: &parser::MedSpan,
@@ -961,21 +1020,20 @@ fn per_day(s: &str) -> Option<f64> {
     None
 }
 
-/// 一个糖皮质激素的泼尼松等效日剂量;算不出来时返回**为什么**(逐字进
-/// `gc.unconvertible[].reason`,界面原样显示)。
+/// 一条激素医嘱的泼尼松等效日剂量;算不出来时返回**为什么**(逐字进
+/// `gc.unconvertible[].reason`,界面原样显示)。外用/局部剂型不走这里,
+/// 在 [`regimen_eval`] 里就被拦去了 `others[]`。
 fn gc_daily_mg(d: &crate::package::Drug, m: &parser::MedSpan) -> Result<f64, String> {
+    if GC_INJECTION.iter().any(|k| form_haystack(m).contains(k)) {
+        return Err("注射剂型,不按口服换算".into());
+    }
     let factor = match &d.pred_equiv {
-        // 换算表待核(`null`):只认泼尼松/泼尼松龙本身,系数 1 是定义不是查表。
-        // 给别的激素编一个系数,DORIS「<5 mg/d」那一条就会得出一个编出来的答案。
-        // 排除含「甲」的写法:甲泼尼龙、甲泼尼松龙(后者逐字含「泼尼松」)、
-        // 甲基强的松龙 —— 它们都不是泼尼松。
-        None => {
-            if m.name.contains("泼尼松") && !m.name.contains('甲') {
-                1.0
-            } else {
-                return Err("换算表待核".into());
-            }
-        }
+        // 换算表待核(`null`):**只认规范名逐字等于「泼尼松」的那一个**。
+        // 泼尼松龙临床上确实按 1:1 算(DORIS Box 1 原文用的就是 prednisolone),
+        // 但那是一个**没有出处 id 的临床数值**,写进引擎就违反了 global-constraints
+        // 「包里每个数值都带出处 id」。等 Task 19 在包里写 `{"泼尼松龙":1}` + 出处。
+        None if m.name == "泼尼松" => 1.0,
+        None => return Err(GC_TABLE_PENDING.into()),
         // 表填上以后(Task 19):**最长的那个键赢** —— 「泼尼松龙」比「泼尼松」更
         // 准,而两者都逐字命中「泼尼松龙片」。并列时按键排序定序:`pred_equiv` 是
         // `HashMap`,靠迭代顺序挑等于每次跑都可能挑到另一个系数,而本模块开头承诺
@@ -986,7 +1044,7 @@ fn gc_daily_mg(d: &crate::package::Drug, m: &parser::MedSpan) -> Result<f64, Str
             .min_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(b.0)))
         {
             Some((_, f)) => *f,
-            None => return Err("换算表里没有这个药".into()),
+            None => return Err(GC_TABLE_PENDING.into()),
         },
     };
     // 包是我们签的,签名防的是被人改,防不住作者手滑写个 0 或负数 —— 那会算出一个
@@ -1004,60 +1062,152 @@ fn gc_daily_mg(d: &crate::package::Drug, m: &parser::MedSpan) -> Result<f64, Str
     Ok(mg * times * factor)
 }
 
-/// 一次现行激素方案的求值。
+/// 现行激素方案的一次求值。
 struct Gc {
     daily_mg: Option<f64>,
     drug: Option<String>,
+    /// 处方上的原剂量串(`"10mg qd"`),证据链用。
+    dose: Option<String>,
+    /// 这条医嘱出现在哪几份文档里(`parser::SourceDoc::index`)。
+    sources: Vec<usize>,
+    /// 最早一次被提到的日期。
     since: Option<NaiveDate>,
-    /// 算不进日剂量的激素,`{name, dose, reason}`。
+    /// **截至哪天** —— 最近一次被提到的日期(`MedSpan.end`)。
+    ///
+    /// 没有这个数,一张 2019 年的处方今天读起来就是「现行方案:泼尼松 4 mg/天」,
+    /// DORIS 的「<5 mg」直接 ✔。`since` 是**起始**日期,读起来像「一直吃到现在」,
+    /// 答不了这个问题。引擎**不设时效**(与 PGA 同一条:多久算过期由包/渲染层说),
+    /// 只负责把日期说出来。
+    as_of: Option<NaiveDate>,
+    /// 算不进日剂量的激素,`{name, dose, reason, sources}`。
     unconvertible: Vec<serde_json::Value>,
+    /// `daily_mg` 为 `None` 时给达标表的那句理由(`None` = 算出来了)。
+    blocked_reason: Option<String>,
 }
 
-/// 现行激素方案。
+/// 现行方案的一次求值:激素那一格 + 其它药那一格。**一份输入只算一遍**,
+/// `status_card` 与达标表读的是同一次结果(与 `activity_eval` 同一条理由)。
+pub struct Regimen {
+    gc: Gc,
+    /// 激素与羟氯喹之外的药,`{class, name, latest_dose, since, sources, infusion}`。
+    others: Vec<serde_json::Value>,
+}
+
+fn other_row(
+    class: Option<&str>,
+    m: &parser::MedSpan,
+    infusion: Option<&std::collections::HashMap<String, String>>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "class": class,
+        "name": m.name,
+        "latest_dose": m.latest_dose,
+        "since": m.start.map(|x| x.to_string()),
+        "as_of": m.end.map(|x| x.to_string()),
+        "sources": m.sources,
+        // 输注周期是包里的原串(§D.8 的 0/2/4 周后每 4 周之类),引擎不排期。
+        "infusion": infusion,
+    })
+}
+
+/// 逐条过一遍用药,分成「激素」与「其它」两格。
 ///
-/// **「现行」= 最近一次被提到的那个激素**,不是「第一个算得出来的」:病历里常见
-/// 2024 年泼尼松、2026 年换甲泼尼龙,挑算得出来的那个会把三年前停掉的剂量当成今天
-/// 的方案送进 DORIS 的「<5 mg」判定。当前这个算不出来,就是算不出来。
+/// **「现行」= 最近一次被提到的那条**(`MedSpan.end`),不是「第一个算得出来的」:
+/// 病历里常见 2024 年泼尼松、2026 年换甲泼尼龙,挑算得出来的那个会把三年前停掉的
+/// 剂量当成今天的方案送进 DORIS 的「<5 mg」判定。当前这条算不出来,就是算不出来。
 ///
-/// 算不出来的**每一个**激素(不只是当前那个)都进 `unconvertible`:界面要说得出
-/// 「这几项没算进去、为什么」,而不是让它们消失。
-fn gc_eval(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> Gc {
-    let mut unconvertible = Vec::new();
-    let mut current: Option<(&parser::MedSpan, Result<f64, String>)> = None;
+/// **包/词典认不得的药不会消失**:它们以 `class: null` 进 `others[]`(倍他米松、
+/// 曲安西龙、可的松今天都不在词典的 H02A* 里),医生照样看得见药名和剂量。
+pub fn regimen_eval(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> Regimen {
+    let mut gc_lines: Vec<(&parser::MedSpan, Result<f64, String>)> = Vec::new();
+    let mut others = Vec::new();
     for m in &ctx.clinical.meds {
-        let Some(d) = drug_class(pkg, m) else {
-            continue;
-        };
-        if d.class != "gc" {
-            continue;
+        match drug_class(pkg, m) {
+            // 认不出的药照样列出来(I2)。
+            None => others.push(other_row(None, m, None)),
+            Some(d) if d.class == "gc" => {
+                if GC_NONSYSTEMIC.iter().any(|k| form_haystack(m).contains(k)) {
+                    others.push(other_row(Some("gc_nonsystemic"), m, None));
+                } else {
+                    gc_lines.push((m, gc_daily_mg(d, m)));
+                }
+            }
+            // 羟氯喹自己一格(`hcq_body`),不在 `others` 里重复一遍。
+            Some(d) if d.class == "hcq" => {}
+            Some(d) => others.push(other_row(Some(&d.class), m, d.infusion.as_ref())),
         }
-        let r = gc_daily_mg(d, m);
-        if let Err(reason) = &r {
+    }
+
+    // 最近一次被提到的那个日期;没有日期的整条排在最前(`None < Some`)。
+    let newest = gc_lines.iter().map(|(m, _)| m.end).max();
+    let same_day: Vec<&(&parser::MedSpan, Result<f64, String>)> = gc_lines
+        .iter()
+        .filter(|(m, _)| Some(m.end) == newest)
+        .collect();
+    // 同一天两条以上 → 谁都不算(见 `GC_MULTI_SAME_DAY`)。
+    let conflict = same_day.len() > 1;
+
+    let mut unconvertible = Vec::new();
+    for (m, r) in &gc_lines {
+        let reason = match (conflict && Some(m.end) == newest, r) {
+            (true, _) => Some(GC_MULTI_SAME_DAY.to_string()),
+            (false, Err(why)) => Some(why.clone()),
+            (false, Ok(_)) => None,
+        };
+        if let Some(reason) = reason {
             unconvertible.push(serde_json::json!({
-                "name": m.name, "dose": m.latest_dose, "reason": reason,
+                "name": m.name, "dose": m.latest_dose,
+                "reason": reason, "sources": m.sources,
             }));
         }
-        // `end` = 最后一次有日期的提及。`None`(整条都没日期)排在最前,只有在一个
-        // 有日期的都没有时才会被选中;同日并列取 `meds` 里靠后的那条(按药名排序,
-        // 确定)。
-        if current.as_ref().is_none_or(|(cur, _)| m.end >= cur.end) {
-            current = Some((m, r));
-        }
     }
-    match current {
-        None => Gc {
+
+    let gc = match (conflict, same_day.first()) {
+        // 一条激素都没读到。
+        (_, None) => Gc {
             daily_mg: None,
             drug: None,
+            dose: None,
+            sources: Vec::new(),
             since: None,
+            as_of: None,
             unconvertible,
+            blocked_reason: Some("还没读到用药记录".into()),
         },
-        Some((m, r)) => Gc {
-            daily_mg: r.ok(),
-            drug: Some(m.name.clone()),
-            since: m.start,
+        // 同一天多条:日剂量为空,但**日期照样说出来** —— 「哪天的记录要核对」是
+        // 这条提示的一半。
+        (true, Some(_)) => Gc {
+            daily_mg: None,
+            drug: None,
+            dose: None,
+            sources: Vec::new(),
+            since: None,
+            as_of: newest.flatten(),
             unconvertible,
+            blocked_reason: Some(GC_MULTI_SAME_DAY.into()),
         },
-    }
+        (false, Some((m, r))) => {
+            let blocked = match r {
+                Ok(_) => None,
+                // 「换算表待核」在达标表里要说成一句完整的话。
+                Err(why) if why == GC_TABLE_PENDING => Some(GC_TABLE_PENDING_CHECKLIST.to_string()),
+                // 其余理由(剂量读不出来、注射剂型…)原样带过去,**不套用换算表那句**
+                // —— 那同样是一句不实的话。
+                Err(why) => Some(format!("读到了{},{},这一项算不了", m.name, why)),
+            };
+            Gc {
+                daily_mg: r.as_ref().ok().copied(),
+                drug: Some(m.name.clone()),
+                dose: m.latest_dose.clone(),
+                sources: m.sources.clone(),
+                since: m.start,
+                as_of: m.end,
+                unconvertible,
+                blocked_reason: blocked,
+            }
+        }
+    };
+    Regimen { gc, others }
 }
 
 /// 最近一次体重(日期、kg、来源)。`profile_event{kind:"weight"}` 与病历/自测的
@@ -1114,14 +1264,19 @@ fn latest_weight_kg(ctx: &Ctx<'_>, package_id: &str) -> Option<(Option<NaiveDate
 /// **说明书那几个数只进 `label_rule` / `label_rule_pending`,不进任何判定** ——
 /// `mg_per_kg` 永远只跟包里的指南值 `target` 比(§D.2.1:指南 5 mg/kg 真实体重 vs
 /// 说明书 6.5 mg/kg 理想体重,两套同时成立,引擎不许替医生挑一份)。
+///
+/// 剂量与体重**各带各的日期**(`dose_at` / `weight_at`):一张 2019 年的处方配今天
+/// 的体重,算出来的 mg/kg 看着像今天的,不说日期就是一句不实的话。
 fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
     let t = pkg.rules.targets.get("hcq");
     let label_rule = t.and_then(|h| h.get("label_rule"));
+    // 与激素同一条规则:取**最近一次被提到**的那条,不是碰巧排在前面的那条。
     let med = ctx
         .clinical
         .meds
         .iter()
-        .find(|m| drug_class(pkg, m).is_some_and(|d| d.class == "hcq"));
+        .filter(|m| drug_class(pkg, m).is_some_and(|d| d.class == "hcq"))
+        .max_by_key(|m| m.end);
     let daily = med.and_then(|m| {
         let dose = m.latest_dose.as_deref()?;
         Some(dose_mg(dose)? * per_day(dose)?)
@@ -1137,6 +1292,9 @@ fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
     };
     serde_json::json!({
         "daily_mg": daily,
+        "dose": med.and_then(|m| m.latest_dose.clone()),
+        "dose_at": med.and_then(|m| m.end).map(|d| d.to_string()),
+        "sources": med.map(|m| m.sources.clone()).unwrap_or_default(),
         "weight_kg": weight.as_ref().map(|(_, kg, _)| *kg),
         // 体重是哪天的。三年前的体重和今天刚录的,少了这一行在界面上长得一模一样
         // (与达标表里 PGA 的 `actual_at` 同一条理由)。
@@ -1156,32 +1314,12 @@ fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
     })
 }
 
-/// 激素与羟氯喹之外、**包认得的**其它药(免疫抑制剂、生物制剂)。包不认得的药不进
-/// 这张卡:这是这个病的「现行方案」,不是一份全量用药清单。
-fn others_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> Vec<serde_json::Value> {
-    ctx.clinical
-        .meds
-        .iter()
-        .filter_map(|m| {
-            let d = drug_class(pkg, m)?;
-            if d.class == "gc" || d.class == "hcq" {
-                return None;
-            }
-            Some(serde_json::json!({
-                "class": d.class,
-                "name": m.name,
-                "latest_dose": m.latest_dose,
-                "since": m.start.map(|x| x.to_string()),
-                // 输注周期是包里的原串(§D.8 的 0/2/4 周后每 4 周之类),引擎不排期。
-                "infusion": d.infusion,
-            }))
-        })
-        .collect()
-}
-
 /// 上次就诊 = 最近一份**医疗机构出的**文档。手动录入的那几类(自测、笔记、动作
 /// 日志)不是就诊 —— 把用户昨天随手录的一次体重显示成「上次就诊」是一句不实的话。
 /// 没有日期的文档不参与:「最近」是按日期比出来的。
+///
+/// ⚠️ 这里没有科室信息,所以它是「上次交进来的那份病历」,**不是**「上次风湿科
+/// 就诊」。Task 21 不许把它标成后者。
 fn last_visit(ctx: &Ctx<'_>) -> serde_json::Value {
     let Some(d) = ctx
         .docs
@@ -1206,30 +1344,36 @@ fn last_visit(ctx: &Ctx<'_>) -> serde_json::Value {
 ///
 /// `body` 的形状(Task 21 的渲染引擎按这一份读):
 /// ```text
-/// {"gc":{"daily_pred_equiv_mg","drug","since",
-///        "targets":[{"value","label","source"}],        // 包里的两条维持线,原样带出
-///        "unconvertible":[{"name","dose","reason"}]},   // 没算进日剂量的激素 + 为什么
-///  "hcq":{"daily_mg","weight_kg","weight_at","weight_source","mg_per_kg",
-///         "target","target_source","label_rule","label_rule_pending","reason"},
-///  "others":[{"class","name","latest_dose","since","infusion"}],
-///  "last_visit":{"date","title"}}                       // 一份都没有时为 null
+/// {"gc":{"daily_pred_equiv_mg","drug","dose","sources","since","as_of",
+///        "targets":[{"value","label","source"}],                 // 包里的两条维持线
+///        "unconvertible":[{"name","dose","reason","sources"}]},   // 没算进日剂量的 + 为什么
+///  "hcq":{"daily_mg","dose","dose_at","sources","weight_kg","weight_at","weight_source",
+///         "mg_per_kg","target","target_source","label_rule","label_rule_pending","reason"},
+///  "others":[{"class","name","latest_dose","since","as_of","sources","infusion"}],
+///  "last_visit":{"date","title"}}                                // 一份都没有时为 null
 /// ```
+/// **`gc.as_of` / `hcq.dose_at` 必须显示在剂量旁边**(Task 21):引擎不设时效,
+/// 一张 2019 年的处方照样会出现在这张卡上,日期是唯一能让医生看出这件事的东西。
+///
 /// 包里一个 `drugs[]` 都没声明时不出这张卡:没有药物表就没有任何可认的东西,一张
 /// 全是 `null` 的卡片不如没有。
 pub fn status_section(
     ctx: &Ctx<'_>,
     pkg: &crate::package::Package,
+    reg: &Regimen,
 ) -> Option<crate::view::Section> {
     if pkg.drugs.is_empty() {
         return None;
     }
-    let gc = gc_eval(ctx, pkg);
+    let gc = &reg.gc;
     let hcq = hcq_body(ctx, pkg);
-    let others = others_body(ctx, pkg);
     let visit = last_visit(ctx);
     // 折叠的条件和活动度卡一样:**真的没东西可看**。只要读到了一个药(哪怕它的
     // 剂量算不出来),就展开 —— 让 `unconvertible` 的理由自己说话。
-    let nothing = gc.drug.is_none() && hcq["daily_mg"].is_null() && others.is_empty();
+    let nothing = gc.drug.is_none()
+        && gc.unconvertible.is_empty()
+        && hcq["daily_mg"].is_null()
+        && reg.others.is_empty();
     Some(crate::view::Section {
         kind: "status_card".into(),
         title: view_title(pkg, "status_card"),
@@ -1239,14 +1383,18 @@ pub fn status_section(
             "gc": {
                 "daily_pred_equiv_mg": gc.daily_mg,
                 "drug": gc.drug,
+                "dose": gc.dose,
+                "sources": gc.sources,
                 "since": gc.since.map(|d| d.to_string()),
-                // 包里没写就是空数组,不是 `null`:三个数组字段(targets /
+                "as_of": gc.as_of.map(|d| d.to_string()),
+                // 包里没写、或者写成了别的形状,就是空数组:三个数组字段(targets /
                 // unconvertible / others)在渲染层一律当数组遍历,少一个类型分支。
-                "targets": pkg.rules.targets.get("gc").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "targets": pkg.rules.targets.get("gc").filter(|v| v.is_array())
+                    .cloned().unwrap_or_else(|| serde_json::json!([])),
                 "unconvertible": gc.unconvertible,
             },
             "hcq": hcq,
-            "others": others,
+            "others": reg.others,
             "last_visit": visit,
         }),
     })

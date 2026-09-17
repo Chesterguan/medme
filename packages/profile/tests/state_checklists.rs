@@ -296,8 +296,61 @@ fn an_unconvertible_steroid_leaves_the_dose_items_unknown_not_met() {
         &[(TODAY, rx_doc("甲泼尼龙片 8mg 每日一次 口服"))],
         vec![enable()],
     );
-    assert_eq!(item(state(&b, "doris"), "pred")["verdict"], "unknown");
+    let pred = item(state(&b, "doris"), "pred");
+    assert_eq!(pred["verdict"], "unknown");
+    // **理由不能是「还没读到用药记录」** —— 记录读到了,换不出来的是剂量。说错了,
+    // 用户会以为是自己没交处方笺,再交一次还是这个结果。
+    assert_eq!(reason(pred), "等效换算表待核,这一项没算进去");
     assert_eq!(item(state(&b, "lldas"), "pred_le75")["verdict"], "unknown");
+}
+
+#[test]
+fn a_steroid_whose_dose_is_unreadable_says_that_and_not_the_conversion_table() {
+    // 换不出来的原因不止一种,理由得跟着原因走:这一条缺的是**频次**,和换算表无关。
+    // 一律套「换算表待核」同样是一句不实的话。
+    let b = checklist(&[(TODAY, rx_doc("泼尼松片 10mg 口服"))], vec![enable()]);
+    let pred = item(state(&b, "doris"), "pred");
+    assert_eq!(pred["verdict"], "unknown");
+    assert!(
+        reason(pred).contains("泼尼松") && reason(pred).contains("每天几次"),
+        "理由要点名是哪个药、缺什么:{}",
+        reason(pred)
+    );
+}
+
+#[test]
+fn two_steroids_on_the_same_day_make_the_dose_items_unknown() {
+    // 同一天两条激素不求和、不挑一个(见 drug_status 那条),达标表跟着未知,并且
+    // 把「请核对」这句话传到底 —— 这是用户能动手解决的那一类未知。
+    let b = checklist(
+        &[(
+            TODAY,
+            rx_doc("泼尼松片 10mg 每日一次 口服\n泼尼松龙片 20mg 每日一次 口服"),
+        )],
+        vec![enable()],
+    );
+    let pred = item(state(&b, "doris"), "pred");
+    assert_eq!(pred["verdict"], "unknown");
+    assert_eq!(reason(pred), "同一天有多条激素记录,请核对");
+}
+
+#[test]
+fn the_steroid_item_carries_the_day_that_prescription_is_from() {
+    // 与 PGA 的 `actual_at` 一字不差的理由:一张 2019 年的处方今天照样判出
+    // 「泼尼松 4 mg < 5 ✔」,日期是唯一能让医生看出这件事的东西。引擎这边不设
+    // 时效(多久算过期由包/渲染层说),但必须把日期说出来。
+    let b = checklist(
+        &[("2019-06-01", rx_doc("泼尼松片 4mg 每日一次 口服"))],
+        vec![enable()],
+    );
+    let pred = item(state(&b, "doris"), "pred");
+    assert_eq!(pred["verdict"], "yes");
+    assert_eq!(pred["actual"], 4.0);
+    assert_eq!(pred["actual_at"], "2019-06-01");
+    assert_eq!(
+        item(state(&b, "lldas"), "pred_le75")["actual_at"],
+        "2019-06-01"
+    );
 }
 
 #[test]

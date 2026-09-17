@@ -42,14 +42,16 @@ pub fn materialize(
         // Task 13–15 继续往这里加 section。「开启了但还没有任何数据」与「没开启」
         // 是两种不同的显示状态:前者出卡片、卡片自己带 `empty_hint`,后者没卡片。
         let mut out = Vec::new();
+        // 用药与活动度**各只算一遍**,两张卡和达标表读同一次结果:算两遍就有算出
+        // 两个不同答案的机会,而卡片上那个「泼尼松 5 mg/天」和达标表里判 `<5` 用的
+        // 必须是同一个数(`rules::Regimen` / `rules::Activity` 的文档)。
+        let regimen = rules::regimen_eval(&ctx, pkg);
+        let activity = rules::activity_eval(&ctx, pkg);
         // 顺序按 spec §6 那张表:现行方案在最前 —— 医生拿到手第一眼要看的是「他
         // 现在吃什么」,不是分数。
-        out.extend(rules::status_section(&ctx, pkg));
-        // 活动度**只算一遍**:达标表的 cSLEDAI 是拿同一次求值按 id 减出来的,
-        // 「这次算全了没有」也看同一份 `unscored`(`rules::Activity` 的文档)。
-        let activity = rules::activity_eval(&ctx, pkg);
+        out.extend(rules::status_section(&ctx, pkg, &regimen));
         out.extend(rules::activity_section(&ctx, pkg, &activity));
-        out.extend(rules::states_section(&ctx, pkg, &activity));
+        out.extend(rules::states_section(&ctx, pkg, &activity, &regimen));
         out
     } else {
         // 没开启就**不碰**临床输入:不 aggregate、不解抽取结果。既省一趟全量
