@@ -717,6 +717,36 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
         keep(ok, &mut d.unverified)
     });
 
+    // 族级病程事实(spec §3):与 labs/meds/diagnoses 同一套逐字校验,**每个字符串
+    // 字段都查**,不是只查 `evidence` —— `drug`/`from`/`to`/`value` 会直接印到界面上
+    // 「泼尼松 30mg → 20mg」这句话里,放任它们就是让模型在最要命的地方自由发挥。
+    // `FieldKind::Text` 对所有字段:日期、器官、剂量在原文里都是印出来的文本,没有
+    // labs 那种「数值/单位/标志」的分型需求。空串由 `field_ok` 恒过(见其文档)。
+    e.facts.retain_mut(|f| {
+        let ok = [
+            &f.organ,
+            &f.date,
+            &f.date_start,
+            &f.date_end,
+            &f.text,
+            &f.reason,
+            &f.result,
+            &f.drug,
+            &f.dose,
+            &f.from,
+            &f.to,
+            &f.name,
+            &f.value,
+            &f.modality,
+            &f.finding,
+            &f.status,
+            &f.evidence,
+        ]
+        .into_iter()
+        .all(|s| field_ok(s, &src, mode, FieldKind::Text));
+        keep(ok, &mut f.unverified)
+    });
+
     Verified {
         extraction: e,
         rejected,
@@ -1013,5 +1043,88 @@ mod tests {
         let j = r#"{"labs":[],"facts":[{"type":"something_new_2027","text":"x","evidence":"x"}]}"#;
         let e = parse_extraction(j).expect("未知 type 不该让解析失败");
         assert_eq!(e.facts[0].r#type, "something_new_2027");
+    }
+
+    // --- Task 6: facts 走与 labs/meds/diagnoses 同一套逐字校验 ---
+
+    const FACT_SRC: &str = "出院诊断:系统性红斑狼疮 狼疮性肾炎 IV 型\n泼尼松减至 20mg qd";
+
+    fn fact(t: &str, text: &str, evidence: &str) -> Fact {
+        Fact {
+            r#type: t.into(),
+            text: text.into(),
+            evidence: evidence.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn text_mode_drops_a_fact_whose_evidence_is_not_in_the_source() {
+        let e = Extraction {
+            facts: vec![
+                fact("organ_involvement", "狼疮性肾炎 IV 型", "狼疮性肾炎 IV 型"),
+                fact("flare", "病情活动加重", "患者病情明显加重需大剂量激素"), // 原文没有
+            ],
+            ..Default::default()
+        };
+        let v = verify(e, FACT_SRC, Mode::Text);
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert_eq!(v.extraction.facts[0].r#type, "organ_involvement");
+        assert_eq!(v.rejected, 1);
+    }
+
+    #[test]
+    fn image_mode_keeps_the_fact_but_marks_it_unverified() {
+        let e = Extraction {
+            facts: vec![fact(
+                "flare",
+                "病情活动加重",
+                "患者病情明显加重需大剂量激素",
+            )],
+            ..Default::default()
+        };
+        let v = verify(e, FACT_SRC, Mode::Image);
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert!(v.extraction.facts[0].unverified);
+        assert_eq!(v.unverified, 1);
+    }
+
+    #[test]
+    fn every_string_field_of_a_fact_is_checked_not_just_evidence() {
+        // `drug`/`from`/`to` 直接决定界面上「泼尼松 30mg → 20mg」这句话。
+        // 只查 evidence、放任其它字段,等于让模型在这几个字段上自由发挥。
+        let e = Extraction {
+            facts: vec![Fact {
+                r#type: "dose_change".into(),
+                drug: "泼尼松".into(),
+                from: "30mg".into(), // 原文里没有 30mg
+                to: "20mg".into(),
+                evidence: "泼尼松减至 20mg".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let v = verify(e, FACT_SRC, Mode::Text);
+        assert!(
+            v.extraction.facts.is_empty(),
+            "from 对不上原文,整条应当丢弃"
+        );
+        assert_eq!(v.rejected, 1);
+    }
+
+    #[test]
+    fn an_empty_field_is_not_a_verification_failure() {
+        // 扁平结构里绝大多数字段对某一族是空的,空串必须恒过 —— 否则每条 fact 都被毙。
+        let e = Extraction {
+            facts: vec![fact(
+                "organ_involvement",
+                "狼疮性肾炎 IV 型",
+                "狼疮性肾炎 IV 型",
+            )],
+            ..Default::default()
+        };
+        let v = verify(e, FACT_SRC, Mode::Text);
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert_eq!(v.rejected, 0);
     }
 }
