@@ -13,6 +13,9 @@
     python3 scripts/sign_skill.py skills/sle/2026.09.1.src.json
         -> 写出 skills/sle/2026.09.1.json(信封),并刷新 skills/index.json
 
+只重签清单(删了一个包之后,不重签任何包内容):
+    python3 scripts/sign_skill.py --reindex
+
 自检(临时目录里的一次性密钥,不碰 ~/.medme_skill_signing_key):
     python3 scripts/sign_skill.py --selftest
 
@@ -74,7 +77,8 @@ def _verify_signed(pub: Ed25519PublicKey, env: dict, where: pathlib.Path) -> Non
 
 
 def refresh_index() -> None:
-    pub = _load_key().public_key()
+    key = _load_key()
+    pub = key.public_key()
     skills = []
     for d in sorted(p for p in SKILLS.iterdir() if p.is_dir()):
         for f in sorted(d.glob("*.json")):
@@ -87,10 +91,15 @@ def refresh_index() -> None:
                 {"id": m["id"], "version": m["version"], "min_engine": m["min_engine"],
                  "name": m["display"]["name"]}
             )
+    # 清单与包用**同一种信封**、同一把私钥:不签的话中间人删掉一行就能把用户
+    # 按在旧规则上,改一行 version 就能拿它去拼任意路径。
+    body = json.dumps({"skills": skills}, ensure_ascii=False, indent=2) + "\n"
+    (SKILLS / "index.src.json").write_text(body, encoding="utf-8")
+    sig = base64.b64encode(key.sign(body.encode("utf-8"))).decode()
     (SKILLS / "index.json").write_text(
-        json.dumps({"skills": skills}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps({"sig": sig, "package": body}, ensure_ascii=False), encoding="utf-8"
     )
-    print(f"index.json: {len(skills)} 个包")
+    print(f"index.json: {len(skills)} 个包(已签名)")
 
 
 def sign(src: pathlib.Path) -> None:
@@ -153,8 +162,8 @@ def _expect_refused(fn, desc: str) -> None:
 
 
 def selftest() -> None:
-    """自检三类必须被拒绝的输入。只在临时目录里生成一把一次性密钥,
-    不读、不碰、不派生 ~/.medme_skill_signing_key。"""
+    """自检三类必须被拒绝的输入,加清单本身也是签名信封。只在临时目录里生成
+    一把一次性密钥,不读、不碰、不派生 ~/.medme_skill_signing_key。"""
     import tempfile
 
     global KEY_PATH, ROOT, SKILLS
@@ -166,6 +175,7 @@ def selftest() -> None:
             SKILLS = ROOT / "skills"
             SKILLS.mkdir()
             gen_key()
+            pub = _load_key().public_key()
 
             # 1. manifest.id 与目录名不符
             (SKILLS / "sle").mkdir()
@@ -188,13 +198,21 @@ def selftest() -> None:
             ok_src = SKILLS / "ok" / "1.0.0.src.json"
             ok_src.write_text(_fixture("ok", "1.0.0"), encoding="utf-8")
             sign(ok_src)  # 先证明正常路径没被前两条的校验挡住
+
+            # 4. 清单本身也是签名信封(不是裸 {"skills":[...]}),同一把私钥验得过。
+            idx_env = json.loads((SKILLS / "index.json").read_text(encoding="utf-8"))
+            assert set(idx_env) == {"sig", "package"}, "index.json 必须是签名信封"
+            _verify_signed(pub, idx_env, SKILLS / "index.json")
+            assert json.loads(idx_env["package"])["skills"], "清单里应至少有 ok 这个包"
+            print("  ok: 清单也是签过名的信封")
+
             ok_env_path = SKILLS / "ok" / "1.0.0.json"
             env = json.loads(ok_env_path.read_text(encoding="utf-8"))
             env["package"] = env["package"].replace("自检病", "被篡改")
             ok_env_path.write_text(json.dumps(env, ensure_ascii=False), encoding="utf-8")
             _expect_refused(refresh_index, "篡改过的信封被 refresh_index 索引")
 
-        print("selftest: 3/3 通过(manifest.id 校验 ×2,篡改信封拒绝索引 ×1)")
+        print("selftest: 4/4 通过(manifest.id 校验 ×2,清单签名 ×1,篡改信封拒绝索引 ×1)")
     finally:
         KEY_PATH, ROOT, SKILLS = real_key, real_root, real_skills
 
@@ -209,5 +227,7 @@ if __name__ == "__main__":
         print_pubkey()
     elif arg == "--selftest":
         selftest()
+    elif arg == "--reindex":
+        refresh_index()
     else:
         sign(pathlib.Path(arg).resolve())

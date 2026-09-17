@@ -41,20 +41,13 @@ fn every_signed_package_in_the_repo_verifies_with_the_production_key() {
 }
 
 #[test]
-fn index_json_lists_exactly_the_signed_packages_present() {
-    let idx_path = repo_root().join("skills").join("index.json");
-    let idx: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&idx_path).unwrap()).unwrap();
-    let listed: Vec<(String, String)> = idx["skills"]
-        .as_array()
-        .expect("index.json 必须有 skills 数组")
+fn index_json_is_signed_and_lists_exactly_the_signed_packages_present() {
+    let raw = std::fs::read_to_string(repo_root().join("skills").join("index.json")).unwrap();
+    let idx = profile::load_signed_index(&raw).expect("清单必须用生产公钥验过");
+    let mut listed: Vec<(String, String)> = idx
+        .skills
         .iter()
-        .map(|s| {
-            (
-                s["id"].as_str().unwrap().to_string(),
-                s["version"].as_str().unwrap().to_string(),
-            )
-        })
+        .map(|s| (s.id.clone(), s.version.clone()))
         .collect();
     let mut on_disk: Vec<(String, String)> = signed_packages()
         .iter()
@@ -70,10 +63,9 @@ fn index_json_lists_exactly_the_signed_packages_present() {
             )
         })
         .collect();
-    let mut listed_sorted = listed.clone();
-    listed_sorted.sort();
+    listed.sort();
     on_disk.sort();
-    assert_eq!(listed_sorted, on_disk, "index.json 与 skills/ 目录不一致");
+    assert_eq!(listed, on_disk, "index.json 与 skills/ 目录不一致");
 }
 
 #[test]

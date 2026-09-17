@@ -1174,11 +1174,14 @@ def test_extract_monthly_token_cap_429(monkeypatch):
 
 # --- /v1/skills:无鉴权的公开静态包分发(disease-profile spec §8)-------------
 
-def test_skills_index_needs_no_auth_and_lists_packages():
+def test_skills_index_needs_no_auth_and_is_a_signed_envelope():
     r = client.get("/v1/skills/index.json")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/json")
-    assert isinstance(r.json()["skills"], list)
+    env = r.json()
+    # 路由只管原样发字节;验签是客户端的事。这里只钉住形状没退回裸清单。
+    assert set(env) == {"sig", "package"}
+    assert isinstance(json.loads(env["package"])["skills"], list)
     assert r.headers.get("etag")
 
 

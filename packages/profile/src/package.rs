@@ -23,6 +23,9 @@ pub enum PackageError {
     BadSignature,
     /// 包要求的引擎版本比本二进制新。老 App 装不上新包是正常的,如实告诉用户去升级。
     EngineTooOld { needs: u32, have: u32 },
+    /// 待装的版本比已经装过的**低**。签名是合法的(确实是我们签的),但这是
+    /// 降级 —— 中间人重放一个旧包就能把用户按在过时的规则上。不装。
+    Downgrade { have: String, offered: String },
 }
 
 impl std::fmt::Display for PackageError {
@@ -32,6 +35,9 @@ impl std::fmt::Display for PackageError {
             PackageError::BadSignature => write!(f, "包签名验证不通过"),
             PackageError::EngineTooOld { needs, have } => {
                 write!(f, "这个病种包需要 App 引擎 v{needs},当前是 v{have}")
+            }
+            PackageError::Downgrade { have, offered } => {
+                write!(f, "拒绝降级:已有 {have},送来的是更旧的 {offered}")
             }
         }
     }
@@ -222,18 +228,9 @@ fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// 用生产公钥验签并解析。**不检查 `min_engine`** —— 版本闸在 Task 2 的
-/// `load_signed`(加载路径)里做,这里只管「是不是我们签的、体裁对不对」。
-pub fn verify_envelope(envelope_json: &str) -> Result<Package, PackageError> {
-    verify_envelope_with_key(envelope_json, SIGNING_PUBLIC_KEY_HEX)
-}
-
-/// 同上,但公钥可注入 —— 只给测试用(生产路径固定走上面那个)。
-/// `pub(crate)`:公钥 pin 不能从 crate 外部绕过,Task 2/27 的调用点都在本 crate 内。
-pub(crate) fn verify_envelope_with_key(
-    envelope_json: &str,
-    pubkey_hex: &str,
-) -> Result<Package, PackageError> {
+/// 验签,返回**内层原文字符串**。包和清单共用这一半 —— 两者是同一种信封,
+/// 区别只在内层解析成什么(`Package` 还是 `Index`)。
+pub fn verify_envelope_body(envelope_json: &str, pubkey_hex: &str) -> Result<String, PackageError> {
     use base64::Engine as _;
     use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -252,9 +249,63 @@ pub(crate) fn verify_envelope_with_key(
     // `verify_strict` 而不是 `verify`:拒掉小阶公钥/可延展签名,别在验签这道闸上省。
     vk.verify_strict(env.package.as_bytes(), &Signature::from_bytes(&sig_arr))
         .map_err(|_| PackageError::BadSignature)?;
+    Ok(env.package)
+}
 
-    serde_json::from_str(&env.package)
-        .map_err(|e| PackageError::Malformed(format!("包体解析失败:{e}")))
+/// 用生产公钥验签并解析。**不检查 `min_engine`** —— 版本闸在 Task 2 的
+/// `load_signed`(加载路径)里做,这里只管「是不是我们签的、体裁对不对」。
+pub fn verify_envelope(envelope_json: &str) -> Result<Package, PackageError> {
+    verify_envelope_with_key(envelope_json, SIGNING_PUBLIC_KEY_HEX)
+}
+
+/// 同上,但公钥可注入 —— 只给测试用(生产路径固定走上面那个)。
+/// `pub(crate)`:公钥 pin 不能从 crate 外部绕过,Task 2/27 的调用点都在本 crate 内。
+pub(crate) fn verify_envelope_with_key(
+    envelope_json: &str,
+    pubkey_hex: &str,
+) -> Result<Package, PackageError> {
+    let body = verify_envelope_body(envelope_json, pubkey_hex)?;
+    serde_json::from_str(&body).map_err(|e| PackageError::Malformed(format!("包体解析失败:{e}")))
+}
+
+/// 分发清单。与包一样签名 —— 不签的话中间人能把新版本从清单里删掉(把用户按在
+/// 旧规则上),或者把 `version` 改成一个任意串去拼路径。
+#[derive(Debug, Clone, Deserialize)]
+pub struct IndexEntry {
+    pub id: String,
+    pub version: String,
+    pub min_engine: u32,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Index {
+    pub skills: Vec<IndexEntry>,
+}
+
+/// 用生产公钥验签并解析清单。清单和包同一种信封,只是内层解析成 `Index`。
+pub fn load_signed_index(envelope_json: &str) -> Result<Index, PackageError> {
+    load_signed_index_with_key(envelope_json, SIGNING_PUBLIC_KEY_HEX)
+}
+
+/// 同上,但公钥可注入 —— 只给测试用(生产路径固定走上面那个)。
+pub(crate) fn load_signed_index_with_key(
+    envelope_json: &str,
+    pubkey_hex: &str,
+) -> Result<Index, PackageError> {
+    let body = verify_envelope_body(envelope_json, pubkey_hex)?;
+    serde_json::from_str(&body).map_err(|e| PackageError::Malformed(format!("清单解析失败:{e}")))
+}
+
+/// `YYYY.MM.N` → 可比较的元组。**必须按数字比**:字典序会把 `2026.09.10` 排在
+/// `2026.09.9` 前面,单调闸就成了反向的。形状不对返回 `None`(调用方按 `Malformed` 处理)。
+pub fn version_tuple(v: &str) -> Option<(u32, u32, u32)> {
+    let mut it = v.split('.');
+    let (y, m, n) = (it.next()?, it.next()?, it.next()?);
+    if it.next().is_some() || y.len() != 4 || m.len() != 2 || n.is_empty() || n.len() > 3 {
+        return None;
+    }
+    Some((y.parse().ok()?, m.parse().ok()?, n.parse().ok()?))
 }
 
 /// 验签 + 引擎版本闸。**生产路径唯一的包入口**。
@@ -292,10 +343,9 @@ fn valid_id(id: &str) -> bool {
 }
 
 /// 把**信封原文**写进缓存,文件名取包自己声明的 `manifest.id`。写之前先验签:
-/// 缓存里只放验得过的东西,免得下次开机拿一份坏包去试。返回写进去的 id。
-///
-/// TODO(Task 27): 这里还没做单调版本号检查(同 id 的旧包不应覆盖新包);
-/// 届时在验签通过之后、写盘之前加。
+/// 缓存里只放验得过的东西,免得下次开机拿一份坏包去试。单调版本闸同样在写盘前:
+/// 装包只会往前走,见过的最高版本就是缓存里那份自己的 `manifest.version`,不另开
+/// 状态文件。返回写进去的 id。
 pub fn cache_store(dir: &std::path::Path, envelope_json: &str) -> Result<String, PackageError> {
     cache_store_with_key(dir, envelope_json, SIGNING_PUBLIC_KEY_HEX)
 }
@@ -313,6 +363,20 @@ pub(crate) fn cache_store_with_key(
             "包 id 只允许小写字母/数字/下划线,实际 {:?}",
             pkg.manifest.id
         )));
+    }
+    let offered = version_tuple(&pkg.manifest.version).ok_or_else(|| {
+        PackageError::Malformed(format!("版本号形状不对:{}", pkg.manifest.version))
+    })?;
+    // 「见过的最高版本」就是缓存里那份自己的版本 —— 装包只会往前走,不另存状态。
+    if let Some(cur) = cache_load_with_key(dir, &pkg.manifest.id, pubkey_hex) {
+        if let Some(have) = version_tuple(&cur.manifest.version) {
+            if offered < have {
+                return Err(PackageError::Downgrade {
+                    have: cur.manifest.version,
+                    offered: pkg.manifest.version,
+                });
+            }
+        }
     }
     let path = cache_file(dir, &pkg.manifest.id);
     if let Some(parent) = path.parent() {
@@ -591,5 +655,94 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, vec!["t.json".to_string()]);
+    }
+
+    const INDEX_BODY: &str =
+        r#"{"skills":[{"id":"t","version":"2026.09.2","min_engine":1,"name":"测试病"}]}"#;
+
+    #[test]
+    fn a_signed_index_parses() {
+        let env = sign_with_test_key(INDEX_BODY);
+        let idx = load_signed_index_with_key(&env, &test_pubkey_hex()).expect("清单要能验过");
+        assert_eq!(idx.skills.len(), 1);
+        assert_eq!(idx.skills[0].id, "t");
+        assert_eq!(idx.skills[0].version, "2026.09.2");
+        assert_eq!(idx.skills[0].min_engine, 1);
+    }
+
+    #[test]
+    fn a_tampered_index_is_refused_so_nobody_can_redirect_the_client() {
+        // 清单不签名的话,中间人改一个 version 就能把客户端引到任意路径,或者
+        // 把新版本从清单里删掉让用户永远停在旧规则上。
+        let env = sign_with_test_key(INDEX_BODY).replace("2026.09.2", "2026.09.1");
+        assert!(matches!(
+            load_signed_index_with_key(&env, &test_pubkey_hex()),
+            Err(PackageError::BadSignature)
+        ));
+    }
+
+    #[test]
+    fn an_unsigned_plain_index_is_refused() {
+        // 老形状(裸 {"skills":[…]})不再接受 —— 不留「验不过就当没签」的后门。
+        assert!(load_signed_index_with_key(INDEX_BODY, &test_pubkey_hex()).is_err());
+    }
+
+    #[test]
+    fn version_tuple_orders_by_year_month_serial() {
+        assert!(version_tuple("2026.09.2").unwrap() > version_tuple("2026.09.1").unwrap());
+        assert!(version_tuple("2026.10.1").unwrap() > version_tuple("2026.09.9").unwrap());
+        assert!(version_tuple("2027.01.1").unwrap() > version_tuple("2026.12.9").unwrap());
+        // 字典序会把 "2026.09.10" 排在 "2026.09.9" 前面 —— 必须按数字比。
+        assert!(version_tuple("2026.09.10").unwrap() > version_tuple("2026.09.9").unwrap());
+        assert!(version_tuple("v2").is_none());
+        assert!(version_tuple("2026.9.1").is_none(), "月份定宽两位");
+    }
+
+    #[test]
+    fn installing_an_older_version_over_a_newer_one_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let newer = sign_with_test_key(&MINIMAL.replace("2026.09.1", "2026.09.2"));
+        cache_store_with_key(dir.path(), &newer, &test_pubkey_hex()).unwrap();
+
+        let older = sign_with_test_key(MINIMAL); // 2026.09.1,签名合法,只是旧
+        match cache_store_with_key(dir.path(), &older, &test_pubkey_hex()) {
+            Err(PackageError::Downgrade { have, offered }) => {
+                assert_eq!(have, "2026.09.2");
+                assert_eq!(offered, "2026.09.1");
+            }
+            other => panic!("应当拒绝降级,实际 {other:?}"),
+        }
+        // 缓存里仍是新的那份,没被旧包覆盖。
+        assert_eq!(
+            cache_load_with_key(dir.path(), "t", &test_pubkey_hex())
+                .unwrap()
+                .manifest
+                .version,
+            "2026.09.2"
+        );
+    }
+
+    #[test]
+    fn reinstalling_the_same_version_is_allowed() {
+        // 刷新/修缓存是常规操作,不能被单调闸拦住。
+        let dir = tempfile::tempdir().unwrap();
+        let env = sign_with_test_key(MINIMAL);
+        cache_store_with_key(dir.path(), &env, &test_pubkey_hex()).unwrap();
+        assert!(cache_store_with_key(dir.path(), &env, &test_pubkey_hex()).is_ok());
+    }
+
+    #[test]
+    fn a_newer_version_installs_normally() {
+        let dir = tempfile::tempdir().unwrap();
+        cache_store_with_key(dir.path(), &sign_with_test_key(MINIMAL), &test_pubkey_hex()).unwrap();
+        let newer = sign_with_test_key(&MINIMAL.replace("2026.09.1", "2026.10.1"));
+        cache_store_with_key(dir.path(), &newer, &test_pubkey_hex()).unwrap();
+        assert_eq!(
+            cache_load_with_key(dir.path(), "t", &test_pubkey_hex())
+                .unwrap()
+                .manifest
+                .version,
+            "2026.10.1"
+        );
     }
 }

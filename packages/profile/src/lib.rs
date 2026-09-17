@@ -8,7 +8,8 @@
 pub mod package;
 
 pub use package::{
-    cache_load, cache_store, load_signed, verify_envelope, ActivityRules, Analyte, Display, Drug,
-    Manifest, Marker, Package, PackageError, Rules, Source, Terms, Triggers, UnitRow, Views,
-    ENGINE_VERSION, SIGNING_PUBLIC_KEY_HEX,
+    cache_load, cache_store, load_signed, load_signed_index, verify_envelope, verify_envelope_body,
+    version_tuple, ActivityRules, Analyte, Display, Drug, Index, IndexEntry, Manifest, Marker,
+    Package, PackageError, Rules, Source, Terms, Triggers, UnitRow, Views, ENGINE_VERSION,
+    SIGNING_PUBLIC_KEY_HEX,
 };
