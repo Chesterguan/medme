@@ -43,6 +43,60 @@ pub struct DiagnosisItem {
     #[serde(default)]
     pub unverified: bool,
 }
+/// 一条**族级病程事实**(spec §3,schema 2)。类型枚举是免疫介导慢病族共用的,
+/// 服务端从 prompt 看不出用户是哪个病。
+///
+/// 扁平结构,不是 12 个变体:所有字段都是**原文逐字字符串**,校验规则完全一样,
+/// 消费方按 `type` 取自己关心的那几个。未知 `type` 原样穿过(服务端 prompt 可以
+/// 先于 App 加新类型,老 App 忽略它,而不是整份抽取解析失败)。
+///
+/// `evidence` 必须是原文逐字子串,与 labs 同一套 `verify`(见 [`verify`])。
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+pub struct Fact {
+    /// `organ_involvement|flare|hospitalization|biopsy|infusion|dose_change|scale|
+    /// imaging_finding|infection|pregnancy|vaccination|exam_done`,或任何将来的新值。
+    #[serde(rename = "type", default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub organ: String,
+    #[serde(default)]
+    pub date: String,
+    #[serde(default)]
+    pub date_start: String,
+    #[serde(default)]
+    pub date_end: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub result: String,
+    #[serde(default)]
+    pub drug: String,
+    #[serde(default)]
+    pub dose: String,
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub to: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub modality: String,
+    #[serde(default)]
+    pub finding: String,
+    #[serde(default)]
+    pub status: String,
+    /// 原文逐字子串。图片档验不过时本条标 `unverified`,界面标「需核对」。
+    #[serde(default)]
+    pub evidence: String,
+    /// 与 `LabItem::unverified` 同一约定:**不在 prompt schema 里**,由 [`verify`] 盖章。
+    #[serde(default)]
+    pub unverified: bool,
+}
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 pub struct Extraction {
     #[serde(default)]
@@ -59,6 +113,9 @@ pub struct Extraction {
     pub impression: String,
     #[serde(default)]
     pub notes: String,
+    /// schema 2 的族级病程事实。schema 1 的 JSON 里没有这个键 → 空 Vec。
+    #[serde(default)]
+    pub facts: Vec<Fact>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -913,5 +970,48 @@ mod tests {
         let v = verify(ex, src, Mode::Image);
         assert!(!v.extraction.labs[0].unverified, "7,1 归一后应等于 7.1");
         assert_eq!(v.unverified, 0);
+    }
+
+    #[test]
+    fn schema_one_json_still_parses_and_yields_no_facts() {
+        // 老 App 发 schema 1,老保险箱里躺着 schema 1 的结果 —— 加了 facts 之后
+        // 它们必须照样解析,而不是整条抽取变成解析失败。
+        let old = r#"{"doc_type":"lab","doc_date":"2026-01-01","labs":[],"meds":[],
+                      "diagnoses":[],"impression":"","notes":""}"#;
+        let e = parse_extraction(old).expect("schema 1 必须继续解析");
+        assert!(e.facts.is_empty());
+    }
+
+    #[test]
+    fn facts_parse_with_only_the_fields_that_type_uses() {
+        let j = r#"{"labs":[],"facts":[
+            {"type":"organ_involvement","organ":"kidney","date":"2024-03-02",
+             "text":"狼疮性肾炎 IV 型","evidence":"狼疮性肾炎 IV 型"},
+            {"type":"dose_change","drug":"泼尼松","from":"30mg","to":"20mg",
+             "date":"2024-06-01","evidence":"泼尼松减至 20mg"},
+            {"type":"hospitalization","date_start":"2024-03-01","date_end":"2024-03-12",
+             "reason":"狼疮活动","evidence":"因狼疮活动收入院"}]}"#;
+        let e = parse_extraction(j).expect("facts 必须解析");
+        assert_eq!(e.facts.len(), 3);
+        assert_eq!(e.facts[0].r#type, "organ_involvement");
+        assert_eq!(e.facts[0].organ, "kidney");
+        assert_eq!(e.facts[0].text, "狼疮性肾炎 IV 型");
+        assert_eq!(e.facts[1].drug, "泼尼松");
+        assert_eq!(e.facts[1].from, "30mg");
+        assert_eq!(e.facts[1].to, "20mg");
+        assert_eq!(e.facts[2].date_start, "2024-03-01");
+        assert_eq!(e.facts[2].date_end, "2024-03-12");
+        // 这一族没用到的字段一律空串,不是 None、不是缺席。
+        assert_eq!(e.facts[0].drug, "");
+        assert!(!e.facts[0].unverified);
+    }
+
+    #[test]
+    fn an_unknown_fact_type_survives_parsing_instead_of_failing_the_document() {
+        // 服务端的 prompt 可以先于 App 加新 type。老 App 必须能把整份抽取收下来
+        // (labs 照常入库),只是忽略认不出的那一条 —— 不能整份丢掉。
+        let j = r#"{"labs":[],"facts":[{"type":"something_new_2027","text":"x","evidence":"x"}]}"#;
+        let e = parse_extraction(j).expect("未知 type 不该让解析失败");
+        assert_eq!(e.facts[0].r#type, "something_new_2027");
     }
 }

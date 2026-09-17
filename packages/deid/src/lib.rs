@@ -12,7 +12,7 @@ pub use redact::{
     redact_boxes, redact_text, restore, Box, KnownIdentity, Rect, Redacted, RestoreMap,
 };
 pub use verify::{
-    parse_extraction, verify, DiagnosisItem, Extraction, LabItem, MedItem, Mode, Verified,
+    parse_extraction, verify, DiagnosisItem, Extraction, Fact, LabItem, MedItem, Mode, Verified,
 };
 
 #[derive(Debug, thiserror::Error)]
