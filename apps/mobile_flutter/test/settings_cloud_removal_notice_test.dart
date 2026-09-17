@@ -3,9 +3,10 @@
 // 删不掉,只是本机记一笔黑名单不再自动拉回,见 `vault_boot.dart`),不是真的
 // 彻底删除。`cloudRemovalNotice` 只为云成员(`cloudId != null`)多说这一句实话。
 //
-// 只测这条纯函数——`_confirmRemove` 所在的 `_VaultCard`/`SettingsScreen` 需要真实
-// Rust FFI(`initState` 直接调 `icloudStatus()`/`patientProfile()`),`flutter test`
-// 没有原生库,同仓库其它涉及 Rust 桥屏幕测试的一贯限制。
+// 只测这条纯函数——`_confirmRemove` 住在 `SettingsScreen`(「我」)里,那一屏需要
+// 真实 Rust FFI(`initState` 直接调 `patientProfile()`),`flutter test` 没有原生库,
+// 同仓库其它涉及 Rust 桥屏幕测试的一贯限制。那颗删除小图标本身在 `MembersCard` 上,
+// 它是纯 widget,单独测(`test/members_card_test.dart`)。
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';

@@ -219,6 +219,9 @@ void main() {
       ));
       await t.pumpAndSettle();
 
+      // 整个「云端」分区就这**一行**(`s5`):标题 + 副标题 + `›`,不是两条各说一半。
+      // 复审 round 1:这一行下面原来还挂着一条「登录 / 注册」,同一件事说了两遍。
+      expect(find.byType(ListTile), findsOneWidget);
       expect(find.text('云端'), findsOneWidget);
       expect(find.byIcon(Icons.chevron_right), findsOneWidget);
       // 副标题里不许再出现「云端」两个字 —— 标题已经说过一次了。

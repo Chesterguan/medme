@@ -115,7 +115,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: const Text('清空所有数据?'),
         content: const Text(
           '确定清空全部记录?所有成员的示例数据和已导入病历都会被删除,'
-          '保险箱恢复到初始状态,此操作不可撤销。',
+          '病历箱恢复到初始状态,此操作不可撤销。',
         ),
         actions: [
           TextButton(
@@ -223,24 +223,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ],
-          // `s5` 第一行:**一行两段** —— 标题「云端」+ 副标题「已备份,刚刚」+「›」。
+          // `s5` 第一行,**整节只有这一行**:标题「云端」+ 副标题「已备份,刚刚」+「›」。
           // 整行可点,点进去才是云端那一层(「云端整理」开关在里面,不在这一屏平铺)。
           // 云的说法全 App 只有两件事:云端备份 / 云端整理。
+          //
+          // 没登录时这一行自己就写着「没登录,换手机找不回来」并且点进账号那一屏,
+          // 所以不再另挂一条「登录 / 注册」—— 同一件事两行说,正是这次要收掉的毛病。
+          // 登录之后进账号那一屏的路仍在:下面的「口令与恢复码」「我的设备」。
           _SectionLabel('云端'),
-          _SettingsGroup(
-            children: [
-              const BackupStatusLine(),
-              ValueListenableBuilder<bool>(
-                valueListenable: AccountSession.instance.loggedIn,
-                builder: (context, loggedIn, _) => _SettingsRow(
-                  icon: Icons.person_outline,
-                  title: loggedIn ? '已登录' : '登录 / 注册',
-                  subtitle: '换手机能找回、家人能看、云端帮你认字',
-                  onTap: _busy ? null : _openAccount,
-                ),
-              ),
-            ],
-          ),
+          const _SettingsGroup(children: [BackupStatusLine()]),
           _SectionLabel('这台手机上的病历'),
           MembersCard(
             members: ProfileManager.instance.profiles,
@@ -556,7 +547,7 @@ class _DemoDataRow extends StatelessWidget {
       subtitle: Text(
         loading
             ? (progressText ?? '正在载入示例数据…')
-            : '单独放一个成员里,不和你的病历混在一起;看完可在上面「保险箱」里整个移除',
+            : '单独放一个成员里,不和你的病历混在一起;看完可以去「我」首页的「这台手机上的病历」里把这个成员整个移除',
         style: const TextStyle(color: MedMe.faint),
       ),
       trailing: loading
@@ -749,8 +740,8 @@ class _AboutScreenState extends State<AboutScreen> {
     if (!ok) _showSnack('无法打开$label,请稍后重试');
   }
 
-  /// 示例数据落进**它自己的成员**,不混进你的档案 —— 于是看完可以直接在「保险箱」
-  /// 里把这个成员整个移除,你自己导入的东西一份不动。(早先是灌进当前成员,再被
+  /// 示例数据落进**它自己的成员**,不混进你的档案 —— 于是看完可以直接去「我」首页的
+  /// 「这台手机上的病历」里把这个成员整个移除,你自己导入的东西一份不动。(早先是灌进当前成员,再被
   /// 自动命名成「张建国」,想清掉就只能动用「清空所有数据」那颗核弹。)
   static const _demoMember = '张建国(示例)';
 
