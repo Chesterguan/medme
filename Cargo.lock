@@ -5465,7 +5465,10 @@ name = "profile"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "chrono",
+ "deid",
  "ed25519-dalek",
+ "parser",
  "serde",
  "serde_json",
  "tempfile",

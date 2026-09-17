@@ -48,15 +48,55 @@ fn enable_then_disable_leaves_it_disabled() {
     assert!(v.enabled, "最后一条才算数");
 }
 
+/// 同一天连点两下开关:`at` 只到天,分不出先后,只能信 `events` 的顺序 ——
+/// 它按保险箱事件日志的追加顺序给,所以靠后的那条就是后发生的。
 #[test]
-fn an_event_for_another_package_does_not_enable_this_one() {
-    let events = vec![parser::ProfileEvent {
-        kind: "enable".into(),
-        package: "ms".into(),
-        at: "2026-03-01".into(),
+fn on_the_same_day_the_later_event_in_the_log_wins() {
+    let ev = |kind: &str| parser::ProfileEvent {
+        kind: kind.into(),
+        package: "t".into(),
+        at: "2026-09-16".into(),
         payload: serde_json::json!({}),
-    }];
-    assert!(!profile::materialize(&[], &events, &minimal_pkg(), day("2026-09-16")).enabled);
+    };
+    let today = day("2026-09-16");
+
+    let opened_then_closed = vec![ev("enable"), ev("disable")];
+    assert!(
+        !profile::materialize(&[], &opened_then_closed, &minimal_pkg(), today).enabled,
+        "同一天开了又关,最后是关着"
+    );
+
+    let closed_then_opened = vec![ev("disable"), ev("enable")];
+    assert!(
+        profile::materialize(&[], &closed_then_opened, &minimal_pkg(), today).enabled,
+        "同一天关了又开,最后是开着"
+    );
+}
+
+#[test]
+fn an_event_for_another_package_does_not_affect_this_one() {
+    let other = |kind: &str, at: &str| parser::ProfileEvent {
+        kind: kind.into(),
+        package: "ms".into(),
+        at: at.into(),
+        payload: serde_json::json!({}),
+    };
+    let today = day("2026-09-16");
+
+    let events = vec![other("enable", "2026-03-01")];
+    assert!(!profile::materialize(&[], &events, &minimal_pkg(), today).enabled);
+
+    // 别的病后来关了(`at` 更晚),不能顺手把这个病也关掉 —— 一个保险箱可以同时开多个病。
+    let events = vec![
+        parser::ProfileEvent {
+            kind: "enable".into(),
+            package: "t".into(),
+            at: "2026-03-01".into(),
+            payload: serde_json::json!({}),
+        },
+        other("disable", "2026-09-10"),
+    ];
+    assert!(profile::materialize(&[], &events, &minimal_pkg(), today).enabled);
 }
 
 #[test]
