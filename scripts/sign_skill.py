@@ -13,6 +13,9 @@
     python3 scripts/sign_skill.py skills/sle/2026.09.1.src.json
         -> 写出 skills/sle/2026.09.1.json(信封),并刷新 skills/index.json
 
+自检(临时目录里的一次性密钥,不碰 ~/.medme_skill_signing_key):
+    python3 scripts/sign_skill.py --selftest
+
 依赖:标准库 + `cryptography`(`python3 -c 'import cryptography'` 确认已装;
 没装就装进虚拟环境,不要装进系统 Python)。
 """
@@ -20,10 +23,12 @@ import base64
 import json
 import os
 import pathlib
+import re
 import stat
 import sys
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 KEY_PATH = pathlib.Path.home() / ".medme_skill_signing_key"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -55,13 +60,28 @@ def print_pubkey() -> None:
     print(pub.hex())
 
 
+def _verify_signed(pub: Ed25519PublicKey, env: dict, where: pathlib.Path) -> None:
+    """手改过的信封不能被索引——用公钥重新验一遍签,镜像 Rust `verify_envelope`
+    (`packages/profile/src/package.rs`)对 `env.package.as_bytes()` 做的同一件事。"""
+    try:
+        sig = base64.b64decode(env["sig"])
+    except Exception as e:
+        sys.exit(f"{where}: 签名不是合法 base64:{e}")
+    try:
+        pub.verify(sig, env["package"].encode("utf-8"))
+    except InvalidSignature:
+        sys.exit(f"{where}: 签名验证失败 —— 信封被改过,或不是这把私钥签的")
+
+
 def refresh_index() -> None:
+    pub = _load_key().public_key()
     skills = []
     for d in sorted(p for p in SKILLS.iterdir() if p.is_dir()):
         for f in sorted(d.glob("*.json")):
             if f.name.endswith(".src.json"):
                 continue
             env = json.loads(f.read_text(encoding="utf-8"))
+            _verify_signed(pub, env, f)
             m = json.loads(env["package"])["manifest"]
             skills.append(
                 {"id": m["id"], "version": m["version"], "min_engine": m["min_engine"],
@@ -81,12 +101,102 @@ def sign(src: pathlib.Path) -> None:
     out = src.with_name(src.name[: -len(".src.json")] + ".json")
     if out.stem != manifest["version"]:
         sys.exit(f"文件名 {out.stem} 与 manifest.version {manifest['version']} 不一致")
+    # id 必须等于目录名、且只含小写字母/数字/下划线——与 Rust 侧 `valid_id`
+    # (packages/profile/src/package.rs)同一条规则。这里不挡,签出来的包能通过
+    # repo_packages_verify(目录名与 index.json 只是碰巧一致),但设备上
+    # `cache_store` 会用 `manifest.id` 拼缓存路径,id 里有大写/不合规字符时
+    # 直接 `Malformed` 拒绝——包签得出来,却永远缓存不下来。
+    if manifest["id"] != out.parent.name or not re.fullmatch(r"[a-z0-9_]+", manifest["id"]):
+        sys.exit(
+            f"manifest.id {manifest['id']!r} 必须等于目录名 {out.parent.name!r},"
+            "且只含小写字母/数字/下划线"
+        )
+    rel_out = out.relative_to(ROOT)  # 先算完相对路径:src 在仓库外时这里就报错,不留半成品
     sig = base64.b64encode(_load_key().sign(body.encode("utf-8"))).decode()
     out.write_text(
         json.dumps({"sig": sig, "package": body}, ensure_ascii=False), encoding="utf-8"
     )
-    print(f"已签名 -> {out.relative_to(ROOT)}")
+    print(f"已签名 -> {rel_out}")
     refresh_index()
+
+
+def _fixture(id_: str, version: str) -> str:
+    """自检用的最小合法包体,与 packages/profile/src/package.rs 测试里的 MINIMAL 同构。"""
+    return json.dumps(
+        {
+            "manifest": {
+                "id": id_, "family": "immune", "version": version, "min_engine": 1,
+                "display": {"name": "自检病", "short": "自检"},
+                "disclaimer": "仅整理你的病历,不做诊断",
+                "sources": [{"id": "S1", "cite": "test", "url": None}],
+            },
+            "triggers": {"diagnosis_patterns": [], "serology_any_two": []},
+            "terms": {"aliases": {}, "analytes": []},
+            "markers": [], "drugs": [],
+            "rules": {
+                "activity": {"window_days": 10, "max": 18, "items": []},
+                "states": [], "monitoring": [], "milestones": [],
+            },
+            "views": {"sections": [], "handoff": []},
+        },
+        ensure_ascii=False,
+    )
+
+
+def _expect_refused(fn, desc: str) -> None:
+    try:
+        fn()
+    except SystemExit:
+        print(f"  ok: {desc} —— 被拒绝")
+        return
+    sys.exit(f"selftest 失败:{desc} —— 本该被拒绝,但没有报错退出")
+
+
+def selftest() -> None:
+    """自检三类必须被拒绝的输入。只在临时目录里生成一把一次性密钥,
+    不读、不碰、不派生 ~/.medme_skill_signing_key。"""
+    import tempfile
+
+    global KEY_PATH, ROOT, SKILLS
+    real_key, real_root, real_skills = KEY_PATH, ROOT, SKILLS
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            KEY_PATH = pathlib.Path(td) / "throwaway.key"
+            ROOT = pathlib.Path(td)
+            SKILLS = ROOT / "skills"
+            SKILLS.mkdir()
+            gen_key()
+
+            # 1. manifest.id 与目录名不符
+            (SKILLS / "sle").mkdir()
+            bad_dir_src = SKILLS / "sle" / "1.0.0.src.json"
+            bad_dir_src.write_text(_fixture("lupus", "1.0.0"), encoding="utf-8")
+            _expect_refused(lambda: sign(bad_dir_src), "manifest.id 与目录名不符")
+            assert not (SKILLS / "sle" / "1.0.0.json").exists(), "被拒绝的签名不该留下输出文件"
+
+            # 2. manifest.id 含大写(目录名同步用同一个大写值,专测字符集这条规则本身,
+            # id==dirname 那一半是过的)。目录名故意不用 "SLE"——macOS 默认文件系统
+            # 大小写不敏感,"SLE" 会撞上上一条已建好的 "sle",不是脚本的 bug。
+            (SKILLS / "ZZZ").mkdir()
+            upper_src = SKILLS / "ZZZ" / "1.0.0.src.json"
+            upper_src.write_text(_fixture("ZZZ", "1.0.0"), encoding="utf-8")
+            _expect_refused(lambda: sign(upper_src), "manifest.id 含大写")
+            assert not (SKILLS / "ZZZ" / "1.0.0.json").exists(), "被拒绝的签名不该留下输出文件"
+
+            # 3. 正常签一份,再手改信封内容——refresh_index 必须拒绝索引
+            (SKILLS / "ok").mkdir()
+            ok_src = SKILLS / "ok" / "1.0.0.src.json"
+            ok_src.write_text(_fixture("ok", "1.0.0"), encoding="utf-8")
+            sign(ok_src)  # 先证明正常路径没被前两条的校验挡住
+            ok_env_path = SKILLS / "ok" / "1.0.0.json"
+            env = json.loads(ok_env_path.read_text(encoding="utf-8"))
+            env["package"] = env["package"].replace("自检病", "被篡改")
+            ok_env_path.write_text(json.dumps(env, ensure_ascii=False), encoding="utf-8")
+            _expect_refused(refresh_index, "篡改过的信封被 refresh_index 索引")
+
+        print("selftest: 3/3 通过(manifest.id 校验 ×2,篡改信封拒绝索引 ×1)")
+    finally:
+        KEY_PATH, ROOT, SKILLS = real_key, real_root, real_skills
 
 
 if __name__ == "__main__":
@@ -97,5 +207,7 @@ if __name__ == "__main__":
         gen_key()
     elif arg == "--pubkey":
         print_pubkey()
+    elif arg == "--selftest":
+        selftest()
     else:
         sign(pathlib.Path(arg).resolve())

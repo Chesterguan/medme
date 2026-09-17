@@ -10,6 +10,9 @@ fn repo_root() -> PathBuf {
 
 fn signed_packages() -> Vec<PathBuf> {
     let skills = repo_root().join("skills");
+    // `skills/` 被删/被改成文件时必须硬失败,不能让下面的 `read_dir` 静默吞成空表——
+    // 那样 `every_signed_package_in_the_repo_verifies_with_the_production_key` 会空转变绿。
+    assert!(skills.is_dir(), "skills/ 不见了:{}", skills.display());
     let mut out = Vec::new();
     let Ok(ids) = std::fs::read_dir(&skills) else {
         return out;
@@ -80,4 +83,24 @@ fn the_production_public_key_is_not_the_placeholder() {
         "0000000000000000000000000000000000000000000000000000000000000000",
         "还是 Task 1 的占位公钥 —— 用 scripts/sign_skill.py --pubkey 换成真的"
     );
+}
+
+/// 上一条只防「还是占位值」,不防「写错了」——63 个字符、含非 hex 字符、或者
+/// 合法 hex 但不是一个能解压的 Ed25519 点,上一条测试都会放行,却会让每一个包在
+/// 每一台设备上都加载失败。两条测试各防一类,缺一不可(实测:全 0/全 0xff 这两个
+/// 「看起来像坏值」的 32 字节其实都能被 `from_bytes` 解压成合法点,所以这条测试
+/// 本身也**不能**顶替上一条逐字节比对占位值的测试)。
+#[test]
+fn the_production_public_key_is_a_real_ed25519_point() {
+    let h = profile::SIGNING_PUBLIC_KEY_HEX;
+    assert_eq!(h.len(), 64, "公钥必须是 64 个 hex 字符");
+    assert!(
+        h.bytes().all(|b| b.is_ascii_hexdigit()),
+        "公钥含非 hex 字符"
+    );
+    let mut k = [0u8; 32];
+    for (i, c) in h.as_bytes().chunks(2).enumerate() {
+        k[i] = u8::from_str_radix(std::str::from_utf8(c).unwrap(), 16).unwrap();
+    }
+    ed25519_dalek::VerifyingKey::from_bytes(&k).expect("常量不是合法 Ed25519 公钥");
 }
