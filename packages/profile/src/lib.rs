@@ -38,10 +38,12 @@ pub fn materialize(
 ) -> ProfileView {
     let enabled = is_enabled(events, &pkg.manifest.id);
     let sections = if enabled {
-        let _ctx = rules::Ctx::build(docs, events, today);
-        // Task 11–15 往这里加 section。此刻先空着 —— 「开启了但还没有任何数据」
-        // 与「没开启」必须是两种不同的显示状态。
-        Vec::new()
+        let ctx = rules::Ctx::build(docs, events, today);
+        // Task 12–15 继续往这里加 section。「开启了但还没有任何数据」与「没开启」
+        // 是两种不同的显示状态:前者出卡片、卡片自己带 `empty_hint`,后者没卡片。
+        let mut out = Vec::new();
+        out.extend(rules::activity_section(&ctx, pkg));
+        out
     } else {
         // 没开启就**不碰**临床输入:不 aggregate、不解抽取结果。既省一趟全量
         // 计算,也是 spec §4「从未开启 = 不算、不显示、不提醒」的字面实现。
