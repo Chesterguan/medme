@@ -211,7 +211,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
-    if s.len() != 64 {
+    // `u8::from_str_radix` 悄悄接受前导 `+`(`"+9"` 和 `"09"` 解出同一个字节),
+    // 逐字符先挡掉非 `0-9a-fA-F`,不然两个不同的 hex 字符串能被当成同一把公钥。
+    if s.len() != 64 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let mut out = [0u8; 32];
@@ -221,13 +223,15 @@ fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// 用生产公钥验签并解析。
+/// 用生产公钥验签并解析。**不检查 `min_engine`** —— 版本闸在 Task 2 的
+/// `load_signed`(加载路径)里做,这里只管「是不是我们签的、体裁对不对」。
 pub fn verify_envelope(envelope_json: &str) -> Result<Package, PackageError> {
     verify_envelope_with_key(envelope_json, SIGNING_PUBLIC_KEY_HEX)
 }
 
 /// 同上,但公钥可注入 —— 只给测试用(生产路径固定走上面那个)。
-pub fn verify_envelope_with_key(
+/// `pub(crate)`:公钥 pin 不能从 crate 外部绕过,Task 2/27 的调用点都在本 crate 内。
+pub(crate) fn verify_envelope_with_key(
     envelope_json: &str,
     pubkey_hex: &str,
 ) -> Result<Package, PackageError> {
@@ -324,6 +328,64 @@ mod tests {
     #[test]
     fn missing_sig_is_malformed_not_bad_signature() {
         let env = serde_json::json!({ "package": MINIMAL }).to_string();
+        assert!(matches!(
+            verify_envelope_with_key(&env, &test_pubkey_hex()),
+            Err(PackageError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn signature_wrong_length_is_malformed() {
+        use base64::Engine as _;
+        let sig_63 = base64::engine::general_purpose::STANDARD.encode([0u8; 63]);
+        let env = serde_json::json!({ "sig": sig_63, "package": MINIMAL }).to_string();
+        assert!(matches!(
+            verify_envelope_with_key(&env, &test_pubkey_hex()),
+            Err(PackageError::Malformed(_))
+        ));
+
+        let sig_65 = base64::engine::general_purpose::STANDARD.encode([0u8; 65]);
+        let env = serde_json::json!({ "sig": sig_65, "package": MINIMAL }).to_string();
+        assert!(matches!(
+            verify_envelope_with_key(&env, &test_pubkey_hex()),
+            Err(PackageError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn invalid_base64_signature_is_malformed() {
+        let env =
+            serde_json::json!({ "sig": "not-valid-base64!!", "package": MINIMAL }).to_string();
+        assert!(matches!(
+            verify_envelope_with_key(&env, &test_pubkey_hex()),
+            Err(PackageError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn bad_and_non_canonical_pubkey_hex_is_malformed() {
+        let env = sign_with_test_key(MINIMAL);
+
+        // 普通非法字符,压根不是 hex。
+        let non_hex = "zz".repeat(32);
+        assert!(matches!(
+            verify_envelope_with_key(&env, &non_hex),
+            Err(PackageError::Malformed(_))
+        ));
+
+        // 非规范:`u8::from_str_radix` 把前导 `+` 当符号位默默吃掉,"+0" 和 "00"
+        // 解出来是同一个字节 —— 两个不同的十六进制字符串却被当成同一把公钥接受。
+        // 必须在解码这一步就拒,不能让非规范写法蒙混过关。
+        let non_canonical = format!("+0{}", "0".repeat(62));
+        assert!(matches!(
+            verify_envelope_with_key(&env, &non_canonical),
+            Err(PackageError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn valid_signature_over_non_json_body_is_malformed() {
+        let env = sign_with_test_key("this is not json");
         assert!(matches!(
             verify_envelope_with_key(&env, &test_pubkey_hex()),
             Err(PackageError::Malformed(_))

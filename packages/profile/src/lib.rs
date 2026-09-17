@@ -8,6 +8,7 @@
 pub mod package;
 
 pub use package::{
-    verify_envelope, Analyte, Display, Drug, Manifest, Marker, Package, PackageError, Rules,
-    Source, Terms, Triggers, UnitRow, Views, ENGINE_VERSION, SIGNING_PUBLIC_KEY_HEX,
+    verify_envelope, ActivityRules, Analyte, Display, Drug, Manifest, Marker, Package,
+    PackageError, Rules, Source, Terms, Triggers, UnitRow, Views, ENGINE_VERSION,
+    SIGNING_PUBLIC_KEY_HEX,
 };
