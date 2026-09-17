@@ -101,16 +101,16 @@ void resetVaultQueueForTest() {
 }
 
 /// 这个成员该走哪条开箱路径——纯函数,不碰任何 IO/FFI,只看有没有
-/// [Profile.cloudId] 以及有没有拿到对应的档案密钥。抽出来是为了让这条判断能在
+/// [Profile.cloudId] 以及有没有拿到对应的档案钥匙。抽出来是为了让这条判断能在
 /// 不加载 Rust 原生库的 `flutter test` 里钉住——[openCurrentProfileVault] 本身
 /// 调 FRB,测试环境一调就崩。
 ///
 /// **没有 [Profile.cloudId]** → [VaultOpenPlan.unkeyed](原路径,一字不改,
-/// 不登录 = 现状)。**有 cloudId 但拿不到密钥**(账号没解锁/密钥被清过)→
+/// 不登录 = 现状)。**有 cloudId 但拿不到钥匙**(账号没解锁/钥匙被清过)→
 /// [VaultOpenPlan.locked]——这是一个必须显式拒绝的状态,**不能**悄悄退化成
-/// unkeyed 打开:那样写进去的事件没有账号密钥的 MAC,下次真正 keyed 打开时会被
+/// unkeyed 打开:那样写进去的事件没有档案钥匙的 MAC,下次真正 keyed 打开时会被
 /// `probe_key_mismatch`/校验链判定为「不可信」,永久隔离在这台设备上写的这一段
-/// 历史。**有 cloudId 且有密钥** → [VaultOpenPlan.keyed]。
+/// 历史。**有 cloudId 且有钥匙** → [VaultOpenPlan.keyed]。
 enum VaultOpenPlan { unkeyed, keyed, locked }
 
 @visibleForTesting
@@ -119,23 +119,25 @@ VaultOpenPlan planVaultOpen(Profile p, Uint8List? profileKey) {
   return profileKey == null ? VaultOpenPlan.locked : VaultOpenPlan.keyed;
 }
 
-/// 档案有 [Profile.cloudId] 但本机解不出对应的档案密钥(账号还没解锁,或密钥被
+/// 档案有 [Profile.cloudId] 但本机解不出对应的档案钥匙(账号还没解锁,或钥匙被
 /// 清过)——[openCurrentProfileVault] 显式拒绝打开,而不是悄悄退回不加密的本地
 /// 打开(见 [VaultOpenPlan] 文档)。调用方(账号屏/设置页)应该提示用户去解锁账号。
 class ProfileLocked implements Exception {
   const ProfileLocked(this.cloudId);
   final String cloudId;
 
-  /// C4:这句话原来是「这个档案已绑定云端备份,但本机还没有它的密钥——需要解锁账号
-  /// 才能打开(cloudId=prf_7f3a…)」。它**是启动时那块白屏上最显眼的一段字**,而
-  /// 它里面每一个词都是我们自己的词汇:"绑定云端备份"、"档案密钥"、"解锁账号",
-  /// 末尾还挂着一串服务端内部 id。老人看完只知道打不开,不知道该做什么。
+  /// C4:这句话原来说的是"这个档案已绑定云端备份,但本机还没有解开它的那把钥匙
+  /// ——需要解锁账号才能打开(cloudId=prf_7f3a…)"。它**是启动时那块白屏上最显眼的
+  /// 一段字**,而它里面每一个词都是我们自己的词汇:"绑定云端备份"、"档案钥匙"、
+  /// "解锁账号",末尾还挂着一串服务端内部 id。老人看完只知道打不开,不知道该做什么。
   ///
-  /// 现在说两件事:为什么打不开(在云端是加密的)、要他做什么(输口令)。
+  /// 现在说两件事:为什么打不开、要他做什么(输口令)。**不说"在云端加密"**
+  /// (ux-audit §4 第 10 条):锁住的是本机这一箱,说成"在云端"会让人以为是断网
+  /// 害的——真正原因是本机还没有解开它的钥匙,这句话不该在这一点上误导人。
   /// [cloudId] 仍然留在字段里(排查时用、也是这个异常的身份),但**只进 debug
   /// 日志**(见 [openCurrentProfileVault] 的 locked 分支),不进给用户看的字。
   @override
-  String toString() => '你的病历在云端是加密的,需要你的口令才能打开。';
+  String toString() => '你的病历是加密的,需要你的口令才能打开。';
 }
 
 /// 打开「当前成员」的病历箱:按 [ProfileManager] 组合本机/iCloud 路径。启动 +
@@ -372,7 +374,7 @@ Future<void> autoNameCurrentProfileFrom(String? detectedName) async {
 /// 删除一个成员:成员表移除 + **本机与 iCloud 容器两处**的数据目录都删掉,再重开
 /// (删的若是当前成员,`remove` 已把 current 切回第一个)并刷新各屏。这是**唯一**
 /// 移除成员的入口(手动删成员的设置页、`Grants.purgeExpired` 清过期授权都走这
-/// 一条),云档案的密钥(`pk_<cloudId>`)也在这里统一清掉——不分别在每个调用方
+/// 一条),云档案的钥匙(`pk_<cloudId>`)也在这里统一清掉——不分别在每个调用方
 /// 补一遍,免得漏掉哪一条路径(见 Task 16 item 3)。
 ///
 /// 两处都删的理由与 [wipeAllData] 第 4 步同源:关掉 iCloud 时容器副本会被保留,
@@ -385,8 +387,8 @@ Future<bool> removeProfileAndReopen(String id) =>
     // 不是 `openCurrentProfileVault`:那一个自己排队,而这里整段已经在队列里了(M11)。
     removeProfileAndReopenImpl(id, reopen: openCurrentProfileVaultUnserialized);
 
-/// [removeProfileAndReopen] 的本体,`reopen` 抽成参数是为了让"云档案的密钥
-/// 随成员一起被清掉、本地档案不碰密钥"这条契约能在**不带 Rust 原生库**的
+/// [removeProfileAndReopen] 的本体,`reopen` 抽成参数是为了让"云档案的钥匙
+/// 随成员一起被清掉、本地档案不碰钥匙"这条契约能在**不带 Rust 原生库**的
 /// `flutter test` 里被钉住(同 [switchProfileAndReopenImpl]/[runWipeSequence]
 /// 的套路)。产品代码里的唯一调用点就是 [removeProfileAndReopen],传的永远是
 /// 真实现。

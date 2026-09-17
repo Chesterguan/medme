@@ -23,7 +23,7 @@ const cloudExtractEnabledKey = 'cloud_extract_enabled';
 /// 也不按登录状态** —— 说的是「东西去哪了」,那件事和你是谁无关。
 const qrNoticeSeenKey = 'qr_notice_seen';
 
-/// 账号会话 + 密钥的本机存储。**私钥与档案密钥只进 secure storage**(iOS Keychain
+/// 账号会话 + 钥匙的本机存储。**私钥与档案钥匙只进 secure storage**(iOS Keychain
 /// 开 synchronizable = 同一 Apple ID 新机自动拿回,这就是「系统钥匙串」那条换机路;
 /// 安卓用 EncryptedSharedPreferences,不跨机)。token 与 id 在 shared_preferences。
 class AccountSession {
@@ -45,7 +45,7 @@ class AccountSession {
   /// 上一次登录走的是哪条认证方式(`'otp'`/`'apple'`)——**只是为了让「注销账号」
   /// 那一步知道该要求哪种重新鉴权凭证**(手机账号要新验证码,Apple 账号要新
   /// identity token,见 `services/api/app.py` 的 `DELETE /v1/account`),不是
-  /// 别的用途。泄露无害(不是密钥),存 shared_preferences 即可。
+  /// 别的用途。泄露无害(不是钥匙),存 shared_preferences 即可。
   String? loginMethod;
 
   /// 登录时用的手机号,**脱敏之后**的样子(`138****8000`)。账号屏拿它告诉用户
@@ -109,8 +109,8 @@ class AccountSession {
       await p.remove(k);
     }
     // `deleteAll` 而不是逐个 delete:AccountSession 是这个 app 里唯一用 secure storage
-    // 的地方,它的命名空间下只会有账号私钥(acct_priv)和各档案密钥(pk_<cloudId>)。
-    // 换账号必须把上一个账号的档案密钥也清掉,不然共享设备上账号 B 能读到账号 A 的密钥。
+    // 的地方,它的命名空间下只会有账号私钥(acct_priv)和各档案钥匙(pk_<cloudId>)。
+    // 换账号必须把上一个账号的档案钥匙也清掉,不然共享设备上账号 B 能读到账号 A 的钥匙。
     await _secure.deleteAll();
     accountId = access = refresh = loginMethod = phoneMasked = null; publicKey = privateKey = null;
     loggedIn.value = false;
@@ -123,8 +123,8 @@ class AccountSession {
 
   Future<void> putProfileKey(String cloudId, Uint8List key) => _secure.write(key: 'pk_$cloudId', value: base64Encode(key));
 
-  /// 这个云档案的授权/成员被移除时,连同它的密钥一起清掉——密钥留着没有任何
-  /// 用处(服务端那份 grant 已经没了,拿着本机这份密钥解不出任何新内容),
+  /// 这个云档案的授权/成员被移除时,连同它的钥匙一起清掉——钥匙留着没有任何
+  /// 用处(服务端那份 grant 已经没了,拿着本机这份钥匙解不出任何新内容),
   /// 留着只是白占 Keychain 位置、多一份"看起来还有效"的敏感材料。
   Future<void> removeProfileKey(String cloudId) => _secure.delete(key: 'pk_$cloudId');
 
@@ -133,7 +133,7 @@ class AccountSession {
   /// 本机主动删过的云成员(cloudId 集合)——owner 授权服务端删不掉(见
   /// `vault_boot.removeProfileAndReopenImpl` 的说明),`AccountFlow.restoreProfileKeys`
   /// 换机/重新登录时拿 `GET /v1/profiles` 一样会看到这些还挂着的档案,不认这份
-  /// 名单就会把用户刚删掉的成员原样建回来。存 shared_preferences——不是密钥,
+  /// 名单就会把用户刚删掉的成员原样建回来。存 shared_preferences——不是钥匙,
   /// 泄露无害。
   Future<Set<String>> deletedCloudProfileIds() async {
     final p = await SharedPreferences.getInstance();

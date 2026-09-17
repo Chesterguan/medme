@@ -679,7 +679,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
 
   /// 把这次代拍打成密文传上瞬时云,返回 `(认领链接, 记录数)`;传不上去返回 null。
   ///
-  /// **密钥不上传** —— 它只进链接 `#` 之后那一段,云上那份我们自己也解不开。
+  /// **钥匙不上传** —— 它只进链接 `#` 之后那一段,云上那份我们自己也解不开。
   /// 用的是与病人出码同一条上传通道([ResumableUpload],断了能续),同一种密文格式,
   /// 查看器那边也只有一套解密逻辑。
   Future<(String, int)?> _deliverAsLink(

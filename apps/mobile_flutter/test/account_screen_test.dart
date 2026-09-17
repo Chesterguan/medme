@@ -599,7 +599,7 @@ void main() {
   tearDown(() async => globalSupport.delete(recursive: true));
 
   group('注册:prepareKeys/commitKeys 两步(恢复码强制确认)', () {
-    testWidgets('登录 → 设口令 → 生成密钥展示恢复码(此时未提交)→ 确认后才真正提交', (t) async {
+    testWidgets('登录 → 设口令 → 设好了展示恢复码(此时未提交)→ 确认后才真正提交', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api));
       await t.enterText(find.byKey(const Key('phone')), '13800000001');
@@ -610,35 +610,35 @@ void main() {
       await t.enterText(find.byKey(const Key('code')), '000000');
       await t.tap(find.text('登录'));
       await t.pumpAndSettle();
-      expect(find.text('设置口令'), findsOneWidget); // needsKeySetup
+      expect(find.text('设一个口令'), findsOneWidget); // needsKeySetup
 
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget); // 恢复码
-      expect(find.text('我已抄下恢复码'), findsOneWidget);
-      // 生成密钥这一步只在内存里备好,还没上传、没落盘。
+      expect(find.text('我抄好了'), findsOneWidget);
+      // 设好了这一步只在内存里备好,还没上传、没落盘。
       expect(api.calls, isNot(contains('PUT /v1/account/keys')));
       expect(AccountSession.instance.privateKey, isNull);
 
-      await t.tap(find.text('我已抄下恢复码'));
+      await t.tap(find.text('我抄好了'));
       await t.pumpAndSettle();
       expect(api.calls, contains('PUT /v1/account/keys'));
       expect(AccountSession.instance.privateKey, isNotNull);
       expect(find.text('已登录'), findsOneWidget);
     });
 
-    testWidgets('恢复码画面强杀重开(未点确认):新开一屏落在设置口令,不是已就绪', (t) async {
+    testWidgets('恢复码画面强杀重开(未点确认):新开一屏落在设一个口令,不是已就绪', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
-      // 没点「我已抄下恢复码」——从没提交过。
+      // 没点「我抄好了」——从没提交过。
       expect(api.calls, isNot(contains('PUT /v1/account/keys')));
 
       // 模拟强杀重开:先换成一个完全不同类型的根 widget,强制 Flutter 把上一棵
@@ -649,33 +649,33 @@ void main() {
       await t.pumpWidget(const SizedBox.shrink());
       await t.pumpWidget(_app(FakeApi()));
       await t.pumpAndSettle();
-      expect(find.text('设置口令'), findsOneWidget);
+      expect(find.text('设一个口令'), findsOneWidget);
       expect(find.text('已登录'), findsNothing);
       expect(AccountSession.instance.privateKey, isNull);
     });
 
-    testWidgets('生成密钥:加载中显示进度圈', (t) async {
+    testWidgets('设好了:加载中显示进度圈', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await t.pumpAndSettle();
     });
 
-    testWidgets('生成密钥失败(KDF/加密层报错):错误可见,停留设置口令,未调用 PUT', (t) async {
+    testWidgets('设好了失败(KDF/加密层报错):错误可见,停留设一个口令,未调用 PUT', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api, crypto: FakeCrypto(failAccountKeysNew: true)));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
       expect(find.textContaining('kdf boom'), findsOneWidget);
-      expect(find.text('设置口令'), findsOneWidget); // 还在这一步
+      expect(find.text('设一个口令'), findsOneWidget); // 还在这一步
       expect(api.calls, isNot(contains('PUT /v1/account/keys')));
       expect(AccountSession.instance.privateKey, isNull);
     });
@@ -686,9 +686,9 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
-      await t.tap(find.text('我已抄下恢复码'));
+      await t.tap(find.text('我抄好了'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await t.pumpAndSettle();
@@ -700,15 +700,15 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
 
-      await t.tap(find.text('我已抄下恢复码'));
+      await t.tap(find.text('我抄好了'));
       await t.pumpAndSettle();
       expect(find.text('服务器开小差了,稍后再试'), findsOneWidget); // B2:不念状态码
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget); // 恢复码原样还在
-      expect(find.text('我已抄下恢复码'), findsOneWidget); // 可以直接重试
+      expect(find.text('我抄好了'), findsOneWidget); // 可以直接重试
       expect(AccountSession.instance.privateKey, isNull);
     });
   });
@@ -814,7 +814,7 @@ void main() {
     testWidgets('注册:默认遮着,点眼睛露出来,再点又遮回去', (t) async {
       await t.pumpWidget(_app(FakeApi()));
       await _loginUpTo(t);
-      expect(find.text('设置口令'), findsOneWidget);
+      expect(find.text('设一个口令'), findsOneWidget);
       expect(obscured(t), isTrue);
 
       await t.tap(find.byKey(const Key('password_eye')));
@@ -826,12 +826,12 @@ void main() {
       expect(obscured(t), isTrue);
     });
 
-    testWidgets('注册:不足 6 位时「生成密钥」不可点并说还差几位;够了才能点', (t) async {
+    testWidgets('注册:不足 6 位时「设好了」不可点并说还差几位;够了才能点', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
 
-      FilledButton button() => t.widget<FilledButton>(find.widgetWithText(FilledButton, '生成密钥'));
+      FilledButton button() => t.widget<FilledButton>(find.widgetWithText(FilledButton, '设好了'));
       expect(button().onPressed, isNull, reason: '空口令就不能往下走');
 
       await t.enterText(find.byKey(const Key('password')), 'ab12');
@@ -840,9 +840,9 @@ void main() {
       expect(button().onPressed, isNull);
 
       // 点一下也不该发生任何事(按钮是真的禁用,不是只画成灰的)。
-      await t.tap(find.widgetWithText(FilledButton, '生成密钥'));
+      await t.tap(find.widgetWithText(FilledButton, '设好了'));
       await t.pumpAndSettle();
-      expect(find.text('设置口令'), findsOneWidget);
+      expect(find.text('设一个口令'), findsOneWidget);
       expect(api.calls, isNot(contains('PUT /v1/account/keys')));
 
       await t.enterText(find.byKey(const Key('password')), 'ab1234');
@@ -854,7 +854,7 @@ void main() {
     testWidgets('解锁:口令框也有眼睛(恢复码框本来就是明文,没有)', (t) async {
       await t.pumpWidget(_app(FakeApi(hasKeys: true)));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
       expect(obscured(t), isTrue);
       await t.tap(find.byKey(const Key('password_eye')));
       await t.pump();
@@ -878,16 +878,16 @@ void main() {
   });
 
   // ---- Argon2 等待:转圈时原来一句话都没有 ----
-  group('转圈时说一句「正在生成密钥」', () {
-    testWidgets('注册点「生成密钥」:进度圈旁边有那句话', (t) async {
+  group('转圈时说一句「正在处理口令」', () {
+    testWidgets('注册点「设好了」:进度圈旁边有那句话', (t) async {
       await t.pumpWidget(_app(FakeApi()));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('正在生成密钥,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
+      expect(find.text('正在处理口令,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
       await t.pumpAndSettle();
     });
 
@@ -898,14 +898,14 @@ void main() {
       await t.pump();
       await t.tap(find.text('解锁'));
       await t.pump();
-      expect(find.text('正在生成密钥,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
+      expect(find.text('正在处理口令,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
       await t.pumpAndSettle();
     });
   });
 
   // ---- 评审 Important 10:Argon2 转圈时退出会 setState after dispose ----
   group('Important 10:转圈时离开这一屏不崩', () {
-    testWidgets('「生成密钥」转圈中把屏拆掉:不留未处理的异步错误', (t) async {
+    testWidgets('「设好了」转圈中把屏拆掉:不留未处理的异步错误', (t) async {
       // 这正是 `_kdfWaitHint`(「请不要等…请不要退出」)所描述的那几秒等待 ——
       // 而 `PopScope` 只在恢复码那一阶段挡返回,所以这几秒里真的走得掉。
       final api = FakeApi(delay: const Duration(milliseconds: 5));
@@ -913,14 +913,14 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pump(); // 转圈起来了,Argon2 还在跑
 
       await t.pumpWidget(const SizedBox.shrink()); // 整棵树 dispose
       // 把假 Argon2 那串 delayed timer 排空 —— 它们 resolve 的那一刻正是原来
       // `setState after dispose` 抛出来的时刻。`pumpAndSettle` 自己不推进它们
       // (没有帧在排队),所以要显式给时间;`prepareKeys` 里是**四次**串行的
-      // 300ms(生成密钥对 / 口令包 / 恢复码 / 恢复码包),一次给足。
+      // 300ms(设好了对 / 口令包 / 恢复码 / 恢复码包),一次给足。
       await t.pump(const Duration(seconds: 3));
       await t.pumpAndSettle();
 
@@ -945,17 +945,17 @@ void main() {
   });
 
   // ---- 评审 Important 11:恢复码离开设备之前要先说一句 ----
-  group('Important 11:「分享给自己」先确认', () {
+  group('Important 11:「发给自己」先确认', () {
     Future<void> toRecoveryScreen(WidgetTester t) async {
       await t.pumpWidget(_app(FakeApi()));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
     }
 
-    testWidgets('点「分享给自己」先弹确认,说清它会经第三方 App 传出去', (t) async {
+    testWidgets('点「发给自己」先弹确认,说清它会经第三方 App 传出去', (t) async {
       await toRecoveryScreen(t);
       await t.tap(find.byKey(const Key('recovery_share')));
       await t.pumpAndSettle();
@@ -974,7 +974,7 @@ void main() {
       await t.pumpAndSettle();
 
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
-      expect(find.text('我已抄下恢复码'), findsOneWidget);
+      expect(find.text('我抄好了'), findsOneWidget);
       expect(t.takeException(), isNull);
     });
 
@@ -991,7 +991,7 @@ void main() {
       await toRecoveryScreen(t);
       await t.tap(find.byKey(const Key('recovery_share')));
       await t.pumpAndSettle();
-      await t.tap(find.text('发给自己'));
+      await t.tap(find.text('发送'));
       await t.pumpAndSettle();
 
       expect(t.takeException(), isNull, reason: 'onPressed 里的 async 必须自己接住');
@@ -1007,11 +1007,11 @@ void main() {
     testWidgets('解锁屏底部有这个入口;弹窗照实说明"找不回"', (t) async {
       await t.pumpWidget(_app(FakeApi(hasKeys: true)));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('lost_everything')));
       await t.pumpAndSettle();
-      expect(find.textContaining('我们不托管你的密钥'), findsOneWidget);
+      expect(find.textContaining('我们不保管你的口令和恢复码'), findsOneWidget);
       expect(find.textContaining('没有任何办法帮你找回'), findsOneWidget);
       expect(find.text('退出登录,重新开始'), findsOneWidget);
       expect(find.text('取消'), findsOneWidget);
@@ -1031,7 +1031,7 @@ void main() {
       AccountSession.instance.privateKey = null; // 换了台设备的样子:有 token、没私钥
       await t.pumpWidget(_app(FakeApi(hasKeys: true)));
       await t.pumpAndSettle();
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('lost_everything')));
       await t.pumpAndSettle();
@@ -1051,7 +1051,7 @@ void main() {
       await t.tap(find.text('取消'));
       await t.pumpAndSettle();
 
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
       expect(AccountSession.instance.accountId, isNotNull);
     });
   });
@@ -1087,7 +1087,7 @@ void main() {
       final api = FakeApi(hasKeys: true);
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
       await t.enterText(find.byKey(const Key('password')), 'right');
       await t.pump();
       await t.tap(find.text('解锁'));
@@ -1110,7 +1110,7 @@ void main() {
       await t.pump();
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('正在生成密钥,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
+      expect(find.text('正在处理口令,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
 
       final escape1 = find.widgetWithText(TextButton, '口令忘了?改用恢复码解锁');
       expect(escape1, findsOneWidget, reason: '转圈时这条出口不该消失');
@@ -1139,7 +1139,7 @@ void main() {
       final api = FakeApi(hasKeys: true);
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
       await t.enterText(find.byKey(const Key('password')), 'wrong');
       await t.pump();
       await t.tap(find.text('解锁'));
@@ -1356,17 +1356,17 @@ void main() {
       expect(find.textContaining('2026-'), findsNothing, reason: 'ISO 串不给用户看');
     });
 
-    testWidgets('C6:恢复码屏除了「复制」还有「分享给自己」', (t) async {
+    testWidgets('C6:恢复码屏除了「复制」还有「发给自己」', (t) async {
       await t.pumpWidget(_app(FakeApi()));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
 
       expect(find.text('复制'), findsOneWidget);
       expect(find.byKey(const Key('recovery_share')), findsOneWidget);
-      expect(find.textContaining('不要只存在这台手机上'), findsOneWidget);
+      expect(find.textContaining('抄在纸上或存到别处'), findsOneWidget);
     });
   });
 
@@ -1840,7 +1840,7 @@ void main() {
       expect(find.text('服务器开小差了,稍后再试'), findsOneWidget);
       expect(find.text('登录 MedMe 账号'), findsOneWidget);
       // 没有因为异常而误判成"需要设口令"或"已就绪"。
-      expect(find.text('设置口令'), findsNothing);
+      expect(find.text('设一个口令'), findsNothing);
       expect(find.text('已登录'), findsNothing);
     });
 
@@ -3125,13 +3125,13 @@ void main() {
     Future<void> toUnlock(WidgetTester t, FakeApi api) async {
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
     }
 
     testWidgets('解锁屏顶部有这一块,口令/恢复码兜底一个都没拿掉', (t) async {
       await toUnlock(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
 
-      expect(find.text('用旧手机扫码批准'), findsOneWidget);
+      expect(find.text('用旧手机扫码批准,最简单'), findsOneWidget);
       expect(find.byKey(const Key('device_approval_start')), findsOneWidget);
       // 兜底还在。
       expect(find.text('解锁'), findsOneWidget);
@@ -3165,7 +3165,7 @@ void main() {
       );
       expect(find.byType(QrImageView), findsOneWidget);
       expect(find.textContaining('等旧手机扫码批准'), findsOneWidget);
-      expect(find.textContaining('这张码里没有你的病历也没有密钥'), findsOneWidget);
+      expect(find.textContaining('这张码里没有你的病历也没有钥匙'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('device_approval_cancel')));
       await t.pumpAndSettle();
@@ -3269,7 +3269,7 @@ void main() {
       // 旧手机封的是上一把临时公钥。
       await t.pumpWidget(_app(api, crypto: FakeCrypto(openSealedFails: (_) => true)));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('device_approval_start')));
       await t.pump(const Duration(milliseconds: 200));
@@ -3308,14 +3308,14 @@ void main() {
       );
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('device_approval_start')));
       await t.pump(const Duration(milliseconds: 200));
       await t.pump(const Duration(seconds: 3));
       await t.pump(const Duration(milliseconds: 200));
 
-      expect(find.textContaining('对不上你账号的密钥'), findsOneWidget);
+      expect(find.textContaining('和你的账号对不上'), findsOneWidget);
       expect(find.text('已登录'), findsNothing, reason: '配不上就不许进去');
       expect(AccountSession.instance.privateKey, isNull, reason: '一个字节都不许落盘');
       expect(AccountSession.instance.publicKey, isNull);

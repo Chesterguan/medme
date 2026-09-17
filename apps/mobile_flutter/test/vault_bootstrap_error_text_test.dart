@@ -15,7 +15,7 @@ void main() {
   test('ProfileLocked:标题是「需要你的口令」,正文不带「请重启 App 再试」,不露 cloudId', () {
     final text = vaultBootstrapErrorText(const ProfileLocked('prf_1'));
     expect(text.title, '需要你的口令');
-    expect(text.body, '你的病历在云端是加密的,需要你的口令才能打开。');
+    expect(text.body, '你的病历是加密的,需要你的口令才能打开。');
     expect(text.body, isNot(contains('请重启 App 再试')));
     expect(text.body, isNot(contains('prf_1')));
   });

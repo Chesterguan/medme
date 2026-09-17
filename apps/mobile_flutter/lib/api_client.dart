@@ -117,7 +117,7 @@ class ApiClient {
   ///
   /// 为什么必须有这个区别:一次后台的、尽力而为的、失败了也只是"这份文档没有云抽取
   /// 结果"的请求,**没有资格把用户整个账号态清掉**。而它会 —— refresh 也过期时
-  /// [_refreshOnce] 调 [AccountSession.clear],连档案密钥一起清,用户下次打开 App
+  /// [_refreshOnce] 调 [AccountSession.clear],连档案钥匙一起清,用户下次打开 App
   /// 发现自己被登出了,而他什么都没做过。用户自己点的那些(登录、同步、授权)该清
   /// 就清:那时他正看着屏幕,一句「登录状态已过期」是有意义的。
   ApiClient.background(AccountSession session, {String? base, Duration timeout = Net.idle})
@@ -182,7 +182,7 @@ class ApiClient {
   ///
   /// * 没有 session / 没有 refresh token / 没有 accountId → false(原样 401)。
   /// * **刷新自己也 401** → refresh 也过期或被吊销了,重试没有任何意义:清掉本机
-  ///   账号态([AccountSession.clear],连档案密钥一起),让 UI 回到登录入口。
+  ///   账号态([AccountSession.clear],连档案钥匙一起),让 UI 回到登录入口。
   ///   除非这个 client 是 [background] 建的——见那个构造函数。
   /// * 网络错误等其它失败 → false,这次请求照原样失败,下次再试(不清账号态:
   ///   断网不等于被登出)。

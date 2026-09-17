@@ -13,14 +13,14 @@ import 'package:mobile_flutter/sync_engine.dart' show SyncEngine, firstSyncAndNa
 import 'package:mobile_flutter/vault_boot.dart' show removeProfileAndReopen, switchProfileAndReopen;
 
 /// `token_hash` 用的哈希——与 Rust 侧 `sync::kek_from_token` 的 salt(`medme-invite-v1`)
-/// 是两回事:这里只是让服务端能核对客户端出示的 token 对不对,不参与密钥推导。
+/// 是两回事:这里只是让服务端能核对客户端出示的 token 对不对,不参与钥匙推导。
 String sha256Hex(String s) => sha256.convert(utf8.encode(s)).toString();
 
 /// 对 `sync_*` FRB 调用的薄包装——同 `SyncCrypto`/`RustSyncApi` 的套路(见
 /// `account_flow.dart`/`sync_engine.dart`),让 [Grants] 在 `flutter test` 里
 /// 可以注入假实现,不碰真实 Rust 桥。
 abstract class GrantsRust {
-  /// `kek = HKDF(token)`(salt `medme-invite-v1`),用它包一份档案密钥,发邀请时用。
+  /// `kek = HKDF(token)`(salt `medme-invite-v1`),用它包一份档案钥匙,发邀请时用。
   Future<Uint8List> wrapWithToken(Uint8List plaintext, String token);
 
   /// 上面那个的逆——兑换邀请时,拿到手的密文只有出示 token 的人能拆开。
@@ -62,7 +62,7 @@ String? expiredGrantNotice(List<Profile> removed) => switch (removed.length) {
 /// (owner,老 owner 服务端自动降 editor)、过期清理。
 ///
 /// 服务端全程只见密文——本文件里除了 [GrantsRust] 的调用之外,不得出现任何解密
-/// 调用之外的明文密钥字段(见 `services/api/app.py` 的 invites/grants 端点)。
+/// 调用之外的明文钥匙字段(见 `services/api/app.py` 的 invites/grants 端点)。
 class Grants {
   Grants(this.api, this.session, {this.rust = const RustGrants(), this.switchAndReopen = switchProfileAndReopen});
 
@@ -89,7 +89,7 @@ class Grants {
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
-    if (key == null) throw StateError('没有这个档案的密钥');
+    if (key == null) throw StateError('没有这个档案的钥匙');
     final token = base64UrlEncode(List.generate(24, (_) => Random.secure().nextInt(256))).replaceAll('=', '');
     final wrapped = await rust.wrapWithToken(key, token);
     final r = await api.postJson('/v1/profiles/$cloudId/invites', {
@@ -178,7 +178,7 @@ class Grants {
   ///
   /// [afterStored] 是测试注入点:默认指向真实的开箱 + 同步 + 命名(都要碰真实
   /// Rust 原生库/`path_provider`,`flutter test` 没法伪造——同 `sync_engine_test.dart`
-  /// 顶部对 `enableCloud` 的同一条限制)。测试传一个空实现,只钉住网络 + 密钥
+  /// 顶部对 `enableCloud` 的同一条限制)。测试传一个空实现,只钉住网络 + 钥匙
   /// 回填 + 建档案这几步可测的逻辑。
   Future<Profile> redeem(GrantLink l, {Future<void> Function(Profile)? afterStored}) async {
     try {
@@ -230,7 +230,7 @@ class Grants {
   ///
   /// 切换走 [switchAndReopen](默认 `vault_boot.switchProfileAndReopen`)而不是
   /// 裸的 `ProfileManager.switchTo` + `openCurrentProfileVault`(最终评审 I2):
-  /// 开箱失败时(最常见是 [ProfileLocked]——账号密钥这会儿读不出来)必须把
+  /// 开箱失败时(最常见是 [ProfileLocked]——这个档案的钥匙这会儿读不出来)必须把
   /// `currentId` 退回兑换之前那个成员,否则就停在「current 指着新档案、进程里开着
   /// 的还是旧档案的箱子」这个状态上,接下来任何一次录入/导入都会把新档案的内容
   /// 写进旧档案的病历箱。[revertTo] 是兑换开始时那个成员,不能用
@@ -245,7 +245,7 @@ class Grants {
     switchAndReopen: switchAndReopen,
   );
 
-  /// 家人按手机号加入:查到对方账号公钥 → 把档案密钥封给对方 → 永久 editor
+  /// 家人按手机号加入:查到对方账号公钥 → 把档案钥匙封给对方 → 永久 editor
   /// (家人不是「只读」,能一起录入)。找不到这个手机号(404)、限流(429)都
   /// 原样抛给调用方——服务端的 existence oracle 是接受并写进文档的行为,这里
   /// 不额外掩盖。
@@ -253,7 +253,7 @@ class Grants {
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
-    if (key == null) throw StateError('没有这个档案的密钥');
+    if (key == null) throw StateError('没有这个档案的钥匙');
     final looked = await api.postJson('/v1/accounts/lookup', {'phone': phone});
     final theirPub = base64Decode(looked['public_key'] as String);
     final wrapped = await rust.sealTo(theirPub, key);

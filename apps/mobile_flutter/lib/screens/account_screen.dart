@@ -142,7 +142,7 @@ String cloudRowStatus(Profile p, {bool icloudOn = false}) {
   if (icloudOn) return '这台手机开着 iCloud 同步,两套同步不能一起开';
   if (p.cloudId == null) return '还没备份上去 —— 会自动重试,也可以打开这个开关立刻再试一次';
   // **「已开通」而不是「已备份」**(复审 N3):I7 之后,非当前成员默认开云只做"注册"
-  // (建档案密钥 + 在服务端建一个空档案),它的病历一条都还没上去 —— 那时说"已备份"
+  // (建档案钥匙 + 在服务端建一个空档案),它的病历一条都还没上去 —— 那时说"已备份"
   // 是假话。而「已开通云端备份」对两种状态都成立:刚注册的、以及已经同步过的。
   // "到底备上了没有、什么时候备的"由「我」tab 第一行按成员回答(见 `backupStatus`)。
   //
@@ -162,7 +162,7 @@ String? createdLabel(Object? iso) {
 /// Argon2id 在老机器上要几秒(64 MiB/t=3,见 `AccountFlow.kdf`),而转圈时原来
 /// 一句话都没有——用户会以为卡死了、切走、甚至杀掉 App(那一刻杀掉正好是
 /// `prepareKeys` 还没 commit 的窗口,等于白做一遍)。
-const _kdfWaitHint = '正在生成密钥,老一点的手机可能要等几秒,请不要退出';
+const _kdfWaitHint = '正在处理口令,老一点的手机可能要等几秒,请不要退出';
 
 /// 「有账号默认开云」这件事的**唯一一份措辞**,就摆在那一排开关的上面 —— 说这件事
 /// 的地方只有这一处(Task 12:登录那一刻那条一次性横幅撤掉了,它说的是同一件事,
@@ -341,7 +341,7 @@ class _AccountScreenState extends State<AccountScreen> {
   void initState() {
     super.initState();
     // 冷启动/本屏重建时,如果本机已经有登录 token,据此判断该落在哪个阶段——
-    // 不重新发 OTP。**没提交的密钥不算数**:`prepareKeys()` 只在内存里,重建
+    // 不重新发 OTP。**没提交的钥匙不算数**:`prepareKeys()` 只在内存里,重建
     // 之后必然读不到,`_afterLogin` 会照实判成 needsKeySetup。
     //
     // `resumeIfLoggedIn()` 对非 404 的失败(网络错误、401、500……)会
@@ -520,7 +520,7 @@ class _AccountScreenState extends State<AccountScreen> {
   });
 
   /// 恢复码只在这一次显示。点了才算数——没有别的路能离开这一屏。这一步才真正
-  /// 把密钥传上服务器、存进本机(`commitKeys`);失败(比如服务器 500)不清
+  /// 把钥匙传上服务器、存进本机(`commitKeys`);失败(比如服务器 500)不清
   /// `_preparedKeys`/`_recoveryCode`,恢复码画面原样留着,允许直接重试。
   Future<void> _confirmRecovery() => _run(() async {
     await widget.flow.commitKeys(_preparedKeys!);
@@ -635,19 +635,16 @@ class _AccountScreenState extends State<AccountScreen> {
   ];
 
   List<Widget> _keySetupContent() => [
-    const Text('设置口令', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+    const Text('设一个口令', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     const Text(
-      '这个口令用来保护你的账号密钥,只存在你自己脑子里——我们不存储明文口令,'
-      '也没有后门。设置好之后我们会给你一组恢复码,两者都要妥善保存:'
-      '口令、恢复码、这个账号登录过的所有设备如果同时丢失,数据将无法恢复,'
-      '我们也帮不了你。',
+      '换手机时用它解开云端那份;我们没有这把钥匙。',
       style: TextStyle(color: MedMe.faint, height: 1.5),
     ),
     const SizedBox(height: 20),
     _passwordField(
       controller: _regPasswordCtrl,
-      label: '设置一个口令',
+      label: '口令',
       helper: '至少 $_minPasswordLen 位。记不住就写下来收好,别只记在脑子里。',
       visible: _showRegPassword,
       onToggle: () => setState(() => _showRegPassword = !_showRegPassword),
@@ -657,7 +654,7 @@ class _AccountScreenState extends State<AccountScreen> {
     if (_error != null) _errorText(_error!),
     const SizedBox(height: 16),
     _asyncButton(
-      label: '生成密钥',
+      label: '设好了',
       onPressed: _registerKeys,
       enabled: _regPasswordCtrl.text.length >= _minPasswordLen,
       busyHint: _kdfWaitHint,
@@ -665,13 +662,10 @@ class _AccountScreenState extends State<AccountScreen> {
   ];
 
   List<Widget> _recoveryContent() => [
-    const Text('抄下你的恢复码', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+    const Text('恢复码,口令忘了用它', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     const Text(
-      '万一忘记口令,恢复码是唯一还能找回账号密钥的办法。请立刻抄写或截图保存在'
-      '别处(不要只存在这台手机上)。\n\n'
-      '口令、这组恢复码、这个账号登录过的所有设备——三样如果同时丢失,'
-      '我们没有办法帮你找回数据。',
+      '抄在纸上或存到别处。两个都丢了,云端那份谁也打不开。',
       style: TextStyle(color: MedMe.danger, height: 1.5, fontWeight: FontWeight.w600),
     ),
     const SizedBox(height: 20),
@@ -706,7 +700,7 @@ class _AccountScreenState extends State<AccountScreen> {
                 key: const Key('recovery_share'),
                 onPressed: _shareRecoveryCode,
                 icon: const Icon(Icons.ios_share, size: 18),
-                label: const Text('分享给自己'),
+                label: const Text('发给自己'),
               ),
             ],
           ),
@@ -715,14 +709,14 @@ class _AccountScreenState extends State<AccountScreen> {
     ),
     if (_error != null) _errorText(_error!),
     const SizedBox(height: 20),
-    _asyncButton(label: '我已抄下恢复码', onPressed: _confirmRecovery),
+    _asyncButton(label: '我抄好了', onPressed: _confirmRecovery),
   ];
 
   /// C6。走系统分享面板,让用户把恢复码存到**这台手机之外**的地方(微信收藏、
   /// 邮箱、备忘录……)。分享的是恢复码本身加一句说明 —— 它就是钥匙,所以那段文字
   /// 必须带上"别人拿到它就能打开你的病历"。
   ///
-  /// **先弹一句确认**(评审 Important 11):这是账号密钥唯一一条刻意离开这台设备的
+  /// **先弹一句确认**(评审 Important 11):这是恢复码唯一一条刻意离开这台设备的
   /// 路径,而原来点下去**直接**就是系统分享面板 —— 屏上没有任何一个字说"它正要
   /// 经第三方 App 传出去"。那句警告原来只跟着内容到达目的地,而不是在决定之前
   /// 到达用户。
@@ -744,7 +738,9 @@ class _AccountScreenState extends State<AccountScreen> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('发给自己')),
+          // 与恢复码画面上那颗触发按钮同名会撞(两个「发给自己」同屏可见,`tap`
+          // 找不到唯一目标),这颗改叫「发送」——标题已经把要做的事说清楚了。
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('发送')),
         ],
       ),
     );
@@ -753,7 +749,7 @@ class _AccountScreenState extends State<AccountScreen> {
     try {
       await SharePlus.instance.share(ShareParams(
         text: 'MedMe 恢复码:$code\n\n'
-            '忘记口令时用它找回账号密钥。请存在这台手机之外的地方;'
+            '忘记口令时,它就是你账号的钥匙。请存在这台手机之外的地方;'
             '别人拿到它就能打开你的病历,不要发给任何人。',
         subject: 'MedMe 恢复码',
         // iPad 上 `share_plus` 要一个非零锚点,否则抛参数错误(同
@@ -769,15 +765,30 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   List<Widget> _unlockContent() => [
+    const Text('拿回你的病历', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    const Text(
+      '已登录;云端有你的病历,选一种方式解开',
+      style: TextStyle(color: MedMe.faint),
+    ),
+    const SizedBox(height: 20),
     // **先给这条**(spec A2 的「旧设备批准」):换手机的人口袋里通常还揣着旧手机,
     // 而口令是他最可能想不起来的东西 —— 那正是 A6 那条「两样都丢了怎么办」存在的
     // 理由。口令/恢复码仍然在下面,一个都没拿掉。
     ..._deviceApprovalBlock(),
     const Divider(height: 32),
-    const Text('输入口令解锁', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+    // ux-audit §4 第 11 条:切到恢复码后这个分区标题原来不跟着变,与下面已经
+    // 换成的恢复码输入框对不上。s15 把两条路分别叫「输口令」与「用恢复码」。
+    Text(
+      _useRecoveryUnlock ? '用恢复码' : '输口令',
+      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+    ),
     const SizedBox(height: 8),
     const Text(
-      '这台设备之前没解锁过这个账号,需要口令或恢复码解出账号密钥。',
+      // ux-audit §4 第 9 条:原文「这台设备之前没解锁过这个账号」在「本机注册 →
+      // 退出 → 重新登录」这条最常见的路上是假话——这台设备恰恰就是当初注册它的
+      // 那台。改说要做什么,不猜设备的历史。
+      '打开你的病历需要口令。忘了口令就用恢复码。',
       style: TextStyle(color: MedMe.faint),
     ),
     const SizedBox(height: 20),
@@ -819,11 +830,11 @@ class _AccountScreenState extends State<AccountScreen> {
       TextButton(
         key: const Key('lost_everything'),
         onPressed: _busy ? null : _lostEverything,
-        child: const Text('口令和恢复码都丢了,怎么办?'),
+        child: const Text('口令和恢复码都丢了?'),
       ),
   ];
 
-  /// A6。照实说:我们不托管密钥,所以云端那份数据谁都解不开,我们也一样。
+  /// A6。照实说:我们不保管口令和恢复码,所以云端那份数据谁都解不开,我们也一样。
   /// 唯一真实存在的出路是退出登录、从头开始——取消则一切原样。
   Future<void> _lostEverything() async {
     final ok = await showDialog<bool>(
@@ -831,8 +842,8 @@ class _AccountScreenState extends State<AccountScreen> {
       builder: (context) => AlertDialog(
         title: const Text('两样都丢了的话'),
         content: const Text(
-          '我们不托管你的密钥。口令和恢复码是唯一能解开账号密钥的两把钥匙——'
-          '两样都没有了,云端那份数据谁都打不开,我们也没有任何办法帮你找回。\n\n'
+          '我们不保管你的口令和恢复码——两者都是打开账号的钥匙,都丢了,'
+          '云端那份数据谁都打不开,我们也没有任何办法帮你找回。\n\n'
           '还能做的事:退出登录、重新开始。这台手机上没开通云端备份的病历不会被'
           '删除;已经开通过云端备份的那些成员,在这台手机上会一直锁着。',
           style: TextStyle(height: 1.5),
@@ -870,11 +881,10 @@ class _AccountScreenState extends State<AccountScreen> {
   List<Widget> _deviceApprovalBlock() {
     final code = _approvalCode;
     return [
-      const Text('用旧手机扫码批准', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+      const Text('用旧手机扫码批准,最简单', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
       const SizedBox(height: 8),
       const Text(
-        '手里还有另一台登录过这个账号的手机?不用口令也能进:在那台手机上打开'
-        '我 → 我的设备 → 「扫码批准新设备」,扫一下这张码就行。',
+        '旧手机打开 MedMe → 我 → 我的设备 → 扫码',
         style: TextStyle(color: MedMe.faint, height: 1.5),
       ),
       if (_approvalError != null) _errorText(_approvalError!),
@@ -910,7 +920,7 @@ class _AccountScreenState extends State<AccountScreen> {
         const SizedBox(height: 4),
         // 这张码里一个秘密都没有,说出来 —— 否则用户会以为自己正举着一把钥匙。
         const Text(
-          '这张码里没有你的病历也没有密钥,被别人拍到也打不开任何东西。',
+          '这张码里没有你的病历也没有钥匙,被别人拍到也打不开任何东西。',
           textAlign: TextAlign.center,
           style: TextStyle(color: MedMe.faint, fontSize: 12, height: 1.5),
         ),
@@ -995,7 +1005,7 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  /// 停轮询 + 把那张码和临时私钥一起丢掉(取消 = 这对临时密钥到此结束)。
+  /// 停轮询 + 把那张码和临时私钥一起丢掉(取消 = 这对临时公私钥到此结束)。
   void _stopApprovalPoll() {
     _approvalPoll?.cancel();
     _approvalPoll = null;
@@ -1167,7 +1177,7 @@ class _AccountScreenState extends State<AccountScreen> {
     ),
   );
 
-  /// 拨开关:**关**只是记一个标记(不删云端密文、不清本机密钥);**开**在还没开通
+  /// 拨开关:**关**只是记一个标记(不删云端密文、不清本机钥匙);**开**在还没开通
   /// 的成员身上顺手就把开通跑了 —— 用户拨这个开关的意思是"我要它备份",不该还要
   /// 再找一个别的按钮。
   Future<void> _toggleCloud(Profile m, bool on) async {
@@ -1404,7 +1414,7 @@ class _AccountScreenState extends State<AccountScreen> {
         title: const Text('退出登录?'),
         content: const Text(
           '退出后,已开通云端备份的成员会在这台设备上锁定(需要重新登录才能打开)——'
-          '我们不托管密钥,这台设备解不开它就是解不开。这台手机上的病历本身不会被删除。',
+          '我们不保管你的钥匙,这台设备解不开它就是解不开。这台手机上的病历本身不会被删除。',
           style: TextStyle(height: 1.5),
         ),
         actions: [
@@ -1430,11 +1440,11 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  /// 见 Task 15 review C1(3):这台手机上已开通云端备份的成员,密钥在服务端和
+  /// 见 Task 15 review C1(3):这台手机上已开通云端备份的成员,钥匙在服务端和
   /// 本机(`AccountSession.clear()` 同一套 secure storage)一起销毁之后,**永远
   /// 打不开**——这不是"锁一下、重新登录就能自动补回来"那种(那是退出登录的
   /// 后果,`AccountFlow.restoreProfileKeys` 已经实现),账号本身没了,没有服务端
-  /// 密钥可补。文案必须把这条说清楚,不能含糊成"锁定"两个字带过;也**不允许**
+  /// 钥匙可补。文案必须把这条说清楚,不能含糊成"锁定"两个字带过;也**不允许**
   /// 为了让它"看起来还能用"而把这个成员的 vault 从 keyed 降级成 unkeyed——
   /// 那等于悄悄丢弃了它本该有的加密完整性保证。
   Future<void> _confirmDeleteAccount() async {
@@ -1446,9 +1456,9 @@ class _AccountScreenState extends State<AccountScreen> {
         content: const Text(
           '注销后:账号里的云端病历、成员与医生的授权全部永久删除,他们会立刻'
           '失去访问权限。此操作不可撤销。\n\n'
-          '这台手机上已开通云端备份的成员,密钥会随账号一起在服务端和本机销毁——'
+          '这台手机上已开通云端备份的成员,钥匙会随账号一起在服务端和本机销毁——'
           '之后这个成员在这台手机上永远打不开,不是"重新登录就能恢复"那种锁定,'
-          '我们不托管密钥,没有任何办法找回。\n\n'
+          '我们不保管你的钥匙,没有任何办法找回。\n\n'
           '这台手机上已保存的病历本身不会被删除——如果也要清空本机数据,'
           '请到「删掉全部」里单独操作。建议先导出一份留档,再继续注销。',
           textAlign: TextAlign.center,
@@ -1892,8 +1902,8 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 口令输入框 + A4 的「显示/隐藏」眼睛。注册与解锁共用(两屏不同时在,所以
   /// 共用 `Key('password')`——已有测试按这个键找它)。
   ///
-  /// `onChanged` 里那一次 `setState` 不是多余的:注册屏的「还差几位」和「生成
-  /// 密钥」能不能点,都得跟着每一次按键走。
+  /// `onChanged` 里那一次 `setState` 不是多余的:注册屏的「还差几位」和「设好
+  /// 了」能不能点,都得跟着每一次按键走。
   Widget _passwordField({
     required TextEditingController controller,
     required String label,

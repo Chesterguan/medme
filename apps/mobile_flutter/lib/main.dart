@@ -271,7 +271,7 @@ class ProfileLockedActions extends StatelessWidget {
               ),
             );
             // 登录/解锁成功时 `AccountFlow.restoreProfileKeys` 已经把这个成员
-            // 锁着的密钥补回来了(见 account_flow.dart)——但这一屏自己的
+            // 锁着的钥匙补回来了(见 account_flow.dart)——但这一屏自己的
             // `_open` 早就 resolve 过一次错误,不会自动感知,回来之后必须
             // 显式重试一次开箱。
             onDone();
@@ -304,7 +304,7 @@ class ProfileLockedActions extends StatelessWidget {
 /// "某个界面显示得不对",而是整套云功能在每次冷启动后**等于不存在**:
 ///
 /// * `openCurrentProfileVault` 靠 `AccountSession.profileKey()` 选开箱路径
-///   (见 `vault_boot.planVaultOpen`)——读不到密钥,每个已开通云端备份的成员都被
+///   (见 `vault_boot.planVaultOpen`)——读不到钥匙,每个已开通云端备份的成员都被
 ///   判成 `ProfileLocked`,用户开机看到的是"需要解锁账号"的死胡同;
 /// * `triggerBackgroundSync` 第一句就是 `session.loggedIn.value`——恒 false,
 ///   debounce push 和 app-resume pull 永远 no-op;
@@ -332,7 +332,7 @@ class ProfileLockedActions extends StatelessWidget {
 /// 排在开箱**之后**(而不是和它并发):它会 `create()`/`switchTo` 动
 /// `ProfileManager.currentId`,而 `openCurrentProfileVault` 读的正是 `current` ——
 /// 并发跑有一个真实的窗口会开错箱子。放在 `finally` 里是因为**开箱失败恰恰是最需要
-/// 它的时候**(`ProfileLocked` = 本机缺档案密钥,而补密钥正是它干的事)。
+/// 它的时候**(`ProfileLocked` = 本机缺档案钥匙,而补钥匙正是它干的事)。
 ///
 /// 失败也不许挡住启动:它对网络失败本来就静默(见
 /// `AccountFlow.restoreProfileKeys`),这里再包一层 `catchError`,任何没预料到的
@@ -422,7 +422,7 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
 
   /// `ProfileLocked` 错误屏「去登录」/「切换成员」返回之后重跑一次开箱——
   /// 见 Task 15 review C1:原来这颗 `Future` 只在 `initState` 建一次,登录/
-  /// 补密钥或切成员成功之后箱子其实已经能开了,但这一屏靠 `FutureBuilder`
+  /// 补钥匙或切成员成功之后箱子其实已经能开了,但这一屏靠 `FutureBuilder`
   /// 监听同一个 `Future`,它早就 resolve(带着错误)了,不会自己刷新——用户
   /// 会被困死在这一屏里出不去。
   void _retry() {
@@ -472,7 +472,7 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
           // `ProfileLocked` 是一个**可操作**的死胡同(见 Task 15 review C1):
           // 退出登录/换设备清过 secure storage 之后,已开通云端备份的成员会变成
           // 这个状态——之前这一屏没有任何按钮,用户只能卡在这儿,连"去登录把
-          // 密钥补回来"都做不到,等于把 App 锁死。其它种类的开箱失败(箱子真的
+          // 钥匙补回来"都做不到,等于把 App 锁死。其它种类的开箱失败(箱子真的
           // 坏了)不给这两个按钮——它们解决不了"文件系统/数据库坏了"这件事。
           final locked = error is ProfileLocked;
           return Scaffold(
@@ -698,7 +698,7 @@ class _HomeShellState extends State<HomeShell> {
 }
 
 /// 授权链接落地屏:家人/医生扫码进来,问一句「要不要加进你的 MedMe」,答应了才
-/// 兑换。**未登录先走账号屏**——兑换需要账号密钥对(封回自己的公钥),没有账号
+/// 兑换。**未登录先走账号屏**——兑换需要账号的公私钥对(封回自己的公钥),没有账号
 /// 无从谈起;登录/解锁完成后回到这一屏继续兑换,不用重新点一次链接。
 class GrantRedeemScreen extends StatefulWidget {
   const GrantRedeemScreen({super.key, required this.link, this.cold = false, this.grants});

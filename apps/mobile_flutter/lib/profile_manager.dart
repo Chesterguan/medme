@@ -238,7 +238,7 @@ class ProfileManager {
 
   /// 记下这个成员已开通云端备份:服务端 `profile_id`([cloudId])、本设备对它的
   /// 角色([role])、这份授权的到期时间([expiresAt],owner 为 null)。
-  /// 调用方(`SyncEngine.enableCloud`)在这之前已经把档案密钥存进
+  /// 调用方(`SyncEngine.enableCloud`)在这之前已经把档案钥匙存进
   /// `AccountSession`——这里只落 profiles.json 里的元数据。
   Future<void> markCloud(String id, String cloudId, String role, DateTime? expiresAt) async {
     await ensureLoaded();
@@ -255,7 +255,7 @@ class ProfileManager {
   ///
   /// `true` = 用户把它关了:后台触发器、「同步」按钮、以及"默认给没开通的成员开通"
   /// 那条队列都跳过它。**不删云端已有的密文**(那是注销账号才做的事),也不清本机
-  /// 密钥 —— 用户随时可以再打开,而且已经同步过的内容照样能在别的设备上看。
+  /// 钥匙 —— 用户随时可以再打开,而且已经同步过的内容照样能在别的设备上看。
   Future<void> setCloudPaused(String id, bool paused) async {
     await ensureLoaded();
     if (byId(id)?.cloudPaused == paused) return;
@@ -440,7 +440,7 @@ class Profile {
   ///
   /// 默认空串只是为了让既有的 `const Profile(...)` 构造点不用全改;真实成员经
   /// [ProfileManager] 之后一律非空,空串的成员不走云抽取(见 `cloud_extract.dart`)。
-  /// 子项目 B 落地后换成档案密钥,这个字段随之退休。
+  /// 子项目 B 落地后换成档案钥匙,这个字段随之退休。
   final String secretHex;
 
   /// 只动给得出的那几个字段。**不带 `expiresAt`**:它需要能被写成 null
