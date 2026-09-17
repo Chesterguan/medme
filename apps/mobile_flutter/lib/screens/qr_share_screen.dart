@@ -22,6 +22,7 @@ import '../grants.dart';
 import '../profile_manager.dart';
 import '../src/rust/api/vault.dart';
 import '../theme.dart';
+import 'qr_notice_sheet.dart';
 
 /// 医生扫码后打开的查看器地址。数据在 `#` 之后,不会随请求上行。
 const _viewerBase = 'https://medmenow.com/viewer/';
@@ -79,7 +80,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
   /// 选的是 [_grantChoice],授权链接创建失败时这里会退回 false。
   bool _grantMode = false;
 
-  /// 用户选的那条路(`true` = 授权链接 / 「医生带走 15 天」)。**默认 false**:
+  /// 用户选的那条路(`true` = 授权链接 / 「医生要长期看(15 天)」)。**默认 false**:
   /// 诊室里最常见的一步是医生拿自己的手机扫一下当场看,那条路不要求医生装任何
   /// 东西。上次的选择记在 shared_preferences(见 [_qrModePrefsKey])。
   bool _grantChoice = false;
@@ -128,6 +129,17 @@ class _QrShareScreenState extends State<QrShareScreen> {
     }
     if (!mounted) return;
     setState(() {});
+    // 第一次在这台设备上出码:先把「东西去哪了」说一句,他按了「好,出码」才继续。
+    // **不看登录状态** —— 登录与否都照常出码(创始人拍板,取代「未登录不给出码」)。
+    if (shouldShowQrNotice(seen: await loadQrNoticeSeen())) {
+      if (!mounted) return;
+      final go = await showQrNoticeSheet(context);
+      if (!mounted) return;
+      if (!go) {
+        Navigator.of(context).pop(); // 「先不出」= 退出这一屏,什么都没传
+        return;
+      }
+    }
     await _generate();
   }
 
@@ -183,7 +195,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
   /// **失败就是失败,不给一个残缺的码。** 医生扫到一个打不开的码,比病人当场知道
   /// 「没传上、再试一次」糟糕得多 —— 前者浪费的是诊室里那几分钟。
   Future<void> _generate() async {
-    // **用户选了「医生带走 15 天」那条**,而且这个成员有资格(登录 + 已开通云同步 +
+    // **用户选了「医生要长期看(15 天)」那条**,而且这个成员有资格(登录 + 已开通云同步 +
     // 是这个档案的 owner):出授权链接,跳过整套「加密病历、上传瞬时云」——医生扫码
     // 兑换的是一份 15 天只读授权,内容走的是正常的云同步拉取,不是这里的密文上传。
     //
@@ -346,7 +358,8 @@ class _QrShareScreenState extends State<QrShareScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('给医生看'),
+        // `s13`:这一屏自己叫「出码」,「给医生看」是它的返回箭头指回去的那一页。
+        title: const Text('出码'),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
       ),
@@ -380,8 +393,17 @@ class _QrShareScreenState extends State<QrShareScreen> {
             ),
             ButtonSegment<bool>(
               value: true,
-              label: Text('医生带走 15 天(医生也需装 MedMe)',
-                  textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
+              // `s13` 逐字:一句主文 + 一行小字(小字说的是这条路的代价)。
+              label: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('医生要长期看(15 天)',
+                      textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
+                  Text('医生也要装 MedMe',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 10, color: MedMe.faint)),
+                ],
+              ),
             ),
           ],
           selected: {_grantChoice},
@@ -502,16 +524,13 @@ class _QrShareScreenState extends State<QrShareScreen> {
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
       child: Column(
         children: [
-          const Text(
-            '请医生扫这个码',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 6),
+          // `s13`:屏名(「出码」)在顶栏,正文第一行就是这句副标题 —— 不再在
+          // 正文里把屏名重写一遍。
           Text(
             _grantMode
                 ? '医生用他自己的 MedMe 扫码,15 天内都能看'
                 // 自动调亮成功了就别再让患者做一遍已经做了的事。
-                : (_brightnessBoosted ? '对着医生的手机相机' : '把屏幕亮度调高,对着医生的手机相机'),
+                : (_brightnessBoosted ? '医生用手机扫一下就能看' : '把屏幕亮度调高,对着医生的手机相机'),
             style: const TextStyle(fontSize: 13.5, color: MedMe.faint),
           ),
           const SizedBox(height: 20),
@@ -534,6 +553,16 @@ class _QrShareScreenState extends State<QrShareScreen> {
               errorCorrectionLevel: QrErrorCorrectLevel.M,
             ),
           ),
+          // `s13`:码下面那一行。**降级的简版码不显示它** —— 那种码的内容全在码里、
+          // 没有上传,15 天这个期限说的是云上那份密文,对它不成立。
+          if (!_degraded) ...[
+            const SizedBox(height: 10),
+            const Text(
+              '15 天内有效;只有扫这个码的人能看',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12.5, color: MedMe.faint),
+            ),
+          ],
           const SizedBox(height: 18),
           if (!_grantMode) _summaryChip(),
           if (!_grantMode) const SizedBox(height: 20),

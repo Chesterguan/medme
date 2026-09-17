@@ -28,6 +28,10 @@ const cloudDefaultNoticeSeenKey = 'cloud_default_notice_seen';
 /// 交给云端模型整理"的选择不该因为换了个人登录就重置回默认。
 const cloudExtractEnabledKey = 'cloud_extract_enabled';
 
+/// 第一次出码前那条告知,这台设备上说过没有(一次性)。**跟设备走,不按成员、
+/// 也不按登录状态** —— 说的是「东西去哪了」,那件事和你是谁无关。
+const qrNoticeSeenKey = 'qr_notice_seen';
+
 /// 账号会话 + 密钥的本机存储。**私钥与档案密钥只进 secure storage**(iOS Keychain
 /// 开 synchronizable = 同一 Apple ID 新机自动拿回,这就是「系统钥匙串」那条换机路;
 /// 安卓用 EncryptedSharedPreferences,不跨机)。token 与 id 在 shared_preferences。
