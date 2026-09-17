@@ -258,6 +258,84 @@ pub(crate) fn verify_envelope_with_key(
         .map_err(|e| PackageError::Malformed(format!("包体解析失败:{e}")))
 }
 
+/// 验签 + 引擎版本闸。**生产路径唯一的包入口**。
+pub fn load_signed(envelope_json: &str) -> Result<Package, PackageError> {
+    load_signed_with_key(envelope_json, SIGNING_PUBLIC_KEY_HEX)
+}
+
+pub(crate) fn load_signed_with_key(
+    envelope_json: &str,
+    pubkey_hex: &str,
+) -> Result<Package, PackageError> {
+    let pkg = verify_envelope_with_key(envelope_json, pubkey_hex)?;
+    if pkg.manifest.min_engine > ENGINE_VERSION {
+        return Err(PackageError::EngineTooOld {
+            needs: pkg.manifest.min_engine,
+            have: ENGINE_VERSION,
+        });
+    }
+    Ok(pkg)
+}
+
+fn cache_file(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
+    dir.join("skills").join(format!("{id}.json"))
+}
+
+/// 把**信封原文**写进缓存,文件名取包自己声明的 `manifest.id`。写之前先验签:
+/// 缓存里只放验得过的东西,免得下次开机拿一份坏包去试。返回写进去的 id。
+///
+/// TODO(Task 27): 这里还没做单调版本号检查(同 id 的旧包不应覆盖新包);
+/// 届时在验签通过之后、写盘之前加。
+pub fn cache_store(dir: &std::path::Path, envelope_json: &str) -> Result<String, PackageError> {
+    cache_store_with_key(dir, envelope_json, SIGNING_PUBLIC_KEY_HEX)
+}
+
+pub(crate) fn cache_store_with_key(
+    dir: &std::path::Path,
+    envelope_json: &str,
+    pubkey_hex: &str,
+) -> Result<String, PackageError> {
+    let pkg = load_signed_with_key(envelope_json, pubkey_hex)?;
+    // id 会变成文件名 —— 它来自包体,包体来自网络,所以按路径分量校验一次。
+    // 验签已经证明包是我们签的,这道闸是给「我们自己签了一个带斜杠的 id」兜底。
+    if pkg.manifest.id.is_empty()
+        || !pkg
+            .manifest
+            .id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
+        return Err(PackageError::Malformed(format!(
+            "包 id 只允许小写字母/数字/下划线,实际 {:?}",
+            pkg.manifest.id
+        )));
+    }
+    let path = cache_file(dir, &pkg.manifest.id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| PackageError::Malformed(format!("建缓存目录失败:{e}")))?;
+    }
+    std::fs::write(&path, envelope_json)
+        .map_err(|e| PackageError::Malformed(format!("写缓存失败:{e}")))?;
+    Ok(pkg.manifest.id)
+}
+
+/// 从缓存读回。**每次都重新验签** —— 缓存文件在用户可写的目录里,是不可信输入。
+/// 任何失败(文件不在、验不过、引擎太老)一律 `None`:调用方的处置都一样
+/// (没有包 = 不显示病程档案),不需要区分。
+pub fn cache_load(dir: &std::path::Path, id: &str) -> Option<Package> {
+    cache_load_with_key(dir, id, SIGNING_PUBLIC_KEY_HEX)
+}
+
+pub(crate) fn cache_load_with_key(
+    dir: &std::path::Path,
+    id: &str,
+    pubkey_hex: &str,
+) -> Option<Package> {
+    let raw = std::fs::read_to_string(cache_file(dir, id)).ok()?;
+    load_signed_with_key(&raw, pubkey_hex).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +468,61 @@ mod tests {
             verify_envelope_with_key(&env, &test_pubkey_hex()),
             Err(PackageError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn a_package_needing_a_newer_engine_is_refused() {
+        let body = MINIMAL.replace("\"min_engine\":1", "\"min_engine\":99");
+        let env = sign_with_test_key(&body);
+        match load_signed_with_key(&env, &test_pubkey_hex()) {
+            Err(PackageError::EngineTooOld { needs, have }) => {
+                assert_eq!(needs, 99);
+                assert_eq!(have, ENGINE_VERSION);
+            }
+            other => panic!("应当拒绝,实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn min_engine_equal_to_ours_is_accepted() {
+        let body = MINIMAL.replace(
+            "\"min_engine\":1",
+            &format!("\"min_engine\":{ENGINE_VERSION}"),
+        );
+        let env = sign_with_test_key(&body);
+        assert!(load_signed_with_key(&env, &test_pubkey_hex()).is_ok());
+    }
+
+    #[test]
+    fn cache_round_trips_and_reverifies_on_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = sign_with_test_key(MINIMAL);
+        let id = cache_store_with_key(dir.path(), &env, &test_pubkey_hex()).unwrap();
+        assert_eq!(id, "t");
+        let pkg = cache_load_with_key(dir.path(), "t", &test_pubkey_hex()).expect("缓存读回");
+        assert_eq!(pkg.manifest.id, "t");
+    }
+
+    #[test]
+    fn a_tampered_cache_file_is_ignored_not_trusted() {
+        // 缓存在用户可写的磁盘上,是**不可信输入**:读回时必须重新验签,
+        // 不能因为「是我们自己写进去的」就跳过。
+        let dir = tempfile::tempdir().unwrap();
+        let env = sign_with_test_key(MINIMAL);
+        cache_store_with_key(dir.path(), &env, &test_pubkey_hex()).unwrap();
+        let path = dir.path().join("skills").join("t.json");
+        let poisoned = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("测试病", "别的病");
+        std::fs::write(&path, poisoned).unwrap();
+        assert!(cache_load_with_key(dir.path(), "t", &test_pubkey_hex()).is_none());
+    }
+
+    #[test]
+    fn cache_store_refuses_to_write_an_unsigned_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = sign_with_test_key(MINIMAL).replace("测试病", "别的病");
+        assert!(cache_store_with_key(dir.path(), &env, &test_pubkey_hex()).is_err());
+        assert!(!dir.path().join("skills").join("t.json").exists());
     }
 }

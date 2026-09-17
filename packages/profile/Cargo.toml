@@ -15,3 +15,5 @@ base64 = "0.23"
 [dev-dependencies]
 # 测试要临时生成一对密钥来签,生产路径只验签。
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+# 缓存测试要一个临时目录,读写完随进程退出自动清理。
+tempfile.workspace = true
