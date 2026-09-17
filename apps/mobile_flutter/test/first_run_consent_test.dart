@@ -12,6 +12,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/theme.dart';
 
@@ -199,10 +200,29 @@ void main() {
       expect(find.textContaining('不是医疗器械'), findsWidgets);
     });
 
-    testWidgets('F5:埋点确实随同意打开,声明区得说一句,不能只删不说', (tester) async {
+    testWidgets('F5:声明是否出现跟 Analytics.isConfigured 同步,两边不能各说各话', (tester) async {
       useTallPhone(tester);
       await pumpScreen(tester);
-      expect(find.text('匿名使用统计默认开,设置里可关。'), findsOneWidget);
+      // 与 `settings_screen.dart:441` 的分析开关同一个条件——没配 Key 的构建里
+      // SDK 压根不启动,这一行也不该出现;配了 Key,埋点真的会开,这一行也该在。
+      // `flutter test` 里 `Analytics.isConfigured` 是编译期常量(没注入
+      // `--dart-define=POSTHOG_KEY`),这条断言按它的**实际值**取该值对应的那支,
+      // 两支的逻辑都在这一行里,不用另外起一次带 dart-define 的构建。
+      expect(
+        find.text('匿名使用统计默认开,设置里可关。'),
+        Analytics.isConfigured ? findsOneWidget : findsNothing,
+      );
+    });
+
+    // ── 复审(task-2-fix-re-review.md):fix round 1 引入的新错 ─────────────────
+    testWidgets('关闭入口写实际路径,不是还不存在的「我 → 云端」', (tester) async {
+      useTallPhone(tester);
+      await pumpScreen(tester);
+      // 本分支底栏是概览/趋势/档案/应急卡/设置,没有「我」tab 也没有「云端」入口
+      // (`lib/main.dart`)——那是 Task 12 才会有的 IA。今天能点到的路径是
+      // 设置 → 账号 →「云端整理」开关。
+      expect(find.textContaining('我 → 云端'), findsNothing);
+      expect(find.textContaining('设置 → 账号 → 云端整理'), findsWidgets);
     });
   });
 }

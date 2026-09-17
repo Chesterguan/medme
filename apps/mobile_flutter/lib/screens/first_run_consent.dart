@@ -197,11 +197,15 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                             ),
                           // F5:埋点确实随同意打开(见 `_agree`),不能只删声明不说——
                           // 不算进上面「有几件事」的计数,同「详见 用户协议…」一样是
-                          // 附在正式声明下面的一行说明。
-                          const Text(
-                            '匿名使用统计默认开,设置里可关。',
-                            style: TextStyle(fontSize: 12.5, color: MedMe.faint, height: 1.6),
-                          ),
+                          // 附在正式声明下面的一行说明。**同 `settings_screen.dart:441`
+                          // 一样的条件**:没配 Key 的构建里 `_agree` 那半根本不会执行
+                          // (`Analytics.isConfigured` 为 false),这一行也不该说「默认
+                          // 开、可以关」——两句话得一起成立或一起不成立,不能各说各话。
+                          if (Analytics.isConfigured)
+                            const Text(
+                              '匿名使用统计默认开,设置里可关。',
+                              style: TextStyle(fontSize: 12.5, color: MedMe.faint, height: 1.6),
+                            ),
                           const SizedBox(height: 8),
                           Wrap(
                             children: [
@@ -353,9 +357,13 @@ const _points = [
   _PointData(
     icon: Icons.lock_outline,
     title: '加密存在手机,登录后云端备份,我们打不开',
+    // TODO(Task 12): 改成「我 → 云端」——「我」tab 与「云端」这一行今天都还不
+    // 存在(底栏五项是概览/趋势/档案/应急卡/设置,`lib/main.dart`),那是 Task 12
+    // 落地新 IA 之后才有的入口。复审(task-2-fix-re-review.md)抓到:round 1 把
+    // 这句话提前写成了目标 IA 的说法,而不是这个提交里真的能点到的路径。
     body: '不登录也能用,只是换手机找不回来。登录后,添加的病历会先在'
         '手机上涂黑姓名、证件号、医院名,再交给深度求索(DeepSeek)的'
-        '模型整理,服务器在境内;可以在 我 → 云端 关掉。',
+        '模型整理,服务器在境内;可以在 设置 → 账号 → 云端整理 关掉。',
   ),
 ];
 
