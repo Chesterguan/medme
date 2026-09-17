@@ -281,19 +281,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
         ),
-        actions: [
-          // 那个剪贴板图标(「给医生看」的第二入口)已删 —— 它现在是 hero 卡下面
-          // 那颗「给医生看」方块推进去的一整页,有固定位置,不需要在这里再开一个
-          // 口子(ia-proposal §2:每个功能只有一条路到达)。
-          Padding(
-            padding: const EdgeInsets.only(right: MedShape.s1),
-            child: TextButton.icon(
-              onPressed: _startAdd,
-              icon: const Icon(Icons.add, size: 20),
-              label: const Text('添加'),
-            ),
-          ),
-        ],
+        // 顶栏不放按钮(mockup s1):「添加」只有 hero 卡下面那颗方块一条路,
+        // 「给医生看」同理 —— 每个功能只有一条路到达(ia-proposal §2)。
       ),
       body: FutureBuilder<(PatientProfileDto, List<TimelineGroupDto>)>(
         future: _future,
