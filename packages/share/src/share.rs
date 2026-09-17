@@ -1566,6 +1566,7 @@ mod tests {
                 backend: "test".into(),
                 model_version: "v1".into(),
                 mode: "text".into(),
+                schema: 1,
                 result_json: r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0"}]}"#.into(),
             })
             .unwrap();

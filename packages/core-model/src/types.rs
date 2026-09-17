@@ -195,6 +195,10 @@ pub struct NewExtraction {
     pub backend: String,
     pub model_version: String,
     pub mode: String,
+    /// 抽取输出 schema 版本(1 = labs/meds/diagnoses;2 = 再加族级 facts)。
+    /// **由调用方给**:写死在这里会让 schema 2 的结果在库里伪装成 schema 1,
+    /// 消费方按 1 去读就永远看不到 facts。
+    pub schema: i32,
     pub result_json: String,
 }
 
@@ -353,7 +357,7 @@ impl Vault {
             backend: e.backend,
             model_version: e.model_version,
             mode: e.mode,
-            schema: 1,
+            schema: e.schema,
             result_hash,
             created_at: Self::now_rfc3339(),
         })?;

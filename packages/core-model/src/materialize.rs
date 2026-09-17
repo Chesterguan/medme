@@ -855,6 +855,7 @@ mod tests {
             backend: "deepseek".into(),
             model_version: "v4-flash".into(),
             mode: "text".into(),
+            schema: 1,
             result_json: r#"{"labs":[]}"#.into(),
         })
         .unwrap();
@@ -863,6 +864,7 @@ mod tests {
             backend: "deepseek".into(),
             model_version: "v4-flash".into(),
             mode: "image".into(),
+            schema: 1,
             result_json: r#"{"labs":[{"name":"WBC"}]}"#.into(),
         })
         .unwrap();
@@ -880,6 +882,46 @@ mod tests {
         assert!(
             v.extraction_json(doc.id).unwrap().is_none(),
             "删文档连抽取一起删"
+        );
+    }
+
+    #[test]
+    fn extraction_schema_is_carried_from_the_caller_not_hardcoded() {
+        use crate::types::NewExtraction;
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let imp = v.import("a.jpg", "image/jpeg", b"jpgbytes").unwrap();
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: None,
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        v.add_extraction(NewExtraction {
+            document_id: doc.id,
+            backend: "deepseek".into(),
+            model_version: "m".into(),
+            mode: "text".into(),
+            schema: 2,
+            result_json: r#"{"labs":[],"facts":[]}"#.into(),
+        })
+        .unwrap();
+        let got: i32 = v
+            .conn()
+            .query_row(
+                "SELECT schema FROM extraction WHERE document_id=?1",
+                [doc.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            got, 2,
+            "写死 schema:1 会让 schema 2 的结果在库里伪装成 schema 1"
         );
     }
 

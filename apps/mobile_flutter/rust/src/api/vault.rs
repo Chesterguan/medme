@@ -2006,6 +2006,9 @@ pub fn vault_cloud_commit_extraction(
                 backend: "deepseek".into(),
                 model_version,
                 mode,
+                // 移动端此刻仍发 schema 1;翻到 2 是 C5 的事(cloud_extract.dart)。
+                // TODO(Task 20): 由 Dart 传入。
+                schema: 1,
                 result_json: restored,
             })
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;

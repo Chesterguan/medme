@@ -1,21 +1,23 @@
 // 第 ④ 臂:本地 OCR → deid 脱敏 → DeepSeek → verify → 渲染成 medrep.rs::score()
-// 能读的行。产出目录 arm4_llm/deepseek-<mode>/,与 medrep.rs 头注释里「第 ④ 列
-// 按模型分子目录」的约定一致,score() 不用改解析器就能读。
+// 能读的行。产出目录 arm4_llm/deepseek-<mode>/(schema 2 是 deepseek-<mode>-s2/,
+// 见 `arm_dir_name`),与 medrep.rs 头注释里「第 ④ 列按模型分子目录」的约定一致,
+// score() 不用改解析器就能读。
 //
 // 跑法(先 `export MEDREP_ROOT=<medrepbench 下载目录>` `DEEPSEEK_API_KEY=…`):
 //
 // ```
 // cargo run --release -p ocr --example medrep_llm --features engine,testing -- \
-//   --mode text  [--limit N] [--out out]
+//   --mode text  [--schema 1|2] [--limit N] [--out out]
 // cargo run --release -p ocr --example medrep_llm --features engine,testing -- \
-//   --mode image [--limit N] [--out out]
+//   --mode image [--schema 1|2] [--limit N] [--out out]
 // cargo run --release -p ocr --example medrep --features engine,testing -- --score --out out
 // ```
 //
 // 每份文档写两个文件:`{doc}.txt`(校验后的化验行,score() 用
-// `parser::extract_labs` 读)、`{doc}.halluc.json`(`labs_*` / `all_*` 两组
-// total/rejected/unverified + token 用量 + 本份 LLM 毫秒数——medrep.rs 的
-// `score()` 跨全部文档累加,打成两条**分别标注**的幻觉率)。
+// `parser::extract_labs` 读)、`{doc}.halluc.json`(`labs_*` / `facts_*` / `all_*`
+// 三组 total/rejected/unverified + token 用量 + 本份 LLM 毫秒数——medrep.rs 的
+// `score()` 跨全部文档累加,打成两条**分别标注**的幻觉率;`facts_*` 只在
+// schema 2 下非零,是旁证不是门槛)。
 // 顺带把 ② 几何重建臂的文本写进 `<out>/arm2_geo/`(同一遍 OCR 的产物,见
 // 循环里的注释)。可续跑:两个产出都在的文档直接跳过。
 
@@ -38,9 +40,6 @@ use std::time::Instant;
 /// 兜底)。
 const SYSTEM: &str = include_str!("../../deid/prompts/extract_v1_system.txt");
 /// schema 2(族级 facts)。评测臂按 `--schema` 选,与线上代理选的是同一份文件。
-// ponytail: 常量先落地(byte-identical 由 test_api.py 兜底),`--schema` CLI
-// 开关本身是后面评测任务的活,这里还没有调用点——先 allow 而不是提前接线。
-#[allow(dead_code)]
 const SYSTEM_V2: &str = include_str!("../../deid/prompts/extract_v2_system.txt");
 /// 图片档 user message 里的提示文本,同样与 `services/api/extract.py` 共享一份文件。
 const IMAGE_USER_TEXT: &str = include_str!("../../deid/prompts/extract_v1_image_user.txt");
@@ -89,13 +88,39 @@ fn mode_dir_name(mode: Mode) -> &'static str {
     }
 }
 
+/// 抽取 schema:1 = 现网,2 = 族级 facts(disease-profile spec §3)。两条臂用同一批
+/// 文档、同一套 `score()` 指标,所以 schema 2 的三条指标可以直接和 schema 1 比 ——
+/// 这就是回归门(不许因为多让模型吐 facts 而把 labs 抽差了)。
+fn system_prompt(schema: u8) -> &'static str {
+    if schema == 2 {
+        SYSTEM_V2
+    } else {
+        SYSTEM
+    }
+}
+
+/// 本臂的产出子目录名。**schema 1 保持旧名**(既有产出不作废),schema 2 起带
+/// `-s<schema>` 后缀:两条臂跑同一批文档、写同一个 `--out`,目录名不同才不会互相
+/// 覆盖,`score()` 也才会把它们当成并排的两列——同分母,直接可比。
+fn arm_dir_name(mode: Mode, schema: u8) -> String {
+    match schema {
+        1 => format!("deepseek-{}", mode_dir_name(mode)),
+        s => format!("deepseek-{}-s{s}", mode_dir_name(mode)),
+    }
+}
+
 /// 纯函数:拼 DeepSeek 请求体。不碰网络,单测直接验证形状。
-fn request_body(mode: Mode, model: &str, user_content: serde_json::Value) -> serde_json::Value {
+fn request_body(
+    mode: Mode,
+    model: &str,
+    system: &str,
+    user_content: serde_json::Value,
+) -> serde_json::Value {
     let mut body = serde_json::json!({
         "model": model,
         "temperature": 0,
         "messages": [
-            {"role": "system", "content": SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": user_content}
         ]
     });
@@ -143,9 +168,10 @@ fn call_deepseek(
     key: &str,
     mode: Mode,
     model: &str,
+    system: &str,
     user_content: serde_json::Value,
 ) -> Result<(String, (u64, u64))> {
-    let body = request_body(mode, model, user_content);
+    let body = request_body(mode, model, system, user_content);
     let mut resp = ureq::post(DEEPSEEK_URL)
         .header("Authorization", &format!("Bearer {key}"))
         .send_json(&body)
@@ -257,6 +283,8 @@ struct Ctx<'a> {
     arm2_dir: &'a Path,
     key: &'a str,
     model: &'a str,
+    /// 本轮发的系统提示词(`--schema` 选出来的那一份,见 [`system_prompt`])。
+    system: &'a str,
     mode: Mode,
     known: &'a KnownIdentity,
 }
@@ -342,7 +370,7 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
     };
 
     let t_llm = Instant::now();
-    let (raw, (ptok, ctok)) = match call_deepseek(c.key, c.mode, c.model, content) {
+    let (raw, (ptok, ctok)) = match call_deepseek(c.key, c.mode, c.model, c.system, content) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{doc}: deepseek 调用失败:{e:#}");
@@ -365,14 +393,20 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
     };
     // 两个分母,分开报(评审:原来分子跨全字段、分母只算 labs,比出来没意义)。
     // labs_*:只看化验条目,与三条指标同一批对象。
-    // all_*:`verify` 真正校验的全部对象 —— labs + meds + diagnoses 三类条目,
-    //        外加 doc_date/impression/notes 三个顶层标量字段(空值算通过)。
+    // all_*:`verify` 真正校验的全部对象 —— labs + meds + diagnoses + **facts**
+    //        四类条目,外加 doc_date/impression/notes 三个顶层标量字段(空值算通过)。
+    //        facts 必须进这个分母:`v.rejected`/`v.unverified` 是连 facts 一起数的,
+    //        漏了它 schema 2 的比值分子分母就不是同一批对象(schema 1 下 facts 恒空,
+    //        这一项等于 0,老数字逐字不变)。
     let n_labs = parsed.labs.len();
-    let n_all = n_labs + parsed.meds.len() + parsed.diagnoses.len() + 3;
+    let n_facts = parsed.facts.len();
+    let n_all = n_labs + parsed.meds.len() + parsed.diagnoses.len() + n_facts + 3;
     let v = verify(parsed, &red.text, c.mode);
     // 文本档不过 = 条目被丢掉;图片档不过 = 留着但打 unverified。一条式子两档都对。
     let labs_rejected = n_labs - v.extraction.labs.len();
     let labs_unverified = v.extraction.labs.iter().filter(|l| l.unverified).count();
+    let facts_rejected = n_facts - v.extraction.facts.len();
+    let facts_unverified = v.extraction.facts.iter().filter(|f| f.unverified).count();
     s.labs_total += n_labs;
     s.labs_rejected += labs_rejected;
     s.labs_unverified += labs_unverified;
@@ -395,6 +429,11 @@ fn process_doc(c: &Ctx, doc: &str, s: &mut Stats) -> Result<()> {
             "labs_total": n_labs,
             "labs_rejected": labs_rejected,
             "labs_unverified": labs_unverified,
+            // schema 2 的族级 facts(schema 1 下恒为 0):模型吐了几条、丢了几条、
+            // 几条待核。三条指标只看 labs,facts 这一组是**旁证**,没有门槛。
+            "facts_total": n_facts,
+            "facts_rejected": facts_rejected,
+            "facts_unverified": facts_unverified,
             "all_total": n_all,
             "all_rejected": v.rejected,
             "all_unverified": v.unverified,
@@ -433,15 +472,14 @@ fn eval_known() -> KnownIdentity {
 ///
 /// stdout:`NEW\t{doc}\t{行}`(新放行)、`PEND\t{doc}\t{行}`(仍待核),供抽样手看。
 /// stderr:汇总数字。
-fn reverify(root: &str, out: &str) -> Result<()> {
+fn reverify(root: &str, out: &str, schema: u8) -> Result<()> {
     let base = PathBuf::from(root).join(out).join("arm4_llm");
-    let (src_dir, old_dir) = (
-        base.join("deepseek-image"),
-        base.join("deepseek-image-verified"),
-    );
-    let new_dir = base.join(
-        std::env::var("REVERIFY_OUT_DIR").unwrap_or_else(|_| "deepseek-image-verified-tol".into()),
-    );
+    // 目录名跟着 `--schema` 走:重算的必须是**同一条臂**的产出,拿 schema 1 的
+    // raw.json 去当 schema 2 的重算结果,两列就串了。
+    let arm = arm_dir_name(Mode::Image, schema);
+    let (src_dir, old_dir) = (base.join(&arm), base.join(format!("{arm}-verified")));
+    let new_dir = base
+        .join(std::env::var("REVERIFY_OUT_DIR").unwrap_or_else(|_| format!("{arm}-verified-tol")));
     std::fs::create_dir_all(&new_dir)?;
     let arm2 = PathBuf::from(root).join(out).join("arm2_geo");
     let known = eval_known();
@@ -641,12 +679,19 @@ fn main() -> Result<()> {
         Some("text") | None => Mode::Text,
         Some(other) => bail!("--mode 只能是 text 或 image,收到 {other}"),
     };
+    // 与 `--mode` 同一种写法:认不得的值直接炸,不默默回落到 1 ——
+    // 打错一个字就是白跑一条臂、白花一次钱,还得到一列标错了 schema 的数字。
+    let schema: u8 = match arg("--schema").as_deref() {
+        None | Some("1") => 1,
+        Some("2") => 2,
+        Some(other) => bail!("--schema 只能是 1 或 2,收到 {other}"),
+    };
     let limit: Option<usize> = arg("--limit").and_then(|s| s.parse().ok());
     let out = arg("--out").unwrap_or_else(|| "out".into());
 
     // 离线重算:只读盘,不要 key,也不该被误当成"又跑了一轮"。
     if args.iter().any(|a| a == "--reverify") {
-        return reverify(&root(), &out);
+        return reverify(&root(), &out, schema);
     }
 
     // 提前失败,别跑到一半才发现 key 没设——绝不打印 key 本身,连报错信息里都不带。
@@ -658,7 +703,7 @@ fn main() -> Result<()> {
     let dir = PathBuf::from(&root)
         .join(&out)
         .join("arm4_llm")
-        .join(format!("deepseek-{}", mode_dir_name(mode)));
+        .join(arm_dir_name(mode, schema));
     std::fs::create_dir_all(&dir)?;
 
     let gt = std::fs::read_to_string(format!("{root}/gt.tsv"))
@@ -685,7 +730,7 @@ fn main() -> Result<()> {
     // 的约定,score() 自动把它当成独立一列,不用改打分器的取文件逻辑。
     let verified_dir = match mode {
         Mode::Image => {
-            let d = dir.with_file_name(format!("deepseek-{}-verified", mode_dir_name(mode)));
+            let d = dir.with_file_name(format!("{}-verified", arm_dir_name(mode, schema)));
             std::fs::create_dir_all(&d)?;
             Some(d)
         }
@@ -699,6 +744,7 @@ fn main() -> Result<()> {
         arm2_dir: &arm2_dir,
         key: &key,
         model: &model,
+        system: system_prompt(schema),
         mode,
         known: &known,
     };
@@ -714,7 +760,7 @@ fn main() -> Result<()> {
     // 运行头:模式 + **模型** + 并发 + 产出目录。每一轮的数字都得说清是哪个
     // 模型跑的 —— 模型可由环境变量换,换了还混在一张表里就是比错了。
     eprintln!(
-        "④ 臂:模式 {} / 模型 {model} / 并发 {jobs} / 产出 {}",
+        "④ 臂:模式 {} / schema {schema} / 模型 {model} / 并发 {jobs} / 产出 {}",
         mode_dir_name(mode),
         dir.display()
     );
@@ -790,8 +836,31 @@ mod tests {
     }
 
     #[test]
+    fn schema_picks_the_prompt_and_the_output_directory() {
+        // 两条臂必须发**不同的** system prompt、写**不同的**目录:发错 prompt =
+        // 量的是同一件事(白跑一轮),写同一个目录 = 后一轮盖掉前一轮(比不成)。
+        assert_eq!(system_prompt(1), SYSTEM);
+        assert_eq!(system_prompt(2), SYSTEM_V2);
+        assert_ne!(SYSTEM, SYSTEM_V2, "两份 prompt 不该是同一份文件");
+        assert_eq!(
+            request_body(Mode::Text, MODEL_TEXT, SYSTEM_V2, serde_json::json!("x"))["messages"][0]
+                ["content"],
+            SYSTEM_V2
+        );
+        // schema 1 的目录名保持旧值,既有产出不作废。
+        assert_eq!(arm_dir_name(Mode::Image, 1), "deepseek-image");
+        assert_eq!(arm_dir_name(Mode::Image, 2), "deepseek-image-s2");
+        assert_eq!(arm_dir_name(Mode::Text, 2), "deepseek-text-s2");
+    }
+
+    #[test]
     fn request_body_has_system_and_user_messages() {
-        let body = request_body(Mode::Text, MODEL_TEXT, serde_json::json!("待抽取文本"));
+        let body = request_body(
+            Mode::Text,
+            MODEL_TEXT,
+            SYSTEM,
+            serde_json::json!("待抽取文本"),
+        );
         assert_eq!(body["model"], MODEL_TEXT);
         assert_eq!(body["temperature"], 0);
         // 与 `services/api/extract.py` 共用的那两个参数必须真的发出去
@@ -812,7 +881,7 @@ mod tests {
             {"type": "text", "text": "请抽取这张单据。"},
             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}
         ]);
-        let body = request_body(Mode::Image, MODEL_IMAGE, content.clone());
+        let body = request_body(Mode::Image, MODEL_IMAGE, SYSTEM, content.clone());
         assert_eq!(body["messages"][1]["content"], content);
         assert_eq!(body["max_tokens"], 8192);
         assert_eq!(body["reasoning_effort"], "low");

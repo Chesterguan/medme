@@ -391,6 +391,7 @@ mod tests {
             backend: "cloud".into(),
             model_version: "deepseek-flash".into(),
             mode: "image".into(),
+            schema: 1,
             result_json: r#"{"labs":[{"name":"血红蛋白","value":"130","unit":"g/L"}]}"#.into(),
         })
         .unwrap();
