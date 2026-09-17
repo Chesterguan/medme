@@ -281,6 +281,17 @@ fn cache_file(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
     dir.join("skills").join(format!("{id}.json"))
 }
 
+/// id 的合法字符集:非空,只含小写字母/数字/下划线。id 会拼进缓存路径
+/// (`cache_file`),写(`cache_store`)和读(`cache_load`)**都**要过这一闸——
+/// 只挡写不挡读,`id="../x"` 就能让 `cache_load` 读到 `<dir>/skills/` 之外的文件
+/// (哪怕那份文件本身验签通过,也不该是这个 id 该读到的东西)。
+fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
 /// 把**信封原文**写进缓存,文件名取包自己声明的 `manifest.id`。写之前先验签:
 /// 缓存里只放验得过的东西,免得下次开机拿一份坏包去试。返回写进去的 id。
 ///
@@ -296,15 +307,9 @@ pub(crate) fn cache_store_with_key(
     pubkey_hex: &str,
 ) -> Result<String, PackageError> {
     let pkg = load_signed_with_key(envelope_json, pubkey_hex)?;
-    // id 会变成文件名 —— 它来自包体,包体来自网络,所以按路径分量校验一次。
-    // 验签已经证明包是我们签的,这道闸是给「我们自己签了一个带斜杠的 id」兜底。
-    if pkg.manifest.id.is_empty()
-        || !pkg
-            .manifest
-            .id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-    {
+    // id 来自包体,包体来自网络,所以按路径分量校验一次。验签已经证明包是我们签的,
+    // 这道闸是给「我们自己签了一个带斜杠/空的 id」兜底。
+    if !valid_id(&pkg.manifest.id) {
         return Err(PackageError::Malformed(format!(
             "包 id 只允许小写字母/数字/下划线,实际 {:?}",
             pkg.manifest.id
@@ -315,13 +320,20 @@ pub(crate) fn cache_store_with_key(
         std::fs::create_dir_all(parent)
             .map_err(|e| PackageError::Malformed(format!("建缓存目录失败:{e}")))?;
     }
-    std::fs::write(&path, envelope_json)
+    // 同目录临时文件 + rename:rename 在同一文件系统内是原子的,写到一半被打断
+    // (掉电/进程被杀)不会留下半份 `<id>.json`——落盘的要么是整份新内容,要么还是旧的。
+    let tmp_path = path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, envelope_json)
         .map_err(|e| PackageError::Malformed(format!("写缓存失败:{e}")))?;
+    std::fs::rename(&tmp_path, &path)
+        .map_err(|e| PackageError::Malformed(format!("落盘缓存失败:{e}")))?;
     Ok(pkg.manifest.id)
 }
 
 /// 从缓存读回。**每次都重新验签** —— 缓存文件在用户可写的目录里,是不可信输入。
-/// 任何失败(文件不在、验不过、引擎太老)一律 `None`:调用方的处置都一样
+/// id 也要过 `valid_id`:形状不对(含 `/`、空、大写……)直接 `None`,不拼路径去碰
+/// 文件系统,免得读到 `<dir>/skills/` 之外的地方。
+/// 任何失败(id 不合法、文件不在、验不过、引擎太老)一律 `None`:调用方的处置都一样
 /// (没有包 = 不显示病程档案),不需要区分。
 pub fn cache_load(dir: &std::path::Path, id: &str) -> Option<Package> {
     cache_load_with_key(dir, id, SIGNING_PUBLIC_KEY_HEX)
@@ -332,6 +344,9 @@ pub(crate) fn cache_load_with_key(
     id: &str,
     pubkey_hex: &str,
 ) -> Option<Package> {
+    if !valid_id(id) {
+        return None;
+    }
     let raw = std::fs::read_to_string(cache_file(dir, id)).ok()?;
     load_signed_with_key(&raw, pubkey_hex).ok()
 }
@@ -524,5 +539,58 @@ mod tests {
         let env = sign_with_test_key(MINIMAL).replace("测试病", "别的病");
         assert!(cache_store_with_key(dir.path(), &env, &test_pubkey_hex()).is_err());
         assert!(!dir.path().join("skills").join("t.json").exists());
+    }
+
+    #[test]
+    fn cache_load_rejects_ids_that_are_not_a_single_path_component() {
+        // 每个 id 按「不做校验时会拼出的路径」真放一份验得过签名的信封在那儿 ——
+        // 这样断言 None 是因为 id 被 valid_id 挡了,不是碰巧那个位置没文件。
+        // "../x" 这一条就是 review 探针复现的路径穿越:不校验时会逃出 <dir>/skills/。
+        let dir = tempfile::tempdir().unwrap();
+        let env = sign_with_test_key(MINIMAL);
+        // `skills/` 先建好,不然 "../x" 那一条在 OS 层面连中间目录都解析不到,
+        // 会"碰巧"返回 None——跟真实场景(缓存已有别的包,skills/ 早就存在)不符,
+        // 也验证不到 id 校验本身。
+        std::fs::create_dir_all(dir.path().join("skills")).unwrap();
+        for (bad_id, planted_at) in [
+            ("../x", dir.path().join("x.json")),
+            ("a/b", dir.path().join("skills").join("a").join("b.json")),
+            ("", dir.path().join("skills").join(".json")),
+            ("T", dir.path().join("skills").join("T.json")),
+        ] {
+            if let Some(parent) = planted_at.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&planted_at, &env).unwrap();
+            assert!(
+                cache_load_with_key(dir.path(), bad_id, &test_pubkey_hex()).is_none(),
+                "id {bad_id:?} 不该读到 {planted_at:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cache_store_rejects_ids_that_are_not_a_single_path_component() {
+        let dir = tempfile::tempdir().unwrap();
+        for bad_id in ["../x", "a/b", "", "T"] {
+            let body = MINIMAL.replace("\"id\":\"t\"", &format!("\"id\":\"{bad_id}\""));
+            let env = sign_with_test_key(&body);
+            assert!(
+                cache_store_with_key(dir.path(), &env, &test_pubkey_hex()).is_err(),
+                "id {bad_id:?} 应被拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn cache_store_leaves_only_the_final_file_no_tmp_litter() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = sign_with_test_key(MINIMAL);
+        cache_store_with_key(dir.path(), &env, &test_pubkey_hex()).unwrap();
+        let names: Vec<_> = std::fs::read_dir(dir.path().join("skills"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["t.json".to_string()]);
     }
 }
