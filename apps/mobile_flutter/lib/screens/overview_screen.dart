@@ -2,17 +2,16 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
+import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/identity_hero_card.dart';
-import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
@@ -258,11 +257,13 @@ class _OverviewScreenState extends State<OverviewScreen> {
                 if (s.patient.recordCount == 0)
                   _FirstRunEmpty(onImport: () => _import(null))
                 else ...[
-                  _LabSnapshot(labs: s.recentLabs, onOpenDoc: _openDoc),
+                  // 这两块已经搬进「趋势」(Task 8),本屏在 Task 9 整屏解散之前
+                  // 借用搬过去的那一份 —— 中间不能有一版是两处都没有。
+                  KeyLabsSnapshot(labs: s.recentLabs, onOpenDoc: _openDoc),
                   const SizedBox(height: MedShape.s5),
-                  _RecentArchive(
+                  RecentVisitsCard(
                     visits: s.recentVisits,
-                    total: s.patient.recordCount,
+                    total: s.patient.recordCount.toInt(),
                     onOpenDoc: _openDoc,
                   ),
                 ],
@@ -456,295 +457,6 @@ class QuickAction extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// 「你怎么样」—— 最近的关键化验。
-///
-/// 数据是 `recentLabs`:每条序列取**最新一个带日期的点**,按日期倒序。也就是说这
-/// 张卡回答的是「我最近一次测的这些指标是多少」,**不是**「我现在的身体状况」。
-/// 标题因此写「最近的关键化验」而不是「健康快照」—— 后者是一个我们给不出的承诺。
-///
-/// **不带骑缝线**:卡里每一行来自不同的原件,这张卡本身不对应任何一张纸。可溯源
-/// 由每一行右侧的箭头兑现(点进去就是那一次化验的那份报告)。
-class _LabSnapshot extends StatelessWidget {
-  const _LabSnapshot({required this.labs, required this.onOpenDoc});
-
-  final List<VisitLabDto> labs;
-  final void Function(int docId) onOpenDoc;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _SectionHeader(
-          title: '最近的关键化验',
-          actionLabel: labs.isEmpty ? null : '看趋势',
-          onAction: labs.isEmpty ? null : goToTrends,
-        ),
-        const SizedBox(height: MedShape.s1),
-        MedCard(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
-            child: labs.isEmpty
-                ? Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      MedShape.s4,
-                      MedShape.s2,
-                      MedShape.s4,
-                      MedShape.s2,
-                    ),
-                    // 空态说的是我们**观察到**什么,不是用户身上有没有事。
-                    child: Text(
-                      '已导入的病历里还没有读到可显示的化验数值。拍一张化验单试试。',
-                      style: MedType.body.copyWith(color: c.ink2, height: 1.5),
-                    ),
-                  )
-                : Column(
-                    children: [
-                      for (var i = 0; i < labs.length; i++) ...[
-                        if (i > 0)
-                          Divider(height: 1, thickness: 1, color: c.line2),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: MedShape.s2,
-                          ),
-                          child: LabLine(
-                            name: labs[i].name,
-                            value: labs[i].value,
-                            unit: labs[i].unit,
-                            flag: labs[i].flag,
-                            refLow: labs[i].refLow,
-                            refHigh: labs[i].refHigh,
-                            // 见 visit_summary_sheet.dart 的 `_LabRow` 同一处注释。
-                            meta: [
-                              labs[i].date,
-                              if (labs[i].selfMeasured) '家测',
-                              if (labs[i].valuesConverted)
-                                unitConvertedNote(labs[i].unit),
-                            ].join(' · '),
-                            // 云抽取图片档没能逐字核对上的行:照常显示,标出来。
-                            unverified: labs[i].unverified,
-                            onTap: () => onOpenDoc(labs[i].documentId),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 「东西在哪」—— 最近归档的几份。
-///
-/// 每一条各自一张卡,**骑缝线按档案屏的同一条规则画**:
-///  · 只含一份文档的记录 → 点了就是那一份原件 → 画;
-///  · 一次就诊含好几份 → 点了是去档案里展开那一组,背后没有「一张纸」→ 不画。
-class _RecentArchive extends StatelessWidget {
-  const _RecentArchive({
-    required this.visits,
-    required this.total,
-    required this.onOpenDoc,
-  });
-
-  final List<VisitRecordDto> visits;
-  final int total;
-  final void Function(int docId) onOpenDoc;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _SectionHeader(
-          title: '最近归档',
-          actionLabel: '全部 $total 份',
-          onAction: goToArchive,
-        ),
-        const SizedBox(height: MedShape.s1),
-        if (visits.isEmpty)
-          MedCard(
-            child: Padding(
-              padding: const EdgeInsets.all(MedShape.s4),
-              child: Text(
-                '还没有归档的记录。',
-                style: MedType.body.copyWith(color: c.ink2),
-              ),
-            ),
-          )
-        else
-          for (var i = 0; i < visits.length; i++) ...[
-            if (i > 0) const SizedBox(height: MedShape.s2),
-            _VisitCard(visit: visits[i], onOpenDoc: onOpenDoc),
-          ],
-      ],
-    );
-  }
-}
-
-/// 右侧那一列日期该不该渲染 —— 标题里已经带了就不重复。
-///
-/// 公开是为了可测:整屏 pump 需要 `viewVisitSummary()` 的 Rust FFI,测试环境没有
-/// 原生库。与 `manualEntryRangeError`、`SeriesCard` 同一先例。
-bool visitCardShowsDate({required String title, required String date}) =>
-    date.isNotEmpty && !title.contains(date);
-
-/// 副标题文案 —— 标题里已有的类型不重复,份数(多份时)照常给。全被涵盖时返回空串,
-/// 调用方据此整行不渲染。
-String visitCardDesc({
-  required String title,
-  required String kindLabel,
-  required int docCount,
-}) => [
-  if (!title.contains(kindLabel)) kindLabel,
-  if (docCount != 1) '$docCount 份记录',
-].join(' · ');
-
-class _VisitCard extends StatelessWidget {
-  const _VisitCard({required this.visit, required this.onOpenDoc});
-
-  final VisitRecordDto visit;
-  final void Function(int docId) onOpenDoc;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    final single = visit.documentIds.length == 1;
-    final date = fmtDate(visit.date);
-    final kindLabel = visitKindLabel(visit.kind);
-    final title = visit.title ?? kindLabel;
-
-    // **标题里已经有的东西不再重复说一遍。**
-    //
-    // 标题来自保险箱里的就诊组标题,而它常常已经把类型和日期都拼进去了
-    // (示例数据里就是 `门诊 · 2026-06-20`)。此前这里无条件在右侧再渲染一次日期、
-    // 在副标题里再渲染一次类型,于是一张卡把同样的信息说三遍:
-    //
-    //     门诊 · 2026-06-20        2026-06-20
-    //     门诊
-    //
-    // 三处各自都对,合起来是坏的。改成按标题的实际内容裁剪。
-    final showDate = visitCardShowsDate(title: title, date: date);
-    final desc = visitCardDesc(
-      title: title,
-      kindLabel: kindLabel,
-      docCount: visit.documentIds.length,
-    );
-
-    return MedCard(
-      perforated: single,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: single
-              ? () => onOpenDoc(visit.documentIds.first.toInt())
-              // 多份的一组在概览里不展开 —— 展开是档案屏的事,那里才有删除、
-              // 子文档列表这些配套。这里只负责把人送过去。
-              : goToArchive,
-          child: Padding(
-            padding: const EdgeInsets.all(MedShape.s2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: c.sealWash,
-                    borderRadius: BorderRadius.circular(MedShape.radiusControl),
-                  ),
-                  child: Icon(
-                    iconForVisitKind(visit.kind),
-                    size: 20,
-                    color: c.seal,
-                  ),
-                ),
-                const SizedBox(width: MedShape.s2),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              title,
-                              style: MedType.subtitle.copyWith(color: c.ink),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (showDate) ...[
-                            const SizedBox(width: MedShape.s1),
-                            Text(
-                              date,
-                              style: MedType.secondary.copyWith(
-                                color: c.ink3,
-                                fontFeatures: MedType.tabular,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      // 全被标题涵盖时整行不渲染 —— 空的副标题只会留一道空隙。
-                      if (desc.isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          desc,
-                          style: MedType.secondary.copyWith(color: c.ink2),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                Icon(Icons.chevron_right, size: 20, color: c.ink3),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 分区标题 + 右侧的一个次级动作。
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, this.actionLabel, this.onAction});
-
-  final String title;
-  final String? actionLabel;
-  final VoidCallback? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return Row(
-      children: [
-        Expanded(
-          child: Text(title, style: MedType.caption.copyWith(color: c.ink3)),
-        ),
-        if (actionLabel != null)
-          // 正文级链接用 `sealInk`(6.76:1),不用 `seal`(3.90:1,不过 AA)。
-          TextButton(
-            onPressed: onAction,
-            style: TextButton.styleFrom(
-              foregroundColor: c.sealInk,
-              padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: Text(actionLabel!, style: MedType.secondary),
-          ),
-      ],
     );
   }
 }
