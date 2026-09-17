@@ -1,4 +1,4 @@
-// 五 tab 信息架构 + 三块新界面的看门测试。
+// 三 tab 信息架构 + 三块新界面的看门测试。
 //
 // 这个文件盯的**不是排版**,是几条一旦破掉就会在临床上说假话的规矩:
 //
@@ -14,10 +14,12 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show Int64List;
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/emergency_contact.dart';
 import 'package:mobile_flutter/main.dart';
 import 'package:mobile_flutter/screens/emergency_card_screen.dart';
+import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/theme.dart';
@@ -768,42 +770,93 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  group('五 tab 信息架构', () {
+  group('三 tab 信息架构', () {
     test('tab 数 == 页面数 == 底栏项数', () {
       // 这三个数字散在两处 const 列表和一组常量里。加一个 tab 时最容易漏掉其中
       // 一处,而漏掉的表现是运行时越界或**点 A 进了 B**,不是编译错误。
-      expect(HomeTab.count, 5);
+      expect(HomeTab.count, 3);
       expect(HomeShell.tabScreens.length, HomeTab.count);
       expect(HomeShell.tabDestinations.length, HomeTab.count);
     });
 
-    test('下标连续、互不重复,顺序即「使用时刻」从慢到急', () {
-      const order = [
-        HomeTab.overview,
-        HomeTab.trends,
-        HomeTab.archive,
-        HomeTab.emergency,
-        HomeTab.settings,
-      ];
-      expect(order, [0, 1, 2, 3, 4]);
+    test('下标连续、互不重复', () {
+      const order = [HomeTab.records, HomeTab.trends, HomeTab.me];
+      expect(order, [0, 1, 2]);
       expect(order.toSet().length, HomeTab.count);
     });
 
-    test('底栏文案就是规范 §八 那五个词', () {
+    test('底栏文案就是 mockup 那三个词', () {
       expect(
         HomeShell.tabDestinations.map((d) => d.label).toList(),
-        ['概览', '趋势', '档案', '应急卡', '设置'],
+        ['病历', '趋势', '我'],
+      );
+    });
+
+    test('「给医生看」**不在**底栏 —— 它是从「病历」推进去的一整页', () {
+      // mockup。这条断言存在的理由:ia-proposal §2 推荐的是把它放进底栏,
+      // 谁照着那份提案改回去,红的应该是这里,而不是到了真机上才发现两处打架。
+      expect(
+        HomeShell.tabDestinations.map((d) => d.label),
+        isNot(contains('给医生看')),
+      );
+      expect(
+        HomeShell.tabDestinations.map((d) => d.label),
+        isNot(contains('应急卡')),
       );
     });
 
     test('程序化跳转落在正确的 tab 上', () {
-      goToArchive();
-      expect(selectedTab.value, HomeTab.archive);
       goToTrends();
       expect(selectedTab.value, HomeTab.trends);
-      goToEmergencyCard();
-      expect(selectedTab.value, HomeTab.emergency);
-      selectedTab.value = HomeTab.overview; // 复位,别污染别的测试
+      goToMe();
+      expect(selectedTab.value, HomeTab.me);
+      goToRecords();
+      expect(selectedTab.value, HomeTab.records);
+    });
+
+    test('埋点枚举与 tab 一一对应 —— 少一个就会把 A 的人气记成 B', () {
+      expect(AnalyticsTab.values.length, HomeTab.count);
+      expect(AnalyticsTab.of(HomeTab.records), AnalyticsTab.records);
+      expect(AnalyticsTab.of(HomeTab.me), AnalyticsTab.me);
+      expect(AnalyticsTab.of(3), isNull);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  group('「给医生看」那一页', () {
+    // 不注入 `load` 时整屏在字段初始化那一刻就走 FFI,`flutter test` 不带原生库 ——
+    // 注入一份空摘要就能把整屏 pump 起来(与 `EmergencyCardScreen.load` 同一手法)。
+    const empty = VisitSummaryDto(
+      patient: PatientProfileDto(recordCount: 0),
+      allergies: [],
+      activeMeds: [],
+      recentLabs: [],
+      recentChanges: [],
+      recentVisits: [],
+      recentNotes: [],
+      plainText: '',
+    );
+
+    testWidgets('整页立得住 —— 摘要主体本身是 ListView,不能再嵌进一层滚动里', (t) async {
+      // 这条钉的是**组合方式**:`VisitSummaryBody` 返回的是 `ListView`,把它放进
+      // 另一个 `ListView` 的 children 会拿到无穷高约束当场炸(见 `wrapScreen` 的
+      // 文档)。所以正文占 `Expanded`,四条入口接在下面 —— 与浮层那边同一个形状。
+      await t.pumpWidget(
+        wrapScreen(ForDoctorScreen(load: () async => empty)),
+      );
+      await t.pumpAndSettle();
+      expect(find.text('给医生看'), findsOneWidget);
+      expect(find.text('出码给医生看'), findsOneWidget);
+    });
+
+    testWidgets('四条入口逐字照 mockup s4,顺序也照它', (t) async {
+      await t.pumpWidget(wrap(const ForDoctorActions()));
+      expect(find.text('出码给医生看'), findsOneWidget);
+      expect(find.text('打印 / 导出'), findsOneWidget);
+      expect(find.text('急救卡'), findsOneWidget);
+      // 代拍入口全 App 只有这一句话(Task 15 让医生端主按钮也用它)。
+      expect(find.text('我是医生,替病人代拍'), findsOneWidget);
+      expect(find.text('病人不用装 App、不用账号'), findsOneWidget);
     });
   });
 

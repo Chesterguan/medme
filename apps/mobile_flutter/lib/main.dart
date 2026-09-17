@@ -21,10 +21,8 @@ import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
-import 'package:mobile_flutter/screens/emergency_card_screen.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/screens/mode_picker_screen.dart';
-import 'package:mobile_flutter/screens/overview_screen.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -581,57 +579,48 @@ class _AppRootState extends State<AppRoot> {
   }
 }
 
-/// 底部导航壳:**五个一级 tab,按「使用时刻」划分**(设计系统 §八)。
+/// 底部导航壳:**三个一级 tab**(mockup,创始人拍板)。
 ///
-/// | tab | 使用时刻 |
+/// | tab | 用户在干什么 |
 /// |---|---|
-/// | 概览 | 日常打开,看一眼「我现在怎么样」 |
-/// | 趋势 | 复诊前自己看「这两年怎么变的」 |
-/// | 档案 | 找某一张单子 |
-/// | 应急卡 | 急诊室,**别人**拿着你的手机 |
-/// | 设置 | 数据主权 |
+/// | 病历 | 拍/添加一份,以及回头找某一张 |
+/// | 趋势 | 这个病现在怎么样、吃过什么药、该查没查 |
+/// | 我 | 云端、成员、口令与恢复码、设置 |
 ///
-/// 划分依据是**时刻**不是数据类型。旧的三 tab(健康档案 / 导出分享 / 设置)是按
-/// 功能分的,于是「我现在怎么样」和「这两年怎么变的」被一起压进了「健康档案」,
-/// 而它们是两个完全不同的时刻 —— 一个是每天早上三十秒,一个是复诊前坐下来看十分钟。
+/// ## 四处刻意的缺席
 ///
-/// ## 两处刻意的缺席
+/// **「给医生看」不是 tab** —— 它是「病历」首页那颗主按钮推进去的一整页。
+/// ⚠️ ia-proposal §2 推荐的恰恰相反(候选 A 把它放进底栏,并写明拒绝候选 B 的
+/// 理由是「老人在底栏找不到它」)。mockup 改了主意,**执行按 mockup**;
+/// 那条风险在模拟器冒烟里验(Task 19)。
 ///
-/// **「看病带这个」不是 tab。**(原名「就诊单」,2026-08-05 改名,见
-/// `screens/visit_summary_sheet.dart` 顶部文档)它是诊室里那 30 秒的动作,从
-/// 概览与档案的顶栏两处以浮层唤起。做成 tab 就是给一个一年用十次的动作一个
-/// 常驻席位,而把它挤掉的会是应急卡。
+/// **「应急卡」不再是 tab**,是「给医生看」那一页里的一条。降的是位置不是质量:
+/// `EmergencyBigCardScreen` 大字模式一字未动。
 ///
-/// **「导出·分享」不再是 tab,收进了设置。** 它承载的是 E2E 加密分享与可打印导出:
-/// 重、正式、要联网、低频。它和「看病带这个」不是一回事(那个是本地的、离线的、
-/// 一页纸),所以不能并进去;而它的心智恰好就是设置这个 tab 的定义 ——「数据
-/// 主权:我的数据往哪去」,和备份、清空是同一件事的三个方向。
-/// 诊室现场那条最高频的路没有变长:「看病带这个」浮层底部直接有「医生要看原件 ·
-/// 出示二维码」。
+/// **「概览」整屏解散**:成员卡进「我」,化验快照与最近就诊进「趋势」,最近添加
+/// 与「病历」tab 重复,三颗快捷操作各归各位。
+///
+/// **「趋势」保留原名**,不叫「看懂」——「病程档案」的入口位落在它里面。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
-  /// 五个 tab 的页面,顺序必须与 [HomeTab] 的常量逐一对应 —— `IndexedStack` 按
-  /// 下标取,错一位就是点「应急卡」进了「设置」。
+  /// 三个 tab 的页面,顺序必须与 [HomeTab] 的常量逐一对应 —— `IndexedStack` 按
+  /// 下标取,错一位就是点「趋势」进了「我」。
   ///
-  /// 与 [tabDestinations] 一起公开是为了让 `test/home_shell_test.dart` 能钉住
-  /// 「页面数 == 底栏项数 == [HomeTab.count]」。这三个数字散在两处 const 列表和
-  /// 一组常量里,加一个 tab 时最容易漏掉的就是其中一处,而漏掉的表现是**运行时
-  /// 越界或错位**,不是编译错误。
+  /// 与 [tabDestinations] 一起公开是为了让 `test/mobile_ia_test.dart` 能钉住
+  /// 「页面数 == 底栏项数 == [HomeTab.count]」。
   static const List<Widget> tabScreens = [
-    OverviewScreen(),
-    TrendsScreen(),
     ArchiveScreen(),
-    EmergencyCardScreen(),
+    TrendsScreen(),
     SettingsScreen(),
   ];
 
-  /// 底栏五项,顺序同 [tabScreens]。
+  /// 底栏三项,顺序同 [tabScreens]。
   static const List<NavigationDestination> tabDestinations = [
     NavigationDestination(
-      icon: Icon(Icons.dashboard_outlined),
-      selectedIcon: Icon(Icons.dashboard),
-      label: '概览',
+      icon: Icon(Icons.folder_outlined),
+      selectedIcon: Icon(Icons.folder),
+      label: '病历',
     ),
     NavigationDestination(
       icon: Icon(Icons.show_chart_outlined),
@@ -639,21 +628,9 @@ class HomeShell extends StatefulWidget {
       label: '趋势',
     ),
     NavigationDestination(
-      icon: Icon(Icons.folder_outlined),
-      selectedIcon: Icon(Icons.folder),
-      label: '档案',
-    ),
-    // 应急卡用 Material 的 `emergency`(那个六角星医疗符号),不用心形或十字 ——
-    // 心形在健康 app 里普遍是「收藏」,十字是「新增」。
-    NavigationDestination(
-      icon: Icon(Icons.emergency_outlined),
-      selectedIcon: Icon(Icons.emergency),
-      label: '应急卡',
-    ),
-    NavigationDestination(
-      icon: Icon(Icons.settings_outlined),
-      selectedIcon: Icon(Icons.settings),
-      label: '设置',
+      icon: Icon(Icons.person_outline),
+      selectedIcon: Icon(Icons.person),
+      label: '我',
     ),
   ];
 
@@ -662,7 +639,7 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _index = HomeTab.overview;
+  int _index = HomeTab.records;
 
   @override
   void initState() {
@@ -684,9 +661,9 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   /// 底栏被**手点**。埋点只挂在这里,**不挂 [_onTabRequested]** ——
-  /// 后者也接程序化跳转(`goToArchive()`、载入示例后的「去看看」),那是别的功能
+  /// 后者也接程序化跳转(`goToRecords()`、载入示例后的「去看看」),那是别的功能
   /// 的副作用,不是用户想去哪。混进来会把一个功能的成功记成另一个 tab 的人气,
-  /// 而这条事件存在的全部意义正是「五个席位该给谁」。
+  /// 而这条事件存在的全部意义正是「三个席位该给谁」。
   void _onTabTapped(int i) {
     final tab = AnalyticsTab.of(i);
     // 认不出来就不报(不猜),但 tab 照切 —— 埋点绝不影响功能。

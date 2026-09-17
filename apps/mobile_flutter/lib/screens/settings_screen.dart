@@ -229,7 +229,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (pm.currentId.value != demoMemberId) {
                 await switchProfileAndReopen(demoMemberId);
               }
-              goToArchive();
+              goToRecords();
             },
           ),
         ),

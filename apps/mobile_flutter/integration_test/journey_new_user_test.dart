@@ -34,7 +34,7 @@ void main() {
     await bootApp(tester);
 
     // ── 概览 ──
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('还没有病历'));
     expect(find.text('导入第一份病历'), findsOneWidget, reason: '概览空态没有出路按钮');
     expect(find.textContaining('只保存在这台手机上'), findsWidgets);
@@ -47,13 +47,13 @@ void main() {
     expect(find.textContaining('趋势需要同一个指标'), findsOneWidget);
 
     // ── 档案 ──
-    await gotoTab(tester, HomeTab.archive);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('还没有病历'));
     expect(find.text('导入'), findsWidgets, reason: '档案空态没有右上角「导入」出路');
     expect(find.textContaining('载入示例数据'), findsWidgets);
 
     // ── 应急卡 ──(这一屏的空态最要命:留白 = 「无过敏史」)
-    await gotoTab(tester, HomeTab.emergency);
+    await gotoEmergencyCard(tester);
     await waitFor(tester, find.text('过敏史'));
     final emergencyTexts = visibleTexts(tester);
     debugPrint('[空态巡检] 应急卡文案: $emergencyTexts');
@@ -72,7 +72,7 @@ void main() {
     );
 
     // ── 设置 ──(空箱子也得能用)
-    await gotoTab(tester, HomeTab.settings);
+    await gotoTab(tester, HomeTab.me);
     await waitFor(tester, find.text('载入示例数据(张建国)'));
     expect(find.text('清空所有数据 · 重置保险箱'), findsOneWidget);
     expect(find.text('导出 · 分享'), findsOneWidget);
@@ -86,7 +86,7 @@ void main() {
     addTearDown(watch.stop);
 
     await bootApp(tester);
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('看病带这个'));
     await tester.tap(find.text('看病带这个'));
     await settle(tester, total: const Duration(seconds: 3));

@@ -125,7 +125,7 @@ void main() {
         reason: '同日多点排序不稳:序列最后一个点是 $lastSys,应该是当天最后录的 149');
 
     // ── 概览「最近的关键化验」也应当认得出这条家测 ──
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('最近的关键化验'));
     expect(find.textContaining('家测'), findsWidgets,
         reason: '概览没把家测值标出来,会被当成医院化验值');

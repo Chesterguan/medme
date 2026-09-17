@@ -72,7 +72,7 @@ void main() {
 
     // UI:档案屏顶部的成员 tab 条应当列全。
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.archive);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('妈妈'));
     expect(find.text('爸爸'), findsWidgets);
 
@@ -100,7 +100,7 @@ void main() {
         reason: '删掉当前成员后,开着的还是那个已删目录的箱子');
 
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.archive);
+    await gotoTab(tester, HomeTab.records);
     await settle(tester, total: const Duration(seconds: 2));
     expect(find.text('妈妈'), findsNothing, reason: '删掉的成员还在 tab 条上');
   });
@@ -142,10 +142,10 @@ void main() {
 
     // 屏上不该被挤爆:档案屏的成员 tab 条 + 设置的保险箱卡都过一遍。
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.archive);
+    await gotoTab(tester, HomeTab.records);
     await settle(tester, total: const Duration(seconds: 2));
 
-    await gotoTab(tester, HomeTab.settings);
+    await gotoTab(tester, HomeTab.me);
     await waitFor(
       tester,
       find.descendant(of: find.byType(AppBar), matching: find.text('设置')),
@@ -157,7 +157,7 @@ void main() {
     await settle(tester);
 
     // 概览的身份卡拿的是 `displayName`,极长名字不该把卡撑破。
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await settle(tester, total: const Duration(seconds: 2));
 
     watch.assertClean();
@@ -171,7 +171,7 @@ void main() {
     await addBpFor(133);
 
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.byType(IdentityHeroCard));
 
     // 身份卡整卡可点 → 弹成员切换器。

@@ -36,7 +36,7 @@ void main() {
     addTearDown(watch.stop);
 
     await bootApp(tester);
-    await gotoTab(tester, HomeTab.settings);
+    await gotoTab(tester, HomeTab.me);
     await waitFor(tester, find.text('载入示例数据(张建国)'));
 
     for (final t in [
@@ -63,7 +63,7 @@ void main() {
     bumpVaultRevision();
     expect((await patientProfile()).recordCount, 1);
 
-    await gotoTab(tester, HomeTab.settings);
+    await gotoTab(tester, HomeTab.me);
     await waitFor(tester, find.text('清空所有数据 · 重置保险箱'));
     await tester.tap(find.text('清空所有数据 · 重置保险箱'));
     await settle(tester, total: const Duration(seconds: 2));
@@ -82,10 +82,10 @@ void main() {
     await seedOne();
     bumpVaultRevision();
 
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('最近的关键化验'));
 
-    await gotoTab(tester, HomeTab.settings);
+    await gotoTab(tester, HomeTab.me);
     await waitFor(tester, find.text('清空所有数据 · 重置保险箱'));
     await tester.tap(find.text('清空所有数据 · 重置保险箱'));
     await settle(tester, total: const Duration(seconds: 2));
@@ -95,7 +95,7 @@ void main() {
     expect((await patientProfile()).recordCount, 0, reason: '确认清空后还有记录');
 
     // 概览是保活的(`IndexedStack`),必须靠 `vaultRevision` 自己刷回空态。
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('还没有病历'),
         what: '清空后概览应当刷回空态(保活屏没刷新 = 用户以为没清掉)');
   });
@@ -105,7 +105,7 @@ void main() {
     addTearDown(watch.stop);
 
     await bootApp(tester);
-    await gotoTab(tester, HomeTab.settings);
+    await gotoTab(tester, HomeTab.me);
     await waitFor(tester, find.text('导出 · 分享'));
     await tester.tap(find.text('导出 · 分享'));
     await settle(tester, total: const Duration(seconds: 2));
@@ -129,7 +129,7 @@ void main() {
     await seedOne();
     bumpVaultRevision();
 
-    await gotoTab(tester, HomeTab.settings);
+    await gotoTab(tester, HomeTab.me);
     await waitFor(tester, find.text('载入示例数据(张建国)'));
     await tester.tap(find.text('载入示例数据(张建国)'));
 

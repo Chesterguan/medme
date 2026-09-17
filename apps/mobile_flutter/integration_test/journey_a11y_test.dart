@@ -52,14 +52,12 @@ Future<void> seed() async {
   bumpVaultRevision();
 }
 
-/// 把五个 tab 都翻一遍(顺带滚一屏,让屏下的内容也参与布局)。
+/// 把三个 tab 都翻一遍(顺带滚一屏,让屏下的内容也参与布局)。
 Future<void> sweepTabs(WidgetTester tester) async {
   for (final (idx, label) in [
-    (HomeTab.overview, '概览'),
+    (HomeTab.records, '病历'),
     (HomeTab.trends, '趋势'),
-    (HomeTab.archive, '档案'),
-    (HomeTab.emergency, '应急卡'),
-    (HomeTab.settings, '设置'),
+    (HomeTab.me, '我'),
   ]) {
     selectedTab.value = idx;
     await waitFor(
@@ -99,7 +97,7 @@ void main() {
         // 「看病带这个」浮层单独过一遍 —— 它是一屏里信息最密的地方。
         // 概览刚被 `sweepTabs` 滚到了底,banner 不在可视区、`ListView` 也就
         // 没构建它 —— 先滚回顶部。
-        selectedTab.value = HomeTab.overview;
+        selectedTab.value = HomeTab.records;
         await settle(tester, total: const Duration(seconds: 2));
         await scrollToTop(tester);
         await waitFor(tester, find.text('看病带这个'));

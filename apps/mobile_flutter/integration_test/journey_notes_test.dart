@@ -26,7 +26,7 @@ final kLong = '复诊要问的问题:${'这个药还要吃多久?' * 300}';
 const kMultiline = '第一行:昨天开始头晕\n第二行:早上量血压 160/95\n第三行:要不要换药?';
 
 Future<void> openNoteEntry(WidgetTester tester) async {
-  await gotoTab(tester, HomeTab.overview);
+  await gotoTab(tester, HomeTab.records);
   await waitFor(tester, find.text('记录'));
   await tester.tap(find.text('记录').first);
   await settle(tester);
@@ -36,7 +36,7 @@ Future<void> openNoteEntry(WidgetTester tester) async {
 }
 
 Future<void> openVisitSheet(WidgetTester tester) async {
-  await gotoTab(tester, HomeTab.overview);
+  await gotoTab(tester, HomeTab.records);
   await waitFor(tester, find.text('看病带这个'));
   await tester.tap(find.text('看病带这个').first);
   await settle(tester, total: const Duration(seconds: 3));

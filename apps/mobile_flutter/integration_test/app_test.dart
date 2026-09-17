@@ -23,7 +23,7 @@ void main() {
 
     await bootApp(tester);
 
-    // 底栏五项俱在,顺序即 HomeTab 的定义。
+    // 底栏三项俱在,顺序即 HomeTab 的定义。
     final bar = find.byType(NavigationBar);
     for (final label in tabLabels) {
       expect(
@@ -35,7 +35,7 @@ void main() {
     expect(HomeTab.count, tabLabels.length);
 
     // 逐个点过去,每个 tab 的顶栏标题要对上 —— 只看底栏高亮不够,
-    // `IndexedStack` 错位一格的表现正是「点应急卡进了设置」。
+    // `IndexedStack` 错位一格的表现正是「点趋势进了我」。
     for (final label in tabLabels) {
       await tapTab(tester, label);
       expect(
@@ -54,17 +54,15 @@ void main() {
     watch.assertClean();
   });
 
-  testWidgets('程序化切 tab 与手点是同一条路径(goToArchive / goToTrends 等)', (
+  testWidgets('程序化切 tab 与手点是同一条路径(goToRecords / goToTrends 等)', (
     tester,
   ) async {
     await bootApp(tester, reset: false);
 
     for (final (idx, label) in [
-      (HomeTab.overview, '概览'),
+      (HomeTab.records, '病历'),
       (HomeTab.trends, '趋势'),
-      (HomeTab.archive, '档案'),
-      (HomeTab.emergency, '应急卡'),
-      (HomeTab.settings, '设置'),
+      (HomeTab.me, '我'),
     ]) {
       await gotoTab(tester, idx);
       expect(

@@ -20,7 +20,7 @@ import 'harness.dart';
 
 /// 从概览的「记录」快捷操作打开录入弹层。
 Future<void> openEntrySheet(WidgetTester tester) async {
-  await gotoTab(tester, HomeTab.overview);
+  await gotoTab(tester, HomeTab.records);
   await waitFor(tester, find.text('记录'));
   await tester.tap(find.text('记录').first);
   await settle(tester);

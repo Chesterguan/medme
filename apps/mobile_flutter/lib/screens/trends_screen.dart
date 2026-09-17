@@ -964,14 +964,14 @@ class _EmptyTrends extends StatelessWidget {
             // 说的是我们**观察到**什么,不是用户身上有没有事。
             Text(
               '趋势需要同一个指标在不同日期至少测过一次,并且报告上能定出日期。\n'
-              '在「档案」里导入几张化验单,这里就会长出线来。',
+              '在「病历」里添加几张化验单,这里就会长出线来。',
               textAlign: TextAlign.center,
               style: MedType.body.copyWith(color: c.ink2, height: 1.6),
             ),
             const SizedBox(height: MedShape.s3),
             OutlinedButton(
-              onPressed: goToArchive,
-              child: const Text('去档案导入化验单'),
+              onPressed: goToRecords,
+              child: const Text('去「病历」添加化验单'),
             ),
           ],
         ),

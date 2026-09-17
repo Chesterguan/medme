@@ -54,11 +54,11 @@ void main() {
   ) async {
     await bootApp(tester);
 
-    await gotoTab(tester, HomeTab.emergency);
+    await gotoEmergencyCard(tester);
     await waitFor(tester, find.text('过敏史'));
 
     // 回概览存一条 —— 走真实 UI。
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('记录'));
     await tester.tap(find.text('记录').first);
     await settle(tester);
@@ -80,7 +80,7 @@ void main() {
     await bootApp(tester);
 
     // 应急卡先看一眼:空态。
-    await gotoTab(tester, HomeTab.emergency);
+    await gotoEmergencyCard(tester);
     await waitFor(tester, find.text('过敏史'));
     expect(find.textContaining('已导入的病历里没有找到过敏记录'), findsOneWidget);
 
@@ -113,7 +113,7 @@ void main() {
     );
 
     // 切到应急卡 —— 屏上必须已经跟着变了。
-    await gotoTab(tester, HomeTab.emergency);
+    await gotoEmergencyCard(tester);
     await settle(tester, total: const Duration(seconds: 3));
     expect(
       find.textContaining('已导入的病历里没有找到过敏记录'),
@@ -156,7 +156,7 @@ void main() {
     expect((await patientProfile()).recordCount, 1);
 
     // 走**真实 UI**清空:设置 → 清空 → 确认。
-    await gotoTab(tester, HomeTab.settings);
+    await gotoTab(tester, HomeTab.me);
     await waitFor(tester, find.text('清空所有数据 · 重置保险箱'));
     await tester.tap(find.text('清空所有数据 · 重置保险箱'));
     await settle(tester, total: const Duration(seconds: 2));
@@ -166,7 +166,7 @@ void main() {
     expect((await patientProfile()).recordCount, 0, reason: '清空本身没生效');
 
     // 现在往里写一条 —— 走真实 UI。这就是用户清空之后做的第一件事。
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('记录'));
     await tester.tap(find.text('记录').first);
     await settle(tester);
@@ -241,7 +241,7 @@ void main() {
     );
     bumpVaultRevision();
 
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('收缩压'));
 
     // 128 / 82 都在家测参考区间(≤135 / ≤85)之内 —— 完全正常,不该有任何 pill。

@@ -84,11 +84,9 @@ void main() {
 
     // ③ 五个 tab 逐个进,记录首屏耗时。
     for (final (idx, label) in [
-      (HomeTab.overview, '概览'),
+      (HomeTab.records, '病历'),
       (HomeTab.trends, '趋势'),
-      (HomeTab.archive, '档案'),
-      (HomeTab.emergency, '应急卡'),
-      (HomeTab.settings, '设置'),
+      (HomeTab.me, '我'),
     ]) {
       final t = Stopwatch()..start();
       selectedTab.value = idx;
@@ -128,7 +126,7 @@ void main() {
     await settle(tester, total: const Duration(seconds: 2));
 
     // ⑥ 档案列表滚到底不崩。
-    await gotoTab(tester, HomeTab.archive);
+    await gotoTab(tester, HomeTab.records);
     await settle(tester, total: const Duration(seconds: 2));
     for (var i = 0; i < 12; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -600));
@@ -137,7 +135,7 @@ void main() {
     await settle(tester, total: const Duration(seconds: 2));
 
     // ⑦「看病带这个」在大数据量下也得开得出来。
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.text('看病带这个'));
     await tester.tap(find.text('看病带这个').first);
     await settle(tester, total: const Duration(seconds: 4));
