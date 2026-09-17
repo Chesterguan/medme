@@ -5,7 +5,7 @@ DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE", "https://api.deepseek.com/v1")
 MODEL_TEXT = os.environ.get("DEEPSEEK_MODEL_TEXT", "deepseek-flash")
 MODEL_VISION = os.environ.get("DEEPSEEK_MODEL_VISION", "deepseek-flash")
 
-# 输出 schema v1 逐字来自 spec A §3;prompt 措辞与评测臂
+# 输出 schema v1/v2 逐字来自 spec A §3;prompt 措辞与评测臂
 # `packages/ocr/examples/medrep_llm.rs` 共用同一份文件(`packages/deid/prompts/`),
 # 改哪边的行为都只改那份文件——两边 byte-identical 由
 # `test_api.py::test_extract_system_prompt_matches_eval_fixture` 兜底。
@@ -47,11 +47,11 @@ with open(os.path.join(_PROMPTS_DIR, "extract_params.json"), encoding="utf-8") a
 
 
 class SchemaError(Exception):
-    """请求本身不满足 schema v1(client 的错,对应 400)。"""
+    """请求本身不满足 schema v1/v2(client 的错,对应 400)。"""
 
 
 class UpstreamError(Exception):
-    """DeepSeek 请求失败,或返回了解不出 schema v1 的内容(不是 client 的错,对应
+    """DeepSeek 请求失败,或返回了解不出 schema v1/v2 的内容(不是 client 的错,对应
     502;不回显上游原文——那可能是模型吐出来的任意内容,不能直接转发给调用方)。"""
 
 

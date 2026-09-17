@@ -2,7 +2,7 @@
     DATABASE_URL=postgresql://postgres@localhost:5435/medme_api_test python3 -m pytest services/api -q
 库不存在先 `createdb -p 5435 medme_api_test`。没有 DATABASE_URL 时整文件跳过。
 """
-import base64, hashlib, json, os, time
+import base64, hashlib, json, os, re, time
 import pytest
 
 DB = os.environ.get("DATABASE_URL")
@@ -729,6 +729,34 @@ def test_extract_system_prompt_matches_eval_fixture():
     with open(os.path.join(prompts_dir, "extract_params.json"), encoding="utf-8") as f:
         assert extract.REQUEST_PARAMS == json.load(f)
 
+    # 上面几条只证明"Python 自己读自己写的路径"(同义反复):没有任何东西核对过
+    # Rust 评测臂的 include_str! 真的指向同一份文件——把 SYSTEM_V2 的 include_str!
+    # 误写成指向 v1 文件,照样编译、照样通过上面的断言(fix round 1 review finding 2)。
+    # 这里真的解析 medrep_llm.rs 的源码,取出三个常量各自的 include_str! 路径,
+    # 相对 .rs 文件本身所在目录解出来,拿文件内容跟 Python 读到的逐字节比。
+    rust_src_path = os.path.join(prompts_dir, "..", "..", "ocr", "examples", "medrep_llm.rs")
+    with open(rust_src_path, encoding="utf-8") as f:
+        rust_src = f.read()
+    includes = dict(re.findall(r'const (\w+): &str = include_str!\("([^"]+)"\);', rust_src))
+    rust_dir = os.path.dirname(rust_src_path)
+    for const_name, py_value in (("SYSTEM", extract.SYSTEM_PROMPT_V1), ("SYSTEM_V2", extract.SYSTEM_PROMPT_V2)):
+        with open(os.path.join(rust_dir, includes[const_name]), encoding="utf-8") as f:
+            assert f.read() == py_value, const_name
+    with open(os.path.join(rust_dir, includes["REQUEST_PARAMS"]), encoding="utf-8") as f:
+        assert json.load(f) == extract.REQUEST_PARAMS
+
+
+def test_extract_v2_prompt_is_v1_verbatim_plus_facts():
+    # fix round 1(review finding 1):brief 原文让 v2 的开场白重写了一遍 v1 的话术,
+    # 于是 Task 8 的 MedRepBench 回归门比较 v1/v2 时,召回涨跌分不清是 facts 拖累的
+    # 还是纯措辞换了。改成硬规矩钉住:v2 必须是"v1 原文一字不改 + facts 追加",
+    # 这样以后谁手滑改了 v2 的开场白,这条测试立刻红。
+    import extract
+    v1_without_closing_brace = extract.SYSTEM_PROMPT_V1[:-1]
+    assert extract.SYSTEM_PROMPT_V2.startswith(v1_without_closing_brace)
+    appended = extract.SYSTEM_PROMPT_V2[len(v1_without_closing_brace):]
+    assert appended.startswith(',"facts":[')
+
 
 def test_extract_v2_prompt_names_every_fact_field_the_rust_type_has():
     # prompt 里的键和 deid::Fact 的字段名对不上,模型吐出来的东西就静默丢字段。
@@ -764,13 +792,31 @@ def test_extract_rejects_schema_three_but_accepts_one_and_two(monkeypatch):
             extract.run({"mode": "text", "schema": bad, "payload": "x"})
 
 
-def test_extract_route_accepts_schema_two(monkeypatch):
+def test_extract_route_picks_prompt_by_schema_and_mode(monkeypatch):
+    # fix round 1(review finding 3):原来这条整个 monkeypatch 掉 extract.run,
+    # schema 闸根本没跑就"过"了。改成只 stub 网络那一层 `_call_deepseek`,让
+    # run() 里真正的 schema 判断、prompt 选择跑一遍,经真实的 /v1/extract 路由,
+    # 四种 schema×mode 组合都测——图片档最容易在未来重构里被漏掉。
     import extract
-    monkeypatch.setattr(extract, "run", lambda body: ({"labs": [], "facts": []}, 1, 1))
+    seen = {}
+
+    def fake(arm, model, messages):
+        seen["system"] = messages[0]["content"]
+        return {"choices": [{"message": {"content": "{}"}}], "usage": {}}
+
+    monkeypatch.setattr(extract, "_call_deepseek", fake)
     a = login("13800000100", "a")
-    r = client.post("/v1/extract", json={"mode": "text", "schema": 2, "payload": "x"}, headers=_h(a["access"]))
-    assert r.status_code == 200
-    assert r.json()["facts"] == []
+    h = _h(a["access"])
+    cases = [
+        ({"mode": "text", "schema": 1, "payload": "x"}, extract.SYSTEM_PROMPT_V1),
+        ({"mode": "image", "schema": 1, "payload": "AAAA"}, extract.SYSTEM_PROMPT_V1),
+        ({"mode": "text", "schema": 2, "payload": "x"}, extract.SYSTEM_PROMPT_V2),
+        ({"mode": "image", "schema": 2, "payload": "AAAA"}, extract.SYSTEM_PROMPT_V2),
+    ]
+    for body, expected_prompt in cases:
+        r = client.post("/v1/extract", json=body, headers=h)
+        assert r.status_code == 200, r.text
+        assert seen["system"] == expected_prompt, body
 
 
 def test_extract_request_bounds_the_model_output(monkeypatch):
