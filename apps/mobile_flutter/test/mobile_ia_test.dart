@@ -28,6 +28,7 @@ import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
+import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
@@ -840,7 +841,8 @@ void main() {
     testWidgets('整页立得住 —— 摘要主体本身是 ListView,不能再嵌进一层滚动里', (t) async {
       // 这条钉的是**组合方式**:`VisitSummaryBody` 返回的是 `ListView`,把它放进
       // 另一个 `ListView` 的 children 会拿到无穷高约束当场炸(见 `wrapScreen` 的
-      // 文档)。所以正文占 `Expanded`,四条入口接在下面 —— 与浮层那边同一个形状。
+      // 文档)。所以正文占 `Expanded`,「出码」那一颗固定在它下面,另外三条经
+      // `footer` 接进正文自己的滚动流 —— 与浮层那边同一个形状。
       await t.pumpWidget(
         wrapScreen(ForDoctorScreen(load: () async => empty)),
       );
@@ -849,14 +851,67 @@ void main() {
       expect(find.text('出码给医生看'), findsOneWidget);
     });
 
-    testWidgets('四条入口逐字照 mockup s4,顺序也照它', (t) async {
+    testWidgets('跟着滚的三条逐字照 mockup s4,顺序也照它', (t) async {
       await t.pumpWidget(wrap(const ForDoctorActions()));
-      expect(find.text('出码给医生看'), findsOneWidget);
-      expect(find.text('打印 / 导出'), findsOneWidget);
-      expect(find.text('急救卡'), findsOneWidget);
+      // 断言**顺序**,不是「都在」—— 三条换个位置照样能逐条 findsOneWidget。
+      expect(
+        find
+            .descendant(
+              of: find.byType(ForDoctorActions),
+              matching: find.byType(ListTile),
+            )
+            .evaluate()
+            .map((e) => ((e.widget as ListTile).title as Text).data)
+            .toList(),
+        ['打印 / 导出', '急救卡', '我是医生,替病人代拍'],
+      );
       // 代拍入口全 App 只有这一句话(Task 15 让医生端主按钮也用它)。
-      expect(find.text('我是医生,替病人代拍'), findsOneWidget);
       expect(find.text('病人不用装 App、不用账号'), findsOneWidget);
+      // 出码不在这一组里 —— 它是固定在底部的那一颗(`s4`)。
+      expect(find.text('出码给医生看'), findsNothing);
+    });
+
+    testWidgets('正文不再画「看病带这个」—— 顶栏已经写着「给医生看」', (t) async {
+      await t.pumpWidget(wrapScreen(ForDoctorScreen(load: () async => empty)));
+      await t.pumpAndSettle();
+      expect(find.text('给医生看'), findsOneWidget);
+      // 同屏两个自己的名字:一个是词表要换掉的旧词(`看病带这个` → `给医生看`)。
+      expect(find.text('看病带这个'), findsNothing);
+      // 浮层那边照旧要抬头(它自己没有标题栏)。
+      await t.pumpWidget(
+        wrapScreen(
+          Scaffold(
+            body: VisitSummaryBody(
+              summary: empty,
+              onOpenDoc: (_) {},
+              onAddNote: () {},
+            ),
+          ),
+        ),
+      );
+      await t.pumpAndSettle();
+      expect(find.text('看病带这个'), findsOneWidget);
+    });
+
+    testWidgets('360×640 上 ×1 / ×2 / ×3 字号都不溢出 —— 老人是主要用户', (t) async {
+      // 固定区一旦不止一颗按钮,大字号下会把正文挤没:四条一起钉死时
+      // ×2.0 只剩 34% 的正文高度,×3.0 直接 `RenderFlex overflowed`。
+      // 现在只有「出码」钉在底部,另外三条跟着滚。
+      t.view.physicalSize = const Size(360, 640);
+      t.view.devicePixelRatio = 1.0;
+      addTearDown(t.view.resetPhysicalSize);
+      addTearDown(t.view.resetDevicePixelRatio);
+      for (final scale in [1.0, 2.0, 3.0]) {
+        await t.pumpWidget(
+          wrapScreen(
+            ForDoctorScreen(load: () async => empty),
+            textScale: scale,
+          ),
+        );
+        await t.pumpAndSettle();
+        expect(t.takeException(), isNull, reason: '×$scale 字号下溢出了');
+        expect(find.text('出码给医生看'), findsOneWidget);
+      }
     });
   });
 

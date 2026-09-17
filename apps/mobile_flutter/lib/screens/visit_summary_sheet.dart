@@ -273,11 +273,24 @@ class VisitSummaryBody extends StatefulWidget {
     required this.summary,
     required this.onOpenDoc,
     required this.onAddNote,
+    this.showHeading = true,
+    this.footer,
   });
 
   final VisitSummaryDto summary;
   final void Function(int docId) onOpenDoc;
   final VoidCallback onAddNote;
+
+  /// 正文顶部那行「看病带这个」抬头要不要画。浮层**要**(它自己没有标题栏);
+  /// 「给医生看」整页**不要** —— 那一页的 AppBar 上已经写着「给医生看」,再画一个
+  /// 旧名字就是同屏两个自己的名字(而「看病带这个」在词表里正是要换成「给医生看」
+  /// 的那个旧词)。患者那行「名字 · 性别 · 年龄」两边都留着。
+  final bool showHeading;
+
+  /// 接在正文最后、**跟着一起滚**的东西。「给医生看」那一页用它把「打印 / 导出」
+  /// 「急救卡」「代拍」三条放进滚动流里 —— `s4` 只有「出码给医生看」那一颗固定在
+  /// 底部。浮层不传。
+  final Widget? footer;
 
   @override
   State<VisitSummaryBody> createState() => _VisitSummaryBodyState();
@@ -307,11 +320,12 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
         MedShape.s3,
       ),
       children: [
-        Text('看病带这个', style: MedType.title.copyWith(color: c.ink)),
-        if (who.isNotEmpty) ...[
-          const SizedBox(height: 2),
-          Text(who, style: MedType.subtitle.copyWith(color: c.ink)),
+        if (widget.showHeading) ...[
+          Text('看病带这个', style: MedType.title.copyWith(color: c.ink)),
+          if (who.isNotEmpty) const SizedBox(height: 2),
         ],
+        if (who.isNotEmpty)
+          Text(who, style: MedType.subtitle.copyWith(color: c.ink)),
         const SizedBox(height: MedShape.s4),
 
         // ── 我想问医生的:这一屏唯一一处"患者自己带来的东西",排最前。 ──
@@ -349,6 +363,8 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
           onToggleMeds: () => setState(() => _medsExpanded = !_medsExpanded),
           onOpenDoc: widget.onOpenDoc,
         ),
+
+        if (widget.footer != null) widget.footer!,
       ],
     );
   }

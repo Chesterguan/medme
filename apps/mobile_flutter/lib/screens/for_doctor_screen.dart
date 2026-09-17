@@ -71,6 +71,33 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
     await next;
   }
 
+  /// 固定在底部的主动作 —— **只有这一颗**(`s4`:「真机上这颗按钮固定在底部」)。
+  /// 一屏只允许一颗主按钮(规范 §六),诊室里那一下就是把码递过去。
+  ///
+  /// 跳转在 Task 9 接上(与页内另外三条一起),这一版先把位置和文案摆对。
+  Widget _qrBar(MedColors c) => Container(
+    padding: const EdgeInsets.fromLTRB(
+      MedShape.s4,
+      MedShape.s2,
+      MedShape.s4,
+      MedShape.s2,
+    ),
+    decoration: BoxDecoration(
+      color: c.surface,
+      border: Border(top: BorderSide(color: c.line)),
+    ),
+    child: SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        // Task 9 接上跳转之前这颗是禁用态(灰的)。这一页本身也还没有入口
+        // (「病历」首页那颗方块是 Task 5),所以没有用户会先看到它。
+        onPressed: null,
+        icon: const Icon(Icons.qr_code_2, size: 20),
+        label: const Text('出码给医生看'),
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
@@ -105,17 +132,20 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
           }
           // 推进来直接就是内容,**没有「今天带给医生的」这类抬头**(`s4`)。
           //
-          // `s4` 的顺序是固定的,别自己重排:
-          //   过敏一行 → 在治(图标块 + 列表)→ 在吃(图标块 + 列表)
-          //   → 关键化验 → 检查与手术 → 出码 → 打印/导出 + 急救卡 → 代拍
+          // ⚠️ **正文分块顺序还不是 `s4` 的顺序。** 这里渲染的是今天
+          // `VisitSummaryBody` 的既有顺序(我想问医生的 → 我最近的变化 →
+          // 医生可能要问的:过敏 + 用药)。`s4` 要的是
+          // 过敏 → 在治 → 在吃 → 关键化验 → 检查与手术,过敏在**第一**行,
+          // 而且多一整块「检查与手术」—— 那次重排连同各行的迷你折线一起,
+          // 归 Task 9/10(Stage 2 内容)。**别照这段注释以为顺序已经对了。**
           //
-          // **Stage 1 只负责顺序,不提前做内容**:`s4` 里关键化验各行画了
-          // 迷你折线、还多一块「检查与手术」—— 那两样是 Stage 2,这一版
-          // 保持今天 `VisitSummaryBody` 的最后一次取值行,位置先摆对。
+          // 页脚与底部的分工照 `s4`:「出码给医生看」是主动作,真机上固定在
+          // 底部;「打印 / 导出」「急救卡」「代拍」跟着内容滚(否则固定区在
+          // 大字号下会把正文挤没 —— ×3.0 时整块直接溢出)。
           //
           // `VisitSummaryBody` 自己就是一个 `ListView`,**不能**再塞进外层
-          // `ListView` 的 children(纵向 viewport 拿到无穷高约束,当场炸)——
-          // 所以照浮层那边同一个写法:它占 `Expanded`,四条入口接在下面。
+          // `ListView` 的 children(纵向 viewport 拿到无穷高约束,当场炸),
+          // 所以那三条是经 `footer` 接进它自己的滚动流里的。
           return Column(
             children: [
               Expanded(
@@ -123,12 +153,12 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
                   summary: snap.data!,
                   onOpenDoc: _openDoc,
                   onAddNote: _addNote,
+                  // AppBar 上已经写着「给医生看」,正文不再画一次旧名字。
+                  showHeading: false,
+                  footer: const ForDoctorActions(),
                 ),
               ),
-              // 四条入口在 Task 9 接上真实跳转,这里先摆位置。
-              // `s4` 里「出码给医生看」在真机上固定在底部;**Stage 1 先内联**
-              // (mockup 那句「真机上这颗按钮固定在底部」是 Stage 3 视觉层的事)。
-              const SafeArea(top: false, child: ForDoctorActions()),
+              SafeArea(top: false, child: _qrBar(c)),
             ],
           );
         },
@@ -137,18 +167,17 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
   }
 }
 
-/// 页面底部四条入口。**纯 widget,不碰 FFI** —— 这样 `flutter test` 测得到
-/// (与 `QuickActions` / `VisitSummaryBody` 同一手法)。
+/// 接在正文最后、**跟着一起滚**的三条入口(`s4`:固定在底部的只有「出码」那一颗)。
+/// **纯 widget,不碰 FFI** —— 这样 `flutter test` 测得到(与 `QuickActions` /
+/// `VisitSummaryBody` 同一手法)。
 class ForDoctorActions extends StatelessWidget {
   const ForDoctorActions({
     super.key,
-    this.onShowQr,
     this.onExport,
     this.onEmergency,
     this.onProxy,
   });
 
-  final VoidCallback? onShowQr;
   final VoidCallback? onExport;
   final VoidCallback? onEmergency;
   final VoidCallback? onProxy;
@@ -158,12 +187,7 @@ class ForDoctorActions extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 逐字照 `s4`:出码那颗是「出码给医生看」,急救那颗是「急救卡」。
-        ListTile(
-          leading: const Icon(Icons.qr_code_2_outlined),
-          title: const Text('出码给医生看'),
-          onTap: onShowQr,
-        ),
+        // 逐字照 `s4`:急救那颗是「急救卡」。
         ListTile(
           leading: const Icon(Icons.print_outlined),
           title: const Text('打印 / 导出'),

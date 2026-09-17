@@ -735,6 +735,21 @@ enum ImportCaptureIssue {
 /// 与 `vault_events.dart` 的 `HomeTab` 下标一一对应,但**刻意不共用那组 int**:
 /// 上报的必须是稳定的名字,而下标会随 tab 顺序调整而变 —— 顺序一改,后台里所有
 /// 历史数据就整体错位,而且看不出来。
+///
+/// ⚠️ **取值在 2026-09 的三 tab 改版(UX Stage 1)换过一次,查数的人要先按版本
+/// 切一刀。** 最后一个发五个旧值的版本是 `1.6.0`(`pubspec.yaml`),新值随其后
+/// 第一个版本上线。对照:
+///
+/// | 旧值 | 新值 | 同一块屏吗 |
+/// |---|---|---|
+/// | `archive` | `records` | 是 —— `ArchiveScreen` 只是换了槽位、改了名 |
+/// | `settings` | `me` | 是 —— `SettingsScreen` 同理 |
+/// | `trends` | `trends` | 是 |
+/// | `overview` | 无 | **否**,概览整屏解散了 |
+/// | `emergency` | 无 | **否**,应急卡退出底栏,收进「给医生看」那一页 |
+///
+/// 不切这一刀,新的 `records` 会被旧的 `archive` 和一块已经不存在的 `overview`
+/// 一起稀释,而**图上看不出来**。
 enum AnalyticsTab {
   records,
   trends,
