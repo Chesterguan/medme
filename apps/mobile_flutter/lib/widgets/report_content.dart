@@ -225,7 +225,7 @@ class _ParaView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    // body 15·400,行高 1.6 —— 大段中文识别文本,行距比字号更影响可读性。
+    // body 15·400,行高 1.6 —— 大段中文识别出来的文字,行距比字号更影响可读性。
     final style = MedType.body.copyWith(height: 1.6, color: c.ink);
     final t = text.trimRight();
     final m = _labelRe.firstMatch(t);

@@ -56,6 +56,7 @@ const Map<String, String> kGlossary = {
 const List<String> kEnforced = [
   '数据出口', '数据管理', '本地优先', '只保存在你自己的设备上',
   '待确认', '点开核对并确认', '确认无误,归入档案',
+  '识别文本', '文档内容', '识别质量',
 ];
 
 /// 扫 `lib/**/*.dart` 找这个词。排除 FRB 生成物(`lib/src/rust/`)—— 那是机器

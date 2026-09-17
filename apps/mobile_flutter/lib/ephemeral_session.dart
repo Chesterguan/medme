@@ -56,7 +56,7 @@ class EphemeralSession {
   /// 的大局。复用 `parser::assemble_summary`——与生成加密分享同一套确定性装配。
   static Future<ProxySummaryDto> summary() => rust_ephemeral.ephemeralSummary();
 
-  /// 一份文档的识别文本(供审阅屏「逐份识别内容」摊开展示,喂给 `ReportContent`)。
+  /// 一份文档识别出来的文字(供审阅屏「逐份识别内容」摊开展示,喂给 `ReportContent`)。
   static Future<String> documentText(int documentId) =>
       rust_ephemeral.ephemeralDocumentText(documentId: documentId);
 
@@ -80,7 +80,7 @@ class EphemeralSession {
       rust_ephemeral.ephemeralConfirmedMap();
 
   /// 一份文档详情(还没核对列表「点进一份」的详情页):类型/日期 + 来源文件元信息 +
-  /// 识别文本 + 置信度。签名与 `vault.dart` 的 `getDocument` 一致。
+  /// 识别出来的文字 + 置信度。签名与 `vault.dart` 的 `getDocument` 一致。
   static Future<DocumentDetailDto> getDocument(int documentId) =>
       rust_ephemeral.ephemeralGetDocument(documentId: documentId);
 

@@ -174,7 +174,7 @@ Future<Map<String, dynamic>> postExtractRetrying(
     final left = deadline.difference(DateTime.now());
     if (e.status != 502 || left < minRetryBudget) rethrow;
     // `e.message` 是服务端的 detail(`upstream` / `upstream_truncated`),是我们
-    // 自己的常量,不含任何文档内容 —— 可以进日志(同下面 catch 那条纪律)。
+    // 自己的常量,不含任何文件正文 —— 可以进日志(同下面 catch 那条纪律)。
     debugPrint('[cloud-extract] 上游 502:${e.message},剩 ${left.inSeconds}s,重试一次');
     return postExtract(api, mode: mode, payload: payload).timeout(left);
   }
@@ -437,7 +437,7 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
       ),
     );
   } catch (e) {
-    // ⚠️ **绝不进埋点**(异常文本可能带文档内容片段)。`debugPrint` 在 release 里
+    // ⚠️ **绝不进埋点**(异常文本可能带文件正文片段)。`debugPrint` 在 release 里
     // 并不会被剥离,一样会进系统日志 —— 这里打印的东西必须自己就是安全的:闸的错误
     // 只报类别不回显身份(`deid/gate.rs` 有测试钉),网络/解析异常带的是**脱敏后**的
     // 响应片段。要往这行里加内容的话,先确认新加的东西也满足这一条。

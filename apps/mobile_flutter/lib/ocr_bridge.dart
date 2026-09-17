@@ -6,7 +6,7 @@ import 'package:flutter/services.dart' show MethodChannel;
 import 'package:mobile_flutter/src/rust/api/dto.dart' show OcrLineDto;
 import 'package:mobile_flutter/src/rust/api/vault.dart' as rust_vault;
 
-/// 一张图片的 OCR 结果:识别文本 + 平均置信度(0~1)。
+/// 一张图片的 OCR 结果:识别出来的文字 + 平均置信度(0~1)。
 ///
 /// [lines]/[frameW]/[frameH]/[bytes] 四个是**云抽取图片档**专用(`cloud_extract.dart`),
 /// 其余调用方一律忽略,所以都给了空默认值(`const OcrResult('x', 0.9)` 这类既有
@@ -48,7 +48,7 @@ const MethodChannel _iosOcrChannel = MethodChannel('medme/ocr');
 /// **iOS + 安卓都走 PP-OCRv5**(经 FRB `recognize_image_pp`,`packages/ocr` 的
 /// `engine` 路径,走 `apps/mobile_flutter/rust/ocr-models/` 里编译进二进制的模型;
 /// 高图纵向切片见 `packages/ocr` 的 `predict_lines`)。iOS 已合入 main(ADR 0006
-/// 采纳);安卓侧 feat/android-pp-ocr —— 用户反馈 ML Kit 中文识别质量不够,拍板
+/// 采纳);安卓侧 feat/android-pp-ocr —— 用户反馈 ML Kit 中文识别置信度不够,拍板
 /// 换成和 iOS 同引擎同模型。
 /// - **iOS**:喂 PP 之前先经 `medme/ocr` 的「rectifyDocument」case 做一遍原生文档
 ///   检测+拉正+裁(见 [_rectifyDocument],`VNDetectDocumentSegmentation`,iOS-only)。

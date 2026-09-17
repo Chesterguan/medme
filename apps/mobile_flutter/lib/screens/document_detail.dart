@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
-import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
@@ -66,7 +65,7 @@ Future<Uint8List> _renderDicomMaterialized(int sourceFileId) async {
   return renderDicomPng(id: sourceFileId);
 }
 
-/// 文档详情屏:类型/日期/来源 + 识别文本(复用 ReportContent 内容感知渲染)+
+/// 文档详情屏:类型/日期/来源 + 识别出来的文字(复用 ReportContent 内容感知渲染)+
 /// 查看原件(图片/PDF/DICOM 各自渲染,其余格式优雅降级不崩)。
 class DocumentDetailScreen extends StatefulWidget {
   final int docId;
@@ -125,9 +124,17 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
   /// 底部「看原件」(`s7` 那一对按钮之一):复用 [_openOriginal] 那套按 mime
   /// 分流的查看器。原件信息在 [_future] 里,本屏已经在拉,不必再读一次。
   Future<void> _viewOriginal() async {
-    final detail = await _future;
-    if (!mounted) return;
-    await _openOriginal(context, detail.sourceFile);
+    try {
+      final detail = await _future;
+      if (!mounted) return;
+      await _openOriginal(context, detail.sourceFile);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(appSnackBar(content: Text('打开失败:$e')));
+      }
+    }
   }
 
   @override
@@ -238,8 +245,6 @@ class _DetailBody extends StatelessWidget {
     final typeLabel = docRowLabel(doc);
     final isManualEntry = _isManualEntry(doc.docType);
 
-    final confTier = confTierFor(detail.ocrConfidence, detail.ocrText);
-
     final c = MedColors.of(context);
 
     return ListView(
@@ -252,7 +257,7 @@ class _DetailBody extends StatelessWidget {
       children: [
         // 抬头卡带骑缝线:这一整屏讲的就是**某一份原件**,而且「查看原件」就在
         // 卡里 —— 「背后有原件、点得进去」两条都成立(规范 §五)。全屏只有这
-        // 一道骑缝线,下面的识别文本是从它派生出来的,不重复。
+        // 一道骑缝线,下面识别出来的文字是从它派生出来的,不重复。
         MedCard(
           perforated: true,
           child: Padding(
@@ -303,17 +308,13 @@ class _DetailBody extends StatelessWidget {
                           Text(
                             '来源:${sf.originalName}',
                             style: MedType.secondary.copyWith(color: c.ink3),
+                            softWrap: false,
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-
-                if (confTier != null) ...[
-                  const SizedBox(height: MedShape.s3),
-                  ConfBadge(tier: confTier),
-                ],
 
                 const SizedBox(height: MedShape.s3),
                 if (isManualEntry) ...[
@@ -364,10 +365,7 @@ class _DetailBody extends StatelessWidget {
           children: [
             Icon(Icons.article_outlined, size: 15, color: c.ink3),
             const SizedBox(width: MedShape.s1),
-            Text(
-              sf.mimeType.startsWith('image/') ? '识别文本' : '文档内容',
-              style: MedType.caption.copyWith(color: c.ink3),
-            ),
+            Text('文字', style: MedType.caption.copyWith(color: c.ink3)),
           ],
         ),
         const SizedBox(height: MedShape.s2),
@@ -450,85 +448,6 @@ Future<void> _openOriginal(BuildContext context, SourceFileMetaDto sf) async {
       ],
     ),
   );
-}
-
-enum ConfTier { high, mid, low, lowYield }
-
-/// OCR 置信度 + 识别产出 → 患者看得懂的档位。手动录入没有 OCR 这一步
-/// (`ocrConfidence` 恒为 null),返回 null,不画徽标。
-///
-/// **光看 `confidence` 会撒谎**:它是逐行均值,一页纸只认出红章那一行、
-/// 十来个字,均值照样很高,徽标就写「识别质量:高」——旁边却只有 14 个字。
-/// 所以先过一道产出闸:门槛直接复用云抽取那条 [isLowOcrYield](40 字 / 3 行,
-/// 阈值来历见它的文档),低于它一律 [ConfTier.lowYield],与「这一份不许上云」
-/// 的判断口径一致——不该出现「质量高、但没资格上云」这种自相矛盾的一屏。
-ConfTier? confTierFor(double? confidence, String ocrText) {
-  if (confidence == null) return null;
-  if (isLowOcrYield(ocrText)) return ConfTier.lowYield;
-  if (confidence >= 0.9) return ConfTier.high;
-  if (confidence >= 0.75) return ConfTier.mid;
-  return ConfTier.low;
-}
-
-/// 识别质量徽标:档位由 [confTierFor] 定,比裸百分比更易懂(与旧 App.tsx .conf 一致)。
-///
-/// 「高」原先是 emerald 绿(#ECFDF5/#047857)。绿不在规范色板里,而且规范 §二
-/// 明确不要「绿=没问题」这层暗示 —— 识别质量高**不代表**化验结果正常,两件事
-/// 用同一种「放心色」讲容易混。改成主色的极浅底:是一条中性的状态说明,不是
-/// 一句安慰。中/低两档接规范的 `high` / `critical`。
-class ConfBadge extends StatelessWidget {
-  final ConfTier tier;
-  const ConfBadge({super.key, required this.tier});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    final (bg, fg, icon, text) = switch (tier) {
-      ConfTier.high => (
-        c.sealWash,
-        c.sealInk,
-        Icons.check_circle_outline,
-        '识别质量:高',
-      ),
-      ConfTier.mid => (
-        c.highWash,
-        c.high,
-        Icons.error_outline,
-        '识别质量:中 · 个别字可能有误,可核对原件',
-      ),
-      ConfTier.low => (
-        c.criticalWash,
-        c.critical,
-        Icons.error_outline,
-        '识别质量:低 · 建议重新拍摄',
-      ),
-      ConfTier.lowYield => (
-        c.criticalWash,
-        c.critical,
-        Icons.error_outline,
-        '识别质量:低 · 几乎没认出字,建议重拍',
-      ),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: MedShape.s2,
-        vertical: MedShape.s1,
-      ),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 17, color: fg),
-          const SizedBox(width: MedShape.s1),
-          Expanded(
-            child: Text(text, style: MedType.secondary.copyWith(color: fg)),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 /// 图片原件全屏查看(可缩放),字节来自 `readSourceBytes`。

@@ -25,11 +25,11 @@ enum ProxyDetailResult { none, changed, retake }
 /// 代码与 `document_detail.dart` 重复大半,也不去改那个文件抽公共组件——保持「不碰
 /// 普通人模式一行代码」这条硬规矩在这两个文件上都显而易见成立。
 ///
-/// 布局复用 `document_detail.dart` 的呈现方式:抬头卡(带骑缝线)+ 识别文本
+/// 布局复用 `document_detail.dart` 的呈现方式:抬头卡(带骑缝线)+ 识别出来的文字
 /// (`ReportContent`)。底部按钮换成本流程要的三个动作:确认这一份 / 删除 / 重拍。
 ///
 /// **视觉上与 `document_detail.dart` 逐处对齐,只把主色 `seal`(蓝)换成 `proxy`
-/// (紫)** —— 结构、字阶、圆角、骑缝线、间距全部同源。识别文本区整块交给共用的
+/// (紫)** —— 结构、字阶、圆角、骑缝线、间距全部同源。识别出来的文字区整块交给共用的
 /// `ReportContent`,它一个字节都不为医生模式改:同一份化验值在两个模式下必须
 /// 长得一模一样。
 class ProxyDocumentDetailScreen extends StatefulWidget {
@@ -351,6 +351,7 @@ class _ProxyDetailBody extends StatelessWidget {
                           Text(
                             '来源:${sf.originalName}',
                             style: MedType.secondary.copyWith(color: c.ink3),
+                            softWrap: false,
                           ),
                         ],
                       ),
@@ -385,10 +386,7 @@ class _ProxyDetailBody extends StatelessWidget {
           children: [
             Icon(Icons.article_outlined, size: 15, color: c.ink3),
             const SizedBox(width: MedShape.s1),
-            Text(
-              sf.mimeType.startsWith('image/') ? '识别文本' : '文档内容',
-              style: MedType.caption.copyWith(color: c.ink3),
-            ),
+            Text('文字', style: MedType.caption.copyWith(color: c.ink3)),
           ],
         ),
         const SizedBox(height: MedShape.s2),
