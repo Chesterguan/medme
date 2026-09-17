@@ -14,6 +14,10 @@ with open(os.path.join(_PROMPTS_DIR, "extract_v1_system.txt"), encoding="utf-8")
     SYSTEM_PROMPT_V1 = _f.read()
 with open(os.path.join(_PROMPTS_DIR, "extract_v1_image_user.txt"), encoding="utf-8") as _f:
     IMAGE_USER_TEXT = _f.read()
+# schema 2:族级病程 facts(spec §3)。措辞是免疫介导慢病族共用的,prompt 里不带
+# 任何具体病名——服务端从这份 prompt 看不出用户开的是哪个 skill(spec §8)。
+with open(os.path.join(_PROMPTS_DIR, "extract_v2_system.txt"), encoding="utf-8") as _f:
+    SYSTEM_PROMPT_V2 = _f.read()
 
 
 # 请求参数与评测臂(`packages/ocr/examples/medrep_llm.rs`)共用同一份文件,理由与
@@ -38,7 +42,7 @@ with open(os.path.join(_PROMPTS_DIR, "extract_v1_image_user.txt"), encoding="utf
 # **两档都实测过**(task-23,同 45 份、同分母 156 条可比):`none` 的项目召回
 # 64.7% / 值-名配对 62.2%,比 `low` 的 68.6% / 64.7% 低 3.9 / 2.5 个点,超出
 # 「1 个点以内就换」的判据,所以两条臂都留 `low`,改抬文本档的 `max_tokens`。
-with open(os.path.join(_PROMPTS_DIR, "extract_v1_params.json"), encoding="utf-8") as _f:
+with open(os.path.join(_PROMPTS_DIR, "extract_params.json"), encoding="utf-8") as _f:
     REQUEST_PARAMS = json.load(_f)
 
 
@@ -79,7 +83,14 @@ def _call_deepseek(arm: str, model: str, messages: list) -> dict:
 
 def run(body: dict) -> tuple[dict, int, int]:
     mode = body.get("mode", "text")
-    if body.get("schema") != 1:
+    schema = body.get("schema")
+    # 老 App 发 1、新 App 发 2,两条都在线;3 和别的形状照旧 400。
+    # `is` 比较避开 True == 1 这个 Python 陷阱(bool 是 int 的子类)。
+    if schema is not True and schema == 1:
+        system_prompt = SYSTEM_PROMPT_V1
+    elif schema is not True and schema == 2:
+        system_prompt = SYSTEM_PROMPT_V2
+    else:
         raise SchemaError("schema")
     if mode == "image":
         payload = body.get("payload")
@@ -96,7 +107,7 @@ def run(body: dict) -> tuple[dict, int, int]:
         model = MODEL_TEXT
         arm = "text"
     try:
-        out = _call_deepseek(arm, model, [{"role": "system", "content": SYSTEM_PROMPT_V1}, {"role": "user", "content": content}])
+        out = _call_deepseek(arm, model, [{"role": "system", "content": system_prompt}, {"role": "user", "content": content}])
         choice = out["choices"][0]
         # 被 MAX_TOKENS 截断的回答**不是**结果:JSON 断在半截,`json.loads` 多半会炸,
         # 但偶尔也会恰好断在一个合法的位置上,于是我们把一份**缺了后半张表**的抽取

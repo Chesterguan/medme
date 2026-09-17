@@ -37,6 +37,11 @@ use std::time::Instant;
 /// 由 `services/api/test_api.py` 的 `test_extract_system_prompt_matches_eval_fixture`
 /// 兜底)。
 const SYSTEM: &str = include_str!("../../deid/prompts/extract_v1_system.txt");
+/// schema 2(族级 facts)。评测臂按 `--schema` 选,与线上代理选的是同一份文件。
+// ponytail: 常量先落地(byte-identical 由 test_api.py 兜底),`--schema` CLI
+// 开关本身是后面评测任务的活,这里还没有调用点——先 allow 而不是提前接线。
+#[allow(dead_code)]
+const SYSTEM_V2: &str = include_str!("../../deid/prompts/extract_v2_system.txt");
 /// 图片档 user message 里的提示文本,同样与 `services/api/extract.py` 共享一份文件。
 const IMAGE_USER_TEXT: &str = include_str!("../../deid/prompts/extract_v1_image_user.txt");
 /// 请求参数(`max_tokens` / `reasoning_effort`)与线上代理 `services/api/extract.py`
@@ -46,7 +51,7 @@ const IMAGE_USER_TEXT: &str = include_str!("../../deid/prompts/extract_v1_image_
 /// 文件**按臂分两块**,键名就是 [`mode_dir_name`] 的返回值(`"text"` / `"image"`):
 /// 文本档的截断风险比图片档高一个量级(合并后的多页文本),两条臂的 `max_tokens`
 /// 因此不同 —— 理由见 `extract.py` 里那段注释。
-const REQUEST_PARAMS: &str = include_str!("../../deid/prompts/extract_v1_params.json");
+const REQUEST_PARAMS: &str = include_str!("../../deid/prompts/extract_params.json");
 
 const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
 /// 模型**默认值**,不是硬绑定:`DEEPSEEK_MODEL_TEXT` / `DEEPSEEK_MODEL_VISION`
@@ -96,15 +101,13 @@ fn request_body(mode: Mode, model: &str, user_content: serde_json::Value) -> ser
     });
     // 本臂的共用参数逐字段并进去(`max_tokens` / `reasoning_effort`),不在这里重复写死。
     let params: serde_json::Value =
-        serde_json::from_str(REQUEST_PARAMS).expect("extract_v1_params.json 不是合法 JSON");
+        serde_json::from_str(REQUEST_PARAMS).expect("extract_params.json 不是合法 JSON");
     let arm = &params[mode_dir_name(mode)];
     let obj = body.as_object_mut().expect("body is object");
-    for (k, v) in arm.as_object().unwrap_or_else(|| {
-        panic!(
-            "extract_v1_params.json 里没有 {} 这一臂",
-            mode_dir_name(mode)
-        )
-    }) {
+    for (k, v) in arm
+        .as_object()
+        .unwrap_or_else(|| panic!("extract_params.json 里没有 {} 这一臂", mode_dir_name(mode)))
+    {
         obj.insert(k.clone(), v.clone());
     }
     body

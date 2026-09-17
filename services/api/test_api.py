@@ -722,8 +722,55 @@ def test_extract_system_prompt_matches_eval_fixture():
     prompts_dir = os.path.join(os.path.dirname(extract.__file__), "..", "..", "packages", "deid", "prompts")
     with open(os.path.join(prompts_dir, "extract_v1_system.txt"), encoding="utf-8") as f:
         assert extract.SYSTEM_PROMPT_V1 == f.read()
+    with open(os.path.join(prompts_dir, "extract_v2_system.txt"), encoding="utf-8") as f:
+        assert extract.SYSTEM_PROMPT_V2 == f.read()
     with open(os.path.join(prompts_dir, "extract_v1_image_user.txt"), encoding="utf-8") as f:
         assert extract.IMAGE_USER_TEXT == f.read()
+    with open(os.path.join(prompts_dir, "extract_params.json"), encoding="utf-8") as f:
+        assert extract.REQUEST_PARAMS == json.load(f)
+
+
+def test_extract_v2_prompt_names_every_fact_field_the_rust_type_has():
+    # prompt 里的键和 deid::Fact 的字段名对不上,模型吐出来的东西就静默丢字段。
+    import extract
+    for key in ["organ_involvement", "flare", "hospitalization", "biopsy", "infusion",
+                "dose_change", "scale", "imaging_finding", "infection", "pregnancy",
+                "vaccination", "exam_done", "evidence", "date_start", "date_end"]:
+        assert key in extract.SYSTEM_PROMPT_V2, key
+    # 族级:prompt 里不许出现任何具体病名 —— 服务端看不出用户是哪个病(spec §8)。
+    # "SLE" 不能直接当子串判:量表名 SLEDAI 是 spec §3 规定的族级 scale 枚举之一
+    # (六个病的量表混列同一个 enum,单看一份 prompt 分不出用户是哪个病),朴素子串
+    # 会把它和 SLEDAI 里连着的这三个字母撞在一起误报,所以改判"每次出现都在 SLEDAI 里"。
+    for banned in ["红斑狼疮", "多发性硬化", "重症肌无力", "IBD", "NMOSD"]:
+        assert banned not in extract.SYSTEM_PROMPT_V2, banned
+    assert extract.SYSTEM_PROMPT_V2.count("SLE") == extract.SYSTEM_PROMPT_V2.count("SLEDAI")
+
+
+def test_extract_rejects_schema_three_but_accepts_one_and_two(monkeypatch):
+    import extract
+    seen = {}
+
+    def fake(arm, model, messages):
+        seen["system"] = messages[0]["content"]
+        return {"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}], "usage": {}}
+
+    monkeypatch.setattr(extract, "_call_deepseek", fake)
+    extract.run({"mode": "text", "schema": 1, "payload": "x"})
+    assert seen["system"] == extract.SYSTEM_PROMPT_V1
+    extract.run({"mode": "text", "schema": 2, "payload": "x"})
+    assert seen["system"] == extract.SYSTEM_PROMPT_V2
+    for bad in (3, 0, "2", None):
+        with pytest.raises(extract.SchemaError):
+            extract.run({"mode": "text", "schema": bad, "payload": "x"})
+
+
+def test_extract_route_accepts_schema_two(monkeypatch):
+    import extract
+    monkeypatch.setattr(extract, "run", lambda body: ({"labs": [], "facts": []}, 1, 1))
+    a = login("13800000100", "a")
+    r = client.post("/v1/extract", json={"mode": "text", "schema": 2, "payload": "x"}, headers=_h(a["access"]))
+    assert r.status_code == 200
+    assert r.json()["facts"] == []
 
 
 def test_extract_request_bounds_the_model_output(monkeypatch):
