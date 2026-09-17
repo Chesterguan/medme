@@ -633,6 +633,26 @@ fn check_top_field(
     }
 }
 
+/// spec §3 的族级 `Fact.type` 允许值(与 `Fact` 结构体文档同一份清单)。
+/// `parse_extraction` 仍容忍清单外的新 type(server 端 prompt 可以先于 App 加新
+/// 类型,见 Task 5 `an_unknown_fact_type_survives_parsing_...`),但 `verify()`
+/// 不会把它当验真事实放行——未知 type 与其它字段一样,文本档丢、图片档标
+/// `unverified`(fix round 1 finding 6)。
+const KNOWN_FACT_TYPES: &[&str] = &[
+    "organ_involvement",
+    "flare",
+    "hospitalization",
+    "biopsy",
+    "infusion",
+    "dose_change",
+    "scale",
+    "imaging_finding",
+    "infection",
+    "pregnancy",
+    "vaccination",
+    "exam_done",
+];
+
 pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
     let src = Src::new(source_text);
     let (mut rejected, mut unverified) = (0usize, 0usize);
@@ -718,32 +738,51 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
     });
 
     // 族级病程事实(spec §3):与 labs/meds/diagnoses 同一套逐字校验,**每个字符串
-    // 字段都查**,不是只查 `evidence` —— `drug`/`from`/`to`/`value` 会直接印到界面上
-    // 「泼尼松 30mg → 20mg」这句话里,放任它们就是让模型在最要命的地方自由发挥。
-    // `FieldKind::Text` 对所有字段:日期、器官、剂量在原文里都是印出来的文本,没有
-    // labs 那种「数值/单位/标志」的分型需求。空串由 `field_ok` 恒过(见其文档)。
+    // 字段都查**,不是只查 `evidence`(fix round 1,评审 c60205d..79497a0)。
+    // 按字段语义分型,不是一律 `FieldKind::Text`:
+    //   * `value`/`dose`/`from`/`to` 走 `Numeric` —— 裸 `contains` 没有数字边界,
+    //     `15` 会背书 `5`、`580mg` 会背书 `80mg`(finding 1);图片档下 `Text` 的
+    //     字母→数字折叠(`s→5,l→1,i→1`,见 `fold_char`)还会让纯字母的 "SLEDAI"
+    //     凭空造出分数 "51"(finding 2)——`Numeric` 两档都不折叠字母,天然挡住。
+    //   * `drug`/`name` 走 `Name`,与 `MedItem.name` 同一条模糊规则,否则同一个
+    //     药名在 meds 验真、在 facts 却被打待核(finding 5)。
+    //   * 其余(`organ`/`date*`/`text`/`reason`/`result`/`modality`/`finding`/
+    //     `status`)仍是 `Text`:纯文本字段,没有数字边界或术语模糊的需求。
+    // `evidence` 不进这套字段分派:它是锚点,`field_ok` 对空串恒过、`FieldKind::Text`
+    // 图片档还会折叠容错,两条都会把这道最后防线放水(finding 3/4)——空串必须是
+    // 硬失败,且两档都要求原文**逐字**(`src.text.contains`,不去空白、不折叠)。
+    // `type` 也单独查:未知 type 不当验真事实放行(finding 6),但解析阶段仍容忍
+    // 未知 type(见 Task 5 `an_unknown_fact_type_survives_parsing_...`)——两者不冲突,
+    // 前者是 `verify()` 的事,后者是 `parse_extraction()` 的事。
     e.facts.retain_mut(|f| {
-        let ok = [
-            &f.organ,
-            &f.date,
-            &f.date_start,
-            &f.date_end,
-            &f.text,
-            &f.reason,
-            &f.result,
-            &f.drug,
-            &f.dose,
-            &f.from,
-            &f.to,
-            &f.name,
-            &f.value,
-            &f.modality,
-            &f.finding,
-            &f.status,
-            &f.evidence,
-        ]
-        .into_iter()
-        .all(|s| field_ok(s, &src, mode, FieldKind::Text));
+        let evidence_ok = !f.evidence.is_empty() && src.text.contains(&f.evidence);
+        let type_ok = KNOWN_FACT_TYPES.contains(&f.r#type.as_str());
+        // ponytail: evidence 核验是全文子串,不认段落边界——抄自不相干段落的句子
+        // 照样能给任意一条 fact 背书(评审实测:拿「否认糖尿病」给 infection 背书
+        // 通过)。真要收紧到「同一段」,得先给 Src 加分段索引;今天没有消费方逼近
+        // 这个洞,先留着,升级路径见 `Src`。
+        let ok = evidence_ok
+            && type_ok
+            && [
+                (&f.organ, FieldKind::Text),
+                (&f.date, FieldKind::Text),
+                (&f.date_start, FieldKind::Text),
+                (&f.date_end, FieldKind::Text),
+                (&f.text, FieldKind::Text),
+                (&f.reason, FieldKind::Text),
+                (&f.result, FieldKind::Text),
+                (&f.drug, FieldKind::Name),
+                (&f.dose, FieldKind::Numeric),
+                (&f.from, FieldKind::Numeric),
+                (&f.to, FieldKind::Numeric),
+                (&f.name, FieldKind::Name),
+                (&f.value, FieldKind::Numeric),
+                (&f.modality, FieldKind::Text),
+                (&f.finding, FieldKind::Text),
+                (&f.status, FieldKind::Text),
+            ]
+            .into_iter()
+            .all(|(s, kind)| field_ok(s, &src, mode, kind));
         keep(ok, &mut f.unverified)
     });
 
@@ -1126,5 +1165,288 @@ mod tests {
         let v = verify(e, FACT_SRC, Mode::Text);
         assert_eq!(v.extraction.facts.len(), 1);
         assert_eq!(v.rejected, 0);
+    }
+
+    // --- Task 6 fix round 1: 数值边界 / 字母折叠 / evidence 强制非空且逐字 /
+    // drug·name 走 Name / type 白名单(评审 c60205d..79497a0 抓出的七个洞) ---
+
+    const FACT_SRC2: &str = "泼尼松减至 20mg qd\nSLEDAI 评分 15 分\n环磷酰胺 580mg 静脉输注";
+
+    // finding 1:value/dose/from/to 裸 contains 没有数字边界,15 能背书 5、
+    // 20mg 能背书 0mg、580mg 能背书 80mg。三个陷阱各一条测试。
+
+    #[test]
+    fn text_mode_scale_value_needs_a_digit_boundary_not_bare_contains() {
+        let f = Fact {
+            r#type: "scale".into(),
+            name: "SLEDAI".into(),
+            value: "5".into(), // 原文是 15,裸 contains 会被背书
+            evidence: "SLEDAI 评分 15 分".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC2,
+            Mode::Text,
+        );
+        assert!(
+            v.extraction.facts.is_empty(),
+            "value=5 不该被原文的 15 背书"
+        );
+        assert_eq!(v.rejected, 1);
+    }
+
+    #[test]
+    fn text_mode_dose_change_to_needs_a_digit_boundary() {
+        let f = Fact {
+            r#type: "dose_change".into(),
+            drug: "泼尼松".into(),
+            to: "0mg".into(), // 原文是 20mg
+            evidence: "泼尼松减至 20mg qd".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC2,
+            Mode::Text,
+        );
+        assert!(
+            v.extraction.facts.is_empty(),
+            "to=0mg 不该被原文的 20mg 背书"
+        );
+        assert_eq!(v.rejected, 1);
+    }
+
+    #[test]
+    fn text_mode_infusion_dose_needs_a_digit_boundary() {
+        let f = Fact {
+            r#type: "infusion".into(),
+            drug: "环磷酰胺".into(),
+            dose: "80mg".into(), // 原文是 580mg
+            evidence: "环磷酰胺 580mg 静脉输注".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC2,
+            Mode::Text,
+        );
+        assert!(
+            v.extraction.facts.is_empty(),
+            "dose=80mg 不该被原文的 580mg 背书"
+        );
+        assert_eq!(v.rejected, 1);
+    }
+
+    // finding 2:图片档 `FieldKind::Text` 的字母折叠(s→5、l→1、i→1)会让纯字母的
+    // "SLEDAI" 凭空造出数字 "51"。数值字段必须不走这条折叠。
+
+    #[test]
+    fn image_mode_numeric_field_does_not_let_letters_fold_into_digits() {
+        let f = Fact {
+            r#type: "scale".into(),
+            name: "SLEDAI".into(),
+            value: "51".into(), // 原文只有单词 SLEDAI,没有任何数字
+            evidence: "SLEDAI".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            "SLEDAI",
+            Mode::Image,
+        );
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert!(
+            v.extraction.facts[0].unverified,
+            "51 不该靠字母→数字折叠验真"
+        );
+        assert_eq!(v.unverified, 1);
+    }
+
+    // finding 3:空 evidence 是免检通行证。
+
+    #[test]
+    fn text_mode_drops_a_fact_with_empty_evidence() {
+        let f = Fact {
+            r#type: "flare".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Text,
+        );
+        assert!(v.extraction.facts.is_empty(), "空 evidence 不能免检");
+        assert_eq!(v.rejected, 1);
+    }
+
+    #[test]
+    fn image_mode_flags_a_fact_with_empty_evidence() {
+        let f = Fact {
+            r#type: "flare".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Image,
+        );
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert!(
+            v.extraction.facts[0].unverified,
+            "空 evidence 图片档也要标待核"
+        );
+        assert_eq!(v.unverified, 1);
+    }
+
+    // finding 4:图片档 evidence 走的是 `FieldKind::Text` 的折叠容错,
+    // 大写 O 会被折成数字 0,"2Omg" 因此能验真 "20mg"。evidence 两档都必须逐字。
+
+    #[test]
+    fn image_mode_evidence_is_verbatim_not_fold_tolerant() {
+        let f = Fact {
+            r#type: "dose_change".into(),
+            to: "20mg".into(),
+            evidence: "泼尼松减至 2Omg qd".into(), // 大写字母 O,不是数字 0
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Image,
+        );
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert!(
+            v.extraction.facts[0].unverified,
+            "evidence 里的字母 O 不是原文的数字 0,不该折叠验真"
+        );
+        assert_eq!(v.unverified, 1);
+    }
+
+    // finding 5:drug/name 应与 `MedItem.name` 同一条模糊规则(edit distance ≤1 的
+    // OCR 误读),否则同一个药名在 meds 验真、在 facts 却被打待核。与
+    // `med_name_uses_the_same_name_rule`(tests/verify_tolerant.rs)同一对字符串。
+
+    #[test]
+    fn image_mode_fact_drug_gets_the_same_fuzzy_name_rule_as_med_name() {
+        let f = Fact {
+            r#type: "infusion".into(),
+            drug: "阿司匹林肠溶片".into(), // 原文是「休」,editdistance 1
+            evidence: "阿司匹休肠溶片 100mg 每日一次".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            "阿司匹休肠溶片 100mg 每日一次",
+            Mode::Image,
+        );
+        assert!(
+            !v.extraction.facts[0].unverified,
+            "drug 应与 meds.name 同一条模糊规则,不该被打待核"
+        );
+    }
+
+    // finding 6:`type` 不在白名单里的 fact,不该被当验真事实放行——但解析阶段
+    // 仍要容忍未知 type(Task 5 的 `an_unknown_fact_type_survives_parsing_...` 不变)。
+
+    #[test]
+    fn text_mode_drops_a_fact_with_an_unknown_type() {
+        let f = Fact {
+            r#type: "something_new_2027".into(),
+            text: "狼疮性肾炎 IV 型".into(),
+            evidence: "狼疮性肾炎 IV 型".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Text,
+        );
+        assert!(
+            v.extraction.facts.is_empty(),
+            "未知 type 不该被当验真事实放行"
+        );
+        assert_eq!(v.rejected, 1);
+    }
+
+    #[test]
+    fn image_mode_flags_a_fact_with_an_unknown_type() {
+        let f = Fact {
+            r#type: "something_new_2027".into(),
+            text: "狼疮性肾炎 IV 型".into(),
+            evidence: "狼疮性肾炎 IV 型".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Image,
+        );
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert!(v.extraction.facts[0].unverified);
+        assert_eq!(v.unverified, 1);
+    }
+
+    #[test]
+    fn all_twelve_spec_fact_types_are_in_the_allowlist() {
+        for t in [
+            "organ_involvement",
+            "flare",
+            "hospitalization",
+            "biopsy",
+            "infusion",
+            "dose_change",
+            "scale",
+            "imaging_finding",
+            "infection",
+            "pregnancy",
+            "vaccination",
+            "exam_done",
+        ] {
+            let f = Fact {
+                r#type: t.into(),
+                evidence: "x".into(),
+                ..Default::default()
+            };
+            let v = verify(
+                Extraction {
+                    facts: vec![f],
+                    ..Default::default()
+                },
+                "x",
+                Mode::Text,
+            );
+            assert_eq!(v.extraction.facts.len(), 1, "type={t} 应在白名单内");
+        }
     }
 }
