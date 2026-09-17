@@ -11,12 +11,13 @@ import 'package:url_launcher/url_launcher.dart';
 /// 不是什么(不是医疗器械、不做诊断)、数据去哪、我们能看到什么。国内应用商店与
 /// 《个人信息保护法》都要求首次启动以显著方式告知并取得同意,不能藏在设置里事后补。
 ///
-/// 一个声明、一个按钮。匿名使用统计在声明里写明,随同意一并开启;
+/// 一个声明、一个按钮。同意的同时会打开匿名使用统计(不在这三条声明里单列——
+/// 那句承诺在没配 Key 的构建里根本不渲染,见 `_points` 处的注释);
 /// 不想要的人在「设置 → 帮助改进 MedMe」里随时关。
 ///
 /// **同意按钮在用户看到声明末尾之前不可点**(见 `_FirstRunConsentScreenState`
 /// 的 `_scrolledToEnd`)。这不是装饰:声明与协议链接是本屏存在的全部理由,一个
-/// 首屏就够着的按钮会让用户在没看过第四条、没点开过任何协议的情况下就点了同意。
+/// 首屏就够着的按钮会让用户在没看过最后一条、没点开过任何协议的情况下就点了同意。
 class FirstRunConsent {
   FirstRunConsent._();
 
@@ -55,7 +56,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
   bool _busy = false;
   final ScrollController _scrollController = ScrollController();
 
-  /// 是否已经看到声明区的末尾 —— 「我知道了,开始使用」的门槛。「不同意」不受
+  /// 是否已经看到声明区的末尾 —— 「同意并开始使用」的门槛。「不同意」不受
   /// 这个门槛限制,任何时候都能点(拒绝不需要读完)。
   ///
   /// 初值 false 是故意的:宁可开局的一帧按钮不可点,也不要反过来「万一没纠正回来
@@ -280,7 +281,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                         disabledForegroundColor: MedMe.tealDark,
                       ),
                       child: const Text(
-                        '我知道了,开始使用',
+                        '同意并开始使用',
                         style: TextStyle(fontSize: 16),
                       ),
                     ),
@@ -311,35 +312,34 @@ const _chineseDigits = ['零', '一', '二', '三', '四', '五', '六', '七', 
 String _chineseCount(int n) =>
     (n >= 0 && n < _chineseDigits.length) ? _chineseDigits[n] : '$n';
 
-/// 首屏四条声明的内容。**标题「有几件事」由这份列表的长度派生**(见上面
+/// 首屏各条声明的内容。**标题「有几件事」由这份列表的长度派生**(见上面
 /// `_chineseCount` 的调用处),不是分开手写的数字 —— 以前标题和条目数各写各的,
 /// 以后加删一条声明,标题会悄悄说错而不报错(没有任何编译检查或测试会因为「标题
 /// 数字对不上条目数」而失败)。派生之后这类改动只需要动这一份列表。
+///
+/// 三条逐字照 mockup `s16`——本版默认开云备份、第一次导入才问云端整理,
+/// 旧的「只存在这台手机上 / 没有账号 / 我们那里本来就没有」已经是对外不实陈述
+/// (ux-audit §4 第 1-5 条)。原第 2 条(不是医生)并进第 1 条;原第 4 条
+/// (匿名使用计数,设置里随时可关)整条删掉——那句承诺在没配 Key 的构建里根本
+/// 不渲染(`settings_screen.dart` 的 `if (Analytics.isConfigured)`),埋点行为
+/// 本身不变,只是不再首屏做一个有的构建里找不到的承诺。
 const _points = [
   _PointData(
+    icon: Icons.document_scanner_outlined,
+    title: '拍一下单子变成表和趋势',
+    body: '化验单、处方、出院记录拍进来,自动认字、排好队、能看变化。'
+        '文字识别可能出错 —— 以原件和医师判断为准,MedMe 不是医生。',
+  ),
+  _PointData(
+    icon: Icons.assignment_outlined,
+    title: '看病时一页给医生',
+    body: '过敏、在治、在吃、最近的数,收在一页里。诊室里点开就能递过去。',
+  ),
+  _PointData(
     icon: Icons.lock_outline,
-    title: '你的病历只存在这台手机上',
-    body: '没有账号,不需要注册。只有你主动分享时,内容才会以加密形式离开手机。',
-  ),
-  _PointData(
-    icon: Icons.medical_information_outlined,
-    title: 'MedMe 不是医生',
-    body: '它不是医疗器械,不提供诊断或用药建议。文字识别可能出错 —— '
-        '以原件和医师判断为准。',
-  ),
-  _PointData(
-    icon: Icons.folder_shared_outlined,
-    title: '数据在你手上,也只在你手上',
-    body: '你随时可以删。但手机丢了、误删了我们也帮不上忙 —— '
-        '我们那里本来就没有。',
-  ),
-  // 不按 `Analytics.isConfigured` 分支 —— **法律声明的内容不能随构建参数变化**,
-  // 否则两个包对用户说的话不一样。没配 Key 的构建只是实际不采,声明照说。
-  _PointData(
-    icon: Icons.insights_outlined,
-    title: '我们只看得到匿名的使用计数',
-    body: '只上报「导入了几份、成没成」这类计数,不含病历内容,'
-        '也不做能认出你的标识。设置里随时可关。',
+    title: '加密存在手机,登录后云端备份,我们打不开',
+    body: '不登录也能用,只是换手机找不回来。要不要让云端帮你整理单子,'
+        '第一次添加病历时会问你一次。',
   ),
 ];
 

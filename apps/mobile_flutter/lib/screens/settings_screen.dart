@@ -524,7 +524,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _InfoRow(
                 title: 'MedMe 医我',
                 subtitle:
-                    'v$_appVersionName ($_appBuildNumber) · 本地优先:你的病历只保存在你自己的设备上',
+                    'v$_appVersionName ($_appBuildNumber) · 端到端加密:云端只有密文,我们打不开',
               ),
               const _InfoRow(
                 title: '医疗免责声明',
