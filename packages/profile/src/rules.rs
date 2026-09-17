@@ -42,9 +42,8 @@ pub struct Ctx<'a> {
     pub raw_labs: Vec<(usize, Option<NaiveDate>, deid::LabItem)>,
     /// 每份文档的原文(`text_present` 类规则用:管型这种只在尿沉渣描述里出现)。
     pub texts: Vec<(usize, Option<NaiveDate>, &'a str)>,
-    // 开启闸自己在 `materialize` 里读 `events`;规则侧的第一个读者在 Task 14
-    // (提醒:上次复查是什么时候要看动作日志)。
-    #[allow(dead_code)]
+    /// 动作日志(开启/关停、PGA、以后的症状勾选…)。开启闸在 `materialize` 里读,
+    /// 规则侧由达标表读最近一次 `pga`。
     pub events: &'a [parser::ProfileEvent],
     pub today: NaiveDate,
 }
@@ -173,7 +172,7 @@ const NEGATION_MARKERS: [&str; 7] = ["未见", "阴性", "(-)", "(−)", "未检
 
 /// 「化验可算部分」的分数。**永远带 `label`,永远不叫 SLEDAI 总分**(spec §8)。
 ///
-/// `body` 的形状(Task 12 的渲染引擎按这一份读):
+/// `body` 的形状(Task 21 的渲染引擎按这一份读):
 /// ```text
 /// {"score","max","label","window_days","as_of",
 ///  "hits":    [{"id","label","weight","source","caveat","evidence":[…]}],  // ✔ 命中,计分
@@ -186,46 +185,14 @@ const NEGATION_MARKERS: [&str; 7] = ["未见", "阴性", "(-)", "(−)", "未检
 pub fn activity_section(
     ctx: &Ctx<'_>,
     pkg: &crate::package::Package,
+    eval: &Activity,
 ) -> Option<crate::view::Section> {
     let a = &pkg.rules.activity;
     if a.items.is_empty() {
         return None;
     }
-    // 窗口先整体判一次:包里写了非正数或大到让日期越界的 `window_days`,整张卡
-    // 都是未知,而不是让 `in_window` 在移动端的 FFI 上把整个 App 炸掉。
     let window_valid = ctx.window_start(a.window_days).is_some();
-
-    let mut hits: Vec<Hit> = Vec::new();
-    let mut missed: Vec<Missed> = Vec::new();
-    let mut unscored: Vec<Unscored> = Vec::new();
-    for item in &a.items {
-        let outcome = if window_valid {
-            eval_activity_item(ctx, item, a.window_days)
-        } else {
-            Outcome::Unknown("窗口设置无效".into())
-        };
-        match outcome {
-            Outcome::Hit(h) => hits.push(h),
-            // 一行证据都没有的 ✘ 没什么可给医生看的,不占一行。
-            Outcome::Missed(evidence) if !evidence.is_empty() => missed.push(Missed {
-                id: str_field(item, "id").to_string(),
-                label: str_field(item, "label").to_string(),
-                evidence,
-            }),
-            Outcome::Missed(_) => {}
-            Outcome::Unknown(reason) => unscored.push(Unscored {
-                id: str_field(item, "id").to_string(),
-                label: str_field(item, "label").to_string(),
-                reason,
-            }),
-        }
-    }
-    // `saturating_add`:`items` 是裸 JSON,权重是包作者写的。手滑写个大数在 debug
-    // 下是 panic、release 下是回绕成小分数 —— 后者更糟,它看起来像个正常分数。
-    let score = hits
-        .iter()
-        .map(|h| h.weight)
-        .fold(0u32, u32::saturating_add);
+    let score = weight_sum(&eval.hits);
     // 折叠成一行(spec §5.6)的条件是**真的没东西可看**:窗口内既没有化验点、
     // 也没有任何文档。只要用户交了单子,哪怕这张卡一条都算不出来,也要展开 ——
     // 让 `unscored` 的理由自己说话。把「引擎读不懂这张单子」显示成「你还没去
@@ -241,7 +208,7 @@ pub fn activity_section(
         .any(|(_, date, _)| ctx.in_window(*date, a.window_days));
     Some(crate::view::Section {
         kind: "score_card".into(),
-        title: "活动度(化验可算部分)".into(),
+        title: view_title(pkg, "score_card"),
         empty_hint: (window_valid && !any_point && !any_doc).then(|| {
             format!(
                 "最近 {} 天还没有化验结果,下次抽血后这里会自动算",
@@ -254,11 +221,80 @@ pub fn activity_section(
             "label": "化验可算部分",
             "window_days": a.window_days,
             "as_of": ctx.today.to_string(),
-            "hits": hits,
-            "missed": missed,
-            "unscored": unscored,
+            "hits": eval.hits,
+            "missed": eval.missed,
+            "unscored": eval.unscored,
         }),
     })
+}
+
+/// 一次活动度求值的产物,三个数组互斥(形状见 [`activity_section`])。
+///
+/// 求值与出卡片分开,是因为 `hits` 有第二个读者:达标表的 cSLEDAI 要按 id 把补体、
+/// dsDNA 两条**减掉**。**一份输入只算一遍** —— 算两遍就有算出两个不同分数的机会,
+/// 而卡片上的 x/18 与达标表里的 cSLEDAI 说的必须是同一次计分。
+pub struct Activity {
+    pub hits: Vec<Hit>,
+    missed: Vec<Missed>,
+    unscored: Vec<Unscored>,
+}
+
+/// 逐条求值活动度描述符。纯函数,不出文案。
+pub fn activity_eval(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> Activity {
+    let a = &pkg.rules.activity;
+    // 窗口先整体判一次:包里写了非正数或大到让日期越界的 `window_days`,整张卡
+    // 都是未知,而不是让 `in_window` 在移动端的 FFI 上把整个 App 炸掉。
+    let window_valid = ctx.window_start(a.window_days).is_some();
+
+    let mut out = Activity {
+        hits: Vec::new(),
+        missed: Vec::new(),
+        unscored: Vec::new(),
+    };
+    for item in &a.items {
+        let outcome = if window_valid {
+            eval_activity_item(ctx, item, a.window_days)
+        } else {
+            Outcome::Unknown("窗口设置无效".into())
+        };
+        match outcome {
+            Outcome::Hit(h) => out.hits.push(h),
+            // 一行证据都没有的 ✘ 没什么可给医生看的,不占一行。
+            Outcome::Missed(evidence) if !evidence.is_empty() => out.missed.push(Missed {
+                id: str_field(item, "id").to_string(),
+                label: str_field(item, "label").to_string(),
+                evidence,
+            }),
+            Outcome::Missed(_) => {}
+            Outcome::Unknown(reason) => out.unscored.push(Unscored {
+                id: str_field(item, "id").to_string(),
+                label: str_field(item, "label").to_string(),
+                reason,
+            }),
+        }
+    }
+    out
+}
+
+/// 一组命中的总分。`saturating_add`:`items` 是裸 JSON,权重是包作者写的。手滑写个
+/// 大数在 debug 下是 panic、release 下是回绕成小分数 —— 后者更糟,它看起来像个正
+/// 常分数。
+fn weight_sum<'h>(hits: impl IntoIterator<Item = &'h Hit>) -> u32 {
+    hits.into_iter()
+        .map(|h| h.weight)
+        .fold(0u32, u32::saturating_add)
+}
+
+/// section 的标题按 kind 从包的 `views.sections` 里取(spec §6:顺序、标题、空态文案
+/// 全来自包)。包里没写就**不给标题** —— 引擎里垫一句中文,「加一个病不发版」这条
+/// 前提上就多了一个例外,而例外只会越来越多。
+fn view_title(pkg: &crate::package::Package, kind: &str) -> String {
+    pkg.views
+        .sections
+        .iter()
+        .find(|s| str_field(s, "kind") == kind)
+        .map(|s| str_field(s, "title").to_string())
+        .unwrap_or_default()
 }
 
 fn str_field<'j>(v: &'j serde_json::Value, k: &str) -> &'j str {
@@ -566,5 +602,175 @@ fn eval_activity_item(ctx: &Ctx<'_>, item: &serde_json::Value, window: i64) -> O
         // 卡片上和「算过了、正常」长得一模一样,等于把「没懂」伪装成 ✘。包可以
         // 先于引擎加规则类型(`min_engine` 管的是**必须**懂的那些)。
         _ => Outcome::Unknown("这一条规则本机还算不了,更新 App 后会自动补上".into()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 达标检查表:DORIS 2021 / LLDAS 逐条三态(sle-clinical-sources §C.1/§C.2)。
+// 引擎只算逐条,**不下结论**(spec §5.3):全 `yes` 时那句「这几条都满足了,拿去
+// 问医生」也是包里的文案,不是引擎说的。
+// ---------------------------------------------------------------------------
+
+/// 三态。**`Unknown` 不是 `No`**:PGA 没人录过,不等于「没达标」—— 把「不知道」
+/// 显示成「不达标」是在替医生下结论(spec §5.3)。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Verdict {
+    Yes,
+    No,
+    Unknown,
+}
+
+impl Verdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Yes => "yes",
+            Verdict::No => "no",
+            Verdict::Unknown => "unknown",
+        }
+    }
+}
+
+/// 最近一次 `pga` 事件的分值(SELENA-SLEDAI PGA,0–3)。从没录过 → `None`。
+///
+/// `at` 只到天,同一天录两次时以**日志里靠后的那条**为准(`max_by` 的文档保证:
+/// 并列取最后一个),与开启闸同一条日内规则(见 `lib.rs::is_enabled`)。
+fn latest_pga(ctx: &Ctx<'_>, package_id: &str) -> Option<f64> {
+    ctx.events
+        .iter()
+        .filter(|e| e.package == package_id && e.kind == "pga")
+        .max_by(|a, b| a.at.cmp(&b.at))
+        .and_then(|e| e.payload.get("value").and_then(serde_json::Value::as_f64))
+}
+
+/// 最近一次泼尼松等效日剂量(mg/天)。**Task 13 才读用药记录**,在那之前恒为
+/// `None`,每条 `pred_*` 如实显示未知。
+///
+/// 不在这儿垫一张等效换算表:spec §2 里 `pred_equiv` 自己标着「待核」,
+/// global-constraints 说没核实的数值一律 `null`。垫一个数出来,界面上就会出现一句
+/// 「泼尼松 4 mg/天 < 5,达标」—— 而那个 4 是引擎编的。
+fn latest_pred_equiv_mg(_ctx: &Ctx<'_>, _pkg: &crate::package::Package) -> Option<f64> {
+    None
+}
+
+/// 达标检查表(spec §5.3)。`hits` 是 [`activity_eval`] 已经算好的那一份命中。
+///
+/// `body` 的形状(Task 21 的渲染引擎按这一份读):
+/// ```text
+/// {"states":[{"id","label","source","note","verdict",
+///             "items":[{"id","label","verdict","actual","reason","note","source"}]}]}
+/// ```
+/// `verdict` 三态 `"yes"|"no"|"unknown"`;整表 = 任一条 `no` → `no`,否则任一条
+/// `unknown` → `unknown`,全 `yes` 才 `yes`。`actual` 是这一条真算出来的数(未知时
+/// `null`),`reason` 是未知的理由(其余时候 `null`)—— 未知必须带一句为什么,不然
+/// 界面上的「未知」和「这条我们不打算算」长得一样。
+pub fn states_section(
+    ctx: &Ctx<'_>,
+    pkg: &crate::package::Package,
+    hits: &[Hit],
+) -> Option<crate::view::Section> {
+    if pkg.rules.states.is_empty() {
+        return None;
+    }
+    let pga = latest_pga(ctx, &pkg.manifest.id);
+    let pred = latest_pred_equiv_mg(ctx, pkg);
+    let lab_score = weight_sum(hits);
+
+    let mut states = Vec::new();
+    for st in &pkg.rules.states {
+        let mut items = Vec::new();
+        let mut worst = Verdict::Yes;
+        for it in st
+            .get("items")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let (verdict, actual, reason) = eval_state_item(it, lab_score, hits, pga, pred);
+            if verdict == Verdict::No {
+                worst = Verdict::No;
+            } else if verdict == Verdict::Unknown && worst != Verdict::No {
+                worst = Verdict::Unknown;
+            }
+            items.push(serde_json::json!({
+                "id": str_field(it, "id"), "label": str_field(it, "label"),
+                "verdict": verdict.as_str(), "actual": actual, "reason": reason,
+                "note": it.get("note"), "source": str_field(it, "source"),
+            }));
+        }
+        // 一条都没有的表**不是**「全满足」:包里 `items` 写漏(或拼成 `item`)时,
+        // 默认的全 `yes` 会在界面上变成「DORIS 每条都对上了」—— 这个功能最坏的一种
+        // 错法,一行挡掉。
+        if items.is_empty() {
+            worst = Verdict::Unknown;
+        }
+        states.push(serde_json::json!({
+            "id": str_field(st, "id"), "label": str_field(st, "label"),
+            "source": str_field(st, "source"), "note": st.get("note"),
+            "verdict": worst.as_str(), "items": items,
+        }));
+    }
+    Some(crate::view::Section {
+        kind: "checklist".into(),
+        title: view_title(pkg, "checklist"),
+        // 逐条对照永远有意义:未知也是答案,不折叠。
+        empty_hint: None,
+        body: serde_json::json!({ "states": states }),
+    })
+}
+
+/// 求一条达标条目:返回(三态,真实算出来的数,未知的理由)。
+fn eval_state_item(
+    it: &serde_json::Value,
+    lab_score: u32,
+    hits: &[Hit],
+    pga: Option<f64>,
+    pred: Option<f64>,
+) -> (Verdict, serde_json::Value, Option<&'static str>) {
+    let unknown = |why: &'static str| (Verdict::Unknown, serde_json::Value::Null, Some(why));
+    let judge = |ok: bool, actual: serde_json::Value| {
+        (if ok { Verdict::Yes } else { Verdict::No }, actual, None)
+    };
+    match (
+        str_field(it, "kind"),
+        it.get("value").and_then(serde_json::Value::as_f64),
+    ) {
+        // 包里写 `null` 的目标值(§C 里还没核到逐字原文的那些)不许当成 0 去比 ——
+        // 那会把「还不知道」变成一个看起来很确定的 ✔/✘。
+        ("csledai_eq" | "sledai_le" | "pga_lt" | "pga_le" | "pred_lt" | "pred_le", None) => {
+            unknown("这一条的目标值还没核实,暂时比不了")
+        }
+        // 临床 SLEDAI:总分**减去** `exclude` 里那几条描述符的权重(DORIS 的
+        // 「irrespective of serology」= 去掉低补体与 dsDNA 两行)。减的是活动度那次
+        // 算好的命中,**不重算** —— 重算就有算出另一个分数的机会。
+        ("csledai_eq", Some(v)) => {
+            let excluded: Vec<&str> = it
+                .get("exclude")
+                .and_then(|x| x.as_array())
+                .map(|a| a.iter().filter_map(|s| s.as_str()).collect())
+                .unwrap_or_default();
+            let c = weight_sum(hits.iter().filter(|h| !excluded.contains(&h.id.as_str())));
+            judge(f64::from(c) == v, serde_json::json!(c))
+        }
+        ("sledai_le", Some(v)) => judge(f64::from(lab_score) <= v, serde_json::json!(lab_score)),
+        (k @ ("pga_lt" | "pga_le"), Some(v)) => match pga {
+            // 没人录过 ≠ 没达标(spec §5.3,§7:二期由授权医生录)。
+            None => unknown("还没有人录过医生整体评估(PGA)"),
+            Some(p) => judge(
+                if k == "pga_lt" { p < v } else { p <= v },
+                serde_json::json!(p),
+            ),
+        },
+        (k @ ("pred_lt" | "pred_le"), Some(v)) => match pred {
+            None => unknown("还没读到用药记录"),
+            Some(p) => judge(
+                if k == "pred_lt" { p < v } else { p <= v },
+                serde_json::json!(p),
+            ),
+        },
+        // 只有人能答的条目(「无重要脏器活动」「与上次比无新活动」)。二期由医生在
+        // 授权查看器里录(spec §7),此刻恒为未知 —— 诚实,不猜。
+        ("manual", _) => unknown("这一条要人来答,还没有人答过"),
+        // 认不出的 kind 同样是未知,不是 ✘:包可以先于引擎加规则类型。
+        _ => unknown("这一条规则本机还算不了,更新 App 后会自动补上"),
     }
 }

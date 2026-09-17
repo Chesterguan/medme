@@ -37,7 +37,60 @@ pub fn activity_pkg() -> Package {
     serde_json::from_str(ACTIVITY).expect("夹具包必须解析")
 }
 
-/// 与 [`MINIMAL`] 同一个壳,只把 `rules.activity` 填满。
+/// 把 `(日期, 文本)` 列表变成 `SourceDoc`。文本**借**调用方那一份(元组里的
+/// `String` 自己就是所有者),不复制也不泄漏 —— 调用方只要让 `docs` 活到用完,
+/// 借用检查自然成立。
+pub fn mk_docs<'a>(docs: &'a [(&str, String)]) -> Vec<parser::SourceDoc<'a>> {
+    docs.iter()
+        .enumerate()
+        .map(|(i, (d, t))| parser::SourceDoc {
+            index: i,
+            date: d.parse().ok(),
+            text: t,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: None,
+        })
+        .collect()
+}
+
+/// 夹具包 = [`ACTIVITY`] 再加 `rules.states`(下面那两张表)与 checklist 的标题。
+/// **不另抄一份 `ACTIVITY`** —— 两份活动度规则会各自长歪。Task 13–16 继续往同一
+/// 份里加 `monitoring` / `milestones`。
+pub fn full_pkg() -> Package {
+    let mut v: serde_json::Value = serde_json::from_str(ACTIVITY).expect("夹具包必须解析");
+    v["rules"]["states"] = serde_json::from_str(STATES).expect("达标表必须解析");
+    v["views"]["sections"]
+        .as_array_mut()
+        .expect("views.sections 是数组")
+        .push(serde_json::json!({"kind":"checklist","title":"达标情况(逐条对照)"}));
+    serde_json::from_value(v).expect("夹具包必须解析")
+}
+
+/// DORIS 2021(§C.1)与 LLDAS(§C.2)两张表,逐条取自 sle-clinical-sources 的
+/// VERBATIM 行。`<0.5` / `<5` 按 DORIS Box 1 原文,中国 2025 指南的 `≤` 写进
+/// `note` —— 恰好在边界上时两份指南不一致,这件事要在界面上说出来。
+pub const STATES: &str = r#"[{"id":"doris","label":"DORIS 2021 缓解标准(逐条对照,不下结论)","source":"S5",
+  "items":[
+    {"id":"csledai_zero","label":"临床 SLEDAI = 0(去掉补体、dsDNA 两项)","kind":"csledai_eq",
+     "value":0,"exclude":["low_complement","dsdna_high"],"source":"S5"},
+    {"id":"phga","label":"医生整体评估 PhGA < 0.5","kind":"pga_lt","value":0.5,"source":"S5",
+     "note":"DORIS Box 1 原文是 <0.5;中国 2025 指南写 ≤0.5,恰好等于 0.5 时两份不一致"},
+    {"id":"pred","label":"泼尼松 < 5 mg/天","kind":"pred_lt","value":5,"source":"S5",
+     "note":"DORIS Box 1 原文是 <5 mg/d;中国 2025 指南写 ≤5 mg/d"},
+    {"id":"therapy","label":"允许用羟氯喹、低剂量激素、稳定的免疫抑制剂或生物制剂",
+     "kind":"manual","source":"S5"}]},
+ {"id":"lldas","label":"LLDAS 低疾病活动(逐条对照,不下结论)","source":"S6",
+  "items":[
+    {"id":"sledai_le4","label":"SLEDAI-2K ≤ 4","kind":"sledai_le","value":4,"source":"S6"},
+    {"id":"no_major_organ","label":"肾、中枢、心肺、血管炎、发热均无活动,无溶血性贫血与消化道活动",
+     "kind":"manual","source":"S6"},
+    {"id":"pga_le1","label":"SELENA-SLEDAI PGA(0–3 分)≤ 1","kind":"pga_le","value":1,"source":"S6"},
+    {"id":"pred_le75","label":"泼尼松(或等效)≤ 7.5 mg/天","kind":"pred_le","value":7.5,"source":"S6"},
+    {"id":"no_new","label":"与上次评估相比没有新的狼疮活动表现","kind":"manual","source":"S6"}]}]"#;
+
+/// 与 [`MINIMAL`] 同一个壳,只把 `rules.activity` 填满。section 的标题在
+/// `views.sections` 里(spec §6:标题全来自包,引擎里不写死)。
 pub const ACTIVITY: &str = r#"{"manifest":{"id":"t","family":"immune","version":"2026.09.1","min_engine":1,
   "display":{"name":"测试病","short":"测试"},"disclaimer":"仅整理你的病历,不做诊断",
   "sources":[{"id":"S1","cite":"test","url":null}]},
@@ -63,4 +116,4 @@ pub const ACTIVITY: &str = r#"{"manifest":{"id":"t","family":"immune","version":
     "canonical_unit":"10*9/L","source":"S1"},
    {"id":"thrombocytopenia","label":"血小板减少","weight":1,"kind":"lt","key":"plt","threshold":100,
     "canonical_unit":"10*9/L","source":"S1"}]},"states":[],"monitoring":[],"milestones":[]},
-  "views":{"sections":[],"handoff":[]}}"#;
+  "views":{"sections":[{"kind":"score_card","title":"活动度(化验可算部分)"}],"handoff":[]}}"#;

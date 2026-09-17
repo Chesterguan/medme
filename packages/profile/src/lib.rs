@@ -39,10 +39,14 @@ pub fn materialize(
     let enabled = is_enabled(events, &pkg.manifest.id);
     let sections = if enabled {
         let ctx = rules::Ctx::build(docs, events, today);
-        // Task 12–15 继续往这里加 section。「开启了但还没有任何数据」与「没开启」
+        // Task 13–15 继续往这里加 section。「开启了但还没有任何数据」与「没开启」
         // 是两种不同的显示状态:前者出卡片、卡片自己带 `empty_hint`,后者没卡片。
         let mut out = Vec::new();
-        out.extend(rules::activity_section(&ctx, pkg));
+        // 活动度**只算一遍**:达标表的 cSLEDAI 是拿同一份命中按 id 减出来的
+        // (`rules::Activity` 的文档),不重算。
+        let activity = rules::activity_eval(&ctx, pkg);
+        out.extend(rules::activity_section(&ctx, pkg, &activity));
+        out.extend(rules::states_section(&ctx, pkg, &activity.hits));
         out
     } else {
         // 没开启就**不碰**临床输入:不 aggregate、不解抽取结果。既省一趟全量
