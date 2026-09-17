@@ -27,9 +27,18 @@ void main() {
     const synced = Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner');
     final now = DateTime(2026, 9, 12, 10, 0);
 
-    test('没登录:照实说病历只在这台手机上,不给"重试"', () {
+    test('没登录:照实说只存在这台手机,不给"重试"', () {
       final s = backupStatus(loggedIn: false, profile: synced, last: null, now: now);
-      expect(s.text, '未登录 · 病历只在这台手机上');
+      expect(s.text, '未登录 · 只存在这台手机');
+      expect(s.canRetry, isFalse);
+    });
+
+    // fix round 1(task-2-review.md F7):这句话只在没开旧版 iCloud 同步时才真——
+    // 那条入口今天收起来了(`settings_screen.dart` 的 `_showIcloudSync = false`),
+    // 但 Rust 侧能力还在,入口一露出,「未登录 + iCloud 开」= 上面那句立刻变假。
+    test('F7:没登录但这台手机开着旧版 iCloud 同步 → 不能说"只存在这台手机"', () {
+      final s = backupStatus(loggedIn: false, profile: synced, last: null, icloudOn: true, now: now);
+      expect(s.text, '未登录 · 同步到你自己的 iCloud');
       expect(s.canRetry, isFalse);
     });
 
@@ -116,8 +125,8 @@ void main() {
       final opened = <int>[];
       await pumpLine(t, openAccount: () => opened.add(1), retry: () async => fail('没登录不该去同步'));
 
-      expect(find.text('未登录 · 病历只在这台手机上'), findsOneWidget);
-      await t.tap(find.text('未登录 · 病历只在这台手机上'));
+      expect(find.text('未登录 · 只存在这台手机'), findsOneWidget);
+      await t.tap(find.text('未登录 · 只存在这台手机'));
       await t.pumpAndSettle();
       expect(opened, [1]);
     });

@@ -179,5 +179,30 @@ void main() {
       }
       expect(find.text('同意并开始使用'), findsOneWidget);
     });
+
+    // ── fix round 1(task-2-review.md):三句 Critical + F4/F5 ─────────────────
+    testWidgets('W1:云端整理没有"问一次"的事前询问,Task 16 落地前不能这么说', (tester) async {
+      useTallPhone(tester);
+      await pumpScreen(tester);
+      expect(find.textContaining('会问你一次'), findsNothing);
+    });
+
+    testWidgets('W3:PIPL 23 单独告知 —— 第三方模型服务商必须点名', (tester) async {
+      useTallPhone(tester);
+      await pumpScreen(tester);
+      expect(find.textContaining('深度求索'), findsWidgets);
+    });
+
+    testWidgets('F4:医疗器械免责补回同意门正文,不只留在类文档注释里', (tester) async {
+      useTallPhone(tester);
+      await pumpScreen(tester);
+      expect(find.textContaining('不是医疗器械'), findsWidgets);
+    });
+
+    testWidgets('F5:埋点确实随同意打开,声明区得说一句,不能只删不说', (tester) async {
+      useTallPhone(tester);
+      await pumpScreen(tester);
+      expect(find.text('匿名使用统计默认开,设置里可关。'), findsOneWidget);
+    });
   });
 }

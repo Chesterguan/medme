@@ -25,7 +25,14 @@ import 'package:mobile_flutter/sync_engine.dart';
   bool icloudOn = false,
   DateTime? now,
 }) {
-  if (!loggedIn) return (text: '未登录 · 病历只在这台手机上', canRetry: false);
+  // F7:这句话只在这台手机没开旧版 iCloud 同步时才真——那条同步与 MedMe 账号
+  // 登录状态无关(`loadIcloudBlocksCloud` 读的是设备级开关),没登录也可能已经在
+  // 往 iCloud 写。入口今天收起来了不代表这个组合态不存在,Rust 侧能力还在。
+  if (!loggedIn) {
+    return icloudOn
+        ? (text: '未登录 · 同步到你自己的 iCloud', canRetry: false)
+        : (text: '未登录 · 只存在这台手机', canRetry: false);
+  }
   if (profile.cloudPaused) return (text: '云同步已关闭', canRetry: false);
   // 复审 I5:开着 iCloud 同步时云同步压根开不了(见 `CloudEnableBlocked`),
   // 那时说「点这里重试」是一条点不动的提示 —— 说真正的原因。

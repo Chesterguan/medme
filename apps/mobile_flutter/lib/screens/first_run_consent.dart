@@ -11,8 +11,8 @@ import 'package:url_launcher/url_launcher.dart';
 /// 不是什么(不是医疗器械、不做诊断)、数据去哪、我们能看到什么。国内应用商店与
 /// 《个人信息保护法》都要求首次启动以显著方式告知并取得同意,不能藏在设置里事后补。
 ///
-/// 一个声明、一个按钮。同意的同时会打开匿名使用统计(不在这三条声明里单列——
-/// 那句承诺在没配 Key 的构建里根本不渲染,见 `_points` 处的注释);
+/// 一个声明、一个按钮。同意的同时会打开匿名使用统计——不在三条正式声明里单列
+/// (见 `_points` 处的注释),但滚动区末尾单独有一行写明这件事;
 /// 不想要的人在「设置 → 帮助改进 MedMe」里随时关。
 ///
 /// **同意按钮在用户看到声明末尾之前不可点**(见 `_FirstRunConsentScreenState`
@@ -102,7 +102,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
   Future<void> _agree() async {
     setState(() => _busy = true);
     await FirstRunConsent.markAgreed();
-    // 匿名统计随同意一并开启 —— 声明里已写明采什么,设置里随时可关。
+    // 匿名统计随同意一并开启 —— 声明区末尾说了这件事,设置里随时可关。
     if (Analytics.isConfigured) {
       await Analytics.setEnabled(true);
       await Analytics.markAsked();
@@ -195,6 +195,13 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                               title: point.title,
                               body: point.body,
                             ),
+                          // F5:埋点确实随同意打开(见 `_agree`),不能只删声明不说——
+                          // 不算进上面「有几件事」的计数,同「详见 用户协议…」一样是
+                          // 附在正式声明下面的一行说明。
+                          const Text(
+                            '匿名使用统计默认开,设置里可关。',
+                            style: TextStyle(fontSize: 12.5, color: MedMe.faint, height: 1.6),
+                          ),
                           const SizedBox(height: 8),
                           Wrap(
                             children: [
@@ -317,18 +324,26 @@ String _chineseCount(int n) =>
 /// 以后加删一条声明,标题会悄悄说错而不报错(没有任何编译检查或测试会因为「标题
 /// 数字对不上条目数」而失败)。派生之后这类改动只需要动这一份列表。
 ///
-/// 三条逐字照 mockup `s16`——本版默认开云备份、第一次导入才问云端整理,
-/// 旧的「只存在这台手机上 / 没有账号 / 我们那里本来就没有」已经是对外不实陈述
-/// (ux-audit §4 第 1-5 条)。原第 2 条(不是医生)并进第 1 条;原第 4 条
-/// (匿名使用计数,设置里随时可关)整条删掉——那句承诺在没配 Key 的构建里根本
-/// 不渲染(`settings_screen.dart` 的 `if (Analytics.isConfigured)`),埋点行为
-/// 本身不变,只是不再首屏做一个有的构建里找不到的承诺。
+/// 三条逐字照 mockup `s16` 改写(Task 2),fix round 1(task-2-review.md)又改了
+/// 第 1、3 条:旧的「只存在这台手机上 / 没有账号 / 我们那里本来就没有」已经是
+/// 对外不实陈述(ux-audit §4 第 1-5 条)。原第 2 条(不是医生)并进第 1 条,
+/// 补回「不是医疗器械」(F4,同一句话类文档 `:11` 那句「不是什么」才对得上)。
+/// 原第 4 条(匿名使用计数)不再单列成点,但埋点确实随同意打开
+/// (`_agree` 的 `Analytics.setEnabled`)——不能真删声明,见下面 `build` 里
+/// points 循环之后那一行独立的 `Text`(F5)。
+///
+/// **第 3 条不能写"会问你一次"**(W1)。本分支**没有**事前询问那道 UI——
+/// `cloud_extract.dart` 默认开、只认有没有登录,ask-once 键 `cloud_extract_asked`
+/// 全树不存在,归 Task 16。Task 16 落地后把这句改回"会问你一次",在那之前只能
+/// 照实说"直接送,没问"。同一句还点名了收货的第三方(W3,PIPL 第二十三条单独
+/// 告知):`api_client.dart` 的注释自己写着"服务端还要等 DeepSeek 出结果"。
 const _points = [
   _PointData(
     icon: Icons.document_scanner_outlined,
     title: '拍一下单子变成表和趋势',
     body: '化验单、处方、出院记录拍进来,自动认字、排好队、能看变化。'
-        '文字识别可能出错 —— 以原件和医师判断为准,MedMe 不是医生。',
+        '文字识别可能出错 —— 以原件和医师判断为准,MedMe 不是医生,'
+        '不是医疗器械,不提供诊断或用药建议。',
   ),
   _PointData(
     icon: Icons.assignment_outlined,
@@ -338,8 +353,9 @@ const _points = [
   _PointData(
     icon: Icons.lock_outline,
     title: '加密存在手机,登录后云端备份,我们打不开',
-    body: '不登录也能用,只是换手机找不回来。要不要让云端帮你整理单子,'
-        '第一次添加病历时会问你一次。',
+    body: '不登录也能用,只是换手机找不回来。登录后,添加的病历会先在'
+        '手机上涂黑姓名、证件号、医院名,再交给深度求索(DeepSeek)的'
+        '模型整理,服务器在境内;可以在 我 → 云端 关掉。',
   ),
 ];
 
