@@ -409,7 +409,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // 诊室现场那条最高频的路没有变长:「看病带这个」浮层底部直接就有
           // 「医生要看原件 · 出示二维码」,一步到同一个界面(见
           // `visit_summary_sheet.dart`)。
-          _SectionLabel('数据出口'),
+          _SectionLabel('给医生看 · 导出'),
           _SettingsGroup(
             children: [
               _SettingsRow(
@@ -458,7 +458,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ],
-          _SectionLabel('数据管理'),
+          _SectionLabel('删掉全部'),
           _SettingsGroup(
             children: [
               _SettingsRow(
