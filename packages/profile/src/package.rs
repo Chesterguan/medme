@@ -229,8 +229,18 @@ fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
 }
 
 /// 验签,返回**内层原文字符串**。包和清单共用这一半 —— 两者是同一种信封,
-/// 区别只在内层解析成什么(`Package` 还是 `Index`)。
-pub fn verify_envelope_body(envelope_json: &str, pubkey_hex: &str) -> Result<String, PackageError> {
+/// 区别只在内层解析成什么(`Package` 还是 `Index`)。用生产公钥固定验(不接受调用方
+/// 指定别的公钥 —— 那样公钥 pin 就成了摆设,谁传个别的公钥进来都能"验过")。
+pub fn verify_envelope_body(envelope_json: &str) -> Result<String, PackageError> {
+    verify_envelope_body_with_key(envelope_json, SIGNING_PUBLIC_KEY_HEX)
+}
+
+/// 同上,但公钥可注入 —— 只给测试用(生产路径固定走上面那个)。
+/// `pub(crate)`:公钥 pin 不能从 crate 外部绕过,调用点都在本 crate 内。
+pub(crate) fn verify_envelope_body_with_key(
+    envelope_json: &str,
+    pubkey_hex: &str,
+) -> Result<String, PackageError> {
     use base64::Engine as _;
     use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -264,7 +274,7 @@ pub(crate) fn verify_envelope_with_key(
     envelope_json: &str,
     pubkey_hex: &str,
 ) -> Result<Package, PackageError> {
-    let body = verify_envelope_body(envelope_json, pubkey_hex)?;
+    let body = verify_envelope_body_with_key(envelope_json, pubkey_hex)?;
     serde_json::from_str(&body).map_err(|e| PackageError::Malformed(format!("包体解析失败:{e}")))
 }
 
@@ -289,20 +299,54 @@ pub fn load_signed_index(envelope_json: &str) -> Result<Index, PackageError> {
 }
 
 /// 同上,但公钥可注入 —— 只给测试用(生产路径固定走上面那个)。
+///
+/// 验完签只是保证「这份清单是我们发的」,不保证里面每一条的 `id`/`version` 形状
+/// 本身没问题——下游(C2+ 的 fetcher)会拿这两个字段拼 URL/路径。签名只有我们能出,
+/// 不是被攻击面,但校验一次是免费的,总比这道闸被忘在某个还没写的任务里强。
+/// 任何一条形状不对,整份清单**都**不要(fail closed),不是挑好的挑走坏的扔掉——
+/// 一份"部分能用"的清单会让不同客户端因为过滤逻辑不一致而看到不同的包集合。
 pub(crate) fn load_signed_index_with_key(
     envelope_json: &str,
     pubkey_hex: &str,
 ) -> Result<Index, PackageError> {
-    let body = verify_envelope_body(envelope_json, pubkey_hex)?;
-    serde_json::from_str(&body).map_err(|e| PackageError::Malformed(format!("清单解析失败:{e}")))
+    let body = verify_envelope_body_with_key(envelope_json, pubkey_hex)?;
+    let idx: Index = serde_json::from_str(&body)
+        .map_err(|e| PackageError::Malformed(format!("清单解析失败:{e}")))?;
+    for entry in &idx.skills {
+        if !valid_id(&entry.id) {
+            return Err(PackageError::Malformed(format!(
+                "清单条目 id 不合法:{:?}",
+                entry.id
+            )));
+        }
+        if version_tuple(&entry.version).is_none() {
+            return Err(PackageError::Malformed(format!(
+                "清单条目 version 形状不对:{:?}",
+                entry.version
+            )));
+        }
+    }
+    Ok(idx)
 }
 
 /// `YYYY.MM.N` → 可比较的元组。**必须按数字比**:字典序会把 `2026.09.10` 排在
 /// `2026.09.9` 前面,单调闸就成了反向的。形状不对返回 `None`(调用方按 `Malformed` 处理)。
 pub fn version_tuple(v: &str) -> Option<(u32, u32, u32)> {
+    // 每一段必须**只含数字**:Rust 的 `u32::from_str` 会悄悄接受前导 `+`
+    // (同 `hex_decode_32` 那个坑),不先挡字符集,"2026.+9.1" 会被当成
+    // "2026.09.1" 解出来。
+    let is_digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let mut it = v.split('.');
     let (y, m, n) = (it.next()?, it.next()?, it.next()?);
-    if it.next().is_some() || y.len() != 4 || m.len() != 2 || n.is_empty() || n.len() > 3 {
+    if it.next().is_some()
+        || y.len() != 4
+        || m.len() != 2
+        || n.is_empty()
+        || n.len() > 3
+        || !is_digits(y)
+        || !is_digits(m)
+        || !is_digits(n)
+    {
         return None;
     }
     Some((y.parse().ok()?, m.parse().ok()?, n.parse().ok()?))
@@ -688,6 +732,44 @@ mod tests {
     }
 
     #[test]
+    fn an_index_entry_with_a_path_traversal_id_is_refused() {
+        // 签名合法(确实是我们签的),但条目内容本身形状不对——服务端已经拿 id/version
+        // 拼路径白名单挡过一轮,客户端这边不能假设「验过签 = 每个字段都能直接拼路径」。
+        let body = INDEX_BODY.replace("\"id\":\"t\"", "\"id\":\"../../etc\"");
+        let env = sign_with_test_key(&body);
+        assert!(matches!(
+            load_signed_index_with_key(&env, &test_pubkey_hex()),
+            Err(PackageError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn an_index_entry_with_a_malformed_version_is_refused() {
+        let body = INDEX_BODY.replace("2026.09.2", "2026.+9.1");
+        let env = sign_with_test_key(&body);
+        assert!(matches!(
+            load_signed_index_with_key(&env, &test_pubkey_hex()),
+            Err(PackageError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn one_bad_entry_rejects_the_whole_index_not_just_that_entry() {
+        // fail closed:不是「挑出能用的几条」,一条不合法整份清单都不要——不然不同
+        // 客户端会因为各自的过滤逻辑不一致,看到不同的包集合。
+        let body = INDEX_BODY.replace(
+            "\"skills\":[",
+            "\"skills\":[{\"id\":\"ok\",\"version\":\"2026.09.1\",\"min_engine\":1,\"name\":\"好包\"},",
+        );
+        let body = body.replace("\"id\":\"t\"", "\"id\":\"../bad\"");
+        let env = sign_with_test_key(&body);
+        assert!(matches!(
+            load_signed_index_with_key(&env, &test_pubkey_hex()),
+            Err(PackageError::Malformed(_))
+        ));
+    }
+
+    #[test]
     fn version_tuple_orders_by_year_month_serial() {
         assert!(version_tuple("2026.09.2").unwrap() > version_tuple("2026.09.1").unwrap());
         assert!(version_tuple("2026.10.1").unwrap() > version_tuple("2026.09.9").unwrap());
@@ -696,6 +778,17 @@ mod tests {
         assert!(version_tuple("2026.09.10").unwrap() > version_tuple("2026.09.9").unwrap());
         assert!(version_tuple("v2").is_none());
         assert!(version_tuple("2026.9.1").is_none(), "月份定宽两位");
+    }
+
+    #[test]
+    fn version_tuple_rejects_non_digit_characters() {
+        // `u32::from_str` 会悄悄接受前导 `+`(同 `hex_decode_32` 挡过的坑):不先挡
+        // 字符集,"2026.+9.1" 就会被当成 "2026.09.1" 解出来,单调闸能被这条绕过。
+        assert!(version_tuple("2026.+9.1").is_none());
+        assert!(version_tuple("+026.09.1").is_none());
+        assert!(version_tuple("2026.-9.1").is_none());
+        assert!(version_tuple("2026.09.-1").is_none());
+        assert!(version_tuple("2026. 9.1").is_none());
     }
 
     #[test]

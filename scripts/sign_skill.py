@@ -27,6 +27,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import stat
 import sys
 
@@ -81,16 +82,27 @@ def refresh_index() -> None:
     pub = key.public_key()
     skills = []
     for d in sorted(p for p in SKILLS.iterdir() if p.is_dir()):
-        for f in sorted(d.glob("*.json")):
-            if f.name.endswith(".src.json"):
-                continue
+        versions = [f for f in sorted(d.glob("*.json")) if not f.name.endswith(".src.json")]
+        if len(versions) > 1:
+            # 一个目录多个已签名版本时,「清单只收最高版」没有排序保证(文件名不是
+            # 排序键,manifest.version 才是),多版本共存也还没设计过降级/并存语义
+            # ——先明确拒绝,好过悄悄漏掉一条或悄悄收错一条。
+            sys.exit(
+                f"{d.name}/ 下有 {len(versions)} 个已签名版本"
+                f"({', '.join(v.name for v in versions)})—— 一个目录一次只允许一个"
+                "当前版本,先删掉旧版本再重签。"
+            )
+        for f in versions:
             env = json.loads(f.read_text(encoding="utf-8"))
             _verify_signed(pub, env, f)
-            m = json.loads(env["package"])["manifest"]
-            skills.append(
-                {"id": m["id"], "version": m["version"], "min_engine": m["min_engine"],
-                 "name": m["display"]["name"]}
-            )
+            try:
+                m = json.loads(env["package"])["manifest"]
+                skills.append(
+                    {"id": m["id"], "version": m["version"], "min_engine": m["min_engine"],
+                     "name": m["display"]["name"]}
+                )
+            except KeyError as e:
+                sys.exit(f"{f}: manifest 缺字段 {e}")
     # 清单与包用**同一种信封**、同一把私钥:不签的话中间人删掉一行就能把用户
     # 按在旧规则上,改一行 version 就能拿它去拼任意路径。
     body = json.dumps({"skills": skills}, ensure_ascii=False, indent=2) + "\n"
@@ -162,8 +174,9 @@ def _expect_refused(fn, desc: str) -> None:
 
 
 def selftest() -> None:
-    """自检三类必须被拒绝的输入,加清单本身也是签名信封。只在临时目录里生成
-    一把一次性密钥,不读、不碰、不派生 ~/.medme_skill_signing_key。"""
+    """自检:manifest.id 校验(×2)、清单本身也是签名信封、manifest 缺字段给清楚报错、
+    一目录多版本给清楚报错、篡改信封拒绝索引。只在临时目录里生成一把一次性密钥,
+    不读、不碰、不派生 ~/.medme_skill_signing_key。"""
     import tempfile
 
     global KEY_PATH, ROOT, SKILLS
@@ -206,13 +219,40 @@ def selftest() -> None:
             assert json.loads(idx_env["package"])["skills"], "清单里应至少有 ok 这个包"
             print("  ok: 清单也是签过名的信封")
 
+            # 5. manifest 缺字段(min_engine)——refresh_index 必须给出清楚的 sys.exit,
+            # 不是 KeyError 堆栈。用完立刻删掉:refresh_index 每次都扫全树,留着这个
+            # 坏目录会让后面每一步都因为它而报错,而不是因为各自在测的那件事。
+            (SKILLS / "badkey").mkdir()
+            bad_manifest = json.loads(_fixture("badkey", "1.0.0"))
+            del bad_manifest["manifest"]["min_engine"]
+            badkey_src = SKILLS / "badkey" / "1.0.0.src.json"
+            badkey_src.write_text(json.dumps(bad_manifest, ensure_ascii=False), encoding="utf-8")
+            _expect_refused(lambda: sign(badkey_src), "manifest 缺 min_engine")
+            shutil.rmtree(SKILLS / "badkey")
+
+            # 6. 一个目录两个已签名版本——refresh_index 必须报错(不是悄悄只挑一个)。
+            # 同样用完就删,不留给后面的步骤添乱。
+            (SKILLS / "twover").mkdir()
+            v1_src = SKILLS / "twover" / "1.0.0.src.json"
+            v1_src.write_text(_fixture("twover", "1.0.0"), encoding="utf-8")
+            sign(v1_src)  # 第一版正常
+            v2_src = SKILLS / "twover" / "1.0.1.src.json"
+            v2_src.write_text(_fixture("twover", "1.0.1"), encoding="utf-8")
+            _expect_refused(lambda: sign(v2_src), "一个目录出现两个已签名版本")
+            shutil.rmtree(SKILLS / "twover")
+
+            # 7. 正常签的信封被手改——refresh_index 必须拒绝索引。放最后:这一步会让
+            # "ok" 永久验不过签,后面不能再指望 refresh_index() 对全树成功。
             ok_env_path = SKILLS / "ok" / "1.0.0.json"
             env = json.loads(ok_env_path.read_text(encoding="utf-8"))
             env["package"] = env["package"].replace("自检病", "被篡改")
             ok_env_path.write_text(json.dumps(env, ensure_ascii=False), encoding="utf-8")
             _expect_refused(refresh_index, "篡改过的信封被 refresh_index 索引")
 
-        print("selftest: 4/4 通过(manifest.id 校验 ×2,清单签名 ×1,篡改信封拒绝索引 ×1)")
+        print(
+            "selftest: 6/6 通过(manifest.id 校验 ×2,清单签名 ×1,manifest 缺字段 ×1,"
+            "一目录多版本 ×1,篡改信封拒绝索引 ×1)"
+        )
     finally:
         KEY_PATH, ROOT, SKILLS = real_key, real_root, real_skills
 
