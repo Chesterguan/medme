@@ -13,7 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 ///
 /// 一个声明、一个按钮。同意的同时会打开匿名使用统计——不在三条正式声明里单列
 /// (见 `_points` 处的注释),但滚动区末尾单独有一行写明这件事;
-/// 不想要的人在「设置 → 帮助改进 MedMe」里随时关。
+/// 不想要的人在「我 → 关于 → 帮助改进 MedMe」里随时关。
 ///
 /// **同意按钮在用户看到声明末尾之前不可点**(见 `_FirstRunConsentScreenState`
 /// 的 `_scrolledToEnd`)。这不是装饰:声明与协议链接是本屏存在的全部理由,一个
@@ -203,7 +203,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                           // 开、可以关」——两句话得一起成立或一起不成立,不能各说各话。
                           if (Analytics.isConfigured)
                             const Text(
-                              '匿名使用统计默认开,设置里可关。',
+                              '匿名使用统计默认开,我 → 关于 里可关。',
                               style: TextStyle(fontSize: 12.5, color: MedMe.faint, height: 1.6),
                             ),
                           const SizedBox(height: 8),
@@ -357,13 +357,9 @@ const _points = [
   _PointData(
     icon: Icons.lock_outline,
     title: '加密存在手机,登录后云端备份,我们打不开',
-    // TODO(Task 12): 改成「我 → 云端」——「我」tab 已经在了(底栏三项:病历 /
-    // 趋势 / 我,`lib/main.dart`),但「云端」那一行要到 Task 12 才落地,今天点
-    // 不到。复审(task-2-fix-re-review.md)抓到:round 1 把这句话提前写成了目标
-    // IA 的说法,而不是这个提交里真的能点到的路径。
     body: '不登录也能用,只是换手机找不回来。登录后,添加的病历会先在'
         '手机上涂黑姓名、证件号、医院名,再交给深度求索(DeepSeek)的'
-        '模型整理,服务器在境内;可以在 设置 → 账号 → 云端整理 关掉。',
+        '模型整理,服务器在境内;可以在 我 → 云端 关掉。',
   ),
 ];
 

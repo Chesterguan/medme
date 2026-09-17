@@ -1317,9 +1317,9 @@ void main() {
       expect(find.textContaining('accountId=acc_1'), findsOneWidget);
     });
 
-    testWidgets('C7:「云同步」排在第一个区块,「设备」排在「云同步」后面', (t) async {
+    testWidgets('C7:「云端」排在第一个区块,「设备」排在「云端」后面', (t) async {
       await _toReady(t, FakeApi(hasKeys: true), debugModeOverride: false);
-      final cloud = t.getTopLeft(find.text('云同步')).dy;
+      final cloud = t.getTopLeft(find.text('云端')).dy;
       final grants = t.getTopLeft(find.text('授权')).dy;
       expect(cloud < grants, isTrue, reason: '点进账号屏十次里九次是为了"我的病历备上了没有"');
     });
@@ -1917,7 +1917,7 @@ void main() {
       await t.pumpAndSettle();
 
       expect(
-        find.text('对方已注册,但还没设置好账号口令 —— 请他在 MedMe 里打开 设置 → 账号,完成最后两步'),
+        find.text('对方已注册,但还没设置好账号口令 —— 请他在 MedMe 里打开 我 → 口令与恢复码,完成最后两步'),
         findsOneWidget,
       );
       expect(
@@ -2701,7 +2701,7 @@ void main() {
       await t.tap(find.byKey(const Key('cloud_switch_p-1')));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('正在开通云同步…'), findsOneWidget);
+      expect(find.text('正在开通云端备份…'), findsOneWidget);
       await t.pumpAndSettle();
     });
 
@@ -2732,7 +2732,7 @@ void main() {
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
 
       expect(t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value, isTrue);
-      expect(find.textContaining('已开通云备份'), findsOneWidget);
+      expect(find.textContaining('已开通云端备份'), findsOneWidget);
       expect(find.text('同步'), findsOneWidget);
     });
 
@@ -2773,7 +2773,7 @@ void main() {
       await t.tap(find.byKey(const Key('cloud_switch_p-1')));
       await t.pumpAndSettle();
 
-      expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
+      expect(find.textContaining('请先在「我 → 关于」里关闭 iCloud 同步'), findsOneWidget);
       expect(
         t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value,
         isFalse,
@@ -2804,7 +2804,7 @@ void main() {
       expect(
         // 精确匹配这一行的状态句:同一句话现在也出现在那节说明和 I8 的告知横幅里
         // (它们共用 `_cloudDefaultCopy`),`textContaining` 会一次找到三个。
-        find.text('云同步已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号'),
+        find.text('云端备份已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号'),
         findsOneWidget,
         reason: '用户最怕的是"关掉是不是等于删库" —— 这句必须在那一行上',
       );
@@ -2851,7 +2851,7 @@ void main() {
       });
       await t.pumpAndSettle();
 
-      expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
+      expect(find.textContaining('请先在「我 → 关于」里关闭 iCloud 同步'), findsOneWidget);
       expect(
         ProfileManager.instance.byId(other!)!.cloudId,
         isNull,
@@ -2962,7 +2962,7 @@ void main() {
       });
       await t.pumpAndSettle();
 
-      expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
+      expect(find.textContaining('请先在「我 → 关于」里关闭 iCloud 同步'), findsOneWidget);
       expect(syncApi.pulls, 0, reason: '一趟同步都不该起步');
       expect(
         await t.runAsync(loadIcloudBlocksCloud),
@@ -3722,7 +3722,10 @@ void main() {
 
   // I8:登录/设完密钥那一刻,屏上必须把"默认开云"这件事说出来 —— 默认上传是一个
   // **代替用户做的决定**,他至少有权在发生的那一刻知道,并且知道怎么关。
-  group('I8:默认开云的一次性告知', () {
+  // Task 12:登录那一刻那条一次性横幅**撤掉了** —— 它说的和它正下方「云端」小节
+  // 那段说明是同一件事(Task 19 友好度 #5 已经记过一次:点完「知道了」同一段话还在
+  // 屏上,像是没点上)。说这件事的地方现在只有一处,这条用例钉住它还在。
+  group('默认开云这件事,说在开关的上面', () {
     late Directory support;
 
     setUp(() async {
@@ -3735,25 +3738,7 @@ void main() {
 
     tearDown(() async => support.delete(recursive: true));
 
-    // Task 19 友好度 #5:横幅原来逐字复用下面「云同步」小节的说明,点「知道了」
-    // 之后用户会发现同一段话还在屏上,像是没点上。横幅现在是独立的一句短话,
-    // 完整的三件事(默认上传 / 可按成员关 / 关了云端密文留着)只在小节说明里说
-    // 一遍——不在横幅里重复。
-    testWidgets('第一次进到「已登录」:横幅是独立短句(不逐字复用云同步小节的说明)', (t) async {
-      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
-
-      expect(find.byKey(const Key('cloud_notice')), findsOneWidget);
-      final bannerText = t.widget<Text>(find.byKey(const Key('cloud_notice_text'))).data!;
-      expect(bannerText, contains('自动加密备份到云端'));
-      expect(bannerText, contains('按成员关掉'));
-      expect(
-        bannerText,
-        isNot(contains('云端已有的密文会保留到你注销账号')),
-        reason: '这句细节留给下面的云同步小节说,横幅点完「知道了」不该让人觉得什么都没变',
-      );
-    });
-
-    testWidgets('云同步小节的完整说明(三件事)仍然只在小节里,不受横幅精简影响', (t) async {
+    testWidgets('完整说明(三件事)就在那一排开关上面,一字不少', (t) async {
       await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
 
       const fullCopy = '登录之后,每个成员的病历默认都会加密备份到云端(我们只看得到密文)。'
@@ -3762,48 +3747,25 @@ void main() {
       expect(find.text(fullCopy), findsOneWidget);
     });
 
-    testWidgets('点「知道了」:收起来,而且落盘 —— 下次不再出现', (t) async {
-      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
-
-      await t.tap(find.byKey(const Key('cloud_notice_ack')));
-      await t.pumpAndSettle();
-      expect(find.byKey(const Key('cloud_notice')), findsNothing);
-      expect(await t.runAsync(loadCloudDefaultNoticeSeen), isTrue);
-    });
-
-    // M16:那个标记原来是全局的 —— 同一台手机上换一个账号登录,他**从没**被告知过
-    // "你的病历会自动上云",而那正是需要被告知的那一刻。退出登录时清掉它
-    // (`AccountSession.clear()` 本来就在清一串账号态的 key,顺路一条)。
-    testWidgets('M16:退出登录之后换个账号登录 → 这句话还会说一次', (t) async {
-      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
-      await t.tap(find.byKey(const Key('cloud_notice_ack')));
-      await t.pumpAndSettle();
-      expect(await t.runAsync(loadCloudDefaultNoticeSeen), isTrue);
-
-      await t.runAsync(() => AccountSession.instance.clear());
-
-      expect(
-        await t.runAsync(loadCloudDefaultNoticeSeen),
-        isFalse,
-        reason: '下一个用这台手机登录的人也有权在那一刻知道这件事',
-      );
-    });
-
-    testWidgets('已经看过:不再出现', (t) async {
-      SharedPreferences.setMockInitialValues({'cloud_default_notice_seen': true});
+    testWidgets('屏顶不再有那条一次性横幅', (t) async {
       await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
 
       expect(find.byKey(const Key('cloud_notice')), findsNothing);
+      expect(find.text('知道了'), findsNothing);
     });
   });
 
   group('cloudRowStatus(纯函数):开关那一行的状态句', () {
     // N3:**不能说「已备份」** —— I7 之后非当前成员只"注册"过(服务端一个空档案 +
-    // 本机一把密钥),病历一条都还没上去。「已开通云备份」对两种状态都是真话。
-    test('已开通:说「已开通」+ 角色,不说「已备份」', () {
+    // 本机一把密钥),病历一条都还没上去。「已开通云端备份」对两种状态都是真话。
+    //
+    // Task 12:后面那半句角色(「· 主人」)撤掉了 —— 挑人的界面上不写角色词,
+    // 授权级别只在某个成员自己的页面里说(`s10`)。
+    test('已开通:说「已开通」,不说「已备份」、也不说角色', () {
       final s = cloudRowStatus(const Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner'));
-      expect(s, '已开通云备份 · 主人');
+      expect(s, '已开通云端备份');
       expect(s, isNot(contains('已备份到')), reason: '只注册过的成员云上还没有他的病历');
+      expect(s, isNot(contains('主人')), reason: '角色只在成员自己的页面里说');
     });
 
     test('还没开通:说会自动重试,也可以自己打开这个开关', () {
@@ -3814,7 +3776,7 @@ void main() {
     // 那句话会让用户以为云上躺着一份他的病历。
     test('M9:关掉的成员从没上过云 → 不许提"云端已有的密文会保留"', () {
       final s = cloudRowStatus(const Profile(id: 'p-1', name: '我', cloudPaused: true));
-      expect(s, contains('云同步已关闭'));
+      expect(s, contains('云端备份已关闭'));
       expect(s, isNot(contains('云端已有的密文')));
     });
 
@@ -3836,7 +3798,7 @@ void main() {
         icloudOn: true,
       );
       expect(s, contains('iCloud 同步'));
-      expect(s, isNot(contains('已开通云备份')));
+      expect(s, isNot(contains('已开通云端备份')));
     });
   });
 

@@ -209,20 +209,21 @@ void main() {
       // `--dart-define=POSTHOG_KEY`),这条断言按它的**实际值**取该值对应的那支,
       // 两支的逻辑都在这一行里,不用另外起一次带 dart-define 的构建。
       expect(
-        find.text('匿名使用统计默认开,设置里可关。'),
+        find.text('匿名使用统计默认开,我 → 关于 里可关。'),
         Analytics.isConfigured ? findsOneWidget : findsNothing,
       );
     });
 
-    // ── 复审(task-2-fix-re-review.md):fix round 1 引入的新错 ─────────────────
-    testWidgets('关闭入口写实际路径,不是还不存在的「我 → 云端」', (tester) async {
+    // ── 复审(task-2-fix-re-review.md):这句话必须写**这个提交里真能点到**的路径 ──
+    //
+    // Task 12 之后那条路是:底栏「我」→ 第一行「云端」→ 进去那一层有「云端整理」
+    // 开关(`settings_screen.dart` 的 `BackupStatusLine` / `account_screen.dart`
+    // 的 `_cloudExtractSwitch`)。旧的「设置 → 账号」已经没有这么一个 tab 了。
+    testWidgets('关闭入口写的是这个提交里真能点到的路径', (tester) async {
       useTallPhone(tester);
       await pumpScreen(tester);
-      // 本分支底栏是概览/趋势/档案/应急卡/设置,没有「我」tab 也没有「云端」入口
-      // (`lib/main.dart`)——那是 Task 12 才会有的 IA。今天能点到的路径是
-      // 设置 → 账号 →「云端整理」开关。
-      expect(find.textContaining('我 → 云端'), findsNothing);
-      expect(find.textContaining('设置 → 账号 → 云端整理'), findsWidgets);
+      expect(find.textContaining('我 → 云端'), findsWidgets);
+      expect(find.textContaining('设置 → 账号'), findsNothing);
     });
   });
 }

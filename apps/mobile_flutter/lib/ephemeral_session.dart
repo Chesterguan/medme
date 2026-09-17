@@ -12,7 +12,7 @@ import 'package:mobile_flutter/src/rust/api/vault_ephemeral.dart' as rust_epheme
 class EphemeralSession {
   EphemeralSession._();
 
-  /// 会话根目录:系统临时缓存目录(不进 iCloud/云备份,系统可能随时清空——
+  /// 会话根目录:系统临时缓存目录(不进 iCloud/云端备份,系统可能随时清空——
   /// 与「用完即焚」互为兜底)。
   static Future<String> _cacheDir() async =>
       (await getTemporaryDirectory()).path;

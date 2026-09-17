@@ -84,8 +84,8 @@ String friendlyApiError(Object e) => switch (e) {
   ApiFailed(status: >= 500) => '服务器开小差了,稍后再试',
   // **`StateError` 必须单独拆一条。** 全仓有 12 处 `throw StateError('中文…')`
   // (`sync_engine.dart`/`grants.dart`)会走到这些错误展示位,而
-  // `StateError.toString()` 是 `'Bad state: $message'` —— 于是「开通云同步」失败时
-  // 屏上是「**Bad state:** 账号公钥未就绪,不能开通云同步」,正是 B1/B2 要消灭的
+  // `StateError.toString()` 是 `'Bad state: $message'` —— 于是「开通云端备份」失败时
+  // 屏上是「**Bad state:** 账号公钥未就绪,不能开通云端备份」,正是 B1/B2 要消灭的
   // 那一类。只取 message。
   StateError(:final message) => message,
   // 其余(`UnlockFailed`/`ProfileLocked`/`VaultMismatch` 等自定义异常)的

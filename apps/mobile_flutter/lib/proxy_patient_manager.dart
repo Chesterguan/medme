@@ -18,7 +18,7 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 /// 告知里「最多存 12 小时,超时后医生下次打开 App 时清掉」那句话的执行者。
 ///
 /// 落在 `<applicationSupport>` 而不是系统临时目录:临时目录系统随时可清,撑不住 12
-/// 小时的承诺。也不进 iCloud —— 代拍病人的数据是别人的隐私,不上医生的云备份
+/// 小时的承诺。也不进 iCloud —— 代拍病人的数据是别人的隐私,不上医生的云端备份
 /// (`openProxyPatientVault` 传 `icloudContainerDir: null`,且每个病人有自己的
 /// dataDir,那里没有 `icloud_enabled` 标记)。
 class ProxyPatientManager {

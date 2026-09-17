@@ -14,18 +14,9 @@ String maskPhone(String phone) {
   return '${d.substring(0, 3)}****${d.substring(d.length - 4)}';
 }
 
-/// 「有账号默认开云」那句一次性告知看过了没(`sync_engine` 读写它)。
-///
-/// 键名定在这里、而不是在用它的那一侧:它要被**两处**认识 —— `sync_engine` 读写,
-/// 以及 [AccountSession.clear] 退出登录时清掉(复审 M16:它跟着账号走,不跟着设备走,
-/// 否则同一台手机上换个账号登录的人从没被告知过"你的病历会自动上云")。
-/// 反过来让本文件 import `sync_engine` 会成环(那边 import 这边)。
-const cloudDefaultNoticeSeenKey = 'cloud_default_notice_seen';
-
 /// 「云端整理」开关(`cloud_extract.dart` 读,账号屏的开关行写)——**跟设备走,
-/// 不跟账号走**:默认 true,`AccountSession.clear()` 不清它(不像
-/// [cloudDefaultNoticeSeenKey])。换个账号登录,这台设备"要不要把涂黑的单据图
-/// 交给云端模型整理"的选择不该因为换了个人登录就重置回默认。
+/// 不跟账号走**:默认 true,`AccountSession.clear()` 不清它。换个账号登录,这台
+/// 设备"要不要把涂黑的病历照片交给云端模型整理"的选择不该因为换了个人登录就重置回默认。
 const cloudExtractEnabledKey = 'cloud_extract_enabled';
 
 /// 第一次出码前那条告知,这台设备上说过没有(一次性)。**跟设备走,不按成员、
@@ -114,8 +105,6 @@ class AccountSession {
       'acct_pub',
       'acct_method',
       'acct_phone_masked',
-      // 见 [cloudDefaultNoticeSeenKey]:那句告知跟着账号走,不跟着设备走(M16)。
-      cloudDefaultNoticeSeenKey,
     ]) {
       await p.remove(k);
     }

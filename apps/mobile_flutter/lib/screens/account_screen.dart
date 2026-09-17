@@ -37,7 +37,7 @@ class _KdfBenchResult {
 }
 
 /// 账号屏的状态机:手机号登录 → OTP → (首次)设口令 + 展示恢复码 / (换设备)口令或
-/// 恢复码解锁 → 就绪(设备批准 + 授权列表 + 云同步 + 退出/注销)。切状态的判断逻辑全在
+/// 恢复码解锁 → 就绪(设备批准 + 授权列表 + 云端备份 + 退出/注销)。切状态的判断逻辑全在
 /// [AccountFlow],本屏只负责按返回值/异常显示对应界面。
 enum _Phase { idle, otpSent, keySetup, showRecovery, unlock, ready }
 
@@ -118,7 +118,7 @@ String expiryLabel(Object? iso) {
   return t == null ? '到期时间不明' : '至 ${t.month}月${t.day}日';
 }
 
-/// 云同步那一行的状态句 —— 纯函数,三态(关了 / 还没开通 / 已开通)。
+/// 云端备份那一行的状态句 —— 纯函数,三态(关了 / 还没开通 / 已开通)。
 ///
 /// 关掉那一句是创始人拍板的逐字文案:用户最怕的是"关掉是不是等于删库"。照实说 ——
 /// 本机这边停了,云端已经上去的那些密文留着,直到他注销账号。
@@ -128,22 +128,26 @@ String cloudRowStatus(Profile p, {bool icloudOn = false}) {
     // M9:**从来没上过云**的成员没有"云端已有的密文"可保留 —— 那句话会让用户以为
     // 云上躺着一份他的病历。只有真的上过云才说后半句。
     return p.cloudId == null
-        ? '云同步已关闭 —— 关闭后本机不再上传下载'
-        : '云同步已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号';
+        ? '云端备份已关闭 —— 关闭后本机不再上传下载'
+        : '云端备份已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号';
   }
-  // I5:开着 iCloud 同步时云同步压根开不了(见 `CloudEnableBlocked`),
+  // I5:开着 iCloud 同步时云端备份压根开不了(见 `CloudEnableBlocked`),
   // 「打开这个开关立刻再试一次」是句空话。
   //
   // **不看 cloudId**(F1):已经开通过的成员在开着 iCloud 时同步也走不通(屏上那颗
-  // 「同步」走 `enableCloud` 的可续做支路,撞的是同一道闸),说「已开通云备份」会让
+  // 「同步」走 `enableCloud` 的可续做支路,撞的是同一道闸),说「已开通云端备份」会让
   // 用户以为这边一切正常。iCloud 这件事是**整台手机**的,与某个成员开通到哪一步无关。
   if (icloudOn) return '这台手机开着 iCloud 同步,两套同步不能一起开';
   if (p.cloudId == null) return '还没备份上去 —— 会自动重试,也可以打开这个开关立刻再试一次';
   // **「已开通」而不是「已备份」**(复审 N3):I7 之后,非当前成员默认开云只做"注册"
   // (建档案密钥 + 在服务端建一个空档案),它的病历一条都还没上去 —— 那时说"已备份"
-  // 是假话。而「已开通云备份」对两种状态都成立:刚注册的、以及已经同步过的。
-  // "到底备上了没有、什么时候备的"由概览屏顶部那一行按成员回答(见 `backupStatus`)。
-  return '已开通云备份 · ${roleLabel(p.role)}';
+  // 是假话。而「已开通云端备份」对两种状态都成立:刚注册的、以及已经同步过的。
+  // "到底备上了没有、什么时候备的"由「我」tab 第一行按成员回答(见 `backupStatus`)。
+  //
+  // mockup:成员列表/切换器上只写名字。`roleLabel(p.role)` 从这里撤掉 —— 授权级别
+  // 在某个成员自己的页面里说,那里有上下文;摆在挑人的列表上,用户读到的是
+  // 「家里谁是谁」,而那不是这个字段的意思。
+  return '已开通云端备份';
 }
 
 /// 创建时间 → 「M月D日添加」。认不出来就不说(不编一个日期)。
@@ -158,8 +162,9 @@ String? createdLabel(Object? iso) {
 /// `prepareKeys` 还没 commit 的窗口,等于白做一遍)。
 const _kdfWaitHint = '正在生成密钥,老一点的手机可能要等几秒,请不要退出';
 
-/// 「有账号默认开云」这件事的**唯一一份措辞**:云同步那一节的说明、以及登录成功那一刻
-/// 的一次性告知(复审 I8)都用它 —— 同一件事在两处各写一遍,迟早会漂成两句不一样的话。
+/// 「有账号默认开云」这件事的**唯一一份措辞**,就摆在那一排开关的上面 —— 说这件事
+/// 的地方只有这一处(Task 12:登录那一刻那条一次性横幅撤掉了,它说的是同一件事,
+/// 而且就在这段话的正上方)。
 ///
 /// 三件事都要说到:默认会上传每个成员的密文、可以按成员关掉、关掉之后云端已有的密文
 /// 怎么办(用户最怕的是"关掉是不是等于删库")。后半句与 [cloudRowStatus] 里那句同源。
@@ -174,12 +179,6 @@ const _cloudDefaultCopy =
     '登录之后,每个成员的病历默认都会加密备份到云端(我们只看得到密文)。'
     '不想备份哪个成员,把它的开关关掉就行 —— 关闭后本机不再上传下载;'
     '云端已有的密文会保留到你注销账号。';
-
-/// Task 19 友好度 #5:一次性告知横幅原来逐字复用 [_cloudDefaultCopy]——与它正下方
-/// 「云同步」小节的说明**一字不差**,用户点「知道了」之后发现同一段话还在,像是
-/// 没点上。横幅只说一句最要紧的话(默认会备份 + 能按成员关),完整的三件事仍然
-/// 只在 [_cloudDefaultCopy] 里说一遍。
-const _cloudNoticeBannerCopy = '登录后病历会自动加密备份到云端;下面可以按成员关掉。';
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({
@@ -199,7 +198,7 @@ class AccountScreen extends StatefulWidget {
   /// 的 `sealTo`),测试传一个带假 `GrantsRust` 的实例进来,不碰真实原生库。
   final Grants? grants;
 
-  /// 测试注入点,同 [grants]——「开通云同步」「立即同步」用得到,默认为 null,
+  /// 测试注入点,同 [grants]——「开通云端备份」「立即同步」用得到,默认为 null,
   /// 真正用的时候按 [flow] 现取现建(见 `_AccountScreenState._sync`)。
   final SyncEngine? syncEngine;
 
@@ -223,7 +222,7 @@ class AccountScreen extends StatefulWidget {
   /// Task 19 友好度 #4:「有账号默认开云」原来只靠三处既有触发点排空
   /// `pendingCloudEnable`(导入 debounce / 回前台 / 冷启动补齐,见 `sync_engine.dart`
   /// `runBackgroundSync` 的文档),唯独没有"刚登录/解锁完这一刻"——于是新账号在空
-  /// 保险箱上会先看到「还没开始备份 · 点这里重试」和「还没开通云同步,暂时不能添加
+  /// 保险箱上会先看到「还没开始备份 · 点这里重试」和「还没开通云端备份,暂时不能添加
   /// 家属」,直到用户导入第一份文档才自动跑完那几秒的注册。这里在进入「已就绪」时
   /// 顺手触发一次同一个触发器,不重新发明"注册 → 重开箱 → 首同步"那一套(`enableCloud`
   /// 已经是原子的、当前成员专属的那条路,见 `_drainPendingCloudEnable` 的文档)。
@@ -300,9 +299,6 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 旧设备这一侧:正在扫码/批准(防连点)。
   bool _approveBusy = false;
 
-  /// I8:那句一次性告知还要不要显示(`initState` 从 prefs 读回来)。
-  bool _showCloudNotice = false;
-
   /// 这台手机开着 iCloud 同步吗 —— 读 `sync_engine` 记下来的那个布尔(复审 I5:
   /// 查 FRB 的事由后台那条队列做,账号屏不碰原生库,它跑在 widget 测试里)。
   bool _icloudBlocks = false;
@@ -323,7 +319,7 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 「我授权给谁」——见 `_loadMyGrants`。
   Future<List<Map<String, dynamic>>>? _myGrantsFuture;
 
-  // ---- 云同步(Task 15):开通 + 触发 + 展示上一次结果 ----
+  // ---- 云端备份(Task 15):开通 + 触发 + 展示上一次结果 ----
   bool _cloudBusy = false;
   String? _cloudError;
   bool _syncBusy = false;
@@ -357,9 +353,6 @@ class _AccountScreenState extends State<AccountScreen> {
     // phase)、把错误摆到 `_error` 上——idle 的界面本来就会渲染 `_error`。
     loadIcloudBlocksCloud().then((v) {
       if (mounted && v != _icloudBlocks) setState(() => _icloudBlocks = v);
-    });
-    loadCloudDefaultNoticeSeen().then((v) {
-      if (mounted && !v) setState(() => _showCloudNotice = true);
     });
     loadCloudExtractEnabled().then((v) {
       if (mounted && v != _cloudExtractEnabled) setState(() => _cloudExtractEnabled = v);
@@ -596,7 +589,7 @@ class _AccountScreenState extends State<AccountScreen> {
     ),
     const SizedBox(height: 8),
     const Text(
-      '换机恢复病历、和家人共享、开启云端识别。不登录不影响本机使用。',
+      '换手机能找回病历、和家人一起看、云端帮你认字。不登录不影响这台手机上用。',
       style: TextStyle(color: MedMe.faint),
     ),
     const SizedBox(height: 20),
@@ -843,8 +836,8 @@ class _AccountScreenState extends State<AccountScreen> {
         content: const Text(
           '我们不托管你的密钥。口令和恢复码是唯一能解开账号密钥的两把钥匙——'
           '两样都没有了,云端那份数据谁都打不开,我们也没有任何办法帮你找回。\n\n'
-          '还能做的事:退出登录、重新开始。这台手机上没开通云同步的病历不会被'
-          '删除;已经开通过云同步的那些成员,在这台手机上会一直锁着。',
+          '还能做的事:退出登录、重新开始。这台手机上没开通云端备份的病历不会被'
+          '删除;已经开通过云端备份的那些成员,在这台手机上会一直锁着。',
           style: TextStyle(height: 1.5),
         ),
         actions: [
@@ -884,7 +877,7 @@ class _AccountScreenState extends State<AccountScreen> {
       const SizedBox(height: 8),
       const Text(
         '手里还有另一台登录过这个账号的手机?不用口令也能进:在那台手机上打开'
-        '设置 → 账号 → 设备 → 「扫码批准新设备」,扫一下这张码就行。',
+        '我 → 我的设备 → 「扫码批准新设备」,扫一下这张码就行。',
         style: TextStyle(color: MedMe.faint, height: 1.5),
       ),
       if (_approvalError != null) _errorText(_approvalError!),
@@ -1019,16 +1012,15 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  /// C7:**「云同步」排第一**。用户点进账号屏,十次里九次是为了"我的病历到底备上了
+  /// C7:**「云端备份」排第一**。用户点进账号屏,十次里九次是为了"我的病历到底备上了
   /// 没有";而它原来排在第四个区块,要滚过设备、授权、家属三节才看得见。
   /// 「设备」排最后 —— 它是一年用一次的东西。
   List<Widget> _readyContent() => [
-    if (_showCloudNotice) ...[_cloudNoticeBanner(), const SizedBox(height: 16)],
     const Text('已登录', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 4),
     Text(_accountLabel(), style: const TextStyle(color: MedMe.faint)),
     const SizedBox(height: 24),
-    const Text('云同步', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const Text('云端', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _cloudSyncSection(),
     const SizedBox(height: 24),
@@ -1061,45 +1053,6 @@ class _AccountScreenState extends State<AccountScreen> {
     ],
   ];
 
-  /// I8。登录/设完密钥那一刻把"默认开云"这件事说出来,一次性、可关闭。
-  ///
-  /// 不做成弹窗:那一刻用户刚走完"输手机号 → 验证码 →(设口令 → 抄恢复码)"四步,
-  /// 再弹一个需要点掉的东西只会被无脑点掉。一条摆在屏顶、带「知道了」的横幅能被读到,
-  /// 而且在他点掉之前一直在。
-  Widget _cloudNoticeBanner() => Container(
-    key: const Key('cloud_notice'),
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(color: MedMe.tealSoft, borderRadius: BorderRadius.circular(12)),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          '你的病历会自动备份到云端',
-          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          _cloudNoticeBannerCopy,
-          key: Key('cloud_notice_text'),
-          style: TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.ink),
-        ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            key: const Key('cloud_notice_ack'),
-            onPressed: _ackCloudNotice,
-            child: const Text('知道了'),
-          ),
-        ),
-      ],
-    ),
-  );
-
-  Future<void> _ackCloudNotice() async {
-    setState(() => _showCloudNotice = false);
-    await saveCloudDefaultNoticeSeen();
-  }
-
   /// C1:这一行原来是 `账号:acc_7f3a…`(服务端内部 id)—— 对用户毫无意义。
   /// 改成他认得出的东西:脱敏手机号,或者「Apple 登录」。
   String _accountLabel() =>
@@ -1111,11 +1064,11 @@ class _AccountScreenState extends State<AccountScreen> {
   String _profileLabel(Object? cloudId) =>
       ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull?.name ?? '一份共享档案';
 
-  // ---- 云同步:每成员一个开关 +「同步」+ 上一次结果/错误 ----
+  // ---- 云端备份:每成员一个开关 +「同步」+ 上一次结果/错误 ----
 
-  /// 每成员一个「云同步」开关(UX 第二轮,创始人拍板:**有账号默认开云,可手动关**)。
+  /// 每成员一个「云端备份」开关(UX 第二轮,创始人拍板:**有账号默认开云,可手动关**)。
   ///
-  /// 原来这里是一颗「开通云同步」按钮,只管**当前成员**:于是家里三个人,用户得
+  /// 原来这里是一颗「开通云端备份」按钮,只管**当前成员**:于是家里三个人,用户得
   /// 切三次成员、各点一次,而"我登录了账号"在他心里早就等于"我的病历备上了"。
   /// 现在默认开(`AccountFlow.restoreProfileKeys` 登记 → 后台排空,见
   /// `sync_engine.pendingCloudEnable`),这里只负责**看见状态 + 手动关掉某一个**。
@@ -1140,7 +1093,7 @@ class _AccountScreenState extends State<AccountScreen> {
           const SizedBox(height: 8),
           const Center(child: CircularProgressIndicator()),
           const SizedBox(height: 8),
-          const Text('正在开通云同步…', textAlign: TextAlign.center, style: TextStyle(color: MedMe.faint)),
+          const Text('正在开通云端备份…', textAlign: TextAlign.center, style: TextStyle(color: MedMe.faint)),
         ],
         const SizedBox(height: 8),
         if (_lastSyncReport != null)
@@ -1156,7 +1109,7 @@ class _AccountScreenState extends State<AccountScreen> {
         // `enableCloud`(已有 cloudId 会跳过注册,直接重开箱 + 首同步),否则就是
         // 一次普通同步。用户只需要知道"点这里同步"。
         const SizedBox(height: 8),
-        // 关掉了云同步的成员没有「同步」可点 —— 那正是"关闭后本机不再上传下载"
+        // 关掉了云端备份的成员没有「同步」可点 —— 那正是"关闭后本机不再上传下载"
         // 这句话的意思;还没开通成功的成员,重试入口是它自己那个开关。
         if (profile.cloudId != null && !profile.cloudPaused)
           (_cloudBusy || _syncBusy)
@@ -1184,7 +1137,7 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  /// 一个成员一行:名字 + 此刻的状态 + 「云同步」开关。
+  /// 一个成员一行:名字 + 此刻的状态 + 「云端备份」开关。
   Widget _cloudMemberRow(Profile m) {
     final on = m.cloudId != null && !m.cloudPaused;
     return Card(
@@ -1203,7 +1156,7 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   /// 「云端整理」开关(Task 17)——跟设备走,不按成员分,所以只有一行,摆在
-  /// 每成员的「云同步」开关下面。关掉只影响 `cloud_extract.runCloudExtractions`
+  /// 每成员的「云端备份」开关下面。关掉只影响 `cloud_extract.runCloudExtractions`
   /// 要不要发网络请求,不影响 [_cloudMemberRow] 那些"要不要备份密文"的开关。
   Widget _cloudExtractSwitch() => Card(
     child: SwitchListTile(
@@ -1245,7 +1198,7 @@ class _AccountScreenState extends State<AccountScreen> {
         }
         pendingCloudEnable.remove(m.id);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('已给「${m.name}」开通云同步')));
+        ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('已给「${m.name}」开通云端备份')));
       }
       if (mounted) setState(() {});
     } catch (e) {
@@ -1270,7 +1223,7 @@ class _AccountScreenState extends State<AccountScreen> {
     return '上次同步:${parts.join('、')}';
   }
 
-  /// 「开通云同步」,**也是**上面那个「已开通,点击重试同步」按钮走的路径——
+  /// 「开通云端备份」,**也是**上面那个「已开通,点击重试同步」按钮走的路径——
   /// `SyncEngine.enableCloud` 自己是可续做的(已有 cloudId 就跳过注册),所以这里
   /// 不需要分两个动作。
   Future<void> _enableCloud() async {
@@ -1285,7 +1238,7 @@ class _AccountScreenState extends State<AccountScreen> {
       await _sync.enableCloud(ProfileManager.instance.current);
       if (!mounted) return;
       setState(() {}); // current 已写回 cloudId,重建切到"已开通"那半支
-      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已开通云同步')));
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已开通云端备份')));
     } catch (e) {
       if (!mounted) return;
       setState(() { _cloudError = friendlyApiError(e); });
@@ -1457,7 +1410,7 @@ class _AccountScreenState extends State<AccountScreen> {
       builder: (context) => AlertDialog(
         title: const Text('退出登录?'),
         content: const Text(
-          '退出后,已开通云同步的成员会在这台设备上锁定(需要重新登录才能打开)——'
+          '退出后,已开通云端备份的成员会在这台设备上锁定(需要重新登录才能打开)——'
           '我们不托管密钥,这台设备解不开它就是解不开。这台手机上的病历本身不会被删除。',
           style: TextStyle(height: 1.5),
         ),
@@ -1484,7 +1437,7 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  /// 见 Task 15 review C1(3):这台手机上已开通云同步的成员,密钥在服务端和
+  /// 见 Task 15 review C1(3):这台手机上已开通云端备份的成员,密钥在服务端和
   /// 本机(`AccountSession.clear()` 同一套 secure storage)一起销毁之后,**永远
   /// 打不开**——这不是"锁一下、重新登录就能自动补回来"那种(那是退出登录的
   /// 后果,`AccountFlow.restoreProfileKeys` 已经实现),账号本身没了,没有服务端
@@ -1500,7 +1453,7 @@ class _AccountScreenState extends State<AccountScreen> {
         content: const Text(
           '注销后:账号里的云端病历、家属/医生的授权全部永久删除,他们会立刻'
           '失去访问权限。此操作不可撤销。\n\n'
-          '这台手机上已开通云同步的成员,密钥会随账号一起在服务端和本机销毁——'
+          '这台手机上已开通云端备份的成员,密钥会随账号一起在服务端和本机销毁——'
           '之后这个成员在这台手机上永远打不开,不是"重新登录就能恢复"那种锁定,'
           '我们不托管密钥,没有任何办法找回。\n\n'
           '这台手机上已保存的病历本身不会被删除——如果也要清空本机数据,'
@@ -1939,12 +1892,12 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   /// 按手机号把**当前打开的成员**共享给家属:查号 → 封给对方公钥 → 永久 editor
-  /// (见 `grants.dart` 的 `grantFamilyByPhone`)。这个成员必须已经开通云同步——
+  /// (见 `grants.dart` 的 `grantFamilyByPhone`)。这个成员必须已经开通云端备份——
   /// 没有 cloudId 就没有档案密钥可封,`_familySection` 那边不显示表单,直接返回。
   Widget _familySection() {
     final profile = ProfileManager.instance.current;
     if (profile.cloudId == null) {
-      return const Text('当前成员还没开通云同步,暂时不能添加家属', style: TextStyle(color: MedMe.faint));
+      return const Text('当前成员还没开通云端备份,暂时不能添加家属', style: TextStyle(color: MedMe.faint));
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2000,7 +1953,7 @@ class _AccountScreenState extends State<AccountScreen> {
     // 在对方手机上。`404 + no_keys` 也认一下,免得新旧版本对不齐时又掉回错话。
     ApiFailed(status: 409, message: 'no_keys') ||
     ApiFailed(status: 404, message: 'no_keys') =>
-      '对方已注册,但还没设置好账号口令 —— 请他在 MedMe 里打开 设置 → 账号,完成最后两步',
+      '对方已注册,但还没设置好账号口令 —— 请他在 MedMe 里打开 我 → 口令与恢复码,完成最后两步',
     ApiFailed(status: 404) => '没有找到使用该手机号的账号',
     ApiFailed(status: 400) => '手机号格式不对',
     _ => null,

@@ -122,19 +122,19 @@ class RustSync implements RustSyncApi {
       rust.syncStoreObject(profileKey: profileKey, objectId: objectId, ciphertext: ciphertext);
 }
 
-/// 这台设备开着 iCloud 同步,不能给成员开通账号云同步(最终评审 C3)。
+/// 这台设备开着 iCloud 同步,不能给成员开通账号云端备份(最终评审 C3)。
 ///
 /// 两套同步搬的是**同一个保险箱的家**:iCloud 开着时,vault 的真相目录在
 /// iCloud 容器里(`<container>/Documents/profiles/<id>/vault`);而 keyed 开箱
 /// (`vault_boot.openCurrentProfileVault` 的 keyed 分支)只认本机沙盒那条路径,
-/// 压根不接容器根。于是「开通云同步」会在一个**空的本机目录**上开出一个空箱子,
+/// 压根不接容器根。于是「开通云端备份」会在一个**空的本机目录**上开出一个空箱子,
 /// 用户眼里就是"我的病历凭空消失了"(真相其实还在容器里,但 App 再也不看那边)。
 ///
 /// 宁可不给开,也不能演这一出。`toString` 就是给用户看的那句话。
 class CloudEnableBlocked implements Exception {
   const CloudEnableBlocked();
   @override
-  String toString() => '请先在设置里关闭 iCloud 同步';
+  String toString() => '请先在「我 → 关于」里关闭 iCloud 同步';
 }
 
 /// 一次 [SyncEngine.syncProfile] 的结果。
@@ -179,7 +179,7 @@ class SyncEngine {
   final AccountSession session;
   final RustSyncApi rust;
 
-  /// 开通云同步之后重开箱(走 keyed 路径)。测试注入点,默认真实的
+  /// 开通云端备份之后重开箱(走 keyed 路径)。测试注入点,默认真实的
   /// `vault_boot.openCurrentProfileVault`——它内部调 FRB,`flutter test` 跑不到,
   /// 于是 [enableCloud] 的"注册成功之后"那半截一直没法测(M4 的续开通逻辑正好
   /// 全在那半截)。同 `AccountFlow.reopenCurrentProfileVault` 的套路。
@@ -199,7 +199,7 @@ class SyncEngine {
   /// 挡一道,别为一个注定被服务端拒收的 PUT 走一趟签名请求。
   static const objectMaxBytes = 64 * 1024 * 1024;
 
-  /// 开通云同步:建一把新的档案密钥,用账号公钥封起来上传给自己(服务端只存
+  /// 开通云端备份:建一把新的档案密钥,用账号公钥封起来上传给自己(服务端只存
   /// 密文),登记为 owner,存进本机 secure storage,写回 [ProfileManager],
   /// 重开箱(走 keyed 路径)后立刻跑一次首同步。
   ///
@@ -221,7 +221,7 @@ class SyncEngine {
   Future<String> enableCloud(Profile p) async {
     if (p.id != ProfileManager.instance.currentId.value) {
       throw VaultMismatch(
-        '只能给当前打开的成员开通云同步(当前=${ProfileManager.instance.currentId.value},传入=${p.id})',
+        '只能给当前打开的成员开通云端备份(当前=${ProfileManager.instance.currentId.value},传入=${p.id})',
       );
     }
     // **在 `reopenVault()` 之前**(复审 R1)。不能只靠 [registerCloudProfile] 里那一道:
@@ -259,7 +259,7 @@ class SyncEngine {
     if (await rust.icloudEnabled()) await _refuseForIcloud();
     final key = await rust.profileKeyNew();
     final pub = session.publicKey;
-    if (pub == null) throw StateError('账号公钥未就绪,不能开通云同步');
+    if (pub == null) throw StateError('账号公钥未就绪,不能开通云端备份');
     final wrapped = await rust.sealTo(pub, key);
     final r = await api.postJson('/v1/profiles', {'wrapped_profile_key': base64Encode(wrapped)});
     final cloudId = r['profile_id'] as String;
@@ -318,7 +318,7 @@ class SyncEngine {
   Future<SyncReport> _syncProfileLocked(Profile p) async {
     await _assertVaultMatches(p);
     final cloudId = p.cloudId;
-    if (cloudId == null) throw StateError('这个成员还没开通云同步');
+    if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
     if (key == null) throw StateError('没有这个档案的密钥');
     final rep = SyncReport();
@@ -508,7 +508,7 @@ class SyncEngine {
   Future<void> _fetchObjectLocked(Profile p, String hash) async {
     await _assertVaultMatches(p);
     final cloudId = p.cloudId;
-    if (cloudId == null) throw StateError('这个成员还没开通云同步');
+    if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
     if (key == null) throw StateError('没有这个档案的密钥');
     final missing = await rust.missingObjects(key);
@@ -573,7 +573,7 @@ class SyncEngine {
 }
 
 /// debounced push(`vaultRevision` 变化 3 秒后)和 app-resume pull 共用的一段
-/// no-op 判断 + 静默失败:没登录、或当前成员没开通云同步(没有 [Profile.cloudId])
+/// no-op 判断 + 静默失败:没登录、或当前成员没开通云端备份(没有 [Profile.cloudId])
 /// 时什么都不做,不发任何请求;真的跑了的话失败也不抛——后台触发器不该弹错误
 /// 打断用户,想看这次到底成没成,去账号屏点「立即同步」(那边会显式展示
 /// [SyncReport]/异常)。
@@ -657,7 +657,7 @@ Future<void> saveLastSync({required bool ok, required String? cloudId}) async {
   lastSyncRevision.value++;
 }
 
-/// 「这台手机开着 iCloud 同步,所以云同步开不了」(见 [CloudEnableBlocked])。
+/// 「这台手机开着 iCloud 同步,所以云端备份开不了」(见 [CloudEnableBlocked])。
 ///
 /// 由 [_drainPendingCloudEnable] 每次排空前问一次 Rust 并记在这儿,**界面只读这个
 /// 布尔**(复审 I5)。这样"查 iCloud 开没开"这件事只有一处碰 FRB,概览屏那一行和
@@ -677,27 +677,6 @@ Future<bool> loadIcloudBlocksCloud() async {
   } catch (_) {
     return false;
   }
-}
-
-/// 「默认开云」那句一次性告知看过了没(复审 I8)。默认上传是一个**代替用户做的
-/// 决定** —— 他至少有权在它发生的那一刻知道这件事、并且知道怎么关。
-/// 键名定在 `account.dart`(见 [cloudDefaultNoticeSeenKey]):`AccountSession.clear()`
-/// 退出登录时也要清它,两边必须认同一个字符串。
-const _cloudNoticeSeenKey = cloudDefaultNoticeSeenKey;
-
-Future<bool> loadCloudDefaultNoticeSeen() async {
-  try {
-    return (await SharedPreferences.getInstance()).getBool(_cloudNoticeSeenKey) ?? false;
-  } catch (_) {
-    // 读不到就当没看过 —— 多说一次远好过漏说。
-    return false;
-  }
-}
-
-Future<void> saveCloudDefaultNoticeSeen() async {
-  try {
-    await (await SharedPreferences.getInstance()).setBool(_cloudNoticeSeenKey, true);
-  } catch (_) {}
 }
 
 Future<LastSync?> loadLastSync(String? cloudId) async {
@@ -721,7 +700,7 @@ Future<void> triggerBackgroundSync({
   /// 不碰 [pendingFirstSync] —— 已有的那些只测"普通同步"的用例不用改。
   Future<void> Function(Profile p, String returnTo)? firstSync,
 
-  /// 给一个还没开通云同步的成员开通。`current` = 这是不是用户此刻打开着的那个成员:
+  /// 给一个还没开通云端备份的成员开通。`current` = 这是不是用户此刻打开着的那个成员:
   /// **只有它走完整路径**(注册 → 重开箱 → 首同步),别人只做"注册"那一步
   /// (复审 I7,见 [_drainPendingCloudEnable])。为 null 时不碰 [pendingCloudEnable]。
   Future<void> Function(Profile p, {required bool current})? enableCloud,
@@ -767,7 +746,7 @@ Future<void> _runBackgroundSyncOnce({
   // 再把「有账号了、但这个成员还没上云」的排空(UX 第二轮)。
   if (enableCloud != null) await _drainPendingCloudEnable(currentProfile, enableCloud, icloudEnabled);
   final profile = currentProfile();
-  // `cloudPaused` = 用户手动关了这个成员的云同步 —— 触发器跳过它(创始人拍板的
+  // `cloudPaused` = 用户手动关了这个成员的云端备份 —— 触发器跳过它(创始人拍板的
   // 那条:「关闭后本机不再上传下载」)。
   if (profile == null || profile.cloudId == null || profile.cloudPaused) return;
   try {
@@ -790,7 +769,7 @@ Future<void> _drainPendingFirstSync(
   if (returnTo == null) return;
   for (final id in pendingFirstSync.toList()) {
     final p = ProfileManager.instance.byId(id);
-    // 成员已经不在了(用户删了)、或者用户把它的云同步关了——别再惦记它。
+    // 成员已经不在了(用户删了)、或者用户把它的云端备份关了——别再惦记它。
     // 关掉之后还去跑首同步,正是"关闭后本机不再上传下载"这句话的反面。
     if (p == null || p.cloudId == null || p.cloudPaused) {
       pendingFirstSync.remove(id);

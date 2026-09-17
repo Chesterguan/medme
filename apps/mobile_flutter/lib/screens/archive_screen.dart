@@ -441,7 +441,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   }
 }
 
-/// 空态引导:没有记录时提示点上面那颗「添加」,或去「设置」载入示例数据。
+/// 空态引导:没有记录时提示点上面那颗「添加」,或去「我 → 关于」载入示例数据。
 class _EmptyState extends StatelessWidget {
   const _EmptyState();
 
@@ -463,7 +463,7 @@ class _EmptyState extends StatelessWidget {
             Text('还没有病历', style: MedType.subtitle.copyWith(color: c.ink)),
             const SizedBox(height: MedShape.s1),
             Text(
-              '点上面那颗「添加」拍照或选择文件,\n或在「设置」里载入示例数据试试看',
+              '点上面那颗「添加」拍照或选择文件,\n或在「我 → 关于」里载入示例数据试试看',
               textAlign: TextAlign.center,
               style: MedType.body.copyWith(color: c.ink2, height: 1.6),
             ),

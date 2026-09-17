@@ -87,7 +87,7 @@ class Grants {
     required int ttlS,
   }) async {
     final cloudId = p.cloudId;
-    if (cloudId == null) throw StateError('这个成员还没开通云同步');
+    if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
     if (key == null) throw StateError('没有这个档案的密钥');
     final token = base64UrlEncode(List.generate(24, (_) => Random.secure().nextInt(256))).replaceAll('=', '');
@@ -251,7 +251,7 @@ class Grants {
   /// 不额外掩盖。
   Future<void> grantFamilyByPhone(Profile p, String phone) async {
     final cloudId = p.cloudId;
-    if (cloudId == null) throw StateError('这个成员还没开通云同步');
+    if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
     if (key == null) throw StateError('没有这个档案的密钥');
     final looked = await api.postJson('/v1/accounts/lookup', {'phone': phone});
@@ -267,7 +267,7 @@ class Grants {
   /// 撤销一份授权(删掉那条 grant)。
   Future<void> revoke(Profile p, String grantId) async {
     final cloudId = p.cloudId;
-    if (cloudId == null) throw StateError('这个成员还没开通云同步');
+    if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     await api.delete('/v1/profiles/$cloudId/grants/$grantId');
   }
 

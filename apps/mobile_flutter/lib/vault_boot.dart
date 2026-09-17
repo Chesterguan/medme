@@ -126,9 +126,9 @@ class ProfileLocked implements Exception {
   const ProfileLocked(this.cloudId);
   final String cloudId;
 
-  /// C4:这句话原来是「这个档案已绑定云同步,但本机还没有它的密钥——需要解锁账号
+  /// C4:这句话原来是「这个档案已绑定云端备份,但本机还没有它的密钥——需要解锁账号
   /// 才能打开(cloudId=prf_7f3a…)」。它**是启动时那块白屏上最显眼的一段字**,而
-  /// 它里面每一个词都是我们自己的词汇:"绑定云同步"、"档案密钥"、"解锁账号",
+  /// 它里面每一个词都是我们自己的词汇:"绑定云端备份"、"档案密钥"、"解锁账号",
   /// 末尾还挂着一串服务端内部 id。老人看完只知道打不开,不知道该做什么。
   ///
   /// 现在说两件事:为什么打不开(在云端是加密的)、要他做什么(输口令)。
@@ -140,7 +140,7 @@ class ProfileLocked implements Exception {
 
 /// 打开「当前成员」的保险箱:按 [ProfileManager] 组合本机/iCloud 路径。启动 +
 /// 切换成员后都调它,也是 `SyncEngine.enableCloud`(见 `sync_engine.dart`)开通
-/// 云同步后重开箱唯一走的入口——**所有开箱都必须经过这个函数**(从而经过下面的
+/// 云端备份后重开箱唯一走的入口——**所有开箱都必须经过这个函数**(从而经过下面的
 /// FIFO 队列),不许在别处直接调 `syncOpenProfileVault`。
 ///
 /// data 目录(设备 id、iCloud 全局开关标记、导入临时文件)所有成员共用——iCloud 是

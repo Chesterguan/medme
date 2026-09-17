@@ -236,7 +236,7 @@ class ProfileManager {
     }
   }
 
-  /// 记下这个成员已开通云同步:服务端 `profile_id`([cloudId])、本设备对它的
+  /// 记下这个成员已开通云端备份:服务端 `profile_id`([cloudId])、本设备对它的
   /// 角色([role])、这份授权的到期时间([expiresAt],owner 为 null)。
   /// 调用方(`SyncEngine.enableCloud`)在这之前已经把档案密钥存进
   /// `AccountSession`——这里只落 profiles.json 里的元数据。
@@ -251,7 +251,7 @@ class ProfileManager {
     await _save();
   }
 
-  /// 这个成员的「云同步」开关(UX 第二轮,创始人拍板:**有账号默认开云,可手动关**)。
+  /// 这个成员的「云端备份」开关(UX 第二轮,创始人拍板:**有账号默认开云,可手动关**)。
   ///
   /// `true` = 用户把它关了:后台触发器、「同步」按钮、以及"默认给没开通的成员开通"
   /// 那条队列都跳过它。**不删云端已有的密文**(那是注销账号才做的事),也不清本机
@@ -405,7 +405,7 @@ class ProfileManager {
 
 /// 一个成员:[id] 是主键与目录名(生成后永不变),[name] 只是给人看的标签(随时可改)。
 ///
-/// [cloudId]/[role]/[expiresAt] 是开通云同步之后才有的:[cloudId] 是服务端的
+/// [cloudId]/[role]/[expiresAt] 是开通云端备份之后才有的:[cloudId] 是服务端的
 /// `profile_id`,[role] 是这台设备对这个云档案的角色(`owner`/`editor`/`viewer`),
 /// [expiresAt] 是这份授权的到期时间(owner 永不过期,为 null)。三者一起决定
 /// `openCurrentProfileVault` 走 keyed 开箱还是原路径——见 `vault_boot.dart`。
@@ -426,7 +426,7 @@ class Profile {
   final String? role;
   final DateTime? expiresAt;
 
-  /// 用户手动关掉了这个成员的云同步(见 [ProfileManager.setCloudPaused])。
+  /// 用户手动关掉了这个成员的云端备份(见 [ProfileManager.setCloudPaused])。
   /// 默认 false = 开着 —— "有账号默认开云"是产品决定,不是用户要逐个打开的东西。
   final bool cloudPaused;
 

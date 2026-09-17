@@ -462,7 +462,8 @@ enum AnalyticsEvent {
   // 「代拍到底成不成立」是盲飞。
 
   /// 选了身份。属性:`mode`(personal/doctor)、`where`(first=首屏首次选 /
-  /// settings=事后在设置里切 / for_doctor=从「给医生看」那一页最后一行进代拍)。
+  /// settings=历史值,「我」里那一节只在代拍模式下才有(出口) / for_doctor=从
+  /// 「给医生看」那一页最后一行进代拍)。
   /// `where` 值钱在于:事后切换说明第一次选错了;`for_doctor` 与 `settings` 的
   /// 比说明医生是照着入口来的,还是逛设置逛到的。
   modeSelected('mode_selected', {'mode', 'where'}),
@@ -540,7 +541,7 @@ enum AnalyticsEvent {
   /// 一次 `syncProfile` 跑完(成功或失败)。属性:`ok`、`pushed_bucket`、
   /// `pulled_bucket`。
   ///
-  /// 回答的决定:**云同步到底跑没跑通。** `ok` 的失败率,以及两个分桶是不是
+  /// 回答的决定:**云端备份到底跑没跑通。** `ok` 的失败率,以及两个分桶是不是
   /// 长期为 `0`,决定这套推拉引擎值不值得继续投入。不报同步了什么内容。
   syncRun('sync_run', {'ok', 'pushed_bucket', 'pulled_bucket'}),
 

@@ -92,7 +92,7 @@ void pushGrantRedeem(GrantLink link, {required bool cold}) {
 
 class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   /// 保险箱内容变化(`vaultRevision`)3 秒后才推——避免连续几次录入/导入各触发
-  /// 一次网络请求;`triggerBackgroundSync` 自己会在没登录/当前成员没开通云同步时
+  /// 一次网络请求;`triggerBackgroundSync` 自己会在没登录/当前成员没开通云端备份时
   /// no-op,这里只管"什么时候跑"。
   Timer? _pushDebounce;
 
@@ -137,7 +137,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(ProxyPatientManager.instance.ensureLoaded());
-      // 回到前台顺手拉一次云同步(`triggerBackgroundSync` 没登录/没开通云同步
+      // 回到前台顺手拉一次云端备份(`triggerBackgroundSync` 没登录/没开通云端备份
       // 时 no-op)——见 Task 15 brief:app-resume pull。
       unawaited(runBackgroundSync());
     }
@@ -219,7 +219,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
 }
 
 /// [ProfileLocked] 错误屏专用的两个动作:「去登录」「切换成员」——见 Task 15
-/// review C1:退出登录/换设备清过 secure storage 之后,已开通云同步的成员会
+/// review C1:退出登录/换设备清过 secure storage 之后,已开通云端备份的成员会
 /// 变成这个状态,原来这一屏没有任何按钮,用户只能卡死在这儿。
 ///
 /// 拆成独立 widget(而不是内联在 `VaultBootstrap.build` 里)是为了让它能在
@@ -304,7 +304,7 @@ class ProfileLockedActions extends StatelessWidget {
 /// "某个界面显示得不对",而是整套云功能在每次冷启动后**等于不存在**:
 ///
 /// * `openCurrentProfileVault` 靠 `AccountSession.profileKey()` 选开箱路径
-///   (见 `vault_boot.planVaultOpen`)——读不到密钥,每个已开通云同步的成员都被
+///   (见 `vault_boot.planVaultOpen`)——读不到密钥,每个已开通云端备份的成员都被
 ///   判成 `ProfileLocked`,用户开机看到的是"需要解锁账号"的死胡同;
 /// * `triggerBackgroundSync` 第一句就是 `session.loggedIn.value`——恒 false,
 ///   debounce push 和 app-resume pull 永远 no-op;
@@ -470,7 +470,7 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
           final error = snap.error!;
           final text = vaultBootstrapErrorText(error);
           // `ProfileLocked` 是一个**可操作**的死胡同(见 Task 15 review C1):
-          // 退出登录/换设备清过 secure storage 之后,已开通云同步的成员会变成
+          // 退出登录/换设备清过 secure storage 之后,已开通云端备份的成员会变成
           // 这个状态——之前这一屏没有任何按钮,用户只能卡在这儿,连"去登录把
           // 密钥补回来"都做不到,等于把 App 锁死。其它种类的开箱失败(箱子真的
           // 坏了)不给这两个按钮——它们解决不了"文件系统/数据库坏了"这件事。

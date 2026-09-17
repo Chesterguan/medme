@@ -75,8 +75,9 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
     await next;
   }
 
-  /// 进代拍。**先确认一次身份**(一次性的那道确认在 Task 15 补进代拍首页),
-  /// 这里只负责切模式 —— `AppRoot` 监听同一个 notifier,自动换根界面。
+  /// 进代拍。**今天点下去就直接切过去了,不确认**(那道一次性的身份确认在
+  /// Task 15 补进代拍首页);这里只负责切模式 —— `AppRoot` 监听同一个 notifier,
+  /// 自动换根界面。
   ///
   /// 换根之后还要把导航栈弹回第一层:本屏是 `push` 进来的,而 `AppRoot` 在
   /// `Navigator` **下面**,不弹的话代拍首页被这一页整个盖住 —— 用户按下去

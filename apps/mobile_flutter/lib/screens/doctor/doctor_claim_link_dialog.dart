@@ -7,7 +7,7 @@ import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart' show Profile;
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 
-/// 决定这个对话框最终该显示哪条链接:登录且传入了已开通云同步的档案时,尝试
+/// 决定这个对话框最终该显示哪条链接:登录且传入了已开通云端备份的档案时,尝试
 /// 换成一条 `role=owner` 的转移邀请;没登录、没传档案、或者换取失败,一律用
 /// [fallbackUrl](调用方原来就准备好的那条,一直有效)。**永不返回空/坏链接**——
 /// 转移失败不该让医生对着一个没法用的码交差。
@@ -39,7 +39,7 @@ Future<String> resolveDoctorClaimUrl({
 /// [cloudProfile] 有值(且医生已登录)时,认领链接改发一条 `role=owner` 的授权
 /// 邀请——这是一次真正的所有权转移(服务端在兑换时把老 owner 自动降成
 /// editor),不再是"密文躺在瞬时云、谁截到密钥谁能看"那种链接。调用方目前还没有
-/// 任何一条路径会把已开通云同步的代拍档案传进来(那需要先把代拍病人的临时保险箱
+/// 任何一条路径会把已开通云端备份的代拍档案传进来(那需要先把代拍病人的临时保险箱
 /// 注册成云档案,是另一块尚未接线的工作),所以这个分支眼下是**前向兼容但还没被
 /// 触发**——保留 `cloudProfile` 为 null 时,行为与改动前逐字节一致。
 ///
