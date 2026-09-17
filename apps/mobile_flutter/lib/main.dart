@@ -22,7 +22,6 @@ import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
-import 'package:mobile_flutter/screens/mode_picker_screen.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -568,16 +567,20 @@ class _AppRootState extends State<AppRoot> {
   Widget _modeRoot() {
     return ValueListenableBuilder<AppModeKind?>(
       valueListenable: AppMode.instance.mode,
-      builder: (context, mode, _) {
-        return switch (mode) {
-          null => const ModePickerScreen(),
-          AppModeKind.personal => const HomeShell(),
-          AppModeKind.doctor => const DoctorHomeScreen(),
-        };
-      },
+      builder: (context, mode, _) => modeRoot(mode),
     );
   }
 }
+
+/// 按模式决定根界面。**`null`(从没选过)走个人模式** —— 「你是?」那一屏已经删了
+/// (ia-proposal §2 候选 A 的删除清单):代拍不是开机第一个该问的问题,它的入口
+/// 在「给医生看」的最后一行。
+///
+/// 顶层纯函数,不碰 `BuildContext` —— 这样 `flutter test` 能直接断言映射关系。
+Widget modeRoot(AppModeKind? mode) => switch (mode) {
+  AppModeKind.doctor => const DoctorHomeScreen(),
+  _ => const HomeShell(),
+};
 
 /// 底部导航壳:**三个一级 tab**(mockup,创始人拍板)。
 ///
