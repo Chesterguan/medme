@@ -230,9 +230,10 @@ pub fn activity_section(
 
 /// 一次活动度求值的产物,三个数组互斥(形状见 [`activity_section`])。
 ///
-/// 求值与出卡片分开,是因为 `hits` 有第二个读者:达标表的 cSLEDAI 要按 id 把补体、
-/// dsDNA 两条**减掉**。**一份输入只算一遍** —— 算两遍就有算出两个不同分数的机会,
-/// 而卡片上的 x/18 与达标表里的 cSLEDAI 说的必须是同一次计分。
+/// 求值与出卡片分开,是因为它有第二个读者:达标表按 id 从 `hits` 里减掉补体、dsDNA
+/// 两条算 cSLEDAI,并且要看 `unscored` 才知道「这次到底算全了没有」。**一份输入只算
+/// 一遍** —— 算两遍就有算出两个不同分数的机会,而卡片上的 x/18 与达标表里的 cSLEDAI
+/// 说的必须是同一次计分。
 pub struct Activity {
     pub hits: Vec<Hit>,
     missed: Vec<Missed>,
@@ -286,15 +287,16 @@ fn weight_sum<'h>(hits: impl IntoIterator<Item = &'h Hit>) -> u32 {
 }
 
 /// section 的标题按 kind 从包的 `views.sections` 里取(spec §6:顺序、标题、空态文案
-/// 全来自包)。包里没写就**不给标题** —— 引擎里垫一句中文,「加一个病不发版」这条
-/// 前提上就多了一个例外,而例外只会越来越多。
-fn view_title(pkg: &crate::package::Package, kind: &str) -> String {
+/// 全来自包)。包里没写就 `None` —— 引擎里垫一句中文,「加一个病不发版」这条前提上
+/// 就多了一个例外,而例外只会越来越多。**空标题要是 `null` 不是 `""`**:后者在
+/// JSON 里和「作者写了个空标题」长得一样,渲染层分不出包漏了还是包故意的。
+fn view_title(pkg: &crate::package::Package, kind: &str) -> Option<String> {
     pkg.views
         .sections
         .iter()
         .find(|s| str_field(s, "kind") == kind)
-        .map(|s| str_field(s, "title").to_string())
-        .unwrap_or_default()
+        .and_then(|s| s.get("title").and_then(|t| t.as_str()))
+        .map(str::to_string)
 }
 
 fn str_field<'j>(v: &'j serde_json::Value, k: &str) -> &'j str {
@@ -630,16 +632,23 @@ impl Verdict {
     }
 }
 
-/// 最近一次 `pga` 事件的分值(SELENA-SLEDAI PGA,0–3)。从没录过 → `None`。
+/// 最近一次 `pga` 事件的分值与**它是哪天录的**(SELENA-SLEDAI PGA,0–3)。从没录过
+/// → `None`。
+///
+/// 日期必须一起带出去:引擎这边不设时效(包/渲染层才知道多久算过期),但 body 里
+/// 没有日期的话,Task 21 连「录于 2023-04」都渲染不出来 —— 一个三年前的分值会长得
+/// 和今天刚录的一模一样。
 ///
 /// `at` 只到天,同一天录两次时以**日志里靠后的那条**为准(`max_by` 的文档保证:
 /// 并列取最后一个),与开启闸同一条日内规则(见 `lib.rs::is_enabled`)。
-fn latest_pga(ctx: &Ctx<'_>, package_id: &str) -> Option<f64> {
-    ctx.events
+fn latest_pga<'e>(ctx: &Ctx<'e>, package_id: &str) -> Option<(f64, &'e str)> {
+    let e = ctx
+        .events
         .iter()
         .filter(|e| e.package == package_id && e.kind == "pga")
-        .max_by(|a, b| a.at.cmp(&b.at))
-        .and_then(|e| e.payload.get("value").and_then(serde_json::Value::as_f64))
+        .max_by(|a, b| a.at.cmp(&b.at))?;
+    let v = e.payload.get("value").and_then(serde_json::Value::as_f64)?;
+    Some((v, e.at.as_str()))
 }
 
 /// 最近一次泼尼松等效日剂量(mg/天)。**Task 13 才读用药记录**,在那之前恒为
@@ -652,28 +661,37 @@ fn latest_pred_equiv_mg(_ctx: &Ctx<'_>, _pkg: &crate::package::Package) -> Optio
     None
 }
 
-/// 达标检查表(spec §5.3)。`hits` 是 [`activity_eval`] 已经算好的那一份命中。
+/// 达标检查表(spec §5.3)。`activity` 是 [`activity_eval`] 已经算好的那一次求值 ——
+/// 分数从 `hits` 来,**算全了没有**从 `unscored` 来。
 ///
 /// `body` 的形状(Task 21 的渲染引擎按这一份读):
 /// ```text
 /// {"states":[{"id","label","source","note","verdict",
-///             "items":[{"id","label","verdict","actual","reason","note","source"}]}]}
+///             "items":[{"id","label","verdict","actual","actual_at","reason","note","source"}]}]}
 /// ```
 /// `verdict` 三态 `"yes"|"no"|"unknown"`;整表 = 任一条 `no` → `no`,否则任一条
-/// `unknown` → `unknown`,全 `yes` 才 `yes`。`actual` 是这一条真算出来的数(未知时
-/// `null`),`reason` 是未知的理由(其余时候 `null`)—— 未知必须带一句为什么,不然
-/// 界面上的「未知」和「这条我们不打算算」长得一样。
+/// `unknown` → `unknown`,全 `yes` 才 `yes`。`actual` 是这一条算出来的数(未知时
+/// `null`;分数类条目算的是**化验可算部分**,没读到的描述符不在里面),`actual_at`
+/// 是那个数是哪天的(目前只有 PGA 有),`reason` 是未知的理由(其余时候 `null`)——
+/// 未知必须带一句为什么,不然界面上的「未知」和「这条我们不打算算」长得一样。
 pub fn states_section(
     ctx: &Ctx<'_>,
     pkg: &crate::package::Package,
-    hits: &[Hit],
+    activity: &Activity,
 ) -> Option<crate::view::Section> {
     if pkg.rules.states.is_empty() {
         return None;
     }
     let pga = latest_pga(ctx, &pkg.manifest.id);
     let pred = latest_pred_equiv_mg(ctx, pkg);
-    let lab_score = weight_sum(hits);
+    // `exclude` 里的 id 要能在活动度规则里找得到,不然减项会静悄悄失效。
+    let known: Vec<&str> = pkg
+        .rules
+        .activity
+        .items
+        .iter()
+        .map(|i| str_field(i, "id"))
+        .collect();
 
     let mut states = Vec::new();
     for st in &pkg.rules.states {
@@ -685,15 +703,16 @@ pub fn states_section(
             .into_iter()
             .flatten()
         {
-            let (verdict, actual, reason) = eval_state_item(it, lab_score, hits, pga, pred);
-            if verdict == Verdict::No {
+            let o = eval_state_item(it, activity, &known, pga, pred);
+            if o.verdict == Verdict::No {
                 worst = Verdict::No;
-            } else if verdict == Verdict::Unknown && worst != Verdict::No {
+            } else if o.verdict == Verdict::Unknown && worst != Verdict::No {
                 worst = Verdict::Unknown;
             }
             items.push(serde_json::json!({
                 "id": str_field(it, "id"), "label": str_field(it, "label"),
-                "verdict": verdict.as_str(), "actual": actual, "reason": reason,
+                "verdict": o.verdict.as_str(), "actual": o.actual, "actual_at": o.actual_at,
+                "reason": o.reason,
                 "note": it.get("note"), "source": str_field(it, "source"),
             }));
         }
@@ -718,18 +737,79 @@ pub fn states_section(
     })
 }
 
-/// 求一条达标条目:返回(三态,真实算出来的数,未知的理由)。
+/// 一条达标条目的结论。
+struct ItemOutcome {
+    verdict: Verdict,
+    /// 这一条算出来的数,未知时 `null`。
+    actual: serde_json::Value,
+    /// `actual` 是哪天的(目前只有 PGA 有日期)。
+    actual_at: Option<String>,
+    /// 未知的理由;`Yes`/`No` 时为 `None`。
+    reason: Option<String>,
+}
+
+impl ItemOutcome {
+    fn unknown(why: impl Into<String>) -> ItemOutcome {
+        ItemOutcome {
+            verdict: Verdict::Unknown,
+            actual: serde_json::Value::Null,
+            actual_at: None,
+            reason: Some(why.into()),
+        }
+    }
+
+    fn judged(ok: bool, actual: serde_json::Value) -> ItemOutcome {
+        ItemOutcome {
+            verdict: if ok { Verdict::Yes } else { Verdict::No },
+            actual,
+            actual_at: None,
+            reason: None,
+        }
+    }
+}
+
+/// 从活动度分数推出来的条目(`csledai_eq` / `sledai_le`)。
+///
+/// **算不出来的描述符不等于 0 分。** 这是「未知不许塌成 ✘」的镜像错法,而且更危险:
+/// 一份文档都没有时 8 条描述符全在 `unscored`、`hits` 为空,按分数直接判就成了
+/// 「临床 SLEDAI = 0 ✔」—— 旁边的活动度卡片正说着「最近 10 天还没有化验结果」。
+///
+/// 权重非负,所以只有一件事可以确定:**分数已经超过目标 → 一定不达标**(把没读到的
+/// 那几项补上只会更高)。没超过时得看算全了没有:还有非 `exclude` 的描述符没算出来
+/// → 未知,并说出第一条是哪一项;全算过了才按分数判。
+fn score_item(
+    activity: &Activity,
+    excluded: &[&str],
+    target: f64,
+    met: impl Fn(f64, f64) -> bool,
+) -> ItemOutcome {
+    let score = weight_sum(
+        activity
+            .hits
+            .iter()
+            .filter(|h| !excluded.contains(&h.id.as_str())),
+    );
+    if f64::from(score) > target {
+        return ItemOutcome::judged(false, serde_json::json!(score));
+    }
+    if let Some(u) = activity
+        .unscored
+        .iter()
+        .find(|u| !excluded.contains(&u.id.as_str()))
+    {
+        return ItemOutcome::unknown(format!("「{}」还没读到,SLEDAI 算不全", u.label));
+    }
+    ItemOutcome::judged(met(f64::from(score), target), serde_json::json!(score))
+}
+
+/// 求一条达标条目。
 fn eval_state_item(
     it: &serde_json::Value,
-    lab_score: u32,
-    hits: &[Hit],
-    pga: Option<f64>,
+    activity: &Activity,
+    known_ids: &[&str],
+    pga: Option<(f64, &str)>,
     pred: Option<f64>,
-) -> (Verdict, serde_json::Value, Option<&'static str>) {
-    let unknown = |why: &'static str| (Verdict::Unknown, serde_json::Value::Null, Some(why));
-    let judge = |ok: bool, actual: serde_json::Value| {
-        (if ok { Verdict::Yes } else { Verdict::No }, actual, None)
-    };
+) -> ItemOutcome {
     match (
         str_field(it, "kind"),
         it.get("value").and_then(serde_json::Value::as_f64),
@@ -737,40 +817,53 @@ fn eval_state_item(
         // 包里写 `null` 的目标值(§C 里还没核到逐字原文的那些)不许当成 0 去比 ——
         // 那会把「还不知道」变成一个看起来很确定的 ✔/✘。
         ("csledai_eq" | "sledai_le" | "pga_lt" | "pga_le" | "pred_lt" | "pred_le", None) => {
-            unknown("这一条的目标值还没核实,暂时比不了")
+            ItemOutcome::unknown("这一条的目标值还没核实,暂时比不了")
         }
-        // 临床 SLEDAI:总分**减去** `exclude` 里那几条描述符的权重(DORIS 的
-        // 「irrespective of serology」= 去掉低补体与 dsDNA 两行)。减的是活动度那次
-        // 算好的命中,**不重算** —— 重算就有算出另一个分数的机会。
+        // 临床 SLEDAI:分数**减去** `exclude` 里那几条描述符(DORIS 的「irrespective
+        // of serology」= 去掉低补体与 dsDNA 两行),减的是活动度那次算好的命中,
+        // **不重算** —— 重算就有算出另一个分数的机会。
         ("csledai_eq", Some(v)) => {
             let excluded: Vec<&str> = it
                 .get("exclude")
                 .and_then(|x| x.as_array())
                 .map(|a| a.iter().filter_map(|s| s.as_str()).collect())
                 .unwrap_or_default();
-            let c = weight_sum(hits.iter().filter(|h| !excluded.contains(&h.id.as_str())));
-            judge(f64::from(c) == v, serde_json::json!(c))
+            // 拼错的 id 减不掉任何东西,而且一声不响:cSLEDAI 会偏高,界面上是一条
+            // 看起来很正常的 ✘。宁可整条未知,也不给一个悄悄算错的数。
+            if let Some(bad) = excluded.iter().find(|e| !known_ids.contains(e)) {
+                return ItemOutcome::unknown(format!(
+                    "包里要去掉的「{bad}」在活动度规则里找不到,这一条先不算"
+                ));
+            }
+            score_item(activity, &excluded, v, |s, t| s == t)
         }
-        ("sledai_le", Some(v)) => judge(f64::from(lab_score) <= v, serde_json::json!(lab_score)),
+        ("sledai_le", Some(v)) => score_item(activity, &[], v, |s, t| s <= t),
         (k @ ("pga_lt" | "pga_le"), Some(v)) => match pga {
             // 没人录过 ≠ 没达标(spec §5.3,§7:二期由授权医生录)。
-            None => unknown("还没有人录过医生整体评估(PGA)"),
-            Some(p) => judge(
-                if k == "pga_lt" { p < v } else { p <= v },
-                serde_json::json!(p),
-            ),
+            None => ItemOutcome::unknown("还没有人录过医生整体评估(PGA)"),
+            // 量表是 SELENA-SLEDAI PGA 的 0–3(§C.2 专门强调不是 0–10 VAS)。按
+            // 0–10 录进来的 2 分,拿去和 0.5 比会安静地判成 ✘ —— 那是拿另一把尺
+            // 量出来的结论。
+            Some((p, _)) if !(0.0..=3.0).contains(&p) => ItemOutcome::unknown("PGA 超出 0–3 范围"),
+            Some((p, at)) => ItemOutcome {
+                actual_at: Some(at.to_string()),
+                ..ItemOutcome::judged(
+                    if k == "pga_lt" { p < v } else { p <= v },
+                    serde_json::json!(p),
+                )
+            },
         },
         (k @ ("pred_lt" | "pred_le"), Some(v)) => match pred {
-            None => unknown("还没读到用药记录"),
-            Some(p) => judge(
+            None => ItemOutcome::unknown("还没读到用药记录"),
+            Some(p) => ItemOutcome::judged(
                 if k == "pred_lt" { p < v } else { p <= v },
                 serde_json::json!(p),
             ),
         },
         // 只有人能答的条目(「无重要脏器活动」「与上次比无新活动」)。二期由医生在
         // 授权查看器里录(spec §7),此刻恒为未知 —— 诚实,不猜。
-        ("manual", _) => unknown("这一条要人来答,还没有人答过"),
+        ("manual", _) => ItemOutcome::unknown("这一条要人来答,还没有人答过"),
         // 认不出的 kind 同样是未知,不是 ✘:包可以先于引擎加规则类型。
-        _ => unknown("这一条规则本机还算不了,更新 App 后会自动补上"),
+        _ => ItemOutcome::unknown("这一条规则本机还算不了,更新 App 后会自动补上"),
     }
 }

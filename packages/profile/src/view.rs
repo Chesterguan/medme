@@ -17,7 +17,10 @@ pub struct Section {
     /// `timeline` / `checklist` / `handoff`(spec §6)。渲染引擎认不出的 kind
     /// 整块跳过(前向兼容),不报错。
     pub kind: String,
-    pub title: String,
+    /// 标题来自包的 `views.sections`(spec §6)。`None` = 包里没给这种 kind 写标题 ——
+    /// 渲染层自己决定怎么办,引擎不垫一句中文顶上。`null` 与 `""` 有区别:后者在
+    /// JSON 里看不出是包漏写了还是作者故意留白。
+    pub title: Option<String>,
     /// `Some(提示语)` = 这块**没数据**,折叠成一行(spec §5.6);`None` = 展开。
     pub empty_hint: Option<String>,
     pub body: serde_json::Value,
