@@ -17,3 +17,5 @@ base64 = "0.23"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 # 缓存测试要一个临时目录,读写完随进程退出自动清理。
 tempfile.workspace = true
+# repo_packages_verify 集成测试要解析 skills/index.json。
+serde_json = { workspace = true }

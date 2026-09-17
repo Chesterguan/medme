@@ -12,9 +12,8 @@ pub const ENGINE_VERSION: u32 = 1;
 
 /// 我们的包签名公钥(hex,32 字节)。私钥只在 `~/.medme_skill_signing_key`,永不进仓库。
 /// 生成/轮换见 `scripts/sign_skill.py --pubkey`。
-/// Task 3 用真实公钥替换这一行的占位值。
 pub const SIGNING_PUBLIC_KEY_HEX: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+    "70718ff1ff2cce86c6d06c8666a48882b8c65fdc0fc1894889a2a09fa32b7a2a";
 
 #[derive(Debug)]
 pub enum PackageError {
