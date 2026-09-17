@@ -42,6 +42,9 @@ pub fn materialize(
         // Task 13–15 继续往这里加 section。「开启了但还没有任何数据」与「没开启」
         // 是两种不同的显示状态:前者出卡片、卡片自己带 `empty_hint`,后者没卡片。
         let mut out = Vec::new();
+        // 顺序按 spec §6 那张表:现行方案在最前 —— 医生拿到手第一眼要看的是「他
+        // 现在吃什么」,不是分数。
+        out.extend(rules::status_section(&ctx, pkg));
         // 活动度**只算一遍**:达标表的 cSLEDAI 是拿同一次求值按 id 减出来的,
         // 「这次算全了没有」也看同一份 `unscored`(`rules::Activity` 的文档)。
         let activity = rules::activity_eval(&ctx, pkg);

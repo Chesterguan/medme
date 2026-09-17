@@ -31,6 +31,12 @@ pub fn lab_doc(rows: &str) -> String {
     format!("检验报告单\n项目 结果 单位 参考区间\n{rows}\n")
 }
 
+/// 把几行医嘱包成一份处方笺文本(`extract_meds` 只在 `doc_type` 含 prescription
+/// 时整份跑,见 `parser::aggregate::wants_meds`)。
+pub fn rx_doc(rows: &str) -> String {
+    format!("处方笺\nRp:\n{rows}\n")
+}
+
 /// 带完整 SLE 活动度规则的夹具包(8 条,权重与阈值逐字取自 sle-clinical-sources
 /// §B.1/§B.2)。Task 18 的真包与这份**内容一致**,由那边的 pin 测试钉住。
 pub fn activity_pkg() -> Package {
@@ -40,23 +46,34 @@ pub fn activity_pkg() -> Package {
 /// 把 `(日期, 文本)` 列表变成 `SourceDoc`。文本**借**调用方那一份(元组里的
 /// `String` 自己就是所有者),不复制也不泄漏 —— 调用方只要让 `docs` 活到用完,
 /// 借用检查自然成立。
+/// `doc_type` 与 `title` 都按**首行**认:首行含「处方」→ 处方笺,否则化验单。
+/// 这不是凑测试 —— `parser::aggregate` 的两道门控正好相反(`extract_labs` 只跑
+/// 化验单类,`extract_meds` 只整份跑处方类),夹具统一给 `lab_report` 的话,
+/// 处方永远抽不出药来。
 pub fn mk_docs<'a>(docs: &'a [(&str, String)]) -> Vec<parser::SourceDoc<'a>> {
     docs.iter()
         .enumerate()
-        .map(|(i, (d, t))| parser::SourceDoc {
-            index: i,
-            date: d.parse().ok(),
-            text: t,
-            doc_type: Some("lab_report".into()),
-            title: None,
-            extraction_json: None,
+        .map(|(i, (d, t))| {
+            let head = t.lines().next().unwrap_or_default();
+            parser::SourceDoc {
+                index: i,
+                date: d.parse().ok(),
+                text: t,
+                doc_type: Some(if head.contains("处方") {
+                    "prescription".into()
+                } else {
+                    "lab_report".into()
+                }),
+                title: Some(head.to_string()),
+                extraction_json: None,
+            }
         })
         .collect()
 }
 
-/// 夹具包 = [`ACTIVITY`] 再加 `rules.states`(下面那两张表)与 checklist 的标题。
-/// **不另抄一份 `ACTIVITY`** —— 两份活动度规则会各自长歪。Task 13–16 继续往同一
-/// 份里加 `monitoring` / `milestones`。
+/// 夹具包 = [`ACTIVITY`] 再加 `rules.states`(下面那两张表)、`drugs`、
+/// `rules.targets` 与两张卡的标题。**不另抄一份 `ACTIVITY`** —— 两份活动度规则
+/// 会各自长歪。Task 14–16 继续往同一份里加 `monitoring` / `milestones`。
 pub fn full_pkg() -> Package {
     serde_json::from_value(full_json()).expect("夹具包必须解析")
 }
@@ -65,12 +82,49 @@ pub fn full_pkg() -> Package {
 pub fn full_json() -> serde_json::Value {
     let mut v: serde_json::Value = serde_json::from_str(ACTIVITY).expect("夹具包必须解析");
     v["rules"]["states"] = serde_json::from_str(STATES).expect("达标表必须解析");
-    v["views"]["sections"]
+    v["rules"]["targets"] = serde_json::from_str(TARGETS).expect("目标值必须解析");
+    v["drugs"] = serde_json::from_str(DRUGS).expect("药物表必须解析");
+    let sections = v["views"]["sections"]
         .as_array_mut()
-        .expect("views.sections 是数组")
-        .push(serde_json::json!({"kind":"checklist","title":"达标情况(逐条对照)"}));
+        .expect("views.sections 是数组");
+    sections.push(serde_json::json!({"kind":"status_card","title":"现行方案"}));
+    sections.push(serde_json::json!({"kind":"checklist","title":"达标情况(逐条对照)"}));
     v
 }
+
+/// spec §2 的 `drugs` 那一份,**但 `pred_equiv` 与 `pred_equiv_source` 都是
+/// `null`**:等效换算表在 sle-clinical-sources §G 里还没核到原始出处(2020 指南
+/// 表2「常用糖皮质激素的等效剂量」我们没读到),global-constraints 说没核实的数值
+/// 一律 `null`。Task 19 核完才填,填上以后引擎那条「只认泼尼松本身」的分支自然
+/// 不再触发。
+pub const DRUGS: &str = r#"[
+  {"class":"gc","atc_prefix":"H02AB","names":["泼尼松","泼尼松龙","甲泼尼龙","地塞米松"],
+   "pred_equiv":null,"pred_equiv_source":null},
+  {"class":"hcq","atc_prefix":"P01BA02","names":["羟氯喹","硫酸羟氯喹","纷乐"]},
+  {"class":"mmf","names":["吗替麦考酚酯","霉酚酸酯","骁悉"]},
+  {"class":"aza","names":["硫唑嘌呤"]},
+  {"class":"ctx","names":["环磷酰胺"]},
+  {"class":"mtx","names":["甲氨蝶呤"]},
+  {"class":"cni","names":["他克莫司","环孢素","伏环孢素"]},
+  {"class":"belimumab","names":["贝利尤单抗","倍力腾"],
+   "infusion":{"iv":"第 0、2、4 周,之后每 4 周","sc":"每周 200 mg(狼疮肾炎为每周 400 mg×4 次后改 200 mg)"}},
+  {"class":"telitacicept","names":["泰它西普","泰爱"],"infusion":{"sc":"每周 160 mg"}},
+  {"class":"rtx","names":["利妥昔单抗","美罗华"]}]"#;
+
+/// 治疗目标值(§C.3 / §C.4)。两份指南的激素维持线**都带**,因为它们不一样:
+/// 界面只画一条就是替医生挑了一份指南。`label` 里是源文逐字片段 + 年份。
+///
+/// 羟氯喹那条的 `label_rule` 是**国内说明书原文**(§D.2.1,0.2 g 规格):6.5 mg/kg
+/// 理想体重,与指南的 5 mg/kg 真实体重既不同数也不同基准。源文件把它标成
+/// 「VERBATIM(page-summariser; verify)」—— 还没有人对着纸核过,所以
+/// `verify_status` 是 `pending`,界面上必须说出这一点,**且它只显示、不参与任何
+/// 判定**(`mg_per_kg` 永远只跟指南值比)。
+pub const TARGETS: &str = r#"{
+  "gc":[{"value":7.5,"label":"EULAR 2019:less than 7.5 mg/day (prednisone equivalent)","source":"S3"},
+        {"value":5,"label":"EULAR 2023:≤5 mg/day (prednisone equivalent)","source":"S4"}],
+  "hcq":{"target":5,"unit":"mg/kg/d","basis":"真实体重(real body weight)","target_source":"S4",
+         "label_rule":{"text":"不应超过6.5mg/kg/日（自理想体重而非实际体重算得）或400mg/日",
+                       "verify_status":"pending","source":"S_HCQ_INSERT"}}}"#;
 
 /// DORIS 2021(§C.1)与 LLDAS(§C.2)两张表,逐条取自 sle-clinical-sources 的
 /// VERBATIM 行。`<0.5` / `<5` 按 DORIS Box 1 原文,中国 2025 指南的 `≤` 写进

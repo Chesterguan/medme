@@ -2,7 +2,7 @@
 use chrono::NaiveDate;
 
 mod common;
-use common::{full_json, full_pkg, lab_doc, mk_docs, TODAY};
+use common::{full_json, full_pkg, lab_doc, mk_docs, rx_doc, TODAY};
 
 fn day(s: &str) -> NaiveDate {
     s.parse().unwrap()
@@ -268,6 +268,35 @@ fn a_steroid_dose_item_is_unknown_until_the_drug_reading_lands() {
     assert_eq!(pred["verdict"], "unknown");
     assert_eq!(pred["actual"], serde_json::Value::Null);
     assert_eq!(pred["reason"], "还没读到用药记录");
+    assert_eq!(item(state(&b, "lldas"), "pred_le75")["verdict"], "unknown");
+}
+
+#[test]
+fn a_prednisone_prescription_answers_both_steroid_items() {
+    // DORIS 的 <5 与 LLDAS 的 ≤7.5 是两个不同的边界(§C.1 / §C.2 原文),5 mg/天
+    // 恰好卡在中间:一条 ✘、一条 ✔。同一个数在两张表上给出不同结论,正是「两份
+    // 指南不一样」这件事在界面上该有的样子。
+    let b = checklist(
+        &[(TODAY, rx_doc("泼尼松片 5mg 每日一次 口服"))],
+        vec![enable()],
+    );
+    let lt = item(state(&b, "doris"), "pred");
+    assert_eq!(lt["verdict"], "no", "DORIS Box 1 是严格 <5,恰好 5 不算");
+    assert_eq!(lt["actual"], 5.0);
+    let le = item(state(&b, "lldas"), "pred_le75");
+    assert_eq!(le["verdict"], "yes");
+    assert_eq!(le["actual"], 5.0);
+}
+
+#[test]
+fn an_unconvertible_steroid_leaves_the_dose_items_unknown_not_met() {
+    // 换算表待核期间,甲泼尼龙算不出泼尼松等效剂量。**未知不许塌成 ✔** ——
+    // 「没算出来」显示成「< 5 mg,达标」是这个功能最坏的一种错法。
+    let b = checklist(
+        &[(TODAY, rx_doc("甲泼尼龙片 8mg 每日一次 口服"))],
+        vec![enable()],
+    );
+    assert_eq!(item(state(&b, "doris"), "pred")["verdict"], "unknown");
     assert_eq!(item(state(&b, "lldas"), "pred_le75")["verdict"], "unknown");
 }
 

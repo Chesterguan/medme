@@ -155,6 +155,12 @@ pub struct Rules {
     pub monitoring: Vec<serde_json::Value>,
     #[serde(default)]
     pub milestones: Vec<serde_json::Value>,
+    /// 治疗目标值,按药物类别分组(`targets.gc` 是激素的两条维持线,`targets.hcq`
+    /// 是羟氯喹的 mg/kg 目标 + 说明书原文)。和 `states`/`monitoring` 一样是**裸
+    /// JSON**:形状由包作者和读它的那条规则约定,引擎不在这里定死字段名 —— 定死
+    /// 一次,以后加一个病就多一次发版。
+    #[serde(default)]
+    pub targets: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]
