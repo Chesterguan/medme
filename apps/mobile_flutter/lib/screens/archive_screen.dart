@@ -8,24 +8,24 @@ import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/widgets/import_queue_card.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
-import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
+import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
+import 'package:mobile_flutter/widgets/identity_hero_card.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
-/// 底部导航一级 tab「档案」—— 生命时间线:就诊组 + 独立文档,按日期倒序,
-/// 点开看详情。与旧 Tauri 移动端 App.tsx 的 archive tab(phead + tl)同一观感,
-/// 数据来自 FFI `loadArchive` / `patientProfile`(见 lib/src/rust/api/vault.dart)。
+/// 底部导航一级 tab「病历」(`s1`)—— 生命时间线:就诊组 + 独立文档,按月分组、
+/// 日期倒序,点开看详情。数据来自 FFI `loadArchive` / `patientProfile`
+/// (见 lib/src/rust/api/vault.dart)。
 ///
-/// 五 tab 信息架构(设计系统 §八)里,这一屏对应的使用时刻是**「找某一张单子」**。
-/// 「我现在怎么样」搬去了概览,「这两年怎么变的」搬去了趋势 —— 这一屏专心做检索,
-/// 不再兼职做首页。顶部因此多了一颗「看病带这个」(原名「就诊单」,2026-08-05
-/// 改名,见 `visit_summary_sheet.dart` 顶部文档):找单子的人下一步常常就是要
-/// 进诊室。
+/// 三 tab 信息架构里这一屏**同时是首页**:概览整屏解散之后,「你是谁、现在看的是谁」
+/// 那张 [IdentityHeroCard] 搬到了这里的最上面,底下是两颗等宽方块
+/// ([HomeTiles]:`添加` / `给医生看`)。「给医生看」没有底栏席位 —— 那颗方块是它
+/// **全 App 唯一的入口**。
 ///
 /// 文档类型标签与图标已挪到 `lib/doc_labels.dart`(四个屏共用,免得同一份病历在
 /// 两个 tab 上叫两个名字)。
@@ -47,6 +47,15 @@ String _groupDate(TimelineGroupDto g) {
     ),
     TimelineGroupDto_Document(:final doc) => fmtDate(doc.docDate),
   };
+}
+
+/// 时间线按月分组用的那一行字(`s1`:`2026 年 8 月`)。**月份不补零。**
+///
+/// 没识别到日期的那几份自成一段「没有日期」,**不许并进上一个月** —— 那等于拿一个
+/// 我们并不知道的日期说话(与 `fmtDate` 对空/坏日期返回空串是同一条约定)。
+String monthLabel(String? iso) {
+  final d = iso == null ? null : DateTime.tryParse(iso);
+  return d == null ? '没有日期' : '${d.year} 年 ${d.month} 月';
 }
 
 String _groupDesc(TimelineGroupDto g) {
@@ -199,17 +208,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     if (await _confirmDelete(label)) await _delete(docId);
   }
 
-  /// 切到某成员(tab 条与弹出式共用)。已经是当前成员则不做事,避免白重开保险箱。
-  Future<void> _switchTo(String id) async {
-    if (id == ProfileManager.instance.currentId.value) return;
-    await switchProfileAndReopen(id);
-    if (mounted) setState(() {});
-  }
-
-  /// 顶部 banner 点击:弹出成员切换器(成员多于 kMemberTabsMax 时用)。
-  ///
-  /// UI 与状态更新路径和概览屏的 hero 卡**共用同一份**(`widgets/member_switcher.dart`)
-  /// —— 真相只有 `ProfileManager.instance.currentId` 一处,不是两屏各存一份。
+  /// hero 卡上那对 `⌃⌄`:弹出成员切换器。**换成员只有这一条路**(`s1` 不在顶栏
+  /// 再放成员 chip)。UI 与状态更新路径都在 `widgets/member_switcher.dart` 里 ——
+  /// 真相只有 `ProfileManager.instance.currentId` 一处。
   Future<void> _showProfileSwitcher() => showMemberSwitcherSheet(
     context,
     onChanged: () {
@@ -217,12 +218,36 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     },
   );
 
-  Future<void> _addMember() => promptAddMember(
-    context,
-    onChanged: () {
-      if (mounted) setState(() {});
-    },
-  );
+  /// 「添加」:弹三选一(拍照 / 相册 / 选文件),排进后台队列后本屏经
+  /// `vaultRevision` 自动刷新。顶栏那颗和 [HomeTiles] 那颗走的是**同一条**。
+  ///
+  /// ⚠️ 这里曾是 `() => showImportSheet(context)` —— 一个**没人 await、没有
+  /// catchError 的 Future**。里面抛出的任何异常都只会掉进 zone,屏上一片安静,
+  /// 这就是「点了没反应」的最后一段。现在 await 起来,兜底 catch 至少把话说出来。
+  Future<void> _startAdd() async {
+    // messenger 在 await 之前同步取好,免得跨 async gap 用 context。
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await showImportSheet(context);
+    } catch (e) {
+      debugPrint('[archive] 添加流程未捕获异常: $e');
+      if (!messenger.mounted) return;
+      messenger.showSnackBar(
+        appSnackBar(
+          content: Text('没能开始添加:$e'),
+          duration: const Duration(seconds: 8),
+        ),
+      );
+    }
+  }
+
+  /// 「找一找」:Stage 1 只摆入口位,搜索本身(医院 / 日期 / 类型 / 指标 / 药名)
+  /// 是 Stage 2(ia-proposal §6)。点了**明说还在做**,不装作能用。
+  void _search() {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(appSnackBar(content: const Text('找一找还在做')));
+  }
 
   Future<void> _refresh() async {
     final next = _load();
@@ -250,49 +275,22 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     final c = MedColors.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('档案'),
+        title: const Text('病历'),
         // 顶栏与内容之间一道 `line` —— 层次靠边框不靠阴影(规范 §四)。
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
         ),
         actions: [
-          // 「看病带这个」的第二个入口(另一个在概览,现在是独立一整条的
-          // `_VisitSheetBanner`)。它刻意不是 tab —— 是诊室里那 30 秒的动作,
-          // 不是一个常驻浏览的空间(设计系统 §八)。放在档案顶栏是因为:翻单子
-          // 的人下一步常常就是要进诊室。
-          IconButton(
-            onPressed: () =>
-                showVisitSummarySheet(context, from: VisitSheetEntry.archive),
-            icon: const Icon(Icons.assignment_outlined),
-            tooltip: '看病带这个',
-          ),
-          // 右上角「导入」:弹三选一(拍照/相册/选文件),导入后本屏经 vaultRevision 自动刷新。
+          // 那个剪贴板图标(「给医生看」的第二入口)已删 —— 它现在是 hero 卡下面
+          // 那颗「给医生看」方块推进去的一整页,有固定位置,不需要在这里再开一个
+          // 口子(ia-proposal §2:每个功能只有一条路到达)。
           Padding(
             padding: const EdgeInsets.only(right: MedShape.s1),
             child: TextButton.icon(
-              // ⚠️ 这里曾是 `() => showImportSheet(context)` —— 一个**没人 await、
-              // 没有 catchError 的 Future**。里面抛出的任何异常都只会掉进 zone,
-              // 屏上一片安静,这就是「点导入没反应」的最后一段。现在 await 起来,
-              // 兜底 catch 至少把话说出来。
-              onPressed: () async {
-                // messenger 在 await 之前同步取好,免得跨 async gap 用 context。
-                final messenger = ScaffoldMessenger.of(context);
-                try {
-                  await showImportSheet(context);
-                } catch (e) {
-                  debugPrint('[archive] 导入流程未捕获异常: $e');
-                  if (!messenger.mounted) return;
-                  messenger.showSnackBar(
-                    appSnackBar(
-                      content: Text('导入没能开始:$e'),
-                      duration: const Duration(seconds: 8),
-                    ),
-                  );
-                }
-              },
+              onPressed: _startAdd,
               icon: const Icon(Icons.add, size: 20),
-              label: const Text('导入'),
+              label: const Text('添加'),
             ),
           ),
         ],
@@ -343,36 +341,42 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 MedShape.s6,
               ),
               children: [
-                // 成员不多时(≤ kMemberTabsMax)用常驻 tab 条:点谁是谁,一步到位。
-                // 超过就退回弹出式列表——横滑的 tab 条会把当前选中的推到屏幕外,
-                // 而且人一多,列表本来就比 tab 好扫。
-                if (ProfileManager.instance.profiles.length <= kMemberTabsMax)
-                  _MemberTabs(
-                    profiles: ProfileManager.instance.profiles,
-                    currentId: ProfileManager.instance.currentId.value,
-                    onPick: _switchTo,
-                    onAdd: _addMember,
-                  ),
-                if (ProfileManager.instance.profiles.length <= kMemberTabsMax)
-                  const SizedBox(height: MedShape.s2),
-                _PatientHeader(
-                  profile: profile,
-                  memberName: ProfileManager.instance.displayName,
-                  // tab 条已经在管「选谁」,身份卡就不再兼职切换入口;
-                  // 人多退回弹出式时,它仍是唯一的切换入口。
-                  showName:
-                      ProfileManager.instance.profiles.length > kMemberTabsMax,
-                  onTap:
-                      ProfileManager.instance.profiles.length > kMemberTabsMax
-                      ? _showProfileSwitcher
+                // 「你是谁、现在看的是谁」(`s1`)。换成员点卡上那对 `⌃⌄` ——
+                // 顶栏**不再**放成员 tab 条/chip:同一件事两个入口,人下次
+                // 找不到自己上回是从哪儿进的。
+                IdentityHeroCard(
+                  // 显示名取当前成员(用户自己给档案起的名),不取报告里抽出来的
+                  // `profile.name` —— 后者可能因为某一张单子上印着别人而漂。
+                  name: ProfileManager.instance.displayName,
+                  gender: profile.gender,
+                  age: profile.age,
+                  recordCount: profile.recordCount.toInt(),
+                  // 「最近就诊」取时间线最新一条的日期(`s1` 那一行),不是本卡
+                  // 单独算的数:没有记录、或那条没识别到日期,卡片自己显示「暂无」。
+                  recentVisitDate: groups.isNotEmpty
+                      ? _groupDate(groups.first)
                       : null,
+                  onSwitchMember: _showProfileSwitcher,
                 ),
-                const SizedBox(height: MedShape.s4),
-                // 后台识别队列:导入点完就回到这一屏,这几行是「东西确实在处理」
+                const SizedBox(height: MedShape.s3),
+                HomeTiles(
+                  onAdd: _startAdd,
+                  onForDoctor: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const ForDoctorScreen(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: MedShape.s3),
+                // 后台识别队列:添加点完就回到这一屏,这几行是「东西确实在处理」
                 // 的唯一去处(见 `import_queue.dart`)。它自己监听模块级的
                 // `importJobs`,不进本屏的 FutureBuilder —— 切走再切回来还在。
                 const ImportQueueCard(),
-                // 待确认:琥珀框卡片,点开进详情核对 + 确认;左滑删除。
+                // s1:一条横幅说一次,不是每行一个橙框(ux-audit P6)。
+                // 「N 份」的 N 是还没核对的份数。
+                PendingReviewBanner(count: pending.length),
+                if (pending.isNotEmpty) const SizedBox(height: MedShape.s2),
+                // 还没核对的:琥珀框卡片,点开进详情核对;左滑删除。
                 for (final d in pending) ...[
                   _PendingCard(
                     doc: d,
@@ -382,30 +386,23 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   ),
                   const SizedBox(height: MedShape.s2),
                 ],
-                if (pending.isNotEmpty && confirmed.isNotEmpty) ...[
-                  const SizedBox(height: MedShape.s1),
-                  Row(
-                    children: [
-                      const Expanded(child: Divider()),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: MedShape.s2,
-                        ),
-                        child: Text(
-                          '以下为已确认',
-                          style: MedType.caption.copyWith(color: c.ink3),
-                        ),
-                      ),
-                      const Expanded(child: Divider()),
-                    ],
-                  ),
-                  const SizedBox(height: MedShape.s2),
-                ],
                 if (pending.isEmpty && confirmed.isEmpty)
                   const _EmptyState()
                 else
                   for (var i = 0; i < confirmed.length; i++) ...[
-                    if (i > 0) const SizedBox(height: MedShape.s2),
+                    // 时间线按**月份**分组(`s1`)。列表本来就按日期倒序,所以
+                    // 「这一条和上一条不同月」就是一段的开头,不必先建一张分组表。
+                    if (i == 0 ||
+                        monthLabel(_groupDate(confirmed[i])) !=
+                            monthLabel(_groupDate(confirmed[i - 1])))
+                      MonthHeader(
+                        label: monthLabel(_groupDate(confirmed[i])),
+                        // 「找一找」只在**最上面那条**月份标题右边(`s1`):它是
+                        // 搜索的入口位,每个月都挂一条就成了噪音。
+                        onSearch: i == 0 ? _search : null,
+                      )
+                    else
+                      const SizedBox(height: MedShape.s2),
                     _TimelineItem(
                       group: confirmed[i],
                       // 按就诊组 id 记展开态(不用列表下标)——删除/导入后下标会错位到别的组。
@@ -439,196 +436,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   }
 }
 
-/// 患者头卡:姓名 / 性别·年龄 / 记录数,字段可空一律优雅缺省。
-/// 常驻成员 tab 条的人数上限。超过就退回弹出式列表:横滑的 tab 会把当前选中的
-/// 推到屏幕外(选中项看不见,是 tab 最糟的失败方式);而人一多,列表本来就更好扫。
-/// 5 是按「一个家庭通常管几个人」定的——自己 + 父母 + 孩子,再多属于少数情况。
-const int kMemberTabsMax = 5;
-
-/// 成员选择器:点谁是谁,一步到位。
-///
-/// **只负责选人,不负责管人。** 改名与删除留在设置页的「保险箱」卡片里——它们低频、
-/// 需要确认、误触代价高(一下就是几十份病历),不该和高频的切换动作挤在同一排。
-/// tab 条上唯一的管理入口是末尾的「+」,因为「用着用着发现要再加一个人」是高频场景。
-class _MemberTabs extends StatelessWidget {
-  const _MemberTabs({
-    required this.profiles,
-    required this.currentId,
-    required this.onPick,
-    required this.onAdd,
-  });
-
-  final List<Profile> profiles;
-  final String currentId;
-  final ValueChanged<String> onPick;
-  final VoidCallback onAdd;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    // 横滑列表必须有确定高度,但**不能写死** —— 写死的 38 在系统字号放大后会把
-    // 名字裁掉一截(007 §2.5「字号可放大,不可砍」)。按当前 textScaler 下的
-    // body 实际行高 + 上下各 12 内边距 + 边框算出来,放大到多少都装得下。
-    final labelHeight = MediaQuery.textScalerOf(
-      context,
-    ).scale(MedType.body.fontSize!);
-    final tabHeight = labelHeight + MedShape.s2 * 2 + 2;
-    // pill:圆角 999(规范 §四)。用 StadiumBorder 语义的半高圆角即可。
-    final radius = BorderRadius.circular(MedShape.radiusPill);
-    return SizedBox(
-      height: tabHeight,
-      child: Row(
-        children: [
-          Expanded(
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: profiles.length,
-              separatorBuilder: (_, _) => const SizedBox(width: MedShape.s1),
-              itemBuilder: (context, i) {
-                final p = profiles[i];
-                final on = p.id == currentId;
-                return Material(
-                  color: on ? c.sealInk : c.surface,
-                  borderRadius: radius,
-                  child: InkWell(
-                    onTap: on ? null : () => onPick(p.id),
-                    borderRadius: radius,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: MedShape.s3,
-                      ),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        borderRadius: radius,
-                        border: Border.all(color: on ? c.sealInk : c.line),
-                      ),
-                      child: Text(
-                        p.name,
-                        style: MedType.body.copyWith(
-                          fontWeight: on ? FontWeight.w600 : FontWeight.w400,
-                          color: on ? c.surface : c.ink,
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: MedShape.s1),
-          Material(
-            color: c.surface,
-            borderRadius: radius,
-            child: InkWell(
-              onTap: onAdd,
-              borderRadius: radius,
-              child: Container(
-                width: tabHeight,
-                height: tabHeight,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  borderRadius: radius,
-                  border: Border.all(color: c.line),
-                ),
-                child: Icon(Icons.add, size: 20, color: c.seal),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PatientHeader extends StatelessWidget {
-  final PatientProfileDto profile;
-  final String memberName;
-
-  /// 是否在卡片里显示姓名。有 tab 条时传 false —— 姓名由 tab 条负责,
-  /// 卡片只讲这个人的档案信息,免得同一个名字在屏幕上出现两次。
-  final bool showName;
-  final VoidCallback? onTap;
-  const _PatientHeader({
-    required this.profile,
-    required this.memberName,
-    required this.showName,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    final initial = memberName.isNotEmpty ? memberName[0] : '我';
-    final subParts = [
-      profile.gender,
-      profile.age,
-    ].whereType<String>().where((s) => s.isNotEmpty).toList();
-    subParts.add('${profile.recordCount} 份记录');
-
-    // **不带骑缝线。** 这是一张派生卡:姓名/性别/年龄/份数都是从许多份原件里
-    // 算出来的汇总,背后没有「某一张纸」可点进去。骑缝线只给点得进原件的卡
-    // (规范 §五)—— 给它画一道,就是拿签名元素说了句假话。
-    return MedCard(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap, // 点顶部切换成员(家庭多成员)
-          child: Padding(
-            padding: const EdgeInsets.all(MedShape.s4),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: c.sealWash,
-                  child: Text(
-                    initial,
-                    style: MedType.title.copyWith(color: c.sealInk),
-                  ),
-                ),
-                const SizedBox(width: MedShape.s3),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (showName) ...[
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                memberName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: MedType.subtitle.copyWith(color: c.ink),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(Icons.unfold_more, size: 18, color: c.ink3),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                      ],
-                      Text(
-                        subParts.join(' · '),
-                        // 份数是数字 —— 等宽表格数字,换个成员不会左右跳。
-                        style:
-                            (showName
-                                    ? MedType.secondary.copyWith(color: c.ink2)
-                                    : MedType.subtitle.copyWith(color: c.ink))
-                                .copyWith(fontFeatures: MedType.tabular),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 空态引导:没有记录时提示点右上角「导入」,或去「设置」载入示例数据。
+/// 空态引导:没有记录时提示点上面那颗「添加」,或去「设置」载入示例数据。
 class _EmptyState extends StatelessWidget {
   const _EmptyState();
 
@@ -639,7 +447,7 @@ class _EmptyState extends StatelessWidget {
     // 框起来 + 明说下一步该点哪,才是「给出路」。
     //
     // 规范的空态样例里还有一颗按钮。这里**刻意没加** —— 加一颗按钮就是新增一个
-    // 交互入口,本次是纯视觉改版。出路由文案给:右上角那颗「导入」一直在。
+    // 交互入口。出路由文案给:上面那颗「添加」方块一直在。
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: MedShape.s6),
       child: DottedBorderBox(
@@ -650,7 +458,7 @@ class _EmptyState extends StatelessWidget {
             Text('还没有病历', style: MedType.subtitle.copyWith(color: c.ink)),
             const SizedBox(height: MedShape.s1),
             Text(
-              '点右上角「导入」拍照或选择文件添加,\n或在「设置」里载入示例数据试试看',
+              '点上面那颗「添加」拍照或选择文件,\n或在「设置」里载入示例数据试试看',
               textAlign: TextAlign.center,
               style: MedType.body.copyWith(color: c.ink2, height: 1.6),
             ),
@@ -1061,6 +869,191 @@ class _MismatchBanner extends StatelessWidget {
               style: MedType.secondary.copyWith(color: c.ink, height: 1.5),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「病历」首页 hero 下面那两颗方块(`s1`)。
+///
+/// **两颗等宽同高**,区别只在底色:`添加` 填主色(最高频的动作),`给医生看` 白底
+/// 带描边。**不做成一条通栏大按钮** —— 它们是一对并列的动作,不是一主一次。
+///
+/// 「给医生看」没有底栏席位,这颗方块是它**全 App 唯一的入口**;ia-proposal §2
+/// 拒绝候选 B 的理由正是「老人在底栏找不到它」,那条风险现在压在这颗方块上。
+/// 谁把它改小、改成纯图标、或者塞进某个菜单里,就是在把那条风险放大 ——
+/// 它在 iPhone SE + 2× 字号下必须仍然写得全那四个字(见 `test/archive_header_test.dart`)。
+class HomeTiles extends StatelessWidget {
+  const HomeTiles({super.key, this.onAdd, this.onForDoctor});
+
+  final VoidCallback? onAdd;
+  final VoidCallback? onForDoctor;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Row(
+      children: [
+        Expanded(
+          child: _Tile(
+            icon: Icons.add_a_photo_outlined,
+            label: '添加',
+            background: c.seal,
+            foreground: Colors.white,
+            onTap: onAdd,
+          ),
+        ),
+        const SizedBox(width: MedShape.s2),
+        Expanded(
+          child: _Tile(
+            icon: Icons.assignment_outlined,
+            label: '给医生看',
+            background: c.surface,
+            foreground: c.sealInk,
+            border: c.line,
+            onTap: onForDoctor,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _Tile extends StatelessWidget {
+  const _Tile({
+    required this.icon,
+    required this.label,
+    required this.background,
+    required this.foreground,
+    this.border,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color background;
+  final Color foreground;
+  final Color? border;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: background,
+      borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: MedShape.s3),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+            border: border == null ? null : Border.all(color: border!),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 26, color: foreground),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: MedType.body.copyWith(
+                  color: foreground,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 「还没核对」横幅(`s1`)。逐字:`N 份还没核对` + `扫描件,识别出的字有几处不确定`。
+///
+/// **一条横幅说一次**,不是每行一个橙框(ux-audit P6:7 份就是 7 条错误提示)。
+/// 0 份时整条不画 —— 没有要核对的东西还留一条横幅,就是在制造一件不存在的待办。
+class PendingReviewBanner extends StatelessWidget {
+  const PendingReviewBanner({super.key, required this.count, this.onTap});
+
+  final int count;
+
+  /// 点整条的去处。**没有去处就别给** —— 那枚 `›` 跟着它一起出现/消失,
+  /// 不画一个点不动的箭头。
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count == 0) return const SizedBox.shrink();
+    final c = MedColors.of(context);
+    return Material(
+      color: c.sealWash,
+      borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
+        child: Padding(
+          padding: const EdgeInsets.all(MedShape.s3),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$count 份还没核对',
+                      style: MedType.body.copyWith(
+                        color: c.ink,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '扫描件,识别出的字有几处不确定',
+                      style: MedType.secondary.copyWith(color: c.ink2),
+                    ),
+                  ],
+                ),
+              ),
+              if (onTap != null)
+                Icon(Icons.chevron_right, size: 20, color: c.ink3),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 月份分组标题(`s1`)。右边那条「找一找」是**搜索的入口位**:Stage 1 点了只说
+/// 一句「还在做」,搜索本身(医院 / 日期 / 类型 / 指标 / 药名)是 Stage 2。
+///
+/// 为什么现在就摆出来:ux-audit P10「找不回东西」是这个定位的核心动作,而一个
+/// 空白的月份标题不会让任何人想起「原来可以搜」。占位不等于假装能用 —— 点了
+/// 明说还在做。
+class MonthHeader extends StatelessWidget {
+  const MonthHeader({super.key, required this.label, this.onSearch});
+
+  final String label;
+  final VoidCallback? onSearch;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, MedShape.s4, 0, MedShape.s1),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: MedType.caption.copyWith(color: c.ink3)),
+          if (onSearch != null)
+            GestureDetector(
+              onTap: onSearch,
+              child: Text('找一找', style: MedType.caption.copyWith(color: c.sealInk)),
+            ),
         ],
       ),
     );

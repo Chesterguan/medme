@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
+import 'package:mobile_flutter/screens/emergency_card_screen.dart';
 import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
@@ -155,7 +156,16 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
                   onAddNote: _addNote,
                   // AppBar 上已经写着「给医生看」,正文不再画一次旧名字。
                   showHeading: false,
-                  footer: const ForDoctorActions(),
+                  // 「急救卡」这一条现在就接上 —— 概览整屏解散之后它**一个入口
+                  // 都不剩**了,而 `s4` 给它的归宿就是这一页。另外两条(打印 /
+                  // 导出、代拍)留给 Task 9,那两处各自还要接别的东西。
+                  footer: ForDoctorActions(
+                    onEmergency: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const EmergencyCardScreen(),
+                      ),
+                    ),
+                  ),
                 ),
               ),
               SafeArea(top: false, child: _qrBar(c)),
