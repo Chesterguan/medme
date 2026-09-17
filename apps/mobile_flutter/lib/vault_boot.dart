@@ -275,7 +275,7 @@ Future<void> switchProfileAndReopenImpl(
 }
 
 /// 「清空所有数据」= 恢复出厂:清**所有成员、所有位置**的 vault 数据(本机 + iCloud
-/// 容器)+ 份数缓存 + 待确认,重置成单一默认档案,最后重开一个空箱子。
+/// 容器)+ 份数缓存 + 还没核对,重置成单一默认档案,最后重开一个空箱子。
 ///
 /// 实现是 [runWipeSequence];顺序契约与踩过的坑写在那上面。
 Future<void> wipeAllData() async {
@@ -337,7 +337,7 @@ Future<void> runWipeSequence({
     if (await d.exists()) await d.delete(recursive: true);
   }
 
-  // 注册表恢复出厂(current→默认 root)+ 清待确认。必须在开箱之前 —— 否则 ③ 开的
+  // 注册表恢复出厂(current→默认 root)+ 清还没核对。必须在开箱之前 —— 否则 ③ 开的
   // 会是清空之前那个成员的箱子。
   await ProfileManager.instance.factoryReset();
   await ReviewState.instance.clearAll();

@@ -53,7 +53,10 @@ const Map<String, String> kGlossary = {
 
 /// 已经启用的禁词。**每个 Task 只加自己那一屏清干净的词。**
 /// 终点是 ux-audit §4 Done 判据②里那条 grep 的全集(见 Task 17)。
-const List<String> kEnforced = ['数据出口', '数据管理', '本地优先', '只保存在你自己的设备上'];
+const List<String> kEnforced = [
+  '数据出口', '数据管理', '本地优先', '只保存在你自己的设备上',
+  '待确认', '点开核对并确认', '确认无误,归入档案',
+];
 
 /// 扫 `lib/**/*.dart` 找这个词。排除 FRB 生成物(`lib/src/rust/`)—— 那是机器
 /// 产出,本阶段硬约束里明确不碰。

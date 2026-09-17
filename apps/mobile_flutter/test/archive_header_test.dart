@@ -66,6 +66,22 @@ void main() {
     expect(find.textContaining('还没核对'), findsNothing, reason: '没有要核对的就整条不画');
   });
 
+  testWidgets('还没核对横幅:给了 onTap 才画 ›,点一下能碰到回调', (tester) async {
+    useNarrowPhone(tester);
+    var tapped = false;
+    await tester.pumpWidget(
+      wrap(PendingReviewBanner(count: 2, onTap: () => tapped = true)),
+    );
+    expect(find.byIcon(Icons.chevron_right), findsOneWidget);
+    await tester.tap(find.byType(PendingReviewBanner));
+    expect(tapped, isTrue, reason: '档案屏用它把还没核对那一段滚动进可视区域');
+
+    // 没有去处就别给箭头——不画一个点不动的 ›(archive_screen.dart 里
+    // PendingReviewBanner 类文档的约定)。
+    await tester.pumpWidget(wrap(const PendingReviewBanner(count: 2)));
+    expect(find.byIcon(Icons.chevron_right), findsNothing);
+  });
+
   testWidgets('月份标题 + 「找一找」占位', (tester) async {
     useNarrowPhone(tester);
     var searched = false;

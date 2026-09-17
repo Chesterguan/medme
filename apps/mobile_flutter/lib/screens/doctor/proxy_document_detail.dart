@@ -12,14 +12,14 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 
-/// [ProxyDocumentDetailScreen] 弹出时告诉调用方(待确认列表屏)接下来该做什么:
+/// [ProxyDocumentDetailScreen] 弹出时告诉调用方(还没核对列表屏)接下来该做什么:
 /// [none] 什么都没变(用户直接返回);[changed] 确认或删除了这一份,列表需要重新拉
 /// `loadPreview`/`summary`/`confirmedMap` 刷新;[retake] 这一份已被删除且调用方
 /// 应紧接着重新弹「拍照/相册/文件」采集入口——由列表屏统一编排(复用它已有的采集
 /// 方法),本屏自己不碰采集逻辑,避免两处维护同一套 `pickImportItems` 调用。
 enum ProxyDetailResult { none, changed, retake }
 
-/// 待确认列表「点进一份」的详情屏(医生代拍流程专用)——**与 `document_detail.dart`
+/// 还没核对列表「点进一份」的详情屏(医生代拍流程专用)——**与 `document_detail.dart`
 /// 是独立副本,不是共享组件**。读的是同一套 `api::vault`,但此刻进程里打开的是**这
 /// 个代拍病人的箱子**(见 `openProxyPatientVault`),不是医生自己的档案。宁可这份
 /// 代码与 `document_detail.dart` 重复大半,也不去改那个文件抽公共组件——保持「不碰

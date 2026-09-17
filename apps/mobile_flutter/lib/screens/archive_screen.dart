@@ -65,7 +65,7 @@ String _groupDesc(TimelineGroupDto g) {
       for (final d in docs) {
         kinds.add(docLabel[d.docType] ?? d.docType);
       }
-      // 用实际 docs.length —— 待确认剔除后 `_confirmedOnly` 会重建只含已确认文档的组,
+      // 用实际 docs.length —— 还没核对剔除后 `_confirmedOnly` 会重建只含已确认文档的组,
       // 此时 encounter.docCount(FFI 按全量算)会 stale,显示条数与展开数量对不上。
       final parts = ['${docs.length} 份记录', ...kinds.take(3)];
       if (encounter.transferred) parts.add('转院');
@@ -78,7 +78,7 @@ String _groupDesc(TimelineGroupDto g) {
   };
 }
 
-/// 把时间线分组拍平成文档列表(就诊组内文档 + 独立文档),用于「待确认」筛选。
+/// 把时间线分组拍平成文档列表(就诊组内文档 + 独立文档),用于「还没核对」筛选。
 List<DocumentSummaryDto> _allDocs(List<TimelineGroupDto> groups) {
   final out = <DocumentSummaryDto>[];
   for (final g in groups) {
@@ -92,8 +92,8 @@ List<DocumentSummaryDto> _allDocs(List<TimelineGroupDto> groups) {
   return out;
 }
 
-/// 「已确认」时间线:把待确认文档从分组里剔除(它们单独在顶部红框区展示,避免重复)。
-/// 就诊组里若有部分文档待确认,重建一个只含已确认文档的组;整组都待确认则整组略去。
+/// 「已确认」时间线:把还没核对文档从分组里剔除(它们单独在顶部红框区展示,避免重复)。
+/// 就诊组里若有部分文档还没核对,重建一个只含已确认文档的组;整组都还没核对则整组略去。
 List<TimelineGroupDto> _confirmedOnly(List<TimelineGroupDto> groups) {
   final out = <TimelineGroupDto>[];
   for (final g in groups) {
@@ -126,6 +126,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   late Future<(PatientProfileDto, List<TimelineGroupDto>)> _future = _load();
   // 已展开的就诊组(按 **encounter.id** 记,不用列表下标——删除/导入后下标会错位)。
   final Set<int> _expanded = {};
+  // 「还没核对」横幅点一下要滚去的地方——挂在横幅自己身上(banner 下面紧跟着
+  // 就是核对卡片,滚到横幅即等于把那一段带进可视区域)。
+  final _pendingSectionKey = GlobalKey();
 
   @override
   void initState() {
@@ -148,7 +151,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     final results = await Future.wait([patientProfile(), loadArchive()]);
     final profile = results[0] as PatientProfileDto;
     final groups = results[1] as List<TimelineGroupDto>;
-    // 载入「待确认」集(build 里同步判断 isPending 前要先加载好)。
+    // 载入「还没核对」集(build 里同步判断 isPending 前要先加载好)。
     await ReviewState.instance.ensureLoaded();
     // 兜底自动命名:示例数据等不走导入流程的路径,也能把默认档案改成识别到的姓名。
     await autoNameCurrentProfileFrom(profile.name);
@@ -188,7 +191,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     return ok ?? false;
   }
 
-  /// 删除一份文档:调 FFI(追加删除事件 + 重放),清掉可能的「待确认」标记,刷新档案。
+  /// 删除一份文档:调 FFI(追加删除事件 + 重放),清掉可能的「还没核对」标记,刷新档案。
   Future<void> _delete(int docId) async {
     try {
       await deleteDocument(documentId: docId);
@@ -270,6 +273,15 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     ).push(MaterialPageRoute(builder: (_) => DocumentDetailScreen(docId: id)));
   }
 
+  /// 横幅点一下:把「还没核对」那一段滚动进可视区域——上面的识别队列卡数量不
+  /// 定,可能把横幅推到折叠线附近。`count == 0` 时横幅自己不画(见
+  /// [PendingReviewBanner.build]),这颗 key 也就没挂上任何渲染对象,取不到
+  /// context,自然也点不到这里。
+  void _scrollToPending() {
+    final ctx = _pendingSectionKey.currentContext;
+    if (ctx != null) Scrollable.ensureVisible(ctx);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
@@ -310,13 +322,13 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           }
 
           final (profile, groups) = snap.data!;
-          // 待确认(新导入)文档:红框置顶,新的(id 大)在前;确认在详情页做。
+          // 还没核对(新导入)文档:红框置顶,新的(id 大)在前;确认在详情页做。
           final pending =
               _allDocs(
                   groups,
                 ).where((d) => ReviewState.instance.isPending(d.id)).toList()
                 ..sort((a, b) => b.id.compareTo(a.id));
-          // 已确认时间线:剔除待确认文档,避免和上面红框区重复。
+          // 已确认时间线:剔除还没核对文档,避免和上面红框区重复。
           final confirmed = _confirmedOnly(groups);
           return RefreshIndicator(
             onRefresh: _refresh,
@@ -363,7 +375,11 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 const ImportQueueCard(),
                 // s1:一条横幅说一次,不是每行一个橙框(ux-audit P6)。
                 // 「N 份」的 N 是还没核对的份数。
-                PendingReviewBanner(count: pending.length),
+                PendingReviewBanner(
+                  key: _pendingSectionKey,
+                  count: pending.length,
+                  onTap: _scrollToPending,
+                ),
                 if (pending.isNotEmpty) const SizedBox(height: MedShape.s2),
                 // 还没核对的:琥珀框卡片,点开进详情核对;左滑删除。
                 for (final d in pending) ...[
@@ -459,7 +475,7 @@ class _EmptyState extends StatelessWidget {
 }
 
 /// 时间线一项:就诊组(可展开子文档)或独立文档。
-/// 时间线/待确认项左滑删除时的红底背景(靠右露出删除图标),Outlook 邮件式。
+/// 时间线/还没核对项左滑删除时的红底背景(靠右露出删除图标),Outlook 邮件式。
 /// 圆角必须与卡片同档(20),否则滑动过程中会露出一圈错位的直角。
 Widget swipeDeleteBackground(BuildContext context) => Container(
   alignment: Alignment.centerRight,
@@ -689,7 +705,7 @@ class _SubDocList extends StatelessWidget {
   }
 }
 
-/// 待确认(新导入)卡片:琥珀框 + 「待确认」pill,点开进**详情页**核对并确认
+/// 还没核对(新导入)卡片:琥珀框 + 「还没核对」pill,点开进**详情页**核对并确认
 /// (确认按钮在详情页,不在这里)。左滑删除。识别姓名与当前档案不符时下方警告。
 /// 确认后本卡消失,该文档以标准样式进入下方时间线。
 ///
@@ -761,7 +777,7 @@ class _PendingCard extends StatelessWidget {
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               MedPill(
-                                text: '待确认',
+                                text: '还没核对',
                                 foreground: c.high,
                                 background: c.highWash,
                               ),
@@ -779,11 +795,11 @@ class _PendingCard extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 3),
+                          // 原来每行都催一句「点开核对」,7 份就是 7 条错误提示
+                          // (ux-audit P6)。那句话现在只在列表顶部说一次,行上
+                          // 只留类型标签 +「还没核对」那枚 pill。
                           Text(
-                            [
-                              docRowLabel(doc),
-                              '点开核对并确认',
-                            ].join(' · '),
+                            docRowLabel(doc),
                             style: MedType.secondary.copyWith(color: c.ink2),
                           ),
                         ],
@@ -817,7 +833,7 @@ class _PendingCard extends StatelessWidget {
 ///
 /// 用 `critical` 红:这是本屏最高一级的提醒。原先是 Material 调色板里的
 /// `Colors.orange` + 一个裸的 `#B25E00` 文字色 —— 两个都不在规范色板里,而且
-/// 和外层「待确认」框同为橙,一眼分不出哪个更要紧。现在外框琥珀、这条红,
+/// 和外层「还没核对」框同为橙,一眼分不出哪个更要紧。现在外框琥珀、这条红,
 /// 层级立住了。左侧三像素竖条是规范 §warn 的样式。
 class _MismatchBanner extends StatelessWidget {
   const _MismatchBanner({required this.who});

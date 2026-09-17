@@ -115,11 +115,19 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
     }
   }
 
-  /// 确认这份待确认文档无误:移出待确认(去掉红框)→ 通知档案刷新 → 退回。
+  /// 确认这份还没核对文档无误:移出还没核对(去掉红框)→ 通知档案刷新 → 退回。
   Future<void> _confirm() async {
     await ReviewState.instance.markReviewed(widget.docId);
     bumpVaultRevision();
     if (mounted) Navigator.of(context).pop();
+  }
+
+  /// 底部「看原件」(`s7` 那一对按钮之一):复用 [_openOriginal] 那套按 mime
+  /// 分流的查看器。原件信息在 [_future] 里,本屏已经在拉,不必再读一次。
+  Future<void> _viewOriginal() async {
+    final detail = await _future;
+    if (!mounted) return;
+    await _openOriginal(context, detail.sourceFile);
   }
 
   @override
@@ -141,8 +149,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
           ),
         ],
       ),
-      // 待确认文档:底部「确认无误」栏,核对后一键归档(去掉琥珀框、进标准时间线)。
-      // 这是本屏**唯一**的主按钮:seal 纯色不用渐变(规范 §六:一屏只允许一个)。
+      // 还没核对文档:底部一对按钮,逐字按 `s7`——「看原件」(次)+「没问题」(主),
+      // 核对后一键归档(去掉琥珀框、进标准时间线)。「没问题」是本屏**唯一**的
+      // 主按钮:seal 纯色不用渐变(规范 §六:一屏只允许一个)。
       bottomNavigationBar: pending
           ? Container(
               decoration: BoxDecoration(
@@ -157,15 +166,35 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                     MedShape.s3,
                     MedShape.s2,
                   ),
-                  child: FilledButton.icon(
-                    onPressed: _confirm,
-                    icon: const Icon(Icons.check),
-                    label: const Text('确认无误,归入档案'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: c.sealInk,
-                      foregroundColor: c.surface,
-                      minimumSize: const Size.fromHeight(48),
-                    ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _viewOriginal,
+                          icon: const Icon(Icons.visibility_outlined, size: 18),
+                          label: const Text('看原件'),
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: c.sealWash,
+                            foregroundColor: c.sealInk,
+                            side: BorderSide(color: c.line),
+                            minimumSize: const Size.fromHeight(48),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: MedShape.s2),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _confirm,
+                          icon: const Icon(Icons.check),
+                          label: const Text('没问题'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: c.sealInk,
+                            foregroundColor: c.surface,
+                            minimumSize: const Size.fromHeight(48),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -380,49 +409,47 @@ class _DetailBody extends StatelessWidget {
       Navigator.of(context).pop();
     }
   }
+}
 
-  Future<void> _openOriginal(BuildContext context, SourceFileMetaDto sf) async {
-    final mime = sf.mimeType;
-    if (mime.startsWith('image/')) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => _ImageViewerScreen(sourceFileId: sf.id),
-        ),
-      );
-      return;
-    }
-    if (mime == 'application/pdf') {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => _PdfViewerScreen(sourceFileId: sf.id),
-        ),
-      );
-      return;
-    }
-    if (mime == 'application/dicom') {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => _DicomViewerScreen(sourceFileId: sf.id),
-        ),
-      );
-      return;
-    }
-    // 其余格式手机端无法内联预览——如实告知,原件仍安全保存,不静默空白。
-    if (!context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('暂不能预览'),
-        content: Text('此格式($mime)暂不能在手机上预览,原件已安全保存在健康档案里。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('知道了'),
-          ),
-        ],
-      ),
-    );
+/// 查看原件(图片/PDF/DICOM 各自渲染,其余格式优雅降级不崩)。抬头卡里的
+/// 「查看原件」与还没核对底栏的「看原件」共用这一份——按 mime 分流去哪个
+/// 查看器只有一处判断(见 Task 6:后者要在按钮敲下去那一刻才知道 [sf],
+/// 等的是本屏已经在拉的 `_future`,不是重开一次)。
+Future<void> _openOriginal(BuildContext context, SourceFileMetaDto sf) async {
+  final mime = sf.mimeType;
+  if (mime.startsWith('image/')) {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => _ImageViewerScreen(sourceFileId: sf.id)));
+    return;
   }
+  if (mime == 'application/pdf') {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => _PdfViewerScreen(sourceFileId: sf.id)));
+    return;
+  }
+  if (mime == 'application/dicom') {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => _DicomViewerScreen(sourceFileId: sf.id)));
+    return;
+  }
+  // 其余格式手机端无法内联预览——如实告知,原件仍安全保存,不静默空白。
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('暂不能预览'),
+      content: Text('此格式($mime)暂不能在手机上预览,原件已安全保存在健康档案里。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('知道了'),
+        ),
+      ],
+    ),
+  );
 }
 
 enum ConfTier { high, mid, low, lowYield }

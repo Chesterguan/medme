@@ -114,7 +114,7 @@ void _notify() => importJobs.value = List<ImportJob>.of(importJobs.value);
 /// 「一条队列、串行」这条不变量在换牌前后都成立。生产里永远只有一次发牌。
 Object? _drainToken;
 
-/// 一批(一次采集)共享的账本:埋点、「待确认」队列、合并、云抽取都按批算。
+/// 一批(一次采集)共享的账本:埋点、「还没核对」队列、合并、云抽取都按批算。
 class _Batch {
   _Batch({
     required this.profile,
@@ -336,7 +336,7 @@ Future<void> _runJob(ImportJob job) async {
 }
 
 Future<void> _finishBatch(_Batch batch) async {
-  // 成员已经切走 → 「待确认」队列和档案自动命名都是**写在当前成员名下**的,
+  // 成员已经切走 → 「还没核对」队列和档案自动命名都是**写在当前成员名下**的,
   // 写下去就是把甲的新文档记进乙的待办。不写,文档本身照常在它自己的箱子里。
   //
   // **每一步之前都重新问一次**,不是开头问一次就一路用到底:下面每个 `await`
@@ -412,7 +412,7 @@ Future<void> _finishBatch(_Batch batch) async {
   unawaited(runCloudExtractions(batch.pending));
 }
 
-/// 把这批照片合并成一份多页文档,并把「待确认」和云抽取都改挂到新文档上。
+/// 把这批照片合并成一份多页文档,并把「还没核对」和云抽取都改挂到新文档上。
 ///
 /// 合并失败时原来那几份**一份不少**(保证来自 Rust 侧
 /// `merge_documents_into_pdf`:任何校验/解码失败都发生在删除任何原文档之前),

@@ -23,7 +23,7 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 一次导入运行的结果,供调用方判断要不要、往哪儿带用户去核对新东西。
 ///
-/// 「待确认」是这个产品最重要的一道质量闸门(抽取质量是已知短板,见
+/// 「还没核对」是这个产品最重要的一道质量闸门(抽取质量是已知短板,见
 /// `review_state.dart`)——但它要用户自己走到档案屏才看得见。从概览发起的导入
 /// 若原地刷新、不带用户过去,这道闸门在那条路径上对所有人都不可见:不是 UI
 /// 疏漏,是一整套写好的核对机制在这条路上悄悄失效。这个结果类型就是让调用方
@@ -49,13 +49,13 @@ class ImportRunResult {
 /// 方便直接单测(见 `test/import_review_navigation_test.dart`)。实际跳转由调用方
 /// (概览屏)按这个结果自己决定怎么导航,这里不管 UI。
 enum ImportReviewDestination {
-  /// 没有新文档——原地不动。跳到一个空的待确认列表比不跳更糟。
+  /// 没有新文档——原地不动。跳到一个空的还没核对列表比不跳更糟。
   none,
 
   /// 恰好一份新文档——直接进它的详情最直接,复核动作就在那儿。
   singleDocument,
 
-  /// 多份新文档——档案屏置顶的「待确认」节已经把它们聚好了,不用另拼一份列表。
+  /// 多份新文档——档案屏置顶的「还没核对」节已经把它们聚好了,不用另拼一份列表。
   archive,
 }
 
@@ -65,7 +65,7 @@ enum ImportReviewDestination {
 ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
   if (result == null) return ImportReviewDestination.none;
   // 排进了后台队列 → 一律去档案:那几行「识别中」和识别完长出来的文档都在那儿,
-  // 置顶的「待确认」节也在那儿。此刻还没有任何一份识别完,谈不上"进哪一份的详情"。
+  // 置顶的「还没核对」节也在那儿。此刻还没有任何一份识别完,谈不上"进哪一份的详情"。
   if (result.queuedCount > 0) return ImportReviewDestination.archive;
   if (!result.hasNewDocs) return ImportReviewDestination.none;
   return result.newDocumentIds.length == 1

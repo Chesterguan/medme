@@ -32,7 +32,7 @@ class MedCard extends StatelessWidget {
   /// 是否画骑缝线。见类文档:只给「背后有原件、点得进去」的卡。
   final bool perforated;
 
-  /// 边框色,默认 `line`。用于「待确认」这类需要整卡变色的状态。
+  /// 边框色,默认 `line`。用于「还没核对」这类需要整卡变色的状态。
   final Color? borderColor;
 
   /// 边框宽度,默认 1。状态卡可加粗到 1.5。

@@ -281,7 +281,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _busy = true);
     try {
-      await wipeAllData(); // 全清:所有成员 vault + 份数缓存 + 待确认 + 恢复出厂
+      await wipeAllData(); // 全清:所有成员 vault + 份数缓存 + 还没核对 + 恢复出厂
       // 埋点:**无属性**,而且此刻设备上已经什么都不剩了。
       // 这是没有持久 ID 的情况下我们能看见的最强负面信号(卸载永远看不到),
       // 而且它在一道二次确认之后 —— 不会是误触。配合上下文的 `tenure_bucket`

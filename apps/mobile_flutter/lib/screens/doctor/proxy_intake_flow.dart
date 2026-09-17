@@ -41,9 +41,9 @@ enum _ProxyPhase { consent, capture, preview, delivering }
 
 /// 「为病人代建档」全屏流程(医生/护士专用,Phase 1:本地交付,不含云)。
 /// 同意(签名/按住确认)→ 为这个病人建一个**独立保险箱** → 采集(拍照/相册/文件,
-/// 可多轮混合来源累加)→ **待确认列表**(每份一行,点进去核对原件+识别内容、逐份点
+/// 可多轮混合来源累加)→ **还没核对列表**(每份一行,点进去核对原件+识别内容、逐份点
 /// 「确认这一份」;可随时「继续采集」再累加更多)→ 生成加密文件交付给病人(摘要只
-/// 统计已确认的文档,未确认的原件仍全部进分享包并标注待确认)。
+/// 统计已确认的文档,未确认的原件仍全部进分享包并标注还没核对)。
 ///
 /// **交付后不即焚**:病人留在本机最多 12 小时(医生通常要几小时内写完病历,期间可
 /// 回来补拍/重发),到点由 [ProxyPatientManager] 自动删——与同意告知里那句话对齐。
@@ -54,7 +54,7 @@ enum _ProxyPhase { consent, capture, preview, delivering }
 /// 是**安全设计**,不是装饰。
 ///
 /// [patientId] 为 null = 新病人(从同意屏开始);非 null = 从主页「今日病历表」点回
-/// 一个已建档的病人(同意已签过,直接进待确认列表继续核对/交付)。
+/// 一个已建档的病人(同意已签过,直接进还没核对列表继续核对/交付)。
 ///
 /// 打开代拍病人的箱子会**顶掉进程级 vault**(医生自己的档案)。这件事不靠调用顺序的
 /// 约定来保证正确:所有开箱走 `vault_boot` 的 FIFO 队列(先发出先生效),并且每次落库
@@ -90,8 +90,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   Map<int, String> _mismatch = const {};
   List<TimelineGroupDto> _preview = const [];
   ProxySummaryDto? _summary;
-  // 文档 id → 是否已确认(待确认列表用它渲染「待确认/已确认」标签)。真相在
-  // `ProxyPatientManager`(落盘),这里只是这一屏的快照;查不到的 id 按「待确认」处理。
+  // 文档 id → 是否已确认(还没核对列表用它渲染「还没核对/已确认」标签)。真相在
+  // `ProxyPatientManager`(落盘),这里只是这一屏的快照;查不到的 id 按「还没核对」处理。
   Map<int, bool> _confirmedMap = const {};
   int _capturedCount = 0;
   bool _busy = false;
@@ -122,7 +122,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     super.dispose();
   }
 
-  /// 从主页点回一个已建档的病人:开它的箱子,直接进待确认列表(同意早签过了)。
+  /// 从主页点回一个已建档的病人:开它的箱子,直接进还没核对列表(同意早签过了)。
   Future<void> _resume(String id) async {
     setState(() {
       _busy = true;
@@ -362,7 +362,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   /// 患者模式同一来源,见 `import_helpers.dart` 的 [ImportIncompleteNotice])。
   ///
   /// 顺手拿 Rust 回传的 `detectedName`:第一份识别到姓名就给这个病人命名(主页
-  /// 「今日病历表」按名字列);之后再识别到**别的**名字就记进 [_mismatch],在待确认
+  /// 「今日病历表」按名字列);之后再识别到**别的**名字就记进 [_mismatch],在还没核对
   /// 列表顶上提醒「可能拍到了别人的单子」。
   Future<void> _ingest(List<PendingImport> items) async {
     final patientId = _patientId;
@@ -483,7 +483,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       _progress = null;
     });
     // 「没能处理」和「落库了但没收全」是两件事,一条提示条里分行说完 ——
-    // 分两条 snackbar 的话第二条要排队等 4 秒,而这一屏紧接着就切到待确认列表了。
+    // 分两条 snackbar 的话第二条要排队等 4 秒,而这一屏紧接着就切到还没核对列表了。
     final notice = proxyIntakeNotice(rows: rows, failed: failed);
     if (notice != null) {
       ScaffoldMessenger.of(
@@ -515,7 +515,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     }
   }
 
-  /// 加载/刷新待确认列表:就诊时间线(铺平成文档清单)+ 病情摘要卡(只统计已确认
+  /// 加载/刷新还没核对列表:就诊时间线(铺平成文档清单)+ 病情摘要卡(只统计已确认
   /// 文档)+ 每份文档的确认状态。采集完成后、以及每次从详情页返回(确认/删除/重拍)
   /// 后都调这个来刷新——单一数据源,不另维护一套局部更新逻辑。`_capturedCount`
   /// 顺带用这次拿到的真实文档数覆盖,不再靠调用方手动加减去维持同步。
@@ -946,7 +946,7 @@ class _CaptureStep extends StatelessWidget {
   }
 }
 
-/// 待确认列表:采集完进这一屏。渲染风格复用 `archive_screen.dart` 的时间线
+/// 还没核对列表:采集完进这一屏。渲染风格复用 `archive_screen.dart` 的时间线
 /// 列表(图标+类型色块、标题、日期、副标题),每份一行,不再像上一版那样把识别
 /// 内容摊开在列表里——点进一份才看原件 + 识别内容(见 `proxy_document_detail.dart`),
 /// 列表本身只负责「核对拍了什么、哪些还没点开确认」。
@@ -979,7 +979,7 @@ class _PendingListStep extends StatelessWidget {
   final VoidCallback onDeliver;
   final ValueChanged<DocumentSummaryDto> onOpenDocument;
 
-  /// 铺平就诊组/独立文档为一份纯清单——待确认列表只需要「拍了什么」,不需要档案屏
+  /// 铺平就诊组/独立文档为一份纯清单——还没核对列表只需要「拍了什么」,不需要档案屏
   /// 那套就诊分组展示。与 `archive_screen.dart` 的展开模式同一匹配写法。
   static List<DocumentSummaryDto> flatten(List<TimelineGroupDto> groups) {
     final out = <DocumentSummaryDto>[];
@@ -1151,12 +1151,12 @@ class _PendingListStep extends StatelessWidget {
   }
 }
 
-/// 待确认列表一行:类型图标 + 标题/日期/类型 + 「待确认/已确认」状态标签。样式
+/// 还没核对列表一行:类型图标 + 标题/日期/类型 + 「还没核对/已确认」状态标签。样式
 /// 参照 `archive_screen.dart` 的时间线行(图标底色块 + 标题/副标题两行)。
 ///
 /// **带骑缝线**:每一行背后就是刚拍下的那一张纸,点进去就是原件(规范 §五)。
 ///
-/// **状态两级的配色跟着个人模式走,不另发明一套**:待确认 = 琥珀(`high`),
+/// **状态两级的配色跟着个人模式走,不另发明一套**:还没核对 = 琥珀(`high`),
 /// 与 `archive_screen.dart` 的 `_PendingCard` 同一处理 —— 「刚拍完还没核对」是常态
 /// 不是事故,红色天天出现就会被学会忽略;真正该报红的是下面那条姓名不符。
 /// 已确认 = 医生模式主色的淡底版(`proxyWash`/`proxyInk`),与详情屏底栏那块
@@ -1306,7 +1306,7 @@ class _StatusBadge extends StatelessWidget {
     // 圆角从 6 提到 pill 那一档,与个人模式的状态标签同一个外壳。
     return confirmed
         ? MedPill(text: '已确认', foreground: c.proxyInk, background: c.proxyWash)
-        : MedPill(text: '待确认', foreground: c.high, background: c.highWash);
+        : MedPill(text: '还没核对', foreground: c.high, background: c.highWash);
   }
 }
 

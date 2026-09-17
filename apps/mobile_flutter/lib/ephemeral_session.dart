@@ -74,12 +74,12 @@ class EphemeralSession {
     confirmed: confirmed,
   );
 
-  /// 当前会话箱里每份文档的确认状态。只含**显式确认过**的文档;待确认列表屏对
-  /// 查不到的 document_id 一律按「待确认」处理。
+  /// 当前会话箱里每份文档的确认状态。只含**显式确认过**的文档;还没核对列表屏对
+  /// 查不到的 document_id 一律按「还没核对」处理。
   static Future<List<ConfirmedStatusDto>> confirmedMap() =>
       rust_ephemeral.ephemeralConfirmedMap();
 
-  /// 一份文档详情(待确认列表「点进一份」的详情页):类型/日期 + 来源文件元信息 +
+  /// 一份文档详情(还没核对列表「点进一份」的详情页):类型/日期 + 来源文件元信息 +
   /// 识别文本 + 置信度。签名与 `vault.dart` 的 `getDocument` 一致。
   static Future<DocumentDetailDto> getDocument(int documentId) =>
       rust_ephemeral.ephemeralGetDocument(documentId: documentId);
