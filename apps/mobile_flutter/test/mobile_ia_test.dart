@@ -768,6 +768,25 @@ void main() {
       expect(OrganDonation.fromKey('nonsense'), OrganDonation.unset);
       expect(OrganDonation.fromKey('yes'), OrganDonation.yes);
     });
+
+    testWidgets('降级之后大字模式一字未动:深色、高对比、没有输入框', (tester) async {
+      // ia-proposal §7 决定 3:降的是位置不是质量。这条测试存在的唯一理由是
+      // 「顺手」—— 把一屏从 tab 降成 push 进来的一页时,最容易发生的事是有人
+      // 觉得「既然不常用了」就顺便简化它。
+      await tester.pumpWidget(
+        wrapScreen(EmergencyBigCardScreen(card: emptyCard, profile: profile)),
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.byType(TextFormField), findsNothing);
+      expect(find.text('未登记'), findsOneWidget);
+      // 它不再是底栏的一项(底栏只有三个:病历 / 趋势 / 我)。
+      expect(
+        HomeShell.tabDestinations.map((d) => d.label),
+        isNot(contains('应急卡')),
+      );
+      expect(HomeShell.tabDestinations.length, 3);
+    });
   });
 
   // ───────────────────────────────────────────────────────────────────────────

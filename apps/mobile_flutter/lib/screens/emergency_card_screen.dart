@@ -15,12 +15,17 @@ import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
-/// 底部导航一级 tab「应急卡」—— 使用时刻:**急诊室,别人拿着你的手机**
-/// (设计系统 §八、§九)。
+/// 急救信息 —— 从「给医生看」那一页的第三条入口进来(ia-proposal §7 决定 3 +
+/// mockup `s4`:不再占底栏席位,但**质量一字未动**)。使用时刻仍然是
+/// **急诊室,别人拿着你的手机**(设计系统 §八、§九)。
+///
+/// ⚠️ 入口那一条写的是「急救卡」(逐字照 `s4`),本屏顶栏写的是「应急卡」。
+/// 两个词今天并存,词表(ia-proposal §3 的 11 组)没裁过这一组 —— 谁要统一,
+/// 连着 `s4` 一起改,别只改一头。
 ///
 /// 这是全 app 唯一一个**读者不是用户本人**的界面。所有取舍都从这一句推出来:
 ///
-/// * **[EmergencyBigCardScreen] 大字模式**才是这个 tab 的产品本体,平时这一屏
+/// * **[EmergencyBigCardScreen] 大字模式**才是这一屏的产品本体,平时这一屏
 ///   只是它的维护界面。所以主按钮是「大字模式」,不是别的。
 /// * **血型不给编。** `EmergencyCardDto.bloodType` 恒为 null(抽取链路里没有血型
 ///   抽取),这里显示「未登记」并且**不提供任何输入框** —— 见 [_BloodTypeCard]。
@@ -136,7 +141,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
                   onOpen: () {
                     // 埋点:**无属性**。这一屏上的每一样东西(姓名、血型、过敏史、
                     // 联系人)都是最敏感的那一类,一个都不带。回答的只有
-                    // 「大字模式到底有没有人开」——那是应急卡这个一级席位的依据。
+                    // 「大字模式到底有没有人开」——那是这一屏存在的依据。
                     Analytics.track(AnalyticsEvent.emergencyBigModeOpened);
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -170,7 +175,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
   }
 }
 
-/// 大字模式的入口。一屏只允许一颗主按钮(规范 §六),这个 tab 把它花在这里。
+/// 大字模式的入口。一屏只允许一颗主按钮(规范 §六),这一屏把它花在这里。
 class _BigModeLauncher extends StatelessWidget {
   const _BigModeLauncher({required this.onOpen});
 

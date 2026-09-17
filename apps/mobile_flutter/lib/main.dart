@@ -515,8 +515,8 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
   }
 }
 
-/// 应用根:按 [AppMode] 决定显示哪个界面——还没选过模式 → 「你是?」选择屏;
-/// 选了「个人」→ [HomeShell](五 tab);选了「医生」→ [DoctorHomeScreen]。
+/// 应用根:按 [AppMode] 决定显示哪个界面——没选过 / 选了「个人」→ [HomeShell]
+/// (三 tab,「你是?」那一屏已删,见 [modeRoot]);选了「医生」→ [DoctorHomeScreen]。
 /// 用 `ValueListenableBuilder` 监听同一个 notifier:设置页「切换模式」写入新值后,
 /// 这里自动重建换到另一个根界面,不需要任何显式导航(调用方只需在切换后把导航栈
 /// popUntil 回第一层,见 `settings_screen.dart`)。
