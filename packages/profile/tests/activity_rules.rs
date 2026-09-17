@@ -492,3 +492,67 @@ fn a_document_with_no_date_never_scores() {
     assert_eq!(b["score"], 0);
     assert!(hit_ids(&b).is_empty());
 }
+
+// --- 证据逐字:给人看的永远是纸上那个数 ---------------------------------------
+
+/// 某条描述符在 `hits`/`missed` 里的第一条证据。
+fn evidence(body: &serde_json::Value, array: &str, id: &str) -> serde_json::Value {
+    body[array]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == id)
+        .unwrap_or_else(|| panic!("{id} 不在 {array} 里"))["evidence"][0]
+        .clone()
+}
+
+#[test]
+fn numeric_evidence_carries_what_the_report_printed_not_the_converted_number() {
+    // 比是拿规范值比的(0.3 g = 300 mg,阈 500 mg),但证据链里必须还是「0.3 g/24h」
+    // —— 医生要能在纸上原样找到它。规范套另放在名字自己说清楚的两个键下。
+    let b = score(&[(TODAY, &lab_doc("24小时尿蛋白定量 0.3 g/24h"))]);
+    let e = evidence(&b, "missed", "proteinuria");
+    assert_eq!(e["value"], "0.3");
+    assert_eq!(e["unit"], "g/24h");
+    assert_eq!(e["value_canonical"], 300.0);
+    assert_eq!(e["unit_canonical"], "mg/24h");
+    assert_eq!(e["values_converted"], false);
+}
+
+#[test]
+fn a_scoring_numeric_hit_carries_the_printed_pair_too() {
+    let b = score(&[(TODAY, &lab_doc("24小时尿蛋白定量 0.51 g/24h"))]);
+    let e = evidence(&b, "hits", "proteinuria");
+    assert_eq!(e["value"], "0.51");
+    assert_eq!(e["unit"], "g/24h");
+    assert_eq!(e["value_canonical"], 510.0);
+}
+
+#[test]
+fn flag_evidence_carries_the_printed_pair_and_the_canonical_one_separately() {
+    // 齐鲁印 mg/L、别家印 g/L(§A.3 的 1000× 坑)。命中的是「800 mg/L」这张单子,
+    // 证据就得是 800 mg/L。
+    let b = score(&[(TODAY, &lab_doc("补体C3 800 mg/L 900-1800"))]);
+    let e = evidence(&b, "hits", "low_complement");
+    assert_eq!(e["value"], "800");
+    assert_eq!(e["unit"], "mg/L");
+    assert_eq!(e["value_canonical"], 0.8);
+    assert_eq!(e["unit_canonical"], "g/L");
+}
+
+#[test]
+fn a_series_whose_units_were_unified_says_so_on_every_piece_of_evidence() {
+    // 两张单子一张印 g/L 一张印 mg/L,`parser` 会把整条序列统一到规范单位 ——
+    // 此时 `value`/`unit` 在**纸上找不到**,必须由 `values_converted` 说出来,
+    // 不说就等于改写原文(`parser::AnalyteSeries::values_converted` 的原话)。
+    let b = score(&[
+        ("2026-09-15", &lab_doc("补体C3 0.4 g/L 0.9-1.8")),
+        (TODAY, &lab_doc("补体C3 500 mg/L 900-1800")),
+    ]);
+    let e = evidence(&b, "hits", "low_complement");
+    assert_eq!(
+        e["values_converted"], true,
+        "混了印刷单位就必须承认这个数是换算过的:{e}"
+    );
+    assert_eq!(e["unit"], "g/L", "统一后的单位是词典规范单位");
+}

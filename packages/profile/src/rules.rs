@@ -3,14 +3,28 @@
 use chrono::NaiveDate;
 
 /// 一条被规则引用到的化验证据(用于「这次计分用了哪几张单子」的证据链)。
+///
+/// **`value`/`unit` 永远是报告上印的那一对**,医生要能在纸上原样找到它。规范套
+/// (跨院可比的那一套)另放在 `value_canonical`/`unit_canonical` 下,名字自己说
+/// 清楚 —— 把 `0.3 g/24h` 显示成 `300 mg/24h` 是一个医生有理由不信的数字,哪怕
+/// 换算本身没错。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Evidence {
     /// `parser::SourceDoc::index` —— 调用方据此翻回 document_id。
     pub document_index: usize,
     pub date: Option<String>,
     pub analyte: String,
+    /// 报告印的值(定性项就是「阳性」这种原话;`text_present` 是命中的那一整行)。
     pub value: String,
+    /// `value` 的单位,报告印的那个。报告没印单位时 `None`(不替它补)。
     pub unit: Option<String>,
+    /// 规范单位下的同一个值。非化验证据(原文行)为 `None`。
+    pub value_canonical: Option<f64>,
+    pub unit_canonical: Option<String>,
+    /// `true` = 这条序列上混了印刷单位,`parser` 已把整条统一换算过,上面的
+    /// `value`/`unit` 在纸上找不到(`parser::AnalyteSeries::values_converted`
+    /// 的文档:「不说就等于改写原文」)。渲染层必须把这件事说出来。
+    pub values_converted: bool,
 }
 
 /// 规则求值的全部输入,装配一次、各条规则共用。
@@ -251,6 +265,21 @@ fn str_field<'j>(v: &'j serde_json::Value, k: &str) -> &'j str {
     v.get(k).and_then(|x| x.as_str()).unwrap_or_default()
 }
 
+/// 一个化验点的证据。**印刷套进 `value`/`unit`,规范套进带后缀的那两个** ——
+/// `gt`/`lt` 是拿规范值比的阈值,但拿去给人看的必须是纸上那个数。
+fn lab_evidence(s: &parser::AnalyteSeries, p: &parser::LabPoint, analyte: &str) -> Evidence {
+    Evidence {
+        document_index: p.source,
+        date: p.date.map(|d| d.to_string()),
+        analyte: analyte.to_string(),
+        value: p.value.to_string(),
+        unit: p.unit.clone(),
+        value_canonical: p.value_canonical,
+        unit_canonical: s.unit_canonical.clone(),
+        values_converted: s.values_converted,
+    }
+}
+
 /// 行里有否定/零值标记吗(全角、空格、大小写都已折平)?
 fn is_negated(normalized_line: &str) -> bool {
     NEGATION_MARKERS
@@ -356,13 +385,7 @@ fn eval_activity_item(ctx: &Ctx<'_>, item: &serde_json::Value, window: i64) -> O
                         saw_unjudgeable = true;
                         continue;
                     };
-                    let e = Evidence {
-                        document_index: p.source,
-                        date: p.date.map(|d| d.to_string()),
-                        analyte: k.to_string(),
-                        value: p.value.to_string(),
-                        unit: p.unit.clone(),
-                    };
+                    let e = lab_evidence(s, p, k);
                     if flag == want {
                         evidence.push(e);
                     } else {
@@ -397,8 +420,13 @@ fn eval_activity_item(ctx: &Ctx<'_>, item: &serde_json::Value, window: i64) -> O
                         document_index: *idx,
                         date: date.map(|d| d.to_string()),
                         analyte: l.name.clone(),
+                        // 抽取结果里的原话(「阳性」「1:80」),本来就没有单位、
+                        // 也没有规范套可言。
                         value: l.value.clone(),
                         unit: None,
+                        value_canonical: None,
+                        unit_canonical: None,
+                        values_converted: false,
                     };
                     let v = terminology::normalize_term(&l.value);
                     if words.iter().any(|w| v.contains(w.as_str())) {
@@ -451,18 +479,12 @@ fn eval_activity_item(ctx: &Ctx<'_>, item: &serde_json::Value, window: i64) -> O
                     }
                     saw_point = true;
                     // 换算不出来的点直接跳过(诚实漏)。
-                    let (Some(v), Some(u), Some(thr_here)) =
-                        (p.value_canonical, s.unit_canonical.as_deref(), thr_here)
-                    else {
+                    let (Some(v), Some(thr_here)) = (p.value_canonical, thr_here) else {
                         continue;
                     };
-                    let e = Evidence {
-                        document_index: p.source,
-                        date: p.date.map(|d| d.to_string()),
-                        analyte: k.to_string(),
-                        value: v.to_string(),
-                        unit: Some(u.to_string()),
-                    };
+                    // 比是拿规范值比的,给人看的却是**纸上那个数**:把「0.3 g/24h」
+                    // 显示成「300 mg/24h」,医生有理由不信这条证据。
+                    let e = lab_evidence(s, p, k);
                     // 两边都是**严格**不等号:SLEDAI-2K 的「>0.5 g/24h」「<3,000」
                     // 恰好在阈上的那个值不计分。
                     if if kind == "gt" {
@@ -519,6 +541,9 @@ fn eval_activity_item(ctx: &Ctx<'_>, item: &serde_json::Value, window: i64) -> O
                         analyte: str_field(item, "id").to_string(),
                         value: line.trim().to_string(),
                         unit: None,
+                        value_canonical: None,
+                        unit_canonical: None,
+                        values_converted: false,
                     };
                     if is_negated(&n) {
                         negated.push(e);
