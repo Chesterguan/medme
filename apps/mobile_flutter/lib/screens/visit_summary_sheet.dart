@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
@@ -10,7 +9,6 @@ import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
-import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 「看病带这个」—— **刻意不是一个 tab**(设计系统 §八)。
 ///
@@ -28,13 +26,12 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 ///
 /// ## 2026-08-05 改版:段落顺序反了过来
 ///
-/// 产品真机验收拆出四条具体问题:
+/// 产品真机验收拆出三条具体问题:
 /// 1. 名字像医院发的东西(已解决,见上);
 /// 2. 前三屏全是免责声明(MedMe 不判断 → 过敏史没找到不等于没有 → 用药不代表
 ///    当前医嘱),三句话都对、都必要,连着堆在开场却把内容压没了;
 /// 3. 药排在化验前面,10 条药(含重复提及)要滚两屏才见到化验,而医生问诊通常
 ///    是先问现在怎么了、再看指标、最后核药,顺序反了;
-/// 4. 「复制全文给医生」与「医生要看原件·出示二维码」两个按钮分不清,得自己推。
 /// 还缺一样东西:**整屏都是"系统从病历里读到了什么",没有一处是"患者自己带来
 /// 的"**——「记录」里写的笔记存完就沉进时间线,没有出口。
 ///
@@ -49,8 +46,8 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 ///
 /// 内容全部来自 `viewVisitSummary()`,而那个投影对结构化字段**只搬运原文逐字
 /// 内容与抽出的数值/日期,不生成任何解释或结论**——「我想问医生的」是唯一的
-/// 例外:那是患者自己写的笔记,只在这一屏显示给患者自己看,绝不进「复制给医生」
-/// 的文本或二维码分享(见 Rust 侧 `VisitNoteDto` 的文档)。这一屏本身也不加结论:
+/// 例外:那是患者自己写的笔记,只在这一屏显示给患者自己看,绝不进交给医生的那份
+/// 纯文本,也不进二维码分享(见 Rust 侧 `VisitNoteDto` 的文档)。这一屏本身也不加结论:
 /// 没有「建议复查」,没有「病情稳定」。它是一页纸,不是一份意见。
 /// [from] 是**唯一**的必填参数,而且刻意没有默认值:这一屏没有 tab 席位,只靠
 /// 概览与档案两处顶栏被找到,所以「哪个入口在起作用」正是它最需要回答的问题
@@ -100,22 +97,10 @@ class _VisitSummarySheetState extends State<VisitSummarySheet> {
     ).push(MaterialPageRoute(builder: (_) => DocumentDetailScreen(docId: id)));
   }
 
-  Future<void> _copy(String text) async {
-    // 埋点:只报「按了复制」。**`text` 就是整页病历摘要,绝不上报任何片段。**
-    Analytics.track(AnalyticsEvent.visitSheetAction, {
-      'action': VisitSheetAction.copy.name,
-    });
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(appSnackBar(content: Text('已复制,可以粘贴到微信发给医生')));
-  }
-
   /// 「我想问医生的」空态与常态共用的「加一条」——直接开录入弹层,预选中「笔记」,
   /// 跳过六选一(用户点这颗按钮时意图已经是"记笔记",没理由再点一次)。存完刷新
-  /// 这一屏的数据,不需要用户自己关掉浮层再重开——参见 `overview_screen.dart` 的
-  /// `_openManualEntry` 同一条理由:存完立刻看见结果,不是靠额外的 SnackBar 交代。
+  /// 这一屏的数据,不需要用户自己关掉浮层再重开:存完立刻看见结果,不是靠额外的
+  /// SnackBar 交代。
   Future<void> _addNote() async {
     // 埋点:只报「按了加一条」——**入口归属**。真正存下来的那条由 `record_added`
     // 计数(且同样不带内容),这里回答的是「我想问医生的」这一节有没有人用。
@@ -189,7 +174,7 @@ class _VisitSummarySheetState extends State<VisitSummarySheet> {
                     onAddNote: _addNote,
                   ),
                 ),
-                _actions(context, s),
+                _actions(context),
               ],
             ),
           );
@@ -198,9 +183,11 @@ class _VisitSummarySheetState extends State<VisitSummarySheet> {
     );
   }
 
-  /// 底部动作条。**一屏只允许一颗主按钮**(规范 §六),这里是「复制」——
-  /// 因为诊室里最常见的一步是把这段字发到医生的微信/工作站,而不是让医生扫码。
-  Widget _actions(BuildContext context, VisitSummaryDto s) {
+  /// 底部动作条。**一屏只允许一颗主按钮**(规范 §六),这里是出码。
+  ///
+  /// 原先并排的那颗「复制全文给医生」已删(ux-audit P3):复制落进的是**用户
+  /// 自己的**剪贴板,对面的医生什么也没拿到 —— 它看着像一条出口,其实不是。
+  Widget _actions(BuildContext context) {
     final c = MedColors.of(context);
     return Container(
       padding: const EdgeInsets.fromLTRB(
@@ -216,27 +203,16 @@ class _VisitSummarySheetState extends State<VisitSummarySheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: () => _copy(s.plainText),
-              icon: const Icon(Icons.copy_all_outlined, size: 20),
-              label: const Text('复制全文给医生'),
-            ),
-          ),
-          const SizedBox(height: MedShape.s1),
           // 二维码分享与这一屏是**两个场景**:这一屏是本地的、离线的、30 秒读完的
           // 一页纸;扫码是端到端加密、要联网、把**完整病历含原件**交出去。医生说
-          // 「我要看原片」时才升级到这一步,所以它是次级按钮,不是并列。两个按钮
-          // 的文案刻意不对称——一个说「给文字」,一个说「给原件」,不用靠图标或
-          // 顺序去猜哪个更"重"。
+          // 「我要看原片」时才升级到这一步。
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
               onPressed: () {
                 // 埋点:只报**入口归属**。出码本身仍由 `share_qr_shown` 计数,
                 // 载荷、份数、体积都在那条上(且都是分桶)。这里回答的是
-                // 「诊室里走的是复制还是出码」。
+                // 「出码的人是从哪一屏进来的」。
                 Analytics.track(AnalyticsEvent.visitSheetAction, {
                   'action': VisitSheetAction.qr.name,
                 });
@@ -741,9 +717,10 @@ class _LabRow extends StatelessWidget {
       refHigh: lab.refHigh,
       // 自测值(家测血压/血糖/体重/体温/心率)与医院值排在同一份「我最近的
       // 变化」里,靠这个标注分清"这是病人自己量的"——见 MANUAL-ENTRY-DESIGN.md,
-      // 措辞与概览、趋势页复用同一个"· 家测"。
+      // 措辞与趋势页复用同一个"· 家测"。
       // `valuesConverted` 见 `unitConvertedNote` —— 这一行的数值不是纸上印的那个
-      // 时必须标注,概览行(overview_screen)用同一份措辞。
+      // 时必须标注,趋势的化验快照(`trends_screen.dart` 的 `KeyLabsSnapshot`)
+      // 用同一份措辞。
       meta: [
         lab.date,
         if (lab.selfMeasured) '家测',

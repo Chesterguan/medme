@@ -78,7 +78,7 @@ ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
 ///
 /// 只管「该不该调、调哪个」,不碰 `Navigator`——具体怎么导航(`push` 什么、
 /// 会不会动底部 tab 状态)完全由调用方通过回调自己决定。这样测试可以直接断言
-/// 「哪种结果触发了哪个回调」,不需要真正拉起一整个 `OverviewScreen`(它的
+/// 「哪种结果触发了哪个回调」,不需要真正拉起调用方那一整屏(它的
 /// `FutureBuilder` 依赖 Rust FFI,在纯 dart test 环境里起不来)。
 void dispatchImportReview(
   ImportRunResult? result, {
@@ -135,8 +135,8 @@ Future<ImportRunResult?> showImportSheet(BuildContext context) async {
             subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
             choice: ImportChoice.camera,
             // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
-            // 改版后那颗快捷操作让位给了「记录」(见 overview_screen.dart 的
-            // `_QuickActions` 文档),拍照要多经一次这个选择表才能到达。视觉上
+            // 改版后那一排快捷操作整个没了(今天「病历」首页只剩「添加」与
+            // 「给医生看」两颗方块),拍照要多经一次这个选择表才能到达。视觉上
             // 做成主选项(填色图标块 + 加粗标题)抵消这多出来的一次点击——它
             // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
             primary: true,

@@ -42,9 +42,9 @@ void main() {
     final pm = ProfileManager.instance;
     final startId = pm.currentId.value;
 
-    // 模拟「概览屏」与「档案屏」各自挂一个监听器——与真实代码同一模式
+    // 模拟「趋势屏」与「病历屏」各自挂一个监听器——与真实代码同一模式
     // (两屏都在各自的 initState 里对某个 ValueNotifier addListener,
-    // 见 overview_screen.dart / archive_screen.dart 对 vaultRevision 的监听)。
+    // 见 trends_screen.dart / archive_screen.dart 对 vaultRevision 的监听)。
     var overviewSeen = startId;
     var archiveSeen = startId;
     void onOverview() => overviewSeen = pm.currentId.value;

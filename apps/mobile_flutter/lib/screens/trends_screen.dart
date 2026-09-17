@@ -40,7 +40,9 @@ import 'package:mobile_flutter/widgets/trend_chart.dart';
 /// 这一屏没有、也不该有任何代码去「聪明地」把它们并起来:UI 层按名字猜哪两条是同一
 /// 个指标,就是在数据里造关系。`TrendSeriesDto` 带着 `analyteKey` / `loinc` 正是为了
 /// 让**归一化在 Rust 侧**做完再下发;`analyteKey == null` 的序列就是没归一化成功的,
-/// 它照原样显示,顶部那条说明把这件事说给用户听。
+/// 它照原样显示 —— UI 不按名字猜、不合并。**这一屏顶上不再有那段常驻说明**
+/// (`s2` 没有它):这件事现在只在搜不到指标时的空态里说一句「同一项在不同医院
+/// 可能印成「肌酐」「血肌酐」「Cr」」,别把那段话又搬回顶部。
 class TrendsScreen extends StatefulWidget {
   const TrendsScreen({
     super.key,
@@ -364,7 +366,7 @@ class _TrendsScreenState extends State<TrendsScreen> {
                       ),
                       child: Text(
                         // 说的是「这些记录里没有」,不是「你没查过」—— 没搜到很可能
-                        // 是同一个指标印成了别的名字(见顶部说明)。
+                        // 是同一个指标印成了别的名字,下面这句文案就说这个。
                         searching
                             ? (panelSelected
                                   ? '「${_panelChipLabel(_selectedPanel)}」里没有名字含'
@@ -760,9 +762,9 @@ class SeriesCard extends StatelessWidget {
                 // 「这是你自己填的」。这与 `lab_status.dart` 那条同源:状态同时编码
                 // 在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
                 //
-                // 概览(`overview_screen.dart` 的 `_LabSnapshot`)和「看病带这个」
+                // 同屏的化验快照([KeyLabsSnapshot])和「给医生看」
                 // (`visit_summary_sheet.dart` 的 `_LabRow`)早就在日期旁标了
-                // 「· 家测」,只有趋势漏了。措辞与它们一致,不另造一套。
+                // 「· 家测」,只有这张折线卡漏了。措辞与它们一致,不另造一套。
                 if (series.selfMeasured) const _SelfMeasuredLegend(),
                 // 图例本身只加一句短后缀交代出处:医院化验的出处是化验单原件
                 // 本身,不新造一个跳转入口 —— 卡底「查看最新一次的原件」按钮

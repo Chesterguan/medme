@@ -8,7 +8,7 @@
 // 不碰 FFI,正好是这次改版真正要验的"数据怎么显示"那一半。
 //
 // 华为 Mate 9(逻辑分辨率约 360×640)这类矮屏 + 长名字组合是本项目反复踩过的坑
-// (`first_run_consent_test.dart`、`overview_screen.dart` 的 `Wrap` 注释都提过),
+// (`first_run_consent_test.dart`、`manual_entry_sheet.dart` 的 `Wrap` 注释都提过),
 // 所以这里额外压了 360×800 与一个宽视口,每种都叠 2× 字号。
 import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';

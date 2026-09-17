@@ -354,10 +354,10 @@ String get currentMemberName => ProfileManager.instance.current.name;
 /// 三个一级 tab 的标签,顺序同 `HomeTab`。
 const tabLabels = ['病历', '趋势', '我'];
 
-/// 「应急卡」在 Stage 1 已从底栏撤下 —— 它是「给医生看」那一页里的一条,而那一页
-/// 的入口要到 Task 9 才接上。在那之前这条路径**没有 UI 可走**,所以这里故意抛,
-/// 不让调用点悄悄落到别的 tab 上:那样断言会去查另一屏,红得驴唇不对马嘴。
-/// 用到它的 journey 随 Task 19 冒烟一起重写。
+/// 「应急卡」在 Stage 1 已从底栏撤下 —— 它是「给医生看」那一页里的一条(入口在
+/// Task 9 已接上:「病历」首页「给医生看」方块 → 那一页的「急救卡」)。**这个
+/// 助手还没按新路径改**,所以这里故意抛,不让调用点悄悄落到别的 tab 上:那样
+/// 断言会去查另一屏,红得驴唇不对马嘴。用到它的 journey 随 Task 19 冒烟一起重写。
 Future<void> gotoEmergencyCard(WidgetTester tester) async =>
     throw UnimplementedError(
       '应急卡入口在「给医生看」页里(Task 9 接上);本条 journey 随 Task 19 重写',

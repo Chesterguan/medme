@@ -44,10 +44,10 @@ void useTabletLandscape(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
-/// 概览页「最近的关键化验」卡片里,一张卡两行的真实结构:
+/// 「趋势」的「最近的关键化验」卡片里,一张卡两行的真实结构:
 /// `MedCard` → 卡内 vertical padding → 每行再套一层 horizontal padding
-/// (`overview_screen.dart` 的 `_LabSnapshot`)。直接拿 `LabLine` 单测,不拉起
-/// 整个概览屏(那需要后端状态/provider),但外层套的 padding 和真实用法一致,
+/// (`trends_screen.dart` 的 `KeyLabsSnapshot`)。直接拿 `LabLine` 单测,不拉起
+/// 整个趋势屏(那需要 Rust FFI),但外层套的 padding 和真实用法一致,
 /// 复现的是同一份可用宽度。
 Future<List<FlutterErrorDetails>> pumpLabRows(
   WidgetTester tester, {

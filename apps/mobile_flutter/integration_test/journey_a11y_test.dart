@@ -151,8 +151,7 @@ void main() {
         //       没有 `Flexible`/`Expanded`**,字号翻倍之后它们各自变宽,
         //       `Spacer` 挤没了也不够,只能溢出。
         // 违反:`007 §2.5` 的「字号可放大,不可砍」。同一个文件里
-        //       `QuickActions` 专门用 `Wrap` 而不是 `GridView` 就是为这条;
-        //       `_MemberTabs` 也按 `textScaler` 算了高度。这一行漏了。
+        //       `_MemberTabs` 按 `textScaler` 算了高度就是为这条。这一行漏了。
         // 修法参考(不在本轮做):把日期那个 `Text` 包 `Flexible` +
         //       `overflow: TextOverflow.ellipsis`,或者放不下时改成上下两行
         //       ——`lab_status.dart` 的 `LabLine` 已经有「实测宽度决定并排还是

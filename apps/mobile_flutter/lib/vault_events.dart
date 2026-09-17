@@ -46,23 +46,3 @@ void goToTrends() => selectedTab.value = HomeTab.trends;
 
 /// 跳到「我」tab。
 void goToMe() => selectedTab.value = HomeTab.me;
-
-// ── 过渡期 shim ─────────────────────────────────────────────────────────────
-//
-// `overview_screen.dart` 还要活到 Task 9(它的「最近的关键化验」「最近就诊」得先
-// 搬进「趋势」才能拆,见 Task 8),在那之前这两个旧名字仍有调用方
-// (`overview_screen.dart:569,650` 和 `:248`)。直接删会让**本次提交的
-// `flutter analyze` 当场就红** —— 而每个 Task 的「Expected: PASS」指的是那一刻
-// 整仓的 analyze + test,不是只有新写的那个测试文件。
-//
-// `goToTrends` 不在此列:「趋势」仍然是一个 tab,那个函数照旧是真的。
-//
-// 两个 shim 在 Task 9 随概览一起删。
-
-@Deprecated('Stage 1: 用 goToRecords();概览删掉后本 shim 一并删(Task 9)')
-void goToArchive() => goToRecords();
-
-/// 急救已经搬进「给医生看」那一页,底栏没有它的位置了 —— 这个 shim **只是让
-/// 注定要删的概览还能编译**,落点是权宜的,不代表产品意图。Task 9 删。
-@Deprecated('Stage 1: 急救在「给医生看」页里;概览删掉后本 shim 一并删(Task 9)')
-void goToEmergencyCard() => goToRecords();

@@ -459,7 +459,9 @@ enum AnalyticsEvent {
   // 「代拍到底成不成立」是盲飞。
 
   /// 选了身份。属性:`mode`(personal/doctor)、`where`(first=首屏首次选 /
-  /// settings=事后在设置里切)。`where` 值钱在于:事后切换说明第一次选错了。
+  /// settings=事后在设置里切 / for_doctor=从「给医生看」那一页最后一行进代拍)。
+  /// `where` 值钱在于:事后切换说明第一次选错了;`for_doctor` 与 `settings` 的
+  /// 比说明医生是照着入口来的,还是逛设置逛到的。
   modeSelected('mode_selected', {'mode', 'where'}),
 
   /// 医生开始了一次代拍(进入代拍流程屏)。属性:`resumed`(是否是回到已建档的病人)。

@@ -4,13 +4,15 @@
 // 导入的人不可见。见 `lib/import_flow.dart` 的 `ImportRunResult` /
 // `reviewDestinationFor` / `dispatchImportReview` 类文档。
 //
-// 这里测的是**该不该跳、跳去哪**这层纯判断,不是把 `OverviewScreen` 整个拉起来
+// 这里测的是**该不该跳、跳去哪**这层纯判断,不是把调用方那一整屏拉起来
 // 跑一遍真实导入 —— 那条链路要触碰原生取件器 + Rust FFI(`ingestBytes` /
 // `ingestImageWithText`),在 `flutter test` 的纯 dart 进程里都没有实现绑定,
 // 这个仓库里没有任何测试触碰过它们(`import_flow.dart` 之前也没有专门测试)。
 // `dispatchImportReview` 正是为此把「决定去哪」从「怎么导航」里剥出来:
 // 生产代码里 `openArchive`/`openSingleDocument` 两个回调各自去 `Navigator.push`
-// 什么,由 `overview_screen.dart` 决定;这里只断言**该结果触发了哪个回调**,
+// 什么,由调用方决定 —— 概览整屏解散(Task 9)之后**暂时没有生产调用方**:
+// 「病历」首页的「添加」排进后台队列,靠「还没核对」横幅接人,不再当场跳转。
+// 这里只断言**该结果触发了哪个回调**,
 // 这正是「取消不跳」「全部失败不跳」「成功能到达复核入口」这三条要守住的地方。
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/import_flow.dart';

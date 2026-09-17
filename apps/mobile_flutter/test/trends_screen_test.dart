@@ -1,11 +1,11 @@
 // 「趋势」tab 顶部四块:化验快照 / 最近就诊 / 病程档案入口 / 记录入口。
 // 整屏**不注入 `load` 时**不可 pump —— `TrendsScreen` 在字段初始化那一刻就调
 // `viewTrends()` 与 `viewVisitSummary()`(FFI),`flutter test` 不带原生库会
-// 直接崩(与 `test/overview_quick_actions_test.dart` 同一条限制)。这四块都是
+// 直接崩(与 `test/mobile_ia_test.dart` 顶部注释同一条限制)。这四块都是
 // 纯 widget;整屏顺序那一条靠注入 `load` 绕开 FFI(与 `ForDoctorScreen` 同款)。
 //
-// 前两块是从 `overview_screen.dart` 搬过来的(概览在 Task 9 整屏解散)。**搬家
-// 必须先于拆房**:这个文件的存在就是证明搬到了。
+// 前两块是从概览屏搬过来的(概览已在 Task 9 整屏解散)。**搬家必须先于拆房**:
+// 这个文件的存在就是证明搬到了。
 import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show Int64List;

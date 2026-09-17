@@ -12,10 +12,13 @@
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
+import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/screens/emergency_card_screen.dart';
+import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
+import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 
@@ -72,10 +75,28 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
     await next;
   }
 
+  /// 进代拍。**先确认一次身份**(一次性的那道确认在 Task 15 补进代拍首页),
+  /// 这里只负责切模式 —— `AppRoot` 监听同一个 notifier,自动换根界面。
+  ///
+  /// 换根之后还要把导航栈弹回第一层:本屏是 `push` 进来的,而 `AppRoot` 在
+  /// `Navigator` **下面**,不弹的话代拍首页被这一页整个盖住 —— 用户按下去
+  /// 什么都没变。与 `settings_screen.dart` 的「切换模式」同一条处理。
+  Future<void> _enterProxy() async {
+    // `where: for_doctor` —— 从「给医生看」那一页的最后一行进来的。它和
+    // `settings` 的比,说明代拍的人是本来就在找它,还是逛设置逛到的。
+    Analytics.track(AnalyticsEvent.modeSelected, {
+      'mode': AppModeKind.doctor.name,
+      'where': 'for_doctor',
+    });
+    Analytics.setContext({'mode': AppModeKind.doctor.name});
+    await AppMode.instance.setMode(AppModeKind.doctor);
+    if (!mounted) return;
+    final nav = Navigator.of(context);
+    if (nav.canPop()) nav.popUntil((route) => route.isFirst);
+  }
+
   /// 固定在底部的主动作 —— **只有这一颗**(`s4`:「真机上这颗按钮固定在底部」)。
   /// 一屏只允许一颗主按钮(规范 §六),诊室里那一下就是把码递过去。
-  ///
-  /// 跳转在 Task 9 接上(与页内另外三条一起),这一版先把位置和文案摆对。
   Widget _qrBar(MedColors c) => Container(
     padding: const EdgeInsets.fromLTRB(
       MedShape.s4,
@@ -90,9 +111,9 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
     child: SizedBox(
       width: double.infinity,
       child: FilledButton.icon(
-        // Task 9 接上跳转之前这颗是禁用态(灰的)。这一页本身也还没有入口
-        // (「病历」首页那颗方块是 Task 5),所以没有用户会先看到它。
-        onPressed: null,
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const QrShareScreen()),
+        ),
         icon: const Icon(Icons.qr_code_2, size: 20),
         label: const Text('出码给医生看'),
       ),
@@ -107,8 +128,8 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
         title: const Text('给医生看'),
         // `s4` 标题下面还有一行「张建国,男,61 岁;截至 <今天>」。前半截今天由
         // `VisitSummaryBody` 在正文顶部渲染(`VisitSummaryDto.patient`),
-        // 「截至 <今天>」还不存在 —— 两截合并到标题下面是 Task 9/10 的事,
-        // 这一版不自己再造一份。
+        // 「截至 <今天>」**还不存在**,两截也还没合并到标题下面 —— Stage 1 的
+        // 接线不做这一条,谁来做谁在这里加,别在正文里再造第二份身份行。
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
@@ -138,7 +159,7 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
           // 医生可能要问的:过敏 + 用药)。`s4` 要的是
           // 过敏 → 在治 → 在吃 → 关键化验 → 检查与手术,过敏在**第一**行,
           // 而且多一整块「检查与手术」—— 那次重排连同各行的迷你折线一起,
-          // 归 Task 9/10(Stage 2 内容)。**别照这段注释以为顺序已经对了。**
+          // 归 Stage 2。**别照这段注释以为顺序已经对了。**
           //
           // 页脚与底部的分工照 `s4`:「出码给医生看」是主动作,真机上固定在
           // 底部;「打印 / 导出」「急救卡」「代拍」跟着内容滚(否则固定区在
@@ -156,15 +177,20 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
                   onAddNote: _addNote,
                   // AppBar 上已经写着「给医生看」,正文不再画一次旧名字。
                   showHeading: false,
-                  // 「急救卡」这一条现在就接上 —— 概览整屏解散之后它**一个入口
-                  // 都不剩**了,而 `s4` 给它的归宿就是这一页。另外两条(打印 /
-                  // 导出、代拍)留给 Task 9,那两处各自还要接别的东西。
+                  // 「急救卡」在概览解散之后**一个入口都不剩**了,`s4` 给它的
+                  // 归宿就是这一页(ia-proposal §7 决定 3)。
                   footer: ForDoctorActions(
+                    onExport: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const ExportScreen(),
+                      ),
+                    ),
                     onEmergency: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => const EmergencyCardScreen(),
                       ),
                     ),
+                    onProxy: _enterProxy,
                   ),
                 ),
               ),
@@ -178,7 +204,7 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
 }
 
 /// 接在正文最后、**跟着一起滚**的三条入口(`s4`:固定在底部的只有「出码」那一颗)。
-/// **纯 widget,不碰 FFI** —— 这样 `flutter test` 测得到(与 `QuickActions` /
+/// **纯 widget,不碰 FFI** —— 这样 `flutter test` 测得到(与 `HomeTiles` /
 /// `VisitSummaryBody` 同一手法)。
 class ForDoctorActions extends StatelessWidget {
   const ForDoctorActions({
