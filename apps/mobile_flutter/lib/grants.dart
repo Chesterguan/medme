@@ -271,6 +271,18 @@ class Grants {
     await api.delete('/v1/profiles/$cloudId/grants/$grantId');
   }
 
+  /// 「谁能看这份病历」(`s10`,Task 13 fix round 1):`GET /v1/profiles/{pid}/grants`
+  /// 原样返回,owner-only(服务端 `_require_role` 只认 owner)。**不过滤 owner
+  /// 那一行**——与 `account_screen.dart` 的 `_loadMyGrants`(跨档案聚合、专门把
+  /// owner 自己那行滤掉,回答"我把这份档案给了谁")不是同一个问题:这里要答的是
+  /// "这份病历现在被谁看得到",owner(也就是这台设备的主人)本来就是答案的一部分,
+  /// 调用方只是不需要再给这一行标角色。
+  Future<List<Map<String, dynamic>>> listGrants(Profile p) async {
+    final cloudId = p.cloudId;
+    if (cloudId == null) throw StateError('这个成员还没开通云端备份');
+    return ((await api.getJson('/v1/profiles/$cloudId/grants')) as List).cast<Map<String, dynamic>>();
+  }
+
   /// 清掉本机已过期的「被授权档案」(viewer/editor 授权到期,不是自己的 owner
   /// 档案——owner 的 `expiresAt` 恒为 null,天然不会被选中)。
   ///

@@ -10,6 +10,7 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/export_screen.dart';
+import 'package:mobile_flutter/screens/member_detail_screen.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
@@ -48,19 +49,6 @@ const bool _showIcloudSync = false;
 /// 这个开关)。`icloud` 为 null(状态还没查回来)时按未开处理。
 @visibleForTesting
 bool shouldShowIcloudSection(IcloudStatusDto? icloud) => _showIcloudSync || (icloud?.enabled ?? false);
-
-/// 删除确认弹窗里,云成员比纯本地成员多出来的一句提醒——`removeProfileAndReopen`
-/// 对云成员做的其实是"从这台手机摘掉"(见 `vault_boot.dart` 的说明:owner 授权
-/// 服务端删不掉,只是本机记一笔黑名单不再自动拉回),不是原文案暗示的"彻底删除"。
-/// 纯本地成员(`p.cloudId == null`)没有这个落差,返回 null 不多说这句。
-@visibleForTesting
-String? cloudRemovalNotice(Profile p) => p.cloudId == null
-    ? null
-    // C10:末尾原来还挂着「要彻底删除请注销账号或撤销授权」。那是一句**错的指路**:
-    // 注销账号删的是整个账号(连同其它成员、所有授权),不是"彻底删掉这一个成员";
-    // 把它摆在删除单个成员的弹窗里,等于建议一个破坏性大得多的操作。撤销授权也只
-    // 管"我给别人的",管不了自己这份 owner 档案。说清楚"这一步做了什么"就够了。
-    : '从这台手机上删除;云端副本和其他设备不受影响,本机不会再自动拉回';
 
 /// 分组卡片列表,视觉还原自 `apps/mobile/src/App.tsx` 的设置区(sect + group + row)。
 /// 病历箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。
@@ -238,7 +226,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             countOf: _countOf,
             onOpen: _openMember,
             onAdd: _addMember,
-            onRemove: _confirmRemove,
           ),
           const SizedBox(height: 16),
           _SettingsGroup(
@@ -326,100 +313,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return pm.countFor(id);
   }
 
-  /// 点开一个成员。
-  ///
-  /// TODO(Task 13):终点应该是**这个成员自己的页面**(`s10`:云端备份 / 云端整理 /
-  /// 谁能看 / 改名字 / 删除这个成员)。那一屏还没有,所以今天点它做的是「切到这个
-  /// 人、去看他的病历」—— 那正是这张卡上「31 份 ›」承诺的事,而且可撤销。
-  Future<void> _openMember(Profile m) async {
-    try {
-      if (m.id != ProfileManager.instance.currentId.value) {
-        await switchProfileAndReopen(m.id);
-      }
-    } catch (e) {
-      // 最常见是锁着的云成员(`ProfileLocked`)——点了没反应最糟,说一句。
-      _showSnack(friendlyApiError(e));
-      return;
-    }
-    if (mounted) goToRecords();
-  }
+  /// 点开一个成员:去他自己的页面(`s10`,`MemberDetailScreen`)——谁能看他的病历 /
+  /// 加一个人 / 改名字 / 删除这个成员。Task 12 时这一步还是「切过去看病历」(那正是
+  /// 这张卡上「31 份 ›」承诺的事);`s10` 到位后这颗承诺改由「病历」tab 的成员
+  /// 切换器兑现,这一行变成管理入口(Task 13 fix round 1)。
+  Future<void> _openMember(Profile m) => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => MemberDetailScreen(
+        member: m,
+        onChanged: () => setState(() {}),
+      ),
+    ),
+  );
 
   /// 「添加成员」:与档案屏成员条末尾那颗「+」同一条路(`promptAddMember`),
   /// 不另起一套。
   Future<void> _addMember() =>
       promptAddMember(context, onChanged: () => setState(() {}));
-
-  /// 移除一个成员:连同他的全部病历一起删,不可撤销。当前成员被删时会自动切回
-  /// 第一个成员(`ProfileManager.remove` 负责),各屏随 `bumpVaultRevision` 刷新。
-  ///
-  /// TODO(Task 13):`s10` 里那条「删除这个成员」到位之后,这颗小图标从列表上撤掉
-  /// (`s5` 的那张卡上只有名字和份数)。在那之前它是删成员的**唯一**入口,不能先删。
-  Future<void> _confirmRemove(Profile p) async {
-    final name = p.name;
-    final n = _countOf(p.id);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        icon: const Icon(
-          Icons.warning_amber_rounded,
-          color: MedMe.danger,
-          size: 44,
-        ),
-        title: Text(
-          '删除「$name」的全部病历?',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontWeight: FontWeight.w800),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (n != null && n > 0)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: MedMe.danger.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '$n 份病历',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: MedMe.danger,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 14),
-            Text(
-              cloudRemovalNotice(p) ??
-                  '连同拍摄的原件一起,从这台手机上彻底删除。\n'
-                      '删除后无法恢复,我们也帮不了你。',
-              textAlign: TextAlign.center,
-              style: const TextStyle(height: 1.5),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: MedMe.danger),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('确认删除'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    final removed = await removeProfileAndReopen(p.id);
-    if (!mounted) return;
-    _showSnack(removed ? '已移除「$name」' : '无法移除该成员');
-    setState(() {});
-  }
 }
 
 /// 分组标题(灰色小字),对应旧版 `App.css` 里的 `.sect`。
@@ -593,25 +503,21 @@ class MembersCard extends StatelessWidget {
     required this.countOf,
     required this.onOpen,
     required this.onAdd,
-    required this.onRemove,
   });
 
   final List<Profile> members;
 
   /// 这个成员有多少份病历;还没数出来返回 null(显示「—」,不编一个数)。
   final int? Function(String id) countOf;
+
+  /// 点一行:去这个成员自己的页面(`s10`,`MemberDetailScreen`)。删除成员的入口
+  /// 挪到那一页的「删除这个成员」去了(Task 13 fix round 1)——这张卡回到 `s5`
+  /// 原本的样子,一个角色词、一颗多余的图标都没有,只有名字和份数。
   final void Function(Profile m) onOpen;
   final VoidCallback onAdd;
 
-  /// TODO(Task 13):`s10` 的「删除这个成员」到位之后,这颗小图标从列表上撤掉
-  /// (`s5` 那张卡上只有名字和份数)。在那之前它是删成员的**唯一**入口。
-  final void Function(Profile m) onRemove;
-
   @override
   Widget build(BuildContext context) {
-    // 不能删到一个不剩 —— 那等于清空整个病历箱,该走「删掉全部」那条更明确的路
-    // (同 `ProfileManager.canRemove`)。
-    final removable = members.length > 1;
     return Card(
       child: Column(
         children: [
@@ -633,13 +539,6 @@ class MembersCard extends StatelessWidget {
                     countOf(m.id) == null ? '—' : '${countOf(m.id)} 份',
                     style: const TextStyle(color: MedMe.faint, fontSize: 13),
                   ),
-                  if (removable)
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 20),
-                      color: MedMe.faint,
-                      tooltip: '移除「${m.name}」',
-                      onPressed: () => onRemove(m),
-                    ),
                   const Icon(Icons.chevron_right, color: MedMe.faint),
                 ],
               ),

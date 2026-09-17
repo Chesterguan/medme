@@ -94,11 +94,13 @@ String _lastSeenLabel(DateTime seen, DateTime now) {
 }
 
 /// 服务端的角色词 → 中文。`viewer`/`editor`/`owner` 是 API 的词汇,不该出现在
-/// 界面上 —— 「只能看 / 能一起录 / 主人」说的是同一件事,而老人读得懂。
-@visibleForTesting
+/// 界面上 —— 「只能看 / 能改 / 主人」说的是同一件事,而老人读得懂。
+///
+/// 不是 `@visibleForTesting`——`member_detail_screen.dart` 的「谁能看」那一节
+/// (`s10`,Task 13 fix round 1)也用它,不止这一个文件。
 String roleLabel(String? role) => switch (role) {
   'viewer' => '只能看',
-  'editor' => '能一起录',
+  'editor' => '能改',
   'owner' => '主人',
   null => '未知',
   _ => role,
@@ -260,7 +262,6 @@ class _AccountScreenState extends State<AccountScreen> {
   final _regPasswordCtrl = TextEditingController();
   final _unlockPasswordCtrl = TextEditingController();
   final _unlockRecoveryCtrl = TextEditingController();
-  final _familyPhoneCtrl = TextEditingController();
 
   /// 验证码重发冷却。**这是给"没收到短信就连点"准备的,不是服务端规则的镜像**——
   /// 服务端那两条是:一小时最多 5 条(`auth.OTP_MAX_SENDS_PER_HOUR`)、验证码本身
@@ -269,9 +270,6 @@ class _AccountScreenState extends State<AccountScreen> {
   static const _otpResendCooldown = 60;
   int _otpSecondsLeft = 0;
   Timer? _otpTimer;
-
-  bool _familyBusy = false;
-  String? _familyError;
 
   /// B5:正在生成一条转移链接(防连点;生成链接是会在服务端建 invite 记录的)。
   bool _transferBusy = false;
@@ -378,7 +376,6 @@ class _AccountScreenState extends State<AccountScreen> {
     _regPasswordCtrl.dispose();
     _unlockPasswordCtrl.dispose();
     _unlockRecoveryCtrl.dispose();
-    _familyPhoneCtrl.dispose();
     _deletePhoneCtrl.dispose();
     _deleteOtpCtrl.dispose();
     super.dispose();
@@ -1027,10 +1024,6 @@ class _AccountScreenState extends State<AccountScreen> {
     const Text('授权', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _grantsSection(),
-    const SizedBox(height: 24),
-    const Text('成员', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-    const SizedBox(height: 8),
-    _familySection(),
     const SizedBox(height: 24),
     const Text('我授权给谁', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
@@ -1890,74 +1883,6 @@ class _AccountScreenState extends State<AccountScreen> {
       if (mounted) setState(() => _revokeBusy = false);
     }
   }
-
-  /// 按手机号把**当前打开的成员**共享给家人:查号 → 封给对方公钥 → 永久 editor
-  /// (见 `grants.dart` 的 `grantFamilyByPhone`)。这个成员必须已经开通云端备份——
-  /// 没有 cloudId 就没有档案密钥可封,`_familySection` 那边不显示表单,直接返回。
-  Widget _familySection() {
-    final profile = ProfileManager.instance.current;
-    if (profile.cloudId == null) {
-      return const Text('这个成员还没开通云端备份,暂时加不了人', style: TextStyle(color: MedMe.faint));
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          key: const Key('family_phone'),
-          controller: _familyPhoneCtrl,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(labelText: '成员手机号'),
-        ),
-        if (_familyError != null) _errorText(_familyError!),
-        const SizedBox(height: 8),
-        _familyBusy
-            ? const Center(child: CircularProgressIndicator())
-            : SizedBox(
-                width: double.infinity,
-                child: FilledButton(onPressed: _addFamily, child: const Text('按手机号加成员')),
-              ),
-      ],
-    );
-  }
-
-  Future<void> _addFamily() async {
-    final profile = ProfileManager.instance.current;
-    if (profile.cloudId == null) return;
-    final phone = _familyPhoneCtrl.text.replaceAll(' ', '');
-    setState(() {
-      _familyBusy = true;
-      _familyError = null;
-    });
-    try {
-      await _grants.grantFamilyByPhone(profile, phone);
-      if (!mounted) return;
-      _familyPhoneCtrl.clear();
-      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已加上')));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() { _familyError = _familyLookupError(e) ?? friendlyApiError(e); });
-    } finally {
-      if (mounted) setState(() => _familyBusy = false);
-    }
-  }
-
-  /// 「按手机号加成员」这条路**自己**的解释。状态码的通用含义在
-  /// [friendlyApiError] 里(全 App 一份),这里只说它管不到的那一层:这个 404
-  /// 指的是"这个手机号没有账号",不是泛泛的"没找到"。认不出来返回 null,
-  /// 交回通用那一层。
-  String? _familyLookupError(Object e) => switch (e) {
-    // B4:服务端把这两件事分开了(`services/api/app.py` 的 `account_lookup`)。
-    // 在这之前两者都是 404,于是这里只能说一句「没有找到使用该手机号的账号」——
-    // 而最常见的真实情况恰恰是下面这一条(父母装了 App、登录了、卡在设口令那一
-    // 步),那句话是**错误归因**:家人会去确认手机号、重输、放弃,而真正要做的事
-    // 在对方手机上。`404 + no_keys` 也认一下,免得新旧版本对不齐时又掉回错话。
-    ApiFailed(status: 409, message: 'no_keys') ||
-    ApiFailed(status: 404, message: 'no_keys') =>
-      '对方已注册,但还没设置好账号口令 —— 请他在 MedMe 里打开 我 → 口令与恢复码,完成最后两步',
-    ApiFailed(status: 404) => '没有找到使用该手机号的账号',
-    ApiFailed(status: 400) => '手机号格式不对',
-    _ => null,
-  };
 
   Widget _errorText(String text) => Padding(
     padding: const EdgeInsets.only(top: 8),

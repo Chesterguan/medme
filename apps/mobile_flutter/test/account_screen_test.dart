@@ -1263,7 +1263,10 @@ void main() {
 
     test('roleLabel:服务端的词不出现在界面上', () {
       expect(roleLabel('viewer'), '只能看');
-      expect(roleLabel('editor'), '能一起录');
+      // Task 13 fix round 1:`s10`(成员详情页「谁能看」那一节)要求 editor 说
+      // 「能改」,不是「能一起录」——`roleLabel` 是共用函数,这里跟着一起换,
+      // 「授权」/「我授权给谁」两节自然跟着统一。
+      expect(roleLabel('editor'), '能改');
       expect(roleLabel('owner'), '主人');
       expect(roleLabel(null), '未知');
     });
@@ -1347,7 +1350,7 @@ void main() {
       await _toReady(t, api, debugModeOverride: false);
       await _scrollToMyGrants(t);
 
-      expect(find.text('能一起录 · 至 12月31日 · 1月2日添加'), findsOneWidget);
+      expect(find.text('能改 · 至 12月31日 · 1月2日添加'), findsOneWidget);
       expect(find.textContaining('account'), findsNothing, reason: 'grantee_kind 是服务端实现细节');
       expect(find.textContaining('editor'), findsNothing);
       expect(find.textContaining('2026-'), findsNothing, reason: 'ISO 串不给用户看');
@@ -1818,164 +1821,9 @@ void main() {
     });
   });
 
-  group('已就绪:按手机号加成员', () {
-    late Directory support;
-
-    setUp(() async {
-      support = await Directory.systemTemp.createTemp('medme-account-family-test');
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
-        const MethodChannel('plugins.flutter.io/path_provider'),
-        (call) async => support.path,
-      );
-    });
-
-    tearDown(() async => support.delete(recursive: true));
-
-    /// 给当前成员(默认档案)一个 cloudId,`_familySection` 才会显示表单而不是
-    /// 「还没开通云同步」的提示。真实文件 IO(`markCloud` 落盘)包进 `runAsync`
-    /// (Task 10 的教训)。
-    Future<void> setUpCloudProfile(WidgetTester t) async {
-      await t.runAsync(() async {
-        await ProfileManager.instance.ensureLoaded();
-        await ProfileManager.instance.factoryReset();
-        await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, 'prf_1', 'owner', null);
-      });
-      await AccountSession.instance.putProfileKey('prf_1', Uint8List(32));
-    }
-
-    testWidgets('加载中显示进度圈', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 30),
-        lookupResult: {'account_id': 'acc_family', 'public_key': 'QQ=='},
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '成员');
-      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号加成员');
-      await t.tap(find.text('按手机号加成员'));
-      await t.pump();
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      await t.pumpAndSettle();
-    });
-
-    testWidgets('查到账号:成功、清空输入框、按永久 editor 授权', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupResult: {'account_id': 'acc_family', 'public_key': 'QQ=='},
-      );
-      final rust = FakeGrantsRust();
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: rust));
-
-      await _scrollToText(t, '成员');
-      await t.enterText(find.byKey(const Key('family_phone')), '138 0000 1111');
-      await _scrollToText(t, '按手机号加成员');
-      await t.tap(find.text('按手机号加成员'));
-      await t.pumpAndSettle();
-
-      expect(api.calls, contains('POST /v1/accounts/lookup'));
-      expect(api.calls, contains('POST /v1/profiles/prf_1/grants'));
-      expect(find.text('138 0000 1111'), findsNothing, reason: '成功后应清空输入框(且已去除空格发送)');
-      expect(rust.sealedWith, isNotEmpty, reason: '应该封给对方公钥');
-    });
-
-    testWidgets('手机号查不到人(404):提示「没有找到使用该手机号的账号」', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupError: const ApiFailed(404, 'not found'),
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '成员');
-      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号加成员');
-      await t.tap(find.text('按手机号加成员'));
-      await t.pumpAndSettle();
-
-      expect(find.text('没有找到使用该手机号的账号'), findsOneWidget);
-    });
-
-    testWidgets('B4:对方已注册、但还没设账号口令(409 no_keys):说清楚该他做什么', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupError: const ApiFailed(409, 'no_keys'),
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '成员');
-      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号加成员');
-      await t.tap(find.text('按手机号加成员'));
-      await t.pumpAndSettle();
-
-      expect(
-        find.text('对方已注册,但还没设置好账号口令 —— 请他在 MedMe 里打开 我 → 口令与恢复码,完成最后两步'),
-        findsOneWidget,
-      );
-      expect(
-        find.text('没有找到使用该手机号的账号'),
-        findsNothing,
-        reason: '这是错误归因:家人会去确认手机号、重输、放弃,而真正要做的事在对方手机上',
-      );
-    });
-
-    testWidgets('限流(429):提示「查询太频繁,稍后再试」', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupError: const ApiFailed(429, 'rate_limited'),
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '成员');
-      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号加成员');
-      await t.tap(find.text('按手机号加成员'));
-      await t.pumpAndSettle();
-
-      expect(find.text('操作太频繁,过一会儿再试'), findsOneWidget); // 迁进 friendlyApiError 之后的统一措辞
-    });
-
-    testWidgets('手机号格式不对(400):提示「手机号格式不对」', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupError: const ApiFailed(400, 'bad phone'),
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '成员');
-      await t.enterText(find.byKey(const Key('family_phone')), 'abc'); // 打个不像手机号的
-      await _scrollToText(t, '按手机号加成员');
-      await t.tap(find.text('按手机号加成员'));
-      await t.pumpAndSettle();
-
-      expect(find.text('手机号格式不对'), findsOneWidget);
-    });
-
-    testWidgets('当前成员还没开通云同步:不显示表单', (t) async {
-      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
-      await t.runAsync(() async {
-        await ProfileManager.instance.ensureLoaded();
-        await ProfileManager.instance.factoryReset();
-      });
-      await _toReady(t, api);
-
-      expect(find.byKey(const Key('family_phone')), findsNothing);
-      await _scrollToText(t, '成员');
-      expect(find.textContaining('暂时加不了人'), findsOneWidget);
-    });
-  });
+  // 「按手机号加成员」这条路(原来在这一屏的「成员」节)Task 13 fix round 1 搬去了
+  // `MemberDetailScreen`(`s10`)——`account_screen.dart` 不再有这个表单,覆盖这条路
+  // 的测试跟着搬到 `test/member_detail_screen_test.dart`。
 
   group('冷启动恢复登录态(initState 里的 resumeIfLoggedIn)', () {
     testWidgets('本机已有 token,但账号服务 500:错误可见,不留未处理的 rejection', (t) async {

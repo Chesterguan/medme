@@ -4,9 +4,12 @@
 // (`icloudStatus` / `patientProfile`),`flutter test` 不带原生库(同
 // `test/overview_quick_actions_test.dart` 顶部那条教训)。
 //
-// 钉住的是一条会在界面上说错话的规矩:**挑人的列表上只有名字和份数,一个角色词
-// 都不许有**。「主人 / 家属 / 能改 / 只能看」写在这里,用户读到的是「家里谁是谁」,
-// 而那不是那个字段的意思 —— 授权级别只在某个成员自己的页面里说(`s10`,Task 13)。
+// 钉住的是一条会在界面上说错话的规矩:**挑人的列表上只有名字和份数,一个角色词、
+// 一颗删除图标都不许有**。「主人 / 家属 / 能改 / 只能看」写在这里,用户读到的是
+// 「家里谁是谁」,而那不是那个字段的意思 —— 授权级别只在某个成员自己的页面里说
+// (`s10`,`MemberDetailScreen`)。删除成员的入口也在 `s10`(Task 13 fix round 1
+// 挪过去的)——这张卡上原来那颗小图标(Task 12 的临时方案,两个 `TODO(Task 13)`
+// 早已作废)已经撤掉,`onRemove` 参数一并从 `MembersCard` 上删掉。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/profile_manager.dart';
@@ -23,7 +26,6 @@ Future<void> pumpCard(
   List<Profile> members = _members,
   void Function(Profile)? onOpen,
   VoidCallback? onAdd,
-  void Function(Profile)? onRemove,
 }) => t.pumpWidget(MaterialApp(
       theme: MedMe.theme(),
       home: Scaffold(
@@ -33,7 +35,6 @@ Future<void> pumpCard(
             countOf: (id) => id == 'p-1' ? 31 : 8,
             onOpen: onOpen ?? (_) {},
             onAdd: onAdd ?? () {},
-            onRemove: onRemove ?? (_) {},
           ),
         ),
       ),
@@ -72,22 +73,14 @@ void main() {
     expect(added, 1);
   });
 
-  // `ProfileManager.canRemove`:不能删到一个不剩 —— 那等于清空整个病历箱,
-  // 该走「删掉全部」那条更明确的路。
-  testWidgets('只剩一个成员:不给删', (t) async {
+  // Task 13 fix round 1:删除成员的入口挪到 `MemberDetailScreen`(`s10`)的
+  // 「删除这个成员」,不管一个成员还是两个,这张卡上都不该再有删除图标。
+  testWidgets('不管几个成员,都没有删除图标(那颗撤掉了,入口在 s10)', (t) async {
     await pumpCard(t, members: const [Profile(id: 'p-1', name: '张建国')]);
-
     expect(find.byIcon(Icons.delete_outline), findsNothing);
-  });
 
-  testWidgets('两个成员:各自给一颗删除', (t) async {
-    final removed = <String>[];
-    await pumpCard(t, onRemove: (m) => removed.add(m.id));
-
-    expect(find.byIcon(Icons.delete_outline), findsNWidgets(2));
-    await t.tap(find.byIcon(Icons.delete_outline).first);
-    await t.pump();
-    expect(removed, ['p-1']);
+    await pumpCard(t);
+    expect(find.byIcon(Icons.delete_outline), findsNothing);
   });
 
   testWidgets('份数还没数出来:显示「—」,不编一个数', (t) async {
@@ -99,7 +92,6 @@ void main() {
           countOf: (_) => null,
           onOpen: (_) {},
           onAdd: () {},
-          onRemove: (_) {},
         ),
       ),
     ));

@@ -787,7 +787,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
         // (见上面的注释:角色由服务端在兑换那一刻才揭晓),所以照实说"下一步
         // 告知",而不是替它猜一个。
         const Text(
-          '接受之后,这份病历会出现在你的 MedMe 里;具体是只能看还是能一起录,'
+          '接受之后,这份病历会出现在你的 MedMe 里;具体是只能看还是能改,'
           '下一步告诉你。',
           style: TextStyle(color: Colors.black54, height: 1.5),
         ),

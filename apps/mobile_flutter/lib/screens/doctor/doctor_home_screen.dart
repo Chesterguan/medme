@@ -41,11 +41,21 @@ List<Profile> patientGrantedProfiles(List<Profile> all, {DateTime? now}) {
   return rows;
 }
 
-/// 「只读 · 至 M月D日」—— 与成员切换器里那一行逐字相同(`member_switcher.dart`),
-/// 同一件事不该有两种说法。没有到期日(理论上 viewer 总有)就只说「只读」。
+/// 「只能看 · 至 M月D日」。
+///
+/// ⚠️ 这一行**不受**「挑人的界面零角色词」那条硬规矩管(Task 13 复审裁定的例外):
+/// 医生模式这一节回答的是"这几天还能看谁的",到期日是医生真正要用的信息,不是
+/// 可有可无的身份标签——拿掉它,医生没法判断该催病人续、还是这几天就要失效。
+/// 措辞上仍然守着一条:「只读」是内部/API 的词,界面上一律说「只能看」(与
+/// `account_screen.dart` 的 `roleLabel('viewer')` 一致)。没有到期日(理论上
+/// viewer 总有)就只说「只能看」。
+///
+/// **这一行不再和 `member_switcher.dart` 逐字相同**——那边(挑人的成员切换器)
+/// 已经把角色词整个删掉,只剩名字(Task 13);这里保留是评审裁定的例外,两处
+/// 分道扬镳是有意的,不是遗漏。
 @visibleForTesting
 String patientGrantedSubtitle(Profile p) =>
-    p.expiresAt == null ? '只读' : '只读 · 至 ${p.expiresAt!.month}月${p.expiresAt!.day}日';
+    p.expiresAt == null ? '只能看' : '只能看 · 至 ${p.expiresAt!.month}月${p.expiresAt!.day}日';
 
 
 

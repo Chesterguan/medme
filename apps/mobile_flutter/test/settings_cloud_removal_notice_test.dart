@@ -1,15 +1,16 @@
-// 设置页删除成员的确认弹窗,原文案对所有成员统一写"彻底删除、无法恢复"——但云
+// 成员详情页删除成员的确认弹窗,原文案对所有成员统一写"彻底删除、无法恢复"——但云
 // 成员的 `removeProfileAndReopen` 做的其实是"从这台手机摘掉"(owner 授权服务端
 // 删不掉,只是本机记一笔黑名单不再自动拉回,见 `vault_boot.dart`),不是真的
 // 彻底删除。`cloudRemovalNotice` 只为云成员(`cloudId != null`)多说这一句实话。
 //
-// 只测这条纯函数——`_confirmRemove` 住在 `SettingsScreen`(「我」)里,那一屏需要
-// 真实 Rust FFI(`initState` 直接调 `patientProfile()`),`flutter test` 没有原生库,
-// 同仓库其它涉及 Rust 桥屏幕测试的一贯限制。那颗删除小图标本身在 `MembersCard` 上,
-// 它是纯 widget,单独测(`test/members_card_test.dart`)。
+// 只测这条纯函数——`confirmRemoveMember` 住在 `MemberDetailScreen`(`s10`,Task 13
+// fix round 1 从 `SettingsScreen` 搬过来)里,那一页要真的开一次成员详情才碰得到
+// 完整弹窗,这里只钉文案本身这条纯函数。删除成员唯一的入口现在是那一页的
+// 「删除这个成员」——`MembersCard` 上原来那颗小图标已经撤掉(`s5` 只留名字和
+// 份数),`test/members_card_test.dart` 钉住"没有这颗图标"。
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/profile_manager.dart';
-import 'package:mobile_flutter/screens/settings_screen.dart';
+import 'package:mobile_flutter/screens/member_detail_screen.dart';
 
 void main() {
   test('云成员:多说一句"本机删除、云端不受影响、不会再自动拉回"', () {
