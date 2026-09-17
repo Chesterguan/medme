@@ -1146,8 +1146,12 @@ fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
         "target": t.and_then(|h| h.get("target")),
         "target_source": t.and_then(|h| h.get("target_source")),
         "label_rule": label_rule.and_then(|l| l.get("text")),
+        // **fail closed**:只有逐字的 `"verified"` 能清掉这面旗。`verify_status` 漏写、
+        // 拼错、写成别的值,一律算「待核」—— 反过来(缺省即已核实)是把一句没人核过
+        // 的说明书原文当成核过的送到医生眼前,而这张卡上说明书那几个数和指南的数**不
+        // 一样**(§D.2.1)。旗立错了只是多一句提示,旗漏了是一句不实的话。
         "label_rule_pending":
-            label_rule.and_then(|l| l.get("verify_status")).and_then(|v| v.as_str()) == Some("pending"),
+            label_rule.and_then(|l| l.get("verify_status")).and_then(|v| v.as_str()) != Some("verified"),
         "reason": reason,
     })
 }

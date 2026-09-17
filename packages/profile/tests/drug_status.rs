@@ -156,6 +156,51 @@ fn hcq_card_states_both_the_guideline_rule_and_the_package_insert_rule() {
     assert_eq!(b["hcq"]["label_rule_pending"], true);
 }
 
+/// 按 `verify_status` 改一份包,取出 `hcq.label_rule_pending`。
+/// `status` 为 `None` = 包里**压根没写** `verify_status` 这个键。
+fn label_rule_pending(status: Option<&str>) -> bool {
+    let mut v = common::full_json();
+    let lr = &mut v["rules"]["targets"]["hcq"]["label_rule"];
+    match status {
+        Some(s) => lr["verify_status"] = serde_json::json!(s),
+        None => {
+            lr.as_object_mut()
+                .expect("label_rule 是对象")
+                .remove("verify_status");
+        }
+    }
+    let pkg: profile::Package = serde_json::from_value(v).expect("夹具包必须解析");
+    let docs = [(TODAY, rx_doc("硫酸羟氯喹片 0.2g 每日两次 口服"))];
+    let src = mk_docs(&docs);
+    profile::materialize(&src, &[enable()], &pkg, day(TODAY))
+        .sections
+        .into_iter()
+        .find(|s| s.kind == "status_card")
+        .expect("有 status_card")
+        .body["hcq"]["label_rule_pending"]
+        .as_bool()
+        .expect("label_rule_pending 是 bool")
+}
+
+#[test]
+fn a_label_rule_with_no_verify_status_is_still_pending() {
+    // fail closed:包作者漏写 `verify_status` 时,默认必须是「待核」。反过来
+    // (缺省即已核实)会把一句没人核过的说明书原文当成核过的送到医生眼前 ——
+    // 而说明书那几个数和指南的数**不一样**(§D.2.1 的三重冲突)。
+    assert!(label_rule_pending(None), "漏写就是待核");
+    // 拼错、写成别的值,同样不清旗:只有逐字的 "verified" 算数。
+    assert!(label_rule_pending(Some("pendng")));
+    assert!(label_rule_pending(Some("")));
+}
+
+#[test]
+fn only_the_literal_verified_clears_the_label_rule_flag() {
+    // Task 19 逐条核完、把 `verify_status` 改成 "verified" 之后,界面上那句
+    // 「待核」才消失,引擎代码不用改。
+    assert!(!label_rule_pending(Some("verified")));
+    assert!(label_rule_pending(Some("pending")), "核之前照旧是待核");
+}
+
 #[test]
 fn gc_targets_carry_both_years_because_the_two_guidelines_differ() {
     let b = status(
