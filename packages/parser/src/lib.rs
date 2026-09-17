@@ -14,6 +14,7 @@ pub mod extraction;
 mod handoff;
 mod labs;
 mod meds;
+mod profile_event;
 mod self_entry;
 pub use aggregate::{
     aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedSpan, SourceDoc,
@@ -23,6 +24,9 @@ pub use extraction::{labs_from_json, LabsFromJson};
 pub use handoff::{assemble_summary, match_disease};
 pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};
+pub use profile_event::{
+    parse_profile_event_payload, render_profile_event_text, ProfileEvent, PROFILE_EVENT_MARKER,
+};
 pub use self_entry::{
     home_ref_range, parse_self_measurement_payload, plausible_range, render_self_measurement_text,
     validate_self_measured_values, HomeRefRange, PlausibilityViolation, PlausibleRange,

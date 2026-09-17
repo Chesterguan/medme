@@ -17,6 +17,11 @@ pub enum DocType {
     SelfMeasurement,
     /// 手动录入的纯文本笔记。原文即内容,不解析、不关联到具体用药/诊断。
     Note,
+    /// 用户在病程档案里主动做的事(开启/关闭某个病、确认诊断、记一次复发、
+    /// 勾一次症状分、忽略一条提醒、开停药…)。与 `SelfMeasurement`/`Note` 同一
+    /// 手法:合成文本当「文件」过一遍 `Vault::import`,**零新 Event 变体**。
+    /// 载荷格式见 `parser::profile_event`。
+    ProfileEvent,
     Other,
     Unknown,
 }
@@ -32,6 +37,7 @@ impl DocType {
             DocType::Surgery => "surgery",
             DocType::SelfMeasurement => "self_measurement",
             DocType::Note => "note",
+            DocType::ProfileEvent => "profile_event",
             DocType::Other => "other",
             DocType::Unknown => "unknown",
         }
@@ -48,6 +54,7 @@ impl DocType {
             "surgery" => DocType::Surgery,
             "self_measurement" => DocType::SelfMeasurement,
             "note" => DocType::Note,
+            "profile_event" => DocType::ProfileEvent,
             "other" => DocType::Other,
             _ => DocType::Unknown,
         }

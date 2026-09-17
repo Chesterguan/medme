@@ -87,6 +87,9 @@ pub(crate) fn doc_type_label(t: &DocType) -> &'static str {
         // 的 `docLabel` 一致。
         DocType::SelfMeasurement => "自测记录",
         DocType::Note => "笔记",
+        // 病程档案的用户动作日志(Task 9,packages/parser/src/profile_event.rs)。
+        // 同上一条注释:这个模块不在本次改动范围内,这里只是补足穷尽匹配。
+        DocType::ProfileEvent => "档案事件",
         DocType::Other => "其他",
         DocType::Unknown => "未分类",
     }

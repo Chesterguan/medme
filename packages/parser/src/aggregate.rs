@@ -694,7 +694,13 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // 诊断。两类文档都显式跳过 meds/conditions —— 比"恰好没触发"更安全、更好
         // 审计,且对每一个调用方(手机端投影、`assemble_summary`/加密分享/二维码)
         // 统一生效,不依赖每个调用方自己记得先过滤。
-        let is_manual_entry = matches!(dt, Some("self_measurement") | Some("note"));
+        // `profile_event` 与前两者同理,而且更危险:它的人读文字里**就是**药名和
+        // 诊断名(「开启狼疮病程档案」「泼尼松 20mg」),不挡就等于用户点一下按钮
+        // 就凭空多一条诊断,还会跟着二维码分享出去。
+        let is_manual_entry = matches!(
+            dt,
+            Some("self_measurement") | Some("note") | Some("profile_event")
+        );
 
         // --- labs: self_measurement 文档直接读回结构化载荷(不跑 extract_labs——
         // 那是给 OCR 报告用的模糊正则,我们自己写的、自己读的格式不需要模糊匹配);
@@ -2127,5 +2133,36 @@ mod tests {
         }];
         let agg = aggregate(&docs);
         assert!(agg.labs.is_empty());
+    }
+
+    #[test]
+    fn profile_event_documents_never_enter_clinical_aggregation() {
+        // profile_event 的合成文本里有「泼尼松」「狼疮性肾炎」这类词。它要是被
+        // extract_conditions/extract_meds 读一遍,用户点一下「开启档案」就会凭空
+        // 多出一条诊断和一条用药 —— 而且会跟着二维码分享给医生。
+        let text = crate::render_profile_event_text(
+            &[
+                "开启狼疮病程档案".to_string(),
+                "记录:泼尼松 20mg qd,狼疮性肾炎 IV 型".to_string(),
+            ],
+            &crate::ProfileEvent {
+                kind: "enable".into(),
+                package: "sle".into(),
+                at: "2026-09-16".into(),
+                payload: serde_json::json!({}),
+            },
+        );
+        let docs = vec![SourceDoc {
+            index: 0,
+            date: "2026-09-16".parse().ok(),
+            text: &text,
+            doc_type: Some("profile_event".into()),
+            title: None,
+            extraction_json: None,
+        }];
+        let out = aggregate(&docs);
+        assert!(out.conditions.is_empty(), "profile_event 不该产出诊断");
+        assert!(out.meds.is_empty(), "profile_event 不该产出用药");
+        assert!(out.labs.is_empty(), "profile_event 不该产出化验");
     }
 }
