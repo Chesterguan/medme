@@ -101,7 +101,7 @@ class FakeApi extends ApiClient {
   /// `GET /v1/account/keys` 报 500(不是 404)——`_afterLogin` 只吞 404,
   /// 非 404 一律 rethrow;用来测 `resumeIfLoggedIn` 冷启动那条路径接不接得住。
   final bool failKeys500;
-  /// `POST /v1/accounts/lookup` 的假响应/假失败——测「按手机号添加家属」。
+  /// `POST /v1/accounts/lookup` 的假响应/假失败——测「按手机号加成员」。
   final Map<String, dynamic>? lookupResult;
   final ApiFailed? lookupError;
   /// 注销账号(`POST /v1/account/delete`,见最终评审 I5)的假失败,默认成功——
@@ -368,7 +368,7 @@ class FakeCrypto implements SyncCrypto {
   }
 }
 
-/// 假 `GrantsRust`——只有 `sealTo` 会被「按手机号添加家属」用到,拼接公钥与
+/// 假 `GrantsRust`——只有 `sealTo` 会被「按手机号加成员」用到,拼接公钥与
 /// 明文即可(同 `sync_engine_test.dart`/`grants_test.dart` 的 `FakeRust`/
 /// `FakeGrantsRust` 套路,不追求真实的密码学正确性,只钉住"传对了什么")。
 class FakeGrantsRust implements GrantsRust {
@@ -1680,10 +1680,10 @@ void main() {
       expect(find.text('链接已复制'), findsOneWidget);
     });
 
-    // ---- 评审 Important 8:入口不能只挂在"对方已经是家属"之后 ----
-    testWidgets('Important 8:自有云成员那一块本身就有转移入口,不必对方先成为家属', (t) async {
+    // ---- 评审 Important 8:入口不能只挂在"对方已经是家人"之后 ----
+    testWidgets('Important 8:自有云成员那一块本身就有转移入口,不必对方先成为家人', (t) async {
       // 只有一个自己拥有的云档案、**没有任何 grantee** —— 「我授权给谁」是空的,
-      // 而红队说的正是"把档案交给一个还不是家属的人"。
+      // 而红队说的正是"把档案交给一个还不是家人的人"。
       final api = FakeApi(
         hasKeys: true,
         delay: const Duration(milliseconds: 5),
@@ -1696,7 +1696,7 @@ void main() {
 
       expect(find.byKey(const Key('transfer_current_profile')), findsOneWidget);
       await _scrollToMyGrants(t);
-      expect(find.text('还没有授权给任何人'), findsOneWidget, reason: '前提:一个家属都没有');
+      expect(find.text('还没有授权给任何人'), findsOneWidget, reason: '前提:一个家人都没有');
       expect(find.text('转为主人'), findsNothing, reason: 'per-grantee 那条路此刻根本不存在');
     });
 
@@ -1818,7 +1818,7 @@ void main() {
     });
   });
 
-  group('已就绪:按手机号添加家属', () {
+  group('已就绪:按手机号加成员', () {
     late Directory support;
 
     setUp(() async {
@@ -1852,10 +1852,10 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
-      await _scrollToText(t, '家属');
+      await _scrollToText(t, '成员');
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
+      await _scrollToText(t, '按手机号加成员');
+      await t.tap(find.text('按手机号加成员'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await t.pumpAndSettle();
@@ -1871,10 +1871,10 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: rust));
 
-      await _scrollToText(t, '家属');
+      await _scrollToText(t, '成员');
       await t.enterText(find.byKey(const Key('family_phone')), '138 0000 1111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
+      await _scrollToText(t, '按手机号加成员');
+      await t.tap(find.text('按手机号加成员'));
       await t.pumpAndSettle();
 
       expect(api.calls, contains('POST /v1/accounts/lookup'));
@@ -1892,10 +1892,10 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
-      await _scrollToText(t, '家属');
+      await _scrollToText(t, '成员');
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
+      await _scrollToText(t, '按手机号加成员');
+      await t.tap(find.text('按手机号加成员'));
       await t.pumpAndSettle();
 
       expect(find.text('没有找到使用该手机号的账号'), findsOneWidget);
@@ -1910,10 +1910,10 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
-      await _scrollToText(t, '家属');
+      await _scrollToText(t, '成员');
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
+      await _scrollToText(t, '按手机号加成员');
+      await t.tap(find.text('按手机号加成员'));
       await t.pumpAndSettle();
 
       expect(
@@ -1923,7 +1923,7 @@ void main() {
       expect(
         find.text('没有找到使用该手机号的账号'),
         findsNothing,
-        reason: '这是错误归因:家属会去确认手机号、重输、放弃,而真正要做的事在对方手机上',
+        reason: '这是错误归因:家人会去确认手机号、重输、放弃,而真正要做的事在对方手机上',
       );
     });
 
@@ -1936,10 +1936,10 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
-      await _scrollToText(t, '家属');
+      await _scrollToText(t, '成员');
       await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
+      await _scrollToText(t, '按手机号加成员');
+      await t.tap(find.text('按手机号加成员'));
       await t.pumpAndSettle();
 
       expect(find.text('操作太频繁,过一会儿再试'), findsOneWidget); // 迁进 friendlyApiError 之后的统一措辞
@@ -1954,10 +1954,10 @@ void main() {
       await setUpCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
 
-      await _scrollToText(t, '家属');
+      await _scrollToText(t, '成员');
       await t.enterText(find.byKey(const Key('family_phone')), 'abc'); // 打个不像手机号的
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
+      await _scrollToText(t, '按手机号加成员');
+      await t.tap(find.text('按手机号加成员'));
       await t.pumpAndSettle();
 
       expect(find.text('手机号格式不对'), findsOneWidget);
@@ -1972,8 +1972,8 @@ void main() {
       await _toReady(t, api);
 
       expect(find.byKey(const Key('family_phone')), findsNothing);
-      await _scrollToText(t, '家属');
-      expect(find.textContaining('暂时不能添加家属'), findsOneWidget);
+      await _scrollToText(t, '成员');
+      expect(find.textContaining('暂时加不了人'), findsOneWidget);
     });
   });
 

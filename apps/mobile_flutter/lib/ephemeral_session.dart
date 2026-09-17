@@ -6,7 +6,7 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_ephemeral.dart' as rust_ephemeral;
 
 /// 「为病人代建档」临时会话(即焚)的 Dart 侧薄封装 —— 直接转发到 Rust 侧独立的
-/// `vault_ephemeral` 模块(与医生自己的保险箱 `api::vault` 完全平行、互不可见,
+/// `vault_ephemeral` 模块(与医生自己的病历箱 `api::vault` 完全平行、互不可见,
 /// 且**零共享代码**,见该 Rust 文件顶部说明)。**不碰** `ProfileManager` /
 /// `vault_boot` 的任何 reopen/switch:这不是「切成员」,是另一个用完即焚的箱子。
 class EphemeralSession {

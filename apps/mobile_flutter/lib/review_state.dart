@@ -6,8 +6,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 
 /// 「新导入还没核对」本地状态,**按成员分命名空间**(每个成员独立的还没核对集,不同
-/// 成员的保险箱各自从 id 1 起,共用一个集合会撞车)。持久化到沙盒
-/// `<support>/review_state.json`(纯本设备 UI 状态,不进保险箱)。
+/// 成员的病历箱各自从 id 1 起,共用一个集合会撞车)。持久化到沙盒
+/// `<support>/review_state.json`(纯本设备 UI 状态,不进病历箱)。
 ///
 /// 除了还没核对集,还记录每份新导入报告里**识别到的患者姓名**——若它和当前成员档案
 /// 名字不一致([_flagged]),说明可能导错了人,健康档案会给这份标红警告。

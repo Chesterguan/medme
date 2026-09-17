@@ -57,7 +57,7 @@ class ApiNetworkError implements Exception {
 /// (`_addFamily` 曾是唯一一个)。状态码的含义是服务端定的、全 App 一致的,
 /// 所以这层翻译也该只有一份。
 ///
-/// 调用点仍然可以在这之上加**自己这条路独有**的解释(比如「按手机号加家属」
+/// 调用点仍然可以在这之上加**自己这条路独有**的解释(比如「按手机号加成员」
 /// 的 404 能说得比"没找到"具体得多,见 `account_screen.dart` 的
 /// `_familyLookupError`)——那是端点语义,不是状态码语义。
 String friendlyApiError(Object e) => switch (e) {

@@ -58,7 +58,7 @@ String? expiredGrantNotice(List<Profile> removed) => switch (removed.length) {
   _ => '${removed.map((p) => p.name).join('、')} 的授权已到期,已移出',
 };
 
-/// 授权落地:家属(手机号,永久 editor)、医生(15 天邀请二维码,viewer)、代拍转移
+/// 授权落地:家人(手机号,永久 editor)、医生(15 天邀请二维码,viewer)、代拍转移
 /// (owner,老 owner 服务端自动降 editor)、过期清理。
 ///
 /// 服务端全程只见密文——本文件里除了 [GrantsRust] 的调用之外,不得出现任何解密
@@ -76,7 +76,7 @@ class Grants {
   /// 假的:真实现里的开箱调 FRB,`flutter test` 跑不到。
   final Future<void> Function(String id, {String? revertTo}) switchAndReopen;
 
-  /// 非永久授权(邀请/家属直发)的天数上限——与 `services/api/db.py` 的
+  /// 非永久授权(邀请/家人直发)的天数上限——与 `services/api/db.py` 的
   /// `GRANT_DOCTOR_DAYS` 一致,客户端这边只是不发一个注定被服务端砍掉的数字。
   static const grantDoctorDays = 15;
 
@@ -147,7 +147,7 @@ class Grants {
   /// 真正的修法是加一个 revoke 端点(另一个决定,不在这一轮)。
   static final _transferInvites = <String, (GrantLink, DateTime)>{};
 
-  /// 代拍/家属转移:owner。一旦兑换即刻转移——不像医生邀请那样按天到期。
+  /// 代拍/家人转移:owner。一旦兑换即刻转移——不像医生邀请那样按天到期。
   /// 同一个档案在 [transferInviteTtlS] 之内复用同一条邀请,见 [_transferInvites]。
   Future<GrantLink> inviteTransfer(Profile p) =>
       _cachedInvite(p, _transferInvites, role: 'owner', days: null, ttlS: transferInviteTtlS);
@@ -233,7 +233,7 @@ class Grants {
   /// 开箱失败时(最常见是 [ProfileLocked]——账号密钥这会儿读不出来)必须把
   /// `currentId` 退回兑换之前那个成员,否则就停在「current 指着新档案、进程里开着
   /// 的还是旧档案的箱子」这个状态上,接下来任何一次录入/导入都会把新档案的内容
-  /// 写进旧档案的保险箱。[revertTo] 是兑换开始时那个成员,不能用
+  /// 写进旧档案的病历箱。[revertTo] 是兑换开始时那个成员,不能用
   /// `switchProfileAndReopen` 的默认值——`create()` 早就把 current 改掉了。
   /// 三步全在 `sync_engine.firstSyncAndName` 里——**换机领回自己的档案走的是同一个
   /// 函数**(A5:那条路原来一步都没做)。这里不传 `returnTo`:兑换完就该停在新档案
@@ -245,8 +245,8 @@ class Grants {
     switchAndReopen: switchAndReopen,
   );
 
-  /// 家属按手机号加入:查到对方账号公钥 → 把档案密钥封给对方 → 永久 editor
-  /// (家属不是「只读」,能一起录入)。找不到这个手机号(404)、限流(429)都
+  /// 家人按手机号加入:查到对方账号公钥 → 把档案密钥封给对方 → 永久 editor
+  /// (家人不是「只读」,能一起录入)。找不到这个手机号(404)、限流(429)都
   /// 原样抛给调用方——服务端的 existence oracle 是接受并写进文档的行为,这里
   /// 不额外掩盖。
   Future<void> grantFamilyByPhone(Profile p, String phone) async {

@@ -138,7 +138,7 @@ class ProfileLocked implements Exception {
   String toString() => '你的病历在云端是加密的,需要你的口令才能打开。';
 }
 
-/// 打开「当前成员」的保险箱:按 [ProfileManager] 组合本机/iCloud 路径。启动 +
+/// 打开「当前成员」的病历箱:按 [ProfileManager] 组合本机/iCloud 路径。启动 +
 /// 切换成员后都调它,也是 `SyncEngine.enableCloud`(见 `sync_engine.dart`)开通
 /// 云端备份后重开箱唯一走的入口——**所有开箱都必须经过这个函数**(从而经过下面的
 /// FIFO 队列),不许在别处直接调 `syncOpenProfileVault`。
@@ -194,7 +194,7 @@ Future<void> openCurrentProfileVaultUnserialized() async {
   }
 }
 
-/// 打开某个**代拍病人**的保险箱(医生模式)。与「切成员」不是一回事:代拍病人不在
+/// 打开某个**代拍病人**的病历箱(医生模式)。与「切成员」不是一回事:代拍病人不在
 /// [ProfileManager] 里,走 [ProxyPatientManager] 的独立命名空间。
 ///
 /// `dataDir` 用该病人自己的 `data/`:每个病人一个一次性 device id(不带医生的设备
@@ -215,7 +215,7 @@ Future<void> openProxyPatientVault(String patientId) =>
 /// 于是「顺序对不对」不再是靠注释维持的约定,而是每次动手前实际比对过的事实。
 Future<void> ensureProxyVaultOpen(String patientId) async {
   final expected = '${await ProxyPatientManager.instance.baseDir(patientId)}/vault';
-  // 一个箱子都没开时 `currentVaultRoot` 会抛(Rust 的「保险箱尚未打开」)——那也只是
+  // 一个箱子都没开时 `currentVaultRoot` 会抛(Rust 的「病历箱尚未打开」)——那也只是
   // 「不是这个病人的箱子」的一种,照样往下走去开,不该当成错误中止。
   String? actual;
   try {
@@ -228,16 +228,16 @@ Future<void> ensureProxyVaultOpen(String patientId) async {
   await openProxyPatientVault(patientId);
   final now = await currentVaultRoot();
   if (now != expected) {
-    throw StateError('代拍保险箱未就位(期望 $expected,实际 $now),已中止写入');
+    throw StateError('代拍病历箱未就位(期望 $expected,实际 $now),已中止写入');
   }
 }
 
-/// 切换到某成员(按 id)并重开其保险箱,然后通知各屏刷新。
+/// 切换到某成员(按 id)并重开其病历箱,然后通知各屏刷新。
 ///
 /// **开箱失败(最常见是 [ProfileLocked])必须把"当前是谁"也退回去**,不能留在
 /// 「`ProfileManager.currentId` 已经指向 B、但进程里那个箱子其实还是 A 的」这个
 /// 不一致状态——那样接下来任何一次写入(手动录入/导入)都会把 B 的东西写进 A 的
-/// 保险箱。异常照原样抛给调用方(UI 据此展示消息),不吞。
+/// 病历箱。异常照原样抛给调用方(UI 据此展示消息),不吞。
 ///
 /// [revertTo]:回退到哪个成员。默认是"调用这个函数的那一刻 `currentId` 指着的
 /// 那个",对"从 A 切到 B"这种场景就是对的。但有一类调用方在切换**之前**已经动过
@@ -313,7 +313,7 @@ Future<void> wipeAllData() async {
 ///   ① [releaseActiveVault](`reset_vault`)—— 要的是它前半截「正常关连接 + 删 db/wal」,
 ///      让紧接着的 `rm -rf` 不落在一个还开着的 sqlite 上。它顺手在原地重开的那个空箱子
 ///      随即被 ② 删掉,不浪费也不留痕。**这一步允许失败**:本次启动压根没开过箱时
-///      (`VaultBootstrap` 开箱失败)Rust 会抛「保险箱尚未打开」,那时本来也没有句柄
+///      (`VaultBootstrap` 开箱失败)Rust 会抛「病历箱尚未打开」,那时本来也没有句柄
 ///      要松开 —— 不能因此让整个「清空」半途而废。
 ///   ② 删磁盘上**所有位置**:本机与 iCloud 容器两个根下的 `profiles/`(全部成员)
 ///      + 遗留的 `vault/`(多成员布局之前 root 待过的老位置)。两个根都删的理由:关掉
@@ -397,7 +397,7 @@ Future<bool> removeProfileAndReopen(String id) =>
 /// (「先松手,再删盘」);而这条路径现在跑在**启动序列**里(A5 删那个空的默认
 /// 成员),正是最不该靠巧合的地方。
 ///
-/// 两个 try 各有理由:没开过任何箱子时 `currentVaultRoot` 会抛(Rust 的「保险箱
+/// 两个 try 各有理由:没开过任何箱子时 `currentVaultRoot` 会抛(Rust 的「病历箱
 /// 尚未打开」)—— 那只是"不是这个成员的箱子"的一种,不是错误;`resetVault` 失败
 /// 也不能让整个删除半途而废(同 [runWipeSequence] ① 的说明)。
 Future<void> _releaseVaultIfOpen(String localBase) async {

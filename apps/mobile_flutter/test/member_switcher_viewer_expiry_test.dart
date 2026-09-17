@@ -149,7 +149,10 @@ void main() {
     });
   });
 
-  testWidgets('viewer 行显示「只读 · 至 M月D日」,owner 行不显示', (tester) async {
+  // Task 13:挑人的界面上不出现任何亲属/角色词——授权级别只在某个成员自己的
+  // 页面里说(`s10`,Stage 2)。这条原来钉的是「viewer 行显示只读 · 至 M月D日」,
+  // 现在反过来钉「不显示」,同 `test/member_no_role_words_test.dart` 的规矩。
+  testWidgets('viewer 成员不写「只读」——挑人的界面只有名字', (tester) async {
     final pm = ProfileManager.instance;
     late String viewerId;
     await tester.runAsync(() async {
@@ -184,13 +187,9 @@ void main() {
     await tester.tap(find.text('打开切换器'));
     await tester.pumpAndSettle();
 
-    expect(find.text('只读 · 至 11月3日'), findsOneWidget);
-    // owner 行(初始的「我」)不该带这行只读文案。
-    final ownerTile = find.ancestor(of: find.text('我'), matching: find.byType(ListTile));
-    expect(
-      find.descendant(of: ownerTile, matching: find.textContaining('只读')),
-      findsNothing,
-    );
+    expect(find.text('张医生的病人'), findsOneWidget);
+    expect(find.textContaining('只读'), findsNothing, reason: '挑人的界面不写角色词');
+    expect(find.textContaining('11月3日'), findsNothing, reason: '到期日也挪到成员自己的页面里说');
   });
 
   testWidgets('打开切换器时先跑一次过期清理', (tester) async {

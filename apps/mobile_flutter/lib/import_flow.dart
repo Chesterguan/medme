@@ -212,7 +212,7 @@ Future<ImportRunResult?> runImport(
 enum ImportChoice { camera, gallery, files }
 
 /// 按 [choice] 走对应的原生采集器,返回待导入项(用户取消为空列表)。**纯采集,
-/// 不碰 OCR/落库**——OCR 识别出来的文字、往哪个保险箱落库,都由调用方在拿到
+/// 不碰 OCR/落库**——OCR 识别出来的文字、往哪个病历箱落库,都由调用方在拿到
 /// [PendingImport] 列表后自己决定(见 [showImportSheet] 与
 /// `proxy_intake_flow.dart` 两个不同的下游处理)。
 ///
@@ -641,10 +641,10 @@ Future<ImportRunResult> _runImport(
   try {
     root = await currentVaultRoot();
   } catch (e) {
-    debugPrint('[import] 读不到当前保险箱根目录,这一批没有排队: $e');
+    debugPrint('[import] 读不到当前病历箱根目录,这一批没有排队: $e');
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        appSnackBar(content: const Text('保险箱没打开,这次没能导入')),
+        appSnackBar(content: const Text('病历还没打开,这次没能添加')),
       );
     }
     return const ImportRunResult([]);

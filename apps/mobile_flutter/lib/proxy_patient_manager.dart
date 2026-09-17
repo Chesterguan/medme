@@ -5,7 +5,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 
-/// 医生代拍的「今日病历表」:每个代拍病人 = 一个**独立保险箱**(自己的目录、自己的
+/// 医生代拍的「今日病历表」:每个代拍病人 = 一个**独立病历箱**(自己的目录、自己的
 /// 一次性 device id),走与患者模式完全相同的 `openVault` + 普通导入路径 —— 姓名不
 /// 匹配提示因此是白捡的。
 ///
@@ -166,7 +166,7 @@ class ProxyPatientManager {
         return p.copyWith(mismatch: next);
       });
 
-  /// 标记/取消一份文档「已确认」。Rust 侧不存这个状态(存了就要动保险箱格式),
+  /// 标记/取消一份文档「已确认」。Rust 侧不存这个状态(存了就要动病历箱格式),
   /// 落在这里,交付时作为 `confirmedIds` 传给 `createProxyShare`。
   Future<void> setConfirmed(String id, int docId, bool confirmed) => _update(id, (p) {
     final next = {...p.confirmedIds};

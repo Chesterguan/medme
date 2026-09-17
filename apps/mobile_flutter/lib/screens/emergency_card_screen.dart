@@ -37,7 +37,7 @@ class EmergencyCardScreen extends StatefulWidget {
   const EmergencyCardScreen({super.key, this.load});
 
   /// 数据源。生产恒为 null → 走 FFI([viewEmergencyCard] + [patientProfile])。
-  /// `flutter test` 不加载 Rust 原生库,注入一个假的才能把「保险箱一变这一屏就
+  /// `flutter test` 不加载 Rust 原生库,注入一个假的才能把「病历箱一变这一屏就
   /// 重新拉一次」钉成不依赖设备的回归(见 `test/emergency_card_refresh_test.dart`)。
   final Future<CardData> Function()? load;
 
@@ -55,7 +55,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
   void initState() {
     super.initState();
     vaultRevision.addListener(_onVaultChanged);
-    // 手填项(紧急联系人 / 器官捐献)本机存,与保险箱无关,单独载入一次。
+    // 手填项(紧急联系人 / 器官捐献)本机存,与病历箱无关,单独载入一次。
     EmergencyExtrasStore.instance.ensureLoaded();
   }
 
@@ -842,7 +842,7 @@ class EmergencyBigCardScreen extends StatelessWidget {
             // 但「未识别 ≠ 没有过敏」这条不能省——同一套产品拍板,只是压缩到
             // 一句话。
             Text(
-              '未识别到过敏记录。\n很少有人查全过敏原,未识别 ≠ 没有,请立刻向本人/家属确认。',
+              '未识别到过敏记录。\n很少有人查全过敏原,未识别 ≠ 没有,请立刻向本人或家人确认。',
               style: MedType.subtitle.copyWith(color: c.ink2, height: 1.4),
             )
           else

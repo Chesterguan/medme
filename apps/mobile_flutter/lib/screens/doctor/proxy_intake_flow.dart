@@ -40,7 +40,7 @@ const int kProxyShareExpiresDays = 15;
 enum _ProxyPhase { consent, capture, preview, delivering }
 
 /// 「为病人代建档」全屏流程(医生/护士专用,Phase 1:本地交付,不含云)。
-/// 同意(签名/按住确认)→ 为这个病人建一个**独立保险箱** → 采集(拍照/相册/文件,
+/// 同意(签名/按住确认)→ 为这个病人建一个**独立病历箱** → 采集(拍照/相册/文件,
 /// 可多轮混合来源累加)→ **还没核对列表**(每份一行,点进去核对原件+识别内容、逐份点
 /// 「确认这一份」;可随时「继续采集」再累加更多)→ 生成加密文件交付给病人(摘要只
 /// 统计已确认的文档,未确认的原件仍全部进分享包并标注还没核对)。
@@ -382,7 +382,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     try {
       capturedRoot = await vault.currentVaultRoot();
     } catch (e) {
-      if (mounted) await _showError('采集已中止', '读不到当前保险箱:$e');
+      if (mounted) await _showError('采集已中止', '读不到当前病历箱:$e');
       return;
     }
     setState(() {

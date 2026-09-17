@@ -9,7 +9,7 @@ import 'package:mobile_flutter/vault_boot.dart'
     show createProfileAndReopen, openCurrentProfileVault, switchProfileAndReopen;
 import 'package:mobile_flutter/vault_events.dart';
 
-/// 认领屏:医生代拍的病历存进病人自己的保险箱。
+/// 认领屏:医生代拍的病历存进病人自己的病历箱。
 ///
 /// 病人是从浏览器点「存进我的 MedMe」过来的,此刻他**已经看过这份病历了** ——
 /// 所以这一屏不再重复展示内容,只回答一个问题:存进谁的档案。存完给一句人话的结果。

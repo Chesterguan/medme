@@ -7,7 +7,7 @@ import 'package:mobile_flutter/net.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart' as rust;
 
-/// 认领链接:医生代拍 → 病人把病历存进自己的保险箱。
+/// 认领链接:医生代拍 → 病人把病历存进自己的病历箱。
 ///
 /// 链接形如 `<查看器>/#c1.<对象id>.<密钥>`。病人先在浏览器里看到病历(那一步不需要
 /// 装 App),点「存进我的 MedMe」时,认领页用自定义 scheme 把同一个 fragment 交给
@@ -57,7 +57,7 @@ class ClaimLink {
     return ClaimLink(objectId: id, keyB64: key);
   }
 
-  /// 取回密文 → 解密 → 写进**当前打开的**保险箱。
+  /// 取回密文 → 解密 → 写进**当前打开的**病历箱。
   ///
   /// 调用前必须已经切到病人要存进去的那个成员(写的是当前箱子)。
   /// 重复认领同一条链接是安全的:内容哈希会去重,结果里体现为 `deduped`。

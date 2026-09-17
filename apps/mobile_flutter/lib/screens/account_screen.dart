@@ -222,8 +222,8 @@ class AccountScreen extends StatefulWidget {
   /// Task 19 友好度 #4:「有账号默认开云」原来只靠三处既有触发点排空
   /// `pendingCloudEnable`(导入 debounce / 回前台 / 冷启动补齐,见 `sync_engine.dart`
   /// `runBackgroundSync` 的文档),唯独没有"刚登录/解锁完这一刻"——于是新账号在空
-  /// 保险箱上会先看到「还没开始备份 · 点这里重试」和「还没开通云端备份,暂时不能添加
-  /// 家属」,直到用户导入第一份文档才自动跑完那几秒的注册。这里在进入「已就绪」时
+  /// 病历箱上会先看到「还没开始备份 · 点这里重试」和「这个成员还没开通云端备份,
+  /// 暂时加不了人」,直到用户导入第一份文档才自动跑完那几秒的注册。这里在进入「已就绪」时
   /// 顺手触发一次同一个触发器,不重新发明"注册 → 重开箱 → 首同步"那一套(`enableCloud`
   /// 已经是原子的、当前成员专属的那条路,见 `_drainPendingCloudEnable` 的文档)。
   final Future<void> Function()? onReadyCloudSync;
@@ -1013,7 +1013,7 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   /// C7:**「云端备份」排第一**。用户点进账号屏,十次里九次是为了"我的病历到底备上了
-  /// 没有";而它原来排在第四个区块,要滚过设备、授权、家属三节才看得见。
+  /// 没有";而它原来排在第四个区块,要滚过设备、授权、成员三节才看得见。
   /// 「设备」排最后 —— 它是一年用一次的东西。
   List<Widget> _readyContent() => [
     const Text('已登录', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
@@ -1028,7 +1028,7 @@ class _AccountScreenState extends State<AccountScreen> {
     const SizedBox(height: 8),
     _grantsSection(),
     const SizedBox(height: 24),
-    const Text('家属', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const Text('成员', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _familySection(),
     const SizedBox(height: 24),
@@ -1117,8 +1117,8 @@ class _AccountScreenState extends State<AccountScreen> {
               : FilledButton(onPressed: _syncOrRecover, child: const Text('同步')),
         // B5 的**真正入口**(评审 Important 8)。原来「转为主人」只作为「我授权给谁」
         // 里的 per-grantee 行存在 —— 于是"把档案交给父母"要先:(1) 父母装 App 并走完
-        // 口令 + 恢复码(正是 B4 那个卡点);(2) 子女按手机号把他加成家属;(3) 才会
-        // 在那一行里出现按钮。而红队说的恰恰是把档案交给一个**还不是家属**的人。
+        // 口令 + 恢复码(正是 B4 那个卡点);(2) 子女按手机号把他加成家人;(3) 才会
+        // 在那一行里出现按钮。而红队说的恰恰是把档案交给一个**还不是家人**的人。
         //
         // 只有 owner 能发转移邀请(服务端 `POST .../invites` 对 editor/viewer 一律
         // 403),所以这一条按角色挡住 —— 不摸黑试一次注定失败的请求。
@@ -1451,13 +1451,13 @@ class _AccountScreenState extends State<AccountScreen> {
         icon: const Icon(Icons.warning_amber_rounded, color: MedMe.danger, size: 44),
         title: const Text('注销账号?', textAlign: TextAlign.center),
         content: const Text(
-          '注销后:账号里的云端病历、家属/医生的授权全部永久删除,他们会立刻'
+          '注销后:账号里的云端病历、成员与医生的授权全部永久删除,他们会立刻'
           '失去访问权限。此操作不可撤销。\n\n'
           '这台手机上已开通云端备份的成员,密钥会随账号一起在服务端和本机销毁——'
           '之后这个成员在这台手机上永远打不开,不是"重新登录就能恢复"那种锁定,'
           '我们不托管密钥,没有任何办法找回。\n\n'
           '这台手机上已保存的病历本身不会被删除——如果也要清空本机数据,'
-          '请到「清空所有数据」里单独操作。建议先导出一份存档,再继续注销。',
+          '请到「删掉全部」里单独操作。建议先导出一份留档,再继续注销。',
           textAlign: TextAlign.center,
           style: TextStyle(height: 1.5),
         ),
@@ -1891,13 +1891,13 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  /// 按手机号把**当前打开的成员**共享给家属:查号 → 封给对方公钥 → 永久 editor
+  /// 按手机号把**当前打开的成员**共享给家人:查号 → 封给对方公钥 → 永久 editor
   /// (见 `grants.dart` 的 `grantFamilyByPhone`)。这个成员必须已经开通云端备份——
   /// 没有 cloudId 就没有档案密钥可封,`_familySection` 那边不显示表单,直接返回。
   Widget _familySection() {
     final profile = ProfileManager.instance.current;
     if (profile.cloudId == null) {
-      return const Text('当前成员还没开通云端备份,暂时不能添加家属', style: TextStyle(color: MedMe.faint));
+      return const Text('这个成员还没开通云端备份,暂时加不了人', style: TextStyle(color: MedMe.faint));
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1906,7 +1906,7 @@ class _AccountScreenState extends State<AccountScreen> {
           key: const Key('family_phone'),
           controller: _familyPhoneCtrl,
           keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(labelText: '家属手机号'),
+          decoration: const InputDecoration(labelText: '成员手机号'),
         ),
         if (_familyError != null) _errorText(_familyError!),
         const SizedBox(height: 8),
@@ -1914,7 +1914,7 @@ class _AccountScreenState extends State<AccountScreen> {
             ? const Center(child: CircularProgressIndicator())
             : SizedBox(
                 width: double.infinity,
-                child: FilledButton(onPressed: _addFamily, child: const Text('按手机号添加家属')),
+                child: FilledButton(onPressed: _addFamily, child: const Text('按手机号加成员')),
               ),
       ],
     );
@@ -1932,7 +1932,7 @@ class _AccountScreenState extends State<AccountScreen> {
       await _grants.grantFamilyByPhone(profile, phone);
       if (!mounted) return;
       _familyPhoneCtrl.clear();
-      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已添加家属')));
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: const Text('已加上')));
     } catch (e) {
       if (!mounted) return;
       setState(() { _familyError = _familyLookupError(e) ?? friendlyApiError(e); });
@@ -1941,7 +1941,7 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  /// 「按手机号加家属」这条路**自己**的解释。状态码的通用含义在
+  /// 「按手机号加成员」这条路**自己**的解释。状态码的通用含义在
   /// [friendlyApiError] 里(全 App 一份),这里只说它管不到的那一层:这个 404
   /// 指的是"这个手机号没有账号",不是泛泛的"没找到"。认不出来返回 null,
   /// 交回通用那一层。
@@ -1949,7 +1949,7 @@ class _AccountScreenState extends State<AccountScreen> {
     // B4:服务端把这两件事分开了(`services/api/app.py` 的 `account_lookup`)。
     // 在这之前两者都是 404,于是这里只能说一句「没有找到使用该手机号的账号」——
     // 而最常见的真实情况恰恰是下面这一条(父母装了 App、登录了、卡在设口令那一
-    // 步),那句话是**错误归因**:家属会去确认手机号、重输、放弃,而真正要做的事
+    // 步),那句话是**错误归因**:家人会去确认手机号、重输、放弃,而真正要做的事
     // 在对方手机上。`404 + no_keys` 也认一下,免得新旧版本对不齐时又掉回错话。
     ApiFailed(status: 409, message: 'no_keys') ||
     ApiFailed(status: 404, message: 'no_keys') =>

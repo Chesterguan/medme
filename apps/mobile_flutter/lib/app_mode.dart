@@ -9,8 +9,8 @@ import 'package:path_provider/path_provider.dart';
 enum AppModeKind { personal, doctor }
 
 /// 模式选择的持久化 + 全局信号。与 `ProfileManager`/`ReviewState` 同一约定:
-/// 沙盒 support 目录下一个小 JSON 文件,不进保险箱本身(纯本机 UI 状态,与哪个
-/// 成员/哪个保险箱无关)。
+/// 沙盒 support 目录下一个小 JSON 文件,不进病历箱本身(纯本机 UI 状态,与哪个
+/// 成员/哪个病历箱无关)。
 ///
 /// [mode] 为 `null` 表示「还没选过」——`main.dart` 的 `modeRoot` 把它**当个人
 /// 模式**(「你是?」选择屏已删)。

@@ -1,6 +1,6 @@
 import 'package:mobile_flutter/claim_link.dart' show ClaimLink;
 
-/// 授权链接:家属/医生凭它去 `POST /v1/invites/redeem` 兑换某个云档案的访问权
+/// 授权链接:家人/医生凭它去 `POST /v1/invites/redeem` 兑换某个云档案的访问权
 /// (viewer 只读、owner 转移……角色由服务端邀请记录决定,链接本身不带角色)。
 ///
 /// 形如 `<认领页>/#g1.<inviteId>.<token>` —— **与 [ClaimLink] 同一个 `pageUrl`、

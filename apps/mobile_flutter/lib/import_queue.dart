@@ -322,7 +322,7 @@ Future<void> _runJob(ImportJob job) async {
     // 切成员那一条要说**怎么办**:重试仍然认捕获的那个成员(闸就是这么设计的),
     // 不切回去点多少次都还是这一行。
     job.error = e is ImportVaultSwitched
-        ? '已经切换了成员或保险箱,这一份没有导入 —— 切回原来那位成员再试'
+        ? '已经切换了成员,这一份没有导入 —— 切回原来那位成员再试'
         : '没能处理这一份';
     batch.rows.add(rowFromError(job.item.name, e));
     // ⚠️ 只记步骤和**原因码**,绝不记 `e` 本身 —— 异常文本里常带文件名和路径。

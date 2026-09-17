@@ -21,7 +21,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// 时间戳),所以发一个占位常量而不是省掉它。
 const wireTs = '0';
 
-/// 当前打开的保险箱和要同步的档案对不上——切换了成员却没重开箱,或者代拍病人的
+/// 当前打开的病历箱和要同步的档案对不上——切换了成员却没重开箱,或者代拍病人的
 /// 箱子(unkeyed)还开着。宁可整次同步失败,也不能把不相关的箱子内容推上/拉进
 /// 这个云档案(见 C1 review:`SyncEngine` 拿到的 `Profile` 只是个参数,真正写盘
 /// 读盘的是进程级单例 vault,两者必须显式核对,不能靠调用顺序自证)。
@@ -46,11 +46,11 @@ abstract class RustSyncApi {
   /// [CloudEnableBlocked]。
   Future<bool> icloudEnabled();
 
-  /// 当前打开的保险箱是不是 keyed(云档案)打开的——`SyncEngine` 每次touch vault
+  /// 当前打开的病历箱是不是 keyed(云档案)打开的——`SyncEngine` 每次touch vault
   /// 前拿它核对身份(见 [VaultMismatch])。
   Future<bool> currentVaultIsKeyed();
 
-  /// 当前打开的保险箱的真相根目录——同上,核对"这真的是要同步的那个档案"。
+  /// 当前打开的病历箱的真相根目录——同上,核对"这真的是要同步的那个档案"。
   Future<String> currentVaultRoot();
 
   /// 本机每个 device 段当前可信的最大 seq——拉取水位。
@@ -124,7 +124,7 @@ class RustSync implements RustSyncApi {
 
 /// 这台设备开着 iCloud 同步,不能给成员开通账号云端备份(最终评审 C3)。
 ///
-/// 两套同步搬的是**同一个保险箱的家**:iCloud 开着时,vault 的真相目录在
+/// 两套同步搬的是**同一个病历箱的家**:iCloud 开着时,vault 的真相目录在
 /// iCloud 容器里(`<container>/Documents/profiles/<id>/vault`);而 keyed 开箱
 /// (`vault_boot.openCurrentProfileVault` 的 keyed 分支)只认本机沙盒那条路径,
 /// 压根不接容器根。于是「开通云端备份」会在一个**空的本机目录**上开出一个空箱子,
@@ -290,11 +290,11 @@ class SyncEngine {
   /// 只能问 Rust 自己(同 `vault_boot.ensureProxyVaultOpen` 的思路)。
   Future<void> _assertVaultMatches(Profile p) async {
     if (!await rust.currentVaultIsKeyed()) {
-      throw VaultMismatch('当前打开的保险箱不是这个云档案(keyed)——可能是本地档案或代拍病人的箱子还开着,拒绝同步');
+      throw VaultMismatch('当前打开的病历箱不是这个云档案(keyed)——可能是本地档案或代拍病人的箱子还开着,拒绝同步');
     }
     final actual = await rust.currentVaultRoot();
     if (!actual.endsWith('/profiles/${p.id}/vault')) {
-      throw VaultMismatch('当前打开的保险箱($actual)与要同步的档案(id=${p.id})不一致,拒绝同步');
+      throw VaultMismatch('当前打开的病历箱($actual)与要同步的档案(id=${p.id})不一致,拒绝同步');
     }
   }
 
@@ -596,7 +596,7 @@ bool _backgroundSyncRerunRequested = false;
 /// A5:领回来了、但首同步还没成功的成员(本机成员 id)。
 ///
 /// `AccountFlow.restoreProfileKeys` 只往里**登记**,真正的首同步由
-/// [triggerBackgroundSync] 排空(启动补齐完、回到前台、保险箱有变动时各跑一次)。
+/// [triggerBackgroundSync] 排空(启动补齐完、回到前台、病历箱有变动时各跑一次)。
 /// 两个理由:
 ///
 /// * **不在启动路径上跑**(评审 Important 3):首同步是「拉一整个档案的全部事件 +
@@ -885,7 +885,7 @@ Future<void> runBackgroundSync() {
 ///
 /// **两条路共用**,而在这之前只有第一条真的做了这件事:
 ///
-///  * `Grants.redeem`(医生/家属扫码兑换):做完停在新档案上 —— 那正是用户刚
+///  * `Grants.redeem`(医生/家人扫码兑换):做完停在新档案上 —— 那正是用户刚
 ///    点头要加入的东西。[returnTo] 传 null。
 ///  * `AccountFlow.restoreProfileKeys`(换机/清过数据之后领回自己的档案,A5):
 ///    做完必须切回用户原来在看的那个成员 —— 这一步是"顺手补齐",不该改变用户

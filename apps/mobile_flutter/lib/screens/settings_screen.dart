@@ -63,7 +63,7 @@ String? cloudRemovalNotice(Profile p) => p.cloudId == null
     : '从这台手机上删除;云端副本和其他设备不受影响,本机不会再自动拉回';
 
 /// 分组卡片列表,视觉还原自 `apps/mobile/src/App.tsx` 的设置区(sect + group + row)。
-/// 保险箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。
+/// 病历箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -1012,7 +1012,7 @@ class _AboutScreenState extends State<AboutScreen> {
       } else {
         await disableIcloudSync();
       }
-      bumpVaultRevision(); // 保险箱已重开,通知档案屏刷新
+      bumpVaultRevision(); // 病历箱已重开,通知档案屏刷新
       await _refresh();
       _showSnack(want ? '已开启 iCloud 同步' : '已关闭(本机保留一份副本)');
     } catch (e) {

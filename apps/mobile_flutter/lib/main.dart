@@ -72,7 +72,7 @@ void pushClaimScreen(ClaimLink link, {required bool cold}) {
   );
 }
 
-/// 同意门之前到达的授权链接(家属/医生扫码进来的那条)。同 [_pendingClaim],
+/// 同意门之前到达的授权链接(家人/医生扫码进来的那条)。同 [_pendingClaim],
 /// 一次性交接,取走即清空。
 (GrantLink, bool)? _pendingGrant;
 
@@ -91,7 +91,7 @@ void pushGrantRedeem(GrantLink link, {required bool cold}) {
 }
 
 class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
-  /// 保险箱内容变化(`vaultRevision`)3 秒后才推——避免连续几次录入/导入各触发
+  /// 病历箱内容变化(`vaultRevision`)3 秒后才推——避免连续几次录入/导入各触发
   /// 一次网络请求;`triggerBackgroundSync` 自己会在没登录/当前成员没开通云端备份时
   /// no-op,这里只管"什么时候跑"。
   Timer? _pushDebounce;
@@ -164,7 +164,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
     }
     final link = ClaimLink.tryParse(uri);
     if (link == null) return false;
-    // 保险箱可能还没打开完(冷启动),推迟到下一帧再导航。
+    // 病历箱可能还没打开完(冷启动),推迟到下一帧再导航。
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // ⚠️ **没同意过就先别推。** 冷启动时认领屏会被推到告知页**上面** —— 那等于
       // 病人在没看过任何告知、没同意过任何条款的情况下,第一屏就是「存进我的档案」,
@@ -353,7 +353,7 @@ Future<void> runBootSequence({
   }
 }
 
-/// 启动引导:先在真实沙盒目录打开保险箱(FFI `open_vault`),再进主界面。
+/// 启动引导:先在真实沙盒目录打开病历箱(FFI `open_vault`),再进主界面。
 /// 打开是可韧性的(损坏的派生 db 会从 log 重建);目录取自 path_provider。
 /// iCloud 已接入(见 `vault_boot` / `icloud_bridge`):容器可解析且用户在设置里开启
 /// 同步时,真相存进 iCloud 容器,否则用本机沙盒。打开失败给人性化提示而非白屏。
@@ -364,7 +364,7 @@ class VaultBootstrap extends StatefulWidget {
 }
 
 class _VaultBootstrapState extends State<VaultBootstrap> {
-  /// 读回账号态、打开「当前成员」的保险箱(多成员见 profile_manager / vault_boot)、
+  /// 读回账号态、打开「当前成员」的病历箱(多成员见 profile_manager / vault_boot)、
   // 读「个人/医生」模式选择(`AppRoot` 据此决定先显示哪个根界面)。顺序契约见
   // [runBootSequence]。
   late Future<void> _open;
@@ -697,7 +697,7 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
-/// 授权链接落地屏:家属/医生扫码进来,问一句「要不要加进你的 MedMe」,答应了才
+/// 授权链接落地屏:家人/医生扫码进来,问一句「要不要加进你的 MedMe」,答应了才
 /// 兑换。**未登录先走账号屏**——兑换需要账号密钥对(封回自己的公钥),没有账号
 /// 无从谈起;登录/解锁完成后回到这一屏继续兑换,不用重新点一次链接。
 class GrantRedeemScreen extends StatefulWidget {

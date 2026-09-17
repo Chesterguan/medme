@@ -213,7 +213,7 @@ typedef PendingCloudExtraction = ({
 /// 涂黑(`lines`/`bytes` 是逐张照片的,拼不成一页)。所以这里给的 [OcrResult] 只
 /// 有文本 —— [canRedactImage] 因此为 false,`runCloudExtraction` 自己就退到文本档,
 /// 发出去的是 Rust 侧脱敏过的文本。文本取各页 OCR 拼起来,只用来过
-/// [isLowOcrYield] 那道闸(真正发出去的文本由 Rust 从保险箱里重读)。
+/// [isLowOcrYield] 那道闸(真正发出去的文本由 Rust 从病历箱里重读)。
 ///
 /// [sources] 为空(比如根本没排上队)返回 null:没有成员/箱子可捕获,就不排。
 PendingCloudExtraction? pendingForMergedDocument({
@@ -326,7 +326,7 @@ Future<T?> ifVaultUnchanged<T>(
   // 路径不进日志:里面有成员 / 代拍病人的 id 和沙盒路径,而"换没换"这一个事实
   // 就够定位了。
   if (await readCurrentVaultRoot() != capturedVaultRoot) {
-    debugPrint('[vault-guard] 保险箱已不是当初那个(代拍/连切两次),跳过 $what');
+    debugPrint('[vault-guard] 病历箱已不是当初那个(代拍/连切两次),跳过 $what');
     return null;
   }
   return action();

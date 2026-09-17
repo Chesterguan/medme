@@ -7,7 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 
-/// 家庭多成员管理:每个成员一个独立保险箱(子文件夹)。成员表持久化到沙盒
+/// 家庭多成员管理:每个成员一个独立病历箱(子文件夹)。成员表持久化到沙盒
 /// `<support>/profiles.json`,与 Apple ID 无关——纯本地 + 子文件夹。
 ///
 /// **成员一律平等**:没有权限差别、没有特殊的那一个,路径规则只有一条 ——
@@ -25,11 +25,11 @@ class ProfileManager {
   ProfileManager._();
   static final ProfileManager instance = ProfileManager._();
 
-  /// 保险箱默认名字(家庭/个人层面)。用户可在设置里改成「我家」「张建国的病历」等。
+  /// 病历箱默认名字(家庭/个人层面)。用户可在设置里改成「我家」「张建国的病历」等。
   static const defaultVaultName = '我的医疗档案';
 
   /// 初始成员的默认名字。**必须与 [defaultVaultName] 不同** —— 两者曾经用同一个字符串,
-  /// 于是设置页会显示成「保险箱:我的医疗档案 → 成员:我的医疗档案」,同一个名字在两个
+  /// 于是设置页会显示成「病历箱:我的医疗档案 → 成员:我的医疗档案」,同一个名字在两个
   /// 层级上各出现一次,用户看不懂谁包含谁。
   ///
   /// 而且成员名会进档案屏顶部那条**常驻 tab**(横向排列,见 `_MemberTabs`):六个字的名字
@@ -62,14 +62,14 @@ class ProfileManager {
   /// 没命中)。见 [nameCloudProfileOnFirstSync] 对"为什么必须改掉占位名"的说明。
   static const restoredFallbackName = '云端成员';
 
-  /// 当前成员 **id** 变化时通知各屏重载(切换成员 = 重开保险箱)。用 id 而不是名字:
+  /// 当前成员 **id** 变化时通知各屏重载(切换成员 = 重开病历箱)。用 id 而不是名字:
   /// 改名不该触发重开,换人才该。
   final ValueNotifier<String> currentId = ValueNotifier<String>(_bootstrapId);
 
   List<Profile> _profiles = const [
     Profile(id: _bootstrapId, name: defaultMemberName),
   ];
-  // 整个保险箱的名字(家庭/个人层面,与「成员」是两回事);设置页展示 + 可改。
+  // 整个病历箱的名字(家庭/个人层面,与「成员」是两回事);设置页展示 + 可改。
   String _vaultName = defaultVaultName;
   // 成员 id → 最近一次已知记录数(档案屏加载时回填);设置页展示每人多少份,不必开各自库去数。
   final Map<String, int> _counts = {};
@@ -92,7 +92,7 @@ class ProfileManager {
     return null;
   }
 
-  /// 档案屏顶部展示名:只有一个、且还没被数据/用户命过名的默认成员时,显示保险箱名
+  /// 档案屏顶部展示名:只有一个、且还没被数据/用户命过名的默认成员时,显示病历箱名
   /// (不把占位名露出来,彻底避开「我」);否则显示当前成员真名。
   String get displayName =>
       (_profiles.length == 1 && _autoNamePending) ? _vaultName : current.name;
@@ -188,7 +188,7 @@ class ProfileManager {
     } catch (_) {}
   }
 
-  /// 切到某成员(需已存在)。调用方随后重开保险箱(见 `openCurrentProfileVault`)。
+  /// 切到某成员(需已存在)。调用方随后重开病历箱(见 `openCurrentProfileVault`)。
   Future<void> switchTo(String id) async {
     await ensureLoaded();
     if (byId(id) == null || currentId.value == id) return;
@@ -265,7 +265,7 @@ class ProfileManager {
 
   /// 能不能删这个成员。成员一律平等,**谁都能删**;删任何一个都只影响它自己
   /// (每人一个独立目录,没有谁的路径依赖别人)。唯一的限制是**不能删到一个不剩** ——
-  /// 那等于清空整个保险箱,该走设置里「清空所有数据 · 重置保险箱」那条更明确的路。
+  /// 那等于清空整个病历箱,该走设置里「清空所有数据 · 重置病历箱」那条更明确的路。
   bool canRemove(String id) => _profiles.length > 1 && byId(id) != null;
 
   /// 删除一个成员(仅从成员表移除;**磁盘上的目录由调用方删**,见
@@ -357,7 +357,7 @@ class ProfileManager {
   bool isUntouchedDefaultMember(String id) =>
       id == _bootstrapId && _autoNamePending && byId(id)?.name == defaultMemberName && _counts[id] == 0;
 
-  /// 改保险箱名字(设置页)。空或没变则忽略。
+  /// 改病历箱名字(设置页)。空或没变则忽略。
   Future<void> setVaultName(String name) async {
     await ensureLoaded();
     final t = name.trim();
@@ -374,7 +374,7 @@ class ProfileManager {
     await _save();
   }
 
-  /// 恢复出厂:成员表清回单一默认、清份数缓存、保险箱名回默认、允许自动命名。
+  /// 恢复出厂:成员表清回单一默认、清份数缓存、病历箱名回默认、允许自动命名。
   /// 「清空所有数据」调它(配合删各成员目录),而不是只清当前成员。
   Future<void> factoryReset() async {
     // 恢复出厂顺带换一把新秘密——旧秘密属于被清掉的那份档案。

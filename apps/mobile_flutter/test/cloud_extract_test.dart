@@ -645,7 +645,7 @@ void main() {
         vaultRoot: _root,
       );
       expect(r, isNull);
-      expect(captured.single, contains('保险箱已不是当初那个'));
+      expect(captured.single, contains('病历箱已不是当初那个'));
       expect(captured.single, contains('跳过 文档 34'));
       expect(
         captured.any((m) => m!.contains('退回本地正则')),
