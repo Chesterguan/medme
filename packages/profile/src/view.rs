@@ -1,0 +1,37 @@
+//! `ProfileView` —— 规则引擎的**唯一**输出。渲染引擎(Flutter/查看器)只认这个形状。
+//!
+//! section 的顺序、标题、空态文案**全来自包**(spec §6):加一个病不发版的前提是
+//! App 里没有任何一句写死的病种文案。
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceOut {
+    pub id: String,
+    pub cite: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Section {
+    /// 7 种之一:`status_card` / `score_card` / `series_chart` / `reminders` /
+    /// `timeline` / `checklist` / `handoff`(spec §6)。渲染引擎认不出的 kind
+    /// 整块跳过(前向兼容),不报错。
+    pub kind: String,
+    pub title: String,
+    /// `Some(提示语)` = 这块**没数据**,折叠成一行(spec §5.6);`None` = 展开。
+    pub empty_hint: Option<String>,
+    pub body: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileView {
+    pub package_id: String,
+    pub package_version: String,
+    pub display_name: String,
+    /// 用户从没开启过这个病时为 `false`,且 `sections` 为空。
+    pub enabled: bool,
+    pub disclaimer: String,
+    pub sections: Vec<Section>,
+    /// 包里声明的全部出处。界面上每个数值旁边的出处 id 到这里查全文。
+    pub sources: Vec<SourceOut>,
+}

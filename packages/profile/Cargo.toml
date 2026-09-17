@@ -7,6 +7,12 @@ description = "病程档案规则引擎:病种包的加载/验签/缓存,以及�
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+# 取值窗口按日期算;与 parser 用同一份 NaiveDate,免得两边日期类型不通。
+chrono = { workspace = true }
+# 规则引擎吃的是 parser 已经汇总好的序列/用药(不自己再实现一遍分组与单位换算),
+# 以及 deid 解出来的 facts(schema 2)。两者都是纯计算,不带 IO。
+parser = { path = "../parser" }
+deid = { path = "../deid" }
 # 包签名:防的是 CDN/桶被改后往规则里塞东西(spec §2)。只用验签,不在客户端签名。
 ed25519-dalek = "2"
 # 与 packages/share 同版本,免得 workspace 里同时编两份 base64。
