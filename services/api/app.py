@@ -8,6 +8,15 @@ from typing import List
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 import auth, db, extract, oss
+import hashlib
+import pathlib
+
+# 病种 skill 包的静态根目录(仓库 `skills/`)。这两条路由是本服务**唯一**不读
+# 账号头的非 /health 路由:请求里没有账号、没有病种偏好,服务端因此看不出
+# 谁开启了哪种病(disease-profile spec §8)。测试会把它换成 tmp 目录。
+SKILLS_DIR = pathlib.Path(__file__).resolve().parents[2] / "skills"
+_SKILL_ID = re.compile(r"[a-z0-9_]{1,32}")
+_SKILL_VER = re.compile(r"[0-9]{4}\.[0-9]{2}\.[0-9]{1,3}")
 
 _OID = re.compile(r"[0-9a-f]{64}")  # 用 .fullmatch() 校验;.match() + 结尾 $ 会放过一个尾随换行
 _SIGN_VERBS = {"PUT", "GET"}
@@ -87,6 +96,40 @@ def extract_account_dep(authorization: str = Header(default="")) -> str:
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+def _static_json(path: pathlib.Path, request: Request) -> Response:
+    """原样回一份 JSON 文件,带 ETag。**逐字节**——包体的签名就是对这些字节签的,
+    任何重新序列化(键序/空白)都会让客户端验签失败。"""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        raise HTTPException(404, "not found")
+    etag = '"' + hashlib.sha256(raw).hexdigest()[:32] + '"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return Response(
+        content=raw,
+        media_type="application/json",
+        headers={"ETag": etag, "Cache-Control": "public, max-age=300"},
+    )
+
+
+@app.get("/v1/skills/index.json")
+def skills_index(request: Request):
+    """公开的包清单。无鉴权、无账号头。"""
+    return _static_json(SKILLS_DIR / "index.json", request)
+
+
+@app.get("/v1/skills/{skill_id}/{version}.json")
+def skills_package(skill_id: str, version: str, request: Request):
+    """公开的签名包。无鉴权、无账号头。
+
+    `skill_id`/`version` 会拼进文件路径,是信任边界:用 `fullmatch` 白名单挡,
+    不做 `..` 黑名单(黑名单挡不住 `%2e%2e`、Unicode 变体这类写法)。"""
+    if not _SKILL_ID.fullmatch(skill_id) or not _SKILL_VER.fullmatch(version):
+        raise HTTPException(400, "bad skill id or version")
+    return _static_json(SKILLS_DIR / skill_id / f"{version}.json", request)
 
 
 @app.post("/v1/auth/otp")

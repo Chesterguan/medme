@@ -1172,6 +1172,60 @@ def test_extract_monthly_token_cap_429(monkeypatch):
     assert client.post("/v1/extract", json={"mode": "text", "schema": 1, "payload": "x"}, headers=_h(b["access"])).status_code == 200
 
 
+# --- /v1/skills:无鉴权的公开静态包分发(disease-profile spec §8)-------------
+
+def test_skills_index_needs_no_auth_and_lists_packages():
+    r = client.get("/v1/skills/index.json")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    assert isinstance(r.json()["skills"], list)
+    assert r.headers.get("etag")
+
+
+def test_skills_index_honours_if_none_match():
+    first = client.get("/v1/skills/index.json")
+    etag = first.headers["etag"]
+    again = client.get("/v1/skills/index.json", headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    assert again.content == b""
+
+
+def test_skills_route_never_reads_the_authorization_header():
+    # 带一个**错的** bearer 也必须照样 200:这条路由不认账号,也就不可能把
+    # 「你开启了哪个病」和账号关联起来(spec §8 的隐私前提)。
+    r = client.get("/v1/skills/index.json", headers={"Authorization": "Bearer not-a-real-token"})
+    assert r.status_code == 200
+
+
+def test_skills_package_path_traversal_is_rejected():
+    # id / version 都会拼进文件路径,是信任边界。放行任何 . 或 / 都是任意文件读。
+    for sid, ver in [("..", "x"), ("sle", ".."), ("a/b", "x"), ("sle", "../../app")]:
+        r = client.get(f"/v1/skills/{sid}/{ver}.json")
+        assert r.status_code in (400, 404), f"{sid}/{ver} 竟然是 {r.status_code}"
+
+
+def test_skills_unknown_package_is_404():
+    assert client.get("/v1/skills/nosuchdisease/2026.09.1.json").status_code == 404
+
+
+def test_skills_package_is_served_verbatim_when_present(tmp_path):
+    import app as app_mod
+
+    root = tmp_path / "skills"
+    (root / "demo").mkdir(parents=True)
+    body = '{"sig":"AA","package":"{}"}'
+    (root / "demo" / "2026.09.1.json").write_text(body, encoding="utf-8")
+    old = app_mod.SKILLS_DIR
+    app_mod.SKILLS_DIR = root
+    try:
+        r = client.get("/v1/skills/demo/2026.09.1.json")
+        assert r.status_code == 200
+        assert r.text == body  # 逐字节原样,签名才验得过
+        assert r.headers.get("etag")
+    finally:
+        app_mod.SKILLS_DIR = old
+
+
 if __name__ == "__main__":
     # `python3 services/api/test_api.py`:与 services/claim-signer/test_handler.py 同风格的
     # 无 pytest 自检——手动跑每个 test_* 函数,复用 `clean` fixture 的清库逻辑,

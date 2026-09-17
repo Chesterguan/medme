@@ -68,6 +68,25 @@ DATABASE_URL=postgresql://postgres@localhost:5435/medme_api_test python3 -m pyte
 Apple 分支测的是格式错误的 `identity_token`,在 `jwt.get_unverified_header` 那步就
 失败,不会走到拉 JWKS 那步。
 
+## 病种 skill 包分发(`GET /v1/skills/*`)
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/v1/skills/index.json` | 包清单,原样返回 `skills/index.json` 的字节 |
+| GET | `/v1/skills/{skill_id}/{version}.json` | 单个签名包信封,原样返回对应文件的字节 |
+
+**无鉴权**——不读 `Authorization` 头,请求里也没有账号/病种偏好,服务端因此看不出
+「谁开启了哪个病」(disease-profile spec §8)。包的目录布局、签名流程见
+`skills/README.md`(Task 3)。
+
+两条都**逐字节**返回(读文件原始 bytes,不重新 `json.dumps`)——包体的 Ed25519
+签名是对这些字节签的,任何重新序列化都会让客户端验签失败。带 `ETag`(内容 sha256
+的前 32 位 hex),`If-None-Match` 命中返回 304;`Cache-Control: public, max-age=300`。
+
+`skill_id`/`version` 会拼进文件路径,是信任边界:分别用 `[a-z0-9_]{1,32}`、
+`[0-9]{4}\.[0-9]{2}\.[0-9]{1,3}` 的 `fullmatch` 白名单挡,校验先于任何文件系统访问;
+不匹配 400,匹配但文件不存在 404,两种情况都不回显路径。
+
 ## 自助注销(`DELETE /v1/account`)
 
 大陆 App Store 强制要求的自助注销渠道。Bearer 之外**必须再证明一次是本人**:
