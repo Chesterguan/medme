@@ -1,0 +1,1660 @@
+{
+  "disclaimer": "仅整理你的病历,不做诊断",
+  "display_name": "测试病",
+  "enabled": true,
+  "package_id": "t",
+  "package_version": "2026.09.1",
+  "sections": [
+    {
+      "body": {
+        "gc": {
+          "as_of": "2026-06-15",
+          "daily_pred_equiv_mg": 7.5,
+          "dose": "7.5mg qd",
+          "drug": "泼尼松",
+          "since": "2024-03-15",
+          "sources": [
+            3,
+            6,
+            13
+          ],
+          "targets": [
+            {
+              "label": "EULAR 2019:less than 7.5 mg/day (prednisone equivalent)",
+              "source": "S3",
+              "value": 7.5
+            },
+            {
+              "label": "EULAR 2023:≤5 mg/day (prednisone equivalent)",
+              "source": "S4",
+              "value": 5
+            }
+          ],
+          "unconvertible": []
+        },
+        "hcq": {
+          "daily_mg": 200.0,
+          "dose": "0.2g qd",
+          "dose_at": "2026-06-15",
+          "label_rule": "不应超过6.5mg/kg/日（自理想体重而非实际体重算得）或400mg/日",
+          "label_rule_pending": true,
+          "mg_per_kg": 3.5714285714285716,
+          "reason": null,
+          "sources": [
+            3,
+            6,
+            13
+          ],
+          "target": 5,
+          "target_source": "S4",
+          "weight_at": "2026-09-01",
+          "weight_kg": 56.0,
+          "weight_source": "self_reported"
+        },
+        "last_visit": {
+          "date": "2026-09-10",
+          "title": null
+        },
+        "others": [
+          {
+            "as_of": "2026-06-15",
+            "class": "mmf",
+            "infusion": null,
+            "latest_dose": "0.5g bid",
+            "name": "吗替麦考酚酯",
+            "since": "2024-03-15",
+            "sources": [
+              3,
+              6,
+              13
+            ]
+          },
+          {
+            "as_of": "2024-09-20",
+            "class": null,
+            "infusion": null,
+            "latest_dose": "0.6g qd",
+            "name": "碳酸钙",
+            "since": "2024-03-15",
+            "sources": [
+              3,
+              6
+            ]
+          },
+          {
+            "as_of": "2025-06-18",
+            "class": "belimumab",
+            "infusion": {
+              "iv": "第 0、2、4 周,之后每 4 周",
+              "sc": "每周 200 mg(狼疮肾炎为每周 400 mg×4 次后改 200 mg)"
+            },
+            "latest_dose": "560mg",
+            "name": "贝利尤单抗",
+            "since": "2025-06-18",
+            "sources": [
+              9
+            ]
+          }
+        ]
+      },
+      "empty_hint": null,
+      "kind": "status_card",
+      "title": "现行方案"
+    },
+    {
+      "body": {
+        "as_of": "2026-09-16",
+        "hits": [
+          {
+            "caveat": null,
+            "evidence": [
+              {
+                "analyte": "complement_c3",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "g/L",
+                "unit_canonical": "g/L",
+                "value": "0.78",
+                "value_canonical": 0.78,
+                "values_converted": false
+              }
+            ],
+            "id": "low_complement",
+            "label": "低补体",
+            "source": "S1",
+            "weight": 2
+          }
+        ],
+        "label": "化验可算部分",
+        "max": 18,
+        "missed": [
+          {
+            "evidence": [
+              {
+                "analyte": "anti_dsdna",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "IU/mL",
+                "unit_canonical": "IU/mL",
+                "value": "18",
+                "value_canonical": 18.0,
+                "values_converted": false
+              }
+            ],
+            "id": "dsdna_high",
+            "label": "dsDNA 升高"
+          },
+          {
+            "evidence": [
+              {
+                "analyte": "urine_protein_24h",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "g/24h",
+                "unit_canonical": "mg/24h",
+                "value": "0.35",
+                "value_canonical": 350.0,
+                "values_converted": false
+              }
+            ],
+            "id": "proteinuria",
+            "label": "蛋白尿"
+          },
+          {
+            "evidence": [
+              {
+                "analyte": "urine_rbc_hpf",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "/HP",
+                "unit_canonical": "/[HPF]",
+                "value": "2",
+                "value_canonical": 2.0,
+                "values_converted": false
+              }
+            ],
+            "id": "hematuria",
+            "label": "血尿"
+          },
+          {
+            "evidence": [
+              {
+                "analyte": "urine_wbc_hpf",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "/HP",
+                "unit_canonical": "/[HPF]",
+                "value": "1",
+                "value_canonical": 1.0,
+                "values_converted": false
+              }
+            ],
+            "id": "pyuria",
+            "label": "脓尿"
+          },
+          {
+            "evidence": [
+              {
+                "analyte": "casts",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": null,
+                "unit_canonical": null,
+                "value": "尿沉渣镜检:未见红细胞管型,未见白细胞管型。",
+                "value_canonical": null,
+                "values_converted": false
+              }
+            ],
+            "id": "casts",
+            "label": "管型"
+          },
+          {
+            "evidence": [
+              {
+                "analyte": "wbc",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "10^9/L",
+                "unit_canonical": "10*9/L",
+                "value": "3.6",
+                "value_canonical": 3.6,
+                "values_converted": false
+              }
+            ],
+            "id": "leukopenia",
+            "label": "白细胞减少"
+          },
+          {
+            "evidence": [
+              {
+                "analyte": "plt",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "10^9/L",
+                "unit_canonical": "10*9/L",
+                "value": "178",
+                "value_canonical": 178.0,
+                "values_converted": false
+              }
+            ],
+            "id": "thrombocytopenia",
+            "label": "血小板减少"
+          }
+        ],
+        "score": 2,
+        "unscored": [],
+        "window_days": 10
+      },
+      "empty_hint": null,
+      "kind": "score_card",
+      "title": "活动度(化验可算部分)"
+    },
+    {
+      "body": {
+        "items": [
+          {
+            "action": "该补钙和维生素 D 了,下次门诊问一下医生",
+            "as_of": "2026-06-15",
+            "basis": "guideline",
+            "drug_class": "gc",
+            "due_at": null,
+            "every_days": null,
+            "id": "gc_ca_vitd",
+            "kind": "drug_threshold",
+            "min_daily_pred_equiv": 7.5,
+            "min_days": 91,
+            "note": "EULAR 2007 全身激素治疗推荐 6a 逐字:「If a patient is started on prednisone ⩾7.5 mg daily and continues on prednisone for more than 3 months, calcium and vitamin D supplementation should be prescribed.」。原文是 more than 3 months(超过、不含),所以下限写 91 天而不是 90 —— `min_days` 在引擎里是「至少这么多天」(含)",
+            "overdue_days": null,
+            "pending": false,
+            "reason": null,
+            "since": "2024-03-15",
+            "source": "S_GC_EULAR2007",
+            "state": "never",
+            "verify_status": "verified"
+          },
+          {
+            "action": "做一次骨密度 / FRAX 骨折风险评估",
+            "as_of": "2026-06-15",
+            "basis": "guideline",
+            "drug_class": "gc",
+            "due_at": null,
+            "every_days": null,
+            "id": "gc_dxa_frax",
+            "kind": "drug_threshold",
+            "min_age": 40,
+            "min_daily_pred_equiv": 2.5,
+            "min_days": 91,
+            "note": "人群定义「>3 months treatment with GCs ≥2.5 mg daily」是 ACR 2022 GIOP 摘要逐字;但「≥40 岁用 FRAX + 骨密度筛查」那句只核到第三方摘要页、没核到指南原文(§D.1),所以整条 pending",
+            "overdue_days": null,
+            "pending": true,
+            "reason": "这一条要看年龄,档案里还没有年龄",
+            "since": "2024-03-15",
+            "source": "S_ACR_GIOP2022",
+            "state": "unknown",
+            "verify_status": "pending"
+          },
+          {
+            "as_of": "2026-06-15",
+            "basis": "package_default",
+            "drug_class": "mmf",
+            "due_at": null,
+            "every_days": null,
+            "id": "mmf_cbc",
+            "kind": "drug_schedule",
+            "note": "⚠️ 第一年之后说明书没再给任何间隔。这一档是包作者按每月沿用的**外推**,所以它以自己的身份出去(package_default + 待核):只显示、不算到期。待 Task 19 逐条核",
+            "overdue_days": null,
+            "panel_keys": [
+              "wbc",
+              "plt",
+              "hgb"
+            ],
+            "pending": true,
+            "phases": [
+              {
+                "every_days": 7,
+                "until_days": 30
+              },
+              {
+                "every_days": 14,
+                "until_days": 90
+              },
+              {
+                "every_days": 30,
+                "until_days": 365
+              },
+              {
+                "basis": "package_default",
+                "every_days": 30,
+                "note": "⚠️ 第一年之后说明书没再给任何间隔。这一档是包作者按每月沿用的**外推**,所以它以自己的身份出去(package_default + 待核):只显示、不算到期。待 Task 19 逐条核",
+                "verify_status": "pending"
+              }
+            ],
+            "reason": null,
+            "since": "2024-03-15",
+            "source": "S_MMF_LABEL",
+            "state": "pending",
+            "target": "血常规",
+            "text": "吃吗替麦考酚酯期间该查血常规了",
+            "verify_status": "verified"
+          },
+          {
+            "as_of": "2026-06-15",
+            "basis": "label",
+            "drug_class": "hcq",
+            "due_at": null,
+            "every_days": null,
+            "exam_names": [
+              "眼底",
+              "OCT",
+              "视野"
+            ],
+            "id": "hcq_eye",
+            "kind": "drug_schedule",
+            "note": "§D.2.1:0.1 g 规格说明书写「定期(每3月)」、0.2 g 规格写「每年至少一次」,两份说明书自己都对不上,且都只经摘要管道;指南侧是「低危第 5 年起每年」。没有一个能逐字确定的间隔,所以只显示、不算到期",
+            "overdue_days": null,
+            "pending": true,
+            "phases": [],
+            "reason": null,
+            "since": "2024-03-15",
+            "source": "S_HCQ_INSERT",
+            "state": "pending",
+            "target": "眼科检查(眼底/OCT/视野)",
+            "text": "羟氯喹的眼科检查间隔几份来源互相矛盾,下次门诊问一下医生多久查一次",
+            "verify_status": "pending"
+          }
+        ]
+      },
+      "empty_hint": null,
+      "kind": "reminders",
+      "title": "待补 / 逾期"
+    },
+    {
+      "body": {
+        "groups": [
+          {
+            "name": "补体",
+            "series": [
+              {
+                "analyte_key": "complement_c3",
+                "dir": "low_is_active",
+                "future_points": 0,
+                "name": "补体C3",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 0.42
+                  },
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 0.58
+                  },
+                  {
+                    "date": "2024-09-09",
+                    "document_index": 5,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 0.72
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 0.8
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 0.88
+                  },
+                  {
+                    "date": "2026-03-14",
+                    "document_index": 12,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 0.92
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 0.78
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 1.8,
+                "ref_low": 0.9,
+                "role": "activity",
+                "undated": [],
+                "unit": "g/L",
+                "values_converted": false
+              },
+              {
+                "analyte_key": "complement_c4",
+                "dir": "low_is_active",
+                "future_points": 0,
+                "name": "补体C4",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 0.06
+                  },
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 0.09
+                  },
+                  {
+                    "date": "2024-09-09",
+                    "document_index": 5,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 0.11
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 0.12
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 0.14
+                  },
+                  {
+                    "date": "2026-03-14",
+                    "document_index": 12,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 0.15
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 0.14
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 0.4,
+                "ref_low": 0.1,
+                "role": "activity",
+                "undated": [],
+                "unit": "g/L",
+                "values_converted": false
+              }
+            ]
+          },
+          {
+            "name": "serology",
+            "series": [
+              {
+                "analyte_key": "anti_dsdna",
+                "dir": "high_is_active",
+                "future_points": 0,
+                "name": "抗双链DNA抗体",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 186.0
+                  },
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 96.0
+                  },
+                  {
+                    "date": "2024-09-09",
+                    "document_index": 5,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 54.0
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 38.0
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 22.0
+                  },
+                  {
+                    "date": "2026-03-14",
+                    "document_index": 12,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 16.0
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 18.0
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 30.0,
+                "ref_low": 0.0,
+                "role": "serology",
+                "undated": [],
+                "unit": "IU/mL",
+                "values_converted": false
+              }
+            ]
+          },
+          {
+            "name": "organ:kidney",
+            "series": [
+              {
+                "analyte_key": "urine_pcr",
+                "dir": "high_is_active",
+                "future_points": 0,
+                "name": "尿蛋白/肌酐比",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 2800.0
+                  },
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 1600.0
+                  },
+                  {
+                    "date": "2024-09-09",
+                    "document_index": 5,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 980.0
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 760.0
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 520.0
+                  },
+                  {
+                    "date": "2026-03-14",
+                    "document_index": 12,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 420.0
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 380.0
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 150.0,
+                "ref_low": 0.0,
+                "role": "organ:kidney",
+                "undated": [],
+                "unit": "mg/g",
+                "values_converted": false
+              },
+              {
+                "analyte_key": "urine_protein_24h",
+                "dir": "high_is_active",
+                "future_points": 0,
+                "name": "24小时尿蛋白定量",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 3.2
+                  },
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 1.9
+                  },
+                  {
+                    "date": "2024-09-09",
+                    "document_index": 5,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 1.2
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 0.9
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 0.6
+                  },
+                  {
+                    "date": "2026-03-14",
+                    "document_index": 12,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 0.45
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 0.35
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 0.15,
+                "ref_low": 0.0,
+                "role": "organ:kidney",
+                "undated": [],
+                "unit": "g/24h",
+                "values_converted": false
+              },
+              {
+                "analyte_key": "creatinine",
+                "dir": null,
+                "future_points": 0,
+                "name": "肌酐",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 96.0
+                  },
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 88.0
+                  },
+                  {
+                    "date": "2024-09-09",
+                    "document_index": 5,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 82.0
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 79.0
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 75.0
+                  },
+                  {
+                    "date": "2026-03-14",
+                    "document_index": 12,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 72.0
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 70.0
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 73.0,
+                "ref_low": 41.0,
+                "role": "organ:kidney",
+                "undated": [],
+                "unit": "umol/L",
+                "values_converted": false
+              },
+              {
+                "analyte_key": "egfr",
+                "dir": null,
+                "future_points": 0,
+                "name": "估算肾小球滤过率",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 82.0
+                  },
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 92.0
+                  },
+                  {
+                    "date": "2024-09-09",
+                    "document_index": 5,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 96.0
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 98.0
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 102.0
+                  },
+                  {
+                    "date": "2026-03-14",
+                    "document_index": 12,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 104.0
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 106.0
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": null,
+                "ref_low": 90.0,
+                "role": "organ:kidney",
+                "undated": [],
+                "unit": "mL/min/1.73m2",
+                "values_converted": false
+              }
+            ]
+          },
+          {
+            "name": "activity",
+            "series": [
+              {
+                "analyte_key": "wbc",
+                "dir": null,
+                "future_points": 0,
+                "name": "白细胞",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 2.8
+                  },
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 4.2
+                  },
+                  {
+                    "date": "2024-09-09",
+                    "document_index": 5,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 3.9
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 4.6
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 4.9
+                  },
+                  {
+                    "date": "2026-03-14",
+                    "document_index": 12,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 5.1
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 3.6
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 9.5,
+                "ref_low": 3.5,
+                "role": "activity",
+                "undated": [],
+                "unit": "10^9/L",
+                "values_converted": false
+              },
+              {
+                "analyte_key": "plt",
+                "dir": null,
+                "future_points": 0,
+                "name": "血小板",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "L",
+                    "unverified": false,
+                    "value": 92.0
+                  },
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 168.0
+                  },
+                  {
+                    "date": "2024-09-09",
+                    "document_index": 5,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 190.0
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 205.0
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 212.0
+                  },
+                  {
+                    "date": "2026-03-14",
+                    "document_index": 12,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 224.0
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 178.0
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 350.0,
+                "ref_low": 125.0,
+                "role": "activity",
+                "undated": [],
+                "unit": "10^9/L",
+                "values_converted": false
+              }
+            ]
+          },
+          {
+            "name": "inflammation",
+            "series": [
+              {
+                "analyte_key": "esr",
+                "dir": null,
+                "future_points": 0,
+                "name": "红细胞沉降率",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 68.0
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 18.0
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 20.0,
+                "ref_low": 0.0,
+                "role": "inflammation",
+                "undated": [],
+                "unit": "mm/h",
+                "values_converted": false
+              },
+              {
+                "analyte_key": "crp",
+                "dir": null,
+                "future_points": 0,
+                "name": "C反应蛋白",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-03-05",
+                    "document_index": 1,
+                    "flag": "H",
+                    "unverified": false,
+                    "value": 12.4
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 3.2
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 8.0,
+                "ref_low": 0.0,
+                "role": "inflammation",
+                "undated": [],
+                "unit": "mg/L",
+                "values_converted": false
+              }
+            ]
+          },
+          {
+            "name": "drug_monitor",
+            "series": [
+              {
+                "analyte_key": "alt",
+                "dir": null,
+                "future_points": 0,
+                "name": "谷丙转氨酶",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 32.0
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 26.0
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 22.0
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 26.0
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 40.0,
+                "ref_low": 7.0,
+                "role": "drug_monitor",
+                "undated": [],
+                "unit": "U/L",
+                "values_converted": false
+              },
+              {
+                "analyte_key": "ast",
+                "dir": null,
+                "future_points": 0,
+                "name": "谷草转氨酶",
+                "needs_review_count": 0,
+                "points": [
+                  {
+                    "date": "2024-06-10",
+                    "document_index": 4,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 28.0
+                  },
+                  {
+                    "date": "2025-02-20",
+                    "document_index": 7,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 24.0
+                  },
+                  {
+                    "date": "2025-12-05",
+                    "document_index": 11,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 20.0
+                  },
+                  {
+                    "date": "2026-09-10",
+                    "document_index": 14,
+                    "flag": "N",
+                    "unverified": false,
+                    "value": 22.0
+                  }
+                ],
+                "qualitative": [],
+                "ref_high": 35.0,
+                "ref_low": 13.0,
+                "role": "drug_monitor",
+                "undated": [],
+                "unit": "U/L",
+                "values_converted": false
+              }
+            ]
+          }
+        ],
+        "missing": []
+      },
+      "empty_hint": null,
+      "kind": "series_chart",
+      "title": "指标趋势"
+    },
+    {
+      "body": {
+        "undated": [],
+        "years": []
+      },
+      "empty_hint": null,
+      "kind": "timeline",
+      "title": "病程时间轴"
+    },
+    {
+      "body": {
+        "states": [
+          {
+            "id": "doris",
+            "items": [
+              {
+                "actual": 0,
+                "actual_at": null,
+                "id": "csledai_zero",
+                "label": "临床 SLEDAI = 0(去掉补体、dsDNA 两项)",
+                "note": "Box 1 原文只说「irrespective of serology」;落到低补体、dsDNA 升高这两行,是按 §B.1 里仅有的两条血清学描述符推出来的对应(源里标 PARAPHRASE),待 Task 19 核",
+                "reason": null,
+                "source": "S5",
+                "verdict": "yes"
+              },
+              {
+                "actual": null,
+                "actual_at": null,
+                "id": "phga",
+                "label": "医生整体评估 PhGA(0–3 分)< 0.5",
+                "note": "DORIS Box 1 原文是 <0.5 (0–3);中国 2025 指南写 ≤0.5,恰好等于 0.5 时两份不一致",
+                "reason": "还没有人录过医生整体评估(PGA)",
+                "source": "S5",
+                "verdict": "unknown"
+              },
+              {
+                "actual": 7.5,
+                "actual_at": "2026-06-15",
+                "id": "pred",
+                "label": "泼尼松/泼尼松龙(或等效)< 5 mg/天",
+                "note": "DORIS Box 1 原文是 prednisolone(泼尼松龙)<5 mg/day;中国 2025 指南写 prednisone(泼尼松)≤5 mg/d —— 药名与边界两份都不一样",
+                "reason": null,
+                "source": "S5",
+                "verdict": "no"
+              },
+              {
+                "actual": null,
+                "actual_at": null,
+                "id": "therapy",
+                "label": "允许用羟氯喹、低剂量激素、稳定的免疫抑制剂或生物制剂",
+                "note": null,
+                "reason": "这一条要人来答,还没有人答过",
+                "source": "S5",
+                "verdict": "unknown"
+              }
+            ],
+            "label": "DORIS 2021 缓解标准(逐条对照,不下结论)",
+            "note": null,
+            "source": "S5",
+            "verdict": "no"
+          },
+          {
+            "id": "lldas",
+            "items": [
+              {
+                "actual": 2,
+                "actual_at": null,
+                "id": "sledai_le4",
+                "label": "SLEDAI-2K ≤ 4",
+                "note": null,
+                "reason": null,
+                "source": "S6",
+                "verdict": "yes"
+              },
+              {
+                "actual": null,
+                "actual_at": null,
+                "id": "no_major_organ",
+                "label": "肾、中枢、心肺、血管炎、发热均无活动,无溶血性贫血与消化道活动",
+                "note": null,
+                "reason": "这一条要人来答,还没有人答过",
+                "source": "S6",
+                "verdict": "unknown"
+              },
+              {
+                "actual": null,
+                "actual_at": null,
+                "id": "pga_le1",
+                "label": "SELENA-SLEDAI PGA(0–3 分)≤ 1",
+                "note": null,
+                "reason": "还没有人录过医生整体评估(PGA)",
+                "source": "S6",
+                "verdict": "unknown"
+              },
+              {
+                "actual": 7.5,
+                "actual_at": "2026-06-15",
+                "id": "pred_le75",
+                "label": "泼尼松龙(或等效)≤ 7.5 mg/天",
+                "note": "§C.2 原文是 prednisolone (or equivalent) ≤7.5 mg daily",
+                "reason": null,
+                "source": "S6",
+                "verdict": "yes"
+              },
+              {
+                "actual": null,
+                "actual_at": null,
+                "id": "no_new",
+                "label": "与上次评估相比没有新的狼疮活动表现",
+                "note": null,
+                "reason": "这一条要人来答,还没有人答过",
+                "source": "S6",
+                "verdict": "unknown"
+              },
+              {
+                "actual": null,
+                "actual_at": null,
+                "id": "stable_therapy",
+                "label": "免疫抑制剂与已获批生物制剂维持在耐受良好的标准维持剂量(不含研究用药)",
+                "note": "§C.2 第 (5) 条原文:「well-tolerated standard maintenance doses of immunosuppressive drugs and approved biologic agents, excluding investigational drugs」",
+                "reason": "这一条要人来答,还没有人答过",
+                "source": "S6",
+                "verdict": "unknown"
+              }
+            ],
+            "label": "LLDAS 低疾病活动(逐条对照,不下结论)",
+            "note": null,
+            "source": "S6",
+            "verdict": "unknown"
+          }
+        ]
+      },
+      "empty_hint": null,
+      "kind": "checklist",
+      "title": "达标情况(逐条对照)"
+    },
+    {
+      "body": {
+        "items": [
+          {
+            "actual": 42.9,
+            "actual_at": "2024-06-10",
+            "actual_unit": "%",
+            "analyte": "urine_pcr",
+            "any_of": [
+              "urine_protein_24h",
+              "urine_pcr"
+            ],
+            "by_days": 90,
+            "drop_pct": 25,
+            "evidence": [
+              {
+                "analyte": "urine_pcr",
+                "date": "2024-03-05",
+                "document_index": 1,
+                "unit": "mg/g",
+                "unit_canonical": "mg/g",
+                "value": "2800",
+                "value_canonical": 2800.0,
+                "values_converted": false
+              },
+              {
+                "analyte": "urine_pcr",
+                "date": "2024-06-10",
+                "document_index": 4,
+                "unit": "mg/g",
+                "unit_canonical": "mg/g",
+                "value": "1600",
+                "value_canonical": 1600.0,
+                "values_converted": false
+              }
+            ],
+            "from": {
+              "baseline_window_days": 30,
+              "drug_classes": [
+                "mmf",
+                "aza",
+                "ctx",
+                "mtx",
+                "cni",
+                "belimumab",
+                "telitacicept",
+                "rtx"
+              ],
+              "organ": "kidney"
+            },
+            "id": "upr_drop_25_3m",
+            "kind": "proteinuria_drop_pct",
+            "label": "3 个月蛋白尿较基线下降 ≥25%",
+            "note": "§E.2 rec 2 逐字:「a reduction in proteinuria of at least 25% by 3 months (2b/C), 50% by 6 months (2a/B), and a UPCR target <700 mg/g by 12 months (1b/B)」。「3 个月」按 90 天算是包里的换算,原文只写 months。24h 尿蛋白与 UPCR 各自跟自己的基线比,不合并",
+            "reason": null,
+            "source": "S8",
+            "t0": "2024-03-15",
+            "t0_basis": "最早一次免疫抑制剂处方:吗替麦考酚酯",
+            "verdict": "yes",
+            "year": 2025
+          },
+          {
+            "actual": 65.0,
+            "actual_at": "2024-09-09",
+            "actual_unit": "%",
+            "analyte": "urine_pcr",
+            "any_of": [
+              "urine_protein_24h",
+              "urine_pcr"
+            ],
+            "by_days": 180,
+            "drop_pct": 50,
+            "evidence": [
+              {
+                "analyte": "urine_pcr",
+                "date": "2024-03-05",
+                "document_index": 1,
+                "unit": "mg/g",
+                "unit_canonical": "mg/g",
+                "value": "2800",
+                "value_canonical": 2800.0,
+                "values_converted": false
+              },
+              {
+                "analyte": "urine_pcr",
+                "date": "2024-09-09",
+                "document_index": 5,
+                "unit": "mg/g",
+                "unit_canonical": "mg/g",
+                "value": "980",
+                "value_canonical": 980.0,
+                "values_converted": false
+              }
+            ],
+            "from": {
+              "baseline_window_days": 30,
+              "drug_classes": [
+                "mmf",
+                "aza",
+                "ctx",
+                "mtx",
+                "cni",
+                "belimumab",
+                "telitacicept",
+                "rtx"
+              ],
+              "organ": "kidney"
+            },
+            "id": "upr_drop_50_6m",
+            "kind": "proteinuria_drop_pct",
+            "label": "6 个月蛋白尿较基线下降 ≥50%(部分应答)",
+            "note": "§E.2 叙述逐字把这一档称作 partial response:「the goals of 25% reduction by 3 months, 50% by 6 months (partial response)」。「6 个月」按 180 天算是包里的换算",
+            "reason": null,
+            "source": "S8",
+            "t0": "2024-03-15",
+            "t0_basis": "最早一次免疫抑制剂处方:吗替麦考酚酯",
+            "verdict": "yes",
+            "year": 2025
+          },
+          {
+            "actual": 760.0,
+            "actual_at": "2025-02-20",
+            "actual_unit": "mg/g",
+            "analyte": "urine_pcr",
+            "by_days": 365,
+            "canonical_unit": "mg/g",
+            "evidence": [
+              {
+                "analyte": "urine_pcr",
+                "date": "2025-02-20",
+                "document_index": 7,
+                "unit": "mg/g",
+                "unit_canonical": "mg/g",
+                "value": "760",
+                "value_canonical": 760.0,
+                "values_converted": false
+              }
+            ],
+            "from": {
+              "drug_classes": [
+                "mmf",
+                "aza",
+                "ctx",
+                "mtx",
+                "cni",
+                "belimumab",
+                "telitacicept",
+                "rtx"
+              ],
+              "organ": "kidney"
+            },
+            "id": "upcr_below_700_12m",
+            "key": "urine_pcr",
+            "kind": "upcr_below",
+            "label": "12 个月 UPCR <700 mg/g",
+            "note": "§E.2 逐字:「an absolute UPCR value of <700 mg/g at 12 months remained unchanged; a change from the range of 500 to 700 mg (referred in the 2019 recommendations) was decided for the sake of simplification」。EULAR 2023 复述 2019 时写的是 500–700 mg/day,与这一条不是同一个数。「12 个月」按 365 天算是包里的换算",
+            "reason": null,
+            "source": "S8",
+            "t0": "2024-03-15",
+            "t0_basis": "最早一次免疫抑制剂处方:吗替麦考酚酯",
+            "threshold": 700,
+            "verdict": "no",
+            "year": 2025
+          },
+          {
+            "actual": 420.0,
+            "actual_at": "2026-03-14",
+            "actual_unit": "mg/g",
+            "analyte": "urine_pcr",
+            "canonical_unit": "mg/g",
+            "evidence": [
+              {
+                "analyte": "urine_pcr",
+                "date": "2026-03-14",
+                "document_index": 12,
+                "unit": "mg/g",
+                "unit_canonical": "mg/g",
+                "value": "420",
+                "value_canonical": 420.0,
+                "values_converted": false
+              }
+            ],
+            "id": "upcr_below_500_any",
+            "key": "urine_pcr",
+            "kind": "upcr_below",
+            "label": "完全肾应答:任一时点 UPCR <500 mg/g",
+            "note": "§E.2 逐字:「Complete renal response should be defined as UPCR <500 mg/g at any time point.」KDIGO 2024(Figure 11)的完全缓解口径是 PCR <0.5 g/g = 同一个数,但它另外要求肾功能在基线 ±10%–15% 内 —— 那一半在 gfr_80_baseline 那条(两份指南的肾功能条件本身也不一样,§E.2 的 ⚠️ 框)",
+            "reason": null,
+            "source": "S8",
+            "t0": null,
+            "t0_basis": null,
+            "threshold": 500,
+            "verdict": "yes",
+            "year": 2025
+          },
+          {
+            "actual": 450.0,
+            "actual_at": "2026-03-14",
+            "actual_unit": "mg/24h",
+            "analyte": "urine_protein_24h",
+            "canonical_unit": "mg/24h",
+            "evidence": [
+              {
+                "analyte": "urine_protein_24h",
+                "date": "2026-03-14",
+                "document_index": 12,
+                "unit": "g/24h",
+                "unit_canonical": "mg/24h",
+                "value": "0.45",
+                "value_canonical": 450.0,
+                "values_converted": false
+              }
+            ],
+            "id": "upr24_below_500_any",
+            "key": "urine_protein_24h",
+            "kind": "upcr_below",
+            "label": "旧口径(EULAR 2019):24 小时尿蛋白 <500 mg",
+            "note": "§E.2 逐字:「complete renal remission (proteinuria <500 mg/24 hours and SCr within 10% from baseline)」。⚠️ 这一条只答**蛋白尿那一半**:另一半「肌酐在基线 10% 以内」与 EULAR 2025 的「GFR ≥ 基线 80%」是两把不同的尺,包里不把它们混成一条。2019 与 2025 的单位也不同(mg/24h vs mg/g),所以另立一条、各带各的年份",
+            "reason": null,
+            "source": "S3",
+            "t0": null,
+            "t0_basis": null,
+            "threshold": 500,
+            "verdict": "yes",
+            "year": 2019
+          },
+          {
+            "actual": 129.3,
+            "actual_at": "2026-09-10",
+            "actual_unit": "%",
+            "analyte": "egfr",
+            "evidence": [
+              {
+                "analyte": "egfr",
+                "date": "2024-03-05",
+                "document_index": 1,
+                "unit": "mL/min/1.73m2",
+                "unit_canonical": "mL/min/1.73m2",
+                "value": "82",
+                "value_canonical": 82.0,
+                "values_converted": false
+              },
+              {
+                "analyte": "egfr",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "mL/min/1.73m2",
+                "unit_canonical": "mL/min/1.73m2",
+                "value": "106",
+                "value_canonical": 106.0,
+                "values_converted": false
+              }
+            ],
+            "id": "gfr_80_baseline",
+            "key": "egfr",
+            "kind": "gfr_pct_of_baseline",
+            "label": "GFR 维持在基线的 ≥80%",
+            "note": "§E.2 逐字:「stabilisation (if not improvement) of GFR to ≥80% of baseline value is desirable within the first 3 months」。⚠️ EULAR 2019/2023 用的是另一把尺(SCr within 10% from baseline),KDIGO 2024 是 ±10%–15% —— 三份不一致(§E.2 的 ⚠️ 框)。基线 = 档案里最早一次有日期的 eGFR",
+            "pct": 80,
+            "reason": null,
+            "source": "S8",
+            "t0": null,
+            "t0_basis": null,
+            "verdict": "yes",
+            "year": 2025
+          },
+          {
+            "actual": 380.0,
+            "actual_at": "2026-09-10",
+            "actual_unit": "mg/g",
+            "analyte": "urine_pcr",
+            "any_of": [
+              {
+                "canonical_unit": "g/24h",
+                "key": "urine_protein_24h",
+                "threshold": 0.5
+              },
+              {
+                "canonical_unit": "mg/g",
+                "key": "urine_pcr",
+                "threshold": 500
+              }
+            ],
+            "evidence": [
+              {
+                "analyte": "urine_protein_24h",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "g/24h",
+                "unit_canonical": "mg/24h",
+                "value": "0.35",
+                "value_canonical": 350.0,
+                "values_converted": false
+              },
+              {
+                "analyte": "urine_pcr",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "mg/g",
+                "unit_canonical": "mg/g",
+                "value": "380",
+                "value_canonical": 380.0,
+                "values_converted": false
+              }
+            ],
+            "id": "biopsy_indication",
+            "kind": "biopsy_indication",
+            "label": "肾活检指征:蛋白尿 ≥0.5 g/24h 或 UPCR ≥500 mg/g",
+            "note": "§E.1 rec 1 逐字:「Kidney biopsy is recommended in every patient with evidence of kidney involvement, especially in those with persistent proteinuria (≥0.5 g/24 h or urine protein-creatinine ratio [UPCR] ≥500 mg/g) (2b/B)」。原文紧接着说这是 indicative threshold:「the 0.5 g/d threshold should be kept as an indicative threshold to avoid potentially unnecessary biopsies, while not preventing biopsies at lower levels of proteinuria, if indicated」。⚠️ 「persistent(持续)」原文没给次数或天数,这一条看的是**最近一次**结果,不代表指南意义上的「持续」;中国 2019 狼疮肾炎指南同一处写的是严格大于(>0.5 g/24 h、>500 mg/g),恰好等于时两份不一致",
+            "reason": null,
+            "source": "S8",
+            "t0": null,
+            "t0_basis": null,
+            "verdict": "no",
+            "year": 2025
+          }
+        ]
+      },
+      "empty_hint": null,
+      "kind": "checklist",
+      "title": "狼疮肾炎治疗里程碑"
+    }
+  ],
+  "sources": [
+    {
+      "cite": "test",
+      "id": "S1",
+      "url": null
+    },
+    {
+      "cite": "EULAR 2019 SLE recommendations, Ann Rheum Dis 2019",
+      "id": "S3",
+      "url": null
+    },
+    {
+      "cite": "EULAR 2023 update, Ann Rheum Dis 2024",
+      "id": "S4",
+      "url": null
+    },
+    {
+      "cite": "EULAR recommendations for the management of SLE with kidney involvement: 2025 update, Ann Rheum Dis 2026;85:75–90(doi 10.1016/j.ard.2025.09.007)",
+      "id": "S8",
+      "url": null
+    },
+    {
+      "cite": "DORIS 2021 definition of remission, Box 1",
+      "id": "S5",
+      "url": null
+    },
+    {
+      "cite": "LLDAS, Franklyn et al. 2016",
+      "id": "S6",
+      "url": null
+    },
+    {
+      "cite": "2020 中国系统性红斑狼疮诊疗指南(Rheumatol Immunol Res 2020;1(1):5–23)推荐 3",
+      "id": "S10",
+      "url": null
+    },
+    {
+      "cite": "CELLCEPT US prescribing information §5.4(DailyMed 37241e87-4af4-4dc3-a1aa-ea6f20d8dc40)",
+      "id": "S_MMF_LABEL",
+      "url": null
+    },
+    {
+      "cite": "EULAR recommendations on management of systemic glucocorticoid therapy, Ann Rheum Dis 2007;66:1560–7, Rec 6a",
+      "id": "S_GC_EULAR2007",
+      "url": null
+    },
+    {
+      "cite": "硫酸羟氯喹片说明书(0.1 g / 0.2 g 两种规格)",
+      "id": "S_HCQ_INSERT",
+      "url": null
+    },
+    {
+      "cite": "ACR 2022 glucocorticoid-induced osteoporosis guideline, Arthritis Care Res 2023;75:2405–19",
+      "id": "S_ACR_GIOP2022",
+      "url": null
+    }
+  ]
+}

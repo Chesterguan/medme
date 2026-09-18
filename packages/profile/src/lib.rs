@@ -52,11 +52,14 @@ pub fn materialize(
         out.extend(rules::status_section(&ctx, pkg, &regimen));
         out.extend(rules::activity_section(&ctx, pkg, &activity));
         out.extend(rules::reminders_section(&ctx, pkg, &activity, &regimen));
-        // 「待补/逾期」永远排在趋势前面(spec §5.6);时间轴跟在趋势后面,达标表
-        // 仍旧压轴(spec §6 那张表的相对顺序)。
+        // 「待补/逾期」永远排在趋势前面(spec §5.6);时间轴跟在趋势后面,两张
+        // 对照表压轴(spec §6 那张表的相对顺序)。**达标表在里程碑前面**:两块
+        // 同为 `checklist`,谁在前是包无关的、固定的顺序,渲染层按 body 里是
+        // `states` 还是 `items` 分。
         out.extend(rules::series_section(&ctx, pkg));
         out.extend(rules::timeline_section(&ctx, pkg));
         out.extend(rules::states_section(&ctx, pkg, &activity, &regimen));
+        out.extend(rules::milestones_section(&ctx, pkg));
         out
     } else {
         // 没开启就**不碰**临床输入:不 aggregate、不解抽取结果。既省一趟全量

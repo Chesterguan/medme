@@ -229,7 +229,7 @@ pub fn activity_section(
         .any(|d| ctx.in_window(d.date, a.window_days));
     Some(crate::view::Section {
         kind: "score_card".into(),
-        title: view_title(pkg, "score_card"),
+        title: view_title(pkg, "score_card", None),
         empty_hint: (window_valid && !any_point && !any_doc).then(|| {
             format!(
                 "最近 {} 天还没有化验结果,下次抽血后这里会自动算",
@@ -311,11 +311,15 @@ fn weight_sum<'h>(hits: impl IntoIterator<Item = &'h Hit>) -> u32 {
 /// 全来自包)。包里没写就 `None` —— 引擎里垫一句中文,「加一个病不发版」这条前提上
 /// 就多了一个例外,而例外只会越来越多。**空标题要是 `null` 不是 `""`**:后者在
 /// JSON 里和「作者写了个空标题」长得一样,渲染层分不出包漏了还是包故意的。
-fn view_title(pkg: &crate::package::Package, kind: &str) -> Option<String> {
+///
+/// `id` 是**同一个 kind 出现两次**时的区分符:达标表与狼疮肾炎里程碑都是
+/// `checklist`(复用同一套渲染)。`None` 只认**没写 `id`** 的那一条 —— 按 kind 取
+/// 第一条的话,包里两块的先后一换,达标表就会顶着里程碑的标题出去。
+fn view_title(pkg: &crate::package::Package, kind: &str, id: Option<&str>) -> Option<String> {
     pkg.views
         .sections
         .iter()
-        .find(|s| str_field(s, "kind") == kind)
+        .find(|s| str_field(s, "kind") == kind && str_field(s, "id") == id.unwrap_or_default())
         .and_then(|s| s.get("title").and_then(|t| t.as_str()))
         .map(str::to_string)
 }
@@ -747,7 +751,7 @@ pub fn states_section(
     }
     Some(crate::view::Section {
         kind: "checklist".into(),
-        title: view_title(pkg, "checklist"),
+        title: view_title(pkg, "checklist", None),
         // 逐条对照永远有意义:未知也是答案,不折叠。
         empty_hint: None,
         body: serde_json::json!({ "states": states }),
@@ -1381,7 +1385,7 @@ pub fn status_section(
         && reg.others.is_empty();
     Some(crate::view::Section {
         kind: "status_card".into(),
-        title: view_title(pkg, "status_card"),
+        title: view_title(pkg, "status_card", None),
         empty_hint: (nothing && visit.is_null())
             .then(|| "还没读到处方,下次把处方笺或出院小结拍进来,这里会显示现行方案".to_string()),
         body: serde_json::json!({
@@ -1506,7 +1510,7 @@ pub fn reminders_section(
     });
     Some(crate::view::Section {
         kind: "reminders".into(),
-        title: view_title(pkg, "reminders"),
+        title: view_title(pkg, "reminders", None),
         // 空列表有三种来源:都没到期、都被忽略了、包里的规则都不适用。说「该查的
         // 都查过了」只有第一种成立,另外两种是不实的话。
         empty_hint: items.is_empty().then(|| "暂时没有到期要补的".to_string()),
@@ -2128,7 +2132,7 @@ pub fn series_section(
     }
     Some(crate::view::Section {
         kind: "series_chart".into(),
-        title: view_title(pkg, "series_chart"),
+        title: view_title(pkg, "series_chart", None),
         // 一条线都画不出来才折叠(spec §5.6)。只要有一条,就展开 —— 剩下那些
         // 没查过的由 `missing` 自己说。
         empty_hint: groups
@@ -2234,7 +2238,7 @@ pub fn timeline_section(
         .collect();
     Some(crate::view::Section {
         kind: "timeline".into(),
-        title: view_title(pkg, "timeline"),
+        title: view_title(pkg, "timeline", None),
         // 一件事都放不上去、而且保险箱里连一条医嘱都没读到,才说「还没有可以放上
         // 时间轴的记录」。读到过处方却这么说,是一句不实的话 —— 那位用户明明已经
         // 把单子交进来了(时间轴上的用药那一层是 C5 的事)。
@@ -2242,6 +2246,546 @@ pub fn timeline_section(
             || "还没有可以放上时间轴的记录,导入门诊病历或出院小结后这里会自动长出来".to_string(),
         ),
         body: serde_json::json!({ "years": years, "undated": undated }),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// 狼疮肾炎治疗里程碑(spec §5.5)。四种 kind:`proteinuria_drop_pct` /
+// `upcr_below` / `gfr_pct_of_baseline` / `biopsy_indication`。
+//
+// 阈值、年份、出处、标签**全在包里**(sle-clinical-sources §E.1/§E.2 标 VERBATIM
+// 的那几行),引擎只做三件事:挑点、算比值、说清楚是拿哪条序列的哪几行算的。
+//
+// **一条都不下「缓解」结论**(global-constraints):逐条 ✔/✘/未知 + 实际值 + 证据。
+// 「完全肾应答」这种词只可能是包里 `label` 的原话,不是引擎的判断。
+//
+// **UPCR 与 24h 尿蛋白永远分开**(spec §11 的已知边界):两个量,不同的数量级、
+// 不同的单位。降幅那两条各自在**自己那条序列内**算比值(基线与复查必须来自同一条
+// 线),`upcr_below` 只读 UPCR —— 拿 0.35 g/24h 去和 700 mg/g 比是一句编出来的话。
+// ---------------------------------------------------------------------------
+
+/// 里程碑那块在包 `views.sections` 里的 id。达标表与里程碑同为 `checklist`
+/// (复用同一套渲染),标题只能靠这个区分。
+const MILESTONES_VIEW_ID: &str = "ln_milestones";
+
+/// 一条里程碑这次的结论。
+struct MsOut {
+    verdict: Verdict,
+    /// 算出来的那个数(降幅/百分比是 `%`,阈值类是**规范单位**下的值 —— 与阈值
+    /// 同一把尺)。未知时 `null`。纸上印的那个数在 `evidence` 里。
+    actual: serde_json::Value,
+    /// `actual` 的单位(`"%"` 或这条序列的规范单位)。
+    actual_unit: Option<String>,
+    /// `actual` 是哪天的。
+    actual_at: Option<String>,
+    /// 未知的理由;`Yes`/`No` 时为 `None` —— 未知不带理由的话,界面上的「未知」
+    /// 和「这条我们不打算算」长得一样。
+    reason: Option<String>,
+    /// 这一条是拿**哪条序列**答的。两个蛋白尿指标永不合并,所以必须说出来。
+    analyte: Option<String>,
+    /// 算这一条用到的那几行。降幅类固定是 `[基线, 复查]`(顺序是约定,渲染层按
+    /// 这个读)。
+    evidence: Vec<Evidence>,
+}
+
+impl MsOut {
+    fn unknown(why: impl Into<String>) -> MsOut {
+        MsOut {
+            verdict: Verdict::Unknown,
+            actual: serde_json::Value::Null,
+            actual_unit: None,
+            actual_at: None,
+            reason: Some(why.into()),
+            analyte: None,
+            evidence: Vec::new(),
+        }
+    }
+
+    fn judged(
+        ok: bool,
+        actual: f64,
+        unit: &str,
+        at: NaiveDate,
+        analyte: &str,
+        evidence: Vec<Evidence>,
+    ) -> MsOut {
+        MsOut {
+            verdict: if ok { Verdict::Yes } else { Verdict::No },
+            actual: serde_json::json!(actual),
+            actual_unit: Some(unit.to_string()),
+            actual_at: Some(at.to_string()),
+            reason: None,
+            analyte: Some(analyte.to_string()),
+            evidence,
+        }
+    }
+}
+
+/// 显示用的一位小数。**只管显示**:判定拿的是没四舍五入的那个数,不然 79.96%
+/// 会先变成 80.0% 再被判成达标。
+fn round1(x: f64) -> f64 {
+    (x * 10.0).round() / 10.0
+}
+
+/// 医院出的那条序列(自测点是另一个桶,不参与 —— 家里量的那一次不是化验单上的
+/// 结果)。一个 key 在这一侧只会有一条(`parser` 的 `GroupKey::Matched`)。
+fn hospital_series<'c>(ctx: &'c Ctx<'_>, key: &str) -> Option<&'c parser::AnalyteSeries> {
+    ctx.clinical
+        .labs
+        .iter()
+        .find(|s| s.analyte_key.as_deref() == Some(key) && !s.self_measured)
+}
+
+/// 这条序列上**能拿来算里程碑**的点,按日期升序(同一天保持文档顺序)。三道门,
+/// 方向都是同一个 —— 宁可算不出来,不可算出一个假的达标:
+/// - 没有日期的点落不进时间轴上的任何一个窗口(与 `in_window` 同一条);
+/// - **今天之后**的日期不算:一张被 OCR 读成 2027 年的单子会凭空造出一个里程碑;
+/// - 逐字验不过的点(`unverified`)不算:拿一个可能是幻觉的数字宣布「达标了」,
+///   比空着更糟(与复查提醒里 `latest_done` 不认 unverified fact 同一条)。
+fn usable_points<'c>(
+    ctx: &Ctx<'_>,
+    s: &'c parser::AnalyteSeries,
+) -> Vec<(NaiveDate, &'c parser::LabPoint)> {
+    let mut out: Vec<(NaiveDate, &parser::LabPoint)> = s
+        .points
+        .iter()
+        .filter(|p| !p.unverified)
+        .filter_map(|p| p.date.filter(|d| *d <= ctx.today).map(|d| (d, p)))
+        .collect();
+    out.sort_by_key(|(d, _)| *d);
+    out
+}
+
+/// 这一条里程碑点名了哪几个分析物 key。三种写法都认(与活动度那边同一套约定):
+/// `"key": "x"`、`"any_of": ["x","y"]`、`"any_of": [{"key":"x","threshold":…}]`。
+fn milestone_keys(it: &serde_json::Value) -> Vec<&str> {
+    let mut keys: Vec<&str> = it
+        .get("any_of")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().or_else(|| x.get("key").and_then(|k| k.as_str())))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(k) = it.get("key").and_then(|x| x.as_str()) {
+        keys.push(k);
+    }
+    keys
+}
+
+/// 出不出这块:**仅当肾受累、或保险箱里有蛋白尿结果**(spec §5.5)。
+///
+/// 「肾」是包里 `from.organ` 写的那个器官,蛋白尿那几项是包里**除 GFR 之外**的
+/// 条目点名的 key —— 引擎不写死 `urine_pcr` 这种字符串,否则换个病就得改引擎。
+/// GFR 不算开场条件:一张普通的肾功能单子不该让一整块全是「未知」的里程碑长出来。
+fn milestones_apply(ctx: &Ctx<'_>, ms: &[serde_json::Value]) -> bool {
+    let organ_hit = ms
+        .iter()
+        .filter_map(|it| it.get("from").map(|f| str_field(f, "organ")))
+        .filter(|o| !o.is_empty())
+        .any(|organ| {
+            let want = terminology::normalize_term(organ);
+            ctx.facts.iter().any(|(_, _, f)| {
+                f.r#type == "organ_involvement"
+                    && !f.unverified
+                    && terminology::normalize_term(&f.organ).contains(want.as_str())
+            })
+        });
+    organ_hit
+        || ms
+            .iter()
+            .filter(|it| str_field(it, "kind") != "gfr_pct_of_baseline")
+            .flat_map(milestone_keys)
+            .any(|k| hospital_series(ctx, k).is_some_and(|s| !s.points.is_empty()))
+}
+
+/// 起算日 T0 与它的由来(spec §5.5)。**两个来源取更早的那个**:
+/// - 最早一条 `organ_involvement` fact —— 器官是包里 `from.organ` 写的那个;
+/// - 包里 `from.drug_classes` 点名的那几类药,最早一次处方(`MedSpan.start`)。
+///
+/// 口径写在**条目自己**的 `from` 里(`rules.milestones` 是个数组,没有块级配置的
+/// 位置),所以每条都自带起算日,界面上也就能逐行说出「这一条从哪天起算」。
+///
+/// 两边都拿不到就是 `None`,依赖它的条目一律未知 —— 整条时间轴都挂在这一天上,
+/// 差一个月就能把「3 个月没达标」变成「达标了」。
+fn milestone_t0(
+    ctx: &Ctx<'_>,
+    pkg: &crate::package::Package,
+    it: &serde_json::Value,
+) -> Option<(NaiveDate, String)> {
+    let spec = it.get("from")?;
+    let mut best: Option<(NaiveDate, String)> = None;
+    let mut offer = |d: NaiveDate, why: String| {
+        if best.as_ref().is_none_or(|(cur, _)| d < *cur) {
+            best = Some((d, why));
+        }
+    };
+    let organ = str_field(spec, "organ");
+    if !organ.is_empty() {
+        let want = terminology::normalize_term(organ);
+        for (_, doc_date, f) in &ctx.facts {
+            // 逐字验不过的 fact 不算:抽取幻觉出来的一句「肾受累」会把整条时间轴
+            // 往前挪(与 `latest_done` 同一条)。
+            if f.r#type != "organ_involvement" || f.unverified {
+                continue;
+            }
+            if !terminology::normalize_term(&f.organ).contains(want.as_str()) {
+                continue;
+            }
+            // fact 自己的日期优先,没写才用文档日期兜底。
+            if let Some(d) = f
+                .date
+                .parse::<NaiveDate>()
+                .ok()
+                .or(*doc_date)
+                .filter(|d| *d <= ctx.today)
+            {
+                // 器官名用**病历自己的写法**,不在引擎里编一个中文名。
+                offer(d, format!("最早一条器官受累记录:{}", f.organ));
+            }
+        }
+    }
+    for m in &ctx.clinical.meds {
+        let classes = str_list(spec, "drug_classes");
+        if !drug_class(pkg, m).is_some_and(|d| classes.contains(&d.class.as_str())) {
+            continue;
+        }
+        if let Some(d) = m.start.filter(|d| *d <= ctx.today) {
+            offer(d, format!("最早一次免疫抑制剂处方:{}", m.name));
+        }
+    }
+    best
+}
+
+/// 基线:**治疗开始前最后一次**结果;T0 当天或之前一次都没有时,退回 T0 之后第一次。
+/// 两边都限定在 T0 ± `window` 天内(天数由包给)。
+///
+/// 不取「离 T0 最近的那次」—— 那会在 T0 前后各有一次时挑到治疗**之后**的那个,
+/// 而治疗一开始蛋白尿就在降,拿它当基线会把后面每一条降幅都算小。
+fn baseline_point<'c>(
+    ctx: &Ctx<'_>,
+    s: &'c parser::AnalyteSeries,
+    t0: NaiveDate,
+    window: i64,
+) -> Option<(NaiveDate, &'c parser::LabPoint)> {
+    let lo = t0.checked_sub_signed(chrono::TimeDelta::try_days(window)?)?;
+    let hi = add_days(t0, window)?;
+    let pts = usable_points(ctx, s);
+    pts.iter()
+        .rfind(|(d, _)| *d >= lo && *d <= t0)
+        .or_else(|| pts.iter().find(|(d, _)| *d >= lo && *d <= hi))
+        .copied()
+}
+
+/// 蛋白尿较基线降了多少(§E.2:3 个月 ≥25%、6 个月 ≥50%)。
+///
+/// **两条序列各算各的,取降得最多的那一条** —— 24h 尿蛋白与 UPCR 是两个量,混着
+/// 算(基线取 A、复查取 B)会得出一个谁也没测过的降幅。
+///
+/// 窗口是 `(T0, T0+by_days]`,取窗口内**降得最多的那次**:原文是「by 3 months」,
+/// 问的是到那时为止达到过没有,不是「第 90 天那次是多少」。
+fn drop_pct_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, String)>) -> MsOut {
+    let Some((t0, _)) = t0 else {
+        return MsOut::unknown("还不知道从哪天起算(没有肾受累记录,也没读到免疫抑制剂处方)");
+    };
+    let Some(target) = it.get("drop_pct").and_then(serde_json::Value::as_f64) else {
+        return MsOut::unknown("这一条的目标降幅还没核实,暂时比不了");
+    };
+    let (Some(by), Some(window)) = (
+        it.get("by_days").and_then(serde_json::Value::as_i64),
+        it.get("from")
+            .and_then(|f| f.get("baseline_window_days"))
+            .and_then(serde_json::Value::as_i64),
+    ) else {
+        return MsOut::unknown("包里没写该在第几天看,或没写基线的取值窗口");
+    };
+    let Some(deadline) = add_days(*t0, by) else {
+        return MsOut::unknown("包里的天数算出来越界了,这一条先不算");
+    };
+
+    let mut best: Option<(f64, NaiveDate, &str, Vec<Evidence>)> = None;
+    let mut saw_baseline = false;
+    for key in milestone_keys(it) {
+        let Some(s) = hospital_series(ctx, key) else {
+            continue;
+        };
+        let Some((b_at, b)) = baseline_point(ctx, s, *t0, window) else {
+            continue;
+        };
+        // 0 或负的基线除不得(报告印错、OCR 读错都可能)。
+        if !(b.value.is_finite() && b.value > 0.0) {
+            continue;
+        }
+        saw_baseline = true;
+        for (d, p) in usable_points(ctx, s) {
+            // 基线那一次本身不是复查:它跟自己比永远是 0%。
+            if d <= b_at || d <= *t0 || d > deadline {
+                continue;
+            }
+            // **同一条序列内用印刷值算比值**:序列内所有点保证同单位
+            // (`AnalyteSeries::value` 的硬不变量),比值因此与单位无关,而且这就是
+            // 医生在纸上能自己验算的那两个数。
+            let drop = (b.value - p.value) / b.value * 100.0;
+            if best.as_ref().is_none_or(|(cur, _, _, _)| drop > *cur) {
+                best = Some((
+                    drop,
+                    d,
+                    key,
+                    vec![lab_evidence(s, b, key), lab_evidence(s, p, key)],
+                ));
+            }
+        }
+    }
+    match best {
+        Some((drop, at, key, evidence)) => {
+            MsOut::judged(drop >= target, round1(drop), "%", at, key, evidence)
+        }
+        None if !saw_baseline => MsOut::unknown(format!(
+            "起算日前后 {window} 天内没有蛋白尿结果,没有基线可比"
+        )),
+        None if ctx.today <= deadline => {
+            MsOut::unknown(format!("还没到第 {by} 天({deadline}),到时候这里会自动算"))
+        }
+        None => MsOut::unknown(format!("起算后到第 {by} 天之间没有复查结果")),
+    }
+}
+
+/// 某个指标低于阈值(§E.2:12 个月 UPCR <700 mg/g;完全肾应答 = 任一时点 <500 mg/g)。
+///
+/// 写了 `by_days` 就是「到第 N 天那次」—— 取窗口内**最后**一次,不是最低的那次:
+/// 「12 个月的目标是 <700」问的是那个时点的水平,中途探到过 600 又回到 900,不算
+/// 达到这条目标。没写 `by_days` 就是「任一时点」,取**第一次**达到的那天。
+fn below_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, String)>) -> MsOut {
+    let key = str_field(it, "key");
+    let Some(thr_raw) = it.get("threshold").and_then(serde_json::Value::as_f64) else {
+        return MsOut::unknown("这一条的阈值还没核实,暂时比不了");
+    };
+    let unit = str_field(it, "canonical_unit");
+    let Some(s) = hospital_series(ctx, key) else {
+        return MsOut::unknown("保险箱里还没有这一项的结果");
+    };
+    // 阈值按**源行单位**写在包里,换算到这条序列的规范单位再比(与活动度的
+    // `gt`/`lt` 同一条路)。换不出来就是比不了,绝不拿两个单位的数硬比。
+    let Some(thr) = s
+        .unit_canonical
+        .as_deref()
+        .and_then(|u| threshold_in(unit, u, key, thr_raw))
+    else {
+        return MsOut::unknown(format!("这一项的单位换算不成 {unit},比不了"));
+    };
+    let canon = s.unit_canonical.clone().unwrap_or_default();
+    // 只有换算得出规范值的点能拿来和阈值比。
+    let pts: Vec<(NaiveDate, &parser::LabPoint, f64)> = usable_points(ctx, s)
+        .into_iter()
+        .filter_map(|(d, p)| p.value_canonical.map(|v| (d, p, v)))
+        .collect();
+
+    match it.get("by_days").and_then(serde_json::Value::as_i64) {
+        Some(by) => {
+            let Some((t0, _)) = t0 else {
+                return MsOut::unknown("还不知道从哪天起算(没有肾受累记录,也没读到免疫抑制剂处方)");
+            };
+            let Some(deadline) = add_days(*t0, by) else {
+                return MsOut::unknown("包里的天数算出来越界了,这一条先不算");
+            };
+            match pts.iter().rfind(|(d, _, _)| *d > *t0 && *d <= deadline) {
+                Some((d, p, v)) => {
+                    MsOut::judged(*v < thr, *v, &canon, *d, key, vec![lab_evidence(s, p, key)])
+                }
+                None if ctx.today <= deadline => {
+                    MsOut::unknown(format!("还没到第 {by} 天({deadline}),到时候这里会自动算"))
+                }
+                None => MsOut::unknown(format!("起算后到第 {by} 天之间没有这一项的结果")),
+            }
+        }
+        // 「任一时点」:第一次达到的那天就是答案;一次都没达到时,把**最低**的那次
+        // 说出来 —— 离目标最近的那个数,比只说一句「没达到」有用。
+        None => match pts.iter().find(|(_, _, v)| *v < thr).or_else(|| {
+            pts.iter()
+                .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+        }) {
+            Some((d, p, v)) => {
+                MsOut::judged(*v < thr, *v, &canon, *d, key, vec![lab_evidence(s, p, key)])
+            }
+            None => MsOut::unknown("保险箱里还没有能和这个阈值比的结果"),
+        },
+    }
+}
+
+/// GFR 还剩基线的百分之几(§E.2 逐字:「GFR to ≥80% of baseline value」)。
+///
+/// **基线 = 保险箱里最早一次有日期的 eGFR**,不是 T0 附近那一次:肾功能的基线是
+/// 「这个人本来的水平」,而档案里最早那次通常就是确诊前后测的。只有一次结果时,
+/// 基线和现在是同一个数,比出来的 100% 什么也没说 —— 如实答未知。
+fn gfr_item(ctx: &Ctx<'_>, it: &serde_json::Value) -> MsOut {
+    let key = str_field(it, "key");
+    let Some(target) = it.get("pct").and_then(serde_json::Value::as_f64) else {
+        return MsOut::unknown("这一条的目标百分比还没核实,暂时比不了");
+    };
+    let Some(s) = hospital_series(ctx, key) else {
+        return MsOut::unknown("保险箱里还没有这一项的结果,没有基线可比");
+    };
+    let pts = usable_points(ctx, s);
+    let (Some((base_at, base)), Some((at, now))) = (pts.first(), pts.last()) else {
+        return MsOut::unknown("保险箱里还没有这一项的结果,没有基线可比");
+    };
+    if base_at == at {
+        return MsOut::unknown("只做过一次,它自己就是基线,比不出变化");
+    }
+    if !(base.value.is_finite() && base.value > 0.0) {
+        return MsOut::unknown("基线那一次读出来不是个能做分母的数");
+    }
+    // 同一条序列内用印刷值算比值(与降幅那条同一条理由)。
+    let pct = now.value / base.value * 100.0;
+    MsOut::judged(
+        pct >= target,
+        round1(pct),
+        "%",
+        *at,
+        key,
+        vec![lab_evidence(s, base, key), lab_evidence(s, now, key)],
+    )
+}
+
+/// 活检指征(§E.1 rec 1 逐字:「persistent proteinuria (≥0.5 g/24 h or urine
+/// protein-creatinine ratio [UPCR] ≥500 mg/g)」)。
+///
+/// 引擎看的是**每条序列最近一次**结果,答的是「现在还满足不满足这条指征」。
+/// ⚠️ 原文的 *persistent* 没有量化(几次、隔多久),所以引擎不替它定义「持续」——
+/// 自己定一个天数出来就是发明一条指南里没有的规则。包里 `note` 要把这件事说给医生看。
+///
+/// 任一指标达到阈值就是 ✔(原文是 or),都在阈下才是 ✘,一个都比不出来是未知。
+fn biopsy_item(ctx: &Ctx<'_>, it: &serde_json::Value) -> MsOut {
+    let mut met: Option<MsOut> = None;
+    let mut below: Vec<(NaiveDate, f64, String, &str, Evidence)> = Vec::new();
+    for spec in it
+        .get("any_of")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let key = str_field(spec, "key");
+        let unit = str_field(spec, "canonical_unit");
+        let (Some(thr_raw), Some(s)) = (
+            spec.get("threshold").and_then(serde_json::Value::as_f64),
+            hospital_series(ctx, key),
+        ) else {
+            continue;
+        };
+        let Some(thr) = s
+            .unit_canonical
+            .as_deref()
+            .and_then(|u| threshold_in(unit, u, key, thr_raw))
+        else {
+            continue;
+        };
+        let Some((d, p, v)) = usable_points(ctx, s)
+            .into_iter()
+            .filter_map(|(d, p)| p.value_canonical.map(|v| (d, p, v)))
+            .next_back()
+        else {
+            continue;
+        };
+        let canon = s.unit_canonical.clone().unwrap_or_default();
+        let e = lab_evidence(s, p, key);
+        if v >= thr {
+            // 先达到阈值的那一条答这一行(原文是 or);另一条照样留在证据里。
+            if met.is_none() {
+                met = Some(MsOut::judged(true, v, &canon, d, key, vec![e]));
+            }
+        } else {
+            below.push((d, v, canon, key, e));
+        }
+    }
+    if let Some(mut hit) = met {
+        hit.evidence.extend(below.into_iter().map(|(.., e)| e));
+        return hit;
+    }
+    // 都在阈下:拿**最近**那一次当这一行的数,其余留在证据里。
+    let Some(i) = (0..below.len()).max_by_key(|i| below[*i].0) else {
+        return MsOut::unknown("保险箱里还没有能和这个阈值比的结果");
+    };
+    let (at, v, unit, key) = (below[i].0, below[i].1, below[i].2.clone(), below[i].3);
+    MsOut {
+        evidence: below.into_iter().map(|(.., e)| e).collect(),
+        ..MsOut::judged(false, v, &unit, at, key, Vec::new())
+    }
+}
+
+/// 求一条里程碑,产出**包里那条规则的全部字段**(`label`/`source`/`year`/`note`/
+/// 阈值都是包作者写的,引擎逐个转抄只会漏),再盖上算出来的这几个 —— 与复查提醒
+/// `eval_monitor` 同一套做法。
+///
+/// `None` = 这一条压根不是个对象(包写坏了),不出现在列表里。
+fn eval_milestone(
+    ctx: &Ctx<'_>,
+    pkg: &crate::package::Package,
+    it: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let t0 = milestone_t0(ctx, pkg, it);
+    let o = match str_field(it, "kind") {
+        "proteinuria_drop_pct" => drop_pct_item(ctx, it, t0.as_ref()),
+        "upcr_below" => below_item(ctx, it, t0.as_ref()),
+        "gfr_pct_of_baseline" => gfr_item(ctx, it),
+        "biopsy_indication" => biopsy_item(ctx, it),
+        // 认不出的 kind 是未知、不是 ✘:包可以先于引擎加规则类型(`min_engine`
+        // 管的是**必须**懂的那些)。
+        _ => MsOut::unknown("这一条规则本机还算不了,更新 App 后会自动补上"),
+    };
+    let mut row = it.clone();
+    let obj = row.as_object_mut()?;
+    obj.insert("verdict".into(), serde_json::json!(o.verdict.as_str()));
+    obj.insert("actual".into(), o.actual);
+    obj.insert("actual_unit".into(), serde_json::json!(o.actual_unit));
+    obj.insert("actual_at".into(), serde_json::json!(o.actual_at));
+    obj.insert("reason".into(), serde_json::json!(o.reason));
+    obj.insert("analyte".into(), serde_json::json!(o.analyte));
+    obj.insert("evidence".into(), serde_json::json!(o.evidence));
+    obj.insert(
+        "t0".into(),
+        serde_json::json!(t0.as_ref().map(|(d, _)| d.to_string())),
+    );
+    obj.insert("t0_basis".into(), serde_json::json!(t0.map(|(_, why)| why)));
+    Some(row)
+}
+
+/// 狼疮肾炎治疗里程碑(spec §5.5)。**只在肾受累或有蛋白尿结果时才出**
+/// (见 [`milestones_apply`])。
+///
+/// `body` 的形状(Task 21 的渲染引擎按这一份读):包里那条规则的**全部字段原样带出**
+/// (`id`/`kind`/`label`/`source`/`year`/`note`/阈值…),再盖上引擎算出来的这几个:
+/// ```text
+/// {"items":[{…包里的原字段…,
+///            "verdict":"yes|no|unknown",
+///            "actual": 数值|null,        // 降幅/百分比是 %,阈值类是规范单位下的值
+///            "actual_unit":"%"|"mg/g"|…, // `actual` 的单位
+///            "actual_at":"YYYY-MM-DD"|null,
+///            "reason":"…"|null,          // 只有 unknown 有
+///            "analyte":"urine_pcr"|null, // 拿哪条序列答的(两个蛋白尿指标不合并)
+///            "evidence":[…],             // 降幅类固定是 [基线, 复查]
+///            "t0":"YYYY-MM-DD"|null,     // 起算日
+///            "t0_basis":"…"|null}]}      // 起算日是怎么来的
+/// ```
+/// 这块与达标表同为 `kind: "checklist"`(复用同一套渲染),渲染层按 body 里是
+/// `states` 还是 `items` 区分。标题取 `views.sections` 里 `id == "ln_milestones"`
+/// 那一条。
+pub fn milestones_section(
+    ctx: &Ctx<'_>,
+    pkg: &crate::package::Package,
+) -> Option<crate::view::Section> {
+    let ms = &pkg.rules.milestones;
+    if ms.is_empty() || !milestones_apply(ctx, ms) {
+        return None;
+    }
+    Some(crate::view::Section {
+        kind: "checklist".into(),
+        title: view_title(pkg, "checklist", Some(MILESTONES_VIEW_ID)),
+        // 逐条对照永远有意义,未知也是答案(与达标表同一条)。
+        empty_hint: None,
+        body: serde_json::json!({
+            "items": ms.iter().filter_map(|it| eval_milestone(ctx, pkg, it)).collect::<Vec<_>>(),
+        }),
     })
 }
 

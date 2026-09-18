@@ -43,6 +43,29 @@ pub fn activity_pkg() -> Package {
     serde_json::from_str(ACTIVITY).expect("夹具包必须解析")
 }
 
+/// 包 `terms.analytes` → 运行时术语覆盖层的条目。**真机上这一步是 Task 20 的 FFI
+/// 在装包时做的**,测试里手动做一遍 —— 不做的话包自己定义的分析物(尿红细胞/尿白
+/// 细胞按高倍视野计数)连认都认不出来,用到它们的规则一律出「未知」。
+///
+/// `category` 固定 `lab`:包的 `terms.analytes` 只能定义化验项(药物走 `drugs[]`),
+/// 这不是从包里读出来的,所以也不该由包说了算。
+pub fn overlay_entries(pkg: &Package) -> Vec<terminology::Entry> {
+    pkg.terms
+        .analytes
+        .iter()
+        .map(|a| {
+            serde_json::from_value(serde_json::json!({
+                "key": a.key, "canonical_name": a.name, "category": "lab",
+                "panel": a.panel, "codes": {}, "canonical_unit": a.canonical_unit,
+                "units": a.units.iter().map(|u| serde_json::json!(
+                    {"unit": u.unit, "slope": u.slope, "intercept": u.intercept})).collect::<Vec<_>>(),
+                "aliases": a.aliases,
+            }))
+            .expect("覆盖层条目必须解析")
+        })
+        .collect()
+}
+
 /// 把 `(日期, 文本)` 列表变成 `SourceDoc`。文本**借**调用方那一份(元组里的
 /// `String` 自己就是所有者),不复制也不泄漏 —— 调用方只要让 `docs` 活到用完,
 /// 借用检查自然成立。
@@ -86,6 +109,7 @@ pub fn full_json() -> serde_json::Value {
     v["rules"]["states"] = serde_json::from_str(STATES).expect("达标表必须解析");
     v["rules"]["targets"] = serde_json::from_str(TARGETS).expect("目标值必须解析");
     v["rules"]["monitoring"] = serde_json::from_str(MONITORING).expect("复查提醒规则必须解析");
+    v["rules"]["milestones"] = serde_json::from_str(MILESTONES).expect("里程碑规则必须解析");
     v["drugs"] = serde_json::from_str(DRUGS).expect("药物表必须解析");
     // 规则里引用到的出处都得在 `manifest.sources` 里声明,否则 `ProfileView.sources`
     // 解不出来,界面上那个出处 id 点开是空的(`reminders.rs` 的守卫用例钉住这件事)。
@@ -106,6 +130,10 @@ pub fn full_json() -> serde_json::Value {
     // 判断 —— 没点名的类型一律 `normal`。
     sections.push(serde_json::json!({"kind":"timeline","title":"病程时间轴",
                                      "severity_high":["flare","hospitalization"]}));
+    // 第二块 `checklist`(里程碑)靠 `id` 与达标表区分 —— 两块复用同一套渲染,
+    // 标题按 kind 取的话谁在前谁就顶掉另一个(见 `rules::view_title`)。
+    sections.push(serde_json::json!({"kind":"checklist","id":"ln_milestones",
+                                     "title":"狼疮肾炎治疗里程碑"}));
     v
 }
 
@@ -126,17 +154,36 @@ pub const MARKERS: &str = r#"[
 /// —— 它是「包定义了一个内置已有的 key」那种情况:别名可以加,`name`/`loinc`/`units`
 /// 一律以内置为准(`terminology::set_overlay` 的红线)。这条夹具因此顺带钉着
 /// `marker_name` 的内置优先。
+/// ⚠️ `urine_rbc_hpf` / `urine_wbc_hpf` 的别名**故意不写「尿红细胞」「尿白细胞」**:
+/// 内置词典里有按**体积**计数的 `urine_rbc_count`(/uL),而「每高倍视野几个」与它
+/// 没有确定换算(词典 `stool_wbc` 那条 note 是同一条理由)。包抢不走内置的别名
+/// (`terminology::pick_best` 的内置优先),写上去只会让这一项在有些报告上悄悄
+/// 解析成另一个概念 —— 所以别名按中国尿沉渣报告单印的那几种写法给。
 pub const PKG_ANALYTES: &str = r#"[
   {"key":"urine_pcr","name":"尿蛋白/肌酐比值","loinc":"2890-2","panel":"肾功能",
    "canonical_unit":"mg/g","units":[{"unit":"mg/mmol","slope":8.84,"intercept":0}],
-   "aliases":["尿蛋白肌酐比","UPCR","尿蛋白/肌酐"],"note":"待核 LOINC"}]"#;
+   "aliases":["尿蛋白肌酐比","UPCR","尿蛋白/肌酐"],"note":"待核 LOINC"},
+  {"key":"urine_rbc_hpf","name":"尿红细胞(高倍视野)","panel":"尿液",
+   "canonical_unit":"/[HPF]","units":[{"unit":"/[HPF]","slope":1,"intercept":0},
+                                      {"unit":"/HP","slope":1,"intercept":0}],
+   "aliases":["高倍镜下红细胞","镜检红细胞","尿沉渣镜检红细胞"],
+   "note":"与内置按体积计数的尿红细胞(/uL)之间没有确定换算,故另立一条"},
+  {"key":"urine_wbc_hpf","name":"尿白细胞(高倍视野)","panel":"尿液",
+   "canonical_unit":"/[HPF]","units":[{"unit":"/[HPF]","slope":1,"intercept":0},
+                                      {"unit":"/HP","slope":1,"intercept":0}],
+   "aliases":["高倍镜下白细胞","镜检白细胞","尿沉渣镜检白细胞"],
+   "note":"同上"}]"#;
 
 /// [`STATES`] / [`TARGETS`] / [`MONITORING`] 里引用到的出处,`id` 与
 /// `.superpowers/sdd/disease-profile/sle-clinical-sources.md` 里的编号一一对应。
 /// [`ACTIVITY`] 自带的 `S1` 不在这里(那份壳自己声明了)。
-pub const SOURCES: [(&str, &str); 9] = [
+pub const SOURCES: [(&str, &str); 10] = [
     ("S3", "EULAR 2019 SLE recommendations, Ann Rheum Dis 2019"),
     ("S4", "EULAR 2023 update, Ann Rheum Dis 2024"),
+    (
+        "S8",
+        "EULAR recommendations for the management of SLE with kidney involvement: 2025 update, Ann Rheum Dis 2026;85:75–90(doi 10.1016/j.ard.2025.09.007)",
+    ),
     ("S5", "DORIS 2021 definition of remission, Box 1"),
     ("S6", "LLDAS, Franklyn et al. 2016"),
     (
@@ -263,6 +310,50 @@ pub const MONITORING: &str = r#"[
    "action":"做一次骨密度 / FRAX 骨折风险评估",
    "basis":"guideline","source":"S_ACR_GIOP2022","verify_status":"pending",
    "note":"人群定义「>3 months treatment with GCs ≥2.5 mg daily」是 ACR 2022 GIOP 摘要逐字;但「≥40 岁用 FRAX + 骨密度筛查」那句只核到第三方摘要页、没核到指南原文(§D.1),所以整条 pending"}]"#;
+
+/// 狼疮肾炎治疗里程碑(spec §5.5),逐条取自 sle-clinical-sources §E.1/§E.2 里标
+/// **VERBATIM** 的行。每条带 `source` 与 `year`:同一个概念在 2019/2023/2025 三份
+/// 指南里是三个数(§E.2 的 ⚠️ 框),不带年份的阈值说不清自己是哪一份的。
+///
+/// `from` 是**起算日(T0)的口径**,写在每条自己身上:`rules.milestones` 是个数组,
+/// 没有块级配置的位置,而每条自带起算日的好处是界面能逐行说出「这一条从哪天起算」。
+///
+/// 「3/6/12 个月」→ 90/180/365 天是**包里的换算**,源文只写 months —— 所以写进
+/// `note`,别让它看起来像指南给的天数。
+pub const MILESTONES: &str = r#"[
+  {"id":"upr_drop_25_3m","kind":"proteinuria_drop_pct","label":"3 个月蛋白尿较基线下降 ≥25%",
+   "any_of":["urine_protein_24h","urine_pcr"],"drop_pct":25,"by_days":90,
+   "from":{"organ":"kidney","baseline_window_days":30,
+           "drug_classes":["mmf","aza","ctx","mtx","cni","belimumab","telitacicept","rtx"]},
+   "source":"S8","year":2025,
+   "note":"§E.2 rec 2 逐字:「a reduction in proteinuria of at least 25% by 3 months (2b/C), 50% by 6 months (2a/B), and a UPCR target <700 mg/g by 12 months (1b/B)」。「3 个月」按 90 天算是包里的换算,原文只写 months。24h 尿蛋白与 UPCR 各自跟自己的基线比,不合并"},
+  {"id":"upr_drop_50_6m","kind":"proteinuria_drop_pct","label":"6 个月蛋白尿较基线下降 ≥50%(部分应答)",
+   "any_of":["urine_protein_24h","urine_pcr"],"drop_pct":50,"by_days":180,
+   "from":{"organ":"kidney","baseline_window_days":30,
+           "drug_classes":["mmf","aza","ctx","mtx","cni","belimumab","telitacicept","rtx"]},
+   "source":"S8","year":2025,
+   "note":"§E.2 叙述逐字把这一档称作 partial response:「the goals of 25% reduction by 3 months, 50% by 6 months (partial response)」。「6 个月」按 180 天算是包里的换算"},
+  {"id":"upcr_below_700_12m","kind":"upcr_below","label":"12 个月 UPCR <700 mg/g",
+   "key":"urine_pcr","threshold":700,"canonical_unit":"mg/g","by_days":365,
+   "from":{"organ":"kidney","drug_classes":["mmf","aza","ctx","mtx","cni","belimumab","telitacicept","rtx"]},
+   "source":"S8","year":2025,
+   "note":"§E.2 逐字:「an absolute UPCR value of <700 mg/g at 12 months remained unchanged; a change from the range of 500 to 700 mg (referred in the 2019 recommendations) was decided for the sake of simplification」。EULAR 2023 复述 2019 时写的是 500–700 mg/day,与这一条不是同一个数。「12 个月」按 365 天算是包里的换算"},
+  {"id":"upcr_below_500_any","kind":"upcr_below","label":"完全肾应答:任一时点 UPCR <500 mg/g",
+   "key":"urine_pcr","threshold":500,"canonical_unit":"mg/g",
+   "source":"S8","year":2025,
+   "note":"§E.2 逐字:「Complete renal response should be defined as UPCR <500 mg/g at any time point.」KDIGO 2024(Figure 11)的完全缓解口径是 PCR <0.5 g/g = 同一个数,但它另外要求肾功能在基线 ±10%–15% 内 —— 那一半在 gfr_80_baseline 那条(两份指南的肾功能条件本身也不一样,§E.2 的 ⚠️ 框)"},
+  {"id":"upr24_below_500_any","kind":"upcr_below","label":"旧口径(EULAR 2019):24 小时尿蛋白 <500 mg",
+   "key":"urine_protein_24h","threshold":500,"canonical_unit":"mg/24h",
+   "source":"S3","year":2019,
+   "note":"§E.2 逐字:「complete renal remission (proteinuria <500 mg/24 hours and SCr within 10% from baseline)」。⚠️ 这一条只答**蛋白尿那一半**:另一半「肌酐在基线 10% 以内」与 EULAR 2025 的「GFR ≥ 基线 80%」是两把不同的尺,包里不把它们混成一条。2019 与 2025 的单位也不同(mg/24h vs mg/g),所以另立一条、各带各的年份"},
+  {"id":"gfr_80_baseline","kind":"gfr_pct_of_baseline","label":"GFR 维持在基线的 ≥80%",
+   "key":"egfr","pct":80,"source":"S8","year":2025,
+   "note":"§E.2 逐字:「stabilisation (if not improvement) of GFR to ≥80% of baseline value is desirable within the first 3 months」。⚠️ EULAR 2019/2023 用的是另一把尺(SCr within 10% from baseline),KDIGO 2024 是 ±10%–15% —— 三份不一致(§E.2 的 ⚠️ 框)。基线 = 档案里最早一次有日期的 eGFR"},
+  {"id":"biopsy_indication","kind":"biopsy_indication","label":"肾活检指征:蛋白尿 ≥0.5 g/24h 或 UPCR ≥500 mg/g",
+   "any_of":[{"key":"urine_protein_24h","threshold":0.5,"canonical_unit":"g/24h"},
+             {"key":"urine_pcr","threshold":500,"canonical_unit":"mg/g"}],
+   "source":"S8","year":2025,
+   "note":"§E.1 rec 1 逐字:「Kidney biopsy is recommended in every patient with evidence of kidney involvement, especially in those with persistent proteinuria (≥0.5 g/24 h or urine protein-creatinine ratio [UPCR] ≥500 mg/g) (2b/B)」。原文紧接着说这是 indicative threshold:「the 0.5 g/d threshold should be kept as an indicative threshold to avoid potentially unnecessary biopsies, while not preventing biopsies at lower levels of proteinuria, if indicated」。⚠️ 「persistent(持续)」原文没给次数或天数,这一条看的是**最近一次**结果,不代表指南意义上的「持续」;中国 2019 狼疮肾炎指南同一处写的是严格大于(>0.5 g/24 h、>500 mg/g),恰好等于时两份不一致"}]"#;
 
 /// 与 [`MINIMAL`] 同一个壳,只把 `rules.activity` 填满。section 的标题在
 /// `views.sections` 里(spec §6:标题全来自包,引擎里不写死)。
