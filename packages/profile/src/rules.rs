@@ -2543,8 +2543,17 @@ fn milestone_t0(
                 .or(*doc_date)
                 .filter(|d| *d <= ctx.today)
             {
-                // 器官名用**病历自己的写法**,不在引擎里编一个中文名。
-                offer(d, format!("最早一条器官受累记录:{}", f.organ));
+                // 说给人看的那半句用**病历自己的写法**,与 `timeline_section` 同一条:
+                // `text` 是原文逐字,没有 `text` 的退回 `evidence`(那条唯一的逐字
+                // 锚点)。`organ` 只兜底 —— 它是 prompt 的**英文词表 token**
+                // (`kidney`),是给规则匹配用的,不是病历上的字;印出去就是一句
+                // 机器话(终审 fix round 1 复核追加)。匹配逻辑仍然只看 `organ`。
+                let shown = [&f.text, &f.evidence, &f.organ]
+                    .into_iter()
+                    .map(|x| x.trim())
+                    .find(|x| !x.is_empty())
+                    .unwrap_or_default();
+                offer(d, format!("最早一条器官受累记录:{shown}"));
             }
         }
     }

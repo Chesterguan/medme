@@ -525,13 +525,11 @@ fn a_verified_organ_involvement_fact_anchors_t0_before_the_first_prescription() 
     let it = items_ex(&docs, Some(&ex));
     let r = row(&it, "upr_drop_25_3m");
     assert_eq!(r["t0"], "2024-03-01", "起算日应当取更早的那条器官受累记录");
-    assert!(
-        r["t0_basis"]
-            .as_str()
-            .unwrap_or_default()
-            .starts_with("最早一条器官受累记录"),
-        "起算日的由来要说出是哪一条,实得:{}",
-        r["t0_basis"]
+    // 由来那句话要说**病历上的写法**,不是 prompt 的英文词表 token:医生读到
+    // 「最早一条器官受累记录:kidney」就是读到一句机器话(终审复核追加)。
+    assert_eq!(
+        r["t0_basis"], "最早一条器官受累记录:狼疮性肾炎(IV型)",
+        "起算日的由来要逐字说出病历上那句话"
     );
     // 没有 fact 的那份还是退回处方:证明差别真的来自这条 fact,不是包换了。
     assert_eq!(
