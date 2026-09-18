@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_boot.dart' show vaultOpenedOkThisLaunch;
+import 'package:mobile_flutter/vault_events.dart' show bumpVaultRevision;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -34,11 +35,19 @@ class FirstRunConsent {
     }
   }
 
+  /// 记下「同意过了」,**并把被这道门挡下的活儿叫起来**。
+  ///
+  /// 病程档案的入口卡在同意之前不许拉病种包(`skill_packages.dart` 的闸),而首启时
+  /// 它可能已经跟着「趋势」tab 挂在 tab 栈里、显示着「还没准备好」——它的取数只在
+  /// 挂载和收到「重新取数」信号时跑,没人推一把就会一直停在那句话上。借
+  /// [bumpVaultRevision] 这个各屏本来就听着的全局信号推一下,它自己会再拉一次;
+  /// 此刻还没挂上的(常见路径:同意之后才建主界面)本来就会在挂载时拉,一样不漏。
   static Future<void> markAgreed() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefAgreed, true);
     } catch (_) {}
+    bumpVaultRevision();
   }
 }
 

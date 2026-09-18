@@ -16,6 +16,13 @@
 /// **失败一律静默**:没网、验签不过、被单调闸拒了降级,都退回缓存里已经装着的
 /// 那一份(`profile::cache_load` 每次读都重新验签)。病程档案没有「必须联网」这
 /// 回事,拉包失败不该让任何界面报错。
+///
+/// **同意之前一个字节都不出去。** [SkillPackages.refreshIndex] 开头先问一次
+/// `FirstRunConsent.hasAgreed()`。这两个请求确实是公开的、不带任何身份的(见上面),
+/// 但首启告知门的字面意思就是「同意之前不联网」,不留例外 —— 而入口卡是跟着「趋势」
+/// tab 一起挂进 tab 栈的,它会在用户还在读告知页的时候就把清单和包拉下来。
+/// 被挡下的那一趟由 `FirstRunConsent.markAgreed` 推的那下「重新取数」补上:
+/// 入口卡本来就听着那个信号,醒过来自己会再拉一次。
 library;
 
 import 'dart:convert';
@@ -25,6 +32,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/api_client.dart' show ApiClient, ApiFailed;
 import 'package:mobile_flutter/net.dart';
+import 'package:mobile_flutter/screens/first_run_consent.dart' show FirstRunConsent;
 import 'package:mobile_flutter/src/rust/api/vault_profile.dart' as rust_profile;
 
 /// 一次裸 GET:返回响应体文本。`headers` 是**这条路想带的头**(恒为空,见类文档)
@@ -76,6 +84,8 @@ class SkillPackages {
   /// `MissingPluginException`)与清单的类型检查都必须在这层保护之内。
   Future<List<String>> refreshIndex() async {
     try {
+      // 同意门(见类文档):没同意过就是「这次没刷成」,一个请求都不发。
+      if (!await FirstRunConsent.hasAgreed()) return const [];
       final envelope = await _get(skillsIndexPath);
       // 验过签的清单才有资格拼出下一个请求的路径。
       final verified = jsonDecode(await _verifyIndex(envelope)) as Map<String, dynamic>;

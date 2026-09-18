@@ -15,6 +15,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/vault_events.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 华为 Mate 9 同款的矮屏视口(逻辑分辨率约 360×640)—— 复现内容溢出首屏的场景。
 void useShortPhone(WidgetTester tester) {
@@ -225,5 +227,21 @@ void main() {
       expect(find.textContaining('我 → 云端'), findsWidgets);
       expect(find.textContaining('设置 → 账号'), findsNothing);
     });
+  });
+
+  // ── task-26 F1:同意门挡下的那一趟拉包,要有人补 ──────────────────────────
+  //
+  // 病程档案入口卡在同意之前不许拉病种包(`skill_packages.dart` 的闸),而首启时
+  // 它可能已经挂在 tab 栈里显示着「还没准备好」——它只在挂载和收到「重新取数」
+  // 信号时取数,没人推一把就一直停在那句话上(卡片听这个信号这件事由
+  // `disease_profile_card_test.dart` 的「添加了新病历」那条钉着)。
+  test('同意之后推一次「重新取数」信号', () async {
+    SharedPreferences.setMockInitialValues({});
+    final before = vaultRevision.value;
+
+    await FirstRunConsent.markAgreed();
+
+    expect(await FirstRunConsent.hasAgreed(), isTrue);
+    expect(vaultRevision.value, before + 1, reason: '同意之后要叫醒听着的那几屏');
   });
 }
