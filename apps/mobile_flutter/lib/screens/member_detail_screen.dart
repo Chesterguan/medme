@@ -281,16 +281,29 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
     return days == null ? roleLabel(role) : '${roleLabel(role)} · $days';
   }
 
-  /// 撤销前先问一句——原来点一下就真撤了,一次误触就让正在靠这份授权看病历的
-  /// 人(家人 / 医生)当场看不到。**这里给不出对方的名字**:服务端本来就不存
-  /// grantee 的手机号/姓名(`db.py` 的 `grants_list` 注释),编一个出来是撒谎,
-  /// 所以只能说「对方」——这份病历是谁的(`$_name`)才是这一页原本就有的信息。
+  /// 撤销前先问一句——原来点一下就真撤了,一次误触就没有回头路。
+  ///
+  /// ⚠️ fix round 1:原文案「撤销后,对方立刻看不到」超出了系统实际能兑现的
+  /// 范围。真相是:`Grants.revoke` 只删服务端那一行 grant 记录
+  /// (`services/api/db.py` 的 `grant_delete`,一条 `DELETE`);真正拦人的是
+  /// 下次同步时 `events_pull` 的角色校验(`services/api/app.py:377-378`)——挡住的
+  /// 是**以后**的同步,不是已经到手的东西。对方手机早前拉过的内容已经解密、落进
+  /// 了它自己本地的 CAS(`sync_engine.dart` 的 `RustSyncApi.storeObject` 一路
+  /// 注释),这台设备够不着,删不掉;而家人(editor)是**永久**授权、没有到期时间
+  /// (`Grants.grantFamilyByPhone` 的文档),本机那条按时间过期的清理
+  /// (`Grants.purgeExpired`)也轮不到它。文案照实说:只挡得住"以后",挡不住
+  /// "已经给出去的"。
+  ///
+  /// **给不出对方的名字**:服务端本来就不存 grantee 的手机号/姓名(`db.py` 的
+  /// `grants_list` 注释),编一个出来是撒谎,只能说「对方」。
   Future<bool> _confirmRevoke() async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('撤销这份授权?'),
-        content: Text('撤销后,对方立刻看不到「$_name」的病历。'),
+        title: const Text('不再让对方看?'),
+        content: const Text(
+          '撤销后,对方收不到之后新增的病历;已经同步到对方手机上的,这里收不回来。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),

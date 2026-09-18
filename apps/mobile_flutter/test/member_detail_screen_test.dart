@@ -153,7 +153,7 @@ void main() {
       expect(find.text('还没有人被邀请'), findsOneWidget);
     });
 
-    testWidgets('点撤销:先问一句(说清楚对方会立刻看不到),确认后才调 DELETE、重新拉一次列表', (t) async {
+    testWidgets('点撤销:先问一句(只说挡得住的——以后不发新内容,已同步的收不回来),确认后才调 DELETE、重新拉一次列表', (t) async {
       final api = _FakeApi(
         grantsResponse: [
           {'grant_id': 'g-owner', 'role': 'owner'},
@@ -167,8 +167,13 @@ void main() {
       await t.pumpAndSettle();
 
       // 弹窗挡在前面,还没真的撤销——此刻只有 `initState` 那一次 GET。
-      expect(find.text('撤销这份授权?'), findsOneWidget);
-      expect(find.textContaining('对方立刻看不到「张建国」的病历'), findsOneWidget);
+      // fix round 1:不再说「立刻看不到」(系统兑现不了这个承诺,见实现处的
+      // 注释与证据链)——只说服务端确认挡得住的那一半:以后的同步。
+      expect(find.text('不再让对方看?'), findsOneWidget);
+      expect(
+        find.text('撤销后,对方收不到之后新增的病历;已经同步到对方手机上的,这里收不回来。'),
+        findsOneWidget,
+      );
       expect(api.calls, ['GET /v1/profiles/prf_1/grants']);
 
       await t.tap(find.text('撤销').last);
