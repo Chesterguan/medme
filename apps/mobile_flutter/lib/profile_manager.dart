@@ -92,10 +92,13 @@ class ProfileManager {
     return null;
   }
 
-  /// 档案屏顶部展示名:只有一个、且还没被数据/用户命过名的默认成员时,显示病历箱名
-  /// (不把占位名露出来,彻底避开「我」);否则显示当前成员真名。
-  String get displayName =>
-      (_profiles.length == 1 && _autoNamePending) ? _vaultName : current.name;
+  /// 档案屏顶部展示名:当前成员的名字。**不回退到病历箱名**(task-20b A3)——
+  /// 这里原来在"只有一个、还没被命过名的默认成员"时显示 [_vaultName]
+  /// (「我的医疗档案」),而 `member_switcher.dart` 的切换器名单在同一种状态下
+  /// 显示的是 [current.name](占位默认值「我」),两处各说一套,是 Stage 1 冒烟
+  /// 记录的必修项之一。统一显示成员名,导入后的自动改名逻辑([maybeAutoNameCurrent])
+  /// 不受影响。
+  String get displayName => current.name;
 
   /// 某成员最近已知记录数(没加载过为 null)。
   int? countFor(String id) => _counts[id];
