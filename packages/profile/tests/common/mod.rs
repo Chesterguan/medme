@@ -83,12 +83,14 @@ pub fn full_json() -> serde_json::Value {
     let mut v: serde_json::Value = serde_json::from_str(ACTIVITY).expect("夹具包必须解析");
     v["rules"]["states"] = serde_json::from_str(STATES).expect("达标表必须解析");
     v["rules"]["targets"] = serde_json::from_str(TARGETS).expect("目标值必须解析");
+    v["rules"]["monitoring"] = serde_json::from_str(MONITORING).expect("复查提醒规则必须解析");
     v["drugs"] = serde_json::from_str(DRUGS).expect("药物表必须解析");
     let sections = v["views"]["sections"]
         .as_array_mut()
         .expect("views.sections 是数组");
     sections.push(serde_json::json!({"kind":"status_card","title":"现行方案"}));
     sections.push(serde_json::json!({"kind":"checklist","title":"达标情况(逐条对照)"}));
+    sections.push(serde_json::json!({"kind":"reminders","title":"待补 / 逾期"}));
     v
 }
 
@@ -152,6 +154,47 @@ pub const STATES: &str = r#"[{"id":"doris","label":"DORIS 2021 缓解标准(逐�
     {"id":"stable_therapy","label":"免疫抑制剂与已获批生物制剂维持在耐受良好的标准维持剂量(不含研究用药)",
      "kind":"manual","source":"S6",
      "note":"§C.2 第 (5) 条原文:「well-tolerated standard maintenance doses of immunosuppressive drugs and approved biologic agents, excluding investigational drugs」"}]}]"#;
+
+/// 复查提醒规则(§A.1 / §D.1 / §D.2.1 / §D.3)。**只有三种 kind,没有第四种**:
+/// 引擎永远不会按单项化验指标造复查间隔 —— §A.1「最重要的负面发现」写得很清楚,
+/// 中国 2020/2025 与 EULAR 都没给 dsDNA/补体/尿蛋白/血常规任何单项间隔。
+///
+/// `verify_status` 是 **fail-closed** 的(见 `rules::monitor_pending`):只有逐字
+/// `"verified"` 的那几条才会被算成到期日,其余一律只显示、不到期。这里两条 pending
+/// 就是源文件里核不实的那两条 —— 说明书自相矛盾的羟氯喹眼科间隔、只核到第三方摘要
+/// 页的骨密度/FRAX 那句。
+pub const MONITORING: &str = r#"[
+  {"kind":"disease_cadence","id":"visit_active","state":"active","every_days":30,
+   "panel_keys":["complement_c3","complement_c4","anti_dsdna","urine_protein_24h","wbc","plt"],
+   "text":"该复诊了,活动期一般一个月看一次,复诊时通常会查补体、抗 dsDNA、尿蛋白和血常规",
+   "basis":"guideline","source":"S10","verify_status":"verified",
+   "note":"中国 2020 与 2025 指南推荐 3 同一句逐字:活动期「at least every month」/「at least once a month for patients with active SLE」"},
+  {"kind":"disease_cadence","id":"visit_stable","state":"stable","every_days":90,
+   "panel_keys":["complement_c3","complement_c4","anti_dsdna","urine_protein_24h","wbc","plt"],
+   "text":"该复诊了,稳定期一般 3—6 个月看一次,复诊时通常会查补体、抗 dsDNA、尿蛋白和血常规",
+   "basis":"guideline","source":"S10","verify_status":"verified",
+   "note":"逐字是「once every 3 to 6 months for patients with stable SLE」。区间取更密的一端(3 个月)提醒:早提醒只是多跑一趟,晚提醒会漏掉复发"},
+  {"kind":"drug_schedule","id":"mmf_cbc","drug_class":"mmf","target":"血常规",
+   "panel_keys":["wbc","plt","hgb"],
+   "phases":[{"until_days":30,"every_days":7},{"until_days":90,"every_days":14},{"every_days":30}],
+   "text":"吃吗替麦考酚酯期间该查血常规了",
+   "basis":"label","source":"S_MMF_LABEL","verify_status":"verified",
+   "note":"CELLCEPT 说明书 §5.4 逐字:「weekly for the first month, twice monthly for the second and third months, and monthly for the remainder of the first year」。⚠️ 第一年之后说明书没再给间隔,这里最后一档不设终点、按每月沿用 —— 这一步是包作者的外推,待 Task 19 逐条核"},
+  {"kind":"drug_schedule","id":"hcq_eye","drug_class":"hcq","target":"眼科检查(眼底/OCT/视野)",
+   "exam_names":["眼底","OCT","视野"],"phases":[],
+   "text":"羟氯喹的眼科检查间隔几份来源互相矛盾,下次门诊问一下医生多久查一次",
+   "basis":"label","source":"S_HCQ_INSERT","verify_status":"pending",
+   "note":"§D.2.1:0.1 g 规格说明书写「定期(每3月)」、0.2 g 规格写「每年至少一次」,两份说明书自己都对不上,且都只经摘要管道;指南侧是「低危第 5 年起每年」。没有一个能逐字确定的间隔,所以只显示、不算到期"},
+  {"kind":"drug_threshold","id":"gc_ca_vitd","drug_class":"gc",
+   "min_daily_pred_equiv":7.5,"min_days":90,
+   "action":"该补钙和维生素 D 了,下次门诊问一下医生",
+   "basis":"guideline","source":"S_GC_EULAR2007","verify_status":"verified",
+   "note":"EULAR 2007 全身激素治疗推荐 6a 逐字:「If a patient is started on prednisone ⩾7.5 mg daily and continues on prednisone for more than 3 months, calcium and vitamin D supplementation should be prescribed.」。「more than 3 months」在包里写成 90 天下限"},
+  {"kind":"drug_threshold","id":"gc_dxa_frax","drug_class":"gc",
+   "min_daily_pred_equiv":2.5,"min_days":90,"min_age":40,
+   "action":"做一次骨密度 / FRAX 骨折风险评估",
+   "basis":"guideline","source":"S_ACR_GIOP2022","verify_status":"pending",
+   "note":"人群定义「>3 months treatment with GCs ≥2.5 mg daily」是 ACR 2022 GIOP 摘要逐字;但「≥40 岁用 FRAX + 骨密度筛查」那句只核到第三方摘要页、没核到指南原文(§D.1),所以整条 pending"}]"#;
 
 /// 与 [`MINIMAL`] 同一个壳,只把 `rules.activity` 填满。section 的标题在
 /// `views.sections` 里(spec §6:标题全来自包,引擎里不写死)。

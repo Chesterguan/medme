@@ -51,6 +51,7 @@ pub fn materialize(
         // 现在吃什么」,不是分数。
         out.extend(rules::status_section(&ctx, pkg, &regimen));
         out.extend(rules::activity_section(&ctx, pkg, &activity));
+        out.extend(rules::reminders_section(&ctx, pkg, &activity, &regimen));
         out.extend(rules::states_section(&ctx, pkg, &activity, &regimen));
         out
     } else {
