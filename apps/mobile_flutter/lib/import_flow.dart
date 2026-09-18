@@ -10,11 +10,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/import_queue.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
@@ -202,6 +204,20 @@ Future<ImportRunResult?> runImport(
     return null;
   }
   if (items.isEmpty || !context.mounted) return null;
+
+  // 第一次添加病历时问一次「云端整理」(ia-proposal §7 决定 5)。放在这里、
+  // 而不是拉起相机之前:问的是「刚刚这张照片要不要送云端」,手上有东西的时候
+  // 这句话才成立。一次 `runImport` 调用就是一次「run」——排在 `_runImport` 之前、
+  // 每次运行只问这一次,不会跟着 `items` 里的每一份文档重复问。
+  if (shouldAskCloudExtract(
+    loggedIn: AccountSession.instance.loggedIn.value,
+    asked: await loadCloudExtractAsked(),
+  )) {
+    if (!context.mounted) return null;
+    await showCloudExtractAskSheet(context);
+  }
+  if (!context.mounted) return null;
+
   return _runImport(context, items, choice);
 }
 

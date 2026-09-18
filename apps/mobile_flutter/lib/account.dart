@@ -19,6 +19,11 @@ String maskPhone(String phone) {
 /// 设备"要不要把涂黑的病历照片交给云端模型整理"的选择不该因为换了个人登录就重置回默认。
 const cloudExtractEnabledKey = 'cloud_extract_enabled';
 
+/// 「云端整理」问过没有(一次性)。**与 [cloudExtractEnabledKey] 是两件事**:
+/// 那个记的是开关值,这个记的是「用户已经做过一次选择」。没有这个键的话,
+/// 关掉的人每次导入都会被再问一次。
+const cloudExtractAskedKey = 'cloud_extract_asked';
+
 /// 第一次出码前那条告知,这台设备上说过没有(一次性)。**跟设备走,不按成员、
 /// 也不按登录状态** —— 说的是「东西去哪了」,那件事和你是谁无关。
 const qrNoticeSeenKey = 'qr_notice_seen';
