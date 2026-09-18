@@ -331,7 +331,9 @@ void main() {
 
     testWidgets('成功:包给的 section 按包给的顺序全画出来,免责声明逐字在最后', (t) async {
       // 视口拉高,好让 `ListView` 一次把整页布局出来 —— 顺序只能整页比。
-      _usePhone(t, height: 12000);
+      // 24000:包的 `note`(每条「与指南口径有差」的话)进了渲染层之后,整页比
+      // 原来高出一截,12000 装不下最后那句免责声明,`ListView` 压根不建它。
+      _usePhone(t, height: 24000);
       final fake = _Fake(view: _golden);
       await t.pumpWidget(_page(fake.source));
       await t.pumpAndSettle();
