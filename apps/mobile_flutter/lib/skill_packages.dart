@@ -38,7 +38,7 @@ const String skillsIndexPath = '/v1/skills/index.json';
 /// 目录,各写各的迟早分家。
 ///
 /// 放沙盒的 Application Support:包是公开的、签过名的、**全成员共用**的东西,不属于
-/// 任何一个保险箱,也不该跟着某个成员的档案走。
+/// 任何一个病历箱,也不该跟着某个成员的病历走。
 Future<String> skillCacheDir() async => (await getApplicationSupportDirectory()).path;
 
 class SkillPackages {
@@ -58,7 +58,7 @@ class SkillPackages {
        base = base ?? ApiClient.defaultBase;
 
   /// 包缓存目录(Rust 在它下面建 `skills/`)。`null` = 用沙盒的 Application
-  /// Support —— 包是公开的、签过名的、**全成员共用**的东西,不属于任何一个保险箱,
+  /// Support —— 包是公开的、签过名的、**全成员共用**的东西,不属于任何一个病历箱,
   /// 也不该跟着某个成员的档案走。
   final String? dir;
 
