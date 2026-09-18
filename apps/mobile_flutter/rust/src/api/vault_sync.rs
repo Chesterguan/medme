@@ -139,6 +139,9 @@ pub fn sync_open_profile_vault(
         data_dir: data,
         profile_key: Some(pk),
     });
+    // 换箱 = 病种包的术语覆盖层作废(理由见 `vault::clear_terminology_overlay`)。
+    // 两条换箱路径(本机 `open_vault` 与这条 keyed)守同一条规矩。
+    crate::api::vault::clear_terminology_overlay();
     Ok(())
 }
 

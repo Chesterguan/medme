@@ -1,9 +1,14 @@
-//! 病程档案的 FFI 门面。**规则全在 `packages/profile`**,这里只做四件事:验清单、
-//! 把包收进缓存、把保险箱投影成引擎的输入、把用户的动作记进保险箱。
+//! 病程档案的 FFI 门面。**规则全在 `packages/profile`**,这里只做几件事:验清单、
+//! 把包收进缓存、装术语覆盖层、把保险箱投影成引擎的输入、把用户的动作记进保险箱。
 //!
 //! 函数名都以 `vault_profile_` 打头:FRB 派发表按**函数名**字典序编号,这个前缀
-//! 排在 `recognize_image_pp`(下标 44,iOS AppDelegate 钉死的外部契约)之后,所以
-//! 加函数不会把它挪走。有一条测试钉着,见 `rust/tests/frb_dispatch_indices.rs`。
+//! 排在 `recognize_image_pp` 之后,所以加函数不会挪动它的下标 44。
+//!
+//! 「44 不许动」这条**出自本 SDD 的 `global-constraints.md`**(它要求 codegen 之后
+//! 逐字核对那一行),**不是**原生代码里的硬编码:核过 `ios/Runner/*.swift` 与安卓
+//! Kotlin 侧,没有一处写死 FRB 序号;Dart 的 `funcId: 44`
+//! (`lib/src/rust/frb_generated.dart`)与这里的 `44 =>` 出自同一次 codegen。
+//! 约束照守,理由按实情写。有一条测试钉着:`rust/tests/frb_dispatch_indices.rs`。
 //!
 //! `dir` 一律是**包缓存目录**(`profile::cache_store` 在它下面建 `skills/`),不是
 //! 保险箱根:包是公开的、签过名的、全成员共用的东西,不属于任何一个箱子。
@@ -58,6 +63,21 @@ pub fn vault_profile_view(dir: String, package_id: String) -> anyhow::Result<Str
     Ok(serde_json::to_string(&view)?)
 }
 
+/// 按**当前开着的保险箱**重装术语覆盖层(装着且开着的包的 `terms` 合并成一份)。
+///
+/// 覆盖层是**进程级全局**,而保险箱是一次一个:换成员之后不重装,上一个成员开的
+/// 病种词典还挂在全局词典上。所以换箱那一侧先清空(`vault::open_vault` /
+/// `vault_sync::sync_open_profile_vault` 成功换箱后各清一次),由开完箱的调用方
+/// (`lib/vault_boot.dart`)再调本函数按新箱子重装 —— 于是趋势页这些**不走病程
+/// 档案**的界面,也能在开机后就认得包里的新分析物,而不必等用户先点开档案页。
+///
+/// 没开箱 / 读不到动作日志时报错(调用方按「这次没装上」处理即可,别让它挡住开箱)。
+pub fn vault_profile_refresh_terms(dir: String) -> anyhow::Result<()> {
+    let input = vault_projections::gather_for_profile()?;
+    terminology::set_overlay(overlay_entries(Path::new(&dir), &input.events));
+    Ok(())
+}
+
 /// 记一条用户动作(开启/关闭某个病、确认诊断、记一次复发……),返回 document id。
 ///
 /// 与 `add_note`/`add_self_measurement` **完全同一条路径**
@@ -66,11 +86,13 @@ pub fn vault_profile_view(dir: String, package_id: String) -> anyhow::Result<Str
 ///
 /// `at` 是**事件发生的那天**(用户说的那天,不是记录那天),必须是 `YYYY-MM-DD`:
 /// 开关闸按它排序(`profile::is_enabled`),形状不对会悄悄排错,所以在这道边界上
-/// 就挡住。
+/// 就挡住。`payload` 必须是 JSON **对象**:规则只按键取值,`null`/数组/裸数字对
+/// 任何一条规则都只是噪音,别让它进日志。
 ///
-/// 同一天、同一 kind、同一 payload 记两次会被 CAS 去重成**同一份文档**(字节逐字
-/// 相同)。这不是 bug:`at` 只到天,两条一模一样的记录本来就分不出先后,而闸读的
-/// 是「最新那条是什么」,结果一样。
+/// **正文里必须有一行随记录时刻变的字节**(`记录时间:`,与自测记录同一手法,
+/// `vault.rs` 的 `add_self_measurement_to`)。否则同 `(kind, package, at, payload)`
+/// 的第二次记录会被 `Vault::import` 的 CAS 按**内容**去重,直接回传旧 document id、
+/// 一条事件都不追加 —— 同一天「开→关→再开」就再也开不回来,而 FFI 还返回 `Ok`。
 pub fn vault_profile_record_event(
     kind: String,
     package: String,
@@ -80,16 +102,25 @@ pub fn vault_profile_record_event(
     if chrono::NaiveDate::parse_from_str(&at, "%Y-%m-%d").is_err() {
         anyhow::bail!("事件日期必须是 YYYY-MM-DD,实际:{at}");
     }
+    let payload: serde_json::Value = serde_json::from_str(&payload_json)?;
+    if !payload.is_object() {
+        anyhow::bail!("事件载荷必须是 JSON 对象(没有就传 {{}}),实际:{payload_json}");
+    }
     let ev = parser::ProfileEvent {
         kind,
         package,
         at,
-        payload: serde_json::from_str(&payload_json)?,
+        payload,
     };
-    let text = parser::render_profile_event_text(&human_lines(&ev), &ev);
+    // 一次时钟读数派生出三样东西,保证它们说的是同一刻:正文里那行记录时间、
+    // 合成文件名、文档日期。
+    let now = chrono::Local::now();
+    let text = parser::render_profile_event_text(&human_lines(&ev, now), &ev);
     let title = format!("病程档案 · {}", kind_label(&ev.kind));
-    let when = chrono::Utc::now();
-    let name = format!("profile-event-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
+    let name = format!("profile-event-{}.txt", now.format("%Y%m%dT%H%M%S%.f"));
+    // 文档日期存**本地墙上时间**(再贴 `Utc` 标签),与 `parse_measured_at` 给
+    // 笔记/自测记录的存法逐字一致 —— 不然凌晨记的一条会在时间线上落到昨天。
+    let when = now.naive_local().and_utc();
     crate::api::vault::with_state(|state| {
         crate::api::vault::add_synthetic_document(
             &state.vault,
@@ -110,11 +141,18 @@ fn today() -> chrono::NaiveDate {
 
 /// 动作日志正文里给人读的那几行(载荷行由 `parser::render_profile_event_text`
 /// 接在后面)。文档正文会出现在时间线里,所以这里写的是人话,不是 JSON。
-fn human_lines(ev: &parser::ProfileEvent) -> Vec<String> {
+///
+/// 「记录时间」带毫秒与时区偏移:它既是给人看的(这条是什么时候记的),也是让
+/// **每一次记录的字节都唯一**的那一样东西 —— 理由见 [`vault_profile_record_event`]。
+fn human_lines(ev: &parser::ProfileEvent, now: chrono::DateTime<chrono::Local>) -> Vec<String> {
     vec![
         kind_label(&ev.kind).to_string(),
         format!("病种:{}", ev.package),
         format!("日期:{}", ev.at),
+        format!(
+            "记录时间:{}",
+            now.to_rfc3339_opts(chrono::SecondsFormat::Millis, false)
+        ),
     ]
 }
 
@@ -420,5 +458,89 @@ mod tests {
             .unwrap();
         assert!(overlay_entries(dir.path(), &[]).is_empty());
         assert!(overlay_entries(dir.path(), &[ev("disable", "2026-01-01")]).is_empty());
+    }
+
+    #[test]
+    fn toggling_three_times_on_the_same_day_ends_enabled_and_leaves_three_documents() {
+        // 回归(fix round 1 · C1):正文里没有随记录时刻变的字节时,第三次
+        // `enable(at=D)` 与第一次逐字节相同 → `Vault::import` 的 CAS 去重 → 回传旧
+        // document id、**一条事件都不追加**,于是 events 永远停在 [enable, disable],
+        // 用户当天再也开不回来,而 FFI 还返回 Ok。
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        open_temp_vault(home.path());
+        let dir_s = home.path().join("skills-cache").display().to_string();
+        vault_profile_install_package(dir_s.clone(), SLE_PACKAGE.into()).unwrap();
+
+        let same_day = "2026-03-01";
+        let mut ids = Vec::new();
+        for kind in ["enable", "disable", "enable"] {
+            ids.push(
+                vault_profile_record_event(kind.into(), "sle".into(), same_day.into(), "{}".into())
+                    .unwrap(),
+            );
+        }
+        let uniq: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(uniq.len(), 3, "三次记录要是三份文档,实际 {ids:?}");
+        // document_id 升序 = 追加顺序 = `gather_for_profile` 给引擎的顺序,
+        // 于是「同一天里最后那条说了算」。
+        assert!(ids[0] < ids[1] && ids[1] < ids[2], "{ids:?}");
+
+        let view: serde_json::Value =
+            serde_json::from_str(&vault_profile_view(dir_s, "sle".into()).unwrap()).unwrap();
+        assert_eq!(view["enabled"], true, "同日开→关→再开,最后是开着");
+
+        crate::api::vault::clear_terminology_overlay();
+    }
+
+    #[test]
+    fn a_non_object_payload_is_refused_at_the_ffi_boundary() {
+        // 规则只按键取值:`null`/数组/裸数字进了日志也只是噪音。不开箱也该被挡住。
+        for bad in ["null", "[1,2]", "3", "\"x\""] {
+            let err = vault_profile_record_event(
+                "flare".into(),
+                "sle".into(),
+                "2026-01-01".into(),
+                bad.into(),
+            )
+            .unwrap_err();
+            assert!(err.to_string().contains("JSON 对象"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn opening_another_members_vault_clears_the_overlay() {
+        // 覆盖层是进程级全局,保险箱一次只开一个:A 开着狼疮,切到 B 之后 B 的
+        // 化验识别不许还认得狼疮包里的词(spec §4 在跨成员这一侧的落点)。
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let a = tempfile::tempdir().unwrap();
+        open_temp_vault(a.path());
+        let dir_s = a.path().join("skills-cache").display().to_string();
+        vault_profile_install_package(dir_s.clone(), SLE_PACKAGE.into()).unwrap();
+        vault_profile_record_event(
+            "enable".into(),
+            "sle".into(),
+            "2026-01-01".into(),
+            "{}".into(),
+        )
+        .unwrap();
+        vault_profile_refresh_terms(dir_s.clone()).unwrap();
+        assert_eq!(
+            terminology::normalize("镜检红细胞").map(|m| m.key),
+            Some("urine_rbc_hpf".to_string()),
+            "A 的箱子开着狼疮:包里的新分析物应当查得到"
+        );
+
+        // 切成员(同一个进程,另一个箱子)。
+        let b = tempfile::tempdir().unwrap();
+        open_temp_vault(b.path());
+        assert!(
+            terminology::normalize("镜检红细胞").is_none(),
+            "换箱之后覆盖层必须退回内置"
+        );
+
+        // B 自己没开过任何病 —— 重装一次也还是空的(装着不等于开着)。
+        vault_profile_refresh_terms(dir_s).unwrap();
+        assert!(terminology::normalize("镜检红细胞").is_none());
     }
 }

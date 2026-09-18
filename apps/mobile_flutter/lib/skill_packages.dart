@@ -33,6 +33,14 @@ typedef SkillGet = Future<String> Function(String path, Map<String, String> head
 
 const String skillsIndexPath = '/v1/skills/index.json';
 
+/// 病种包的缓存目录(Rust 在它下面建 `skills/`)。**全 App 只有这一处决定包放哪** ——
+/// 装包([SkillPackages])和开箱后重装术语覆盖层(`vault_boot.dart`)读的必须是同一个
+/// 目录,各写各的迟早分家。
+///
+/// 放沙盒的 Application Support:包是公开的、签过名的、**全成员共用**的东西,不属于
+/// 任何一个保险箱,也不该跟着某个成员的档案走。
+Future<String> skillCacheDir() async => (await getApplicationSupportDirectory()).path;
+
 class SkillPackages {
   SkillPackages({
     this.dir,
@@ -62,38 +70,41 @@ class SkillPackages {
 
   /// 拉一遍清单,把清单里列的包都装上,返回**真的装上了**的那几个 id。
   ///
-  /// 任何一步失败都只是「这次没更新」:返回空列表 / 少几个 id,不抛。
+  /// 任何一步失败都只是「这次没更新」:返回空列表 / 少几个 id,**不抛**。
+  /// 整个方法体都在一个 `try` 里 —— C5 会 fire-and-forget 地调它,漏出去的异常会变成
+  /// 启动期的 unhandled async error。取目录(平台通道没起来时会抛
+  /// `MissingPluginException`)与清单的类型检查都必须在这层保护之内。
   Future<List<String>> refreshIndex() async {
-    final List<Map<String, dynamic>> skills;
     try {
       final envelope = await _get(skillsIndexPath);
       // 验过签的清单才有资格拼出下一个请求的路径。
       final verified = jsonDecode(await _verifyIndex(envelope)) as Map<String, dynamic>;
-      skills = (verified['skills'] as List).cast<Map<String, dynamic>>();
+      // `.toList()` 不能省:`cast` 是**惰性**的,不落地的话类型错误要等到下面迭代
+      // 时才抛 —— 那时抛在哪一层就取决于循环写在哪儿,不该靠这个吃饭。
+      final skills = (verified['skills'] as List).cast<Map<String, dynamic>>().toList();
+      if (skills.isEmpty) return const [];
+
+      final dir = await _resolveDir();
+      final installed = <String>[];
+      for (final s in skills) {
+        final id = s['id'], version = s['version'];
+        try {
+          // 一个包装不上不影响别的:引擎太老、被单调闸拒了降级,都只是这一个病
+          // 这次没更新。
+          installed.add(await _install(dir, await _get('/v1/skills/$id/$version.json')));
+        } catch (e) {
+          debugPrint('[skills] $id $version 这次没装上:$e');
+        }
+      }
+      return installed;
     } catch (e) {
       // 包 id/版本号是公开信息,异常文本里不会有病历内容,可以进日志。
-      debugPrint('[skills] 清单没取到或没验过,继续用缓存里那份:$e');
+      debugPrint('[skills] 这次没刷成,继续用缓存里那份:$e');
       return const [];
     }
-    if (skills.isEmpty) return const [];
-
-    final dir = await _resolveDir();
-    final installed = <String>[];
-    for (final s in skills) {
-      final id = s['id'], version = s['version'];
-      try {
-        // 一个包装不上不影响别的:引擎太老、被单调闸拒了降级,都只是这一个病
-        // 这次没更新。
-        installed.add(await _install(dir, await _get('/v1/skills/$id/$version.json')));
-      } catch (e) {
-        debugPrint('[skills] $id $version 这次没装上:$e');
-      }
-    }
-    return installed;
   }
 
-  Future<String> _resolveDir() async =>
-      dir ?? (await getApplicationSupportDirectory()).path;
+  Future<String> _resolveDir() async => dir ?? await skillCacheDir();
 
   Future<String> _get(String path) => (httpGet ?? _bareGet)(path, const {});
 

@@ -5,12 +5,14 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/src/rust/api/vault_profile.dart' show vaultProfileRefreshTerms;
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncOpenProfileVault, syncCurrentVaultIsKeyed;
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/review_state.dart';
+import 'package:mobile_flutter/skill_packages.dart' show skillCacheDir;
 import 'package:mobile_flutter/vault_events.dart';
 
 /// Rust 侧的 vault 是**进程级单例**:开一个箱子就顶掉上一个。医生代拍让「谁被顶掉」
@@ -191,6 +193,24 @@ Future<void> openCurrentProfileVaultUnserialized() async {
       if (await syncCurrentVaultIsKeyed()) {
         throw StateError('本地档案开箱后状态核对失败:不应为 keyed');
       }
+  }
+  await _refreshProfileTerms();
+}
+
+/// 按**刚开的这个箱子**重装病种包的术语覆盖层。
+///
+/// 覆盖层是进程级全局:换箱时 Rust 侧先把它清空(`vault::clear_terminology_overlay`,
+/// 退回内置词典),这里再按新箱子装上「装着而且开着」的那几个包的术语。放在开箱之后
+/// 而不是等用户点开病程档案页,是为了让趋势页这些**不走病程档案**的界面开机就认得
+/// 包里的新分析物(如 UPCR)。
+///
+/// **失败只是「这次没装上」**:下一次打开病程档案页会再装一次。绝不能让它把开箱
+/// 本身弄失败 —— 开箱失败的后果是用户看不到自己的病历,比少认几个化验名严重得多。
+Future<void> _refreshProfileTerms() async {
+  try {
+    await vaultProfileRefreshTerms(dir: await skillCacheDir());
+  } catch (e) {
+    debugPrint('[skills] 术语覆盖层这次没重装(不影响开箱):$e');
   }
 }
 

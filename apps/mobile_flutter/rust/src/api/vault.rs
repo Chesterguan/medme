@@ -156,7 +156,26 @@ pub fn open_vault(
         data_dir,
         profile_key: None,
     });
+    clear_terminology_overlay();
     Ok(())
+}
+
+/// 换箱之后把病种包带来的术语覆盖层退回内置(见 `api::vault_profile` 的
+/// `vault_profile_refresh_terms`)。
+///
+/// 覆盖层是**进程级全局**,而保险箱一次只开一个:不清的话,上一个成员开的病种的
+/// 别名与新分析物会继续挂在全局词典上、给下一个成员的化验识别用 —— spec §4
+/// 「从未开启 = 不算、不显示、不提醒」在跨成员这一侧就被绕过了。
+///
+/// 清空是**失败安全**的那一侧(退回内置词典,永远不会多认一个词);重装由开完箱的
+/// 调用方(`lib/vault_boot.dart` → `vault_profile_refresh_terms`)按新箱子做,打开
+/// 病程档案页时还会再装一次。
+///
+/// `vault_sync::sync_open_profile_vault`(keyed 开箱)也调它 —— 两条换箱路径,同一条
+/// 规矩。`pub(crate)` 而非 `pub`:名字字典序排在 `recognize_image_pp` 前面,改 `pub`
+/// 会被 FRB 扫成 FFI、把下标 44 顶走(同 `extraction_json_for` / `add_synthetic_document`)。
+pub(crate) fn clear_terminology_overlay() {
+    terminology::set_overlay(Vec::new());
 }
 
 /// 决定真相/派生库路径:开了 iCloud 标记且 Dart 传入了容器根 → 真相在
@@ -841,6 +860,17 @@ fn parse_measured_at(measured_at: Option<&str>) -> chrono::DateTime<chrono::Utc>
 ///
 /// 不经全局 `VAULT` 锁(收 `&Vault`):`load_demo_data` 与单测调用时已经持有
 /// `&state.vault` 或自己的临时保险箱,再抢一次同一把锁会死锁。
+///
+/// ⚠️ **必须是 `pub(crate)`,不能是 `pub`**:FRB 只扫 `pub fn`,而这个名字的字典序
+/// 排在 `recognize_image_pp` **前面** —— 一旦 `pub`,它会被生成成 FFI 并把那个函数
+/// 的派发下标 44 顶走(本 SDD `global-constraints` 的硬约束;`extraction_json_for`
+/// 是同一条理由的先例)。`rust/tests/frb_dispatch_indices.rs` 会当场抓住,但一句
+/// 注释比一次 CI 红省事。
+///
+/// 调用方要留意 CAS:正文逐字节相同 = 同一份文档、不追加事件。凡是「同样的内容
+/// 可能被记两次、而两次都必须留下」的调用方(动作日志就是),正文里必须有一行随
+/// 记录时刻变的字节 —— 见 `add_self_measurement_to` 的「记录时间」与
+/// `vault_profile::human_lines`。
 pub(crate) fn add_synthetic_document(
     v: &Vault,
     doc_type: DocType,

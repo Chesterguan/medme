@@ -92,4 +92,31 @@ void main() {
     expect(await pkgs.refreshIndex(), ['sle'], reason: '装不上的那个只是这次没更新');
     expect(calls, 2, reason: '第一个失败不该让循环提前结束');
   });
+
+  // 「失败一律静默」得是真的:C5 会 fire-and-forget 地调它,漏出去的异常会变成
+  // 启动期的 unhandled async error。
+  group('refreshIndex 永不抛', () {
+    test('取不到缓存目录(平台通道没起来)', () async {
+      // 不传 dir → 走 `skillCacheDir()` → 纯 Dart 测试环境里 path_provider 必抛。
+      final pkgs = SkillPackages(
+        httpGet: (path, headers) async => 'envelope',
+        verifyIndex: (envelope) async => _verified([_sle]),
+        install: (dir, envelope) async => fail('目录都取不到,不该装'),
+      );
+      expect(await pkgs.refreshIndex(), isEmpty);
+    });
+
+    test('验过的清单形状不对(skills 不是对象列表)', () async {
+      // `cast<Map>()` 是惰性的:不 `.toList()` 落地的话,类型错误会在循环里才抛。
+      final pkgs = SkillPackages(
+        dir: '/tmp/skills-cache',
+        httpGet: (path, headers) async => 'envelope',
+        verifyIndex: (envelope) async => jsonEncode({
+          'skills': [1, 2, 3],
+        }),
+        install: (dir, envelope) async => fail('清单形状不对,不该装'),
+      );
+      expect(await pkgs.refreshIndex(), isEmpty);
+    });
+  });
 }

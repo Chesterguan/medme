@@ -37,6 +37,18 @@ Future<String> vaultProfileView({
   packageId: packageId,
 );
 
+/// 按**当前开着的保险箱**重装术语覆盖层(装着且开着的包的 `terms` 合并成一份)。
+///
+/// 覆盖层是**进程级全局**,而保险箱是一次一个:换成员之后不重装,上一个成员开的
+/// 病种词典还挂在全局词典上。所以换箱那一侧先清空(`vault::open_vault` /
+/// `vault_sync::sync_open_profile_vault` 成功换箱后各清一次),由开完箱的调用方
+/// (`lib/vault_boot.dart`)再调本函数按新箱子重装 —— 于是趋势页这些**不走病程
+/// 档案**的界面,也能在开机后就认得包里的新分析物,而不必等用户先点开档案页。
+///
+/// 没开箱 / 读不到动作日志时报错(调用方按「这次没装上」处理即可,别让它挡住开箱)。
+Future<void> vaultProfileRefreshTerms({required String dir}) =>
+    RustLib.instance.api.crateApiVaultProfileVaultProfileRefreshTerms(dir: dir);
+
 /// 记一条用户动作(开启/关闭某个病、确认诊断、记一次复发……),返回 document id。
 ///
 /// 与 `add_note`/`add_self_measurement` **完全同一条路径**
@@ -45,11 +57,13 @@ Future<String> vaultProfileView({
 ///
 /// `at` 是**事件发生的那天**(用户说的那天,不是记录那天),必须是 `YYYY-MM-DD`:
 /// 开关闸按它排序(`profile::is_enabled`),形状不对会悄悄排错,所以在这道边界上
-/// 就挡住。
+/// 就挡住。`payload` 必须是 JSON **对象**:规则只按键取值,`null`/数组/裸数字对
+/// 任何一条规则都只是噪音,别让它进日志。
 ///
-/// 同一天、同一 kind、同一 payload 记两次会被 CAS 去重成**同一份文档**(字节逐字
-/// 相同)。这不是 bug:`at` 只到天,两条一模一样的记录本来就分不出先后,而闸读的
-/// 是「最新那条是什么」,结果一样。
+/// **正文里必须有一行随记录时刻变的字节**(`记录时间:`,与自测记录同一手法,
+/// `vault.rs` 的 `add_self_measurement_to`)。否则同 `(kind, package, at, payload)`
+/// 的第二次记录会被 `Vault::import` 的 CAS 按**内容**去重,直接回传旧 document id、
+/// 一条事件都不追加 —— 同一天「开→关→再开」就再也开不回来,而 FFI 还返回 `Ok`。
 Future<PlatformInt64> vaultProfileRecordEvent({
   required String kind,
   required String package,
