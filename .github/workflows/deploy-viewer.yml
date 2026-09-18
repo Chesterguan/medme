@@ -32,6 +32,19 @@ jobs:
       contents: write # 推查看器与示例页到 gh-pages 分支
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # 查看器是 push-to-live:合进 main 就自动上线,中间没有人复核。所以这两道闸
+      # 必须挡在推之前,挡不住就不部署(终审 I4):
+      #   * CSP 里的 sha256 与内联脚本对不上 = **整页白屏**(浏览器直接拒绝执行,
+      #     而本地 file:// 打开还看不出来);病程档案那段内联 JS 一动 hash 就变;
+      #   * 冒烟自检跑的是 index.html 里那段**真源码**,渲染错了当场红。
+      # python3 / node 都是 ubuntu-latest 自带,不装。
+      - name: Gate — CSP hash 与渲染冒烟自检
+        run: |
+          set -euo pipefail
+          python3 scripts/csp-hashes.py --check
+          node web/hosted-viewer/renderProfile.smoke.mjs
+
       - name: Build demo share from the real sample dataset
         run: |
           set -euo pipefail
