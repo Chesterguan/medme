@@ -778,7 +778,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
         // 一刻才揭晓(见 `redeem` 的响应)——文案不能替它先猜一个,猜错了(比如
         // 这其实是一条转移邀请)就是当场说瞎话。角色相关的措辞留到 [_result]。
         const Text(
-          '要接受对方分享的病历档案吗?',
+          '要接受对方给你的这份病历吗?',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),

@@ -103,7 +103,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           target == AppModeKind.doctor
               ? '切换到代拍:主界面变成「我是医生,替病人代拍」,你自己的病历仍在——'
                     '随时可以再切回来查看。'
-              : '切换到「自己/家人的病历」模式,回到健康档案 / 导出分享 / 设置。',
+              : '切换到「自己/家人的病历」模式,回到「病历」「趋势」「我」三个入口。',
         ),
         actions: [
           TextButton(
@@ -679,7 +679,7 @@ class _AboutScreenState extends State<AboutScreen> {
       builder: (context) => AlertDialog(
         title: const Text('清空所有数据?'),
         content: const Text(
-          '确定清空全部记录?所有成员的示例数据和已导入病历都会被删除,'
+          '确定清空全部记录?所有成员的示例数据和已添加病历都会被删除,'
           '病历箱恢复到初始状态,此操作不可撤销。',
         ),
         actions: [
@@ -781,7 +781,7 @@ class _AboutScreenState extends State<AboutScreen> {
                   onChanged: _busy ? null : _setAnalytics,
                   title: const Text('帮助改进 MedMe'),
                   subtitle: const Text(
-                    '只上报「导入了几份、用了多久、成没成」这类计数,'
+                    '只上报「添加了几份、用了多久、成没成」这类计数,'
                     '不含任何病历内容 —— 文字、文件名、药名、化验值一个字都不会离开这台手机。'
                     '也不会给你分配可追踪的标识。',
                     style: TextStyle(fontSize: 12.5, height: 1.5),

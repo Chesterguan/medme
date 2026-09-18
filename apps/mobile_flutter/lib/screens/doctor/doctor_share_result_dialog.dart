@@ -6,7 +6,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
-/// 「医生代拍」交付结果弹窗:记录数说明 + 可复制的口令 + 「分享文件」按钮。
+/// 「医生代拍」交付结果弹窗:记录数说明 + 可复制的口令 + 「发给病人」按钮。
 ///
 /// 与 `screens/export_screen.dart` 的 `_showShareResult` 是**同一份 UI/文案的
 /// 独立副本**,不是共享组件——两者交付方向相反(患者→医生 vs 医生→病人),
@@ -96,7 +96,7 @@ Future<void> showDoctorShareResultDialog(
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: c.proxy),
             icon: const Icon(Icons.ios_share),
-            label: const Text('分享文件'),
+            label: const Text('发给病人'),
             onPressed: () async {
               await SharePlus.instance.share(
                 ShareParams(

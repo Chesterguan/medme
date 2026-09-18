@@ -996,7 +996,7 @@ void main() {
       await t.pumpAndSettle();
 
       expect(t.takeException(), isNull, reason: 'onPressed 里的 async 必须自己接住');
-      expect(find.textContaining('分享没打开'), findsOneWidget);
+      expect(find.textContaining('没发出去'), findsOneWidget);
       expect(find.textContaining('可以改用上面的「复制」'), findsOneWidget);
       // 恢复码画面原样留着,用户还能走「复制」那条。
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
@@ -1459,7 +1459,11 @@ void main() {
       final api = FakeApi(hasKeys: true, failProfiles: true);
       await _toReady(t, api);
       await _scrollToText(t, '谁能看');
-      expect(find.textContaining('授权列表加载失败'), findsOneWidget);
+      // task-20b Part B 把「授权列表加载失败」这句改成了「加载失败」,与
+      // 「我让谁看」那节共用同一句——`failProfiles` 连带让 `_loadMyGrants`
+      // 里那次 `/v1/profiles` 也失败(见 `_loadMyGrants` 先取 owner 列表那步),
+      // 于是两节此刻都在报错,`findsOneWidget` 不再成立,改成"至少能看到一个"。
+      expect(find.textContaining('加载失败'), findsWidgets);
     });
   });
 
@@ -1477,7 +1481,7 @@ void main() {
       );
       await _toReady(t, api);
       await _scrollToMyGrants(t);
-      expect(find.text('还没有授权给任何人'), findsNothing);
+      expect(find.text('还没让任何人看过'), findsNothing);
       expect(find.text('撤销'), findsOneWidget);
     });
 
@@ -1514,7 +1518,7 @@ void main() {
       final api = FakeApi(hasKeys: true, profiles: const []);
       await _toReady(t, api);
       await _scrollToMyGrants(t);
-      expect(find.text('还没有授权给任何人'), findsOneWidget);
+      expect(find.text('还没让任何人看过'), findsOneWidget);
       expect(api.calls.any((c) => c.contains('/grants')), isFalse, reason: '没有拥有任何档案,不该多打一次 grants 请求');
     });
 
@@ -1700,7 +1704,7 @@ void main() {
 
       expect(find.byKey(const Key('transfer_current_profile')), findsOneWidget);
       await _scrollToMyGrants(t);
-      expect(find.text('还没有授权给任何人'), findsOneWidget, reason: '前提:一个家人都没有');
+      expect(find.text('还没让任何人看过'), findsOneWidget, reason: '前提:一个家人都没有');
       expect(find.text('转为主人'), findsNothing, reason: 'per-grantee 那条路此刻根本不存在');
     });
 
@@ -2987,7 +2991,7 @@ void main() {
 
       await t.tap(find.text('先导出'));
       await t.pumpAndSettle();
-      expect(find.text('导出 · 分享'), findsOneWidget); // ExportScreen 的 AppBar 标题
+      expect(find.text('导出文件'), findsOneWidget); // ExportScreen 的 AppBar 标题
 
       // 导出完回来,确认弹窗还在,可以接着点「继续注销」——不是走了一趟导出
       // 就把整个确认流程弄丢。

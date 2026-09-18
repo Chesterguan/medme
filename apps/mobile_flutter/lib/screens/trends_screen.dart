@@ -1110,7 +1110,7 @@ class KeyLabsSnapshot extends StatelessWidget {
                 ),
                 // 空态说的是我们**观察到**什么,不是用户身上有没有事。
                 child: Text(
-                  '已导入的病历里还没有读到可显示的化验数值。拍一张化验单试试。',
+                  '已添加的病历里还没有读到可显示的化验数值。拍一张化验单试试。',
                   style: MedType.body.copyWith(color: c.ink2, height: 1.5),
                 ),
               )

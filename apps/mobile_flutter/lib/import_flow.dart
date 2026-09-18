@@ -690,7 +690,7 @@ Future<bool> askPhotoMerge(BuildContext context, int photoCount) async {
           '刚才这 $photoCount 张,如果是同一份病历的连续页,可以合并'
           '成一份多页文档,时间线上只显示一条。原始照片仍然保留,已经识别出的'
           '文字也会一并带进合并后的这一份,云端整理重新跑一次。\n\n'
-          '合并不可撤销:要拆开得重新导入这几张照片。',
+          '合并不可撤销:要拆开得重新添加这几张照片。',
           style: MedType.body.copyWith(color: c.ink2),
         ),
         // ⚠️ 顺序是**故意**这样的:主按钮(右下角)必须是「分开保存」。这一问

@@ -54,8 +54,8 @@ class RustGrants implements GrantsRust {
 /// purge 点)照旧静默(评审 Important 4)。
 String? expiredGrantNotice(List<Profile> removed) => switch (removed.length) {
   0 => null,
-  1 => '${removed.single.name} 的授权已到期,已移出',
-  _ => '${removed.map((p) => p.name).join('、')} 的授权已到期,已移出',
+  1 => '${removed.single.name} 的查看权限已到期,已移出',
+  _ => '${removed.map((p) => p.name).join('、')} 的查看权限已到期,已移出',
 };
 
 /// 授权落地:家人(手机号,永久 editor)、医生(15 天邀请二维码,viewer)、代拍转移
@@ -188,7 +188,7 @@ class Grants {
       });
       final key = await rust.unwrapWithToken(base64Decode(r['wrapped_key_by_token'] as String), l.token);
       final pub = session.publicKey;
-      if (pub == null) throw StateError('账号公钥未就绪,不能兑换授权');
+      if (pub == null) throw StateError('账号公钥未就绪,不能接受这份病历');
       final mine = await rust.sealTo(pub, key);
       final profileId = r['profile_id'] as String;
       final grantId = r['grant_id'] as String;

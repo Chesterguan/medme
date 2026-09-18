@@ -114,7 +114,7 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
           // 化验数据(而不是"有数据但都不异常")也会走到这句,两种情况文案上不
           // 强行区分:对患者来说"要不要在意"这件事,答案都是"这里没有要提醒你
           // 的"。
-          emptyText: '已导入的病历里没有自测数值,也没有标为异常的化验。',
+          emptyText: '已添加的病历里没有自测数值,也没有标为异常的化验。',
           isEmpty: s.recentChanges.isEmpty,
           children: [
             for (final l in s.recentChanges)
@@ -288,7 +288,7 @@ class _DoctorMayAskSection extends StatelessWidget {
         Text('医生可能要问的', style: MedType.caption.copyWith(color: c.ink3)),
         const SizedBox(height: 2),
         Text(
-          '下面每一个字都逐字来自你已导入的病历。MedMe 不做判断,也不生成结论。',
+          '下面每一个字都逐字来自你已添加的病历。MedMe 不做判断,也不生成结论。',
           style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
         ),
         const SizedBox(height: MedShape.s3),
@@ -299,7 +299,7 @@ class _DoctorMayAskSection extends StatelessWidget {
           title: '过敏史',
           // 空过敏史必须自己说话:留白会被医生读成「无过敏史」,而我们只知道
           // 「已导入的这些纸上没写」。这两件事在临床上差着一条命。
-          emptyText: '已导入的病历里没有找到过敏记录 —— 这不等于你不过敏,请当面告诉医生。',
+          emptyText: '已添加的病历里没有找到过敏记录 —— 这不等于你不过敏,请当面告诉医生。',
           isEmpty: allergies.isEmpty,
           children: [
             for (final a in allergies)
@@ -343,7 +343,7 @@ class _MedsSubsection extends StatelessWidget {
     if (activeMeds.isEmpty) {
       return const _Section(
         title: kRecordedMedsTitle,
-        emptyText: '已导入的病历里没有读到药名。',
+        emptyText: '已添加的病历里没有读到药名。',
         isEmpty: true,
         children: [],
       );

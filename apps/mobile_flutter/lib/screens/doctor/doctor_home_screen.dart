@@ -339,7 +339,7 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
   }
 }
 
-/// A3b:「病人授权给我的档案」那一节。**不碰任何 IO** —— 成员表由
+/// A3b:「病人让我看的档案」那一节。**不碰任何 IO** —— 成员表由
 /// [DoctorHomeScreen] 读好传进来,于是这一节的渲染与点击能在 `flutter test` 里
 /// 单独钉住(整屏不行:它的 `initState` 要穿过三个单例的真实文件 I/O)。
 ///
@@ -361,7 +361,7 @@ class PatientGrantedSection extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 0, 4, MedShape.s1),
-            child: Text('病人授权给我的档案', style: MedType.caption.copyWith(color: c.ink3)),
+            child: Text('病人让我看的档案', style: MedType.caption.copyWith(color: c.ink3)),
           ),
           for (final p in profiles)
             MedCard(

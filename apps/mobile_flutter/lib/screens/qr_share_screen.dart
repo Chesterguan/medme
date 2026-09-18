@@ -212,7 +212,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
         setState(() {
           _error = null;
           _grantMode = true;
-          _stage = '正在生成授权链接…';
+          _stage = '正在生成链接…';
           _progress = null;
         });
         final link = await (widget.grants ??

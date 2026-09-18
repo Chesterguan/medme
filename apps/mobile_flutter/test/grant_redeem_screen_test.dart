@@ -54,7 +54,7 @@ void main() {
       ),
     ));
 
-    expect(find.text('要接受对方分享的病历档案吗?'), findsOneWidget);
+    expect(find.text('要接受对方给你的这份病历吗?'), findsOneWidget);
     expect(find.textContaining('这份病历会出现在你的 MedMe 里'), findsOneWidget);
     expect(find.textContaining('下一步告诉你'), findsOneWidget);
     // 角色由服务端在兑换那一刻才揭晓,这一步**不许**替它猜一个。

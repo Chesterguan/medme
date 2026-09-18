@@ -297,7 +297,7 @@ class _AllergySection extends StatelessWidget {
             padding: const EdgeInsets.all(MedShape.s3),
             child: allergies.isEmpty
                 ? Text(
-                    '已导入的病历里没有找到过敏记录,状态是「未识别」。\n'
+                    '已添加的病历里没有找到过敏记录,状态是「未识别」。\n'
                     '这不等于没有过敏 —— 几乎没有人做过完整的过敏原检测,'
                     '记录没写通常只是没查到,不是查过确认没有。请当面告知医生。',
                     style: MedType.body.copyWith(color: c.ink2, height: 1.5),
@@ -345,7 +345,7 @@ class _MedsSection extends StatelessWidget {
             padding: const EdgeInsets.all(MedShape.s3),
             child: meds.isEmpty
                 ? Text(
-                    '已导入的病历里没有读到药名。',
+                    '已添加的病历里没有读到药名。',
                     style: MedType.body.copyWith(color: c.ink2),
                   )
                 : Column(
@@ -389,7 +389,7 @@ class _ConditionSection extends StatelessWidget {
             padding: const EdgeInsets.all(MedShape.s3),
             child: conditions.isEmpty
                 ? Text(
-                    '已导入的病历里没有读到诊断名。',
+                    '已添加的病历里没有读到诊断名。',
                     style: MedType.body.copyWith(color: c.ink2),
                   )
                 : Column(

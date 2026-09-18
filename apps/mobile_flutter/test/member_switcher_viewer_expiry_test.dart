@@ -67,7 +67,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('清掉了一份:弹窗收起后 SnackBar **可见**地说「X 的授权已到期,已移出」', (tester) async {
+    testWidgets('清掉了一份:弹窗收起后 SnackBar **可见**地说「X 的查看权限已到期,已移出」', (tester) async {
       await pumpSwitcher(
         tester,
         purgeExpired: () async => const [
@@ -77,11 +77,11 @@ void main() {
       // 第一轮把这句话弹在**打开弹窗之前** —— SnackBar 从底部升起,而底部弹窗整块
       // 盖在它上面,那 4 秒里用户一个字都看不见。所以这里用 `hitTestable()`:
       // `findsOneWidget` 对"在树里但被盖住"是过得去的,而那正是当时的 bug。
-      expect(find.text('李秀兰 的授权已到期,已移出').hitTestable(), findsNothing,
+      expect(find.text('李秀兰 的查看权限已到期,已移出').hitTestable(), findsNothing,
           reason: '弹窗还开着,此刻不该(也盖不住地)显示');
 
       await dismissSheet(tester);
-      expect(find.text('李秀兰 的授权已到期,已移出').hitTestable(), findsOneWidget);
+      expect(find.text('李秀兰 的查看权限已到期,已移出').hitTestable(), findsOneWidget);
     });
 
     testWidgets('什么都没清掉:不说话(不骚扰每一次打开切换器)', (tester) async {

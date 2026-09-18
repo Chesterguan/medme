@@ -113,6 +113,50 @@ List<String> scanLib(String word) {
   return hits;
 }
 
+// ── 弱闸(task-20b Part B)───────────────────────────────────────────────
+//
+// 「分享」「授权」「导入」**不进 [kEnforced]**:那三个词同时也是 Dart 标识符/
+// 关键字里的常见子串(`import '...';` 语句、`Grants` 类名一大堆),整行子串扫
+// 会把满仓的普通代码都拦下来,协调人已裁定这三个词排除在硬闸之外(见
+// `global-constraints.md`)。但 task-17 复核发现用户可见字符串里仍有一批残留
+// (task-17-report.md「Task 20 hand-off」),task-20b Part B 逐条清过一遍之后,
+// 补一条**弱闸**防止以后又手滑写回去——只扫「看起来会渲染给用户看」的位置:
+// 被引号包住、且不在整行注释或 `debugPrint(...)` 里的字面量。
+//
+// **这是弱闸,不是精确解析器**:不处理多行拼接字符串里词落在后半段的情况、
+// 不处理引号内嵌套转义。宁可偶尔漏报,也不要因为一个粗糙的正则把
+// `import 'package:...';` 这类满仓都是的语句也拦下来,变成没人敢改的哑闸。
+const List<String> kWeakEnforced = ['分享', '授权', '导入'];
+
+/// 已核实的假阳性,弱闸不报:`link_qr_dialog.dart` 的 `shareLabel` 默认参数
+/// 从未实际渲染——三个调用方(`account_screen.dart`/`member_detail_screen.dart`/
+/// `doctor_claim_link_dialog.dart`)全部覆盖了这个默认值(task-17-report.md 已核实)。
+const Set<String> _weakFalsePositives = {'lib/widgets/link_qr_dialog.dart:33'};
+
+/// 一行「引号里含有目标词」,且不是整行注释、也不是只进开发者日志的 `debugPrint`。
+bool _looksUserFacing(String line, String word) {
+  final trimmed = line.trimLeft();
+  if (trimmed.startsWith('//')) return false; // 整行注释(含 ///)
+  if (trimmed.startsWith('debugPrint(')) return false; // 只进系统日志,不进 UI
+  return RegExp("['\"][^'\"]*$word[^'\"]*['\"]").hasMatch(line);
+}
+
+List<String> scanLibWeak(String word) {
+  final hits = <String>[];
+  final root = Directory('lib');
+  for (final f in root.listSync(recursive: true).whereType<File>()) {
+    if (!f.path.endsWith('.dart')) continue;
+    if (f.path.contains('lib/src/rust/')) continue;
+    final lines = f.readAsLinesSync();
+    for (var i = 0; i < lines.length; i++) {
+      final loc = '${f.path}:${i + 1}';
+      if (_weakFalsePositives.contains(loc)) continue;
+      if (_looksUserFacing(lines[i], word)) hits.add(loc);
+    }
+  }
+  return hits;
+}
+
 void main() {
   test('kEnforced 里的每个词都在 kGlossary 里有去处', () {
     // 值可以是空串 —— 那表示「整块删掉,没有替代词」(如「识别质量」徽标、
@@ -126,6 +170,13 @@ void main() {
   for (final word in kEnforced) {
     test('lib 里没有「$word」(应改成「${kGlossary[word]}」)', () {
       final hits = scanLib(word);
+      expect(hits, isEmpty, reason: '还剩 ${hits.length} 处:\n${hits.join('\n')}');
+    });
+  }
+
+  for (final word in kWeakEnforced) {
+    test('弱闸:lib 里没有把「$word」写进字符串字面量(应改成「${kGlossary[word]}」;标识符/注释不算)', () {
+      final hits = scanLibWeak(word);
       expect(hits, isEmpty, reason: '还剩 ${hits.length} 处:\n${hits.join('\n')}');
     });
   }

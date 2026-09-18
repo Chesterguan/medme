@@ -673,7 +673,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _progress = null;
         _phase = _ProxyPhase.preview;
       });
-      await _showError('生成分享失败', '$e');
+      await _showError('交付失败', '$e');
     }
   }
 

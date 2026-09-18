@@ -203,6 +203,6 @@ ImportResultRow rowFromError(String name, Object error) => ImportResultRow(
   name: name,
   // 诊断期:直接把真实错误原因展示出来(而非笼统「格式不支持」),便于真机定位
   // 相册导入失败到底炸在哪(读文件 / FFI / 空文件 bail 等)。定位后再换回友好文案。
-  statusLabel: '导入失败:$error',
+  statusLabel: '添加失败:$error',
   kind: ImportRowKind.failed,
 );

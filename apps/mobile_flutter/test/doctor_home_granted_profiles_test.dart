@@ -76,10 +76,10 @@ void main() {
     });
 
     test('一份 / 多份', () {
-      expect(expiredGrantNotice([_viewer('a', '张建国', null)]), '张建国 的授权已到期,已移出');
+      expect(expiredGrantNotice([_viewer('a', '张建国', null)]), '张建国 的查看权限已到期,已移出');
       expect(
         expiredGrantNotice([_viewer('a', '张建国', null), _viewer('b', '李秀兰', null)]),
-        '张建国、李秀兰 的授权已到期,已移出',
+        '张建国、李秀兰 的查看权限已到期,已移出',
       );
     });
   });
@@ -101,7 +101,7 @@ void main() {
 
     testWidgets('有被授权的档案:列出姓名 + 「只能看 · 至 M月D日」', (t) async {
       await pumpSection(t, [_viewer('p-2', '张建国', DateTime(2026, 9, 20))]);
-      expect(find.text('病人授权给我的档案'), findsOneWidget);
+      expect(find.text('病人让我看的档案'), findsOneWidget);
       expect(find.text('张建国'), findsOneWidget);
       expect(find.text('只能看 · 至 9月20日'), findsOneWidget);
       // 内部 id 不露出来。
@@ -110,7 +110,7 @@ void main() {
 
     testWidgets('没有被授权的档案:整节不画(医生模式的主角是代拍)', (t) async {
       await pumpSection(t, const []);
-      expect(find.text('病人授权给我的档案'), findsNothing);
+      expect(find.text('病人让我看的档案'), findsNothing);
     });
 
     testWidgets('点一行:回调拿到的是那个成员', (t) async {

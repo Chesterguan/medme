@@ -769,7 +769,7 @@ class _AccountScreenState extends State<AccountScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        appSnackBar(content: Text('分享没打开:${friendlyApiError(e)}。可以改用上面的「复制」。')),
+        appSnackBar(content: Text('没发出去:${friendlyApiError(e)}。可以改用上面的「复制」。')),
       );
     }
   }
@@ -1183,7 +1183,7 @@ class _AccountScreenState extends State<AccountScreen> {
       title: const Text('云端整理'),
       subtitle: Text(
         _cloudExtractAsked
-            ? '导入后把脱敏、涂黑的单据图交给云端模型整理成表;关掉后只用本机识别'
+            ? '添加后把脱敏、涂黑的单据图交给云端模型整理成表;关掉后只用本机识别'
             : '第一次添加病历时会问你',
         style: const TextStyle(fontSize: 12.5, height: 1.4),
       ),
@@ -1472,7 +1472,7 @@ class _AccountScreenState extends State<AccountScreen> {
         icon: const Icon(Icons.warning_amber_rounded, color: MedMe.danger, size: 44),
         title: const Text('注销账号?', textAlign: TextAlign.center),
         content: const Text(
-          '注销后:账号里的云端病历、成员与医生的授权全部永久删除,他们会立刻'
+          '注销后:账号里的云端病历全部永久删除,成员与医生也会立刻'
           '失去访问权限。此操作不可撤销。\n\n'
           '这台手机上已开通云端备份的成员,钥匙会随账号一起在服务端和本机销毁——'
           '之后这个成员在这台手机上永远打不开,不是"重新登录就能恢复"那种锁定;'
@@ -1762,7 +1762,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return const Center(child: CircularProgressIndicator());
       }
       if (snap.hasError) {
-        return _errorText('授权列表加载失败:${friendlyApiError(snap.error!)}');
+        return _errorText('加载失败:${friendlyApiError(snap.error!)}');
       }
       final grants = snap.data ?? const [];
       if (grants.isEmpty) return const Text('没有共享档案', style: TextStyle(color: MedMe.faint));
@@ -1793,7 +1793,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return _errorText('加载失败:${friendlyApiError(snap.error!)}');
       }
       final rows = snap.data ?? const [];
-      if (rows.isEmpty) return const Text('还没有授权给任何人', style: TextStyle(color: MedMe.faint));
+      if (rows.isEmpty) return const Text('还没让任何人看过', style: TextStyle(color: MedMe.faint));
       return Column(
         children: [
           for (final g in rows)
@@ -1856,7 +1856,7 @@ class _AccountScreenState extends State<AccountScreen> {
         title: const Text('把这份档案交给他?'),
         content: Text(
           '对方接受之后,「${profile.name}」这份档案就归他所有;'
-          '你会降为可以一起录入的家人,不再能把它转给别人、也不能再收回别人的授权。\n\n'
+          '你会降为可以一起录入的家人,不再能把它转给别人、也不能再撤销别人的查看权限。\n\n'
           '现在这一步只生成一条链接,还不会改变任何东西 —— 对方点开并接受之后才真正生效。\n\n'
           '注意:拿到这个码的任何人都能接受(它不绑定某一个人),15 天内有效,'
           '而且生成之后没有办法收回 —— 只发给你真正要交给的那个人。',

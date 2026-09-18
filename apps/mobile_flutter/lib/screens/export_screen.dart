@@ -8,9 +8,10 @@ import 'package:mobile_flutter/theme.dart';
 import 'qr_share_screen.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
-/// 底部导航一级 tab「导出·分享」—— 当面出示二维码给医生,或把病历导出成可打印文件
-/// (可按日期区间筛选)。手机端只做「轻」的导出/筛选;全文搜索、趋势等「重」功能在
-/// 桌面端与医生查看器。导出全在 Rust core(`medme_share`),这里只调 FFI + 分享。
+/// 从「给医生看」页的「导出文件」那一行进(Task 17 之后不再是底栏 tab)——当面
+/// 出示二维码给医生,或把病历导出成可打印文件(可按日期区间筛选)。手机端只做
+/// 「轻」的导出/筛选;全文搜索、趋势等「重」功能在桌面端与医生查看器。导出全在
+/// Rust core(`medme_share`),这里只调 FFI + 分享。
 class ExportScreen extends StatefulWidget {
   const ExportScreen({super.key});
 
@@ -120,7 +121,7 @@ class _ExportScreenState extends State<ExportScreen> {
                   }
                   Navigator.of(context).pop(true);
                 },
-                child: const Text('导出并分享'),
+                child: const Text('导出'),
               ),
             ],
           );
@@ -191,7 +192,7 @@ class _ExportScreenState extends State<ExportScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('导出 · 分享')),
+      appBar: AppBar(title: const Text('导出文件')),
       body: Stack(
         children: [
           ListView(
