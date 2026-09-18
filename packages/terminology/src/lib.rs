@@ -1272,6 +1272,35 @@ mod tests {
     }
 
     #[test]
+    fn upcr_is_its_own_concept_and_never_lands_on_acr() {
+        // 尿蛋白/肌酐比(UPCR,分子是**总蛋白**)与尿白蛋白/肌酐比(ACR,分子只有
+        // 白蛋白)是两个不同的化验。词典里只有 ACR 的那段时间,「尿蛋白肌酐比」
+        // 差一个「白」字,正好落进模糊匹配的 1 字预算里 —— 悄悄按 0.4 的置信度
+        // 配成 ACR,两个量画进同一条线(「UPCR」→「UACR」同理)。补上 urine_pcr
+        // 这条之后两边都是精确命中,模糊路径根本不会被走到。
+        for t in ["尿蛋白肌酐比", "尿蛋白/肌酐比值", "尿蛋白/肌酐", "UPCR"] {
+            let m = resolve(t, Some("mg/g")).unwrap_or_else(|| panic!("no hit for {t}"));
+            assert_eq!(m.key, "urine_pcr", "{t}");
+            assert_eq!(m.confidence, 1.0, "{t} 必须是精确命中,不是 0.4 的猜");
+        }
+        for t in [
+            "尿白蛋白肌酐比",
+            "尿微量白蛋白肌酐比",
+            "尿微量白蛋白/肌酐",
+            "UACR",
+            "尿白蛋白/肌酐比值(ACR)",
+        ] {
+            let m = resolve(t, Some("mg/g")).unwrap_or_else(|| panic!("no hit for {t}"));
+            assert_eq!(m.key, "urine_acr", "{t}");
+        }
+        // 两条比值都不是 24h 尿蛋白定量(那是每日排泄量,量纲都不同)。
+        assert_eq!(
+            resolve("24小时尿蛋白定量", Some("g/24h")).unwrap().key,
+            "urine_protein_24h"
+        );
+    }
+
+    #[test]
     fn resolve_fuzzy_matches_ocr_corrupted_names() {
         // 精确路径全部 miss 之后,`resolve` 才会退到模糊路径 —— 单字 OCR 误读、
         // 截断都应该救回来,且置信度必须低于精确/剥壳/OCR混淆表。
@@ -1611,10 +1640,12 @@ mod tests {
         // +4 (2026-08-13.1:MedRepBench 词典缺口扫描,补尿沉渣分析仪四项 ——
         // urine_pathologic_casts/urine_mucus/urine_yeast/urine_wbc_clumps,均有独立
         // LOINC 标准概念,见各条目 note)= 640。
+        // +1 (2026-09-17.1:urine_pcr,尿总蛋白/肌酐比 —— 补之前它按 1 字编辑距离
+        // 被模糊配成 urine_acr,见 upcr_is_its_own_concept_and_never_lands_on_acr)= 641。
         // A drift here means an entry was accidentally dropped or duplicated.
         assert_eq!(
             dictionary_entries().len(),
-            640,
+            641,
             "unexpected dictionary entry count"
         );
     }

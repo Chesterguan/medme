@@ -96,9 +96,11 @@ fn each_series_keeps_the_reference_range_printed_on_its_own_report() {
 fn upcr_and_twenty_four_hour_protein_are_two_separate_lines() {
     // §11 已知边界:UPCR ≠ 24h 尿蛋白。画成一条线是把两个不同的量当成同一个。
     //
-    // ⚠️ 今天 `urine_pcr` 在内置词典里**根本不存在**(包的 `terms` 覆盖层是 Task 17),
-    // 所以它这会儿只能进 `missing`。这条用例钉的就是那个**没有**发生的合并:
-    // 24h 那条线上只有 24h 那一个点,UPCR 不许被它收编。
+    // Task 15 写这条时 `urine_pcr` 还不在内置词典里 —— 「尿蛋白肌酐比」按 1 字编辑
+    // 距离被模糊配成了 `urine_acr`(尿**白**蛋白/肌酐比,另一个化验),UPCR 只能进
+    // `missing`,用例也就只钉得住「那个没有发生的合并」。词典补上 `urine_pcr` 之后
+    // (terminology 的 `upcr_is_its_own_concept_and_never_lands_on_acr`),两条线的
+    // 断言才加得回来。
     let s = sections(
         &[(
             TODAY,
@@ -107,11 +109,19 @@ fn upcr_and_twenty_four_hour_protein_are_two_separate_lines() {
         None,
     );
     let g = body(&s, "series_chart");
+    assert!(keys(&g).contains(&"urine_pcr".to_string()));
     assert!(keys(&g).contains(&"urine_protein_24h".to_string()));
     assert!(
-        missing_keys(&g).contains(&"urine_pcr".to_string()),
-        "UPCR 现在没有序列,要如实说没有,不许并进 24h 那条线"
+        !missing_keys(&g).contains(&"urine_pcr".to_string()),
+        "UPCR 已经有自己的序列了,不该还挂在 missing 里"
     );
+    let pcr = one_series(&g, "urine_pcr");
+    assert_eq!(
+        pcr["points"].as_array().expect("points 是数组").len(),
+        1,
+        "UPCR 那条线上只有 UPCR 那一个点"
+    );
+    assert_eq!(pcr["points"][0]["value"], 1200.0);
     let p24 = one_series(&g, "urine_protein_24h");
     assert_eq!(
         p24["points"].as_array().expect("points 是数组").len(),

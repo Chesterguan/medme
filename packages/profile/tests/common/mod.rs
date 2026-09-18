@@ -121,9 +121,11 @@ pub const MARKERS: &str = r#"[
   {"key":"creatinine","role":"organ:kidney"},{"key":"egfr","role":"organ:kidney"},
   {"key":"alt","role":"drug_monitor"},{"key":"ast","role":"drug_monitor"}]"#;
 
-/// 包里自己定义的分析物(spec §2 的 `terms.analytes`)。UPCR 内置词典里没有 ——
-/// **定义在这儿还不等于认得出来**:让它真的能从报告里解析出来的覆盖层是 Task 17,
-/// 在那之前这份定义只提供一个中文名(`missing` 那一格要显示的东西)。
+/// 包里自己定义的分析物(spec §2 的 `terms.analytes`)。UPCR 写这份夹具时内置词典
+/// 里还没有;Task 17 把 `urine_pcr` 补成了**内置**条目,所以这份定义现在的角色反过来了
+/// —— 它是「包定义了一个内置已有的 key」那种情况:别名可以加,`name`/`loinc`/`units`
+/// 一律以内置为准(`terminology::set_overlay` 的红线)。这条夹具因此顺带钉着
+/// `marker_name` 的内置优先。
 pub const PKG_ANALYTES: &str = r#"[
   {"key":"urine_pcr","name":"尿蛋白/肌酐比值","loinc":"2890-2","panel":"肾功能",
    "canonical_unit":"mg/g","units":[{"unit":"mg/mmol","slope":8.84,"intercept":0}],

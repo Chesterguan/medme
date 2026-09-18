@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-13.1",
+  "version": "2026-09-17.1",
   "note": "Clinical terminology normalization dictionary for MedMe (docs/015 §3.5). Codes pulled from the local OMOP vocab (LOINC / RxNorm / ATC + OMOP standard concept_id). Conversions are affine: canonical_value = slope * source_value + intercept. LOINC property/scale is chosen to agree with canonical_unit (molar LOINC for SI molar canonicals). See docs/superpowers/specs/2026-07-10-terminology-normalization-layer-design.md. Lab entries additionally carry an optional `panel`: the 检验大类 (specimen-report print grouping, e.g. 血常规/肝功能/肾功能) a lab is printed under on a Chinese lab report — a curation of print convention, not a clinical/disease judgment (that's `packages/parser/data/problem_map.json`, a separate axis for the doctor viewer). Absent for entries that don't cleanly fit one of the ~14 curated panels. See packages/terminology/panel_methodology.md.",
   "entries": [
     {
@@ -1701,6 +1701,7 @@
         "尿白蛋白肌酐比",
         "尿白蛋白肌酐比值",
         "尿微量白蛋白肌酐比",
+        "尿微量白蛋白/肌酐",
         "白蛋白肌酐比值",
         "尿白蛋白/肌酐",
         "ACR",
@@ -1708,7 +1709,42 @@
         "mALB/Cr"
       ],
       "ocr_confusions": [],
-      "note": "Spot-urine microalbumin/creatinine ratio (LOINC 14959-1, Mass Ratio, mg/g). Some Chinese labs report ACR in mg/mmol against a distinct molar-ratio LOINC (Albumin/Creatinine [Molar ratio] 14585-4); that is a different unit basis and is intentionally NOT cross-converted here (no affine factor supplied) to avoid error."
+      "note": "Spot-urine microalbumin/creatinine ratio (LOINC 14959-1, Mass Ratio, mg/g). Some Chinese labs report ACR in mg/mmol against a distinct molar-ratio LOINC (Albumin/Creatinine [Molar ratio] 14585-4); that is a different unit basis and is intentionally NOT cross-converted here (no affine factor supplied) to avoid error. 分子只有白蛋白,与 urine_pcr(总蛋白/肌酐比)是两个不同的化验,别名刻意不含不带「白」字的写法。"
+    },
+    {
+      "key": "urine_pcr",
+      "canonical_name": "尿蛋白/肌酐比",
+      "category": "lab",
+      "system": "urine",
+      "panel": "肾功能",
+      "codes": {
+        "loinc": "2890-2",
+        "omop_concept_id": 3001582
+      },
+      "canonical_unit": "mg/g",
+      "units": [
+        {
+          "unit": "mg/g",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "mg/mmol",
+          "slope": 8.84,
+          "intercept": 0.0
+        }
+      ],
+      "aliases": [
+        "尿蛋白/肌酐比",
+        "尿蛋白肌酐比",
+        "尿蛋白/肌酐比值",
+        "尿蛋白肌酐比值",
+        "尿蛋白肌酐比率",
+        "尿蛋白/肌酐",
+        "UPCR"
+      ],
+      "ocr_confusions": [],
+      "note": "随机(点)尿总蛋白/肌酐比(LOINC 2890-2,Protein/Creatinine [Mass Ratio] in Urine;OMOP 标准概念 3001582)。分子是**总蛋白**,与 urine_acr(尿白蛋白/肌酐比,分子只有白蛋白)是两个不同的化验 —— 只差一个「白」字,补上这条之前「尿蛋白肌酐比」会按 1 字编辑距离被模糊配成 ACR。也不是 urine_protein_24h(24h 排泄量,量纲不同)。别名刻意不含裸「PCR」:化验单上那是核酸扩增。mg/mmol → mg/g:1 mmol 肌酐 = 0.11312 g(肌酐分子量 113.12 g/mol,与 urine_creatinine / urine_creatinine_24h 两条 note 用的是同一个常数),×1000/113.12 = ×8.840,取 8.84。ACR 那条刻意不给 mg/mmol 换算是因为它的 mg/mmol 对应另一个「摩尔比」LOINC(分子也按摩尔算);UPCR 没有这个问题 —— 总蛋白两边都是质量,换算只动分母的肌酐。"
     },
     {
       "key": "direct_bilirubin",
