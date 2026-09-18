@@ -72,8 +72,8 @@ class GlossIconTile extends StatelessWidget {
             if (icon != null)
               Icon(icon, size: MedBrand.tileIconSize * (size / MedBrand.tileSize), color: Colors.white)
             else
-              // **不跟系统字号放大**:块是固定尺寸,字放大就溢出。这是唯一一处
-              // 允许关掉字号缩放的地方 —— 它是个图形,不是要读的正文。
+              // **不跟系统字号放大**:块是固定尺寸,字放大就溢出。见
+              // design_tokens.dart MedType 文档里的唯一例外。
               MediaQuery.withNoTextScaling(
                 child: Text(
                   letter!,

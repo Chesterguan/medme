@@ -323,6 +323,9 @@ class MedColors extends ThemeExtension<MedColors> {
 /// 这些是 **TextStyle 常量**,不是写死的像素:Flutter 默认让 `TextStyle.fontSize`
 /// 走 `MediaQuery.textScaler`,系统字号放大会照常生效。**不要**在任何地方用
 /// `MediaQuery.withNoTextScaling` 或给 `Text` 传死的 `textScaler` 去抵消它。
+///
+/// 唯一例外:`GlossIconTile.letter` 里的头像首字母 —— 固定尺寸的装饰字形,不
+/// 承载信息(姓名在旁边、照常放大)。
 class MedType {
   MedType._();
 

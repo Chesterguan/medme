@@ -1,5 +1,7 @@
 // 光泽图标块是 brief §形 里的「我们的 3D 图标语言」—— 全 app 的图标底块只此一家。
 // 这个测试钉住它的几何与三层光泽,免得后来有人「简化成一个纯色方块」。
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
@@ -25,6 +27,7 @@ void main() {
     expect(g.colors, [a, b]);
     // 150°:CSS 的 0° 朝上、顺时针;150° ≈ 从左上偏上 → 右下偏下。
     expect(g.transform, isA<GradientRotation>());
+    expect((g.transform! as GradientRotation).radians, closeTo(-30 * math.pi / 180, 1e-9));
 
     expect(d.boxShadow!.single.color, s);
     expect(d.boxShadow!.single.offset, const Offset(0, 5));
@@ -80,5 +83,19 @@ void main() {
     ));
     expect(tester.takeException(), isNull);
     expect(tester.getSize(find.byType(GlossIconTile)), const Size(44, 44));
+  });
+
+  testWidgets('size 非默认值(首启场景 52/56/40):几何整体跟着缩放', (tester) async {
+    final d = await _decoOf(tester, const GlossIconTile(icon: Icons.add, size: 52));
+    expect(tester.getSize(find.byType(GlossIconTile)), const Size(52, 52));
+    // 按实现里同样的运算顺序算(先除再乘):`a*52/b` 是 `(a*52)/b`,浮点上和
+    // 实现的 `a*(52/b)` 未必位级相等,直接抄字面表达式会碰运气挂测试。
+    expect(d.borderRadius, BorderRadius.circular(MedShape.radiusTile * (52 / MedBrand.tileSize)));
+
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: Center(child: GlossIconTile(icon: Icons.add, size: 52))),
+    ));
+    final icon = tester.widget<Icon>(find.byType(Icon));
+    expect(icon.size, MedBrand.tileIconSize * (52 / MedBrand.tileSize));
   });
 }
