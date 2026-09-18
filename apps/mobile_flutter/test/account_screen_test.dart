@@ -545,16 +545,17 @@ Future<void> _toReady(
   await t.pumpAndSettle();
 }
 
-/// 「我授权给谁」排在「已就绪」页最后一节——`ListView(children: ...)` 底层还是
-/// `SliverChildListDelegate`,只有落在视口 + 缓存区内的子节点才会被挂载,普通
-/// `ensureVisible` 对还没挂载的 widget 无能为力(同 `visit_summary_sheet_test.dart`
-/// 的 `scrollToMedsToggle` 一模一样的坑):先 `scrollUntilVisible` 挂载它,再
-/// `ensureVisible` 把它拉回可点击的范围。
-Future<void> _scrollToMyGrants(WidgetTester t) => _scrollToText(t, '我授权给谁');
+/// 「我让谁看」(task-20b A4 之前叫「我授权给谁」)排在「已就绪」页最后一节——
+/// `ListView(children: ...)` 底层还是 `SliverChildListDelegate`,只有落在视口 +
+/// 缓存区内的子节点才会被挂载,普通 `ensureVisible` 对还没挂载的 widget 无能为力
+/// (同 `visit_summary_sheet_test.dart` 的 `scrollToMedsToggle` 一模一样的坑):
+/// 先 `scrollUntilVisible` 挂载它,再 `ensureVisible` 把它拉回可点击的范围。
+Future<void> _scrollToMyGrants(WidgetTester t) => _scrollToText(t, '我让谁看');
 
-/// 把一段文字滚进视口。C7 把「云同步」提到第一位之后,「设备」「账号管理」落到了
-/// 最底下 —— 原来那些裸 `ensureVisible` 够不到它们(`SliverList` 懒实现,没挂载的
-/// widget `ensureVisible` 无能为力),必须先 `scrollUntilVisible` 把它挂载出来。
+/// 把一段文字滚进视口。C7 把「云同步」提到第一位之后,「我的设备」「账号管理」
+/// 落到了最底下 —— 原来那些裸 `ensureVisible` 够不到它们(`SliverList` 懒实现,
+/// 没挂载的 widget `ensureVisible` 无能为力),必须先 `scrollUntilVisible` 把它
+/// 挂载出来。
 Future<void> _scrollToText(WidgetTester t, String text) async {
   final finder = find.text(text);
   await t.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
@@ -1220,7 +1221,7 @@ void main() {
         {'device_id': 'dev2', 'name': 'iPhone 15', 'eph_public': 'AA==', 'approved': false},
       ]);
       await _toReady(t, api);
-      await _scrollToText(t, '设备');
+      await _scrollToText(t, '我的设备');
       expect(find.text('iPhone 15'), findsOneWidget);
       expect(find.text('新设备,等你批准'), findsOneWidget, reason: '状态照实显示,只是不给这条操作入口');
       expect(
@@ -1235,7 +1236,7 @@ void main() {
     testWidgets('加载失败:显示错误,不崩', (t) async {
       final api = FakeApi(hasKeys: true, failDevices: true);
       await _toReady(t, api);
-      await _scrollToText(t, '设备');
+      await _scrollToText(t, '我的设备');
       expect(find.textContaining('设备列表加载失败:服务器开小差了'), findsOneWidget);
     });
 
@@ -1323,7 +1324,7 @@ void main() {
     testWidgets('C7:「云端」排在第一个区块,「设备」排在「云端」后面', (t) async {
       await _toReady(t, FakeApi(hasKeys: true), debugModeOverride: false);
       final cloud = t.getTopLeft(find.text('云端')).dy;
-      final grants = t.getTopLeft(find.text('授权')).dy;
+      final grants = t.getTopLeft(find.text('谁能看')).dy;
       expect(cloud < grants, isTrue, reason: '点进账号屏十次里九次是为了"我的病历备上了没有"');
     });
 
@@ -1421,7 +1422,7 @@ void main() {
         {'device_id': 'dev2', 'name': 'android', 'eph_public': 'AA==', 'approved': false, 'last_seen': '2026-01-01T00:00:00.000Z'},
       ]);
       await _toReady(t, api);
-      await _scrollToText(t, '设备');
+      await _scrollToText(t, '我的设备');
       expect(find.text('iPhone/iPad'), findsOneWidget);
       expect(find.text('安卓手机'), findsOneWidget);
       expect(find.text('新设备,等你批准'), findsOneWidget);
@@ -1442,7 +1443,7 @@ void main() {
       await _toReady(t, api);
       // Task 17 在「云同步」那节加了一行「云端整理」开关,「授权」这节的挂载点
       // 被挤出首屏——`SliverList` 懒实现,没挂载的 widget 找不到,先滚过去。
-      await _scrollToText(t, '授权');
+      await _scrollToText(t, '谁能看');
       // C:`prf_xxx` 是服务端内部 id,不给用户看;对不上本机成员时说「一份共享档案」。
       expect(find.text('一份共享档案'), findsOneWidget);
       expect(find.textContaining('p1'), findsNothing);
@@ -1457,7 +1458,7 @@ void main() {
     testWidgets('加载失败:显示错误,不崩', (t) async {
       final api = FakeApi(hasKeys: true, failProfiles: true);
       await _toReady(t, api);
-      await _scrollToText(t, '授权');
+      await _scrollToText(t, '谁能看');
       expect(find.textContaining('授权列表加载失败'), findsOneWidget);
     });
   });
@@ -1501,7 +1502,7 @@ void main() {
       // /v1/profiles 30ms),但远小于 myGrantsDelay(3s)——此刻应该已经落在
       // "已就绪,「我授权给谁」还在等" 这个窗口。
       await t.pump(const Duration(milliseconds: 200));
-      await t.scrollUntilVisible(find.text('我授权给谁'), 200, scrollable: find.byType(Scrollable).first);
+      await t.scrollUntilVisible(find.text('我让谁看'), 200, scrollable: find.byType(Scrollable).first);
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsWidgets);
       // 收尾:把剩下的延迟耗完,不留 pending timer。
@@ -2529,7 +2530,7 @@ void main() {
         reason: '开关的值是"此刻真的在同步吗",还没开通成功就是关的 —— 打开它就是重试',
       );
       expect(find.textContaining('还没备份上去'), findsOneWidget);
-      expect(find.text('同步'), findsNothing);
+      expect(find.text('云端备份'), findsNothing);
     });
 
     testWidgets('开通云同步:加载中显示进度圈', (t) async {
@@ -2581,7 +2582,7 @@ void main() {
 
       expect(t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value, isTrue);
       expect(find.textContaining('已开通云端备份'), findsOneWidget);
-      expect(find.text('同步'), findsOneWidget);
+      expect(find.text('云端备份'), findsOneWidget);
     });
 
     testWidgets('task-20b A2:「云端整理」开关未问过时默认关,摆在每成员云备份行下面,开着能存住', (t) async {
@@ -2641,7 +2642,7 @@ void main() {
       final api = FakeApi(hasKeys: true);
       await giveCurrentProfileCloudId(t);
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
-      expect(find.text('同步'), findsOneWidget);
+      expect(find.text('云端备份'), findsOneWidget);
 
       // `setCloudPaused` 要写 profiles.json —— 真实文件 I/O 在 `pumpAndSettle` 的
       // 假时钟里跑不完(本仓库一贯的限制),所以这一跳包进 `runAsync`。
@@ -2660,7 +2661,7 @@ void main() {
         findsOneWidget,
         reason: '用户最怕的是"关掉是不是等于删库" —— 这句必须在那一行上',
       );
-      expect(find.text('同步'), findsNothing, reason: '「关闭后本机不再上传下载」');
+      expect(find.text('云端备份'), findsNothing, reason: '「关闭后本机不再上传下载」');
     });
 
     testWidgets('关掉了的成员:不在"默认开云"的待办队列里(否则下次触发又开回来)', (t) async {
@@ -2759,23 +2760,23 @@ void main() {
       await _toReady(t, api, syncEngine: engine);
 
       // 第一次点:普通同步,撞 VaultMismatch。
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
       expect(find.textContaining('不是这个云档案'), findsOneWidget, reason: 'VaultMismatch 的中文原文');
-      expect(find.text('同步'), findsOneWidget, reason: '同一颗按钮,不多出第二颗');
+      expect(find.text('云端备份'), findsOneWidget, reason: '同一颗按钮,不多出第二颗');
 
       // 第二次点同一颗:上次失败过,于是走 enableCloud → 重开箱(FIFO 队列)+
       // 首同步,不必重启 App。Task 17 在「云同步」这节里加了一行「云端整理」
       // 开关,第一次点出的错误横幅把「同步」按钮挤到了视口外——先滚回可点范围。
-      await t.ensureVisible(find.text('同步'));
+      await t.ensureVisible(find.text('云端备份'));
       await t.pumpAndSettle();
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
 
       expect(rust.keyedNow, isTrue, reason: '重开箱走了(FIFO 队列),箱子现在是 keyed 的');
       expect(syncApi.pulls, 1, reason: '重开箱之后首同步真的跑到了拉事件这一步');
       expect(find.textContaining('不是这个云档案'), findsNothing, reason: '成功之后错误清掉');
-      expect(find.text('同步'), findsOneWidget);
+      expect(find.text('云端备份'), findsOneWidget);
     });
 
     // R1:屏上那条路 —— 上次失败过之后,「同步」走的是可续做的 `enableCloud`,而那一支
@@ -2800,16 +2801,16 @@ void main() {
       );
       await _toReady(t, api, syncEngine: engine);
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
       expect(find.textContaining('不是这个云档案'), findsOneWidget);
 
       // 第二次点同一颗:走 enableCloud 那条可续做的支路。同 M4:先滚回可点范围
       // (Task 17 新加的「云端整理」开关把错误横幅之后的「同步」按钮挤出了视口)。
-      await t.ensureVisible(find.text('同步'));
+      await t.ensureVisible(find.text('云端备份'));
       await t.pumpAndSettle();
       await t.runAsync(() async {
-        await t.tap(find.text('同步'));
+        await t.tap(find.text('云端备份'));
         await Future<void>.delayed(const Duration(milliseconds: 50));
       });
       await t.pumpAndSettle();
@@ -2830,7 +2831,7 @@ void main() {
       final syncApi = _SyncApi();
       await _toReady(t, api, syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust()));
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await t.pumpAndSettle();
@@ -2843,10 +2844,10 @@ void main() {
       final syncApi = _SyncApi(delay: const Duration(milliseconds: 1));
       await _toReady(t, api, syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust()));
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
 
-      expect(find.textContaining('上次同步'), findsOneWidget);
+      expect(find.textContaining('上次云端备份'), findsOneWidget);
       expect(find.textContaining('推送 0 条'), findsOneWidget);
       expect(find.textContaining('拉取 0 条'), findsOneWidget);
     });
@@ -2858,7 +2859,7 @@ void main() {
       final syncApi = _SyncApi(failPull: true, delay: const Duration(milliseconds: 1));
       await _toReady(t, api, syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust()));
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
 
       expect(find.text('服务器开小差了,稍后再试'), findsOneWidget);
@@ -2875,7 +2876,7 @@ void main() {
         syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust(keyed: false)),
       );
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
 
       expect(find.textContaining('拒绝同步'), findsOneWidget);

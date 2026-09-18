@@ -1043,15 +1043,15 @@ class _AccountScreenState extends State<AccountScreen> {
     const SizedBox(height: 8),
     _cloudSyncSection(),
     const SizedBox(height: 24),
-    const Text('授权', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const Text('谁能看', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _grantsSection(),
     const SizedBox(height: 24),
-    const Text('我授权给谁', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const Text('我让谁看', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _myGrantsSection(),
     const SizedBox(height: 24),
-    const Text('设备', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const Text('我的设备', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _devicesSection(),
     const SizedBox(height: 24),
@@ -1129,7 +1129,7 @@ class _AccountScreenState extends State<AccountScreen> {
         if (profile.cloudId != null && !profile.cloudPaused)
           (_cloudBusy || _syncBusy)
               ? const Center(child: CircularProgressIndicator())
-              : FilledButton(onPressed: _syncOrRecover, child: const Text('同步')),
+              : FilledButton(onPressed: _syncOrRecover, child: const Text('云端备份')),
         // B5 的**真正入口**(评审 Important 8)。原来「转为主人」只作为「我授权给谁」
         // 里的 per-grantee 行存在 —— 于是"把档案交给父母"要先:(1) 父母装 App 并走完
         // 口令 + 恢复码(正是 B4 那个卡点);(2) 子女按手机号把他加成家人;(3) 才会
@@ -1145,7 +1145,7 @@ class _AccountScreenState extends State<AccountScreen> {
           TextButton(
             key: const Key('transfer_current_profile'),
             onPressed: _transferBusy ? null : () => _transferOwnership(profile),
-            child: const Text('把这份档案转给家人(生成链接)'),
+            child: const Text('把这份病历交给别人'),
           ),
         ],
       ],
@@ -1241,7 +1241,7 @@ class _AccountScreenState extends State<AccountScreen> {
     final parts = ['推送 ${r.pushed} 条', '拉取 ${r.pulled} 条'];
     if (r.objectsFailed > 0) parts.add('${r.objectsFailed} 个附件失败');
     if (r.pushSkippedNoWatermark) parts.add('本次跳过推送(水位未就绪)');
-    return '上次同步:${parts.join('、')}';
+    return '上次云端备份:${parts.join('、')}';
   }
 
   /// 「开通云端备份」,**也是**上面那个「已开通,点击重试同步」按钮走的路径——
@@ -1842,7 +1842,7 @@ class _AccountScreenState extends State<AccountScreen> {
     final profile = ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull;
     if (profile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        appSnackBar(content: const Text('这台手机上找不到这份档案,先同步一次再试')),
+        appSnackBar(content: const Text('这台手机上找不到这份档案,先云端备份一次再试')),
       );
       return;
     }
