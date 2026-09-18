@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-17.1",
+  "version": "2026-09-17.2",
   "note": "Clinical terminology normalization dictionary for MedMe (docs/015 §3.5). Codes pulled from the local OMOP vocab (LOINC / RxNorm / ATC + OMOP standard concept_id). Conversions are affine: canonical_value = slope * source_value + intercept. LOINC property/scale is chosen to agree with canonical_unit (molar LOINC for SI molar canonicals). See docs/superpowers/specs/2026-07-10-terminology-normalization-layer-design.md. Lab entries additionally carry an optional `panel`: the 检验大类 (specimen-report print grouping, e.g. 血常规/肝功能/肾功能) a lab is printed under on a Chinese lab report — a curation of print convention, not a clinical/disease judgment (that's `packages/parser/data/problem_map.json`, a separate axis for the doctor viewer). Absent for entries that don't cleanly fit one of the ~14 curated panels. See packages/terminology/panel_methodology.md.",
   "entries": [
     {
@@ -9433,6 +9433,41 @@
       ],
       "ocr_confusions": [],
       "note": "Mass-concentration LOINC (4498-2) matches the mass canonical unit g/L."
+    },
+    {
+      "key": "ch50",
+      "canonical_name": "总补体溶血活性",
+      "category": "lab",
+      "system": "serum/plasma",
+      "panel": "风湿免疫",
+      "codes": {
+        "loinc": "4532-8",
+        "omop_concept_id": 3028461
+      },
+      "canonical_unit": "U/mL",
+      "units": [
+        {
+          "unit": "U/mL",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "kU/L",
+          "slope": 1.0,
+          "intercept": 0.0
+        }
+      ],
+      "aliases": [
+        "总补体溶血活性",
+        "总补体活性",
+        "总补体",
+        "补体活性",
+        "补体CH50",
+        "CH50",
+        "CH-50"
+      ],
+      "ocr_confusions": [],
+      "note": "总补体溶血活性 CH50(LOINC 4532-8,Complement total hemolytic CH50 [Units/volume] in Serum or Plasma;OMOP 标准概念 3028461)。U/mL = kU/L(同一个数,与 ca19_9/ca125 几条同一约定)。补这条之前「CH50」按 1 字编辑距离被模糊配成 ca50(糖类抗原50,肿瘤标志物)—— 差一个**字母**的缩写是两个完全不同的概念,不是字形误读。刻意不收裸「补体」:那是 C3/C4 的上位词,单独出现指不了这一项。"
     },
     {
       "key": "igg",

@@ -1328,6 +1328,25 @@ mod tests {
     }
 
     #[test]
+    fn ch50_is_its_own_concept_and_never_lands_on_ca50() {
+        // 「CH50」(总补体溶血活性)与「CA50」(糖类抗原50,肿瘤标志物)差一个**字母**,
+        // 正好落进模糊匹配 1 字的编辑距离预算 —— 补这条之前 `resolve("CH50")` 返回的是
+        // `ca50`(0.4),一条补体总活性会顶着「糖类抗原50」的名字和 CA50 的 LOINC 出现在
+        // 通用摘要 / 医生查看器里(下游没有任何地方按 confidence 过滤)。spec §5.2 的低
+        // 补体判定本来就要用 CH50,这条化验在目标人群里不罕见。
+        for t in ["CH50", "总补体", "总补体溶血活性", "补体CH50"] {
+            let m = resolve(t, Some("U/mL")).unwrap_or_else(|| panic!("no hit for {t}"));
+            assert_eq!(m.key, "ch50", "{t}");
+            assert_eq!(m.confidence, 1.0, "{t} 必须是精确命中,不是 0.4 的猜");
+        }
+        for t in ["CA50", "CA-50", "糖类抗原50"] {
+            let m = resolve(t, Some("U/mL")).unwrap_or_else(|| panic!("no hit for {t}"));
+            assert_eq!(m.key, "ca50", "{t}");
+            assert_eq!(m.confidence, 1.0, "{t}");
+        }
+    }
+
+    #[test]
     fn resolve_fuzzy_matches_ocr_corrupted_names() {
         // 精确路径全部 miss 之后,`resolve` 才会退到模糊路径 —— 单字 OCR 误读、
         // 截断都应该救回来,且置信度必须低于精确/剥壳/OCR混淆表。
@@ -1669,10 +1688,12 @@ mod tests {
         // LOINC 标准概念,见各条目 note)= 640。
         // +1 (2026-09-17.1:urine_pcr,尿总蛋白/肌酐比 —— 补之前它按 1 字编辑距离
         // 被模糊配成 urine_acr,见 upcr_is_its_own_concept_and_never_lands_on_acr)= 641。
+        // +1 (2026-09-17.2:ch50,总补体溶血活性 —— 同一类问题,补之前「CH50」被模糊
+        // 配成 ca50,见 ch50_is_its_own_concept_and_never_lands_on_ca50)= 642。
         // A drift here means an entry was accidentally dropped or duplicated.
         assert_eq!(
             dictionary_entries().len(),
-            641,
+            642,
             "unexpected dictionary entry count"
         );
     }

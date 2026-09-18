@@ -3,9 +3,11 @@
 //! 这些测试**必须串行**跑:覆盖层是进程级全局状态。用一个互斥锁串起来,
 //! 而不是 `--test-threads=1`(那要求每个跑测试的人都记得加参数)。
 //!
-//! 拿 `ch50`(总补体溶血活性)当例子,不是 UPCR —— UPCR 已经是内置条目了
-//! (见 `dictionary.json` 的 `urine_pcr`),而 SLE 包真正缺的正是 CH50 /
-//! 尿红白细胞(/HP)这几条(Task 11–15)。
+//! 拿 `urine_rbc_hpf`(高倍视野下的尿红细胞)当例子:UPCR 与 CH50 这一轮都补成了
+//! **内置**条目(`dictionary.json` 的 `urine_pcr` / `ch50`),拿它们当「内置没有的
+//! 分析物」会自相矛盾;SLEDAI 血尿项要的按高倍视野计数才是真正还缺的那条
+//! (Task 11–15)。**换算算术**的证据在 `parser/tests/overlay_end_to_end.rs`:/HP 与
+//! /uL 之间没有确定换算,这条夹具只有恒等行,证不了斜率。
 use std::sync::Mutex;
 use terminology::Entry;
 
@@ -17,16 +19,19 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// 病种包定义的新分析物。`U/L → U/mL` 的 0.001 是纯单位代数(1 U/L = 0.001 U/mL),
-/// 不是任何临床换算 —— 用例只想证明「包带的换算表真的被用上了」。
-fn ch50() -> Entry {
+/// 病种包定义的新分析物。内置只有按体积计数的 `urine_rbc_count`(/uL),与「每高倍
+/// 视野几个」**没有确定换算**(词典 `stool_wbc` 那条 note 写的同一条理由),所以这里
+/// 只有恒等行,`/HP` 与 `/[HPF]` 是同一个量的两种印法。
+///
+/// 别名里**故意**混进一条内置已有的「尿红细胞」:包抢不走它,用例顺带钉住这件事。
+fn urine_rbc_hpf() -> Entry {
     serde_json::from_value(serde_json::json!({
-        "key": "ch50", "canonical_name": "总补体溶血活性", "category": "lab",
-        "system": "serum/plasma", "panel": "风湿免疫", "codes": {},
-        "canonical_unit": "U/mL",
-        "units": [{"unit": "U/mL", "slope": 1.0, "intercept": 0.0},
-                  {"unit": "U/L", "slope": 0.001, "intercept": 0.0}],
-        "aliases": ["总补体溶血活性", "CH50", "总补体活性"]
+        "key": "urine_rbc_hpf", "canonical_name": "尿红细胞(高倍视野)", "category": "lab",
+        "system": "urine", "panel": "尿液", "codes": {},
+        "canonical_unit": "/[HPF]",
+        "units": [{"unit": "/[HPF]", "slope": 1.0, "intercept": 0.0},
+                  {"unit": "/HP", "slope": 1.0, "intercept": 0.0}],
+        "aliases": ["高倍镜下红细胞", "尿红细胞"]
     }))
     .expect("夹具条目必须解析")
 }
@@ -36,29 +41,26 @@ fn an_overlay_analyte_resolves_and_carries_its_units() {
     let _g = serial();
     terminology::set_overlay(vec![]);
     assert!(
-        terminology::resolve("总补体溶血活性", Some("U/mL")).is_none(),
+        terminology::resolve("高倍镜下红细胞", Some("/HP")).is_none(),
         "内置词典里本来没有"
     );
-    // 内置今天还会把 CH50 模糊猜成 CA50(肿瘤标志物,0.4)—— 包的精确别名必须压过
-    // 这个猜测,否则「加病」加出来的是个更糟的错配。
-    assert_ne!(
-        terminology::resolve("CH50", Some("U/mL")).map(|m| m.key),
-        Some("ch50".to_string())
-    );
 
-    terminology::set_overlay(vec![ch50()]);
-    let m = terminology::resolve("总补体溶血活性", Some("U/mL")).expect("覆盖层要认出来");
-    assert_eq!(m.key, "ch50");
+    terminology::set_overlay(vec![urine_rbc_hpf()]);
+    let m = terminology::resolve("高倍镜下红细胞", Some("/HP")).expect("覆盖层要认出来");
+    assert_eq!(m.key, "urine_rbc_hpf");
     assert_eq!(m.confidence, 1.0, "精确别名命中 = 1.0,与内置同一条约定");
-    let by_abbr = terminology::resolve("CH50", Some("U/mL")).expect("缩写也要认");
-    assert_eq!(by_abbr.key, "ch50", "覆盖层的精确命中压过内置的模糊猜测");
 
-    let e = terminology::entry_for("ch50").expect("entry_for 也要查覆盖层");
-    assert_eq!(e.canonical_unit.as_deref(), Some("U/mL"));
-    assert!(e
-        .units
-        .iter()
-        .any(|u| u.unit == "U/L" && (u.slope - 0.001).abs() < 1e-12));
+    let e = terminology::entry_for("urine_rbc_hpf").expect("entry_for 也要查覆盖层");
+    assert_eq!(e.canonical_unit.as_deref(), Some("/[HPF]"));
+    assert!(e.units.iter().any(|u| u.unit == "/HP"));
+
+    // 包把内置的「尿红细胞」也写进了自己的别名里 —— 内置那条(按体积计数)纹丝不动。
+    assert_eq!(
+        terminology::resolve("尿红细胞", Some("/uL"))
+            .expect("内置认得")
+            .key,
+        "urine_rbc_count"
+    );
     terminology::set_overlay(vec![]);
 }
 
@@ -146,9 +148,9 @@ fn an_overlay_can_never_shadow_a_builtin_definition() {
 #[test]
 fn clearing_the_overlay_really_clears_it() {
     let _g = serial();
-    terminology::set_overlay(vec![ch50()]);
-    assert!(terminology::entry_for("ch50").is_some());
+    terminology::set_overlay(vec![urine_rbc_hpf()]);
+    assert!(terminology::entry_for("urine_rbc_hpf").is_some());
     terminology::set_overlay(vec![]);
-    assert!(terminology::entry_for("ch50").is_none());
-    assert!(terminology::resolve("总补体溶血活性", Some("U/mL")).is_none());
+    assert!(terminology::entry_for("urine_rbc_hpf").is_none());
+    assert!(terminology::resolve("高倍镜下红细胞", Some("/HP")).is_none());
 }
