@@ -285,6 +285,7 @@ class _ItemRow extends StatelessWidget {
     this.trailing,
     this.meta = const [],
     this.longText,
+    this.note,
   });
 
   final IconData icon;
@@ -293,6 +294,12 @@ class _ItemRow extends StatelessWidget {
   final Widget? trailing;
   final List<String?> meta;
   final String? longText;
+
+  /// 包里那条「与指南口径有差」的话(`gfr_80_baseline.note`、`biopsy_indication.note`
+  /// 都带 ⚠️ 段)。引擎特意把包的 `note` 原样带进 body,**就是要医生看见**
+  /// (`rules.rs::gfr_item` / `biopsy_item` 的文档写了这件事);与 `longText` 分两行,
+  /// 不拼在一起 —— 拼了就核不到这一句的逐字原文(与 score_card 的 `caveat` 同一手法)。
+  final String? note;
 
   @override
   Widget build(BuildContext context) {
@@ -325,10 +332,11 @@ class _ItemRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   metaLine,
                 ],
-                if (longText case final t? when t.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(t, style: MedType.secondary.copyWith(color: c.ink)),
-                ],
+                for (final t in [longText, note])
+                  if (t case final s? when s.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(s, style: MedType.secondary.copyWith(color: c.ink)),
+                  ],
               ],
             ),
           ),
@@ -959,6 +967,7 @@ class _ReminderRow extends StatelessWidget {
         item['source'] == null ? null : '出处 ${item['source']}',
       ],
       longText: item['reason'] as String?,
+      note: item['note'] as String?,
     );
   }
 }
@@ -1150,6 +1159,7 @@ class _ChecklistItemRow extends StatelessWidget {
       // `reason` 只有 unknown 才有(`states_section`/`eval_milestone` 的约定),
       // 原样显示。
       longText: item['reason'] as String?,
+      note: item['note'] as String?,
     );
   }
 }

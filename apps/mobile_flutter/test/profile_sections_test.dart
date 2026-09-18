@@ -225,6 +225,43 @@ void main() {
   );
 
   // ---------------------------------------------------------------------
+  // 终审 fix round 1(I3):包的 `note` 必须印到医生眼前
+  // ---------------------------------------------------------------------
+
+  /// 引擎特意把包的 `note` 原样带进 body,就是为了让「与指南口径有差」这句话
+  /// 出现在医生那一屏上(`rules.rs::gfr_item` / `biopsy_item` 的文档)。之前两个
+  /// 渲染器都在最后一米把它丢了。两条都用 golden 里**真实那一条**,不手抄。
+  testWidgets('a milestone row prints the package note it was handed', (t) async {
+    final ms = _goldenSections.firstWhere((s) => s['id'] == 'ln_milestones');
+    final items = (_asMapForTest(ms['body'])['items'] as List)
+        .map(_asMapForTest)
+        .toList();
+    final gfr = items.firstWhere((i) => i['id'] == 'gfr_80_baseline');
+    expect(gfr['note'], isNotNull, reason: 'golden 的形状变了,先看那边');
+
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'checklist', 'id': 'ln_milestones', 'title': '狼疮肾炎治疗里程碑',
+      'body': {'items': [gfr]},
+    })));
+    expect(find.text(gfr['note'] as String), findsOneWidget);
+  });
+
+  testWidgets('a reminder row prints the package note it was handed', (t) async {
+    final rem = _goldenSections.firstWhere((s) => s['kind'] == 'reminders');
+    final items = (_asMapForTest(rem['body'])['items'] as List)
+        .map(_asMapForTest)
+        .toList();
+    final mmf = items.firstWhere((i) => i['id'] == 'mmf_cbc');
+    expect(mmf['note'], isNotNull, reason: 'golden 的形状变了,先看那边');
+
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'reminders', 'title': '待补 / 逾期',
+      'body': {'items': [mmf]},
+    })));
+    expect(find.text(mmf['note'] as String), findsOneWidget);
+  });
+
+  // ---------------------------------------------------------------------
   // golden fixture:窄屏 + 2× 字号都不能崩、不能溢出。
   // ---------------------------------------------------------------------
 

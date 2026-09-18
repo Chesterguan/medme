@@ -17,7 +17,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-EGx0hRSWvMPBgsJDBLheSwZfqiSSR1wvKOvgdpk+77U='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-A8iMa/8pQIxQOvgUl2mpiNFCDwNgdMMW70BTYGio9Es='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -1413,7 +1413,7 @@ function pfReminders(body) {
       [(!pending && it.state === "overdue" && it.overdue_days !== null && it.overdue_days !== undefined)
         ? "超期 " + it.overdue_days + " 天" : "",
        ds, pfSpan(it.since, it.as_of), pfSrc(it.source)],
-      typeof it.reason === "string" ? it.reason : null);
+      typeof it.reason === "string" ? it.reason : null) + pfNote(it.note);
   });
   return h;
 }
@@ -1454,7 +1454,13 @@ function pfChecklistItem(it) {
     // 数值旁边永远带它的日期与出处。
     [actual, typeof it.actual_at === "string" ? it.actual_at : "", pfSrc(it.source)],
     // `reason` 只有 unknown 才有,原样显示。
-    typeof it.reason === "string" ? it.reason : null);
+    typeof it.reason === "string" ? it.reason : null) + pfNote(it.note);
+}
+// 包里那条「与指南口径有差」的话(`gfr_80_baseline.note` 的 ⚠️ 段)。引擎特意把包的
+// `note` 原样带进 body,**就是要医生看见**;与 `caveat` 同一手法:单独成行、原样逐字,
+// 不拼进 `reason` 里。
+function pfNote(note) {
+  return (typeof note === "string" && note) ? '<div class="pf-long pf-ind">' + esc(note) + "</div>" : "";
 }
 function pfChecklist(sectionId, body) {
   // 按 `section.id` 认里程碑表,body 形状只当兜底 —— 两块 checklist 复用同一个 kind,

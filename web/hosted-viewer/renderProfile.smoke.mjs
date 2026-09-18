@@ -83,6 +83,15 @@ const adjacency = [
 ];
 for (const [frag, why] of adjacency) assert.ok(out.includes(frag), why);
 
+// 包里每一条「与指南口径有差」的话(`note`)都必须印出来(终审 I3):`gfr_80_baseline`
+// 比的是「最近一次 ÷ 最早一次」而不是原文的「前 3 个月内」,`mmf_cbc` 第一年之后那一档
+// 是包作者的外推 —— 引擎特意把这两句原样带到渲染层,最后一米丢掉的话,医生读到的就是
+// 一个没有限定语的结论。
+for (const [frag, why] of [
+  ["基线 = 档案里最早一次有日期的 eGFR", "里程碑条目的 note 要印出来"],
+  ["第一年之后说明书没再给任何间隔", "提醒条目的 note 要印出来"],
+]) assert.ok(out.includes(frag), why);
+
 // 时间轴这一块 golden 里是空的、且包**故意**没给 empty_hint —— 卡片仍要在
 // (与手机端一致:查看器既不替它编一句话,也不让整块消失)。
 assert.ok(out.includes("病程时间轴"), "空的 timeline 也要出一张带标题的卡");
