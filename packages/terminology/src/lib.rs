@@ -726,7 +726,10 @@ pub fn normalize(raw_term: &str) -> Option<Match> {
             return Some(idx.to_match(hit, STRIPPED_CONFIDENCE));
         }
     }
-    // 内置全部路径都没命中,才问病种包的覆盖层(见 [`set_overlay`])。
+    // 内置全部**精确**路径都没命中,才问病种包的覆盖层(见 [`set_overlay`])。
+    // 注意内置的**模糊**路径(`fuzzy_lookup`,0.4)排在覆盖层之后 —— 它由 `resolve`
+    // 在所有精确命中都落空之后才跑,所以包的精确别名确实会压过内置的模糊救回。
+    // 这是刻意的(模糊本来就是推算),闸门放在签包那一侧:见 [`set_overlay`]。
     overlay_match(&norm, false)
 }
 
@@ -949,12 +952,20 @@ pub fn resolve_drug(name: &str) -> Option<Match> {
 fn pick_best(hits: Vec<Match>, unit: Option<&str>) -> Option<Match> {
     let unit = unit.map(str::trim).filter(|u| !u.is_empty());
     hits.into_iter().rev().max_by_key(|m| {
+        // **排序键第一位:是不是内置。** 「内置优先」在 `normalize` 里只保证到**单个
+        // 候选串**;跨候选的竞争在这里,而覆盖层命中与内置命中同为 1.0,单看长度就是
+        // 「别名更长的赢」。包只要把别名写成报告整行的印法(`term_candidates` 的头两个
+        // 候选正是原串和去括号主体,如「血清肌酐(Cr)」),就能把内置那一行连同
+        // `units[]` 一起抢到自己 key 上 —— 换个 key 达成「改掉肌酐的规范单位」。
+        // 把它顶到最前面,任何置信度/长度都翻不过来。
+        let builtin = dictionary_entries().iter().any(|e| e.key == m.key);
         // `entry_for` 而不是 `dictionary_entries().find`:覆盖层带来的分析物也有
         // `units[]`,不查它的话包里那条永远拿不到「单位对得上」这条最强证据,
-        // 跟内置候选竞争时会无声地输掉。
+        // 跟**另一条覆盖层候选**竞争时会无声地输掉。
         let accepts =
             unit.is_some_and(|u| entry_for(&m.key).is_some_and(|e| entry_accepts_unit(&e, u)));
         (
+            builtin,
             accepts,
             (m.confidence * 100.0) as u32,
             m.matched_alias.chars().count(),
@@ -1009,6 +1020,22 @@ static OVERLAY: std::sync::RwLock<Vec<Entry>> = std::sync::RwLock::new(Vec::new(
 /// 内置 key 相同的条目**会被保留但定义永远查不到**:它们只能给那个 key 加别名
 /// (见 [`overlay_match`])。与其在这里静默丢弃,不如让优先级只由查询一侧决定,
 /// 只有一处需要读懂。
+///
+/// 调用方(Task 20)要守的三条,这里一概不代管:
+/// - **多个包合并成一个 `Vec` 一次性传进来** —— 这是整体替换,分两次调用后一次会把
+///   前一包冲掉。同一个别名被两条覆盖层条目共用时**先到先得**(数组靠前的赢),
+///   没有任何提示:去重/告警该在合并那一步做(内置那侧有
+///   `no_duplicate_alias_within_category` 守着,覆盖层没有)。
+/// - **只在空闲时切**。这是进程级全局量:切包发生在另一个线程 `aggregate` 到一半时,
+///   同一份文档可能前半程按旧覆盖层、后半程按新覆盖层归一化(不崩、不脏写,但结果
+///   不自洽)。切完要重算。
+/// - **空 `key` / 空别名在装包时就该拒收**。这里不挡:`entry_for("")` 会把这种条目
+///   返回给调用方,只是今天没有调用方传空 key(空别名在 [`normalize`] 的
+///   `norm.is_empty()` 就被挡了)。
+///
+/// 另一条闸门在**签包**那一侧:包里任何别名,若今天 `resolve()` 得到的是内置 key,
+/// 就该拒签/告警 —— 覆盖层的精确别名会压过内置的模糊救回(见 [`normalize`] 末尾),
+/// 这条路不该让包随手走。
 pub fn set_overlay(entries: Vec<Entry>) {
     // ponytail: 线性扫描覆盖层(条目数是「开着的病种数 × 每包几条」,个位数)。
     // 真到几百条再建索引。

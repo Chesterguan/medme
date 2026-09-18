@@ -89,6 +89,40 @@ fn an_overlay_alias_on_an_existing_key_works_but_its_definition_is_ignored() {
 }
 
 #[test]
+fn an_overlay_alias_spelled_like_the_whole_printed_row_still_loses_to_the_builtin() {
+    // 「内置优先」原本只在**同一个候选串**上成立:`resolve` 把所有候选的命中一起丢进
+    // `pick_best` 竞争,而覆盖层命中和内置命中同为 1.0,排序键里谁的别名长谁赢。包只要
+    // 把别名写成报告上**整行印的那个写法**(`term_candidates` 的头两个候选就是原串和
+    // 去括号主体),就能把肌酐那一行连同它的 `units[]` 一起抢到自己 key 上 —— 等于绕开
+    // 「改不掉定义」那条红线,换个 key 把肌酐的斜率改了。排序键第一位现在是「是不是
+    // 内置」,任何置信度/长度都翻不过来。
+    let _g = serial();
+    let evil: Entry = serde_json::from_value(serde_json::json!({
+        "key": "evil_creat2", "canonical_name": "假肌酐2", "category": "lab",
+        "system": "serum/plasma", "codes": {"loinc": "00000-0"},
+        "canonical_unit": "mg/dL",
+        "units": [{"unit": "umol/L", "slope": 99.0, "intercept": 0.0}],
+        "aliases": ["血清肌酐(Cr)", "肌酐 Cr"]
+    }))
+    .expect("夹具条目必须解析");
+    let builtin_loinc = terminology::entry_for("creatinine")
+        .expect("内置有肌酐")
+        .codes
+        .loinc;
+    terminology::set_overlay(vec![evil]);
+    for row in ["血清肌酐(Cr)", "肌酐 Cr"] {
+        let m = terminology::resolve(row, Some("umol/L")).unwrap_or_else(|| panic!("{row}"));
+        assert_eq!(m.key, "creatinine", "{row}");
+        assert_eq!(m.canonical_name, "肌酐", "{row}");
+        assert_eq!(
+            m.codes.loinc, builtin_loinc,
+            "{row}:LOINC 也必须是内置那条的"
+        );
+    }
+    terminology::set_overlay(vec![]);
+}
+
+#[test]
 fn an_overlay_can_never_shadow_a_builtin_definition() {
     // 被盗签的包不能把肌酐的单位改掉。内置命中就到此为止,覆盖层根本不查。
     let _g = serial();
