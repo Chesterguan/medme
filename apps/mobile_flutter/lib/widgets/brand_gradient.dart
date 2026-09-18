@@ -59,33 +59,49 @@ class BrandGradientBox extends StatelessWidget {
       ]);
     }
 
-    final box = Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(radius),
-        gradient: LinearGradient(
-          colors: MedBrand.gradientColors,
-          stops: MedBrand.gradientStops,
-          begin: MedBrand.gradientBegin,
-          end: MedBrand.gradientEnd,
+    // R13(review fix round 1):这层原来是 Container——不透明的渐变整个盖在
+    // InkWell 的水波纹上面,水波纹画了也看不见(Flutter `Ink`类文档原话:opaque
+    // 的 Container/DecoratedBox 画在 Material 上层会把水波纹整个遮住)。换成
+    // Ink:它把 decoration 交给最近的祖先 Material 去画,和水波纹同一张画布,
+    // 水波纹才叠在渐变上面。
+    //
+    // Ink 没有 clipBehavior(不像 Container),所以外面套一层 ClipRRect——它裁的
+    // 是 Ink 的**子内容**(这里是光晕那个故意画出边界的圆),不是 Ink 自己的
+    // decoration:decoration 画在祖先 Material 的画布上,在 ClipRRect 裁剪范围
+    // 之外(`Ink` 类文档写明的限制),但那份 decoration 自带 borderRadius,
+    // BoxDecoration 画自己的圆角形状本就不需要外部裁剪。
+    final box = ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: Ink(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          gradient: LinearGradient(
+            colors: MedBrand.gradientColors,
+            stops: MedBrand.gradientStops,
+            begin: MedBrand.gradientBegin,
+            end: MedBrand.gradientEnd,
+          ),
+          boxShadow: shadow,
         ),
-        boxShadow: shadow,
+        child: content,
       ),
-      // 裁住光晕那团故意画到边界外的圆。
-      clipBehavior: Clip.antiAlias,
-      child: content,
     );
 
-    if (onTap == null) return _semantics(box);
-    return _semantics(Material(
-      type: MaterialType.transparency,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(radius),
-        splashColor: Colors.white.withValues(alpha: 0.08),
-        highlightColor: Colors.white.withValues(alpha: 0.04),
-        child: box,
-      ),
-    ));
+    final tappable = onTap == null
+        ? box
+        : InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(radius),
+            splashColor: Colors.white.withValues(alpha: 0.08),
+            highlightColor: Colors.white.withValues(alpha: 0.04),
+            child: box,
+          );
+
+    // `Ink` 无论有没有 onTap 都要有祖先 Material(`debugCheckHasMaterial`)——
+    // 原来只在 onTap != null 分支里包 Material,onTap 为 null(PrimaryEntryTile/
+    // MedPrimaryButton 常见的静态展示场景,以及 HeroCard 没传 onTap 时)会在
+    // 真机上直接 assert 炸掉,所以这里挪到两个分支外面统一包一层。
+    return _semantics(Material(type: MaterialType.transparency, child: tappable));
   }
 
   Widget _semantics(Widget w) => semanticLabel == null
@@ -182,7 +198,9 @@ class MedSecondaryButton extends StatelessWidget {
       child: InkWell(
         onTap: onPressed,
         borderRadius: BorderRadius.circular(MedShape.radiusPill),
-        child: Container(
+        // R13:同上——白底改用 Ink,水波纹才不会被这层不透明白底盖住。这里没有
+        // 光晕那类会溢出的子内容,不需要额外的 ClipRRect。
+        child: Ink(
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(MedShape.radiusPill),

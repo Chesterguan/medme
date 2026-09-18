@@ -93,33 +93,38 @@ class IdentityHeroCard extends StatelessWidget {
                   color: Colors.white.withValues(alpha: 0.35),
                 ),
                 const SizedBox(height: MedShape.s2),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.event_note_outlined,
-                      size: 15,
-                      color: Colors.white.withValues(alpha: 0.88),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        '最近就诊 · ',
-                        style: MedType.secondary.copyWith(
-                          fontSize: 14,
-                          color: Colors.white.withValues(alpha: 0.88),
+                // review fix round 1(Minor):标签和数值拆成两个 Text 后,读屏会
+                // 停两次。MergeSemantics 把这一整行合并回一个语义节点,读起来还是
+                // 一句话——不改字符串、不改布局,只改语义树。
+                MergeSemantics(
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.event_note_outlined,
+                        size: 15,
+                        color: Colors.white.withValues(alpha: 0.88),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '最近就诊 · ',
+                          style: MedType.secondary.copyWith(
+                            fontSize: 14,
+                            color: Colors.white.withValues(alpha: 0.88),
+                          ),
                         ),
                       ),
-                    ),
-                    Text(
-                      recentVisitText.isEmpty ? '暂无' : recentVisitText,
-                      style: MedType.value.copyWith(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                        fontVariations: MedType.w600,
-                        color: Colors.white,
+                      Text(
+                        recentVisitText.isEmpty ? '暂无' : recentVisitText,
+                        style: MedType.value.copyWith(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
+                          fontVariations: MedType.w600,
+                          color: Colors.white,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),

@@ -153,8 +153,9 @@ void main() {
         recentVisitDate: null,
         onSwitchMember: () {},
       )));
-      final box = tester.widget<Container>(find.descendant(
-        of: find.byType(BrandGradientBox), matching: find.byType(Container)).first);
+      // R13:渐变面是 Ink,不是 Container(见 brand_gradient_test.dart 同一处改动)。
+      final box = tester.widget<Ink>(find.descendant(
+        of: find.byType(BrandGradientBox), matching: find.byType(Ink)).first);
       final g = (box.decoration! as BoxDecoration).gradient! as LinearGradient;
       expect(g.colors, MedBrand.gradientColors);
       expect(g.begin, MedBrand.gradientBegin);
@@ -191,6 +192,35 @@ void main() {
           Colors.white.withValues(alpha: 0.88));
       expect(tester.widget<Icon>(find.byIcon(Icons.unfold_more)).color,
           Colors.white.withValues(alpha: 0.9));
+    });
+  });
+
+  group('review fix round 1(Minor):「最近就诊」标签与数值合并成一个读屏节点', () {
+    // 标签(「最近就诊 · 」)与数值(日期/「暂无」)拆成两个 Text 之后,不加
+    // MergeSemantics 会让读屏在这一行停两次。这条钉住 MergeSemantics 确实包住
+    // 了这一整行——不是「有没有拆」的问题(拆分本身是 mockup 要的两档字号),
+    // 是「拆了之后读屏体验有没有补回来」的问题。
+    testWidgets('标签与数值同属一个 MergeSemantics', (tester) async {
+      await tester.pumpWidget(wrap(IdentityHeroCard(
+        name: '我',
+        gender: '男',
+        age: '40岁',
+        recordCount: 5,
+        recentVisitDate: '2024-03-01',
+        onSwitchMember: () {},
+      )));
+      final merged = find.byType(MergeSemantics);
+      expect(merged, findsOneWidget);
+      expect(
+        find.descendant(of: merged, matching: find.text('最近就诊 · ')),
+        findsOneWidget,
+        reason: '标签必须在 MergeSemantics 里面',
+      );
+      expect(
+        find.descendant(of: merged, matching: find.text('2024-03-01')),
+        findsOneWidget,
+        reason: '数值也必须在同一个 MergeSemantics 里面,两者才合并成一个节点',
+      );
     });
   });
 }
