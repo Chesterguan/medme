@@ -3,17 +3,19 @@
 //
 //  1. **数字必须是真的**:传 null 的字段一律显示「暂无」,不许留空、不许编
 //     一个「0」出来;
-//  2. **对比度必须过 WCAG AA**:卡片自己推出来的深色渐变,与卡上每一种
-//     文字/图标颜色的组合,都拿 `Color.computeLuminance()` 实打实算一遍,
-//     正文 ≥4.5:1、非文本 UI ≥3:1 ——这个项目之前踩过 `seal` 配白字只有
-//     3.90:1 不达标的坑,不能再踩一次;
+//  2. **卡面文字颜色是确定性的**:非装饰性文字一律 `Colors.white`,压在
+//     `MedBrand.gradientColors` 上(见预检裁定 R11)——不再对渐变端点实测
+//     WCAG 对比度(那套 `IdentityHeroPalette` 已删,见 Stage 3 视觉令牌
+//     brief Task 4);
 //  3. **大字模式不许截断姓名**:系统字号放大后,姓名的 Text 不能带
 //     `maxLines`/`ellipsis`,长名字要能整段读到;
 //  4. **点击必须能触发切换成员**:hero 卡是概览/档案联动切换的入口之一。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
 import 'package:mobile_flutter/widgets/identity_hero_card.dart';
 
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
@@ -23,16 +25,6 @@ Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
     child: Scaffold(body: SingleChildScrollView(child: child)),
   ),
 );
-
-/// WCAG 对比度,与 `test/design_tokens_test.dart` 同一公式
-/// ((亮+0.05)/(暗+0.05))——那边测规范色板,这里测这张卡实际用到的组合。
-double contrast(Color a, Color b) {
-  final la = a.computeLuminance();
-  final lb = b.computeLuminance();
-  final hi = la > lb ? la : lb;
-  final lo = la > lb ? lb : la;
-  return (hi + 0.05) / (lo + 0.05);
-}
 
 void main() {
   group('每一个数字都是真的,缺失说「暂无」不留空', () {
@@ -137,50 +129,68 @@ void main() {
     });
   });
 
-  group('深色 hero 的对比度必须过 WCAG AA', () {
-    // 直接导入 IdentityHeroPalette 里卡片实际用的颜色——不在这里另抄一遍
-    // HSL 推导公式。两处各写一份同样的算式,谁改了卡片那份而没改测试这份,
-    // 对比度测试就会悄悄测着一个卡片实际不用的颜色,红不了真正的回归。
-    final gradientStart = IdentityHeroPalette.gradientStart;
-    final gradientEnd = IdentityHeroPalette.gradientEnd;
-    final heroInk = IdentityHeroPalette.textPrimary; // 姓名
-    final heroInk2 = IdentityHeroPalette.textSecondary; // 次级信息、图标
-
-    test('正文级文字(姓名/次级信息)在渐变两端都 ≥ 4.5:1', () {
-      for (final bg in [gradientStart, gradientEnd]) {
-        expect(
-          contrast(heroInk, bg),
-          greaterThanOrEqualTo(4.5),
-          reason: '姓名用的 heroInk 在渐变端点 $bg 上必须达标',
-        );
-        expect(
-          contrast(heroInk2, bg),
-          greaterThanOrEqualTo(4.5),
-          reason: '次级信息用的 heroInk2 在渐变端点 $bg 上必须达标'
-              '(这个项目之前 seal+白字量出来是 3.90,不够,别再踩一次)',
-        );
-      }
+  group('hero 卡面的文字颜色规则(预检裁定 R11,取代旧的 WCAG 对比度实测)', () {
+    // 旧版本这里直接导入 `IdentityHeroPalette` 算出来的深色渐变端点,拿
+    // `Color.computeLuminance()` 对每种文字/图标颜色实测 WCAG 对比度。Stage 3
+    // 视觉令牌 brief 把卡片换成了全 app 统一收口的品牌渐变(`HeroCard` →
+    // `BrandGradientBox`,见 `widgets/brand_gradient.dart`),那套渐变最亮的
+    // 一段 #1FB0C6 上压白字只有 2.4:1,达不到 AA——`IdentityHeroPalette` 已经
+    // 整个删掉,不再有渐变端点可测。
+    //
+    // 取而代之的是一条确定性规则(R11):**非装饰性文字一律 `Colors.white`,
+    // 压在渐变里 `#1789C1` 及更深的一段上**,不做像素取色、不算对比度公式。
+    // 几何前提(不在这里验证,只record 为什么这条规则站得住):渐变
+    // 135°(`gradientBegin` = 左上)从最亮的 #1FB0C6 铺到最深的 #16508E;
+    // 头像固定占住卡片左上角——正是渐变最亮的那个角——姓名与「最近就诊」
+    // 这些非装饰性文字都排在头像右侧、渐变中点(#1789C1)之后的区域,所以
+    // 白字实际压的是中段及更深的颜色,不是最亮那一角。
+    testWidgets('渐变是 MedBrand.gradientColors,135°(begin=左上,头像占住这个角)', (tester) async {
+      await tester.pumpWidget(wrap(IdentityHeroCard(
+        name: '我',
+        gender: '男',
+        age: '40岁',
+        recordCount: 5,
+        recentVisitDate: null,
+        onSwitchMember: () {},
+      )));
+      final box = tester.widget<Container>(find.descendant(
+        of: find.byType(BrandGradientBox), matching: find.byType(Container)).first);
+      final g = (box.decoration! as BoxDecoration).gradient! as LinearGradient;
+      expect(g.colors, MedBrand.gradientColors);
+      expect(g.begin, MedBrand.gradientBegin);
+      expect(g.begin, Alignment.topLeft);
     });
 
-    test('非文本 UI(切换图标)在渐变两端都 ≥ 3:1', () {
-      for (final bg in [gradientStart, gradientEnd]) {
-        expect(contrast(heroInk2, bg), greaterThanOrEqualTo(3.0));
-      }
+    testWidgets('非装饰性文字(姓名、最近就诊数值)一律 Colors.white', (tester) async {
+      await tester.pumpWidget(wrap(IdentityHeroCard(
+        name: '张建国(示例)',
+        gender: '男',
+        age: '59岁',
+        recordCount: 22,
+        recentVisitDate: '2024-03-01',
+        onSwitchMember: () {},
+      )));
+      expect(tester.widget<Text>(find.text('张建国(示例)')).style!.color, Colors.white,
+          reason: '姓名是这张卡最关键的信息,渐变中段之后必须是不透明白字');
+      expect(tester.widget<Text>(find.text('2024-03-01')).style!.color, Colors.white,
+          reason: '「最近就诊」的大数字同一档待遇');
     });
 
-    test('头像上的白字对头像底色 ≥ 4.5:1', () {
-      expect(
-        contrast(Colors.white, IdentityHeroPalette.avatarBackground),
-        greaterThanOrEqualTo(4.5),
-      );
-    });
-
-    test('渐变端点自身足够深:不会在卡片中段意外变亮到不达标', () {
-      // 亮度取中点,防止「两端都深、中间被插了一个浅色」这种没被上面两组
-      // 覆盖到的情况。
-      final mid = Color.lerp(gradientStart, gradientEnd, 0.5)!;
-      expect(contrast(heroInk, mid), greaterThanOrEqualTo(4.5));
-      expect(contrast(heroInk2, mid), greaterThanOrEqualTo(4.5));
+    testWidgets('次级文字/图标是白字降透明度,不是另配一个颜色', (tester) async {
+      await tester.pumpWidget(wrap(IdentityHeroCard(
+        name: '我',
+        gender: '男',
+        age: '40岁',
+        recordCount: 5,
+        recentVisitDate: null,
+        onSwitchMember: () {},
+      )));
+      expect(tester.widget<Text>(find.textContaining('5 份记录')).style!.color,
+          Colors.white.withValues(alpha: 0.88));
+      expect(tester.widget<Text>(find.text('最近就诊 · ')).style!.color,
+          Colors.white.withValues(alpha: 0.88));
+      expect(tester.widget<Icon>(find.byIcon(Icons.unfold_more)).color,
+          Colors.white.withValues(alpha: 0.9));
     });
   });
 }
