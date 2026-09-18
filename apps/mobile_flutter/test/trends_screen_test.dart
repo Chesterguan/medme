@@ -14,6 +14,7 @@ import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart' show PatientProfileDto;
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/disease_profile_card.dart';
 
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
   theme: MedMe.theme(),
@@ -21,6 +22,15 @@ Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
     data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
     child: Scaffold(body: SingleChildScrollView(child: child)),
   ),
+);
+
+/// 病程档案那一块的假口子:这一屏的测试不关心它的内容,只要它别去碰 FFI 与网络
+/// (卡片自己的三态由 `test/disease_profile_card_test.dart` 验)。
+DiseaseProfileSource noProfilePackage() => DiseaseProfileSource(
+  installed: () async => const [],
+  view: (id) async => '{}',
+  record: (kind, pkg, at) async {},
+  refresh: () async {},
 );
 
 void useNarrowPhone(WidgetTester tester) {
@@ -123,17 +133,6 @@ void main() {
     }
   });
 
-  testWidgets('病程档案入口:说清楚以后放什么,不假装已经有了', (tester) async {
-    useNarrowPhone(tester);
-    await tester.pumpWidget(wrap(const DiseaseFileEntryCard()));
-    expect(find.text('病程档案'), findsOneWidget);
-    // 不许宣称已经能用 —— 内容由另一条线做。
-    for (final claim in ['活动度', '该查没查', '查看详情']) {
-      expect(find.textContaining(claim), findsNothing);
-    }
-    expect(find.textContaining('还在做'), findsOneWidget);
-  });
-
   testWidgets('记录一下:点得动', (tester) async {
     useNarrowPhone(tester);
     var tapped = false;
@@ -147,7 +146,12 @@ void main() {
     useNarrowPhone(tester);
     await tester.pumpWidget(
       wrap(
-        const Column(children: [DiseaseFileEntryCard(), RecordEntryCard()]),
+        Column(
+          children: [
+            DiseaseProfileCard(source: noProfilePackage()),
+            const RecordEntryCard(),
+          ],
+        ),
         textScale: 2.0,
       ),
     );
@@ -199,20 +203,23 @@ void main() {
         theme: MedMe.theme(),
         home: TrendsScreen(
           load: () async => (const <TrendSeriesDto>[], const <String>[], summary),
+          profileSource: noProfilePackage(),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
     double dy(String text) => tester.getTopLeft(find.text(text)).dy;
-    // ② 关键化验 → ③ 各行 → ④ 看懂 → ⑤ 最近就诊 → ⑥ 记录一下。
+    // ① 病程档案 → ② 关键化验 → ③ 各行 → ④ 看懂 → ⑤ 最近就诊 → ⑥ 记录一下。
+    expect(dy('病程档案'), lessThan(dy('关键化验')));
     expect(dy('关键化验'), lessThan(dy('肌酐')));
     expect(dy('肌酐'), lessThan(dy('看懂')));
     expect(dy('看懂'), lessThan(dy('最近就诊')));
     expect(dy('最近就诊'), lessThan(dy('记录一下')));
-    // ① 病程档案:内容由另一条线做。**没有档案就不摆入口** —— 一个点了只会
-    // 说「还在做」的条,不该占住这一屏的第一眼。
-    expect(find.text('病程档案'), findsNothing);
+    // ① 病程档案入口**恒在**(mockup `s2` 的第一块)。这一屏的测试里一个病种包都
+    // 没装上,所以它说的是「还没准备好」——「装上了 / 开启了」那两态在
+    // `test/disease_profile_card_test.dart` 里验。
+    expect(find.textContaining('还没准备好'), findsOneWidget);
     // 顶栏只有「趋势」两个字,不加成员 chip(s2)。
     expect(find.text('趋势'), findsOneWidget);
   });

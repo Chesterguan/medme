@@ -9,6 +9,7 @@ import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/disease_profile_card.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
@@ -26,9 +27,9 @@ import 'package:mobile_flutter/widgets/trend_chart.dart';
 /// Stage 2;Stage 1 保持今天的取值行,全序列的折线卡([SeriesCard])照旧摆在
 /// 它下面,位置先摆对,内容不提前做。
 ///
-/// 「病程档案」与「看懂」两块的**内容由另一条线做**,这里只有位置:
-/// [DiseaseFileEntryCard] 在真有一份档案之前根本不出现(见 [TrendsScreen.diseaseProfile]),
-/// [UnderstandBanner] 只摆一句「还在做」。
+/// 「病程档案」那一块的内容在 [DiseaseProfileCard] 自己里头(没有病种包 / 装上了
+/// 还没开启 / 开启了,三态各说各的话),这一屏只负责把它摆在第一位;
+/// 「看懂」([UnderstandBanner])仍然只摆一句「还在做」。
 ///
 /// ## 这一屏最容易撒的谎
 ///
@@ -48,7 +49,7 @@ class TrendsScreen extends StatefulWidget {
     super.key,
     this.load,
     this.onRequestAddNote,
-    this.diseaseProfile,
+    this.profileSource,
   });
 
   /// 数据源。null → 三个真实投影(FFI)。
@@ -61,10 +62,9 @@ class TrendsScreen extends StatefulWidget {
   /// 「记录一下」按下时走的动作,返回「是否真的存了一条」。null → 开录入弹层(FFI)。
   final Future<bool?> Function(BuildContext context)? onRequestAddNote;
 
-  /// 病程档案的病名(`s2` 的「病程档案 · 狼疮」)。**Stage 1 恒为 null** ——
-  /// 档案的内容由另一条线做,在真有一份之前这一条入口**不摆出来**:一个点了
-  /// 只会说「还在做」的条,不该占住这一屏的第一眼。
-  final String? diseaseProfile;
+  /// 病程档案那一块的取数口子(装着哪个包 / 算一份视图 / 记一条开关)。
+  /// null → 真的那一套(FFI + 平台通道)。**摆成注入点只为测试**,与 [load] 同款。
+  final DiseaseProfileSource? profileSource;
 
   @override
   State<TrendsScreen> createState() => _TrendsScreenState();
@@ -316,16 +316,10 @@ class _TrendsScreenState extends State<TrendsScreen> {
                 MedShape.s6,
               ),
               children: [
-                // ① 病程档案入口。内容由另一条线做,`diseaseProfile` 现在恒为
-                //    null —— 没有档案就不摆入口,见该字段的文档。
-                if (widget.diseaseProfile != null) ...[
-                  DiseaseFileEntryCard(
-                    onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                      appSnackBar(content: const Text('病程档案还在做')),
-                    ),
-                  ),
-                  const SizedBox(height: MedShape.s4),
-                ],
+                // ① 病程档案入口。三态(没有病种包 / 装上了还没开启 / 开启了)全在
+                //    卡片自己里头,这一屏只负责把它摆在第一位(`s2`)。
+                DiseaseProfileCard(source: widget.profileSource),
+                const SizedBox(height: MedShape.s4),
                 // ② 「关键化验」标题 + 分类 chip。
                 const _SectionHeader(title: '关键化验'),
                 const SizedBox(height: MedShape.s1),
@@ -1358,34 +1352,10 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-// ── `s2` 上的三张新卡 ────────────────────────────────────────────────────────
-
-/// 「病程档案」的入口位。**本阶段只有位置,没有内容** —— 内容(活动度 / 用药
-/// 时间轴 / 该查没查 / 给医生的一页)由另一条线做,ia-proposal §6 Stage 2。
-///
-/// 留一张说清楚「这里以后放什么」的卡,而不是留空:老人在一个空 tab 上学不到
-/// 这个 tab 是干什么的,而这正是「趋势」这一步最需要先立起来的东西。
-class DiseaseFileEntryCard extends StatelessWidget {
-  const DiseaseFileEntryCard({super.key, this.onTap});
-
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return Card(
-      child: ListTile(
-        leading: Icon(Icons.timeline_outlined, color: c.ink3),
-        title: Text('病程档案', style: MedType.body.copyWith(color: c.ink)),
-        subtitle: Text(
-          '把一个病的用药、检查、变化串成一条线 —— 还在做,先占个位。',
-          style: MedType.secondary.copyWith(color: c.ink2),
-        ),
-        onTap: onTap,
-      ),
-    );
-  }
-}
+// ── `s2` 上的两张新卡 ────────────────────────────────────────────────────────
+//
+// 「病程档案」入口卡搬去了 `widgets/disease_profile_card.dart`:它现在是有状态、
+// 要取数的一块(装着哪个包、开没开启、包给的摘要),不再是这一屏里的一张死卡。
 
 /// 「看懂」横幅的**占位**(`s2` 里它引用某份报告「提示」一栏的原文)。
 ///

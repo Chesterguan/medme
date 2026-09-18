@@ -211,7 +211,7 @@ class _SectionCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _IconTile(icon: icon),
+              ProfileIconTile(icon: icon),
               const SizedBox(width: MedShape.s3),
               Expanded(
                 child: Column(
@@ -235,8 +235,12 @@ class _SectionCard extends StatelessWidget {
 
 /// 图标色块——身份卡头像那一档视觉语言的小号版本(`identity_hero_card.dart`
 /// 的 52×52 圆角色块,这里降到 36 给内容行让位)。
-class _IconTile extends StatelessWidget {
-  const _IconTile({required this.icon});
+///
+/// 公开是因为「趋势」tab 上那张入口卡(`widgets/disease_profile_card.dart`)要用
+/// **同一个**色块:入口卡与它推开的这一页是同一件东西的两个面,两处各画一个 36×36
+/// 圆角块迟早分家。
+class ProfileIconTile extends StatelessWidget {
+  const ProfileIconTile({super.key, required this.icon});
 
   final IconData icon;
 
