@@ -14,7 +14,9 @@ import pathlib
 # 病种 skill 包的静态根目录(仓库 `skills/`)。这两条路由是本服务**唯一**不读
 # 账号头的非 /health 路由:请求里没有账号、没有病种偏好,服务端因此看不出
 # 谁开启了哪种病(disease-profile spec §8)。测试会把它换成 tmp 目录。
-SKILLS_DIR = pathlib.Path(__file__).resolve().parents[2] / "skills"
+SKILLS_DIR = pathlib.Path(
+    os.environ.get("MEDME_SKILLS_DIR") or pathlib.Path(__file__).resolve().parents[2] / "skills"
+)  # FC 打包后 app.py 在根目录,parents[2] 不再指向仓库 skills/,部署时用环境变量指过去
 _SKILL_ID = re.compile(r"[a-z0-9_]{1,32}")
 _SKILL_VER = re.compile(r"[0-9]{4}\.[0-9]{2}\.[0-9]{1,3}")
 
