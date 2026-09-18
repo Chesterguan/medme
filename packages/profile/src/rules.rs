@@ -1319,9 +1319,11 @@ fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
 ///
 /// ⚠️ 这里没有科室信息,所以它是「上次交进来的那份病历」,**不是**「上次风湿科
 /// 就诊」。Task 21 不许把它标成后者。
-fn last_visit(ctx: &Ctx<'_>) -> serde_json::Value {
-    let Some(d) = ctx
-        .docs
+///
+/// 第二个读者是复查提醒里的病级节律([`cadence_rule`]):「该复诊了」要按**上次
+/// 就诊**算,不是按上次化验 —— 所以这里返回文档本身,两个调用方各取所需。
+fn last_visit_doc<'c, 'a>(ctx: &'c Ctx<'a>) -> Option<&'c Doc<'a>> {
+    ctx.docs
         .iter()
         .filter(|d| {
             !matches!(
@@ -1330,7 +1332,10 @@ fn last_visit(ctx: &Ctx<'_>) -> serde_json::Value {
             ) && d.date.is_some()
         })
         .max_by_key(|d| d.date)
-    else {
+}
+
+fn last_visit(ctx: &Ctx<'_>) -> serde_json::Value {
+    let Some(d) = last_visit_doc(ctx) else {
         return serde_json::Value::Null;
     };
     serde_json::json!({
@@ -1420,29 +1425,30 @@ enum Remind {
     Never,
     /// 算不了,附一句为什么(未知必须带理由,不然和「这条我们不打算算」长得一样)。
     Unknown(String),
-    /// 包里这条的间隔/阈值还没核实:只显示,**永远不算出到期日**。
+    /// 包里这条(或这一档)的间隔/阈值还没核实:只显示,**永远不算出到期日**。
     Pending,
-    /// 不用提(没到期)。不进列表。
+    /// 不用提(没到期、或没达到阈值)。不进列表。
     Ok,
 }
 
-/// 一条提醒求值的产物:状态 + 要盖到包那份 JSON 上的几个字段。
+/// 一条提醒求值的产物:状态 + 要盖到包那份 JSON 上的字段。
+///
+/// `extra` 是个字典而不是一串具名字段:各种来源要盖的东西不一样(节律盖
+/// `disease_state`/`text`,药物类盖 `since`/`as_of`,分档的还要盖 `basis`/`source`/
+/// `note`),而**只有算出它的那段代码知道该盖什么** —— 在结构体上给每一种都开一个
+/// `Option` 字段,等于让另外两种各带一个恒为 `None` 的洞。
 struct Reminder {
     state: Remind,
     /// 当前这一档的间隔。`None` = 这条没有间隔(阈值类,或间隔没核实)。
     every_days: Option<i64>,
-    /// 盖掉包里 `text` 的那句话(只有「活动度没算全」的复诊提醒用得上)。
-    text: Option<String>,
-    /// 病级节律这次走的是哪一档(`active` / `stable`)。
-    disease_state: Option<&'static str>,
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn plain(state: Remind, every_days: Option<i64>) -> Reminder {
     Reminder {
         state,
         every_days,
-        text: None,
-        disease_state: None,
+        extra: serde_json::Map::new(),
     }
 }
 
@@ -1456,12 +1462,15 @@ fn plain(state: Remind, every_days: Option<i64>) -> Reminder {
 /// ```text
 /// {"items":[{…包里的原字段…,
 ///            "state":"never|overdue|unknown|pending",  // 排序也按这个顺序
-///            "pending":bool,                            // 间隔没核实 = 只显示不到期
+///            "pending":bool,                            // 数没核实 = 只显示不到期
 ///            "reason":"…"|null,                         // 只有 unknown 有
 ///            "due_at":"YYYY-MM-DD"|null,                // 最近一次 + 间隔
 ///            "overdue_days":int|null,                   // 从 due_at 起超了几天
 ///            "every_days":int|null,                     // 当前这一档的间隔
-///            "disease_state":"active|stable"|null}]}    // 只有病级节律有
+///            // 下面几个按来源出现,不适用的那种根本没有这个键:
+///            "disease_state":"active|stable",           // 病级节律
+///            "since","as_of":"YYYY-MM-DD"|null,         // 药物类:处方最早/最近的日期
+///            "basis","source","note"}]}                 // 分档的可由档级覆盖规则级
 /// ```
 /// 包里 `disease_cadence` 那个 `state`(active|stable)是**规则的适用条件**,与这里
 /// 的提醒状态同名不同义,所以出口时挪进 `disease_state`,`state` 让给提醒状态。
@@ -1534,6 +1543,7 @@ fn eval_monitor(
     };
     let id = str_field(m, "id");
     // 没有 id 的条目忽略不掉、在界面上也定位不住(渲染层按 id 做 key),不如不出。
+    // 包里不该有这种条目,由包校验那一层钉住(`reminders.rs` 的守卫用例)。
     if id.is_empty() || dismissed(ctx, pkg, id, due, r.every_days) {
         return None;
     }
@@ -1542,9 +1552,12 @@ fn eval_monitor(
     let mut row = m.clone();
     let obj = row.as_object_mut()?;
     obj.insert("state".into(), serde_json::json!(state));
+    // **`pending` 是「这条规则的数没核实」,不只是「这次的状态是 pending」**:
+    // 阈值类可能因为别的原因(没年龄)先落进 unknown,那面旗还是得举着 —— 不然
+    // 渲染层会把一条没人核过的规则当成一条只是暂时算不出来的规则。
     obj.insert(
         "pending".into(),
-        serde_json::json!(matches!(r.state, Remind::Pending)),
+        serde_json::json!(matches!(r.state, Remind::Pending) || monitor_pending(m)),
     );
     obj.insert("reason".into(), serde_json::json!(reason));
     obj.insert(
@@ -1553,17 +1566,16 @@ fn eval_monitor(
     );
     obj.insert("overdue_days".into(), serde_json::json!(overdue_days));
     obj.insert("every_days".into(), serde_json::json!(r.every_days));
-    obj.insert("disease_state".into(), serde_json::json!(r.disease_state));
-    if let Some(t) = r.text {
-        obj.insert("text".into(), serde_json::json!(t));
+    for (k, v) in r.extra {
+        obj.insert(k, v);
     }
     Some(row)
 }
 
-/// 包里这条的间隔/阈值核实了没有。**fail closed**:只有逐字 `"verified"` 能清掉
-/// 这面旗(与 `hcq.label_rule_pending` 同一条规矩,理由也一样)。漏写、拼错、写成
-/// 别的值一律算「待核」—— 反过来(缺省即已核实)会把一个没人核过的间隔算成到期日
-/// 推到用户面前,而 §D.1/§D.2.1 里核不实的间隔恰恰是最多的那一类。
+/// 包里这条规则(或这一档)的间隔/阈值核实了没有。**fail closed**:只有逐字
+/// `"verified"` 能清掉这面旗(与 `hcq.label_rule_pending` 同一条规矩,理由也一样)。
+/// 漏写、拼错、写成别的值一律算「待核」—— 反过来(缺省即已核实)会把一个没人核过
+/// 的间隔算成到期日推到用户面前,而 §D.1/§D.2.1 里核不实的间隔恰恰是最多的那一类。
 fn monitor_pending(m: &serde_json::Value) -> bool {
     str_field(m, "verify_status") != "verified"
 }
@@ -1572,6 +1584,11 @@ fn monitor_pending(m: &serde_json::Value) -> bool {
 /// 全算过了、一条都没命中 = 稳定;**没算全就按活动期那条(更密的)提醒**,并在
 /// 文案里说出来 —— 把「这次没读到」当成「病情稳定」,是把复诊间隔从 1 个月拉到
 /// 3 个月,而这个方向上的错会漏掉复发。
+///
+/// **「上次做过」= 上次就诊 与 最近一次那组化验,取更晚的那一个。** 复诊提醒说的是
+/// 「该去看医生了」,不是「你的某项化验过期了」(§A.1 的负面发现):上周刚看完门诊、
+/// 只是那次没开化验(或化验单还没拍进来),今天不该被告知「该复诊了」;反过来,
+/// 拍进来一张化验单本身就说明去过医院了。
 fn cadence_rule(ctx: &Ctx<'_>, m: &serde_json::Value, activity: &Activity) -> Option<Reminder> {
     let (state, unsure) = if !activity.hits.is_empty() {
         ("active", false)
@@ -1584,89 +1601,136 @@ fn cadence_rule(ctx: &Ctx<'_>, m: &serde_json::Value, activity: &Activity) -> Op
     if str_field(m, "state") != state {
         return None;
     }
+    let mut extra = serde_json::Map::new();
+    extra.insert("disease_state".into(), serde_json::json!(state));
     if monitor_pending(m) {
-        return Some(plain(Remind::Pending, None));
+        return Some(Reminder {
+            extra,
+            ..plain(Remind::Pending, None)
+        });
     }
     let Some(every) = m.get("every_days").and_then(serde_json::Value::as_i64) else {
-        return Some(plain(
-            Remind::Unknown("这一条的间隔读不出来(包里不是整数)".into()),
-            None,
-        ));
+        return Some(Reminder {
+            extra,
+            ..plain(
+                Remind::Unknown("这一条的间隔读不出来(包里不是整数)".into()),
+                None,
+            )
+        });
     };
+    if unsure {
+        extra.insert(
+            "text".into(),
+            serde_json::json!(format!("{}({CADENCE_UNSURE})", str_field(m, "text"))),
+        );
+    }
+    let last = latest_done(ctx, m).max(visited_on(ctx));
     Some(Reminder {
-        text: unsure.then(|| format!("{}({CADENCE_UNSURE})", str_field(m, "text"))),
-        disease_state: Some(state),
-        ..plain(due_state(ctx, m, every), (every >= 1).then_some(every))
+        extra,
+        ..plain(due_state(ctx, last, every), (every >= 1).then_some(every))
     })
 }
 
-/// 说明书/指南明示的监测频率。`phases` 按顺序取**第一条还没过期**的:
-/// `until_days` 是这一档的终点(用药第几天为止),不写 = 这一档没有终点。
-///
-/// 几档都过完了(每一档都写了终点)是 `unknown` 不是「不用查」:说明书只写到第一年
-/// 的时候,「之后不用再查了」是它没说过的话。
+/// 上次就诊那天(`last_visit` 找的是同一份文档),**未来日期不算**:OCR 把
+/// 2026 读成 2027 的单子不该把一条该提的提醒按下去(与 [`latest_done`] 同一条)。
+fn visited_on(ctx: &Ctx<'_>) -> Option<NaiveDate> {
+    last_visit_doc(ctx)
+        .and_then(|d| d.date)
+        .filter(|d| *d <= ctx.today)
+}
+
+/// 说明书/指南明示的监测频率。没在吃这个药 = 这条规则不适用,整条不出现。
 fn schedule_rule(
     ctx: &Ctx<'_>,
     pkg: &crate::package::Package,
     m: &serde_json::Value,
 ) -> Option<Reminder> {
     let meds = meds_of_class(ctx, pkg, str_field(m, "drug_class"));
-    // 没在吃这个药 = 这条规则不适用。
     if meds.is_empty() {
         return None;
     }
+    let mut extra = span_dates(&meds);
+    let (state, every_days) = schedule_due(ctx, m, &meds, &mut extra);
+    Some(Reminder {
+        state,
+        every_days,
+        extra,
+    })
+}
+
+/// `phases` 按顺序取**第一条还没过期**的:`until_days` 是这一档的终点(用药第几天
+/// 为止),不写 = 这一档没有终点。
+///
+/// **档级的 `basis`/`source`/`note`/`verify_status` 覆盖规则级**:说明书逐字往往只
+/// 覆盖前几档(MMF 只写到「the remainder of the first year」),包作者把之后那一档
+/// 按同样的频率沿用下去是**外推**,它必须以自己的身份出去(`package_default` +
+/// 待核),不能顶着「出处=说明书」的标签发给渲染层。覆盖只能把事情变得**更**待核:
+/// 规则级已经待核的,前面早就短路了。
+///
+/// 几档都过完了(每一档都写了终点)是 `unknown` 不是「不用查」:说明书只写到第一年
+/// 的时候,「之后不用再查了」是它没说过的话。
+fn schedule_due(
+    ctx: &Ctx<'_>,
+    m: &serde_json::Value,
+    meds: &[&parser::MedSpan],
+    extra: &mut serde_json::Map<String, serde_json::Value>,
+) -> (Remind, Option<i64>) {
     if monitor_pending(m) {
-        return Some(plain(Remind::Pending, None));
+        return (Remind::Pending, None);
     }
     // 起始日 = 最早一次**有日期**的提及。⚠️ `profile_event{kind:"drug_start"}`
     // 目前还没有任何地方产出(C5 的界面才会录),等它有了要一起参与取最早值。
     let Some(start) = meds.iter().filter_map(|x| x.start).min() else {
-        return Some(plain(
+        return (
             Remind::Unknown("处方上没有日期,算不出现在该按哪一档".into()),
             None,
-        ));
+        );
     };
-    let days_on = (ctx.today - start).num_days();
-    let phase = m
+    let phases = m
         .get("phases")
         .and_then(|p| p.as_array())
-        .into_iter()
-        .flatten()
-        .find(|p| {
-            p.get("until_days")
-                .and_then(serde_json::Value::as_i64)
-                .is_none_or(|u| days_on <= u)
-        });
-    let Some(phase) = phase else {
-        return Some(plain(
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    // 「包里根本没写档」和「几档都过完了」是两回事,理由不能混着说。
+    if phases.is_empty() {
+        return (Remind::Unknown("包里没给这一条写监测频率".into()), None);
+    }
+    let days_on = (ctx.today - start).num_days();
+    let Some(phase) = phases.iter().find(|p| {
+        p.get("until_days")
+            .and_then(serde_json::Value::as_i64)
+            .is_none_or(|u| days_on <= u)
+    }) else {
+        return (
             Remind::Unknown("说明书给的几档都过完了,之后多久查一次没有出处".into()),
             None,
-        ));
+        );
     };
+    for k in ["basis", "source", "note"] {
+        if let Some(v) = phase.get(k) {
+            extra.insert(k.to_string(), v.clone());
+        }
+    }
+    // **只有档里自己写了 `verify_status` 才算档级声明**:没写的那几档沿用规则级
+    // (照 `monitor_pending` 的 fail closed 直接判,会把没写的档一律打成待核)。
+    if phase.get("verify_status").is_some() && monitor_pending(phase) {
+        return (Remind::Pending, None);
+    }
     let Some(every) = phase.get("every_days").and_then(serde_json::Value::as_i64) else {
-        return Some(plain(
+        return (
             Remind::Unknown("这一档的间隔读不出来(包里不是整数)".into()),
             None,
-        ));
+        );
     };
-    Some(plain(
-        due_state(ctx, m, every),
+    (
+        due_state(ctx, latest_done(ctx, m), every),
         (every >= 1).then_some(every),
-    ))
+    )
 }
 
 /// 剂量-时长(-年龄)阈值上的动作:§D.1 的「⩾7.5 mg 且超过 3 个月 → 补钙和维 D」
 /// 是唯一一条能逐字拿到的。达阈就是 `never`(这类动作没有「上次做过」这回事,
-/// 用户做过了自己忽略掉)。
-///
-/// 日剂量读 [`regimen_eval`] 那一次算好的 `gc.daily_mg`,**算不出来时是 `unknown`
-/// 附理由,不是「没到阈值」** —— 静默跳过会让一条该提的提醒消失得无声无息,而
-/// 「换算表待核」正是现在最常见的那种算不出来。
-///
-/// ⚠️ 近似:阈值原文是「started on ⩾7.5 mg **and continues**」,引擎拿的是
-/// **现行**日剂量(最近一条医嘱)配**最早一次**激素提及起算的天数。从 60 mg 减到
-/// 5 mg 的人不会被提(现行剂量没到阈),这是对的;但「中间停过几个月」这件事
-/// `MedSpan` 看不出来,那种情况下天数会偏长。
+/// 用户做过了自己忽略掉)。没在吃这个药 = 不适用,整条不出现。
 fn threshold_rule(
     ctx: &Ctx<'_>,
     pkg: &crate::package::Package,
@@ -1678,23 +1742,37 @@ fn threshold_rule(
     if meds.is_empty() {
         return None;
     }
-    if monitor_pending(m) {
-        return Some(plain(Remind::Pending, None));
-    }
-    // 档案里根本没有年龄这一项。「没有就当不满足」会让这条**永远**不出现、而且
-    // 一声不响 —— 骨密度那条恰恰是最容易被忘掉的一类。如实说算不了。
-    if m.get("min_age").is_some() {
-        return Some(plain(
-            Remind::Unknown("这一条要看年龄,档案里还没有年龄".into()),
-            None,
-        ));
-    }
-    let Some(start) = meds.iter().filter_map(|x| x.start).min() else {
-        return Some(plain(
-            Remind::Unknown("处方上没有日期,算不出用了多久".into()),
-            None,
-        ));
-    };
+    Some(Reminder {
+        extra: span_dates(&meds),
+        ..plain(threshold_due(ctx, m, &meds, reg, class), None)
+    })
+}
+
+/// 阈值判定的顺序是**先算逐字的门槛,再说我们能不能开口**:
+///
+/// 1. 剂量(`min_daily_pred_equiv`)、2. 时长(`min_days`)—— 这两个是源文件里逐字的
+///    适用人群;不满足就是**这条规则跟这个人无关**(`Ok`,整条不出)。
+/// 3. 满足了,才轮到 `min_age` / `verify_status`:它们把一条**本该提的**提醒降级成
+///    「算不了」或「数还没核实」。
+///
+/// 顺序反过来会出人命题:吃 1 mg 泼尼松 2 天的人,会因为这条规则整体待核而看到
+/// 「做一次骨密度」—— 待核该挡住的是那个没核过的数(≥40 岁 FRAX),不是这条规则
+/// 的适用人群。
+///
+/// 日剂量读 [`regimen_eval`] 那一次算好的 `gc.daily_mg`,**算不出来时是 `unknown`
+/// 附理由,不是「没到阈值」** —— 静默跳过会让一条该提的提醒消失得无声无息。
+///
+/// ⚠️ 近似:阈值原文是「started on ⩾7.5 mg **and continues**」,引擎拿的是
+/// **现行**日剂量(最近一条医嘱)配**最早一次**激素提及起算的天数。从 60 mg 减到
+/// 5 mg 的人不会被提(现行剂量没到阈),这是对的;但「中间停过几个月」这件事
+/// `MedSpan` 看不出来,那种情况下天数会偏长 —— 所以出口带 `since`/`as_of`。
+fn threshold_due(
+    ctx: &Ctx<'_>,
+    m: &serde_json::Value,
+    meds: &[&parser::MedSpan],
+    reg: &Regimen,
+    class: &str,
+) -> Remind {
     if let Some(min_mg) = m
         .get("min_daily_pred_equiv")
         .and_then(serde_json::Value::as_f64)
@@ -1702,43 +1780,46 @@ fn threshold_rule(
         // 泼尼松等效日剂量只有激素那一格算得出来;包把这个条件写在别的药上,
         // 是引擎还不懂的规则,不是「没到阈值」。
         if class != "gc" {
-            return Some(plain(
-                Remind::Unknown("这一条规则本机还算不了,更新 App 后会自动补上".into()),
-                None,
-            ));
+            return Remind::Unknown("这一条规则本机还算不了,更新 App 后会自动补上".into());
         }
         let Some(daily) = reg.gc.daily_mg else {
-            return Some(plain(
-                Remind::Unknown(
-                    reg.gc
-                        .blocked_reason
-                        .clone()
-                        .unwrap_or_else(|| "算不出泼尼松等效日剂量".into()),
-                ),
-                None,
-            ));
+            return Remind::Unknown(
+                reg.gc
+                    .blocked_reason
+                    .clone()
+                    .unwrap_or_else(|| "算不出泼尼松等效日剂量".into()),
+            );
         };
         if daily < min_mg {
-            return Some(plain(Remind::Ok, None));
+            return Remind::Ok;
         }
     }
-    let min_days = m
-        .get("min_days")
-        .and_then(serde_json::Value::as_i64)
-        .unwrap_or(0);
-    if (ctx.today - start).num_days() < min_days {
-        return Some(plain(Remind::Ok, None));
+    if let Some(min_days) = m.get("min_days").and_then(serde_json::Value::as_i64) {
+        let Some(start) = meds.iter().filter_map(|x| x.start).min() else {
+            return Remind::Unknown("处方上没有日期,算不出用了多久".into());
+        };
+        if (ctx.today - start).num_days() < min_days {
+            return Remind::Ok;
+        }
     }
-    Some(plain(Remind::Never, None))
+    // 档案里根本没有年龄这一项。「没有就当不满足」会让这条**永远**不出现、而且
+    // 一声不响 —— 骨密度那条恰恰是最容易被忘掉的一类。如实说算不了。
+    if m.get("min_age").is_some() {
+        return Remind::Unknown("这一条要看年龄,档案里还没有年龄".into());
+    }
+    if monitor_pending(m) {
+        return Remind::Pending;
+    }
+    Remind::Never
 }
 
 /// 到期判定(spec §5.4):最近一次 + 间隔 ×1.2 还早于今天 → 逾期;从没查过 →
-/// `never`;都不是 → 不用提。
-fn due_state(ctx: &Ctx<'_>, m: &serde_json::Value, every_days: i64) -> Remind {
+/// `never`;都不是 → 不用提。「最近一次」由调用方给(节律那条还要算上就诊日期)。
+fn due_state(ctx: &Ctx<'_>, last: Option<NaiveDate>, every_days: i64) -> Remind {
     if every_days < 1 {
         return Remind::Unknown("包里的间隔不是正整数,这一条先不提".into());
     }
-    let Some(last) = latest_done(ctx, m) else {
+    let Some(last) = last else {
         return Remind::Never;
     };
     // 宽限按整数算(`×12/10` 向下取整):每 30 天 → 36 天。早一天开口只是多问一句,
@@ -1762,8 +1843,12 @@ fn due_state(ctx: &Ctx<'_>, m: &serde_json::Value, every_days: i64) -> Remind {
 /// 上一次做过是哪天:`panel_keys` 里任一化验的最新**有日期**的点,与 `exam_names`
 /// 里任一 `exam_done` fact 的日期,取更晚的那个。都没有 → `None`(= 从没查过)。
 ///
-/// 没有日期的结果**一律不算**(与 `in_window` 同一条:猜日期等于编一个到期日)。
-/// 自测值也不算 —— 家里量的那一次不是「去医院复查过了」。
+/// 三道门,方向都是同一个 —— **宁可多提一次,不可少提一次**:
+/// - 没有日期的结果不算(与 `in_window` 同一条:猜日期等于编一个到期日);
+/// - **今天之后的日期不算**(同 `in_window` 的 `d <= today`):一张被 OCR 读成 2027 年
+///   的化验单,会把今天该提的提醒整条按下去;
+/// - 自测值不算 —— 家里量的那一次不是「去医院复查过了」;
+/// - 逐字验不过的 fact 不算:抽取幻觉出来的一句「已做骨密度」压不住提醒。
 fn latest_done(ctx: &Ctx<'_>, m: &serde_json::Value) -> Option<NaiveDate> {
     let keys = str_list(m, "panel_keys");
     let mut best: Option<NaiveDate> = None;
@@ -1775,14 +1860,12 @@ fn latest_done(ctx: &Ctx<'_>, m: &serde_json::Value) -> Option<NaiveDate> {
             continue;
         }
         for p in &s.points {
-            best = best.max(p.date);
+            best = best.max(p.date.filter(|d| *d <= ctx.today));
         }
     }
     // 眼底、骨密度、心超这类不会变成化验序列,只会以 `exam_done` fact 进来。
     let exams = str_list(m, "exam_names");
     for (_, doc_date, f) in &ctx.facts {
-        // 逐字验不过的 fact 不算「做过了」:抽取幻觉出来的一句「已做骨密度」会
-        // 把一条该提的提醒按下去,而这是最不该出错的方向。
         if f.r#type != "exam_done" || f.unverified {
             continue;
         }
@@ -1794,7 +1877,13 @@ fn latest_done(ctx: &Ctx<'_>, m: &serde_json::Value) -> Option<NaiveDate> {
             continue;
         }
         // fact 自己的日期优先,没写才用文档日期兜底。
-        best = best.max(f.date.parse::<NaiveDate>().ok().or(*doc_date));
+        best = best.max(
+            f.date
+                .parse::<NaiveDate>()
+                .ok()
+                .or(*doc_date)
+                .filter(|d| *d <= ctx.today),
+        );
     }
     best
 }
@@ -1806,6 +1895,9 @@ fn latest_done(ctx: &Ctx<'_>, m: &serde_json::Value) -> Option<NaiveDate> {
 ///
 /// 从没查过的那条没有「这一轮的到期日」,只受第二条管;阈值类连间隔都没有
 /// (「该补钙了」不是周期性的),忽略就是长期的 —— 用户说了「这事我处理了」。
+///
+/// 日期在今天之后的忽略不算数:日志是用户自己录的,一条 2027 年的忽略会把提醒
+/// 静静压住一年多(与 [`latest_done`] 同一个方向)。
 fn dismissed(
     ctx: &Ctx<'_>,
     pkg: &crate::package::Package,
@@ -1818,6 +1910,7 @@ fn dismissed(
         .filter(|e| e.package == pkg.manifest.id && e.kind == "dismiss_reminder")
         .filter(|e| e.payload.get("id").and_then(|v| v.as_str()) == Some(id))
         .filter_map(|e| e.at.parse::<NaiveDate>().ok())
+        .filter(|at| *at <= ctx.today)
         .any(|at| {
             due.is_none_or(|d| at >= d)
                 && every_days
@@ -1851,4 +1944,31 @@ fn meds_of_class<'c>(
         .iter()
         .filter(|m| drug_class(pkg, m).is_some_and(|d| d.class == class))
         .collect()
+}
+
+/// 这几条医嘱的起止:`since` = 最早一次被提到,`as_of` = **最近**一次被提到。
+///
+/// **引擎不推断停药**(`parser::MedSpan::status` 恒为 active,见 `aggregate.rs` 的
+/// 模块头「discontinuation is not inferred」),所以一张 2020 年的处方今天照样会让
+/// 这条提醒亮起来。日期是唯一能让用户和医生看出这件事的东西 —— 与现行方案卡上的
+/// `gc.as_of` 一字不差的理由。
+fn span_dates(meds: &[&parser::MedSpan]) -> serde_json::Map<String, serde_json::Value> {
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "since".into(),
+        serde_json::json!(meds
+            .iter()
+            .filter_map(|x| x.start)
+            .min()
+            .map(|d| d.to_string())),
+    );
+    extra.insert(
+        "as_of".into(),
+        serde_json::json!(meds
+            .iter()
+            .filter_map(|x| x.end)
+            .max()
+            .map(|d| d.to_string())),
+    );
+    extra
 }

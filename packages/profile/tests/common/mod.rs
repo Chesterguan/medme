@@ -85,6 +85,14 @@ pub fn full_json() -> serde_json::Value {
     v["rules"]["targets"] = serde_json::from_str(TARGETS).expect("目标值必须解析");
     v["rules"]["monitoring"] = serde_json::from_str(MONITORING).expect("复查提醒规则必须解析");
     v["drugs"] = serde_json::from_str(DRUGS).expect("药物表必须解析");
+    // 规则里引用到的出处都得在 `manifest.sources` 里声明,否则 `ProfileView.sources`
+    // 解不出来,界面上那个出处 id 点开是空的(`reminders.rs` 的守卫用例钉住这件事)。
+    let sources = v["manifest"]["sources"]
+        .as_array_mut()
+        .expect("manifest.sources 是数组");
+    for (id, cite) in SOURCES {
+        sources.push(serde_json::json!({"id": id, "cite": cite, "url": null}));
+    }
     let sections = v["views"]["sections"]
         .as_array_mut()
         .expect("views.sections 是数组");
@@ -93,6 +101,33 @@ pub fn full_json() -> serde_json::Value {
     sections.push(serde_json::json!({"kind":"reminders","title":"待补 / 逾期"}));
     v
 }
+
+/// [`STATES`] / [`TARGETS`] / [`MONITORING`] 里引用到的出处,`id` 与
+/// `.superpowers/sdd/disease-profile/sle-clinical-sources.md` 里的编号一一对应。
+/// [`ACTIVITY`] 自带的 `S1` 不在这里(那份壳自己声明了)。
+pub const SOURCES: [(&str, &str); 9] = [
+    ("S3", "EULAR 2019 SLE recommendations, Ann Rheum Dis 2019"),
+    ("S4", "EULAR 2023 update, Ann Rheum Dis 2024"),
+    ("S5", "DORIS 2021 definition of remission, Box 1"),
+    ("S6", "LLDAS, Franklyn et al. 2016"),
+    (
+        "S10",
+        "2020 中国系统性红斑狼疮诊疗指南(Rheumatol Immunol Res 2020;1(1):5–23)推荐 3",
+    ),
+    (
+        "S_MMF_LABEL",
+        "CELLCEPT US prescribing information §5.4(DailyMed 37241e87-4af4-4dc3-a1aa-ea6f20d8dc40)",
+    ),
+    (
+        "S_GC_EULAR2007",
+        "EULAR recommendations on management of systemic glucocorticoid therapy, Ann Rheum Dis 2007;66:1560–7, Rec 6a",
+    ),
+    ("S_HCQ_INSERT", "硫酸羟氯喹片说明书(0.1 g / 0.2 g 两种规格)"),
+    (
+        "S_ACR_GIOP2022",
+        "ACR 2022 glucocorticoid-induced osteoporosis guideline, Arthritis Care Res 2023;75:2405–19",
+    ),
+];
 
 /// spec §2 的 `drugs` 那一份,**但 `pred_equiv` 与 `pred_equiv_source` 都是
 /// `null`**:等效换算表在 sle-clinical-sources §G 里还没核到原始出处(2020 指南
@@ -176,22 +211,26 @@ pub const MONITORING: &str = r#"[
    "note":"逐字是「once every 3 to 6 months for patients with stable SLE」。区间取更密的一端(3 个月)提醒:早提醒只是多跑一趟,晚提醒会漏掉复发"},
   {"kind":"drug_schedule","id":"mmf_cbc","drug_class":"mmf","target":"血常规",
    "panel_keys":["wbc","plt","hgb"],
-   "phases":[{"until_days":30,"every_days":7},{"until_days":90,"every_days":14},{"every_days":30}],
+   "phases":[{"until_days":30,"every_days":7},
+             {"until_days":90,"every_days":14},
+             {"until_days":365,"every_days":30},
+             {"every_days":30,"basis":"package_default","verify_status":"pending",
+              "note":"⚠️ 第一年之后说明书没再给任何间隔。这一档是包作者按每月沿用的**外推**,所以它以自己的身份出去(package_default + 待核):只显示、不算到期。待 Task 19 逐条核"}],
    "text":"吃吗替麦考酚酯期间该查血常规了",
    "basis":"label","source":"S_MMF_LABEL","verify_status":"verified",
-   "note":"CELLCEPT 说明书 §5.4 逐字:「weekly for the first month, twice monthly for the second and third months, and monthly for the remainder of the first year」。⚠️ 第一年之后说明书没再给间隔,这里最后一档不设终点、按每月沿用 —— 这一步是包作者的外推,待 Task 19 逐条核"},
+   "note":"CELLCEPT 说明书 §5.4 逐字:「weekly for the first month, twice monthly for the second and third months, and monthly for the remainder of the first year」"},
   {"kind":"drug_schedule","id":"hcq_eye","drug_class":"hcq","target":"眼科检查(眼底/OCT/视野)",
    "exam_names":["眼底","OCT","视野"],"phases":[],
    "text":"羟氯喹的眼科检查间隔几份来源互相矛盾,下次门诊问一下医生多久查一次",
    "basis":"label","source":"S_HCQ_INSERT","verify_status":"pending",
    "note":"§D.2.1:0.1 g 规格说明书写「定期(每3月)」、0.2 g 规格写「每年至少一次」,两份说明书自己都对不上,且都只经摘要管道;指南侧是「低危第 5 年起每年」。没有一个能逐字确定的间隔,所以只显示、不算到期"},
   {"kind":"drug_threshold","id":"gc_ca_vitd","drug_class":"gc",
-   "min_daily_pred_equiv":7.5,"min_days":90,
+   "min_daily_pred_equiv":7.5,"min_days":91,
    "action":"该补钙和维生素 D 了,下次门诊问一下医生",
    "basis":"guideline","source":"S_GC_EULAR2007","verify_status":"verified",
-   "note":"EULAR 2007 全身激素治疗推荐 6a 逐字:「If a patient is started on prednisone ⩾7.5 mg daily and continues on prednisone for more than 3 months, calcium and vitamin D supplementation should be prescribed.」。「more than 3 months」在包里写成 90 天下限"},
+   "note":"EULAR 2007 全身激素治疗推荐 6a 逐字:「If a patient is started on prednisone ⩾7.5 mg daily and continues on prednisone for more than 3 months, calcium and vitamin D supplementation should be prescribed.」。原文是 more than 3 months(超过、不含),所以下限写 91 天而不是 90 —— `min_days` 在引擎里是「至少这么多天」(含)"},
   {"kind":"drug_threshold","id":"gc_dxa_frax","drug_class":"gc",
-   "min_daily_pred_equiv":2.5,"min_days":90,"min_age":40,
+   "min_daily_pred_equiv":2.5,"min_days":91,"min_age":40,
    "action":"做一次骨密度 / FRAX 骨折风险评估",
    "basis":"guideline","source":"S_ACR_GIOP2022","verify_status":"pending",
    "note":"人群定义「>3 months treatment with GCs ≥2.5 mg daily」是 ACR 2022 GIOP 摘要逐字;但「≥40 岁用 FRAX + 骨密度筛查」那句只核到第三方摘要页、没核到指南原文(§D.1),所以整条 pending"}]"#;
