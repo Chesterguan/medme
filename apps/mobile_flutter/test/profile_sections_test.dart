@@ -11,6 +11,9 @@
 //  5. 7 种 kind 各自吃真实的引擎产出(`packages/profile/testdata/
 //     golden_profile_view.json`,合成 SLE 语料跑出来的 golden fixture)都不能
 //     崩、在窄屏 + 2× 系统字号下都不能溢出。
+//
+// fix round 1(task-21-review.md I1/I2):caveat/给药途径 key 两条钉子测试见下方
+// 「fix round 1」分节。
 import 'dart:convert';
 import 'dart:io';
 
@@ -29,6 +32,23 @@ Widget _wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
     child: Scaffold(body: SingleChildScrollView(child: child)),
   ),
 );
+
+// golden fixture:7 种 kind 各吃一遍真实引擎产出(`packages/profile/testdata/
+// golden_profile_view.json`,Task 20 的合成 SLE 语料)。`analytics_catalog_test.dart`
+// 已经示范过同一种「读仓库里另一个包的文件」的写法(CWD 是 `apps/mobile_flutter`,
+// 相对路径两层上到仓库根)。提到文件顶层,好让下面 fix round 1 的 I2 测试也用得上
+// 同一份数据——不为了同一份 JSON 再手抄一遍贝利尤单抗那一行。
+final _goldenFile = File(
+  '../../packages/profile/testdata/golden_profile_view.json',
+);
+final _golden =
+    jsonDecode(_goldenFile.readAsStringSync()) as Map<String, dynamic>;
+final _goldenSections = (_golden['sections'] as List)
+    .map((s) => (s as Map).cast<String, dynamic>())
+    .toList();
+
+Map<String, dynamic> _asMapForTest(dynamic v) =>
+    (v as Map).cast<String, dynamic>();
 
 void main() {
   // section 的标题、顺序、空态文案**全部来自包** —— 这几条测试就是在钉住
@@ -135,27 +155,63 @@ void main() {
   });
 
   // ---------------------------------------------------------------------
-  // golden fixture:7 种 kind 各吃一遍真实引擎产出(`packages/profile/testdata/
-  // golden_profile_view.json`,Task 20 的合成 SLE 语料),窄屏 + 2× 字号都不能
-  // 崩、不能溢出。`analytics_catalog_test.dart` 已经示范过同一种「读仓库里另一
-  // 个包的文件」的写法(CWD 是 `apps/mobile_flutter`,相对路径两层上到仓库根)。
+  // fix round 1(task-21-review.md)
   // ---------------------------------------------------------------------
-  final goldenFile = File(
-    '../../packages/profile/testdata/golden_profile_view.json',
+
+  testWidgets('a score card hit shows its clinical caveat (I1)', (t) async {
+    // 出厂包原文(`skills/sle/2026.09.1.src.json:177`),不是编的字符串——
+    // dsDNA/血尿/脓尿三条 hit 里出厂包真的带 `caveat`,golden fixture 唯一的
+    // hit 恰好 `caveat: null`,所以这个洞之前测不出来。
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'score_card', 'title': '活动度(化验可算部分)',
+      'body': {'score': 4, 'max': 18, 'label': '化验可算部分', 'window_days': 10,
+               'as_of': '2026-09-16', 'hits': [
+        {'id': 'hematuria', 'label': '血尿', 'weight': 4, 'source': 'S1',
+         'caveat': '需排除结石、感染或其它原因,需医生确认', 'evidence': []},
+      ]},
+    })));
+    expect(find.text('需排除结石、感染或其它原因,需医生确认'), findsOneWidget);
+  });
+
+  testWidgets(
+    'infusion routes keep their iv/sc keys instead of running the doses together (I2)',
+    (t) async {
+      // 用 golden 里真实的贝利尤单抗那一行(`others[]` 唯一带 `infusion` 的
+      // 条目)——IV 与 SC 的剂量原文不一样,拼掉 key 就分不出哪半句是哪种
+      // 给药方式。
+      final statusBody = _asMapForTest(
+        _goldenSections.firstWhere((s) => s['kind'] == 'status_card')['body'],
+      );
+      final others = (statusBody['others'] as List).map(_asMapForTest).toList();
+      final belimumab = others.firstWhere((o) => o['name'] == '贝利尤单抗');
+      expect(belimumab['infusion'], isNotNull, reason: 'golden 的形状变了,先看那边');
+
+      await t.pumpWidget(_wrap(ProfileSectionView({
+        'kind': 'status_card', 'title': '现行方案',
+        'body': {
+          'gc': {'daily_pred_equiv_mg': null, 'drug': null, 'targets': [],
+                 'unconvertible': []},
+          'hcq': null,
+          'others': [belimumab],
+          'last_visit': null,
+        },
+      })));
+      expect(find.textContaining('iv: 10 mg/kg'), findsOneWidget);
+      expect(find.textContaining('sc: SLE 每周 200 mg'), findsOneWidget);
+    },
   );
-  final golden =
-      jsonDecode(goldenFile.readAsStringSync()) as Map<String, dynamic>;
-  final goldenSections = (golden['sections'] as List)
-      .map((s) => (s as Map).cast<String, dynamic>())
-      .toList();
+
+  // ---------------------------------------------------------------------
+  // golden fixture:窄屏 + 2× 字号都不能崩、不能溢出。
+  // ---------------------------------------------------------------------
 
   // golden fixture 本身要有点东西,不然下面的循环悄悄跑 0 次、测试全绿但什么
   // 都没测——golden 目前覆盖 status_card/score_card/reminders/series_chart/
   // timeline/checklist(两块,达标表与里程碑),独缺 handoff(引擎还没有会产出
   // 这个 kind 的构建函数,见 `profile_sections.dart` 里 `_HandoffBody` 的文档)。
   test('golden fixture actually has sections to iterate (sanity)', () {
-    expect(goldenSections, isNotEmpty);
-    expect(goldenSections.map((s) => s['kind']).toSet(), {
+    expect(_goldenSections, isNotEmpty);
+    expect(_goldenSections.map((s) => s['kind']).toSet(), {
       'status_card', 'score_card', 'reminders', 'series_chart', 'timeline',
       'checklist',
     });
@@ -187,8 +243,8 @@ void main() {
     return errors;
   }
 
-  for (var i = 0; i < goldenSections.length; i++) {
-    final section = goldenSections[i];
+  for (var i = 0; i < _goldenSections.length; i++) {
+    final section = _goldenSections[i];
     final label = '${section['kind']}${section['id'] != null ? '/${section['id']}' : ''}';
 
     testWidgets('golden $label renders at 400×800 without exceptions', (

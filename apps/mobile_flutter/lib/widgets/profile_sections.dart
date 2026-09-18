@@ -409,6 +409,17 @@ class _GcBlock extends StatelessWidget {
                 fmtDate(gc['as_of'] as String?),
               ].where((s) => s.isNotEmpty).join(' – '),
             ],
+          )
+        else if (unconvertible.isEmpty)
+          // 一条激素都没读到,但包里配了维持目标线(下面的 `targets` 循环)——不
+          // 说明白为什么会展开这张卡时,只剩两行光秃秃的「维持目标」,像是漏了
+          // 内容而不是「这个人没有对应记录」。`unconvertible` 非空时不重复这句:
+          // 那边逐条已经带着同一句 `reason`(见 `rules.rs::regimen_eval` 的
+          // 同一天多条医嘱分支),两处都画就是同一句话说两遍。
+          _ItemRow(
+            icon: Icons.medication_outlined,
+            label: '激素',
+            longText: gc['blocked_reason'] as String?,
           ),
         for (final t in targets)
           Padding(
@@ -527,7 +538,12 @@ class _OtherDrugRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final infusion = med['infusion'] == null ? null : _asMap(med['infusion']);
-    final infusionText = infusion?.values.whereType<String>().join(' / ');
+    // 给药途径的 key(`"iv"`/`"sc"`,`package.rs::Drug.infusion`)必须留着——同一个
+    // 药不同途径的剂量常常不一样(贝利尤单抗 IV 与 SC 的方案原文都不同),丢了 key
+    // 只拼 value 会把两句话读成一句,分不出哪半句是哪种给药方式。
+    final infusionText = infusion?.entries
+        .map((e) => '${e.key}: ${e.value}')
+        .join(' / ');
     return _ItemRow(
       icon: Icons.medication_outlined,
       label: [
@@ -646,7 +662,7 @@ class _ScoreCardBody extends StatelessWidget {
   Widget _hitRow(BuildContext context, Map<String, dynamic> h) {
     final c = MedColors.of(context);
     final weight = h['weight'];
-    return _ItemRow(
+    final row = _ItemRow(
       icon: Icons.check_circle_outline,
       label: '${h['label']}',
       trailing: weight == null
@@ -654,6 +670,24 @@ class _ScoreCardBody extends StatelessWidget {
           : MedPill(text: '+$weight 分', foreground: c.ink2, background: c.line2),
       meta: [h['source'] == null ? null : '出处 ${h['source']}'],
       longText: _evidenceText(_asMapList(h['evidence'])),
+    );
+    final caveat = h['caveat'] as String?;
+    if (caveat == null || caveat.isEmpty) return row;
+    // `caveat`(spec §5.2 的临床限定语,如「非 Farr 法,按定义有偏差」)与证据行是
+    // 两句不同的话,原样单独成行——与 `unconvertible[].reason` 同一处理方式,不
+    // 拼进 `longText` 里(拼了就核不到这一句的逐字原文)。
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        row,
+        Padding(
+          padding: const EdgeInsets.only(
+            left: 18 + MedShape.s2,
+            bottom: MedShape.s1,
+          ),
+          child: Text(caveat, style: MedType.secondary.copyWith(color: c.ink)),
+        ),
+      ],
     );
   }
 
