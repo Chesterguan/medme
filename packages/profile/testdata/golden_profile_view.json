@@ -307,27 +307,6 @@
             "verify_status": "verified"
           },
           {
-            "action": "做一次骨密度 / FRAX 骨折风险评估",
-            "as_of": "2026-06-15",
-            "basis": "guideline",
-            "drug_class": "gc",
-            "due_at": null,
-            "every_days": null,
-            "id": "gc_dxa",
-            "kind": "drug_threshold",
-            "min_age": null,
-            "min_daily_pred_equiv": 2.5,
-            "min_days": 91,
-            "note": "人群定义逐字来自 S13 摘要:「>3 months treatment with glucocorticoids (GCs) ≥2.5 mg daily」(同 gc_ca_vitd:more than 3 months → min_days 91)。但「≥40 岁用 FRAX + 骨密度筛查」那句只核到第三方摘要页(guidelinecentral)、没核到指南原文,所以年龄阈值写 null + 待核,整条 pending。复查间隔(常被引作每 1–2 年)同样核不实,不写。",
-            "overdue_days": null,
-            "pending": true,
-            "reason": "这一条要看年龄,档案里还没有年龄",
-            "since": "2024-03-15",
-            "source": "S13",
-            "state": "unknown",
-            "verify_status": "pending"
-          },
-          {
             "as_of": "2026-06-15",
             "basis": "package_default",
             "drug_class": "mmf",
@@ -398,6 +377,27 @@
             "state": "pending",
             "target": "眼科检查(OCT / 眼底自发荧光 / 眼底 / 视野)",
             "text": "羟氯喹的眼科检查间隔几份来源互相矛盾,下次门诊问一下医生多久查一次",
+            "verify_status": "pending"
+          },
+          {
+            "action": "做一次骨密度 / FRAX 骨折风险评估",
+            "as_of": "2026-06-15",
+            "basis": "guideline",
+            "drug_class": "gc",
+            "due_at": null,
+            "every_days": null,
+            "id": "gc_dxa",
+            "kind": "drug_threshold",
+            "min_age": null,
+            "min_daily_pred_equiv": 2.5,
+            "min_days": 91,
+            "note": "人群定义逐字来自 S13 摘要:「>3 months treatment with glucocorticoids (GCs) ≥2.5 mg daily」(同 gc_ca_vitd:more than 3 months → min_days 91)。但「≥40 岁用 FRAX + 骨密度筛查」那句只核到第三方摘要页(guidelinecentral)、没核到指南原文,所以年龄阈值写 null + 待核,整条 pending。复查间隔(常被引作每 1–2 年)同样核不实,不写。",
+            "overdue_days": null,
+            "pending": true,
+            "reason": null,
+            "since": "2024-03-15",
+            "source": "S13",
+            "state": "pending",
             "verify_status": "pending"
           }
         ]
@@ -1522,7 +1522,7 @@
             "key": "urine_pcr",
             "kind": "upcr_below",
             "label": "完全肾应答:任一时点 UPCR <500 mg/g",
-            "note": "§E.2 逐字:「Complete renal response should be defined as UPCR <500 mg/g at any time point.」⚠️ 这里的「任一时点」只数**起算日之后**的结果:治疗开始前就 <500 的那一次说明的是起病时蛋白尿本来就不高,不是治疗达到了完全肾应答。KDIGO 2024(Figure 11)的完全缓解口径是 PCR <0.5 g/g = 同一个数,但它另外要求肾功能在基线 ±10%–15% 内 —— 那一半在 gfr_80_baseline 那条(两份指南的肾功能条件本身也不一样,§E.2 的 ⚠️ 框)",
+            "note": "§E.2 逐字:「Complete renal response should be defined as UPCR <500 mg/g at any time point.」⚠️ 这里的「任一时点」只数**起算日之后**的结果:治疗开始前就 <500 的那一次说明的是起病时蛋白尿本来就不高,不是治疗达到了完全肾应答。KDIGO 2024(S15,Figure 11)的完全缓解口径逐字是「Reduction in proteinuria <0.5 g/g (50 mg/mmol)」= 同一个数,但它另外要求「Stabilization or improvement in kidney function (±10%–15% of baseline)」 —— 那一半在 gfr_80_baseline 那条(两份指南的肾功能条件本身也不一样,§E.2 的 ⚠️ 框)",
             "reason": null,
             "source": "S8",
             "t0": "2024-03-15",
@@ -1608,7 +1608,7 @@
             "key": "egfr",
             "kind": "gfr_pct_of_baseline",
             "label": "GFR 维持在基线的 ≥80%",
-            "note": "§E.2 逐字:「stabilisation (if not improvement) of GFR to ≥80% of baseline value is desirable within the first 3 months」。⚠️ 口径与原文有差:这一行比的是**档案里最近一次**与**最早一次**的比值,既没有原文的「前 3 个月内」这个窗口,中途有没有掉到 80% 以下也看不出来 —— 基线 = 档案里最早一次有日期的 eGFR。另:EULAR 2019/2023 用的是另一把尺(SCr within 10% from baseline),KDIGO 2024 是 ±10%–15%,三份不一致(§E.2 的 ⚠️ 框)",
+            "note": "§E.2 逐字:「stabilisation (if not improvement) of GFR to ≥80% of baseline value is desirable within the first 3 months」。⚠️ 口径与原文有差:这一行比的是**档案里最近一次**与**最早一次**的比值,既没有原文的「前 3 个月内」这个窗口,中途有没有掉到 80% 以下也看不出来 —— 基线 = 档案里最早一次有日期的 eGFR。另:EULAR 2019/2023 用的是另一把尺(SCr within 10% from baseline),KDIGO 2024(S15,Figure 11)逐字是「Stabilization or improvement in kidney function (±10%–15% of baseline)」,三份不一致(§E.2 的 ⚠️ 框)",
             "pct": 80,
             "reason": null,
             "source": "S8",
@@ -1661,7 +1661,7 @@
             "id": "biopsy_indication",
             "kind": "biopsy_indication",
             "label": "肾活检指征:蛋白尿 ≥0.5 g/24h 或 UPCR ≥500 mg/g",
-            "note": "§E.1 rec 1 逐字:「Kidney biopsy is recommended in every patient with evidence of kidney involvement, especially in those with persistent proteinuria (≥0.5 g/24 h or urine protein-creatinine ratio [UPCR] ≥500 mg/g) (2b/B)」。原文紧接着说这是 indicative threshold:「the 0.5 g/d threshold should be kept as an indicative threshold to avoid potentially unnecessary biopsies, while not preventing biopsies at lower levels of proteinuria, if indicated」。⚠️ 「persistent(持续)」原文没给次数或天数,这一条看的是**最近一次**结果,不代表指南意义上的「持续」;引擎也不给这一次设新旧门槛,两个指标各自的「最近一次」可能相隔很久(日期见每行证据);中国 2019 狼疮肾炎指南同一处写的是严格大于(>0.5 g/24 h、>500 mg/g),恰好等于时两份不一致",
+            "note": "§E.1 rec 1 逐字:「Kidney biopsy is recommended in every patient with evidence of kidney involvement, especially in those with persistent proteinuria (≥0.5 g/24 h or urine protein-creatinine ratio [UPCR] ≥500 mg/g) (2b/B)」。原文紧接着说这是 indicative threshold:「the 0.5 g/d threshold should be kept as an indicative threshold to avoid potentially unnecessary biopsies, while not preventing biopsies at lower levels of proteinuria, if indicated」。⚠️ 「persistent(持续)」原文没给次数或天数,这一条看的是**最近一次**结果,不代表指南意义上的「持续」;引擎也不给这一次设新旧门槛,两个指标各自的「最近一次」可能相隔很久(日期见每行证据);中国 2019 狼疮肾炎指南(S16)同一处逐字是「尿蛋白持续>0.5 g/24 h，或随机尿检查尿蛋白+++，或尿蛋白/肌酐比>500 mg/g（50 mg/mmol）」—— 严格大于,恰好等于时两份不一致",
             "reason": null,
             "source": "S8",
             "t0": null,
@@ -1724,11 +1724,6 @@
       "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9524765/"
     },
     {
-      "cite": "Aringer M, et al. 2019 EULAR/ACR classification criteria for SLE. Arthritis Rheumatol 2019;71:1400–12",
-      "id": "S11",
-      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC6827566/"
-    },
-    {
       "cite": "EULAR recommendations on the management of systemic glucocorticoid therapy in rheumatic diseases. Ann Rheum Dis 2007;66:1560–7",
       "id": "S12",
       "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC2095301/"
@@ -1742,6 +1737,16 @@
       "cite": "Marmor MF, et al. Special AAO Report: Recommendations on Screening for Hydroxychloroquine Retinopathy(2025 Revision). Ophthalmology 2026;133:439–50 —— 付费墙,只读到结构化摘要与 AAO 声明页",
       "id": "S14",
       "url": "https://pubmed.ncbi.nlm.nih.gov/41232611/"
+    },
+    {
+      "cite": "KDIGO 2024 Clinical Practice Guideline for the Management of Lupus Nephritis. Kidney Int 2024;105(1S):S1–S69, Figure 11(治疗应答定义)",
+      "id": "S15",
+      "url": "https://kdigo.org/wp-content/uploads/2024/01/KDIGO-2024-Lupus-Nephritis-Guideline.pdf"
+    },
+    {
+      "cite": "《中国狼疮肾炎诊断和治疗指南》2019(中华医学杂志 2019;99(44):3441–3455)—— 逐字串由两个互相独立的页面给出同一份原文,但两页都是**转引该指南的综述**,不是指南自己的页面",
+      "id": "S16",
+      "url": null
     },
     {
       "cite": "CELLCEPT(吗替麦考酚酯)US prescribing information,DailyMed setid 37241e87-4af4-4dc3-a1aa-ea6f20d8dc40",

@@ -297,14 +297,24 @@ fn a_dose_below_the_threshold_is_not_a_reminder_at_all_even_while_the_rule_is_un
     }
 }
 
+/// 7.5 mg × 120 天:剂量和时长两道逐字门槛都过了,才轮到「我们能不能开口」。
+/// `min_age` 按参数改,用来分出「写了一个真年龄」与「写了 null」两条路。
+fn dxa_with_min_age(min_age: serde_json::Value) -> serde_json::Value {
+    let mut v = full_json();
+    for m in v["rules"]["monitoring"].as_array_mut().expect("monitoring") {
+        if m["id"] == "gc_dxa" {
+            m["min_age"] = min_age.clone();
+        }
+    }
+    let pkg: Package = serde_json::from_value(v).expect("包要能解析");
+    let docs = [("2026-05-19", rx_doc("泼尼松片 7.5mg 每日一次 口服"))];
+    let items = reminders_of(&pkg, &mk_docs(&docs), vec![enable()]);
+    find(&items, "gc_dxa").clone()
+}
+
 #[test]
 fn a_threshold_that_is_met_but_needs_an_age_says_that_and_keeps_the_pending_flag() {
-    // 7.5 mg × 120 天:剂量和时长两道逐字门槛都过了,才轮到「我们能不能开口」。
-    let items = reminders(
-        &[("2026-05-19", rx_doc("泼尼松片 7.5mg 每日一次 口服"))],
-        vec![enable()],
-    );
-    let r = find(&items, "gc_dxa");
+    let r = dxa_with_min_age(serde_json::json!(40));
     assert_eq!(r["state"], "unknown");
     assert!(
         r["reason"].as_str().unwrap().contains("年龄"),
@@ -313,7 +323,28 @@ fn a_threshold_that_is_met_but_needs_an_age_says_that_and_keeps_the_pending_flag
     );
     // 「这条规则的数还没核实」这面旗不能因为落进 unknown 就不举了。
     assert_eq!(r["pending"], true);
+    let items = reminders(
+        &[("2026-05-19", rx_doc("泼尼松片 7.5mg 每日一次 口服"))],
+        vec![enable()],
+    );
     assert!(has(&items, "gc_ca_vitd"), "同一份处方过了 7.5 mg 那条线");
+}
+
+#[test]
+fn a_null_min_age_means_the_number_is_unverified_not_that_we_need_your_age() {
+    // 包里的 `null` = 「这个阈值还没核实」(global-constraints:没核实的一律 null +
+    // 待核),不是「这条要看年龄」。`serde_json::Value::get` 对 `null` 返回
+    // `Some(Value::Null)`,不显式排掉的话两者完全同路 —— 动作一样(都不提醒),但
+    // 用户看到的理由会是「档案里还没有年龄」,让人以为补上年龄就能算。
+    let r = dxa_with_min_age(serde_json::Value::Null);
+    assert_eq!(r["state"], "pending", "落到「这条规则的数还没核实」那一档");
+    assert!(
+        r["reason"].is_null(),
+        "pending 不带 unknown 的理由:{}",
+        r["reason"]
+    );
+    assert_eq!(r["pending"], true);
+    assert!(r["due_at"].is_null(), "没核实的数永远不算出到期日");
 }
 
 #[test]
@@ -541,8 +572,10 @@ fn the_ones_nobody_ever_did_sort_above_the_overdue_ones() {
             "gc_dxa"
         ]
     );
+    // `gc_dxa` 的 `min_age` 是 null(阈值未核实)→ `pending`,排在最后一档:
+    // 它连到期日都算不出来,不该占着列表最上面那一屏。
     let states: Vec<&str> = items.iter().map(|i| i["state"].as_str().unwrap()).collect();
-    assert_eq!(states, ["never", "never", "overdue", "overdue", "unknown"]);
+    assert_eq!(states, ["never", "never", "overdue", "overdue", "pending"]);
 }
 
 #[test]

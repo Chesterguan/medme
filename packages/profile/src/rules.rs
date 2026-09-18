@@ -1856,7 +1856,13 @@ fn threshold_due(
     }
     // 档案里根本没有年龄这一项。「没有就当不满足」会让这条**永远**不出现、而且
     // 一声不响 —— 骨密度那条恰恰是最容易被忘掉的一类。如实说算不了。
-    if m.get("min_age").is_some() {
+    //
+    // **`null` 当「没写」,不当「写了一个年龄」**:包里的 `null` 是「这个阈值还没
+    // 核实」(global-constraints:没核实的一律 `null` + 待核),不是「这条要看年龄」。
+    // 两条路产生的动作一样(都不给动作),但给用户看的**理由**是两句不同的话 ——
+    // 说成「档案里还没有年龄」,用户会以为补上年龄就能算,而真相是那个数还没人核过。
+    // `serde_json::Value::get` 对 `null` 返回的是 `Some(Value::Null)`,得显式排掉。
+    if m.get("min_age").is_some_and(|v| !v.is_null()) {
         return Remind::Unknown("这一条要看年龄,档案里还没有年龄".into());
     }
     if monitor_pending(m) {

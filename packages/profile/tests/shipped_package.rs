@@ -114,6 +114,58 @@ fn every_rule_object_declares_a_source_that_exists() {
 }
 
 #[test]
+fn every_source_id_a_note_names_is_declared_too() {
+    // 上一条只看对象有没有 `source` 键,看不见 **note 里点名的别人**。而 `note` 会
+    // 原样进 ProfileView(`eval_milestone`/`eval_monitor` 把包里那条规则整条带出),
+    // 所以 note 里印的每一个出处 id 都得能在界面的「id → 全文」表里查到 ——
+    // 查不到的那个 id,用户点开是空的。
+    let ids = source_ids(&signed_pkg());
+    let mut seen = 0usize;
+    fn walk(v: &serde_json::Value, ids: &[String], path: &str, seen: &mut usize) {
+        match v {
+            serde_json::Value::Object(m) => {
+                for (k, x) in m {
+                    let p = format!("{path}.{k}");
+                    if let Some(s) = x.as_str() {
+                        // 形如 S8 / L1 / R1 的 token。`§E.2`、`SLEDAI-2K`、`H02AB`
+                        // 都配不上(要求首字母是 S/L/R 且**紧跟**数字、两侧断词)。
+                        for tok in s.split(|c: char| !c.is_ascii_alphanumeric()) {
+                            let looks_like_id =
+                                matches!(tok.as_bytes().first(), Some(b'S' | b'L' | b'R'))
+                                    && tok.len() > 1
+                                    && tok[1..].bytes().all(|b| b.is_ascii_digit());
+                            if !looks_like_id {
+                                continue;
+                            }
+                            assert!(
+                                ids.iter().any(|i| i == tok),
+                                "{p} 的文案里点名了出处 {tok},但 manifest.sources 没有它"
+                            );
+                            *seen += 1;
+                        }
+                    }
+                    walk(x, ids, &p, seen);
+                }
+            }
+            serde_json::Value::Array(a) => {
+                for (i, x) in a.iter().enumerate() {
+                    walk(x, ids, &format!("{path}[{i}]"), seen);
+                }
+            }
+            _ => {}
+        }
+    }
+    let v = src_json();
+    for top in ["rules", "terms", "drugs", "markers", "views"] {
+        walk(&v[top], &ids, &format!("pkg.{top}"), &mut seen);
+    }
+    assert!(
+        seen >= 10,
+        "只扫到 {seen} 个 note 里的出处 id,谓词可能没生效"
+    );
+}
+
+#[test]
 fn every_terms_analyte_and_drug_row_says_where_its_numbers_came_from() {
     // `terms`/`drugs` 不在 `rules` 下,但同样是「会印到用户眼前的事实」:
     // 新分析物的单位换算系数、生物制剂的输注周期都必须能追到出处或写明待核。
