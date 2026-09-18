@@ -726,7 +726,8 @@ pub fn normalize(raw_term: &str) -> Option<Match> {
             return Some(idx.to_match(hit, STRIPPED_CONFIDENCE));
         }
     }
-    None
+    // 内置全部路径都没命中,才问病种包的覆盖层(见 [`set_overlay`])。
+    overlay_match(&norm, false)
 }
 
 /// 这个条目认不认这个单位(记法折叠后比较 canonical_unit 与 units[])。
@@ -946,15 +947,13 @@ pub fn resolve_drug(name: &str) -> Option<Match> {
 /// 从若干候选命中里按证据择优。`max_by_key` 在平手时保留**最后**一个,所以先反转,
 /// 让平手回落到候选顺序里**最靠前**的那个。
 fn pick_best(hits: Vec<Match>, unit: Option<&str>) -> Option<Match> {
-    let entries = dictionary_entries();
     let unit = unit.map(str::trim).filter(|u| !u.is_empty());
     hits.into_iter().rev().max_by_key(|m| {
-        let accepts = unit.is_some_and(|u| {
-            entries
-                .iter()
-                .find(|e| e.key == m.key)
-                .is_some_and(|e| entry_accepts_unit(e, u))
-        });
+        // `entry_for` 而不是 `dictionary_entries().find`:覆盖层带来的分析物也有
+        // `units[]`,不查它的话包里那条永远拿不到「单位对得上」这条最强证据,
+        // 跟内置候选竞争时会无声地输掉。
+        let accepts =
+            unit.is_some_and(|u| entry_for(&m.key).is_some_and(|e| entry_accepts_unit(&e, u)));
         (
             accepts,
             (m.confidence * 100.0) as u32,
@@ -982,12 +981,97 @@ pub fn normalize_drug(raw_term: &str) -> Option<Match> {
         .iter()
         .find_map(|c| idx.drug_aliases.get(c))
         .map(|hit| idx.to_match(hit, STRIPPED_CONFIDENCE))
+        .or_else(|| overlay_match(&norm, true))
 }
 
 /// Read-only access to the parsed dictionary (entries), for consumers that need
-/// to enumerate concepts (e.g. entity search auto-complete).
+/// to enumerate concepts (e.g. entity search auto-complete). **内置那份,不含
+/// 覆盖层** —— 要「内置 + 病种包」的单点查询用 [`entry_for`]。
 pub fn dictionary_entries() -> &'static [Entry] {
     &index().entries
+}
+
+// ---------------------------------------------------------------------------
+// 运行时术语覆盖层(spec §2)
+// ---------------------------------------------------------------------------
+
+/// 运行时术语覆盖层:病种包带来的别名与新分析物(spec §2)。
+///
+/// **内置永远优先。** 所有查询都是「内置全部路径都没命中,才来问覆盖层」——
+/// 包不能改写 `dictionary.json` 里已有的定义。理由是安全边界:包来自网络,
+/// 哪怕验过签,也不该有能力把肌酐的规范单位改掉。
+///
+/// 覆盖层是**进程级全局**,由 App 在加载/切换病种包时整体替换(传空 Vec 清空)。
+/// 用 `RwLock` 而不是 `OnceLock`:用户会开关病、切换成员,包不是只装一次。
+static OVERLAY: std::sync::RwLock<Vec<Entry>> = std::sync::RwLock::new(Vec::new());
+
+/// 整体替换覆盖层(移动端 FFI 每加载一个病种包调一次,Task 20)。`entries` 里与
+/// 内置 key 相同的条目**会被保留但定义永远查不到**:它们只能给那个 key 加别名
+/// (见 [`overlay_match`])。与其在这里静默丢弃,不如让优先级只由查询一侧决定,
+/// 只有一处需要读懂。
+pub fn set_overlay(entries: Vec<Entry>) {
+    // ponytail: 线性扫描覆盖层(条目数是「开着的病种数 × 每包几条」,个位数)。
+    // 真到几百条再建索引。
+    // 锁毒化只可能来自「持锁时 panic」,而这里持锁期间只做一次 Vec 赋值 / 一次
+    // 只读遍历,不存在改了一半的中间态 —— 恢复它比 panic 诚实。
+    *OVERLAY
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = entries;
+}
+
+/// 按 key 取条目:**内置优先**,内置没有才查覆盖层。返回克隆(覆盖层在锁后面,
+/// 给不出 `&'static`)。
+pub fn entry_for(key: &str) -> Option<Entry> {
+    if let Some(e) = dictionary_entries().iter().find(|e| e.key == key) {
+        return Some(e.clone());
+    }
+    OVERLAY
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .find(|e| e.key == key)
+        .cloned()
+}
+
+/// 覆盖层的别名查找,供 [`normalize`] / [`normalize_drug`] 在内置**全部**精确路径
+/// miss 之后回落。与内置一样,精确别名命中 = 1.0。
+///
+/// 内置已有这个 key 时:**别名照加,定义一律用内置那条** —— `matched_alias` 来自
+/// 包(可追溯回包里那行),其余字段一个都不来自包。这就是「包能加别名、改不掉
+/// 定义」那条红线的落点。
+///
+/// `drugs_only` = 处方语境([`normalize_drug`]),只认 drug 条目;类别按**最终生效的
+/// 那条定义**判(内置有就按内置的),否则包只要把 category 写成 drug 就能把一个
+/// 化验项塞进处方命名空间。
+///
+/// 刻意**不接进 [`fuzzy_lookup`]**:模糊匹配是 0.4 的推算,词典里那几百条都还要
+/// 靠歧义拒绝兜着;给包里几条新词也开这条路,只会多出一类没人核对过的错配。
+fn overlay_match(norm: &str, drugs_only: bool) -> Option<Match> {
+    let overlay = OVERLAY
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for e in overlay.iter() {
+        let Some(alias) = e.aliases.iter().find(|a| normalize_term(a) == norm) else {
+            continue;
+        };
+        let def = dictionary_entries()
+            .iter()
+            .find(|b| b.key == e.key)
+            .unwrap_or(e);
+        if drugs_only && def.category != Category::Drug {
+            continue;
+        }
+        return Some(Match {
+            key: def.key.clone(),
+            canonical_name: def.canonical_name.clone(),
+            category: def.category,
+            codes: def.codes.clone(),
+            ingredient: def.ingredient.clone(),
+            matched_alias: alias.clone(),
+            confidence: 1.0,
+        });
+    }
+    None
 }
 
 /// Fixed display order for the lab-panel catalog (检验大类:血常规/肝功能/…) —
@@ -1022,6 +1106,11 @@ pub const PANEL_CATALOG: &[&str] = &[
 /// commonly a specialty/low-frequency lab that doesn't cleanly fit one of the
 /// curated panels (see `panel_methodology.md`'s "留空" section). Callers should
 /// treat `None` as "uncategorized", not as an error.
+///
+/// **只看内置词典**,不查 [`set_overlay`] 的覆盖层:返回的是 `&'static str`,锁
+/// 后面的条目给不出这个生命周期。后果是病种包自带的分析物在趋势页落进「其他」——
+/// 可接受(它们在病程档案里按包的 `markers` 分组,不靠 panel)。真要改,得先把
+/// 这个签名换成 `Option<String>`,那会波及移动端 FFI。
 pub fn panel_for(key: &str) -> Option<&'static str> {
     dictionary_entries()
         .iter()

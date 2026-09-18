@@ -129,7 +129,7 @@
 
 use regex::Regex;
 use std::sync::OnceLock;
-use terminology::{dictionary_entries, normalize_unit, resolve, Match};
+use terminology::{normalize_unit, resolve, Match};
 
 /// One normalized lab result row. Mapping is additive: the raw name/value is
 /// always kept even when terminology can't resolve it (upper layer decides).
@@ -378,7 +378,9 @@ pub(crate) fn canonicalize(
     let mut ref_low_canonical = None;
     let mut ref_high_canonical = None;
     if let (Some(m), Some(u)) = (m, unit_raw) {
-        if let Some(entry) = dictionary_entries().iter().find(|e| e.key == m.key) {
+        // `entry_for` 而不是 `dictionary_entries().find`:病种包带来的新分析物
+        // (CH50 等)也要能换算单位,否则它有名字却画不出规范单位的线。
+        if let Some(entry) = terminology::entry_for(&m.key) {
             let nu = normalize_unit(u);
             if let Some(conv) = entry.units.iter().find(|c| normalize_unit(&c.unit) == nu) {
                 if conv.slope > 0.0 {
@@ -1624,6 +1626,8 @@ fn recover_second_entry(residual: &str, budget: u8) -> Vec<LabObservation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // 词典整表遍历只有守卫用例需要(本体查条目走 `terminology::entry_for`)。
+    use terminology::dictionary_entries;
 
     fn find<'a>(obs: &'a [LabObservation], key: &str) -> &'a LabObservation {
         obs.iter()
