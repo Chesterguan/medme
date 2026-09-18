@@ -920,7 +920,7 @@ void main() {
       // 把假 Argon2 那串 delayed timer 排空 —— 它们 resolve 的那一刻正是原来
       // `setState after dispose` 抛出来的时刻。`pumpAndSettle` 自己不推进它们
       // (没有帧在排队),所以要显式给时间;`prepareKeys` 里是**四次**串行的
-      // 300ms(设好了对 / 口令包 / 恢复码 / 恢复码包),一次给足。
+      // 300ms(生成账号公私钥对 / 口令包 / 恢复码 / 恢复码包),一次给足。
       await t.pump(const Duration(seconds: 3));
       await t.pumpAndSettle();
 

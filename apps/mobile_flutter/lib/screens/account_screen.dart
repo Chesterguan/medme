@@ -638,7 +638,7 @@ class _AccountScreenState extends State<AccountScreen> {
     const Text('设一个口令', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     const Text(
-      '换手机时用它解开云端那份;我们没有这把钥匙。',
+      '换手机时用它解开云端那份;我们没有这把钥匙',
       style: TextStyle(color: MedMe.faint, height: 1.5),
     ),
     const SizedBox(height: 20),
@@ -665,7 +665,7 @@ class _AccountScreenState extends State<AccountScreen> {
     const Text('恢复码,口令忘了用它', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     const Text(
-      '抄在纸上或存到别处。两个都丢了,云端那份谁也打不开。',
+      '抄在纸上或存到别处。口令、恢复码、登录过的手机,三样都丢了,云端那份谁也打不开。',
       style: TextStyle(color: MedMe.danger, height: 1.5, fontWeight: FontWeight.w600),
     ),
     const SizedBox(height: 20),
@@ -834,16 +834,18 @@ class _AccountScreenState extends State<AccountScreen> {
       ),
   ];
 
-  /// A6。照实说:我们不保管口令和恢复码,所以云端那份数据谁都解不开,我们也一样。
-  /// 唯一真实存在的出路是退出登录、从头开始——取消则一切原样。
+  /// A6。照实说:我们不保管口令和恢复码,而这一屏本身还留着一条口子——旧手机
+  /// 扫码批准不用口令。三样(口令、恢复码、登录过的手机)都不在了,云端那份数据
+  /// 才是真的谁都解不开,我们也一样。唯一真实存在的出路是退出登录、从头开始——
+  /// 取消则一切原样。
   Future<void> _lostEverything() async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('两样都丢了的话'),
         content: const Text(
-          '我们不保管你的口令和恢复码——两者都是打开账号的钥匙,都丢了,'
-          '云端那份数据谁都打不开,我们也没有任何办法帮你找回。\n\n'
+          '口令、恢复码、登录过的手机,三样都丢了,云端那份数据谁都打不开——'
+          '我们不保管你的口令和恢复码,也没有任何办法帮你找回。\n\n'
           '还能做的事:退出登录、重新开始。这台手机上没开通云端备份的病历不会被'
           '删除;已经开通过云端备份的那些成员,在这台手机上会一直锁着。',
           style: TextStyle(height: 1.5),
@@ -1457,8 +1459,9 @@ class _AccountScreenState extends State<AccountScreen> {
           '注销后:账号里的云端病历、成员与医生的授权全部永久删除,他们会立刻'
           '失去访问权限。此操作不可撤销。\n\n'
           '这台手机上已开通云端备份的成员,钥匙会随账号一起在服务端和本机销毁——'
-          '之后这个成员在这台手机上永远打不开,不是"重新登录就能恢复"那种锁定,'
-          '我们不保管你的钥匙,没有任何办法找回。\n\n'
+          '之后这个成员在这台手机上永远打不开,不是"重新登录就能恢复"那种锁定;'
+          '账号本身连同服务端那份记录一起没了,口令、恢复码、别的登录过的手机都'
+          '帮不上,我们也没有任何办法找回。\n\n'
           '这台手机上已保存的病历本身不会被删除——如果也要清空本机数据,'
           '请到「删掉全部」里单独操作。建议先导出一份留档,再继续注销。',
           textAlign: TextAlign.center,
