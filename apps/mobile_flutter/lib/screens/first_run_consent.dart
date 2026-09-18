@@ -336,11 +336,13 @@ String _chineseCount(int n) =>
 /// (`_agree` 的 `Analytics.setEnabled`)——不能真删声明,见下面 `build` 里
 /// points 循环之后那一行独立的 `Text`(F5)。
 ///
-/// **第 3 条不能写"会问你一次"**(W1)。本分支**没有**事前询问那道 UI——
-/// `cloud_extract.dart` 默认开、只认有没有登录,ask-once 键 `cloud_extract_asked`
-/// 全树不存在,归 Task 16。Task 16 落地后把这句改回"会问你一次",在那之前只能
-/// 照实说"直接送,没问"。同一句还点名了收货的第三方(W3,PIPL 第二十三条单独
-/// 告知):`api_client.dart` 的注释自己写着"服务端还要等 DeepSeek 出结果"。
+/// **第 3 条现在写"会问你一次"**(task-20b A1)。Task 16 落地了 `cloud_extract_ask_sheet.dart`
+/// 的 ask-once 流程(`import_flow.dart:195` 调用 `shouldAskCloudExtract`/
+/// `showCloudExtractAskSheet`)之后这句才站得住——W1 那条「本分支没有事前
+/// 询问,只能说直接送、没问」的旧注留到了 Task 20 才被发现没跟着回改,这里补上,
+/// 同时把措辞对齐 privacy.html(commit b936361)。同一句还点名了收货的第三方
+/// (W3,PIPL 第二十三条单独告知):`api_client.dart` 的注释自己写着"服务端还要等
+/// DeepSeek 出结果"。
 const _points = [
   _PointData(
     icon: Icons.document_scanner_outlined,
@@ -357,9 +359,10 @@ const _points = [
   _PointData(
     icon: Icons.lock_outline,
     title: '加密存在手机,登录后云端备份,我们打不开',
-    body: '不登录也能用,只是换手机找不回来。登录后,添加的病历会先在'
-        '手机上涂黑姓名、证件号、医院名,再交给深度求索(DeepSeek)的'
-        '模型整理,服务器在境内;可以在 我 → 云端 关掉。',
+    body: '不登录也能用,只是换手机找不回来。登录后第一次添加病历时会问你'
+        '一次要不要让云端帮忙整理;答应了,添加的病历才会先在手机上涂黑'
+        '姓名、证件号、医院名,再交给深度求索(DeepSeek)的模型整理,'
+        '服务器在境内;可以在「我 → 云端」关掉。',
   ),
 ];
 

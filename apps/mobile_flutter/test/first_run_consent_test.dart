@@ -182,10 +182,10 @@ void main() {
     });
 
     // ── fix round 1(task-2-review.md):三句 Critical + F4/F5 ─────────────────
-    testWidgets('W1:云端整理没有"问一次"的事前询问,Task 16 落地前不能这么说', (tester) async {
+    testWidgets('W1→task-20b A1:Task 16 落地 ask-once 之后,声明必须说"会问你一次"', (tester) async {
       useTallPhone(tester);
       await pumpScreen(tester);
-      expect(find.textContaining('会问你一次'), findsNothing);
+      expect(find.textContaining('会问你一次'), findsWidgets);
     });
 
     testWidgets('W3:PIPL 23 单独告知 —— 第三方模型服务商必须点名', (tester) async {
