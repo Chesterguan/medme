@@ -1,6 +1,6 @@
 //! 规则求值的共享上下文与各条规则的实现。**纯函数**:同样的 `Ctx` + 同样的包 +
 //! 同样的 `today`,永远得到同样的结果。
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 
 /// 一条被规则引用到的化验证据(用于「这次计分用了哪几张单子」的证据链)。
 ///
@@ -1944,6 +1944,300 @@ fn meds_of_class<'c>(
         .iter()
         .filter(|m| drug_class(pkg, m).is_some_and(|d| d.class == class))
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// 趋势(spec §6 的 `series_chart`)与时间轴(`timeline`)。
+//
+// 这两块**只把保险箱里已经有的东西摆出来**,不产生任何新结论:参考区间是各院单子
+// 上印的那对数,事件文本是抽取结果里的原话。引擎在这里唯一做的判断是「哪条线画不
+// 出来」和「哪一年」。
+// ---------------------------------------------------------------------------
+
+/// 一个化验点在趋势图上的样子。`value` 是**报告印的那个数**(与 [`Evidence`] 同一条
+/// 约定:规范套只用来跨院比较,给人看的永远是纸上那个数),`unverified` 原样带出去
+/// —— 渲染层据此把它画成空心点(spec §6:「需核对」空心点)。
+fn point_row(p: &parser::LabPoint) -> serde_json::Value {
+    serde_json::json!({
+        "date": p.date.map(|d| d.to_string()),
+        "value": p.value,
+        "flag": p.flag,
+        "unverified": p.unverified,
+        "document_index": p.source,
+    })
+}
+
+/// 指标的中文名:**内置词典优先**,内置没有才看包里 `terms.analytes` 自己定义的那些
+/// (spec §2:包不能覆盖内置定义)。两边都没有 → `None`,渲染层显示 key —— 引擎不
+/// 替包编一个名字。
+fn marker_name(pkg: &crate::package::Package, key: &str) -> Option<String> {
+    terminology::dictionary_entries()
+        .iter()
+        .find(|e| e.key == key)
+        .map(|e| e.canonical_name.clone())
+        .or_else(|| {
+            pkg.terms
+                .analytes
+                .iter()
+                .find(|a| a.key == key)
+                .map(|a| a.name.clone())
+        })
+}
+
+/// 定性结果(「阳性」「1:80」)只在抽取结果的原始行里有:解析不出 f64 的行在
+/// `aggregate` 那层就没进序列了(见 [`Ctx::raw_labs`])。`qualitative_ok` 的指标要把
+/// 那句话**原样**带出来,一个字都不改写。
+///
+/// 返回 `(行, 日期在今天之后的条数)` —— 后者并进这条线的 `future_points`,与数值点
+/// 同一条规矩:不画,但要数出来。
+fn qualitative_rows(ctx: &Ctx<'_>, key: &str) -> (Vec<serde_json::Value>, usize) {
+    let mut rows = Vec::new();
+    let mut future = 0;
+    for (idx, date, l) in &ctx.raw_labs {
+        // 解析得出数的行走数值那条路(它已经在序列里了),不在这儿重复一遍。
+        if l.value.trim().parse::<f64>().is_ok() {
+            continue;
+        }
+        if terminology::resolve(&l.name, None).is_none_or(|m| m.key != key) {
+            continue;
+        }
+        if date.is_some_and(|d| d > ctx.today) {
+            future += 1;
+            continue;
+        }
+        rows.push(serde_json::json!({
+            "date": date.map(|d| d.to_string()),
+            "value": l.value,
+            "unverified": l.unverified,
+            "document_index": idx,
+        }));
+    }
+    (rows, future)
+}
+
+/// 一个 marker 的那条线;`None` = 保险箱里一个结果都没有(调用方据此进 `missing`)。
+///
+/// `ref_low`/`ref_high`/`values_converted`/`needs_review_count` 全部**原样透传**
+/// `AnalyteSeries` —— 计数包含未来点与无日期点,那本来就是「这条线上有几个值需要
+/// 核对」,不随画不画出来变。
+fn marker_series(
+    ctx: &Ctx<'_>,
+    pkg: &crate::package::Package,
+    m: &crate::package::Marker,
+) -> Option<serde_json::Value> {
+    // 一个 key 在「医院出的」那一侧只会有一条序列(`parser` 的 `GroupKey::Matched`
+    // 一个 key 一组);自测点是另一个桶(`GroupKey::SelfMeasured`),**不画** ——
+    // 家里量的那一次不是化验单上的结果。
+    let s = ctx
+        .clinical
+        .labs
+        .iter()
+        .find(|s| s.analyte_key.as_deref() == Some(m.key.as_str()) && !s.self_measured);
+    let (qualitative, mut future_points) = if m.qualitative_ok {
+        qualitative_rows(ctx, &m.key)
+    } else {
+        (Vec::new(), 0)
+    };
+    if s.is_none() && qualitative.is_empty() {
+        return None;
+    }
+    let mut points = Vec::new();
+    let mut undated = Vec::new();
+    for p in s.iter().flat_map(|x| x.points.iter()) {
+        match p.date {
+            // 今天之后的日期不画:一张被 OCR 读成 2027 年的单子会在图上拉出一段
+            // 看着很像趋势的东西。但也不许无声消失 —— 数出来,让渲染层说一句。
+            Some(d) if d > ctx.today => future_points += 1,
+            Some(_) => points.push(point_row(p)),
+            // 没有日期的点画不上 x 轴,单独一列交给渲染层(与未来点同一条理由:
+            // 丢掉的那个值,用户永远不会知道它没显示过)。
+            None => undated.push(point_row(p)),
+        }
+    }
+    Some(serde_json::json!({
+        "analyte_key": m.key,
+        // 名字优先用这条序列自己的(`group_name` = 词典规范名,或报告上的原名);
+        // 只有定性行的指标没有序列,退回词典/包里的名字。
+        "name": s.map(|x| x.group_name.clone()).or_else(|| marker_name(pkg, &m.key)),
+        // 序列内所有点同单位(`AnalyteSeries` 的硬不变量),取哪个点的都一样;
+        // 整条线一个单位都没印时为 `None`。
+        "unit": s.and_then(|x| x.points.iter().find_map(|p| p.unit.clone())),
+        "ref_low": s.and_then(|x| x.ref_low),
+        "ref_high": s.and_then(|x| x.ref_high),
+        "values_converted": s.is_some_and(|x| x.values_converted),
+        "needs_review_count": s.map_or(0, |x| x.needs_review_count),
+        "dir": m.dir,
+        "role": m.role,
+        "points": points,
+        "undated": undated,
+        "future_points": future_points,
+        "qualitative": qualitative,
+    }))
+}
+
+/// 趋势图(spec §6 的 `series_chart`)。包里 `markers[]` 点名的指标逐条去
+/// `ctx.clinical.labs` 里找:找得到的按 `group`(没写就按 `role`)分组,一次都没查过
+/// 的进 `missing`。
+///
+/// **参考区间原样用各院单子上印的那对数**(`AnalyteSeries::ref_low`/`ref_high`),
+/// 不换成指南目标值:换了,用户拿手里那张纸一对就对不上,而且「正常/异常」的判定
+/// 会跟着医院变 —— 那是医院的事实。指南目标由渲染层另画一条虚线(spec §6)。
+///
+/// **UPCR 与 24h 尿蛋白是两个 marker、两条线**,永远不合并 —— 它们是两个不同的量
+/// (§11 的已知边界),画成一条是把其中一个当成了另一个。这件事在这里不需要特判:
+/// 一个 marker 一条线,合并压根没有发生的路径。
+///
+/// `body` 的形状(Task 21 的渲染引擎按这一份读):
+/// ```text
+/// {"groups":[{"name","series":[{
+///     "analyte_key","name","unit","ref_low","ref_high","values_converted",
+///     "needs_review_count","dir","role",
+///     "points":     [{"date","value","flag","unverified","document_index"}],
+///     "undated":    [ 同上,"date" 为 null ],   // 没日期的点:画不上 x 轴,但不丢
+///     "future_points": 0,                        // 日期在今天之后的点数(不画,数出来)
+///     "qualitative":[{"date","value","unverified","document_index"}]}]}],  // 原话
+///  "missing":[{"key","name"}]}                   // 包点了名、保险箱里一次都没有的
+/// ```
+/// 包里一个 marker 都没有时不出这张卡:没有指标表就没有「该画哪几条线」这回事。
+pub fn series_section(
+    ctx: &Ctx<'_>,
+    pkg: &crate::package::Package,
+) -> Option<crate::view::Section> {
+    if pkg.markers.is_empty() {
+        return None;
+    }
+    // 分组顺序 = 包里第一次出现的顺序。排一下序就成了字典序,而作者写下的顺序
+    // 本身是信息(补体在前、药物监测在后)。
+    let mut groups: Vec<(&str, Vec<serde_json::Value>)> = Vec::new();
+    let mut missing = Vec::new();
+    for m in &pkg.markers {
+        let Some(row) = marker_series(ctx, pkg, m) else {
+            missing.push(serde_json::json!({"key": m.key, "name": marker_name(pkg, &m.key)}));
+            continue;
+        };
+        let name = m.group.as_deref().unwrap_or(m.role.as_str());
+        match groups.iter_mut().find(|(g, _)| *g == name) {
+            Some((_, series)) => series.push(row),
+            None => groups.push((name, vec![row])),
+        }
+    }
+    Some(crate::view::Section {
+        kind: "series_chart".into(),
+        title: view_title(pkg, "series_chart"),
+        // 一条线都画不出来才折叠(spec §5.6)。只要有一条,就展开 —— 剩下那些
+        // 没查过的由 `missing` 自己说。
+        empty_hint: groups
+            .is_empty()
+            .then(|| "还没有这些指标的化验结果,下次抽血后这里会自动画出来".to_string()),
+        body: serde_json::json!({
+            "groups": groups.into_iter()
+                .map(|(name, series)| serde_json::json!({"name": name, "series": series}))
+                .collect::<Vec<_>>(),
+            "missing": missing,
+        }),
+    })
+}
+
+/// 时间轴上认的事件类型(spec §6 那一行,与 `deid` schema 2 的 fact 类型同名)。
+/// 其余类型各有各的去处,不在时间轴上再来一遍:`exam_done` 是复查提醒的「上次做过」,
+/// `scale`/`organ_involvement`/`imaging_finding`/`vaccination` 还没有读者。
+const TIMELINE_TYPES: [&str; 7] = [
+    "flare",
+    "hospitalization",
+    "biopsy",
+    "infusion",
+    "dose_change",
+    "infection",
+    "pregnancy",
+];
+
+/// 病程时间轴(spec §6 的 `timeline`):长病程压缩到年,一年一格。
+///
+/// **文本原文逐字,不合成**:`text` 是抽取结果里的原话,没有 `text` 的类型(住院、
+/// 活检、输注)退回 `evidence` —— 按 schema 2 的约定它就是原文里的一段连续原话,
+/// `deid` 的逐字校验钉着这件事。两个都空就是 `null`:引擎不替它拼一句「肾活检:
+/// IV 型」出来,那句话谁都没说过。
+///
+/// **`severity` 由包说了算**(`views.sections[kind=timeline].severity_high`)。
+/// 「复发是重的」是临床判断,不是引擎该下的:包里不点名就一律 `normal` —— 少一抹
+/// 红只是少一个强调,自己判一个红是替医生下结论。
+///
+/// `body` 的形状(Task 21 的渲染引擎按这一份读):
+/// ```text
+/// {"years":[{"year","events":[{"type","date","text","severity","document_index","unverified"}]}],
+///  "undated":[ 同上的 event,"date" 为 null ]}   // fact 与文档都没日期:不进年,但不丢
+/// ```
+pub fn timeline_section(
+    ctx: &Ctx<'_>,
+    pkg: &crate::package::Package,
+) -> Option<crate::view::Section> {
+    let high = pkg
+        .views
+        .sections
+        .iter()
+        .find(|s| str_field(s, "kind") == "timeline")
+        .map(|s| str_list(s, "severity_high"))
+        .unwrap_or_default();
+    let mut years: Vec<(i32, Vec<(NaiveDate, serde_json::Value)>)> = Vec::new();
+    let mut undated = Vec::new();
+    for (idx, doc_date, f) in &ctx.facts {
+        if !TIMELINE_TYPES.contains(&f.r#type.as_str()) {
+            continue;
+        }
+        // fact 自己的日期优先(住院那一类只写 `date_start`),都没有才退回文档日期。
+        let date = f
+            .date
+            .parse::<NaiveDate>()
+            .ok()
+            .or_else(|| f.date_start.parse::<NaiveDate>().ok())
+            .or(*doc_date);
+        let text = [&f.text, &f.evidence]
+            .into_iter()
+            .find(|s| !s.trim().is_empty());
+        let row = serde_json::json!({
+            "type": f.r#type,
+            "date": date.map(|d| d.to_string()),
+            "text": text,
+            "severity": if high.contains(&f.r#type.as_str()) { "high" } else { "normal" },
+            "document_index": idx,
+            // 逐字验不过的事实**标出来,不删掉**(与趋势图上的空心点同一条约定)。
+            "unverified": f.unverified,
+        });
+        // ⚠️ 未来日期**照原样进那一年**,与趋势图上的点不同:时间轴上凭空多出来的
+        // 「2031」那一格,用户一眼就看得出是哪张单子的日期读错了(然后去改);
+        // 而趋势图上的未来点会把 x 轴拉长,看起来像一段真实的趋势。
+        let Some(d) = date else {
+            undated.push(row);
+            continue;
+        };
+        match years.iter_mut().find(|(y, _)| *y == d.year()) {
+            Some((_, evs)) => evs.push((d, row)),
+            None => years.push((d.year(), vec![(d, row)])),
+        }
+    }
+    years.sort_by_key(|(y, _)| *y);
+    let years: Vec<serde_json::Value> = years
+        .into_iter()
+        .map(|(y, mut evs)| {
+            // 年内按日期升序;同一天的保持文档顺序(`sort_by_key` 是稳定排序)。
+            evs.sort_by_key(|(d, _)| *d);
+            serde_json::json!({
+                "year": y,
+                "events": evs.into_iter().map(|(_, e)| e).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Some(crate::view::Section {
+        kind: "timeline".into(),
+        title: view_title(pkg, "timeline"),
+        // 一件事都放不上去、而且保险箱里连一条医嘱都没读到,才说「还没有可以放上
+        // 时间轴的记录」。读到过处方却这么说,是一句不实的话 —— 那位用户明明已经
+        // 把单子交进来了(时间轴上的用药那一层是 C5 的事)。
+        empty_hint: (years.is_empty() && undated.is_empty() && ctx.clinical.meds.is_empty()).then(
+            || "还没有可以放上时间轴的记录,导入门诊病历或出院小结后这里会自动长出来".to_string(),
+        ),
+        body: serde_json::json!({ "years": years, "undated": undated }),
+    })
 }
 
 /// 这几条医嘱的起止:`since` = 最早一次被提到,`as_of` = **最近**一次被提到。

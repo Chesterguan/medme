@@ -81,6 +81,8 @@ pub fn full_pkg() -> Package {
 /// [`full_pkg`] 的 JSON 形态,给要改几个字段再用的用例(改包的用例改这份,别另抄)。
 pub fn full_json() -> serde_json::Value {
     let mut v: serde_json::Value = serde_json::from_str(ACTIVITY).expect("夹具包必须解析");
+    v["markers"] = serde_json::from_str(MARKERS).expect("指标表必须解析");
+    v["terms"]["analytes"] = serde_json::from_str(PKG_ANALYTES).expect("包内分析物必须解析");
     v["rules"]["states"] = serde_json::from_str(STATES).expect("达标表必须解析");
     v["rules"]["targets"] = serde_json::from_str(TARGETS).expect("目标值必须解析");
     v["rules"]["monitoring"] = serde_json::from_str(MONITORING).expect("复查提醒规则必须解析");
@@ -99,8 +101,33 @@ pub fn full_json() -> serde_json::Value {
     sections.push(serde_json::json!({"kind":"status_card","title":"现行方案"}));
     sections.push(serde_json::json!({"kind":"checklist","title":"达标情况(逐条对照)"}));
     sections.push(serde_json::json!({"kind":"reminders","title":"待补 / 逾期"}));
+    sections.push(serde_json::json!({"kind":"series_chart","title":"指标趋势"}));
+    // 哪几类事件标红是**包**说的(spec §6「复发标红」),不是引擎自己认定的临床
+    // 判断 —— 没点名的类型一律 `normal`。
+    sections.push(serde_json::json!({"kind":"timeline","title":"病程时间轴",
+                                     "severity_high":["flare","hospitalization"]}));
     v
 }
+
+/// spec §2 的 `markers`(12 条,逐字)。`group` 没写的按 `role` 分组。
+pub const MARKERS: &str = r#"[
+  {"key":"complement_c3","role":"activity","dir":"low_is_active","group":"补体"},
+  {"key":"complement_c4","role":"activity","dir":"low_is_active","group":"补体"},
+  {"key":"anti_dsdna","role":"serology","dir":"high_is_active","qualitative_ok":true},
+  {"key":"urine_pcr","role":"organ:kidney","dir":"high_is_active"},
+  {"key":"urine_protein_24h","role":"organ:kidney","dir":"high_is_active"},
+  {"key":"wbc","role":"activity"},{"key":"plt","role":"activity"},
+  {"key":"esr","role":"inflammation"},{"key":"crp","role":"inflammation"},
+  {"key":"creatinine","role":"organ:kidney"},{"key":"egfr","role":"organ:kidney"},
+  {"key":"alt","role":"drug_monitor"},{"key":"ast","role":"drug_monitor"}]"#;
+
+/// 包里自己定义的分析物(spec §2 的 `terms.analytes`)。UPCR 内置词典里没有 ——
+/// **定义在这儿还不等于认得出来**:让它真的能从报告里解析出来的覆盖层是 Task 17,
+/// 在那之前这份定义只提供一个中文名(`missing` 那一格要显示的东西)。
+pub const PKG_ANALYTES: &str = r#"[
+  {"key":"urine_pcr","name":"尿蛋白/肌酐比值","loinc":"2890-2","panel":"肾功能",
+   "canonical_unit":"mg/g","units":[{"unit":"mg/mmol","slope":8.84,"intercept":0}],
+   "aliases":["尿蛋白肌酐比","UPCR","尿蛋白/肌酐"],"note":"待核 LOINC"}]"#;
 
 /// [`STATES`] / [`TARGETS`] / [`MONITORING`] 里引用到的出处,`id` 与
 /// `.superpowers/sdd/disease-profile/sle-clinical-sources.md` 里的编号一一对应。

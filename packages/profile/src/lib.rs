@@ -52,6 +52,10 @@ pub fn materialize(
         out.extend(rules::status_section(&ctx, pkg, &regimen));
         out.extend(rules::activity_section(&ctx, pkg, &activity));
         out.extend(rules::reminders_section(&ctx, pkg, &activity, &regimen));
+        // 「待补/逾期」永远排在趋势前面(spec §5.6);时间轴跟在趋势后面,达标表
+        // 仍旧压轴(spec §6 那张表的相对顺序)。
+        out.extend(rules::series_section(&ctx, pkg));
+        out.extend(rules::timeline_section(&ctx, pkg));
         out.extend(rules::states_section(&ctx, pkg, &activity, &regimen));
         out
     } else {
