@@ -1,6 +1,7 @@
 // 用户视角六:**笔记用户**。
 //
-// **硬不变量**:笔记绝不进「复制全文给医生」那份纯文本,也不进二维码分享
+// **硬不变量**:笔记绝不进给医生看的那份纯文本(`VisitSummaryDto.plainText`),
+// 也不进二维码分享
 // (见 `vault_projections.rs` 的 `VisitNoteDto` 文档与 Rust 单测
 // `notes_never_enter_the_doctor_facing_plain_text_but_do_enter_recent_notes`)。
 // 这里在**真机 + 真实保险箱**上再钉一道:Rust 单测钉的是投影函数,这一条钉的是
@@ -25,22 +26,12 @@ const kEmoji = '😀😀😀🩺💊🏥';
 final kLong = '复诊要问的问题:${'这个药还要吃多久?' * 300}';
 const kMultiline = '第一行:昨天开始头晕\n第二行:早上量血压 160/95\n第三行:要不要换药?';
 
+/// 「趋势 →「记录一下」→ 六选一里点「笔记」」。录入那颗快捷键原来在概览上,
+/// 概览 Task 9 解散之后归到「趋势」(`harness.openRecordSheet`)。
 Future<void> openNoteEntry(WidgetTester tester) async {
-  await gotoTab(tester, HomeTab.records);
-  await waitFor(tester, find.text('记录'));
-  await tester.tap(find.text('记录').first);
-  await settle(tester);
-  await waitFor(tester, find.text('保存'));
+  await openRecordSheet(tester);
   await tester.tap(find.text('笔记').first);
   await settle(tester);
-}
-
-Future<void> openVisitSheet(WidgetTester tester) async {
-  await gotoTab(tester, HomeTab.records);
-  await waitFor(tester, find.text('看病带这个'));
-  await tester.tap(find.text('看病带这个').first);
-  await settle(tester, total: const Duration(seconds: 3));
-  await waitFor(tester, find.text('复制全文给医生'));
 }
 
 void main() {
@@ -95,7 +86,7 @@ void main() {
       expect(
         s.plainText.contains(probe),
         isFalse,
-        reason: '**硬不变量破了**:笔记内容「$probe」漏进了「复制全文给医生」的纯文本。\n'
+        reason: '**硬不变量破了**:笔记内容「$probe」漏进了给医生看的纯文本。\n'
             'plainText = ${s.plainText}',
       );
     }
@@ -107,9 +98,9 @@ void main() {
     final qr = await buildQrShareUrl(baseUrl: 'https://example.invalid');
     expect(qr.url, isNotEmpty);
 
-    // ── UI:浮层里要显示得出来 ──
+    // ── UI:「给医生看」那一页里要显示得出来 ──
     await bootApp(tester, reset: false);
-    await openVisitSheet(tester);
+    await gotoForDoctor(tester);
 
     expect(find.textContaining('<script>'), findsWidgets,
         reason: '注入串没有原样显示 —— 笔记是「逐字来自你写的东西」');
@@ -121,19 +112,21 @@ void main() {
 
   // ⚠️ 这条**刻意不点保存**。
   //
-  // 从这里保存会踩到 BUG-4(`visit_summary_sheet.dart:98` 的
+  // 从这里保存曾经会踩到 BUG-4(当年浮层 `visit_summary_sheet.dart` 里那句
   // `setState(() => _future = viewVisitSummary())`):异常逃成未捕获的 zone
   // 错误,`flutter_test` 收到就把用例当场终止 —— 后面的断言一行都执行不到,
-  // 而且会把同文件后面的用例一起带塌。那个缺陷由
-  // `test/known_defect_setstate_future_test.dart` 从源码层钉住。
+  // 而且会把同文件后面的用例一起带塌。浮层本体 Task 17 已删,那条刷新路径现在
+  // 住在 `for_doctor_screen.dart` 的 `_addNote`(只有真的存下了才重拉一次),
+  // 由 `test/for_doctor_refresh_test.dart` 与
+  // `test/known_defect_setstate_future_test.dart` 两条不需要设备的测试钉住。
   //
   // 这里能验、也值得验的是**前半段**:「加一条」有没有真的跳过六选一、直接落在
   // 笔记类型上(这是这颗按钮存在的全部理由)。
-  testWidgets('从「看病带这个」里点「加一条」直接落到笔记类型(不保存 —— 见 BUG-4)', (
+  testWidgets('从「给医生看」里点「加一条」直接落到笔记类型(不保存 —— 见 BUG-4)', (
     tester,
   ) async {
     await bootApp(tester);
-    await openVisitSheet(tester);
+    await gotoForDoctor(tester);
 
     await tester.tap(find.text('加一条'));
     await settle(tester, total: const Duration(seconds: 2));
