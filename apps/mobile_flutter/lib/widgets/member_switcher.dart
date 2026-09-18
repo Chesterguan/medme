@@ -139,7 +139,7 @@ Future<void> showMemberSwitcherSheet(
 /// (`s10`,Task 13)。眼下唯一的小字是「正在恢复」。
 ///
 /// 「正在恢复…点这里重试」是评审 Important 2 的可见出口:首同步没成功过的成员
-/// (换机领回来的那些)原来只是静静地叫「正在恢复的档案」、0 份病历,用户没有任何
+/// (换机领回来的那些)原来只是静静地叫「正在恢复的成员」、0 份病历,用户没有任何
 /// 办法让它再试一次,也不知道还能不能好。**点这一行就是重试** —— 切过去会
 /// `bumpVaultRevision()`,后台触发器随即把 `sync_engine.pendingFirstSync` 排空。
 Widget? _memberSubtitle(Profile m, TextStyle style) {

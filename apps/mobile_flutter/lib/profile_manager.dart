@@ -49,7 +49,7 @@ class ProfileManager {
   ///
   /// 原来是「云端档案 a1b2c3」(cloudId 前 6 位)。用户换了台新手机,解锁完账号,
   /// 第一眼看到的是一串内部 id:既看不懂,也不知道它会不会变成正常的。
-  static const restoringPlaceholderName = '正在恢复的档案';
+  static const restoringPlaceholderName = '正在恢复的成员';
 
   /// 兑换授权时的占位名(`Grants.redeem`)。
   static const redeemingPlaceholderName = '(同步中)';
@@ -314,7 +314,7 @@ class ProfileManager {
   /// **抽不出姓名也要改名**(复审新问题 2)。这个方法只在首同步**成功之后**被调用
   /// (`sync_engine.firstSyncAndName`:同步抛异常就走不到这儿),所以"名字还是占位
   /// 串"这条证据在这一刻必须被消费掉 —— 留着的后果是一个死循环:空档案(或者正则
-  /// 一个都没命中)的成员名字永远停在「正在恢复的档案」→ 每次启动
+  /// 一个都没命中)的成员名字永远停在「正在恢复的成员」→ 每次启动
   /// `restoreProfileKeys` 都把它重新排进首同步队列 → 反复切成员、屏幕闪烁,切换器
   /// 一直显示「正在恢复…点这里重试」,而它其实早就同步好了。
   /// 抽不出来就给一个中性的 [restoredFallbackName] —— 用户随时可以在设置里改名。

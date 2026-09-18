@@ -869,7 +869,7 @@ class _MismatchBanner extends StatelessWidget {
           const SizedBox(width: MedShape.s1),
           Expanded(
             child: Text(
-              '报告上的姓名是「$who」,与当前档案「${ProfileManager.instance.current.name}」不一致,'
+              '报告上的姓名是「$who」,与当前成员「${ProfileManager.instance.current.name}」不一致,'
               '请核对是否导错了人。',
               style: MedType.secondary.copyWith(color: c.ink, height: 1.5),
             ),

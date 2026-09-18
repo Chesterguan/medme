@@ -471,7 +471,7 @@ class _ImageViewerScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           if (snap.hasError || !snap.hasData) {
-            return const _ViewerFallback(message: '原件加载失败,已安全保存在档案里,可稍后重试。');
+            return const _ViewerFallback(message: '原件加载失败,已安全保存在病历箱里,可稍后重试。');
           }
           return PhotoView(
             imageProvider: MemoryImage(snap.data!),
@@ -526,7 +526,7 @@ class _PdfViewerScreenState extends State<_PdfViewerScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('原件')),
       body: _error != null
-          ? const _ViewerFallback(message: '此文件暂不能预览,原件已安全保存在档案里。')
+          ? const _ViewerFallback(message: '此文件暂不能预览,原件已安全保存在病历箱里。')
           : _controller == null
           ? const Center(child: CircularProgressIndicator())
           : PdfView(controller: _controller!, onDocumentError: (_) {}),

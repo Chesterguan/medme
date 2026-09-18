@@ -1447,8 +1447,8 @@ void main() {
       // Task 17 在「云同步」那节加了一行「云端整理」开关,「我能看的」这节的挂载点
       // 被挤出首屏——`SliverList` 懒实现,没挂载的 widget 找不到,先滚过去。
       await _scrollToText(t, '我能看的');
-      // C:`prf_xxx` 是服务端内部 id,不给用户看;对不上本机成员时说「一份共享档案」。
-      expect(find.text('一份共享档案'), findsOneWidget);
+      // C:`prf_xxx` 是服务端内部 id,不给用户看;对不上本机成员时说「一份共享的病历」。
+      expect(find.text('一份共享的病历'), findsOneWidget);
       expect(find.textContaining('p1'), findsNothing);
       expect(find.text('本人 · 长期有效'), findsOneWidget, reason: '角色中文化;没有到期日说「长期有效」,不露 null');
       expect(
@@ -1638,7 +1638,7 @@ void main() {
       await t.tap(find.byKey(const Key('transfer_g2')));
       await t.pumpAndSettle();
 
-      expect(find.text('把这份档案交给他?'), findsOneWidget);
+      expect(find.text('把这份病历交给他?'), findsOneWidget);
       expect(find.textContaining('降为可以一起录入的家人'), findsOneWidget);
       expect(find.textContaining('还不会改变任何东西'), findsOneWidget);
       expect(find.text('生成链接'), findsOneWidget);
@@ -1727,7 +1727,7 @@ void main() {
       await t.pumpAndSettle();
       await t.tap(find.byKey(const Key('transfer_current_profile')));
       await t.pumpAndSettle();
-      expect(find.text('把这份档案交给他?'), findsOneWidget);
+      expect(find.text('把这份病历交给他?'), findsOneWidget);
       await t.tap(find.text('生成链接'));
       await t.pumpAndSettle();
 
@@ -2061,7 +2061,7 @@ void main() {
       expect(adopted.length, 1);
       // A5:占位名不再是「云端档案 prf_un」—— 换了台新手机的人第一眼看到的不该
       // 是一串内部 id。
-      expect(adopted.single.name, '正在恢复的档案');
+      expect(adopted.single.name, '正在恢复的成员');
       expect(adopted.single.role, 'editor');
       expect(adopted.single.expiresAt, DateTime.parse('2027-01-02T03:04:05.000Z'));
       expect(await AccountSession.instance.profileKey('prf_unknown_abcdef'), wrappedKey);
@@ -2107,7 +2107,7 @@ void main() {
         reason: '换机之后不该等"用户哪天自己切过去"才有第一次同步;'
             '但也不该在启动路径上串行跑 N 个完整同步(评审 Important 3)',
       );
-      expect(adopted.name, '正在恢复的档案', reason: '同步还没跑,名字还是占位串');
+      expect(adopted.name, '正在恢复的成员', reason: '同步还没跑,名字还是占位串');
     });
 
     test('A5:本机已有这个云成员、密钥也齐、名字也是真名 → 不重排首同步', () async {
@@ -2134,7 +2134,7 @@ void main() {
 
     // 评审 Important 2:密钥是在同步**之前**就存下的,于是下一次启动那句
     // `continue`(有成员 + 有密钥)会把它整条跳过 —— 那唯一一次尝试里的一次网络
-    // 抖动就让用户永久看着一个叫「正在恢复的档案」、0 份病历的成员。
+    // 抖动就让用户永久看着一个叫「正在恢复的成员」、0 份病历的成员。
     test('Important 2:首同步没成功过的成员(名字还是占位串)下次启动会被重排', () async {
       final api = oneUnknownCloudProfile();
       final flow = AccountFlow(

@@ -9,7 +9,7 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// 「一条链接 → 摆成一张码,旁边给复制和分享」。
 ///
 /// **两条路共用**:代拍交付的取件码(`doctor_claim_link_dialog.dart`)、以及
-/// 「把这份档案交给他」的转移链接(`account_screen.dart` 的 B5)。抽出来之前
+/// 「把这份病历交给他」的转移链接(`account_screen.dart` 的 B5)。抽出来之前
 /// 只有前者有这套展示,后者要么重写一遍、要么只给一行纯文本链接 —— 而收链接的
 /// 人常常是"手机递过来,你扫一下"这种场景,码比链接管用。
 ///

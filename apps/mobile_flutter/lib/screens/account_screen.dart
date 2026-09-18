@@ -1082,9 +1082,9 @@ class _AccountScreenState extends State<AccountScreen> {
       (widget.flow.session.loginMethod == 'apple' ? 'Apple 登录' : '已登录');
 
   /// 云档案 id → 本机那个成员的名字。对不上(刚授权、还没同步下来)时说
-  /// 「一份共享档案」—— 绝不把 `prf_xxx` 摆给用户看。
+  /// 「一份共享的病历」—— 绝不把 `prf_xxx` 摆给用户看。
   String _profileLabel(Object? cloudId) =>
-      ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull?.name ?? '一份共享档案';
+      ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull?.name ?? '一份共享的病历';
 
   // ---- 云端备份:每成员一个开关 +「同步」+ 上一次结果/错误 ----
 
@@ -1783,7 +1783,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return _errorText('加载失败:${friendlyApiError(snap.error!)}');
       }
       final grants = snap.data ?? const [];
-      if (grants.isEmpty) return const Text('没有共享档案', style: TextStyle(color: MedMe.faint));
+      if (grants.isEmpty) return const Text('没有共享的病历', style: TextStyle(color: MedMe.faint));
       return Column(
         children: [
           for (final g in grants.cast<Map<String, dynamic>>())
@@ -1848,7 +1848,7 @@ class _AccountScreenState extends State<AccountScreen> {
     },
   );
 
-  /// B5:「把这份档案交给他」。
+  /// B5:「把这份病历交给他」。
   ///
   /// `Grants.inviteTransfer` 在这之前**一个调用方都没有**。也就是说"把档案交给
   /// 父母/子女"这件事在产品里根本不存在,而它恰恰是「替父母管病历」这条主线的
@@ -1861,7 +1861,7 @@ class _AccountScreenState extends State<AccountScreen> {
     final profile = ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull;
     if (profile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        appSnackBar(content: const Text('这台手机上找不到这份档案,先云端备份一次再试')),
+        appSnackBar(content: const Text('这台手机上找不到这份病历,先云端备份一次再试')),
       );
       return;
     }
@@ -1872,9 +1872,9 @@ class _AccountScreenState extends State<AccountScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('把这份档案交给他?'),
+        title: const Text('把这份病历交给他?'),
         content: Text(
-          '对方接受之后,「${profile.name}」这份档案就归他所有;'
+          '对方接受之后,「${profile.name}」这份病历就归他所有;'
           '你会降为可以一起录入的家人,不再能把它转给别人、也不能再撤销别人的查看权限。\n\n'
           '现在这一步只生成一条链接,还不会改变任何东西 —— 对方点开并接受之后才真正生效。\n\n'
           '注意:拿到这个码的任何人都能接受(它不绑定某一个人),15 天内有效,'
@@ -1897,13 +1897,13 @@ class _AccountScreenState extends State<AccountScreen> {
         title: '请他扫这个码',
         url: link.toUrl(),
         body: '让对方用手机相机拍下这个码,或者把链接发给他。他点开并接受之后,'
-            '「${profile.name}」这份档案就归他所有,你降为可以一起录入的家人。',
+            '「${profile.name}」这份病历就归他所有,你降为可以一起录入的家人。',
         // ⚠️ 这句原来写的是「在他接受之前,你随时可以不管它 —— 不接受就什么都没
         // 发生」。那是**误导**(评审 Important 9):服务端既没有列出 invite 的端点、
         // 也没有撤销的端点,所以你既没法"不管它"、也没法收回。照实说。
         footnote: '拿到这个码的任何人都能接受(它不绑定某一个人),15 天内有效,'
             '生成之后无法撤回。只发给你真正要交给的那个人。',
-        shareSubject: '把这份病历档案交给你',
+        shareSubject: '把这份病历交给你',
         shareLabel: '发给他',
       );
     } catch (e) {
