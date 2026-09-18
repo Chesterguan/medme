@@ -1605,6 +1605,22 @@ mod tests {
         }
     }
 
+    /// 两份清单必须**逐字**一致:prompt 里 `"organ":"kidney|blood|…"` 那一段就是
+    /// `ORGAN_VALUES`。谁改了一边没改另一边,多出来的那个值就会被当原文逐字去查,
+    /// 查不到 → 整条 fact 静默丢掉 —— 正是终审 I2 那个洞的形状。
+    #[test]
+    fn the_vocabularies_are_the_prompt_lists_verbatim() {
+        const PROMPT: &str = include_str!("../prompts/extract_v2_system.txt");
+        for (field, values) in [
+            ("organ", ORGAN_VALUES),
+            ("status", PREGNANCY_STATUS_VALUES),
+            ("modality", IMAGING_MODALITY_VALUES),
+        ] {
+            let want = format!("\"{field}\":\"{}\"", values.join("|"));
+            assert!(PROMPT.contains(&want), "prompt 里找不到 {want}");
+        }
+    }
+
     /// `biopsy.organ` 在 prompt 里是**原文自由文本**(`"organ":""`),不是词表 ——
     /// 词表这道门只是多一条路,老的逐字路不能被它顶掉。
     #[test]
