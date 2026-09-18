@@ -558,6 +558,29 @@ mod tests {
     }
 
     #[test]
+    fn the_last_event_of_the_day_wins_even_when_it_is_the_off_one() {
+        // 上面那条是**回文**(开→关→开):把顺序整个倒过来,答案还是「开着」,
+        // 所以它证不了「同一天里最后那条说了算」。这条不对称:开→关,倒过来读
+        // 就会答「开着」(终审 M5)。
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        open_temp_vault(home.path());
+        let dir_s = home.path().join("skills-cache").display().to_string();
+        vault_profile_install_package(dir_s.clone(), SLE_PACKAGE.into()).unwrap();
+
+        let same_day = "2026-03-01";
+        for kind in ["enable", "disable"] {
+            vault_profile_record_event(kind.into(), "sle".into(), same_day.into(), "{}".into())
+                .unwrap();
+        }
+        let view: serde_json::Value =
+            serde_json::from_str(&vault_profile_view(dir_s, "sle".into()).unwrap()).unwrap();
+        assert_eq!(view["enabled"], false, "同日开→关,最后是关着");
+
+        crate::api::vault::clear_terminology_overlay();
+    }
+
+    #[test]
     fn a_non_object_payload_is_refused_at_the_ffi_boundary() {
         // 规则只按键取值:`null`/数组/裸数字进了日志也只是噪音。不开箱也该被挡住。
         for bad in ["null", "[1,2]", "3", "\"x\""] {

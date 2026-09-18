@@ -142,6 +142,22 @@ CLAUDE.md 硬规矩第 3 条「不许自审」)逐条核了 91 个带标量对�
   同一条云抽取通道、同一道脱敏硬闸、同一个计量,这条 ADR 只加 `facts[]`,不改传输/账号/
   计费模型。
 
+## Addendum(2026-09-18)
+
+ADR 按规矩不改原文,但上面两处「入口尚未接入」的**事实陈述**已经过期,而 CLAUDE.md 要求
+新会话开头先读 ADR —— 不加这一段,下一个人会被它主动误导:
+
+- **入口已接入**(`d7c5e19`):`disease_profile_screen.dart` 与 `disease_profile_card.dart`
+  都在,`trends_screen.dart:321` 挂着入口卡。Decision §3 与 Consequences 首段里
+  「入口这一层尚未接入」「整个 worktree 没有任何屏幕引用 `profile_sections.dart`」两句,
+  说的是写这条 ADR 当天的状态,今天不再成立。决策本身不变。
+- **`rules.bands` 今天没有读者**:包里那三档(≤6 / 7–12 / >12)在 `package.rs::Rules` 里
+  没有对应字段,serde 解析时静默丢掉;两个渲染器也都不提它。`shipped_package.rs` 对它的
+  断言读的是包的**原 JSON**,不是解析后的结构体,所以它守得住「包里写了三档」,守不住
+  「有人在用」。留着不删(删要重签包),但在有读者之前,它只是包里的一句声明。
+  顺带暴露的不一致:未知的**规则块**无声消失,未知的**条目 kind** 引擎却报成 `unscored`
+  + 理由 —— 两级不一样,加第二个病之前值得统一。
+
 ## 参考
 
 - 设计:[disease-profile-skill-framework-design](../superpowers/specs/2026-09-16-disease-profile-skill-framework-design.md)

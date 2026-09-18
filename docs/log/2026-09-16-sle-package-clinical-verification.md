@@ -281,8 +281,10 @@ DORIS `<5 mg` / LLDAS `≤7.5 mg` / `gc_ca_vitd` / `gc_dxa`。在表还是 `null
 1. `hcq.label_rule` → `null`,`label_rule_pending` `true` → `false`(不再举空旗);
 2. `gc_dxa`:`state` `pending` → **`never`**、`pending` `true` → `false`、`verify_status` → `verified`,
    `action`/`note` 换新。它在提醒列表里从最后一档升到「还没查过」那一档,排序从
-   `[gc_ca_vitd, gc_cv_annual, visit_active, mmf_cbc, gc_dxa]` 变成
-   `[gc_ca_vitd, gc_dxa, gc_cv_annual, visit_active, mmf_cbc]`;
+   `[gc_ca_vitd, gc_cv_annual, mmf_cbc, hcq_eye, gc_dxa]` 变成
+   `[gc_ca_vitd, gc_dxa, gc_cv_annual, mmf_cbc, hcq_eye]`
+   (2026-09-18 终审 M4 订正:原先这两行写成 `visit_active`,那一条从来没在清单里出现过;
+   逐字核回 `a721fc1` 与 `a721fc1^` 两版 golden 的 `reminders` 块);
 3. `sources`:`L8` 消失,`S17` 出现,`S13`/`R1` 的 cite/url 更新;
 4. `hcq_eye.note` 换新。
 

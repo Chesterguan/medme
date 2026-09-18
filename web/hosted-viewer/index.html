@@ -17,7 +17,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-A8iMa/8pQIxQOvgUl2mpiNFCDwNgdMMW70BTYGio9Es='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-1W78FH/BnYVBaSZPQ8EiW/CSi++FJj/q5GxT2mdqVnc='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -1337,10 +1337,12 @@ function pfScoreCard(body) {
     // `caveat`(临床限定语)与证据行是两句不同的话,原样单独成行,不拼进证据里。
     if (typeof x.caveat === "string" && x.caveat) h += '<div class="pf-long pf-ind">' + esc(x.caveat) + "</div>";
   });
-  missed.forEach(x => { h += pfRow(pfMark("no"), pfTxt(x.label), "", [pfSrc(x.source)], pfEvidence(x.evidence) || null); });
+  // `Missed`(`rules.rs:160`)与 `Unscored`(`rules.rs:170`)**没有** `source` 字段
+  // (只有 `Hit` 有),所以这两行不带出处 —— 以前这里各挂一个 `pfSrc(x.source)`,恒为空。
+  missed.forEach(x => { h += pfRow(pfMark("no"), pfTxt(x.label), "", [], pfEvidence(x.evidence) || null); });
   // 算不出来的那几条**永远说明白为什么**(`reason`),空着会被读成「查了没事」。
   unscored.forEach(x => {
-    h += pfRow(pfMark("unknown"), pfTxt(x.label), pfPill(PF_VERDICT.unknown, ""), [pfSrc(x.source)],
+    h += pfRow(pfMark("unknown"), pfTxt(x.label), pfPill(PF_VERDICT.unknown, ""), [],
       typeof x.reason === "string" ? x.reason : null);
   });
   return h;
