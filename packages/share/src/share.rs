@@ -155,12 +155,19 @@ pub fn build_encrypted_share_with_consent_and_confirmed(
 /// 那条路要把同一份密文单独传上瞬时云、密钥留在 URL fragment 里,而不是包成一个
 /// 自带查看器的 HTML 文件。两条路共用这里,保证密文格式(nonce‖密文、`SHARE_AAD`)
 /// 只有一处定义 —— 查看器的解密分支因此可以原样复用。见 [`build_claim_blob`]。
+///
+/// `profile_view` = 病程档案(`profile::ProfileView` 的 JSON)。**严格加法**:`None`
+/// 时 payload 逐字节不变。本层不解释它的内容,原样挂上去 —— 规则、措辞、出处都已经
+/// 在 `packages/profile` 里定完了,分享层再碰一次就是第二份真相。参数名不叫
+/// `profile`:那个名字在函数体里已经是**患者基本信息**(`pipeline::patient_profile`),
+/// 同名会把它遮住。
 fn build_share_blob_inner(
     v: &Vault,
     expires_days: u32,
     render_dicom_png: crate::DicomPngRenderer,
     consent: Option<ShareConsent>,
     confirmed_document_ids: Option<&HashSet<i64>>,
+    profile_view: Option<&serde_json::Value>,
 ) -> Result<(Vec<u8>, [u8; 32], i64), String> {
     let records = crate::export::gather_records(v)?;
     let profile = pipeline::patient_profile(v).map_err(|e| e.to_string())?;
@@ -349,6 +356,19 @@ fn build_share_blob_inner(
         payload["summary"] = summary;
     }
 
+    // 病程档案(可选)。挂的门槛与 summary 同理:开着、且真的算出了内容才挂,
+    // 免得医生那边多出一个空块。
+    if let Some(pv) = profile_view {
+        let enabled = pv.get("enabled").and_then(|b| b.as_bool()).unwrap_or(false);
+        let has_sections = pv
+            .get("sections")
+            .and_then(|s| s.as_array())
+            .is_some_and(|a| !a.is_empty());
+        if enabled && has_sections {
+            payload["profile"] = pv.clone();
+        }
+    }
+
     // 拍前同意记录(医生代拍流程):严格加法,仅当调用方传入了 `consent` 才插入
     // 这个键;`build_encrypted_share`(consent=None)因此逐字节不受影响。
     if let Some(c) = &consent {
@@ -405,8 +425,25 @@ pub fn build_own_share_blob(
     expires_days: u32,
     render_dicom_png: crate::DicomPngRenderer,
 ) -> Result<(Vec<u8>, String, i64), String> {
+    build_own_share_blob_with_profile(v, expires_days, render_dicom_png, None)
+}
+
+/// 同 [`build_own_share_blob`],但把病程档案(`profile::ProfileView` 的 JSON)一起
+/// 放进密文。[`build_own_share_blob`] 就是本函数传 `profile=None` 的特例,两者共用
+/// 同一套装配逻辑,不重复维护 —— 与 [`build_encrypted_share`] /
+/// [`build_encrypted_share_with_consent`] 的关系完全一样。
+///
+/// **只有病人自己出码这条路带档案。** 代拍认领([`build_claim_blob`])方向相反,
+/// 病人的档案不在医生手机上;URL fragment 那条码(`qr::build_qr_share`)体积是硬
+/// 约束;桌面导出([`build_encrypted_share`])本轮不动。
+pub fn build_own_share_blob_with_profile(
+    v: &Vault,
+    expires_days: u32,
+    render_dicom_png: crate::DicomPngRenderer,
+    profile: Option<&serde_json::Value>,
+) -> Result<(Vec<u8>, String, i64), String> {
     let (blob, key_bytes, record_count) =
-        build_share_blob_inner(v, expires_days, render_dicom_png, None, None)?;
+        build_share_blob_inner(v, expires_days, render_dicom_png, None, None, profile)?;
     Ok((blob, B64URL.encode(key_bytes), record_count))
 }
 
@@ -423,6 +460,7 @@ pub fn build_claim_blob(
         render_dicom_png,
         Some(consent),
         Some(confirmed_document_ids),
+        None,
     )?;
     Ok((blob, B64URL.encode(key_bytes), record_count))
 }
@@ -440,6 +478,7 @@ fn build_encrypted_share_inner(
         render_dicom_png,
         consent,
         confirmed_document_ids,
+        None, // 桌面导出本轮不带病程档案 —— payload 逐字节不变。
     )?;
     let blob_b64 = B64.encode(&blob);
 
@@ -558,6 +597,56 @@ mod tests {
         v["blob"].as_str().unwrap().to_string()
     }
 
+    /// 一个带一份临床记录(化验单 + OCR 原文)的保险箱 —— 这一堆测试里反复要的那份。
+    /// `TempDir` 必须被调用方接住:它一析构,箱子就没了。
+    fn fixture_vault_with_records() -> (Vault, tempfile::TempDir) {
+        use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let imp = vault.import("血常规.txt", "text/plain", b"data").unwrap();
+        let doc = vault
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: Some(chrono::Utc::now()),
+                doc_date_end: None,
+                title: Some("血常规报告".into()),
+                language: Some("zh".into()),
+                page_count: 1,
+            })
+            .unwrap();
+        vault
+            .add_ocr(NewOcr {
+                document_id: doc.id,
+                page_no: 1,
+                backend: OcrBackendKind::Native,
+                model_version: "text-layer".into(),
+                text: "白细胞 10.5".into(),
+                confidence: None,
+            })
+            .unwrap();
+        (vault, dir)
+    }
+
+    /// 解开一份 blob(与浏览器查看器同路径:nonce 在前 12 字节,AAD = `SHARE_AAD`)。
+    /// `key_b64` 是 base64url 密钥,分组用的空白会先去掉 —— 出码那条路不分组、
+    /// 整份分享那条路分组,两种都吃得下。
+    fn decrypt_payload_for_test(blob: &[u8], key_b64: &str) -> serde_json::Value {
+        let stripped: String = key_b64.chars().filter(|c| !c.is_whitespace()).collect();
+        let key = B64URL.decode(stripped).unwrap();
+        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+        let pt = cipher
+            .decrypt(
+                (&blob[..12]).try_into().expect("已按 12 字节切片"),
+                Payload {
+                    msg: &blob[12..],
+                    aad: SHARE_AAD,
+                },
+            )
+            .unwrap();
+        serde_json::from_slice(&pt).unwrap()
+    }
+
     /// 自包含分享文件必须**一个网络请求都发不出去**。托管查看器为了取认领密文放行了
     /// 一个源,这条钉住那个放行不会顺着模板漏进离线分享 —— 那是它最该守住的性质。
     #[test]
@@ -602,31 +691,8 @@ mod tests {
     /// 一旦有人给某一条路单独改了 AAD 或 blob 布局,这里就会红。
     #[test]
     fn claim_blob_decrypts_with_the_same_format_as_a_full_share() {
-        use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind};
-        let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
-        let imp = vault.import("血常规.txt", "text/plain", b"data").unwrap();
-        let doc = vault
-            .add_document(NewDocument {
-                source_file_id: imp.source_file.id,
-                doc_type: DocType::LabReport,
-                doc_date: Some(chrono::Utc::now()),
-                doc_date_end: None,
-                title: Some("血常规报告".into()),
-                language: Some("zh".into()),
-                page_count: 1,
-            })
-            .unwrap();
-        vault
-            .add_ocr(NewOcr {
-                document_id: doc.id,
-                page_no: 1,
-                backend: OcrBackendKind::Native,
-                model_version: "text-layer".into(),
-                text: "白细胞 10.5".into(),
-                confidence: None,
-            })
-            .unwrap();
+        let (vault, _tmp) = fixture_vault_with_records();
+        let doc_id = crate::export::gather_records(&vault).unwrap()[0].doc.id;
 
         let consent = ShareConsent {
             utc_ts: "2026-07-28T00:00:00Z".into(),
@@ -635,7 +701,7 @@ mod tests {
             method: "press_hold".into(),
             session_id: "s-1".into(),
         };
-        let confirmed: HashSet<i64> = [doc.id].into_iter().collect();
+        let confirmed: HashSet<i64> = [doc_id].into_iter().collect();
         let (blob, key_b64, n) = build_claim_blob(
             &vault,
             15,
@@ -652,17 +718,7 @@ mod tests {
         assert_eq!(key.len(), 32);
 
         // 用与整份分享完全相同的方式解开(nonce 在前 12 字节,AAD = SHARE_AAD)。
-        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let pt = cipher
-            .decrypt(
-                (&blob[..12]).try_into().expect("已按 12 字节切片"),
-                Payload {
-                    msg: &blob[12..],
-                    aad: SHARE_AAD,
-                },
-            )
-            .unwrap();
-        let payload: serde_json::Value = serde_json::from_slice(&pt).unwrap();
+        let payload = decrypt_payload_for_test(&blob, &key_b64);
         assert_eq!(payload["records"].as_array().unwrap().len(), 1);
         // 拍前同意记录随密文走(代拍流程的举证材料),没有掉在 HTML 包装那一层。
         assert_eq!(payload["consent"]["session_id"], "s-1");
@@ -670,31 +726,7 @@ mod tests {
 
     #[test]
     fn build_share_produces_valid_html_and_key() {
-        use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind};
-        let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path()).unwrap();
-        let imp = vault.import("血常规.txt", "text/plain", b"data").unwrap();
-        let doc = vault
-            .add_document(NewDocument {
-                source_file_id: imp.source_file.id,
-                doc_type: DocType::LabReport,
-                doc_date: Some(chrono::Utc::now()),
-                doc_date_end: None,
-                title: Some("血常规报告".into()),
-                language: Some("zh".into()),
-                page_count: 1,
-            })
-            .unwrap();
-        vault
-            .add_ocr(NewOcr {
-                document_id: doc.id,
-                page_no: 1,
-                backend: OcrBackendKind::Native,
-                model_version: "text-layer".into(),
-                text: "白细胞 10.5".into(),
-                confidence: None,
-            })
-            .unwrap();
+        let (vault, _tmp) = fixture_vault_with_records();
 
         let (html, pass, n) =
             build_encrypted_share(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
@@ -710,18 +742,7 @@ mod tests {
         assert_eq!(key.len(), 32);
 
         // 提取内嵌 blob → 用该密钥解密 → 应还原出合法 payload JSON(与浏览器查看器同路径)。
-        let blob = B64.decode(extract_blob_b64(&html)).unwrap();
-        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let pt = cipher
-            .decrypt(
-                (&blob[..12]).try_into().expect("已按 12 字节切片"),
-                Payload {
-                    msg: &blob[12..],
-                    aad: SHARE_AAD,
-                },
-            )
-            .unwrap();
-        let payload: serde_json::Value = serde_json::from_slice(&pt).unwrap();
+        let payload = decrypt_payload(&html, &pass);
         assert_eq!(payload["records"].as_array().unwrap().len(), 1);
         assert_eq!(payload["records"][0]["doc_type"], "lab_report");
         assert_eq!(payload["patient"]["record_count"], 1);
@@ -1146,22 +1167,11 @@ mod tests {
         );
     }
 
-    /// 解密生成分享的 payload(与浏览器查看器同路径),供 summary 断言复用。
+    /// 解密生成分享 **HTML** 的 payload,供 summary 断言复用 —— 先从 `#share-data`
+    /// 取 blob,再交给 [`decrypt_payload_for_test`]。
     fn decrypt_payload(html: &str, pass: &str) -> serde_json::Value {
-        let stripped: String = pass.chars().filter(|c| !c.is_whitespace()).collect();
-        let key = B64URL.decode(stripped).unwrap();
         let blob = B64.decode(extract_blob_b64(html)).unwrap();
-        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let pt = cipher
-            .decrypt(
-                (&blob[..12]).try_into().expect("已按 12 字节切片"),
-                Payload {
-                    msg: &blob[12..],
-                    aad: SHARE_AAD,
-                },
-            )
-            .unwrap();
-        serde_json::from_slice(&pt).unwrap()
+        decrypt_payload_for_test(&blob, pass)
     }
 
     /// slice ④:含临床内容(诊断 + 化验 + 用药)的分享应带上确定性 summary,
@@ -1608,6 +1618,137 @@ mod tests {
         assert!(
             summary.contains("140"),
             "没有云抽取结果的文档应仍能走正则退回路径: {summary}"
+        );
+    }
+
+    // ── 病程档案进分享包(Task 23)────────────────────────────────────────────
+
+    /// profile 是**严格加法**:不传的调用方产出的 payload 必须逐字节不变。
+    /// 这条要挡的是一整类事故 —— 老分享文件、老查看器、桌面导出都还在跑同一份密文格式。
+    #[test]
+    fn a_share_without_a_profile_has_no_profile_key_at_all() {
+        let (vault, _tmp) = fixture_vault_with_records();
+        let (blob, key, _n) =
+            build_own_share_blob(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
+        let payload = decrypt_payload_for_test(&blob, &key);
+        assert!(payload.get("profile").is_none());
+    }
+
+    #[test]
+    fn passing_none_through_the_new_parameter_is_byte_identical_to_the_old_entry() {
+        let (vault, _tmp) = fixture_vault_with_records();
+        let a = build_own_share_blob(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
+        let b =
+            build_own_share_blob_with_profile(&vault, 5, &crate::render_dicom_png_in_process, None)
+                .unwrap();
+        // blob 每次的 nonce/密钥都不同,所以比**明文 payload**,不是比密文。
+        // `generated`/`expires` 是调用时刻,两次调用差几毫秒 —— 去掉再比,剩下的
+        // 每一个键都必须逐字相同。
+        let strip = |mut v: serde_json::Value| {
+            let o = v.as_object_mut().expect("payload 是对象");
+            o.remove("generated");
+            o.remove("expires");
+            v
+        };
+        assert_eq!(
+            strip(decrypt_payload_for_test(&a.0, &a.1)),
+            strip(decrypt_payload_for_test(&b.0, &b.1))
+        );
+    }
+
+    #[test]
+    fn a_profile_is_carried_verbatim_when_present() {
+        let (vault, _tmp) = fixture_vault_with_records();
+        let view = serde_json::json!({
+            "package_id": "sle", "package_version": "2026.09.1",
+            "display_name": "系统性红斑狼疮", "enabled": true,
+            "disclaimer": "仅整理你的病历,不做诊断",
+            "sections": [{"kind": "handoff", "title": "给医生看", "empty_hint": null,
+                          "body": {"blocks": []}}],
+            "sources": [{"id": "S1", "cite": "x", "url": null}]
+        });
+        let (blob, key, _n) = build_own_share_blob_with_profile(
+            &vault,
+            5,
+            &crate::render_dicom_png_in_process,
+            Some(&view),
+        )
+        .unwrap();
+        let payload = decrypt_payload_for_test(&blob, &key);
+        assert_eq!(
+            payload["profile"], view,
+            "档案必须原样进去,分享层不做任何改写"
+        );
+    }
+
+    #[test]
+    fn a_disabled_or_empty_profile_is_not_attached() {
+        // 「没开启」和「开启了但一个 section 都算不出来」都不该在医生那边多出一个空块。
+        let (vault, _tmp) = fixture_vault_with_records();
+        for view in [
+            serde_json::json!({"package_id":"sle","enabled":false,"sections":[],"sources":[]}),
+            serde_json::json!({"package_id":"sle","enabled":true,"sections":[],"sources":[]}),
+        ] {
+            let (blob, key, _n) = build_own_share_blob_with_profile(
+                &vault,
+                5,
+                &crate::render_dicom_png_in_process,
+                Some(&view),
+            )
+            .unwrap();
+            assert!(decrypt_payload_for_test(&blob, &key)
+                .get("profile")
+                .is_none());
+        }
+    }
+
+    /// 出码之外的三条路**一律不带档案** —— 方向不对(代拍是医生给病人)、体积不够
+    /// (URL fragment 那条码)、本轮不动(桌面导出)。这条钉住「只有一条路带」,
+    /// 不然日后有人顺手给 `build_share_blob_inner` 的别的调用方也传一份。
+    #[test]
+    fn only_the_patients_own_qr_path_can_carry_a_profile() {
+        let (vault, _tmp) = fixture_vault_with_records();
+        let doc_id = crate::export::gather_records(&vault).unwrap()[0].doc.id;
+
+        let (html, pass, _n) =
+            build_encrypted_share(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
+        assert!(
+            decrypt_payload(&html, &pass).get("profile").is_none(),
+            "桌面导出不带档案"
+        );
+
+        let consent = ShareConsent {
+            utc_ts: "2026-09-16T00:00:00Z".into(),
+            consent_text_version: "v1".into(),
+            signature_png_base64: None,
+            method: "press_hold".into(),
+            session_id: "s-23".into(),
+        };
+        let confirmed: HashSet<i64> = [doc_id].into_iter().collect();
+        let (blob, key, _n) = build_claim_blob(
+            &vault,
+            15,
+            &crate::render_dicom_png_in_process,
+            consent,
+            &confirmed,
+        )
+        .unwrap();
+        assert!(
+            decrypt_payload_for_test(&blob, &key)
+                .get("profile")
+                .is_none(),
+            "代拍认领方向相反,病人的档案不在医生手机上"
+        );
+    }
+
+    /// 查看器是 `include_str!` 进来的同一份文件(`share.rs:27`),所以这里能直接钉住
+    /// 它确实长出了渲染入口 —— 没有 JS 测试框架,也不为这件事引入一个。
+    #[test]
+    fn the_viewer_has_a_guarded_profile_render_entry() {
+        assert!(CANONICAL_VIEWER.contains("function renderProfile("));
+        assert!(
+            CANONICAL_VIEWER.contains("if (payload.profile)"),
+            "必须是**有才画**:老分享包没有这个键,不能因此报错或画空块"
         );
     }
 }

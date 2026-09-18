@@ -1144,15 +1144,32 @@ pub fn current_vault_root() -> anyhow::Result<String> {
 /// `<查看器>/#q2.<id>.<密钥>` —— 八十来个字符,格子稀疏、隔着桌子好扫。
 ///
 /// **密钥不上传**,只进二维码的 `#` 之后。云上那份我们自己也解不开。
-pub fn qr_share_blob(expires_days: i64) -> anyhow::Result<(Vec<u8>, String, i64)> {
+///
+/// `profile_json`:`vault_profile_view` 的返回值原样带下来,没开启病程档案就传 `None`。
+/// **解析失败当场报错**,不降级成「没有档案」—— 那样会静默产出一份少了交接单的分享,
+/// 医生那边看不出少了东西。
+///
+/// 函数名不变(只加参数):FRB 派发表按函数名字典序编号,改名会把
+/// `recognize_image_pp` 的下标 44 挪走(`rust/tests/frb_dispatch_indices.rs` 钉着)。
+pub fn qr_share_blob(
+    expires_days: i64,
+    profile_json: Option<String>,
+) -> anyhow::Result<(Vec<u8>, String, i64)> {
     let days: u32 = expires_days
         .try_into()
         .map_err(|_| anyhow::anyhow!("expires_days 取值无效:{expires_days}"))?;
+    let profile: Option<serde_json::Value> = match profile_json.as_deref() {
+        Some(s) => {
+            Some(serde_json::from_str(s).map_err(|e| anyhow::anyhow!("档案 JSON 解析失败:{e}"))?)
+        }
+        None => None,
+    };
     with_state(|state| {
-        medme_share::share::build_own_share_blob(
+        medme_share::share::build_own_share_blob_with_profile(
             &state.vault,
             days,
             &medme_share::render_dicom_png_in_process,
+            profile.as_ref(),
         )
         .map_err(|e| anyhow::anyhow!(e))
     })
@@ -2800,6 +2817,25 @@ mod cloud_extraction_tests {
         assert!(
             extraction_json_for(doc_id).is_none(),
             "不该落盘一条空抽取结果"
+        );
+    }
+}
+
+#[cfg(test)]
+mod qr_share_profile_tests {
+    use super::*;
+
+    /// Dart 传下来的是一个字符串;坏字符串要当场报错,不能悄悄当成「没有档案」
+    /// 去生成一份**少了交接单**的分享 —— 医生那边看不出少了东西。
+    ///
+    /// 不需要打开的保险箱:这道校验排在 `with_state` 之前,正是为了让坏输入在
+    /// 碰保险箱之前就被挡回去。
+    #[test]
+    fn qr_share_blob_rejects_a_profile_json_that_is_not_json() {
+        let err = qr_share_blob(5, Some("{not json".into())).unwrap_err();
+        assert!(
+            err.to_string().contains("档案 JSON"),
+            "错误里要说清楚是档案 JSON 坏了:{err}"
         );
     }
 }

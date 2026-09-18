@@ -23,6 +23,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grant_link.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/screens/disease_profile_screen.dart';
 import 'package:mobile_flutter/screens/qr_notice_sheet.dart';
 import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -61,7 +62,10 @@ class _NeverInvitedGrants extends Grants {
 
 /// 原路径的假密文生成:立即失败,验证的是"确实退回来尝试了",不是"原路径真的
 /// 能跑通"(那需要真实 Rust 库)。
-Future<(Uint8List, String, int)> _fakeQrShareBlobFails({required int expiresDays}) async {
+Future<(Uint8List, String, int)> _fakeQrShareBlobFails({
+  required int expiresDays,
+  String? profileJson,
+}) async {
   throw Exception('fake: 原路径被调用到了(不含原生库,这里只验证调用发生)');
 }
 
@@ -296,4 +300,88 @@ void main() {
     expect(find.text('去出码'), findsOneWidget, reason: '「先不出」= 退回上一屏');
     expect(find.text('生成失败'), findsNothing, reason: '压根没走到出码那一步');
   });
+
+  // ── 病程档案随出码进加密包(Task 23)────────────────────────────────────
+  //
+  // 「开着才带」这条闸落在 Dart 这一侧:Rust 那边只负责「给了就原样挂上去」
+  // (`build_share_blob_inner` 还会再挡一次空档案)。这两条用例钉的就是这道闸 ——
+  // 带错了,医生那边会多出一份病人**没打算给**的东西。
+  group('出码带不带病程档案', () {
+    test('开着 → 原串逐字带上,不重新序列化', () async {
+      var viewCalls = 0;
+      final source = DiseaseProfileSource(
+        installed: () async => ['sle'],
+        view: (id) async {
+          viewCalls++;
+          return _enabledViewJson;
+        },
+        record: (k, p, at) async {},
+        refresh: () async {},
+      );
+      expect(await profileJsonForShare(source), _enabledViewJson);
+      // 一次分享只算一遍:`viewJson` 每调一次,Rust 那边就把整箱病历重投影一次。
+      expect(viewCalls, 1, reason: '一次出码只该算一遍档案');
+    });
+
+    test('没开启 / 一个包都没装 / 读不出来 → 一律不带', () async {
+      Future<String?> probe(DiseaseProfileSource s) => profileJsonForShare(s);
+      final disabled = DiseaseProfileSource(
+        installed: () async => ['sle'],
+        view: (id) async => '{"package_id":"sle","enabled":false,"sections":[],"sources":[]}',
+        record: (k, p, at) async {},
+        refresh: () async {},
+      );
+      expect(await probe(disabled), isNull, reason: '没开启不许带');
+
+      final none = DiseaseProfileSource(
+        installed: () async => <String>[],
+        view: (id) => fail('一个包都没装就不该去算视图'),
+        record: (k, p, at) async {},
+        refresh: () async {},
+      );
+      expect(await probe(none), isNull);
+
+      // 算不出来只是「这次不带档案」—— 出码本身绝不能因此失败。
+      final broken = DiseaseProfileSource(
+        installed: () async => ['sle'],
+        view: (id) async => throw Exception('fake: 投影失败'),
+        record: (k, p, at) async {},
+        refresh: () async {},
+      );
+      expect(await probe(broken), isNull);
+    });
+
+    testWidgets('整屏出码:开着的档案确实交到了密文生成那一步', (t) async {
+      String? seen;
+      var called = false;
+      await t.pumpWidget(MaterialApp(
+        home: QrShareScreen(
+          grants: _NeverInvitedGrants(),
+          profileSource: DiseaseProfileSource(
+            installed: () async => ['sle'],
+            view: (id) async => _enabledViewJson,
+            record: (k, p, at) async {},
+            refresh: () async {},
+          ),
+          qrShareBlobFn: ({required int expiresDays, String? profileJson}) async {
+            called = true;
+            seen = profileJson;
+            throw Exception('fake: 到这一步就够了,不含原生库');
+          },
+        ),
+      ));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 50));
+
+      expect(called, isTrue, reason: '得真的走到密文生成那一步');
+      expect(seen, _enabledViewJson, reason: '开着的档案要原样交下去');
+    });
+  });
 }
+
+/// 一份**开着**的 `ProfileView`(形状取自 `packages/profile/src/view.rs`)。
+const _enabledViewJson =
+    '{"package_id":"sle","package_version":"2026.09.1","display_name":"系统性红斑狼疮",'
+    '"enabled":true,"disclaimer":"仅整理你的病历,不做诊断",'
+    '"sections":[{"kind":"reminders","id":null,"title":"待补 / 逾期","empty_hint":null,'
+    '"body":{"items":[]}}],"sources":[]}';

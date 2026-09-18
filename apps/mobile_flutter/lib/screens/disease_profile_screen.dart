@@ -50,7 +50,15 @@ class DiseaseProfileSource {
 
   /// 算一份 `ProfileView`。**纯投影**,不写任何东西进病历箱。
   Future<Map<String, dynamic>> view(String packageId) async =>
-      jsonDecode(await _view(packageId)) as Map<String, dynamic>;
+      jsonDecode(await viewJson(packageId)) as Map<String, dynamic>;
+
+  /// 同 [view],但给回**没解析过的原串**。
+  ///
+  /// 出码那条路要的是这个:那串要原样塞进加密分享包交给医生
+  /// (`qr_share_screen.dart` 的 `profileJsonForShare`),解开再拼回去等于多一次
+  /// 序列化;而且一份档案一次分享**只算一遍** —— 这个函数每调一次,Rust 那边就
+  /// 把整箱病历重新投影一次。
+  Future<String> viewJson(String packageId) => _view(packageId);
 
   /// 记一条 `enable`/`disable`,**真记上了才回 `true`**。
   ///

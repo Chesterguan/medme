@@ -241,6 +241,7 @@ abstract class RustLibApi extends BaseApi {
 
   Future<(Uint8List, String, PlatformInt64)> crateApiVaultQrShareBlob({
     required PlatformInt64 expiresDays,
+    String? profileJson,
   });
 
   Future<Uint8List> crateApiVaultReadSourceBytes({required PlatformInt64 id});
@@ -1755,12 +1756,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<(Uint8List, String, PlatformInt64)> crateApiVaultQrShareBlob({
     required PlatformInt64 expiresDays,
+    String? profileJson,
   }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_i_64(expiresDays, serializer);
+          sse_encode_opt_String(profileJson, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1773,7 +1776,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiVaultQrShareBlobConstMeta,
-        argValues: [expiresDays],
+        argValues: [expiresDays, profileJson],
         apiImpl: this,
       ),
     );
@@ -1781,7 +1784,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiVaultQrShareBlobConstMeta => const TaskConstMeta(
     debugName: "qr_share_blob",
-    argNames: ["expiresDays"],
+    argNames: ["expiresDays", "profileJson"],
   );
 
   @override

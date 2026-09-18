@@ -1573,11 +1573,13 @@ fn wire__crate__api__vault__qr_share_blob_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_expires_days = <i64>::sse_decode(&mut deserializer);
+            let api_profile_json = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || {
-                        let output_ok = crate::api::vault::qr_share_blob(api_expires_days)?;
+                        let output_ok =
+                            crate::api::vault::qr_share_blob(api_expires_days, api_profile_json)?;
                         Ok(output_ok)
                     })(),
                 )

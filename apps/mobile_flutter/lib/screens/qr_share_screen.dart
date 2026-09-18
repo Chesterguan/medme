@@ -7,6 +7,7 @@
 // 载荷有界(Rust 侧 QrLimits),体积与病历总量无关,永远塞得进一张码。钥匙在
 // URL 的 `#` 之后,按 HTTP 规范不会发给服务器 —— 医生扫码后只从静态页下载一个
 // 空壳查看器,病历数据全程只在两台手机之间。
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -22,13 +23,19 @@ import '../grants.dart';
 import '../profile_manager.dart';
 import '../src/rust/api/vault.dart';
 import '../theme.dart';
+import 'disease_profile_screen.dart' show DiseaseProfileSource;
 import 'qr_notice_sheet.dart';
 
 /// 医生扫码后打开的查看器地址。数据在 `#` 之后,不会随请求上行。
 const _viewerBase = 'https://medmenow.com/viewer/';
 
 class QrShareScreen extends StatefulWidget {
-  const QrShareScreen({super.key, this.grants, this.qrShareBlobFn = qrShareBlob});
+  const QrShareScreen({
+    super.key,
+    this.grants,
+    this.qrShareBlobFn = qrShareBlob,
+    this.profileSource,
+  });
 
   /// 测试注入点,默认为 null——真正用的时候现取现建(见
   /// `_QrShareScreenState._grants`)。`flutter test` 不带原生库,注入一个带假
@@ -40,10 +47,45 @@ class QrShareScreen extends StatefulWidget {
   /// FRB 调用**——`flutter test` 没有原生库时它不是抛异常,而是真的把整个测试
   /// 进程卡住退不出去(实测踩过)。测一条"回退确实发生了"的路时,注入一个
   /// 立即失败的假实现,不必也不能真的跑通这一步。
-  final Future<(Uint8List, String, int)> Function({required int expiresDays}) qrShareBlobFn;
+  final Future<(Uint8List, String, int)> Function({
+    required int expiresDays,
+    String? profileJson,
+  })
+  qrShareBlobFn;
+
+  /// 病程档案的取数口子(装着哪个包 / 算一份视图)。null → 真的那一套(FFI +
+  /// 平台通道)。**摆成注入点只为测试**,与 [qrShareBlobFn] 同款。
+  final DiseaseProfileSource? profileSource;
 
   @override
   State<QrShareScreen> createState() => _QrShareScreenState();
+}
+
+/// 出码时随密文一起带给医生的病程档案 JSON;**没开启就是 `null`**。
+///
+/// 开关不是本地一个 bool —— 它是病历箱里 `enable`/`disable` 事件算出来的
+/// (`profile::is_enabled`),所以这里读的是引擎算好的 `enabled` 字段,不另猜一份。
+///
+/// **一次分享只算一遍档案。** 拿到的原串既用来判断开没开启,也原样交给 Rust:
+/// `viewJson` 每调一次,Rust 那边就把整箱病历重新投影一次。
+///
+/// 任何一步出错都只是「这次不带档案」—— 出码本身绝不能因此失败:诊室里病人要的是
+/// 那个码,档案带不带得上是第二位的。
+@visibleForTesting
+Future<String?> profileJsonForShare(DiseaseProfileSource source) async {
+  try {
+    final ids = await source.installedPackages();
+    if (ids.isEmpty) return null;
+    // 与入口卡同一条(`widgets/disease_profile_card.dart`):今天清单里就一个病,
+    // 装了不止一个时只带第一个。真出现第二个病时那是一次要重新看设计的改动。
+    final json = await source.viewJson(ids.first);
+    final view = jsonDecode(json);
+    return (view is Map && view['enabled'] == true) ? json : null;
+  } catch (e) {
+    // 只有一句错误文本,没有病历内容,可以进日志。
+    debugPrint('[profile] 这次出码不带档案:$e');
+    return null;
+  }
 }
 
 /// 授权链接那条路**能不能提供给用户选**——纯函数,不碰网络/FFI,方便在
@@ -243,7 +285,15 @@ class _QrShareScreenState extends State<QrShareScreen> {
         _stage = '正在准备病历…';
         _progress = null;
       });
-      final (blob, keyB64, recordCount) = await widget.qrShareBlobFn(expiresDays: 15);
+      // 病程档案随同一份密文走 —— 同一条通道、同一把钥匙、同一个有效期,只是那份
+      // 里多了一块内容(隐私政策三之三第 4 段说的就是这件事)。
+      final profileJson = await profileJsonForShare(
+        widget.profileSource ?? DiseaseProfileSource(),
+      );
+      final (blob, keyB64, recordCount) = await widget.qrShareBlobFn(
+        expiresDays: 15,
+        profileJson: profileJson,
+      );
       _upload = ResumableUpload(blob);
       _totalBytes = blob.length;
       _pendingShare = (keyB64, recordCount.toInt());

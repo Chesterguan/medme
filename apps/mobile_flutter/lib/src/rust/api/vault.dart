@@ -254,9 +254,20 @@ Future<String> currentVaultRoot() =>
 /// `<查看器>/#q2.<id>.<密钥>` —— 八十来个字符,格子稀疏、隔着桌子好扫。
 ///
 /// **密钥不上传**,只进二维码的 `#` 之后。云上那份我们自己也解不开。
+///
+/// `profile_json`:`vault_profile_view` 的返回值原样带下来,没开启病程档案就传 `None`。
+/// **解析失败当场报错**,不降级成「没有档案」—— 那样会静默产出一份少了交接单的分享,
+/// 医生那边看不出少了东西。
+///
+/// 函数名不变(只加参数):FRB 派发表按函数名字典序编号,改名会把
+/// `recognize_image_pp` 的下标 44 挪走(`rust/tests/frb_dispatch_indices.rs` 钉着)。
 Future<(Uint8List, String, PlatformInt64)> qrShareBlob({
   required PlatformInt64 expiresDays,
-}) => RustLib.instance.api.crateApiVaultQrShareBlob(expiresDays: expiresDays);
+  String? profileJson,
+}) => RustLib.instance.api.crateApiVaultQrShareBlob(
+  expiresDays: expiresDays,
+  profileJson: profileJson,
+);
 
 /// 代拍交付用的密文:**带同意书**、按已确认份数筛选摘要,交给 Dart 传上瞬时云。
 ///
