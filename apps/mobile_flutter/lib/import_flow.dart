@@ -10,11 +10,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/import_queue.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
@@ -23,9 +25,9 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 一次导入运行的结果,供调用方判断要不要、往哪儿带用户去核对新东西。
 ///
-/// 「待确认」是这个产品最重要的一道质量闸门(抽取质量是已知短板,见
-/// `review_state.dart`)——但它要用户自己走到档案屏才看得见。从概览发起的导入
-/// 若原地刷新、不带用户过去,这道闸门在那条路径上对所有人都不可见:不是 UI
+/// 「还没核对」是这个产品最重要的一道质量闸门(抽取质量是已知短板,见
+/// `review_state.dart`)——但它要用户自己翻到「病历」tab 才看得见。若一次添加
+/// 原地刷新、不把用户带过去,这道闸门在那条路径上就对用户不可见:不是 UI
 /// 疏漏,是一整套写好的核对机制在这条路上悄悄失效。这个结果类型就是让调用方
 /// 接住「这次是不是真的有新东西要核对」,自己决定带不带用户过去、去哪儿。
 class ImportRunResult {
@@ -34,7 +36,7 @@ class ImportRunResult {
   /// 本次真正新入库的文档 id——与 [ReviewState.markPending] 标记的是同一批。
   /// 去重、失败的文档不落库,不在这里面;空列表 = 没有新东西要核对。
   ///
-  /// **走后台队列的导入(现在患者模式的全部导入)这里恒为空**:采集一结束就返回,
+  /// **走后台队列的导入(现在患者模式的全部导入)这里恒为空**:添加一结束就返回,
   /// 那时一份都还没识别完,自然也没有 id。要不要带用户去核对由 [queuedCount] 说了
   /// 算。医生代拍那条路不走队列,仍然按 id 走。
   final List<int> newDocumentIds;
@@ -46,26 +48,31 @@ class ImportRunResult {
 }
 
 /// 导入结果该不该带用户去复核、去哪复核——纯判断,不碰 `Navigator`/`BuildContext`,
-/// 方便直接单测(见 `test/import_review_navigation_test.dart`)。实际跳转由调用方
-/// (概览屏)按这个结果自己决定怎么导航,这里不管 UI。
+/// 方便直接单测(见 `test/import_review_navigation_test.dart`)。实际跳转该怎么
+/// 导航(`push` 什么、会不会动底部 tab 状态)交给调用方自己决定,这里不管 UI。
 enum ImportReviewDestination {
-  /// 没有新文档——原地不动。跳到一个空的待确认列表比不跳更糟。
+  /// 没有新文档——原地不动。跳到一个空的还没核对列表比不跳更糟。
   none,
 
   /// 恰好一份新文档——直接进它的详情最直接,复核动作就在那儿。
   singleDocument,
 
-  /// 多份新文档——档案屏置顶的「待确认」节已经把它们聚好了,不用另拼一份列表。
+  /// 多份新文档——「病历」tab 置顶的「还没核对」节已经把它们聚好了,不用另拼一份列表。
   archive,
 }
 
-/// [result] 为 `null` 覆盖「用户在选择表/原生选择器里取消」与「context 在采集
+/// [result] 为 `null` 覆盖「用户在选择表/原生选择器里取消」与「context 在添加
 /// 过程中失效」两种情况(`runImport` / `showImportSheet` 在这些分支上返回
 /// `null`)——语义上与「有结果但没有新文档」一样:都不该跳。
+///
+/// ⚠️ **概览整屏解散后(Task 9)暂时没有生产调用方**——「病历」tab 的「添加」
+/// 排进后台队列,靠「还没核对」横幅接人,不再当场判断跳去哪。这条纯判断逻辑
+/// 保留:哪天需要「添加完直接带去复核」这类跳转,直接量这个结果(见
+/// `test/import_review_navigation_test.dart`)。
 ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
   if (result == null) return ImportReviewDestination.none;
   // 排进了后台队列 → 一律去档案:那几行「识别中」和识别完长出来的文档都在那儿,
-  // 置顶的「待确认」节也在那儿。此刻还没有任何一份识别完,谈不上"进哪一份的详情"。
+  // 置顶的「还没核对」节也在那儿。此刻还没有任何一份识别完,谈不上"进哪一份的详情"。
   if (result.queuedCount > 0) return ImportReviewDestination.archive;
   if (!result.hasNewDocs) return ImportReviewDestination.none;
   return result.newDocumentIds.length == 1
@@ -73,36 +80,12 @@ ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
       : ImportReviewDestination.archive;
 }
 
-/// 按 [reviewDestinationFor] 的判断,把用户带去复核入口 —— 只在真的有新文档
-/// 落库时才调用其中一个回调,取消/全部失败/全部重复都不调用任何一个。
-///
-/// 只管「该不该调、调哪个」,不碰 `Navigator`——具体怎么导航(`push` 什么、
-/// 会不会动底部 tab 状态)完全由调用方通过回调自己决定。这样测试可以直接断言
-/// 「哪种结果触发了哪个回调」,不需要真正拉起一整个 `OverviewScreen`(它的
-/// `FutureBuilder` 依赖 Rust FFI,在纯 dart test 环境里起不来)。
-void dispatchImportReview(
-  ImportRunResult? result, {
-  required void Function(int docId) openSingleDocument,
-  required VoidCallback openArchive,
-}) {
-  switch (reviewDestinationFor(result)) {
-    case ImportReviewDestination.none:
-      return;
-    case ImportReviewDestination.singleDocument:
-      openSingleDocument(result!.newDocumentIds.first);
-      return;
-    case ImportReviewDestination.archive:
-      openArchive();
-      return;
-  }
-}
-
-/// 「健康档案」右上角「+ 导入」触发的采集流程:弹三选一(拍照 / 相册 / 选文件),
+/// 「病历」tab 那颗「添加」触发的添加流程:弹三选一(拍照 / 相册 / 选文件),
 /// 选定后**把这一批交给后台队列就返回**(见 `import_queue.dart`)——识别不再把用户
-/// 钉在一个模态进度框里等,档案屏顶部那几行「识别中」替代了它,每识别完一份,
-/// 那份文档就自己长到时间线上。
+/// 钉在一个模态进度框里等,「病历」tab 顶部那几行「识别中」替代了它,每识别完
+/// 一份,那份文档就自己长到时间线上。
 ///
-/// 这一层只管**采集**(拉起原生取件器)和**问一句合不合并**;OCR、落库、补页、
+/// 这一层只管**拉起原生取件器**和**问一句合不合并**;OCR、落库、补页、
 /// 云抽取全在队列那边。医疗判断全在 Rust core,这里只搬字节 + 调 FFI。
 ///
 /// 返回值见 [ImportRunResult]:取消/未选文件返回 `null`,否则带上这次排了几份。
@@ -135,8 +118,8 @@ Future<ImportRunResult?> showImportSheet(BuildContext context) async {
             subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
             choice: ImportChoice.camera,
             // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
-            // 改版后那颗快捷操作让位给了「记录」(见 overview_screen.dart 的
-            // `_QuickActions` 文档),拍照要多经一次这个选择表才能到达。视觉上
+            // 改版后那一排快捷操作整个没了(今天「病历」首页只剩「添加」与
+            // 「给医生看」两颗方块),拍照要多经一次这个选择表才能到达。视觉上
             // 做成主选项(填色图标块 + 加粗标题)抵消这多出来的一次点击——它
             // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
             primary: true,
@@ -162,12 +145,14 @@ Future<ImportRunResult?> showImportSheet(BuildContext context) async {
   return runImport(context, choice);
 }
 
-/// 跳过三选一,**直接**走某一种采集来源。
+/// 跳过三选一,**直接**走某一种取件来源。
 ///
-/// 从 [showImportSheet] 里原样切出来的后半段(逻辑一字未改),为的是让「概览」页
-/// 的快捷操作能有一颗真正的「拍照」—— 那一屏的使用时刻是「日常打开」,而拍一张
-/// 化验单是这个时刻里最高频的动作;让它先弹一张三选一的表,等于在最短的路上多设
-/// 一道门。「存档」那颗仍然走 [showImportSheet](相册 / 文件在那里选)。
+/// 从 [showImportSheet] 里原样切出来的后半段(逻辑一字未改)——留着这一刀是为了
+/// 让将来任何一颗「直接拍照」式的快捷入口都能跳过三选一,不用重新拼一遍后半段
+/// 逻辑。⚠️ 今天**只有** [showImportSheet] 一个调用方(概览页那一排快捷操作已在
+/// Task 9 随整屏解散,「病历」首页只剩「添加」与「给医生看」两颗方块,都不是
+/// 直接拍照的捷径)——这条切分暂时没有第二个用武之地,但保留成本低,拆开来
+/// 反而要在两处各写一遍前置等待与埋点。
 ///
 /// 前面那 350ms 的等待对直接调用**同样必要**:调用方多半也是从一个 bottom sheet
 /// 或菜单里点过来的,原生扫描器一样会被正在退场的浮层挡下。
@@ -178,7 +163,7 @@ Future<ImportRunResult?> runImport(
   BuildContext context,
   ImportChoice choice,
 ) async {
-  // 等 bottom sheet 的关闭动画播完再拉起原生采集器。文档扫描器
+  // 等 bottom sheet 的关闭动画播完再拉起原生取件器。文档扫描器
   // (VNDocumentCameraViewController)靠 rootViewController.present 弹出;若 sheet
   // 尚未完全消失,present 会被正在退场的 sheet 挡下、静默失败,method channel 永不
   // 回调 —— 表现就是「点了没反应」。ImagePicker 内部自己处理了这个时序,这个扫描器
@@ -187,7 +172,7 @@ Future<ImportRunResult?> runImport(
   if (!context.mounted) return null;
 
   // 屏上探针的出口。**在任何 await 之前同步取出**,之后就不再碰 context ——
-  // 采集期间用户可能把这一屏推走,而 `ScaffoldMessengerState` 自己知道有没有 mounted。
+  // 添加期间用户可能把这一屏推走,而 `ScaffoldMessengerState` 自己知道有没有 mounted。
   final probe = ScaffoldMessenger.of(context);
 
   final List<PendingImport> items;
@@ -197,26 +182,40 @@ Future<ImportRunResult?> runImport(
     // 兜底。[pickImportItems] 内部每个分支都已自己 catch,所以这里理论上不可达 ——
     // 但「理论上不可达」正是前五版每次都栽的地方:一个漏网的异常从这里飘走,
     // 上面 `await` 的调用方什么都不做,屏上就是「点了没反应」。
-    debugPrint('[import] 采集环节未捕获异常: $e');
-    _report(probe, choice, ImportCaptureIssue.unknown, '采集没能开始:$e');
+    debugPrint('[import] 添加环节未捕获异常: $e');
+    _report(probe, choice, ImportCaptureIssue.unknown, '添加没能开始:$e');
     return null;
   }
   if (items.isEmpty || !context.mounted) return null;
+
+  // 第一次添加病历时问一次「云端整理」(ia-proposal §7 决定 5)。放在这里、
+  // 而不是拉起相机之前:问的是「刚刚这张照片要不要送云端」,手上有东西的时候
+  // 这句话才成立。一次 `runImport` 调用就是一次「run」——排在 `_runImport` 之前、
+  // 每次运行只问这一次,不会跟着 `items` 里的每一份文档重复问。
+  if (shouldAskCloudExtract(
+    loggedIn: AccountSession.instance.loggedIn.value,
+    asked: await loadCloudExtractAsked(),
+  )) {
+    if (!context.mounted) return null;
+    await showCloudExtractAskSheet(context);
+  }
+  if (!context.mounted) return null;
+
   return _runImport(context, items, choice);
 }
 
-/// 采集来源:拍照(含文档扫描器)/ 从相册选 / 选择文件。`public`——除了本文件的
+/// 添加来源:拍照(含文档扫描器)/ 从相册选 / 选择文件。`public`——除了本文件的
 /// [showImportSheet],「医生代拍」临时会话流程(`screens/doctor/proxy_intake_flow.dart`)
-/// 也复用 [pickImportItems] 拿采集入口(自己另起一个只含「拍照/选择文件」的选择
+/// 也复用 [pickImportItems] 拿取件入口(自己另起一个只含「拍照/选择文件」的选择
 /// 表,不复用 `showImportSheet` 的三选一 UI)。
 enum ImportChoice { camera, gallery, files }
 
-/// 按 [choice] 走对应的原生采集器,返回待导入项(用户取消为空列表)。**纯采集,
-/// 不碰 OCR/落库**——OCR 识别文本、往哪个保险箱落库,都由调用方在拿到
+/// 按 [choice] 走对应的原生取件器,返回待导入项(用户取消为空列表)。**纯取件,
+/// 不碰 OCR/落库**——OCR 识别出来的文字、往哪个病历箱落库,都由调用方在拿到
 /// [PendingImport] 列表后自己决定(见 [showImportSheet] 与
 /// `proxy_intake_flow.dart` 两个不同的下游处理)。
 ///
-/// **本函数不再向外抛异常。** 每个采集分支都自己 catch,失败一律「屏上说清 + 分类
+/// **本函数不再向外抛异常。** 每个分支都自己 catch,失败一律「屏上说清 + 分类
 /// 埋点 + 返回空」——因为这条链路上的每一种失败,在 UI 上都长得一模一样(什么都没
 /// 发生),不主动说就只能靠猜。[probe] 是屏上探针的出口(`ScaffoldMessenger`),
 /// 调用方在进入本函数**之前**同步取好;不传就只剩埋点和 `debugPrint`。
@@ -598,8 +597,8 @@ void _report(
   String? detail,
 ) {
   Analytics.track(issue.event, {
-    // 注意:这里的 `source` 是**采集器**(camera/gallery/files),与 `doc_import_*`
-    // 的 `source`(那里代拍会报 `proxy`)口径不同 —— 坏掉的是哪个采集器才是这条
+    // 注意:这里的 `source` 是**取件方式**(camera/gallery/files),与 `doc_import_*`
+    // 的 `source`(那里代拍会报 `proxy`)口径不同 —— 坏掉的是哪种取件方式才是这条
     // 事件要回答的。个人模式 vs 代拍由会话上下文的 `mode` 切开,不占这个字段。
     'source': source.name,
     'reason': issue.name,
@@ -641,10 +640,10 @@ Future<ImportRunResult> _runImport(
   try {
     root = await currentVaultRoot();
   } catch (e) {
-    debugPrint('[import] 读不到当前保险箱根目录,这一批没有排队: $e');
+    debugPrint('[import] 读不到当前病历箱根目录,这一批没有排队: $e');
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        appSnackBar(content: const Text('保险箱没打开,这次没能导入')),
+        appSnackBar(content: const Text('病历还没打开,这次没能添加')),
       );
     }
     return const ImportRunResult([]);
@@ -691,7 +690,7 @@ Future<bool> askPhotoMerge(BuildContext context, int photoCount) async {
           '刚才这 $photoCount 张,如果是同一份病历的连续页,可以合并'
           '成一份多页文档,时间线上只显示一条。原始照片仍然保留,已经识别出的'
           '文字也会一并带进合并后的这一份,云端整理重新跑一次。\n\n'
-          '合并不可撤销:要拆开得重新导入这几张照片。',
+          '合并不可撤销:要拆开得重新添加这几张照片。',
           style: MedType.body.copyWith(color: c.ink2),
         ),
         // ⚠️ 顺序是**故意**这样的:主按钮(右下角)必须是「分开保存」。这一问

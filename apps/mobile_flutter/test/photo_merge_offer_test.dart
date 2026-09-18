@@ -7,7 +7,7 @@
 // 这里只测「该不该问」这层纯判断(`shouldOfferPhotoMerge`),不是把整条导入链路
 // 拉起来跑一遍——那条链路要触碰原生取件器 + Rust FFI(`ingestImageWithText` /
 // `mergePhotosIntoDocument`),`flutter test` 的纯 dart 进程里没有实现绑定,与
-// `import_review_navigation_test.dart` 测 `dispatchImportReview` 是同一个理由。
+// `import_review_navigation_test.dart` 测 `reviewDestinationFor` 是同一个理由。
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/import_flow.dart';
 

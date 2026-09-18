@@ -54,11 +54,13 @@ void main() {
       ),
     ));
 
-    expect(find.text('要接受对方分享的病历档案吗?'), findsOneWidget);
+    expect(find.text('要接受对方给你的这份病历吗?'), findsOneWidget);
     expect(find.textContaining('这份病历会出现在你的 MedMe 里'), findsOneWidget);
     expect(find.textContaining('下一步告诉你'), findsOneWidget);
-    // 角色由服务端在兑换那一刻才揭晓,这一步**不许**替它猜一个。
-    expect(find.textContaining('只读'), findsNothing);
+    // 角色由服务端在兑换那一刻才揭晓,这一步**不许**替它猜一个 —— 正文那句把
+    // 「只能看 / 能改」两种都念了一遍再交给下一步,所以这里钉的是**没有单挑一个
+    // 当结论**(`find.text` 精确匹配,不会命中那整句)。
+    expect(find.text('只能看'), findsNothing);
     expect(find.textContaining('主人'), findsNothing);
   });
 
@@ -78,7 +80,7 @@ void main() {
     await t.pumpAndSettle();
   });
 
-  testWidgets('成功·viewer:显示只读到期日,不是「主人」措辞', (t) async {
+  testWidgets('成功·viewer:显示「只能看」到期日,不出现角色词「主人」', (t) async {
     await t.pumpWidget(MaterialApp(
       home: GrantRedeemScreen(
         link: _link,
@@ -90,12 +92,12 @@ void main() {
     await t.tap(find.text('加入'));
     await t.pumpAndSettle();
 
-    expect(find.text('已加入「张三」的档案'), findsOneWidget);
-    expect(find.text('只读,至 11月3日'), findsOneWidget);
+    expect(find.text('已加入「张三」的病历箱'), findsOneWidget);
+    expect(find.text('只能看,至 11月3日'), findsOneWidget);
     expect(find.textContaining('主人'), findsNothing);
   });
 
-  testWidgets('成功·owner(代拍转移):显示「成为主人」,老账号已降级的说明', (t) async {
+  testWidgets('成功·owner(代拍转移):说「现在归你了」,老账号已降级的说明', (t) async {
     await t.pumpWidget(MaterialApp(
       home: GrantRedeemScreen(
         link: _link,
@@ -105,9 +107,9 @@ void main() {
     await t.tap(find.text('加入'));
     await t.pumpAndSettle();
 
-    expect(find.text('你已成为「张三」档案的主人'), findsOneWidget);
-    expect(find.textContaining('降为编辑'), findsOneWidget);
-    expect(find.textContaining('只读'), findsNothing);
+    expect(find.text('「张三」的病历箱现在归你了'), findsOneWidget);
+    expect(find.textContaining('降成「能改」'), findsOneWidget);
+    expect(find.textContaining('只能看'), findsNothing);
   });
 
   testWidgets('失败:错误可见,按钮可再点重试', (t) async {
@@ -144,6 +146,6 @@ void main() {
 
     expect(find.byType(AccountScreen), findsOneWidget);
     expect(redeemCalled, isFalse);
-    expect(find.text('已加入「张三」的档案'), findsNothing);
+    expect(find.text('已加入「张三」的病历箱'), findsNothing);
   });
 }

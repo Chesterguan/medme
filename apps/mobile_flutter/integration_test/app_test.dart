@@ -1,10 +1,12 @@
-// 骨架冒烟 —— **五 tab 信息架构**(概览 / 趋势 / 档案 / 应急卡 / 设置)。
+// 骨架冒烟 —— **三 tab 信息架构**(病历 / 趋势 / 我)。
 //
-// 这个文件此前断言的是**旧的三 tab**(健康档案 / 导出分享 / 设置),而 IA 早在
-// `feat/mobile-ia` 就换成了五个;加上 `patrolTest` 在 `flutter test` 下起不来,
-// 这批测试整体是死的。改写详见 `harness.dart` 顶部。
+// 这个文件的断言跟着 IA 改过两轮:最早是「健康档案 / 导出分享 / 设置」三 tab,
+// 中间一版是「概览 / 趋势 / 档案 / 应急卡 / 设置」五 tab,UX Stage 1 收成现在这
+// 三个(mockup `s1`/`s2`/`s5`)。「给医生看」与「急救卡」都**不是 tab** —— 前者
+// 从「病历」首页那颗白底方块推进去,后者在那一页里(见 `harness.dart` 的
+// `gotoForDoctor` / `gotoEmergencyCard`)。
 //
-//     flutter test integration_test/app_test.dart -d emulator-5554
+//     flutter test integration_test/app_test.dart -d <device>
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,13 +19,13 @@ import 'harness.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('启动 + 五个一级 tab 都在、都点得动、都不崩', (tester) async {
-    final watch = OverflowWatch('五 tab 冒烟')..start();
+  testWidgets('启动 + 三个一级 tab 都在、都点得动、都不崩', (tester) async {
+    final watch = OverflowWatch('三 tab 冒烟')..start();
     addTearDown(watch.stop);
 
     await bootApp(tester);
 
-    // 底栏五项俱在,顺序即 HomeTab 的定义。
+    // 底栏三项俱在,顺序即 HomeTab 的定义。
     final bar = find.byType(NavigationBar);
     for (final label in tabLabels) {
       expect(
@@ -35,7 +37,7 @@ void main() {
     expect(HomeTab.count, tabLabels.length);
 
     // 逐个点过去,每个 tab 的顶栏标题要对上 —— 只看底栏高亮不够,
-    // `IndexedStack` 错位一格的表现正是「点应急卡进了设置」。
+    // `IndexedStack` 错位一格的表现正是「点趋势进了我」。
     for (final label in tabLabels) {
       await tapTab(tester, label);
       expect(
@@ -54,17 +56,15 @@ void main() {
     watch.assertClean();
   });
 
-  testWidgets('程序化切 tab 与手点是同一条路径(goToArchive / goToTrends 等)', (
+  testWidgets('程序化切 tab 与手点是同一条路径(goToRecords / goToTrends 等)', (
     tester,
   ) async {
     await bootApp(tester, reset: false);
 
     for (final (idx, label) in [
-      (HomeTab.overview, '概览'),
+      (HomeTab.records, '病历'),
       (HomeTab.trends, '趋势'),
-      (HomeTab.archive, '档案'),
-      (HomeTab.emergency, '应急卡'),
-      (HomeTab.settings, '设置'),
+      (HomeTab.me, '我'),
     ]) {
       await gotoTab(tester, idx);
       expect(

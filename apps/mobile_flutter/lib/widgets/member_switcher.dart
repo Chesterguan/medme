@@ -134,19 +134,16 @@ Future<void> showMemberSwitcherSheet(
   }
 }
 
-/// 成员那一行的小字。优先级:**正在恢复** → 只读授权的到期日 → 没有。
+/// 成员那一行的小字。**不写角色/到期日**(mockup:挑人的界面上不出现任何
+/// 亲属/角色词,只留名字)——只读授权还剩多久这类信息挪到成员自己的页面里说
+/// (`s10`,Task 13)。眼下唯一的小字是「正在恢复」。
 ///
 /// 「正在恢复…点这里重试」是评审 Important 2 的可见出口:首同步没成功过的成员
-/// (换机领回来的那些)原来只是静静地叫「正在恢复的档案」、0 份病历,用户没有任何
+/// (换机领回来的那些)原来只是静静地叫「正在恢复的成员」、0 份病历,用户没有任何
 /// 办法让它再试一次,也不知道还能不能好。**点这一行就是重试** —— 切过去会
 /// `bumpVaultRevision()`,后台触发器随即把 `sync_engine.pendingFirstSync` 排空。
 Widget? _memberSubtitle(Profile m, TextStyle style) {
   if (pendingFirstSync.contains(m.id)) return Text('正在恢复…点这里重试', style: style);
-  // 只读授权(医生扫码兑换的那种)带到期日——过期由 `purgeExpired` 清掉,
-  // 这里显示的永远是"还剩多久",不是"曾经有过"。
-  if (m.role == 'viewer' && m.expiresAt != null) {
-    return Text('只读 · 至 ${m.expiresAt!.month}月${m.expiresAt!.day}日', style: style);
-  }
   return null;
 }
 

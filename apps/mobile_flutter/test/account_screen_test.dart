@@ -14,6 +14,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
+import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart' show shouldAskCloudExtract;
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -101,7 +102,7 @@ class FakeApi extends ApiClient {
   /// `GET /v1/account/keys` 报 500(不是 404)——`_afterLogin` 只吞 404,
   /// 非 404 一律 rethrow;用来测 `resumeIfLoggedIn` 冷启动那条路径接不接得住。
   final bool failKeys500;
-  /// `POST /v1/accounts/lookup` 的假响应/假失败——测「按手机号添加家属」。
+  /// `POST /v1/accounts/lookup` 的假响应/假失败——测「按手机号加成员」。
   final Map<String, dynamic>? lookupResult;
   final ApiFailed? lookupError;
   /// 注销账号(`POST /v1/account/delete`,见最终评审 I5)的假失败,默认成功——
@@ -115,7 +116,7 @@ class FakeApi extends ApiClient {
   final calls = <String>[];
   /// 每次 `delete()` 收到的 body,按调用顺序——测「注销账号」发对了 phone/otp_code。
   final deleteBodies = <Object?>[];
-  /// `POST /v1/profiles/{pid}/invites` 的 body——B5 测「转为主人」发的是 owner、
+  /// `POST /v1/profiles/{pid}/invites` 的 body——B5 测「交给他」发的是 owner、
   /// 而且不带 days。
   final inviteBodies = <Map<String, dynamic>>[];
   /// 让建邀请这一步 500,测 B5 的失败态。
@@ -368,7 +369,7 @@ class FakeCrypto implements SyncCrypto {
   }
 }
 
-/// 假 `GrantsRust`——只有 `sealTo` 会被「按手机号添加家属」用到,拼接公钥与
+/// 假 `GrantsRust`——只有 `sealTo` 会被「按手机号加成员」用到,拼接公钥与
 /// 明文即可(同 `sync_engine_test.dart`/`grants_test.dart` 的 `FakeRust`/
 /// `FakeGrantsRust` 套路,不追求真实的密码学正确性,只钉住"传对了什么")。
 class FakeGrantsRust implements GrantsRust {
@@ -545,16 +546,19 @@ Future<void> _toReady(
   await t.pumpAndSettle();
 }
 
-/// 「我授权给谁」排在「已就绪」页最后一节——`ListView(children: ...)` 底层还是
-/// `SliverChildListDelegate`,只有落在视口 + 缓存区内的子节点才会被挂载,普通
-/// `ensureVisible` 对还没挂载的 widget 无能为力(同 `visit_summary_sheet_test.dart`
-/// 的 `scrollToMedsToggle` 一模一样的坑):先 `scrollUntilVisible` 挂载它,再
-/// `ensureVisible` 把它拉回可点击的范围。
-Future<void> _scrollToMyGrants(WidgetTester t) => _scrollToText(t, '我授权给谁');
+/// 「谁能看」(task-20b A4 一度改成「我让谁看」,与 member_detail_screen.dart
+/// 已经在用的「谁能看$_name的病历」撞了车,Part B 复核时纠正回来)排在「已就绪」
+/// 页最后一节——`ListView(children: ...)` 底层还是 `SliverChildListDelegate`,
+/// 只有落在视口 + 缓存区内的子节点才会被挂载,普通 `ensureVisible` 对还没挂载的
+/// widget 无能为力(同 `for_doctor_refresh_test.dart` 的 `scrollToMedsToggle`
+/// 一模一样的坑):先 `scrollUntilVisible` 挂载它,再 `ensureVisible` 把它拉回
+/// 可点击的范围。
+Future<void> _scrollToMyGrants(WidgetTester t) => _scrollToText(t, '谁能看');
 
-/// 把一段文字滚进视口。C7 把「云同步」提到第一位之后,「设备」「账号管理」落到了
-/// 最底下 —— 原来那些裸 `ensureVisible` 够不到它们(`SliverList` 懒实现,没挂载的
-/// widget `ensureVisible` 无能为力),必须先 `scrollUntilVisible` 把它挂载出来。
+/// 把一段文字滚进视口。C7 把「云同步」提到第一位之后,「我的设备」「账号管理」
+/// 落到了最底下 —— 原来那些裸 `ensureVisible` 够不到它们(`SliverList` 懒实现,
+/// 没挂载的 widget `ensureVisible` 无能为力),必须先 `scrollUntilVisible` 把它
+/// 挂载出来。
 Future<void> _scrollToText(WidgetTester t, String text) async {
   final finder = find.text(text);
   await t.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
@@ -599,7 +603,7 @@ void main() {
   tearDown(() async => globalSupport.delete(recursive: true));
 
   group('注册:prepareKeys/commitKeys 两步(恢复码强制确认)', () {
-    testWidgets('登录 → 设口令 → 生成密钥展示恢复码(此时未提交)→ 确认后才真正提交', (t) async {
+    testWidgets('登录 → 设口令 → 设好了展示恢复码(此时未提交)→ 确认后才真正提交', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api));
       await t.enterText(find.byKey(const Key('phone')), '13800000001');
@@ -610,35 +614,35 @@ void main() {
       await t.enterText(find.byKey(const Key('code')), '000000');
       await t.tap(find.text('登录'));
       await t.pumpAndSettle();
-      expect(find.text('设置口令'), findsOneWidget); // needsKeySetup
+      expect(find.text('设一个口令'), findsOneWidget); // needsKeySetup
 
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget); // 恢复码
-      expect(find.text('我已抄下恢复码'), findsOneWidget);
-      // 生成密钥这一步只在内存里备好,还没上传、没落盘。
+      expect(find.text('我抄好了'), findsOneWidget);
+      // 设好了这一步只在内存里备好,还没上传、没落盘。
       expect(api.calls, isNot(contains('PUT /v1/account/keys')));
       expect(AccountSession.instance.privateKey, isNull);
 
-      await t.tap(find.text('我已抄下恢复码'));
+      await t.tap(find.text('我抄好了'));
       await t.pumpAndSettle();
       expect(api.calls, contains('PUT /v1/account/keys'));
       expect(AccountSession.instance.privateKey, isNotNull);
       expect(find.text('已登录'), findsOneWidget);
     });
 
-    testWidgets('恢复码画面强杀重开(未点确认):新开一屏落在设置口令,不是已就绪', (t) async {
+    testWidgets('恢复码画面强杀重开(未点确认):新开一屏落在设一个口令,不是已就绪', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
-      // 没点「我已抄下恢复码」——从没提交过。
+      // 没点「我抄好了」——从没提交过。
       expect(api.calls, isNot(contains('PUT /v1/account/keys')));
 
       // 模拟强杀重开:先换成一个完全不同类型的根 widget,强制 Flutter 把上一棵
@@ -649,33 +653,33 @@ void main() {
       await t.pumpWidget(const SizedBox.shrink());
       await t.pumpWidget(_app(FakeApi()));
       await t.pumpAndSettle();
-      expect(find.text('设置口令'), findsOneWidget);
+      expect(find.text('设一个口令'), findsOneWidget);
       expect(find.text('已登录'), findsNothing);
       expect(AccountSession.instance.privateKey, isNull);
     });
 
-    testWidgets('生成密钥:加载中显示进度圈', (t) async {
+    testWidgets('设好了:加载中显示进度圈', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await t.pumpAndSettle();
     });
 
-    testWidgets('生成密钥失败(KDF/加密层报错):错误可见,停留设置口令,未调用 PUT', (t) async {
+    testWidgets('设好了失败(KDF/加密层报错):错误可见,停留设一个口令,未调用 PUT', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api, crypto: FakeCrypto(failAccountKeysNew: true)));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
       expect(find.textContaining('kdf boom'), findsOneWidget);
-      expect(find.text('设置口令'), findsOneWidget); // 还在这一步
+      expect(find.text('设一个口令'), findsOneWidget); // 还在这一步
       expect(api.calls, isNot(contains('PUT /v1/account/keys')));
       expect(AccountSession.instance.privateKey, isNull);
     });
@@ -686,9 +690,9 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
-      await t.tap(find.text('我已抄下恢复码'));
+      await t.tap(find.text('我抄好了'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await t.pumpAndSettle();
@@ -700,15 +704,15 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
 
-      await t.tap(find.text('我已抄下恢复码'));
+      await t.tap(find.text('我抄好了'));
       await t.pumpAndSettle();
       expect(find.text('服务器开小差了,稍后再试'), findsOneWidget); // B2:不念状态码
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget); // 恢复码原样还在
-      expect(find.text('我已抄下恢复码'), findsOneWidget); // 可以直接重试
+      expect(find.text('我抄好了'), findsOneWidget); // 可以直接重试
       expect(AccountSession.instance.privateKey, isNull);
     });
   });
@@ -814,7 +818,7 @@ void main() {
     testWidgets('注册:默认遮着,点眼睛露出来,再点又遮回去', (t) async {
       await t.pumpWidget(_app(FakeApi()));
       await _loginUpTo(t);
-      expect(find.text('设置口令'), findsOneWidget);
+      expect(find.text('设一个口令'), findsOneWidget);
       expect(obscured(t), isTrue);
 
       await t.tap(find.byKey(const Key('password_eye')));
@@ -826,12 +830,12 @@ void main() {
       expect(obscured(t), isTrue);
     });
 
-    testWidgets('注册:不足 6 位时「生成密钥」不可点并说还差几位;够了才能点', (t) async {
+    testWidgets('注册:不足 6 位时「设好了」不可点并说还差几位;够了才能点', (t) async {
       final api = FakeApi();
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
 
-      FilledButton button() => t.widget<FilledButton>(find.widgetWithText(FilledButton, '生成密钥'));
+      FilledButton button() => t.widget<FilledButton>(find.widgetWithText(FilledButton, '设好了'));
       expect(button().onPressed, isNull, reason: '空口令就不能往下走');
 
       await t.enterText(find.byKey(const Key('password')), 'ab12');
@@ -840,9 +844,9 @@ void main() {
       expect(button().onPressed, isNull);
 
       // 点一下也不该发生任何事(按钮是真的禁用,不是只画成灰的)。
-      await t.tap(find.widgetWithText(FilledButton, '生成密钥'));
+      await t.tap(find.widgetWithText(FilledButton, '设好了'));
       await t.pumpAndSettle();
-      expect(find.text('设置口令'), findsOneWidget);
+      expect(find.text('设一个口令'), findsOneWidget);
       expect(api.calls, isNot(contains('PUT /v1/account/keys')));
 
       await t.enterText(find.byKey(const Key('password')), 'ab1234');
@@ -854,7 +858,7 @@ void main() {
     testWidgets('解锁:口令框也有眼睛(恢复码框本来就是明文,没有)', (t) async {
       await t.pumpWidget(_app(FakeApi(hasKeys: true)));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
       expect(obscured(t), isTrue);
       await t.tap(find.byKey(const Key('password_eye')));
       await t.pump();
@@ -878,16 +882,16 @@ void main() {
   });
 
   // ---- Argon2 等待:转圈时原来一句话都没有 ----
-  group('转圈时说一句「正在生成密钥」', () {
-    testWidgets('注册点「生成密钥」:进度圈旁边有那句话', (t) async {
+  group('转圈时说一句「正在处理口令」', () {
+    testWidgets('注册点「设好了」:进度圈旁边有那句话', (t) async {
       await t.pumpWidget(_app(FakeApi()));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('正在生成密钥,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
+      expect(find.text('正在处理口令,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
       await t.pumpAndSettle();
     });
 
@@ -898,14 +902,14 @@ void main() {
       await t.pump();
       await t.tap(find.text('解锁'));
       await t.pump();
-      expect(find.text('正在生成密钥,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
+      expect(find.text('正在处理口令,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
       await t.pumpAndSettle();
     });
   });
 
   // ---- 评审 Important 10:Argon2 转圈时退出会 setState after dispose ----
   group('Important 10:转圈时离开这一屏不崩', () {
-    testWidgets('「生成密钥」转圈中把屏拆掉:不留未处理的异步错误', (t) async {
+    testWidgets('「设好了」转圈中把屏拆掉:不留未处理的异步错误', (t) async {
       // 这正是 `_kdfWaitHint`(「请不要等…请不要退出」)所描述的那几秒等待 ——
       // 而 `PopScope` 只在恢复码那一阶段挡返回,所以这几秒里真的走得掉。
       final api = FakeApi(delay: const Duration(milliseconds: 5));
@@ -913,14 +917,14 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pump(); // 转圈起来了,Argon2 还在跑
 
       await t.pumpWidget(const SizedBox.shrink()); // 整棵树 dispose
       // 把假 Argon2 那串 delayed timer 排空 —— 它们 resolve 的那一刻正是原来
       // `setState after dispose` 抛出来的时刻。`pumpAndSettle` 自己不推进它们
       // (没有帧在排队),所以要显式给时间;`prepareKeys` 里是**四次**串行的
-      // 300ms(生成密钥对 / 口令包 / 恢复码 / 恢复码包),一次给足。
+      // 300ms(生成账号公私钥对 / 口令包 / 恢复码 / 恢复码包),一次给足。
       await t.pump(const Duration(seconds: 3));
       await t.pumpAndSettle();
 
@@ -945,17 +949,17 @@ void main() {
   });
 
   // ---- 评审 Important 11:恢复码离开设备之前要先说一句 ----
-  group('Important 11:「分享给自己」先确认', () {
+  group('Important 11:「发给自己」先确认', () {
     Future<void> toRecoveryScreen(WidgetTester t) async {
       await t.pumpWidget(_app(FakeApi()));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
     }
 
-    testWidgets('点「分享给自己」先弹确认,说清它会经第三方 App 传出去', (t) async {
+    testWidgets('点「发给自己」先弹确认,说清它会经第三方 App 传出去', (t) async {
       await toRecoveryScreen(t);
       await t.tap(find.byKey(const Key('recovery_share')));
       await t.pumpAndSettle();
@@ -974,7 +978,7 @@ void main() {
       await t.pumpAndSettle();
 
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
-      expect(find.text('我已抄下恢复码'), findsOneWidget);
+      expect(find.text('我抄好了'), findsOneWidget);
       expect(t.takeException(), isNull);
     });
 
@@ -991,11 +995,11 @@ void main() {
       await toRecoveryScreen(t);
       await t.tap(find.byKey(const Key('recovery_share')));
       await t.pumpAndSettle();
-      await t.tap(find.text('发给自己'));
+      await t.tap(find.text('发送'));
       await t.pumpAndSettle();
 
       expect(t.takeException(), isNull, reason: 'onPressed 里的 async 必须自己接住');
-      expect(find.textContaining('分享没打开'), findsOneWidget);
+      expect(find.textContaining('没发出去'), findsOneWidget);
       expect(find.textContaining('可以改用上面的「复制」'), findsOneWidget);
       // 恢复码画面原样留着,用户还能走「复制」那条。
       expect(find.text('ABCD-EFGH-JKMN-PQRS-TVWX'), findsOneWidget);
@@ -1007,11 +1011,11 @@ void main() {
     testWidgets('解锁屏底部有这个入口;弹窗照实说明"找不回"', (t) async {
       await t.pumpWidget(_app(FakeApi(hasKeys: true)));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('lost_everything')));
       await t.pumpAndSettle();
-      expect(find.textContaining('我们不托管你的密钥'), findsOneWidget);
+      expect(find.textContaining('我们不保管你的口令和恢复码'), findsOneWidget);
       expect(find.textContaining('没有任何办法帮你找回'), findsOneWidget);
       expect(find.text('退出登录,重新开始'), findsOneWidget);
       expect(find.text('取消'), findsOneWidget);
@@ -1031,7 +1035,7 @@ void main() {
       AccountSession.instance.privateKey = null; // 换了台设备的样子:有 token、没私钥
       await t.pumpWidget(_app(FakeApi(hasKeys: true)));
       await t.pumpAndSettle();
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('lost_everything')));
       await t.pumpAndSettle();
@@ -1051,7 +1055,7 @@ void main() {
       await t.tap(find.text('取消'));
       await t.pumpAndSettle();
 
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
       expect(AccountSession.instance.accountId, isNotNull);
     });
   });
@@ -1087,7 +1091,7 @@ void main() {
       final api = FakeApi(hasKeys: true);
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
       await t.enterText(find.byKey(const Key('password')), 'right');
       await t.pump();
       await t.tap(find.text('解锁'));
@@ -1110,7 +1114,7 @@ void main() {
       await t.pump();
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('正在生成密钥,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
+      expect(find.text('正在处理口令,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
 
       final escape1 = find.widgetWithText(TextButton, '口令忘了?改用恢复码解锁');
       expect(escape1, findsOneWidget, reason: '转圈时这条出口不该消失');
@@ -1139,7 +1143,7 @@ void main() {
       final api = FakeApi(hasKeys: true);
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
       await t.enterText(find.byKey(const Key('password')), 'wrong');
       await t.pump();
       await t.tap(find.text('解锁'));
@@ -1220,7 +1224,7 @@ void main() {
         {'device_id': 'dev2', 'name': 'iPhone 15', 'eph_public': 'AA==', 'approved': false},
       ]);
       await _toReady(t, api);
-      await _scrollToText(t, '设备');
+      await _scrollToText(t, '我的设备');
       expect(find.text('iPhone 15'), findsOneWidget);
       expect(find.text('新设备,等你批准'), findsOneWidget, reason: '状态照实显示,只是不给这条操作入口');
       expect(
@@ -1235,7 +1239,7 @@ void main() {
     testWidgets('加载失败:显示错误,不崩', (t) async {
       final api = FakeApi(hasKeys: true, failDevices: true);
       await _toReady(t, api);
-      await _scrollToText(t, '设备');
+      await _scrollToText(t, '我的设备');
       expect(find.textContaining('设备列表加载失败:服务器开小差了'), findsOneWidget);
     });
 
@@ -1263,8 +1267,11 @@ void main() {
 
     test('roleLabel:服务端的词不出现在界面上', () {
       expect(roleLabel('viewer'), '只能看');
-      expect(roleLabel('editor'), '能一起录');
-      expect(roleLabel('owner'), '主人');
+      // Task 13 fix round 1:`s10`(成员详情页「谁能看」那一节)要求 editor 说
+      // 「能改」,不是「能一起录」——`roleLabel` 是共用函数,这里跟着一起换,
+      // 「授权」/「我授权给谁」两节自然跟着统一。
+      expect(roleLabel('editor'), '能改');
+      expect(roleLabel('owner'), '本人');
       expect(roleLabel(null), '未知');
     });
 
@@ -1317,10 +1324,10 @@ void main() {
       expect(find.textContaining('accountId=acc_1'), findsOneWidget);
     });
 
-    testWidgets('C7:「云同步」排在第一个区块,「设备」排在「云同步」后面', (t) async {
+    testWidgets('C7:「云端」排在第一个区块,「设备」排在「云端」后面', (t) async {
       await _toReady(t, FakeApi(hasKeys: true), debugModeOverride: false);
-      final cloud = t.getTopLeft(find.text('云同步')).dy;
-      final grants = t.getTopLeft(find.text('授权')).dy;
+      final cloud = t.getTopLeft(find.text('云端')).dy;
+      final grants = t.getTopLeft(find.text('我能看的')).dy;
       expect(cloud < grants, isTrue, reason: '点进账号屏十次里九次是为了"我的病历备上了没有"');
     });
 
@@ -1347,23 +1354,23 @@ void main() {
       await _toReady(t, api, debugModeOverride: false);
       await _scrollToMyGrants(t);
 
-      expect(find.text('能一起录 · 至 12月31日 · 1月2日添加'), findsOneWidget);
+      expect(find.text('能改 · 至 12月31日 · 1月2日添加'), findsOneWidget);
       expect(find.textContaining('account'), findsNothing, reason: 'grantee_kind 是服务端实现细节');
       expect(find.textContaining('editor'), findsNothing);
       expect(find.textContaining('2026-'), findsNothing, reason: 'ISO 串不给用户看');
     });
 
-    testWidgets('C6:恢复码屏除了「复制」还有「分享给自己」', (t) async {
+    testWidgets('C6:恢复码屏除了「复制」还有「发给自己」', (t) async {
       await t.pumpWidget(_app(FakeApi()));
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right1');
       await t.pump();
-      await t.tap(find.text('生成密钥'));
+      await t.tap(find.text('设好了'));
       await t.pumpAndSettle();
 
       expect(find.text('复制'), findsOneWidget);
       expect(find.byKey(const Key('recovery_share')), findsOneWidget);
-      expect(find.textContaining('不要只存在这台手机上'), findsOneWidget);
+      expect(find.textContaining('抄在纸上或存到别处'), findsOneWidget);
     });
   });
 
@@ -1418,7 +1425,7 @@ void main() {
         {'device_id': 'dev2', 'name': 'android', 'eph_public': 'AA==', 'approved': false, 'last_seen': '2026-01-01T00:00:00.000Z'},
       ]);
       await _toReady(t, api);
-      await _scrollToText(t, '设备');
+      await _scrollToText(t, '我的设备');
       expect(find.text('iPhone/iPad'), findsOneWidget);
       expect(find.text('安卓手机'), findsOneWidget);
       expect(find.text('新设备,等你批准'), findsOneWidget);
@@ -1437,13 +1444,13 @@ void main() {
         {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
       ]);
       await _toReady(t, api);
-      // Task 17 在「云同步」那节加了一行「云端整理」开关,「授权」这节的挂载点
+      // Task 17 在「云同步」那节加了一行「云端整理」开关,「我能看的」这节的挂载点
       // 被挤出首屏——`SliverList` 懒实现,没挂载的 widget 找不到,先滚过去。
-      await _scrollToText(t, '授权');
-      // C:`prf_xxx` 是服务端内部 id,不给用户看;对不上本机成员时说「一份共享档案」。
-      expect(find.text('一份共享档案'), findsOneWidget);
+      await _scrollToText(t, '我能看的');
+      // C:`prf_xxx` 是服务端内部 id,不给用户看;对不上本机成员时说「一份共享的病历」。
+      expect(find.text('一份共享的病历'), findsOneWidget);
       expect(find.textContaining('p1'), findsNothing);
-      expect(find.text('主人 · 长期有效'), findsOneWidget, reason: '角色中文化;没有到期日说「长期有效」,不露 null');
+      expect(find.text('本人 · 长期有效'), findsOneWidget, reason: '角色中文化;没有到期日说「长期有效」,不露 null');
       expect(
         find.text('撤销'),
         findsNothing,
@@ -1454,8 +1461,12 @@ void main() {
     testWidgets('加载失败:显示错误,不崩', (t) async {
       final api = FakeApi(hasKeys: true, failProfiles: true);
       await _toReady(t, api);
-      await _scrollToText(t, '授权');
-      expect(find.textContaining('授权列表加载失败'), findsOneWidget);
+      await _scrollToText(t, '我能看的');
+      // task-20b Part B 把「授权列表加载失败」这句改成了「加载失败」,与
+      // 「谁能看」那节共用同一句——`failProfiles` 连带让 `_loadMyGrants`
+      // 里那次 `/v1/profiles` 也失败(见 `_loadMyGrants` 先取 owner 列表那步),
+      // 于是两节此刻都在报错,`findsOneWidget` 不再成立,改成"至少能看到一个"。
+      expect(find.textContaining('加载失败'), findsWidgets);
     });
   });
 
@@ -1473,7 +1484,7 @@ void main() {
       );
       await _toReady(t, api);
       await _scrollToMyGrants(t);
-      expect(find.text('还没有授权给任何人'), findsNothing);
+      expect(find.text('还没让任何人看过'), findsNothing);
       expect(find.text('撤销'), findsOneWidget);
     });
 
@@ -1496,9 +1507,9 @@ void main() {
       await t.tap(find.text('解锁'));
       // 200ms:盖过解锁本身(FakeCrypto 20ms + restoreProfileKeys 的 GET
       // /v1/profiles 30ms),但远小于 myGrantsDelay(3s)——此刻应该已经落在
-      // "已就绪,「我授权给谁」还在等" 这个窗口。
+      // "已就绪,「谁能看」还在等" 这个窗口。
       await t.pump(const Duration(milliseconds: 200));
-      await t.scrollUntilVisible(find.text('我授权给谁'), 200, scrollable: find.byType(Scrollable).first);
+      await t.scrollUntilVisible(find.text('谁能看'), 200, scrollable: find.byType(Scrollable).first);
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsWidgets);
       // 收尾:把剩下的延迟耗完,不留 pending timer。
@@ -1510,7 +1521,7 @@ void main() {
       final api = FakeApi(hasKeys: true, profiles: const []);
       await _toReady(t, api);
       await _scrollToMyGrants(t);
-      expect(find.text('还没有授权给任何人'), findsOneWidget);
+      expect(find.text('还没让任何人看过'), findsOneWidget);
       expect(api.calls.any((c) => c.contains('/grants')), isFalse, reason: '没有拥有任何档案,不该多打一次 grants 请求');
     });
 
@@ -1589,7 +1600,7 @@ void main() {
   });
 
   // ---- B5:`inviteTransfer` 在这之前一个调用方都没有 ----
-  group('B5:「转为主人」', () {
+  group('B5:「交给他」(把病历交给家人)', () {
     Map<String, dynamic> granteeRow() => {
       'grant_id': 'g2',
       'grantee_kind': 'account',
@@ -1617,17 +1628,17 @@ void main() {
       await AccountSession.instance.putProfileKey('prf_1', Uint8List(32));
     }
 
-    testWidgets('每行都有「转为主人」,点了先弹确认,说明"现在还不会改变任何东西"', (t) async {
+    testWidgets('每行都有「交给他」,点了先弹确认,说明"现在还不会改变任何东西"', (t) async {
       final api = apiWithGrantee();
       await setUpOwnedCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
       await _scrollToMyGrants(t);
 
-      expect(find.text('转为主人'), findsOneWidget);
+      expect(find.text('交给他'), findsOneWidget);
       await t.tap(find.byKey(const Key('transfer_g2')));
       await t.pumpAndSettle();
 
-      expect(find.text('把这份档案交给他?'), findsOneWidget);
+      expect(find.text('把这份病历交给他?'), findsOneWidget);
       expect(find.textContaining('降为可以一起录入的家人'), findsOneWidget);
       expect(find.textContaining('还不会改变任何东西'), findsOneWidget);
       expect(find.text('生成链接'), findsOneWidget);
@@ -1670,7 +1681,7 @@ void main() {
       expect(find.text('发给他'), findsOneWidget);
 
       // Minor 18:这条路的复制提示是通用那句(代拍那条路有自己的,见
-      // `doctor_claim_link_dialog_test`)。两条都钉住,免得抽取时再丢一次。
+      // `doctor_claim_link_dialog.dart` 的 `copiedMessage`)。两条都钉住,免得抽取时再丢一次。
       // 对话框内容在 `SingleChildScrollView` 里,800×600 的测试画布上这颗按钮
       // 落在视口外 —— 不先滚进来,`tap` 点的是一片空白。
       await t.ensureVisible(find.text('复制链接'));
@@ -1680,10 +1691,10 @@ void main() {
       expect(find.text('链接已复制'), findsOneWidget);
     });
 
-    // ---- 评审 Important 8:入口不能只挂在"对方已经是家属"之后 ----
-    testWidgets('Important 8:自有云成员那一块本身就有转移入口,不必对方先成为家属', (t) async {
+    // ---- 评审 Important 8:入口不能只挂在"对方已经是家人"之后 ----
+    testWidgets('Important 8:自有云成员那一块本身就有转移入口,不必对方先成为家人', (t) async {
       // 只有一个自己拥有的云档案、**没有任何 grantee** —— 「我授权给谁」是空的,
-      // 而红队说的正是"把档案交给一个还不是家属的人"。
+      // 而红队说的正是"把档案交给一个还不是家人的人"。
       final api = FakeApi(
         hasKeys: true,
         delay: const Duration(milliseconds: 5),
@@ -1696,8 +1707,8 @@ void main() {
 
       expect(find.byKey(const Key('transfer_current_profile')), findsOneWidget);
       await _scrollToMyGrants(t);
-      expect(find.text('还没有授权给任何人'), findsOneWidget, reason: '前提:一个家属都没有');
-      expect(find.text('转为主人'), findsNothing, reason: 'per-grantee 那条路此刻根本不存在');
+      expect(find.text('还没让任何人看过'), findsOneWidget, reason: '前提:一个家人都没有');
+      expect(find.text('交给他'), findsNothing, reason: 'per-grantee 那条路此刻根本不存在');
     });
 
     testWidgets('Important 8:那个入口走同一条确认 → 生成 owner 邀请', (t) async {
@@ -1716,7 +1727,7 @@ void main() {
       await t.pumpAndSettle();
       await t.tap(find.byKey(const Key('transfer_current_profile')));
       await t.pumpAndSettle();
-      expect(find.text('把这份档案交给他?'), findsOneWidget);
+      expect(find.text('把这份病历交给他?'), findsOneWidget);
       await t.tap(find.text('生成链接'));
       await t.pumpAndSettle();
 
@@ -1814,168 +1825,13 @@ void main() {
       await t.pumpAndSettle();
 
       expect(find.text('生成转移链接失败:服务器开小差了,稍后再试'), findsOneWidget);
-      expect(find.text('转为主人'), findsOneWidget);
+      expect(find.text('交给他'), findsOneWidget);
     });
   });
 
-  group('已就绪:按手机号添加家属', () {
-    late Directory support;
-
-    setUp(() async {
-      support = await Directory.systemTemp.createTemp('medme-account-family-test');
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
-        const MethodChannel('plugins.flutter.io/path_provider'),
-        (call) async => support.path,
-      );
-    });
-
-    tearDown(() async => support.delete(recursive: true));
-
-    /// 给当前成员(默认档案)一个 cloudId,`_familySection` 才会显示表单而不是
-    /// 「还没开通云同步」的提示。真实文件 IO(`markCloud` 落盘)包进 `runAsync`
-    /// (Task 10 的教训)。
-    Future<void> setUpCloudProfile(WidgetTester t) async {
-      await t.runAsync(() async {
-        await ProfileManager.instance.ensureLoaded();
-        await ProfileManager.instance.factoryReset();
-        await ProfileManager.instance.markCloud(ProfileManager.instance.current.id, 'prf_1', 'owner', null);
-      });
-      await AccountSession.instance.putProfileKey('prf_1', Uint8List(32));
-    }
-
-    testWidgets('加载中显示进度圈', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 30),
-        lookupResult: {'account_id': 'acc_family', 'public_key': 'QQ=='},
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '家属');
-      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
-      await t.pump();
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      await t.pumpAndSettle();
-    });
-
-    testWidgets('查到账号:成功、清空输入框、按永久 editor 授权', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupResult: {'account_id': 'acc_family', 'public_key': 'QQ=='},
-      );
-      final rust = FakeGrantsRust();
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: rust));
-
-      await _scrollToText(t, '家属');
-      await t.enterText(find.byKey(const Key('family_phone')), '138 0000 1111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
-      await t.pumpAndSettle();
-
-      expect(api.calls, contains('POST /v1/accounts/lookup'));
-      expect(api.calls, contains('POST /v1/profiles/prf_1/grants'));
-      expect(find.text('138 0000 1111'), findsNothing, reason: '成功后应清空输入框(且已去除空格发送)');
-      expect(rust.sealedWith, isNotEmpty, reason: '应该封给对方公钥');
-    });
-
-    testWidgets('手机号查不到人(404):提示「没有找到使用该手机号的账号」', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupError: const ApiFailed(404, 'not found'),
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '家属');
-      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
-      await t.pumpAndSettle();
-
-      expect(find.text('没有找到使用该手机号的账号'), findsOneWidget);
-    });
-
-    testWidgets('B4:对方已注册、但还没设账号口令(409 no_keys):说清楚该他做什么', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupError: const ApiFailed(409, 'no_keys'),
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '家属');
-      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
-      await t.pumpAndSettle();
-
-      expect(
-        find.text('对方已注册,但还没设置好账号口令 —— 请他在 MedMe 里打开 设置 → 账号,完成最后两步'),
-        findsOneWidget,
-      );
-      expect(
-        find.text('没有找到使用该手机号的账号'),
-        findsNothing,
-        reason: '这是错误归因:家属会去确认手机号、重输、放弃,而真正要做的事在对方手机上',
-      );
-    });
-
-    testWidgets('限流(429):提示「查询太频繁,稍后再试」', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupError: const ApiFailed(429, 'rate_limited'),
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '家属');
-      await t.enterText(find.byKey(const Key('family_phone')), '13800001111');
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
-      await t.pumpAndSettle();
-
-      expect(find.text('操作太频繁,过一会儿再试'), findsOneWidget); // 迁进 friendlyApiError 之后的统一措辞
-    });
-
-    testWidgets('手机号格式不对(400):提示「手机号格式不对」', (t) async {
-      final api = FakeApi(
-        hasKeys: true,
-        delay: const Duration(milliseconds: 5),
-        lookupError: const ApiFailed(400, 'bad phone'),
-      );
-      await setUpCloudProfile(t);
-      await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
-
-      await _scrollToText(t, '家属');
-      await t.enterText(find.byKey(const Key('family_phone')), 'abc'); // 打个不像手机号的
-      await _scrollToText(t, '按手机号添加家属');
-      await t.tap(find.text('按手机号添加家属'));
-      await t.pumpAndSettle();
-
-      expect(find.text('手机号格式不对'), findsOneWidget);
-    });
-
-    testWidgets('当前成员还没开通云同步:不显示表单', (t) async {
-      final api = FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5));
-      await t.runAsync(() async {
-        await ProfileManager.instance.ensureLoaded();
-        await ProfileManager.instance.factoryReset();
-      });
-      await _toReady(t, api);
-
-      expect(find.byKey(const Key('family_phone')), findsNothing);
-      await _scrollToText(t, '家属');
-      expect(find.textContaining('暂时不能添加家属'), findsOneWidget);
-    });
-  });
+  // 「按手机号加成员」这条路(原来在这一屏的「成员」节)Task 13 fix round 1 搬去了
+  // `MemberDetailScreen`(`s10`)——`account_screen.dart` 不再有这个表单,覆盖这条路
+  // 的测试跟着搬到 `test/member_detail_screen_test.dart`。
 
   group('冷启动恢复登录态(initState 里的 resumeIfLoggedIn)', () {
     testWidgets('本机已有 token,但账号服务 500:错误可见,不留未处理的 rejection', (t) async {
@@ -1992,7 +1848,7 @@ void main() {
       expect(find.text('服务器开小差了,稍后再试'), findsOneWidget);
       expect(find.text('登录 MedMe 账号'), findsOneWidget);
       // 没有因为异常而误判成"需要设口令"或"已就绪"。
-      expect(find.text('设置口令'), findsNothing);
+      expect(find.text('设一个口令'), findsNothing);
       expect(find.text('已登录'), findsNothing);
     });
 
@@ -2205,7 +2061,7 @@ void main() {
       expect(adopted.length, 1);
       // A5:占位名不再是「云端档案 prf_un」—— 换了台新手机的人第一眼看到的不该
       // 是一串内部 id。
-      expect(adopted.single.name, '正在恢复的档案');
+      expect(adopted.single.name, '正在恢复的成员');
       expect(adopted.single.role, 'editor');
       expect(adopted.single.expiresAt, DateTime.parse('2027-01-02T03:04:05.000Z'));
       expect(await AccountSession.instance.profileKey('prf_unknown_abcdef'), wrappedKey);
@@ -2251,7 +2107,7 @@ void main() {
         reason: '换机之后不该等"用户哪天自己切过去"才有第一次同步;'
             '但也不该在启动路径上串行跑 N 个完整同步(评审 Important 3)',
       );
-      expect(adopted.name, '正在恢复的档案', reason: '同步还没跑,名字还是占位串');
+      expect(adopted.name, '正在恢复的成员', reason: '同步还没跑,名字还是占位串');
     });
 
     test('A5:本机已有这个云成员、密钥也齐、名字也是真名 → 不重排首同步', () async {
@@ -2278,7 +2134,7 @@ void main() {
 
     // 评审 Important 2:密钥是在同步**之前**就存下的,于是下一次启动那句
     // `continue`(有成员 + 有密钥)会把它整条跳过 —— 那唯一一次尝试里的一次网络
-    // 抖动就让用户永久看着一个叫「正在恢复的档案」、0 份病历的成员。
+    // 抖动就让用户永久看着一个叫「正在恢复的成员」、0 份病历的成员。
     test('Important 2:首同步没成功过的成员(名字还是占位串)下次启动会被重排', () async {
       final api = oneUnknownCloudProfile();
       final flow = AccountFlow(
@@ -2681,7 +2537,7 @@ void main() {
         reason: '开关的值是"此刻真的在同步吗",还没开通成功就是关的 —— 打开它就是重试',
       );
       expect(find.textContaining('还没备份上去'), findsOneWidget);
-      expect(find.text('同步'), findsNothing);
+      expect(find.text('云端备份'), findsNothing);
     });
 
     testWidgets('开通云同步:加载中显示进度圈', (t) async {
@@ -2701,7 +2557,7 @@ void main() {
       await t.tap(find.byKey(const Key('cloud_switch_p-1')));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('正在开通云同步…'), findsOneWidget);
+      expect(find.text('正在开通云端备份…'), findsOneWidget);
       await t.pumpAndSettle();
     });
 
@@ -2732,30 +2588,60 @@ void main() {
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
 
       expect(t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value, isTrue);
-      expect(find.textContaining('已开通云备份'), findsOneWidget);
-      expect(find.text('同步'), findsOneWidget);
+      expect(find.textContaining('已开通云端备份'), findsOneWidget);
+      expect(find.text('云端备份'), findsOneWidget);
     });
 
-    testWidgets('Task 17:「云端整理」开关默认开,摆在每成员云备份行下面,关掉能存住', (t) async {
-      resetVaultQueueForTest();
-      final api = FakeApi(hasKeys: true);
-      await giveCurrentProfileCloudId(t);
-      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+    testWidgets(
+      'task-20b A2:「云端整理」开关未问过时默认关,拨了之后能存住、且置真「问过了」',
+      (t) async {
+        resetVaultQueueForTest();
+        final api = FakeApi(hasKeys: true);
+        await giveCurrentProfileCloudId(t);
+        await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
 
-      final extractSwitch = find.byKey(const Key('cloud_extract_switch'));
-      expect(extractSwitch, findsOneWidget);
-      expect(find.text('云端整理'), findsOneWidget);
-      expect(t.widget<SwitchListTile>(extractSwitch).value, isTrue, reason: '默认开——只是关了才用纯本机识别');
+        final extractSwitch = find.byKey(const Key('cloud_extract_switch'));
+        expect(extractSwitch, findsOneWidget);
+        expect(find.text('云端整理'), findsOneWidget);
+        expect(
+          t.widget<SwitchListTile>(extractSwitch).value,
+          isFalse,
+          reason: '没问过(cloud_extract_asked 没写过)时默认关——第一次添加病历时才会问,问了答应才置真',
+        );
+        expect(
+          find.text('第一次添加病历时会问你'),
+          findsOneWidget,
+          reason: '没问过时副标题得说清楚"还没问",不能一边显示关一边就已经说开着会做什么',
+        );
 
-      await t.tap(extractSwitch);
-      await t.pumpAndSettle();
+        await t.tap(extractSwitch);
+        await t.pumpAndSettle();
 
-      expect(t.widget<SwitchListTile>(extractSwitch).value, isFalse);
-      // 持久化:不是只改了内存里的 State,prefs 里那把键也得真的写成 false——
-      // 下次 `runCloudExtractions` 读的正是这把键。
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getBool('cloud_extract_enabled'), isFalse);
-    });
+        expect(t.widget<SwitchListTile>(extractSwitch).value, isTrue);
+        // task-20b 复核 Important:手动拨开关不能只改 enabled、漏了 asked——否则
+        // 界面上「开关已经开着」和副标题「第一次添加病历时会问你」自相矛盾,
+        // 而且下一次 runImport 还会再弹一次 ask sheet 把这次选择覆盖掉。
+        expect(
+          find.text('第一次添加病历时会问你'),
+          findsNothing,
+          reason: '拨了开关就算问过了,副标题不该再说"还没问"——矛盾界面就是这条要挡的问题',
+        );
+        // 持久化:不是只改了内存里的 State,prefs 里那两把键也得真的写下去——
+        // 下次 `runCloudExtractions`/`shouldAskCloudExtract` 读的正是这两把键。
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getBool('cloud_extract_enabled'), isTrue);
+        expect(
+          prefs.getBool(cloudExtractAskedKey),
+          isTrue,
+          reason: '拨开关本身也算做过一次明确选择,必须一起置真',
+        );
+        expect(
+          shouldAskCloudExtract(loggedIn: true, asked: prefs.getBool(cloudExtractAskedKey) ?? false),
+          isFalse,
+          reason: '置真之后,下一次 runImport 不该再弹 ask sheet 把这次手动选择覆盖掉',
+        );
+      },
+    );
 
     testWidgets('C3:开着 iCloud 同步时点「开通云同步」:原因摆在屏上,仍停在"未开通"分支', (t) async {
       resetVaultQueueForTest();
@@ -2773,7 +2659,7 @@ void main() {
       await t.tap(find.byKey(const Key('cloud_switch_p-1')));
       await t.pumpAndSettle();
 
-      expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
+      expect(find.textContaining('请先在「我 → 关于」里关闭 iCloud 同步'), findsOneWidget);
       expect(
         t.widget<SwitchListTile>(find.byKey(const Key('cloud_switch_p-1'))).value,
         isFalse,
@@ -2789,7 +2675,7 @@ void main() {
       final api = FakeApi(hasKeys: true);
       await giveCurrentProfileCloudId(t);
       await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
-      expect(find.text('同步'), findsOneWidget);
+      expect(find.text('云端备份'), findsOneWidget);
 
       // `setCloudPaused` 要写 profiles.json —— 真实文件 I/O 在 `pumpAndSettle` 的
       // 假时钟里跑不完(本仓库一贯的限制),所以这一跳包进 `runAsync`。
@@ -2804,11 +2690,11 @@ void main() {
       expect(
         // 精确匹配这一行的状态句:同一句话现在也出现在那节说明和 I8 的告知横幅里
         // (它们共用 `_cloudDefaultCopy`),`textContaining` 会一次找到三个。
-        find.text('云同步已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号'),
+        find.text('云端备份已关闭 —— 关闭后本机不再上传下载;云端已有的密文会保留到你注销账号'),
         findsOneWidget,
         reason: '用户最怕的是"关掉是不是等于删库" —— 这句必须在那一行上',
       );
-      expect(find.text('同步'), findsNothing, reason: '「关闭后本机不再上传下载」');
+      expect(find.text('云端备份'), findsNothing, reason: '「关闭后本机不再上传下载」');
     });
 
     testWidgets('关掉了的成员:不在"默认开云"的待办队列里(否则下次触发又开回来)', (t) async {
@@ -2851,7 +2737,7 @@ void main() {
       });
       await t.pumpAndSettle();
 
-      expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
+      expect(find.textContaining('请先在「我 → 关于」里关闭 iCloud 同步'), findsOneWidget);
       expect(
         ProfileManager.instance.byId(other!)!.cloudId,
         isNull,
@@ -2907,23 +2793,23 @@ void main() {
       await _toReady(t, api, syncEngine: engine);
 
       // 第一次点:普通同步,撞 VaultMismatch。
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
-      expect(find.textContaining('不是这个云档案'), findsOneWidget, reason: 'VaultMismatch 的中文原文');
-      expect(find.text('同步'), findsOneWidget, reason: '同一颗按钮,不多出第二颗');
+      expect(find.textContaining('不是这个云端病历箱'), findsOneWidget, reason: 'VaultMismatch 的中文原文');
+      expect(find.text('云端备份'), findsOneWidget, reason: '同一颗按钮,不多出第二颗');
 
       // 第二次点同一颗:上次失败过,于是走 enableCloud → 重开箱(FIFO 队列)+
       // 首同步,不必重启 App。Task 17 在「云同步」这节里加了一行「云端整理」
       // 开关,第一次点出的错误横幅把「同步」按钮挤到了视口外——先滚回可点范围。
-      await t.ensureVisible(find.text('同步'));
+      await t.ensureVisible(find.text('云端备份'));
       await t.pumpAndSettle();
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
 
       expect(rust.keyedNow, isTrue, reason: '重开箱走了(FIFO 队列),箱子现在是 keyed 的');
       expect(syncApi.pulls, 1, reason: '重开箱之后首同步真的跑到了拉事件这一步');
-      expect(find.textContaining('不是这个云档案'), findsNothing, reason: '成功之后错误清掉');
-      expect(find.text('同步'), findsOneWidget);
+      expect(find.textContaining('不是这个云端病历箱'), findsNothing, reason: '成功之后错误清掉');
+      expect(find.text('云端备份'), findsOneWidget);
     });
 
     // R1:屏上那条路 —— 上次失败过之后,「同步」走的是可续做的 `enableCloud`,而那一支
@@ -2948,21 +2834,21 @@ void main() {
       );
       await _toReady(t, api, syncEngine: engine);
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
-      expect(find.textContaining('不是这个云档案'), findsOneWidget);
+      expect(find.textContaining('不是这个云端病历箱'), findsOneWidget);
 
       // 第二次点同一颗:走 enableCloud 那条可续做的支路。同 M4:先滚回可点范围
       // (Task 17 新加的「云端整理」开关把错误横幅之后的「同步」按钮挤出了视口)。
-      await t.ensureVisible(find.text('同步'));
+      await t.ensureVisible(find.text('云端备份'));
       await t.pumpAndSettle();
       await t.runAsync(() async {
-        await t.tap(find.text('同步'));
+        await t.tap(find.text('云端备份'));
         await Future<void>.delayed(const Duration(milliseconds: 50));
       });
       await t.pumpAndSettle();
 
-      expect(find.textContaining('请先在设置里关闭 iCloud 同步'), findsOneWidget);
+      expect(find.textContaining('请先在「我 → 关于」里关闭 iCloud 同步'), findsOneWidget);
       expect(syncApi.pulls, 0, reason: '一趟同步都不该起步');
       expect(
         await t.runAsync(loadIcloudBlocksCloud),
@@ -2978,7 +2864,7 @@ void main() {
       final syncApi = _SyncApi();
       await _toReady(t, api, syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust()));
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await t.pumpAndSettle();
@@ -2991,10 +2877,10 @@ void main() {
       final syncApi = _SyncApi(delay: const Duration(milliseconds: 1));
       await _toReady(t, api, syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust()));
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
 
-      expect(find.textContaining('上次同步'), findsOneWidget);
+      expect(find.textContaining('上次云端备份'), findsOneWidget);
       expect(find.textContaining('推送 0 条'), findsOneWidget);
       expect(find.textContaining('拉取 0 条'), findsOneWidget);
     });
@@ -3006,7 +2892,7 @@ void main() {
       final syncApi = _SyncApi(failPull: true, delay: const Duration(milliseconds: 1));
       await _toReady(t, api, syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust()));
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
 
       expect(find.text('服务器开小差了,稍后再试'), findsOneWidget);
@@ -3023,7 +2909,7 @@ void main() {
         syncEngine: SyncEngine(syncApi, AccountSession.instance, rust: _FakeSyncRust(keyed: false)),
       );
 
-      await t.tap(find.text('同步'));
+      await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
 
       expect(find.textContaining('拒绝同步'), findsOneWidget);
@@ -3134,7 +3020,7 @@ void main() {
 
       await t.tap(find.text('先导出'));
       await t.pumpAndSettle();
-      expect(find.text('导出 · 分享'), findsOneWidget); // ExportScreen 的 AppBar 标题
+      expect(find.text('导出文件'), findsOneWidget); // ExportScreen 的 AppBar 标题
 
       // 导出完回来,确认弹窗还在,可以接着点「继续注销」——不是走了一趟导出
       // 就把整个确认流程弄丢。
@@ -3277,13 +3163,13 @@ void main() {
     Future<void> toUnlock(WidgetTester t, FakeApi api) async {
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
     }
 
     testWidgets('解锁屏顶部有这一块,口令/恢复码兜底一个都没拿掉', (t) async {
       await toUnlock(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
 
-      expect(find.text('用旧手机扫码批准'), findsOneWidget);
+      expect(find.text('用旧手机扫码批准,最简单'), findsOneWidget);
       expect(find.byKey(const Key('device_approval_start')), findsOneWidget);
       // 兜底还在。
       expect(find.text('解锁'), findsOneWidget);
@@ -3317,7 +3203,7 @@ void main() {
       );
       expect(find.byType(QrImageView), findsOneWidget);
       expect(find.textContaining('等旧手机扫码批准'), findsOneWidget);
-      expect(find.textContaining('这张码里没有你的病历也没有密钥'), findsOneWidget);
+      expect(find.textContaining('这张码里没有你的病历也没有钥匙'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('device_approval_cancel')));
       await t.pumpAndSettle();
@@ -3421,7 +3307,7 @@ void main() {
       // 旧手机封的是上一把临时公钥。
       await t.pumpWidget(_app(api, crypto: FakeCrypto(openSealedFails: (_) => true)));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('device_approval_start')));
       await t.pump(const Duration(milliseconds: 200));
@@ -3460,14 +3346,14 @@ void main() {
       );
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
-      expect(find.text('输入口令解锁'), findsOneWidget);
+      expect(find.text('输口令'), findsOneWidget);
 
       await t.tap(find.byKey(const Key('device_approval_start')));
       await t.pump(const Duration(milliseconds: 200));
       await t.pump(const Duration(seconds: 3));
       await t.pump(const Duration(milliseconds: 200));
 
-      expect(find.textContaining('对不上你账号的密钥'), findsOneWidget);
+      expect(find.textContaining('和你的账号对不上'), findsOneWidget);
       expect(find.text('已登录'), findsNothing, reason: '配不上就不许进去');
       expect(AccountSession.instance.privateKey, isNull, reason: '一个字节都不许落盘');
       expect(AccountSession.instance.publicKey, isNull);
@@ -3722,7 +3608,10 @@ void main() {
 
   // I8:登录/设完密钥那一刻,屏上必须把"默认开云"这件事说出来 —— 默认上传是一个
   // **代替用户做的决定**,他至少有权在发生的那一刻知道,并且知道怎么关。
-  group('I8:默认开云的一次性告知', () {
+  // Task 12:登录那一刻那条一次性横幅**撤掉了** —— 它说的和它正下方「云端」小节
+  // 那段说明是同一件事(Task 19 友好度 #5 已经记过一次:点完「知道了」同一段话还在
+  // 屏上,像是没点上)。说这件事的地方现在只有一处,这条用例钉住它还在。
+  group('默认开云这件事,说在开关的上面', () {
     late Directory support;
 
     setUp(() async {
@@ -3735,25 +3624,7 @@ void main() {
 
     tearDown(() async => support.delete(recursive: true));
 
-    // Task 19 友好度 #5:横幅原来逐字复用下面「云同步」小节的说明,点「知道了」
-    // 之后用户会发现同一段话还在屏上,像是没点上。横幅现在是独立的一句短话,
-    // 完整的三件事(默认上传 / 可按成员关 / 关了云端密文留着)只在小节说明里说
-    // 一遍——不在横幅里重复。
-    testWidgets('第一次进到「已登录」:横幅是独立短句(不逐字复用云同步小节的说明)', (t) async {
-      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
-
-      expect(find.byKey(const Key('cloud_notice')), findsOneWidget);
-      final bannerText = t.widget<Text>(find.byKey(const Key('cloud_notice_text'))).data!;
-      expect(bannerText, contains('自动加密备份到云端'));
-      expect(bannerText, contains('按成员关掉'));
-      expect(
-        bannerText,
-        isNot(contains('云端已有的密文会保留到你注销账号')),
-        reason: '这句细节留给下面的云同步小节说,横幅点完「知道了」不该让人觉得什么都没变',
-      );
-    });
-
-    testWidgets('云同步小节的完整说明(三件事)仍然只在小节里,不受横幅精简影响', (t) async {
+    testWidgets('完整说明(三件事)就在那一排开关上面,一字不少', (t) async {
       await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
 
       const fullCopy = '登录之后,每个成员的病历默认都会加密备份到云端(我们只看得到密文)。'
@@ -3762,48 +3633,25 @@ void main() {
       expect(find.text(fullCopy), findsOneWidget);
     });
 
-    testWidgets('点「知道了」:收起来,而且落盘 —— 下次不再出现', (t) async {
-      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
-
-      await t.tap(find.byKey(const Key('cloud_notice_ack')));
-      await t.pumpAndSettle();
-      expect(find.byKey(const Key('cloud_notice')), findsNothing);
-      expect(await t.runAsync(loadCloudDefaultNoticeSeen), isTrue);
-    });
-
-    // M16:那个标记原来是全局的 —— 同一台手机上换一个账号登录,他**从没**被告知过
-    // "你的病历会自动上云",而那正是需要被告知的那一刻。退出登录时清掉它
-    // (`AccountSession.clear()` 本来就在清一串账号态的 key,顺路一条)。
-    testWidgets('M16:退出登录之后换个账号登录 → 这句话还会说一次', (t) async {
-      await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
-      await t.tap(find.byKey(const Key('cloud_notice_ack')));
-      await t.pumpAndSettle();
-      expect(await t.runAsync(loadCloudDefaultNoticeSeen), isTrue);
-
-      await t.runAsync(() => AccountSession.instance.clear());
-
-      expect(
-        await t.runAsync(loadCloudDefaultNoticeSeen),
-        isFalse,
-        reason: '下一个用这台手机登录的人也有权在那一刻知道这件事',
-      );
-    });
-
-    testWidgets('已经看过:不再出现', (t) async {
-      SharedPreferences.setMockInitialValues({'cloud_default_notice_seen': true});
+    testWidgets('屏顶不再有那条一次性横幅', (t) async {
       await _toReady(t, FakeApi(hasKeys: true, delay: const Duration(milliseconds: 5)));
 
       expect(find.byKey(const Key('cloud_notice')), findsNothing);
+      expect(find.text('知道了'), findsNothing);
     });
   });
 
   group('cloudRowStatus(纯函数):开关那一行的状态句', () {
     // N3:**不能说「已备份」** —— I7 之后非当前成员只"注册"过(服务端一个空档案 +
-    // 本机一把密钥),病历一条都还没上去。「已开通云备份」对两种状态都是真话。
-    test('已开通:说「已开通」+ 角色,不说「已备份」', () {
+    // 本机一把密钥),病历一条都还没上去。「已开通云端备份」对两种状态都是真话。
+    //
+    // Task 12:后面那半句角色(「· 主人」)撤掉了 —— 挑人的界面上不写角色词,
+    // 授权级别只在某个成员自己的页面里说(`s10`)。
+    test('已开通:说「已开通」,不说「已备份」、也不说角色', () {
       final s = cloudRowStatus(const Profile(id: 'p-1', name: '我', cloudId: 'prf_1', role: 'owner'));
-      expect(s, '已开通云备份 · 主人');
+      expect(s, '已开通云端备份');
       expect(s, isNot(contains('已备份到')), reason: '只注册过的成员云上还没有他的病历');
+      expect(s, isNot(contains('主人')), reason: '角色只在成员自己的页面里说');
     });
 
     test('还没开通:说会自动重试,也可以自己打开这个开关', () {
@@ -3814,7 +3662,7 @@ void main() {
     // 那句话会让用户以为云上躺着一份他的病历。
     test('M9:关掉的成员从没上过云 → 不许提"云端已有的密文会保留"', () {
       final s = cloudRowStatus(const Profile(id: 'p-1', name: '我', cloudPaused: true));
-      expect(s, contains('云同步已关闭'));
+      expect(s, contains('云端备份已关闭'));
       expect(s, isNot(contains('云端已有的密文')));
     });
 
@@ -3836,7 +3684,7 @@ void main() {
         icloudOn: true,
       );
       expect(s, contains('iCloud 同步'));
-      expect(s, isNot(contains('已开通云备份')));
+      expect(s, isNot(contains('已开通云端备份')));
     });
   });
 

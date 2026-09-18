@@ -15,14 +15,14 @@ void main() {
   test('ProfileLocked:标题是「需要你的口令」,正文不带「请重启 App 再试」,不露 cloudId', () {
     final text = vaultBootstrapErrorText(const ProfileLocked('prf_1'));
     expect(text.title, '需要你的口令');
-    expect(text.body, '你的病历在云端是加密的,需要你的口令才能打开。');
+    expect(text.body, '你的病历是加密的,需要你的口令才能打开。');
     expect(text.body, isNot(contains('请重启 App 再试')));
     expect(text.body, isNot(contains('prf_1')));
   });
 
-  test('其它错误:维持原文案(标题「无法打开你的健康档案」,正文带重启建议)', () {
+  test('其它错误:维持原文案(标题「无法打开你的病历箱」,正文带重启建议)', () {
     final text = vaultBootstrapErrorText(StateError('boom'));
-    expect(text.title, '无法打开你的健康档案');
+    expect(text.title, '无法打开你的病历箱');
     expect(text.body, contains('boom'));
     expect(text.body, contains('请重启 App 再试。'));
   });

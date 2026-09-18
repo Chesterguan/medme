@@ -193,6 +193,41 @@ void main() {
     );
   });
 
+  // 终审 I7:事件名和属性名早就被钉住了,「触发点」那一列一直是自由文本 —— 于是
+  // `overview_screen.dart`、`visit_summary_sheet.dart`、`mode_picker_screen.dart`
+  // 这些**已经删掉的文件**在目录里挂了整整一轮改版都没人发现,而后台查数的人正是
+  // 照着这一列去翻代码的。这条只钉最便宜也最有效的那一半:**文件得存在**。
+  // (它钉不住「文件在、但那里已经不发这条事件了」—— 那要跑一遍源码扫描,
+  // 代价远大于收益;文件被删是这类漂移里最常见的一种。)
+  test('触发点那一列提到的每个 .dart 文件都还在(删屏最容易漏改这一列)', () {
+    final md = _catalog.readAsStringSync();
+    final start = md.indexOf('## 四、');
+    final end = md.indexOf('## 五、');
+    final section = md.substring(start, end);
+    // 事件行的第三格 = 触发点。路径一律相对 `lib/` 写(例:`screens/archive_screen.dart`)。
+    final rowRe = RegExp(
+      r'^\|\s*`([a-z][a-z0-9_]*)`\s*\|[^|]*\|([^|]*)\|',
+      multiLine: true,
+    );
+    final pathRe = RegExp(r'`([^`]*\.dart)`');
+    final missing = <String>[];
+    for (final row in rowRe.allMatches(section)) {
+      for (final m in pathRe.allMatches(row.group(2)!)) {
+        final rel = m.group(1)!;
+        if (!File('lib/$rel').existsSync()) {
+          missing.add('${row.group(1)}: lib/$rel');
+        }
+      }
+    }
+    expect(
+      missing,
+      isEmpty,
+      reason:
+          '目录第四节「触发点」列指向了不存在的文件:\n${missing.join('\n')}\n'
+          '路径相对 `apps/mobile_flutter/lib/` 写;删屏/改名时把这一列一起改了。',
+    );
+  });
+
   test('目录里没漏掉「不采什么」那一节 —— 隐私政策直接引它', () {
     final md = _catalog.readAsStringSync();
     for (final must in ['录屏', r'$geoip_disable', 'ADR 0009']) {

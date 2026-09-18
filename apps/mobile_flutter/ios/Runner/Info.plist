@@ -67,9 +67,9 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>MedMe 需要使用相机拍摄你的化验单、处方等病历(识别文字后保存到你自己的健康档案),以及在新手机上用旧手机扫码完成登录。照片与扫到的二维码只在本机处理,不会上传。</string>
+	<string>MedMe 需要使用相机拍摄你的化验单、处方等病历(识别文字后保存到你自己的病历里),以及在新手机上用旧手机扫码完成登录。开了「云端整理」时,登录后会把涂黑后的病历照片或文字送到云端(我们的服务器和合作的模型服务)整理。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>MedMe 需要访问相册,导入你已经拍好的病历照片。照片只存在本机,不会上传。</string>
+	<string>MedMe 需要访问相册,添加你已经拍好的病历照片。开了「云端整理」时,登录后会把涂黑后的病历照片或文字送到云端(我们的服务器和合作的模型服务)整理。</string>
 	<!-- ⚠️ 这条必须留着,来源是 **file_picker**,不是 ML Kit。
 	     `file_picker ^8` 的 iOS 实现依赖 DKImagePickerController,其中 `DKCamera` 有个
 	     `DKCameraLocationManager`(给照片打地理标记用),会引用 `CLLocationManager` +

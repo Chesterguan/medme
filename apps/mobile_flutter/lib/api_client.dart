@@ -57,7 +57,7 @@ class ApiNetworkError implements Exception {
 /// (`_addFamily` 曾是唯一一个)。状态码的含义是服务端定的、全 App 一致的,
 /// 所以这层翻译也该只有一份。
 ///
-/// 调用点仍然可以在这之上加**自己这条路独有**的解释(比如「按手机号加家属」
+/// 调用点仍然可以在这之上加**自己这条路独有**的解释(比如「按手机号加成员」
 /// 的 404 能说得比"没找到"具体得多,见 `account_screen.dart` 的
 /// `_familyLookupError`)——那是端点语义,不是状态码语义。
 String friendlyApiError(Object e) => switch (e) {
@@ -74,7 +74,7 @@ String friendlyApiError(Object e) => switch (e) {
   // 自己的 `_familyLookupError` 先接走,落不到这里。
   ApiFailed(status: 409) => '这一步已经做过了,不用再做一次',
   ApiFailed(status: 410) => '这个邀请码已经过期或被用过了,请对方重新生成一个',
-  ApiFailed(status: 403) => '没有权限做这件事——这份档案可能不是你的,或者授权已经被收回',
+  ApiFailed(status: 403) => '没有权限做这件事——这份病历可能不是你的,或者能看的权限已经被收回',
   ApiFailed(status: 404) => '没有找到——可能已经被删除或撤销了',
   // 自己转给自己(服务端 `db.py` 的 `cannot redeem own invite`)。**必须排在通用
   // 400 之前** —— switch 表达式按顺序匹配。通用的「请求里有填错的地方」对这件事是
@@ -84,8 +84,8 @@ String friendlyApiError(Object e) => switch (e) {
   ApiFailed(status: >= 500) => '服务器开小差了,稍后再试',
   // **`StateError` 必须单独拆一条。** 全仓有 12 处 `throw StateError('中文…')`
   // (`sync_engine.dart`/`grants.dart`)会走到这些错误展示位,而
-  // `StateError.toString()` 是 `'Bad state: $message'` —— 于是「开通云同步」失败时
-  // 屏上是「**Bad state:** 账号公钥未就绪,不能开通云同步」,正是 B1/B2 要消灭的
+  // `StateError.toString()` 是 `'Bad state: $message'` —— 于是「开通云端备份」失败时
+  // 屏上是「**Bad state:** 账号公钥未就绪,不能开通云端备份」,正是 B1/B2 要消灭的
   // 那一类。只取 message。
   StateError(:final message) => message,
   // 其余(`UnlockFailed`/`ProfileLocked`/`VaultMismatch` 等自定义异常)的
@@ -117,7 +117,7 @@ class ApiClient {
   ///
   /// 为什么必须有这个区别:一次后台的、尽力而为的、失败了也只是"这份文档没有云抽取
   /// 结果"的请求,**没有资格把用户整个账号态清掉**。而它会 —— refresh 也过期时
-  /// [_refreshOnce] 调 [AccountSession.clear],连档案密钥一起清,用户下次打开 App
+  /// [_refreshOnce] 调 [AccountSession.clear],连档案钥匙一起清,用户下次打开 App
   /// 发现自己被登出了,而他什么都没做过。用户自己点的那些(登录、同步、授权)该清
   /// 就清:那时他正看着屏幕,一句「登录状态已过期」是有意义的。
   ApiClient.background(AccountSession session, {String? base, Duration timeout = Net.idle})
@@ -182,7 +182,7 @@ class ApiClient {
   ///
   /// * 没有 session / 没有 refresh token / 没有 accountId → false(原样 401)。
   /// * **刷新自己也 401** → refresh 也过期或被吊销了,重试没有任何意义:清掉本机
-  ///   账号态([AccountSession.clear],连档案密钥一起),让 UI 回到登录入口。
+  ///   账号态([AccountSession.clear],连档案钥匙一起),让 UI 回到登录入口。
   ///   除非这个 client 是 [background] 建的——见那个构造函数。
   /// * 网络错误等其它失败 → false,这次请求照原样失败,下次再试(不清账号态:
   ///   断网不等于被登出)。

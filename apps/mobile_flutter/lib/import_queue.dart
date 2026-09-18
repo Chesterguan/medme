@@ -1,7 +1,7 @@
-/// 导入的**后台队列**:采集完就走人,识别在后台一份一份跑。
+/// 导入的**后台队列**:添加完就走人,识别在后台一份一份跑。
 ///
 /// 为什么存在:此前 `import_flow` 在一个模态进度框里逐张跑 OCR,用户得盯着
-/// 「正在导入 3/12…」等完每一页(创始人原话:「导入识别的时间过长」)。现在采集
+/// 「正在导入 3/12…」等完每一页(创始人原话:「导入识别的时间过长」)。现在添加
 /// 一结束就把这批交给这条队列,对话框立刻关掉;屏上剩下的只是档案顶部几行
 /// 「识别中」,每识别完一份,那份文档就自己长到时间线上
 /// ([bumpVaultRevision])。
@@ -29,7 +29,7 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/doc_labels.dart' show isTempCaptureName;
 // `backfillPagesWithoutText` 住在 import_flow 里(医生代拍那条路也用它)。两个文件
-// 互相 import 是有意的:采集 UI 在那边,跑批在这边,同一件事不该有两份实现。
+// 互相 import 是有意的:取件 UI 在那边,跑批在这边,同一件事不该有两份实现。
 import 'package:mobile_flutter/import_flow.dart'
     show ImportChoice, backfillPagesWithoutText;
 import 'package:mobile_flutter/ocr_bridge.dart';
@@ -114,7 +114,7 @@ void _notify() => importJobs.value = List<ImportJob>.of(importJobs.value);
 /// 「一条队列、串行」这条不变量在换牌前后都成立。生产里永远只有一次发牌。
 Object? _drainToken;
 
-/// 一批(一次采集)共享的账本:埋点、「待确认」队列、合并、云抽取都按批算。
+/// 一批(一次添加)共享的账本:埋点、「还没核对」队列、合并、云抽取都按批算。
 class _Batch {
   _Batch({
     required this.profile,
@@ -127,14 +127,14 @@ class _Batch {
     required this.sizeBefore,
   });
 
-  /// 采集那一刻的成员与箱子 —— 整批都认它们,过程中一次都不重读「当前成员」
+  /// 添加那一刻的成员与箱子 —— 整批都认它们,过程中一次都不重读「当前成员」
   /// (同 `cloud_extract.PendingCloudExtraction` 的两个字段,理由一模一样:
   /// 队列要跑好几分钟,中途切成员/医生代拍会把箱子换掉)。
   final Profile profile;
   final String vaultRoot;
   final ImportChoice source;
 
-  /// 用户在采集结束时答应过「合并成一份」。**问在前面**:识别是后台跑的,人早
+  /// 用户在添加结束时答应过「合并成一份」。**问在前面**:识别是后台跑的,人早
   /// 就走了,没法等识别完再弹一个框问他。
   final bool mergePhotos;
   final int total;
@@ -162,7 +162,7 @@ class _Batch {
 
 /// 把这一批交给队列,**立刻返回**排了几份。
 ///
-/// [profile] / [vaultRoot] 必须是调用方在采集结束时就地捕获的那一对(见 [_Batch])。
+/// [profile] / [vaultRoot] 必须是调用方在添加结束时就地捕获的那一对(见 [_Batch])。
 int enqueueImport({
   required List<PendingImport> items,
   required Profile profile,
@@ -284,7 +284,7 @@ Future<void> _drain(Object token) async {
 Future<void> _runJob(ImportJob job) async {
   final batch = job._batch;
   final startedAt = DateTime.now();
-  // 每份从「采集完、待处理」开始;下面逐步推进,失败时它就是失败所在的步骤。
+  // 每份从「添加完、待处理」开始;下面逐步推进,失败时它就是失败所在的步骤。
   var stage = 'capture';
   try {
     // 便宜的预检:成员/箱子已经换了就别白跑一趟 OCR。**挡住写错库的不是这一行**,
@@ -322,7 +322,7 @@ Future<void> _runJob(ImportJob job) async {
     // 切成员那一条要说**怎么办**:重试仍然认捕获的那个成员(闸就是这么设计的),
     // 不切回去点多少次都还是这一行。
     job.error = e is ImportVaultSwitched
-        ? '已经切换了成员或保险箱,这一份没有导入 —— 切回原来那位成员再试'
+        ? '已经切换了成员,这一份没添加上 —— 切回原来那位成员再试'
         : '没能处理这一份';
     batch.rows.add(rowFromError(job.item.name, e));
     // ⚠️ 只记步骤和**原因码**,绝不记 `e` 本身 —— 异常文本里常带文件名和路径。
@@ -336,7 +336,7 @@ Future<void> _runJob(ImportJob job) async {
 }
 
 Future<void> _finishBatch(_Batch batch) async {
-  // 成员已经切走 → 「待确认」队列和档案自动命名都是**写在当前成员名下**的,
+  // 成员已经切走 → 「还没核对」队列和档案自动命名都是**写在当前成员名下**的,
   // 写下去就是把甲的新文档记进乙的待办。不写,文档本身照常在它自己的箱子里。
   //
   // **每一步之前都重新问一次**,不是开头问一次就一路用到底:下面每个 `await`
@@ -362,7 +362,7 @@ Future<void> _finishBatch(_Batch batch) async {
       final missing = batch.imageTotal - batch.imageDocIds.length;
       importQueueNotice.value =
           '刚才那 ${batch.imageTotal} 张里有 $missing 张没能入库,所以没有合并成一份'
-          ' —— 合并不可撤销,少一页不如不合。已入库的都在档案里。';
+          ' —— 合并不可撤销,少一页不如不合。已入库的都在「病历」里。';
     }
   }
   bumpVaultRevision();
@@ -412,7 +412,7 @@ Future<void> _finishBatch(_Batch batch) async {
   unawaited(runCloudExtractions(batch.pending));
 }
 
-/// 把这批照片合并成一份多页文档,并把「待确认」和云抽取都改挂到新文档上。
+/// 把这批照片合并成一份多页文档,并把「还没核对」和云抽取都改挂到新文档上。
 ///
 /// 合并失败时原来那几份**一份不少**(保证来自 Rust 侧
 /// `merge_documents_into_pdf`:任何校验/解码失败都发生在删除任何原文档之前),
@@ -522,7 +522,7 @@ Future<ImportItemOutcome> _processImportItem(
   final stillMissingPages = await backfillPagesWithoutText(
     outcome,
     item.path,
-    // 回填是**写事件**,同样只认采集那一刻的成员和箱子(见那边的 ⚠️)。
+    // 回填是**写事件**,同样只认添加那一刻的成员和箱子(见那边的 ⚠️)。
     profile: batch.profile,
     vaultRoot: batch.vaultRoot,
     onStage: onStage,

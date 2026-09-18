@@ -21,10 +21,7 @@ import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
-import 'package:mobile_flutter/screens/emergency_card_screen.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
-import 'package:mobile_flutter/screens/mode_picker_screen.dart';
-import 'package:mobile_flutter/screens/overview_screen.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -75,7 +72,7 @@ void pushClaimScreen(ClaimLink link, {required bool cold}) {
   );
 }
 
-/// 同意门之前到达的授权链接(家属/医生扫码进来的那条)。同 [_pendingClaim],
+/// 同意门之前到达的授权链接(家人/医生扫码进来的那条)。同 [_pendingClaim],
 /// 一次性交接,取走即清空。
 (GrantLink, bool)? _pendingGrant;
 
@@ -94,8 +91,8 @@ void pushGrantRedeem(GrantLink link, {required bool cold}) {
 }
 
 class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
-  /// 保险箱内容变化(`vaultRevision`)3 秒后才推——避免连续几次录入/导入各触发
-  /// 一次网络请求;`triggerBackgroundSync` 自己会在没登录/当前成员没开通云同步时
+  /// 病历箱内容变化(`vaultRevision`)3 秒后才推——避免连续几次录入/导入各触发
+  /// 一次网络请求;`triggerBackgroundSync` 自己会在没登录/当前成员没开通云端备份时
   /// no-op,这里只管"什么时候跑"。
   Timer? _pushDebounce;
 
@@ -140,7 +137,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(ProxyPatientManager.instance.ensureLoaded());
-      // 回到前台顺手拉一次云同步(`triggerBackgroundSync` 没登录/没开通云同步
+      // 回到前台顺手拉一次云端备份(`triggerBackgroundSync` 没登录/没开通云端备份
       // 时 no-op)——见 Task 15 brief:app-resume pull。
       unawaited(runBackgroundSync());
     }
@@ -167,7 +164,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
     }
     final link = ClaimLink.tryParse(uri);
     if (link == null) return false;
-    // 保险箱可能还没打开完(冷启动),推迟到下一帧再导航。
+    // 病历箱可能还没打开完(冷启动),推迟到下一帧再导航。
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // ⚠️ **没同意过就先别推。** 冷启动时认领屏会被推到告知页**上面** —— 那等于
       // 病人在没看过任何告知、没同意过任何条款的情况下,第一屏就是「存进我的档案」,
@@ -218,11 +215,11 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   if (error is ProfileLocked) {
     return (title: '需要你的口令', body: '$error');
   }
-  return (title: '无法打开你的健康档案', body: '$error\n\n请重启 App 再试。');
+  return (title: '无法打开你的病历箱', body: '$error\n\n请重启 App 再试。');
 }
 
 /// [ProfileLocked] 错误屏专用的两个动作:「去登录」「切换成员」——见 Task 15
-/// review C1:退出登录/换设备清过 secure storage 之后,已开通云同步的成员会
+/// review C1:退出登录/换设备清过 secure storage 之后,已开通云端备份的成员会
 /// 变成这个状态,原来这一屏没有任何按钮,用户只能卡死在这儿。
 ///
 /// 拆成独立 widget(而不是内联在 `VaultBootstrap.build` 里)是为了让它能在
@@ -274,7 +271,7 @@ class ProfileLockedActions extends StatelessWidget {
               ),
             );
             // 登录/解锁成功时 `AccountFlow.restoreProfileKeys` 已经把这个成员
-            // 锁着的密钥补回来了(见 account_flow.dart)——但这一屏自己的
+            // 锁着的钥匙补回来了(见 account_flow.dart)——但这一屏自己的
             // `_open` 早就 resolve 过一次错误,不会自动感知,回来之后必须
             // 显式重试一次开箱。
             onDone();
@@ -307,7 +304,7 @@ class ProfileLockedActions extends StatelessWidget {
 /// "某个界面显示得不对",而是整套云功能在每次冷启动后**等于不存在**:
 ///
 /// * `openCurrentProfileVault` 靠 `AccountSession.profileKey()` 选开箱路径
-///   (见 `vault_boot.planVaultOpen`)——读不到密钥,每个已开通云同步的成员都被
+///   (见 `vault_boot.planVaultOpen`)——读不到钥匙,每个已开通云端备份的成员都被
 ///   判成 `ProfileLocked`,用户开机看到的是"需要解锁账号"的死胡同;
 /// * `triggerBackgroundSync` 第一句就是 `session.loggedIn.value`——恒 false,
 ///   debounce push 和 app-resume pull 永远 no-op;
@@ -335,11 +332,11 @@ class ProfileLockedActions extends StatelessWidget {
 /// 排在开箱**之后**(而不是和它并发):它会 `create()`/`switchTo` 动
 /// `ProfileManager.currentId`,而 `openCurrentProfileVault` 读的正是 `current` ——
 /// 并发跑有一个真实的窗口会开错箱子。放在 `finally` 里是因为**开箱失败恰恰是最需要
-/// 它的时候**(`ProfileLocked` = 本机缺档案密钥,而补密钥正是它干的事)。
+/// 它的时候**(`ProfileLocked` = 本机缺档案钥匙,而补钥匙正是它干的事)。
 ///
 /// 失败也不许挡住启动:它对网络失败本来就静默(见
 /// `AccountFlow.restoreProfileKeys`),这里再包一层 `catchError`,任何没预料到的
-/// 失败都不该把用户摆在一个"无法打开你的健康档案"的错误屏上。
+/// 失败都不该把用户摆在一个"无法打开你的病历箱"的错误屏上。
 @visibleForTesting
 Future<void> runBootSequence({
   required Future<void> Function() restoreAccountSession,
@@ -356,7 +353,7 @@ Future<void> runBootSequence({
   }
 }
 
-/// 启动引导:先在真实沙盒目录打开保险箱(FFI `open_vault`),再进主界面。
+/// 启动引导:先在真实沙盒目录打开病历箱(FFI `open_vault`),再进主界面。
 /// 打开是可韧性的(损坏的派生 db 会从 log 重建);目录取自 path_provider。
 /// iCloud 已接入(见 `vault_boot` / `icloud_bridge`):容器可解析且用户在设置里开启
 /// 同步时,真相存进 iCloud 容器,否则用本机沙盒。打开失败给人性化提示而非白屏。
@@ -367,7 +364,7 @@ class VaultBootstrap extends StatefulWidget {
 }
 
 class _VaultBootstrapState extends State<VaultBootstrap> {
-  /// 读回账号态、打开「当前成员」的保险箱(多成员见 profile_manager / vault_boot)、
+  /// 读回账号态、打开「当前成员」的病历箱(多成员见 profile_manager / vault_boot)、
   // 读「个人/医生」模式选择(`AppRoot` 据此决定先显示哪个根界面)。顺序契约见
   // [runBootSequence]。
   late Future<void> _open;
@@ -425,7 +422,7 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
 
   /// `ProfileLocked` 错误屏「去登录」/「切换成员」返回之后重跑一次开箱——
   /// 见 Task 15 review C1:原来这颗 `Future` 只在 `initState` 建一次,登录/
-  /// 补密钥或切成员成功之后箱子其实已经能开了,但这一屏靠 `FutureBuilder`
+  /// 补钥匙或切成员成功之后箱子其实已经能开了,但这一屏靠 `FutureBuilder`
   /// 监听同一个 `Future`,它早就 resolve(带着错误)了,不会自己刷新——用户
   /// 会被困死在这一屏里出不去。
   void _retry() {
@@ -473,9 +470,9 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
           final error = snap.error!;
           final text = vaultBootstrapErrorText(error);
           // `ProfileLocked` 是一个**可操作**的死胡同(见 Task 15 review C1):
-          // 退出登录/换设备清过 secure storage 之后,已开通云同步的成员会变成
+          // 退出登录/换设备清过 secure storage 之后,已开通云端备份的成员会变成
           // 这个状态——之前这一屏没有任何按钮,用户只能卡在这儿,连"去登录把
-          // 密钥补回来"都做不到,等于把 App 锁死。其它种类的开箱失败(箱子真的
+          // 钥匙补回来"都做不到,等于把 App 锁死。其它种类的开箱失败(箱子真的
           // 坏了)不给这两个按钮——它们解决不了"文件系统/数据库坏了"这件事。
           final locked = error is ProfileLocked;
           return Scaffold(
@@ -518,8 +515,8 @@ class _VaultBootstrapState extends State<VaultBootstrap> {
   }
 }
 
-/// 应用根:按 [AppMode] 决定显示哪个界面——还没选过模式 → 「你是?」选择屏;
-/// 选了「个人」→ [HomeShell](五 tab);选了「医生」→ [DoctorHomeScreen]。
+/// 应用根:按 [AppMode] 决定显示哪个界面——没选过 / 选了「个人」→ [HomeShell]
+/// (三 tab,「你是?」那一屏已删,见 [modeRoot]);选了「医生」→ [DoctorHomeScreen]。
 /// 用 `ValueListenableBuilder` 监听同一个 notifier:设置页「切换模式」写入新值后,
 /// 这里自动重建换到另一个根界面,不需要任何显式导航(调用方只需在切换后把导航栈
 /// popUntil 回第一层,见 `settings_screen.dart`)。
@@ -570,68 +567,63 @@ class _AppRootState extends State<AppRoot> {
   Widget _modeRoot() {
     return ValueListenableBuilder<AppModeKind?>(
       valueListenable: AppMode.instance.mode,
-      builder: (context, mode, _) {
-        return switch (mode) {
-          null => const ModePickerScreen(),
-          AppModeKind.personal => const HomeShell(),
-          AppModeKind.doctor => const DoctorHomeScreen(),
-        };
-      },
+      builder: (context, mode, _) => modeRoot(mode),
     );
   }
 }
 
-/// 底部导航壳:**五个一级 tab,按「使用时刻」划分**(设计系统 §八)。
+/// 按模式决定根界面。**`null`(从没选过)走个人模式** —— 「你是?」那一屏已经删了
+/// (ia-proposal §2 候选 A 的删除清单):代拍不是开机第一个该问的问题,它的入口
+/// 在「给医生看」的最后一行。
 ///
-/// | tab | 使用时刻 |
+/// 顶层纯函数,不碰 `BuildContext` —— 这样 `flutter test` 能直接断言映射关系。
+Widget modeRoot(AppModeKind? mode) => switch (mode) {
+  AppModeKind.doctor => const DoctorHomeScreen(),
+  _ => const HomeShell(),
+};
+
+/// 底部导航壳:**三个一级 tab**(mockup,创始人拍板)。
+///
+/// | tab | 用户在干什么 |
 /// |---|---|
-/// | 概览 | 日常打开,看一眼「我现在怎么样」 |
-/// | 趋势 | 复诊前自己看「这两年怎么变的」 |
-/// | 档案 | 找某一张单子 |
-/// | 应急卡 | 急诊室,**别人**拿着你的手机 |
-/// | 设置 | 数据主权 |
+/// | 病历 | 拍/添加一份,以及回头找某一张 |
+/// | 趋势 | 这个病现在怎么样、吃过什么药、该查没查 |
+/// | 我 | 云端、成员、口令与恢复码、设置 |
 ///
-/// 划分依据是**时刻**不是数据类型。旧的三 tab(健康档案 / 导出分享 / 设置)是按
-/// 功能分的,于是「我现在怎么样」和「这两年怎么变的」被一起压进了「健康档案」,
-/// 而它们是两个完全不同的时刻 —— 一个是每天早上三十秒,一个是复诊前坐下来看十分钟。
+/// ## 四处刻意的缺席
 ///
-/// ## 两处刻意的缺席
+/// **「给医生看」不是 tab** —— 它是「病历」首页那颗主按钮推进去的一整页。
+/// ⚠️ ia-proposal §2 推荐的恰恰相反(候选 A 把它放进底栏,并写明拒绝候选 B 的
+/// 理由是「老人在底栏找不到它」)。mockup 改了主意,**执行按 mockup**;
+/// 那条风险在模拟器冒烟里验(Task 19)。
 ///
-/// **「看病带这个」不是 tab。**(原名「就诊单」,2026-08-05 改名,见
-/// `screens/visit_summary_sheet.dart` 顶部文档)它是诊室里那 30 秒的动作,从
-/// 概览与档案的顶栏两处以浮层唤起。做成 tab 就是给一个一年用十次的动作一个
-/// 常驻席位,而把它挤掉的会是应急卡。
+/// **「急救卡」不再是 tab**,是「给医生看」那一页里的一条。降的是位置不是质量:
+/// `EmergencyBigCardScreen` 大字模式一字未动。
 ///
-/// **「导出·分享」不再是 tab,收进了设置。** 它承载的是 E2E 加密分享与可打印导出:
-/// 重、正式、要联网、低频。它和「看病带这个」不是一回事(那个是本地的、离线的、
-/// 一页纸),所以不能并进去;而它的心智恰好就是设置这个 tab 的定义 ——「数据
-/// 主权:我的数据往哪去」,和备份、清空是同一件事的三个方向。
-/// 诊室现场那条最高频的路没有变长:「看病带这个」浮层底部直接有「医生要看原件 ·
-/// 出示二维码」。
+/// **「概览」整屏解散**:成员卡进「我」,化验快照与最近就诊进「趋势」,最近添加
+/// 与「病历」tab 重复,三颗快捷操作各归各位。
+///
+/// **「趋势」保留原名**,不叫「看懂」——「病程档案」的入口位落在它里面。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
-  /// 五个 tab 的页面,顺序必须与 [HomeTab] 的常量逐一对应 —— `IndexedStack` 按
-  /// 下标取,错一位就是点「应急卡」进了「设置」。
+  /// 三个 tab 的页面,顺序必须与 [HomeTab] 的常量逐一对应 —— `IndexedStack` 按
+  /// 下标取,错一位就是点「趋势」进了「我」。
   ///
-  /// 与 [tabDestinations] 一起公开是为了让 `test/home_shell_test.dart` 能钉住
-  /// 「页面数 == 底栏项数 == [HomeTab.count]」。这三个数字散在两处 const 列表和
-  /// 一组常量里,加一个 tab 时最容易漏掉的就是其中一处,而漏掉的表现是**运行时
-  /// 越界或错位**,不是编译错误。
+  /// 与 [tabDestinations] 一起公开是为了让 `test/mobile_ia_test.dart` 能钉住
+  /// 「页面数 == 底栏项数 == [HomeTab.count]」。
   static const List<Widget> tabScreens = [
-    OverviewScreen(),
-    TrendsScreen(),
     ArchiveScreen(),
-    EmergencyCardScreen(),
+    TrendsScreen(),
     SettingsScreen(),
   ];
 
-  /// 底栏五项,顺序同 [tabScreens]。
+  /// 底栏三项,顺序同 [tabScreens]。
   static const List<NavigationDestination> tabDestinations = [
     NavigationDestination(
-      icon: Icon(Icons.dashboard_outlined),
-      selectedIcon: Icon(Icons.dashboard),
-      label: '概览',
+      icon: Icon(Icons.folder_outlined),
+      selectedIcon: Icon(Icons.folder),
+      label: '病历',
     ),
     NavigationDestination(
       icon: Icon(Icons.show_chart_outlined),
@@ -639,21 +631,9 @@ class HomeShell extends StatefulWidget {
       label: '趋势',
     ),
     NavigationDestination(
-      icon: Icon(Icons.folder_outlined),
-      selectedIcon: Icon(Icons.folder),
-      label: '档案',
-    ),
-    // 应急卡用 Material 的 `emergency`(那个六角星医疗符号),不用心形或十字 ——
-    // 心形在健康 app 里普遍是「收藏」,十字是「新增」。
-    NavigationDestination(
-      icon: Icon(Icons.emergency_outlined),
-      selectedIcon: Icon(Icons.emergency),
-      label: '应急卡',
-    ),
-    NavigationDestination(
-      icon: Icon(Icons.settings_outlined),
-      selectedIcon: Icon(Icons.settings),
-      label: '设置',
+      icon: Icon(Icons.person_outline),
+      selectedIcon: Icon(Icons.person),
+      label: '我',
     ),
   ];
 
@@ -662,7 +642,7 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _index = HomeTab.overview;
+  int _index = HomeTab.records;
 
   @override
   void initState() {
@@ -684,9 +664,9 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   /// 底栏被**手点**。埋点只挂在这里,**不挂 [_onTabRequested]** ——
-  /// 后者也接程序化跳转(`goToArchive()`、载入示例后的「去看看」),那是别的功能
+  /// 后者也接程序化跳转(`goToRecords()`、载入示例后的「去看看」),那是别的功能
   /// 的副作用,不是用户想去哪。混进来会把一个功能的成功记成另一个 tab 的人气,
-  /// 而这条事件存在的全部意义正是「五个席位该给谁」。
+  /// 而这条事件存在的全部意义正是「三个席位该给谁」。
   void _onTabTapped(int i) {
     final tab = AnalyticsTab.of(i);
     // 认不出来就不报(不猜),但 tab 照切 —— 埋点绝不影响功能。
@@ -717,8 +697,8 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
-/// 授权链接落地屏:家属/医生扫码进来,问一句「要不要加进你的 MedMe」,答应了才
-/// 兑换。**未登录先走账号屏**——兑换需要账号密钥对(封回自己的公钥),没有账号
+/// 授权链接落地屏:家人/医生扫码进来,问一句「要不要加进你的 MedMe」,答应了才
+/// 兑换。**未登录先走账号屏**——兑换需要账号的公私钥对(封回自己的公钥),没有账号
 /// 无从谈起;登录/解锁完成后回到这一屏继续兑换,不用重新点一次链接。
 class GrantRedeemScreen extends StatefulWidget {
   const GrantRedeemScreen({super.key, required this.link, this.cold = false, this.grants});
@@ -779,7 +759,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('加入档案')),
+      appBar: AppBar(title: const Text('加入病历箱')),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -798,7 +778,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
         // 一刻才揭晓(见 `redeem` 的响应)——文案不能替它先猜一个,猜错了(比如
         // 这其实是一条转移邀请)就是当场说瞎话。角色相关的措辞留到 [_result]。
         const Text(
-          '要接受对方分享的病历档案吗?',
+          '要接受对方给你的这份病历吗?',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
@@ -807,7 +787,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
         // (见上面的注释:角色由服务端在兑换那一刻才揭晓),所以照实说"下一步
         // 告知",而不是替它猜一个。
         const Text(
-          '接受之后,这份病历会出现在你的 MedMe 里;具体是只能看还是能一起录,'
+          '接受之后,这份病历会出现在你的 MedMe 里;具体是只能看还是能改,'
           '下一步告诉你。',
           style: TextStyle(color: Colors.black54, height: 1.5),
         ),
@@ -853,14 +833,14 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
   }
 
   /// 结果页标题——按**实际拿到的角色**说话,不是兑换前猜的那句。owner(代拍
-  /// 转移)是「成为主人」,其余(viewer/editor)是普通的「加入档案」。
+  /// 转移)是「归你了」,其余(viewer/editor)是普通的「加入病历箱」。
   String _resultHeadline(Profile p) =>
-      p.role == 'owner' ? '你已成为「${p.name}」档案的主人' : '已加入「${p.name}」的档案';
+      p.role == 'owner' ? '「${p.name}」的病历箱现在归你了' : '已加入「${p.name}」的病历箱';
 
   String _resultSubtitle(Profile p) {
-    if (p.role == 'owner') return '这份档案现在完全归你所有,原来的账号已自动降为编辑权限。';
+    if (p.role == 'owner') return '这个病历箱现在完全归你,原来那个账号降成「能改」。';
     final exp = p.expiresAt;
-    if (p.role == 'viewer' && exp != null) return '只读,至 ${exp.month}月${exp.day}日';
+    if (p.role == 'viewer' && exp != null) return '只能看,至 ${exp.month}月${exp.day}日';
     return p.role == 'editor' ? '可以一起录入,长期有效。' : '';
   }
 }

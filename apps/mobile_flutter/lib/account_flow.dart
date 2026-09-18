@@ -17,7 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 /// 本机在服务端的登记名——首次用时生成、存进 shared_preferences,后续复用。
-/// 不落 secure storage:它不是密钥,只是设备批准/审计用的一个标识符,泄露无害。
+/// 不落 secure storage:它不是钥匙,只是设备批准/审计用的一个标识符,泄露无害。
 Future<String> deviceId() async {
   final p = await SharedPreferences.getInstance();
   var id = p.getString('device_id');
@@ -29,13 +29,13 @@ Future<String> deviceId() async {
   return id;
 }
 
-/// 登录之后、密钥就绪之前,UI 该走哪条路。
+/// 登录之后、私钥就绪之前,UI 该走哪条路。
 enum LoginOutcome {
-  /// 服务端还没有这个账号的密钥(`GET /v1/account/keys` 404)—— 首次注册,
-  /// 需要设口令、生成密钥对。
+  /// 服务端还没有这个账号的钥匙(`GET /v1/account/keys` 404)—— 首次注册,
+  /// 需要设口令、生成一对账号公私钥。
   needsKeySetup,
 
-  /// 服务端有密钥,但本机没有解出来的私钥(新设备/清过 App)—— 需要口令或
+  /// 服务端有钥匙,但本机没有解出来的私钥(新设备/清过 App)—— 需要口令或
   /// 恢复码解锁。
   needsUnlock,
 
@@ -113,7 +113,7 @@ abstract class SyncCrypto {
 
   /// [sealTo] 的反向操作:用自己的私钥拆开别人用自己公钥封的密文。
   /// [AccountFlow.restoreProfileKeys] 拿它把 `wrapped_profile_key`(账号公钥封的
-  /// 档案密钥)解出来——退出登录/换设备之后"重新登录自动恢复"的真正实现
+  /// 档案钥匙)解出来——退出登录/换设备之后"重新登录自动恢复"的真正实现
   /// (Task 15 review C1:这条路径之前完全没有 Dart 调用点,是一句假文案)。
   Future<Uint8List> openSealed(Uint8List secret, Uint8List blob);
 }
@@ -174,7 +174,7 @@ class AccountFlow {
   final AccountSession session;
   final SyncCrypto crypto;
 
-  /// [restoreProfileKeys] 补完密钥后,如果补的正好是**当前打开的成员**、且它
+  /// [restoreProfileKeys] 补完钥匙后,如果补的正好是**当前打开的成员**、且它
   /// 补之前是锁着的,就用这个重开一次——测试注入点,默认真实的
   /// `vault_boot.openCurrentProfileVault`(`flutter test` 不能跑到它内部的
   /// FFI 开箱,测试传一个假的进来)。
@@ -199,7 +199,7 @@ class AccountFlow {
   /// `account_login` 只覆盖「认证 + session.save」这一小段——**`_afterLogin()`
   /// 必须留在这个 try 外面**。它调的 `GET /v1/account/keys` 只吞 404
   /// (见 `_afterLogin`),非 404 会 rethrow;如果把它包进同一个 try,登录本身
-  /// 明明成功了,却会因为账号密钥服务 500 被这里的 catch 接住,再报一条
+  /// 明明成功了,却会因为 `GET /v1/account/keys` 500 被这里的 catch 接住,再报一条
   /// `ok:false`——一次点击变成两条互相矛盾的 `account_login`。
   Future<LoginOutcome> loginOtp(String phone, String code) async {
     try {
@@ -259,7 +259,7 @@ class AccountFlow {
         lastOutcome = LoginOutcome.needsUnlock;
       } else {
         // 本机已经有私钥(这台设备之前解锁过)——直接进「已就绪」之前,顺手把
-        // 服务端记着、本机还没补上的档案密钥补一遍,见 [restoreProfileKeys]。
+        // 服务端记着、本机还没补上的档案钥匙补一遍,见 [restoreProfileKeys]。
         await restoreProfileKeys();
         lastOutcome = LoginOutcome.ready;
       }
@@ -270,7 +270,7 @@ class AccountFlow {
     return lastOutcome!;
   }
 
-  /// 换设备/重新登录后,把服务端记着的、本机还没有的档案密钥补回来——
+  /// 换设备/重新登录后,把服务端记着的、本机还没有的档案钥匙补回来——
   /// 「退出登录/换设备之后重新登录会自动恢复」这句话的真正实现(Task 15
   /// review C1:之前 `syncOpenSealed` 压根没有 Dart 调用点,这句话是假的,
   /// `AccountSession.clear()` 清掉 `pk_<cloudId>` 之后没有任何路径能补回来,
@@ -280,14 +280,14 @@ class AccountFlow {
   /// `wrapped_profile_key`),用账号私钥拆开:
   ///
   /// * cloudId 在本机的删除黑名单里(`AccountSession.deletedCloudProfileIds`)
-  ///   → 整条跳过,密钥不补、成员不建——这个成员是被用户在本机主动删掉的,
+  ///   → 整条跳过,钥匙不补、成员不建——这个成员是被用户在本机主动删掉的,
   ///   owner 授权服务端删不掉,不跳过就是"删了又自动长回来"。
-  /// * 本地**已经有**这个成员(有同一个 cloudId)、只是缺密钥 → 把密钥补回去;
+  /// * 本地**已经有**这个成员(有同一个 cloudId)、只是缺钥匙 → 把钥匙补回去;
   /// * 本地**没有**这个成员 → **新建一个**(最终评审 I3,spec 的「换机」那条路):
   ///   名字是占位的「云端档案 `<cloudId 前 6 位>`」,`markCloud` 记下
-  ///   role/expiresAt,密钥存进 secure storage。换了台新手机、或者清了 App 数据
+  ///   role/expiresAt,钥匙存进 secure storage。换了台新手机、或者清了 App 数据
   ///   之后,用户重新登录 + 解锁就能看见自己的档案都在——在这之前这条路完全不
-  ///   存在:服务端明明有这些档案、密钥也解得开,本机却因为「没有对应的本地
+  ///   存在:服务端明明有这些档案、钥匙也解得开,本机却因为「没有对应的本地
   ///   成员」全部跳过,于是新手机上一片空白,只有一条邀请链接能救(而 owner
   ///   根本给自己发不出邀请)。
   ///
@@ -296,7 +296,7 @@ class AccountFlow {
   ///   「拉一整个档案的事件 + 逐个下载附件」,而这个方法跑在启动序列里 —— N 个
   ///   档案串行跑完,启动画面会被按住几十秒。失败的留在集合里,下一次触发再试
   ///   (评审 Important 2:在这之前只试一次,一次网络抖动就把成员永久钉在
-  ///   「正在恢复的档案」上)。
+  ///   「正在恢复的成员」上)。
   ///
   ///   在这之前这里什么都不做,等"用户哪天自己切到这个成员"才会有第一次同步。
   ///   于是换了台新手机、解锁完账号,看到的是一个叫「云端档案 a1b2c3」、0 份病历
@@ -310,7 +310,7 @@ class AccountFlow {
   /// 数据拖累其它成员的恢复;整个 `/v1/profiles` 请求失败也不抛——这一步是
   /// "顺手补",不该挡住登录/解锁本身成功这件事。
   ///
-  /// 如果**当前打开的成员**在补之前是锁着的(有 cloudId、没密钥),补上之后用
+  /// 如果**当前打开的成员**在补之前是锁着的(有 cloudId、没钥匙),补上之后用
   /// [reopenCurrentProfileVault] 重开一次,免得用户还要再手动做一步才能看到
   /// 自己的档案。
   ///
@@ -341,7 +341,7 @@ class AccountFlow {
   /// 补齐还在跑、用户已经点进账号屏登录"不是理论情形。
   ///
   /// 后来者**等前一次的 future**,不是直接返回:调用方的契约是"这句 await 回来
-  /// 之后密钥就补齐了",提前返回会让它在密钥还没落地时就往下走。
+  /// 之后钥匙就补齐了",提前返回会让它在钥匙还没落地时就往下走。
   Future<void> restoreProfileKeys() =>
       _restoreInFlight ??= _restoreProfileKeys().whenComplete(() => _restoreInFlight = null);
 
@@ -389,12 +389,12 @@ class AccountFlow {
         final expiresAt = DateTime.tryParse(entry['expires_at'] as String? ?? '');
         final local = ProfileManager.instance.profiles.where((p) => p.cloudId == cloudId).firstOrNull;
         if (local != null && await session.profileKey(cloudId) != null) {
-          // 密钥齐了 —— 但还有两件事要做,不能直接 `continue`:
+          // 钥匙齐了 —— 但还有两件事要做,不能直接 `continue`:
           await _refreshLocalGrant(local, cloudId, role, expiresAt);
           // **首同步可能从来没成功过** —— 名字还是我们自己写上去的占位串就是证据
           // (首同步成功必然把它换掉,哪怕病历里抽不出姓名也会换成
           // `restoredFallbackName`,见 `nameCloudProfileOnFirstSync`)。重新排一次
-          // (评审 Important 2:密钥是在同步之前就存下的,所以下一次启动这条
+          // (评审 Important 2:钥匙是在同步之前就存下的,所以下一次启动这条
           // `continue` 会把它整条跳过,于是那唯一一次尝试里的一次网络抖动 =
           // 永久卡住)。
           if (ProfileManager.cloudPlaceholderNames.contains(local.name)) adopted.add(local.id);
@@ -430,7 +430,7 @@ class AccountFlow {
       try {
         await reopenCurrentProfileVault();
       } catch (_) {
-        // 重开失败不影响"密钥已经补上了"这件事本身——下次任何触发开箱的路径
+        // 重开失败不影响"钥匙已经补上了"这件事本身——下次任何触发开箱的路径
         // (比如用户自己切一下成员、或 `VaultBootstrap` 的重试)都会用上它。
       }
     }
@@ -452,7 +452,7 @@ class AccountFlow {
       }
     }
 
-    // **有账号就默认开云**(UX 第二轮,创始人拍板)。这个方法是"本机账号密钥就绪"
+    // **有账号就默认开云**(UX 第二轮,创始人拍板)。这个方法是"本机账号钥匙就绪"
     // 的唯一汇流处(`commitKeys` 注册完、口令/恢复码解锁完、每次启动补齐都经过
     // 它),所以登记这件事只挂这一处。
     //
@@ -489,15 +489,15 @@ class AccountFlow {
     return _afterLogin();
   }
 
-  /// 首次注册,第一步:生成密钥对、口令包一份、恢复码包一份——**纯内存操作,
+  /// 首次注册,第一步:生成一对账号公私钥、口令包一份、恢复码包一份——**纯内存操作,
   /// 不上传、不写本机存储**。恢复码只在返回值里出现这一次。
   ///
   /// 与 [commitKeys] 分成两步,是因为中间要插一道「用户必须先抄下恢复码」的
   /// UI 关卡(见 `account_screen.dart` 的 showRecovery 阶段)——如果这一步就把
-  /// 密钥传上服务器、存进本机,那道关卡就只是摆设:App 在恢复码画面被强杀,
+  /// 钥匙传上服务器、存进本机,那道关卡就只是摆设:App 在恢复码画面被强杀,
   /// 账号已经是「有效可用」的了,但恢复码再也拿不出来第二次。拆成两步之后,
-  /// 强杀导致的最坏情况只是「服务端和本机都还没有这个账号的密钥」——用户下次
-  /// 打开重新走一遍注册即可(会生成一把全新的密钥对,这一把从未落过盘、从未
+  /// 强杀导致的最坏情况只是「服务端和本机都还没有这个账号的钥匙」——用户下次
+  /// 打开重新走一遍注册即可(会生成一对全新的公私钥,这一对从未落过盘、从未
   /// 上传过,不构成任何残留状态,谈不上"丢失")。
   Future<PreparedKeys> prepareKeys(String password) async {
     final (pub, sec) = await crypto.accountKeysNew();
@@ -511,7 +511,7 @@ class AccountFlow {
   /// 第二步,只应该在用户点了「我已抄下恢复码」之后调用:把 [prepareKeys] 备好
   /// 的密文上传服务器、私钥存进本机 secure storage。这一步失败(比如服务器
   /// 500)不清 `keys`——UI 应该原样保留恢复码画面,允许用户直接重试这一步,
-  /// 不必重新生成一把新密钥对。
+  /// 不必重新生成一对新的公私钥。
   Future<void> commitKeys(PreparedKeys keys) async {
     await api.putJson('/v1/account/keys', {
       'public_key': base64Encode(keys.publicKey),
@@ -527,7 +527,7 @@ class AccountFlow {
       publicKey: keys.publicKey,
       privateKey: keys.privateKey,
     );
-    // 全新账号,服务端此刻不会有任何档案(自己刚生成密钥对),调用一次也
+    // 全新账号,服务端此刻不会有任何档案(自己刚生成公私钥对),调用一次也
     // 无害(空列表,循环直接跳过)——统一走这条路径,不必单独判断"是不是新
     // 账号"。
     await restoreProfileKeys();
@@ -561,9 +561,9 @@ class AccountFlow {
     lastOutcome = LoginOutcome.ready;
   }
 
-  /// 退出登录:清掉本机全部账号态(token、私钥、各档案密钥)。**不是**注销账号——
-  /// 服务端账号与云端数据原样保留;已开通云同步的成员在这台设备上会因为没有档案
-  /// 密钥而变成 [ProfileLocked](`vault_boot.dart`),重新登录后自动恢复。调用方
+  /// 退出登录:清掉本机全部账号态(token、私钥、各档案钥匙)。**不是**注销账号——
+  /// 服务端账号与云端数据原样保留;已开通云端备份的成员在这台设备上会因为没有档案
+  /// 钥匙而变成 [ProfileLocked](`vault_boot.dart`),重新登录后自动恢复。调用方
   /// (`AccountScreen`)在确认弹窗里把这句话说清楚,不是这里的事。
   Future<void> logout() async {
     // 邀请缓存是静态的,`session.clear()` 不碰它们 —— 不清的话一个只读看诊令牌在
@@ -608,10 +608,10 @@ class AccountFlow {
   // 而没有任何路径会把 `eph_public` 写上去 —— 于是那颗按钮是一段永不触发的 UI,
   // 而新设备上唯一的出路是口令或恢复码(正是最容易两样都想不起来的时刻)。
 
-  /// 新设备这一侧第一步:生成一对**临时** X25519 密钥,把公钥登记到服务端,返回
+  /// 新设备这一侧第一步:生成一对**临时** X25519 公私钥,把公钥登记到服务端,返回
   /// 要画成二维码的那串字和只在内存里的临时私钥。
   ///
-  /// 复用 `sync_account_keys_new`(就是一对 X25519 密钥),不新加 FRB 函数。
+  /// 复用 `sync_account_keys_new`(就是一对 X25519 公私钥),不新加 FRB 函数。
   Future<DeviceApprovalRequest> requestDeviceApproval() async {
     final (pub, sec) = await crypto.accountKeysNew();
     final did = await deviceId();
@@ -637,7 +637,7 @@ class AccountFlow {
   }
 
   /// 新设备这一侧第三步:用临时私钥拆开,走和口令解锁**完全相同**的后半截
-  /// (存 session → 补齐档案密钥 → ready)。不需要口令。
+  /// (存 session → 补齐档案钥匙 → ready)。不需要口令。
   ///
   /// ## 为什么这里要核对"私钥和公钥是一对",以及它**挡不住**什么(复审 C1 / N2)
   ///
@@ -646,20 +646,20 @@ class AccountFlow {
   /// **探针挡住的那一种:只换公钥。** 服务端把旧设备封的那份真密文原样转交(于是本机
   /// 拿到的是**真**账号私钥),但在 `/v1/account/keys` 里把 `public_key` 换成自己那把。
   /// 那之后一切都照常工作 —— 已有的云档案照样解得开(它们是用真公钥封的,而本机有真
-  /// 私钥)—— 而"有账号默认开云"每给一个成员生成档案密钥,都会用
+  /// 私钥)—— 而"有账号默认开云"每给一个成员生成档案钥匙,都会用
   /// `session.publicKey`(= 攻击者那把)封起来上传。没有任何症状,而服务器从此读得到
   /// 这些新成员。这一种被挡住,因为真私钥与那把假公钥配不上。
   ///
   /// **探针挡不住的那一种:整对替换。** 服务端自造一对 `(pub_a, sec_a)`,把 `sec_a`
   /// 封给 `eph_public`(`eph_public` 是公开的,就在那张码里),同时发下 `pub_a`。
-  /// 那**是**一对真密钥,探针照样通过 —— 这不是实现疏漏,是这条路形状上的缺口:
+  /// 那**是**一对真公私钥,探针照样通过 —— 这不是实现疏漏,是这条路形状上的缺口:
   /// 码是单向的(新手机 → 旧手机),新设备没有任何经过认证的渠道能知道"我账号真正的
   /// 公钥是哪一把"。
   ///
   /// 这一种的后果与症状:受害者**已有**的云档案一个都打不开(它们用真公钥封的,而本机
   /// 拿到的是 `sec_a`),`restoreProfileKeys` 的逐条 try/catch 会把它们全部跳过 ——
-  /// 新手机上看起来是"档案没回来";而此后新建的档案密钥都封给 `pub_a`。所以它会留下
-  /// 可见的异常,但**不是被密码学挡住的**。
+  /// 新手机上看起来是"档案没回来";而此后新建的档案钥匙都封给 `pub_a`。所以它会留下
+  /// 可见的异常,但**不是被加密校验挡住的**。
   ///
   /// 真正的堵法是**双向确认**:两台手机各显示同一把账号公钥的指纹(短认证串),让用户
   /// 对一眼。没做,记在 `docs/superpowers/specs/2026-09-11-account-keys-sync-design.md`
@@ -675,12 +675,12 @@ class AccountFlow {
     try {
       sec = await crypto.openSealed(ephSecret, base64Decode(sealed));
     } catch (_) {
-      // 拆不开 = 这份批准不是封给这台设备此刻这把临时密钥的(比如用户中途重新
+      // 拆不开 = 这份批准不是封给这台设备此刻这把临时私钥的(比如用户中途重新
       // 生成过一张码)。让他重来一次,别把账号态搞脏。
       throw const UnlockFailed('这份批准打不开,请重新生成二维码再让旧手机扫一次');
     }
     if (!await _isKeyPair(pub, sec)) {
-      throw const UnlockFailed('这份批准对不上你账号的密钥,请改用口令或恢复码');
+      throw const UnlockFailed('这份批准和你的账号对不上,请改用口令或恢复码');
     }
     await session.save(
       accountId: session.accountId!,

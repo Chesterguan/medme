@@ -5,7 +5,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 
-/// 医生代拍的「今日病历表」:每个代拍病人 = 一个**独立保险箱**(自己的目录、自己的
+/// 医生代拍的病人列表:每个代拍病人 = 一个**独立病历箱**(自己的目录、自己的
 /// 一次性 device id),走与患者模式完全相同的 `openVault` + 普通导入路径 —— 姓名不
 /// 匹配提示因此是白捡的。
 ///
@@ -18,7 +18,7 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 /// 告知里「最多存 12 小时,超时后医生下次打开 App 时清掉」那句话的执行者。
 ///
 /// 落在 `<applicationSupport>` 而不是系统临时目录:临时目录系统随时可清,撑不住 12
-/// 小时的承诺。也不进 iCloud —— 代拍病人的数据是别人的隐私,不上医生的云备份
+/// 小时的承诺。也不进 iCloud —— 代拍病人的数据是别人的隐私,不上医生的云端备份
 /// (`openProxyPatientVault` 传 `icloudContainerDir: null`,且每个病人有自己的
 /// dataDir,那里没有 `icloud_enabled` 标记)。
 class ProxyPatientManager {
@@ -137,7 +137,7 @@ class ProxyPatientManager {
   }
 
   /// 用报告里识别到的患者姓名给这个病人命名。只在还是占位名时生效(幂等,后续
-  /// 采集识别到别人的名字不会把已命名的病人改掉——那种情况该由「姓名不匹配」红条
+  /// 添加识别到别人的名字不会把已命名的病人改掉——那种情况该由「姓名不匹配」红条
   /// 提醒医生,而不是悄悄改名)。
   Future<void> autoName(String id, String? detected) async {
     final name = detected?.trim() ?? '';
@@ -166,7 +166,7 @@ class ProxyPatientManager {
         return p.copyWith(mismatch: next);
       });
 
-  /// 标记/取消一份文档「已确认」。Rust 侧不存这个状态(存了就要动保险箱格式),
+  /// 标记/取消一份文档「已确认」。Rust 侧不存这个状态(存了就要动病历箱格式),
   /// 落在这里,交付时作为 `confirmedIds` 传给 `createProxyShare`。
   Future<void> setConfirmed(String id, int docId, bool confirmed) => _update(id, (p) {
     final next = {...p.confirmedIds};
@@ -228,10 +228,10 @@ class ProxyPatient {
   /// 从报告 OCR 里识别到的患者姓名;还没识别到为 null(列表显示占位名)。
   final String? name;
 
-  /// 已采集的文档份数(列表展示用的缓存值)。
+  /// 已添加的文档份数(列表展示用的缓存值)。
   final int docCount;
 
-  /// 医生逐份点过「确认这一份」的 document_id。
+  /// 医生逐份点过「没问题」的 document_id。
   final Set<int> confirmedIds;
 
   /// 报告上姓名与本病人不一致的文档(docId → 报告上的名字)。跨重启保留。

@@ -23,6 +23,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grant_link.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/screens/qr_notice_sheet.dart';
 import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -71,7 +72,9 @@ void main() {
 
   setUp(() async {
     // 出码屏现在要读「上次选了哪条路」(UX 第二轮),默认旧路径。
-    SharedPreferences.setMockInitialValues({});
+    // `qr_notice_seen: true` = 第一次出码那条告知已经说过了(Task 11),不然
+    // 每条用例都会先被那张 sheet 挡住,一个码都出不来。
+    SharedPreferences.setMockInitialValues({'qr_notice_seen': true});
     support = await Directory.systemTemp.createTemp('medme-qr-share-test');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
       const MethodChannel('plugins.flutter.io/path_provider'),
@@ -144,7 +147,7 @@ void main() {
   });
 
   testWidgets('owner + 邀请创建失败:不留在授权链接的报错态里,转去尝试原路径', (t) async {
-    SharedPreferences.setMockInitialValues({'qr_share_grant_mode': true});
+    SharedPreferences.setMockInitialValues({'qr_share_grant_mode': true, 'qr_notice_seen': true});
     await setUpOwnerProfile(t);
 
     await t.pumpWidget(MaterialApp(
@@ -160,7 +163,7 @@ void main() {
   });
 
   testWidgets('owner + 邀请创建成功:出码,不触碰原路径', (t) async {
-    SharedPreferences.setMockInitialValues({'qr_share_grant_mode': true});
+    SharedPreferences.setMockInitialValues({'qr_share_grant_mode': true, 'qr_notice_seen': true});
     await setUpOwnerProfile(t);
 
     await t.pumpWidget(MaterialApp(
@@ -171,7 +174,9 @@ void main() {
 
     // 出码成功(这一步顺带跑过 `Analytics.track(shareQrShown, {})`——空 props
     // 不在目录允许集合之外,断言不炸就是它没违反目录契约)。
-    expect(find.text('请医生扫这个码'), findsOneWidget);
+    // 码出来了的证据换成码下面那一行(`s13`):屏名「出码」现在在顶栏,正文里
+    // 不再重写一遍(Task 11)。这一行只在 `_url != null` 时才画。
+    expect(find.text('15 天内有效;只有扫这个码的人能看'), findsOneWidget);
     expect(find.text('生成失败'), findsNothing);
   });
 
@@ -204,7 +209,7 @@ void main() {
     await t.pump(const Duration(milliseconds: 50));
 
     expect(find.text('医生当场看(任何手机)'), findsOneWidget);
-    expect(find.text('医生带走 15 天(医生也需装 MedMe)'), findsOneWidget);
+    expect(find.text('医生要长期看(15 天)'), findsOneWidget);
     expect(
       find.textContaining('他不用装 App'),
       findsOneWidget,
@@ -224,10 +229,10 @@ void main() {
     await t.pump();
     await t.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('医生带走 15 天(医生也需装 MedMe)'), findsNothing);
+    expect(find.text('医生要长期看(15 天)'), findsNothing);
   });
 
-  testWidgets('拨到「医生带走 15 天」:出授权链接,并把选择记进 prefs', (t) async {
+  testWidgets('拨到「医生要长期看」:出授权链接,并把选择记进 prefs', (t) async {
     await setUpOwnerProfile(t);
 
     await t.pumpWidget(MaterialApp(
@@ -237,13 +242,58 @@ void main() {
     await t.pump(const Duration(milliseconds: 50));
     expect(find.text('生成失败'), findsOneWidget); // 默认那条的假实现失败态
 
-    await t.tap(find.text('医生带走 15 天(医生也需装 MedMe)'));
+    await t.tap(find.text('医生要长期看(15 天)'));
     await t.pump();
     await t.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('请医生扫这个码'), findsOneWidget);
+    // 码出来了的证据换成码下面那一行(`s13`):屏名「出码」现在在顶栏,正文里
+    // 不再重写一遍(Task 11)。这一行只在 `_url != null` 时才画。
+    expect(find.text('15 天内有效;只有扫这个码的人能看'), findsOneWidget);
     expect(find.textContaining('他需要已经装了 MedMe 并登录'), findsOneWidget);
     final prefs = await t.runAsync(() => SharedPreferences.getInstance());
     expect(prefs!.getBool('qr_share_grant_mode'), isTrue, reason: '下次打开该记得这个选择');
+  });
+
+  // ---- Task 11:第一次出码先告知一次 ----
+  //
+  // sheet 本体逐字钉在 `qr_notice_test.dart`;这里只钉**接线**:没说过就先说,
+  // 「先不出」= 这一屏退掉、一个字节都没传。要推一层进去才测得到那个 pop。
+  testWidgets('这台设备第一次出码:先弹告知,「先不出」就退回上一屏,不出码', (t) async {
+    SharedPreferences.setMockInitialValues({}); // 没有 qr_notice_seen = 没说过
+    await t.runAsync(() async {
+      await ProfileManager.instance.ensureLoaded();
+      await ProfileManager.instance.factoryReset();
+    });
+
+    await t.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (ctx) => TextButton(
+            onPressed: () => Navigator.of(ctx).push(MaterialPageRoute<void>(
+              builder: (_) => QrShareScreen(
+                grants: _NeverInvitedGrants(),
+                qrShareBlobFn: _fakeQrShareBlobFails,
+              ),
+            )),
+            child: const Text('去出码'),
+          ),
+        ),
+      ),
+    ));
+    // 不能 `pumpAndSettle` —— 出码屏等码的时候画的是个转不完的圈,它永远 settle
+    // 不了(这里踩过一次)。按帧推,推到够 sheet 的进场动画跑完为止。
+    await t.tap(find.text('去出码'));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 500)); // sheet 插进来
+    await t.pump(const Duration(milliseconds: 500)); // 进场动画跑完,按钮才点得到
+
+    expect(find.text(kQrNoticeText), findsOneWidget);
+
+    await t.tap(find.text('先不出'));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('去出码'), findsOneWidget, reason: '「先不出」= 退回上一屏');
+    expect(find.text('生成失败'), findsNothing, reason: '压根没走到出码那一步');
   });
 }

@@ -9,7 +9,7 @@ import 'package:mobile_flutter/vault_boot.dart'
     show createProfileAndReopen, openCurrentProfileVault, switchProfileAndReopen;
 import 'package:mobile_flutter/vault_events.dart';
 
-/// 认领屏:医生代拍的病历存进病人自己的保险箱。
+/// 认领屏:医生代拍的病历存进病人自己的病历箱。
 ///
 /// 病人是从浏览器点「存进我的 MedMe」过来的,此刻他**已经看过这份病历了** ——
 /// 所以这一屏不再重复展示内容,只回答一个问题:存进谁的档案。存完给一句人话的结果。
@@ -118,7 +118,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: MedMe.bg,
-      appBar: AppBar(title: const Text('存进我的档案')),
+      appBar: AppBar(title: const Text('存进我的病历箱')),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -215,17 +215,17 @@ class _ClaimScreenState extends State<ClaimScreen> {
                   height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                 )
-              : const Text('存进我的档案', style: TextStyle(fontSize: 16)),
+              : const Text('存进我的病历箱', style: TextStyle(fontSize: 16)),
         ),
       ],
     );
   }
 
   Widget _result(ClaimResultDto r) {
-    // 重复认领不是错误(病人常会再点一次链接),所以这里按「都已在档案里」说话。
+    // 重复认领不是错误(病人常会再点一次链接),所以这里按「都已在病历箱里」说话。
     final lines = <String>[
       if (r.imported > 0) '新存入 ${r.imported} 份',
-      if (r.deduped > 0) '${r.deduped} 份原本就在你的档案里',
+      if (r.deduped > 0) '${r.deduped} 份原本就在你的病历箱里',
       if (r.textOnly > 0) '${r.textOnly} 份只带回了文字,原件没随包过来',
     ];
     return Column(
@@ -235,7 +235,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
         const Icon(Icons.check_circle, color: MedMe.teal, size: 56),
         const SizedBox(height: 16),
         const Text(
-          '已存进你的档案',
+          '已存进你的病历箱',
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
         ),

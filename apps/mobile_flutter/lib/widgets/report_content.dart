@@ -12,7 +12,7 @@ import 'med_card.dart';
 //  - 其余/解析不到结构 → 退回干净段落 —— 永不比原文更糟(见 memory:
 //    content-aware-rendering)。
 
-/// 档案/文档详情屏复用的富文本渲染;`docType` 为空或未知类型时退回通用分块。
+/// 「一份病历」屏复用的富文本渲染;`docType` 为空或未知类型时退回通用分块。
 class ReportContent extends StatelessWidget {
   final String text;
   final String? docType;
@@ -225,7 +225,7 @@ class _ParaView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    // body 15·400,行高 1.6 —— 大段中文识别文本,行距比字号更影响可读性。
+    // body 15·400,行高 1.6 —— 大段中文识别出来的文字,行距比字号更影响可读性。
     final style = MedType.body.copyWith(height: 1.6, color: c.ink);
     final t = text.trimRight();
     final m = _labelRe.firstMatch(t);

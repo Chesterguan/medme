@@ -4,7 +4,7 @@
 // **当下病情** —— 在治的病、关键指标最近几个点、在用的药。要看原件或阅片,
 // 患者手机当场翻,不必把整份病历交出去。
 //
-// 载荷有界(Rust 侧 QrLimits),体积与病历总量无关,永远塞得进一张码。密钥在
+// 载荷有界(Rust 侧 QrLimits),体积与病历总量无关,永远塞得进一张码。钥匙在
 // URL 的 `#` 之后,按 HTTP 规范不会发给服务器 —— 医生扫码后只从静态页下载一个
 // 空壳查看器,病历数据全程只在两台手机之间。
 import 'dart:typed_data';
@@ -22,6 +22,7 @@ import '../grants.dart';
 import '../profile_manager.dart';
 import '../src/rust/api/vault.dart';
 import '../theme.dart';
+import 'qr_notice_sheet.dart';
 
 /// 医生扫码后打开的查看器地址。数据在 `#` 之后,不会随请求上行。
 const _viewerBase = 'https://medmenow.com/viewer/';
@@ -48,17 +49,17 @@ class QrShareScreen extends StatefulWidget {
 /// 授权链接那条路**能不能提供给用户选**——纯函数,不碰网络/FFI,方便在
 /// `flutter test` 里单独钉住这道闸(见 `test/qr_share_screen_test.dart`)。
 ///
-/// 三个条件都是硬要求:未登录/未开通云同步没有档案密钥可用;不是 owner 时,
+/// 三个条件都是硬要求:未登录/未开通云端备份没有档案钥匙可用;不是 owner 时,
 /// 服务端 `POST .../invites` 本来就会 403(owner-only),不判就是摸黑试一次
 /// 注定失败的请求。
 ///
-/// **「已开通云备份」= `cloudId != null && !cloudPaused`**(F2),与 `cloudRowStatus`
-/// 同一个定义。把云备份关掉的成员原来照样能拿到这个选项,而且真的会建出一条 15 天
+/// **「已开通云端备份」= `cloudId != null && !cloudPaused`**(F2),与 `cloudRowStatus`
+/// 同一个定义。把云端备份关掉的成员原来照样能拿到这个选项,而且真的会建出一条 15 天
 /// 授权 —— 他刚刚明确关掉的恰恰是"让病历上云"这件事,这条路却绕过开关把密文送上去
-/// (隐私政策里也是按"开通了云备份才有这个选项"写的)。
+/// (隐私政策里也是按"开通了云端备份才有这个选项"写的)。
 ///
 /// ⚠️ **它不再决定走哪条路**(UX 第二轮,创始人拍板)。在这之前它一为真就**自动**
-/// 切成授权链接,于是「开通云同步」这件事顺带改掉了诊室里那条最关键的路:医生
+/// 切成授权链接,于是「开通云端备份」这件事顺带改掉了诊室里那条最关键的路:医生
 /// 拿自己的手机扫一下就能看 → 变成医生必须先装 MedMe 并登录。那不是一个该由
 /// "你登录了没"替用户做的决定。现在它只负责**有没有这个选项**,选哪个由
 /// [_QrShareScreenState._grantChoice] 决定,默认旧路径。
@@ -79,7 +80,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
   /// 选的是 [_grantChoice],授权链接创建失败时这里会退回 false。
   bool _grantMode = false;
 
-  /// 用户选的那条路(`true` = 授权链接 / 「医生带走 15 天」)。**默认 false**:
+  /// 用户选的那条路(`true` = 授权链接 / 「医生要长期看(15 天)」)。**默认 false**:
   /// 诊室里最常见的一步是医生拿自己的手机扫一下当场看,那条路不要求医生装任何
   /// 东西。上次的选择记在 shared_preferences(见 [_qrModePrefsKey])。
   bool _grantChoice = false;
@@ -97,7 +98,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
   int _totalBytes = 0;
   /// 当前这次上传。**留着它才能续传** —— 失败后重试会跳过已成功的分片。
   ResumableUpload? _upload;
-  /// 重试时要用的 (密钥, 记录数) —— 加密只做一次,重试不重新加密。
+  /// 重试时要用的 (钥匙, 记录数) —— 加密只做一次,重试不重新加密。
   (String, int)? _pendingShare;
   /// 失败了但可以续传:此时给「继续上传 / 就用简版码」两个选择,而不是直接降级 ——
   /// 用户可能知道「再等一下就好,医生不急」,那不该由我们替他决定。
@@ -128,6 +129,17 @@ class _QrShareScreenState extends State<QrShareScreen> {
     }
     if (!mounted) return;
     setState(() {});
+    // 第一次在这台设备上出码:先把「东西去哪了」说一句,他按了「好,出码」才继续。
+    // **不看登录状态** —— 登录与否都照常出码(创始人拍板,取代「未登录不给出码」)。
+    if (shouldShowQrNotice(seen: await loadQrNoticeSeen())) {
+      if (!mounted) return;
+      final go = await showQrNoticeSheet(context);
+      if (!mounted) return;
+      if (!go) {
+        Navigator.of(context).pop(); // 「先不出」= 退出这一屏,什么都没传
+        return;
+      }
+    }
     await _generate();
   }
 
@@ -175,7 +187,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
     }
   }
 
-  /// 出码 = 先把完整病历(含原件)加密传上瞬时云,再把 `q2.<id>.<密钥>` 编成码。
+  /// 出码 = 先把完整病历(含原件)加密传上瞬时云,再把 `q2.<id>.<钥匙>` 编成码。
   ///
   /// 上传要花几秒到几十秒,取决于原件多少 —— 这段时间医患本来就在说话,进度条是
   /// 为了让病人知道还要多久,而不是干等一个转圈。
@@ -183,23 +195,24 @@ class _QrShareScreenState extends State<QrShareScreen> {
   /// **失败就是失败,不给一个残缺的码。** 医生扫到一个打不开的码,比病人当场知道
   /// 「没传上、再试一次」糟糕得多 —— 前者浪费的是诊室里那几分钟。
   Future<void> _generate() async {
-    // **用户选了「医生带走 15 天」那条**,而且这个成员有资格(登录 + 已开通云同步 +
+    // **用户选了「医生要长期看(15 天)」那条**,而且这个成员有资格(登录 + 已开通云端备份 +
     // 是这个档案的 owner):出授权链接,跳过整套「加密病历、上传瞬时云」——医生扫码
-    // 兑换的是一份 15 天只读授权,内容走的是正常的云同步拉取,不是这里的密文上传。
+    // 兑换的是一份 15 天只读授权,内容走的是正常的云端备份拉取,不是这里的密文上传。
     //
     // owner 这道闸是硬要求,不是优化:发邀请是服务端 owner-only 的操作
     // (`POST /v1/profiles/{pid}/invites` 对 editor/viewer 一律 403),不判就摸黑
     // 试一次注定失败的请求。而**即使是 owner**,邀请创建仍可能失败(网络、服务端
     // 500……)——那种情况绝不能停在一个空白/报错的死胡同,必须退回原来的加密
-    // 上传路径,像 `doctor_claim_link_dialog.dart` 处理转移链接失败那样,总有
-    // 一条码能出。未登录/未开通云同步/不是 owner,直接走原路径,一字不改。
+    // 上传路径,像 `proxy_intake_flow.dart` 的 `_deliver` 上传失败退回本地加密
+    // 文件那样,总有一条码能出。未登录/未开通云端备份/不是 owner,直接走原路径,
+    // 一字不改。
     final profile = ProfileManager.instance.current;
     if (_grantChoice && shouldTryGrantLink(loggedIn: AccountSession.instance.loggedIn.value, profile: profile)) {
       try {
         setState(() {
           _error = null;
           _grantMode = true;
-          _stage = '正在生成授权链接…';
+          _stage = '正在生成链接…';
           _progress = null;
         });
         final link = await (widget.grants ??
@@ -346,7 +359,8 @@ class _QrShareScreenState extends State<QrShareScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('给医生看'),
+        // `s13`:这一屏自己叫「出码」,「给医生看」是它的返回箭头指回去的那一页。
+        title: const Text('出码'),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
       ),
@@ -380,8 +394,17 @@ class _QrShareScreenState extends State<QrShareScreen> {
             ),
             ButtonSegment<bool>(
               value: true,
-              label: Text('医生带走 15 天(医生也需装 MedMe)',
-                  textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
+              // `s13` 逐字:一句主文 + 一行小字(小字说的是这条路的代价)。
+              label: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('医生要长期看(15 天)',
+                      textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
+                  Text('医生也要装 MedMe',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 10, color: MedMe.faint)),
+                ],
+              ),
             ),
           ],
           selected: {_grantChoice},
@@ -390,7 +413,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
         const SizedBox(height: 6),
         Text(
           _grantChoice
-              ? '医生用他自己的 MedMe 扫码(需要他已经装了 App 并登录),这份病历进他的列表,只读,15 天后自动看不到。'
+              ? '医生用他自己的 MedMe 扫码(需要他已经装了 App 并登录),这份病历进他的列表,只能看,15 天后自动看不到。'
               : '医生用任何手机的相机扫码,在浏览器里打开看 —— 他不用装 App、不用注册。看完收起手机即可。',
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 12, color: MedMe.faint, height: 1.5),
@@ -502,16 +525,13 @@ class _QrShareScreenState extends State<QrShareScreen> {
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
       child: Column(
         children: [
-          const Text(
-            '请医生扫这个码',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 6),
+          // `s13`:屏名(「出码」)在顶栏,正文第一行就是这句副标题 —— 不再在
+          // 正文里把屏名重写一遍。
           Text(
             _grantMode
                 ? '医生用他自己的 MedMe 扫码,15 天内都能看'
                 // 自动调亮成功了就别再让患者做一遍已经做了的事。
-                : (_brightnessBoosted ? '对着医生的手机相机' : '把屏幕亮度调高,对着医生的手机相机'),
+                : (_brightnessBoosted ? '医生用手机扫一下就能看' : '把屏幕亮度调高,对着医生的手机相机'),
             style: const TextStyle(fontSize: 13.5, color: MedMe.faint),
           ),
           const SizedBox(height: 20),
@@ -534,6 +554,16 @@ class _QrShareScreenState extends State<QrShareScreen> {
               errorCorrectionLevel: QrErrorCorrectLevel.M,
             ),
           ),
+          // `s13`:码下面那一行。**降级的简版码不显示它** —— 那种码的内容全在码里、
+          // 没有上传,15 天这个期限说的是云上那份密文,对它不成立。
+          if (!_degraded) ...[
+            const SizedBox(height: 10),
+            const Text(
+              '15 天内有效;只有扫这个码的人能看',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12.5, color: MedMe.faint),
+            ),
+          ],
           const SizedBox(height: 18),
           if (!_grantMode) _summaryChip(),
           if (!_grantMode) const SizedBox(height: 20),
@@ -554,7 +584,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
                 Text(
                   _grantMode
                       ? '医生扫码后,这份病历会出现在他自己的 MedMe 里(他需要已经装了 MedMe 并登录)'
-                          '——只读,15 天后自动看不到。'
+                          '——只能看,15 天后自动看不到。'
                       : (_degraded
                           ? '当前在治的疾病、关键指标趋势、正在吃的药。'
                           '这次没能上传,所以不含原件 —— 医生要看原件,请当场用手机翻给他。'
@@ -564,12 +594,12 @@ class _QrShareScreenState extends State<QrShareScreen> {
                 const SizedBox(height: 10),
                 Text(
                   _grantMode
-                      ? '这张码就是钥匙:被拍下就等于给了这份只读权限,15 天后自动失效,你随时可以提前收回。'
+                      ? '这张码就是钥匙:被拍下就等于给了这份「只能看」的权限,15 天后自动失效,你随时可以提前收回。'
                       : (_degraded
                           ? '这张码就是钥匙:被拍下就等于把这份摘要给了对方,看完收起手机即可。'
                           '这次的内容全在码里,没有上传到任何地方。'
                           : '这张码就是钥匙:被拍下就等于把这份病历给了对方,看完收起手机即可。'
-                          '内容已加密临时存放,保留期结束后自动删除 —— 密钥只在这张码里,我们解不开。'),
+                          '内容已加密临时存放,保留期结束后自动删除 —— 钥匙只在这张码里,我们解不开。'),
                   style: const TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.faint),
                 ),
               ],

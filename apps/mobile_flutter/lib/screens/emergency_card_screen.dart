@@ -15,12 +15,16 @@ import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
-/// 底部导航一级 tab「应急卡」—— 使用时刻:**急诊室,别人拿着你的手机**
-/// (设计系统 §八、§九)。
+/// 急救信息 —— 从「给医生看」那一页的第三条入口进来(ia-proposal §7 决定 3 +
+/// mockup `s4`:不再占底栏席位,但**质量一字未动**)。使用时刻仍然是
+/// **急诊室,别人拿着你的手机**(设计系统 §八、§九)。
+///
+/// 入口那一条与本屏顶栏曾经用着两个不同的词——Task 17 统一成入口一直在用的
+/// 那个:急救卡。
 ///
 /// 这是全 app 唯一一个**读者不是用户本人**的界面。所有取舍都从这一句推出来:
 ///
-/// * **[EmergencyBigCardScreen] 大字模式**才是这个 tab 的产品本体,平时这一屏
+/// * **[EmergencyBigCardScreen] 大字模式**才是这一屏的产品本体,平时这一屏
 ///   只是它的维护界面。所以主按钮是「大字模式」,不是别的。
 /// * **血型不给编。** `EmergencyCardDto.bloodType` 恒为 null(抽取链路里没有血型
 ///   抽取),这里显示「未登记」并且**不提供任何输入框** —— 见 [_BloodTypeCard]。
@@ -32,7 +36,7 @@ class EmergencyCardScreen extends StatefulWidget {
   const EmergencyCardScreen({super.key, this.load});
 
   /// 数据源。生产恒为 null → 走 FFI([viewEmergencyCard] + [patientProfile])。
-  /// `flutter test` 不加载 Rust 原生库,注入一个假的才能把「保险箱一变这一屏就
+  /// `flutter test` 不加载 Rust 原生库,注入一个假的才能把「病历箱一变这一屏就
   /// 重新拉一次」钉成不依赖设备的回归(见 `test/emergency_card_refresh_test.dart`)。
   final Future<CardData> Function()? load;
 
@@ -40,7 +44,7 @@ class EmergencyCardScreen extends StatefulWidget {
   State<EmergencyCardScreen> createState() => _EmergencyCardScreenState();
 }
 
-/// 应急卡一次要用到的两样东西:抽取出来的卡本体 + 档案里的姓名性别年龄。
+/// 急救卡一次要用到的两样东西:抽取出来的卡本体 + 档案里的姓名性别年龄。
 typedef CardData = (EmergencyCardDto, PatientProfileDto);
 
 class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
@@ -50,7 +54,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
   void initState() {
     super.initState();
     vaultRevision.addListener(_onVaultChanged);
-    // 手填项(紧急联系人 / 器官捐献)本机存,与保险箱无关,单独载入一次。
+    // 手填项(紧急联系人 / 器官捐献)本机存,与病历箱无关,单独载入一次。
     EmergencyExtrasStore.instance.ensureLoaded();
   }
 
@@ -99,7 +103,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
     final c = MedColors.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('应急卡'),
+        title: const Text('急救卡'),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
@@ -115,7 +119,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
             return Padding(
               padding: const EdgeInsets.all(MedShape.s6),
               child: Text(
-                '加载应急卡失败:\n${snap.error}',
+                '加载急救卡失败:\n${snap.error}',
                 textAlign: TextAlign.center,
                 style: MedType.body.copyWith(color: c.ink2, height: 1.6),
               ),
@@ -136,7 +140,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
                   onOpen: () {
                     // 埋点:**无属性**。这一屏上的每一样东西(姓名、血型、过敏史、
                     // 联系人)都是最敏感的那一类,一个都不带。回答的只有
-                    // 「大字模式到底有没有人开」——那是应急卡这个一级席位的依据。
+                    // 「大字模式到底有没有人开」——那是这一屏存在的依据。
                     Analytics.track(AnalyticsEvent.emergencyBigModeOpened);
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -170,7 +174,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
   }
 }
 
-/// 大字模式的入口。一屏只允许一颗主按钮(规范 §六),这个 tab 把它花在这里。
+/// 大字模式的入口。一屏只允许一颗主按钮(规范 §六),这一屏把它花在这里。
 class _BigModeLauncher extends StatelessWidget {
   const _BigModeLauncher({required this.onOpen});
 
@@ -293,7 +297,7 @@ class _AllergySection extends StatelessWidget {
             padding: const EdgeInsets.all(MedShape.s3),
             child: allergies.isEmpty
                 ? Text(
-                    '已导入的病历里没有找到过敏记录,状态是「未识别」。\n'
+                    '已添加的病历里没有找到过敏记录,状态是「未识别」。\n'
                     '这不等于没有过敏 —— 几乎没有人做过完整的过敏原检测,'
                     '记录没写通常只是没查到,不是查过确认没有。请当面告知医生。',
                     style: MedType.body.copyWith(color: c.ink2, height: 1.5),
@@ -341,7 +345,7 @@ class _MedsSection extends StatelessWidget {
             padding: const EdgeInsets.all(MedShape.s3),
             child: meds.isEmpty
                 ? Text(
-                    '已导入的病历里没有读到药名。',
+                    '已添加的病历里没有读到药名。',
                     style: MedType.body.copyWith(color: c.ink2),
                   )
                 : Column(
@@ -385,7 +389,7 @@ class _ConditionSection extends StatelessWidget {
             padding: const EdgeInsets.all(MedShape.s3),
             child: conditions.isEmpty
                 ? Text(
-                    '已导入的病历里没有读到诊断名。',
+                    '已添加的病历里没有读到诊断名。',
                     style: MedType.body.copyWith(color: c.ink2),
                   )
                 : Column(
@@ -837,7 +841,7 @@ class EmergencyBigCardScreen extends StatelessWidget {
             // 但「未识别 ≠ 没有过敏」这条不能省——同一套产品拍板,只是压缩到
             // 一句话。
             Text(
-              '未识别到过敏记录。\n很少有人查全过敏原,未识别 ≠ 没有,请立刻向本人/家属确认。',
+              '未识别到过敏记录。\n很少有人查全过敏原,未识别 ≠ 没有,请立刻向本人或家人确认。',
               style: MedType.subtitle.copyWith(color: c.ink2, height: 1.4),
             )
           else

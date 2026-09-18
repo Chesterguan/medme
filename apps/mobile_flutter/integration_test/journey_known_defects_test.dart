@@ -17,7 +17,8 @@
 //   · BUG-1 → `test/emergency_card_refresh_test.dart`
 //   · BUG-2 → `test/mobile_ia_test.dart`(化验状态那一组)
 //   · BUG-3 → `test/wipe_all_data_test.dart`
-//   · BUG-4 → `test/visit_summary_sheet_test.dart`(「存完笔记要当场刷新」那一组)
+//   · BUG-4 → `test/for_doctor_refresh_test.dart`(「存完笔记要当场刷新」那一组;
+//             浮层删掉之后那份测试跟着改名,断言的是「给医生看」整页上的同一件事)
 //   · 两处写法本身 → `test/known_defect_setstate_future_test.dart`
 
 import 'package:flutter/material.dart';
@@ -37,32 +38,28 @@ void main() {
 
   // ── BUG-1 ────────────────────────────────────────────────────────────────
   //
-  // 复现:冷启动 → 概览 →「记录」→ 存任意一条(或导入、清空、载入示例)。
-  // 曾经的现象:`bumpVaultRevision()` 触发应急卡屏的
+  // 复现:冷启动 → 记一条(或导入、清空、载入示例)。当年那颗「记录」快捷键在
+  //       概览上,概览 Task 9 解散之后它是「趋势 →『记录一下』」。
+  // 曾经的现象:`bumpVaultRevision()` 触发急救卡屏的
   //       `setState(() => _future = _load())`(箭头体,把 `Future` 当成了 setState
   //       的返回值)。debug 构建里 `State.setState` 的断言在 **`markNeedsBuild()`
   //       之前**抛出 —— 于是 `_future` 换成了新的,却**没有任何一次重建被调度**。
-  //       五个 tab 全在 `IndexedStack` 里、且 `tabScreens` 是 `const` 列表,切 tab
+  //       tab 全在 `IndexedStack` 里、且 `tabScreens` 是 `const` 列表,切 tab
   //       也不会让它重建(`identical(newWidget, oldWidget)` 直接跳过)。结果:
-  //       **应急卡一直显示冷启动那一刻的内容,直到 App 重启。**
+  //       **急救卡一直显示冷启动那一刻的内容,直到 App 重启。**
   // 影响面:release 构建里断言被剥掉 → 正常;**debug / profile 必现**,而团队自己
   //       装的正是带 `.dev` 后缀的 debug 包。
-  // 修法:`_onVaultChanged` → `_refresh()`,语句块 setState(与概览 / 趋势 / 档案
-  //       三屏同一形状)。
+  // 修法:`_onVaultChanged` → `_refresh()`,语句块 setState(与病历 / 趋势 两屏
+  //       同一形状)。
   testWidgets('BUG-1 存一条之后,刷新路径上不再有「setState 收到 Future」这类异常', (
     tester,
   ) async {
     await bootApp(tester);
 
-    await gotoTab(tester, HomeTab.emergency);
-    await waitFor(tester, find.text('过敏史'));
+    await gotoEmergencyCard(tester);
 
-    // 回概览存一条 —— 走真实 UI。
-    await gotoTab(tester, HomeTab.overview);
-    await waitFor(tester, find.text('记录'));
-    await tester.tap(find.text('记录').first);
-    await settle(tester);
-    await waitFor(tester, find.text('保存'));
+    // 回去存一条 —— 走真实 UI(趋势 →「记录一下」)。
+    await openRecordSheet(tester);
     await tester.enterText(find.byType(TextField).at(0), '128');
     await tester.enterText(find.byType(TextField).at(1), '82');
     await settle(tester);
@@ -74,15 +71,14 @@ void main() {
     assertNoKnownDefects();
   });
 
-  // BUG-1 的**用户可见后果**:载入示例数据(里面有过敏史、用药、诊断)之后,应急卡
+  // BUG-1 的**用户可见后果**:载入示例数据(里面有过敏史、用药、诊断)之后,急救卡
   // 那一屏必须跟着变。这一条是上面那条的兑现,也是「为什么这不只是一条控制台噪音」。
-  testWidgets('BUG-1 后果:导入之后应急卡当场刷新,不再停在空态', (tester) async {
+  testWidgets('BUG-1 后果:添加之后急救卡当场刷新,不再停在空态', (tester) async {
     await bootApp(tester);
 
-    // 应急卡先看一眼:空态。
-    await gotoTab(tester, HomeTab.emergency);
-    await waitFor(tester, find.text('过敏史'));
-    expect(find.textContaining('已导入的病历里没有找到过敏记录'), findsOneWidget);
+    // 急救卡先看一眼:空态。
+    await gotoEmergencyCard(tester);
+    expect(find.textContaining('已添加的病历里没有找到过敏记录'), findsOneWidget);
 
     // 灌示例数据(22 份真实版式的病历,里面有过敏史/用药/诊断)。
     var loaded = 0;
@@ -112,20 +108,20 @@ void main() {
       reason: '示例数据里应当抽得出过敏史/用药/诊断,否则这条用例证明不了什么',
     );
 
-    // 切到应急卡 —— 屏上必须已经跟着变了。
-    await gotoTab(tester, HomeTab.emergency);
+    // 再进一次急救卡 —— 屏上必须已经跟着变了。
+    await gotoEmergencyCard(tester);
     await settle(tester, total: const Duration(seconds: 3));
     expect(
-      find.textContaining('已导入的病历里没有找到过敏记录'),
+      find.textContaining('已添加的病历里没有找到过敏记录'),
       findsNothing,
-      reason: 'BUG-1 复发:应急卡没有随保险箱变更刷新,还停在冷启动那一刻的空态',
+      reason: 'BUG-1 复发:急救卡没有随病历箱变更刷新,还停在冷启动那一刻的空态',
     );
     assertNoKnownDefects();
   }, timeout: const Timeout(Duration(minutes: 10)));
 
   // ── BUG-3 ────────────────────────────────────────────────────────────────
   //
-  // 复现:设置 →「清空所有数据 · 重置保险箱」→ 确认 → 回概览 →「记录」→ 填
+  // 复现:我 → 关于 →「清空所有数据 · 重置病历箱」→ 确认 → 趋势 →「记录一下」→ 填
   //       128/82 → 保存。
   // 曾经的现象:弹层不关,红字「保存失败:AnyhowException(io: No such file or
   //       directory (os error 2))」。**清空之后到重启之前,一条都存不进去**
@@ -155,10 +151,10 @@ void main() {
     bumpVaultRevision();
     expect((await patientProfile()).recordCount, 1);
 
-    // 走**真实 UI**清空:设置 → 清空 → 确认。
-    await gotoTab(tester, HomeTab.settings);
-    await waitFor(tester, find.text('清空所有数据 · 重置保险箱'));
-    await tester.tap(find.text('清空所有数据 · 重置保险箱'));
+    // 走**真实 UI**清空:我 → 关于 → 清空 → 确认。
+    await gotoAbout(tester);
+    expect(await scrollToFind(tester, find.text('清空所有数据 · 重置病历箱')), isTrue);
+    await tester.tap(find.text('清空所有数据 · 重置病历箱'));
     await settle(tester, total: const Duration(seconds: 2));
     await tester.tap(find.widgetWithText(TextButton, '清空'));
     await settle(tester, total: const Duration(seconds: 6));
@@ -166,11 +162,7 @@ void main() {
     expect((await patientProfile()).recordCount, 0, reason: '清空本身没生效');
 
     // 现在往里写一条 —— 走真实 UI。这就是用户清空之后做的第一件事。
-    await gotoTab(tester, HomeTab.overview);
-    await waitFor(tester, find.text('记录'));
-    await tester.tap(find.text('记录').first);
-    await settle(tester);
-    await waitFor(tester, find.text('保存'));
+    await openRecordSheet(tester);
     await tester.enterText(find.byType(TextField).at(0), '128');
     await tester.enterText(find.byType(TextField).at(1), '82');
     await settle(tester);
@@ -192,8 +184,9 @@ void main() {
 
   // ── BUG-4 ────────────────────────────────────────────────────────────────
   //
-  // 复现:概览 →「看病带这个」→「我想问医生的」右侧的「加一条」→ 写一句 → 保存。
-  // 曾经的现象:笔记确实存进去了,但**浮层一个字都不变** —— 用户看着自己刚写的
+  // 复现:「给医生看」→「我想问医生的」右侧的「加一条」→ 写一句 → 保存。
+  //       (当年这一屏还是从概览唤起的浮层。)
+  // 曾经的现象:笔记确实存进去了,但**那一屏一个字都不变** —— 用户看着自己刚写的
   //       东西没出现,自然会再写一遍。关掉浮层重开才看得到。
   // 根因:`visit_summary_sheet.dart` 的 `setState(() => _future = viewVisitSummary())`
   //       —— 与 BUG-1 同一个写法。而且这一处是在 `async` 方法里、被 `VoidCallback`
@@ -203,7 +196,7 @@ void main() {
   //
   // ⚠️ **这一条仍然不在这个文件里驱动**,原因和当初一样在成本而不在缺陷:它要走完整
   // 的「加一条 → 录入弹层 → 保存」链路(两层浮层 + FFI 落库),在集成测试里噪音大。
-  // 修好之后的行为由 `test/visit_summary_sheet_test.dart` 的「存完笔记要当场刷新」
+  // 修好之后的行为由 `test/for_doctor_refresh_test.dart` 的「存完笔记要当场刷新」
   // 那一组钉住 —— 那里把数据源与「加一条」都注入成假的,`flutter test` 就能跑,不需要
   // 设备,断言的是「存完真的重新拉了一次、新笔记出现在屏上、放弃时不白拉」。
   //
@@ -212,7 +205,7 @@ void main() {
 
   // ── BUG-2 ────────────────────────────────────────────────────────────────
   //
-  // 复现:存一条正常范围内的家测血压(如 128/82),看概览「最近的关键化验」;
+  // 复现:存一条正常范围内的家测血压(如 128/82),看「趋势」的「关键化验」;
   //       或导入任意一张带参考区间的化验单,看任何一个正常项。
   // 曾经的现象:每一行数值左边都挂着一个灰色 pill,上面印着一个字母 **「N」**。
   // 根因:Rust 侧 `flag` 的取值域是 `"H" | "L" | "N" | null`
@@ -241,7 +234,7 @@ void main() {
     );
     bumpVaultRevision();
 
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.trends);
     await waitFor(tester, find.text('收缩压'));
 
     // 128 / 82 都在家测参考区间(≤135 / ≤85)之内 —— 完全正常,不该有任何 pill。

@@ -14,21 +14,22 @@ String maskPhone(String phone) {
   return '${d.substring(0, 3)}****${d.substring(d.length - 4)}';
 }
 
-/// 「有账号默认开云」那句一次性告知看过了没(`sync_engine` 读写它)。
-///
-/// 键名定在这里、而不是在用它的那一侧:它要被**两处**认识 —— `sync_engine` 读写,
-/// 以及 [AccountSession.clear] 退出登录时清掉(复审 M16:它跟着账号走,不跟着设备走,
-/// 否则同一台手机上换个账号登录的人从没被告知过"你的病历会自动上云")。
-/// 反过来让本文件 import `sync_engine` 会成环(那边 import 这边)。
-const cloudDefaultNoticeSeenKey = 'cloud_default_notice_seen';
-
 /// 「云端整理」开关(`cloud_extract.dart` 读,账号屏的开关行写)——**跟设备走,
-/// 不跟账号走**:默认 true,`AccountSession.clear()` 不清它(不像
-/// [cloudDefaultNoticeSeenKey])。换个账号登录,这台设备"要不要把涂黑的单据图
+/// 不跟账号走**:问过之前默认 false(task-20b A2,见 [cloudExtractAskedKey]),
+/// `AccountSession.clear()` 不清它。换个账号登录,这台设备"要不要把涂黑的病历照片
 /// 交给云端模型整理"的选择不该因为换了个人登录就重置回默认。
 const cloudExtractEnabledKey = 'cloud_extract_enabled';
 
-/// 账号会话 + 密钥的本机存储。**私钥与档案密钥只进 secure storage**(iOS Keychain
+/// 「云端整理」问过没有(一次性)。**与 [cloudExtractEnabledKey] 是两件事**:
+/// 那个记的是开关值,这个记的是「用户已经做过一次选择」。没有这个键的话,
+/// 关掉的人每次导入都会被再问一次。
+const cloudExtractAskedKey = 'cloud_extract_asked';
+
+/// 第一次出码前那条告知,这台设备上说过没有(一次性)。**跟设备走,不按成员、
+/// 也不按登录状态** —— 说的是「东西去哪了」,那件事和你是谁无关。
+const qrNoticeSeenKey = 'qr_notice_seen';
+
+/// 账号会话 + 钥匙的本机存储。**私钥与档案钥匙只进 secure storage**(iOS Keychain
 /// 开 synchronizable = 同一 Apple ID 新机自动拿回,这就是「系统钥匙串」那条换机路;
 /// 安卓用 EncryptedSharedPreferences,不跨机)。token 与 id 在 shared_preferences。
 class AccountSession {
@@ -50,7 +51,7 @@ class AccountSession {
   /// 上一次登录走的是哪条认证方式(`'otp'`/`'apple'`)——**只是为了让「注销账号」
   /// 那一步知道该要求哪种重新鉴权凭证**(手机账号要新验证码,Apple 账号要新
   /// identity token,见 `services/api/app.py` 的 `DELETE /v1/account`),不是
-  /// 别的用途。泄露无害(不是密钥),存 shared_preferences 即可。
+  /// 别的用途。泄露无害(不是钥匙),存 shared_preferences 即可。
   String? loginMethod;
 
   /// 登录时用的手机号,**脱敏之后**的样子(`138****8000`)。账号屏拿它告诉用户
@@ -110,14 +111,12 @@ class AccountSession {
       'acct_pub',
       'acct_method',
       'acct_phone_masked',
-      // 见 [cloudDefaultNoticeSeenKey]:那句告知跟着账号走,不跟着设备走(M16)。
-      cloudDefaultNoticeSeenKey,
     ]) {
       await p.remove(k);
     }
     // `deleteAll` 而不是逐个 delete:AccountSession 是这个 app 里唯一用 secure storage
-    // 的地方,它的命名空间下只会有账号私钥(acct_priv)和各档案密钥(pk_<cloudId>)。
-    // 换账号必须把上一个账号的档案密钥也清掉,不然共享设备上账号 B 能读到账号 A 的密钥。
+    // 的地方,它的命名空间下只会有账号私钥(acct_priv)和各档案钥匙(pk_<cloudId>)。
+    // 换账号必须把上一个账号的档案钥匙也清掉,不然共享设备上账号 B 能读到账号 A 的钥匙。
     await _secure.deleteAll();
     accountId = access = refresh = loginMethod = phoneMasked = null; publicKey = privateKey = null;
     loggedIn.value = false;
@@ -130,8 +129,8 @@ class AccountSession {
 
   Future<void> putProfileKey(String cloudId, Uint8List key) => _secure.write(key: 'pk_$cloudId', value: base64Encode(key));
 
-  /// 这个云档案的授权/成员被移除时,连同它的密钥一起清掉——密钥留着没有任何
-  /// 用处(服务端那份 grant 已经没了,拿着本机这份密钥解不出任何新内容),
+  /// 这个云档案的授权/成员被移除时,连同它的钥匙一起清掉——钥匙留着没有任何
+  /// 用处(服务端那份 grant 已经没了,拿着本机这份钥匙解不出任何新内容),
   /// 留着只是白占 Keychain 位置、多一份"看起来还有效"的敏感材料。
   Future<void> removeProfileKey(String cloudId) => _secure.delete(key: 'pk_$cloudId');
 
@@ -140,7 +139,7 @@ class AccountSession {
   /// 本机主动删过的云成员(cloudId 集合)——owner 授权服务端删不掉(见
   /// `vault_boot.removeProfileAndReopenImpl` 的说明),`AccountFlow.restoreProfileKeys`
   /// 换机/重新登录时拿 `GET /v1/profiles` 一样会看到这些还挂着的档案,不认这份
-  /// 名单就会把用户刚删掉的成员原样建回来。存 shared_preferences——不是密钥,
+  /// 名单就会把用户刚删掉的成员原样建回来。存 shared_preferences——不是钥匙,
   /// 泄露无害。
   Future<Set<String>> deletedCloudProfileIds() async {
     final p = await SharedPreferences.getInstance();

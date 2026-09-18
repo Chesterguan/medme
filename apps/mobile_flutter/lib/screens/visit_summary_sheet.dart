@@ -1,283 +1,65 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
-import 'package:mobile_flutter/screens/document_detail.dart';
-import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
-import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
-import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
-/// 「看病带这个」—— **刻意不是一个 tab**(设计系统 §八)。
+/// 「给医生看」正文——诊室里那 30 秒要看的东西,纯渲染,见 [VisitSummaryBody]。
 ///
-/// 原名「就诊单」,2026-08-05 产品真机验收后改名:「就诊单似乎不太好理解」——
-/// 「单」这个字暗示这是医院/系统发下来的一张单据,而它其实是**你自己带进诊室的
-/// 那张纸**。文件名、函数名(`showVisitSummarySheet`)、类名、下面的内部注释仍然
-/// 沿用旧名——那是给读代码的人用的内部标识符,不是给患者看的界面文案,批量改
-/// 标识符只会放大这次 diff 的风险却不会改变任何人看到的东西:**只改字(界面上
-/// 显示的文案),不改名(Dart 符号)**。
+/// ⚠️ 这里原来是一整块浮层(`VisitSummarySheet`/`showVisitSummarySheet`,从
+/// **概览**与**档案**两处顶栏唤起),退出只能下滑、自动化和真人都在那儿卡住过
+/// (ux-audit「试了不止一次」①②)。Task 9 把内容升格成「给医生看」整页
+/// (`screens/for_doctor_screen.dart`);Task 17 把浮层本体整个删掉,只留下面这份
+/// 纯渲染的 [VisitSummaryBody] 与它下面的私有 widget —— 那才是「给医生看」在用
+/// 的东西。`AnalyticsEvent.visitSheetOpened`/`VisitSheetEntry`(以及
+/// `visitSheetAction`/`VisitSheetAction`)几个埋点定义仍标 `@Deprecated` 留在
+/// `analytics.dart`——PostHog 里有它们的历史数据,删了对不上账。
 ///
-/// 它是诊室里那 30 秒的动作:医生问「你最近吃什么药、过敏吗、上次化验多少」,你
-/// 把手机递过去。这不是一个你会常驻浏览的空间,所以它没有底栏席位,而是从**概览**
-/// 与**档案**两处以浮层唤起 —— 那两处正好是「日常打开」和「找单子」,进诊室前你
-/// 本来就在其中之一。
+/// ## 段落顺序:「我想问医生的」排最前
 ///
-/// ## 2026-08-05 改版:段落顺序反了过来
+/// 2026-08-05 产品真机验收拆出的顺序问题(浮层删了,内容和顺序没变):前三屏全是
+/// 免责声明(MedMe 不判断 → 过敏史没找到不等于没有 → 用药不代表当前医嘱)会把
+/// 内容压没;药排在化验前面,医生问诊通常是先问现在怎么了、再看指标、最后核药,
+/// 顺序反了;而且整屏原是"系统从病历里读到了什么",没有一处是"患者自己带来的"。
+/// 四个区块(见 [_VisitSummaryBodyState.build])因此按这个顺序排:
+/// - **我想问医生的**(笔记)排最前——这是这一屏唯一一处"你自己的东西";
+/// - **我最近的变化**紧跟着(自测数值 + 异常化验)——回答"最近有什么不一样";
+/// - **医生可能要问的**(过敏史 + 用药)收在后面,过敏史保持展开(唯一一条
+///   "用错会当场出事"的信息),用药默认折叠——两节各自的免责声明跟着自己的
+///   内容走,不再连着堆在开场。
 ///
-/// 产品真机验收拆出四条具体问题:
-/// 1. 名字像医院发的东西(已解决,见上);
-/// 2. 前三屏全是免责声明(MedMe 不判断 → 过敏史没找到不等于没有 → 用药不代表
-///    当前医嘱),三句话都对、都必要,连着堆在开场却把内容压没了;
-/// 3. 药排在化验前面,10 条药(含重复提及)要滚两屏才见到化验,而医生问诊通常
-///    是先问现在怎么了、再看指标、最后核药,顺序反了;
-/// 4. 「复制全文给医生」与「医生要看原件·出示二维码」两个按钮分不清,得自己推。
-/// 还缺一样东西:**整屏都是"系统从病历里读到了什么",没有一处是"患者自己带来
-/// 的"**——「记录」里写的笔记存完就沉进时间线,没有出口。
-///
-/// 新顺序(`_body` 的四个区块)一起解决这些:
-/// - **我想问医生的**(笔记)排最前——这是这一屏唯一一处"你自己的东西",也是
-///   唯一动手就能加的一节;
-/// - **我最近的变化**紧跟着(自测数值 + 异常化验)——回答"最近有什么不一样",
-///   医生问诊的第二步;
-/// - **医生可能要问的**(过敏史 + 用药)收在后面,过敏史保持展开(它是这一屏
-///   唯一一条"用错会当场出事"的信息),用药默认折叠——两节各自的免责声明跟着
-///   自己的内容走,不再连着堆在开场。
-///
-/// 内容全部来自 `viewVisitSummary()`,而那个投影对结构化字段**只搬运原文逐字
-/// 内容与抽出的数值/日期,不生成任何解释或结论**——「我想问医生的」是唯一的
-/// 例外:那是患者自己写的笔记,只在这一屏显示给患者自己看,绝不进「复制给医生」
-/// 的文本或二维码分享(见 Rust 侧 `VisitNoteDto` 的文档)。这一屏本身也不加结论:
-/// 没有「建议复查」,没有「病情稳定」。它是一页纸,不是一份意见。
-/// [from] 是**唯一**的必填参数,而且刻意没有默认值:这一屏没有 tab 席位,只靠
-/// 概览与档案两处顶栏被找到,所以「哪个入口在起作用」正是它最需要回答的问题
-/// (见 `analytics.dart` 的 [AnalyticsEvent.visitSheetOpened])。给了默认值,
-/// 下一个加入口的人就会漏掉它,而漏掉的表现是数据静静地偏 —— 不是编译错误。
-Future<void> showVisitSummarySheet(
-  BuildContext context, {
-  required VisitSheetEntry from,
-}) {
-  // 埋点:只报「从哪一屏唤起的」。屏上显示的药名、过敏史、化验值一个字不带。
-  Analytics.track(AnalyticsEvent.visitSheetOpened, {'where': from.name});
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    builder: (_) => const VisitSummarySheet(),
-  );
-}
-
-/// 浮层本体。生产只由 [showVisitSummarySheet] 用默认构造建;两个可注入的钩子存在的
-/// 唯一理由是**测试**:这一屏的数据源与「加一条」都要走 Rust FFI,而 `flutter test`
-/// 不加载原生库(见 `test/visit_summary_sheet_test.dart` 顶部同一条限制)。注入之后
-/// 「存完笔记要重新拉一次数据」才能被钉成一条不依赖设备的回归。
-class VisitSummarySheet extends StatefulWidget {
-  const VisitSummarySheet({super.key, this.load, this.onRequestAddNote});
-
-  /// 数据源。null → [viewVisitSummary](FFI)。
-  final Future<VisitSummaryDto> Function()? load;
-
-  /// 「加一条」按下时走的动作,返回「是否真的存了一条」。null → 开录入弹层(FFI)。
-  final Future<bool?> Function(BuildContext context)? onRequestAddNote;
-
-  @override
-  State<VisitSummarySheet> createState() => _VisitSummarySheetState();
-}
-
-class _VisitSummarySheetState extends State<VisitSummarySheet> {
-  late Future<VisitSummaryDto> _future = _load();
-
-  Future<VisitSummaryDto> _load() =>
-      widget.load?.call() ?? viewVisitSummary();
-
-  void _openDoc(int id) {
-    // 与档案屏同一条埋点:只报「打开了一份」,不带 id、不带任何内容。
-    Analytics.track(AnalyticsEvent.docOpened);
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => DocumentDetailScreen(docId: id)));
-  }
-
-  Future<void> _copy(String text) async {
-    // 埋点:只报「按了复制」。**`text` 就是整页病历摘要,绝不上报任何片段。**
-    Analytics.track(AnalyticsEvent.visitSheetAction, {
-      'action': VisitSheetAction.copy.name,
-    });
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(appSnackBar(content: Text('已复制,可以粘贴到微信发给医生')));
-  }
-
-  /// 「我想问医生的」空态与常态共用的「加一条」——直接开录入弹层,预选中「笔记」,
-  /// 跳过六选一(用户点这颗按钮时意图已经是"记笔记",没理由再点一次)。存完刷新
-  /// 这一屏的数据,不需要用户自己关掉浮层再重开——参见 `overview_screen.dart` 的
-  /// `_openManualEntry` 同一条理由:存完立刻看见结果,不是靠额外的 SnackBar 交代。
-  Future<void> _addNote() async {
-    // 埋点:只报「按了加一条」——**入口归属**。真正存下来的那条由 `record_added`
-    // 计数(且同样不带内容),这里回答的是「我想问医生的」这一节有没有人用。
-    Analytics.track(AnalyticsEvent.visitSheetAction, {
-      'action': VisitSheetAction.addNote.name,
-    });
-    final add = widget.onRequestAddNote;
-    final saved = add != null
-        ? await add(context)
-        : await showManualEntrySheet(
-            context,
-            initialKind: ManualEntryKind.note,
-          );
-    if (saved == true && mounted) await _refresh();
-  }
-
-  /// 重新拉一次数据并**真的重建这一屏**。
-  ///
-  /// 与概览 / 趋势 / 档案三屏同一个写法,理由也同一条:`setState(() => _future = …)`
-  /// 的**箭头体**会把赋值结果(一个 `Future`)当成 setState 的返回值交出去,
-  /// `State.setState` 在断言里发现它是 Future 就抛 —— 而那一抛发生在
-  /// `markNeedsBuild()` **之前**。于是 `_future` 换成了新的,却没有任何一次重建被
-  /// 调度:用户看着自己刚写的笔记没出现,自然会再写一遍。这一处还更狠 —— 它在一个
-  /// `async` 方法里、由 `VoidCallback` 调起,异常直接逃成未捕获的 zone 错误,连控制台
-  /// 上都只是一条与现象对不上的噪音。release 里断言被剥掉看不出来,debug/profile 必现。
-  /// **所以必须是语句块,不是箭头。**
-  Future<void> _refresh() async {
-    final next = _load();
-    setState(() {
-      _future = next;
-    });
-    await next;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    // 浮层高度上限取屏高的 88%:再高就盖住了顶栏,读起来像换了一屏而不是「递过去
-    // 一张纸」;再矮则一屏放不下过敏 + 用药两节,医生要滚才看得到最要紧的过敏史。
-    final maxHeight = MediaQuery.sizeOf(context).height * 0.88;
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxHeight: maxHeight),
-      child: FutureBuilder<VisitSummaryDto>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Padding(
-              padding: EdgeInsets.all(MedShape.s6),
-              child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          if (snap.hasError) {
-            return Padding(
-              padding: const EdgeInsets.all(MedShape.s5),
-              child: Text(
-                '加载失败:${snap.error}',
-                style: MedType.body.copyWith(color: c.ink2, height: 1.6),
-              ),
-            );
-          }
-          final s = snap.data!;
-          return SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Expanded(
-                  child: VisitSummaryBody(
-                    summary: s,
-                    onOpenDoc: _openDoc,
-                    onAddNote: _addNote,
-                  ),
-                ),
-                _actions(context, s),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  /// 底部动作条。**一屏只允许一颗主按钮**(规范 §六),这里是「复制」——
-  /// 因为诊室里最常见的一步是把这段字发到医生的微信/工作站,而不是让医生扫码。
-  Widget _actions(BuildContext context, VisitSummaryDto s) {
-    final c = MedColors.of(context);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(
-        MedShape.s4,
-        MedShape.s2,
-        MedShape.s4,
-        MedShape.s2,
-      ),
-      decoration: BoxDecoration(
-        color: c.surface,
-        border: Border(top: BorderSide(color: c.line)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: () => _copy(s.plainText),
-              icon: const Icon(Icons.copy_all_outlined, size: 20),
-              label: const Text('复制全文给医生'),
-            ),
-          ),
-          const SizedBox(height: MedShape.s1),
-          // 二维码分享与这一屏是**两个场景**:这一屏是本地的、离线的、30 秒读完的
-          // 一页纸;扫码是端到端加密、要联网、把**完整病历含原件**交出去。医生说
-          // 「我要看原片」时才升级到这一步,所以它是次级按钮,不是并列。两个按钮
-          // 的文案刻意不对称——一个说「给文字」,一个说「给原件」,不用靠图标或
-          // 顺序去猜哪个更"重"。
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                // 埋点:只报**入口归属**。出码本身仍由 `share_qr_shown` 计数,
-                // 载荷、份数、体积都在那条上(且都是分桶)。这里回答的是
-                // 「诊室里走的是复制还是出码」。
-                Analytics.track(AnalyticsEvent.visitSheetAction, {
-                  'action': VisitSheetAction.qr.name,
-                });
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const QrShareScreen(),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.qr_code_2, size: 20),
-              label: const Text('医生要看原件 · 出示二维码'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 「看病带这个」浮层的内容主体——**不碰 FFI**,纯粹拿一份已经取到的
-/// [VisitSummaryDto] 渲染。
-///
-/// 从 `_VisitSummarySheetState.build()` 里拆成一个公开 widget,是为了让
-/// `flutter test` 能在没有 Rust 原生库的环境下对这一屏做多视口 + 大字号溢出
-/// 回归测试——`_VisitSummarySheet` 本身在 `_future` 字段初始化那一刻就会调
-/// `viewVisitSummary()`,在测试环境里直接崩(见 `manual_entry_sheet_test.dart`
-/// 顶部注释,这是本项目反复踩过的坑,也是这一屏在这次改版前一直没有测试文件的
-/// 原因)。这层拆分让"数据从哪来"(FFI,留在 `_VisitSummarySheetState`)和
-/// "数据怎么显示"(纯 widget 树,搬到这里)分开,后者才是这次改版真正要验的
-/// 内容——见 `test/visit_summary_sheet_test.dart`。
+/// 内容全部来自 `viewVisitSummary()` 返回的 [VisitSummaryDto],对结构化字段
+/// **只搬运原文逐字内容与抽出的数值/日期,不生成任何解释或结论**——「我想问医生的」是
+/// 唯一的例外:那是患者自己写的笔记,只在这一屏显示给患者自己看,绝不进交给医生
+/// 的那份纯文本,也不进二维码分享(见 Rust 侧 `VisitNoteDto` 的文档)。这一屏本身
+/// 也不加结论:没有「建议复查」,没有「病情稳定」。它是一页纸,不是一份意见。
 class VisitSummaryBody extends StatefulWidget {
   const VisitSummaryBody({
     super.key,
     required this.summary,
     required this.onOpenDoc,
     required this.onAddNote,
+    this.showHeading = true,
+    this.footer,
   });
 
   final VisitSummaryDto summary;
   final void Function(int docId) onOpenDoc;
   final VoidCallback onAddNote;
+
+  /// 正文顶部要不要画一行「给医生看」抬头。`ForDoctorScreen` 传 `false` ——
+  /// 那一页的 AppBar 上已经写着「给医生看」,正文再画一遍就是同屏两个自己的
+  /// 名字。`true`(默认值)留给**不带自己标题栏**的调用方——今天没有这样的
+  /// 调用方了(原来的浮层已删,内容升格成了 tab),但组件自身的这个开关不因为
+  /// 调用方一时没有就该跟着拆。患者那行「名字 · 性别 · 年龄」两边都留着。
+  final bool showHeading;
+
+  /// 接在正文最后、**跟着一起滚**的东西。「给医生看」那一页用它把「打印 / 导出」
+  /// 「急救卡」「代拍」三条放进滚动流里 —— `s4` 只有「出码给医生看」那一颗固定在
+  /// 底部。浮层不传。
+  final Widget? footer;
 
   @override
   State<VisitSummaryBody> createState() => _VisitSummaryBodyState();
@@ -307,11 +89,12 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
         MedShape.s3,
       ),
       children: [
-        Text('看病带这个', style: MedType.title.copyWith(color: c.ink)),
-        if (who.isNotEmpty) ...[
-          const SizedBox(height: 2),
-          Text(who, style: MedType.subtitle.copyWith(color: c.ink)),
+        if (widget.showHeading) ...[
+          Text('给医生看', style: MedType.title.copyWith(color: c.ink)),
+          if (who.isNotEmpty) const SizedBox(height: 2),
         ],
+        if (who.isNotEmpty)
+          Text(who, style: MedType.subtitle.copyWith(color: c.ink)),
         const SizedBox(height: MedShape.s4),
 
         // ── 我想问医生的:这一屏唯一一处"患者自己带来的东西",排最前。 ──
@@ -331,7 +114,7 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
           // 化验数据(而不是"有数据但都不异常")也会走到这句,两种情况文案上不
           // 强行区分:对患者来说"要不要在意"这件事,答案都是"这里没有要提醒你
           // 的"。
-          emptyText: '已导入的病历里没有自测数值,也没有标为异常的化验。',
+          emptyText: '已添加的病历里没有自测数值,也没有标为异常的化验。',
           isEmpty: s.recentChanges.isEmpty,
           children: [
             for (final l in s.recentChanges)
@@ -349,6 +132,8 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
           onToggleMeds: () => setState(() => _medsExpanded = !_medsExpanded),
           onOpenDoc: widget.onOpenDoc,
         ),
+
+        if (widget.footer != null) widget.footer!,
       ],
     );
   }
@@ -503,7 +288,7 @@ class _DoctorMayAskSection extends StatelessWidget {
         Text('医生可能要问的', style: MedType.caption.copyWith(color: c.ink3)),
         const SizedBox(height: 2),
         Text(
-          '下面每一个字都逐字来自你已导入的病历。MedMe 不做判断,也不生成结论。',
+          '下面每一个字都逐字来自你已添加的病历。MedMe 不做判断,也不生成结论。',
           style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
         ),
         const SizedBox(height: MedShape.s3),
@@ -514,7 +299,7 @@ class _DoctorMayAskSection extends StatelessWidget {
           title: '过敏史',
           // 空过敏史必须自己说话:留白会被医生读成「无过敏史」,而我们只知道
           // 「已导入的这些纸上没写」。这两件事在临床上差着一条命。
-          emptyText: '已导入的病历里没有找到过敏记录 —— 这不等于你不过敏,请当面告诉医生。',
+          emptyText: '已添加的病历里没有找到过敏记录 —— 这不等于你不过敏,请当面告诉医生。',
           isEmpty: allergies.isEmpty,
           children: [
             for (final a in allergies)
@@ -558,7 +343,7 @@ class _MedsSubsection extends StatelessWidget {
     if (activeMeds.isEmpty) {
       return const _Section(
         title: kRecordedMedsTitle,
-        emptyText: '已导入的病历里没有读到药名。',
+        emptyText: '已添加的病历里没有读到药名。',
         isEmpty: true,
         children: [],
       );
@@ -725,9 +510,10 @@ class _LabRow extends StatelessWidget {
       refHigh: lab.refHigh,
       // 自测值(家测血压/血糖/体重/体温/心率)与医院值排在同一份「我最近的
       // 变化」里,靠这个标注分清"这是病人自己量的"——见 MANUAL-ENTRY-DESIGN.md,
-      // 措辞与概览、趋势页复用同一个"· 家测"。
+      // 措辞与趋势页复用同一个"· 家测"。
       // `valuesConverted` 见 `unitConvertedNote` —— 这一行的数值不是纸上印的那个
-      // 时必须标注,概览行(overview_screen)用同一份措辞。
+      // 时必须标注,趋势的化验快照(`trends_screen.dart` 的 `KeyLabsSnapshot`)
+      // 用同一份措辞。
       meta: [
         lab.date,
         if (lab.selfMeasured) '家测',

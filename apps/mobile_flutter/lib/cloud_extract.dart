@@ -27,16 +27,16 @@ import 'package:mobile_flutter/src/rust/api/vault.dart' as rust_vault;
 import 'package:mobile_flutter/vault_boot.dart' show runSerialized;
 import 'package:mobile_flutter/vault_events.dart';
 
-/// 「云端整理」开关(键定在 `account.dart`,见 [cloudExtractEnabledKey])。默认
-/// true——关掉这台设备的云抽取,不是关登录。读不到就当开着,跟别的"读不到"
-/// 兜底不一样:这个开关一旦被用户关过,漏读成"开"会把用户已经关掉的东西又发出去。
-/// 但 `getBool` 只会在真没写过时返回 null(未写=从没关过=default true 成立),
-/// 写过之后一定读得到那次写的值,所以这条兜底是安全的。
+/// 「云端整理」开关(键定在 `account.dart`,见 [cloudExtractEnabledKey])。**默认
+/// false**(task-20b A2)——在 `cloud_extract_asked`(见 [cloudExtractAskedKey])
+/// 记下用户回答之前,不能把"没写过"读成"同意过"。读不到(没写过 / 读取本身出错)
+/// 一律当关:这是一条同意闸,失败方向必须偏向"不发"。写过之后 `getBool` 一定读得到
+/// 那次写的值(只有从没写过才是 null),所以这条兜底不会盖掉用户已经做过的选择。
 Future<bool> loadCloudExtractEnabled() async {
   try {
-    return (await SharedPreferences.getInstance()).getBool(cloudExtractEnabledKey) ?? true;
+    return (await SharedPreferences.getInstance()).getBool(cloudExtractEnabledKey) ?? false;
   } catch (_) {
-    return true;
+    return false;
   }
 }
 
@@ -183,7 +183,7 @@ Future<Map<String, dynamic>> postExtractRetrying(
     final left = deadline.difference(DateTime.now());
     if (e.status != 502 || left < minRetryBudget) rethrow;
     // `e.message` 是服务端的 detail(`upstream` / `upstream_truncated`),是我们
-    // 自己的常量,不含任何文档内容 —— 可以进日志(同下面 catch 那条纪律)。
+    // 自己的常量,不含任何文件正文 —— 可以进日志(同下面 catch 那条纪律)。
     debugPrint('[cloud-extract] 上游 502:${e.message},剩 ${left.inSeconds}s,重试一次');
     return postExtract(api, mode: mode, payload: payload).timeout(left);
   }
@@ -222,7 +222,7 @@ typedef PendingCloudExtraction = ({
 /// 涂黑(`lines`/`bytes` 是逐张照片的,拼不成一页)。所以这里给的 [OcrResult] 只
 /// 有文本 —— [canRedactImage] 因此为 false,`runCloudExtraction` 自己就退到文本档,
 /// 发出去的是 Rust 侧脱敏过的文本。文本取各页 OCR 拼起来,只用来过
-/// [isLowOcrYield] 那道闸(真正发出去的文本由 Rust 从保险箱里重读)。
+/// [isLowOcrYield] 那道闸(真正发出去的文本由 Rust 从病历箱里重读)。
 ///
 /// [sources] 为空(比如根本没排上队)返回 null:没有成员/箱子可捕获,就不排。
 PendingCloudExtraction? pendingForMergedDocument({
@@ -335,7 +335,7 @@ Future<T?> ifVaultUnchanged<T>(
   // 路径不进日志:里面有成员 / 代拍病人的 id 和沙盒路径,而"换没换"这一个事实
   // 就够定位了。
   if (await readCurrentVaultRoot() != capturedVaultRoot) {
-    debugPrint('[vault-guard] 保险箱已不是当初那个(代拍/连切两次),跳过 $what');
+    debugPrint('[vault-guard] 病历箱已不是当初那个(代拍/连切两次),跳过 $what');
     return null;
   }
   return action();
@@ -448,7 +448,7 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
       ),
     );
   } catch (e) {
-    // ⚠️ **绝不进埋点**(异常文本可能带文档内容片段)。`debugPrint` 在 release 里
+    // ⚠️ **绝不进埋点**(异常文本可能带文件正文片段)。`debugPrint` 在 release 里
     // 并不会被剥离,一样会进系统日志 —— 这里打印的东西必须自己就是安全的:闸的错误
     // 只报类别不回显身份(`deid/gate.rs` 有测试钉),网络/解析异常带的是**脱敏后**的
     // 响应片段。要往这行里加内容的话,先确认新加的东西也满足这一条。

@@ -58,12 +58,15 @@ void main() {
   });
 
   group('patientGrantedSubtitle', () {
-    test('与成员切换器里那一行逐字相同', () {
-      expect(patientGrantedSubtitle(_viewer('p', '张', DateTime(2026, 9, 20))), '只读 · 至 9月20日');
+    // Task 13 复审裁定的例外:挑人界面零角色词的硬规矩不管这一节——医生要用到期日
+    // 判断该不该催病人续。这一行早就不再和 member_switcher.dart 逐字相同了(那边
+    // 已经把角色词整个删掉);词从「只读」换成「只能看」,与 roleLabel('viewer') 对齐。
+    test('只能看 · 至 M月D日', () {
+      expect(patientGrantedSubtitle(_viewer('p', '张', DateTime(2026, 9, 20))), '只能看 · 至 9月20日');
     });
 
-    test('没有到期日就只说「只读」,不编一个日期', () {
-      expect(patientGrantedSubtitle(_viewer('p', '张', null)), '只读');
+    test('没有到期日就只说「只能看」,不编一个日期', () {
+      expect(patientGrantedSubtitle(_viewer('p', '张', null)), '只能看');
     });
   });
 
@@ -73,10 +76,10 @@ void main() {
     });
 
     test('一份 / 多份', () {
-      expect(expiredGrantNotice([_viewer('a', '张建国', null)]), '张建国 的授权已到期,已移出');
+      expect(expiredGrantNotice([_viewer('a', '张建国', null)]), '张建国 的查看权限已到期,已移出');
       expect(
         expiredGrantNotice([_viewer('a', '张建国', null), _viewer('b', '李秀兰', null)]),
-        '张建国、李秀兰 的授权已到期,已移出',
+        '张建国、李秀兰 的查看权限已到期,已移出',
       );
     });
   });
@@ -96,18 +99,18 @@ void main() {
       ),
     ));
 
-    testWidgets('有被授权的档案:列出姓名 + 「只读 · 至 M月D日」', (t) async {
+    testWidgets('有被授权的档案:列出姓名 + 「只能看 · 至 M月D日」', (t) async {
       await pumpSection(t, [_viewer('p-2', '张建国', DateTime(2026, 9, 20))]);
-      expect(find.text('病人授权给我的档案'), findsOneWidget);
+      expect(find.text('病人让我看的病历'), findsOneWidget);
       expect(find.text('张建国'), findsOneWidget);
-      expect(find.text('只读 · 至 9月20日'), findsOneWidget);
+      expect(find.text('只能看 · 至 9月20日'), findsOneWidget);
       // 内部 id 不露出来。
       expect(find.textContaining('prf_'), findsNothing);
     });
 
     testWidgets('没有被授权的档案:整节不画(医生模式的主角是代拍)', (t) async {
       await pumpSection(t, const []);
-      expect(find.text('病人授权给我的档案'), findsNothing);
+      expect(find.text('病人让我看的病历'), findsNothing);
     });
 
     testWidgets('点一行:回调拿到的是那个成员', (t) async {

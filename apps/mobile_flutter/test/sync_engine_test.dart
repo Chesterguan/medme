@@ -1137,7 +1137,7 @@ void main() {
   });
 
   group('C3:开着 iCloud 同步时不许开通云同步(keyed 开箱会落在一个空的本机目录上)', () {
-    test('enableCloud 拒绝,消息告诉用户去设置里关 iCloud,零 API 调用', () async {
+    test('enableCloud 拒绝,消息告诉用户去哪里关 iCloud,零 API 调用', () async {
       await ProfileManager.instance.ensureLoaded();
       await ProfileManager.instance.factoryReset();
       final p = ProfileManager.instance.current;
@@ -1151,7 +1151,7 @@ void main() {
 
       await expectLater(
         engine.enableCloud(p),
-        throwsA(isA<CloudEnableBlocked>().having((e) => '$e', 'toString', '请先在设置里关闭 iCloud 同步')),
+        throwsA(isA<CloudEnableBlocked>().having((e) => '$e', 'toString', '请先在「我 → 关于」里关闭 iCloud 同步')),
       );
       expect(api.calls, isEmpty);
       expect(ProfileManager.instance.byId(p.id)!.cloudId, isNull, reason: '什么都没落盘');

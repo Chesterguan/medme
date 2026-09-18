@@ -124,11 +124,12 @@ void main() {
     expect(lastSys, 149.0,
         reason: '同日多点排序不稳:序列最后一个点是 $lastSys,应该是当天最后录的 149');
 
-    // ── 概览「最近的关键化验」也应当认得出这条家测 ──
-    await gotoTab(tester, HomeTab.overview);
-    await waitFor(tester, find.text('最近的关键化验'));
+    // ── 「趋势」的「关键化验」也应当认得出这条家测 ──
+    // (概览 Task 9 解散,那一块搬进了「趋势」,标题跟着词表去掉了「最近的」。)
+    await gotoTab(tester, HomeTab.trends);
+    await waitFor(tester, find.text('关键化验'));
     expect(find.textContaining('家测'), findsWidgets,
-        reason: '概览没把家测值标出来,会被当成医院化验值');
+        reason: '「关键化验」没把家测值标出来,会被当成医院化验值');
 
     watch.assertClean();
   });
@@ -155,11 +156,15 @@ void main() {
     expect(sys.anyAbnormal, isTrue, reason: '30 天里一半是 150+,却没有任何点被标异常');
 
     // 关掉「只看非正常项」,序列不该减少。
+    //
+    // `findsWidgets` 而不是 `findsOneWidget`:概览解散之后「关键化验」那一块也
+    // 搬进了「趋势」,同一屏上「收缩压」会出现在关键化验那一行**和**趋势卡标题
+    // 两处 —— 这里要的是「切开关之后这条序列还在」,不是数它出现几次。
     final sw = find.byType(Switch);
     if (sw.evaluate().isNotEmpty) {
       await tester.tap(sw.first);
       await settle(tester);
-      expect(find.text('收缩压'), findsOneWidget);
+      expect(find.text('收缩压'), findsWidgets);
     }
   });
 }

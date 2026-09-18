@@ -21,7 +21,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// 时间戳),所以发一个占位常量而不是省掉它。
 const wireTs = '0';
 
-/// 当前打开的保险箱和要同步的档案对不上——切换了成员却没重开箱,或者代拍病人的
+/// 当前打开的病历箱和要同步的档案对不上——切换了成员却没重开箱,或者代拍病人的
 /// 箱子(unkeyed)还开着。宁可整次同步失败,也不能把不相关的箱子内容推上/拉进
 /// 这个云档案(见 C1 review:`SyncEngine` 拿到的 `Profile` 只是个参数,真正写盘
 /// 读盘的是进程级单例 vault,两者必须显式核对,不能靠调用顺序自证)。
@@ -46,11 +46,11 @@ abstract class RustSyncApi {
   /// [CloudEnableBlocked]。
   Future<bool> icloudEnabled();
 
-  /// 当前打开的保险箱是不是 keyed(云档案)打开的——`SyncEngine` 每次touch vault
+  /// 当前打开的病历箱是不是 keyed(云档案)打开的——`SyncEngine` 每次touch vault
   /// 前拿它核对身份(见 [VaultMismatch])。
   Future<bool> currentVaultIsKeyed();
 
-  /// 当前打开的保险箱的真相根目录——同上,核对"这真的是要同步的那个档案"。
+  /// 当前打开的病历箱的真相根目录——同上,核对"这真的是要同步的那个档案"。
   Future<String> currentVaultRoot();
 
   /// 本机每个 device 段当前可信的最大 seq——拉取水位。
@@ -122,19 +122,19 @@ class RustSync implements RustSyncApi {
       rust.syncStoreObject(profileKey: profileKey, objectId: objectId, ciphertext: ciphertext);
 }
 
-/// 这台设备开着 iCloud 同步,不能给成员开通账号云同步(最终评审 C3)。
+/// 这台设备开着 iCloud 同步,不能给成员开通账号云端备份(最终评审 C3)。
 ///
-/// 两套同步搬的是**同一个保险箱的家**:iCloud 开着时,vault 的真相目录在
+/// 两套同步搬的是**同一个病历箱的家**:iCloud 开着时,vault 的真相目录在
 /// iCloud 容器里(`<container>/Documents/profiles/<id>/vault`);而 keyed 开箱
 /// (`vault_boot.openCurrentProfileVault` 的 keyed 分支)只认本机沙盒那条路径,
-/// 压根不接容器根。于是「开通云同步」会在一个**空的本机目录**上开出一个空箱子,
+/// 压根不接容器根。于是「开通云端备份」会在一个**空的本机目录**上开出一个空箱子,
 /// 用户眼里就是"我的病历凭空消失了"(真相其实还在容器里,但 App 再也不看那边)。
 ///
 /// 宁可不给开,也不能演这一出。`toString` 就是给用户看的那句话。
 class CloudEnableBlocked implements Exception {
   const CloudEnableBlocked();
   @override
-  String toString() => '请先在设置里关闭 iCloud 同步';
+  String toString() => '请先在「我 → 关于」里关闭 iCloud 同步';
 }
 
 /// 一次 [SyncEngine.syncProfile] 的结果。
@@ -149,7 +149,7 @@ class SyncReport {
   int objectsFailed = 0;
 
   /// 拉回来的事件里,MAC/链校验没通过、被隔离的条目数——非零说明有台设备的
-  /// 密钥不对或被篡改,不代表这次同步本身失败,但值得留意。
+  /// 钥匙不对或被篡改,不代表这次同步本身失败,但值得留意。
   int untrusted = 0;
 
   /// 撞到需要重排/暂时接不上的乱序条目数。`syncProfile` 内部已经自动重拉过一次
@@ -171,7 +171,7 @@ class SyncReport {
 ///
 /// **每个会碰进程级 vault 的方法开头都核对身份**(见 [VaultMismatch])——vault 是
 /// 进程级单例,`Profile p` 只是个参数,两者不天然一致:切换成员没重开箱、或者
-/// 医生模式的代拍病人箱子还开着,都会让"传进来的 p"和"实际写盘读盘的箱子"对不上。
+/// 代拍病人箱子还开着,都会让"传进来的 p"和"实际写盘读盘的箱子"对不上。
 class SyncEngine {
   SyncEngine(this.api, this.session, {this.rust = const RustSync(), this.reopenVault = openCurrentProfileVault});
 
@@ -179,7 +179,7 @@ class SyncEngine {
   final AccountSession session;
   final RustSyncApi rust;
 
-  /// 开通云同步之后重开箱(走 keyed 路径)。测试注入点,默认真实的
+  /// 开通云端备份之后重开箱(走 keyed 路径)。测试注入点,默认真实的
   /// `vault_boot.openCurrentProfileVault`——它内部调 FRB,`flutter test` 跑不到,
   /// 于是 [enableCloud] 的"注册成功之后"那半截一直没法测(M4 的续开通逻辑正好
   /// 全在那半截)。同 `AccountFlow.reopenCurrentProfileVault` 的套路。
@@ -199,7 +199,7 @@ class SyncEngine {
   /// 挡一道,别为一个注定被服务端拒收的 PUT 走一趟签名请求。
   static const objectMaxBytes = 64 * 1024 * 1024;
 
-  /// 开通云同步:建一把新的档案密钥,用账号公钥封起来上传给自己(服务端只存
+  /// 开通云端备份:建一把新的档案钥匙,用账号公钥封起来上传给自己(服务端只存
   /// 密文),登记为 owner,存进本机 secure storage,写回 [ProfileManager],
   /// 重开箱(走 keyed 路径)后立刻跑一次首同步。
   ///
@@ -215,13 +215,13 @@ class SyncEngine {
   ///
   /// **可续做**(最终评审 M4):这件事有三步(注册 → 重开箱 → 首同步),后两步
   /// 任何一步失败,前面那步的后果都已经落盘了——服务端有了这个档案、本机有了
-  /// 密钥、`profiles.json` 里已经 `markCloud` 过。再点一次不能重新走注册:那会
-  /// 在服务端建出第二个档案、本机第二把密钥,第一个档案从此成了没人认领的孤儿。
+  /// 钥匙、`profiles.json` 里已经 `markCloud` 过。再点一次不能重新走注册:那会
+  /// 在服务端建出第二个档案、本机第二把钥匙,第一个档案从此成了没人认领的孤儿。
   /// 所以已经有 [Profile.cloudId] 时直接从"重开箱 + 首同步"这一步继续。
   Future<String> enableCloud(Profile p) async {
     if (p.id != ProfileManager.instance.currentId.value) {
       throw VaultMismatch(
-        '只能给当前打开的成员开通云同步(当前=${ProfileManager.instance.currentId.value},传入=${p.id})',
+        '只能给当前打开的成员开通云端备份(当前=${ProfileManager.instance.currentId.value},传入=${p.id})',
       );
     }
     // **在 `reopenVault()` 之前**(复审 R1)。不能只靠 [registerCloudProfile] 里那一道:
@@ -237,8 +237,8 @@ class SyncEngine {
     return cloudId;
   }
 
-  /// [enableCloud] 里不碰 FFI 开箱的那半截:建密钥、封给自己公钥、POST
-  /// `/v1/profiles`、密钥存本机、[ProfileManager.markCloud]。拆出来单独可测——
+  /// [enableCloud] 里不碰 FFI 开箱的那半截:建钥匙、封给自己公钥、POST
+  /// `/v1/profiles`、钥匙存本机、[ProfileManager.markCloud]。拆出来单独可测——
   /// `flutter test` 不能跑到 `openCurrentProfileVault`(需要真实 Rust 原生库),
   /// 但这半截的逻辑用假 API/假 Rust 就能钉住。返回新的 `cloudId`。
   ///
@@ -248,7 +248,7 @@ class SyncEngine {
   Future<String> registerCloudProfile(Profile p) async {
     // **这道闸在这儿,不在 `enableCloud` 里**(复审 N1)。I7 之后"给非当前成员默认
     // 开云"直接调这个方法,而它原来没有这道检查 —— 于是开着 iCloud 同步时拨一下别人
-    // 的开关会**成功**:`markCloud` 写下 cloudId、密钥存进 secure storage、一声不响。
+    // 的开关会**成功**:`markCloud` 写下 cloudId、钥匙存进 secure storage、一声不响。
     // 下次切到那个成员,`planVaultOpen` 判成 keyed,而 keyed 分支压根不接 iCloud 容器
     // 根(见 `vault_boot.openCurrentProfileVaultUnserialized` 两个分支的差别)——
     // 他在容器里的那些病历从此够不着,用户眼里就是"病历凭空消失"。
@@ -259,7 +259,7 @@ class SyncEngine {
     if (await rust.icloudEnabled()) await _refuseForIcloud();
     final key = await rust.profileKeyNew();
     final pub = session.publicKey;
-    if (pub == null) throw StateError('账号公钥未就绪,不能开通云同步');
+    if (pub == null) throw StateError('账号公钥未就绪,不能开通云端备份');
     final wrapped = await rust.sealTo(pub, key);
     final r = await api.postJson('/v1/profiles', {'wrapped_profile_key': base64Encode(wrapped)});
     final cloudId = r['profile_id'] as String;
@@ -290,11 +290,11 @@ class SyncEngine {
   /// 只能问 Rust 自己(同 `vault_boot.ensureProxyVaultOpen` 的思路)。
   Future<void> _assertVaultMatches(Profile p) async {
     if (!await rust.currentVaultIsKeyed()) {
-      throw VaultMismatch('当前打开的保险箱不是这个云档案(keyed)——可能是本地档案或代拍病人的箱子还开着,拒绝同步');
+      throw VaultMismatch('当前打开的病历箱不是这个云端病历箱(keyed)——可能是本地病历箱或代拍病人的箱子还开着,拒绝同步');
     }
     final actual = await rust.currentVaultRoot();
     if (!actual.endsWith('/profiles/${p.id}/vault')) {
-      throw VaultMismatch('当前打开的保险箱($actual)与要同步的档案(id=${p.id})不一致,拒绝同步');
+      throw VaultMismatch('当前打开的病历箱($actual)与要同步的成员(id=${p.id})不一致,拒绝同步');
     }
   }
 
@@ -318,9 +318,9 @@ class SyncEngine {
   Future<SyncReport> _syncProfileLocked(Profile p) async {
     await _assertVaultMatches(p);
     final cloudId = p.cloudId;
-    if (cloudId == null) throw StateError('这个成员还没开通云同步');
+    if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
-    if (key == null) throw StateError('没有这个档案的密钥');
+    if (key == null) throw StateError('没有这个病历箱的钥匙');
     final rep = SyncReport();
     final canWrite = p.role == 'owner' || p.role == 'editor';
 
@@ -508,9 +508,9 @@ class SyncEngine {
   Future<void> _fetchObjectLocked(Profile p, String hash) async {
     await _assertVaultMatches(p);
     final cloudId = p.cloudId;
-    if (cloudId == null) throw StateError('这个成员还没开通云同步');
+    if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
-    if (key == null) throw StateError('没有这个档案的密钥');
+    if (key == null) throw StateError('没有这个病历箱的钥匙');
     final missing = await rust.missingObjects(key);
     final match = missing.where((e) => e.$1 == hash);
     if (match.isEmpty) return;
@@ -573,7 +573,7 @@ class SyncEngine {
 }
 
 /// debounced push(`vaultRevision` 变化 3 秒后)和 app-resume pull 共用的一段
-/// no-op 判断 + 静默失败:没登录、或当前成员没开通云同步(没有 [Profile.cloudId])
+/// no-op 判断 + 静默失败:没登录、或当前成员没开通云端备份(没有 [Profile.cloudId])
 /// 时什么都不做,不发任何请求;真的跑了的话失败也不抛——后台触发器不该弹错误
 /// 打断用户,想看这次到底成没成,去账号屏点「立即同步」(那边会显式展示
 /// [SyncReport]/异常)。
@@ -596,7 +596,7 @@ bool _backgroundSyncRerunRequested = false;
 /// A5:领回来了、但首同步还没成功的成员(本机成员 id)。
 ///
 /// `AccountFlow.restoreProfileKeys` 只往里**登记**,真正的首同步由
-/// [triggerBackgroundSync] 排空(启动补齐完、回到前台、保险箱有变动时各跑一次)。
+/// [triggerBackgroundSync] 排空(启动补齐完、回到前台、病历箱有变动时各跑一次)。
 /// 两个理由:
 ///
 /// * **不在启动路径上跑**(评审 Important 3):首同步是「拉一整个档案的全部事件 +
@@ -604,7 +604,7 @@ bool _backgroundSyncRerunRequested = false;
 ///   正是换机后的第一次启动 —— N 个档案串行跑完,启动画面能被按住几十秒。
 /// * **失败要能再试**(评审 Important 2):同步失败的成员**留在集合里**,下一次
 ///   触发再试。在这之前那唯一一次尝试里的一次网络抖动,就让用户永久看着一个叫
-///   「正在恢复的档案」、0 份病历的成员 —— 一个承诺了永不会完成的操作的标签。
+///   「正在恢复的成员」、0 份病历的成员 —— 一个承诺了永不会完成的操作的标签。
 ///
 /// 只在内存里:`restoreProfileKeys` 每次启动都会照"名字还是占位串吗"重新登记一遍
 /// (见那边的 `adopted`),所以不需要落盘。
@@ -657,7 +657,7 @@ Future<void> saveLastSync({required bool ok, required String? cloudId}) async {
   lastSyncRevision.value++;
 }
 
-/// 「这台手机开着 iCloud 同步,所以云同步开不了」(见 [CloudEnableBlocked])。
+/// 「这台手机开着 iCloud 同步,所以云端备份开不了」(见 [CloudEnableBlocked])。
 ///
 /// 由 [_drainPendingCloudEnable] 每次排空前问一次 Rust 并记在这儿,**界面只读这个
 /// 布尔**(复审 I5)。这样"查 iCloud 开没开"这件事只有一处碰 FRB,概览屏那一行和
@@ -677,27 +677,6 @@ Future<bool> loadIcloudBlocksCloud() async {
   } catch (_) {
     return false;
   }
-}
-
-/// 「默认开云」那句一次性告知看过了没(复审 I8)。默认上传是一个**代替用户做的
-/// 决定** —— 他至少有权在它发生的那一刻知道这件事、并且知道怎么关。
-/// 键名定在 `account.dart`(见 [cloudDefaultNoticeSeenKey]):`AccountSession.clear()`
-/// 退出登录时也要清它,两边必须认同一个字符串。
-const _cloudNoticeSeenKey = cloudDefaultNoticeSeenKey;
-
-Future<bool> loadCloudDefaultNoticeSeen() async {
-  try {
-    return (await SharedPreferences.getInstance()).getBool(_cloudNoticeSeenKey) ?? false;
-  } catch (_) {
-    // 读不到就当没看过 —— 多说一次远好过漏说。
-    return false;
-  }
-}
-
-Future<void> saveCloudDefaultNoticeSeen() async {
-  try {
-    await (await SharedPreferences.getInstance()).setBool(_cloudNoticeSeenKey, true);
-  } catch (_) {}
 }
 
 Future<LastSync?> loadLastSync(String? cloudId) async {
@@ -721,7 +700,7 @@ Future<void> triggerBackgroundSync({
   /// 不碰 [pendingFirstSync] —— 已有的那些只测"普通同步"的用例不用改。
   Future<void> Function(Profile p, String returnTo)? firstSync,
 
-  /// 给一个还没开通云同步的成员开通。`current` = 这是不是用户此刻打开着的那个成员:
+  /// 给一个还没开通云端备份的成员开通。`current` = 这是不是用户此刻打开着的那个成员:
   /// **只有它走完整路径**(注册 → 重开箱 → 首同步),别人只做"注册"那一步
   /// (复审 I7,见 [_drainPendingCloudEnable])。为 null 时不碰 [pendingCloudEnable]。
   Future<void> Function(Profile p, {required bool current})? enableCloud,
@@ -767,7 +746,7 @@ Future<void> _runBackgroundSyncOnce({
   // 再把「有账号了、但这个成员还没上云」的排空(UX 第二轮)。
   if (enableCloud != null) await _drainPendingCloudEnable(currentProfile, enableCloud, icloudEnabled);
   final profile = currentProfile();
-  // `cloudPaused` = 用户手动关了这个成员的云同步 —— 触发器跳过它(创始人拍板的
+  // `cloudPaused` = 用户手动关了这个成员的云端备份 —— 触发器跳过它(创始人拍板的
   // 那条:「关闭后本机不再上传下载」)。
   if (profile == null || profile.cloudId == null || profile.cloudPaused) return;
   try {
@@ -790,7 +769,7 @@ Future<void> _drainPendingFirstSync(
   if (returnTo == null) return;
   for (final id in pendingFirstSync.toList()) {
     final p = ProfileManager.instance.byId(id);
-    // 成员已经不在了(用户删了)、或者用户把它的云同步关了——别再惦记它。
+    // 成员已经不在了(用户删了)、或者用户把它的云端备份关了——别再惦记它。
     // 关掉之后还去跑首同步,正是"关闭后本机不再上传下载"这句话的反面。
     if (p == null || p.cloudId == null || p.cloudPaused) {
       pendingFirstSync.remove(id);
@@ -813,7 +792,7 @@ Future<void> _drainPendingFirstSync(
 /// [saveIcloudBlocksCloud],界面据此说出真正的原因(而不是一条点不动的「点这里重试」)。
 ///
 /// **只有当前成员走完整路径**(复审 I7 裁定):`SyncEngine.enableCloud` 的三步里,
-/// 只有"注册"(`registerCloudProfile`:生成档案密钥、封给账号公钥、POST /v1/profiles、
+/// 只有"注册"(`registerCloudProfile`:生成档案钥匙、封给账号公钥、POST /v1/profiles、
 /// `markCloud`)与箱子无关;"重开箱 + 首同步"必须是当前成员。于是给别人开通只做注册 ——
 /// 不切成员、不开箱、不闪屏;内容的首次推送等用户下次打开那个成员时由既有路径自然发生
 /// (切成员本身就 `bumpVaultRevision` → debounced push)。当前成员仍然走完整的三步。
@@ -906,7 +885,7 @@ Future<void> runBackgroundSync() {
 ///
 /// **两条路共用**,而在这之前只有第一条真的做了这件事:
 ///
-///  * `Grants.redeem`(医生/家属扫码兑换):做完停在新档案上 —— 那正是用户刚
+///  * `Grants.redeem`(医生/家人扫码兑换):做完停在新档案上 —— 那正是用户刚
 ///    点头要加入的东西。[returnTo] 传 null。
 ///  * `AccountFlow.restoreProfileKeys`(换机/清过数据之后领回自己的档案,A5):
 ///    做完必须切回用户原来在看的那个成员 —— 这一步是"顺手补齐",不该改变用户

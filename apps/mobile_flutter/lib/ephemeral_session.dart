@@ -5,14 +5,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_ephemeral.dart' as rust_ephemeral;
 
-/// 「为病人代建档」临时会话(即焚)的 Dart 侧薄封装 —— 直接转发到 Rust 侧独立的
-/// `vault_ephemeral` 模块(与医生自己的保险箱 `api::vault` 完全平行、互不可见,
+/// 「代拍」临时会话(即焚)的 Dart 侧薄封装 —— 直接转发到 Rust 侧独立的
+/// `vault_ephemeral` 模块(与医生自己的病历箱 `api::vault` 完全平行、互不可见,
 /// 且**零共享代码**,见该 Rust 文件顶部说明)。**不碰** `ProfileManager` /
 /// `vault_boot` 的任何 reopen/switch:这不是「切成员」,是另一个用完即焚的箱子。
 class EphemeralSession {
   EphemeralSession._();
 
-  /// 会话根目录:系统临时缓存目录(不进 iCloud/云备份,系统可能随时清空——
+  /// 会话根目录:系统临时缓存目录(不进 iCloud/云端备份,系统可能随时清空——
   /// 与「用完即焚」互为兜底)。
   static Future<String> _cacheDir() async =>
       (await getTemporaryDirectory()).path;
@@ -28,7 +28,7 @@ class EphemeralSession {
     await rust_ephemeral.ephemeralBegin(cacheDir: await _cacheDir());
   }
 
-  /// 采集(图片,已识别好文本)。签名与 `vault.dart` 的 `ingestImageWithText` 一致。
+  /// 添加(图片,已识别好文本)。签名与 `vault.dart` 的 `ingestImageWithText` 一致。
   static Future<ImportOutcomeDto> ingestImageWithText({
     required String name,
     required List<int> bytes,
@@ -41,7 +41,7 @@ class EphemeralSession {
     confidence: confidence,
   );
 
-  /// 采集(字节直传,如「选择文件」拿到的 PDF/TXT)。签名与 `vault.dart` 的
+  /// 添加(字节直传,如「选择文件」拿到的 PDF/TXT)。签名与 `vault.dart` 的
   /// `ingestBytes` 一致。
   static Future<ImportOutcomeDto> ingestBytes({
     required String filename,
@@ -56,7 +56,7 @@ class EphemeralSession {
   /// 的大局。复用 `parser::assemble_summary`——与生成加密分享同一套确定性装配。
   static Future<ProxySummaryDto> summary() => rust_ephemeral.ephemeralSummary();
 
-  /// 一份文档的识别文本(供审阅屏「逐份识别内容」摊开展示,喂给 `ReportContent`)。
+  /// 一份文档识别出来的文字(供审阅屏「逐份识别内容」摊开展示,喂给 `ReportContent`)。
   static Future<String> documentText(int documentId) =>
       rust_ephemeral.ephemeralDocumentText(documentId: documentId);
 
@@ -65,7 +65,7 @@ class EphemeralSession {
   static Future<void> deleteDocument(int documentId) =>
       rust_ephemeral.ephemeralDeleteDocument(documentId: documentId);
 
-  /// 标记/取消一份文档「已确认」(详情页「确认这一份」,整份确认,不细到每一项)。
+  /// 标记/取消一份文档「已确认」(详情页「没问题」,整份确认,不细到每一项)。
   static Future<void> setConfirmed({
     required int documentId,
     required bool confirmed,
@@ -74,13 +74,13 @@ class EphemeralSession {
     confirmed: confirmed,
   );
 
-  /// 当前会话箱里每份文档的确认状态。只含**显式确认过**的文档;待确认列表屏对
-  /// 查不到的 document_id 一律按「待确认」处理。
+  /// 当前会话箱里每份文档的确认状态。只含**显式确认过**的文档;还没核对列表屏对
+  /// 查不到的 document_id 一律按「还没核对」处理。
   static Future<List<ConfirmedStatusDto>> confirmedMap() =>
       rust_ephemeral.ephemeralConfirmedMap();
 
-  /// 一份文档详情(待确认列表「点进一份」的详情页):类型/日期 + 来源文件元信息 +
-  /// 识别文本 + 置信度。签名与 `vault.dart` 的 `getDocument` 一致。
+  /// 一份病历的详情(还没核对列表「点进一份」的详情页):类型/日期 + 来源文件元信息 +
+  /// 识别出来的文字 + 置信度。签名与 `vault.dart` 的 `getDocument` 一致。
   static Future<DocumentDetailDto> getDocument(int documentId) =>
       rust_ephemeral.ephemeralGetDocument(documentId: documentId);
 

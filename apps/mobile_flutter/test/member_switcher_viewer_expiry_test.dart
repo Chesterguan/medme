@@ -67,7 +67,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('清掉了一份:弹窗收起后 SnackBar **可见**地说「X 的授权已到期,已移出」', (tester) async {
+    testWidgets('清掉了一份:弹窗收起后 SnackBar **可见**地说「X 的查看权限已到期,已移出」', (tester) async {
       await pumpSwitcher(
         tester,
         purgeExpired: () async => const [
@@ -77,11 +77,11 @@ void main() {
       // 第一轮把这句话弹在**打开弹窗之前** —— SnackBar 从底部升起,而底部弹窗整块
       // 盖在它上面,那 4 秒里用户一个字都看不见。所以这里用 `hitTestable()`:
       // `findsOneWidget` 对"在树里但被盖住"是过得去的,而那正是当时的 bug。
-      expect(find.text('李秀兰 的授权已到期,已移出').hitTestable(), findsNothing,
+      expect(find.text('李秀兰 的查看权限已到期,已移出').hitTestable(), findsNothing,
           reason: '弹窗还开着,此刻不该(也盖不住地)显示');
 
       await dismissSheet(tester);
-      expect(find.text('李秀兰 的授权已到期,已移出').hitTestable(), findsOneWidget);
+      expect(find.text('李秀兰 的查看权限已到期,已移出').hitTestable(), findsOneWidget);
     });
 
     testWidgets('什么都没清掉:不说话(不骚扰每一次打开切换器)', (tester) async {
@@ -149,7 +149,10 @@ void main() {
     });
   });
 
-  testWidgets('viewer 行显示「只读 · 至 M月D日」,owner 行不显示', (tester) async {
+  // Task 13:挑人的界面上不出现任何亲属/角色词——授权级别只在某个成员自己的
+  // 页面里说(`s10`,Stage 2)。这条原来钉的是「viewer 行显示只读 · 至 M月D日」,
+  // 现在反过来钉「不显示」,同 `test/member_no_role_words_test.dart` 的规矩。
+  testWidgets('viewer 成员不写「只读」——挑人的界面只有名字', (tester) async {
     final pm = ProfileManager.instance;
     late String viewerId;
     await tester.runAsync(() async {
@@ -184,13 +187,9 @@ void main() {
     await tester.tap(find.text('打开切换器'));
     await tester.pumpAndSettle();
 
-    expect(find.text('只读 · 至 11月3日'), findsOneWidget);
-    // owner 行(初始的「我」)不该带这行只读文案。
-    final ownerTile = find.ancestor(of: find.text('我'), matching: find.byType(ListTile));
-    expect(
-      find.descendant(of: ownerTile, matching: find.textContaining('只读')),
-      findsNothing,
-    );
+    expect(find.text('张医生的病人'), findsOneWidget);
+    expect(find.textContaining('只读'), findsNothing, reason: '挑人的界面不写角色词');
+    expect(find.textContaining('11月3日'), findsNothing, reason: '到期日也挪到成员自己的页面里说');
   });
 
   testWidgets('打开切换器时先跑一次过期清理', (tester) async {

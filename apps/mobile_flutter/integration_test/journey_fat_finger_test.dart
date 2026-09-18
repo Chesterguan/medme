@@ -1,6 +1,6 @@
 // 用户视角二:**手抖 / 乱按的用户**。
 //
-// 全程走**真实 UI**(概览 → 记录 → 输入框 → 保存),不走 FFI 后门 —— 这一条
+// 全程走**真实 UI**(趋势 →「记录一下」→ 输入框 → 保存),不走 FFI 后门 —— 这一条
 // 用例要验的正是「UI 这一层挡不挡得住」。覆盖:空值、只填一半、0、-1、999999、
 // 小数、中文字符、超长数字串、反复快速点保存、录入中途退出。
 //
@@ -14,18 +14,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/vault_events.dart';
 
 import 'harness.dart';
 
-/// 从概览的「记录」快捷操作打开录入弹层。
-Future<void> openEntrySheet(WidgetTester tester) async {
-  await gotoTab(tester, HomeTab.overview);
-  await waitFor(tester, find.text('记录'));
-  await tester.tap(find.text('记录').first);
-  await settle(tester);
-  await waitFor(tester, find.text('保存'), what: '录入弹层的「保存」按钮');
-}
+/// 从「趋势」的「记录一下」打开录入弹层(概览 Task 9 解散,这颗快捷键搬去了那儿)。
+Future<void> openEntrySheet(WidgetTester tester) => openRecordSheet(tester);
 
 Finder get sysBox => find.byType(TextField).at(0);
 Finder get diaBox => find.byType(TextField).at(1);
@@ -47,7 +40,7 @@ void main() {
     addTearDown(watch.stop);
 
     await bootApp(tester);
-    expect(await recordCount(), 0, reason: '起点应当是空保险箱');
+    expect(await recordCount(), 0, reason: '起点应当是空病历箱');
 
     await openEntrySheet(tester);
 

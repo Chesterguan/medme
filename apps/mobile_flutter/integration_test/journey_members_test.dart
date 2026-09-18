@@ -70,10 +70,13 @@ void main() {
     await switchProfileAndReopen(dadId!);
     expect((await patientProfile()).recordCount, 2);
 
-    // UI:档案屏顶部的成员 tab 条应当列全。
+    // UI:成员名单在「我 → 这台手机上的病历」那张卡里(`s5`);「病历」顶部
+    // 只有 hero 卡显示**当前**那一个人,没有成员 tab 条(`s1` 的 mockup 决定)。
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.archive);
-    await waitFor(tester, find.text('妈妈'));
+    await gotoTab(tester, HomeTab.me);
+    await waitFor(tester, find.text('这台手机上的病历'));
+    expect(await scrollToFind(tester, find.text('妈妈')), isTrue,
+        reason: '「我」的成员名单里没有「妈妈」');
     expect(find.text('爸爸'), findsWidgets);
 
     watch.assertClean();
@@ -100,9 +103,10 @@ void main() {
         reason: '删掉当前成员后,开着的还是那个已删目录的箱子');
 
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.archive);
+    await gotoTab(tester, HomeTab.me);
+    await waitFor(tester, find.text('这台手机上的病历'));
     await settle(tester, total: const Duration(seconds: 2));
-    expect(find.text('妈妈'), findsNothing, reason: '删掉的成员还在 tab 条上');
+    expect(find.text('妈妈'), findsNothing, reason: '删掉的成员还在「我」的名单上');
   });
 
   testWidgets('删到只剩一个时不给删(该走「清空所有数据」)', (tester) async {
@@ -111,7 +115,7 @@ void main() {
     expect(pm.profiles.length, 1);
     expect(pm.canRemove(pm.currentId.value), isFalse);
     final removed = await removeProfileAndReopen(pm.currentId.value);
-    expect(removed, isFalse, reason: '把最后一个成员删掉了 —— 保险箱变成无人状态');
+    expect(removed, isFalse, reason: '把最后一个成员删掉了 —— 病历箱变成无人状态');
     expect(pm.profiles.length, 1);
   });
 
@@ -140,24 +144,29 @@ void main() {
     await createProfileAndReopen('张伟');
     expect(pm.profiles.where((p) => p.name == '张伟').length, 2);
 
-    // 屏上不该被挤爆:档案屏的成员 tab 条 + 设置的保险箱卡都过一遍。
+    // 屏上不该被挤爆:「病历」的 hero 卡 +「我」的成员名单卡都过一遍。
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.archive);
+    await gotoTab(tester, HomeTab.records);
     await settle(tester, total: const Duration(seconds: 2));
 
-    await gotoTab(tester, HomeTab.settings);
+    await gotoTab(tester, HomeTab.me);
     await waitFor(
       tester,
-      find.descendant(of: find.byType(AppBar), matching: find.text('设置')),
+      find.descendant(of: find.byType(AppBar), matching: find.text('我')),
     );
-    // 五个成员 + 一个 40 字的名字会把保险箱卡撑得很高,「示例数据」那一节被顶到
-    // 屏外 —— `ListView` 不构建屏外的子项,所以要翻下去才找得到。
-    expect(await scrollToFind(tester, find.text('清空所有数据 · 重置保险箱')), isTrue,
-        reason: '五个成员之后,设置屏翻到底也找不到「清空所有数据」');
+    // 五个成员 + 一个 40 字的名字会把成员名单卡撑得很高,下面那几行被顶到屏外
+    // —— `ListView` 不构建屏外的子项,所以要翻下去才找得到。
+    expect(await scrollToFind(tester, find.text('关于 / 隐私政策')), isTrue,
+        reason: '五个成员之后,「我」翻到底也找不到「关于 / 隐私政策」');
     await settle(tester);
 
-    // 概览的身份卡拿的是 `displayName`,极长名字不该把卡撑破。
-    await gotoTab(tester, HomeTab.overview);
+    // 「删掉全部」现在住在「关于」那一层,顺带确认那一层也没被撑破。
+    await gotoAbout(tester);
+    expect(await scrollToFind(tester, find.text('清空所有数据 · 重置病历箱')), isTrue,
+        reason: '「关于」翻到底也找不到「清空所有数据」');
+
+    // hero 身份卡拿的是当前成员名,极长名字不该把卡撑破。
+    await gotoTab(tester, HomeTab.records);
     await settle(tester, total: const Duration(seconds: 2));
 
     watch.assertClean();
@@ -171,7 +180,7 @@ void main() {
     await addBpFor(133);
 
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.overview);
+    await gotoTab(tester, HomeTab.records);
     await waitFor(tester, find.byType(IdentityHeroCard));
 
     // 身份卡整卡可点 → 弹成员切换器。
