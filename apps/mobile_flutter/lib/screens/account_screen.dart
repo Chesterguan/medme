@@ -321,7 +321,7 @@ class _AccountScreenState extends State<AccountScreen> {
   Future<List<dynamic>>? _devicesFuture;
   Future<List<dynamic>>? _grantsFuture;
 
-  /// 「我授权给谁」——见 `_loadMyGrants`。
+  /// 「谁能看」——见 `_loadMyGrants`。
   Future<List<Map<String, dynamic>>>? _myGrantsFuture;
 
   // ---- 云端备份(Task 15):开通 + 触发 + 展示上一次结果 ----
@@ -503,10 +503,10 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  /// 「我授权给谁」:遍历我拥有(role=='owner')的每个云档案,查它的 grantee 列表
+  /// 「谁能看」:遍历我拥有(role=='owner')的每个云档案,查它的 grantee 列表
   /// (`GET /v1/profiles/{pid}/grants`,owner-only,服务端不带手机号/姓名)。
   /// owner 自己那一行由服务端一并返回,这里过滤掉——这个列表只回答"我把这份
-  /// 档案给了谁",不是"我在这份档案里是什么角色"(那是上面「授权」区块的事)。
+  /// 档案给了谁",不是"我在这份档案里是什么角色"(那是上面「我能看的」区块的事)。
   Future<List<Map<String, dynamic>>> _loadMyGrants() async {
     final profiles = ((await widget.flow.api.getJson('/v1/profiles')) as List).cast<Map<String, dynamic>>();
     final out = <Map<String, dynamic>>[];
@@ -1034,6 +1034,12 @@ class _AccountScreenState extends State<AccountScreen> {
   /// C7:**「云端备份」排第一**。用户点进账号屏,十次里九次是为了"我的病历到底备上了
   /// 没有";而它原来排在第四个区块,要滚过设备、授权、成员三节才看得见。
   /// 「设备」排最后 —— 它是一年用一次的东西。
+  ///
+  /// task-20b A4/Part B:下面两节标题不要弄反——「我能看的」(`_grantsSection`)
+  /// 列的是**这个账号**有身份的云档案(含自己 owner 的那份);「谁能看」
+  /// (`_myGrantsSection`)列的是**我拥有的档案**分别被谁看了,与
+  /// `member_detail_screen.dart` 的「谁能看$_name的病历」那一节是同一个概念、
+  /// 同一个词,只是那边按单个成员分开显示,这里跨档案汇总。
   List<Widget> _readyContent() => [
     const Text('已登录', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 4),
@@ -1043,11 +1049,11 @@ class _AccountScreenState extends State<AccountScreen> {
     const SizedBox(height: 8),
     _cloudSyncSection(),
     const SizedBox(height: 24),
-    const Text('谁能看', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const Text('我能看的', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _grantsSection(),
     const SizedBox(height: 24),
-    const Text('我让谁看', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+    const Text('谁能看', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     _myGrantsSection(),
     const SizedBox(height: 24),
@@ -1130,7 +1136,7 @@ class _AccountScreenState extends State<AccountScreen> {
           (_cloudBusy || _syncBusy)
               ? const Center(child: CircularProgressIndicator())
               : FilledButton(onPressed: _syncOrRecover, child: const Text('云端备份')),
-        // B5 的**真正入口**(评审 Important 8)。原来「转为主人」只作为「我授权给谁」
+        // B5 的**真正入口**(评审 Important 8)。原来「转为主人」只作为「谁能看」
         // 里的 per-grantee 行存在 —— 于是"把档案交给父母"要先:(1) 父母装 App 并走完
         // 口令 + 恢复码(正是 B4 那个卡点);(2) 子女按手机号把他加成家人;(3) 才会
         // 在那一行里出现按钮。而红队说的恰恰是把档案交给一个**还不是家人**的人。
@@ -1141,7 +1147,7 @@ class _AccountScreenState extends State<AccountScreen> {
           const SizedBox(height: 4),
           // 忙的时候只是**禁用**,不换成进度圈:`_transferBusy` 在那张码的对话框开着
           // 的整段时间里都是 true,底下挂一个永不停的进度圈既无意义,也会让
-          // `pumpAndSettle` 永远 settle 不下来(踩过)。同「我授权给谁」那一行的写法。
+          // `pumpAndSettle` 永远 settle 不下来(踩过)。同「谁能看」那一行的写法。
           TextButton(
             key: const Key('transfer_current_profile'),
             onPressed: _transferBusy ? null : () => _transferOwnership(profile),
@@ -1780,9 +1786,10 @@ class _AccountScreenState extends State<AccountScreen> {
     },
   );
 
-  /// 「我授权给谁」——每个我拥有的云档案下面挂着的 grantee(见 `_loadMyGrants`),
-  /// 每行一个真正能用的「撤销」(`DELETE /v1/profiles/{pid}/grants/{gid}`,后端
-  /// 本身就拒绝删 owner 那一行,这里也从不会展示 owner 自己)。
+  /// 「谁能看」(task-20b A4 之前叫「我授权给谁」)——每个我拥有的云档案下面
+  /// 挂着的 grantee(见 `_loadMyGrants`),每行一个真正能用的「撤销」
+  /// (`DELETE /v1/profiles/{pid}/grants/{gid}`,后端本身就拒绝删 owner 那一行,
+  /// 这里也从不会展示 owner 自己)。
   Widget _myGrantsSection() => FutureBuilder<List<Map<String, dynamic>>>(
     future: _myGrantsFuture,
     builder: (context, snap) {

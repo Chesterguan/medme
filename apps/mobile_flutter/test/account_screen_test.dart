@@ -545,12 +545,14 @@ Future<void> _toReady(
   await t.pumpAndSettle();
 }
 
-/// 「我让谁看」(task-20b A4 之前叫「我授权给谁」)排在「已就绪」页最后一节——
-/// `ListView(children: ...)` 底层还是 `SliverChildListDelegate`,只有落在视口 +
-/// 缓存区内的子节点才会被挂载,普通 `ensureVisible` 对还没挂载的 widget 无能为力
-/// (同 `visit_summary_sheet_test.dart` 的 `scrollToMedsToggle` 一模一样的坑):
-/// 先 `scrollUntilVisible` 挂载它,再 `ensureVisible` 把它拉回可点击的范围。
-Future<void> _scrollToMyGrants(WidgetTester t) => _scrollToText(t, '我让谁看');
+/// 「谁能看」(task-20b A4 一度改成「我让谁看」,与 member_detail_screen.dart
+/// 已经在用的「谁能看$_name的病历」撞了车,Part B 复核时纠正回来)排在「已就绪」
+/// 页最后一节——`ListView(children: ...)` 底层还是 `SliverChildListDelegate`,
+/// 只有落在视口 + 缓存区内的子节点才会被挂载,普通 `ensureVisible` 对还没挂载的
+/// widget 无能为力(同 `visit_summary_sheet_test.dart` 的 `scrollToMedsToggle`
+/// 一模一样的坑):先 `scrollUntilVisible` 挂载它,再 `ensureVisible` 把它拉回
+/// 可点击的范围。
+Future<void> _scrollToMyGrants(WidgetTester t) => _scrollToText(t, '谁能看');
 
 /// 把一段文字滚进视口。C7 把「云同步」提到第一位之后,「我的设备」「账号管理」
 /// 落到了最底下 —— 原来那些裸 `ensureVisible` 够不到它们(`SliverList` 懒实现,
@@ -1324,7 +1326,7 @@ void main() {
     testWidgets('C7:「云端」排在第一个区块,「设备」排在「云端」后面', (t) async {
       await _toReady(t, FakeApi(hasKeys: true), debugModeOverride: false);
       final cloud = t.getTopLeft(find.text('云端')).dy;
-      final grants = t.getTopLeft(find.text('谁能看')).dy;
+      final grants = t.getTopLeft(find.text('我能看的')).dy;
       expect(cloud < grants, isTrue, reason: '点进账号屏十次里九次是为了"我的病历备上了没有"');
     });
 
@@ -1441,9 +1443,9 @@ void main() {
         {'profile_id': 'p1', 'role': 'owner', 'grant_id': 'g1', 'expires_at': null},
       ]);
       await _toReady(t, api);
-      // Task 17 在「云同步」那节加了一行「云端整理」开关,「授权」这节的挂载点
+      // Task 17 在「云同步」那节加了一行「云端整理」开关,「我能看的」这节的挂载点
       // 被挤出首屏——`SliverList` 懒实现,没挂载的 widget 找不到,先滚过去。
-      await _scrollToText(t, '谁能看');
+      await _scrollToText(t, '我能看的');
       // C:`prf_xxx` 是服务端内部 id,不给用户看;对不上本机成员时说「一份共享档案」。
       expect(find.text('一份共享档案'), findsOneWidget);
       expect(find.textContaining('p1'), findsNothing);
@@ -1458,9 +1460,9 @@ void main() {
     testWidgets('加载失败:显示错误,不崩', (t) async {
       final api = FakeApi(hasKeys: true, failProfiles: true);
       await _toReady(t, api);
-      await _scrollToText(t, '谁能看');
+      await _scrollToText(t, '我能看的');
       // task-20b Part B 把「授权列表加载失败」这句改成了「加载失败」,与
-      // 「我让谁看」那节共用同一句——`failProfiles` 连带让 `_loadMyGrants`
+      // 「谁能看」那节共用同一句——`failProfiles` 连带让 `_loadMyGrants`
       // 里那次 `/v1/profiles` 也失败(见 `_loadMyGrants` 先取 owner 列表那步),
       // 于是两节此刻都在报错,`findsOneWidget` 不再成立,改成"至少能看到一个"。
       expect(find.textContaining('加载失败'), findsWidgets);
@@ -1504,9 +1506,9 @@ void main() {
       await t.tap(find.text('解锁'));
       // 200ms:盖过解锁本身(FakeCrypto 20ms + restoreProfileKeys 的 GET
       // /v1/profiles 30ms),但远小于 myGrantsDelay(3s)——此刻应该已经落在
-      // "已就绪,「我授权给谁」还在等" 这个窗口。
+      // "已就绪,「谁能看」还在等" 这个窗口。
       await t.pump(const Duration(milliseconds: 200));
-      await t.scrollUntilVisible(find.text('我让谁看'), 200, scrollable: find.byType(Scrollable).first);
+      await t.scrollUntilVisible(find.text('谁能看'), 200, scrollable: find.byType(Scrollable).first);
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsWidgets);
       // 收尾:把剩下的延迟耗完,不留 pending timer。
