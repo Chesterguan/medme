@@ -323,6 +323,33 @@ void main() {
       expect(dy(disclaimer), greaterThan(last));
     });
 
+    testWidgets('出处:默认收起,展开后包里每一条题录逐字都在', (t) async {
+      // 卡片里印的是出处 id(「出处 S12」),全文只有这一块 —— 没有它,那些 id
+      // 就是查不到去处的编号。视口拉高,好让展开后的二十几条一次都布局出来。
+      _usePhone(t, height: 20000);
+      final fake = _Fake(view: _golden);
+      final cites = (_golden['sources'] as List)
+          .map((s) => '${(s as Map)['id']} · ${s['cite']}')
+          .toList();
+      expect(cites.length, 24, reason: 'golden 里就是这么多条,数变了要来看一眼');
+
+      await t.pumpWidget(_page(fake.source));
+      await t.pumpAndSettle();
+      expect(find.text('出处'), findsOneWidget);
+      expect(find.text(cites.first), findsNothing, reason: '默认收起');
+
+      await t.tap(find.text('出处'));
+      await t.pumpAndSettle();
+      for (final cite in cites) {
+        expect(find.text(cite), findsOneWidget, reason: cite);
+      }
+
+      // 再点一下收回去 —— 收起来才算「可折叠」。
+      await t.tap(find.text('出处'));
+      await t.pumpAndSettle();
+      expect(find.text(cites.first), findsNothing);
+    });
+
     testWidgets('失败:一句话 + 重试,点了真的重算', (t) async {
       _usePhone(t);
       final fake = _Fake()..viewError = StateError('没有可用的病种包:sle');

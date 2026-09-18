@@ -223,7 +223,7 @@ class _Failed extends StatelessWidget {
   }
 }
 
-/// 正文:包给的 section 按包给的顺序 → 开关 → 免责声明(逐字,最后一行)。
+/// 正文:包给的 section 按包给的顺序 → 开关 → 出处 → 免责声明(逐字,最后一行)。
 class _Body extends StatelessWidget {
   const _Body({required this.view, required this.busy, required this.onToggle});
 
@@ -236,6 +236,9 @@ class _Body extends StatelessWidget {
     final c = MedColors.of(context);
     final enabled = view['enabled'] == true;
     final sections = (view['sections'] as List? ?? const [])
+        .map((s) => (s as Map).cast<String, dynamic>())
+        .toList();
+    final sources = (view['sources'] as List? ?? const [])
         .map((s) => (s as Map).cast<String, dynamic>())
         .toList();
     final disclaimer = view['disclaimer'] as String? ?? '';
@@ -264,11 +267,52 @@ class _Body extends StatelessWidget {
           child: Text(enabled ? '关闭病程档案' : '开启病程档案'),
         ),
         const SizedBox(height: MedShape.s4),
+        if (sources.isNotEmpty) _Sources(sources),
+        const SizedBox(height: MedShape.s2),
         // 包给的那句话,**逐字**,不在前后加任何自己的措辞。
         Text(
           disclaimer,
           style: MedType.secondary.copyWith(color: c.ink3, height: 1.6),
         ),
+      ],
+    );
+  }
+}
+
+/// 出处全文,**默认收起**。
+///
+/// 卡片里每个数值旁边印的是出处 id(`出处 S12`,`widgets/profile_sections.dart`),
+/// 全文只在这里有一份 —— 没有这一块,那些 id 就是查不到去处的编号。`id · cite`
+/// **逐字**来自包的 `manifest.sources[]`,这里不加书名号、不重排、不缩写。
+///
+/// 收起是因为它是「要查的时候才查」的东西:二十几条文献题录摆在开关下面,会把
+/// 真正要看的内容挤出屏幕。
+class _Sources extends StatelessWidget {
+  const _Sources(this.sources);
+
+  final List<Map<String, dynamic>> sources;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return ExpansionTile(
+      title: Text('出处', style: MedType.caption.copyWith(color: c.ink3)),
+      // 展开/收起时 Material 自己那两道分隔线在这一屏上是多余的一档层次
+      // (层次靠边框,设计系统 §四)。
+      shape: const Border(),
+      collapsedShape: const Border(),
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(bottom: MedShape.s2),
+      expandedCrossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final s in sources)
+          Padding(
+            padding: const EdgeInsets.only(bottom: MedShape.s1),
+            child: Text(
+              '${s['id']} · ${s['cite']}',
+              style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
+            ),
+          ),
       ],
     );
   }
