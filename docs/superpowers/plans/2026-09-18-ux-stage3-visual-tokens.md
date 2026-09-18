@@ -132,11 +132,11 @@ Claude-Session: https://claude.ai/code/session_01KMR1uVqpofrCC5Yjf9com8
 
 
 ### 控制者裁定(2026-09-18,执行前)
-- 分歧 6「正常」pill:透明底 + `#227A4C` 文字,保留「正常」两个字。
+- 已知分歧 5「正常」pill:**预检后改判(见 SDD 工作区 global-constraints.md R2)**——不做 pill、不加字;`status == null` 行 = 左色条 `#2F8F5B` + 数值文字 `#227A4C`。
 - 对比度:主卡沿用 mockup 的白字压品牌渐变;主标题 26/600 与次级文字 ≥15/600 一律放在渐变的中段到深段(文字块靠左、靠下,光晕在右上),按大字号 AA(≥3:1)验收;Task 4 Step 4 的「站不住就停下来报」改为按本裁定执行并在测试里断言次级文字字号 ≥15 且字重 600。
-- 分歧 5:打包单个 Manrope 可变字体,`FontVariation('wght', 500/600)`。
-- 分歧 10:Stage 3 brief 取代 DESIGN-SYSTEM v1 色板,Task 1 重写旧测试并注明出处。
-- 其余分歧按计划所写收口。
+- 已知分歧 4:打包单个 Manrope 可变字体,`FontVariation('wght', 500/600)`。
+- 已知分歧 10:Stage 3 brief 取代 DESIGN-SYSTEM v1 色板,Task 1 重写旧测试并注明出处。
+- 其余分歧按计划所写收口。预检(2026-09-18)后的 10 条执行裁定 R1–R10 见 `.superpowers/sdd/2026-09-18-ux-stage3-visual-tokens/global-constraints.md`,对每个 Task 有约束力。
 
 ## File Structure
 
