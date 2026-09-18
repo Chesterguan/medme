@@ -360,9 +360,10 @@ fn threshold_in(unit_from: &str, unit_to: &str, key: &str, thr: f64) -> Option<f
     if terminology::normalize_unit(unit_from) == terminology::normalize_unit(unit_to) {
         return Some(thr);
     }
-    let entry = terminology::dictionary_entries()
-        .iter()
-        .find(|e| e.key == key)?;
+    // `entry_for` 而不是 `dictionary_entries().find`:**包自己定义的分析物**(覆盖层
+    // 存在的理由)也得换算得出来,否则包按源行单位写的阈值配上包自带的分析物,这条
+    // 规则会静默按「未知」出 —— 方向是 fail-safe,但「加病不发版」在规则侧就缺一块。
+    let entry = terminology::entry_for(key)?;
     // 只认「换到这条序列的规范单位」这一个方向:词典的 slope/intercept 就是
     // 「本单位 → canonical」,反方向没有表,也不该在这儿自己求逆。
     if entry
