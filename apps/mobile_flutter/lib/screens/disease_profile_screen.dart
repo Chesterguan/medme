@@ -42,6 +42,9 @@ class DiseaseProfileSource {
   final Future<void> Function() _refresh;
 
   /// 缓存里装着哪几个病种包(id,已排序)。空 = 一个都没有。
+  ///
+  /// 「装着」在这里只到**文件在**为止;那份文件验不验得过要等 [view] 去算才知道
+  /// (那里算不出来会自己重新拉一遍包,见它的文档)。
   Future<List<String>> installedPackages() => _installed();
 
   /// 拉一次清单,把清单里列的包装上。**永不抛**(`SkillPackages.refreshIndex`
@@ -49,7 +52,28 @@ class DiseaseProfileSource {
   Future<void> refresh() => _refresh();
 
   /// 算一份 `ProfileView`。**纯投影**,不写任何东西进病历箱。
-  Future<Map<String, dynamic>> view(String packageId) async =>
+  ///
+  /// **算不出来就先重新拉一遍包,再算一次。** 缓存在用户可写的磁盘上,是不可信
+  /// 输入,`profile::cache_load` 每次读都重新验签 —— 所以「装着的那份被改过一个
+  /// 字节」和「压根没装」在这里是同一种失败。而磁盘上那个坏文件的名字还在,
+  /// [installedPackages] 看谁都是「装着」,光原地重试一万次也只会一万次验不过。
+  /// 重新拉一遍(`refresh` 把清单里列的包整份重装)才是那条出路 —— 入口卡与独立页
+  /// 都从这一个函数过,闸放这一处就够,不必各自补一遍。
+  ///
+  /// 还是不行就把错误抛给调用方:没网的时候走的就是这一路,两边的处置本来就一样
+  /// (说一句「还没准备好 —— 联网之后点一下重试」,不摆一份不存在的档案)。
+  Future<Map<String, dynamic>> view(String packageId) async {
+    try {
+      return await _viewMap(packageId);
+    } catch (e) {
+      // 只有包 id 和一句错误文本,没有病历内容,可以进日志。
+      debugPrint('[profile] $packageId 这次算不出来,重新拉一遍包再试:$e');
+      await _refresh();
+      return await _viewMap(packageId);
+    }
+  }
+
+  Future<Map<String, dynamic>> _viewMap(String packageId) async =>
       jsonDecode(await viewJson(packageId)) as Map<String, dynamic>;
 
   /// 同 [view],但给回**没解析过的原串**。
@@ -58,6 +82,10 @@ class DiseaseProfileSource {
   /// (`qr_share_screen.dart` 的 `profileJsonForShare`),解开再拼回去等于多一次
   /// 序列化;而且一份档案一次分享**只算一遍** —— 这个函数每调一次,Rust 那边就
   /// 把整箱病历重新投影一次。
+  ///
+  /// **这一路不自愈**(与 [view] 相反,那边算不出来会去重新拉一遍包)。出码是在
+  /// 诊室里按的:没网时那一趟拉包要耗到连接超时(`Net.connect`,20 秒),而病人
+  /// 此刻要的是那个码。包坏了就这一次不带档案 —— 入口卡那一路会把它修好。
   Future<String> viewJson(String packageId) => _view(packageId);
 
   /// 记一条 `enable`/`disable`,**真记上了才回 `true`**。
@@ -85,6 +113,11 @@ class DiseaseProfileSource {
 /// 这里只列文件名、不读内容:包体每次读都要重新验签(`cache_load`),所以列错一个
 /// 名字也换不出一份假档案 —— `vault_profile_view` 会当作「没有这个包」。落盘写到一半
 /// 的 `.json.tmp` 天然不以 `.json` 结尾,不会被数进来。
+///
+/// 代价是这份名单会把**被改过的那份**也算成装着(名字还在)。那一半由
+/// [DiseaseProfileSource.view] 兜着:算不出来就重新拉一遍包,坏的那份被整份换掉。
+/// 别在这里改成「挨个验一遍」——那等于把一整箱病历的投影跑 N 遍,只为了得到一个
+/// 紧接着就会被算出来的答案。
 Future<List<String>> _installedPackageIds() async {
   final d = Directory('${await skillCacheDir()}/skills');
   if (!d.existsSync()) return const [];

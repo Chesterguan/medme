@@ -86,6 +86,10 @@ class _Fake {
   /// 非 null 时 `record()` 抛这个 —— 「这次没记上」那一路。
   Object? recordError;
 
+  /// 每次 `refresh()` 之后跑一下 —— 「重新拉一遍包」在真机上会把缓存里那份坏的
+  /// 整份换掉,这个钩子就是用来摆出那个结果的。
+  void Function()? onRefresh;
+
   final List<List<String>> calls = <List<String>>[];
   int views = 0;
   int refreshes = 0;
@@ -103,7 +107,10 @@ class _Fake {
       final err = recordError;
       if (err != null) throw err;
     },
-    refresh: () async => refreshes++,
+    refresh: () async {
+      refreshes++;
+      onRefresh?.call();
+    },
   );
 }
 
@@ -152,6 +159,32 @@ void main() {
       expect(find.textContaining('还没准备好'), findsOneWidget);
       // 没有包时**一个字都不许假装已经有一份档案**。
       expect(find.text('开启'), findsNothing);
+    });
+
+    // ── task-26 F2:缓存里那份被改过一个字节 ────────────────────────────
+    //
+    // `cache_load` 每次读都重新验签,所以那份包算不出任何东西;而磁盘上那个文件的
+    // 名字还在,「装着哪几个包」看谁都是装着 —— 光原地重试一万次也只会一万次验不过。
+    testWidgets('缓存里那份验不过:重新拉一遍包,卡片自己活过来', (t) async {
+      _usePhone(t);
+      final fake = _Fake()..viewError = StateError('没有可用的病种包:sle');
+      fake.onRefresh = () => fake.viewError = null; // 坏的那份被整份换掉了
+      await t.pumpWidget(_wrap(DiseaseProfileCard(source: fake.source)));
+      await t.pumpAndSettle();
+
+      expect(fake.refreshes, 1, reason: '验不过 = 没装上,得重新拉一遍');
+      expect(find.text('病程档案 · 系统性红斑狼疮'), findsOneWidget, reason: '自愈之后该活过来');
+      expect(find.textContaining('还没准备好'), findsNothing);
+    });
+
+    testWidgets('缓存好好的:一次都不联网', (t) async {
+      _usePhone(t);
+      final fake = _Fake();
+      await t.pumpWidget(_wrap(DiseaseProfileCard(source: fake.source)));
+      await t.pumpAndSettle();
+
+      expect(fake.refreshes, 0, reason: '装着的那份算得出来,就没有任何理由去联网');
+      expect(fake.views, 1);
     });
 
     testWidgets('装上了但还没开启:给一颗「开启」,不替用户贴标签', (t) async {
@@ -360,10 +393,15 @@ void main() {
       // Rust 那句错误原文(路径、包 id)对用户没用,不摆给他看。
       expect(find.textContaining('sle'), findsNothing);
 
+      // 一次「算不出来」现在是两次调用:先重新拉一遍包(F2 的自愈),再算一次;
+      // 这条用例里拉包不改变什么(`_Fake` 没挂 `onRefresh`),所以第二次照样不行。
+      expect(fake.views, 2, reason: '自愈:重新拉一遍包之后再算一次');
+      expect(fake.refreshes, 1);
+
       fake.viewError = null;
       await t.tap(find.text('重试'));
       await t.pumpAndSettle();
-      expect(fake.views, 2);
+      expect(fake.views, 3);
       expect(find.text('待补 / 逾期'), findsOneWidget);
     });
 
