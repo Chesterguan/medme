@@ -27,16 +27,16 @@ import 'package:mobile_flutter/src/rust/api/vault.dart' as rust_vault;
 import 'package:mobile_flutter/vault_boot.dart' show runSerialized;
 import 'package:mobile_flutter/vault_events.dart';
 
-/// 「云端整理」开关(键定在 `account.dart`,见 [cloudExtractEnabledKey])。默认
-/// true——关掉这台设备的云抽取,不是关登录。读不到就当开着,跟别的"读不到"
-/// 兜底不一样:这个开关一旦被用户关过,漏读成"开"会把用户已经关掉的东西又发出去。
-/// 但 `getBool` 只会在真没写过时返回 null(未写=从没关过=default true 成立),
-/// 写过之后一定读得到那次写的值,所以这条兜底是安全的。
+/// 「云端整理」开关(键定在 `account.dart`,见 [cloudExtractEnabledKey])。**默认
+/// false**(task-20b A2)——在 `cloud_extract_asked`(见 [cloudExtractAskedKey])
+/// 记下用户回答之前,不能把"没写过"读成"同意过"。读不到(没写过 / 读取本身出错)
+/// 一律当关:这是一条同意闸,失败方向必须偏向"不发"。写过之后 `getBool` 一定读得到
+/// 那次写的值(只有从没写过才是 null),所以这条兜底不会盖掉用户已经做过的选择。
 Future<bool> loadCloudExtractEnabled() async {
   try {
-    return (await SharedPreferences.getInstance()).getBool(cloudExtractEnabledKey) ?? true;
+    return (await SharedPreferences.getInstance()).getBool(cloudExtractEnabledKey) ?? false;
   } catch (_) {
-    return true;
+    return false;
   }
 }
 

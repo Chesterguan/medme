@@ -15,8 +15,9 @@ String maskPhone(String phone) {
 }
 
 /// 「云端整理」开关(`cloud_extract.dart` 读,账号屏的开关行写)——**跟设备走,
-/// 不跟账号走**:默认 true,`AccountSession.clear()` 不清它。换个账号登录,这台
-/// 设备"要不要把涂黑的病历照片交给云端模型整理"的选择不该因为换了个人登录就重置回默认。
+/// 不跟账号走**:问过之前默认 false(task-20b A2,见 [cloudExtractAskedKey]),
+/// `AccountSession.clear()` 不清它。换个账号登录,这台设备"要不要把涂黑的病历照片
+/// 交给云端模型整理"的选择不该因为换了个人登录就重置回默认。
 const cloudExtractEnabledKey = 'cloud_extract_enabled';
 
 /// 「云端整理」问过没有(一次性)。**与 [cloudExtractEnabledKey] 是两件事**:

@@ -10,6 +10,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/cloud_extract.dart' show loadCloudExtractEnabled, saveCloudExtractEnabled;
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart' show loadCloudExtractAsked;
 import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncKdfBenchMs;
 import 'package:mobile_flutter/sync_engine.dart';
@@ -301,8 +302,14 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 查 FRB 的事由后台那条队列做,账号屏不碰原生库,它跑在 widget 测试里)。
   bool _icloudBlocks = false;
 
-  /// 「云端整理」开关(Task 17)——跟设备走,默认开,`initState` 从 prefs 读回来。
-  bool _cloudExtractEnabled = true;
+  /// 「云端整理」开关(Task 17)——跟设备走,问过之前默认关(task-20b A2),
+  /// `initState` 从 prefs 读回来。
+  bool _cloudExtractEnabled = false;
+
+  /// 「云端整理」问过没有(task-20b A2)——决定开关旁副标题说什么:没问过时说
+  /// 「第一次添加病历时会问你」,问过就说开着会做什么。初值与 [_cloudExtractEnabled]
+  /// 同一个假设(还没问过),`initState` 里的 `loadCloudExtractAsked()` 读回真值后纠正。
+  bool _cloudExtractAsked = false;
 
   /// 正在撤销一份授权(评审 Minor 20:双击会发两个 DELETE,第二个在成功撤销之后
   /// 立刻显示「撤销失败:没有找到…」—— 一次成功的操作看起来像失败了)。
@@ -354,6 +361,9 @@ class _AccountScreenState extends State<AccountScreen> {
     });
     loadCloudExtractEnabled().then((v) {
       if (mounted && v != _cloudExtractEnabled) setState(() => _cloudExtractEnabled = v);
+    });
+    loadCloudExtractAsked().then((v) {
+      if (mounted && v != _cloudExtractAsked) setState(() => _cloudExtractAsked = v);
     });
     widget.flow
         .resumeIfLoggedIn()
@@ -1163,13 +1173,19 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 「云端整理」开关(Task 17)——跟设备走,不按成员分,所以只有一行,摆在
   /// 每成员的「云端备份」开关下面。关掉只影响 `cloud_extract.runCloudExtractions`
   /// 要不要发网络请求,不影响 [_cloudMemberRow] 那些"要不要备份密文"的开关。
+  ///
+  /// 副标题按有没有问过分两句(task-20b A2):没问过时这个开关本身默认关着,
+  /// 说明它开着会做什么没有意义——第一次添加病历时才会真的问;问过之后(不管
+  /// 那次答的是开还是关)才说清楚这个开关本身管什么。
   Widget _cloudExtractSwitch() => Card(
     child: SwitchListTile(
       key: const Key('cloud_extract_switch'),
       title: const Text('云端整理'),
-      subtitle: const Text(
-        '导入后把脱敏、涂黑的单据图交给云端模型整理成表;关掉后只用本机识别',
-        style: TextStyle(fontSize: 12.5, height: 1.4),
+      subtitle: Text(
+        _cloudExtractAsked
+            ? '导入后把脱敏、涂黑的单据图交给云端模型整理成表;关掉后只用本机识别'
+            : '第一次添加病历时会问你',
+        style: const TextStyle(fontSize: 12.5, height: 1.4),
       ),
       value: _cloudExtractEnabled,
       onChanged: (v) async {

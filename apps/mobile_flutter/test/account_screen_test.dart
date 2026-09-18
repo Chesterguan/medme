@@ -2584,7 +2584,7 @@ void main() {
       expect(find.text('同步'), findsOneWidget);
     });
 
-    testWidgets('Task 17:「云端整理」开关默认开,摆在每成员云备份行下面,关掉能存住', (t) async {
+    testWidgets('task-20b A2:「云端整理」开关未问过时默认关,摆在每成员云备份行下面,开着能存住', (t) async {
       resetVaultQueueForTest();
       final api = FakeApi(hasKeys: true);
       await giveCurrentProfileCloudId(t);
@@ -2593,16 +2593,20 @@ void main() {
       final extractSwitch = find.byKey(const Key('cloud_extract_switch'));
       expect(extractSwitch, findsOneWidget);
       expect(find.text('云端整理'), findsOneWidget);
-      expect(t.widget<SwitchListTile>(extractSwitch).value, isTrue, reason: '默认开——只是关了才用纯本机识别');
+      expect(
+        t.widget<SwitchListTile>(extractSwitch).value,
+        isFalse,
+        reason: '没问过(cloud_extract_asked 没写过)时默认关——第一次添加病历时才会问,问了答应才置真',
+      );
 
       await t.tap(extractSwitch);
       await t.pumpAndSettle();
 
-      expect(t.widget<SwitchListTile>(extractSwitch).value, isFalse);
-      // 持久化:不是只改了内存里的 State,prefs 里那把键也得真的写成 false——
+      expect(t.widget<SwitchListTile>(extractSwitch).value, isTrue);
+      // 持久化:不是只改了内存里的 State,prefs 里那把键也得真的写成 true——
       // 下次 `runCloudExtractions` 读的正是这把键。
       final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getBool('cloud_extract_enabled'), isFalse);
+      expect(prefs.getBool('cloud_extract_enabled'), isTrue);
     });
 
     testWidgets('C3:开着 iCloud 同步时点「开通云同步」:原因摆在屏上,仍停在"未开通"分支', (t) async {

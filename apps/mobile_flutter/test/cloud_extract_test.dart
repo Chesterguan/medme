@@ -511,13 +511,15 @@ void main() {
       expect(captured.single, contains('文档 22 退回本地正则'));
     });
 
-    test('没写过这个键(默认)→ 当作开着,跟老版本行为一致', () async {
+    test('task-20b A2:没写过这个键(未问过)→ 当作关着,这份文档不送云端整理', () async {
       SharedPreferences.setMockInitialValues({});
-      expect(await loadCloudExtractEnabled(), isTrue);
+      expect(await loadCloudExtractEnabled(), isFalse);
+      final before = vaultRevision.value;
       await runCloudExtractions([
         (outcome: _stored(23, detectedName: '张建国'), ocr: _ocr, profile: await _currentProfile(), vaultRoot: _root),
       ]);
-      expect(captured, isNotEmpty);
+      expect(captured, isEmpty, reason: '没问过不能当成"同意过"——同意闸的失败方向必须偏向不发');
+      expect(vaultRevision.value, before, reason: '没跑就没有新结果');
     });
 
     /// 评审 I3:开关原先只在**每批开头**读一次 —— 用户在一批导入跑到一半时去设置里
