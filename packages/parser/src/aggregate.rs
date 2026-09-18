@@ -158,18 +158,30 @@ pub struct MedSpan {
     pub drug_key: Option<String>,
     /// Canonical name if resolved, else the raw name.
     pub name: String,
-    /// Every distinct name **as actually written**, deduped and sorted.
+    /// Every distinct name **as actually written**, deduped and sorted — the
+    /// whole span's history.
     ///
     /// `name` is the dictionary's canonical form, and normalising to it throws
     /// away the dosage form: 「地塞米松注射液」 and 「地塞米松片」 both become
-    /// 「地塞米松」. Downstream that difference decides whether a steroid order
-    /// may be read as a standing daily oral dose at all, so the original
-    /// wording has to survive the merge. Kept as a list because one drug can be
-    /// written several ways across documents.
+    /// 「地塞米松」. Kept as a list because one drug can be written several ways
+    /// across documents.
+    ///
+    /// ⚠️ **This is a union over all mentions, so it must not be used to judge
+    /// what the patient is on today.** One IV pulse in the history would
+    /// otherwise disqualify the oral tablet in this month's prescription. For
+    /// anything that pairs with [`Self::latest_dose`], use
+    /// [`Self::latest_raw_name`] instead.
     pub raw_names: Vec<String>,
     pub atc: Option<String>,
     /// e.g. "0.5g bid", taken from the most recent mention (fallback: any).
     pub latest_dose: Option<String>,
+    /// The name **as written on the same mention that supplied
+    /// [`Self::latest_dose`]** — the two always describe one prescription.
+    ///
+    /// Dosage form/route decisions belong here, not in [`Self::raw_names`]:
+    /// "is this dose an oral tablet or an infusion" is a question about the
+    /// order being read, not about everything the patient has ever taken.
+    pub latest_raw_name: Option<String>,
     /// Earliest dated mention (`None` if no mention carried a date).
     pub start: Option<NaiveDate>,
     /// Latest dated mention.
@@ -521,8 +533,9 @@ struct MedBuilder {
     start: Option<NaiveDate>,
     end: Option<NaiveDate>,
     sources: BTreeSet<usize>,
-    /// Dose/date of the mention currently winning "most recent".
+    /// Dose/raw name/date of the mention currently winning "most recent".
     best_dose: Option<String>,
+    best_raw_name: Option<String>,
     best_date: Option<NaiveDate>,
     has_best: bool,
 }
@@ -882,6 +895,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 end: None,
                 sources: BTreeSet::new(),
                 best_dose: None,
+                best_raw_name: None,
                 best_date: None,
                 has_best: false,
             });
@@ -910,6 +924,9 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             if replace {
                 b.best_date = doc.date;
                 b.best_dose = this_dose;
+                // 跟 `best_dose` **同一条 mention** 的原样写法。分开取会把「今天这片
+                // 口服药」和「三月那次静脉冲击」拼成一条自相矛盾的记录。
+                b.best_raw_name = Some(obs.raw_name.clone());
                 b.has_best = true;
             }
         }
@@ -964,6 +981,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             raw_names: b.raw_names.into_iter().collect(),
             atc: b.atc,
             latest_dose: b.best_dose,
+            latest_raw_name: b.best_raw_name,
             start: b.start,
             end: b.end,
             status: "active".to_string(),

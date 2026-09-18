@@ -81,7 +81,7 @@
 | `mmf_cbc.phases[0..2]` | 7 / 14 / 30 天 | L1 | 430 | VERBATIM(摘要管道) | ✅ 逐字命中「Consider monitoring with complete blood counts weekly for the first month, twice monthly for the second and third months, and monthly for the remainder of the first year.」 | MATCH |
 | `mmf_cbc.phases[3]` | `every_days:30` `package_default` `pending` | L1 | — | 包作者外推 | ✅ 说明书第一年之后确实没有任何间隔 | MATCH(身份标注正确) |
 | `aza_cbc.phases[0..2]` | 7 / 14 / 30 天 | L2 | 455 | VERBATIM(摘要管道) | ⚠️ 数字全对,但**引文抄错了出处** | **MISMATCH(引文)→ 已改** |
-| `cni_egfr.phases[0..2]` | 14 / 28 / 90 天 | L3 | 480 | VERBATIM | ✅ 逐字命中;**原页有一个逗号包里漏了** | MATCH(已补逗号) |
+| `cni_egfr.phases[0..2]` | 14 / 28 / 90 天 | L3 | 480 | VERBATIM | ✅ 逐字命中 | MATCH(⚠️ 我第一轮「补」的那个逗号补错了,见 §九 F1,已改回) |
 | `cni_bp.phases[0]` | 14 天 | L3 | 481 | VERBATIM | ✅「Monitor blood pressure every two weeks for the first month after initiating LUPKYNIS, and as clinically indicated thereafter.」 | MATCH |
 | `csa_bp_scr.phases[0..1]` | 14 / 30 天 | L4 | 494 | VERBATIM | ✅ NEORAL「Special Monitoring of Rheumatoid Arthritis Patients」节逐字命中 | MATCH |
 | `rtx_hbv` | 一次性动作 | L6 | 544–545 | VERBATIM | ✅ 黑框与 §2.1 两句都逐字命中 | MATCH |
@@ -306,21 +306,76 @@ DORIS `<5 mg` / LLDAS `≤7.5 mg` / `gc_ca_vitd` / `gc_dxa`。在表还是 `null
 - 核查对象 **91** 个带标量的对象(含数值的 **56** 个),**一条没跳过**
 - 一手页面复核 **22** 份:DailyMed ×7、PMC ×5、PubMed ×3、机构仓储/出版方 PDF ×6、NLM LOINC ×1
 - **值**的判定:MATCH **90** 个对象;无法核实 **1** 个(`targets.hcq.label_rule`,已改 `null`)
-- 另查出**不改变数值**的缺陷 **3** 处:L2 引文抄了别的 setid、L3 引文漏一个逗号、
+- 另查出**不改变数值**的缺陷 **2** 处:L2 引文抄了别的 setid、
   `gc_dxa.min_age` 的**理由**是错的(值恰好该保持 `null`,但原因完全相反)
-- 因核查而改动:包 **8** 处、引擎 **3** 处、测试 4 个文件(其中 **2 条全新**、8 条改名改语义)、golden **1** 份
+- 因核查而改动:包 **8** 处、引擎 **3** 处、测试 4 个文件、golden **1** 份
 - 仍 pending/`null`:**7** 项(上表)
 - 取不到一手件:**2** 类(L8 中文说明书、S16 指南自身页面)
+- **我自己引入、被复核抓出来的缺陷:3 处**(见 §九)
 
 ## 八、门禁
 
-全部前台跑:
+全部前台跑(数字为 fix round 1 之后):
 
-- `cargo test -p profile` —— **202 passed / 0 failed**
-- `cargo test --workspace` —— **885 passed / 0 failed**
+- `cargo test -p profile` —— **205 passed / 0 failed**
+- `cargo test -p parser` —— **211 passed / 0 failed**
+- `cargo test --workspace` —— **888 passed / 0 failed / 9 ignored**
 - `cargo fmt --all --check` —— 干净
-- `cargo clippy -p profile --all-targets -- -D warnings` —— 干净
-- `python3 scripts/sign_skill.py --selftest` —— **6/6**(重签之前跑的)
+- `cargo clippy -p parser -p profile --all-targets -- -D warnings` —— 干净
+- `python3 scripts/sign_skill.py --selftest` —— **6/6**(每次重签之前都跑)
 
 包已用 `scripts/sign_skill.py` 重签。私钥 `~/.medme_skill_signing_key` 全程只被脚本读,
 没有打印、复制、移动,也没有进仓库。
+
+## 九、fix round 1 —— 独立复核抓出来的、我自己引入的三处
+
+复核人(又一个独立 agent)判定核查本身站得住:抽查的 6 份一手来源 100% 复现,
+0 条编造或放水。但抓出 3 处**是我这一轮改出来的**问题 —— 印证了 CLAUDE.md 硬规矩第 3 条
+那句「三轮核查抓出 5 条硬错误,**包括我『修正』时新引入的错误**」。
+
+### C1(Critical)—— 剂型门的粒度错了,一次历史冲击会永久挡住今天的口服剂量
+
+我给 `MedSpan` 加的 `raw_names` 是**整条 span 的历史并集**(一个 drug_key 的所有 mention),
+而 `latest_dose` 取的是**最近一条**医嘱 —— 两者不同源。于是「冲击 → 口服维持」
+(**SLE 最常见的激素用法**)里那一次冲击会让今天的口服剂量永远算不出来,卡上还把今天那片
+8 mg 口服药标成「注射剂型」,`gc_ca_vitd` 与 `gc_dxa` 两条强推荐从 `never` 掉到 `unknown`
+—— **掉下去的恰恰是需要过冲击、激素负荷最重的那群人**。
+
+方向上它是 fail-safe(不会算出错的数,只会算不出来),但这是本轮 commit 之后的出厂行为。
+**没被测出来的原因**:`testdata/corpus/` 里的激素只有「泼尼松片」,新填的那张表在 golden
+里一次都没执行过;我新加的两条用例又都是**单文档**,碰不到合并。
+
+**修法**:`MedBuilder` 跟着 `best_dose` 一起记 `best_raw_name`(**同一条 mention** 的原样写法),
+`MedSpan` 出 `latest_raw_name`,`form_haystack` 只看它。`raw_names` 保留(additive),
+并在 doc 注释里写明它是历史并集、**不许**用来判断「今天在用什么」。
+新增两条探针:`one_pulse_in_the_history_does_not_block_todays_oral_dose`(正向)与
+`a_pulse_as_the_newest_order_is_still_not_read_as_a_daily_oral_dose`(反向),
+外加提醒侧的 `a_pulse_in_the_history_does_not_silence_the_steroid_reminders`。
+`corpus_summary` 5 条数字未变。
+
+### I1(Important)—— 我「补」的那个逗号把引文挪到了它没声明的那一节
+
+自取 LUPKYNIS 原页确认复核人是对的:同一句在 **HIGHLIGHTS 区**(offset 2712)带逗号
+「…through the first year**,** and quarterly thereafter.」,在 **§2.3 正文**(offset 10703)
+**不带逗号**。包里 note 自称「L3 §2.3 逐字」,所以**改之前那句才是对的**;我那一下
+「补逗号」把它换成了另一节的句子,却仍挂着 §2.3 的出处 —— 和我这轮刚修好的 `aza_cbc`
+是**同一类缺陷**。已改回,并在 note 里写明两版的差别,免得下一个人再「补」一次。
+
+### I2(Important)—— S13 的 cite 与 url 指向两本不同的期刊
+
+我填的 eScholarship URL 取回的是同步发表的 *Arthritis Rheumatol* 2023;75(12):2088–2102
+(doi 10.1002/art.42646),而 cite 写的是 *Arthritis Care Res* 75:2405–19(doi 10.1002/acr.25240)。
+内容同一篇(PDF 自己写着「published simultaneously in *Arthritis Care & Research*」),
+但照 cite 的页码/DOI 去那个 URL 上找不到。已在 cite 里补上实际读的那一份的完整坐标。
+
+### 四条 Minor,全修了
+
+| # | 问题 | 修法 |
+|---|---|---|
+| M1 | 测试名说 `keeps_the_pending_flag`,断言却是 `pending == false` | 改名 `…_drops_the_pending_flag` |
+| M2 | 注释写「收紧成**全包**禁字」,代码只走了 `rules` | `walk(&src_json(), "pkg")` |
+| M3 | `6.5` 的禁字是字面量,写成「6.5 mg/kg」(带空格)能绕过 | 先去掉全部空白再比,并加禁中文写法 |
+| M4 | `gc_dxa.note` 的归纳句把限定词丢了(<40 岁的骨密度原文是 *is advised*;*strongly recommended* 那句带「with one or more osteoporotic risk factors」) | 归纳句加回限定词,逐字原句本来就在同一条 note 里 |
+
+**一条都没留。** golden 因 M4 与 I2 两处文案改动重生成,diff **仅 2 行**,
+`daily_pred_equiv_mg` 等所有数值一个没动。

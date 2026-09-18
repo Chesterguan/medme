@@ -274,6 +274,61 @@ fn a_dosage_form_the_dictionary_normalised_away_is_still_seen_as_an_injection() 
 }
 
 #[test]
+fn one_pulse_in_the_history_does_not_block_todays_oral_dose() {
+    // fix round 1 的 C1。剂型门第一版看的是 `raw_names` —— 整条 span 的**历史并集**,
+    // 而 `latest_dose` 取的是**最近一条**医嘱。于是「冲击 → 口服维持」(SLE 最常见的
+    // 激素用法)里那一次冲击会**永久**挡住今天的口服剂量,卡上还会把今天那片 8 mg
+    // 口服药标成「注射剂型」,`gc_ca_vitd` / `gc_dxa` 两条强推荐一起哑掉 ——
+    // 掉下去的恰恰是激素负荷最重的那群人。
+    //
+    // 现在剂型只看**贡献了 latest_dose 的那一条 mention**(`latest_raw_name`)。
+    let b = status(
+        &[
+            ("2026-01-10", rx_doc("甲泼尼龙片 8mg 每日一次 口服")),
+            (
+                "2026-03-01",
+                rx_doc("注射用甲泼尼龙琥珀酸钠 500mg 每日一次"),
+            ),
+            ("2026-09-16", rx_doc("甲泼尼龙片 8mg 每日一次 口服")),
+        ],
+        vec![enable()],
+    );
+    assert_eq!(
+        b["gc"]["daily_pred_equiv_mg"], 10.0,
+        "今天吃的是 8 mg 口服片,8 × 1.25 = 10"
+    );
+    assert_eq!(b["gc"]["dose"], "8mg qd");
+    assert!(
+        b["gc"]["unconvertible"].as_array().unwrap().is_empty(),
+        "历史上那次冲击不该把今天这条也拖下水:{}",
+        b["gc"]["unconvertible"]
+    );
+}
+
+#[test]
+fn a_pulse_as_the_newest_order_is_still_not_read_as_a_daily_oral_dose() {
+    // C1 的反向:最近一条就是冲击时,照旧算不出口服日剂量。修 C1 不能把剂型门拆了。
+    let b = status(
+        &[
+            ("2026-01-10", rx_doc("甲泼尼龙片 8mg 每日一次 口服")),
+            (
+                "2026-09-16",
+                rx_doc("注射用甲泼尼龙琥珀酸钠 500mg 每日一次"),
+            ),
+        ],
+        vec![enable()],
+    );
+    assert!(
+        b["gc"]["daily_pred_equiv_mg"].is_null(),
+        "最近一条是冲击,不按口服换算"
+    );
+    assert_eq!(
+        b["gc"]["unconvertible"][0]["reason"],
+        "注射剂型,不按口服换算"
+    );
+}
+
+#[test]
 fn a_route_written_after_the_dose_is_still_invisible_to_this_layer() {
     // ⚠️ **已知边界,不是期望行为 —— 绊线的另一半,留给 parser。**
     // 「静滴」写在剂量后面,被 `meds.rs::strip_trailing_route` 剥掉,而 `dose_string`

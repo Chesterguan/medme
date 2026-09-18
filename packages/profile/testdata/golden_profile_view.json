@@ -286,7 +286,7 @@
             "min_age": null,
             "min_daily_pred_equiv": 2.5,
             "min_days": 91,
-            "note": "人群定义逐字来自 S13:「>3 months treatment with glucocorticoids (GCs) ≥2.5 mg daily」(同 gc_ca_vitd:more than 3 months → min_days 91)。⚠️ **Task 19 改了这一条的结论**:之前「≥40 岁」只核到第三方摘要页(guidelinecentral),这次从 eScholarship 拿到已刊全文,发现那个年龄**只挂在 FRAX 上,不挂在骨密度上**。指南原文逐字:「As soon as possible after initiation of ≥2.5 mg/day GC treatment for >3 months, screening for fracture risk in patients ≥40 years of age should be assessed by using FRAX and by performing BMD using dual-energy x-ray absorptiometry (DXA) with vertebral fracture assessment (VFA) testing or spinal x-rays.」——但同一段紧接着写「BMD with VFA or spinal x-rays are strongly recommended, and, for adults ≥40 years old, FRAX analysis is also recommended」与「BMD with VFA testing or spinal x-ray is advised in patients <40 years, as FRAX is not validated in this population」,并另有「BMD measurement is strongly recommended for patients <40 years on GCs ≥2.5 mg/day with one or more osteoporotic risk factors」。**所以 min_age 保持 null 不是「没核到」,是核到了以后的决定**:拿 40 岁当门槛会把 SLE 最主要的发病年龄段挡在骨密度之外,而骨密度对 <40 岁同样是强推荐;年龄只影响要不要加做 FRAX,这句写进 action 里让人看得见。复查间隔原文表 1 确有「BMD with VFA or spinal x-ray every 1–2 years during GC treatment」(§G.1 原记为核不实,现已可核),但那是个区间、取哪一端是判断,本包不替医生选,仍不写。",
+            "note": "人群定义逐字来自 S13:「>3 months treatment with glucocorticoids (GCs) ≥2.5 mg daily」(同 gc_ca_vitd:more than 3 months → min_days 91)。⚠️ **Task 19 改了这一条的结论**:之前「≥40 岁」只核到第三方摘要页(guidelinecentral),这次从 eScholarship 拿到已刊全文,发现那个年龄**只挂在 FRAX 上,不挂在骨密度上**。指南原文逐字:「As soon as possible after initiation of ≥2.5 mg/day GC treatment for >3 months, screening for fracture risk in patients ≥40 years of age should be assessed by using FRAX and by performing BMD using dual-energy x-ray absorptiometry (DXA) with vertebral fracture assessment (VFA) testing or spinal x-rays.」——但同一段紧接着写「BMD with VFA or spinal x-rays are strongly recommended, and, for adults ≥40 years old, FRAX analysis is also recommended」与「BMD with VFA testing or spinal x-ray is advised in patients <40 years, as FRAX is not validated in this population」,并另有「BMD measurement is strongly recommended for patients <40 years on GCs ≥2.5 mg/day with one or more osteoporotic risk factors」。**所以 min_age 保持 null 不是「没核到」,是核到了以后的决定**:拿 40 岁当门槛会把 SLE 最主要的发病年龄段挡在骨密度之外,而骨密度对 <40 岁同样推荐(原文 Key Rec 1 是 is advised;另一句「strongly recommended」带限定词「with one or more osteoporotic risk factors」);年龄只影响要不要加做 FRAX,这句写进 action 里让人看得见。复查间隔原文表 1 确有「BMD with VFA or spinal x-ray every 1–2 years during GC treatment」(§G.1 原记为核不实,现已可核),但那是个区间、取哪一端是判断,本包不替医生选,仍不写。",
             "overdue_days": null,
             "pending": false,
             "reason": null,
@@ -1729,7 +1729,7 @@
       "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC2095301/"
     },
     {
-      "cite": "Humphrey MB, et al. 2022 ACR guideline for the prevention and treatment of glucocorticoid-induced osteoporosis. Arthritis Care Res 2023;75:2405–19(doi 10.1002/acr.25240)—— Task 19 从 eScholarship 取到已刊全文 PDF,逐字核过「风险评估」一节与表 1",
+      "cite": "Humphrey MB, et al. 2022 ACR guideline for the prevention and treatment of glucocorticoid-induced osteoporosis. Arthritis Care Res 2023;75:2405–19(doi 10.1002/acr.25240);**本条实际读的是同步发表的另一本** —— Arthritis Rheumatol 2023;75(12):2088–2102(doi 10.1002/art.42646),即下面 url 取回的那份 PDF(其正文写明「This article is published simultaneously in Arthritis Care & Research」)。Task 19 从 eScholarship 取到已刊全文,逐字核过「风险评估」一节与表 1",
       "id": "S13",
       "url": "https://escholarship.org/content/qt10w6f17t/qt10w6f17t.pdf"
     },

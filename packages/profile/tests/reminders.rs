@@ -313,7 +313,7 @@ fn dxa_with_min_age(min_age: serde_json::Value) -> serde_json::Value {
 }
 
 #[test]
-fn a_threshold_that_is_met_but_needs_an_age_says_that_and_keeps_the_pending_flag() {
+fn a_threshold_that_is_met_but_needs_an_age_says_that_and_drops_the_pending_flag() {
     let r = dxa_with_min_age(serde_json::json!(40));
     assert_eq!(r["state"], "unknown");
     assert!(
@@ -376,6 +376,31 @@ fn a_glucocorticoid_we_cannot_convert_is_unknown_not_silently_skipped() {
         "理由要说清是剂型挡的,不是缺药:{}",
         r["reason"]
     );
+}
+
+#[test]
+fn a_pulse_in_the_history_does_not_silence_the_steroid_reminders() {
+    // fix round 1 的 C1,提醒这一侧。剂型门原来看整条 span 的历史并集,于是
+    // 「冲击 → 口服维持」里那一次冲击会让 `gc_ca_vitd`(EULAR:≥7.5 mg/d 超 3 个月
+    // 补钙 + 维 D)和 `gc_dxa`(ACR GIOP:≥2.5 mg/d 超 3 个月做骨密度)双双从
+    // `never` 掉到 `unknown` —— **掉下去的恰恰是需要过冲击、激素负荷最重的那群人。**
+    let items = reminders(
+        &[
+            ("2026-01-10", rx_doc("甲泼尼龙片 8mg 每日一次 口服")),
+            (
+                "2026-03-01",
+                rx_doc("注射用甲泼尼龙琥珀酸钠 500mg 每日一次"),
+            ),
+            ("2026-09-16", rx_doc("甲泼尼龙片 8mg 每日一次 口服")),
+        ],
+        vec![enable()],
+    );
+    // 8 mg 甲泼尼龙 = 10 mg 泼尼松等效,两条阈值(7.5 / 2.5)都过,且已吃了 8 个多月。
+    for id in ["gc_ca_vitd", "gc_dxa"] {
+        let r = find(&items, id);
+        assert_eq!(r["state"], "never", "{id} 该提出来:{}", r["reason"]);
+        assert!(r["reason"].is_null(), "{id}");
+    }
 }
 
 #[test]

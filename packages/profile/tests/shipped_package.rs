@@ -463,14 +463,21 @@ fn the_hcq_rule_keeps_the_guideline_numbers_and_ships_no_unverified_insert() {
         "要写清楚试过哪些一手来源、怎么失败的"
     );
     // 那两个数彻底不在包里,任何地方都不能再出现。
+    // **先去掉所有空白再比**:写成「6.5 mg/kg」(带空格)就绕过字面量比对了
+    // —— fix round 1 的 M3。
+    let squashed: String = common::FULL
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     assert!(
-        !common::FULL.contains("6.5mg/kg"),
+        !squashed.contains("6.5mg/kg"),
         "说明书的 6.5 mg/kg 应已撤掉"
     );
     assert!(
-        !common::FULL.contains("理想体重"),
-        "理想体重那套算法应已撤掉"
+        !squashed.contains("6.5毫克/公斤"),
+        "同一个数的中文写法也不许"
     );
+    assert!(!squashed.contains("理想体重"), "理想体重那套算法应已撤掉");
 }
 
 /// 这几个键装的是**给人读的文案**;判定读的是别的键。
@@ -518,7 +525,9 @@ fn the_package_insert_numbers_never_drive_a_judgement() {
             _ => {}
         }
     }
-    walk(&src_json()["rules"], "pkg.rules");
+    // **整包**,不只 `rules` —— `drugs`/`terms`/`manifest` 里同样不许出现那几个字。
+    // (上一轮注释写着「全包」,代码却只走了 `rules`;fix round 1 的 M2。)
+    walk(&src_json(), "pkg");
 
     // 眼科那条同理:三份来源互相矛盾、危险因素档案里也没有,所以它**根本不给间隔**。
     let eye = src_json()["rules"]["monitoring"]
