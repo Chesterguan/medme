@@ -103,7 +103,7 @@ String _lastSeenLabel(DateTime seen, DateTime now) {
 String roleLabel(String? role) => switch (role) {
   'viewer' => '只能看',
   'editor' => '能改',
-  'owner' => '主人',
+  'owner' => '本人',
   null => '未知',
   _ => role,
 };
@@ -141,7 +141,7 @@ String cloudRowStatus(Profile p, {bool icloudOn = false}) {
   // **不看 cloudId**(F1):已经开通过的成员在开着 iCloud 时同步也走不通(屏上那颗
   // 「同步」走 `enableCloud` 的可续做支路,撞的是同一道闸),说「已开通云端备份」会让
   // 用户以为这边一切正常。iCloud 这件事是**整台手机**的,与某个成员开通到哪一步无关。
-  if (icloudOn) return '这台手机开着 iCloud 同步,两套同步不能一起开';
+  if (icloudOn) return '这台手机开着 iCloud 同步,两套不能一起开';
   if (p.cloudId == null) return '还没备份上去 —— 会自动重试,也可以打开这个开关立刻再试一次';
   // **「已开通」而不是「已备份」**(复审 N3):I7 之后,非当前成员默认开云只做"注册"
   // (建档案钥匙 + 在服务端建一个空档案),它的病历一条都还没上去 —— 那时说"已备份"
@@ -1137,7 +1137,7 @@ class _AccountScreenState extends State<AccountScreen> {
           (_cloudBusy || _syncBusy)
               ? const Center(child: CircularProgressIndicator())
               : FilledButton(onPressed: _syncOrRecover, child: const Text('云端备份')),
-        // B5 的**真正入口**(评审 Important 8)。原来「转为主人」只作为「谁能看」
+        // B5 的**真正入口**(评审 Important 8)。原来「交给他」只作为「谁能看」
         // 里的 per-grantee 行存在 —— 于是"把档案交给父母"要先:(1) 父母装 App 并走完
         // 口令 + 恢复码(正是 B4 那个卡点);(2) 子女按手机号把他加成家人;(3) 才会
         // 在那一行里出现按钮。而红队说的恰恰是把档案交给一个**还不是家人**的人。
@@ -1197,7 +1197,7 @@ class _AccountScreenState extends State<AccountScreen> {
       title: const Text('云端整理'),
       subtitle: Text(
         _cloudExtractAsked
-            ? '添加后把脱敏、涂黑的单据图交给云端模型整理成表;关掉后只用本机识别'
+            ? '添加后把脱敏、涂黑的病历照片交给云端模型整理成表;关掉后只用本机识别'
             : '第一次添加病历时会问你',
         style: const TextStyle(fontSize: 12.5, height: 1.4),
       ),
@@ -1636,7 +1636,7 @@ class _AccountScreenState extends State<AccountScreen> {
       const SizedBox(height: 8),
       // 忙的时候只是**禁用**,不换成进度圈:`_approveBusy` 在确认弹窗开着的整段时间
       // 里都是 true,底下挂一个不定式动画会让 `pumpAndSettle` 永远 settle 不下来
-      // (与「转为主人」那颗按钮同一条教训,踩过两次)。
+      // (与「交给他」那颗按钮同一条教训,踩过两次)。
       OutlinedButton.icon(
         key: const Key('scan_approve_device'),
         onPressed: _approveBusy ? null : _scanApproveDevice,
@@ -1833,7 +1833,7 @@ class _AccountScreenState extends State<AccountScreen> {
                     TextButton(
                       key: Key('transfer_${g['grant_id']}'),
                       onPressed: _transferBusy ? null : () => _transferOwnershipOf(g['profile_id']),
-                      child: const Text('转为主人'),
+                      child: const Text('交给他'),
                     ),
                     TextButton(
                       onPressed: _revokeBusy ? null : () => _revokeMyGrant(g),

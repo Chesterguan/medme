@@ -2,7 +2,7 @@
 //
 // 只 pump 这张卡,不 pump `SettingsScreen` —— 那一屏 `initState` 里直接调 FFI
 // (`icloudStatus` / `patientProfile`),`flutter test` 不带原生库(同
-// `test/overview_quick_actions_test.dart` 顶部那条教训)。
+// `global-constraints.md` 里那条「不 pumpWidget 整屏」的硬约束)。
 //
 // 钉住的是一条会在界面上说错话的规矩:**挑人的列表上只有名字和份数,一个角色词、
 // 一颗删除图标都不许有**。「主人 / 家属 / 能改 / 只能看」写在这里,用户读到的是

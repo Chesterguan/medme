@@ -116,7 +116,7 @@ class FakeApi extends ApiClient {
   final calls = <String>[];
   /// 每次 `delete()` 收到的 body,按调用顺序——测「注销账号」发对了 phone/otp_code。
   final deleteBodies = <Object?>[];
-  /// `POST /v1/profiles/{pid}/invites` 的 body——B5 测「转为主人」发的是 owner、
+  /// `POST /v1/profiles/{pid}/invites` 的 body——B5 测「交给他」发的是 owner、
   /// 而且不带 days。
   final inviteBodies = <Map<String, dynamic>>[];
   /// 让建邀请这一步 500,测 B5 的失败态。
@@ -550,7 +550,7 @@ Future<void> _toReady(
 /// 已经在用的「谁能看$_name的病历」撞了车,Part B 复核时纠正回来)排在「已就绪」
 /// 页最后一节——`ListView(children: ...)` 底层还是 `SliverChildListDelegate`,
 /// 只有落在视口 + 缓存区内的子节点才会被挂载,普通 `ensureVisible` 对还没挂载的
-/// widget 无能为力(同 `visit_summary_sheet_test.dart` 的 `scrollToMedsToggle`
+/// widget 无能为力(同 `for_doctor_refresh_test.dart` 的 `scrollToMedsToggle`
 /// 一模一样的坑):先 `scrollUntilVisible` 挂载它,再 `ensureVisible` 把它拉回
 /// 可点击的范围。
 Future<void> _scrollToMyGrants(WidgetTester t) => _scrollToText(t, '谁能看');
@@ -1271,7 +1271,7 @@ void main() {
       // 「能改」,不是「能一起录」——`roleLabel` 是共用函数,这里跟着一起换,
       // 「授权」/「我授权给谁」两节自然跟着统一。
       expect(roleLabel('editor'), '能改');
-      expect(roleLabel('owner'), '主人');
+      expect(roleLabel('owner'), '本人');
       expect(roleLabel(null), '未知');
     });
 
@@ -1450,7 +1450,7 @@ void main() {
       // C:`prf_xxx` 是服务端内部 id,不给用户看;对不上本机成员时说「一份共享档案」。
       expect(find.text('一份共享档案'), findsOneWidget);
       expect(find.textContaining('p1'), findsNothing);
-      expect(find.text('主人 · 长期有效'), findsOneWidget, reason: '角色中文化;没有到期日说「长期有效」,不露 null');
+      expect(find.text('本人 · 长期有效'), findsOneWidget, reason: '角色中文化;没有到期日说「长期有效」,不露 null');
       expect(
         find.text('撤销'),
         findsNothing,
@@ -1600,7 +1600,7 @@ void main() {
   });
 
   // ---- B5:`inviteTransfer` 在这之前一个调用方都没有 ----
-  group('B5:「转为主人」', () {
+  group('B5:「交给他」(把病历交给家人)', () {
     Map<String, dynamic> granteeRow() => {
       'grant_id': 'g2',
       'grantee_kind': 'account',
@@ -1628,13 +1628,13 @@ void main() {
       await AccountSession.instance.putProfileKey('prf_1', Uint8List(32));
     }
 
-    testWidgets('每行都有「转为主人」,点了先弹确认,说明"现在还不会改变任何东西"', (t) async {
+    testWidgets('每行都有「交给他」,点了先弹确认,说明"现在还不会改变任何东西"', (t) async {
       final api = apiWithGrantee();
       await setUpOwnedCloudProfile(t);
       await _toReady(t, api, grants: Grants(api, AccountSession.instance, rust: FakeGrantsRust()));
       await _scrollToMyGrants(t);
 
-      expect(find.text('转为主人'), findsOneWidget);
+      expect(find.text('交给他'), findsOneWidget);
       await t.tap(find.byKey(const Key('transfer_g2')));
       await t.pumpAndSettle();
 
@@ -1708,7 +1708,7 @@ void main() {
       expect(find.byKey(const Key('transfer_current_profile')), findsOneWidget);
       await _scrollToMyGrants(t);
       expect(find.text('还没让任何人看过'), findsOneWidget, reason: '前提:一个家人都没有');
-      expect(find.text('转为主人'), findsNothing, reason: 'per-grantee 那条路此刻根本不存在');
+      expect(find.text('交给他'), findsNothing, reason: 'per-grantee 那条路此刻根本不存在');
     });
 
     testWidgets('Important 8:那个入口走同一条确认 → 生成 owner 邀请', (t) async {
@@ -1825,7 +1825,7 @@ void main() {
       await t.pumpAndSettle();
 
       expect(find.text('生成转移链接失败:服务器开小差了,稍后再试'), findsOneWidget);
-      expect(find.text('转为主人'), findsOneWidget);
+      expect(find.text('交给他'), findsOneWidget);
     });
   });
 

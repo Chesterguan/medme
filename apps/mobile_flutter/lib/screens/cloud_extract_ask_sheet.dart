@@ -78,7 +78,7 @@ class CloudExtractAskBody extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           const Text(
-            '开了以后,每次添加的单子会先在手机上把名字、证件号、医院名涂黑,'
+            '开了以后,每次添加的病历照片会先在手机上把姓名、证件号、医院名涂黑,'
             '再送到云端整理成表格。不开就只用手机自己识别,能认出来的字段少一点。'
             '以后在「我 → 云端」随时改。',
             style: TextStyle(height: 1.6),

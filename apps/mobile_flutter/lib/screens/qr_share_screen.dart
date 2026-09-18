@@ -413,7 +413,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
         const SizedBox(height: 6),
         Text(
           _grantChoice
-              ? '医生用他自己的 MedMe 扫码(需要他已经装了 App 并登录),这份病历进他的列表,只读,15 天后自动看不到。'
+              ? '医生用他自己的 MedMe 扫码(需要他已经装了 App 并登录),这份病历进他的列表,只能看,15 天后自动看不到。'
               : '医生用任何手机的相机扫码,在浏览器里打开看 —— 他不用装 App、不用注册。看完收起手机即可。',
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 12, color: MedMe.faint, height: 1.5),
@@ -584,7 +584,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
                 Text(
                   _grantMode
                       ? '医生扫码后,这份病历会出现在他自己的 MedMe 里(他需要已经装了 MedMe 并登录)'
-                          '——只读,15 天后自动看不到。'
+                          '——只能看,15 天后自动看不到。'
                       : (_degraded
                           ? '当前在治的疾病、关键指标趋势、正在吃的药。'
                           '这次没能上传,所以不含原件 —— 医生要看原件,请当场用手机翻给他。'
@@ -594,7 +594,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
                 const SizedBox(height: 10),
                 Text(
                   _grantMode
-                      ? '这张码就是钥匙:被拍下就等于给了这份只读权限,15 天后自动失效,你随时可以提前收回。'
+                      ? '这张码就是钥匙:被拍下就等于给了这份「只能看」的权限,15 天后自动失效,你随时可以提前收回。'
                       : (_degraded
                           ? '这张码就是钥匙:被拍下就等于把这份摘要给了对方,看完收起手机即可。'
                           '这次的内容全在码里,没有上传到任何地方。'

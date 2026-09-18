@@ -24,7 +24,7 @@ Future<void> showDoctorClaimLinkDialog(
   required Rect Function() shareOrigin,
 }) async {
   if (!context.mounted) return;
-  // 展示本身(码 + 复制 + 分享)共用 `showLinkQrDialog` —— 「转为主人」那条路
+  // 展示本身(码 + 复制 + 分享)共用 `showLinkQrDialog` —— 「交给他」那条路
   // (`account_screen.dart` 的 B5)要的是同一套东西,不该重写一遍。
   await showLinkQrDialog(
     context,

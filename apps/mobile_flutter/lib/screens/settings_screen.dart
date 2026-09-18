@@ -750,7 +750,7 @@ class _AboutScreenState extends State<AboutScreen> {
                 title: 'MedMe 医我',
                 subtitle:
                     'v$_appVersionName ($_appBuildNumber) · 端到端加密:云端备份只有密文,我们打不开;'
-                    '云端整理送出的是涂黑后的单据图或文字,交给深度求索(DeepSeek)的模型整理,服务器在境内。',
+                    '云端整理送出的是涂黑后的病历照片或文字,交给深度求索(DeepSeek)的模型整理,服务器在境内。',
               ),
               const _InfoRow(
                 title: '医疗免责声明',
