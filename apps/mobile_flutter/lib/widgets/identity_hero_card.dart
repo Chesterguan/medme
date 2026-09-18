@@ -70,7 +70,7 @@ class IdentityHeroCard extends StatelessWidget {
   final String? age;
   final int recordCount;
 
-  /// 最近一次就诊/归档的日期,`"YYYY-MM-DD"`。没有任何记录、或那条记录没识别到
+  /// 最近一次就诊/添加的日期,`"YYYY-MM-DD"`。没有任何记录、或那条记录没识别到
   /// 日期时为 null —— 卡片显示「暂无」,**不许**当 0 或今天填。
   final String? recentVisitDate;
 

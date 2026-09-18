@@ -157,7 +157,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
         ],
       ),
       // 还没核对文档:底部一对按钮,逐字按 `s7`——「看原件」(次)+「没问题」(主),
-      // 核对后一键归档(去掉琥珀框、进标准时间线)。「没问题」是本屏**唯一**的
+      // 核对后一键归入正常时间线(去掉琥珀框)。「没问题」是本屏**唯一**的
       // 主按钮:seal 纯色不用渐变(规范 §六:一屏只允许一个)。
       bottomNavigationBar: pending
           ? Container(

@@ -151,7 +151,7 @@ ImportResultRow rowForOutcome(
 /// 「这一批没收全」的提示文案 —— **唯一来源**。
 ///
 /// 患者模式档案屏上的队列行(`widgets/import_queue_card.dart`,取的是
-/// `rowForOutcome` 产出的 `statusLabel`)和医生代拍采集完的提示条
+/// `rowForOutcome` 产出的 `statusLabel`)和医生代拍添加完的提示条
 /// (`proxy_intake_flow.dart::_ingest`)都从这里取字符串。这个项目
 /// 有一条硬约束:同一件事在不同屏上不能长成两个略微不同的意思 —— 「有几页没识别
 /// 出来」在患者那儿叫「部分页未能识别」,在医生那儿就不许改口叫别的。要改文案,
@@ -180,7 +180,7 @@ List<String> incompleteNoticesFor(Iterable<ImportResultRow> rows) {
   ];
 }
 
-/// 医生代拍采集完那一条提示条的全文;没有任何要说的事时返回 `null`(不弹)。
+/// 医生代拍添加完那一条提示条的全文;没有任何要说的事时返回 `null`(不弹)。
 ///
 /// 代拍不像患者模式那样把结果摊在档案屏上(诊室里没那一屏),但
 /// **「没收全」必须说出来**:医生当场拍完以为收全了,病人一走就再也补不上。

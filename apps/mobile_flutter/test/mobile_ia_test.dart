@@ -783,7 +783,7 @@ void main() {
       // 它不再是底栏的一项(底栏只有三个:病历 / 趋势 / 我)。
       expect(
         HomeShell.tabDestinations.map((d) => d.label),
-        isNot(contains('应急卡')),
+        isNot(contains('急救卡')),
       );
       expect(HomeShell.tabDestinations.length, 3);
     });
@@ -821,7 +821,7 @@ void main() {
       );
       expect(
         HomeShell.tabDestinations.map((d) => d.label),
-        isNot(contains('应急卡')),
+        isNot(contains('急救卡')),
       );
     });
 
@@ -890,13 +890,13 @@ void main() {
       expect(find.text('出码给医生看'), findsNothing);
     });
 
-    testWidgets('正文不再画「看病带这个」—— 顶栏已经写着「给医生看」', (t) async {
+    testWidgets('正文不重复画「给医生看」—— AppBar 已经写着这个名字了', (t) async {
       await t.pumpWidget(wrapScreen(ForDoctorScreen(load: () async => empty)));
       await t.pumpAndSettle();
+      // 只出现一次(AppBar 那一处)——`showHeading: false` 时正文不该再画一遍,
+      // 同屏两个自己的名字。
       expect(find.text('给医生看'), findsOneWidget);
-      // 同屏两个自己的名字:一个是词表要换掉的旧词(`看病带这个` → `给医生看`)。
-      expect(find.text('看病带这个'), findsNothing);
-      // 浮层那边照旧要抬头(它自己没有标题栏)。
+      // 不带自己标题栏的调用方(`showHeading` 默认值 `true`)则要自己画一遍抬头。
       await t.pumpWidget(
         wrapScreen(
           Scaffold(
@@ -909,7 +909,7 @@ void main() {
         ),
       );
       await t.pumpAndSettle();
-      expect(find.text('看病带这个'), findsOneWidget);
+      expect(find.text('给医生看'), findsOneWidget);
     });
 
     testWidgets('360×640 上 ×1 / ×2 / ×3 字号都不溢出 —— 老人是主要用户', (t) async {

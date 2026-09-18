@@ -19,9 +19,8 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// mockup `s4`:不再占底栏席位,但**质量一字未动**)。使用时刻仍然是
 /// **急诊室,别人拿着你的手机**(设计系统 §八、§九)。
 ///
-/// ⚠️ 入口那一条写的是「急救卡」(逐字照 `s4`),本屏顶栏写的是「应急卡」。
-/// 两个词今天并存,词表(ia-proposal §3 的 11 组)没裁过这一组 —— 谁要统一,
-/// 连着 `s4` 一起改,别只改一头。
+/// 入口那一条与本屏顶栏曾经用着两个不同的词——Task 17 统一成入口一直在用的
+/// 那个:急救卡。
 ///
 /// 这是全 app 唯一一个**读者不是用户本人**的界面。所有取舍都从这一句推出来:
 ///
@@ -45,7 +44,7 @@ class EmergencyCardScreen extends StatefulWidget {
   State<EmergencyCardScreen> createState() => _EmergencyCardScreenState();
 }
 
-/// 应急卡一次要用到的两样东西:抽取出来的卡本体 + 档案里的姓名性别年龄。
+/// 急救卡一次要用到的两样东西:抽取出来的卡本体 + 档案里的姓名性别年龄。
 typedef CardData = (EmergencyCardDto, PatientProfileDto);
 
 class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
@@ -104,7 +103,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
     final c = MedColors.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('应急卡'),
+        title: const Text('急救卡'),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
@@ -120,7 +119,7 @@ class _EmergencyCardScreenState extends State<EmergencyCardScreen> {
             return Padding(
               padding: const EdgeInsets.all(MedShape.s6),
               child: Text(
-                '加载应急卡失败:\n${snap.error}',
+                '加载急救卡失败:\n${snap.error}',
                 textAlign: TextAlign.center,
                 style: MedType.body.copyWith(color: c.ink2, height: 1.6),
               ),

@@ -52,7 +52,7 @@ const MethodChannel _iosOcrChannel = MethodChannel('medme/ocr');
 /// 换成和 iOS 同引擎同模型。
 /// - **iOS**:喂 PP 之前先经 `medme/ocr` 的「rectifyDocument」case 做一遍原生文档
 ///   检测+拉正+裁(见 [_rectifyDocument],`VNDetectDocumentSegmentation`,iOS-only)。
-/// - **安卓**:没有那个原生 channel,跳过 rectify 直接喂 PP(相机采集本身走系统
+/// - **安卓**:没有那个原生 channel,跳过 rectify 直接喂 PP(相机拍摄本身走系统
 ///   文档扫描器已拉正;导入图不经 rectify)。
 ///
 /// 早先留过一条 ML Kit 中文识别的回退路径,但它**不可达** —— 上面的 iOS/安卓分支

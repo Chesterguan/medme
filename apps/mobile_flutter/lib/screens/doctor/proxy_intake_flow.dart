@@ -40,9 +40,9 @@ const int kProxyShareExpiresDays = 15;
 enum _ProxyPhase { consent, capture, preview, delivering }
 
 /// 「代拍」全屏流程(医生/护士专用,Phase 1:本地交付,不含云)。
-/// 同意(签名/按住确认)→ 为这个病人建一个**独立病历箱** → 采集(拍照/相册/文件,
+/// 同意(签名/按住确认)→ 为这个病人建一个**独立病历箱** → 添加(拍照/相册/文件,
 /// 可多轮混合来源累加)→ **还没核对列表**(每份一行,点进去核对原件+识别内容、逐份点
-/// 「确认这一份」;可随时「继续采集」再累加更多)→ 生成加密文件交付给病人(摘要只
+/// 「确认这一份」;可随时「继续添加」再累加更多)→ 生成加密文件交付给病人(摘要只
 /// 统计已确认的文档,未确认的原件仍全部进分享包并标注还没核对)。
 ///
 /// **交付后不即焚**:病人留在本机最多 12 小时(医生通常要几小时内写完病历,期间可
@@ -61,7 +61,7 @@ enum _ProxyPhase { consent, capture, preview, delivering }
 /// /交付前都过 `ensureProxyVaultOpen` 硬校验(开着的不是这个病人的箱子就重开,重开还
 /// 不对就中止写入)。[dispose] 里换回医生自己的档案因此可以安全地不 await。
 ///
-/// **采集走与患者模式完全相同的那条链路**:`pickImportItems` + `recognizeImageText`
+/// **添加走与患者模式完全相同的那条链路**:`pickImportItems` + `recognizeImageText`
 /// (`ocr_bridge.dart`,iOS/安卓各自原生 OCR)+ `vault.ingestImageWithText` —— 本文件
 /// 不重写任何 OCR/入库逻辑,唯一差别是此刻进程里打开的是这个病人的箱子(见
 /// `openProxyPatientVault`)。
@@ -180,7 +180,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       _consent = consent;
       await ProxyPatientManager.instance.setConsent(id, consent);
       if (!mounted) {
-        // 组件已在这段 await 期间被卸载:这个病人一份都没采集,不该留在今天代拍的列表里。
+        // 组件已在这段 await 期间被卸载:这个病人一份都没添加,不该留在今天代拍的列表里。
         await ProxyPatientManager.instance.remove(id);
         return;
       }
@@ -199,8 +199,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     }
   }
 
-  /// 退出这一屏。**不删数据**——已采集的病人留在今天代拍的列表里(12 小时内可回来续拍
-  /// /交付),这正是「不再用完即焚」的意思。一份都没采集的空病人不留(不然主页会
+  /// 退出这一屏。**不删数据**——已添加过的病人留在今天代拍的列表里(12 小时内可回来
+  /// 续拍/交付),这正是「不再用完即焚」的意思。一份都没添加的空病人不留(不然主页会
   /// 攒一堆空条目)。进程级 vault 由主页在本路由返回后换回(见类注释)。
   Future<void> _cancelAndExit() async {
     final id = _patientId;
@@ -211,7 +211,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  /// AppBar 返回箭头点了先确认再退出。已经采集过东西的:退出**不会**丢数据(病人
+  /// AppBar 返回箭头点了先确认再退出。已经添加过东西的:退出**不会**丢数据(病人
   /// 留在今天代拍的列表里),所以不必吓唬人;一份都没拍的:退出就是放弃这个病人。
   Future<void> _confirmExit() async {
     if (_capturedCount == 0) {
@@ -341,15 +341,15 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     } catch (e) {
       // 兜底:[pickImportItems] 内部每个分支都已自己 catch,这里理论上不可达。
       // 但诊室里「点了没反应」比在家更贵 —— 医生当着病人的面无从判断,只能重来。
-      debugPrint('[proxy] 采集环节未捕获异常: $e');
-      if (mounted) await _showError('采集没能开始', '$e');
+      debugPrint('[proxy] 添加环节未捕获异常: $e');
+      if (mounted) await _showError('添加没能开始', '$e');
       return;
     }
     if (items.isEmpty || !mounted) return;
     await _ingest(items);
   }
 
-  /// 采集落库——走**与患者模式同一条**链路(`vault.ingestImageWithText` /
+  /// 添加落库——走**与患者模式同一条**链路(`vault.ingestImageWithText` /
   /// `vault.ingestBytes`),此刻进程里打开的是这个病人的箱子,所以东西落进他自己的
   /// vault。OCR 仍是未改动的 [recognizeImageText](`ocr_bridge.dart`,iOS/安卓各自
   /// 原生引擎)。
@@ -371,7 +371,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       // 动手前确认此刻开着的确实是这个病人的箱子(见 `ensureProxyVaultOpen`)。
       await ensureProxyVaultOpen(patientId);
     } catch (e) {
-      if (mounted) await _showError('采集已中止', '$e');
+      if (mounted) await _showError('添加已中止', '$e');
       return;
     }
     // 补页那一步是**写事件**,要认「此刻开的是哪个箱子」(见
@@ -382,14 +382,14 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     try {
       capturedRoot = await vault.currentVaultRoot();
     } catch (e) {
-      if (mounted) await _showError('采集已中止', '读不到当前病历箱:$e');
+      if (mounted) await _showError('添加已中止', '读不到当前病历箱:$e');
       return;
     }
     setState(() {
       _busy = true;
       _progress = '正在处理 1/${items.length}…';
     });
-    // 埋点:代拍的采集**也走 doc_import_***。早先只有患者模式的导入有埋点,于是
+    // 埋点:代拍的添加**也走 doc_import_***。早先只有患者模式的导入有埋点,于是
     // 「拍纸质件的 OCR 要多久」——最需要这个数的那条路——反而完全测不到。
     // `source: proxy` 把两条路分开,好知道拍纸和导入截图的耗时差多少。
     final startedAt = DateTime.now();
@@ -404,7 +404,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
 
     var failed = 0;
     // 每份的展示态(与患者模式同一个 `rowForOutcome`)。代拍不在屏上留结果行——
-    // 诊室里多一次点击都是多的——但「哪几份没收全」必须留下来,采集完汇总成一条
+    // 诊室里多一次点击都是多的——但「哪几份没收全」必须留下来,添加完汇总成一条
     // 提示条说出去。
     final rows = <ImportResultRow>[];
     for (var i = 0; i < items.length; i++) {
@@ -447,7 +447,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         okElapsedMs += DateTime.now().difference(itemStartedAt).inMilliseconds;
         okCount++;
       } catch (e) {
-        debugPrint('[doctor-proxy] ${item.name} 采集失败: $e');
+        debugPrint('[doctor-proxy] ${item.name} 添加失败: $e');
         failed++;
         // 只记步骤和原因码,**绝不记 `e`** —— 异常文本里常带文件名和路径。
         failStage ??= stage;
@@ -490,7 +490,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         context,
       ).showSnackBar(appSnackBar(content: Text(notice)));
     }
-    // 采集完直接进审阅屏(病情摘要 + 逐份识别内容摊开),不再停在采集屏问「继续 / 去
+    // 添加完直接进审阅屏(病情摘要 + 逐份识别内容摊开),不再停在添加屏问「继续 / 去
     // 预览」——「继续拍摄」是审阅屏上的一个按钮。让「拍完 → 看到审阅」一步到位。
     if (mounted && _capturedCount > 0) {
       await _goToPreview();
@@ -516,7 +516,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   }
 
   /// 加载/刷新还没核对列表:就诊时间线(铺平成文档清单)+ 病情摘要卡(只统计已确认
-  /// 文档)+ 每份文档的确认状态。采集完成后、以及每次从详情页返回(确认/删除/重拍)
+  /// 文档)+ 每份文档的确认状态。添加完成后、以及每次从详情页返回(确认/删除/重拍)
   /// 后都调这个来刷新——单一数据源,不另维护一套局部更新逻辑。`_capturedCount`
   /// 顺带用这次拿到的真实文档数覆盖,不再靠调用方手动加减去维持同步。
   ///
@@ -567,8 +567,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
 
   /// 点进一份的详情页:核对原件 + 识别内容,「确认这一份」/ 删除 / 重拍都在那一屏
   /// 完成(见 `proxy_document_detail.dart`)。回来后按详情页汇报的结果决定下一步:
-  /// 有变化(确认或删除)就刷新列表;是「重拍」则刷新后紧接着重新弹采集入口——
-  /// 复用现有的 [_pickCaptureSource]/[_ingest] 链路,不在详情页重复一遍采集逻辑。
+  /// 有变化(确认或删除)就刷新列表;是「重拍」则刷新后紧接着重新弹取件入口——
+  /// 复用现有的 [_pickCaptureSource]/[_ingest] 链路,不在详情页重复一遍取件逻辑。
   Future<void> _openDocument(DocumentSummaryDto doc) async {
     final patientId = _patientId;
     if (patientId == null) return;
@@ -946,7 +946,7 @@ class _CaptureStep extends StatelessWidget {
   }
 }
 
-/// 还没核对列表:采集完进这一屏。渲染风格复用 `archive_screen.dart` 的时间线
+/// 还没核对列表:添加完进这一屏。渲染风格复用 `archive_screen.dart` 的时间线
 /// 列表(图标+类型色块、标题、日期、副标题),每份一行,不再像上一版那样把识别
 /// 内容摊开在列表里——点进一份才看原件 + 识别内容(见 `proxy_document_detail.dart`),
 /// 列表本身只负责「核对拍了什么、哪些还没点开确认」。
@@ -1093,7 +1093,7 @@ class _PendingListStep extends StatelessWidget {
                         side: BorderSide(color: c.line),
                         minimumSize: const Size.fromHeight(48),
                       ),
-                      child: const Text('继续采集'),
+                      child: const Text('添加'),
                     ),
                   ),
                   const SizedBox(width: MedShape.s2),

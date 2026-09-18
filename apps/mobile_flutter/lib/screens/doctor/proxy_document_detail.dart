@@ -15,8 +15,8 @@ import 'package:mobile_flutter/widgets/report_content.dart';
 /// [ProxyDocumentDetailScreen] 弹出时告诉调用方(还没核对列表屏)接下来该做什么:
 /// [none] 什么都没变(用户直接返回);[changed] 确认或删除了这一份,列表需要重新拉
 /// `loadPreview`/`summary`/`confirmedMap` 刷新;[retake] 这一份已被删除且调用方
-/// 应紧接着重新弹「拍照/相册/文件」采集入口——由列表屏统一编排(复用它已有的采集
-/// 方法),本屏自己不碰采集逻辑,避免两处维护同一套 `pickImportItems` 调用。
+/// 应紧接着重新弹「拍照/相册/文件」取件入口——由列表屏统一编排(复用它已有的取件
+/// 方法),本屏自己不碰取件逻辑,避免两处维护同一套 `pickImportItems` 调用。
 enum ProxyDetailResult { none, changed, retake }
 
 /// 还没核对列表「点进一份」的详情屏(医生代拍流程专用)——**与 `document_detail.dart`
@@ -108,7 +108,7 @@ class _ProxyDocumentDetailScreenState extends State<ProxyDocumentDetailScreen> {
     }
   }
 
-  /// 重拍:这一份拍得不好(糊/切歪/拍错页),删掉后回列表屏由它重新弹采集入口。
+  /// 重拍:这一份拍得不好(糊/切歪/拍错页),删掉后回列表屏由它重新弹取件入口。
   Future<void> _retake() async {
     final ok = await showDialog<bool>(
       context: context,

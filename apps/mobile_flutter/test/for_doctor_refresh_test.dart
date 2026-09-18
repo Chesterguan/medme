@@ -1,11 +1,16 @@
-// 「看病带这个」(`screens/visit_summary_sheet.dart`,2026-08-05 改版,原名
-// 「就诊单」)的多视口回归测试 + 三条新规则的钉子测试。
+// 「给医生看」正文(`screens/visit_summary_sheet.dart` 的 `VisitSummaryBody`,
+// 2026-08-05 改版,原名「就诊单」)的多视口回归测试 + 三条新规则的钉子测试,
+// 外加 BUG-4(存完笔记要当场刷新)的回归。
 //
-// 不能直接 `pumpWidget` `showVisitSummarySheet`/`_VisitSummarySheet`——那条路径
-// 在字段初始化那一刻就调 `viewVisitSummary()`(FFI),`flutter test` 不带 Rust
-// 原生库会直接崩(与 `manual_entry_sheet_test.dart` 顶部注释同一条限制)。这里测
-// 的是拆出来的公开 widget `VisitSummaryBody`——它只吃一份手造的 [VisitSummaryDto],
-// 不碰 FFI,正好是这次改版真正要验的"数据怎么显示"那一半。
+// 不能直接 `pumpWidget` 整屏 —— 取数的那一层(`ForDoctorScreen` 的
+// `_ForDoctorScreenState`)在字段初始化那一刻就调 `viewVisitSummary()`(FFI),
+// `flutter test` 不带 Rust 原生库会直接崩(与 `manual_entry_sheet_test.dart`
+// 顶部注释同一条限制)。前两组测的是拆出来的公开 widget `VisitSummaryBody`——
+// 它只吃一份手造的 [VisitSummaryDto],不碰 FFI,正好是这次改版真正要验的
+// "数据怎么显示"那一半;BUG-4 那组给 `ForDoctorScreen` 注入 `load`/
+// `onRequestAddNote`,同样不碰 FFI(浮层本体 `VisitSummarySheet` 已在 Task 17
+// 删掉,内容升格成了 `ForDoctorScreen`,这组回归原样搬了过来,见
+// `screens/visit_summary_sheet.dart` 顶部注释)。
 //
 // 华为 Mate 9(逻辑分辨率约 360×640)这类矮屏 + 长名字组合是本项目反复踩过的坑
 // (`first_run_consent_test.dart`、`manual_entry_sheet.dart` 的 `Wrap` 注释都提过),
@@ -13,6 +18,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
@@ -184,10 +190,11 @@ void main() {
   });
 
   group('段落顺序与标题', () {
-    testWidgets('标题是「看病带这个」,不是「就诊单」', (tester) async {
+    testWidgets('标题是「给医生看」,不是旧词「看病带这个」或「就诊单」', (tester) async {
       useViewport(tester, 390, 844);
       await tester.pumpWidget(wrap(richSummary()));
-      expect(find.text('看病带这个'), findsOneWidget);
+      expect(find.text('给医生看'), findsOneWidget);
+      expect(find.text('看病带这个'), findsNothing);
       expect(find.text('就诊单'), findsNothing);
     });
 
@@ -296,9 +303,11 @@ void main() {
 
   // ── BUG-4 ──────────────────────────────────────────────────────────────────
   //
-  // 这一组测的是浮层**本体**(`VisitSummarySheet`,上面几组测的是它里面那层无状态的
-  // `VisitSummaryBody`),盯的是它自己的文档承诺的那件事:「存完刷新这一屏的数据,
-  // 不需要用户自己关掉浮层再重开」。
+  // 这一组测的是「给医生看」整页(`ForDoctorScreen`,上面几组测的是它正文用的那层
+  // 无状态的 `VisitSummaryBody`),盯的是它自己的文档承诺的那件事:「存完刷新这一
+  // 屏的数据,不需要用户自己划走再重开」。浮层时代这组钉的是 `VisitSummarySheet`
+  // 本体——Task 17 把浮层删掉、内容升格成 `ForDoctorScreen` 之后,回归原样搬了
+  // 过来,两边的注入点(`load`/`onRequestAddNote`)签名一字不差。
   //
   // 它曾经写的是 `setState(() => _future = viewVisitSummary())` —— **箭头体**。
   // `State.setState` 先执行回调(赋值已经发生),再在断言里发现回调返回了一个
@@ -311,8 +320,9 @@ void main() {
   // 同侧(断言开着),所以这条测试正好站在能看见它的那一边。
   //
   // 数据源与「加一条」都要走 FFI,所以两处都注入假的(见文件顶部同一条限制)。
+  // `ForDoctorScreen` 自带 `Scaffold`,不再像浮层那样需要外面套一层。
   group('存完笔记要当场刷新', () {
-    testWidgets('「加一条」存完之后,浮层重新拉一次数据并把新笔记显示出来', (tester) async {
+    testWidgets('「加一条」存完之后,整页重新拉一次数据并把新笔记显示出来', (tester) async {
       useViewport(tester, 390, 844);
 
       var summary = emptySummary();
@@ -321,18 +331,16 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: MedMe.theme(),
-          home: Scaffold(
-            body: VisitSummarySheet(
-              load: () async {
-                loads++;
-                return summary;
-              },
-              // 录入弹层的替身:用户写完一句、点了保存。
-              onRequestAddNote: (_) async {
-                summary = summaryWithNote('降压药是不是要减量');
-                return true;
-              },
-            ),
+          home: ForDoctorScreen(
+            load: () async {
+              loads++;
+              return summary;
+            },
+            // 录入弹层的替身:用户写完一句、点了保存。
+            onRequestAddNote: (_) async {
+              summary = summaryWithNote('降压药是不是要减量');
+              return true;
+            },
           ),
         ),
       );
@@ -348,7 +356,7 @@ void main() {
       expect(
         find.textContaining('降压药是不是要减量'),
         findsOneWidget,
-        reason: 'BUG-4:重建没被调度,用户看着自己刚写的东西没出现,只能关掉浮层再重开',
+        reason: 'BUG-4:重建没被调度,用户看着自己刚写的东西没出现,只能划走再重开',
       );
     });
 
@@ -359,14 +367,12 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: MedMe.theme(),
-          home: Scaffold(
-            body: VisitSummarySheet(
-              load: () async {
-                loads++;
-                return emptySummary();
-              },
-              onRequestAddNote: (_) async => null, // 划掉弹层,什么也没存
-            ),
+          home: ForDoctorScreen(
+            load: () async {
+              loads++;
+              return emptySummary();
+            },
+            onRequestAddNote: (_) async => null, // 划掉弹层,什么也没存
           ),
         ),
       );
@@ -385,11 +391,9 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: MedMe.theme(),
-          home: Scaffold(
-            body: VisitSummarySheet(
-              load: () async => emptySummary(),
-              onRequestAddNote: (_) async => true,
-            ),
+          home: ForDoctorScreen(
+            load: () async => emptySummary(),
+            onRequestAddNote: (_) async => true,
           ),
         ),
       );

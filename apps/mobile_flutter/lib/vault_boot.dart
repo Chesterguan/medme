@@ -16,7 +16,7 @@ import 'package:mobile_flutter/vault_events.dart';
 /// Rust 侧的 vault 是**进程级单例**:开一个箱子就顶掉上一个。医生代拍让「谁被顶掉」
 /// 变成安全问题(代拍病人的箱子顶掉医生自己的档案),而各调用点的 `await` 先后并不
 /// 保证 FFI 到达顺序 —— 「退出代拍时换回医生档案」和「紧接着开下一个病人」一旦反序,
-/// 采集就会写进医生自己的档案。
+/// 添加就会写进医生自己的档案。
 ///
 /// 所以**所有开箱都排进这一条 FIFO 队列**:先发出的先生效,与调用方是否 await 无关。
 /// 这是顺序保证;写入前还有一道内容校验,见 [ensureProxyVaultOpen]。
@@ -212,7 +212,7 @@ Future<void> openProxyPatientVault(String patientId) =>
     });
 
 /// **写入前的硬校验**:确认此刻进程里开着的确实是 [patientId] 这个代拍病人的箱子。
-/// 不是就重开;重开后仍不是就抛 —— 宁可这次采集失败,也绝不把病人的材料写进医生
+/// 不是就重开;重开后仍不是就抛 —— 宁可这次添加失败,也绝不把病人的材料写进医生
 /// 自己的档案。代拍流程每次落库/交付前都过这一关(见 `proxy_intake_flow.dart`),
 /// 于是「顺序对不对」不再是靠注释维持的约定,而是每次动手前实际比对过的事实。
 Future<void> ensureProxyVaultOpen(String patientId) async {

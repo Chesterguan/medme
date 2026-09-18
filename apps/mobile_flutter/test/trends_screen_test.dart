@@ -216,4 +216,46 @@ void main() {
     // 顶栏只有「趋势」两个字,不加成员 chip(s2)。
     expect(find.text('趋势'), findsOneWidget);
   });
+
+  // ── BUG-4 同形状:「记录」存完不刷新,刚量的值不出现 ─────────────────────────
+  //
+  // 化验快照(`KeyLabsSnapshot`)来自与「给医生看」同一份 `viewVisitSummary()`。
+  // 用户在「记录一下」里存完一条自测值,不重新拉一次就看不到它 —— 与
+  // `test/for_doctor_refresh_test.dart` 钉的是同一类 bug(`setState` 必须是语句块
+  // 不是箭头,见 `_refresh` 的文档),这里补上「趋势」这一侧同形状的回归。
+  testWidgets('「趋势」里存完一条记录,化验快照当场重新拉一次', (tester) async {
+    tester.view.physicalSize = const Size(360 * 3, 2400 * 3);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.reset);
+
+    var loads = 0;
+    final summary = VisitSummaryDto(
+      patient: const PatientProfileDto(recordCount: 0),
+      allergies: const [],
+      activeMeds: const [],
+      recentLabs: const [],
+      recentChanges: const [],
+      recentVisits: const [],
+      recentNotes: const [],
+      plainText: '',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: MedMe.theme(),
+        home: TrendsScreen(
+          load: () async {
+            loads++;
+            return (const <TrendSeriesDto>[], const <String>[], summary);
+          },
+          onRequestAddNote: (_) async => true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(loads, 1);
+
+    await tester.tap(find.text('记录一下'));
+    await tester.pumpAndSettle();
+    expect(loads, 2, reason: '存完必须重新拉一次,否则刚量的血压不出现');
+  });
 }

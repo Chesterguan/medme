@@ -28,7 +28,7 @@ class EphemeralSession {
     await rust_ephemeral.ephemeralBegin(cacheDir: await _cacheDir());
   }
 
-  /// 采集(图片,已识别好文本)。签名与 `vault.dart` 的 `ingestImageWithText` 一致。
+  /// 添加(图片,已识别好文本)。签名与 `vault.dart` 的 `ingestImageWithText` 一致。
   static Future<ImportOutcomeDto> ingestImageWithText({
     required String name,
     required List<int> bytes,
@@ -41,7 +41,7 @@ class EphemeralSession {
     confidence: confidence,
   );
 
-  /// 采集(字节直传,如「选择文件」拿到的 PDF/TXT)。签名与 `vault.dart` 的
+  /// 添加(字节直传,如「选择文件」拿到的 PDF/TXT)。签名与 `vault.dart` 的
   /// `ingestBytes` 一致。
   static Future<ImportOutcomeDto> ingestBytes({
     required String filename,

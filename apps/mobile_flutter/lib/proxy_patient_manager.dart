@@ -137,7 +137,7 @@ class ProxyPatientManager {
   }
 
   /// 用报告里识别到的患者姓名给这个病人命名。只在还是占位名时生效(幂等,后续
-  /// 采集识别到别人的名字不会把已命名的病人改掉——那种情况该由「姓名不匹配」红条
+  /// 添加识别到别人的名字不会把已命名的病人改掉——那种情况该由「姓名不匹配」红条
   /// 提醒医生,而不是悄悄改名)。
   Future<void> autoName(String id, String? detected) async {
     final name = detected?.trim() ?? '';
@@ -228,7 +228,7 @@ class ProxyPatient {
   /// 从报告 OCR 里识别到的患者姓名;还没识别到为 null(列表显示占位名)。
   final String? name;
 
-  /// 已采集的文档份数(列表展示用的缓存值)。
+  /// 已添加的文档份数(列表展示用的缓存值)。
   final int docCount;
 
   /// 医生逐份点过「确认这一份」的 document_id。

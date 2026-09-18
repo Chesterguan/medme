@@ -311,7 +311,7 @@ class MedColors extends ThemeExtension<MedColors> {
 class MedType {
   MedType._();
 
-  /// 28 · 700 —— 应急卡姓名血型、单指标大字。
+  /// 28 · 700 —— 急救卡姓名血型、单指标大字。
   static const TextStyle display = TextStyle(
     fontSize: 28,
     fontWeight: FontWeight.w700,
