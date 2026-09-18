@@ -281,7 +281,34 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
     return days == null ? roleLabel(role) : '${roleLabel(role)} · $days';
   }
 
+  /// 撤销前先问一句——原来点一下就真撤了,一次误触就让正在靠这份授权看病历的
+  /// 人(家人 / 医生)当场看不到。**这里给不出对方的名字**:服务端本来就不存
+  /// grantee 的手机号/姓名(`db.py` 的 `grants_list` 注释),编一个出来是撒谎,
+  /// 所以只能说「对方」——这份病历是谁的(`$_name`)才是这一页原本就有的信息。
+  Future<bool> _confirmRevoke() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('撤销这份授权?'),
+        content: Text('撤销后,对方立刻看不到「$_name」的病历。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('撤销'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _revoke(String grantId) async {
+    if (!await _confirmRevoke()) return;
     try {
       await _grants.revoke(widget.member, grantId);
       _reloadGrants();
@@ -467,10 +494,16 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
   /// 删除这个成员——`confirmRemoveMember` 就是原来 `settings_screen.dart` 那颗
   /// 删除小图标背后的同一个弹窗 + 同一次 `removeProfileAndReopen`。删掉之后这一页
   /// 没有存在的理由了,直接退回成员列表;失败就留在这一页说清楚。
+  ///
+  /// 成功那句「已移除」是从 `settings_screen.dart` 原来的 `_confirmRemove` 搬过来
+  /// 时漏掉的一条(那时候删除就在原地的列表行上,不需要跳走;搬来这一页、加了
+  /// `pop()` 之后,反而更需要这句话——`ScaffoldMessenger` 是 `MaterialApp` 根上
+  /// 唯一那个,`showSnackBar` 之后紧接着 `pop` 不会把它带走)。
   Future<void> _delete() async {
     final removed = await confirmRemoveMember(context, widget.member, removeProfile: widget.removeProfile);
     if (!mounted) return;
     if (removed) {
+      ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text('已移除「$_name」')));
       widget.onChanged?.call();
       Navigator.of(context).pop();
     } else {

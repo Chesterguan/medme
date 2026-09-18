@@ -153,7 +153,7 @@ void main() {
       expect(find.text('还没有人被邀请'), findsOneWidget);
     });
 
-    testWidgets('点撤销:调 DELETE 那个 grant,然后重新拉一次列表', (t) async {
+    testWidgets('点撤销:先问一句(说清楚对方会立刻看不到),确认后才调 DELETE、重新拉一次列表', (t) async {
       final api = _FakeApi(
         grantsResponse: [
           {'grant_id': 'g-owner', 'role': 'owner'},
@@ -166,8 +166,34 @@ void main() {
       await t.tap(find.text('撤销'));
       await t.pumpAndSettle();
 
+      // 弹窗挡在前面,还没真的撤销——此刻只有 `initState` 那一次 GET。
+      expect(find.text('撤销这份授权?'), findsOneWidget);
+      expect(find.textContaining('对方立刻看不到「张建国」的病历'), findsOneWidget);
+      expect(api.calls, ['GET /v1/profiles/prf_1/grants']);
+
+      await t.tap(find.text('撤销').last);
+      await t.pumpAndSettle();
+
       expect(api.calls, contains('DELETE /v1/profiles/prf_1/grants/g-editor'));
       expect(api.calls.where((c) => c.startsWith('GET')).length, 2, reason: '初次加载一次,撤销后重新拉一次');
+    });
+
+    testWidgets('撤销弹窗点取消:不调 DELETE,列表也不重新拉', (t) async {
+      final api = _FakeApi(
+        grantsResponse: [
+          {'grant_id': 'g-owner', 'role': 'owner'},
+          {'grant_id': 'g-editor', 'role': 'editor'},
+        ],
+      );
+      await t.pumpWidget(MaterialApp(home: MemberDetailScreen(member: _owner, grants: _grants(api))));
+      await t.pumpAndSettle();
+
+      await t.tap(find.text('撤销'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('取消'));
+      await t.pumpAndSettle();
+
+      expect(api.calls, ['GET /v1/profiles/prf_1/grants'], reason: '取消不调 DELETE、不重新拉');
     });
 
     testWidgets('这个成员从没开通云端备份:不查、也不画这一节', (t) async {
@@ -342,6 +368,47 @@ void main() {
       expect(removeCalls, ['p-1']);
       expect(changed, 1);
       expect(find.byType(MemberDetailScreen), findsNothing, reason: '删完退回上一页');
+    });
+
+    // 上一条用的是只有一层的裸 `Navigator`——删完弹层退到底就没有下一层可落地,
+    // 顾不上验证 SnackBar(那种情况下 `ScaffoldMessenger` 找不到还活着的
+    // `Scaffold` 可以挂,消息直接丢了,不是这句话没发,而是这个裸壳测试环境本身
+    // 撑不住这个场景)。真实 App 里 `MemberDetailScreen` 永远是 `push` 到「我」tab
+    // 之上的,退回去落在的是那一屏的 `Scaffold`——这里补一层「落地页」照实还原:
+    // 退回上一页要能看到「已移除」这句话。
+    testWidgets('删除这个成员成功:退回的上一页上能看到「已移除「名字」」', (t) async {
+      await t.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => MemberDetailScreen(
+                        member: _local,
+                        removeProfile: (id) async => true,
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开成员详情'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await t.pumpAndSettle();
+      await t.tap(find.text('打开成员详情'));
+      await t.pumpAndSettle();
+
+      await t.tap(find.text('删除这个成员'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('确认删除'));
+      await t.pumpAndSettle();
+
+      expect(find.byType(MemberDetailScreen), findsNothing, reason: '删完退回上一页');
+      expect(find.text('已移除「张建国」'), findsOneWidget);
     });
 
     testWidgets('删除失败(removeProfile 返回 false):留在这一页,说清楚', (t) async {
