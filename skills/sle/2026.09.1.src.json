@@ -114,17 +114,17 @@
   "markers": [
     {"key": "complement_c3", "role": "activity", "dir": "low_is_active", "group": "补体"},
     {"key": "complement_c4", "role": "activity", "dir": "low_is_active", "group": "补体"},
-    {"key": "anti_dsdna", "role": "serology", "dir": "high_is_active", "qualitative_ok": true},
-    {"key": "urine_pcr", "role": "organ:kidney", "dir": "high_is_active"},
-    {"key": "urine_protein_24h", "role": "organ:kidney", "dir": "high_is_active"},
-    {"key": "wbc", "role": "activity"},
-    {"key": "plt", "role": "activity"},
-    {"key": "esr", "role": "inflammation"},
-    {"key": "crp", "role": "inflammation"},
-    {"key": "creatinine", "role": "organ:kidney"},
-    {"key": "egfr", "role": "organ:kidney"},
-    {"key": "alt", "role": "drug_monitor"},
-    {"key": "ast", "role": "drug_monitor"}
+    {"key": "anti_dsdna", "role": "serology", "dir": "high_is_active", "qualitative_ok": true, "group": "血清学"},
+    {"key": "urine_pcr", "role": "organ:kidney", "dir": "high_is_active", "group": "肾脏"},
+    {"key": "urine_protein_24h", "role": "organ:kidney", "dir": "high_is_active", "group": "肾脏"},
+    {"key": "wbc", "role": "activity", "group": "血细胞"},
+    {"key": "plt", "role": "activity", "group": "血细胞"},
+    {"key": "esr", "role": "inflammation", "group": "炎症指标"},
+    {"key": "crp", "role": "inflammation", "group": "炎症指标"},
+    {"key": "creatinine", "role": "organ:kidney", "group": "肾脏"},
+    {"key": "egfr", "role": "organ:kidney", "group": "肾脏"},
+    {"key": "alt", "role": "drug_monitor", "group": "用药监测"},
+    {"key": "ast", "role": "drug_monitor", "group": "用药监测"}
   ],
 
   "drugs": [

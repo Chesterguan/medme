@@ -590,6 +590,34 @@ fn views_cover_every_section_kind_the_engine_can_emit() {
         .is_empty());
 }
 
+/// 每个 marker 都要有**给人看的**分组名。
+///
+/// 引擎在没有 `group` 时回落到 `role`(`rules.rs::series_section`:
+/// `m.group.as_deref().unwrap_or(m.role.as_str())`),而 `role` 是机器 key ——
+/// `organ:kidney` / `drug_monitor` / `serology`。这些字符串会一路印到界面上,
+/// 而从 Task 23 起也印到**医生**眼前(病程档案随出码进加密分享包)。
+///
+/// 半角冒号是这件事最好认的指纹:`organ:<器官>` 是 `role` 独有的写法,给人看的
+/// 分组名里不会有它。
+#[test]
+fn every_marker_carries_a_human_readable_group_label() {
+    let v = src_json();
+    let markers = v["markers"].as_array().expect("markers 是数组");
+    assert!(!markers.is_empty(), "包里一个 marker 都没有");
+    for m in markers {
+        let key = m["key"].as_str().unwrap_or("<无 key>");
+        let group = m
+            .get("group")
+            .and_then(|g| g.as_str())
+            .unwrap_or_else(|| panic!("marker {key} 没写 group —— 引擎会把 role 当分组名印出去"));
+        assert!(!group.trim().is_empty(), "marker {key} 的 group 是空的");
+        assert!(
+            !group.contains(':'),
+            "marker {key} 的 group 是 `{group}` —— 半角冒号是 role 的形状,不是给人看的名字"
+        );
+    }
+}
+
 #[test]
 fn the_disclaimer_and_engine_gate_are_what_the_spec_says() {
     let p = signed_pkg();

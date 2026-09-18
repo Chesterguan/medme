@@ -547,7 +547,7 @@
             ]
           },
           {
-            "name": "serology",
+            "name": "血清学",
             "series": [
               {
                 "analyte_key": "anti_dsdna",
@@ -617,7 +617,7 @@
             ]
           },
           {
-            "name": "organ:kidney",
+            "name": "肾脏",
             "series": [
               {
                 "analyte_key": "urine_pcr",
@@ -882,7 +882,7 @@
             ]
           },
           {
-            "name": "activity",
+            "name": "血细胞",
             "series": [
               {
                 "analyte_key": "wbc",
@@ -1017,7 +1017,7 @@
             ]
           },
           {
-            "name": "inflammation",
+            "name": "炎症指标",
             "series": [
               {
                 "analyte_key": "esr",
@@ -1082,7 +1082,7 @@
             ]
           },
           {
-            "name": "drug_monitor",
+            "name": "用药监测",
             "series": [
               {
                 "analyte_key": "alt",
