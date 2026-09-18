@@ -150,7 +150,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _SettingsRow(
                   icon: Icons.medical_services_outlined,
                   title: '退出代拍',
-                  subtitle: '点击切换到你自己的家庭档案',
+                  subtitle: '点一下回到你自己的病历箱',
                   onTap: _switchMode,
                 ),
               ],

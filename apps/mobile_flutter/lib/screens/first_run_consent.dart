@@ -126,7 +126,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
     builder: (context) => AlertDialog(
       title: const Text('需要你的同意才能使用'),
       content: const Text(
-        'MedMe 会把你的病历保存在这台手机上。在你同意之前,我们不会创建任何档案。\n\n'
+        'MedMe 会把你的病历保存在这台手机上。在你同意之前,我们不会保存你的任何病历。\n\n'
         '如果不同意,请直接关闭 App。',
         style: TextStyle(height: 1.6),
       ),

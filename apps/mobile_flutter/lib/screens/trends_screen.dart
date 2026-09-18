@@ -818,7 +818,7 @@ class SeriesCard extends StatelessWidget {
             if (undated > 0) ...[
               const SizedBox(height: 4),
               Text(
-                '另有 $undated 次没能从报告上定出日期,画不到时间轴上;它们在档案里照样能翻到。',
+                '另有 $undated 次没能从报告上定出日期,画不到时间轴上;它们在「病历」里照样能翻到。',
                 style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
               ),
             ],

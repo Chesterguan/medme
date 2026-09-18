@@ -290,11 +290,11 @@ class SyncEngine {
   /// 只能问 Rust 自己(同 `vault_boot.ensureProxyVaultOpen` 的思路)。
   Future<void> _assertVaultMatches(Profile p) async {
     if (!await rust.currentVaultIsKeyed()) {
-      throw VaultMismatch('当前打开的病历箱不是这个云档案(keyed)——可能是本地档案或代拍病人的箱子还开着,拒绝同步');
+      throw VaultMismatch('当前打开的病历箱不是这个云端病历箱(keyed)——可能是本地病历箱或代拍病人的箱子还开着,拒绝同步');
     }
     final actual = await rust.currentVaultRoot();
     if (!actual.endsWith('/profiles/${p.id}/vault')) {
-      throw VaultMismatch('当前打开的病历箱($actual)与要同步的档案(id=${p.id})不一致,拒绝同步');
+      throw VaultMismatch('当前打开的病历箱($actual)与要同步的成员(id=${p.id})不一致,拒绝同步');
     }
   }
 
@@ -320,7 +320,7 @@ class SyncEngine {
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
-    if (key == null) throw StateError('没有这个档案的钥匙');
+    if (key == null) throw StateError('没有这个病历箱的钥匙');
     final rep = SyncReport();
     final canWrite = p.role == 'owner' || p.role == 'editor';
 
@@ -510,7 +510,7 @@ class SyncEngine {
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
-    if (key == null) throw StateError('没有这个档案的钥匙');
+    if (key == null) throw StateError('没有这个病历箱的钥匙');
     final missing = await rust.missingObjects(key);
     final match = missing.where((e) => e.$1 == hash);
     if (match.isEmpty) return;

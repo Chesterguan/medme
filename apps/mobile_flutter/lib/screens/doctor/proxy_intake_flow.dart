@@ -150,7 +150,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _busy = false;
         _progress = null;
       });
-      await _showError('打开病人档案失败', '$e');
+      await _showError('打开病人的病历箱失败', '$e');
     }
   }
 
@@ -195,7 +195,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _busy = false;
         _progress = null;
       });
-      await _showError('新建病人档案失败', '$e');
+      await _showError('新建病人的病历箱失败', '$e');
     }
   }
 
@@ -829,7 +829,7 @@ class _ProxyBanner extends StatelessWidget {
           const SizedBox(width: MedShape.s1),
           Expanded(
             child: Text(
-              '代拍 · 本机最多留 12 小时 · 不进你自己的档案',
+              '代拍 · 本机最多留 12 小时 · 不进你自己的病历箱',
               style: MedType.secondary.copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.w600,

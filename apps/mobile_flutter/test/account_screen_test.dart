@@ -2795,7 +2795,7 @@ void main() {
       // 第一次点:普通同步,撞 VaultMismatch。
       await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
-      expect(find.textContaining('不是这个云档案'), findsOneWidget, reason: 'VaultMismatch 的中文原文');
+      expect(find.textContaining('不是这个云端病历箱'), findsOneWidget, reason: 'VaultMismatch 的中文原文');
       expect(find.text('云端备份'), findsOneWidget, reason: '同一颗按钮,不多出第二颗');
 
       // 第二次点同一颗:上次失败过,于是走 enableCloud → 重开箱(FIFO 队列)+
@@ -2808,7 +2808,7 @@ void main() {
 
       expect(rust.keyedNow, isTrue, reason: '重开箱走了(FIFO 队列),箱子现在是 keyed 的');
       expect(syncApi.pulls, 1, reason: '重开箱之后首同步真的跑到了拉事件这一步');
-      expect(find.textContaining('不是这个云档案'), findsNothing, reason: '成功之后错误清掉');
+      expect(find.textContaining('不是这个云端病历箱'), findsNothing, reason: '成功之后错误清掉');
       expect(find.text('云端备份'), findsOneWidget);
     });
 
@@ -2836,7 +2836,7 @@ void main() {
 
       await t.tap(find.text('云端备份'));
       await t.pumpAndSettle();
-      expect(find.textContaining('不是这个云档案'), findsOneWidget);
+      expect(find.textContaining('不是这个云端病历箱'), findsOneWidget);
 
       // 第二次点同一颗:走 enableCloud 那条可续做的支路。同 M4:先滚回可点范围
       // (Task 17 新加的「云端整理」开关把错误横幅之后的「同步」按钮挤出了视口)。

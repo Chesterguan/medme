@@ -181,7 +181,7 @@ Future<void> openCurrentProfileVaultUnserialized() async {
       // 的办法是问 Rust 自己——同 [ensureProxyVaultOpen] 的思路,不靠调用点的
       // 分支逻辑自证。
       if (!await syncCurrentVaultIsKeyed()) {
-        throw StateError('云档案 keyed 开箱后状态核对失败:期望 keyed,实际不是');
+        throw StateError('云端病历箱 keyed 开箱后状态核对失败:期望 keyed,实际不是');
       }
     case VaultOpenPlan.unkeyed:
       final containerRoot = await IcloudBridge.containerPath();   // ← 原路径,一字不改
@@ -191,7 +191,7 @@ Future<void> openCurrentProfileVaultUnserialized() async {
         icloudContainerDir: ProfileManager.instance.containerBase(containerRoot),
       );
       if (await syncCurrentVaultIsKeyed()) {
-        throw StateError('本地档案开箱后状态核对失败:不应为 keyed');
+        throw StateError('本地病历箱开箱后状态核对失败:不应为 keyed');
       }
   }
 }

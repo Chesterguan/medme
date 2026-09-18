@@ -74,7 +74,7 @@ String friendlyApiError(Object e) => switch (e) {
   // 自己的 `_familyLookupError` 先接走,落不到这里。
   ApiFailed(status: 409) => '这一步已经做过了,不用再做一次',
   ApiFailed(status: 410) => '这个邀请码已经过期或被用过了,请对方重新生成一个',
-  ApiFailed(status: 403) => '没有权限做这件事——这份档案可能不是你的,或者能看的权限已经被收回',
+  ApiFailed(status: 403) => '没有权限做这件事——这份病历可能不是你的,或者能看的权限已经被收回',
   ApiFailed(status: 404) => '没有找到——可能已经被删除或撤销了',
   // 自己转给自己(服务端 `db.py` 的 `cannot redeem own invite`)。**必须排在通用
   // 400 之前** —— switch 表达式按顺序匹配。通用的「请求里有填错的地方」对这件事是

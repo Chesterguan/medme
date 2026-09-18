@@ -362,7 +362,7 @@ Future<void> _finishBatch(_Batch batch) async {
       final missing = batch.imageTotal - batch.imageDocIds.length;
       importQueueNotice.value =
           '刚才那 ${batch.imageTotal} 张里有 $missing 张没能入库,所以没有合并成一份'
-          ' —— 合并不可撤销,少一页不如不合。已入库的都在档案里。';
+          ' —— 合并不可撤销,少一页不如不合。已入库的都在「病历」里。';
     }
   }
   bumpVaultRevision();

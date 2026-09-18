@@ -179,7 +179,7 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
     final ok = await _confirm(
       '清空今天代拍的?',
       '${_patients.length} 位病人在本机的材料会立刻全部删除,不可撤销。'
-          '你自己的档案不受影响。',
+          '你自己的病历箱不受影响。',
     );
     if (ok != true) return;
     await ProxyPatientManager.instance.removeAll();
@@ -361,7 +361,7 @@ class PatientGrantedSection extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 0, 4, MedShape.s1),
-            child: Text('病人让我看的档案', style: MedType.caption.copyWith(color: c.ink3)),
+            child: Text('病人让我看的病历', style: MedType.caption.copyWith(color: c.ink3)),
           ),
           for (final p in profiles)
             MedCard(

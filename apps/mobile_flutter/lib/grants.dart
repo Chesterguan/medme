@@ -89,7 +89,7 @@ class Grants {
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
-    if (key == null) throw StateError('没有这个档案的钥匙');
+    if (key == null) throw StateError('没有这个病历箱的钥匙');
     final token = base64UrlEncode(List.generate(24, (_) => Random.secure().nextInt(256))).replaceAll('=', '');
     final wrapped = await rust.wrapWithToken(key, token);
     final r = await api.postJson('/v1/profiles/$cloudId/invites', {
@@ -211,7 +211,7 @@ class Grants {
       final existing = ProfileManager.instance.profiles.where((p) => p.cloudId == profileId).firstOrNull;
       final localId =
           existing?.id ?? await ProfileManager.instance.create(ProfileManager.redeemingPlaceholderName, userManaged: false);
-      if (localId == null) throw StateError('无法创建本地档案');
+      if (localId == null) throw StateError('无法创建本地成员');
       final role = r['role'] as String;
       final expiresAt = r['expires_at'] == null ? null : DateTime.parse(r['expires_at'] as String);
       await ProfileManager.instance.markCloud(localId, profileId, role, expiresAt);
@@ -253,7 +253,7 @@ class Grants {
     final cloudId = p.cloudId;
     if (cloudId == null) throw StateError('这个成员还没开通云端备份');
     final key = await session.profileKey(cloudId);
-    if (key == null) throw StateError('没有这个档案的钥匙');
+    if (key == null) throw StateError('没有这个病历箱的钥匙');
     final looked = await api.postJson('/v1/accounts/lookup', {'phone': phone});
     final theirPub = base64Decode(looked['public_key'] as String);
     final wrapped = await rust.sealTo(theirPub, key);
