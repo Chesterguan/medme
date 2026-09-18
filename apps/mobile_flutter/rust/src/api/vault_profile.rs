@@ -35,11 +35,10 @@ pub fn vault_profile_install_package(dir: String, envelope_json: String) -> anyh
     // 重建视图。此刻没开箱(App 刚启动就刷包)就读不到动作日志 —— 那就保持原样,
     // 下一次 `vault_profile_view` 一定会重建。
     //
-    // ponytail: 为了拿动作日志顺手读了一整箱正文(`gather_for_profile`),而这里
-    // 只要 `profile_event` 那几份。装包是一天最多几次的冷路径,与趋势页每次打开
-    // 跑的是同一个读,不值得为它再开一条只取一种 doc_type 的取数路径。真慢了再说。
-    if let Ok(input) = vault_projections::gather_for_profile() {
-        terminology::set_overlay(overlay_entries(dir, &input.events));
+    // 只读动作日志那几份(`gather_profile_events`):覆盖层的输入只有事件,一整箱
+    // 病历的正文与抽取结果在这条路上一份都用不上。
+    if let Ok(events) = vault_projections::gather_profile_events() {
+        terminology::set_overlay(overlay_entries(dir, &events));
     }
     Ok(id)
 }
@@ -54,10 +53,25 @@ pub fn vault_profile_view(dir: String, package_id: String) -> anyhow::Result<Str
     // (装包早于开箱是正常顺序)。
     let pkg = profile::cache_load(dir, &package_id)
         .ok_or_else(|| anyhow::anyhow!("没有可用的病种包:{package_id}"))?;
-    let input = vault_projections::gather_for_profile()?;
+    // **闸排在整箱逐份读之前。** 先只读动作日志那几份:没开启的话引擎一块都不算
+    // (spec §4「从未开启 = 不算、不显示、不提醒」),那就没有任何理由去解一整箱
+    // 病历的正文与抽取结果 —— 而「装上了还没开启」正是入口卡每次打开「趋势」都会
+    // 走的那一态。
+    let events = vault_projections::gather_profile_events()?;
     // 术语覆盖层必须在 `aggregate` **之前**装上(`materialize` 第一步就是它),
     // 否则 UPCR 这类包里新定义的分析物在分组那一步就已经落进「未识别」桶了。
-    terminology::set_overlay(overlay_entries(dir, &input.events));
+    // 它的输入只有事件,与这份视图算不算得出来无关,所以两条路上都先装好 ——
+    // 趋势页这些**不走病程档案**的界面也靠它认包里的新分析物。
+    terminology::set_overlay(overlay_entries(dir, &events));
+    if !profile::is_enabled(&events, &pkg.manifest.id) {
+        // `materialize` 在关着时本来就不碰 `docs`(它直接给空 sections),所以这里
+        // 传一个空切片得到的是**与全量读那条路逐字节相同**的一份「关着」的视图。
+        let view = profile::materialize(&[], &events, &pkg, today());
+        return Ok(serde_json::to_string(&view)?);
+    }
+    let input = vault_projections::gather_for_profile()?;
+    // 动作日志那几份在这一趟里被读了第二次 —— 这是把闸提前的代价,几份合成文本,
+    // 换掉的是「没开启也解一整箱病历」。
     let docs = input.source_docs();
     let view = profile::materialize(&docs, &input.events, &pkg, today());
     Ok(serde_json::to_string(&view)?)
@@ -73,8 +87,10 @@ pub fn vault_profile_view(dir: String, package_id: String) -> anyhow::Result<Str
 ///
 /// 没开箱 / 读不到动作日志时报错(调用方按「这次没装上」处理即可,别让它挡住开箱)。
 pub fn vault_profile_refresh_terms(dir: String) -> anyhow::Result<()> {
-    let input = vault_projections::gather_for_profile()?;
-    terminology::set_overlay(overlay_entries(Path::new(&dir), &input.events));
+    // 只读动作日志那几份:覆盖层的输入只有事件。这条路每次开箱都走一遍(开机、
+    // 换成员),读一整箱正文只为了拿那几条事件是纯浪费。
+    let events = vault_projections::gather_profile_events()?;
+    terminology::set_overlay(overlay_entries(Path::new(&dir), &events));
     Ok(())
 }
 
@@ -408,6 +424,54 @@ mod tests {
         let off = parse(vault_profile_view(dir_s, "sle".into()).unwrap());
         assert_eq!(off["enabled"], false);
         assert_eq!(off["sections"].as_array().unwrap().len(), 0);
+
+        terminology::set_overlay(Vec::new());
+    }
+
+    /// 闸排在整箱逐份读之前 —— 没开启就一份临床正文都不读。
+    ///
+    /// 这条是**代价**测试,不是功能测试:关着的那份视图本来就长这样(上一条已经
+    /// 钉过),这里钉的是「拿到它花了多少」。入口卡在「装上了还没开启」这一态下
+    /// 每次打开「趋势」都会走这条路,读一整箱病历只为了发现「没开启」是纯浪费。
+    #[test]
+    fn a_disabled_package_reads_no_clinical_document_at_all() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        open_temp_vault(home.path());
+        let dir_s = home.path().join("skills-cache").display().to_string();
+        vault_profile_install_package(dir_s.clone(), SLE_PACKAGE.into()).unwrap();
+
+        // 箱里放一份真的临床文档 —— 逐份读的时候它就是最贵的那一类。
+        crate::api::vault::add_note("今天血压 130/80".into(), None).unwrap();
+
+        let parse = |json: String| serde_json::from_str::<serde_json::Value>(&json).unwrap();
+
+        // ① 从没开启过:一份正文都没读,视图照样出得来(入口卡要拿它的名字)。
+        vault_projections::reset_doc_text_reads();
+        let off = parse(vault_profile_view(dir_s.clone(), "sle".into()).unwrap());
+        assert_eq!(off["enabled"], false);
+        assert_eq!(off["sections"].as_array().unwrap().len(), 0);
+        assert_eq!(off["display_name"], "系统性红斑狼疮");
+        assert_eq!(
+            vault_projections::doc_text_reads(),
+            0,
+            "没开启就不该读任何一份正文(箱里那份笔记一次都不该被解开)"
+        );
+
+        // ② 开启之后:动作日志那份 + 笔记那份都读到了。3 = 闸那一趟读动作日志
+        //    (1)+ 全量那一趟读两份(2);动作日志被读两次就是把闸提前的代价。
+        vault_profile_record_event(
+            "enable".into(),
+            "sle".into(),
+            "2026-01-02".into(),
+            "{}".into(),
+        )
+        .unwrap();
+        vault_projections::reset_doc_text_reads();
+        let on = parse(vault_profile_view(dir_s, "sle".into()).unwrap());
+        assert_eq!(on["enabled"], true);
+        assert!(!on["sections"].as_array().unwrap().is_empty());
+        assert_eq!(vault_projections::doc_text_reads(), 3);
 
         terminology::set_overlay(Vec::new());
     }

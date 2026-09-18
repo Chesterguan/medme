@@ -365,10 +365,33 @@ fn document_ids_for(docs: &[ProjectionDoc], indices: &[usize]) -> Vec<i64> {
 /// 而不是让整个投影失败 —— 一份坏文档不该让整张趋势图/应急卡打不开。它仍占一个
 /// index,序号与 document_id 的对应关系因此不受影响。
 fn gather() -> anyhow::Result<VaultProjection> {
+    let (flat, visits) = flat_docs()?;
+    let docs = flat
+        .into_iter()
+        .map(|(id, date, doc_type, title)| ProjectionDoc {
+            document_id: id,
+            date,
+            text: read_text(id),
+            doc_type: Some(doc_type),
+            title,
+            extraction_json: crate::api::vault::extraction_json_for(id),
+        })
+        .collect();
+    Ok(VaultProjection { docs, visits })
+}
+
+/// 一份文档的元信息:`(document_id, 临床日期, doc_type, 标题)`。
+type FlatDoc = (i64, Option<NaiveDate>, String, Option<String>);
+
+/// 病历箱里全部文档的**元信息** + 就诊记录行,按病程正序排好。
+///
+/// **一份正文都不读。** 逐份解密读正文(与抽取结果)是这一趟里最贵的部分,谁真的
+/// 要用谁自己读:[`gather`] 读全部,[`gather_profile_events`] 只读动作日志那几份。
+fn flat_docs() -> anyhow::Result<(Vec<FlatDoc>, Vec<VisitRecordDto>)> {
     let groups = crate::api::vault::load_archive()?;
 
     // 展平成 (document_id, date, doc_type, title),同时记下就诊记录行。
-    let mut flat: Vec<(i64, Option<NaiveDate>, String, Option<String>)> = Vec::new();
+    let mut flat: Vec<FlatDoc> = Vec::new();
     let mut visits: Vec<VisitRecordDto> = Vec::new();
     for g in &groups {
         match g {
@@ -413,21 +436,34 @@ fn gather() -> anyhow::Result<VaultProjection> {
         (None, None) => a.0.cmp(&b.0),
     });
 
-    let docs = flat
-        .into_iter()
-        .map(|(id, date, doc_type, title)| ProjectionDoc {
-            document_id: id,
-            date,
-            text: crate::api::vault::get_document(id)
-                .map(|d| d.ocr_text)
-                .unwrap_or_default(),
-            doc_type: Some(doc_type),
-            title,
-            extraction_json: crate::api::vault::extraction_json_for(id),
-        })
-        .collect();
+    Ok((flat, visits))
+}
 
-    Ok(VaultProjection { docs, visits })
+/// 读一份文档的正文。**投影里最贵的一步**(每份都要解密 + 读盘),所以
+/// 「这一趟到底逐份读了几份」的计数也放在这唯一的一处。
+fn read_text(id: i64) -> String {
+    #[cfg(test)]
+    DOC_TEXT_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    crate::api::vault::get_document(id)
+        .map(|d| d.ocr_text)
+        .unwrap_or_default()
+}
+
+/// 测试用:[`read_text`] 至今被调用了多少次。**只在 `cfg(test)` 下存在** ——
+/// 「没开启病程档案就一份临床正文都不读」这条断言需要一个能观察的量,而给生产
+/// 热路径挂一个常驻计数器不值得。
+#[cfg(test)]
+pub(crate) static DOC_TEXT_READS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn reset_doc_text_reads() {
+    DOC_TEXT_READS.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn doc_text_reads() -> usize {
+    DOC_TEXT_READS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn source_docs(docs: &[ProjectionDoc]) -> Vec<parser::SourceDoc<'_>> {
@@ -481,6 +517,21 @@ pub(crate) fn gather_for_profile() -> anyhow::Result<ProfileInput> {
         docs: projection.docs,
         events,
     })
+}
+
+/// **只**把动作日志(`doc_type == "profile_event"`)那几份读出来解成事件,顺序与
+/// [`gather_for_profile`] 完全一致(同一份 [`flat_docs`] 排序,只是少读了别的文档)。
+///
+/// 存在的理由是**闸要排在整箱逐份读之前**:开关闸(`profile::is_enabled`)与术语
+/// 覆盖层都只认这几条,而「从没开启」时引擎一块都不算(spec §4)—— 那就没有任何
+/// 理由去解一整箱病历的正文与抽取结果。动作日志通常是个位数份。
+pub(crate) fn gather_profile_events() -> anyhow::Result<Vec<parser::ProfileEvent>> {
+    let (flat, _visits) = flat_docs()?;
+    Ok(flat
+        .into_iter()
+        .filter(|(_, _, doc_type, _)| doc_type == "profile_event")
+        .filter_map(|(id, _, _, _)| parser::parse_profile_event_payload(&read_text(id)))
+        .collect())
 }
 
 // ─────────────────────── 契约:可渲染的序列 ───────────────────────
