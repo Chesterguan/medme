@@ -10,7 +10,8 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/cloud_extract.dart' show loadCloudExtractEnabled, saveCloudExtractEnabled;
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
-import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart' show loadCloudExtractAsked;
+import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart'
+    show loadCloudExtractAsked, saveCloudExtractAsked;
 import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncKdfBenchMs;
 import 'package:mobile_flutter/sync_engine.dart';
@@ -1183,6 +1184,13 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 副标题按有没有问过分两句(task-20b A2):没问过时这个开关本身默认关着,
   /// 说明它开着会做什么没有意义——第一次添加病历时才会真的问;问过之后(不管
   /// 那次答的是开还是关)才说清楚这个开关本身管什么。
+  ///
+  /// **拨这个开关本身也算「问过」**(task-20b 复核 Important)——`onChanged` 因此
+  /// 也调 [saveCloudExtractAsked]。不这样做的话,用户能在没被 ask sheet 问过的
+  /// 情况下把开关直接拨成开:界面上「已经开着」和副标题「第一次添加病历时会问你」
+  /// 自相矛盾,而且下一次 `runImport` 里的 `shouldAskCloudExtract` 还会再弹一次
+  /// ask sheet、把这次手动选择覆盖掉。两个方向(开/关)都算数——同 ask sheet 自己
+  /// 「不看答案是什么,退出就算问过」那条规矩一致。
   Widget _cloudExtractSwitch() => Card(
     child: SwitchListTile(
       key: const Key('cloud_extract_switch'),
@@ -1195,8 +1203,12 @@ class _AccountScreenState extends State<AccountScreen> {
       ),
       value: _cloudExtractEnabled,
       onChanged: (v) async {
-        setState(() => _cloudExtractEnabled = v);
+        setState(() {
+          _cloudExtractEnabled = v;
+          _cloudExtractAsked = true;
+        });
         await saveCloudExtractEnabled(v);
+        await saveCloudExtractAsked();
       },
     ),
   );

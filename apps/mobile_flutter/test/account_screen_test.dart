@@ -14,6 +14,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
+import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart' show shouldAskCloudExtract;
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -2591,30 +2592,56 @@ void main() {
       expect(find.text('云端备份'), findsOneWidget);
     });
 
-    testWidgets('task-20b A2:「云端整理」开关未问过时默认关,摆在每成员云备份行下面,开着能存住', (t) async {
-      resetVaultQueueForTest();
-      final api = FakeApi(hasKeys: true);
-      await giveCurrentProfileCloudId(t);
-      await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
+    testWidgets(
+      'task-20b A2:「云端整理」开关未问过时默认关,拨了之后能存住、且置真「问过了」',
+      (t) async {
+        resetVaultQueueForTest();
+        final api = FakeApi(hasKeys: true);
+        await giveCurrentProfileCloudId(t);
+        await _toReady(t, api, syncEngine: SyncEngine(api, AccountSession.instance, rust: _FakeSyncRust()));
 
-      final extractSwitch = find.byKey(const Key('cloud_extract_switch'));
-      expect(extractSwitch, findsOneWidget);
-      expect(find.text('云端整理'), findsOneWidget);
-      expect(
-        t.widget<SwitchListTile>(extractSwitch).value,
-        isFalse,
-        reason: '没问过(cloud_extract_asked 没写过)时默认关——第一次添加病历时才会问,问了答应才置真',
-      );
+        final extractSwitch = find.byKey(const Key('cloud_extract_switch'));
+        expect(extractSwitch, findsOneWidget);
+        expect(find.text('云端整理'), findsOneWidget);
+        expect(
+          t.widget<SwitchListTile>(extractSwitch).value,
+          isFalse,
+          reason: '没问过(cloud_extract_asked 没写过)时默认关——第一次添加病历时才会问,问了答应才置真',
+        );
+        expect(
+          find.text('第一次添加病历时会问你'),
+          findsOneWidget,
+          reason: '没问过时副标题得说清楚"还没问",不能一边显示关一边就已经说开着会做什么',
+        );
 
-      await t.tap(extractSwitch);
-      await t.pumpAndSettle();
+        await t.tap(extractSwitch);
+        await t.pumpAndSettle();
 
-      expect(t.widget<SwitchListTile>(extractSwitch).value, isTrue);
-      // 持久化:不是只改了内存里的 State,prefs 里那把键也得真的写成 true——
-      // 下次 `runCloudExtractions` 读的正是这把键。
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getBool('cloud_extract_enabled'), isTrue);
-    });
+        expect(t.widget<SwitchListTile>(extractSwitch).value, isTrue);
+        // task-20b 复核 Important:手动拨开关不能只改 enabled、漏了 asked——否则
+        // 界面上「开关已经开着」和副标题「第一次添加病历时会问你」自相矛盾,
+        // 而且下一次 runImport 还会再弹一次 ask sheet 把这次选择覆盖掉。
+        expect(
+          find.text('第一次添加病历时会问你'),
+          findsNothing,
+          reason: '拨了开关就算问过了,副标题不该再说"还没问"——矛盾界面就是这条要挡的问题',
+        );
+        // 持久化:不是只改了内存里的 State,prefs 里那两把键也得真的写下去——
+        // 下次 `runCloudExtractions`/`shouldAskCloudExtract` 读的正是这两把键。
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getBool('cloud_extract_enabled'), isTrue);
+        expect(
+          prefs.getBool(cloudExtractAskedKey),
+          isTrue,
+          reason: '拨开关本身也算做过一次明确选择,必须一起置真',
+        );
+        expect(
+          shouldAskCloudExtract(loggedIn: true, asked: prefs.getBool(cloudExtractAskedKey) ?? false),
+          isFalse,
+          reason: '置真之后,下一次 runImport 不该再弹 ask sheet 把这次手动选择覆盖掉',
+        );
+      },
+    );
 
     testWidgets('C3:开着 iCloud 同步时点「开通云同步」:原因摆在屏上,仍停在"未开通"分支', (t) async {
       resetVaultQueueForTest();

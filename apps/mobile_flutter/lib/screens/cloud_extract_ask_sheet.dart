@@ -27,6 +27,18 @@ Future<bool> loadCloudExtractAsked() async {
   }
 }
 
+/// 记「问过了」。**两处调用**:[showCloudExtractAskSheet] 本身,以及
+/// `account_screen.dart` 的 `_cloudExtractSwitch`——用户在账号屏手动拨这个开关
+/// 时(不管拨成开还是关)也算做过一次明确选择,必须一起置真,否则会出现「开关
+/// 已经拨成开,副标题却还在说『第一次添加病历时会问你』」的自相矛盾界面,而且
+/// 下一次 `runImport` 里的 `shouldAskCloudExtract` 还会再弹一次 ask sheet,把用户
+/// 刚拨的选择覆盖掉(task-20b 复核 Important)。
+Future<void> saveCloudExtractAsked() async {
+  try {
+    await (await SharedPreferences.getInstance()).setBool(cloudExtractAskedKey, true);
+  } catch (_) {}
+}
+
 /// 问一次,把答案和「问过了」一起写下去。
 ///
 /// `isDismissible: false`/`enableDrag: false` 挡掉点外面、下滑两条路;系统返回
@@ -43,9 +55,7 @@ Future<void> showCloudExtractAskSheet(BuildContext context) async {
     builder: (_) => const SafeArea(child: CloudExtractAskBody()),
   );
   await saveCloudExtractEnabled(on ?? false);
-  try {
-    await (await SharedPreferences.getInstance()).setBool(cloudExtractAskedKey, true);
-  } catch (_) {}
+  await saveCloudExtractAsked();
 }
 
 /// sheet 的内容主体。**纯 widget,不碰 prefs** —— 这样 `flutter test` 测得到。
