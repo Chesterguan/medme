@@ -28,8 +28,8 @@ import 'package:mobile_flutter/widgets/member_switcher.dart';
 /// 这颗常量已经漂过两次(团队靠它核「有没有装到最新版」,结果显示的还是两个小版本
 /// 前的号)。`test/app_version_test.dart` 会拿这里的字面量去和 `pubspec.yaml` 比对,
 /// 漂了就会红——改这两行时记得同时改 `pubspec.yaml`,或者反过来。
-const _appVersionName = '1.6.0';
-const _appBuildNumber = '56';
+const _appVersionName = '3.0.0';
+const _appBuildNumber = '57';
 
 /// 底部导航一级 tab「我」(`s5`)—— 云端 / 这台手机上的病历 / 口令与恢复码 ·
 /// 我的设备 · 关于 / 给医生看 · 导出 / 删掉全部。
