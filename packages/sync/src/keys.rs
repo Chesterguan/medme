@@ -68,7 +68,7 @@ pub fn recovery_code_new() -> String {
         if b[0] >= 240 {
             continue;
         }
-        if i > 0 && i % 4 == 0 {
+        if i > 0 && i.is_multiple_of(4) {
             s.push('-');
         }
         s.push(ALPHABET[(b[0] % 30) as usize] as char);
