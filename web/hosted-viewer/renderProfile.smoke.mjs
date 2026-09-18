@@ -36,11 +36,13 @@ function slice(from, to) {
 const src = [
   slice("function esc(s) {", "// SECURITY: only accept a data: image"),
   slice("const SUM_MN =", "function buildEMRFromSummary"),
+  // 摘要那块也要跑:它与病程档案画在**同一页**上,参考区间必须是同一套说法。
+  slice("function buildEMRFromSummary", "function wireSummary"),
   slice("// ── 病程档案(Task 23)", "function render(payload) {"),
-  "return { renderProfile };",
+  "return { renderProfile, renderSummary };",
 ].join("\n");
 // eslint-disable-next-line no-new-func -- 这就是本文件的全部意义:跑查看器里那段真源码。
-const { renderProfile } = new Function(src)();
+const { renderProfile, renderSummary } = new Function(src)();
 
 // ── 1. golden:整份档案画得出来,且每一处都读包给的字 ──────────────────────
 const out = renderProfile(golden);
@@ -70,6 +72,16 @@ const must = [
   "Gladman DD",
 ];
 for (const m of must) assert.ok(out.includes(m), `golden 渲染里少了:${m}`);
+
+// 记号与标签必须**贴在一起**。只用 includes 查「✔」「✘」各出现过,把渲染结果里
+// 每一个 ✘ 换成 ✔ 也照样全绿 —— 三态诚实正是这块最该守的东西,量具不能漏它。
+const adjacency = [
+  ['<span class="pf-mk ok">✔</span><div class="pf-bd"><div class="pf-lb">低补体', '满足的那条要挂 ✔'],
+  ['<span class="pf-mk no">✘</span><div class="pf-bd"><div class="pf-lb">dsDNA 升高', '未满足的那条要挂 ✘'],
+  ['<span class="pf-mk no">✘</span><div class="pf-bd"><div class="pf-lb">泼尼松/泼尼松龙(或等效)&lt; 5 mg/天', '达标表未满足的那条要挂 ✘'],
+  ['<span class="pf-mk un">?</span><div class="pf-bd"><div class="pf-lb">医生整体评估', '未知的那条要挂 ?'],
+];
+for (const [frag, why] of adjacency) assert.ok(out.includes(frag), why);
 
 // 时间轴这一块 golden 里是空的、且包**故意**没给 empty_hint —— 卡片仍要在
 // (与手机端一致:查看器既不替它编一句话,也不让整块消失)。
@@ -115,5 +127,51 @@ const xss = renderProfile({
 });
 assert.ok(!xss.includes("<img"), "载荷里的标签必须被转义,一个都不许落进 DOM");
 assert.ok(xss.includes("&lt;img"), "转义后的原文应仍然看得见");
+
+// ── 6. 时间轴:没有日期的事件必须自己一组,不许挂在最近那个年份底下 ───────
+const tl = renderProfile({
+  display_name: "d", sources: [], sections: [{
+    kind: "timeline", title: "病程时间轴", empty_hint: null,
+    body: {
+      years: [{ year: 2026, events: [{ type: "flare", text: "皮疹加重", date: "2026-03-01", severity: "high" }] }],
+      undated: [{ type: "biopsy", text: "肾活检" }],
+    },
+  }],
+});
+assert.ok(tl.includes('<div class="pf-grp">日期不详</div>'), "无日期事件要有自己的分组头");
+assert.ok(tl.includes("肾活检"), "分组头不是把它藏起来的借口");
+assert.ok(tl.indexOf("日期不详") > tl.indexOf("皮疹加重"), "分组头排在有日期那组之后");
+assert.ok(tl.indexOf("日期不详") < tl.indexOf("肾活检"), "分组头排在无日期那条之前");
+
+// ── 7. `handoff`:引擎今天一块都不产,这个分支什么都不画(但它有名字) ────
+assert.equal(
+  renderProfile({ display_name: "d", sources: [], sections: [{ kind: "handoff", title: "给医生看", body: { blocks: [] } }] }),
+  "",
+  "handoff 今天不画;等引擎真产出这一块时改 pfSection 里那一行",
+);
+
+// ── 8. 摘要与病程档案画在同一页,参考区间必须是同一套说法 ────────────────
+// 老写法 `refLow != null ? "≥"+refLow : …` 会把 CRP 0–5、抗 dsDNA 0–30 这类
+// **下限为 0** 的区间印成「参考 ≥0」,等于告诉医生这条线没有上限。
+const summaryOut = renderSummary({
+  problems: [{
+    term: "系统性红斑狼疮", onset: "2024-03", status: "稳定",
+    labs: [
+      { name: "C反应蛋白", unit: "mg/L", refLow: 0, refHigh: 30, pts: [["2026-03", 8.1], ["2026-09", 3.2]] },
+      { name: "两头都没有的指标", unit: "U", pts: [["2026-09", 1]] },
+    ],
+  }],
+}, "2026-09-16", { name: "张三" });
+// 断在**渲染出来的那一段**上,不数全文里「参考」出现几次 —— 摘要末尾那句
+// 「供参考、以原件为准」也含这两个字,数出来的是另一个问题的答案。
+assert.ok(
+  summaryOut.includes('<div class="rn">C反应蛋白</div><div class="rf">参考 0–30 mg/L</div>'),
+  "摘要也要两头都说",
+);
+assert.ok(!summaryOut.includes("参考 ≥0"), "「参考 ≥0」是一句不实的话");
+assert.ok(
+  summaryOut.includes('<div class="rn">两头都没有的指标</div><div class="rf">U</div>'),
+  "两头都没有的那条不该印出一个光秃秃的「参考 」",
+);
 
 console.log("✓ renderProfile 冒烟自检通过");

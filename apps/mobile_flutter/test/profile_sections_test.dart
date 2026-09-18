@@ -80,6 +80,29 @@ void main() {
     expect(find.text('还没有可以放上时间轴的记录'), findsOneWidget);
   });
 
+  testWidgets('undated timeline events get their own group, not the last year', (t) async {
+    // 跟在最后一个年份后面等于把它们说成那一年发生的:一条没有日期的活检排在
+    // `2026` 表头下、和 2026-03-01 的复发并排,只会被读成 2026 年做的活检。
+    // 引擎的原意是「不进年,但不丢」(`rules.rs::timeline_section`)。
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'timeline', 'title': '病程时间轴',
+      'body': {
+        'years': [{'year': 2026, 'events': [
+          {'type': 'flare', 'text': '皮疹加重', 'date': '2026-03-01', 'severity': 'high'}]}],
+        'undated': [{'type': 'biopsy', 'text': '肾活检'}],
+      },
+    })));
+    expect(find.text('日期不详'), findsOneWidget);
+    // 两条事件都还在 —— 分组头不是把无日期那条藏起来的借口。
+    expect(find.text('皮疹加重'), findsOneWidget);
+    expect(find.text('肾活检'), findsOneWidget);
+    // 「日期不详」排在 2026 那组之后、无日期那条之前。
+    final y = t.getTopLeft(find.text('2026')).dy;
+    final u = t.getTopLeft(find.text('日期不详')).dy;
+    expect(u, greaterThan(y));
+    expect(t.getTopLeft(find.text('肾活检')).dy, greaterThan(u));
+  });
+
   testWidgets('the score card never renders the words SLEDAI total', (t) async {
     await t.pumpWidget(_wrap(ProfileSectionView({
       'kind': 'score_card', 'title': '活动度(化验可算部分)',

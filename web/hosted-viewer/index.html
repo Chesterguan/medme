@@ -17,7 +17,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-G5rzk1i3j2Va1UgM6/GE9TDTAD4hwDaYxvZEbl9fHn8='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-EGx0hRSWvMPBgsJDBLheSwZfqiSSR1wvKOvgdpk+77U='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -817,6 +817,21 @@ function openDicomViewer(slices, name) {
 const SUM_MN = s => { const a = String(s || "").split("-"); return (+a[0]) * 12 + ((+a[1] || 1) - 1); };
 function sumFlag(v, lo, hi) { return (hi != null && v > hi) || (lo != null && v < lo); }
 
+// 参考区间的显示文本。**两头都要说。**
+//
+// 老写法只印一头(`lo != null ? "≥"+lo : …`),于是下限为 0 的区间 —— CRP 0–5、
+// 抗 dsDNA 0–30 —— 被印成「参考 ≥0」,等于告诉医生这条线没有上限。两头都没有时
+// 返回空串,调用方据此**连「参考」两个字都不印**(印一个光秃秃的「参考 」更难读)。
+//
+// 摘要(`renderSummary`)与病程档案(`pfSeriesChart`)共用这一个 —— 它们画在**同一页**上,
+// 各写一套的下场就是同一个指标在上下两块里给出两种参考区间。
+function refRangeText(lo, hi) {
+  if (lo != null && hi != null) return lo + "–" + hi;
+  if (lo != null) return "≥" + lo;
+  if (hi != null) return "<" + hi;
+  return "";
+}
+
 function sparkSVG(L) {
   const W = 190, H = 42, padL = 4, padR = 32, padT = 6, padB = 12;
   const pts = L.pts || []; if (!pts.length) return "";
@@ -956,8 +971,9 @@ function renderSummary(sm, asOf, patient) {
         db += '<div class="bh">相关化验</div>';
         shownLabs.forEach(L => {
           const pts = L.pts; const last = pts[pts.length - 1], bad = sumFlag(last[1], L.refLow, L.refHigh);
-          const refTxt = L.refLow != null ? "≥" + L.refLow : (L.refHigh != null ? "<" + L.refHigh : "");
-          db += '<div class="lr2"><div style="flex:1;min-width:0"><div class="rn">' + esc(L.name) + '</div><div class="rf">参考 ' + esc(refTxt) + ' ' + esc(L.unit || "") + '</div></div>'
+          const refTxt = refRangeText(L.refLow, L.refHigh);
+          db += '<div class="lr2"><div style="flex:1;min-width:0"><div class="rn">' + esc(L.name) + '</div><div class="rf">'
+            + [refTxt ? "参考 " + esc(refTxt) : "", esc(L.unit || "")].filter(x => x).join(" ") + '</div></div>'
             + sparkSVG(L)
             + '<div style="text-align:right;min-width:52px"><span class="rv' + (bad ? " bad" : "") + '">' + last[1] + '</span><div class="rf">' + esc(last[0]) + " " + nrChip(L, last) + " " + evChip(L.evidence) + '</div></div></div>';
         });
@@ -1191,13 +1207,18 @@ function renderImaging(imaging, records) {
 // 能拿到化验单原文那个字符串的地方(`evidence[].value`)一律显示那个字符串,不显示
 // 旁边算好的 `value_canonical`。其余算出来的数(`score`/`mg_per_kg`)原样打印,不在
 // 这里四舍五入。每个值旁边显示它的出处 id,全文在末尾的「出处」里。
-const PF_BASIS = { guideline: "指南", label: "说明书", literature: "文献", package_default: "包默认" };
-const PF_VERDICT = { yes: "满足", no: "未满足", unknown: "未知" };
-const PF_REM_STATE = { overdue: "逾期", never: "没查到", unknown: "未知", pending: "待核" };
-const PF_TL_TYPE = { flare: "复发", hospitalization: "住院", biopsy: "活检", infusion: "输注", dose_change: "调整用药", infection: "感染", pregnancy: "妊娠" };
-const PF_WEIGHT_SRC = { self_reported: "自测", record: "病历" };
+//
+// 五张表都建在 **null 原型**上(`Object.create(null)`):普通对象字面量遇到
+// `verdict === "constructor"` 这种键会取到 `Object` 函数,而记号是**不转义**拼进
+// HTML 的 —— 结果是医生那一行上多出一串 `function Object() { [native code] }`。
+// 载荷来自我们自己的引擎,但它是解密出来的、可被构造的东西,不该靠「引擎不会这么写」。
+const PF_BASIS = Object.assign(Object.create(null), { guideline: "指南", label: "说明书", literature: "文献", package_default: "包默认" });
+const PF_VERDICT = Object.assign(Object.create(null), { yes: "满足", no: "未满足", unknown: "未知" });
+const PF_REM_STATE = Object.assign(Object.create(null), { overdue: "逾期", never: "没查到", unknown: "未知", pending: "待核" });
+const PF_TL_TYPE = Object.assign(Object.create(null), { flare: "复发", hospitalization: "住院", biopsy: "活检", infusion: "输注", dose_change: "调整用药", infection: "感染", pregnancy: "妊娠" });
+const PF_WEIGHT_SRC = Object.assign(Object.create(null), { self_reported: "自测", record: "病历" });
 // 判定 → 记号。与手机端的图标一一对应(✔/✘/?),达标表逐条对照、不下结论。
-const PF_MARK = { yes: '<span class="pf-mk ok">✔</span>', no: '<span class="pf-mk no">✘</span>', unknown: '<span class="pf-mk un">?</span>' };
+const PF_MARK = Object.assign(Object.create(null), { yes: '<span class="pf-mk ok">✔</span>', no: '<span class="pf-mk no">✘</span>', unknown: '<span class="pf-mk un">?</span>' });
 
 function pfArr(v) { return Array.isArray(v) ? v : []; }
 function pfObj(v) { return (v && typeof v === "object" && !Array.isArray(v)) ? v : {}; }
@@ -1346,11 +1367,8 @@ function pfSeriesChart(body) {
       };
       const last = dated.length ? dated[dated.length - 1] : null;
       const bad = last ? sumFlag(last.value, L.refLow, L.refHigh) : false;
-      // 参考区间**两头都要说**。只印一头(summary 那边的老写法)会把上限型指标
-      // 写成「参考 ≥0」—— 抗 dsDNA 的参考是 0–30,写成「≥0」等于告诉医生这条线
-      // 没有上限,是一句不实的话。
-      const refTxt = (L.refLow !== null && L.refHigh !== null) ? L.refLow + "–" + L.refHigh
-        : (L.refLow !== null ? "≥" + L.refLow : (L.refHigh !== null ? "<" + L.refHigh : ""));
+      // 参考区间两头都说,与摘要那块共用同一个 `refRangeText`。
+      const refTxt = refRangeText(L.refLow, L.refHigh);
       const nr = (s.needs_review_count | 0) > 0
         ? '<span class="nr2" title="这个值由云端整理得出,MedMe 没能逐字核对上,请以原件为准">需核对 ×' + (s.needs_review_count | 0) + "</span>" : "";
       // 「已换算」:这条线上混了不同印刷单位,画的是统一后的规范单位 —— 病人在自己
@@ -1416,7 +1434,15 @@ function pfTimeline(body) {
     h += '<div class="pf-grp">' + pfTxt(y.year) + "</div>";
     pfArr(y.events).forEach(e => { h += pfTimelineEvent(e); });
   });
-  pfArr(body.undated).forEach(e => { h += pfTimelineEvent(e); });
+  // 没有日期的事件**必须自己一组**。跟在最后一个年份后面等于把它们说成那一年发生的:
+  // 一条没有日期的「肾活检」排在 `2026` 表头下、和 2026-03-01 的复发并排,医生只会
+  // 读成 2026 年做的活检。引擎的原意是「不进年,但不丢」(`rules.rs::timeline_section`)。
+  // 「日期不详」是**引擎级结构词**,不是哪个病的措辞;手机端同一个词。
+  const undated = pfArr(body.undated);
+  if (undated.length) {
+    h += '<div class="pf-grp">日期不详</div>';
+    undated.forEach(e => { h += pfTimelineEvent(e); });
+  }
   return h;
 }
 
@@ -1463,6 +1489,13 @@ function pfSection(s) {
   else if (kind === "reminders") inner = pfReminders(body);
   else if (kind === "timeline") inner = pfTimeline(body);
   else if (kind === "checklist") inner = pfChecklist(typeof s.id === "string" ? s.id : null, body);
+  // `handoff`:spec §6 的第 7 种。**今天引擎一块都不产** —— `rules.rs` 没有
+  // `handoff_section`,`ProfileView` 里也没有 `views` 字段,golden 里一块都没有。
+  // 所以这里什么都不画,与「认不出的 kind」同一个结果;**但它是一个有名字的分支**:
+  // 哪天引擎真开始产这一块,改的是这一行,而不是有人先花半天查「为什么医生那屏
+  // 少了一块」(在仓库里 grep `handoff` 就会撞见这段话)。
+  // 引擎产出 + 两端按 `views.handoff` 排序 = 单独一个后续任务,不在本轮。
+  else if (kind === "handoff") return "";
   else return ""; // 认不出的 kind:整块跳过,不抛异常
   // `inner` 为空但包**没给** `empty_hint`,是引擎的一个决定(`rules.rs` 的 timeline:
   // 读到过处方就不许说「还没有记录」)。那就出一张只有标题的空卡 —— 与手机端同款,

@@ -1634,16 +1634,19 @@ mod tests {
         assert!(payload.get("profile").is_none());
     }
 
+    /// ⚠️ **名字里没有「逐字节」是故意的。** 这条比的是解密后的 `serde_json::Value`,
+    /// 而且先剔掉了 `generated`/`expires`(调用时刻,两次调用差几毫秒)。真正的
+    /// 「桌面导出与代拍认领逐字节不变」是**结构论证** —— 新参数的唯一效果是一个
+    /// 纯加法的 `if let`,`None` 时一个键都不插 —— 不是这条测试的结论。
+    /// 别让后来人以为这里有一张字节级回归网。
     #[test]
-    fn passing_none_through_the_new_parameter_is_byte_identical_to_the_old_entry() {
+    fn passing_none_through_the_new_parameter_produces_the_same_payload_as_the_old_entry() {
         let (vault, _tmp) = fixture_vault_with_records();
         let a = build_own_share_blob(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
         let b =
             build_own_share_blob_with_profile(&vault, 5, &crate::render_dicom_png_in_process, None)
                 .unwrap();
         // blob 每次的 nonce/密钥都不同,所以比**明文 payload**,不是比密文。
-        // `generated`/`expires` 是调用时刻,两次调用差几毫秒 —— 去掉再比,剩下的
-        // 每一个键都必须逐字相同。
         let strip = |mut v: serde_json::Value| {
             let o = v.as_object_mut().expect("payload 是对象");
             o.remove("generated");

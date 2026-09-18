@@ -980,8 +980,11 @@ class _TimelineBody extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final y in years) _YearGroup(y),
-        if (undated.isNotEmpty)
-          for (final e in undated) _TimelineEventRow(e),
+        // 没有日期的事件**必须自己一组**:跟在最后一个年份后面等于把它们说成那一年
+        // 发生的(一条没有日期的活检排在 `2026` 表头下,只会被读成 2026 年做的)。
+        // 引擎的原意是「不进年,但不丢」(`rules.rs::timeline_section`)。
+        // 「日期不详」是引擎级结构词,不是哪个病的措辞;查看器 `pfTimeline` 同一个词。
+        if (undated.isNotEmpty) _YearGroup({'year': '日期不详', 'events': undated}),
       ],
     );
   }
