@@ -43,6 +43,9 @@ sync = { path = "../../../packages/sync" }
 # `panel` 字段。`parser` 已经依赖 `terminology`,但不重新导出它,同一条理由与
 # 上面 `serde_json` 的注释一致:要 `use` 就得是直接依赖。
 terminology = { path = "../../../packages/terminology" }
+# 病程档案:包验签/缓存 + 规则引擎(`api::vault_profile`)。纯计算 + 一个缓存
+# 目录,不碰网络 —— 包从哪来是 Dart 侧的事(`lib/skill_packages.dart`)。
+profile = { path = "../../../packages/profile" }
 # DICOM:iOS + 安卓两端都关掉 `codecs`(C/C++ JPEG2000/JPEG-LS 解码器),与 Tauri
 # 移动端 `apps/mobile/src-tauri/Cargo.toml` 的取舍一致——移动端不看 DICOM 像素
 # 精细阅片,免去这处内存破坏型 RCE 面(GHSA-24px),`parse_meta`/`render_png` 仍

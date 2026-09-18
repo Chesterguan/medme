@@ -829,6 +829,66 @@ fn parse_measured_at(measured_at: Option<&str>) -> chrono::DateTime<chrono::Utc>
         .unwrap_or_else(chrono::Utc::now)
 }
 
+/// 「没有原件的文档」的唯一写入路径:合成文本当"文件"过一遍 `vault.import`,再
+/// `add_document` + `add_ocr` + `rebuild_encounters`。自测记录、笔记、病程档案的
+/// 动作日志(`DocType::ProfileEvent`)全走这里 —— 三处的差异只有文件名/类型/标题/
+/// 语言四样,抽出来是为了**不写第三份**同样的五步(pipeline 的
+/// `add_text_layer_document`、DICOM 摘要是更早的同一手法先例)。
+///
+/// `name` 只是溯源用的合成文件名:CAS 去重按**字节**,不按名字。逐字节重复且已
+/// 建过档 = 真·重复提交,回传已有 document id 不再建档(`document.source_file_id`
+/// 唯一,重复建档会违反约束)。
+///
+/// 不经全局 `VAULT` 锁(收 `&Vault`):`load_demo_data` 与单测调用时已经持有
+/// `&state.vault` 或自己的临时保险箱,再抢一次同一把锁会死锁。
+pub(crate) fn add_synthetic_document(
+    v: &Vault,
+    doc_type: DocType,
+    when: chrono::DateTime<chrono::Utc>,
+    name: &str,
+    title: String,
+    language: Option<String>,
+    text: String,
+) -> anyhow::Result<i64> {
+    let imp = v
+        .import(name, "text/plain", text.as_bytes())
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let sid = imp.source_file.id;
+    if imp.deduped
+        && v.has_document(sid)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+    {
+        return v
+            .document_by_source_file_id(sid)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .map(|d| d.id)
+            .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
+    }
+    let doc = v
+        .add_document(NewDocument {
+            source_file_id: sid,
+            doc_type,
+            doc_date: Some(when),
+            doc_date_end: None,
+            title: Some(title),
+            language,
+            page_count: 1,
+        })
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    v.add_ocr(NewOcr {
+        document_id: doc.id,
+        page_no: 1,
+        backend: OcrBackendKind::Native,
+        model_version: "self-entry".into(),
+        text,
+        confidence: None,
+    })
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    v.rebuild_encounters()
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    Ok(doc.id)
+}
+
 /// 写一条自测记录(结构化,append-only)。血压两个值(收缩压+舒张压)共享
 /// 同一份文档/同一个 `measured_at` —— 一次测量是最小操作单元,一起删一起改
 /// (MANUAL-ENTRY-DESIGN.md §5.3);其余四项(心率/体重/体温/血糖)各自单独一条
@@ -902,46 +962,15 @@ fn add_self_measurement_to(
     let title = self_measured_title(values);
 
     let name = format!("self-measurement-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
-    let imp = v
-        .import(&name, "text/plain", text.as_bytes())
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let sid = imp.source_file.id;
-    // 合成文本逐字节相同(极少见,但见 `Vault::import` 的 CAS 去重)且已建过
-    // 档 —— 真·重复提交,直接回传已有文档 id,不再建档(`document.source_file_id`
-    // 唯一,重复建档会违反约束)。与 `ingest_image_with_text` 的同一防线同构。
-    if imp.deduped
-        && v.has_document(sid)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?
-    {
-        return v
-            .document_by_source_file_id(sid)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?
-            .map(|d| d.id)
-            .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
-    }
-    let doc = v
-        .add_document(NewDocument {
-            source_file_id: sid,
-            doc_type: DocType::SelfMeasurement,
-            doc_date: Some(when),
-            doc_date_end: None,
-            title: Some(title),
-            language: Some("zh".into()),
-            page_count: 1,
-        })
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    v.add_ocr(NewOcr {
-        document_id: doc.id,
-        page_no: 1,
-        backend: OcrBackendKind::Native,
-        model_version: "self-entry".into(),
+    add_synthetic_document(
+        v,
+        DocType::SelfMeasurement,
+        when,
+        &name,
+        title,
+        Some("zh".into()),
         text,
-        confidence: None,
-    })
-    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    v.rebuild_encounters()
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    Ok(doc.id)
+    )
 }
 
 /// 读回一份 `self_measurement` 文档的结构化值 —— 供「编辑」预填表单用(编辑=
@@ -992,45 +1021,17 @@ pub fn add_note(text: String, measured_at: Option<String>) -> anyhow::Result<i64
         .collect();
 
     with_state(|state| {
-        let v = &state.vault;
         let name = format!("note-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
-        let imp = v
-            .import(&name, "text/plain", text.as_bytes())
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let sid = imp.source_file.id;
-        if imp.deduped
-            && v.has_document(sid)
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?
-        {
-            return v
-                .document_by_source_file_id(sid)
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?
-                .map(|d| d.id)
-                .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
-        }
-        let doc = v
-            .add_document(NewDocument {
-                source_file_id: sid,
-                doc_type: DocType::Note,
-                doc_date: Some(when),
-                doc_date_end: None,
-                title: Some(title),
-                language: parser::detect_language(&text),
-                page_count: 1,
-            })
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        v.add_ocr(NewOcr {
-            document_id: doc.id,
-            page_no: 1,
-            backend: OcrBackendKind::Native,
-            model_version: "self-entry".into(),
+        let language = parser::detect_language(&text);
+        add_synthetic_document(
+            &state.vault,
+            DocType::Note,
+            when,
+            &name,
+            title,
+            language,
             text,
-            confidence: None,
-        })
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        v.rebuild_encounters()
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        Ok(doc.id)
+        )
     })
 }
 
@@ -1971,6 +1972,7 @@ pub fn vault_cloud_redact_image(_bytes: Vec<u8>, _paint: Vec<RectDto>) -> anyhow
 pub fn vault_cloud_commit_extraction(
     document_id: i64,
     mode: String,
+    schema: i32,
     model_version: String,
     llm_json: String,
     restore_map_json: String,
@@ -2006,9 +2008,11 @@ pub fn vault_cloud_commit_extraction(
                 backend: "deepseek".into(),
                 model_version,
                 mode,
-                // 移动端此刻仍发 schema 1;翻到 2 是 C5 的事(cloud_extract.dart)。
-                // TODO(Task 20): 由 Dart 传入。
-                schema: 1,
+                // **发的是几就记几**:Dart 那一头往 `/v1/extract` 发的 `schema`
+                // 原样传进来(`cloud_extract.dart` 的 `postExtract`)。写死在这里
+                // 会让 schema 2 的结果在库里伪装成 schema 1(`NewExtraction::schema`
+                // 的文档),下游按 1 解就再也看不见 facts。
+                schema,
                 result_json: restored,
             })
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -2262,6 +2266,7 @@ mod cloud_extraction_tests {
             vault_cloud_commit_extraction(
                 doc_id,
                 "text".into(),
+                2,
                 "v4".into(),
                 llm_json.into(),
                 req.restore_map_json,
@@ -2337,6 +2342,7 @@ mod cloud_extraction_tests {
         let result = vault_cloud_commit_extraction(
             doc_id,
             "text".into(),
+            2,
             "v4".into(),
             llm_json.into(),
             req.restore_map_json.clone(),
@@ -2435,6 +2441,7 @@ mod cloud_extraction_tests {
         let result = vault_cloud_commit_extraction(
             doc_id,
             "image".into(),
+            2,
             "v4".into(),
             llm_json.into(),
             req.restore_map_json,
@@ -2486,6 +2493,7 @@ mod cloud_extraction_tests {
         let result = vault_cloud_commit_extraction(
             doc_id,
             "text".into(),
+            2,
             "v4".into(),
             llm_json.into(),
             req.restore_map_json,
@@ -2540,6 +2548,7 @@ mod cloud_extraction_tests {
         let result = vault_cloud_commit_extraction(
             doc_id,
             "text".into(),
+            2,
             "v4".into(),
             llm_json.into(),
             req.restore_map_json,
@@ -2692,6 +2701,7 @@ mod cloud_extraction_tests {
         let err = vault_cloud_commit_extraction(
             doc_a,
             "text".into(),
+            2,
             "v4".into(),
             llm_json.into(),
             req_b.restore_map_json,
@@ -2747,6 +2757,7 @@ mod cloud_extraction_tests {
         let err = vault_cloud_commit_extraction(
             doc_id,
             "text".into(),
+            2,
             "v4".into(),
             r#"{"labs":[]}"#.into(),
             "{}".into(),

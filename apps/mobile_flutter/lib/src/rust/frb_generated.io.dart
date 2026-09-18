@@ -6,6 +6,7 @@
 import 'api/dto.dart';
 import 'api/vault.dart';
 import 'api/vault_ephemeral.dart';
+import 'api/vault_profile.dart';
 import 'api/vault_projections.dart';
 import 'api/vault_sync.dart';
 import 'dart:async';

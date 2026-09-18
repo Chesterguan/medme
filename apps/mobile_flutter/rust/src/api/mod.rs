@@ -13,6 +13,12 @@ pub mod vault_ephemeral;
 // 因此统一用 `view_` 前缀——排在现存最末的 `source_file_object_path` 之后,新增只会
 // 追加在生成代码末尾,`recognize_image_pp` 的序号纹丝不动。
 pub mod vault_projections;
+// 全部函数 `vault_profile_` 前缀。硬约束只有一条(同下面 `sync_` 那段的说法):
+// 这个前缀在**函数名**字典序上排在 `recognize_image_pp` 之后(`vault_cloud_*` <
+// `vault_profile_*` < `view_*`),所以下标 44 纹丝不动;`view_*` 那几个的号往后挪
+// 了,那无所谓(FRB 序号只需要一次生成内部自洽)。有测试钉着下标 44:
+// `rust/tests/frb_dispatch_indices.rs`。
+pub mod vault_profile;
 // 本模块函数全部 `sync_` 前缀。**这条纪律真正钉住的只有一件事**:`sync_` 在
 // 字典序上排在 `recognize_image_pp` 之后,所以它(以及字典序更早的一切)序号
 // 不变——这是唯一的硬约束(见 `apps/mobile_flutter/CLAUDE.md`)。它**不能**

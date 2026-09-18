@@ -6,6 +6,7 @@
 import 'api/dto.dart';
 import 'api/vault.dart';
 import 'api/vault_ephemeral.dart';
+import 'api/vault_profile.dart';
 import 'api/vault_projections.dart';
 import 'api/vault_sync.dart';
 import 'dart:async';
@@ -70,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -998100501;
+  int get rustContentHash => -1336020360;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -364,6 +365,7 @@ abstract class RustLibApi extends BaseApi {
   Future<CloudExtractionResultDto> crateApiVaultVaultCloudCommitExtraction({
     required PlatformInt64 documentId,
     required String mode,
+    required int schema,
     required String modelVersion,
     required String llmJson,
     required String restoreMapJson,
@@ -386,6 +388,27 @@ abstract class RustLibApi extends BaseApi {
   Future<Uint8List> crateApiVaultVaultCloudRedactImage({
     required List<int> bytes,
     required List<RectDto> paint,
+  });
+
+  Future<String> crateApiVaultProfileVaultProfileInstallPackage({
+    required String dir,
+    required String envelopeJson,
+  });
+
+  Future<PlatformInt64> crateApiVaultProfileVaultProfileRecordEvent({
+    required String kind,
+    required String package,
+    required String at,
+    required String payloadJson,
+  });
+
+  Future<String> crateApiVaultProfileVaultProfileVerifyIndex({
+    required String envelopeJson,
+  });
+
+  Future<String> crateApiVaultProfileVaultProfileView({
+    required String dir,
+    required String packageId,
   });
 
   Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard();
@@ -2690,6 +2713,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<CloudExtractionResultDto> crateApiVaultVaultCloudCommitExtraction({
     required PlatformInt64 documentId,
     required String mode,
+    required int schema,
     required String modelVersion,
     required String llmJson,
     required String restoreMapJson,
@@ -2703,6 +2727,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_i_64(documentId, serializer);
           sse_encode_String(mode, serializer);
+          sse_encode_i_32(schema, serializer);
           sse_encode_String(modelVersion, serializer);
           sse_encode_String(llmJson, serializer);
           sse_encode_String(restoreMapJson, serializer);
@@ -2724,6 +2749,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argValues: [
           documentId,
           mode,
+          schema,
           modelVersion,
           llmJson,
           restoreMapJson,
@@ -2742,6 +2768,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argNames: [
           "documentId",
           "mode",
+          "schema",
           "modelVersion",
           "llmJson",
           "restoreMapJson",
@@ -2852,6 +2879,148 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<String> crateApiVaultProfileVaultProfileInstallPackage({
+    required String dir,
+    required String envelopeJson,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(dir, serializer);
+          sse_encode_String(envelopeJson, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 74,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProfileVaultProfileInstallPackageConstMeta,
+        argValues: [dir, envelopeJson],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProfileVaultProfileInstallPackageConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_profile_install_package",
+        argNames: ["dir", "envelopeJson"],
+      );
+
+  @override
+  Future<PlatformInt64> crateApiVaultProfileVaultProfileRecordEvent({
+    required String kind,
+    required String package,
+    required String at,
+    required String payloadJson,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(kind, serializer);
+          sse_encode_String(package, serializer);
+          sse_encode_String(at, serializer);
+          sse_encode_String(payloadJson, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 75,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProfileVaultProfileRecordEventConstMeta,
+        argValues: [kind, package, at, payloadJson],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProfileVaultProfileRecordEventConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_profile_record_event",
+        argNames: ["kind", "package", "at", "payloadJson"],
+      );
+
+  @override
+  Future<String> crateApiVaultProfileVaultProfileVerifyIndex({
+    required String envelopeJson,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(envelopeJson, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 76,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProfileVaultProfileVerifyIndexConstMeta,
+        argValues: [envelopeJson],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProfileVaultProfileVerifyIndexConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_profile_verify_index",
+        argNames: ["envelopeJson"],
+      );
+
+  @override
+  Future<String> crateApiVaultProfileVaultProfileView({
+    required String dir,
+    required String packageId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(dir, serializer);
+          sse_encode_String(packageId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 77,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProfileVaultProfileViewConstMeta,
+        argValues: [dir, packageId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProfileVaultProfileViewConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_profile_view",
+        argNames: ["dir", "packageId"],
+      );
+
+  @override
   Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard() {
     return handler.executeNormal(
       NormalTask(
@@ -2860,7 +3029,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 74,
+            funcId: 78,
             port: port_,
           );
         },
@@ -2887,7 +3056,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 75,
+            funcId: 79,
             port: port_,
           );
         },
@@ -2914,7 +3083,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 76,
+            funcId: 80,
             port: port_,
           );
         },
@@ -2941,7 +3110,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 77,
+            funcId: 81,
             port: port_,
           );
         },

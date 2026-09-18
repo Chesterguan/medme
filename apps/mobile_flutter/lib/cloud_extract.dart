@@ -132,6 +132,15 @@ String knownNameFor(ImportOutcomeDto outcome, Profile profile) {
   return detected.isNotEmpty ? detected : profile.name;
 }
 
+/// 抽取输出的 schema 版本。**2 = labs/meds/diagnoses 再加族级 facts**(病程档案要
+/// 的那一半,spec §3)。
+///
+/// 这个数有两个去处,必须是**同一个**:发给 `/v1/extract` 的 body,以及落盘时
+/// `NewExtraction.schema`([runCloudExtraction] 里那次 commit)。两边不一致 = 库里
+/// 的结果在说谎,下游按 1 解就再也看不见 facts。schema 1 的老结果照常读得懂
+/// (`deid::parse_extraction` 对缺失的 `facts` 给空列表)。
+const int extractSchema = 2;
+
 /// 把一份**已经脱敏**的 payload 发给代理,返回响应体原样。
 ///
 /// `/v1/extract` 直接返回抽取结果对象本身(`services/api/extract.py` 的 `run()`
@@ -144,7 +153,7 @@ Future<Map<String, dynamic>> postExtract(
   required String payload,
 }) => api.postJson(
   '/v1/extract',
-  {'mode': mode, 'schema': 1, 'payload': payload},
+  {'mode': mode, 'schema': extractSchema, 'payload': payload},
 );
 
 /// 同 [postExtract],但 **502 再发一次**。
@@ -428,6 +437,8 @@ Future<CloudExtractionResultDto?> runCloudExtraction(
       () => rust_vault.vaultCloudCommitExtraction(
         documentId: docId,
         mode: mode,
+        // 发的是几就记几 —— 与上面 [postExtract] body 里那个是同一个常量。
+        schema: extractSchema,
         // 这次真正跑抽取的模型由服务端说了算(环境变量,运维随时能换);老版本
         // 服务端不回这个字段时才退到本地兜底值。
         modelVersion: (result['model'] as String?) ?? extractModelVersion,

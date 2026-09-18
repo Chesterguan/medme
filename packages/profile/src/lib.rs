@@ -97,7 +97,11 @@ pub fn materialize(
 /// 这里显式用 `>=` 把同 `at` 的后来者顶上去,不借 `max_by` 「相等取后者」的隐含
 /// 行为:那是 `Iterator::max_by` 的文档保证没错,但闸门的语义不该挂在一句容易被
 /// 后人改成 `min_by`/`sort` 就悄悄反过来的实现细节上。
-fn is_enabled(events: &[parser::ProfileEvent], package_id: &str) -> bool {
+///
+/// `pub`:移动端拼术语覆盖层时要按同一条闸挑「开着的包」(只有开着的病才有资格
+/// 把别名塞进全局词典,spec §4)。那边必须用**这一个**实现,不能照着重写一遍 ——
+/// 重写的那份迟早和上面这段同日排序的讲究分家。
+pub fn is_enabled(events: &[parser::ProfileEvent], package_id: &str) -> bool {
     let mut latest: Option<&parser::ProfileEvent> = None;
     for e in events {
         if e.package != package_id || (e.kind != "enable" && e.kind != "disable") {

@@ -102,14 +102,17 @@ void main() {
     });
     tearDown(() => server.close(force: true));
 
-    test('发到 /v1/extract、带账号 Bearer、body 是 {mode, schema:1, payload}', () async {
+    test('发到 /v1/extract、带账号 Bearer、body 是 {mode, schema:2, payload}', () async {
       await postExtract(api, mode: 'text', payload: '白细胞 5.6');
       expect(seen.single, {
         'method': 'POST',
         'path': '/v1/extract',
         'auth': 'Bearer tok', // 走的是账号会话,不是另一套 token
-        'body': {'mode': 'text', 'schema': 1, 'payload': '白细胞 5.6'},
+        // schema 2 = labs/meds/diagnoses 之外再加族级 facts(病程档案要的那一半)。
+        // body 里**只有**这三个键 —— 病种/包 id 一个字都不上传(spec §8)。
+        'body': {'mode': 'text', 'schema': 2, 'payload': '白细胞 5.6'},
       });
+      expect(extractSchema, 2, reason: '发出去的那个数和落盘记的是同一个常量');
     });
 
     test('返回响应体原样,一个字段都不改写', () async {

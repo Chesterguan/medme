@@ -444,6 +444,45 @@ fn source_docs(docs: &[ProjectionDoc]) -> Vec<parser::SourceDoc<'_>> {
         .collect()
 }
 
+// ─────────────────────── 病程档案的输入投影 ───────────────────────
+
+/// 病程档案(`api::vault_profile`)要的两份输入:全部文档 + 其中的动作日志。
+///
+/// 自有数据、不是借用:`parser::SourceDoc` 借的是 `ProjectionDoc::text`,借用关系
+/// 留在调用方那一侧 —— 调用方拿着这个结构体,现借现用([`ProfileInput::source_docs`])。
+pub(crate) struct ProfileInput {
+    docs: Vec<ProjectionDoc>,
+    /// 解得出载荷的 `profile_event` 文档,**按保险箱追加顺序**(见
+    /// [`gather_for_profile`])。解不出来的跳过,不猜。
+    pub(crate) events: Vec<parser::ProfileEvent>,
+}
+
+impl ProfileInput {
+    pub(crate) fn source_docs(&self) -> Vec<parser::SourceDoc<'_>> {
+        source_docs(&self.docs)
+    }
+}
+
+/// 读一遍保险箱,顺带把 `doc_type == "profile_event"` 的文档解成动作日志。
+///
+/// **顺序就是 [`gather`] 的顺序**(临床日期升序、同日按 document_id 升序);动作
+/// 日志的 `doc_date` 是它被记下来的那一刻,所以同一天里先后追加的两条,靠
+/// document_id 升序仍然排在正确的先后上 —— `profile::materialize` 要的正是这个
+/// (它的文档:`at` 只到天,日内的真实先后只剩数组顺序这一个信息源)。
+pub(crate) fn gather_for_profile() -> anyhow::Result<ProfileInput> {
+    let projection = gather()?;
+    let events = projection
+        .docs
+        .iter()
+        .filter(|d| d.doc_type.as_deref() == Some("profile_event"))
+        .filter_map(|d| parser::parse_profile_event_payload(&d.text))
+        .collect();
+    Ok(ProfileInput {
+        docs: projection.docs,
+        events,
+    })
+}
+
 // ─────────────────────── 契约:可渲染的序列 ───────────────────────
 
 /// 这条序列**画得出来吗**?
