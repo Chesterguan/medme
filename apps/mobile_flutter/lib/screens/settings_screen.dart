@@ -141,7 +141,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// 切换「个人 / 医生」模式:写入持久化后,`main.dart` 的 `AppRoot` 监听同一个
-  /// notifier 自动换到另一个根界面;本屏若是被 push 进来的(医生模式下,设置没有
+  /// notifier 自动换到另一个根界面;本屏若是被 push 进来的(代拍模式下,设置没有
   /// 自己的 tab,是从 `DoctorHomeScreen` 点进来的),顺手把导航栈弹回第一层,让
   /// 换好的根界面露出来。个人模式下设置本来就是 tab、没有可弹的栈,`canPop()` 为
   /// false,这一步是 no-op。
@@ -156,7 +156,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: const Text('切换模式?'),
         content: Text(
           target == AppModeKind.doctor
-              ? '切换到「医生模式」:主界面变成「为病人代拍」,你自己的病历仍在——'
+              ? '切换到代拍:主界面变成「我是医生,替病人代拍」,你自己的病历仍在——'
                     '随时可以再切回来查看。'
               : '切换到「自己/家人的病历」模式,回到健康档案 / 导出分享 / 设置。',
         ),
@@ -204,7 +204,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 _SettingsRow(
                   icon: Icons.medical_services_outlined,
-                  title: '医生模式',
+                  title: '退出代拍',
                   subtitle: '点击切换到你自己的家庭档案',
                   onTap: _switchMode,
                 ),

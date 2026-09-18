@@ -5,7 +5,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 
-/// 医生代拍的「今日病历表」:每个代拍病人 = 一个**独立病历箱**(自己的目录、自己的
+/// 医生代拍的病人列表:每个代拍病人 = 一个**独立病历箱**(自己的目录、自己的
 /// 一次性 device id),走与患者模式完全相同的 `openVault` + 普通导入路径 —— 姓名不
 /// 匹配提示因此是白捡的。
 ///

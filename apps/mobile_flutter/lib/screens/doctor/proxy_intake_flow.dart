@@ -39,7 +39,7 @@ const int kProxyShareExpiresDays = 15;
 
 enum _ProxyPhase { consent, capture, preview, delivering }
 
-/// 「为病人代建档」全屏流程(医生/护士专用,Phase 1:本地交付,不含云)。
+/// 「代拍」全屏流程(医生/护士专用,Phase 1:本地交付,不含云)。
 /// 同意(签名/按住确认)→ 为这个病人建一个**独立病历箱** → 采集(拍照/相册/文件,
 /// 可多轮混合来源累加)→ **还没核对列表**(每份一行,点进去核对原件+识别内容、逐份点
 /// 「确认这一份」;可随时「继续采集」再累加更多)→ 生成加密文件交付给病人(摘要只
@@ -49,11 +49,11 @@ enum _ProxyPhase { consent, capture, preview, delivering }
 /// 回来补拍/重发),到点由 [ProxyPatientManager] 自动删——与同意告知里那句话对齐。
 /// 病人数据落在 [ProxyPatientManager] 的独立命名空间,**绝不写入医生自己的档案**;
 /// **紫色 chrome**(令牌 `MedColors.proxy`)+ 顶部常驻横幅是每一屏都在的信号,提醒
-/// 「这不是我的箱」。紫是医生模式专属:个人模式主色是蓝(`seal`),两个模式一眼
+/// 「这不是我的箱」。紫是代拍专属:个人模式主色是蓝(`seal`),两个模式一眼
 /// 可辨 —— 代拍最危险的失误是拍到别人的单子、或在错的模式下动手,让两者长得不一样
 /// 是**安全设计**,不是装饰。
 ///
-/// [patientId] 为 null = 新病人(从同意屏开始);非 null = 从主页「今日病历表」点回
+/// [patientId] 为 null = 新病人(从同意屏开始);非 null = 从主页「今天代拍的」点回
 /// 一个已建档的病人(同意已签过,直接进还没核对列表继续核对/交付)。
 ///
 /// 打开代拍病人的箱子会**顶掉进程级 vault**(医生自己的档案)。这件事不靠调用顺序的
@@ -180,7 +180,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       _consent = consent;
       await ProxyPatientManager.instance.setConsent(id, consent);
       if (!mounted) {
-        // 组件已在这段 await 期间被卸载:这个病人一份都没采集,不该留在今日病历表里。
+        // 组件已在这段 await 期间被卸载:这个病人一份都没采集,不该留在今天代拍的列表里。
         await ProxyPatientManager.instance.remove(id);
         return;
       }
@@ -199,7 +199,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     }
   }
 
-  /// 退出这一屏。**不删数据**——已采集的病人留在今日病历表里(12 小时内可回来续拍
+  /// 退出这一屏。**不删数据**——已采集的病人留在今天代拍的列表里(12 小时内可回来续拍
   /// /交付),这正是「不再用完即焚」的意思。一份都没采集的空病人不留(不然主页会
   /// 攒一堆空条目)。进程级 vault 由主页在本路由返回后换回(见类注释)。
   Future<void> _cancelAndExit() async {
@@ -212,7 +212,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   }
 
   /// AppBar 返回箭头点了先确认再退出。已经采集过东西的:退出**不会**丢数据(病人
-  /// 留在今日病历表),所以不必吓唬人;一份都没拍的:退出就是放弃这个病人。
+  /// 留在今天代拍的列表里),所以不必吓唬人;一份都没拍的:退出就是放弃这个病人。
   Future<void> _confirmExit() async {
     if (_capturedCount == 0) {
       await _cancelAndExit();
@@ -222,7 +222,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('先退出?'),
-        content: const Text('已经拍好的会留在「今日病历表」里,12 小时内可以随时回来继续。'),
+        content: const Text('已经拍好的会留在「今天代拍的」里,12 小时内可以随时回来继续。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -257,7 +257,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  '拍摄病历材料',
+                  '添加',
                   style: MedType.subtitle.copyWith(color: c.ink),
                 ),
               ),
@@ -362,7 +362,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   /// 患者模式同一来源,见 `import_helpers.dart` 的 [ImportIncompleteNotice])。
   ///
   /// 顺手拿 Rust 回传的 `detectedName`:第一份识别到姓名就给这个病人命名(主页
-  /// 「今日病历表」按名字列);之后再识别到**别的**名字就记进 [_mismatch],在还没核对
+  /// 「今天代拍的」按名字列);之后再识别到**别的**名字就记进 [_mismatch],在还没核对
   /// 列表顶上提醒「可能拍到了别人的单子」。
   Future<void> _ingest(List<PendingImport> items) async {
     final patientId = _patientId;
@@ -551,7 +551,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _progress = null;
         _phase = _ProxyPhase.preview;
       });
-      // 回填份数,主页「今日病历表」列表直接读它,不必为了数数把每个箱子都开一遍。
+      // 回填份数,主页「今天代拍的」列表直接读它,不必为了数数把每个箱子都开一遍。
       if (_patientId case final id?) {
         await ProxyPatientManager.instance.setDocCount(id, docs.length);
       }
@@ -663,7 +663,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         shareOrigin: _shareOrigin,
       );
       if (!mounted) return;
-      // **交付后不删**:病人留在今日病历表里,12 小时内医生可以回来补拍/重发,到点
+      // **交付后不删**:病人留在今天代拍的列表里,12 小时内医生可以回来补拍/重发,到点
       // 由 `ProxyPatientManager` 自动清(与同意告知里的口径一致)。
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
@@ -814,7 +814,7 @@ class _ProxyBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 白字压在 `proxy` 紫上,对比度 6.9:1 —— 医生模式里最常出现的一块颜色,
+    // 白字压在 `proxy` 紫上,对比度 6.9:1 —— 代拍里最常出现的一块颜色,
     // 诊室灯光下也要读得清(个人模式的 seal 蓝在同样搭配下只有 3.9:1)。
     return Container(
       width: double.infinity,
@@ -829,7 +829,7 @@ class _ProxyBanner extends StatelessWidget {
           const SizedBox(width: MedShape.s1),
           Expanded(
             child: Text(
-              '为病人代建档 · 本机最多留 12 小时 · 不进你自己的档案',
+              '代拍 · 本机最多留 12 小时 · 不进你自己的档案',
               style: MedType.secondary.copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.w600,
@@ -1106,7 +1106,7 @@ class _PendingListStep extends StatelessWidget {
                         minimumSize: const Size.fromHeight(48),
                       ),
                       onPressed: busy || docs.isEmpty ? null : onDeliver,
-                      child: const Text('生成认领码,交给病人'),
+                      child: const Text('生成取件码,交给病人'),
                     ),
                   ),
                 ],
@@ -1159,7 +1159,7 @@ class _PendingListStep extends StatelessWidget {
 /// **状态两级的配色跟着个人模式走,不另发明一套**:还没核对 = 琥珀(`high`),
 /// 与 `archive_screen.dart` 的 `_PendingCard` 同一处理 —— 「刚拍完还没核对」是常态
 /// 不是事故,红色天天出现就会被学会忽略;真正该报红的是下面那条姓名不符。
-/// 已确认 = 医生模式主色的淡底版(`proxyWash`/`proxyInk`),与详情屏底栏那块
+/// 已确认 = 代拍主色的淡底版(`proxyWash`/`proxyInk`),与详情屏底栏那块
 /// 「已确认」同色同分量,点进去点回来不会觉得换了个东西。
 class _PendingRow extends StatelessWidget {
   const _PendingRow({
@@ -1246,7 +1246,7 @@ class _PendingRow extends StatelessWidget {
 /// 的,这条就是防它。只提醒、不自动移动任何东西:该删哪份由医生点进详情自己判断。
 ///
 /// **配色从「主色 10% 淡底」改成 `critical` 红 + 左侧三像素竖条**,与个人模式逐处
-/// 对齐。原先它用的是医生模式主色 —— 而主色在这一屏满屏都是(横幅、图标底、主
+/// 对齐。原先它用的是代拍主色 —— 而主色在这一屏满屏都是(横幅、图标底、主
 /// 按钮),用它报警等于没报警。这是全 app 最高一级的提醒:**可能拍到了别人的病历**,
 /// 它必须和「代拍中」这个常态信号长得完全不一样。
 class _MismatchBanner extends StatelessWidget {

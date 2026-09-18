@@ -44,7 +44,7 @@ List<Profile> patientGrantedProfiles(List<Profile> all, {DateTime? now}) {
 /// 「只能看 · 至 M月D日」。
 ///
 /// ⚠️ 这一行**不受**「挑人的界面零角色词」那条硬规矩管(Task 13 复审裁定的例外):
-/// 医生模式这一节回答的是"这几天还能看谁的",到期日是医生真正要用的信息,不是
+/// 代拍这一节回答的是"这几天还能看谁的",到期日是医生真正要用的信息,不是
 /// 可有可无的身份标签——拿掉它,医生没法判断该催病人续、还是这几天就要失效。
 /// 措辞上仍然守着一条:「只读」是内部/API 的词,界面上一律说「只能看」(与
 /// `account_screen.dart` 的 `roleLabel('viewer')` 一致)。没有到期日(理论上
@@ -59,12 +59,12 @@ String patientGrantedSubtitle(Profile p) =>
 
 
 
-/// 医生模式主界面——不放进「导出·分享」tab,是独立的应用根(见 `main.dart` 的
-/// `AppRoot`)。「为病人代拍」按钮 + **今日病历表**:代拍过的病人按姓名列在这里,
+/// 代拍主界面——不放进「导出·分享」tab,是独立的应用根(见 `main.dart` 的
+/// `AppRoot`)。「我是医生,替病人代拍」按钮 + **今天代拍的**列表:代拍过的病人按姓名列在这里,
 /// 本机最多留 12 小时(到点由 [ProxyPatientManager] 自动删),期间可点回去补拍、
 /// 继续核对、重新交付。右上「清空」一次删干净。
 ///
-/// 视觉:主色走 `MedColors.proxy`(紫),不是个人模式的 `seal`(蓝)——医生模式
+/// 视觉:主色走 `MedColors.proxy`(紫),不是个人模式的 `seal`(蓝)——代拍
 /// 的每一屏都靠这个颜色宣告「这不是你自己的档案」。除主色外的一切(中性色、字阶、
 /// 圆角、阴影、卡片)与个人模式同源。
 class DoctorHomeScreen extends StatefulWidget {
@@ -177,7 +177,7 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
 
   Future<void> _removeAll() async {
     final ok = await _confirm(
-      '清空今日病历表?',
+      '清空今天代拍的?',
       '${_patients.length} 位病人在本机的材料会立刻全部删除,不可撤销。'
           '你自己的档案不受影响。',
     );
@@ -212,12 +212,12 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
     final c = MedColors.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('医生模式'),
+        title: const Text('替病人代拍'),
         actions: [
           if (_patients.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.delete_sweep_outlined),
-              tooltip: '清空今日病历表',
+              tooltip: '清空今天代拍的',
               onPressed: _removeAll,
             ),
           IconButton(
@@ -251,10 +251,10 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                     ),
                   ),
                   const SizedBox(height: MedShape.s2),
-                  Text('为病人代建档', style: MedType.title.copyWith(color: c.ink)),
+                  Text('代拍', style: MedType.title.copyWith(color: c.ink)),
                   const SizedBox(height: 6),
                   Text(
-                    '当面征得同意后拍摄病人的纸质病历材料,拍完生成一个认领码让病人当场扫走;'
+                    '当面征得同意后拍摄病人的纸质病历材料,拍完生成一个取件码让病人当场扫走;'
                     '网络不畅时退回加密文件+口令。本机最多留 12 小时,到时间自动删。',
                     textAlign: TextAlign.center,
                     style: MedType.secondary.copyWith(
@@ -271,7 +271,7 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                       style: FilledButton.styleFrom(backgroundColor: c.proxy),
                       onPressed: _startCapture,
                       icon: const Icon(Icons.camera_alt_outlined),
-                      label: const Text('为病人代拍'),
+                      label: const Text('我是医生,替病人代拍'),
                     ),
                   ),
                 ],
@@ -323,7 +323,7 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 4, 4, MedShape.s1),
-          child: Text('今日病历表', style: MedType.caption.copyWith(color: c.ink3)),
+          child: Text('今天代拍的', style: MedType.caption.copyWith(color: c.ink3)),
         ),
         for (final p in _patients)
           Padding(
@@ -343,7 +343,7 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
 /// [DoctorHomeScreen] 读好传进来,于是这一节的渲染与点击能在 `flutter test` 里
 /// 单独钉住(整屏不行:它的 `initState` 要穿过三个单例的真实文件 I/O)。
 ///
-/// 列表为空时整节不画:医生模式的主角是代拍,没有被授权的档案时不该多一个空标题。
+/// 列表为空时整节不画:这一屏的主角是代拍,没有被授权的档案时不该多一个空标题。
 class PatientGrantedSection extends StatelessWidget {
   const PatientGrantedSection({super.key, required this.profiles, required this.onTap});
 
@@ -389,7 +389,7 @@ class PatientGrantedSection extends StatelessWidget {
   }
 }
 
-/// 今日病历表一行:病人名 + 份数 + 还剩多久自动删 + 删除按钮。
+/// 「今天代拍的」列表一行:病人名 + 份数 + 还剩多久自动删 + 删除按钮。
 ///
 /// **不带骑缝线。** 这是一张派生卡:名字是从若干份原件里识别出来的、份数是数出来
 /// 的,背后没有「某一张纸」可点进去(点进去是这个病人的清单)。骑缝线只给点得进
@@ -445,7 +445,7 @@ class _PatientRow extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '${patient.docCount} 份 · ${_remainingLabel(patient.remaining)}',
+                        '拍了 ${patient.docCount} 份 · ${_remainingLabel(patient.remaining)}',
                         // 份数与倒计时都是数字,等宽才对得齐。
                         style: MedType.secondary.copyWith(
                           color: c.ink2,
@@ -470,9 +470,9 @@ class _PatientRow extends StatelessWidget {
   }
 }
 
-/// 「还剩 N 小时/分钟自动删」。不到一分钟就说「即将自动删除」,不显示 0 分钟。
+/// 「N 小时/分钟后自动清掉」。不到一分钟就说「即将自动清掉」,不显示 0 分钟。
 String _remainingLabel(Duration d) {
-  if (d.inMinutes < 1) return '即将自动删除';
-  if (d.inHours < 1) return '还剩 ${d.inMinutes} 分钟自动删';
-  return '还剩 ${d.inHours} 小时自动删';
+  if (d.inMinutes < 1) return '即将自动清掉';
+  if (d.inHours < 1) return '${d.inMinutes} 分钟后自动清掉';
+  return '${d.inHours} 小时后自动清掉';
 }

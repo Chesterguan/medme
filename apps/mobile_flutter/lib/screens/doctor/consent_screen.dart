@@ -21,7 +21,7 @@ const String kConsentTextVersion = 'v1';
 /// 采集「谁、以何种方式、何时同意」这一件事。
 ///
 /// ⚠️ **这是法务文案屏,一个字都不改。** 文案变了要升 [kConsentTextVersion]。视觉
-/// 上走设计系统令牌:强调色是医生模式的 `proxy`(紫),正文字号从 13.5 提到 15
+/// 上走设计系统令牌:强调色是代拍的 `proxy`(紫),正文字号从 13.5 提到 15
 /// (`MedType.body`)—— 读这一屏的是**病人**,常常是老人,而他要在这里签字。
 class ConsentScreen extends StatefulWidget {
   const ConsentScreen({
@@ -154,7 +154,7 @@ class _ConsentScreenState extends State<ConsentScreen>
               const _ConsentPoint(
                 icon: Icons.person_outline,
                 title: '交给谁',
-                body: '当场给您一个码,您用手机拍下来带走;只交给您本人,不会自动发给别人。',
+                body: '拍完当场给您一个取件码。凭它在自己手机上把这份病历取走,只交给您本人,不会自动发给别人。',
               ),
               const _ConsentPoint(
                 icon: Icons.schedule_outlined,

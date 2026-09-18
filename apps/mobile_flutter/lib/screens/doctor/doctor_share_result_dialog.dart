@@ -101,7 +101,7 @@ Future<void> showDoctorShareResultDialog(
               await SharePlus.instance.share(
                 ShareParams(
                   files: [XFile(result.path)],
-                  subject: 'MedMe 病历(代建档)',
+                  subject: 'MedMe 病历(代拍)',
                   sharePositionOrigin: shareOrigin(),
                 ),
               );

@@ -203,8 +203,9 @@ class _QrShareScreenState extends State<QrShareScreen> {
     // (`POST /v1/profiles/{pid}/invites` 对 editor/viewer 一律 403),不判就摸黑
     // 试一次注定失败的请求。而**即使是 owner**,邀请创建仍可能失败(网络、服务端
     // 500……)——那种情况绝不能停在一个空白/报错的死胡同,必须退回原来的加密
-    // 上传路径,像 `doctor_claim_link_dialog.dart` 处理转移链接失败那样,总有
-    // 一条码能出。未登录/未开通云端备份/不是 owner,直接走原路径,一字不改。
+    // 上传路径,像 `proxy_intake_flow.dart` 的 `_deliver` 上传失败退回本地加密
+    // 文件那样,总有一条码能出。未登录/未开通云端备份/不是 owner,直接走原路径,
+    // 一字不改。
     final profile = ProfileManager.instance.current;
     if (_grantChoice && shouldTryGrantLink(loggedIn: AccountSession.instance.loggedIn.value, profile: profile)) {
       try {

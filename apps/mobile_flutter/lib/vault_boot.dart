@@ -196,7 +196,7 @@ Future<void> openCurrentProfileVaultUnserialized() async {
   }
 }
 
-/// 打开某个**代拍病人**的病历箱(医生模式)。与「切成员」不是一回事:代拍病人不在
+/// 打开某个**代拍病人**的病历箱。与「切成员」不是一回事:代拍病人不在
 /// [ProfileManager] 里,走 [ProxyPatientManager] 的独立命名空间。
 ///
 /// `dataDir` 用该病人自己的 `data/`:每个病人一个一次性 device id(不带医生的设备

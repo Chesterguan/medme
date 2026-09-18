@@ -171,7 +171,7 @@ class SyncReport {
 ///
 /// **每个会碰进程级 vault 的方法开头都核对身份**(见 [VaultMismatch])——vault 是
 /// 进程级单例,`Profile p` 只是个参数,两者不天然一致:切换成员没重开箱、或者
-/// 医生模式的代拍病人箱子还开着,都会让"传进来的 p"和"实际写盘读盘的箱子"对不上。
+/// 代拍病人箱子还开着,都会让"传进来的 p"和"实际写盘读盘的箱子"对不上。
 class SyncEngine {
   SyncEngine(this.api, this.session, {this.rust = const RustSync(), this.reopenVault = openCurrentProfileVault});
 

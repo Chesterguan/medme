@@ -1673,7 +1673,7 @@ void main() {
       expect(find.text('发给他'), findsOneWidget);
 
       // Minor 18:这条路的复制提示是通用那句(代拍那条路有自己的,见
-      // `doctor_claim_link_dialog_test`)。两条都钉住,免得抽取时再丢一次。
+      // `doctor_claim_link_dialog.dart` 的 `copiedMessage`)。两条都钉住,免得抽取时再丢一次。
       // 对话框内容在 `SingleChildScrollView` 里,800×600 的测试画布上这颗按钮
       // 落在视口外 —— 不先滚进来,`tap` 点的是一片空白。
       await t.ensureVisible(find.text('复制链接'));

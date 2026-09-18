@@ -30,7 +30,7 @@ enum ProxyDetailResult { none, changed, retake }
 ///
 /// **视觉上与 `document_detail.dart` 逐处对齐,只把主色 `seal`(蓝)换成 `proxy`
 /// (紫)** —— 结构、字阶、圆角、骑缝线、间距全部同源。识别出来的文字区整块交给共用的
-/// `ReportContent`,它一个字节都不为医生模式改:同一份化验值在两个模式下必须
+/// `ReportContent`,它一个字节都不为代拍改:同一份化验值在两个模式下必须
 /// 长得一模一样。
 class ProxyDocumentDetailScreen extends StatefulWidget {
   const ProxyDocumentDetailScreen({

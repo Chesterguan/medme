@@ -119,7 +119,7 @@ class Analytics {
     _context.addAll(kv);
   }
 
-  /// 当前已知的库存份数;`null` = 还没读到(冷启动早期,或医生模式没有个人档案)。
+  /// 当前已知的库存份数;`null` = 还没读到(冷启动早期,或代拍模式下没有个人档案)。
   /// 导入埋点用它判断 `is_first`——**不知道就不报**,绝不猜。
   static int? _librarySize;
 

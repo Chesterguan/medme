@@ -8,7 +8,7 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 「一条链接 → 摆成一张码,旁边给复制和分享」。
 ///
-/// **两条路共用**:代拍交付的认领码(`doctor_claim_link_dialog.dart`)、以及
+/// **两条路共用**:代拍交付的取件码(`doctor_claim_link_dialog.dart`)、以及
 /// 「把这份档案交给他」的转移链接(`account_screen.dart` 的 B5)。抽出来之前
 /// 只有前者有这套展示,后者要么重写一遍、要么只给一行纯文本链接 —— 而收链接的
 /// 人常常是"手机递过来,你扫一下"这种场景,码比链接管用。
@@ -35,7 +35,7 @@ Future<void> showLinkQrDialog(
   /// iPad 上系统分享面板的锚点。拿不到就不给(`share_plus` 接受 null)。
   Rect Function()? shareOrigin,
 
-  /// 主按钮颜色。医生模式传紫色,个人模式不传(走主题默认)。
+  /// 主按钮颜色。代拍模式传紫色,个人模式不传(走主题默认)。
   Color? accent,
 
   /// 复制成功后那句 SnackBar。代拍那条路原本是「链接已复制,可以发给病人」——
