@@ -155,12 +155,43 @@ fn the_proteinuria_threshold_stays_the_verbatim_half_gram_and_converts_to_a_mg_r
         .unwrap()
         .clone();
     assert_eq!(item["threshold"], 0.5);
-    assert_eq!(item["canonical_unit"], "g/24h");
+    assert_eq!(item["threshold_unit"], "g/24h");
 
     let b = score(&[(TODAY, &lab_doc("24小时尿蛋白定量 510 mg/24h"))]);
     assert_eq!(b["score"], 4, "510 mg = 0.51 g,过阈");
     let b = score(&[(TODAY, &lab_doc("24小时尿蛋白定量 500 mg/24h"))]);
     assert_eq!(b["score"], 0, "500 mg 恰好 0.5 g,不计分");
+}
+
+#[test]
+fn a_package_still_using_the_old_field_name_fails_loudly_instead_of_scoring() {
+    // 阈值单位那个字段从 `canonical_unit` 改名成了 `threshold_unit`(旧名在骗包作者:
+    // 它是**阈值自己写的单位**,不是规范单位;照字面写 `mg/24h` 而值仍是 0.5,阈值就
+    // 静默变成 0.5 mg)。**刻意不留 serde 兼容**:拿旧名写的包在这里读不到单位,整条
+    // 落「未知 + 理由」,而不是被默默当成另一个意思。
+    let mut raw: serde_json::Value = serde_json::from_str(ACTIVITY).expect("夹具包必须解析");
+    for item in raw["rules"]["activity"]["items"]
+        .as_array_mut()
+        .expect("items 是数组")
+    {
+        if let Some(u) = item
+            .as_object_mut()
+            .and_then(|o| o.remove("threshold_unit"))
+        {
+            item["canonical_unit"] = u;
+        }
+    }
+    let pkg: profile::Package = serde_json::from_value(raw).expect("夹具包必须解析");
+    let b = section_with(&pkg, &[(TODAY, &lab_doc("24小时尿蛋白定量 3.2 g/24h"))]).body;
+    assert_eq!(b["score"], 0, "读不到阈值单位就不许计分");
+    let reason = b["unscored"]
+        .as_array()
+        .expect("unscored 是数组")
+        .iter()
+        .find(|u| u["id"] == "proteinuria")
+        .map(|u| u["reason"].clone())
+        .expect("蛋白尿那条要如实说算不了");
+    assert_eq!(reason, "这一条没写阈值的单位(threshold_unit),比不了");
 }
 
 #[test]

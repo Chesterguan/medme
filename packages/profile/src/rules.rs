@@ -352,6 +352,24 @@ fn str_field<'j>(v: &'j serde_json::Value, k: &str) -> &'j str {
     v.get(k).and_then(|x| x.as_str()).unwrap_or_default()
 }
 
+/// **阈值本身写的单位;引擎按词典换算到规范单位再比**(见 [`threshold_in`])。
+///
+/// 包里逐字写源行的数(SLEDAI-2K 印的是「>0.5 gram/24 hours」、EULAR 2025 印的是
+/// 「≥500 mg/g」),这个字段就是那个数旁边印的单位 —— **不是**词典意义上的规范单位。
+/// 字段一度叫 `canonical_unit`,那个名字会骗包作者:照着字面写 `mg/24h` 而值仍是
+/// 0.5,阈值就静默变成 0.5 mg(1000 倍)。
+///
+/// 没写就是 `None`:调用方据此如实说「这一条没写阈值的单位」。**旧名不做 serde
+/// 兼容** —— 拿旧名写的包在这里读不到单位、整条落「未知 + 理由」,而不是被默默当成
+/// 另一个意思(正式包还没发版,这是唯一一次能干净改名的机会)。
+fn threshold_unit(it: &serde_json::Value) -> Option<&str> {
+    it.get("threshold_unit").and_then(|x| x.as_str())
+}
+
+/// 包里没写阈值单位时的逐字理由(三处 kind 共用:`gt`/`lt`、`upcr_below`、
+/// `biopsy_indication`)。
+const NO_THRESHOLD_UNIT: &str = "这一条没写阈值的单位(threshold_unit),比不了";
+
 /// 一个化验点的证据。**印刷套进 `value`/`unit`,规范套进带后缀的那两个** ——
 /// `gt`/`lt` 是拿规范值比的阈值,但拿去给人看的必须是纸上那个数。
 fn lab_evidence(s: &parser::AnalyteSeries, p: &parser::LabPoint, analyte: &str) -> Evidence {
@@ -541,7 +559,9 @@ fn eval_activity_item(ctx: &Ctx<'_>, item: &serde_json::Value, window: i64) -> O
             let Some(thr) = item.get("threshold").and_then(|v| v.as_f64()) else {
                 return Outcome::Unknown("这一条的阈值还没核实,暂不计分".into());
             };
-            let unit = str_field(item, "canonical_unit");
+            let Some(unit) = threshold_unit(item) else {
+                return Outcome::Unknown(NO_THRESHOLD_UNIT.into());
+            };
             let mut evidence = Vec::new();
             let mut compared = Vec::new();
             // 「窗口里压根没做这一项」和「做了但单位换算不过来」是两回事,理由不能
@@ -2632,7 +2652,9 @@ fn below_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, Str
     let Some(thr_raw) = it.get("threshold").and_then(serde_json::Value::as_f64) else {
         return MsOut::unknown("这一条的阈值还没核实,暂时比不了");
     };
-    let unit = str_field(it, "canonical_unit");
+    let Some(unit) = threshold_unit(it) else {
+        return MsOut::unknown(NO_THRESHOLD_UNIT);
+    };
     let Some(s) = hospital_series(ctx, key) else {
         return MsOut::unknown("保险箱里还没有这一项的结果");
     };
@@ -2751,8 +2773,10 @@ fn biopsy_item(ctx: &Ctx<'_>, it: &serde_json::Value) -> MsOut {
         .flatten()
     {
         let key = str_field(spec, "key");
-        let unit = str_field(spec, "canonical_unit");
-        let (Some(thr_raw), Some(s)) = (
+        // 这一条的两个指标各带各的阈值与单位;没写单位的那一个整条跳过(下面
+        // 「一个都比不出来」那句未知会把它报出来),绝不拿一个空单位去查换算表。
+        let (Some(unit), Some(thr_raw), Some(s)) = (
+            threshold_unit(spec),
             spec.get("threshold").and_then(serde_json::Value::as_f64),
             hospital_series(ctx, key),
         ) else {

@@ -21,7 +21,7 @@ const PKG: &str = r#"{"manifest":{"id":"t","family":"immune","version":"2026.09.
   "markers":[],"drugs":[],
   "rules":{"activity":{"window_days":10,"max":4,"items":[
     {"id":"anti_c1q_high","label":"抗C1q升高","weight":4,"kind":"gt","key":"anti_c1q",
-     "threshold":20,"canonical_unit":"U/L","source":"S1"}]},
+     "threshold":20,"threshold_unit":"U/L","source":"S1"}]},
    "states":[],"monitoring":[],"milestones":[]},
   "views":{"sections":[],"handoff":[]}}"#;
 

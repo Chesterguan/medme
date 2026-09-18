@@ -1408,7 +1408,6 @@
             "actual_unit": "mg/g",
             "analyte": "urine_pcr",
             "by_days": 365,
-            "canonical_unit": "mg/g",
             "evidence": [
               {
                 "analyte": "urine_pcr",
@@ -1444,6 +1443,7 @@
             "t0": "2024-03-15",
             "t0_basis": "最早一次处方:吗替麦考酚酯",
             "threshold": 700,
+            "threshold_unit": "mg/g",
             "verdict": "no",
             "year": 2025
           },
@@ -1452,7 +1452,6 @@
             "actual_at": "2026-03-14",
             "actual_unit": "mg/g",
             "analyte": "urine_pcr",
-            "canonical_unit": "mg/g",
             "evidence": [
               {
                 "analyte": "urine_pcr",
@@ -1488,6 +1487,7 @@
             "t0": "2024-03-15",
             "t0_basis": "最早一次处方:吗替麦考酚酯",
             "threshold": 500,
+            "threshold_unit": "mg/g",
             "verdict": "yes",
             "year": 2025
           },
@@ -1496,7 +1496,6 @@
             "actual_at": "2026-03-14",
             "actual_unit": "mg/24h",
             "analyte": "urine_protein_24h",
-            "canonical_unit": "mg/24h",
             "evidence": [
               {
                 "analyte": "urine_protein_24h",
@@ -1532,6 +1531,7 @@
             "t0": "2024-03-15",
             "t0_basis": "最早一次处方:吗替麦考酚酯",
             "threshold": 500,
+            "threshold_unit": "mg/24h",
             "verdict": "yes",
             "year": 2019
           },
@@ -1582,14 +1582,14 @@
             "analyte": "urine_pcr",
             "any_of": [
               {
-                "canonical_unit": "g/24h",
                 "key": "urine_protein_24h",
-                "threshold": 0.5
+                "threshold": 0.5,
+                "threshold_unit": "g/24h"
               },
               {
-                "canonical_unit": "mg/g",
                 "key": "urine_pcr",
-                "threshold": 500
+                "threshold": 500,
+                "threshold_unit": "mg/g"
               }
             ],
             "evidence": [

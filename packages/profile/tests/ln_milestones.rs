@@ -370,6 +370,53 @@ fn the_biopsy_threshold_is_met_exactly_at_five_hundred_mg_per_g() {
     assert_eq!(verdict(&it, "biopsy_indication"), "no");
 }
 
+#[test]
+fn a_milestone_still_using_the_old_field_name_fails_loudly() {
+    // 阈值单位那个字段叫 `threshold_unit`(阈值**自己**写的单位),旧名 `canonical_unit`
+    // **不做 serde 兼容**:拿旧名写的包在这里读不到单位,整条落「未知 + 理由」,而不是
+    // 被默默当成另一个意思。
+    let mut raw = common::full_json();
+    for item in raw["rules"]["milestones"]
+        .as_array_mut()
+        .expect("milestones 是数组")
+    {
+        if let Some(u) = item
+            .as_object_mut()
+            .and_then(|o| o.remove("threshold_unit"))
+        {
+            item["canonical_unit"] = u;
+        }
+    }
+    let pkg: profile::Package = serde_json::from_value(raw).expect("夹具包必须解析");
+    let docs = [
+        (T0, rx_doc("吗替麦考酚酯胶囊 0.75g bid")),
+        (
+            "2026-03-14",
+            lab_doc("UPCR       尿蛋白/肌酐比     420   mg/g    0 - 150   ↑"),
+        ),
+    ];
+    let docs = common::mk_docs(&docs);
+    let ev = vec![parser::ProfileEvent {
+        kind: "enable".into(),
+        package: "t".into(),
+        at: "2024-01-01".into(),
+        payload: serde_json::json!({}),
+    }];
+    let body = profile::materialize(&docs, &ev, &pkg, common::TODAY.parse().expect("今天"))
+        .sections
+        .into_iter()
+        .find(|s| s.id.as_deref() == Some("ln_milestones"))
+        .expect("有尿蛋白结果就该出里程碑这块")
+        .body;
+    let it = body["items"].as_array().expect("items 是数组").clone();
+    // 420 < 500:旧名要是还认,这一条会答成「完全肾应答 ✔」。
+    assert_eq!(verdict(&it, "upcr_below_500_any"), "unknown");
+    assert_eq!(
+        row(&it, "upcr_below_500_any")["reason"],
+        "这一条没写阈值的单位(threshold_unit),比不了"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 出处与年份(spec §5.5:四个阈值都带出处与年份)
 // ---------------------------------------------------------------------------
