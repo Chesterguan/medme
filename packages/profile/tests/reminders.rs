@@ -20,7 +20,7 @@ const MMF_START: &str = "2026-06-01";
 fn enable() -> parser::ProfileEvent {
     parser::ProfileEvent {
         kind: "enable".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: "2026-01-01".into(),
         payload: serde_json::json!({}),
     }
@@ -29,7 +29,7 @@ fn enable() -> parser::ProfileEvent {
 fn dismiss(at: &str, id: &str) -> parser::ProfileEvent {
     parser::ProfileEvent {
         kind: "dismiss_reminder".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: at.into(),
         payload: serde_json::json!({ "id": id }),
     }
@@ -290,7 +290,11 @@ fn a_dose_below_the_threshold_is_not_a_reminder_at_all_even_while_the_rule_is_un
         &[("2026-09-14", rx_doc("泼尼松片 1mg 每日一次 口服"))],
         vec![enable()],
     );
-    assert!(items.is_empty(), "一条都不该出:{items:?}");
+    // 两条阈值规则一条都不该出。(`gc_cv_annual` 是**排期**规则、不看剂量门槛,
+    // 吃上激素就会出 —— 它测的是另一件事,不在这条的射程里。)
+    for id in ["gc_ca_vitd", "gc_dxa"] {
+        assert!(!has(&items, id), "{id} 不该出:{items:?}");
+    }
 }
 
 #[test]
@@ -300,7 +304,7 @@ fn a_threshold_that_is_met_but_needs_an_age_says_that_and_keeps_the_pending_flag
         &[("2026-05-19", rx_doc("泼尼松片 7.5mg 每日一次 口服"))],
         vec![enable()],
     );
-    let r = find(&items, "gc_dxa_frax");
+    let r = find(&items, "gc_dxa");
     assert_eq!(r["state"], "unknown");
     assert!(
         r["reason"].as_str().unwrap().contains("年龄"),
@@ -319,7 +323,7 @@ fn a_threshold_whose_drug_was_never_prescribed_stays_off_the_list() {
         &[(MMF_START, rx_doc("吗替麦考酚酯胶囊 0.5g 每日两次 口服"))],
         vec![enable()],
     );
-    for id in ["gc_ca_vitd", "gc_dxa_frax", "hcq_eye"] {
+    for id in ["gc_ca_vitd", "gc_dxa", "hcq_eye"] {
         assert!(!has(&items, id), "{id}");
     }
 }
@@ -391,10 +395,7 @@ fn the_extrapolated_phase_goes_out_as_package_default_and_never_comes_due() {
     assert!(r["due_at"].is_null(), "外推出来的间隔不算到期日");
     assert!(r["every_days"].is_null());
     assert!(r["note"].as_str().unwrap().contains("外推"));
-    assert_eq!(
-        r["source"], "S_MMF_LABEL",
-        "数还是说明书那个 30 天,沿用它的出处"
-    );
+    assert_eq!(r["source"], "L1", "数还是说明书那个 30 天,沿用它的出处");
 }
 
 #[test]
@@ -529,12 +530,19 @@ fn the_ones_nobody_ever_did_sort_above_the_overdue_ones() {
         ],
         vec![enable()],
     );
+    // 同档内按包里的顺序稳定排(`gc_ca_vitd` 在 `gc_cv_annual` 前面)。
     assert_eq!(
         ids(&items),
-        ["gc_ca_vitd", "visit_active", "mmf_cbc", "gc_dxa_frax"]
+        [
+            "gc_ca_vitd",
+            "gc_cv_annual",
+            "visit_active",
+            "mmf_cbc",
+            "gc_dxa"
+        ]
     );
     let states: Vec<&str> = items.iter().map(|i| i["state"].as_str().unwrap()).collect();
-    assert_eq!(states, ["never", "overdue", "overdue", "unknown"]);
+    assert_eq!(states, ["never", "never", "overdue", "overdue", "unknown"]);
 }
 
 #[test]

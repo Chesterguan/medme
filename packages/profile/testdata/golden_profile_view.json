@@ -1,8 +1,8 @@
 {
   "disclaimer": "仅整理你的病历,不做诊断",
-  "display_name": "测试病",
+  "display_name": "系统性红斑狼疮",
   "enabled": true,
-  "package_id": "t",
+  "package_id": "sle",
   "package_version": "2026.09.1",
   "sections": [
     {
@@ -36,7 +36,7 @@
           "daily_mg": 200.0,
           "dose": "0.2g qd",
           "dose_at": "2026-06-15",
-          "label_rule": "不应超过6.5mg/kg/日（自理想体重而非实际体重算得）或400mg/日",
+          "label_rule": "说明书写「不应超过6.5mg/kg/日（自理想体重而非实际体重算得）或0.4g/日」,与指南的 5 mg/kg 真实体重不是同一个算法;两份规格的说明书连眼科复查间隔都互相矛盾(0.1 g 规格写「定期（每3月）」,0.2 g 规格写「每年至少检查一次」)",
           "label_rule_pending": true,
           "mg_per_kg": 3.5714285714285716,
           "reason": null,
@@ -85,8 +85,8 @@
             "as_of": "2025-06-18",
             "class": "belimumab",
             "infusion": {
-              "iv": "第 0、2、4 周,之后每 4 周",
-              "sc": "每周 200 mg(狼疮肾炎为每周 400 mg×4 次后改 200 mg)"
+              "iv": "10 mg/kg,第 0、2、4 周,之后每 4 周(S8/L5)",
+              "sc": "SLE 每周 200 mg;狼疮肾炎每周 400 mg×4 次后改每周 200 mg(S8/L5)"
             },
             "latest_dose": "560mg",
             "name": "贝利尤单抗",
@@ -265,13 +265,45 @@
             "kind": "drug_threshold",
             "min_daily_pred_equiv": 7.5,
             "min_days": 91,
-            "note": "EULAR 2007 全身激素治疗推荐 6a 逐字:「If a patient is started on prednisone ⩾7.5 mg daily and continues on prednisone for more than 3 months, calcium and vitamin D supplementation should be prescribed.」。原文是 more than 3 months(超过、不含),所以下限写 91 天而不是 90 —— `min_days` 在引擎里是「至少这么多天」(含)",
+            "note": "S12 推荐 6a 逐字:「If a patient is started on prednisone ⩾7.5 mg daily and continues on prednisone for more than 3 months, calcium and vitamin D supplementation should be prescribed.」原文是 more than 3 months(超过、不含),而 `min_days` 在引擎里是「至少这么多天」(含),所以下限写 91 而不是 90。",
             "overdue_days": null,
             "pending": false,
             "reason": null,
             "since": "2024-03-15",
-            "source": "S_GC_EULAR2007",
+            "source": "S12",
             "state": "never",
+            "verify_status": "verified"
+          },
+          {
+            "as_of": "2026-06-15",
+            "basis": "guideline",
+            "drug_class": "gc",
+            "due_at": null,
+            "every_days": 365,
+            "id": "gc_cv_annual",
+            "kind": "drug_schedule",
+            "note": "S2 推荐 2 逐字:「At baseline and during follow-up at least once a year: … perform blood tests: blood cholesterol, glucose; examine for blood pressure, body mass index (and/or waist circumference). NB: some patients may need more frequent follow-up (ie, patients on glucocorticoids)」。「once a year」按 365 天算是包里的换算。⚠️ 两处近似:原文这条是给**所有 SLE 患者**的(激素只是「可能要更密」的举例),包里挂在激素类下是按 §D.1 的归类;另外引擎判「上次做过」时 panel_keys 里**任一项**有结果就算做过,而原文要的是四项一起。",
+            "overdue_days": null,
+            "panel_keys": [
+              "cholesterol",
+              "glucose",
+              "bp_systolic",
+              "bp_diastolic",
+              "bmi"
+            ],
+            "pending": false,
+            "phases": [
+              {
+                "every_days": 365,
+                "source": "S2"
+              }
+            ],
+            "reason": null,
+            "since": "2024-03-15",
+            "source": "S2",
+            "state": "never",
+            "target": "血脂 / 血糖 / 血压 / 体质指数",
+            "text": "该查一次血脂、血糖,并量血压、算体质指数了(每年一次)",
             "verify_status": "verified"
           },
           {
@@ -281,17 +313,17 @@
             "drug_class": "gc",
             "due_at": null,
             "every_days": null,
-            "id": "gc_dxa_frax",
+            "id": "gc_dxa",
             "kind": "drug_threshold",
-            "min_age": 40,
+            "min_age": null,
             "min_daily_pred_equiv": 2.5,
             "min_days": 91,
-            "note": "人群定义「>3 months treatment with GCs ≥2.5 mg daily」是 ACR 2022 GIOP 摘要逐字;但「≥40 岁用 FRAX + 骨密度筛查」那句只核到第三方摘要页、没核到指南原文(§D.1),所以整条 pending",
+            "note": "人群定义逐字来自 S13 摘要:「>3 months treatment with glucocorticoids (GCs) ≥2.5 mg daily」(同 gc_ca_vitd:more than 3 months → min_days 91)。但「≥40 岁用 FRAX + 骨密度筛查」那句只核到第三方摘要页(guidelinecentral)、没核到指南原文,所以年龄阈值写 null + 待核,整条 pending。复查间隔(常被引作每 1–2 年)同样核不实,不写。",
             "overdue_days": null,
             "pending": true,
             "reason": "这一条要看年龄,档案里还没有年龄",
             "since": "2024-03-15",
-            "source": "S_ACR_GIOP2022",
+            "source": "S13",
             "state": "unknown",
             "verify_status": "pending"
           },
@@ -303,7 +335,7 @@
             "every_days": null,
             "id": "mmf_cbc",
             "kind": "drug_schedule",
-            "note": "⚠️ 第一年之后说明书没再给任何间隔。这一档是包作者按每月沿用的**外推**,所以它以自己的身份出去(package_default + 待核):只显示、不算到期。待 Task 19 逐条核",
+            "note": "⚠️ 第一年之后说明书没再给任何间隔。这一档是包作者按每月沿用的**外推**,所以它以自己的身份出去(package_default + 待核):只显示、不算到期。数还是说明书那个 30 天,所以沿用它的出处。待 Task 19 逐条核",
             "overdue_days": null,
             "panel_keys": [
               "wbc",
@@ -314,26 +346,30 @@
             "phases": [
               {
                 "every_days": 7,
+                "source": "L1",
                 "until_days": 30
               },
               {
                 "every_days": 14,
+                "source": "L1",
                 "until_days": 90
               },
               {
                 "every_days": 30,
+                "source": "L1",
                 "until_days": 365
               },
               {
                 "basis": "package_default",
                 "every_days": 30,
-                "note": "⚠️ 第一年之后说明书没再给任何间隔。这一档是包作者按每月沿用的**外推**,所以它以自己的身份出去(package_default + 待核):只显示、不算到期。待 Task 19 逐条核",
+                "note": "⚠️ 第一年之后说明书没再给任何间隔。这一档是包作者按每月沿用的**外推**,所以它以自己的身份出去(package_default + 待核):只显示、不算到期。数还是说明书那个 30 天,所以沿用它的出处。待 Task 19 逐条核",
+                "source": "L1",
                 "verify_status": "pending"
               }
             ],
             "reason": null,
             "since": "2024-03-15",
-            "source": "S_MMF_LABEL",
+            "source": "L1",
             "state": "pending",
             "target": "血常规",
             "text": "吃吗替麦考酚酯期间该查血常规了",
@@ -341,7 +377,7 @@
           },
           {
             "as_of": "2026-06-15",
-            "basis": "label",
+            "basis": "guideline",
             "drug_class": "hcq",
             "due_at": null,
             "every_days": null,
@@ -352,15 +388,15 @@
             ],
             "id": "hcq_eye",
             "kind": "drug_schedule",
-            "note": "§D.2.1:0.1 g 规格说明书写「定期(每3月)」、0.2 g 规格写「每年至少一次」,两份说明书自己都对不上,且都只经摘要管道;指南侧是「低危第 5 年起每年」。没有一个能逐字确定的间隔,所以只显示、不算到期",
+            "note": "S14(AAO 2025 修订)逐字:「Annual screening with OCT and FAF is recommended while using HCQ, but may be deferred during the first 5 years if there are no significant risk factors.」AAO 声明页补:有显著危险因素时「annual screening should begin at the initiation of HCQ」,危险因素是肾病、既往黄斑/视网膜病、他莫昔芬、起始年龄偏大。**档案里没有这些危险因素**,所以引擎判不出这个人该走哪一档 —— 不给间隔、只提示。另两套说法同时在用:S3 rec 2.1.2 逐字「at baseline, after 5 years, and yearly thereafter」;国内两份说明书(L8)一份写「定期（每3月）」、一份写「每年至少检查一次」,彼此都对不上,且都只经摘要管道。没有一个能逐字确定并落到这个人身上的间隔,所以整条 pending:只显示、不算到期。",
             "overdue_days": null,
             "pending": true,
             "phases": [],
             "reason": null,
             "since": "2024-03-15",
-            "source": "S_HCQ_INSERT",
+            "source": "S14",
             "state": "pending",
-            "target": "眼科检查(眼底/OCT/视野)",
+            "target": "眼科检查(OCT / 眼底自发荧光 / 眼底 / 视野)",
             "text": "羟氯喹的眼科检查间隔几份来源互相矛盾,下次门诊问一下医生多久查一次",
             "verify_status": "pending"
           }
@@ -1331,7 +1367,9 @@
                 "telitacicept",
                 "rtx"
               ],
-              "organ": "kidney"
+              "note": "起算日(T0)的口径是**包定的**,不是指南给的:取「最早一条肾受累记录」与「最早一次上面那几类药的处方」里更早的那个,基线取 T0 ±30 天内治疗开始前的最后一次结果。spec §5.5 只说「以确诊/治疗起始为 T0」,天数与药物清单由包填。",
+              "organ": "kidney",
+              "source": "PKG"
             },
             "id": "upr_drop_25_3m",
             "kind": "proteinuria_drop_pct",
@@ -1389,7 +1427,8 @@
                 "telitacicept",
                 "rtx"
               ],
-              "organ": "kidney"
+              "organ": "kidney",
+              "source": "PKG"
             },
             "id": "upr_drop_50_6m",
             "kind": "proteinuria_drop_pct",
@@ -1431,7 +1470,8 @@
                 "telitacicept",
                 "rtx"
               ],
-              "organ": "kidney"
+              "organ": "kidney",
+              "source": "PKG"
             },
             "id": "upcr_below_700_12m",
             "key": "urine_pcr",
@@ -1475,7 +1515,8 @@
                 "telitacicept",
                 "rtx"
               ],
-              "organ": "kidney"
+              "organ": "kidney",
+              "source": "PKG"
             },
             "id": "upcr_below_500_any",
             "key": "urine_pcr",
@@ -1519,7 +1560,8 @@
                 "telitacicept",
                 "rtx"
               ],
-              "organ": "kidney"
+              "organ": "kidney",
+              "source": "PKG"
             },
             "id": "upr24_below_500_any",
             "key": "urine_protein_24h",
@@ -1583,11 +1625,13 @@
             "any_of": [
               {
                 "key": "urine_protein_24h",
+                "source": "S8",
                 "threshold": 0.5,
                 "threshold_unit": "g/24h"
               },
               {
                 "key": "urine_pcr",
+                "source": "S8",
                 "threshold": 500,
                 "threshold_unit": "mg/g"
               }
@@ -1635,58 +1679,118 @@
   ],
   "sources": [
     {
-      "cite": "test",
+      "cite": "Gladman DD, Ibañez D, Urowitz MB. Systemic Lupus Erythematosus Disease Activity Index 2000(SLEDAI-2K). J Rheumatol 2002;29:288–91, Table 2",
       "id": "S1",
-      "url": null
+      "url": "https://www.jrheum.org/content/jrheum/suppl/2023/08/03/50.8.976.DC3/Gladman_2002_288-91.pdf"
     },
     {
-      "cite": "EULAR 2019 SLE recommendations, Ann Rheum Dis 2019",
+      "cite": "Mosca M, et al. EULAR recommendations for monitoring patients with SLE in clinical practice and in observational studies. Ann Rheum Dis 2010;69:1269–74, Table 1",
+      "id": "S2",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC2952401/"
+    },
+    {
+      "cite": "Fanouriakis A, et al. 2019 update of the EULAR recommendations for the management of SLE. Ann Rheum Dis 2019;78:736–45",
       "id": "S3",
-      "url": null
+      "url": "https://www.thermofisher.com/diagnostic-education/dam/clinical/documents/2019-EULAR-Management-SLE.pdf"
     },
     {
-      "cite": "EULAR 2023 update, Ann Rheum Dis 2024",
+      "cite": "Fanouriakis A, et al. EULAR recommendations for the management of SLE: 2023 update. Ann Rheum Dis 2024;83:15–29(author accepted manuscript)",
       "id": "S4",
-      "url": null
+      "url": "https://ueaeprints.uea.ac.uk/id/eprint/93399/1/EULAR_RECOMMENDATIONS_FOR_SLE_2023_Revised_draft_26.8.23_clean74.pdf"
     },
     {
-      "cite": "EULAR recommendations for the management of SLE with kidney involvement: 2025 update, Ann Rheum Dis 2026;85:75–90(doi 10.1016/j.ard.2025.09.007)",
-      "id": "S8",
-      "url": null
-    },
-    {
-      "cite": "DORIS 2021 definition of remission, Box 1",
+      "cite": "van Vollenhoven RF, et al. 2021 DORIS definition of remission in SLE. Lupus Sci Med 2021;8:e000538, Box 1 / Table 2",
       "id": "S5",
-      "url": null
+      "url": "https://www.repository.cam.ac.uk/bitstreams/195fa979-4f5f-4397-9bd5-47805ac6f487/download"
     },
     {
-      "cite": "LLDAS, Franklyn et al. 2016",
+      "cite": "Golder V, et al. Arthritis Res Ther 2017;19:62 —— 逐字转载 Franklyn K, et al.(Ann Rheum Dis 2016;75:1615–21)的 LLDAS 操作性定义;原文付费墙",
       "id": "S6",
-      "url": null
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5359963/"
     },
     {
-      "cite": "2020 中国系统性红斑狼疮诊疗指南(Rheumatol Immunol Res 2020;1(1):5–23)推荐 3",
+      "cite": "Fanouriakis A, et al. EULAR recommendations for the management of SLE with kidney involvement: 2025 update. Ann Rheum Dis 2026;85:75–90(doi 10.1016/j.ard.2025.09.007)",
+      "id": "S8",
+      "url": "https://boa.unimib.it/bitstream/10281/607703/1/Fanouriakis%20et%20al-2026-Annals%20of%20the%20Rheumatic%20Diseases-VoR.pdf"
+    },
+    {
+      "cite": "Zhao J, Zhang S, et al. 2025 Chinese guidelines for the diagnosis and treatment of SLE. Rheumatol Immunol Res 2025;6(3):120–148(doi 10.1515/rir-2025-0017)",
+      "id": "S9",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12495991/"
+    },
+    {
+      "cite": "2020 Chinese Guidelines for the Diagnosis and Treatment of SLE(中华医学会风湿病学分会). Rheumatol Immunol Res 2020;1(1):5–23(doi 10.2478/rir-2020-0009)",
       "id": "S10",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9524765/"
+    },
+    {
+      "cite": "Aringer M, et al. 2019 EULAR/ACR classification criteria for SLE. Arthritis Rheumatol 2019;71:1400–12",
+      "id": "S11",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC6827566/"
+    },
+    {
+      "cite": "EULAR recommendations on the management of systemic glucocorticoid therapy in rheumatic diseases. Ann Rheum Dis 2007;66:1560–7",
+      "id": "S12",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC2095301/"
+    },
+    {
+      "cite": "Humphrey MB, et al. 2022 ACR guideline for the prevention and treatment of glucocorticoid-induced osteoporosis. Arthritis Care Res 2023;75:2405–19(doi 10.1002/acr.25240)—— 只读到摘要,全文 403",
+      "id": "S13",
       "url": null
     },
     {
-      "cite": "CELLCEPT US prescribing information §5.4(DailyMed 37241e87-4af4-4dc3-a1aa-ea6f20d8dc40)",
-      "id": "S_MMF_LABEL",
+      "cite": "Marmor MF, et al. Special AAO Report: Recommendations on Screening for Hydroxychloroquine Retinopathy(2025 Revision). Ophthalmology 2026;133:439–50 —— 付费墙,只读到结构化摘要与 AAO 声明页",
+      "id": "S14",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/41232611/"
+    },
+    {
+      "cite": "CELLCEPT(吗替麦考酚酯)US prescribing information,DailyMed setid 37241e87-4af4-4dc3-a1aa-ea6f20d8dc40",
+      "id": "L1",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/fda/fdaDrugXsl.cfm?setid=37241e87-4af4-4dc3-a1aa-ea6f20d8dc40"
+    },
+    {
+      "cite": "IMURAN(硫唑嘌呤)US label,DailyMed setid aaa6c540-4c84-48a0-939c-cd423134fa2a",
+      "id": "L2",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/fda/fdaDrugXsl.cfm?setid=aaa6c540-4c84-48a0-939c-cd423134fa2a"
+    },
+    {
+      "cite": "LUPKYNIS(伏环孢素)US prescribing information,DailyMed setid 9f489295-1156-52c7-5fd0-5c4c52f9b813",
+      "id": "L3",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/fda/fdaDrugXsl.cfm?setid=9f489295-1156-52c7-5fd0-5c4c52f9b813"
+    },
+    {
+      "cite": "NEORAL(环孢素)US prescribing information,DailyMed setid 94461af3-11f1-4670-95d4-2965b9538ae3",
+      "id": "L4",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/fda/fdaDrugXsl.cfm?setid=94461af3-11f1-4670-95d4-2965b9538ae3"
+    },
+    {
+      "cite": "BENLYSTA(贝利尤单抗)US prescribing information,DailyMed setid 2fa3c528-1777-4628-8a55-a69dae2381a3",
+      "id": "L5",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/fda/fdaDrugXsl.cfm?setid=2fa3c528-1777-4628-8a55-a69dae2381a3"
+    },
+    {
+      "cite": "RITUXAN(利妥昔单抗)US prescribing information,DailyMed setid b172773b-3905-4a1c-ad95-bab4b6126563",
+      "id": "L6",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/fda/fdaDrugXsl.cfm?setid=b172773b-3905-4a1c-ad95-bab4b6126563"
+    },
+    {
+      "cite": "van Vollenhoven RF, et al. A Phase 3 Trial of Telitacicept for Systemic Lupus Erythematosus. N Engl J Med 2025;393(15):1475–85(doi 10.1056/NEJMoa2414719)",
+      "id": "L7",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/41092329/"
+    },
+    {
+      "cite": "硫酸羟氯喹片说明书(0.1 g 与 0.2 g 两种规格)—— 两份互相矛盾,且只经摘要管道转录,没有人对着纸核过",
+      "id": "L8",
       "url": null
     },
     {
-      "cite": "EULAR recommendations on management of systemic glucocorticoid therapy, Ann Rheum Dis 2007;66:1560–7, Rec 6a",
-      "id": "S_GC_EULAR2007",
+      "cite": "Staveri C, Liossis SC. Front Lupus 2026;4:1877692 —— 综述,既不是指南也不是说明书",
+      "id": "R1",
       "url": null
     },
     {
-      "cite": "硫酸羟氯喹片说明书(0.1 g / 0.2 g 两种规格)",
-      "id": "S_HCQ_INSERT",
-      "url": null
-    },
-    {
-      "cite": "ACR 2022 glucocorticoid-induced osteoporosis guideline, Arthritis Care Res 2023;75:2405–19",
-      "id": "S_ACR_GIOP2022",
+      "cite": "包默认值 —— 既不是指南也不是说明书,是本包作者定的保守默认",
+      "id": "PKG",
       "url": null
     }
   ]

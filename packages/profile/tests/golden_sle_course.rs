@@ -75,21 +75,21 @@ fn the_synthetic_sle_course_renders_the_pinned_profile_view() {
     let events = vec![
         parser::ProfileEvent {
             kind: "enable".into(),
-            package: "t".into(),
+            package: "sle".into(),
             at: "2024-03-15".into(),
             payload: serde_json::json!({}),
         },
         parser::ProfileEvent {
             kind: "weight".into(),
-            package: "t".into(),
+            package: "sle".into(),
             at: "2026-09-01".into(),
             payload: serde_json::json!({"kg": 56.0}),
         },
     ];
 
-    // 用**测试夹具包**,不是 skills/ 里那份 —— 那份要到 Task 18 才存在,而这条测试
-    // 测的是规则引擎。两份内容一致由 Task 18 的
-    // `the_shipped_sle_package_matches_the_test_fixture` 钉住。
+    // 用的就是**发布出去的那一份**(`common::FULL` = `skills/sle/2026.09.1.src.json`
+    // 的原文逐字节),不是另一份长得差不多的夹具 —— 所以这份 golden 钉住的是用户
+    // 真会装上的那个包。「签好的信封里也是这一份」由 `shipped_package.rs` 钉住。
     let pkg = common::full_pkg();
     // 尿红细胞/尿白细胞按**高倍视野**计数的那两条只在包里(内置词典只有按体积
     // 计数的 `urine_rbc_count`,两者没有确定换算)。真机上这一步由 Task 20 的 FFI

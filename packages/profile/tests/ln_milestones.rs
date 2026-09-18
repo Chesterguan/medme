@@ -23,7 +23,7 @@ fn items(docs: &[(&str, String)]) -> Vec<serde_json::Value> {
     let docs = common::mk_docs(docs);
     let ev = vec![parser::ProfileEvent {
         kind: "enable".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: "2024-01-01".into(),
         payload: serde_json::json!({}),
     }];
@@ -398,7 +398,7 @@ fn a_milestone_still_using_the_old_field_name_fails_loudly() {
     let docs = common::mk_docs(&docs);
     let ev = vec![parser::ProfileEvent {
         kind: "enable".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: "2024-01-01".into(),
         payload: serde_json::json!({}),
     }];
@@ -430,7 +430,12 @@ fn every_milestone_carries_a_source_id_and_a_guideline_year() {
         "UPCR       尿蛋白/肌酐比     699   mg/g    0 - 150   ↑",
     ));
     assert!(it.len() >= 4, "四种 kind 至少四条,实际 {}", it.len());
-    let declared = common::SOURCES.map(|(id, _)| id.to_string());
+    let declared: Vec<String> = common::full_pkg()
+        .manifest
+        .sources
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
     for row in &it {
         let id = row["id"].as_str().unwrap_or_default();
         let source = row["source"].as_str().unwrap_or_default();
@@ -457,7 +462,7 @@ fn the_section_stays_away_when_there_is_no_kidney_data_at_all() {
     let docs = common::mk_docs(&only_complement);
     let ev = vec![parser::ProfileEvent {
         kind: "enable".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: "2024-01-01".into(),
         payload: serde_json::json!({}),
     }];

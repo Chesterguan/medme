@@ -24,7 +24,7 @@ fn status(docs: &[(&str, String)], events: Vec<parser::ProfileEvent>) -> serde_j
 fn enable() -> parser::ProfileEvent {
     parser::ProfileEvent {
         kind: "enable".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: "2026-01-01".into(),
         payload: serde_json::json!({}),
     }
@@ -33,7 +33,7 @@ fn enable() -> parser::ProfileEvent {
 fn weight(at: &str, kg: f64) -> parser::ProfileEvent {
     parser::ProfileEvent {
         kind: "weight".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: at.into(),
         payload: serde_json::json!({ "kg": kg }),
     }
@@ -91,22 +91,46 @@ fn methylprednisolone_spelled_the_other_way_is_still_unconvertible() {
 }
 
 #[test]
-fn a_steroid_neither_the_package_nor_the_dictionary_knows_still_shows_up() {
-    // 倍他米松 / 曲安西龙 / 可的松今天既不在词典的 H02A* 里(只有 4 个),也不在包的
-    // `drugs[gc].names` 里。认不出**不等于**可以让它从界面上消失 —— 医生至少要看见
-    // 「他还在吃这个」。
+fn a_steroid_the_dictionary_lacks_is_still_recognised_as_one_by_the_package() {
+    // 倍他米松 / 曲安西龙 / 可的松不在词典的 H02A*(只有 4 个),所以 `atc_prefix`
+    // 认不出它们 —— 包的 `drugs[gc].names` 逐字兜住。认成激素之后换算表还没核实,
+    // 于是它进 `unconvertible` 并说清缺的是换算表,而不是掉进「认不出的药」那一格。
+    for rx in [
+        "倍他米松片 0.5mg 每日一次 口服",
+        "曲安西龙片 4mg 每日一次 口服",
+    ] {
+        let b = status(&[(TODAY, rx_doc(rx))], vec![enable()]);
+        assert!(
+            b["gc"]["daily_pred_equiv_mg"].is_null(),
+            "{rx}:换算表待核,不许算出日剂量"
+        );
+        assert_eq!(b["gc"]["unconvertible"][0]["reason"], "换算表待核", "{rx}");
+        assert!(
+            b["others"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|x| x["class"] != "gc"),
+            "{rx}:激素不重复进 others"
+        );
+    }
+}
+
+#[test]
+fn a_drug_neither_the_package_nor_the_dictionary_places_still_shows_up() {
+    // 认不出**不等于**可以让它从界面上消失 —— 医生至少要看见「他还在吃这个」。
     let b = status(
-        &[(TODAY, rx_doc("倍他米松片 0.5mg 每日一次 口服"))],
+        &[(TODAY, rx_doc("阿司匹林肠溶片 100mg 每日一次 口服"))],
         vec![enable()],
     );
-    assert!(b["gc"]["drug"].is_null(), "认不出就别当成现行激素方案");
+    assert!(b["gc"]["drug"].is_null(), "不是激素就别当成现行激素方案");
     let o = b["others"].as_array().unwrap();
     let row = o
         .iter()
-        .find(|x| x["name"] == "倍他米松片")
-        .expect("认不出的药也要列出来");
+        .find(|x| x["name"].as_str().unwrap_or_default().contains("阿司匹林"))
+        .unwrap_or_else(|| panic!("包不认得的药也要列出来:{o:?}"));
     assert!(row["class"].is_null(), "不知道是哪一类就写 null,不编一个");
-    assert_eq!(row["latest_dose"], "0.5mg qd");
+    assert_eq!(row["latest_dose"], "100mg qd");
 }
 
 #[test]

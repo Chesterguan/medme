@@ -73,7 +73,7 @@ fn checklist(docs: &[(&str, String)], events: Vec<parser::ProfileEvent>) -> serd
 fn enable() -> parser::ProfileEvent {
     parser::ProfileEvent {
         kind: "enable".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: "2026-01-01".into(),
         payload: serde_json::json!({}),
     }
@@ -82,7 +82,7 @@ fn enable() -> parser::ProfileEvent {
 fn pga(at: &str, value: f64) -> parser::ProfileEvent {
     parser::ProfileEvent {
         kind: "pga".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: at.into(),
         payload: serde_json::json!({ "value": value }),
     }

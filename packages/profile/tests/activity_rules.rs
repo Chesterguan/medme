@@ -4,16 +4,24 @@
 use chrono::NaiveDate;
 
 mod common;
-use common::{activity_pkg, lab_doc, ACTIVITY, TODAY};
+use common::{activity_pkg, full_json, lab_doc, TODAY};
 
 fn day(s: &str) -> NaiveDate {
     s.parse().unwrap()
 }
 
+/// 把发布包改一个字段再解析回来。改包的用例都走这条 —— 在测试里另抄一份包,抄出来
+/// 的那份迟早和发布的那份长歪(这正是 Task 18 把夹具换成真包要治的病)。
+fn pkg_with(edit: impl FnOnce(&mut serde_json::Value)) -> profile::Package {
+    let mut v = full_json();
+    edit(&mut v);
+    serde_json::from_value(v).expect("包要能解析")
+}
+
 fn enabled() -> Vec<parser::ProfileEvent> {
     vec![parser::ProfileEvent {
         kind: "enable".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: "2026-01-01".into(),
         payload: serde_json::json!({}),
     }]
@@ -146,7 +154,7 @@ fn upcr_never_scores_it_is_display_only() {
 fn the_proteinuria_threshold_stays_the_verbatim_half_gram_and_converts_to_a_mg_report() {
     // 包里写 §B.1 的原值「>0.5 gram/24 hours」;报告印 mg/24h 时由词典的换算表
     // (×1000)对齐 —— 不在包里先手算成 500,那样读包的人就看不出它不是源行原值。
-    let pkg: serde_json::Value = serde_json::from_str(ACTIVITY).unwrap();
+    let pkg = full_json();
     let item = pkg["rules"]["activity"]["items"]
         .as_array()
         .unwrap()
@@ -169,19 +177,19 @@ fn a_package_still_using_the_old_field_name_fails_loudly_instead_of_scoring() {
     // 它是**阈值自己写的单位**,不是规范单位;照字面写 `mg/24h` 而值仍是 0.5,阈值就
     // 静默变成 0.5 mg)。**刻意不留 serde 兼容**:拿旧名写的包在这里读不到单位,整条
     // 落「未知 + 理由」,而不是被默默当成另一个意思。
-    let mut raw: serde_json::Value = serde_json::from_str(ACTIVITY).expect("夹具包必须解析");
-    for item in raw["rules"]["activity"]["items"]
-        .as_array_mut()
-        .expect("items 是数组")
-    {
-        if let Some(u) = item
-            .as_object_mut()
-            .and_then(|o| o.remove("threshold_unit"))
+    let pkg = pkg_with(|v| {
+        for item in v["rules"]["activity"]["items"]
+            .as_array_mut()
+            .expect("items 是数组")
         {
-            item["canonical_unit"] = u;
+            if let Some(u) = item
+                .as_object_mut()
+                .and_then(|o| o.remove("threshold_unit"))
+            {
+                item["canonical_unit"] = u;
+            }
         }
-    }
-    let pkg: profile::Package = serde_json::from_value(raw).expect("夹具包必须解析");
+    });
     let b = section_with(&pkg, &[(TODAY, &lab_doc("24小时尿蛋白定量 3.2 g/24h"))]).body;
     assert_eq!(b["score"], 0, "读不到阈值单位就不许计分");
     let reason = b["unscored"]
@@ -266,7 +274,7 @@ fn a_qualitative_positive_dsdna_scores_but_is_flagged_as_a_deviation() {
     }];
     let events = vec![parser::ProfileEvent {
         kind: "enable".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: "2026-01-01".into(),
         payload: serde_json::json!({}),
     }];
@@ -459,11 +467,8 @@ fn the_unknown_reason_says_not_done_when_the_item_is_simply_absent() {
 fn an_unusable_window_is_reported_invalid_instead_of_panicking() {
     // `today - Duration::days(n)` 在 n 大到越界时直接 panic,而 `window_days` 是包里
     // 的裸 i64、加载时不校验。在移动端这条路走 FFI,一次 panic 就是整个 App 崩。
-    for bad in ["100000000", "-1", "0"] {
-        let pkg: profile::Package = serde_json::from_str(
-            &ACTIVITY.replace("\"window_days\":10", &format!("\"window_days\":{bad}")),
-        )
-        .expect("包要能解析");
+    for bad in [100_000_000_i64, -1, 0] {
+        let pkg = pkg_with(|v| v["rules"]["activity"]["window_days"] = serde_json::json!(bad));
         let s = section_with(&pkg, &[(TODAY, &lab_doc("补体C3 0.4 g/L 0.9-1.8"))]);
         assert_eq!(s.body["score"], 0, "window_days={bad}");
         assert_eq!(
@@ -482,10 +487,13 @@ fn an_unusable_window_is_reported_invalid_instead_of_panicking() {
 
 #[test]
 fn a_rule_kind_this_engine_does_not_know_is_reported_unknown_not_a_silent_zero() {
-    let pkg: profile::Package = serde_json::from_str(
-        &ACTIVITY.replace("\"kind\":\"flag_low\"", "\"kind\":\"某种更晚的规则\""),
-    )
-    .expect("包要能解析");
+    let pkg = pkg_with(|v| {
+        for item in v["rules"]["activity"]["items"].as_array_mut().unwrap() {
+            if item["kind"] == "flag_low" {
+                item["kind"] = serde_json::json!("某种更晚的规则");
+            }
+        }
+    });
     let b = section_with(&pkg, &[(TODAY, &lab_doc("补体C3 0.4 g/L 0.9-1.8"))]).body;
     assert!(ids(&b, "unscored").contains(&"low_complement".to_string()));
     assert!(reason(&b, "low_complement").contains("更新 App"));
@@ -494,11 +502,13 @@ fn a_rule_kind_this_engine_does_not_know_is_reported_unknown_not_a_silent_zero()
 #[test]
 fn an_item_whose_weight_is_not_an_integer_is_unknown_not_a_zero_point_hit() {
     // 命中但不加分的条目在卡片上没有任何信号 —— 那是最难发现的一种错。
-    let pkg: profile::Package = serde_json::from_str(&ACTIVITY.replace(
-        "\"weight\":2,\"kind\":\"flag_low\"",
-        "\"weight\":2.5,\"kind\":\"flag_low\"",
-    ))
-    .expect("包要能解析");
+    let pkg = pkg_with(|v| {
+        for item in v["rules"]["activity"]["items"].as_array_mut().unwrap() {
+            if item["kind"] == "flag_low" {
+                item["weight"] = serde_json::json!(2.5);
+            }
+        }
+    });
     let b = section_with(&pkg, &[(TODAY, &lab_doc("补体C3 0.4 g/L 0.9-1.8"))]).body;
     assert_eq!(b["score"], 0);
     assert!(!hit_ids(&b).contains(&"low_complement".to_string()));

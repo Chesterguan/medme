@@ -21,7 +21,7 @@ fn sections_of<'a>(
     }
     let ev = vec![parser::ProfileEvent {
         kind: "enable".into(),
-        package: "t".into(),
+        package: "sle".into(),
         at: "2026-01-01".into(),
         payload: serde_json::json!({}),
     }];
