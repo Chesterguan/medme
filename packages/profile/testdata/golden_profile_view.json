@@ -36,8 +36,8 @@
           "daily_mg": 200.0,
           "dose": "0.2g qd",
           "dose_at": "2026-06-15",
-          "label_rule": "说明书写「不应超过6.5mg/kg/日（自理想体重而非实际体重算得）或0.4g/日」,与指南的 5 mg/kg 真实体重不是同一个算法;两份规格的说明书连眼科复查间隔都互相矛盾(0.1 g 规格写「定期（每3月）」,0.2 g 规格写「每年至少检查一次」)",
-          "label_rule_pending": true,
+          "label_rule": null,
+          "label_rule_pending": false,
           "mg_per_kg": 3.5714285714285716,
           "reason": null,
           "sources": [
@@ -275,6 +275,27 @@
             "verify_status": "verified"
           },
           {
+            "action": "做一次骨密度(DXA,含椎体骨折评估);满 40 岁的话还要加做 FRAX 骨折风险评估",
+            "as_of": "2026-06-15",
+            "basis": "guideline",
+            "drug_class": "gc",
+            "due_at": null,
+            "every_days": null,
+            "id": "gc_dxa",
+            "kind": "drug_threshold",
+            "min_age": null,
+            "min_daily_pred_equiv": 2.5,
+            "min_days": 91,
+            "note": "人群定义逐字来自 S13:「>3 months treatment with glucocorticoids (GCs) ≥2.5 mg daily」(同 gc_ca_vitd:more than 3 months → min_days 91)。⚠️ **Task 19 改了这一条的结论**:之前「≥40 岁」只核到第三方摘要页(guidelinecentral),这次从 eScholarship 拿到已刊全文,发现那个年龄**只挂在 FRAX 上,不挂在骨密度上**。指南原文逐字:「As soon as possible after initiation of ≥2.5 mg/day GC treatment for >3 months, screening for fracture risk in patients ≥40 years of age should be assessed by using FRAX and by performing BMD using dual-energy x-ray absorptiometry (DXA) with vertebral fracture assessment (VFA) testing or spinal x-rays.」——但同一段紧接着写「BMD with VFA or spinal x-rays are strongly recommended, and, for adults ≥40 years old, FRAX analysis is also recommended」与「BMD with VFA testing or spinal x-ray is advised in patients <40 years, as FRAX is not validated in this population」,并另有「BMD measurement is strongly recommended for patients <40 years on GCs ≥2.5 mg/day with one or more osteoporotic risk factors」。**所以 min_age 保持 null 不是「没核到」,是核到了以后的决定**:拿 40 岁当门槛会把 SLE 最主要的发病年龄段挡在骨密度之外,而骨密度对 <40 岁同样是强推荐;年龄只影响要不要加做 FRAX,这句写进 action 里让人看得见。复查间隔原文表 1 确有「BMD with VFA or spinal x-ray every 1–2 years during GC treatment」(§G.1 原记为核不实,现已可核),但那是个区间、取哪一端是判断,本包不替医生选,仍不写。",
+            "overdue_days": null,
+            "pending": false,
+            "reason": null,
+            "since": "2024-03-15",
+            "source": "S13",
+            "state": "never",
+            "verify_status": "verified"
+          },
+          {
             "as_of": "2026-06-15",
             "basis": "guideline",
             "drug_class": "gc",
@@ -367,7 +388,7 @@
             ],
             "id": "hcq_eye",
             "kind": "drug_schedule",
-            "note": "S14(AAO 2025 修订)逐字:「Annual screening with OCT and FAF is recommended while using HCQ, but may be deferred during the first 5 years if there are no significant risk factors.」AAO 声明页补:有显著危险因素时「annual screening should begin at the initiation of HCQ」,危险因素是肾病、既往黄斑/视网膜病、他莫昔芬、起始年龄偏大。**档案里没有这些危险因素**,所以引擎判不出这个人该走哪一档 —— 不给间隔、只提示。另两套说法同时在用:S3 rec 2.1.2 逐字「at baseline, after 5 years, and yearly thereafter」;国内两份说明书(L8)一份写「定期（每3月）」、一份写「每年至少检查一次」,彼此都对不上,且都只经摘要管道。没有一个能逐字确定并落到这个人身上的间隔,所以整条 pending:只显示、不算到期。",
+            "note": "S14(AAO 2025 修订)逐字:「Annual screening with OCT and FAF is recommended while using HCQ, but may be deferred during the first 5 years if there are no significant risk factors.」AAO 声明页补:有显著危险因素时「annual screening should begin at the initiation of HCQ」,危险因素是肾病、既往黄斑/视网膜病、他莫昔芬、起始年龄偏大。**档案里没有这些危险因素**,所以引擎判不出这个人该走哪一档 —— 不给间隔、只提示。另两套说法同时在用:S3 rec 2.1.2 逐字「at baseline, after 5 years, and yearly thereafter」;S9 推荐 5 逐字「For high-risk patients, an annual ophthalmologic examination is recommended. Low-risk patients are recommended to undergo an ophthalmologic examination annually from the fifth year of medication」。国内两份中文说明书还各给了第三、第四个间隔,但 Task 19 没能拿到任何一手说明书(NMPA 412 / 企业站打不开),那两个数按「核不到就不发」整条撤掉,不在这里复述。没有一个能逐字确定并落到这个人身上的间隔,所以整条 pending:只显示、不算到期。",
             "overdue_days": null,
             "pending": true,
             "phases": [],
@@ -377,27 +398,6 @@
             "state": "pending",
             "target": "眼科检查(OCT / 眼底自发荧光 / 眼底 / 视野)",
             "text": "羟氯喹的眼科检查间隔几份来源互相矛盾,下次门诊问一下医生多久查一次",
-            "verify_status": "pending"
-          },
-          {
-            "action": "做一次骨密度 / FRAX 骨折风险评估",
-            "as_of": "2026-06-15",
-            "basis": "guideline",
-            "drug_class": "gc",
-            "due_at": null,
-            "every_days": null,
-            "id": "gc_dxa",
-            "kind": "drug_threshold",
-            "min_age": null,
-            "min_daily_pred_equiv": 2.5,
-            "min_days": 91,
-            "note": "人群定义逐字来自 S13 摘要:「>3 months treatment with glucocorticoids (GCs) ≥2.5 mg daily」(同 gc_ca_vitd:more than 3 months → min_days 91)。但「≥40 岁用 FRAX + 骨密度筛查」那句只核到第三方摘要页(guidelinecentral)、没核到指南原文,所以年龄阈值写 null + 待核,整条 pending。复查间隔(常被引作每 1–2 年)同样核不实,不写。",
-            "overdue_days": null,
-            "pending": true,
-            "reason": null,
-            "since": "2024-03-15",
-            "source": "S13",
-            "state": "pending",
             "verify_status": "pending"
           }
         ]
@@ -1729,9 +1729,9 @@
       "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC2095301/"
     },
     {
-      "cite": "Humphrey MB, et al. 2022 ACR guideline for the prevention and treatment of glucocorticoid-induced osteoporosis. Arthritis Care Res 2023;75:2405–19(doi 10.1002/acr.25240)—— 只读到摘要,全文 403",
+      "cite": "Humphrey MB, et al. 2022 ACR guideline for the prevention and treatment of glucocorticoid-induced osteoporosis. Arthritis Care Res 2023;75:2405–19(doi 10.1002/acr.25240)—— Task 19 从 eScholarship 取到已刊全文 PDF,逐字核过「风险评估」一节与表 1",
       "id": "S13",
-      "url": null
+      "url": "https://escholarship.org/content/qt10w6f17t/qt10w6f17t.pdf"
     },
     {
       "cite": "Marmor MF, et al. Special AAO Report: Recommendations on Screening for Hydroxychloroquine Retinopathy(2025 Revision). Ophthalmology 2026;133:439–50 —— 付费墙,只读到结构化摘要与 AAO 声明页",
@@ -1784,14 +1784,14 @@
       "url": "https://pubmed.ncbi.nlm.nih.gov/41092329/"
     },
     {
-      "cite": "硫酸羟氯喹片说明书(0.1 g 与 0.2 g 两种规格)—— 两份互相矛盾,且只经摘要管道转录,没有人对着纸核过",
-      "id": "L8",
-      "url": null
+      "cite": "Staveri C, Liossis SC. Front Lupus 2026;4:1877692 —— 综述,既不是指南也不是说明书;Task 19 在 Frontiers 开放全文上逐字核过",
+      "id": "R1",
+      "url": "https://www.frontiersin.org/journals/lupus/articles/10.3389/flupu.2026.1877692/full"
     },
     {
-      "cite": "Staveri C, Liossis SC. Front Lupus 2026;4:1877692 —— 综述,既不是指南也不是说明书",
-      "id": "R1",
-      "url": null
+      "cite": "LOINC 编码经 NLM Clinical Table Search Service(LOINC v2 官方发布)逐条查得:13945-1 / 5821-4,PROPERTY 均为 Naric(按面积计数)",
+      "id": "S17",
+      "url": "https://clinicaltables.nlm.nih.gov/apidoc/loinc_items/v3/doc.html"
     },
     {
       "cite": "包默认值 —— 既不是指南也不是说明书,是本包作者定的保守默认",

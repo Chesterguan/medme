@@ -290,17 +290,21 @@ fn a_prednisone_prescription_answers_both_steroid_items() {
 
 #[test]
 fn an_unconvertible_steroid_leaves_the_dose_items_unknown_not_met() {
-    // 换算表待核期间,甲泼尼龙算不出泼尼松等效剂量。**未知不许塌成 ✔** ——
-    // 「没算出来」显示成「< 5 mg,达标」是这个功能最坏的一种错法。
+    // Task 19 把等效换算表填进包以后甲泼尼龙已经算得出来,所以这条改用**注射剂型**:
+    // 一次静脉冲击不按口服日剂量换算,仍然是「算不出来」的那一类。
+    // **未知不许塌成 ✔** —— 「没算出来」显示成「< 5 mg,达标」是最坏的一种错法。
     let b = checklist(
-        &[(TODAY, rx_doc("甲泼尼龙片 8mg 每日一次 口服"))],
+        &[(TODAY, rx_doc("地塞米松注射液 5mg 每日一次"))],
         vec![enable()],
     );
     let pred = item(state(&b, "doris"), "pred");
     assert_eq!(pred["verdict"], "unknown");
     // **理由不能是「还没读到用药记录」** —— 记录读到了,换不出来的是剂量。说错了,
     // 用户会以为是自己没交处方笺,再交一次还是这个结果。
-    assert_eq!(reason(pred), "等效换算表待核,这一项没算进去");
+    assert_eq!(
+        reason(pred),
+        "读到了地塞米松,注射剂型,不按口服换算,这一项算不了"
+    );
     assert_eq!(item(state(&b, "lldas"), "pred_le75")["verdict"], "unknown");
 }
 

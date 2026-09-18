@@ -987,17 +987,22 @@ const GC_NONSYSTEMIC: [&str; 10] = [
 /// 5 mg/天不是一回事,等效表(待核)覆盖的也只是口服。
 const GC_INJECTION: [&str; 7] = ["注射", "针", "静滴", "静脉", "肌注", "iv", "im"];
 
-/// 剂型/途径关键词要找的那片干草:**药名 + 剂量串**,小写。
+/// 剂型/途径关键词要找的那片干草:**规范名 + 原样写法 + 剂量串**,小写。
 ///
-/// ⚠️ 能看到的只有这两处。`parser` 把写在剂量**之后**的给药途径直接剥掉了
-/// (`meds.rs::strip_trailing_route`,而 `dose_string` 只拼「剂量 频次」),所以
-/// 「甲泼尼龙 40mg 静滴」到这一层时「静滴」已经没了。这道门挡得住把剂型写进
-/// **药名**里的那些(复方地塞米松乳膏、注射用甲泼尼龙琥珀酸钠),挡不住写在后面
-/// 的 —— 剩下那半要等 parser 把途径也带出来(见 Task 18/19 交接清单)。
+/// `m.name` 是词典归一之后的规范名,而归一会把剂型吃掉(「地塞米松注射液」→
+/// 「地塞米松」)。Task 19 把等效换算表填进包以后,只看规范名就挡不住注射剂了:
+/// 一次静脉冲击会被当成口服日剂量,换算出一个几十毫克的「泼尼松等效」并直接进
+/// DORIS/LLDAS 的达标判定。所以这里还要看 `raw_names` —— 每份文档上**原样写的**
+/// 那个名字,`aggregate` 现在会一路带过来。
+///
+/// ⚠️ 仍然看不到的一半:写在剂量**之后**的给药途径被 `meds.rs::strip_trailing_route`
+/// 剥掉了,而 `dose_string` 只拼「剂量 频次」,所以「甲泼尼龙片 40mg 静滴」到这一层
+/// 时「静滴」已经没了 —— 那半要等 parser 把 route 也带出来(见交接清单)。
 fn form_haystack(m: &parser::MedSpan) -> String {
     format!(
-        "{} {}",
+        "{} {} {}",
         m.name,
+        m.raw_names.join(" "),
         m.latest_dose.as_deref().unwrap_or_default()
     )
     .to_ascii_lowercase()
@@ -1318,7 +1323,10 @@ fn latest_weight_kg(ctx: &Ctx<'_>, package_id: &str) -> Option<(Option<NaiveDate
 /// 的体重,算出来的 mg/kg 看着像今天的,不说日期就是一句不实的话。
 fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
     let t = pkg.rules.targets.get("hcq");
-    let label_rule = t.and_then(|h| h.get("label_rule"));
+    // `serde_json::Value::get` 对 JSON `null` 返回的是 `Some(Value::Null)`,所以
+    // 「包里写了 label_rule: null」和「包里有一条 label_rule」在这里长得一样 ——
+    // 与 Task 14 m1 在 `min_age` 上踩到的是同一个坑。显式滤掉 null。
+    let label_rule = t.and_then(|h| h.get("label_rule")).filter(|l| !l.is_null());
     // 与激素同一条规则:取**最近一次被提到**的那条,不是碰巧排在前面的那条。
     let med = ctx
         .clinical
@@ -1353,12 +1361,17 @@ fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
         "target": t.and_then(|h| h.get("target")),
         "target_source": t.and_then(|h| h.get("target_source")),
         "label_rule": label_rule.and_then(|l| l.get("text")),
-        // **fail closed**:只有逐字的 `"verified"` 能清掉这面旗。`verify_status` 漏写、
-        // 拼错、写成别的值,一律算「待核」—— 反过来(缺省即已核实)是把一句没人核过
-        // 的说明书原文当成核过的送到医生眼前,而这张卡上说明书那几个数和指南的数**不
-        // 一样**(§D.2.1)。旗立错了只是多一句提示,旗漏了是一句不实的话。
-        "label_rule_pending":
-            label_rule.and_then(|l| l.get("verify_status")).and_then(|v| v.as_str()) != Some("verified"),
+        // **fail closed**:有 `label_rule` 时,只有逐字的 `"verified"` 能清掉这面旗。
+        // `verify_status` 漏写、拼错、写成别的值,一律算「待核」—— 反过来(缺省即已
+        // 核实)是把一句没人核过的说明书原文当成核过的送到医生眼前,而说明书那几个数
+        // 和指南的数**不一样**(§D.2.1)。旗立错了只是多一句提示,旗漏了是一句不实的话。
+        //
+        // 包里**根本没有** `label_rule` 是另一回事(Task 19 起出厂包就是这样:两份中文
+        // 说明书拿不到一手件,整块撤了)。没有那句话,就没有「那句话待核」—— 立着一面
+        // 指向空处的旗,界面上是一句解释不了的「待核」。
+        "label_rule_pending": label_rule.is_some_and(|l| {
+            l.get("verify_status").and_then(|v| v.as_str()) != Some("verified")
+        }),
         "reason": reason,
     })
 }

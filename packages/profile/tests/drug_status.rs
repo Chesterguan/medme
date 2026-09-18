@@ -50,61 +50,57 @@ fn prednisone_daily_dose_is_read_from_the_prescription() {
 }
 
 #[test]
-fn another_glucocorticoid_is_not_silently_converted_while_the_table_is_unverified() {
-    // 包里 pred_equiv 是 null(换算表还没核实,sle-clinical-sources §G)。
-    // 编一个系数比不显示更糟:剂量会直接进 DORIS「<5 mg」那一条的判定。
+fn another_glucocorticoid_converts_through_the_verified_table() {
+    // Task 19 从 S10 一手全文(PMC9524765, Table 3)核到了等效剂量表,包里填上了
+    // 系数,所以甲泼尼龙不再落 unconvertible。8 mg × 1.25(= 5 ÷ 4 mg)= 10 mg。
     let b = status(
         &[(TODAY, rx_doc("甲泼尼龙片 8mg 每日一次 口服"))],
         vec![enable()],
     );
-    assert!(b["gc"]["daily_pred_equiv_mg"].is_null());
-    assert_eq!(b["gc"]["unconvertible"][0]["name"], "甲泼尼龙");
-    // 界面上原样显示这五个字(Task 21 的 status_card 断言同一串),不是一句模糊的
-    // 「无法计算」—— 用户和医生要知道缺的是**换算表**,不是缺药。
-    assert_eq!(b["gc"]["unconvertible"][0]["reason"], "换算表待核");
+    assert_eq!(b["gc"]["daily_pred_equiv_mg"], 10.0, "8 mg × 1.25");
+    assert_eq!(b["gc"]["drug"], "甲泼尼龙");
+    assert!(b["gc"]["unconvertible"].as_array().unwrap().is_empty());
 }
 
 #[test]
-fn prednisolone_does_not_get_a_hard_coded_factor_of_one() {
-    // 泼尼松龙临床上确实按 1:1 算(DORIS Box 1 原文用的就是 prednisolone),但那是
-    // 一个**没有出处 id 的临床数值**;写进引擎就违反了 global-constraints「包里每个
-    // 数值都带出处 id」。系数 1 只留给规范名逐字等于「泼尼松」的那一个。
+fn prednisolone_converts_at_one_to_one_from_the_table_not_from_a_hard_coded_factor() {
+    // 泼尼松龙按 1:1 算 —— 但那个 1 现在来自 S10 Table 3(Prednisolone 5 mg =
+    // Prednisone 5 mg),带着出处 id 进的包,不是引擎里写死的。
     let b = status(
         &[(TODAY, rx_doc("泼尼松龙片 10mg 每日一次 口服"))],
         vec![enable()],
     );
-    assert!(b["gc"]["daily_pred_equiv_mg"].is_null());
-    assert_eq!(b["gc"]["unconvertible"][0]["name"], "泼尼松龙片");
-    assert_eq!(b["gc"]["unconvertible"][0]["reason"], "换算表待核");
+    assert_eq!(b["gc"]["daily_pred_equiv_mg"], 10.0);
+    assert!(b["gc"]["unconvertible"].as_array().unwrap().is_empty());
 }
 
 #[test]
-fn methylprednisolone_spelled_the_other_way_is_still_unconvertible() {
-    // 「甲泼尼松龙」是甲泼尼龙在中国处方上的另一种写法,词典里没有,逐字含
-    // 「泼尼松」。按「规范名 == 泼尼松」判就不会误伤。
+fn methylprednisolone_spelled_the_other_way_still_converts_as_methylprednisolone() {
+    // 「甲泼尼松龙」是甲泼尼龙在中国处方上的另一种写法,词典里没有。它逐字含
+    // 「泼尼松」也含「泼尼松龙」,但**最长的键赢** —— 命中「泼尼松龙」的 1.0,
+    // 而不是「泼尼松」的 1.0(这里两者恰好同值,断言的是不会掉进 unconvertible)。
     let b = status(
         &[(TODAY, rx_doc("甲泼尼松龙片 8mg 每日一次 口服"))],
         vec![enable()],
     );
-    assert!(b["gc"]["daily_pred_equiv_mg"].is_null());
-    assert_eq!(b["gc"]["unconvertible"][0]["reason"], "换算表待核");
+    assert_eq!(b["gc"]["daily_pred_equiv_mg"], 8.0);
+    assert!(b["gc"]["unconvertible"].as_array().unwrap().is_empty());
 }
 
 #[test]
 fn a_steroid_the_dictionary_lacks_is_still_recognised_as_one_by_the_package() {
     // 倍他米松 / 曲安西龙 / 可的松不在词典的 H02A*(只有 4 个),所以 `atc_prefix`
-    // 认不出它们 —— 包的 `drugs[gc].names` 逐字兜住。认成激素之后换算表还没核实,
-    // 于是它进 `unconvertible` 并说清缺的是换算表,而不是掉进「认不出的药」那一格。
-    for rx in [
-        "倍他米松片 0.5mg 每日一次 口服",
-        "曲安西龙片 4mg 每日一次 口服",
+    // 认不出它们 —— 包的 `drugs[gc].names` 逐字兜住,再由 S10 Table 3 的系数换算。
+    for (rx, want) in [
+        ("倍他米松片 0.5mg 每日一次 口服", 4.166666666666667), // 0.5 × 5/0.60
+        ("曲安西龙片 4mg 每日一次 口服", 5.0),                 // 4 × 5/4
+        ("可的松片 25mg 每日一次 口服", 5.0),                  // 25 × 5/25
     ] {
         let b = status(&[(TODAY, rx_doc(rx))], vec![enable()]);
-        assert!(
-            b["gc"]["daily_pred_equiv_mg"].is_null(),
-            "{rx}:换算表待核,不许算出日剂量"
-        );
-        assert_eq!(b["gc"]["unconvertible"][0]["reason"], "换算表待核", "{rx}");
+        let got = b["gc"]["daily_pred_equiv_mg"]
+            .as_f64()
+            .unwrap_or_else(|| panic!("{rx}:应该算得出日剂量"));
+        assert!((got - want).abs() < 1e-9, "{rx}:得到 {got},应为 {want}");
         assert!(
             b["others"]
                 .as_array()
@@ -114,6 +110,20 @@ fn a_steroid_the_dictionary_lacks_is_still_recognised_as_one_by_the_package() {
             "{rx}:激素不重复进 others"
         );
     }
+}
+
+#[test]
+fn hydrocortisone_is_not_swallowed_by_the_cortisone_key() {
+    // 「可的松」是「氢化可的松」的子串。引擎按最长键匹配,包里也确实单列了
+    // 氢化可的松(0.25)—— 少了那一行,这里会算成 20 mg × 0.2 = 4 mg,低 20%。
+    let b = status(
+        &[(TODAY, rx_doc("氢化可的松片 20mg 每日一次 口服"))],
+        vec![enable()],
+    );
+    assert_eq!(
+        b["gc"]["daily_pred_equiv_mg"], 5.0,
+        "20 mg × 0.25,不是 × 0.2"
+    );
 }
 
 #[test]
@@ -237,28 +247,46 @@ fn an_injection_written_into_the_drug_name_is_not_converted_as_an_oral_dose() {
 }
 
 #[test]
-fn a_route_the_parser_already_swallowed_is_invisible_to_this_layer() {
-    // ⚠️ **已知边界,不是期望行为 —— 这是给 Task 19 的绊线。**
-    // 剂型/途径在到达这一层之前就没了,两条路各丢一半:
-    //  - 写在剂量**后面**的(「甲泼尼龙 40mg 静滴」)被 `meds.rs` 的
-    //    `strip_trailing_route` 剥掉,`dose_string` 也只拼「剂量 频次」;
-    //  - 写在**药名里**的(「地塞米松注射液」)被词典归一成规范名「地塞米松」。
-    // 所以这道门只挡得住**词典认不出**的那些注射剂型(上一条测试)。今天靠
-    // 「换算表待核」兜住,一旦 Task 19 把 pred_equiv 填上,这一条就会按口服换算出
-    // 一个几倍于实际的泼尼松等效剂量并直接进 DORIS —— **填表之前必须先让途径到达
-    // 这一层**(交接清单)。这条测试到时候会红,那正是它的作用。
+fn a_dosage_form_the_dictionary_normalised_away_is_still_seen_as_an_injection() {
+    // Task 18 在这里留了一根绊线:词典把「地塞米松注射液」归一成规范名「地塞米松」,
+    // 剂型门就看不见它了;当时靠「换算表待核」兜住,并写明「**填表之前必须先让途径
+    // 到达这一层**」。Task 19 填表时这根绊线如期绷响,于是补了根治点:`MedSpan` 现在
+    // 带着 `raw_names`(每份文档上原样写的名字),`form_haystack` 一起看。
+    //
+    // 没有这一步,这里会算出 5 mg × 6.667 = 33.3 mg/天「泼尼松等效」,把一次静脉冲击
+    // 说成常规口服日剂量,并直接进 DORIS「<5 mg」那一条。
     let b = status(
         &[(TODAY, rx_doc("地塞米松注射液 5mg 每日一次"))],
         vec![enable()],
     );
-    assert!(b["gc"]["daily_pred_equiv_mg"].is_null());
-    assert_eq!(
-        b["gc"]["unconvertible"][0]["name"], "地塞米松",
-        "词典把「注射液」三个字归一掉了"
+    assert!(
+        b["gc"]["daily_pred_equiv_mg"].is_null(),
+        "注射剂不按口服换算"
     );
     assert_eq!(
-        b["gc"]["unconvertible"][0]["reason"], "换算表待核",
-        "**不是**「注射剂型」—— 剂型门根本没看见它"
+        b["gc"]["unconvertible"][0]["name"], "地塞米松",
+        "显示的仍是规范名"
+    );
+    assert_eq!(
+        b["gc"]["unconvertible"][0]["reason"], "注射剂型,不按口服换算",
+        "理由要说对:是剂型挡的,不是换算表缺"
+    );
+}
+
+#[test]
+fn a_route_written_after_the_dose_is_still_invisible_to_this_layer() {
+    // ⚠️ **已知边界,不是期望行为 —— 绊线的另一半,留给 parser。**
+    // 「静滴」写在剂量后面,被 `meds.rs::strip_trailing_route` 剥掉,而 `dose_string`
+    // 只拼「剂量 频次」,所以到这一层已经没了。药名里没有任何剂型字样,`raw_names`
+    // 也救不了。根治点在 parser:把 route 一路带出来(交接清单)。
+    // 这条测试钉住**今天的真实行为**,修好那天它会红 —— 那正是它的作用。
+    let b = status(
+        &[(TODAY, rx_doc("甲泼尼龙片 40mg 每日一次 静滴"))],
+        vec![enable()],
+    );
+    assert_eq!(
+        b["gc"]["daily_pred_equiv_mg"], 50.0,
+        "40 × 1.25 —— 明知是静滴却仍按口服换算,这就是那半个缺口"
     );
 }
 
@@ -339,25 +367,34 @@ fn hcq_without_a_weight_shows_the_dose_but_no_mg_per_kg() {
 }
 
 #[test]
-fn hcq_card_states_both_the_guideline_rule_and_the_package_insert_rule() {
-    // sle-clinical-sources §D.2.1:指南 5 mg/kg 真实体重 vs 说明书 6.5 mg/kg 理想体重。
-    // 用户手里那张说明书写的就是另一个数,界面只说一个就是在制造矛盾。
+fn hcq_card_states_the_guideline_rule_and_no_unverified_insert() {
+    // 原来这里断言界面同时印出说明书那条(6.5 mg/kg 理想体重)。Task 19 独立核查
+    // 没能拿到任何一手中文说明书(NMPA 412、企业站打不开),整块已从包里撤掉 ——
+    // 宁可不说,不能说一句没核过的。指南那条照旧印。
     let b = status(
         &[(TODAY, rx_doc("硫酸羟氯喹片 0.2g 每日两次 口服"))],
         vec![enable()],
     );
-    let insert = b["hcq"]["label_rule"].as_str().unwrap();
-    assert!(insert.contains("6.5"));
-    assert!(insert.contains("理想体重"));
+    assert!(b["hcq"]["label_rule"].is_null(), "没核到的说明书不许上卡");
+    // 没有那句话,就没有「那句话待核」。⚠️ `Value::get` 对 JSON `null` 返回
+    // `Some(Value::Null)`,不显式滤掉就会在卡上立一面指向空处的「待核」旗。
+    assert_eq!(b["hcq"]["label_rule_pending"], false, "空的不叫待核");
     assert_eq!(b["hcq"]["target_source"], "S4");
-    // 说明书那串还没有人对着纸核过 —— 界面必须让医生知道这一点。
-    assert_eq!(b["hcq"]["label_rule_pending"], true);
 }
 
-/// 按 `verify_status` 改一份包,取出 `hcq.label_rule_pending`。
+/// 按 `verify_status` 造一份**带 `label_rule` 的**包,取出 `hcq.label_rule_pending`。
 /// `status` 为 `None` = 包里**压根没写** `verify_status` 这个键。
+///
+/// 出厂包现在 `label_rule: null`(Task 19 撤掉了那块),所以这里自己塞一条进去:
+/// 被测的是**引擎的 fail-closed 逻辑**,那条逻辑得在下一份包重新填 `label_rule`
+/// 时依然成立,不该跟着出厂包一起消失。
 fn label_rule_pending(status: Option<&str>) -> bool {
     let mut v = common::full_json();
+    v["rules"]["targets"]["hcq"]["label_rule"] = serde_json::json!({
+        "text": "某份说明书写的剂量上限与指南不同",
+        "source": "S4",
+        "verify_status": "pending",
+    });
     let lr = &mut v["rules"]["targets"]["hcq"]["label_rule"];
     match status {
         Some(s) => lr["verify_status"] = serde_json::json!(s),

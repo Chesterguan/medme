@@ -321,8 +321,9 @@ fn a_threshold_that_is_met_but_needs_an_age_says_that_and_keeps_the_pending_flag
         "{}",
         r["reason"]
     );
-    // 「这条规则的数还没核实」这面旗不能因为落进 unknown 就不举了。
-    assert_eq!(r["pending"], true);
+    // 出厂包的 `gc_dxa` 现在是 `verified`(Task 19),所以这里不该再举「待核」旗:
+    // 落进 unknown 的理由是**档案缺年龄**,不是**那个数没人核过** —— 两句话不一样。
+    assert_eq!(r["pending"], false);
     let items = reminders(
         &[("2026-05-19", rx_doc("泼尼松片 7.5mg 每日一次 口服"))],
         vec![enable()],
@@ -331,20 +332,20 @@ fn a_threshold_that_is_met_but_needs_an_age_says_that_and_keeps_the_pending_flag
 }
 
 #[test]
-fn a_null_min_age_means_the_number_is_unverified_not_that_we_need_your_age() {
-    // 包里的 `null` = 「这个阈值还没核实」(global-constraints:没核实的一律 null +
-    // 待核),不是「这条要看年龄」。`serde_json::Value::get` 对 `null` 返回
-    // `Some(Value::Null)`,不显式排掉的话两者完全同路 —— 动作一样(都不提醒),但
-    // 用户看到的理由会是「档案里还没有年龄」,让人以为补上年龄就能算。
+fn a_null_min_age_means_the_rule_does_not_gate_on_age_so_it_actually_fires() {
+    // `min_age: null` ≠ 「这条要看年龄」。`serde_json::Value::get` 对 `null` 返回
+    // `Some(Value::Null)`,不显式排掉的话两者完全同路(Task 14 的 m1)。
+    //
+    // Task 19 之后 null 的**含义**也变了:核到 ACR 2022 GIOP 原文后确认,≥40 岁只
+    // 管 FRAX,骨密度对 <40 岁同样是强推荐 —— 所以 null 是「本来就不按年龄卡」,
+    // 这条提醒该**真的提出来**,而不是停在「有个数没人核过」的 pending 档里。
     let r = dxa_with_min_age(serde_json::Value::Null);
-    assert_eq!(r["state"], "pending", "落到「这条规则的数还没核实」那一档");
-    assert!(
-        r["reason"].is_null(),
-        "pending 不带 unknown 的理由:{}",
-        r["reason"]
-    );
-    assert_eq!(r["pending"], true);
-    assert!(r["due_at"].is_null(), "没核实的数永远不算出到期日");
+    assert_eq!(r["state"], "never", "剂量与时长都够了,骨密度就该提");
+    assert!(r["reason"].is_null(), "没有算不了的理由:{}", r["reason"]);
+    assert_eq!(r["pending"], false);
+    // 写了一个真年龄才落 unknown —— 两条路必须分得开(上一条测试钉的就是这个)。
+    let aged = dxa_with_min_age(serde_json::json!(40));
+    assert_eq!(aged["state"], "unknown");
 }
 
 #[test]
@@ -361,17 +362,18 @@ fn a_threshold_whose_drug_was_never_prescribed_stays_off_the_list() {
 
 #[test]
 fn a_glucocorticoid_we_cannot_convert_is_unknown_not_silently_skipped() {
-    // 甲泼尼龙:等效换算表还没核实(包里 `pred_equiv: null`),日剂量算不出来。
+    // Task 19 把等效换算表填进包以后,甲泼尼龙已经算得出来了,所以这条改用**注射
+    // 剂型**:一次静脉冲击不按口服日剂量换算,日剂量因此仍然是算不出来的。
     // 「算不出来」不等于「没到阈值」—— 静默跳过会让一条该提的提醒消失得无声无息。
     let items = reminders(
-        &[("2026-01-01", rx_doc("甲泼尼龙片 8mg 每日一次 口服"))],
+        &[("2026-01-01", rx_doc("地塞米松注射液 5mg 每日一次"))],
         vec![enable()],
     );
     let r = find(&items, "gc_ca_vitd");
     assert_eq!(r["state"], "unknown");
     assert!(
-        r["reason"].as_str().unwrap().contains("换算表待核"),
-        "理由要说清缺的是换算表,不是缺药:{}",
+        r["reason"].as_str().unwrap().contains("注射剂型"),
+        "理由要说清是剂型挡的,不是缺药:{}",
         r["reason"]
     );
 }
@@ -561,21 +563,21 @@ fn the_ones_nobody_ever_did_sort_above_the_overdue_ones() {
         ],
         vec![enable()],
     );
-    // 同档内按包里的顺序稳定排(`gc_ca_vitd` 在 `gc_cv_annual` 前面)。
+    // 同档内按包里的顺序稳定排(`gc_ca_vitd` → `gc_dxa` → `gc_cv_annual`)。
+    // ⚠️ Task 19 之后 `gc_dxa` 是 `verified`(核到指南原文:≥40 岁只管 FRAX,骨密度
+    // 本来就不按年龄卡),于是它从最后一档的 `pending` 升到「还没查过」那一档。
     assert_eq!(
         ids(&items),
         [
             "gc_ca_vitd",
+            "gc_dxa",
             "gc_cv_annual",
             "visit_active",
-            "mmf_cbc",
-            "gc_dxa"
+            "mmf_cbc"
         ]
     );
-    // `gc_dxa` 的 `min_age` 是 null(阈值未核实)→ `pending`,排在最后一档:
-    // 它连到期日都算不出来,不该占着列表最上面那一屏。
     let states: Vec<&str> = items.iter().map(|i| i["state"].as_str().unwrap()).collect();
-    assert_eq!(states, ["never", "never", "overdue", "overdue", "pending"]);
+    assert_eq!(states, ["never", "never", "never", "overdue", "overdue"]);
 }
 
 #[test]

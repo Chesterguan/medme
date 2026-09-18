@@ -158,6 +158,15 @@ pub struct MedSpan {
     pub drug_key: Option<String>,
     /// Canonical name if resolved, else the raw name.
     pub name: String,
+    /// Every distinct name **as actually written**, deduped and sorted.
+    ///
+    /// `name` is the dictionary's canonical form, and normalising to it throws
+    /// away the dosage form: 「地塞米松注射液」 and 「地塞米松片」 both become
+    /// 「地塞米松」. Downstream that difference decides whether a steroid order
+    /// may be read as a standing daily oral dose at all, so the original
+    /// wording has to survive the merge. Kept as a list because one drug can be
+    /// written several ways across documents.
+    pub raw_names: Vec<String>,
     pub atc: Option<String>,
     /// e.g. "0.5g bid", taken from the most recent mention (fallback: any).
     pub latest_dose: Option<String>,
@@ -505,6 +514,8 @@ struct LabBuilder {
 struct MedBuilder {
     drug_key: Option<String>,
     name: String,
+    /// `BTreeSet` so the output order never depends on document order.
+    raw_names: BTreeSet<String>,
     atc: Option<String>,
     meta_from_match: bool,
     start: Option<NaiveDate>,
@@ -864,6 +875,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             let b = meds.entry(key).or_insert_with(|| MedBuilder {
                 drug_key: obs.drug_key.clone(),
                 name: obs.raw_name.clone(),
+                raw_names: BTreeSet::new(),
                 atc: None,
                 meta_from_match: false,
                 start: None,
@@ -873,6 +885,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 best_date: None,
                 has_best: false,
             });
+            b.raw_names.insert(obs.raw_name.clone());
             if !b.meta_from_match && matched {
                 if let Some(name) = &obs.canonical_name {
                     b.name = name.clone();
@@ -948,6 +961,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         .map(|b| MedSpan {
             drug_key: b.drug_key,
             name: b.name,
+            raw_names: b.raw_names.into_iter().collect(),
             atc: b.atc,
             latest_dose: b.best_dose,
             start: b.start,

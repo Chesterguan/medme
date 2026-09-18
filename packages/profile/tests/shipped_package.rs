@@ -341,28 +341,67 @@ fn unverified_values_are_null_with_a_todo_note_not_invented_numbers() {
         .iter()
         .find(|d| d["class"] == "gc")
         .expect("gc");
+    // Task 19 从 S10 一手全文(PMC9524765, Table 3)取到了等效剂量表,所以这条从
+    // 「必须是 null」翻成「已填,且每个系数都指得回那张表」。
+    let ids = source_ids(&signed_pkg());
+    let tbl = gc["pred_equiv"]
+        .as_object()
+        .expect("等效换算表已核实,应已填上");
+    let src = gc["pred_equiv_source"]
+        .as_str()
+        .expect("填了表就必须给出处");
     assert!(
-        gc["pred_equiv"].is_null(),
-        "泼尼松等效换算表未核实,不许写数字"
+        ids.iter().any(|i| i == src),
+        "pred_equiv_source {src} 没在 manifest.sources 里"
     );
-    assert!(gc["pred_equiv_source"].is_null());
-    assert!(gc["note"].as_str().unwrap_or_default().contains("待核"));
-    // 包自带的两个分析物,LOINC 都未核实。
-    for a in v["terms"]["analytes"].as_array().unwrap() {
-        let key = a["key"].as_str().unwrap_or_default();
-        assert!(a["loinc"].is_null(), "{key} 的 LOINC 未核实");
+    // S10 Table 3 的等效剂量(mg);包里存的系数 = 5 ÷ 等效剂量。逐条对着原表核。
+    for (name, equiv_mg) in [
+        ("氢化可的松", 20.0),
+        ("可的松", 25.0),
+        ("泼尼松", 5.0),
+        ("泼尼松龙", 5.0),
+        ("甲泼尼龙", 4.0),
+        ("曲安西龙", 4.0),
+        ("倍他米松", 0.60),
+        ("地塞米松", 0.75),
+    ] {
+        let f = tbl[name]
+            .as_f64()
+            .unwrap_or_else(|| panic!("{name} 没有系数"));
         assert!(
-            a["note"].as_str().unwrap_or_default().contains("待核"),
-            "{key}"
+            (equiv_mg * f - 5.0).abs() < 1e-9,
+            "{name}:{equiv_mg} mg × {f} 应等于 5 mg 泼尼松"
+        );
+    }
+    // 「可的松」是「氢化可的松」的子串,而引擎按最长键匹配 —— 漏掉氢化可的松那一行,
+    // 氢化可的松就会套用可的松的 0.2,算低 20%。
+    assert!(
+        tbl.contains_key("氢化可的松"),
+        "氢化可的松必须单列,否则被可的松吃掉"
+    );
+    // 包自带的两个分析物,LOINC 由 NLM 的 LOINC 服务逐条查得(S17)。
+    for (key, loinc) in [("urine_rbc_hpf", "13945-1"), ("urine_wbc_hpf", "5821-4")] {
+        let a = v["terms"]["analytes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["key"] == key)
+            .unwrap_or_else(|| panic!("{key}"));
+        assert_eq!(a["loinc"], loinc, "{key} 的 LOINC");
+        assert!(
+            a["note"].as_str().unwrap_or_default().contains("S17"),
+            "{key} 要点名出处"
         );
     }
 }
 
 #[test]
-fn the_dxa_age_threshold_is_null_because_it_came_from_a_third_party_summary() {
-    // 「≥40 岁用 FRAX + 骨密度」那句 VERBATIM 是从 guidelinecentral 的摘要页抄的,
-    // 不是 ACR 2022 GIOP 指南原文(sle-clinical-sources §D.1 自己标了)。
-    // 人群阈值(>3 个月、≥2.5 mg/d)是逐字的,年龄不是。
+fn the_dxa_age_threshold_is_null_because_the_guideline_gates_only_frax_on_age() {
+    // Task 19 拿到 ACR 2022 GIOP 已刊全文(eScholarship)后翻案:「≥40 岁」是挂在
+    // **FRAX** 上的,不是挂在骨密度上 —— 原文另有「BMD with VFA testing or spinal
+    // x-ray is advised in patients <40 years, as FRAX is not validated in this
+    // population」。所以 min_age 仍是 null,但理由从「没核到」变成「核到了,指南
+    // 本来就不按年龄卡骨密度」;拿 40 岁当门槛会把 SLE 的主力发病年龄挡在外面。
     let v = src_json();
     let r = v["rules"]["monitoring"]
         .as_array()
@@ -374,9 +413,14 @@ fn the_dxa_age_threshold_is_null_because_it_came_from_a_third_party_summary() {
     // 原文是 more than 3 months(超过、不含),而 `min_days` 在引擎里是「至少这么多
     // 天」(含),所以下限是 91 不是 90(Task 14 的 m1,与 gc_ca_vitd 同一条)。
     assert_eq!(r["min_days"], 91);
-    assert!(r["min_age"].is_null(), "年龄阈值来自三方摘要,核实前写 null");
-    assert!(r["note"].as_str().unwrap_or_default().contains("待核"));
-    assert_eq!(r["verify_status"], "pending");
+    assert!(
+        r["min_age"].is_null(),
+        "骨密度不按年龄卡,min_age 必须是 null"
+    );
+    assert_eq!(r["verify_status"], "verified");
+    // 年龄的真实作用(要不要加做 FRAX)得让用户看得见,否则这条就在悄悄少说一半。
+    let action = r["action"].as_str().unwrap_or_default();
+    assert!(action.contains("FRAX") && action.contains("40"), "{action}");
 }
 
 #[test]
@@ -395,24 +439,37 @@ fn the_package_never_uses_the_unsourced_five_band_sledai_scheme() {
     assert_eq!(bands, 3, "只用 ≤6 / 7–12 / >12 三档(两份指南一致)");
 }
 
-// --- 羟氯喹:说明书只提示、不判定 ------------------------------------------
+// --- 羟氯喹:指南那组数留下,核不到的说明书整块撤掉 ------------------------
 
 #[test]
-fn the_hcq_rule_carries_both_the_guideline_and_the_package_insert_numbers() {
+fn the_hcq_rule_keeps_the_guideline_numbers_and_ships_no_unverified_insert() {
     let v = src_json();
     let h = &v["rules"]["targets"]["hcq"];
+    // 指南那组数 Task 19 在 S4 原文 + S9 原文上都逐字核过了,留着。
     assert_eq!(h["target"], 5);
     assert_eq!(h["basis"], "real_body_weight");
+    assert_eq!(h["ceiling_mg"], 400);
     // `target_source` 是引擎在现行方案卡上读的那个键(`rules.rs::hcq_body`)。
     assert_eq!(h["target_source"], "S4");
-    let lr = &h["label_rule"];
-    assert!(lr["text"].as_str().unwrap_or_default().contains("6.5"));
-    assert!(lr["text"].as_str().unwrap_or_default().contains("理想体重"));
-    // 说明书那串只经过摘要管道,没有人打开过纸质说明书 —— 必须标着待核。
-    assert_eq!(lr["verify_status"], "pending");
-    assert_eq!(
-        lr["source"], "L8",
-        "Task 13 的占位 id 必须换成出处表里的真 id"
+    // 两份中文说明书只经过摘要管道,而那条管道编造过两次羟氯喹剂量;Task 19 试了
+    // NMPA 数据库与生产企业站点都没拿到一手件,所以整块撤掉 —— 宁可不说,不能说
+    // 一句没核过的。撤掉的理由留在 `label_rule_note` 里,免得下一个人又把它抄回来。
+    assert!(h["label_rule"].is_null(), "没核到的说明书不许发");
+    assert!(
+        h["label_rule_note"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("NMPA"),
+        "要写清楚试过哪些一手来源、怎么失败的"
+    );
+    // 那两个数彻底不在包里,任何地方都不能再出现。
+    assert!(
+        !common::FULL.contains("6.5mg/kg"),
+        "说明书的 6.5 mg/kg 应已撤掉"
+    );
+    assert!(
+        !common::FULL.contains("理想体重"),
+        "理想体重那套算法应已撤掉"
     );
 }
 
@@ -430,24 +487,25 @@ const PROSE_KEYS: [&str; 8] = [
 
 #[test]
 fn the_package_insert_numbers_never_drive_a_judgement() {
-    // 6.5 / 理想体重 / 说明书那两个眼科间隔只能出现在**文案**里。一旦哪条规则真的拿
-    // 它去判「你的剂量超了」,我们就是在用一个没人核过的数字给用户下结论。
-    // 所以:除文案键之外的任何标量,都不许等于 6.5、也不许含这几个字样。
+    // Task 19 之前这条只能要求「6.5 / 理想体重只许待在文案里」,因为 `label_rule`
+    // 整块就是把说明书原话摆出来。现在那一块已经撤掉(核不到一手件),所以这条
+    // 收紧成**全包禁字**:6.5 不许当任何非文案标量,「理想体重」「每3月」不许出现
+    // 在任何字符串里 —— 连 note 也不行,note 是会原样印到用户眼前的。
     fn walk(v: &serde_json::Value, path: &str) {
         match v {
             serde_json::Value::Object(m) => {
                 for (k, x) in m {
                     let p = format!("{path}.{k}");
+                    if let Some(s) = x.as_str() {
+                        for banned in ["理想体重", "每3月", "每 3 月"] {
+                            assert!(!s.contains(banned), "{p} 里出现了说明书数值:{banned}");
+                        }
+                    }
                     if PROSE_KEYS.contains(&k.as_str()) && !x.is_object() && !x.is_array() {
                         continue;
                     }
                     if let Some(n) = x.as_f64() {
                         assert!((n - 6.5).abs() > f64::EPSILON, "{p} 是说明书那个 6.5");
-                    }
-                    if let Some(s) = x.as_str() {
-                        for banned in ["理想体重", "每3月", "每 3 月"] {
-                            assert!(!s.contains(banned), "{p} 里出现了说明书数值:{banned}");
-                        }
                     }
                     walk(x, &p);
                 }
@@ -460,10 +518,7 @@ fn the_package_insert_numbers_never_drive_a_judgement() {
             _ => {}
         }
     }
-    let mut rules = src_json()["rules"].clone();
-    // `label_rule` 整块就是「把说明书原话摆出来」,它是这条规矩的例外本身。
-    rules["targets"]["hcq"]["label_rule"] = serde_json::Value::Null;
-    walk(&rules, "pkg.rules");
+    walk(&src_json()["rules"], "pkg.rules");
 
     // 眼科那条同理:三份来源互相矛盾、危险因素档案里也没有,所以它**根本不给间隔**。
     let eye = src_json()["rules"]["monitoring"]
