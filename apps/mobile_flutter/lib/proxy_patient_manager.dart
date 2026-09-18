@@ -231,7 +231,7 @@ class ProxyPatient {
   /// 已添加的文档份数(列表展示用的缓存值)。
   final int docCount;
 
-  /// 医生逐份点过「确认这一份」的 document_id。
+  /// 医生逐份点过「没问题」的 document_id。
   final Set<int> confirmedIds;
 
   /// 报告上姓名与本病人不一致的文档(docId → 报告上的名字)。跨重启保留。

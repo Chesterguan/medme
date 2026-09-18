@@ -20,9 +20,9 @@ void main() {
     expect(text.body, isNot(contains('prf_1')));
   });
 
-  test('其它错误:维持原文案(标题「无法打开你的健康档案」,正文带重启建议)', () {
+  test('其它错误:维持原文案(标题「无法打开你的病历箱」,正文带重启建议)', () {
     final text = vaultBootstrapErrorText(StateError('boom'));
-    expect(text.title, '无法打开你的健康档案');
+    expect(text.title, '无法打开你的病历箱');
     expect(text.body, contains('boom'));
     expect(text.body, contains('请重启 App 再试。'));
   });

@@ -172,7 +172,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除这份记录?'),
-        content: Text('「$what」将从健康档案移除,此操作不可撤销。'),
+        content: Text('「$what」将从病历箱移除,此操作不可撤销。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -311,7 +311,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   Padding(
                     padding: const EdgeInsets.all(MedShape.s6),
                     child: Text(
-                      '加载健康档案失败:\n${snap.error}\n\n下拉可重试。',
+                      '加载病历失败:\n${snap.error}\n\n下拉可重试。',
                       textAlign: TextAlign.center,
                       style: MedType.body.copyWith(color: c.ink2, height: 1.6),
                     ),

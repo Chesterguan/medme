@@ -26,10 +26,10 @@ class ProfileManager {
   static final ProfileManager instance = ProfileManager._();
 
   /// 病历箱默认名字(家庭/个人层面)。用户可在设置里改成「我家」「张建国的病历」等。
-  static const defaultVaultName = '我的医疗档案';
+  static const defaultVaultName = '我的病历箱';
 
   /// 初始成员的默认名字。**必须与 [defaultVaultName] 不同** —— 两者曾经用同一个字符串,
-  /// 于是设置页会显示成「病历箱:我的医疗档案 → 成员:我的医疗档案」,同一个名字在两个
+  /// 于是设置页会显示成「病历箱:我的病历箱 → 成员:我的病历箱」,同一个名字在两个
   /// 层级上各出现一次,用户看不懂谁包含谁。
   ///
   /// 而且成员名会进档案屏顶部那条**常驻 tab**(横向排列,见 `_MemberTabs`):六个字的名字
@@ -94,7 +94,7 @@ class ProfileManager {
 
   /// 档案屏顶部展示名:当前成员的名字。**不回退到病历箱名**(task-20b A3)——
   /// 这里原来在"只有一个、还没被命过名的默认成员"时显示 [_vaultName]
-  /// (「我的医疗档案」),而 `member_switcher.dart` 的切换器名单在同一种状态下
+  /// (「我的病历箱」),而 `member_switcher.dart` 的切换器名单在同一种状态下
   /// 显示的是 [current.name](占位默认值「我」),两处各说一套,是 Stage 1 冒烟
   /// 记录的必修项之一。统一显示成员名,导入后的自动改名逻辑([maybeAutoNameCurrent])
   /// 不受影响。

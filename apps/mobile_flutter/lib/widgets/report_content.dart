@@ -12,7 +12,7 @@ import 'med_card.dart';
 //  - 其余/解析不到结构 → 退回干净段落 —— 永不比原文更糟(见 memory:
 //    content-aware-rendering)。
 
-/// 档案/文档详情屏复用的富文本渲染;`docType` 为空或未知类型时退回通用分块。
+/// 「一份病历」屏复用的富文本渲染;`docType` 为空或未知类型时退回通用分块。
 class ReportContent extends StatelessWidget {
   final String text;
   final String? docType;

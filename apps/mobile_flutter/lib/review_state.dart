@@ -10,13 +10,13 @@ import 'package:mobile_flutter/profile_manager.dart';
 /// `<support>/review_state.json`(纯本设备 UI 状态,不进病历箱)。
 ///
 /// 除了还没核对集,还记录每份新导入报告里**识别到的患者姓名**——若它和当前成员档案
-/// 名字不一致([_flagged]),说明可能导错了人,健康档案会给这份标红警告。
+/// 名字不一致([_flagged]),说明可能导错了人,「病历」屏会给这份标红警告。
 ///
 /// 分区键是**成员 id**,不是名字:名字是可变标签(自动命名会改),用它当键的话改一次
 /// 名这些状态就全丢了;而且不同成员可以重名。
 ///
 /// 语义:导入时把本次新建文档 id 显式加入**当前成员**的还没核对集([markPending]);
-/// 健康档案顶部把当前成员还没核对集里的文档置顶让用户核对;点「确认」移除([markReviewed])。
+/// 「病历」屏顶部把当前成员还没核对集里的文档置顶让用户核对;点「确认」移除([markReviewed])。
 class ReviewState {
   ReviewState._();
   static final ReviewState instance = ReviewState._();

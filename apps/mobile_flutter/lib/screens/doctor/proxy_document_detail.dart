@@ -26,7 +26,7 @@ enum ProxyDetailResult { none, changed, retake }
 /// 普通人模式一行代码」这条硬规矩在这两个文件上都显而易见成立。
 ///
 /// 布局复用 `document_detail.dart` 的呈现方式:抬头卡(带骑缝线)+ 识别出来的文字
-/// (`ReportContent`)。底部按钮换成本流程要的三个动作:确认这一份 / 删除 / 重拍。
+/// (`ReportContent`)。底部按钮换成本流程要的三个动作:没问题 / 删除 / 重拍。
 ///
 /// **视觉上与 `document_detail.dart` 逐处对齐,只把主色 `seal`(蓝)换成 `proxy`
 /// (紫)** —— 结构、字阶、圆角、骑缝线、间距全部同源。识别出来的文字区整块交给共用的
@@ -40,7 +40,7 @@ class ProxyDocumentDetailScreen extends StatefulWidget {
     required this.initiallyConfirmed,
   });
 
-  /// 这一份属于哪个代拍病人——「确认这一份」落在 [ProxyPatientManager] 的这个病人
+  /// 这一份属于哪个代拍病人——「没问题」落在 [ProxyPatientManager] 的这个病人
   /// 名下(要跨 12 小时保留窗口和 app 重启存活,所以落盘,不放 Rust 进程内存)。
   final String patientId;
 
@@ -151,7 +151,7 @@ class _ProxyDocumentDetailScreenState extends State<ProxyDocumentDetailScreen> {
     }
   }
 
-  /// 核对无误,确认这一份(整份确认,不细到每一项)。
+  /// 核对无误,「没问题」(整份确认,不细到每一项)。
   Future<void> _confirm() async {
     setState(() => _busy = true);
     try {
@@ -245,7 +245,7 @@ class _ProxyDocumentDetailScreenState extends State<ProxyDocumentDetailScreen> {
                 : FilledButton.icon(
                     onPressed: _busy ? null : _confirm,
                     icon: const Icon(Icons.check),
-                    label: const Text('确认这一份'),
+                    label: const Text('没问题'),
                     style: FilledButton.styleFrom(
                       backgroundColor: c.proxy,
                       minimumSize: const Size.fromHeight(48),
@@ -362,7 +362,7 @@ class _ProxyDetailBody extends StatelessWidget {
                 const SizedBox(height: MedShape.s3),
                 // 次级按钮(规范 §六 btn-2):proxy-wash 底 + proxy-ink 字。
                 // 「原件永远可达」是 007 §2.1 的铁律,所以它不能是最弱的那一级;
-                // 但本屏的主按钮位置留给底部的「确认这一份」,它就不该是纯色主按钮。
+                // 但本屏的主按钮位置留给底部的「没问题」,它就不该是纯色主按钮。
                 // 原先它是紫(当时的橙)描边 + 同色字,与底部主按钮同分量 ——
                 // 一屏两个「主」,医生在赶时间时得读文字才知道该按哪个。
                 OutlinedButton.icon(

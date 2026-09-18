@@ -215,7 +215,7 @@ class _MedMeAppState extends State<MedMeApp> with WidgetsBindingObserver {
   if (error is ProfileLocked) {
     return (title: '需要你的口令', body: '$error');
   }
-  return (title: '无法打开你的健康档案', body: '$error\n\n请重启 App 再试。');
+  return (title: '无法打开你的病历箱', body: '$error\n\n请重启 App 再试。');
 }
 
 /// [ProfileLocked] 错误屏专用的两个动作:「去登录」「切换成员」——见 Task 15
@@ -336,7 +336,7 @@ class ProfileLockedActions extends StatelessWidget {
 ///
 /// 失败也不许挡住启动:它对网络失败本来就静默(见
 /// `AccountFlow.restoreProfileKeys`),这里再包一层 `catchError`,任何没预料到的
-/// 失败都不该把用户摆在一个"无法打开你的健康档案"的错误屏上。
+/// 失败都不该把用户摆在一个"无法打开你的病历箱"的错误屏上。
 @visibleForTesting
 Future<void> runBootSequence({
   required Future<void> Function() restoreAccountSession,
@@ -759,7 +759,7 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('加入档案')),
+      appBar: AppBar(title: const Text('加入病历箱')),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -833,14 +833,14 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
   }
 
   /// 结果页标题——按**实际拿到的角色**说话,不是兑换前猜的那句。owner(代拍
-  /// 转移)是「成为主人」,其余(viewer/editor)是普通的「加入档案」。
+  /// 转移)是「归你了」,其余(viewer/editor)是普通的「加入病历箱」。
   String _resultHeadline(Profile p) =>
-      p.role == 'owner' ? '你已成为「${p.name}」档案的主人' : '已加入「${p.name}」的档案';
+      p.role == 'owner' ? '「${p.name}」的病历箱现在归你了' : '已加入「${p.name}」的病历箱';
 
   String _resultSubtitle(Profile p) {
-    if (p.role == 'owner') return '这份档案现在完全归你所有,原来的账号已自动降为编辑权限。';
+    if (p.role == 'owner') return '这个病历箱现在完全归你,原来那个账号降成「能改」。';
     final exp = p.expiresAt;
-    if (p.role == 'viewer' && exp != null) return '只读,至 ${exp.month}月${exp.day}日';
+    if (p.role == 'viewer' && exp != null) return '只能看,至 ${exp.month}月${exp.day}日';
     return p.role == 'editor' ? '可以一起录入,长期有效。' : '';
   }
 }

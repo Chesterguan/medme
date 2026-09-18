@@ -115,7 +115,7 @@ class ClaimLink {
 class ClaimGone implements Exception {
   const ClaimGone();
   @override
-  String toString() => '这个链接已经用过了,或者过了保留期。如果之前存过,在你的档案里就能找到。';
+  String toString() => '这个链接已经用过了,或者过了保留期。如果之前存过,在你的病历箱里就能找到。';
 }
 
 class ClaimFailed implements Exception {

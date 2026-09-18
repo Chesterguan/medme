@@ -65,7 +65,7 @@ class EphemeralSession {
   static Future<void> deleteDocument(int documentId) =>
       rust_ephemeral.ephemeralDeleteDocument(documentId: documentId);
 
-  /// 标记/取消一份文档「已确认」(详情页「确认这一份」,整份确认,不细到每一项)。
+  /// 标记/取消一份文档「已确认」(详情页「没问题」,整份确认,不细到每一项)。
   static Future<void> setConfirmed({
     required int documentId,
     required bool confirmed,
@@ -79,7 +79,7 @@ class EphemeralSession {
   static Future<List<ConfirmedStatusDto>> confirmedMap() =>
       rust_ephemeral.ephemeralConfirmedMap();
 
-  /// 一份文档详情(还没核对列表「点进一份」的详情页):类型/日期 + 来源文件元信息 +
+  /// 一份病历的详情(还没核对列表「点进一份」的详情页):类型/日期 + 来源文件元信息 +
   /// 识别出来的文字 + 置信度。签名与 `vault.dart` 的 `getDocument` 一致。
   static Future<DocumentDetailDto> getDocument(int documentId) =>
       rust_ephemeral.ephemeralGetDocument(documentId: documentId);

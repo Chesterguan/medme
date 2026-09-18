@@ -42,7 +42,7 @@ enum _ProxyPhase { consent, capture, preview, delivering }
 /// 「代拍」全屏流程(医生/护士专用,Phase 1:本地交付,不含云)。
 /// 同意(签名/按住确认)→ 为这个病人建一个**独立病历箱** → 添加(拍照/相册/文件,
 /// 可多轮混合来源累加)→ **还没核对列表**(每份一行,点进去核对原件+识别内容、逐份点
-/// 「确认这一份」;可随时「继续添加」再累加更多)→ 生成加密文件交付给病人(摘要只
+/// 「没问题」;可随时「继续添加」再累加更多)→ 生成加密文件交付给病人(摘要只
 /// 统计已确认的文档,未确认的原件仍全部进分享包并标注还没核对)。
 ///
 /// **交付后不即焚**:病人留在本机最多 12 小时(医生通常要几小时内写完病历,期间可
@@ -565,7 +565,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     }
   }
 
-  /// 点进一份的详情页:核对原件 + 识别内容,「确认这一份」/ 删除 / 重拍都在那一屏
+  /// 点进一份的详情页:核对原件 + 识别内容,「没问题」/ 删除 / 重拍都在那一屏
   /// 完成(见 `proxy_document_detail.dart`)。回来后按详情页汇报的结果决定下一步:
   /// 有变化(确认或删除)就刷新列表;是「重拍」则刷新后紧接着重新弹取件入口——
   /// 复用现有的 [_pickCaptureSource]/[_ingest] 链路,不在详情页重复一遍取件逻辑。
@@ -595,7 +595,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     if (consent == null) return;
     setState(() {
       _busy = true;
-      _progress = '正在生成认领链接…';
+      _progress = '正在生成取件码…';
       _phase = _ProxyPhase.delivering;
     });
     try {
@@ -1054,7 +1054,7 @@ class _PendingListStep extends StatelessWidget {
                             MedShape.s1,
                           ),
                           child: Text(
-                            '逐份核对',
+                            '核对',
                             style: MedType.caption.copyWith(color: c.ink3),
                           ),
                         ),

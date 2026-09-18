@@ -65,7 +65,7 @@ Future<Uint8List> _renderDicomMaterialized(int sourceFileId) async {
   return renderDicomPng(id: sourceFileId);
 }
 
-/// 文档详情屏:类型/日期/来源 + 识别出来的文字(复用 ReportContent 内容感知渲染)+
+/// 「一份病历」屏(mockup s8):类型/日期/来源 + 识别出来的文字(复用 ReportContent 内容感知渲染)+
 /// 查看原件(图片/PDF/DICOM 各自渲染,其余格式优雅降级不崩)。
 class DocumentDetailScreen extends StatefulWidget {
   final int docId;
@@ -84,7 +84,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除这份记录?'),
-        content: const Text('将从健康档案移除,此操作不可撤销。'),
+        content: const Text('将从病历箱移除,此操作不可撤销。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -143,7 +143,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
     final pending = ReviewState.instance.isPending(widget.docId);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('文档详情'),
+        title: const Text('一份病历'),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
@@ -439,7 +439,7 @@ Future<void> _openOriginal(BuildContext context, SourceFileMetaDto sf) async {
     context: context,
     builder: (ctx) => AlertDialog(
       title: const Text('暂不能预览'),
-      content: Text('此格式($mime)暂不能在手机上预览,原件已安全保存在健康档案里。'),
+      content: Text('此格式($mime)暂不能在手机上预览,原件已安全保存在病历箱里。'),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(ctx),

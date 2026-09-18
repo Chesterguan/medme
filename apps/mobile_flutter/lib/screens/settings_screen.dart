@@ -566,7 +566,7 @@ class _AboutScreenState extends State<AboutScreen> {
   ///
   /// 现在的分工:切成员是**手段**,载入完立刻切回用户载入前正看着的那个人;
   /// 是否要去看示例数据,交给 SnackBar 上的「去看看」——用户自己点了,才在同一次
-  /// 点击里把视角切过去 + 跳到「健康档案」,两件事绑在一起,而不是替他做主。
+  /// 点击里把视角切过去 + 跳到「病历」,两件事绑在一起,而不是替他做主。
   Future<void> _loadDemoData() async {
     setState(() {
       _busy = true;

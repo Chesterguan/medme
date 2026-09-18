@@ -80,7 +80,7 @@ ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
       : ImportReviewDestination.archive;
 }
 
-/// 「健康档案」右上角「+ 导入」触发的添加流程:弹三选一(拍照 / 相册 / 选文件),
+/// 「病历」tab 那颗「添加」触发的添加流程:弹三选一(拍照 / 相册 / 选文件),
 /// 选定后**把这一批交给后台队列就返回**(见 `import_queue.dart`)——识别不再把用户
 /// 钉在一个模态进度框里等,「病历」tab 顶部那几行「识别中」替代了它,每识别完
 /// 一份,那份文档就自己长到时间线上。
