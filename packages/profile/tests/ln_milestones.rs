@@ -19,8 +19,16 @@ const T0: &str = "2024-03-15";
 
 /// 一组 `(日期, 文本)` → 里程碑那块的 `items`。`today` 定在 2026-09-16,与 golden 同一天。
 fn items(docs: &[(&str, String)]) -> Vec<serde_json::Value> {
+    items_ex(docs, None)
+}
+
+/// 同上,外加一份挂在**第一份文档**上的 schema 2 抽取结果(facts 从这里进)。
+fn items_ex(docs: &[(&str, String)], extraction: Option<&str>) -> Vec<serde_json::Value> {
     let pkg = full_pkg();
-    let docs = common::mk_docs(docs);
+    let mut docs = common::mk_docs(docs);
+    if let Some(j) = extraction {
+        docs[0].extraction_json = Some(j);
+    }
     let ev = vec![parser::ProfileEvent {
         kind: "enable".into(),
         package: "sle".into(),
@@ -473,5 +481,64 @@ fn the_section_stays_away_when_there_is_no_kidney_data_at_all() {
             .iter()
             .any(|s| s.kind == "checklist" && s.body.get("items").is_some()),
         "没有肾脏数据就不出这块"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 终审 I2:器官受累那条 fact 能验真了,起算日不再只剩「最早一次处方」那条兜底
+// ---------------------------------------------------------------------------
+
+/// 走的是 `deid::verify` 的**真实出口**,不是手写一份「假装验过」的 JSON ——
+/// 这条测试要证的恰恰是那道闸:`organ:"kidney"` 是 prompt 给的英文词表值,中文
+/// 出院小结上一个字母都找不到,修之前它在文本档整条被丢,`milestone_t0` 的器官
+/// 分支(只认 `!f.unverified`)在真实数据上是死路。
+#[test]
+fn a_verified_organ_involvement_fact_anchors_t0_before_the_first_prescription() {
+    // `date` 仍走逐字(它是原文里的字),所以日期得真的印在这份小结上。
+    const SRC: &str =
+        "出院小结\n入院日期:2024-03-01\n出院诊断:系统性红斑狼疮\n狼疮性肾炎(IV型)\n泼尼松 30mg qd";
+    let v = deid::verify(
+        deid::Extraction {
+            facts: vec![deid::Fact {
+                r#type: "organ_involvement".into(),
+                organ: "kidney".into(),
+                date: "2024-03-01".into(),
+                text: "狼疮性肾炎(IV型)".into(),
+                evidence: "狼疮性肾炎(IV型)".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+        SRC,
+        deid::Mode::Text,
+    );
+    assert_eq!(v.rejected, 0, "词表值 + 逐字 evidence 应当验真");
+    assert!(!v.extraction.facts[0].unverified);
+    let ex = serde_json::to_string(&v.extraction).expect("抽取结果可序列化");
+
+    let docs = course(
+        "2024-03-10",
+        "24小时尿蛋白定量 4.00 g/24h",
+        "2024-06-10",
+        "24小时尿蛋白定量 2.00 g/24h",
+    );
+    let it = items_ex(&docs, Some(&ex));
+    let r = row(&it, "upr_drop_25_3m");
+    assert_eq!(r["t0"], "2024-03-01", "起算日应当取更早的那条器官受累记录");
+    assert!(
+        r["t0_basis"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("最早一条器官受累记录"),
+        "起算日的由来要说出是哪一条,实得:{}",
+        r["t0_basis"]
+    );
+    // 没有 fact 的那份还是退回处方:证明差别真的来自这条 fact,不是包换了。
+    assert_eq!(
+        items(&docs)
+            .iter()
+            .find(|i| i["id"] == "upr_drop_25_3m")
+            .expect("有这一条")["t0"],
+        T0
     );
 }

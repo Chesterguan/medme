@@ -380,3 +380,35 @@ fn a_future_dated_qualitative_result_is_not_called_never_tested() {
         .is_empty());
     assert!(one["points"].as_array().expect("points 是数组").is_empty());
 }
+
+/// 终审 I2:`pregnancy.status` 是 prompt 给的英文词表值(planning|pregnant|
+/// postpartum),中文门诊记录上一个字母都没有 —— 修之前这条在文本档整条被丢,
+/// 妊娠从来没在时间轴上出现过。这里走 `deid::verify` 的**真实出口**,不手写一份
+/// 「假装验过」的 JSON。
+#[test]
+fn a_verified_pregnancy_fact_reaches_the_timeline() {
+    const SRC: &str = "门诊记录\n就诊日期:2026-05-06\n现孕 12 周,产科随诊";
+    let v = deid::verify(
+        deid::Extraction {
+            facts: vec![deid::Fact {
+                r#type: "pregnancy".into(),
+                status: "pregnant".into(),
+                date: "2026-05-06".into(),
+                evidence: "现孕 12 周".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+        SRC,
+        deid::Mode::Text,
+    );
+    assert_eq!(v.rejected, 0, "词表值 + 逐字 evidence 应当验真");
+    let ex = serde_json::to_string(&v.extraction).expect("抽取结果可序列化");
+    let s = sections(&[(TODAY, lab_doc("补体C3 0.4 g/L 0.9-1.8"))], Some(&ex));
+    let e = body(&s, "timeline")["years"][0]["events"][0].clone();
+    assert_eq!(e["type"], "pregnancy");
+    assert_eq!(e["date"], "2026-05-06");
+    // 自己没有 `text` 的类型退回 `evidence`,仍是原文逐字。
+    assert_eq!(e["text"], "现孕 12 周");
+    assert_eq!(e["unverified"], false);
+}

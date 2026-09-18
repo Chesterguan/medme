@@ -143,15 +143,19 @@ pub fn parse_extraction(llm_json: &str) -> Result<Extraction, DeidError> {
 }
 
 /// 字段属于数值(化验的 value/ref_low/ref_high)、名字(化验/药品的 name)、
-/// 单位、异常标志,还是普通文本(其余所有字段)。各类的可接受等价不同,见 [`field_ok`]。
+/// 单位、异常标志、受控词表,还是普通文本(其余所有字段)。各类的可接受等价不同,
+/// 见 [`field_ok`]。
 /// 单位和标志单列出来,是因为它们短到用"全文子串"判定近乎恒真
 /// (`g/L` ⊂ `mg/L`,差 1000 倍;`L` ⊂ 任何一个 `1`)。
+/// `Enum` 单列出来,是因为它的值**根本不在单据上**:prompt 让模型从我们给的英文
+/// 词表里挑一个(`organ`/`status`/`modality`),中文原文里永远查不到它。
 #[derive(Clone, Copy)]
 enum FieldKind {
     Numeric,
     Name,
     Unit,
     Flag,
+    Enum(&'static [&'static str]),
     Text,
 }
 
@@ -565,6 +569,18 @@ fn field_ok(value: &str, src: &Src, mode: Mode, kind: FieldKind) -> bool {
     if let FieldKind::Unit = kind {
         return unit_token_match(src.text, value, matches!(mode, Mode::Image));
     }
+    // 受控词表字段:值来自 **prompt 给的那张表**,不是单据上的字 —— 一份写着
+    // 「狼疮性肾炎(IV型)」的中文出院小结里没有 `kidney` 这七个字母,拿它去查
+    // 原文子串等于把这一族 fact 全判假、静默丢掉(终审 I2)。表里有就算数。
+    // 表外的值不放行、退回逐字那条老路:`biopsy.organ` 在 prompt 里本来就是原文
+    // 自由文本(`"organ":""`),它得继续按原文逐字验。
+    // 这道门只管**取值域**;fact 与原文的绑定仍然只由 `evidence` 那条逐字锚点
+    // 负责,一寸没动。
+    if let FieldKind::Enum(allowed) = kind {
+        if allowed.iter().any(|v| v.eq_ignore_ascii_case(value)) {
+            return true;
+        }
+    }
     if let Mode::Text = mode {
         return match kind {
             // 数值同样要锚点:逐字子串会让 `1.5` 被 `11.5` 收下(fix round 2)
@@ -588,7 +604,9 @@ fn field_ok(value: &str, src: &Src, mode: Mode, kind: FieldKind) -> bool {
                     || digit_bounded_contains(&src.folded_spaced, &fold(value))
             }
         },
-        FieldKind::Text => src.ws.contains(&strip_ws(value)) || src.folded.contains(&fold(value)),
+        FieldKind::Text | FieldKind::Enum(_) => {
+            src.ws.contains(&strip_ws(value)) || src.folded.contains(&fold(value))
+        }
         FieldKind::Name => {
             if src.ws.contains(&strip_ws(value)) {
                 return true;
@@ -652,6 +670,15 @@ const KNOWN_FACT_TYPES: &[&str] = &[
     "vaccination",
     "exam_done",
 ];
+
+/// prompt(`prompts/extract_v2_system.txt`)里写成 `a|b|c` 的那三个受控词表字段的
+/// 允许值,**与 prompt 逐字同一份清单**。改了 prompt 就得改这里:多出来的那个值
+/// 会被当成原文逐字去查,查不到就整条 fact 静默丢掉。
+const ORGAN_VALUES: &[&str] = &[
+    "kidney", "blood", "skin", "joint", "cns", "serosa", "lung", "gi", "eye", "other",
+];
+const PREGNANCY_STATUS_VALUES: &[&str] = &["planning", "pregnant", "postpartum"];
+const IMAGING_MODALITY_VALUES: &[&str] = &["MRI", "CT", "OCT", "DXA", "US", "endoscopy"];
 
 pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
     let src = Src::new(source_text);
@@ -746,8 +773,12 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
     //     凭空造出分数 "51"(finding 2)——`Numeric` 两档都不折叠字母,天然挡住。
     //   * `drug`/`name` 走 `Name`,与 `MedItem.name` 同一条模糊规则,否则同一个
     //     药名在 meds 验真、在 facts 却被打待核(finding 5)。
-    //   * 其余(`organ`/`date*`/`text`/`reason`/`result`/`modality`/`finding`/
-    //     `status`)仍是 `Text`:纯文本字段,没有数字边界或术语模糊的需求。
+    //   * `organ`/`status`/`modality` 走 `Enum`:prompt 把它们定义成英文受控词表,
+    //     中文原文里根本没有 `kidney`/`pregnant`/`MRI` 这些字,按原文逐字查一律
+    //     判假 —— 文本档整条丢、图片档恒「需核对」,里程碑起算日与妊娠时间轴因此
+    //     在真实数据上是死路(终审 I2)。
+    //   * 其余(`date*`/`text`/`reason`/`result`/`finding`)仍是 `Text`:纯文本
+    //     字段,没有数字边界或术语模糊的需求。
     // `evidence` 不进这套字段分派:它是锚点,`field_ok` 对空串恒过、`FieldKind::Text`
     // 图片档还会折叠容错,两条都会把这道最后防线放水(finding 3/4)——空串必须是
     // 硬失败,且两档都要求原文**逐字**(`src.text.contains`,不去空白、不折叠)。
@@ -764,7 +795,7 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
         let ok = evidence_ok
             && type_ok
             && [
-                (&f.organ, FieldKind::Text),
+                (&f.organ, FieldKind::Enum(ORGAN_VALUES)),
                 (&f.date, FieldKind::Text),
                 (&f.date_start, FieldKind::Text),
                 (&f.date_end, FieldKind::Text),
@@ -777,9 +808,9 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
                 (&f.to, FieldKind::Numeric),
                 (&f.name, FieldKind::Name),
                 (&f.value, FieldKind::Numeric),
-                (&f.modality, FieldKind::Text),
+                (&f.modality, FieldKind::Enum(IMAGING_MODALITY_VALUES)),
                 (&f.finding, FieldKind::Text),
-                (&f.status, FieldKind::Text),
+                (&f.status, FieldKind::Enum(PREGNANCY_STATUS_VALUES)),
             ]
             .into_iter()
             .all(|(s, kind)| field_ok(s, &src, mode, kind));
@@ -1448,5 +1479,151 @@ mod tests {
             );
             assert_eq!(v.extraction.facts.len(), 1, "type={t} 应在白名单内");
         }
+    }
+
+    // --- 终审 fix round 1(I2):prompt 写成英文受控词表的字段按词表校验 ---
+
+    /// 词表值 + 逐字 evidence:文本档过,且不带「需核对」。
+    /// 修之前这条在文本档整条被丢 —— 中文小结里没有 `kidney` 这七个字母,而
+    /// `milestone_t0` 的器官分支只认验真的 fact,里程碑起算日因此永远退到
+    /// 「最早一次处方」那条兜底上。
+    #[test]
+    fn text_mode_verifies_an_organ_taken_from_the_prompt_vocabulary() {
+        let f = Fact {
+            r#type: "organ_involvement".into(),
+            organ: "kidney".into(),
+            text: "狼疮性肾炎 IV 型".into(),
+            evidence: "狼疮性肾炎 IV 型".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Text,
+        );
+        assert_eq!(v.extraction.facts.len(), 1, "词表里的值不该判假");
+        assert!(!v.extraction.facts[0].unverified);
+        assert_eq!(v.rejected, 0);
+    }
+
+    /// 同一条在图片档也得是**验真**,不是「留着标需核对」。
+    #[test]
+    fn image_mode_verifies_an_organ_taken_from_the_prompt_vocabulary() {
+        let f = Fact {
+            r#type: "organ_involvement".into(),
+            organ: "kidney".into(),
+            text: "狼疮性肾炎 IV 型".into(),
+            evidence: "狼疮性肾炎 IV 型".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Image,
+        );
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert!(!v.extraction.facts[0].unverified, "词表命中不该标需核对");
+        assert_eq!(v.unverified, 0);
+    }
+
+    /// 词表外的值**不**放行:退回逐字那条老路,原文里也没有它。
+    #[test]
+    fn text_mode_drops_a_fact_whose_organ_is_outside_the_prompt_vocabulary() {
+        let f = Fact {
+            r#type: "organ_involvement".into(),
+            organ: "pancreas".into(), // 词表里没有,原文里也没有
+            evidence: "狼疮性肾炎 IV 型".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Text,
+        );
+        assert!(v.extraction.facts.is_empty(), "词表外的值不许当验真放行");
+        assert_eq!(v.rejected, 1);
+    }
+
+    /// 图片档同理:词表外的 `status` 留着,但必须举着「需核对」。
+    #[test]
+    fn image_mode_flags_a_status_outside_the_prompt_vocabulary() {
+        let f = Fact {
+            r#type: "pregnancy".into(),
+            status: "married".into(), // planning|pregnant|postpartum 之外
+            evidence: "狼疮性肾炎 IV 型".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Image,
+        );
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert!(v.extraction.facts[0].unverified);
+        assert_eq!(v.unverified, 1);
+    }
+
+    /// 另两个词表字段各一条,证明三份清单都接上了。
+    #[test]
+    fn the_other_two_vocabulary_fields_verify_too() {
+        for f in [
+            Fact {
+                r#type: "pregnancy".into(),
+                status: "pregnant".into(),
+                evidence: "狼疮性肾炎 IV 型".into(),
+                ..Default::default()
+            },
+            Fact {
+                r#type: "imaging_finding".into(),
+                modality: "MRI".into(),
+                evidence: "狼疮性肾炎 IV 型".into(),
+                ..Default::default()
+            },
+        ] {
+            let t = f.r#type.clone();
+            let v = verify(
+                Extraction {
+                    facts: vec![f],
+                    ..Default::default()
+                },
+                FACT_SRC,
+                Mode::Text,
+            );
+            assert_eq!(v.extraction.facts.len(), 1, "{t} 的词表值应当验真");
+        }
+    }
+
+    /// `biopsy.organ` 在 prompt 里是**原文自由文本**(`"organ":""`),不是词表 ——
+    /// 词表这道门只是多一条路,老的逐字路不能被它顶掉。
+    #[test]
+    fn a_biopsy_organ_written_verbatim_in_chinese_still_verifies() {
+        let f = Fact {
+            r#type: "biopsy".into(),
+            organ: "狼疮性肾炎".into(),
+            evidence: "狼疮性肾炎 IV 型".into(),
+            ..Default::default()
+        };
+        let v = verify(
+            Extraction {
+                facts: vec![f],
+                ..Default::default()
+            },
+            FACT_SRC,
+            Mode::Text,
+        );
+        assert_eq!(v.extraction.facts.len(), 1);
+        assert_eq!(v.rejected, 0);
     }
 }
