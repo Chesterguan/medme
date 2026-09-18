@@ -882,7 +882,7 @@ void main() {
             .evaluate()
             .map((e) => ((e.widget as ListTile).title as Text).data)
             .toList(),
-        ['打印 / 导出', '急救卡', '我是医生,替病人代拍'],
+        ['导出文件', '急救卡', '我是医生,替病人代拍'],
       );
       // 代拍入口全 App 只有这一句话(Task 15 让医生端主按钮也用它)。
       expect(find.text('病人不用装 App、不用账号'), findsOneWidget);

@@ -49,8 +49,8 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.text('打印 / 导出'));
-    expect([exp, emg, proxy], [true, false, false], reason: '「打印 / 导出」串线了');
+    await tester.tap(find.text('导出文件'));
+    expect([exp, emg, proxy], [true, false, false], reason: '「导出文件」串线了');
     await tester.tap(find.text('急救卡'));
     expect([exp, emg, proxy], [true, true, false], reason: '「急救卡」串线了');
     await tester.tap(find.text('我是医生,替病人代拍'));
@@ -75,7 +75,7 @@ void main() {
     final actions = tester.widget<ForDoctorActions>(
       find.byType(ForDoctorActions),
     );
-    expect(actions.onExport, isNotNull, reason: '「打印 / 导出」没接');
+    expect(actions.onExport, isNotNull, reason: '「导出文件」没接');
     expect(actions.onEmergency, isNotNull, reason: '「急救卡」没接');
     expect(actions.onProxy, isNotNull, reason: '「代拍」没接');
   });

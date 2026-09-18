@@ -9,7 +9,6 @@ import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
-import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/screens/member_detail_screen.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
@@ -62,11 +61,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   PatientProfileDto? _profile;
 
-  /// 载入示例 / 清空时置真,禁用所有操作按钮,防止重复点击(尤其清空——
-  /// 用户反馈过「载入示例后清空点了没反应」,这里确保按钮忙时不可再点,
-  /// 而不是悄悄丢弃点击)。
-  bool _busy = false;
-
   @override
   void initState() {
     super.initState();
@@ -88,55 +82,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() => _profile = p);
     } catch (_) {
       // 状态读取失败不影响本屏其它功能(删成员/清空仍可用),静默忽略即可。
-    }
-  }
-
-  void _showSnack(String text) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(appSnackBar(content: Text(text)));
-  }
-
-  Future<void> _confirmAndResetVault() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('清空所有数据?'),
-        content: const Text(
-          '确定清空全部记录?所有成员的示例数据和已导入病历都会被删除,'
-          '病历箱恢复到初始状态,此操作不可撤销。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
-            child: const Text('清空'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    setState(() => _busy = true);
-    try {
-      await wipeAllData(); // 全清:所有成员 vault + 份数缓存 + 还没核对 + 恢复出厂
-      // 埋点:**无属性**,而且此刻设备上已经什么都不剩了。
-      // 这是没有持久 ID 的情况下我们能看见的最强负面信号(卸载永远看不到),
-      // 而且它在一道二次确认之后 —— 不会是误触。配合上下文的 `tenure_bucket`
-      // 就分得开「第一天就清掉」和「用了一个月才清」,那是两种病。
-      //
-      // 发在 `wipeAllData()` **之后**:清空失败(磁盘故障)不该记成一次清空,
-      // 那是另一件事,由用户看到的错误提示承担。
-      Analytics.track(AnalyticsEvent.dataWiped);
-      await _refresh();
-      _showSnack('已清空');
-    } catch (e) {
-      _showSnack('清空失败:$e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -233,12 +178,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SettingsRow(
                 icon: Icons.key_outlined,
                 title: '口令与恢复码',
-                onTap: _busy ? null : _openAccount,
+                onTap: _openAccount,
               ),
               _SettingsRow(
                 icon: Icons.devices_outlined,
                 title: '我的设备',
-                onTap: _busy ? null : _openAccount,
+                onTap: _openAccount,
               ),
               _SettingsRow(
                 icon: Icons.info_outline,
@@ -249,43 +194,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
-          // ⚠️ 「导出·分享」原本是一个一级 tab。五 tab 信息架构(设计系统 §八)按
-          // 「使用时刻」重排之后,它没有属于自己的时刻:它不是「日常打开」、不是
-          // 「复诊前」、不是「找单子」、更不是急诊室。它是**低频、正式、要联网**的
-          // 一次交付动作,心智恰好落在这个 tab 的定义上 ——「数据主权:我的数据往
-          // 哪去」,和下面的「清空所有数据」是同一件事的两个方向。
-          //
-          // 它没有并进「给医生看」,因为那是两个场景:「给医生看」是本地的、离线的、
-          // 一页纸、三十秒;这里是端到端加密、把**完整病历含原件**交出去。
-          _SectionLabel('给医生看 · 导出'),
-          _SettingsGroup(
-            children: [
-              _SettingsRow(
-                icon: Icons.ios_share_outlined,
-                title: '导出 · 分享',
-                subtitle: '当面出示二维码给医生,或导出可打印文件用于报销、留档',
-                onTap: _busy
-                    ? null
-                    : () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const ExportScreen(),
-                        ),
-                      ),
-              ),
-            ],
-          ),
-          _SectionLabel('删掉全部'),
-          _SettingsGroup(
-            children: [
-              _SettingsRow(
-                icon: Icons.delete_outline,
-                title: '清空所有数据 · 重置病历箱',
-                // 灰字说明与点击后的确认弹窗内容重复,去掉省空间(用户反馈)。
-                danger: true,
-                onTap: _busy ? null : _confirmAndResetVault,
-              ),
-            ],
-          ),
+          // ⚠️ Task 17:「给医生看 · 导出」这一节与下面的「删掉全部」都撤掉了——
+          // 「给医生看」首页那颗方块是导出/出码唯一的门(不在「我」首屏另开一条),
+          // 「导出文件」现在是那一整页里跟着滚的次要一行(`for_doctor_screen.dart`
+          // 的 `ForDoctorActions`);「删掉全部」挪到了「我 → 关于」页面的最后一行
+          // (`AboutScreen`),同一套确认流程原样搬了过去。
         ],
       ),
     );
@@ -756,6 +669,53 @@ class _AboutScreenState extends State<AboutScreen> {
     await Analytics.setEnabled(on);
   }
 
+  /// 「删掉全部」——原是「我」首屏单独一节,Task 17 挪到这里当「关于」页的最后
+  /// 一行:那一屏只在「云端 / 这台手机上的病历」之外还留三条二级入口(口令与
+  /// 恢复码 / 我的设备 / 关于),清空整个病历箱是一年碰不到一次的动作,不该占
+  /// 首屏的位置。确认流程与顺序契约原样保留,见 `test/wipe_all_data_test.dart`。
+  Future<void> _confirmAndResetVault() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清空所有数据?'),
+        content: const Text(
+          '确定清空全部记录?所有成员的示例数据和已导入病历都会被删除,'
+          '病历箱恢复到初始状态,此操作不可撤销。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _busy = true);
+    try {
+      await wipeAllData(); // 全清:所有成员 vault + 份数缓存 + 还没核对 + 恢复出厂
+      // 埋点:**无属性**,而且此刻设备上已经什么都不剩了。
+      // 这是没有持久 ID 的情况下我们能看见的最强负面信号(卸载永远看不到),
+      // 而且它在一道二次确认之后 —— 不会是误触。配合上下文的 `tenure_bucket`
+      // 就分得开「第一天就清掉」和「用了一个月才清」,那是两种病。
+      //
+      // 发在 `wipeAllData()` **之后**:清空失败(磁盘故障)不该记成一次清空,
+      // 那是另一件事,由用户看到的错误提示承担。
+      Analytics.track(AnalyticsEvent.dataWiped);
+      _showSnack('已清空');
+    } catch (e) {
+      _showSnack('清空失败:$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -860,6 +820,18 @@ class _AboutScreenState extends State<AboutScreen> {
               ],
             ),
           ],
+          _SectionLabel('删掉全部'),
+          _SettingsGroup(
+            children: [
+              _SettingsRow(
+                icon: Icons.delete_outline,
+                title: '清空所有数据 · 重置病历箱',
+                // 灰字说明与点击后的确认弹窗内容重复,去掉省空间(用户反馈)。
+                danger: true,
+                onTap: _busy ? null : _confirmAndResetVault,
+              ),
+            ],
+          ),
         ],
       ),
     );

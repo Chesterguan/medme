@@ -163,7 +163,7 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
           // 归 Stage 2。**别照这段注释以为顺序已经对了。**
           //
           // 页脚与底部的分工照 `s4`:「出码给医生看」是主动作,真机上固定在
-          // 底部;「打印 / 导出」「急救卡」「代拍」跟着内容滚(否则固定区在
+          // 底部;「导出文件」「急救卡」「代拍」跟着内容滚(否则固定区在
           // 大字号下会把正文挤没 —— ×3.0 时整块直接溢出)。
           //
           // `VisitSummaryBody` 自己就是一个 `ListView`,**不能**再塞进外层
@@ -225,9 +225,17 @@ class ForDoctorActions extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         // 逐字照 `s4`:急救那颗是「急救卡」。
+        //
+        // 「导出文件」是这一页唯一的次要行,排在固定于底部的「出码」之后——出码
+        // 才是诊室里那个主动作(本地、离线、30 秒),这一行是低频、要联网的
+        // 交付动作(端到端加密、完整病历含原件),Task 17 从「我」首屏搬过来
+        // (那边不再单独放一个导出入口,「给医生看」这颗方块是唯一的门)。
+        // 文案刻意不用「分享」二字——见 `test/glossary_guard_test.dart` 顶部
+        // 关于这个词的收窄说明。
         ListTile(
           leading: const Icon(Icons.print_outlined),
-          title: const Text('打印 / 导出'),
+          title: const Text('导出文件'),
+          subtitle: const Text('报销、留档用的可打印文件'),
           onTap: onExport,
         ),
         ListTile(
