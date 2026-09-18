@@ -30,9 +30,10 @@ fn items(docs: &[(&str, String)]) -> Vec<serde_json::Value> {
     let view = profile::materialize(&docs, &ev, &pkg, common::TODAY.parse().expect("今天"));
     view.sections
         .into_iter()
-        // 两块都是 `checklist`(达标表与里程碑),按 body 的形状分:达标表是
-        // `states`,里程碑是 `items`。
-        .find(|s| s.kind == "checklist" && s.body.get("items").is_some())
+        // 两块都是 `checklist`(达标表与里程碑),**按 `Section::id` 认** —— id 原样
+        // 来自包 `views.sections[].id`。不许靠「body 里有哪个键」去猜:那是隐式契约,
+        // 另一块哪天在 body 里多一个同名键就会静默认错(`view::Section::id` 的文档)。
+        .find(|s| s.id.as_deref() == Some("ln_milestones"))
         .expect("有尿蛋白结果就该出里程碑这块")
         .body["items"]
         .as_array()
@@ -209,6 +210,61 @@ fn the_upcr_milestones_never_read_the_24h_protein_series() {
     ));
     assert_eq!(verdict(&it, "upcr_below_700_12m"), "unknown");
     assert_eq!(verdict(&it, "upcr_below_500_any"), "unknown");
+}
+
+#[test]
+fn a_pre_treatment_result_below_the_target_is_not_a_response() {
+    // 「任一时点」只数**起算日之后**的结果:2024-03-10 那次(T0 = 03-15 之前)就已经
+    // <500,那说明的是起病时蛋白尿本来就不高,不是治疗达到了完全肾应答。
+    let it = items(&course(
+        "2024-03-10",
+        "UPCR       尿蛋白/肌酐比     420   mg/g    0 - 150   ↑",
+        "2025-03-10",
+        "UPCR       尿蛋白/肌酐比     900   mg/g    0 - 150   ↑",
+    ));
+    assert_eq!(verdict(&it, "upcr_below_500_any"), "no");
+    // 答的是起算后最低的那次(900),不是治疗前那个 420。
+    assert_eq!(row(&it, "upcr_below_500_any")["actual"], 900.0);
+    assert_eq!(row(&it, "upcr_below_500_any")["actual_at"], "2025-03-10");
+}
+
+// ---------------------------------------------------------------------------
+// 单位:同一条序列里混了印刷单位时,**不许相除**
+// ---------------------------------------------------------------------------
+
+/// 24h 尿蛋白印成 `g/d`:词典不认这个单位(它只有 `mg/24h` 与 `g/24h`),于是这条
+/// 序列落进 `parser::aggregate::finalize_lab_series` 的分支③ —— 混了印刷单位、又不是
+/// 每个点都换算得出规范值,**每个点各自带自己的印刷单位**。
+#[test]
+fn a_mixed_unit_series_is_never_divided() {
+    let it = items(&course(
+        "2024-03-10",
+        "Upro       尿蛋白定量      4.00   g/24h   0.00 - 0.15   ↑",
+        "2024-06-10",
+        "Upro       尿蛋白定量      0.45   g/d     0.00 - 0.15   ↑",
+    ));
+    // 硬除出来是「降了 88.75%」—— 一个凭空出现的 ✔。必须是未知。
+    assert_eq!(verdict(&it, "upr_drop_25_3m"), "unknown");
+    assert_eq!(row(&it, "upr_drop_25_3m")["reason"], "单位不一致,算不了");
+    assert!(row(&it, "upr_drop_25_3m")["actual"].is_null());
+}
+
+#[test]
+fn a_mixed_unit_gfr_series_is_never_divided() {
+    let it = items(&[
+        (T0, rx_doc("吗替麦考酚酯胶囊 0.75g bid")),
+        (
+            "2024-03-10",
+            lab_doc("UPCR       尿蛋白/肌酐比    800   mg/g    0 - 150   ↑\neGFR       估算肾小球滤过率   100   mL/min/1.73m2   > 90"),
+        ),
+        (
+            "2024-06-10",
+            // `ml/min` 词典不认(大小写与 /1.73m2 都不一样),换算不出规范值。
+            lab_doc("UPCR       尿蛋白/肌酐比    700   mg/g    0 - 150   ↑\neGFR       估算肾小球滤过率    80   ml/min   > 90"),
+        ),
+    ]);
+    assert_eq!(verdict(&it, "gfr_80_baseline"), "unknown");
+    assert_eq!(row(&it, "gfr_80_baseline")["reason"], "单位不一致,算不了");
 }
 
 // ---------------------------------------------------------------------------

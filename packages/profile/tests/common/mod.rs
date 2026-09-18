@@ -340,20 +340,22 @@ pub const MILESTONES: &str = r#"[
    "note":"§E.2 逐字:「an absolute UPCR value of <700 mg/g at 12 months remained unchanged; a change from the range of 500 to 700 mg (referred in the 2019 recommendations) was decided for the sake of simplification」。EULAR 2023 复述 2019 时写的是 500–700 mg/day,与这一条不是同一个数。「12 个月」按 365 天算是包里的换算"},
   {"id":"upcr_below_500_any","kind":"upcr_below","label":"完全肾应答:任一时点 UPCR <500 mg/g",
    "key":"urine_pcr","threshold":500,"canonical_unit":"mg/g",
+   "from":{"organ":"kidney","drug_classes":["mmf","aza","ctx","mtx","cni","belimumab","telitacicept","rtx"]},
    "source":"S8","year":2025,
-   "note":"§E.2 逐字:「Complete renal response should be defined as UPCR <500 mg/g at any time point.」KDIGO 2024(Figure 11)的完全缓解口径是 PCR <0.5 g/g = 同一个数,但它另外要求肾功能在基线 ±10%–15% 内 —— 那一半在 gfr_80_baseline 那条(两份指南的肾功能条件本身也不一样,§E.2 的 ⚠️ 框)"},
+   "note":"§E.2 逐字:「Complete renal response should be defined as UPCR <500 mg/g at any time point.」⚠️ 这里的「任一时点」只数**起算日之后**的结果:治疗开始前就 <500 的那一次说明的是起病时蛋白尿本来就不高,不是治疗达到了完全肾应答。KDIGO 2024(Figure 11)的完全缓解口径是 PCR <0.5 g/g = 同一个数,但它另外要求肾功能在基线 ±10%–15% 内 —— 那一半在 gfr_80_baseline 那条(两份指南的肾功能条件本身也不一样,§E.2 的 ⚠️ 框)"},
   {"id":"upr24_below_500_any","kind":"upcr_below","label":"旧口径(EULAR 2019):24 小时尿蛋白 <500 mg",
    "key":"urine_protein_24h","threshold":500,"canonical_unit":"mg/24h",
+   "from":{"organ":"kidney","drug_classes":["mmf","aza","ctx","mtx","cni","belimumab","telitacicept","rtx"]},
    "source":"S3","year":2019,
-   "note":"§E.2 逐字:「complete renal remission (proteinuria <500 mg/24 hours and SCr within 10% from baseline)」。⚠️ 这一条只答**蛋白尿那一半**:另一半「肌酐在基线 10% 以内」与 EULAR 2025 的「GFR ≥ 基线 80%」是两把不同的尺,包里不把它们混成一条。2019 与 2025 的单位也不同(mg/24h vs mg/g),所以另立一条、各带各的年份"},
+   "note":"§E.2 逐字:「complete renal remission (proteinuria <500 mg/24 hours and SCr within 10% from baseline)」。⚠️ 这一条只答**蛋白尿那一半**:另一半「肌酐在基线 10% 以内」与 EULAR 2025 的「GFR ≥ 基线 80%」是两把不同的尺,包里不把它们混成一条。2019 与 2025 的单位也不同(mg/24h vs mg/g),所以另立一条、各带各的年份。同样只数起算日之后的结果"},
   {"id":"gfr_80_baseline","kind":"gfr_pct_of_baseline","label":"GFR 维持在基线的 ≥80%",
    "key":"egfr","pct":80,"source":"S8","year":2025,
-   "note":"§E.2 逐字:「stabilisation (if not improvement) of GFR to ≥80% of baseline value is desirable within the first 3 months」。⚠️ EULAR 2019/2023 用的是另一把尺(SCr within 10% from baseline),KDIGO 2024 是 ±10%–15% —— 三份不一致(§E.2 的 ⚠️ 框)。基线 = 档案里最早一次有日期的 eGFR"},
+   "note":"§E.2 逐字:「stabilisation (if not improvement) of GFR to ≥80% of baseline value is desirable within the first 3 months」。⚠️ 口径与原文有差:这一行比的是**档案里最近一次**与**最早一次**的比值,既没有原文的「前 3 个月内」这个窗口,中途有没有掉到 80% 以下也看不出来 —— 基线 = 档案里最早一次有日期的 eGFR。另:EULAR 2019/2023 用的是另一把尺(SCr within 10% from baseline),KDIGO 2024 是 ±10%–15%,三份不一致(§E.2 的 ⚠️ 框)"},
   {"id":"biopsy_indication","kind":"biopsy_indication","label":"肾活检指征:蛋白尿 ≥0.5 g/24h 或 UPCR ≥500 mg/g",
    "any_of":[{"key":"urine_protein_24h","threshold":0.5,"canonical_unit":"g/24h"},
              {"key":"urine_pcr","threshold":500,"canonical_unit":"mg/g"}],
    "source":"S8","year":2025,
-   "note":"§E.1 rec 1 逐字:「Kidney biopsy is recommended in every patient with evidence of kidney involvement, especially in those with persistent proteinuria (≥0.5 g/24 h or urine protein-creatinine ratio [UPCR] ≥500 mg/g) (2b/B)」。原文紧接着说这是 indicative threshold:「the 0.5 g/d threshold should be kept as an indicative threshold to avoid potentially unnecessary biopsies, while not preventing biopsies at lower levels of proteinuria, if indicated」。⚠️ 「persistent(持续)」原文没给次数或天数,这一条看的是**最近一次**结果,不代表指南意义上的「持续」;中国 2019 狼疮肾炎指南同一处写的是严格大于(>0.5 g/24 h、>500 mg/g),恰好等于时两份不一致"}]"#;
+   "note":"§E.1 rec 1 逐字:「Kidney biopsy is recommended in every patient with evidence of kidney involvement, especially in those with persistent proteinuria (≥0.5 g/24 h or urine protein-creatinine ratio [UPCR] ≥500 mg/g) (2b/B)」。原文紧接着说这是 indicative threshold:「the 0.5 g/d threshold should be kept as an indicative threshold to avoid potentially unnecessary biopsies, while not preventing biopsies at lower levels of proteinuria, if indicated」。⚠️ 「persistent(持续)」原文没给次数或天数,这一条看的是**最近一次**结果,不代表指南意义上的「持续」;引擎也不给这一次设新旧门槛,两个指标各自的「最近一次」可能相隔很久(日期见每行证据);中国 2019 狼疮肾炎指南同一处写的是严格大于(>0.5 g/24 h、>500 mg/g),恰好等于时两份不一致"}]"#;
 
 /// 与 [`MINIMAL`] 同一个壳,只把 `rules.activity` 填满。section 的标题在
 /// `views.sections` 里(spec §6:标题全来自包,引擎里不写死)。

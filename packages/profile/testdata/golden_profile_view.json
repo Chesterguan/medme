@@ -98,6 +98,7 @@
         ]
       },
       "empty_hint": null,
+      "id": null,
       "kind": "status_card",
       "title": "现行方案"
     },
@@ -246,6 +247,7 @@
         "window_days": 10
       },
       "empty_hint": null,
+      "id": null,
       "kind": "score_card",
       "title": "活动度(化验可算部分)"
     },
@@ -365,6 +367,7 @@
         ]
       },
       "empty_hint": null,
+      "id": null,
       "kind": "reminders",
       "title": "待补 / 逾期"
     },
@@ -1138,6 +1141,7 @@
         "missing": []
       },
       "empty_hint": null,
+      "id": null,
       "kind": "series_chart",
       "title": "指标趋势"
     },
@@ -1147,6 +1151,7 @@
         "years": []
       },
       "empty_hint": null,
+      "id": null,
       "kind": "timeline",
       "title": "病程时间轴"
     },
@@ -1274,6 +1279,7 @@
         ]
       },
       "empty_hint": null,
+      "id": null,
       "kind": "checklist",
       "title": "达标情况(逐条对照)"
     },
@@ -1334,7 +1340,7 @@
             "reason": null,
             "source": "S8",
             "t0": "2024-03-15",
-            "t0_basis": "最早一次免疫抑制剂处方:吗替麦考酚酯",
+            "t0_basis": "最早一次处方:吗替麦考酚酯",
             "verdict": "yes",
             "year": 2025
           },
@@ -1392,7 +1398,7 @@
             "reason": null,
             "source": "S8",
             "t0": "2024-03-15",
-            "t0_basis": "最早一次免疫抑制剂处方:吗替麦考酚酯",
+            "t0_basis": "最早一次处方:吗替麦考酚酯",
             "verdict": "yes",
             "year": 2025
           },
@@ -1436,7 +1442,7 @@
             "reason": null,
             "source": "S8",
             "t0": "2024-03-15",
-            "t0_basis": "最早一次免疫抑制剂处方:吗替麦考酚酯",
+            "t0_basis": "最早一次处方:吗替麦考酚酯",
             "threshold": 700,
             "verdict": "no",
             "year": 2025
@@ -1459,15 +1465,28 @@
                 "values_converted": false
               }
             ],
+            "from": {
+              "drug_classes": [
+                "mmf",
+                "aza",
+                "ctx",
+                "mtx",
+                "cni",
+                "belimumab",
+                "telitacicept",
+                "rtx"
+              ],
+              "organ": "kidney"
+            },
             "id": "upcr_below_500_any",
             "key": "urine_pcr",
             "kind": "upcr_below",
             "label": "完全肾应答:任一时点 UPCR <500 mg/g",
-            "note": "§E.2 逐字:「Complete renal response should be defined as UPCR <500 mg/g at any time point.」KDIGO 2024(Figure 11)的完全缓解口径是 PCR <0.5 g/g = 同一个数,但它另外要求肾功能在基线 ±10%–15% 内 —— 那一半在 gfr_80_baseline 那条(两份指南的肾功能条件本身也不一样,§E.2 的 ⚠️ 框)",
+            "note": "§E.2 逐字:「Complete renal response should be defined as UPCR <500 mg/g at any time point.」⚠️ 这里的「任一时点」只数**起算日之后**的结果:治疗开始前就 <500 的那一次说明的是起病时蛋白尿本来就不高,不是治疗达到了完全肾应答。KDIGO 2024(Figure 11)的完全缓解口径是 PCR <0.5 g/g = 同一个数,但它另外要求肾功能在基线 ±10%–15% 内 —— 那一半在 gfr_80_baseline 那条(两份指南的肾功能条件本身也不一样,§E.2 的 ⚠️ 框)",
             "reason": null,
             "source": "S8",
-            "t0": null,
-            "t0_basis": null,
+            "t0": "2024-03-15",
+            "t0_basis": "最早一次处方:吗替麦考酚酯",
             "threshold": 500,
             "verdict": "yes",
             "year": 2025
@@ -1490,15 +1509,28 @@
                 "values_converted": false
               }
             ],
+            "from": {
+              "drug_classes": [
+                "mmf",
+                "aza",
+                "ctx",
+                "mtx",
+                "cni",
+                "belimumab",
+                "telitacicept",
+                "rtx"
+              ],
+              "organ": "kidney"
+            },
             "id": "upr24_below_500_any",
             "key": "urine_protein_24h",
             "kind": "upcr_below",
             "label": "旧口径(EULAR 2019):24 小时尿蛋白 <500 mg",
-            "note": "§E.2 逐字:「complete renal remission (proteinuria <500 mg/24 hours and SCr within 10% from baseline)」。⚠️ 这一条只答**蛋白尿那一半**:另一半「肌酐在基线 10% 以内」与 EULAR 2025 的「GFR ≥ 基线 80%」是两把不同的尺,包里不把它们混成一条。2019 与 2025 的单位也不同(mg/24h vs mg/g),所以另立一条、各带各的年份",
+            "note": "§E.2 逐字:「complete renal remission (proteinuria <500 mg/24 hours and SCr within 10% from baseline)」。⚠️ 这一条只答**蛋白尿那一半**:另一半「肌酐在基线 10% 以内」与 EULAR 2025 的「GFR ≥ 基线 80%」是两把不同的尺,包里不把它们混成一条。2019 与 2025 的单位也不同(mg/24h vs mg/g),所以另立一条、各带各的年份。同样只数起算日之后的结果",
             "reason": null,
             "source": "S3",
-            "t0": null,
-            "t0_basis": null,
+            "t0": "2024-03-15",
+            "t0_basis": "最早一次处方:吗替麦考酚酯",
             "threshold": 500,
             "verdict": "yes",
             "year": 2019
@@ -1534,7 +1566,7 @@
             "key": "egfr",
             "kind": "gfr_pct_of_baseline",
             "label": "GFR 维持在基线的 ≥80%",
-            "note": "§E.2 逐字:「stabilisation (if not improvement) of GFR to ≥80% of baseline value is desirable within the first 3 months」。⚠️ EULAR 2019/2023 用的是另一把尺(SCr within 10% from baseline),KDIGO 2024 是 ±10%–15% —— 三份不一致(§E.2 的 ⚠️ 框)。基线 = 档案里最早一次有日期的 eGFR",
+            "note": "§E.2 逐字:「stabilisation (if not improvement) of GFR to ≥80% of baseline value is desirable within the first 3 months」。⚠️ 口径与原文有差:这一行比的是**档案里最近一次**与**最早一次**的比值,既没有原文的「前 3 个月内」这个窗口,中途有没有掉到 80% 以下也看不出来 —— 基线 = 档案里最早一次有日期的 eGFR。另:EULAR 2019/2023 用的是另一把尺(SCr within 10% from baseline),KDIGO 2024 是 ±10%–15%,三份不一致(§E.2 的 ⚠️ 框)",
             "pct": 80,
             "reason": null,
             "source": "S8",
@@ -1585,7 +1617,7 @@
             "id": "biopsy_indication",
             "kind": "biopsy_indication",
             "label": "肾活检指征:蛋白尿 ≥0.5 g/24h 或 UPCR ≥500 mg/g",
-            "note": "§E.1 rec 1 逐字:「Kidney biopsy is recommended in every patient with evidence of kidney involvement, especially in those with persistent proteinuria (≥0.5 g/24 h or urine protein-creatinine ratio [UPCR] ≥500 mg/g) (2b/B)」。原文紧接着说这是 indicative threshold:「the 0.5 g/d threshold should be kept as an indicative threshold to avoid potentially unnecessary biopsies, while not preventing biopsies at lower levels of proteinuria, if indicated」。⚠️ 「persistent(持续)」原文没给次数或天数,这一条看的是**最近一次**结果,不代表指南意义上的「持续」;中国 2019 狼疮肾炎指南同一处写的是严格大于(>0.5 g/24 h、>500 mg/g),恰好等于时两份不一致",
+            "note": "§E.1 rec 1 逐字:「Kidney biopsy is recommended in every patient with evidence of kidney involvement, especially in those with persistent proteinuria (≥0.5 g/24 h or urine protein-creatinine ratio [UPCR] ≥500 mg/g) (2b/B)」。原文紧接着说这是 indicative threshold:「the 0.5 g/d threshold should be kept as an indicative threshold to avoid potentially unnecessary biopsies, while not preventing biopsies at lower levels of proteinuria, if indicated」。⚠️ 「persistent(持续)」原文没给次数或天数,这一条看的是**最近一次**结果,不代表指南意义上的「持续」;引擎也不给这一次设新旧门槛,两个指标各自的「最近一次」可能相隔很久(日期见每行证据);中国 2019 狼疮肾炎指南同一处写的是严格大于(>0.5 g/24 h、>500 mg/g),恰好等于时两份不一致",
             "reason": null,
             "source": "S8",
             "t0": null,
@@ -1596,6 +1628,7 @@
         ]
       },
       "empty_hint": null,
+      "id": "ln_milestones",
       "kind": "checklist",
       "title": "狼疮肾炎治疗里程碑"
     }

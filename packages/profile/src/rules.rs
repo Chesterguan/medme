@@ -229,6 +229,7 @@ pub fn activity_section(
         .any(|d| ctx.in_window(d.date, a.window_days));
     Some(crate::view::Section {
         kind: "score_card".into(),
+        id: view_id(pkg, "score_card", None),
         title: view_title(pkg, "score_card", None),
         empty_hint: (window_valid && !any_point && !any_doc).then(|| {
             format!(
@@ -307,20 +308,43 @@ fn weight_sum<'h>(hits: impl IntoIterator<Item = &'h Hit>) -> u32 {
         .fold(0u32, u32::saturating_add)
 }
 
-/// section 的标题按 kind 从包的 `views.sections` 里取(spec §6:顺序、标题、空态文案
-/// 全来自包)。包里没写就 `None` —— 引擎里垫一句中文,「加一个病不发版」这条前提上
-/// 就多了一个例外,而例外只会越来越多。**空标题要是 `null` 不是 `""`**:后者在
-/// JSON 里和「作者写了个空标题」长得一样,渲染层分不出包漏了还是包故意的。
+/// 包 `views.sections` 里对得上这一块的那条配置(spec §6:顺序、标题、空态文案全来
+/// 自包)。
 ///
 /// `id` 是**同一个 kind 出现两次**时的区分符:达标表与狼疮肾炎里程碑都是
-/// `checklist`(复用同一套渲染)。`None` 只认**没写 `id`** 的那一条 —— 按 kind 取
-/// 第一条的话,包里两块的先后一换,达标表就会顶着里程碑的标题出去。
-fn view_title(pkg: &crate::package::Package, kind: &str, id: Option<&str>) -> Option<String> {
+/// `checklist`(复用同一套渲染)。按 kind 取第一条的话,包里两块的先后一换,达标表
+/// 就会顶着里程碑的标题出去。
+///
+/// `id: None` 只认**压根没写 `id` 那个键**的条目:写成 `"id": ""` 的既配不上
+/// `None`、也配不上任何 `Some` —— 那条 section 于是没有标题、没有 id,在界面上一眼
+/// 就看得出包写错了。与 `title` 那条「`null` ≠ `""`」是同一个讲究:一个空串不该被
+/// 当成「作者什么都没写」。
+fn view_section<'p>(
+    pkg: &'p crate::package::Package,
+    kind: &str,
+    id: Option<&str>,
+) -> Option<&'p serde_json::Value> {
     pkg.views
         .sections
         .iter()
-        .find(|s| str_field(s, "kind") == kind && str_field(s, "id") == id.unwrap_or_default())
+        .find(|s| str_field(s, "kind") == kind && s.get("id").and_then(|v| v.as_str()) == id)
+}
+
+/// section 的标题。包里没写就 `None` —— 引擎里垫一句中文,「加一个病不发版」这条
+/// 前提上就多了一个例外,而例外只会越来越多。**空标题要是 `null` 不是 `""`**:
+/// 后者在 JSON 里和「作者写了个空标题」长得一样,渲染层分不出包漏了还是包故意的。
+fn view_title(pkg: &crate::package::Package, kind: &str, id: Option<&str>) -> Option<String> {
+    view_section(pkg, kind, id)
         .and_then(|s| s.get("title").and_then(|t| t.as_str()))
+        .map(str::to_string)
+}
+
+/// section 的 id,原样来自包里那条配置(见 [`crate::view::Section::id`])。包里那条
+/// 没写 id、或包里压根没有这块的配置 → `None`,引擎**不替它编一个** —— 渲染层看到
+/// `null` 就知道这块在包里没有身份,而不是拿一个引擎自造的 id 去对包里的配置。
+fn view_id(pkg: &crate::package::Package, kind: &str, id: Option<&str>) -> Option<String> {
+    view_section(pkg, kind, id)
+        .and_then(|s| s.get("id").and_then(|v| v.as_str()))
         .map(str::to_string)
 }
 
@@ -751,6 +775,7 @@ pub fn states_section(
     }
     Some(crate::view::Section {
         kind: "checklist".into(),
+        id: view_id(pkg, "checklist", None),
         title: view_title(pkg, "checklist", None),
         // 逐条对照永远有意义:未知也是答案,不折叠。
         empty_hint: None,
@@ -1385,6 +1410,7 @@ pub fn status_section(
         && reg.others.is_empty();
     Some(crate::view::Section {
         kind: "status_card".into(),
+        id: view_id(pkg, "status_card", None),
         title: view_title(pkg, "status_card", None),
         empty_hint: (nothing && visit.is_null())
             .then(|| "还没读到处方,下次把处方笺或出院小结拍进来,这里会显示现行方案".to_string()),
@@ -1510,6 +1536,7 @@ pub fn reminders_section(
     });
     Some(crate::view::Section {
         kind: "reminders".into(),
+        id: view_id(pkg, "reminders", None),
         title: view_title(pkg, "reminders", None),
         // 空列表有三种来源:都没到期、都被忽略了、包里的规则都不适用。说「该查的
         // 都查过了」只有第一种成立,另外两种是不实的话。
@@ -2132,6 +2159,7 @@ pub fn series_section(
     }
     Some(crate::view::Section {
         kind: "series_chart".into(),
+        id: view_id(pkg, "series_chart", None),
         title: view_title(pkg, "series_chart", None),
         // 一条线都画不出来才折叠(spec §5.6)。只要有一条,就展开 —— 剩下那些
         // 没查过的由 `missing` 自己说。
@@ -2238,6 +2266,7 @@ pub fn timeline_section(
         .collect();
     Some(crate::view::Section {
         kind: "timeline".into(),
+        id: view_id(pkg, "timeline", None),
         title: view_title(pkg, "timeline", None),
         // 一件事都放不上去、而且保险箱里连一条医嘱都没读到,才说「还没有可以放上
         // 时间轴的记录」。读到过处方却这么说,是一句不实的话 —— 那位用户明明已经
@@ -2356,6 +2385,32 @@ fn usable_points<'c>(
     out
 }
 
+/// 两个点能不能相除 —— 返回 `(前一个, 后一个)` 放在**同一把尺**上的那对数。
+///
+/// **永远不许拿两个不同单位的数相除。** 「同一条序列内单位一致」不是硬不变量:
+/// `parser::aggregate::finalize_lab_series` 的分支③(印刷单位混了、又不是每个点都
+/// 换算得出规范值)明确让**每个点各自带自己的印刷单位**。基线印 `2800 mg/24h`、
+/// 复查印 `0.45 g/24h` 时硬除出来是「降了 99.98%」—— 一个凭空出现的 ✔,方向与本
+/// 模块「宁可算不出来」的原则正好相反。
+///
+/// 两条路,都要求两个点站在同一把尺上:
+/// 1. 两点都有规范值 → 用规范值(词典把它们换到了同一个单位,跨报告可比);
+/// 2. 否则两点印的单位必须是**同一个**(过 `normalize_unit`,`×10^9/L` 与 `10*9/L`
+///    是同一个写法),用纸上那两个数 —— 医生能自己验算的那一对。
+///
+/// 两个都没印单位的点**也不算可比**:没印单位就是没证据说它们同单位,而这一步的
+/// 产物是要送到医生眼前的百分比。都不满足 → `None`,调用方据此答「单位不一致」。
+fn comparable_pair(a: &parser::LabPoint, b: &parser::LabPoint) -> Option<(f64, f64)> {
+    if let (Some(x), Some(y)) = (a.value_canonical, b.value_canonical) {
+        return Some((x, y));
+    }
+    let (Some(ua), Some(ub)) = (a.unit.as_deref(), b.unit.as_deref()) else {
+        return None;
+    };
+    (terminology::normalize_unit(ua) == terminology::normalize_unit(ub))
+        .then_some((a.value, b.value))
+}
+
 /// 这一条里程碑点名了哪几个分析物 key。三种写法都认(与活动度那边同一套约定):
 /// `"key": "x"`、`"any_of": ["x","y"]`、`"any_of": [{"key":"x","threshold":…}]`。
 fn milestone_keys(it: &serde_json::Value) -> Vec<&str> {
@@ -2452,7 +2507,10 @@ fn milestone_t0(
             continue;
         }
         if let Some(d) = m.start.filter(|d| *d <= ctx.today) {
-            offer(d, format!("最早一次免疫抑制剂处方:{}", m.name));
+            // 措辞不替包里那几类药定性:`drug_classes` 里既可能是免疫抑制剂,也可能
+            // 是生物制剂(贝利尤单抗、泰它西普),笼统说「免疫抑制剂」会在某些行上
+            // 是一句不准的话。
+            offer(d, format!("最早一次处方:{}", m.name));
         }
     }
     best
@@ -2487,7 +2545,7 @@ fn baseline_point<'c>(
 /// 问的是到那时为止达到过没有,不是「第 90 天那次是多少」。
 fn drop_pct_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, String)>) -> MsOut {
     let Some((t0, _)) = t0 else {
-        return MsOut::unknown("还不知道从哪天起算(没有肾受累记录,也没读到免疫抑制剂处方)");
+        return MsOut::unknown("还不知道从哪天起算(没有器官受累记录,也没读到包里点名的那几类药)");
     };
     let Some(target) = it.get("drop_pct").and_then(serde_json::Value::as_f64) else {
         return MsOut::unknown("这一条的目标降幅还没核实,暂时比不了");
@@ -2506,6 +2564,8 @@ fn drop_pct_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, 
 
     let mut best: Option<(f64, NaiveDate, &str, Vec<Evidence>)> = None;
     let mut saw_baseline = false;
+    // 窗口里有复查、但它和基线**不在同一把尺上**(见 [`comparable_pair`])。
+    let mut saw_incomparable = false;
     for key in milestone_keys(it) {
         let Some(s) = hospital_series(ctx, key) else {
             continue;
@@ -2513,20 +2573,23 @@ fn drop_pct_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, 
         let Some((b_at, b)) = baseline_point(ctx, s, *t0, window) else {
             continue;
         };
-        // 0 或负的基线除不得(报告印错、OCR 读错都可能)。
-        if !(b.value.is_finite() && b.value > 0.0) {
-            continue;
-        }
         saw_baseline = true;
         for (d, p) in usable_points(ctx, s) {
             // 基线那一次本身不是复查:它跟自己比永远是 0%。
             if d <= b_at || d <= *t0 || d > deadline {
                 continue;
             }
-            // **同一条序列内用印刷值算比值**:序列内所有点保证同单位
-            // (`AnalyteSeries::value` 的硬不变量),比值因此与单位无关,而且这就是
-            // 医生在纸上能自己验算的那两个数。
-            let drop = (b.value - p.value) / b.value * 100.0;
+            // 比值只在**同一把尺**上算:两点都有规范值就用规范值,否则必须是同一个
+            // 印刷单位。混了单位的序列在这里是「算不了」,不是一个 99.98% 的假达标。
+            let Some((base, now)) = comparable_pair(b, p) else {
+                saw_incomparable = true;
+                continue;
+            };
+            // 0 或负的基线除不得(报告印错、OCR 读错都可能)。
+            if !(base.is_finite() && base > 0.0) {
+                continue;
+            }
+            let drop = (base - now) / base * 100.0;
             if best.as_ref().is_none_or(|(cur, _, _, _)| drop > *cur) {
                 best = Some((
                     drop,
@@ -2544,6 +2607,9 @@ fn drop_pct_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, 
         None if !saw_baseline => MsOut::unknown(format!(
             "起算日前后 {window} 天内没有蛋白尿结果,没有基线可比"
         )),
+        // 单位对不上要排在「还没到第 N 天」前面:它说的是**已经有的那张单子**读不了,
+        // 与「还没查」是两件事。
+        None if saw_incomparable => MsOut::unknown("单位不一致,算不了"),
         None if ctx.today <= deadline => {
             MsOut::unknown(format!("还没到第 {by} 天({deadline}),到时候这里会自动算"))
         }
@@ -2556,6 +2622,11 @@ fn drop_pct_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, 
 /// 写了 `by_days` 就是「到第 N 天那次」—— 取窗口内**最后**一次,不是最低的那次:
 /// 「12 个月的目标是 <700」问的是那个时点的水平,中途探到过 600 又回到 900,不算
 /// 达到这条目标。没写 `by_days` 就是「任一时点」,取**第一次**达到的那天。
+///
+/// **两种都只看 T0 之后的点。** §E.2 那句「at any time point」是**治疗应答**语境下
+/// 的任一时点:治疗开始前就 <500 的那一次说明的是「这个人起病时蛋白尿本来就不高」,
+/// 不是「治疗达到了完全肾应答」。所以 T0 拿不到时整条未知,而不是把全部历史点拿来
+/// 碰运气 —— 那个方向上的错会在界面上变成一个凭空出现的 ✔。
 fn below_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, String)>) -> MsOut {
     let key = str_field(it, "key");
     let Some(thr_raw) = it.get("threshold").and_then(serde_json::Value::as_f64) else {
@@ -2575,21 +2646,22 @@ fn below_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, Str
         return MsOut::unknown(format!("这一项的单位换算不成 {unit},比不了"));
     };
     let canon = s.unit_canonical.clone().unwrap_or_default();
-    // 只有换算得出规范值的点能拿来和阈值比。
+    let Some((t0, _)) = t0 else {
+        return MsOut::unknown("还不知道从哪天起算(没有器官受累记录,也没读到包里点名的那几类药)");
+    };
+    // 只有**起算日之后**、且换算得出规范值的点能拿来和阈值比。
     let pts: Vec<(NaiveDate, &parser::LabPoint, f64)> = usable_points(ctx, s)
         .into_iter()
+        .filter(|(d, _)| d > t0)
         .filter_map(|(d, p)| p.value_canonical.map(|v| (d, p, v)))
         .collect();
 
     match it.get("by_days").and_then(serde_json::Value::as_i64) {
         Some(by) => {
-            let Some((t0, _)) = t0 else {
-                return MsOut::unknown("还不知道从哪天起算(没有肾受累记录,也没读到免疫抑制剂处方)");
-            };
             let Some(deadline) = add_days(*t0, by) else {
                 return MsOut::unknown("包里的天数算出来越界了,这一条先不算");
             };
-            match pts.iter().rfind(|(d, _, _)| *d > *t0 && *d <= deadline) {
+            match pts.iter().rfind(|(d, _, _)| *d <= deadline) {
                 Some((d, p, v)) => {
                     MsOut::judged(*v < thr, *v, &canon, *d, key, vec![lab_evidence(s, p, key)])
                 }
@@ -2599,8 +2671,8 @@ fn below_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, Str
                 None => MsOut::unknown(format!("起算后到第 {by} 天之间没有这一项的结果")),
             }
         }
-        // 「任一时点」:第一次达到的那天就是答案;一次都没达到时,把**最低**的那次
-        // 说出来 —— 离目标最近的那个数,比只说一句「没达到」有用。
+        // 「任一时点」:起算后第一次达到的那天就是答案;一次都没达到时,把**最低**的
+        // 那次说出来 —— 离目标最近的那个数,比只说一句「没达到」有用。
         None => match pts.iter().find(|(_, _, v)| *v < thr).or_else(|| {
             pts.iter()
                 .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
@@ -2608,7 +2680,7 @@ fn below_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, Str
             Some((d, p, v)) => {
                 MsOut::judged(*v < thr, *v, &canon, *d, key, vec![lab_evidence(s, p, key)])
             }
-            None => MsOut::unknown("保险箱里还没有能和这个阈值比的结果"),
+            None => MsOut::unknown("起算之后还没有能和这个阈值比的结果"),
         },
     }
 }
@@ -2616,8 +2688,13 @@ fn below_item(ctx: &Ctx<'_>, it: &serde_json::Value, t0: Option<&(NaiveDate, Str
 /// GFR 还剩基线的百分之几(§E.2 逐字:「GFR to ≥80% of baseline value」)。
 ///
 /// **基线 = 保险箱里最早一次有日期的 eGFR**,不是 T0 附近那一次:肾功能的基线是
-/// 「这个人本来的水平」,而档案里最早那次通常就是确诊前后测的。只有一次结果时,
-/// 基线和现在是同一个数,比出来的 100% 什么也没说 —— 如实答未知。
+/// 「这个人本来的水平」,而档案里最早那次通常就是确诊前后测的。
+///
+/// ⚠️ **与原文的口径差**:§E.2 那句是「within the first 3 months」,而这里比的是
+/// **最近一次 ÷ 最早一次**,没有 3 个月的窗口,中途掉到 80% 以下又回来也看不出。
+/// 这条偏差写进了包的 `note`(界面上医生看得见),不是藏在引擎里。
+///
+/// 只有一次结果时,基线和现在是同一个数,比出来的 100% 什么也没说 —— 如实答未知。
 fn gfr_item(ctx: &Ctx<'_>, it: &serde_json::Value) -> MsOut {
     let key = str_field(it, "key");
     let Some(target) = it.get("pct").and_then(serde_json::Value::as_f64) else {
@@ -2630,14 +2707,22 @@ fn gfr_item(ctx: &Ctx<'_>, it: &serde_json::Value) -> MsOut {
     let (Some((base_at, base)), Some((at, now))) = (pts.first(), pts.last()) else {
         return MsOut::unknown("保险箱里还没有这一项的结果,没有基线可比");
     };
-    if base_at == at {
+    // 首尾是同一个点 = 只做过一次;首尾**同一天**但不是同一个点,是另一回事
+    // (同一天两张单子),理由不能混着说 —— 判定同为保守的未知,但话要说对。
+    if std::ptr::eq(*base, *now) {
         return MsOut::unknown("只做过一次,它自己就是基线,比不出变化");
     }
-    if !(base.value.is_finite() && base.value > 0.0) {
+    if base_at == at {
+        return MsOut::unknown("只有同一天的结果,比不出变化");
+    }
+    // 比值只在**同一把尺**上算(与降幅那条同一条理由,见 `comparable_pair`)。
+    let Some((base_v, now_v)) = comparable_pair(base, now) else {
+        return MsOut::unknown("单位不一致,算不了");
+    };
+    if !(base_v.is_finite() && base_v > 0.0) {
         return MsOut::unknown("基线那一次读出来不是个能做分母的数");
     }
-    // 同一条序列内用印刷值算比值(与降幅那条同一条理由)。
-    let pct = now.value / base.value * 100.0;
+    let pct = now_v / base_v * 100.0;
     MsOut::judged(
         pct >= target,
         round1(pct),
@@ -2780,6 +2865,7 @@ pub fn milestones_section(
     }
     Some(crate::view::Section {
         kind: "checklist".into(),
+        id: view_id(pkg, "checklist", Some(MILESTONES_VIEW_ID)),
         title: view_title(pkg, "checklist", Some(MILESTONES_VIEW_ID)),
         // 逐条对照永远有意义,未知也是答案(与达标表同一条)。
         empty_hint: None,

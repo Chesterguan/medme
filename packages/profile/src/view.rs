@@ -17,6 +17,19 @@ pub struct Section {
     /// `timeline` / `checklist` / `handoff`(spec §6)。渲染引擎认不出的 kind
     /// 整块跳过(前向兼容),不报错。
     pub kind: String,
+    /// 这一块在包 `views.sections` 里那条配置的 `id`(spec §6)。
+    ///
+    /// **同一个 kind 会出现两次**:达标表与狼疮肾炎里程碑都是 `checklist`(复用同一
+    /// 套渲染)。渲染层按这个 id 认,**不许靠「body 里有哪个键」去猜** —— 那是隐式
+    /// 契约:`states_section` 哪天在 body 里多一个同名键、或者第三块 `checklist`
+    /// 出现,渲染层就会静默认错。它也是渲染层把这一块对回包里那条 per-section 配置
+    /// (`timeline` 的 `severity_high` 是先例)的唯一钥匙。
+    ///
+    /// `None` = 包里那条没写 id(或包里压根没有这块的配置)。**永远序列化**(不许加
+    /// `skip_serializing_if`):`null` 与「缺这个字段」在 JSON 里要分得开,与 `title`
+    /// 同一条讲究。
+    #[serde(default)]
+    pub id: Option<String>,
     /// 标题来自包的 `views.sections`(spec §6)。`None` = 包里没给这种 kind 写标题 ——
     /// 渲染层自己决定怎么办,引擎不垫一句中文顶上。`null` 与 `""` 有区别:后者在
     /// JSON 里看不出是包漏写了还是作者故意留白。
