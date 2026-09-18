@@ -207,6 +207,9 @@ fn two_steroids_on_the_same_day_are_never_summed_or_picked_between() {
         .all(|x| x["reason"] == "同一天有多条激素记录,请核对"));
     assert!(u.iter().any(|x| x["name"] == "泼尼松"));
     assert!(u.iter().any(|x| x["name"] == "泼尼松龙片"));
+    // `blocked_reason` 是给渲染层的那句话(`unconvertible[].reason` 逐条列的是
+    // 「哪几条」,这条说的是「日剂量这一格为什么是空的」)—— 同一件事,两个读者。
+    assert_eq!(b["gc"]["blocked_reason"], "同一天有多条激素记录,请核对");
 }
 
 #[test]
@@ -558,6 +561,7 @@ fn an_empty_vault_collapses_the_card_instead_of_showing_a_blank_regimen() {
         .expect("开启了就有卡,只是折叠");
     assert!(s.empty_hint.is_some(), "没读到任何处方时折叠成一行");
     assert!(s.body["gc"]["daily_pred_equiv_mg"].is_null());
+    assert_eq!(s.body["gc"]["blocked_reason"], "还没读到用药记录");
 }
 
 #[test]

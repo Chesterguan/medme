@@ -1418,7 +1418,9 @@ fn last_visit(ctx: &Ctx<'_>) -> serde_json::Value {
 /// ```text
 /// {"gc":{"daily_pred_equiv_mg","drug","dose","sources","since","as_of",
 ///        "targets":[{"value","label","source"}],                 // 包里的两条维持线
-///        "unconvertible":[{"name","dose","reason","sources"}]},   // 没算进日剂量的 + 为什么
+///        "unconvertible":[{"name","dose","reason","sources"}],    // 没算进日剂量的 + 为什么
+///        "blocked_reason"},                // `daily_pred_equiv_mg` 为 null 时为什么
+///                                           // (`Gc::blocked_reason`,与 hcq.reason 同一条理由)
 ///  "hcq":{"daily_mg","dose","dose_at","sources","weight_kg","weight_at","weight_source",
 ///         "mg_per_kg","target","target_source","label_rule","label_rule_pending","reason"},
 ///  "others":[{"class","name","latest_dose","since","as_of","sources","infusion"}],
@@ -1465,6 +1467,7 @@ pub fn status_section(
                 "targets": pkg.rules.targets.get("gc").filter(|v| v.is_array())
                     .cloned().unwrap_or_else(|| serde_json::json!([])),
                 "unconvertible": gc.unconvertible,
+                "blocked_reason": gc.blocked_reason,
             },
             "hcq": hcq,
             "others": reg.others,

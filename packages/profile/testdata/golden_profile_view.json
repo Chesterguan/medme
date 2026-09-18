@@ -9,6 +9,7 @@
       "body": {
         "gc": {
           "as_of": "2026-06-15",
+          "blocked_reason": null,
           "daily_pred_equiv_mg": 7.5,
           "dose": "7.5mg qd",
           "drug": "泼尼松",
