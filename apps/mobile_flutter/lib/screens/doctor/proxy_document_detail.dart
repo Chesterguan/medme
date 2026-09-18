@@ -591,7 +591,7 @@ class _ProxyViewerFallback extends StatelessWidget {
   Widget build(BuildContext context) {
     // 全屏看片是黑底(`_ProxyImageViewerScreen` / DICOM),那一档只能用白系文字;
     // 浅底那一档走令牌 `ink2`。
-    final color = light ? MedColors.of(context).ink2 : Colors.white70;
+    final color = light ? MedColors.of(context).ink2 : MedColors.of(context).onDarkFaint;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(MedShape.s6),

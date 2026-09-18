@@ -912,7 +912,7 @@ class _CaptureStep extends StatelessWidget {
         if (busy)
           Positioned.fill(
             child: ColoredBox(
-              color: Colors.black26,
+              color: c.scrimLight,
               child: Center(
                 child: MedCard(
                   child: Padding(
@@ -1117,7 +1117,7 @@ class _PendingListStep extends StatelessWidget {
         if (busy)
           Positioned.fill(
             child: ColoredBox(
-              color: Colors.black26,
+              color: c.scrimLight,
               child: Center(
                 child: MedCard(
                   child: Padding(

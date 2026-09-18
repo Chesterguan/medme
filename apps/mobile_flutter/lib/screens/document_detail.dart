@@ -578,9 +578,9 @@ class _ViewerFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 深色查看器(图片/DICOM 是黑底)上用 white70;浅底上用 ink-2 ——
-    // 原先浅底用的是最浅的 faint,一段要认真读的告知文案不该是最低对比度。
-    final color = light ? MedColors.of(context).ink2 : Colors.white70;
+    // 深色查看器(图片/DICOM 是黑底)上用 onDarkFaint(即 white70);浅底上用
+    // ink-2 —— 原先浅底用的是最浅的 faint,一段要认真读的告知文案不该是最低对比度。
+    final color = light ? MedColors.of(context).ink2 : MedColors.of(context).onDarkFaint;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(MedShape.s6),

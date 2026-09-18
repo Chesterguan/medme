@@ -12,21 +12,17 @@ class MedMe {
   MedMe._();
 
   // 品牌
-  static const Color teal = Color(0xFF1789C1);
-  static const Color tealDark = Color(0xFF1560A8);
-  static const Color tealSoft = Color(0xFFE6F6FA);
+  static const Color teal = Color(0xFF1789C1); // = seal,不动
+  static const Color tealDark = Color(0xFF0E6285); // 原 #1560A8 → sealInk
+  static const Color tealSoft = Color(0xFFEAF5FA); // 原 #E6F6FA → sealWash
 
   // 中性
-  static const Color bg = Color(0xFFF6F8FB);
+  static const Color bg = Color(0xFFF1F4F8); // 原 #F6F8FB → paper
   static const Color panel = Colors.white;
-  static const Color line = Color(0xFFE2E8F0);
-  static const Color ink = Color(0xFF1E293B);
-  // 原 #94A3B8 压 `bg` 只有 2.41:1、压白 2.56:1,远低于 WCAG AA 的 4.5 ——
-  // 而这个色被用在同意屏正文、设置项说明等大段可读文字上,不是纯装饰性弱化。
-  // 保持原色相(H≈215°)与饱和度不变,只压暗明度,取刚好过线的值:
-  // 压 `bg`(比白更难过的底)4.55:1、压白 4.84:1,两者都过 4.5。
-  static const Color faint = Color(0xFF5F7390);
-  static const Color danger = Color(0xFFBE123C);
+  static const Color line = Color(0xFFEEF2F5); // 原 #E2E8F0 → line2(分隔线)
+  static const Color ink = Color(0xFF101A23); // 原 #1E293B
+  static const Color faint = Color(0xFF657581); // 原 #5F7390 → ink3
+  static const Color danger = Color(0xFFBE123C); // 不动
 
   // 代拍专属强调色曾经是橙 `#C2570C` —— **已删**。
   // 它离化验「偏高」的琥珀 `#B45309` 太近(色相差 1°),同一个 app 里一个橙点既
@@ -57,7 +53,8 @@ class MedMe {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      fontFamily: 'PingFang SC',
+      fontFamily: MedType.family,
+      fontFamilyFallback: MedType.fallback,
     );
     // 控件圆角统一 10(规范 §四:按钮、输入框这一档)。
     final controlShape = RoundedRectangleBorder(
@@ -82,19 +79,19 @@ class MedMe {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: c.surface,
-        indicatorColor: c.sealWash,
+        indicatorColor: Colors.transparent,   // mockup 底栏没有药丸指示块,靠颜色区分
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        // 层次靠边框不靠阴影:底栏与内容之间用一道 `line`,不用投影。
         labelTextStyle: WidgetStatePropertyAll(MedType.caption),
       ),
       dividerTheme: DividerThemeData(color: c.line, thickness: 1, space: 1),
+      // brief §形:卡**无边框**,靠阴影分层(旧规范是反过来的:靠边框不靠阴影)。
       cardTheme: CardThemeData(
         color: c.surface,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(MedShape.radiusCard),
-          side: BorderSide(color: c.line),
+          side: BorderSide.none,
         ),
         margin: EdgeInsets.zero,
       ),

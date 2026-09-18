@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:mobile_flutter/analytics.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/theme.dart';
 
@@ -213,7 +214,7 @@ class _ExportScreenState extends State<ExportScreen> {
           if (_busy)
             Positioned.fill(
               child: ColoredBox(
-                color: Colors.black26,
+                color: MedColors.of(context).scrimLight,
                 child: Center(
                   child: Card(
                     child: Padding(

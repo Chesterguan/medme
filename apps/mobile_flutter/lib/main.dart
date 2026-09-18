@@ -786,14 +786,14 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
         // 说得出的只有"会看到对方的病历"这一件事;**具体权限真的还不知道**
         // (见上面的注释:角色由服务端在兑换那一刻才揭晓),所以照实说"下一步
         // 告知",而不是替它猜一个。
-        const Text(
+        Text(
           '接受之后,这份病历会出现在你的 MedMe 里;具体是只能看还是能改,'
           '下一步告诉你。',
-          style: TextStyle(color: Colors.black54, height: 1.5),
+          style: TextStyle(color: MedColors.of(context).scrim, height: 1.5),
         ),
         if (_error != null) ...[
           const SizedBox(height: 16),
-          Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+          Text(_error!, style: TextStyle(color: MedColors.of(context).critical)),
         ],
         const SizedBox(height: 24),
         FilledButton(
@@ -814,14 +814,14 @@ class _GrantRedeemScreenState extends State<GrantRedeemScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Icon(Icons.check_circle, color: Colors.teal, size: 56),
+        Icon(Icons.check_circle, color: MedColors.of(context).seal, size: 56),
         const SizedBox(height: 16),
         Text(_resultHeadline(p), textAlign: TextAlign.center),
         const SizedBox(height: 8),
         Text(
           _resultSubtitle(p),
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.black54),
+          style: TextStyle(color: MedColors.of(context).scrim),
         ),
         const SizedBox(height: 24),
         FilledButton(
