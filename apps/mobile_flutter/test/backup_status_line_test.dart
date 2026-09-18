@@ -146,7 +146,8 @@ void main() {
       });
 
       var ran = 0;
-      await pumpLine(t, retry: () async {
+      final opened = <int>[];
+      await pumpLine(t, openAccount: () => opened.add(1), retry: () async {
         ran++;
         await Future<void>.delayed(const Duration(milliseconds: 30));
         await saveLastSync(ok: true, cloudId: 'prf_1'); // 真实现里这一笔由 `SyncEngine.syncProfile` 记
@@ -157,6 +158,8 @@ void main() {
       await t.tap(find.text('上次没备份成功'));
       await t.pump();
       expect(find.text('正在备份…'), findsOneWidget, reason: '加载中那一态必须看得见,否则像"点了没反应"');
+      // 终审 I3:失败态也**必须**进得去 —— 那是用户最想去关「云端整理」的时刻。
+      expect(opened, [1], reason: '失败态点下去不能只是一颗静默重试按钮');
 
       await t.pumpAndSettle();
       expect(ran, 1);
@@ -172,7 +175,8 @@ void main() {
         await ProfileManager.instance.markCloud('p-1', 'prf_1', 'owner', null);
       });
 
-      await pumpLine(t, retry: () async {
+      final opened = <int>[];
+      await pumpLine(t, openAccount: () => opened.add(1), retry: () async {
         await saveLastSync(ok: false, cloudId: 'prf_1');
         throw Exception('网络抖了一下');
       });
@@ -182,6 +186,26 @@ void main() {
 
       expect(t.takeException(), isNull);
       expect(find.text('上次没备份成功'), findsOneWidget);
+      expect(opened, [1], reason: '终审 I3:重试炸了也照样进得去账号屏');
+    });
+
+    // 终审 I3:可重试的第三态(还没开通成功,`cloudId == null`)—— 三态齐了。
+    testWidgets('I3:「还没开始备份」点下去也进账号屏,同时踢一脚重试', (t) async {
+      AccountSession.instance.loggedIn.value = true;
+      await t.runAsync(() async {
+        await ProfileManager.instance.ensureLoaded();
+        await ProfileManager.instance.factoryReset();
+      });
+
+      var ran = 0;
+      final opened = <int>[];
+      await pumpLine(t, openAccount: () => opened.add(1), retry: () async => ran++);
+
+      expect(find.text('还没开始备份'), findsOneWidget);
+      await t.tap(find.text('还没开始备份'));
+      await t.pumpAndSettle();
+      expect(opened, [1]);
+      expect(ran, 1);
     });
 
     // I6:备份状态是**按成员**的。在这之前那一笔是全局的,于是给 A 同步完之后切到

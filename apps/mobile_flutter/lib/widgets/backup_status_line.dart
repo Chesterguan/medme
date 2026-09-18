@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/account.dart';
@@ -21,8 +23,8 @@ import 'package:mobile_flutter/sync_engine.dart';
 /// 是误读了 mockup,以 `s5` 为准。
 ///
 /// 四态,对应四件用户真的需要知道的事:没登录 / 关掉了 / 上次失败了 / 上次什么时候
-/// 成功的。**失败那条是可点的**(点一下就重试),其余点进下一层(账号屏,
-/// 「云端整理」开关就在那里)。
+/// 成功的。`canRetry` 只决定**点下去顺不顺手踢一脚后台同步**;导航是无条件的 ——
+/// 哪一态点下去都进下一层(账号屏,「云端整理」开关就在那里),见终审 I3。
 @visibleForTesting
 ({String text, bool canRetry}) backupStatus({
   required bool loggedIn,
@@ -190,7 +192,18 @@ class _BackupStatusLineState extends State<BackupStatusLine> {
         style: MedType.secondary.copyWith(color: failed ? c.high : c.ink3),
       ),
       trailing: Icon(Icons.chevron_right, color: c.ink3),
-      onTap: _busy ? null : (s.canRetry ? _retry : _openAccount),
+      // 终审 I3:这一行是四处文案承诺的那条路(首启同意页与 ask sheet 都写着
+      // 「可以在『我 → 云端』关掉」),所以**七态里的哪一态点下去都得进得去**。
+      // 原来可重试的三态(还没开始备份 / 还没备份过 / 上次没备份成功)`onTap`
+      // 只做一次静默重试、永不导航 —— 而失败态恰恰是用户最想进去关它的时刻。
+      // 现在:顺手踢一脚后台同步(结果由 `lastSyncRevision` 自己回到这一行上),
+      // 然后照样进账号屏。
+      onTap: _busy
+          ? null
+          : () {
+              if (s.canRetry) unawaited(_retry());
+              _openAccount();
+            },
     );
   }
 }
