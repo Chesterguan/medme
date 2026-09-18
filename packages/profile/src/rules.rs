@@ -2038,7 +2038,11 @@ fn marker_series(
     } else {
         (Vec::new(), 0)
     };
-    if s.is_none() && qualitative.is_empty() {
+    // `missing` 的意思是**一次都没查过**。定性结果全都是未来日期时,`qualitative`
+    // 是空的、`future_points` 却不是 0 —— 那种情况下说「没查过」是一句不实的话:
+    // 查过了,是那张单子的日期读错了。留成一条只有 `future_points` 的线,让渲染层
+    // 说出来。
+    if s.is_none() && qualitative.is_empty() && future_points == 0 {
         return None;
     }
     let mut points = Vec::new();

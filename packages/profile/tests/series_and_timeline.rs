@@ -197,6 +197,30 @@ fn a_fact_without_its_own_date_falls_back_to_the_document_date() {
 }
 
 #[test]
+fn a_hospitalization_lands_on_the_year_its_admission_date_says() {
+    // 住院那一类的 schema 里**没有** `date`,只有 `date_start`/`date_end`
+    // (`extract_v2_system.txt`)。只认 `date` 的话,每一次住院都会退回文档日期 ——
+    // 一份 2026 年的出院小结会把 2023 年那次住院画在 2026 年那一格。
+    let ex = r#"{"labs":[],"facts":[{"type":"hospitalization","date_start":"2023-04-05",
+                 "date_end":"2023-04-20","reason":"狼疮肾炎","evidence":"因狼疮肾炎住院"}]}"#;
+    let s = sections(&[(TODAY, lab_doc("补体C3 0.4 g/L 0.9-1.8"))], Some(ex));
+    let years = body(&s, "timeline")["years"]
+        .as_array()
+        .expect("years 是数组")
+        .clone();
+    let y = years
+        .iter()
+        .find(|y| y["year"] == 2023)
+        .expect("2023 那一年");
+    assert_eq!(y["events"][0]["type"], "hospitalization");
+    assert_eq!(y["events"][0]["date"], "2023-04-05");
+    assert!(
+        !years.iter().any(|y| y["year"] == 2026),
+        "不许退回文档日期,那次住院不在 2026 年"
+    );
+}
+
+#[test]
 fn a_fact_with_no_date_anywhere_goes_to_its_own_list_not_the_bin() {
     // 文档也没日期时不许丢:丢掉的那条住院记录,用户永远不会知道它没显示。
     let ex = r#"{"labs":[],"facts":[{"type":"hospitalization","date_start":"","date_end":"",
@@ -323,5 +347,26 @@ fn a_qualitative_only_marker_keeps_the_printed_words() {
     assert_eq!(one["qualitative"][0]["value"], "阳性");
     assert_eq!(one["qualitative"][0]["date"], TODAY);
     assert_eq!(one["qualitative"][0]["document_index"], 0);
+    assert!(one["points"].as_array().expect("points 是数组").is_empty());
+}
+
+#[test]
+fn a_future_dated_qualitative_result_is_not_called_never_tested() {
+    // 唯一那次定性结果的日期在今天之后(OCR 读错年份):它不画,但**查过就是查过**。
+    // 落进 `missing`(「包里点了名却一次都没查过」)是一句不实的话。
+    let ex = r#"{"labs":[{"name":"抗dsDNA抗体","value":"阳性","unit":"","ref_low":"",
+                 "ref_high":"","flag":"","unverified":false}],"facts":[]}"#;
+    let s = sections(&[("2027-01-05", lab_doc("抗dsDNA抗体 阳性"))], Some(ex));
+    let g = body(&s, "series_chart");
+    assert!(
+        !missing_keys(&g).contains(&"anti_dsdna".to_string()),
+        "查过了,只是日期在今天之后 —— 不是「一次都没查过」"
+    );
+    let one = one_series(&g, "anti_dsdna");
+    assert_eq!(one["future_points"], 1);
+    assert!(one["qualitative"]
+        .as_array()
+        .expect("qualitative 是数组")
+        .is_empty());
     assert!(one["points"].as_array().expect("points 是数组").is_empty());
 }
