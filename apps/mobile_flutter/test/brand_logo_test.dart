@@ -31,5 +31,9 @@ void main() {
   testWidgets('默认 30px(主页顶栏那一档)', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Center(child: BrandLogo()))));
     expect(tester.getSize(find.byType(BrandLogo)), const Size(30, 30));
+    // 第二个尺寸点:100 那档 22% 恰好等于 22,分不清「按尺寸算」和「写死 22」。
+    final clip = tester.widget<ClipRRect>(find.descendant(
+        of: find.byType(BrandLogo), matching: find.byType(ClipRRect)));
+    expect(clip.borderRadius, BorderRadius.circular(30 * 0.22));   // 6.6
   });
 }
