@@ -148,7 +148,8 @@ const List<String> kWeakEnforced = ['分享', '授权', '导入', '认领'];
 /// 已核实的假阳性,弱闸不报:`link_qr_dialog.dart` 的 `shareLabel` 默认参数
 /// 从未实际渲染——三个调用方(`account_screen.dart`/`member_detail_screen.dart`/
 /// `doctor_claim_link_dialog.dart`)全部覆盖了这个默认值(task-17-report.md 已核实)。
-const Set<String> _weakFalsePositives = {'lib/widgets/link_qr_dialog.dart:33'};
+/// 行号 33→35:task-13b(R27)在这个默认参数之前加了两行 import,行号跟着挪。
+const Set<String> _weakFalsePositives = {'lib/widgets/link_qr_dialog.dart:35'};
 
 /// 一行「引号里含有目标词」,且不是整行注释、也不是只进开发者日志的 `debugPrint`。
 bool _looksUserFacing(String line, String word) {

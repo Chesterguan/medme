@@ -1179,7 +1179,6 @@ class _PendingRow extends StatelessWidget {
     final date = _fmtDate(doc.docDate);
     return MedCard(
       perforated: true,
-      // 还没核对的整卡描琥珀边(加粗到 1.5),核对过的回到普通 line 边。
       child: InkWell(
         onTap: onTap,
         child: Padding(
