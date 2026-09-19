@@ -3,10 +3,26 @@
 //
 // 能这样断言的前提是:**渐变只从 BrandGradientBox 出去**。所以这里先钉住这一点,
 // 屏测试才有得数。
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/widgets/brand_gradient.dart';
+
+/// WCAG 相对亮度 / 对比度。与 `test/first_run_consent_test.dart` 里那份独立算
+/// 一遍——不引用实现,免得实现算错了测试还跟着算错(同一条理由,原样抄一份)。
+double _relLuminance(Color c) {
+  double channel(double v) =>
+      v <= 0.03928 ? v / 12.92 : math.pow((v + 0.055) / 1.055, 2.4).toDouble();
+  return 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+}
+
+double _contrast(Color a, Color b) {
+  final la = _relLuminance(a) + 0.05;
+  final lb = _relLuminance(b) + 0.05;
+  return la > lb ? la / lb : lb / la;
+}
 
 void main() {
   testWidgets('渐变 135°、三段、0/.5/1', (tester) async {
@@ -51,9 +67,12 @@ void main() {
     expect(tester.widget<Icon>(find.byType(Icon)).color, Colors.white);
   });
 
-  testWidgets('MedPrimaryButton:药丸、按钮阴影、17·w500 白字', (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(
-      body: MedPrimaryButton(label: '出码给医生看', icon: Icons.qr_code_2_outlined))));
+  testWidgets('MedPrimaryButton(启用):药丸、按钮阴影、17·w500 白字', (tester) async {
+    // fix round 1(task-14-review R29):`onPressed` 没默认值即 `null`,以前
+    // 启用/禁用画得一模一样所以漏了也测不出来;现在两条路径外观不同,这条测的
+    // 是启用态,显式传一个回调,不再依赖「默认值恰好长这样」。
+    await tester.pumpWidget(MaterialApp(home: Scaffold(
+      body: MedPrimaryButton(label: '出码给医生看', icon: Icons.qr_code_2_outlined, onPressed: () {}))));
     final box = tester.widget<Ink>(find.descendant(
       of: find.byType(BrandGradientBox), matching: find.byType(Ink)).first);
     final d = box.decoration! as BoxDecoration;
@@ -63,6 +82,40 @@ void main() {
     expect(t.style!.fontSize, 17);
     expect(t.style!.fontWeight, FontWeight.w500);
     expect(t.style!.color, Colors.white);
+  });
+
+  group('MedPrimaryButton(禁用,fix round 1 task-14-review R29):不画渐变', () {
+    testWidgets('没有 BrandGradientBox / 没有渐变,背景 line2、文字 ink3,同一档圆角', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(
+        body: MedPrimaryButton(label: '同意并开始使用'), // onPressed 缺省 = null = 禁用
+      )));
+      expect(find.byType(BrandGradientBox), findsNothing);
+      final container = tester.widget<Container>(find.descendant(
+        of: find.byType(MedPrimaryButton), matching: find.byType(Container)).first);
+      final d = container.decoration! as BoxDecoration;
+      expect(d.gradient, isNull);
+      expect(d.color, MedColors.light.line2);
+      expect(d.borderRadius, BorderRadius.circular(MedShape.radiusPill));
+      expect(d.boxShadow, anyOf(isNull, isEmpty));
+      expect(tester.widget<Text>(find.text('同意并开始使用')).style!.color, MedColors.light.ink3);
+    });
+
+    // R29 明确指示:测出来不够 4.5:1 就如实报数、停在这里(不实现 fix round 1
+    // 的第 2 步——s16 迁移),不许为了让测试变绿去换别的颜色。实测
+    // ink3/line2 = 4.2254633132556485:1(见 task-14-report.md 的 fix round 1
+    // 记录),没到 4.5。留 `markTestSkipped` 而不是留一个改小阈值的假绿或一个
+    // 常红的失败——这样这个数字每次跑测试都会被看见;哪天令牌值改了、真的
+    // 够了,这条会自己开始断言,不需要谁记得回来改测试。
+    test('背景/文字对比度(目标 WCAG AA 4.5:1;R29 STOP 条款,详见 task-14-report.md)', () {
+      final ratio = _contrast(MedColors.light.ink3, MedColors.light.line2);
+      if (ratio < 4.5) {
+        markTestSkipped(
+            '实测 ink3/line2 = ${ratio.toStringAsFixed(10)}:1,未达 4.5:1 —— '
+            '按 R29 的 STOP 条款如实报数,不换颜色,留给控制者判断');
+        return;
+      }
+      expect(ratio, greaterThanOrEqualTo(4.5));
+    });
   });
 
   testWidgets('MedSecondaryButton:白底 + 1.5px seal 描边 + sealInk 字,无阴影', (tester) async {

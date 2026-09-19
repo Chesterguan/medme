@@ -3,7 +3,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
+import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/widgets/brand_gradient.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
@@ -39,7 +41,13 @@ void main() {
   });
 
   testWidgets('三张 sheet 在两个尺寸 × 两档字号下不溢出', (tester) async {
+    // fix round 1(task-14-review Important):原来只 pump 了 CloudExtractAskBody
+    // 一家,s6(AddSheetBody)与 s16(FirstRunConsentScreen)一次都没在这个
+    // 矩阵里跑过。补齐,用真文案。
     await expectNoOverflowAtBothSizes(tester,
         const Scaffold(body: SingleChildScrollView(child: CloudExtractAskBody())));
+    await expectNoOverflowAtBothSizes(tester,
+        const Scaffold(body: SingleChildScrollView(child: AddSheetBody())));
+    await expectNoOverflowAtBothSizes(tester, FirstRunConsentScreen(onAgreed: () {}));
   });
 }

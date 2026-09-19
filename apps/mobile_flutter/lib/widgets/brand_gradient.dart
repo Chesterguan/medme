@@ -158,6 +158,15 @@ class PrimaryEntryTile extends StatelessWidget {
 }
 
 /// 主按钮(mockup `.btn`):药丸、渐变、17·w500 白字。
+///
+/// **禁用态**(`onPressed == null`)不画渐变(fix round 1,task-14-review R29):
+/// 换成 `line2` 底 + `ink3` 字的纯色药丸,同一档圆角/内边距,无阴影、无光晕、
+/// 无水波纹。原因:`BrandGradientBox` 的渐变最浅一段压白字实测只有 2.60:1,
+/// 过不了 WCAG AA——但那是渐变边缘,标签实际压在渐变中段(`#1789C1` ≈
+/// 3.9:1,与全 app 每一颗启用态主按钮相同,R11 hero 规则已经接受这个数,不
+/// 在本次改动范围)。真正的缺口只在禁用态:disabled 之前和 enabled 画得一模
+/// 一样,用户分不出还能不能点,而且那份白字落在最浅渐变上时对比度更差。
+/// **启用态渲染一个字没动。**
 class MedPrimaryButton extends StatelessWidget {
   const MedPrimaryButton({super.key, required this.label, this.icon, this.onPressed});
 
@@ -166,20 +175,38 @@ class MedPrimaryButton extends StatelessWidget {
   final VoidCallback? onPressed;
 
   @override
-  Widget build(BuildContext context) => BrandGradientBox(
-    radius: MedShape.radiusPill,
-    shadow: MedBrand.buttonShadow,
-    onTap: onPressed,
-    child: Padding(
-      padding: const EdgeInsets.all(13),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        if (icon != null) ...[Icon(icon, size: 20, color: Colors.white), const SizedBox(width: 8)],
-        Flexible(child: Text(label, textAlign: TextAlign.center,
-          style: MedType.body.copyWith(fontSize: 17, fontWeight: FontWeight.w500,
-              fontVariations: MedType.w500, color: Colors.white))),
-      ]),
-    ),
-  );
+  Widget build(BuildContext context) {
+    if (onPressed == null) {
+      final c = MedColors.of(context);
+      return Container(
+        decoration: BoxDecoration(
+          color: c.line2,
+          borderRadius: BorderRadius.circular(MedShape.radiusPill),
+        ),
+        padding: const EdgeInsets.all(13),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          if (icon != null) ...[Icon(icon, size: 20, color: c.ink3), const SizedBox(width: 8)],
+          Flexible(child: Text(label, textAlign: TextAlign.center,
+            style: MedType.body.copyWith(fontSize: 17, fontWeight: FontWeight.w500,
+                fontVariations: MedType.w500, color: c.ink3))),
+        ]),
+      );
+    }
+    return BrandGradientBox(
+      radius: MedShape.radiusPill,
+      shadow: MedBrand.buttonShadow,
+      onTap: onPressed,
+      child: Padding(
+        padding: const EdgeInsets.all(13),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          if (icon != null) ...[Icon(icon, size: 20, color: Colors.white), const SizedBox(width: 8)],
+          Flexible(child: Text(label, textAlign: TextAlign.center,
+            style: MedType.body.copyWith(fontSize: 17, fontWeight: FontWeight.w500,
+                fontVariations: MedType.w500, color: Colors.white))),
+        ]),
+      ),
+    );
+  }
 }
 
 /// 次按钮(mockup `.btn.sec`):白底 + 1.5px seal 描边 + sealInk 字,**无阴影、无渐变**。

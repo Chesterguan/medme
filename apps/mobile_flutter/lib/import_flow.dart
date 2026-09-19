@@ -94,59 +94,72 @@ Future<ImportRunResult?> showImportSheet(BuildContext context) async {
   final choice = await showModalBottomSheet<ImportChoice>(
     context: context,
     showDragHandle: true,
-    builder: (context) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              MedShape.s4,
-              4,
-              MedShape.s4,
-              MedShape.s1,
-            ),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '添加病历',
-                style: MedType.subtitle.copyWith(color: MedColors.of(context).ink),
-              ),
-            ),
-          ),
-          _SheetTile(
-            icon: Icons.photo_camera_outlined,
-            category: GlossCategory.brand,
-            title: '拍照',
-            subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
-            choice: ImportChoice.camera,
-            // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
-            // 改版后那一排快捷操作整个没了(今天「病历」首页只剩「添加」与
-            // 「给医生看」两颗方块),拍照要多经一次这个选择表才能到达。视觉上
-            // 做成主选项(蓝底块 + `highlighted`)抵消这多出来的一次点击——它
-            // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
-            primary: true,
-          ),
-          _SheetTile(
-            icon: Icons.photo_library_outlined,
-            category: GlossCategory.lab,
-            title: '从相册选',
-            subtitle: '选一张或多张已经拍好的病历照片',
-            choice: ImportChoice.gallery,
-          ),
-          _SheetTile(
-            icon: Icons.folder_open_outlined,
-            category: GlossCategory.neutral,
-            title: '选择文件',
-            subtitle: 'PDF、图片、TXT',
-            choice: ImportChoice.files,
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    ),
+    builder: (context) => const SafeArea(child: AddSheetBody()),
   );
   if (choice == null || !context.mounted) return null;
   return runImport(context, choice);
+}
+
+/// [showImportSheet] 的正文(mockup `s6`)。fix round 1(task-14-review
+/// Important):从 `builder:` 里原样搬出来(纯搬家,内容一字未改)——只有
+/// 提成一个公开 widget,视觉溢出矩阵才 pump 得到这一屏,而不是只测到
+/// `CloudExtractAskBody` 一家。**纯 widget,不碰 `Navigator`**——三个
+/// `_SheetTile.onTap` 各自 `Navigator.of(context).pop(choice)`,这个 widget
+/// 本身不需要知道选完之后去哪儿。
+class AddSheetBody extends StatelessWidget {
+  const AddSheetBody({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            MedShape.s4,
+            4,
+            MedShape.s4,
+            MedShape.s1,
+          ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '添加病历',
+              style: MedType.subtitle.copyWith(color: MedColors.of(context).ink),
+            ),
+          ),
+        ),
+        _SheetTile(
+          icon: Icons.photo_camera_outlined,
+          category: GlossCategory.brand,
+          title: '拍照',
+          subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
+          choice: ImportChoice.camera,
+          // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
+          // 改版后那一排快捷操作整个没了(今天「病历」首页只剩「添加」与
+          // 「给医生看」两颗方块),拍照要多经一次这个选择表才能到达。视觉上
+          // 做成主选项(蓝底块 + `highlighted`)抵消这多出来的一次点击——它
+          // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
+          primary: true,
+        ),
+        _SheetTile(
+          icon: Icons.photo_library_outlined,
+          category: GlossCategory.lab,
+          title: '从相册选',
+          subtitle: '选一张或多张已经拍好的病历照片',
+          choice: ImportChoice.gallery,
+        ),
+        _SheetTile(
+          icon: Icons.folder_open_outlined,
+          category: GlossCategory.neutral,
+          title: '选择文件',
+          subtitle: 'PDF、图片、TXT',
+          choice: ImportChoice.files,
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
 }
 
 /// 跳过三选一,**直接**走某一种取件来源。
@@ -984,8 +997,13 @@ class _SheetTile extends StatelessWidget {
             onTap: () => Navigator.of(context).pop(choice),
           ),
           Padding(
+            // fix round 1(task-14-review Minor):缩进要从 MedSheetOption 自己
+            // 的水平内边距算起(hPad),不是从 0 算起——标题实际起点是
+            // hPad(12) + 图标块(44) + 间距(12) = 68,少算 hPad 会跟标题错位。
+            // 点击区域是上面那一整行图标+标题(MedSheetOption 自带的
+            // InkWell);这句说明文字不参与点击。
             padding: const EdgeInsets.fromLTRB(
-              MedBrand.tileSize + MedShape.s2, 0, MedShape.s2, 0),
+              MedSheetOption.hPad + MedBrand.tileSize + MedShape.s2, 0, MedShape.s2, 0),
             child: Text(subtitle, style: MedType.secondary.copyWith(color: c.ink3)),
           ),
         ],

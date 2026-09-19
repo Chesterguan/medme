@@ -472,6 +472,11 @@ class MedSheetOption extends StatelessWidget {
   final String label; final String? note;
   final bool highlighted; final VoidCallback? onTap;
 
+  /// 圆角块自身的水平内边距(fix round 1,task-14-review Minor)。外部想让
+  /// 别的内容(比如 `import_flow.dart` 的 `_SheetTile` 那句说明)跟标题左对齐,
+  /// 要从这个值算起,不要另写一个数字——两处早晚会对不上。
+  static const double hPad = 12;
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
@@ -484,7 +489,7 @@ class MedSheetOption extends StatelessWidget {
           decoration: BoxDecoration(
             color: highlighted ? MedBrand.bannerBlue : c.paper,
             borderRadius: BorderRadius.circular(MedShape.radiusBanner)),
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          padding: const EdgeInsets.fromLTRB(hPad, 10, hPad, 10),
           child: Row(children: [
             GlossIconTile(icon: icon, category: category),
             const SizedBox(width: MedShape.s2),
