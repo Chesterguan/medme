@@ -132,6 +132,11 @@ class MedColors extends ThemeExtension<MedColors> {
   /// 恒定白,不跟 [ink] 变:深底本身已经是深的,不需要再跟主题切换。
   Color get onDarkFaint => const Color(0xB3FFFFFF);
 
+  /// 深底上比 [onDarkFaint] 更亮一档的说明文字 —— hero 卡「最近就诊」的标签
+  /// (R18,mockup `.hero .rule` 的 label,rgba(255,255,255,.88))。同样恒定白,
+  /// 不跟 [ink] 变。
+  Color get onDarkMeta => const Color(0xE0FFFFFF);
+
   /// 浅色一套。
   static const MedColors light = MedColors(
     ink: Color(0xFF101A23),
@@ -358,6 +363,14 @@ class MedType {
     fontVariations: w500, fontFeatures: tabular,
   );
 
+  /// 22 · 600 · tabular —— hero 卡「最近就诊」的值(R18,mockup `.hero .rule b`)。
+  /// 颜色不在这里定:这张卡的白字规则是全卡统一的确定性规则(R11,见
+  /// `identity_hero_card.dart` 类文档),用处按 `.copyWith(color: Colors.white)`。
+  static const TextStyle heroValue = TextStyle(
+    fontSize: 22, fontWeight: FontWeight.w600,
+    fontVariations: w600, fontFeatures: tabular,
+  );
+
   /// 13 · 400 —— 行元数据、横幅小字(brief §字:两处都是 13)。
   static const TextStyle secondary = TextStyle(fontSize: 13);
 
@@ -447,6 +460,21 @@ class MedBrand {
 
   /// 主卡右上那团弱光晕。
   static const Color heroGlow = Color(0x38FFFFFF);          // rgba(255,255,255,.22)
+
+  /// 主卡头像块(R18,mockup `.hero .tile`):白底 54×54 圆角 14。圆角复用
+  /// [MedShape.radiusBlock](同为 14,「卡内分块」那档,旧版本头像本就在用它)
+  /// ——不再另开一个数值重复的 `heroTileRadius`。inset 底边与投影都是从 mockup
+  /// 逐字抄来的,取代旧版本借用的占位色 `glossBottom`(那是另一块光泽图标块的
+  /// 底部高光,rgba 对不上)。
+  static const double heroTileSize = 54;
+  static const double heroTileLetterSize = 28;
+  /// `inset 0 -2px 0 rgba(22,80,142,.12)`,贴一道 2px 实色边代替(CSS 的 inset
+  /// box-shadow,Flutter 没有)。
+  static const Color heroTileInset = Color(0x1F16508E);
+  /// `0 8px 18px rgba(14,60,100,.35)`。
+  static const List<BoxShadow> heroTileShadow = [
+    BoxShadow(color: Color(0x590E3C64), offset: Offset(0, 8), blurRadius: 18),
+  ];
 
   /// 病历本书脊:180°(上 → 下),两段。
   static const List<Color> spineColors = [Color(0xFF1FB0C6), Color(0xFF16508E)];

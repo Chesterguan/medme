@@ -536,6 +536,18 @@ void main() {
       expect(MedBrand.buttonShadow.single.color, const Color(0x4D16508E)); // rgba(22,80,142,.3)
       expect(MedBrand.navShadow.single.offset, const Offset(0, -6));
     });
+
+    test('头像块令牌(R18,mockup .hero .tile):尺寸/字号/inset/投影', () {
+      expect(MedBrand.heroTileSize, 54);
+      expect(MedBrand.heroTileLetterSize, 28);
+      // 圆角数值上与 MedShape.radiusBlock(14,「卡内分块」那档,头像本来就在
+      // 用它)重复,不另开一个 MedBrand.heroTileRadius。
+      expect(MedShape.radiusBlock, 14);
+      expect(MedBrand.heroTileInset, const Color(0x1F16508E)); // rgba(22,80,142,.12)
+      expect(MedBrand.heroTileShadow.single.color, const Color(0x590E3C64)); // rgba(14,60,100,.35)
+      expect(MedBrand.heroTileShadow.single.offset, const Offset(0, 8));
+      expect(MedBrand.heroTileShadow.single.blurRadius, 18);
+    });
   });
 
   group('MedShape / MedType —— Stage 3 brief §形 §字', () {
@@ -564,8 +576,12 @@ void main() {
       expect(MedType.value.fontFeatures, MedType.tabular);
       expect(MedType.display.fontSize, 30);
       expect(MedType.display.fontWeight, FontWeight.w600);
+      // R18:hero 卡「最近就诊」的值(mockup `.hero .rule b`)。
+      expect(MedType.heroValue.fontSize, 22);
+      expect(MedType.heroValue.fontWeight, FontWeight.w600);
+      expect(MedType.heroValue.fontFeatures, MedType.tabular);
       // 700 不许出现:mockup 里没有一处 Latin/数字用它(见计划「已知分歧 3」)。
-      for (final s in [MedType.display, MedType.value, MedType.title,
+      for (final s in [MedType.display, MedType.value, MedType.heroValue, MedType.title,
                        MedType.subtitle, MedType.body, MedType.secondary, MedType.caption]) {
         // body/secondary 不显式写 fontWeight(null = 默认 w400)—— 同上面
         // 「七档字号」测试一样用 `?? FontWeight.w400`,不能直接 `!`(会在这两个
@@ -601,6 +617,13 @@ void main() {
     test('onDarkFaint 恒定白 70%,不随 ink 变(深底本身已经是深的)', () {
       expect(MedColors.light.onDarkFaint, const Color(0xB3FFFFFF));
       expect(MedColors.dark.onDarkFaint, const Color(0xB3FFFFFF));
+    });
+
+    // 严格说这条是 R18 加的(hero 卡「最近就诊」标签),不是 R5——放在这里是因为
+    // 它和 onDarkFaint 同一类「深底恒定白、不随 ink 变」的令牌。
+    test('onDarkMeta 恒定白 88%,不随 ink 变(R18,hero 卡「最近就诊」标签)', () {
+      expect(MedColors.light.onDarkMeta, const Color(0xE0FFFFFF));
+      expect(MedColors.dark.onDarkMeta, const Color(0xE0FFFFFF));
     });
   });
 }

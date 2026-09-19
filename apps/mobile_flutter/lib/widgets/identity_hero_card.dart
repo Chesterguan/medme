@@ -115,23 +115,20 @@ class IdentityHeroCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: MedType.secondary.copyWith(
                             fontSize: 14,
-                            color: Colors.white.withValues(alpha: 0.88),
+                            color: MedColors.of(context).onDarkMeta,
                           ),
                         ),
                       ),
                       // 数值可能比整行都宽(如 400 宽屏 + 长日期串)。Flexible +
                       // maxLines:1 + ellipsis:让它收缩/截断,而不是把 Row 撑溢出。
+                      // R18:22/600 是 MedType.heroValue(mockup `.hero .rule b`)
+                      // ——颜色不在令牌里,按卡面确定性白字规则(R11)在用处给。
                       Flexible(
                         child: Text(
                           recentVisitText.isEmpty ? '暂无' : recentVisitText,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: MedType.value.copyWith(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w600,
-                            fontVariations: MedType.w600,
-                            color: Colors.white,
-                          ),
+                          style: MedType.heroValue.copyWith(color: Colors.white),
                         ),
                       ),
                     ],
@@ -149,14 +146,31 @@ class IdentityHeroCard extends StatelessWidget {
   }
 }
 
-/// 头像方块:白底 54×54 圆角 14,首字母用 `seal` 色、字重 600(mockup
-/// `.tile` / `.tile.logo span`)。白块上放渐变文字在 Flutter 里要 `ShaderMask`,
-/// 不值得,用实色 seal。
+/// 头像方块:白底 54×54(`MedBrand.heroTileSize`)圆角 14
+/// (`MedShape.radiusBlock`),首字母用 `seal` 色、28 / 600
+/// (`MedBrand.heroTileLetterSize`,mockup `.tile` / `.tile.logo span`)。白块上
+/// 放渐变文字在 Flutter 里要 `ShaderMask`,不值得,用实色 seal。
 ///
-/// mockup 的 `inset 0 -2px 0` 用一道 2px 的底边代替(与 `GlossIconTile` 同一
-/// 手法:CSS 的 inset box-shadow,Flutter 没有,贴一道实色边视觉等价)。brief
-/// 没给这道内阴影的具体色值——复用 `MedBrand.glossBottom`(全 app 唯一一档
-/// 「亮块底部内阴影」令牌,brief 原文本身也是拿 `.tile` 这个类来指认这块头像)。
+/// **R18 根因**:旧版本白底是 `Stack` 里一个没有 `child`、没有显式宽高的
+/// `ColoredBox`。`Stack` 对非 `Positioned` 子项默认 `StackFit.loose`(约束松到
+/// 0),`ColoredBox` 没有 `width`/`height` 参数、也没有 `child` 可借尺寸,只能
+/// 收缩成 `constraints.smallest` = 0×0——白底从来没有真的画出来过,首字母直接
+/// 落在 `HeroCard` 的品牌渐变上;唯一真正占到尺寸的是那道 `Positioned` 的
+/// 底边(`left/right/bottom: 0` + 子项显式 `height: 2`,不受 `fit` 影响),
+/// 于是看起来像「字母下面一道深线,其余都是渐变」。
+///
+/// 换成 `Container`(**不用 `Ink`**——`Ink` 的 decoration 不画在自己的
+/// RenderObject 上,而是登记成最近祖先 `Material` 的一个 ink feature,和
+/// `BrandGradientBox` 那面品牌渐变挤在同一张底层画布上,反而会被渐变盖住,
+/// 见 `brand_gradient.dart` R13 的类似坑)显式给 `width`/`height`,不会再收缩;
+/// `clipBehavior: Clip.antiAlias` 把子内容(那道底边)裁成圆角,`boxShadow` 画
+/// 在 clip 之外,不受影响。
+///
+/// mockup 的 `inset 0 -2px 0 rgba(22,80,142,.12)` 用一道 2px 的底边代替(CSS
+/// 的 inset box-shadow,Flutter 没有,贴一道实色边视觉等价),色值是
+/// `MedBrand.heroTileInset`——取代旧版本借用的占位色 `glossBottom`(那是另一块
+/// 光泽图标块的底部高光,rgba 对不上,当时 brief 没给这块头像的准确值)。投影
+/// `0 8px 18px rgba(14,60,100,.35)` 是 `MedBrand.heroTileShadow`。
 class _Avatar extends StatelessWidget {
   const _Avatar({required this.initial});
 
@@ -164,30 +178,35 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(MedShape.radiusBlock),
-      child: SizedBox(
-        width: 54,
-        height: 54,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            const ColoredBox(color: Colors.white),
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: DecoratedBox(
-                decoration: const BoxDecoration(color: MedBrand.glossBottom),
-                child: const SizedBox(height: 2, width: double.infinity),
-              ),
+    return Container(
+      width: MedBrand.heroTileSize,
+      height: MedBrand.heroTileSize,
+      clipBehavior: Clip.antiAlias,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.all(Radius.circular(MedShape.radiusBlock)),
+        boxShadow: MedBrand.heroTileShadow,
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: DecoratedBox(
+              decoration: const BoxDecoration(color: MedBrand.heroTileInset),
+              child: const SizedBox(height: 2, width: double.infinity),
             ),
-            Text(
-              initial,
-              style: MedType.title.copyWith(color: MedColors.light.seal),
+          ),
+          Text(
+            initial,
+            style: MedType.title.copyWith(
+              fontSize: MedBrand.heroTileLetterSize,
+              color: MedColors.light.seal,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

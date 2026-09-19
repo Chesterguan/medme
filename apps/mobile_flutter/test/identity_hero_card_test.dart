@@ -188,8 +188,13 @@ void main() {
       )));
       expect(tester.widget<Text>(find.textContaining('5 份记录')).style!.color,
           Colors.white.withValues(alpha: 0.88));
+      // R18:这一行的标签改用了 MedColors.onDarkMeta = Color(0xE0FFFFFF) 令牌
+      // (仍是白 88%,只是不再内联)。不能再拿 Colors.white.withValues(alpha:
+      // 0.88) 比:新版 Color 是浮点内部表示,0xE0/255 = 0.878431… 和字面量
+      // 0.88 在 == 下不是同一个浮点数,尽管两者量化到 8 位都是同一个字节
+      // 0xE0,渲染出来是同一个颜色。
       expect(tester.widget<Text>(find.text('最近就诊 · ')).style!.color,
-          Colors.white.withValues(alpha: 0.88));
+          MedColors.light.onDarkMeta);
       expect(tester.widget<Icon>(find.byIcon(Icons.unfold_more)).color,
           Colors.white.withValues(alpha: 0.9));
     });
@@ -222,6 +227,59 @@ void main() {
         reason: '数值也必须在同一个 MergeSemantics 里面,两者才合并成一个节点',
       );
     });
+  });
+
+  group('R18:头像块按 mockup 修白底 54/14/28,「最近就诊」值 22/600', () {
+    testWidgets(
+      '头像白底 54×54/圆角14/投影;首字母 28·600·seal;数值 22·600·白;标签 onDarkMeta',
+      (tester) async {
+        await tester.pumpWidget(wrap(IdentityHeroCard(
+          name: '张建国(示例)',
+          gender: '男',
+          age: '59岁',
+          recordCount: 22,
+          recentVisitDate: '2024-03-01',
+          onSwitchMember: () {},
+        )));
+
+        // 头像白底:旧版本是 Stack 里一个没有 child、没有显式宽高的
+        // ColoredBox——非 Positioned 子项走 StackFit.loose,没有 child 可借
+        // 尺寸,收缩成 0×0,品牌渐变直接透出来。这里钉住渲染尺寸(不止声明值),
+        // 回归了会直接红。
+        final tileFinder = find.byWidgetPredicate((w) =>
+            w is Container &&
+            w.decoration is BoxDecoration &&
+            (w.decoration! as BoxDecoration).color == Colors.white);
+        expect(
+          tileFinder,
+          findsOneWidget,
+          reason: '白底 Container 只有头像这一个——渐变面的光晕用的是 gradient,不是纯色',
+        );
+        expect(
+          tester.getSize(tileFinder),
+          const Size(MedBrand.heroTileSize, MedBrand.heroTileSize),
+        );
+        final tileDeco = tester.widget<Container>(tileFinder).decoration! as BoxDecoration;
+        expect(tileDeco.borderRadius, BorderRadius.circular(MedShape.radiusBlock));
+        expect(tileDeco.boxShadow, MedBrand.heroTileShadow);
+
+        final letterStyle = tester.widget<Text>(find.text('张')).style!;
+        expect(letterStyle.fontSize, MedBrand.heroTileLetterSize);
+        expect(letterStyle.fontWeight, FontWeight.w600);
+        expect(letterStyle.fontVariations, MedType.w600);
+        expect(letterStyle.color, MedColors.light.seal);
+
+        final valueStyle = tester.widget<Text>(find.text('2024-03-01')).style!;
+        expect(valueStyle.fontSize, 22);
+        expect(valueStyle.fontWeight, FontWeight.w600);
+        expect(valueStyle.fontVariations, MedType.w600);
+        expect(valueStyle.color, Colors.white);
+
+        final labelStyle = tester.widget<Text>(find.text('最近就诊 · ')).style!;
+        expect(labelStyle.fontSize, 14);
+        expect(labelStyle.color, MedColors.light.onDarkMeta);
+      },
+    );
   });
 }
 
