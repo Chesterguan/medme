@@ -734,8 +734,6 @@ class _PendingCard extends StatelessWidget {
     final card = MedCard(
       // 这张卡背后就是刚导入的那份原件,点开即达 → 画骑缝线。
       perforated: true,
-      borderColor: c.high,
-      borderWidth: 1.5,
       child: Material(
         color: Colors.transparent,
         child: Column(

@@ -34,7 +34,6 @@ class ImportQueueCard extends StatelessWidget {
           return Padding(
             padding: const EdgeInsets.only(bottom: MedShape.s2),
             child: MedCard(
-              borderColor: running > 0 ? c.seal : c.high,
               child: Padding(
                 padding: const EdgeInsets.all(MedShape.s2),
                 child: Column(

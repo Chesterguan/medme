@@ -1180,8 +1180,6 @@ class _PendingRow extends StatelessWidget {
     return MedCard(
       perforated: true,
       // 还没核对的整卡描琥珀边(加粗到 1.5),核对过的回到普通 line 边。
-      borderColor: confirmed ? c.line : c.high,
-      borderWidth: confirmed ? 1 : 1.5,
       child: Material(
         color: Colors.transparent,
         child: InkWell(

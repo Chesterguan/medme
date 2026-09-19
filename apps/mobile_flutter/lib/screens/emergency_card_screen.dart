@@ -291,8 +291,6 @@ class _AllergySection extends StatelessWidget {
         ),
         const SizedBox(height: MedShape.s1),
         MedCard(
-          borderColor: allergies.isEmpty ? null : c.critical,
-          borderWidth: allergies.isEmpty ? 1 : 1.5,
           child: Padding(
             padding: const EdgeInsets.all(MedShape.s3),
             child: allergies.isEmpty

@@ -242,7 +242,6 @@ class _EntryCard extends StatelessWidget {
     final c = MedColors.of(context);
     return MedCard(
       // 主色描边:这是这一屏的第一块,也是唯一一块「点进去是另一整页」的卡。
-      borderColor: c.seal,
       child: InkWell(
         onTap: onTap,
         child: Padding(

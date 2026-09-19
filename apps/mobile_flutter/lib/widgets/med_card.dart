@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../design_tokens.dart';
+import 'gloss_tile.dart';
 
-/// 设计系统 v1 的三个共用外壳:卡片、骑缝线、状态 pill。
+/// 设计系统 v1 的共用外壳:卡片、骑缝线、状态 pill、横幅。
 ///
 /// 规范正本 `DESIGN-SYSTEM-v1.html`;色值/字号/圆角/间距一律取自
 /// `design_tokens.dart`,这里只负责**怎么摆**,不新增任何裸色值。
 
-/// 标准卡片:`surface` 底 + 一像素 `line` 边框 + 圆角 20 + 全 app 唯一那一档阴影。
+/// 标准卡片:`surface` 底 + 圆角 20 + 阴影分层,**无边框**。
 ///
-/// 层次靠**边框**不靠阴影(规范 §四)——所以这里的阴影极浅,只是把卡从 `paper`
-/// 底上轻轻托起半格,不叠第二档。
+/// Stage 3 视觉令牌 brief §形把 v1 的分层规则整个翻过来了:v1 是「层次靠边框不靠
+/// 阴影」,现在是「卡无边框,靠 `0 6px 18px rgba(16,26,35,.08)`
+/// ([MedBrand.cardShadow]) 把卡从 `paper` 底上托起来分层」。
 ///
 /// [perforated] 是签名元素「骑缝线」:卡顶一道齿孔纹,**只允许出现在「这条数据
 /// 背后有一份原件、并且点得进去」的卡上**(规范 §五)。派生数据卡(身份卡、
@@ -21,8 +23,6 @@ class MedCard extends StatelessWidget {
     super.key,
     required this.child,
     this.perforated = false,
-    this.borderColor,
-    this.borderWidth = 1,
     this.background,
   });
 
@@ -31,12 +31,6 @@ class MedCard extends StatelessWidget {
 
   /// 是否画骑缝线。见类文档:只给「背后有原件、点得进去」的卡。
   final bool perforated;
-
-  /// 边框色,默认 `line`。用于「还没核对」这类需要整卡变色的状态。
-  final Color? borderColor;
-
-  /// 边框宽度,默认 1。状态卡可加粗到 1.5。
-  final double borderWidth;
 
   /// 卡片底色,默认 `surface`。
   final Color? background;
@@ -48,8 +42,7 @@ class MedCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: background ?? c.surface,
         borderRadius: BorderRadius.circular(MedShape.radiusCard),
-        border: Border.all(color: borderColor ?? c.line, width: borderWidth),
-        boxShadow: c.shadow,
+        boxShadow: MedBrand.cardShadow,
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -128,6 +121,15 @@ class MedPill extends StatelessWidget {
     required this.background,
   });
 
+  /// 「需核对」/「看一眼」共用的中性配色(`MedBrand.checkInk` / `checkWash`)。
+  /// R4:这枚配色只在这一处定义,`lab_status.dart` 与 `profile_sections.dart`
+  /// 都调它,不许各写各的裸色值。
+  factory MedPill.check(String text) => MedPill(
+    text: text,
+    foreground: MedBrand.checkInk,
+    background: MedBrand.checkWash,
+  );
+
   final String text;
   final Color foreground;
   final Color background;
@@ -141,6 +143,108 @@ class MedPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(MedShape.radiusPill),
       ),
       child: Text(text, style: MedType.caption.copyWith(color: foreground)),
+    );
+  }
+}
+
+/// 横幅(mockup `.banner`):圆角 16,左边一枚光泽图标块,标题用对应的横幅文字色,
+/// 副标用 ink2;右边一枚 `›`(**只在 [onTap] 非空时画** —— 沿用
+/// `PendingReviewBanner` 既有那条规矩:没有去处就不画箭头)。
+class MedBanner extends StatelessWidget {
+  const MedBanner({
+    super.key,
+    required this.icon,
+    required this.iconCategory,
+    required this.title,
+    this.subtitle,
+    this.amber = false,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final GlossCategory iconCategory;
+  final String title;
+  final String? subtitle;
+
+  /// 蓝(默认)/ 琥珀两色,见 brief §色「横幅」。
+  final bool amber;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final bg = amber ? MedBrand.bannerAmber : MedBrand.bannerBlue;
+    final ink = amber ? MedBrand.bannerAmberInk : MedBrand.bannerBlueInk;
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(MedShape.radiusBanner),
+        child: Container(
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(MedShape.radiusBanner),
+          ),
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          child: Row(
+            children: [
+              GlossIconTile(icon: icon, category: iconCategory),
+              const SizedBox(width: MedShape.s2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: MedType.body.copyWith(
+                        color: ink,
+                        fontWeight: FontWeight.w600,
+                        fontVariations: MedType.w600,
+                      ),
+                    ),
+                    if (subtitle != null)
+                      Text(
+                        subtitle!,
+                        style: MedType.secondary.copyWith(color: c.ink2),
+                      ),
+                  ],
+                ),
+              ),
+              if (onTap != null)
+                Icon(Icons.chevron_right, size: 18, color: ink),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 「示例」标(mockup `.pill.demo`):白底 + 虚线框,**不是**实心 pill —— demo 数据
+/// 需要一眼与真实数据区分开,用「只剩轮廓、没有实色底」的克制画法。
+class MedDemoPill extends StatelessWidget {
+  const MedDemoPill({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: const _DashedBorderPainter(
+        MedBrand.demoBorder,
+        radius: MedShape.radiusPill,
+        dash: 3,
+        gap: 2,
+        strokeWidth: 1,
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.all(Radius.circular(MedShape.radiusPill)),
+        ),
+        child: Text(text, style: MedType.caption.copyWith(color: MedBrand.demoInk)),
+      ),
     );
   }
 }
@@ -168,23 +272,34 @@ class DottedBorderBox extends StatelessWidget {
   }
 }
 
+/// 沿圆角矩形轮廓画虚线,`DottedBorderBox`(空态大框)与 `MedDemoPill`(示例
+/// pill 的小框)共用同一个画法,只是半径/线宽/疏密不同 —— 两套参数化,不写第
+/// 二个近乎重复的 painter 类。
 class _DashedBorderPainter extends CustomPainter {
-  const _DashedBorderPainter(this.color);
+  const _DashedBorderPainter(
+    this.color, {
+    this.radius = MedShape.radiusBlock,
+    this.dash = 6,
+    this.gap = 4,
+    this.strokeWidth = 1.5,
+  });
 
   final Color color;
+  final double radius;
+  final double dash;
+  final double gap;
+  final double strokeWidth;
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
+      ..strokeWidth = strokeWidth;
     final rrect = RRect.fromRectAndRadius(
       Offset.zero & size,
-      const Radius.circular(MedShape.radiusBlock),
+      Radius.circular(radius),
     );
-    // 沿圆角矩形轮廓按 6 实 / 4 虚切段。
-    const dash = 6.0, gap = 4.0;
     for (final metric in (Path()..addRRect(rrect)).computeMetrics()) {
       var d = 0.0;
       while (d < metric.length) {
@@ -196,5 +311,10 @@ class _DashedBorderPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _DashedBorderPainter old) => old.color != color;
+  bool shouldRepaint(covariant _DashedBorderPainter old) =>
+      old.color != color ||
+      old.radius != radius ||
+      old.dash != dash ||
+      old.gap != gap ||
+      old.strokeWidth != strokeWidth;
 }
