@@ -773,40 +773,44 @@ class _SeriesCardState extends State<SeriesCard> {
                         // `.tr .v`)。sparkSVG 是把它用 10px 画在图里的 —— 10 低于
                         // 字阶下限 12,而且画布里的字不跟系统字号放大。放在行里
                         // 既更大也更可放大。
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              fmtLabNumber(last.value),
-                              style: MedType.value.copyWith(
-                                color: labStatusColor(context, status),
+                        //
+                        // Fix round 1(控制者裁定 R19):这一簇原来是
+                        // `Row(mainAxisSize: min)`,长名称 + 长单位在 2× 字号下会
+                        // 把它顶出卡外(`RenderFlex overflowed`)。换成有宽度上限
+                        // 的 `Wrap`——装不下时单位/箭头自己换行,不越界。brief
+                        // §形「单位小字可折到数值下一行」本来就是为这种情况写的,
+                        // 只是之前只在化验行(`LabLine`)接了,这里漏了。
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: MedBrand.trendValueMaxWidth,
+                          ),
+                          child: Wrap(
+                            alignment: WrapAlignment.end,
+                            crossAxisAlignment: WrapCrossAlignment.end,
+                            spacing: 4,
+                            children: [
+                              Text(
+                                fmtLabNumber(last.value),
+                                style: MedType.value.copyWith(
+                                  color: labStatusColor(context, status),
+                                ),
                               ),
-                            ),
-                            if (unit != null && unit.isNotEmpty) ...[
-                              const SizedBox(width: 4),
-                              Padding(
-                                padding: const EdgeInsets.only(top: 6),
-                                child: Text(
+                              if (unit != null && unit.isNotEmpty)
+                                Text(
                                   unit,
                                   style: MedType.secondary.copyWith(color: c.ink3),
                                 ),
-                              ),
-                            ],
-                            const SizedBox(width: 2),
-                            // `▾`/`▴`:mockup 用一个文字字形,这里改用 Icon——
-                            // 与本文件其余展开/收起箭头(`_TimelineItem` 的
-                            // `expand_more`/`expand_less`)同一个画法,不额外
-                            // 造一个新的可见字符串。
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Icon(
+                              // `▾`/`▴`:mockup 用一个文字字形,这里改用 Icon——
+                              // 与本文件其余展开/收起箭头(`_TimelineItem` 的
+                              // `expand_more`/`expand_less`)同一个画法,不额外
+                              // 造一个新的可见字符串。
+                              Icon(
                                 _expanded ? Icons.expand_less : Icons.expand_more,
                                 size: 18,
                                 color: c.ink3,
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -1000,11 +1004,18 @@ class _RefLegend extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     return Row(
+      // Fix round 1(R19):原来是 `mainAxisSize: min` + 裸 `Text`——一句长参考
+      // 区间图例(`"参考区间 ... · 出自化验单原件"`)在这个 Row 里没有宽度上限,
+      // 会把整行挤出卡外。文字不能拿宽度上限硬砍(那是「化验行 4px 左色条」同一条
+      // 「单位小字可折到数值下一行」的精神,不是删字),所以让色块非 flex、文字
+      // `Expanded` 吃掉剩余宽度、允许自己换行——色块位置不受影响,行只会变高。
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
           width: 16,
           height: 10,
+          margin: const EdgeInsets.only(top: 2),
           decoration: BoxDecoration(
             color: c.sealWash,
             border: Border.all(color: c.ink3),
@@ -1012,7 +1023,7 @@ class _RefLegend extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 4),
-        Text(text, style: style),
+        Expanded(child: Text(text, style: style, softWrap: true)),
       ],
     );
   }

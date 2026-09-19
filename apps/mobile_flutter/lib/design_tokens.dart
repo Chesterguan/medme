@@ -529,6 +529,12 @@ class MedBrand {
   static const Color timelineLine = Color(0xFFDCE3EA);
   static const Color expandedChartBg = Color(0xFFF7FAFC);
 
+  /// 趋势行右侧值簇的最大宽度(≈ 375pt 行宽的 40%);超过就把单位折到数值下
+  /// 一行(brief §形 化验行)。Fix round 1(控制者裁定 R19):2× 字号下长名称 +
+  /// 长单位(「抗核抗体谱定量(ANA)」+「mmol/L」)会把这一簇顶出卡外,给它一个
+  /// 硬上限、允许换行,而不是让它继续用 `Row(mainAxisSize: min)` 硬挤一行。
+  static const double trendValueMaxWidth = 150;
+
   // ── 阴影(五档,逐字抄 mockup)────────────────────────────
   static const List<BoxShadow> cardShadow = [
     BoxShadow(color: Color(0x14101A23), offset: Offset(0, 6), blurRadius: 18),

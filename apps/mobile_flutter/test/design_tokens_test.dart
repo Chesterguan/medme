@@ -522,6 +522,11 @@ void main() {
       expect(MedBrand.expandedChartBg, const Color(0xFFF7FAFC));
     });
 
+    // Fix round 1(R19):趋势行右侧值簇的换行上限——Task 9 review 的溢出根因。
+    test('趋势行右侧值簇的最大宽度', () {
+      expect(MedBrand.trendValueMaxWidth, 150);
+    });
+
     test('五档阴影,逐字', () {
       expect(MedBrand.cardShadow.single.blurRadius, 18);
       expect(MedBrand.cardShadow.single.offset, const Offset(0, 6));
