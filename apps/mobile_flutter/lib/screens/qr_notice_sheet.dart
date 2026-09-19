@@ -11,6 +11,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
 
 /// 逐字文案。**单独拎成常量**,让测试和这一屏引用同一份字符串 —— 两处各写一遍,
 /// 改一处忘一处时测试反而是绿的。
@@ -60,24 +62,24 @@ class QrNoticeBody extends StatelessWidget {
           const Text(
             // `s13` 逐字。
             '第一次出码,说一句',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            style: MedType.subtitle,
           ),
           const SizedBox(height: 12),
-          const Text(kQrNoticeText, style: TextStyle(height: 1.6)),
+          Text(kQrNoticeText, style: MedType.body.copyWith(fontSize: 15, height: 1.6)),
           const SizedBox(height: 24),
           Row(
             children: [
               Expanded(
-                child: FilledButton(
+                child: MedSecondaryButton(
+                  label: '先不出',
                   onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('先不出'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: FilledButton(
+                child: MedPrimaryButton(
+                  label: '好,出码',
                   onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('好,出码'),
                 ),
               ),
             ],

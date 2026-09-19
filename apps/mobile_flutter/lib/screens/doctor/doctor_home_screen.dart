@@ -15,6 +15,8 @@ import 'package:mobile_flutter/screens/doctor/proxy_intake_flow.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 
 /// A3b:「病人授权给我的档案」列哪些成员 —— 纯函数,好单独钉住。
@@ -239,42 +241,47 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                 MedShape.s5,
                 MedShape.s1,
               ),
-              child: Column(
-                children: [
-                  CircleAvatar(
-                    radius: 34,
-                    backgroundColor: c.proxyWash,
-                    child: Icon(
-                      Icons.medical_services_outlined,
-                      color: c.proxy,
-                      size: 32,
+              // s14 的一屏一处品牌渐变:这一屏唯一的 HeroCard。
+              child: HeroCard(
+                child: Column(
+                  children: [
+                    CircleAvatar(
+                      radius: 34,
+                      backgroundColor: c.proxyWash,
+                      child: Icon(
+                        Icons.medical_services_outlined,
+                        color: c.proxy,
+                        size: 32,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: MedShape.s2),
-                  Text('代拍', style: MedType.title.copyWith(color: c.ink)),
-                  const SizedBox(height: 6),
-                  Text(
-                    '当面征得同意后拍摄病人的纸质病历材料,拍完生成一个取件码让病人当场扫走;'
-                    '网络不畅时退回加密文件+口令。本机最多留 12 小时,到时间自动删。',
-                    textAlign: TextAlign.center,
-                    style: MedType.secondary.copyWith(
-                      color: c.ink2,
-                      height: 1.5,
+                    const SizedBox(height: MedShape.s2),
+                    Text('代拍', style: MedType.title.copyWith(color: Colors.white)),
+                    const SizedBox(height: 6),
+                    Text(
+                      '当面征得同意后拍摄病人的纸质病历材料,拍完生成一个取件码让病人当场扫走;'
+                      '网络不畅时退回加密文件+口令。本机最多留 12 小时,到时间自动删。',
+                      textAlign: TextAlign.center,
+                      style: MedType.secondary.copyWith(
+                        color: c.onDarkMeta,
+                        height: 1.5,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: MedShape.s4),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: FilledButton.icon(
-                      // 一屏唯一的主按钮:紫色纯色不用渐变(规范 §六)。
-                      style: FilledButton.styleFrom(backgroundColor: c.proxy),
-                      onPressed: _startCapture,
-                      icon: const Icon(Icons.camera_alt_outlined),
-                      label: const Text('我是医生,替病人代拍'),
+                    const SizedBox(height: MedShape.s4),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 54,
+                      child: FilledButton.icon(
+                        // 一屏唯一的主按钮:紫色纯色不用渐变(规范 §六)。代拍
+                        // 主色 proxy 原样保留——brief 没动它,紫也不是品牌渐变,
+                        // 不占这一屏 hero:1 的名额。
+                        style: FilledButton.styleFrom(backgroundColor: c.proxy),
+                        onPressed: _startCapture,
+                        icon: const Icon(Icons.camera_alt_outlined),
+                        label: const Text('我是医生,替病人代拍'),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
             PatientGrantedSection(profiles: _granted, onTap: _openGranted),
@@ -367,10 +374,9 @@ class PatientGrantedSection extends StatelessWidget {
             MedCard(
               child: ListTile(
                 key: Key('granted_${p.id}'),
-                leading: CircleAvatar(
-                  backgroundColor: c.proxyWash,
-                  child: Icon(Icons.folder_shared_outlined, size: 19, color: c.proxy),
-                ),
+                // 「med 文件」:这是病人授权给医生看的一份病历文件(brief §形
+                // 光泽图标块语汇,med 类别)。
+                leading: const GlossIconTile(icon: Icons.description_outlined, category: GlossCategory.med),
                 title: Text(p.name, style: MedType.subtitle.copyWith(color: c.ink)),
                 subtitle: Text(
                   patientGrantedSubtitle(p),
@@ -417,16 +423,9 @@ class _PatientRow extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Container(
-                width: 36,
-                height: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: c.proxyWash,
-                  borderRadius: BorderRadius.circular(MedShape.radiusControl),
-                ),
-                child: Icon(Icons.person_outline, size: 19, color: c.proxy),
-              ),
+              // 「lab 相机」:这一行是拍下来的病人材料(brief §形 光泽图标块
+              // 语汇,lab 类别 —— 与化验单共用同一档只是借色,不代表这是化验)。
+              const GlossIconTile(icon: Icons.camera_alt_outlined, category: GlossCategory.lab),
               const SizedBox(width: MedShape.s2),
               Expanded(
                 child: Column(

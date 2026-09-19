@@ -125,7 +125,15 @@ void main() {
     testWidgets('MedDemoPill:白底 + 虚线框 + 灰字', (tester) async {
       await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MedDemoPill(text: '示例'))));
       expect(tester.widget<Text>(find.text('示例')).style!.color, MedBrand.demoInk);
-      expect(find.byType(CustomPaint), findsWidgets);   // 虚线自己画
+      // R9:测试名字说了「白底」,但原来没有断言真的验过 —— 补上。
+      final d = tester.widget<Container>(find.descendant(
+        of: find.byType(MedDemoPill), matching: find.byType(Container)).first)
+        .decoration! as BoxDecoration;
+      expect(d.color, Colors.white);
+      // 虚线框自己画:CustomPaint 存在,而且真的带了一个 painter(不是占位)。
+      final paint = tester.widget<CustomPaint>(find.descendant(
+        of: find.byType(MedDemoPill), matching: find.byType(CustomPaint)).first);
+      expect(paint.painter, isNotNull);
     });
   });
 

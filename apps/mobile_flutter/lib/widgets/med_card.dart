@@ -372,6 +372,97 @@ class MedDemoPill extends StatelessWidget {
   }
 }
 
+/// 输入框/信息面板(mockup `.field`):白底、圆角 16、卡阴影、17 号字。
+class MedFieldPanel extends StatelessWidget {
+  const MedFieldPanel({super.key, required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(color: Colors.white,
+      borderRadius: BorderRadius.circular(MedShape.radiusBanner),
+      boxShadow: MedBrand.cardShadow),
+    padding: const EdgeInsets.all(15),
+    child: DefaultTextStyle.merge(
+      style: MedType.body.copyWith(fontSize: 17, color: MedColors.of(context).ink3),
+      child: child),
+  );
+}
+
+/// 恢复码框(mockup `.code`):等宽 20 号、字距 .1em、paper 底、sealInk 字、圆角 14。
+///
+/// **字距单位是逻辑像素不是 em**(Flutter 的老坑):.1em × 20px = 2.0。
+class RecoveryCodeBox extends StatelessWidget {
+  const RecoveryCodeBox({super.key, required this.code});
+  final String code;
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(color: c.paper,
+        borderRadius: BorderRadius.circular(MedShape.radiusBlock)),
+      padding: const EdgeInsets.all(13),
+      child: Text(code, textAlign: TextAlign.center,
+        style: TextStyle(fontFamily: 'monospace', fontSize: 20,
+            letterSpacing: 2.0, color: c.sealInk)),
+    );
+  }
+}
+
+/// 二维码白框(mockup `.qr`):白底 + 10 内边距 + 圆角 16 + 专用阴影。
+class MedQrFrame extends StatelessWidget {
+  const MedQrFrame({super.key, required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(color: Colors.white,
+      borderRadius: BorderRadius.circular(MedShape.radiusBanner),
+      boxShadow: MedBrand.qrShadow),
+    padding: const EdgeInsets.all(10),
+    child: child,
+  );
+}
+
+/// 「病历」首页 hero 下面那两颗方块(`s1`)与「换新手机」(`s15`)输口令/用恢复码
+/// 两块共用的白块样式(mockup 的 `.qa`):白底 + 一枚光泽图标块 + 标题下的短标签。
+///
+/// R8:原是 `archive_screen.dart` 的私有 `_Tile`,只给 `HomeTiles` 用;Task 13
+/// 把它提到这里改名共用(纯搬家改名,布局/参数一个字没变),`archive_screen.dart`
+/// 的 `HomeTiles` 与 `account_screen.dart` 换新手机屏两处都调它,不再各写一份。
+class MedEntryTile extends StatelessWidget {
+  const MedEntryTile({super.key, required this.icon, required this.category, required this.label, this.onTap});
+
+  final IconData icon;
+  final GlossCategory category;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(MedShape.radiusEntry),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(MedShape.radiusEntry),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 12, 8, 11),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(MedShape.radiusEntry),
+          boxShadow: MedBrand.cardShadow,
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          GlossIconTile(icon: icon, category: category),
+          const SizedBox(height: 6),
+          Text(label, textAlign: TextAlign.center,
+            style: MedType.body.copyWith(fontWeight: FontWeight.w500,
+                fontVariations: MedType.w500)),
+        ]),
+      ),
+    ),
+  );
+}
+
 /// 空态的虚线框(规范 §六:`1.5px dashed --line`,圆角取分块这一档 14)。
 ///
 /// Flutter 没有虚线边框,自己画 —— 不为一条虚线加依赖(007 §2.4)。

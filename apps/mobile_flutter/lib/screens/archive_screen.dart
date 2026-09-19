@@ -883,44 +883,12 @@ class HomeTiles extends StatelessWidget {
       icon: Icons.add_a_photo_outlined, label: '添加', onTap: onAdd)),
     const SizedBox(width: 14),   // mockup `.tiles{gap:14px}`
     // mockup 的 `.qa`:白块 + 一枚光泽图标块。
-    Expanded(child: _Tile(
+    // R8:_Tile 已提到 `widgets/med_card.dart` 改名 `MedEntryTile` 共用
+    // (Task 13,与「换新手机」屏的输口令/用恢复码两块同款),这里不再自己定义。
+    Expanded(child: MedEntryTile(
       icon: Icons.assignment_outlined, category: GlossCategory.clinic,
       label: '给医生看', onTap: onForDoctor)),
   ]);
-}
-
-class _Tile extends StatelessWidget {
-  const _Tile({required this.icon, required this.category, required this.label, this.onTap});
-
-  final IconData icon;
-  final GlossCategory category;
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(MedShape.radiusEntry),
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(MedShape.radiusEntry),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(8, 12, 8, 11),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(MedShape.radiusEntry),
-          boxShadow: MedBrand.cardShadow,
-        ),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          GlossIconTile(icon: icon, category: category),
-          const SizedBox(height: 6),
-          Text(label, textAlign: TextAlign.center,
-            style: MedType.body.copyWith(fontWeight: FontWeight.w500,
-                fontVariations: MedType.w500)),
-        ]),
-      ),
-    ),
-  );
 }
 
 /// 「还没核对」横幅(`s1`)。逐字:`N 份还没核对` + `扫描件,识别出的字有几处不确定`。

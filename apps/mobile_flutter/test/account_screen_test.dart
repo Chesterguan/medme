@@ -566,6 +566,29 @@ Future<void> _scrollToText(WidgetTester t, String text) async {
   await t.pumpAndSettle();
 }
 
+/// Task 13:解锁屏顶部那块「用旧手机扫码批准」进了 `HeroCard`、「输口令」/
+/// 「用恢复码」从一行字变成两块 `MedEntryTile`——都比原来高很多,「口令忘了?
+/// 改用恢复码解锁」与「口令和恢复码都丢了?」这两个出口因此常年滚出 `ListView`
+/// 的挂载区(`SliverChildListDelegate` 只挂视口+缓存区内的子节点,同上面
+/// `_scrollToMyGrants` 那条注释的坑),原来不用滚就摸得到,现在必须先滚。
+Future<void> _scrollToRecoveryToggle(WidgetTester t) => _scrollToText(t, '口令忘了?改用恢复码解锁');
+
+Future<void> _scrollToLostEverything(WidgetTester t) async {
+  final finder = find.byKey(const Key('lost_everything'));
+  await t.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
+  await t.ensureVisible(finder);
+  await t.pumpAndSettle();
+}
+
+/// 同上,但用在"转圈期间"那条用例——**不能** `pumpAndSettle()`:那会把
+/// `FakeApi` 那个真实的 `Future.delayed` 一并推完,转圈还没查看就先结束了。
+/// `duration: Duration.zero` 让每一步滚动都不推进虚拟时钟,只为了把目标滚进
+/// `ListView` 的挂载区,不改变"业务上的口令解锁还没跑完"这件事。
+Future<void> _scrollToRecoveryToggleWithoutSettling(WidgetTester t) async {
+  final finder = find.text('口令忘了?改用恢复码解锁');
+  await t.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first, duration: Duration.zero);
+}
+
 /// 旧设备封回来的那份批准,**真实形状**:`[...新设备的临时公钥, ...账号私钥]`
 /// (见 [FakeCrypto.sealTo]/[FakeCrypto.openSealed] 的"公钥 == 私钥"模型)。
 /// 两段都是 32 个 0,于是拆出来的账号私钥正好与 `FakeApi.serverPublicKey` 配得上。
@@ -864,6 +887,7 @@ void main() {
       await t.pump();
       expect(obscured(t), isFalse);
 
+      await _scrollToRecoveryToggle(t);
       await t.tap(find.text('口令忘了?改用恢复码解锁'));
       await t.pump();
       expect(find.byKey(const Key('password_eye')), findsNothing);
@@ -1013,6 +1037,7 @@ void main() {
       await _loginUpTo(t);
       expect(find.text('输口令'), findsOneWidget);
 
+      await _scrollToLostEverything(t);
       await t.tap(find.byKey(const Key('lost_everything')));
       await t.pumpAndSettle();
       expect(find.textContaining('我们不保管你的口令和恢复码'), findsOneWidget);
@@ -1037,6 +1062,7 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text('输口令'), findsOneWidget);
 
+      await _scrollToLostEverything(t);
       await t.tap(find.byKey(const Key('lost_everything')));
       await t.pumpAndSettle();
       await t.tap(find.text('退出登录,重新开始'));
@@ -1050,6 +1076,7 @@ void main() {
     testWidgets('取消:一切原样,仍停在解锁屏、没有退出登录', (t) async {
       await t.pumpWidget(_app(FakeApi(hasKeys: true)));
       await _loginUpTo(t);
+      await _scrollToLostEverything(t);
       await t.tap(find.byKey(const Key('lost_everything')));
       await t.pumpAndSettle();
       await t.tap(find.text('取消'));
@@ -1116,6 +1143,7 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       expect(find.text('正在处理口令,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
 
+      await _scrollToRecoveryToggleWithoutSettling(t);
       final escape1 = find.widgetWithText(TextButton, '口令忘了?改用恢复码解锁');
       expect(escape1, findsOneWidget, reason: '转圈时这条出口不该消失');
       expect(t.widget<TextButton>(escape1).onPressed, isNull, reason: '而是禁用');
@@ -1158,10 +1186,17 @@ void main() {
       final api = FakeApi(hasKeys: true);
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
+      await _scrollToRecoveryToggle(t);
       await t.tap(find.text('口令忘了?改用恢复码解锁'));
       await t.pump();
       await t.enterText(find.byKey(const Key('recovery_code')), 'GOODCODE');
       await t.tap(find.text('用恢复码解锁'));
+      await t.pumpAndSettle();
+      // 切到「已就绪」用的是同一个 `ListView`,滚动偏移量原样从解锁屏继承下来
+      // ——停在刚才滚去找「口令忘了…」的那个位置,而「已登录」在新内容里排在
+      // 最前面,反而被卷出了挂载区。往回滚(负的 delta)才找得到,不能沿用
+      // `_scrollToText` 那个只往下滚的写法。
+      await t.scrollUntilVisible(find.text('已登录'), -200, scrollable: find.byType(Scrollable).first);
       await t.pumpAndSettle();
       expect(find.text('已登录'), findsOneWidget);
       expect(AccountSession.instance.privateKey, isNotNull);
@@ -1171,6 +1206,7 @@ void main() {
       final api = FakeApi(hasKeys: true);
       await t.pumpWidget(_app(api));
       await _loginUpTo(t);
+      await _scrollToRecoveryToggle(t);
       await t.tap(find.text('口令忘了?改用恢复码解锁'));
       await t.pump();
       await t.enterText(find.byKey(const Key('recovery_code')), 'WRONGCODE');
@@ -3173,7 +3209,9 @@ void main() {
       expect(find.byKey(const Key('device_approval_start')), findsOneWidget);
       // 兜底还在。
       expect(find.text('解锁'), findsOneWidget);
+      await _scrollToRecoveryToggle(t);
       expect(find.text('口令忘了?改用恢复码解锁'), findsOneWidget);
+      await _scrollToLostEverything(t);
       expect(find.byKey(const Key('lost_everything')), findsOneWidget);
     });
 

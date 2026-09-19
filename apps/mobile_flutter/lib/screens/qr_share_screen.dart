@@ -23,6 +23,7 @@ import '../grants.dart';
 import '../profile_manager.dart';
 import '../src/rust/api/vault.dart';
 import '../theme.dart';
+import '../widgets/med_card.dart';
 import 'disease_profile_screen.dart' show DiseaseProfileSource;
 import 'qr_notice_sheet.dart';
 
@@ -586,22 +587,20 @@ class _QrShareScreenState extends State<QrShareScreen> {
           ),
           const SizedBox(height: 20),
           // 白底 + 留白是二维码可扫性的硬要求,别加装饰。
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: MedMe.line),
-            ),
-            child: QrImageView(
-              data: url,
-              version: QrVersions.auto,
-              size: 280,
-              backgroundColor: Colors.white,
-              // 医生隔着距离扫,纠错等级留高一点更容易扫上。
-              // 注意:Rust 侧 `QR_BINARY_CAPACITY` 是按这个等级(M=2331 字节)定的,
-              // 改这里必须同步改那个常量,否则守卫会比实际容量宽 27%。
-              errorCorrectionLevel: QrErrorCorrectLevel.M,
+          Center(
+            child: MedCard(
+              child: MedQrFrame(
+                child: QrImageView(
+                  data: url,
+                  version: QrVersions.auto,
+                  size: 280,
+                  backgroundColor: Colors.white,
+                  // 医生隔着距离扫,纠错等级留高一点更容易扫上。
+                  // 注意:Rust 侧 `QR_BINARY_CAPACITY` 是按这个等级(M=2331 字节)定的,
+                  // 改这里必须同步改那个常量,否则守卫会比实际容量宽 27%。
+                  errorCorrectionLevel: QrErrorCorrectLevel.M,
+                ),
+              ),
             ),
           ),
           // `s13`:码下面那一行。**降级的简版码不显示它** —— 那种码的内容全在码里、

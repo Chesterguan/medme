@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:mobile_flutter/account_flow.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/cloud_extract.dart' show loadCloudExtractEnabled, saveCloudExtractEnabled;
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart'
@@ -17,7 +18,10 @@ import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncKdfBenchMs
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/qr_scanner_sheet.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
@@ -646,19 +650,21 @@ class _AccountScreenState extends State<AccountScreen> {
   ];
 
   List<Widget> _keySetupContent() => [
-    const Text('设一个口令', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+    const Text('设一个口令', style: MedType.title),
     const SizedBox(height: 8),
     const Text(
       '换手机时用它解开云端那份;我们没有这把钥匙',
       style: TextStyle(color: MedMe.faint, height: 1.5),
     ),
     const SizedBox(height: 20),
-    _passwordField(
-      controller: _regPasswordCtrl,
-      label: '口令',
-      helper: '至少 $_minPasswordLen 位。记不住就写下来收好,别只记在脑子里。',
-      visible: _showRegPassword,
-      onToggle: () => setState(() => _showRegPassword = !_showRegPassword),
+    MedFieldPanel(
+      child: _passwordField(
+        controller: _regPasswordCtrl,
+        label: '口令',
+        helper: '至少 $_minPasswordLen 位。记不住就写下来收好,别只记在脑子里。',
+        visible: _showRegPassword,
+        onToggle: () => setState(() => _showRegPassword = !_showRegPassword),
+      ),
     ),
     if (_regPasswordCtrl.text.isNotEmpty && _regPasswordCtrl.text.length < _minPasswordLen)
       _errorText('还差 ${_minPasswordLen - _regPasswordCtrl.text.length} 位'),
@@ -672,56 +678,48 @@ class _AccountScreenState extends State<AccountScreen> {
     ),
   ];
 
-  List<Widget> _recoveryContent() => [
-    const Text('恢复码,口令忘了用它', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-    const SizedBox(height: 8),
-    const Text(
-      '抄在纸上或存到别处。口令、恢复码、登录过的手机,三样都丢了,云端那份谁也打不开。',
-      style: TextStyle(color: MedMe.danger, height: 1.5, fontWeight: FontWeight.w600),
-    ),
-    const SizedBox(height: 20),
-    Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
-      decoration: BoxDecoration(
-        color: MedMe.tealSoft,
-        borderRadius: BorderRadius.circular(12),
+  List<Widget> _recoveryContent() {
+    final c = MedColors.of(context);
+    return [
+      // 分区标题,不是页面标题(mockup `s12` 的 `.sec`):15 号 ink2,字符串不动。
+      Text('恢复码,口令忘了用它', style: TextStyle(fontSize: 15, color: c.ink2)),
+      const SizedBox(height: 8),
+      const Text(
+        '抄在纸上或存到别处。口令、恢复码、登录过的手机,三样都丢了,云端那份谁也打不开。',
+        style: TextStyle(color: MedMe.danger, height: 1.5, fontWeight: FontWeight.w600),
       ),
-      child: Column(
+      const SizedBox(height: 20),
+      RecoveryCodeBox(code: _recoveryCode!),
+      const SizedBox(height: 12),
+      // C6:原来只有「复制」—— 复制到剪贴板等于"存在这台手机上",而上面那段
+      // 红字刚说了"不要只存在这台手机上"。**本机没有"存图到相册"的能力**
+      // (全仓没有任何 gallery/截图保存的依赖或代码),所以给系统分享面板:
+      // 发给自己的微信收藏、邮箱、备忘录 —— 那些才是"别处"。
+      // Wrap 而不是 Row:两颗按钮一颗换成 MedSecondaryButton 之后变宽,窄屏
+      // + 2× 字号下 Row 会溢出,Wrap 放不下就折到下一行。
+      Wrap(
+        alignment: WrapAlignment.center,
+        spacing: 8,
+        runSpacing: 4,
         children: [
-          Text(
-            _recoveryCode!,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 1.2),
+          TextButton.icon(
+            onPressed: () => Clipboard.setData(ClipboardData(text: _recoveryCode!)),
+            icon: const Icon(Icons.copy, size: 18),
+            label: const Text('复制'),
           ),
-          const SizedBox(height: 8),
-          // C6:原来只有「复制」—— 复制到剪贴板等于"存在这台手机上",而上面那段
-          // 红字刚说了"不要只存在这台手机上"。**本机没有"存图到相册"的能力**
-          // (全仓没有任何 gallery/截图保存的依赖或代码),所以给系统分享面板:
-          // 发给自己的微信收藏、邮箱、备忘录 —— 那些才是"别处"。
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              TextButton.icon(
-                onPressed: () => Clipboard.setData(ClipboardData(text: _recoveryCode!)),
-                icon: const Icon(Icons.copy, size: 18),
-                label: const Text('复制'),
-              ),
-              TextButton.icon(
-                key: const Key('recovery_share'),
-                onPressed: _shareRecoveryCode,
-                icon: const Icon(Icons.ios_share, size: 18),
-                label: const Text('发给自己'),
-              ),
-            ],
+          MedSecondaryButton(
+            key: const Key('recovery_share'),
+            label: '发给自己',
+            icon: Icons.ios_share,
+            onPressed: _shareRecoveryCode,
           ),
         ],
       ),
-    ),
-    if (_error != null) _errorText(_error!),
-    const SizedBox(height: 20),
-    _asyncButton(label: '我抄好了', onPressed: _confirmRecovery),
-  ];
+      if (_error != null) _errorText(_error!),
+      const SizedBox(height: 20),
+      _asyncButton(label: '我抄好了', onPressed: _confirmRecovery, primary: true),
+    ];
+  }
 
   /// C6。走系统分享面板,让用户把恢复码存到**这台手机之外**的地方(微信收藏、
   /// 邮箱、备忘录……)。分享的是恢复码本身加一句说明 —— 它就是钥匙,所以那段文字
@@ -775,75 +773,93 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  List<Widget> _unlockContent() => [
-    const Text('拿回你的病历', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-    const SizedBox(height: 8),
-    const Text(
-      '已登录;云端有你的病历,选一种方式解开',
-      style: TextStyle(color: MedMe.faint),
-    ),
-    const SizedBox(height: 20),
-    // **先给这条**(spec A2 的「旧设备批准」):换手机的人口袋里通常还揣着旧手机,
-    // 而口令是他最可能想不起来的东西 —— 那正是 A6 那条「两样都丢了怎么办」存在的
-    // 理由。口令/恢复码仍然在下面,一个都没拿掉。
-    ..._deviceApprovalBlock(),
-    const Divider(height: 32),
-    // ux-audit §4 第 11 条:切到恢复码后这个分区标题原来不跟着变,与下面已经
-    // 换成的恢复码输入框对不上。s15 把两条路分别叫「输口令」与「用恢复码」。
-    Text(
-      _useRecoveryUnlock ? '用恢复码' : '输口令',
-      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-    ),
-    const SizedBox(height: 8),
-    const Text(
-      // ux-audit §4 第 9 条:原文「这台设备之前没解锁过这个账号」在「本机注册 →
-      // 退出 → 重新登录」这条最常见的路上是假话——这台设备恰恰就是当初注册它的
-      // 那台。改说要做什么,不猜设备的历史。
-      '打开你的病历需要口令。忘了口令就用恢复码。',
-      style: TextStyle(color: MedMe.faint),
-    ),
-    const SizedBox(height: 20),
-    if (_useRecoveryUnlock)
-      TextField(
-        key: const Key('recovery_code'),
-        controller: _unlockRecoveryCtrl,
-        decoration: const InputDecoration(labelText: '输入恢复码'),
-      )
-    else
-      _passwordField(
-        controller: _unlockPasswordCtrl,
-        label: '输入口令',
-        visible: _showUnlockPassword,
-        onToggle: () => setState(() => _showUnlockPassword = !_showUnlockPassword),
+  List<Widget> _unlockContent() {
+    final c = MedColors.of(context);
+    return [
+      const Text('拿回你的病历', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 8),
+      const Text(
+        '已登录;云端有你的病历,选一种方式解开',
+        style: TextStyle(color: MedMe.faint),
       ),
-    if (_error != null) _errorText(_error!),
-    const SizedBox(height: 16),
-    _asyncButton(
-      label: _useRecoveryUnlock ? '用恢复码解锁' : '解锁',
-      onPressed: _unlock,
-      busyHint: _useRecoveryUnlock ? null : _kdfWaitHint,
-    ),
-    const SizedBox(height: 8),
-    TextButton(
-      onPressed: _busy
-          ? null
-          : () => setState(() {
-              _useRecoveryUnlock = !_useRecoveryUnlock;
-              _error = null;
-            }),
-      child: Text(_useRecoveryUnlock ? '改用口令解锁' : '口令忘了?改用恢复码解锁'),
-    ),
-    // A6:两样都丢了的人原来**卡死在这一屏**——注册时的警告到位,丢了之后反而
-    // 一句话都没有、一个出口都没有。
-    if (_logoutBusy)
-      const Center(child: CircularProgressIndicator())
-    else
+      const SizedBox(height: 20),
+      // **先给这条**(spec A2 的「旧设备批准」):换手机的人口袋里通常还揣着旧手机,
+      // 而口令是他最可能想不起来的东西 —— 那正是 A6 那条「两样都丢了怎么办」存在的
+      // 理由。口令/恢复码仍然在下面,一个都没拿掉。
+      ..._deviceApprovalBlock(),
+      const Divider(height: 32),
+      // ux-audit §4 第 11 条:切到恢复码后原来的分区标题不跟着变,与下面已经
+      // 换成的恢复码输入框对不上。s15 把两条路分别画成两块可点的白块(与
+      // `HomeTiles` 的入口块同款,`MedEntryTile`),各带一枚光泽图标块 ——
+      // 「输口令」= 钥匙(med)、「用恢复码」= 文档(clinic),点哪块切到哪条路。
+      Row(children: [
+        Expanded(child: MedEntryTile(
+          icon: Icons.vpn_key_outlined, category: GlossCategory.med,
+          label: '输口令',
+          onTap: _busy ? null : () => setState(() { _useRecoveryUnlock = false; _error = null; }),
+        )),
+        const SizedBox(width: 14),
+        Expanded(child: MedEntryTile(
+          icon: Icons.description_outlined, category: GlossCategory.clinic,
+          label: '用恢复码',
+          onTap: _busy ? null : () => setState(() { _useRecoveryUnlock = true; _error = null; }),
+        )),
+      ]),
+      const SizedBox(height: 8),
+      const Text(
+        // ux-audit §4 第 9 条:原文「这台设备之前没解锁过这个账号」在「本机注册 →
+        // 退出 → 重新登录」这条最常见的路上是假话——这台设备恰恰就是当初注册它的
+        // 那台。改说要做什么,不猜设备的历史。
+        '打开你的病历需要口令。忘了口令就用恢复码。',
+        style: TextStyle(color: MedMe.faint),
+      ),
+      const SizedBox(height: 20),
+      MedFieldPanel(
+        child: _useRecoveryUnlock
+            ? TextField(
+                key: const Key('recovery_code'),
+                controller: _unlockRecoveryCtrl,
+                decoration: const InputDecoration(labelText: '输入恢复码'),
+              )
+            : _passwordField(
+                controller: _unlockPasswordCtrl,
+                label: '输入口令',
+                visible: _showUnlockPassword,
+                onToggle: () => setState(() => _showUnlockPassword = !_showUnlockPassword),
+              ),
+      ),
+      if (_error != null) _errorText(_error!),
+      const SizedBox(height: 16),
+      _asyncButton(
+        label: _useRecoveryUnlock ? '用恢复码解锁' : '解锁',
+        onPressed: _unlock,
+        busyHint: _useRecoveryUnlock ? null : _kdfWaitHint,
+      ),
+      const SizedBox(height: 8),
       TextButton(
-        key: const Key('lost_everything'),
-        onPressed: _busy ? null : _lostEverything,
-        child: const Text('口令和恢复码都丢了?'),
+        style: TextButton.styleFrom(foregroundColor: c.seal),
+        onPressed: _busy
+            ? null
+            : () => setState(() {
+                _useRecoveryUnlock = !_useRecoveryUnlock;
+                _error = null;
+              }),
+        child: Text(_useRecoveryUnlock ? '改用口令解锁' : '口令忘了?改用恢复码解锁',
+            style: TextStyle(color: c.seal, fontWeight: FontWeight.w400)),
       ),
-  ];
+      // A6:两样都丢了的人原来**卡死在这一屏**——注册时的警告到位,丢了之后反而
+      // 一句话都没有、一个出口都没有。
+      if (_logoutBusy)
+        const Center(child: CircularProgressIndicator())
+      else
+        TextButton(
+          key: const Key('lost_everything'),
+          style: TextButton.styleFrom(foregroundColor: c.seal),
+          onPressed: _busy ? null : _lostEverything,
+          child: Text('口令和恢复码都丢了?', style: TextStyle(color: c.seal, fontWeight: FontWeight.w400)),
+        ),
+    ];
+  }
 
   /// A6。照实说:我们不保管口令和恢复码,而这一屏本身还留着一条口子——旧手机
   /// 扫码批准不用口令。三样(口令、恢复码、登录过的手机)都不在了,云端那份数据
@@ -891,54 +907,75 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// 解锁屏顶部那一块。三态都在这儿:还没生成(一颗按钮)/ 举着码等批准(码 +
   /// 倒计时 + 取消)/ 失败(红字 + 按钮还在,可以再来一次)。
+  /// `s15` 的一屏一处品牌渐变:整块（标题/说明/二维码/倒计时/取消)包进一张
+  /// `HeroCard`。卡面白字规则(design_tokens.dart `MedType.heroValue` 类文档
+  /// 「全卡统一的确定性规则」)照搬:标题/正文一律换成白字系的 token。
   List<Widget> _deviceApprovalBlock() {
     final code = _approvalCode;
+    final c = MedColors.of(context);
     return [
-      const Text('用旧手机扫码批准,最简单', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-      const SizedBox(height: 8),
-      const Text(
-        '旧手机打开 MedMe → 我 → 我的设备 → 扫码',
-        style: TextStyle(color: MedMe.faint, height: 1.5),
-      ),
-      if (_approvalError != null) _errorText(_approvalError!),
-      const SizedBox(height: 12),
-      if (code == null)
-        _approvalBusy
-            ? const Center(child: CircularProgressIndicator())
-            : SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  key: const Key('device_approval_start'),
-                  onPressed: _startDeviceApproval,
-                  child: const Text('生成二维码'),
+      HeroCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              '用旧手机扫码批准,最简单',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600).copyWith(color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '旧手机打开 MedMe → 我 → 我的设备 → 扫码',
+              style: TextStyle(color: c.onDarkMeta, height: 1.5),
+            ),
+            if (_approvalError != null) _errorText(_approvalError!),
+            const SizedBox(height: 12),
+            if (code == null)
+              _approvalBusy
+                  ? const Center(child: CircularProgressIndicator())
+                  : SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        key: const Key('device_approval_start'),
+                        onPressed: _startDeviceApproval,
+                        child: const Text('生成二维码'),
+                      ),
+                    )
+            else ...[
+              Center(
+                // 紧约束 —— 见 `link_qr_dialog.dart`:没有它,`QrImageView` 在可滚动的
+                // 父级里会走到 `LayoutBuilder does not support returning intrinsic
+                // dimensions`。
+                child: MedQrFrame(
+                  child: SizedBox(
+                    width: 220,
+                    height: 220,
+                    child: QrImageView(data: code, version: QrVersions.auto, backgroundColor: Colors.white),
+                  ),
                 ),
-              )
-      else ...[
-        Center(
-          // 紧约束 —— 见 `link_qr_dialog.dart`:没有它,`QrImageView` 在可滚动的
-          // 父级里会走到 `LayoutBuilder does not support returning intrinsic
-          // dimensions`。
-          child: SizedBox(
-            width: 220,
-            height: 220,
-            child: QrImageView(data: code, version: QrVersions.auto, backgroundColor: Colors.white),
-          ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _approvalSecondsLeft > 0 ? '等旧手机扫码批准…(还剩 $_approvalSecondsLeft 秒)' : '正在等旧手机批准…',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: c.onDarkMeta),
+              ),
+              const SizedBox(height: 4),
+              // 这张码里一个秘密都没有,说出来 —— 否则用户会以为自己正举着一把钥匙。
+              Text(
+                '这张码里没有你的病历也没有钥匙,被别人拍到也打不开任何东西。',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: c.onDarkFaint, fontSize: 12, height: 1.5),
+              ),
+              TextButton(
+                key: const Key('device_approval_cancel'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+                onPressed: _stopApprovalPoll,
+                child: const Text('取消'),
+              ),
+            ],
+          ],
         ),
-        const SizedBox(height: 8),
-        Text(
-          _approvalSecondsLeft > 0 ? '等旧手机扫码批准…(还剩 $_approvalSecondsLeft 秒)' : '正在等旧手机批准…',
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: MedMe.faint),
-        ),
-        const SizedBox(height: 4),
-        // 这张码里一个秘密都没有,说出来 —— 否则用户会以为自己正举着一把钥匙。
-        const Text(
-          '这张码里没有你的病历也没有钥匙,被别人拍到也打不开任何东西。',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: MedMe.faint, fontSize: 12, height: 1.5),
-        ),
-        TextButton(key: const Key('device_approval_cancel'), onPressed: _stopApprovalPoll, child: const Text('取消')),
-      ],
+      ),
     ];
   }
 
@@ -1105,8 +1142,12 @@ class _AccountScreenState extends State<AccountScreen> {
       children: [
         const Text(_cloudDefaultCopy, style: TextStyle(color: MedMe.faint, height: 1.5)),
         const SizedBox(height: 8),
-        for (final m in ProfileManager.instance.profiles) _cloudMemberRow(m),
-        const SizedBox(height: 8),
+        // R25:每行现在是 MedCard(无边框、纯阴影分层),不再是自带外边距的
+        // Material `Card` —— 多个成员时行与行之间要显式补一条缝,否则会贴在一起。
+        for (final m in ProfileManager.instance.profiles) ...[
+          _cloudMemberRow(m),
+          const SizedBox(height: 8),
+        ],
         _cloudExtractSwitch(),
         // 开通要注册云档案 + 重开箱 + 跑一次首同步,几秒到几十秒 —— 屏上必须有
         // 东西在转,否则用户会以为开关没拨动。做完就没了(`_cloudBusy` 回 false),
@@ -1149,10 +1190,13 @@ class _AccountScreenState extends State<AccountScreen> {
           // 忙的时候只是**禁用**,不换成进度圈:`_transferBusy` 在那张码的对话框开着
           // 的整段时间里都是 true,底下挂一个永不停的进度圈既无意义,也会让
           // `pumpAndSettle` 永远 settle 不下来(踩过)。同「谁能看」那一行的写法。
+          //
+          // R25:仍然是纯文字按钮,只是颜色从主题默认换成 token 的 sealInk ——
+          // 这一行本来就没有图标位,不新增一个(与另外两行的光泽图标块不同)。
           TextButton(
             key: const Key('transfer_current_profile'),
             onPressed: _transferBusy ? null : () => _transferOwnership(profile),
-            child: const Text('把这份病历交给别人'),
+            child: Text('把这份病历交给别人', style: TextStyle(color: MedColors.of(context).sealInk)),
           ),
         ],
       ],
@@ -1160,15 +1204,21 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   /// 一个成员一行:名字 + 此刻的状态 + 「云端备份」开关。
+  ///
+  /// R25:`Card` → `MedCard`(无边框、卡阴影),前面补一枚 lab 类别的光泽图标块
+  /// (与 `settings_screen.dart` 的 `_SettingsRow`「云端相关=lab」同一张映射
+  /// 表)。开关本身的值/回调一个字没动。
   Widget _cloudMemberRow(Profile m) {
+    final c = MedColors.of(context);
     final on = m.cloudId != null && !m.cloudPaused;
-    return Card(
+    return MedCard(
       child: SwitchListTile(
         key: Key('cloud_switch_${m.id}'),
-        title: Text(m.name),
+        secondary: const GlossIconTile(icon: Icons.cloud_outlined, category: GlossCategory.lab),
+        title: Text(m.name, style: MedType.body.copyWith(color: c.ink)),
         subtitle: Text(
           cloudRowStatus(m, icloudOn: _icloudBlocks),
-          style: const TextStyle(fontSize: 12.5, height: 1.4),
+          style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
         ),
         value: on,
         // 开通要重开箱 + 跑一次首同步,期间不许再拨别的开关(vault 是进程级单例)。
@@ -1191,27 +1241,33 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 自相矛盾,而且下一次 `runImport` 里的 `shouldAskCloudExtract` 还会再弹一次
   /// ask sheet、把这次手动选择覆盖掉。两个方向(开/关)都算数——同 ask sheet 自己
   /// 「不看答案是什么,退出就算问过」那条规矩一致。
-  Widget _cloudExtractSwitch() => Card(
-    child: SwitchListTile(
-      key: const Key('cloud_extract_switch'),
-      title: const Text('云端整理'),
-      subtitle: Text(
-        _cloudExtractAsked
-            ? '添加后把脱敏、涂黑的病历照片交给云端模型整理成表;关掉后只用本机识别'
-            : '第一次添加病历时会问你',
-        style: const TextStyle(fontSize: 12.5, height: 1.4),
+  /// R25:同 [_cloudMemberRow] 的 `Card` → `MedCard` + 光泽图标块处理,类别
+  /// 换成 clinic(与 `_cloudMemberRow` 的 lab 区分开,两行不撞色)。
+  Widget _cloudExtractSwitch() {
+    final c = MedColors.of(context);
+    return MedCard(
+      child: SwitchListTile(
+        key: const Key('cloud_extract_switch'),
+        secondary: const GlossIconTile(icon: Icons.auto_awesome_outlined, category: GlossCategory.clinic),
+        title: Text('云端整理', style: MedType.body.copyWith(color: c.ink)),
+        subtitle: Text(
+          _cloudExtractAsked
+              ? '添加后把脱敏、涂黑的病历照片交给云端模型整理成表;关掉后只用本机识别'
+              : '第一次添加病历时会问你',
+          style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
+        ),
+        value: _cloudExtractEnabled,
+        onChanged: (v) async {
+          setState(() {
+            _cloudExtractEnabled = v;
+            _cloudExtractAsked = true;
+          });
+          await saveCloudExtractEnabled(v);
+          await saveCloudExtractAsked();
+        },
       ),
-      value: _cloudExtractEnabled,
-      onChanged: (v) async {
-        setState(() {
-          _cloudExtractEnabled = v;
-          _cloudExtractAsked = true;
-        });
-        await saveCloudExtractEnabled(v);
-        await saveCloudExtractAsked();
-      },
-    ),
-  );
+    );
+  }
 
   /// 拨开关:**关**只是记一个标记(不删云端密文、不清本机钥匙);**开**在还没开通
   /// 的成员身上顺手就把开通跑了 —— 用户拨这个开关的意思是"我要它备份",不该还要
@@ -1968,11 +2024,17 @@ class _AccountScreenState extends State<AccountScreen> {
   /// [enabled] 为 false 时按钮画出来但不可点(`onPressed: null`)——不是把它藏
   /// 起来:用户得看见下一步在哪、为什么还不能点(提示就在按钮上方)。
   /// [busyHint] 是转圈时那句话,见 [_kdfWaitHint]。
+  ///
+  /// [primary] 只给 brief 明确点名要品牌渐变的那一颗按钮用(目前只有恢复码
+  /// 画面的「我抄好了」,s12 的渐变预算恰好是 1)——其余调用点(发送验证码/
+  /// 登录/设好了/解锁)默认 false,继续走原来的 `FilledButton`,不许一并改掉,
+  /// 否则每屏的渐变预算就对不上了。
   Widget _asyncButton({
     required String label,
     required VoidCallback onPressed,
     bool enabled = true,
     String? busyHint,
+    bool primary = false,
   }) {
     if (_busy) {
       return Column(
@@ -1988,6 +2050,9 @@ class _AccountScreenState extends State<AccountScreen> {
           ],
         ],
       );
+    }
+    if (primary) {
+      return MedPrimaryButton(label: label, onPressed: enabled ? onPressed : null);
     }
     return SizedBox(
       width: double.infinity,
