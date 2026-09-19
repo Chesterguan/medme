@@ -5,6 +5,9 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_logo.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/import_queue_card.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
@@ -77,6 +80,16 @@ String _groupDesc(TimelineGroupDto g) {
     ].join(' · '),
   };
 }
+
+/// 时间线一项的光泽图标块类别(brief §色 的类别色表)。就诊组(门诊/住院/急诊/
+/// 检查,`encounter.kind` 与 `categoryForDocType` 认得的文档类型不是同一命名空间)
+/// 一律归 [GlossCategory.clinic] —— 都是「到医疗机构走了一趟」,九档里没有更细的
+/// 桶;独立文档按它自己的类型走 `lib/doc_labels.dart` 的 [categoryForDocType]
+/// (R3,与 Task 9「趋势」页共用同一份映射)。
+GlossCategory _categoryOf(TimelineGroupDto group) => switch (group) {
+  TimelineGroupDto_Encounter() => GlossCategory.clinic,
+  TimelineGroupDto_Document(:final doc) => categoryForDocType(doc.docType),
+};
 
 /// 把时间线分组拍平成文档列表(就诊组内文档 + 独立文档),用于「还没核对」筛选。
 List<DocumentSummaryDto> _allDocs(List<TimelineGroupDto> groups) {
@@ -287,7 +300,13 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     final c = MedColors.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('病历'),
+        // 真 logo 30px(brief §品牌:允许出现的四处之一是「主页顶栏」)+ 标题,
+        // 字符串不动——只是标题前面多了一枚图。
+        title: const Row(mainAxisSize: MainAxisSize.min, children: [
+          BrandLogo(),
+          SizedBox(width: MedShape.s2),
+          Text('病历'),
+        ]),
         // 顶栏与内容之间一道 `line` —— 层次靠边框不靠阴影(规范 §四)。
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
@@ -532,18 +551,7 @@ class _TimelineItem extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: c.sealWash,
-                        borderRadius: BorderRadius.circular(
-                          MedShape.radiusControl,
-                        ),
-                      ),
-                      child: Icon(icon, size: 20, color: c.seal),
-                    ),
+                    GlossIconTile(icon: icon, category: _categoryOf(group)),
                     const SizedBox(width: MedShape.s2),
                     Expanded(
                       child: Column(
@@ -556,9 +564,13 @@ class _TimelineItem extends StatelessWidget {
                               Expanded(
                                 child: Text(
                                   _groupTitle(group),
-                                  style: MedType.subtitle.copyWith(
+                                  style: MedType.body.copyWith(
                                     color: c.ink,
+                                    fontWeight: FontWeight.w500,
+                                    fontVariations: MedType.w500,
+                                    height: 1.3,
                                   ),
+                                  maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
@@ -576,7 +588,7 @@ class _TimelineItem extends StatelessWidget {
                           const SizedBox(height: 3),
                           Text(
                             _groupDesc(group),
-                            style: MedType.secondary.copyWith(color: c.ink2),
+                            style: MedType.secondary.copyWith(color: c.ink3),
                           ),
                         ],
                       ),
@@ -662,19 +674,9 @@ class _SubDocList extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      Container(
-                        width: 28,
-                        height: 28,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: c.sealWash,
-                          borderRadius: BorderRadius.circular(MedShape.s1),
-                        ),
-                        child: Icon(
-                          iconForDoc(d.docType),
-                          size: 15,
-                          color: c.seal,
-                        ),
+                      GlossIconTile(
+                        icon: iconForDoc(d.docType),
+                        category: categoryForDocType(d.docType),
                       ),
                       const SizedBox(width: MedShape.s2),
                       Expanded(
@@ -746,21 +748,9 @@ class _PendingCard extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: c.highWash,
-                        borderRadius: BorderRadius.circular(
-                          MedShape.radiusControl,
-                        ),
-                      ),
-                      child: Icon(
-                        iconForDoc(doc.docType),
-                        size: 20,
-                        color: c.high,
-                      ),
+                    GlossIconTile(
+                      icon: iconForDoc(doc.docType),
+                      category: categoryForDocType(doc.docType),
                     ),
                     const SizedBox(width: MedShape.s2),
                     Expanded(
@@ -849,10 +839,7 @@ class _MismatchBanner extends StatelessWidget {
         MedShape.s2,
         MedShape.s2,
       ),
-      padding: const EdgeInsets.symmetric(
-        horizontal: MedShape.s2,
-        vertical: MedShape.s1,
-      ),
+      padding: const EdgeInsets.all(MedShape.s2),
       decoration: BoxDecoration(
         color: c.criticalWash,
         borderRadius: const BorderRadius.horizontal(
@@ -861,10 +848,12 @@ class _MismatchBanner extends StatelessWidget {
         border: Border(left: BorderSide(color: c.critical, width: 3)),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.warning_amber_rounded, color: c.critical, size: 18),
-          const SizedBox(width: MedShape.s1),
+          // 光泽图标块统一 44×44(gloss_tile.dart 类文档:别处一律用默认尺寸,
+          // 不为了挤下去而调小)。类别用 alert(警示)—— 这不是文档类型,是本屏
+          // 最高一级的提醒,与外层 `criticalWash`/`critical` 同一层语义。
+          const GlossIconTile(icon: Icons.warning_amber_rounded, category: GlossCategory.alert),
+          const SizedBox(width: MedShape.s2),
           Expanded(
             child: Text(
               '报告上的姓名是「$who」,与当前成员「${ProfileManager.instance.current.name}」不一致,'
@@ -894,85 +883,50 @@ class HomeTiles extends StatelessWidget {
   final VoidCallback? onForDoctor;
 
   @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return Row(
-      children: [
-        Expanded(
-          child: _Tile(
-            icon: Icons.add_a_photo_outlined,
-            label: '添加',
-            background: c.seal,
-            foreground: Colors.white,
-            onTap: onAdd,
-          ),
-        ),
-        const SizedBox(width: MedShape.s2),
-        Expanded(
-          child: _Tile(
-            icon: Icons.assignment_outlined,
-            label: '给医生看',
-            background: c.surface,
-            foreground: c.sealInk,
-            border: c.line,
-            onTap: onForDoctor,
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => Row(children: [
+    // mockup `s1` 的 `.qa.pri`:主入口块,整块品牌渐变。**一屏只此一个。**
+    Expanded(child: PrimaryEntryTile(
+      icon: Icons.add_a_photo_outlined, label: '添加', onTap: onAdd)),
+    const SizedBox(width: 14),   // mockup `.tiles{gap:14px}`
+    // mockup 的 `.qa`:白块 + 一枚光泽图标块。
+    Expanded(child: _Tile(
+      icon: Icons.assignment_outlined, category: GlossCategory.clinic,
+      label: '给医生看', onTap: onForDoctor)),
+  ]);
 }
 
 class _Tile extends StatelessWidget {
-  const _Tile({
-    required this.icon,
-    required this.label,
-    required this.background,
-    required this.foreground,
-    this.border,
-    this.onTap,
-  });
+  const _Tile({required this.icon, required this.category, required this.label, this.onTap});
 
   final IconData icon;
+  final GlossCategory category;
   final String label;
-  final Color background;
-  final Color foreground;
-  final Color? border;
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: background,
-      borderRadius: BorderRadius.circular(MedShape.radiusBlock),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: MedShape.s3),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(MedShape.radiusBlock),
-            border: border == null ? null : Border.all(color: border!),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 26, color: foreground),
-              const SizedBox(height: 6),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: MedType.body.copyWith(
-                  color: foreground,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(MedShape.radiusEntry),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(MedShape.radiusEntry),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 12, 8, 11),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(MedShape.radiusEntry),
+          boxShadow: MedBrand.cardShadow,
         ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          GlossIconTile(icon: icon, category: category),
+          const SizedBox(height: 6),
+          Text(label, textAlign: TextAlign.center,
+            style: MedType.body.copyWith(fontWeight: FontWeight.w500,
+                fontVariations: MedType.w500)),
+        ]),
       ),
-    );
-  }
+    ),
+  );
 }
 
 /// 「还没核对」横幅(`s1`)。逐字:`N 份还没核对` + `扫描件,识别出的字有几处不确定`。
@@ -991,42 +945,13 @@ class PendingReviewBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (count == 0) return const SizedBox.shrink();
-    final c = MedColors.of(context);
-    return Material(
-      color: c.sealWash,
-      borderRadius: BorderRadius.circular(MedShape.radiusBlock),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
-        child: Padding(
-          padding: const EdgeInsets.all(MedShape.s3),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$count 份还没核对',
-                      style: MedType.body.copyWith(
-                        color: c.ink,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '扫描件,识别出的字有几处不确定',
-                      style: MedType.secondary.copyWith(color: c.ink2),
-                    ),
-                  ],
-                ),
-              ),
-              if (onTap != null)
-                Icon(Icons.chevron_right, size: 20, color: c.ink3),
-            ],
-          ),
-        ),
-      ),
+    return MedBanner(
+      icon: Icons.warning_amber_outlined,
+      iconCategory: GlossCategory.med,
+      amber: true,
+      title: '$count 份还没核对',
+      subtitle: '扫描件,识别出的字有几处不确定',
+      onTap: onTap,
     );
   }
 }
@@ -1047,15 +972,25 @@ class MonthHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, MedShape.s4, 0, MedShape.s1),
+      // mockup `.sec{padding:0 4px}`,上下沿仍按分组前后的间距留白。
+      padding: const EdgeInsets.fromLTRB(4, MedShape.s4, 4, MedShape.s1),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: MedType.caption.copyWith(color: c.ink3)),
+          // Expanded + ellipsis:月份标题在 2× 字号下可能比「找一找」+ 月份标题
+          // 两者加起来还宽(中英文数字混排,`s1` 里没给这一行的溢出预案)——
+          // 「找一找」是可点的搜索入口,固定不裁;标题让出空间,裁的是信息性
+          // 文字,不是交互入口。
+          Expanded(
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: MedType.body.copyWith(fontSize: 15, color: c.ink2)),
+          ),
           if (onSearch != null)
             GestureDetector(
               onTap: onSearch,
-              child: Text('找一找', style: MedType.caption.copyWith(color: c.sealInk)),
+              child: Text('找一找', style: MedType.secondary.copyWith(
+                  fontSize: 14, color: c.seal, fontWeight: FontWeight.w500,
+                  fontVariations: MedType.w500)),
             ),
         ],
       ),
