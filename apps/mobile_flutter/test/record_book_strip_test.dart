@@ -72,6 +72,32 @@ void main() {
     expect(find.text('化验可算活动度'), findsOneWidget);
   });
 
+  // Fix round 1 / 控制者裁定 R15:大数列曾经包了一层 `Flexible(fit: FlexFit.loose)`
+  // 来防溢出(见本文件先前版本 / 报告 deviation 3)。reviewer 用 scratch widget test
+  // 验出这层包装本身就是 bug:`Flexible` 让大数列变成 flex 子项,`RenderFlex` 先按
+  // flex 比例把可用空间在标题的 `Expanded` 和它之间**对半分**、各封顶 50%,大数列
+  // 即使自己比封顶窄也不退回多余空间——于是它不再贴右边,`brief §形「右列大数」`
+  // 的形状就破了。已去掉那层 `Flexible`(大数列恢复成 brief 原稿的普通非 flex 子
+  // 项),这条测试把「贴右边」钉成断言,回归就会红。
+  //
+  // 用不含 `bigNumberSuffix`/`bigNumberCaption` 的最小 strip——否则「靠右贴边」的
+  // 其实是后缀 `/18`,`find.text('4')` 断言就找错了对象。宽度用
+  // `tester.view.physicalSize` 定死(和上面「太长时省略」那条同一手法),不用
+  // `SizedBox(width:360)` 包一层——`Scaffold`/`MaterialApp.home` 给 body 的是紧约束,
+  // 直接包 `SizedBox` 会被那层紧约束吃掉,量出来的还是整个视口宽度而不是 360。
+  testWidgets('大数靠右贴边(fix round 1:去掉会打破贴边的 Flexible)', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    const minimal = RecordBookStrip(title: '病程档案 · 狼疮', subtitle: '2 项该复查', bigNumber: '4');
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: minimal)));
+    final rightEdge = tester.getTopRight(find.byType(RecordBookStrip)).dx;
+    expect(
+      tester.getTopRight(find.text('4')).dx,
+      closeTo(rightEdge - RecordBookStrip.bigNumberEndPadding, 0.5),
+    );
+  });
+
   testWidgets('标题副标太长时省略,不撑破布局', (tester) async {
     tester.view.physicalSize = const Size(360, 640);
     tester.view.devicePixelRatio = 1.0;

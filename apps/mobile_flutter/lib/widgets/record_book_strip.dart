@@ -36,6 +36,10 @@ class RecordBookStrip extends StatelessWidget {
 
   final VoidCallback? onTap;
 
+  /// 右列大数那一列的右内边距 —— 独立命名成常量,只为了测试能引用同一个数字断言
+  /// 「大数靠右贴边」,不是为了给调用方调。
+  static const double bigNumberEndPadding = 14;
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
@@ -75,36 +79,33 @@ class RecordBookStrip extends StatelessWidget {
                   ],
                 ),
               )),
-              if (bigNumber != null) Flexible(
-                fit: FlexFit.loose,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 0, 14, 0),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          // 两个独立的 Text(不用 Text.rich/TextSpan 拼)——大数要单独
-                          // 承接自己的样式断言(22·600·seal),拼进一棵 span 树里就
-                          // 找不到了。
-                          Text(bigNumber!, style: MedType.value.copyWith(fontSize: 22,
-                              fontWeight: FontWeight.w600, fontVariations: MedType.w600,
-                              color: c.seal, height: 1)),
-                          if (bigNumberSuffix != null)
-                            Text(bigNumberSuffix!, style: MedType.caption.copyWith(
-                                color: c.ink3, fontWeight: FontWeight.w400)),
-                        ],
-                      ),
-                      if (bigNumberCaption != null)
-                        Text(bigNumberCaption!, maxLines: 1, overflow: TextOverflow.ellipsis,
-                          style: MedType.caption.copyWith(color: c.ink3, fontSize: 11,
-                              fontWeight: FontWeight.w400)),
-                    ],
-                  ),
+              if (bigNumber != null) Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, bigNumberEndPadding, 0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        // 两个独立的 Text(不用 Text.rich/TextSpan 拼)——大数要单独
+                        // 承接自己的样式断言(22·600·seal),拼进一棵 span 树里就
+                        // 找不到了。
+                        Text(bigNumber!, style: MedType.value.copyWith(fontSize: 22,
+                            fontWeight: FontWeight.w600, fontVariations: MedType.w600,
+                            color: c.seal, height: 1)),
+                        if (bigNumberSuffix != null)
+                          Text(bigNumberSuffix!, style: MedType.caption.copyWith(
+                              color: c.ink3, fontWeight: FontWeight.w400)),
+                      ],
+                    ),
+                    if (bigNumberCaption != null)
+                      Text(bigNumberCaption!, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: MedType.caption.copyWith(color: c.ink3, fontSize: 11,
+                            fontWeight: FontWeight.w400)),
+                  ],
                 ),
               ),
             ]),
