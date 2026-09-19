@@ -104,24 +104,26 @@ void main() {
   });
 
   group('化验行的左侧色条', () {
-    testWidgets('异常行有色条、正常行的色条是透明的(占位恒定,文字不左右跳)', (tester) async {
+    testWidgets('三档 LabFlag 各有色条,恒定 4px(R22:正常也上色,不再透明)', (tester) async {
       await tester.pumpWidget(
         wrap(const ReportContent(text: labText, docType: 'lab_report')),
       );
       final lefts = decorations(tester)
           .map((d) => d.border)
           .whereType<Border>()
-          .where((b) => b.left.width == 3)
+          .where((b) => b.left.width == 4)
           .map((b) => b.left.color)
           .toList();
-      // 三行 → 三条 3px 的左边框:高、低、透明各一。
+      // 三行 → 三条 4px 的左边框:偏高、偏低、正常各一色 —— R22 之前正常行是
+      // 透明的,现在与 `lab_status.dart` 的 `LabLine` 同一套规则,正常也上色
+      // (`MedBrand.barNormal`),色条恒定占位这条不变。
       expect(lefts, hasLength(3));
-      expect(lefts, contains(MedColors.light.high));
-      expect(lefts, contains(MedColors.light.low));
+      expect(lefts, contains(MedBrand.barHigh));
+      expect(lefts, contains(MedBrand.barLow));
       expect(
         lefts,
-        contains(Colors.transparent),
-        reason: '正常行不上色,但色条照样占 3px —— 否则整列项目名会随异常与否左右错位',
+        contains(MedBrand.barNormal),
+        reason: 'R22:LabFlag.normal 现在也有色条(MedBrand.barNormal),不再透明',
       );
     });
   });

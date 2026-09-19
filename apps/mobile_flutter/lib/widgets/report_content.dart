@@ -169,23 +169,30 @@ LabFlag? _rowStatus(List<String> cells) {
   return null;
 }
 
-/// 化验状态 → 前景色。色值来自设计系统 v1 令牌(`MedColors`),不在这里写死。
-/// 正常与无标记**不上色**,继承正文墨色 —— 一份血常规 22 项通常只有 1–2 项异常,
-/// 给正常配色会把异常淹没(规范 §二)。
+/// 化验状态 → 前景色(R22:与 `lab_status.dart` 的 `labStatusColor` 同一套令牌,
+/// `LabFlag.normal` 现在是 [MedBrand.normalInk],不再是不上色的墨色 —— 那条
+/// 「正常不上色」的旧规则已被 Stage 3 视觉令牌取代,`LabFlag` 没有「认不出的
+/// 标记」这一档,`null` 才是继承正文墨色的那个)。
 Color _flagColor(BuildContext context, LabFlag? flag) {
   final c = MedColors.of(context);
-  if (flag == LabFlag.high) return c.high;
-  if (flag == LabFlag.low) return c.low;
-  return c.ink;
+  return switch (flag) {
+    LabFlag.high => c.high,
+    LabFlag.low => c.low,
+    LabFlag.normal => MedBrand.normalInk,
+    null => c.ink,
+  };
 }
 
-/// 化验状态 → 左侧色条。正常/无标记是**透明**的,但色条本身照画 —— 3px 的占位
-/// 恒定,异常行才有颜色,整列文字起点才不会因为有没有色条而左右跳。
+/// 化验状态 → 左侧色条(R22:`MedBrand.barHigh/barLow/barNormal`,brief §形
+/// 4px 恒定占位——`null`(没解析出标记)仍是透明,颜色由 `LabFlag` 决定,不在这
+/// 一层反推)。
 Color _stripeColor(BuildContext context, LabFlag? flag) {
-  final c = MedColors.of(context);
-  if (flag == LabFlag.high) return c.high;
-  if (flag == LabFlag.low) return c.low;
-  return Colors.transparent;
+  return switch (flag) {
+    LabFlag.high => MedBrand.barHigh,
+    LabFlag.low => MedBrand.barLow,
+    LabFlag.normal => MedBrand.barNormal,
+    null => Colors.transparent,
+  };
 }
 
 /// 化验状态 → 文字 pill。正常/无标记不给 pill。
@@ -397,14 +404,15 @@ class _LabRowView extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         border: Border(
-          // 3px 色条走边框而不是独立的 Container:边框天然铺满整行高度,
-          // 不需要 IntrinsicHeight 去量一遍。
-          left: BorderSide(color: _stripeColor(context, row.flag), width: 3),
+          // 4px 色条走边框而不是独立的 Container:边框天然铺满整行高度,
+          // 不需要 IntrinsicHeight 去量一遍(R22:brief §形 色条恒定 4px,
+          // 与 `lab_status.dart` 的 `LabLine` 同一档)。
+          left: BorderSide(color: _stripeColor(context, row.flag), width: 4),
           bottom: last ? BorderSide.none : BorderSide(color: c.line2),
         ),
       ),
-      // 左内边距 9 + 3px 色条 = s2(12),与右侧对齐;有没有色条都不跳。
-      padding: const EdgeInsets.fromLTRB(9, 9, MedShape.s2, 9),
+      // 左内边距 8 + 4px 色条 = s2(12),与右侧对齐;有没有色条都不跳。
+      padding: const EdgeInsets.fromLTRB(8, 9, MedShape.s2, 9),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

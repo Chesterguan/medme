@@ -270,7 +270,9 @@ void main() {
       ),
     );
 
-    testWidgets('偏高 = --high #C25E18,偏低 = --low #1F5FB8,正常不上色', (tester) async {
+    testWidgets('偏高 = --high #C25E18,偏低 = --low #1F5FB8,正常 = MedBrand.normalInk(R22)', (
+      tester,
+    ) async {
       await pumpLab(tester);
 
       expect(
@@ -283,11 +285,12 @@ void main() {
         MedColors.light.low.toARGB32(),
       );
       expect(valueColor(tester, '0.98 mmol/L', '0.98').toARGB32(), 0xFF1F5FB8);
-      // 正常行继承正文墨色(令牌 `ink`),不走任何状态色 —— 规范 §二 的
-      // 「正常不上色」:22 项里 1–2 项异常,给正常配色会把异常淹没。
+      // R22 fix round 1:「正常不上色」的旧规则已被 Stage 3 视觉令牌取代 ——
+      // `LabFlag.normal` 现在走 `MedBrand.normalInk`,与 `lab_status.dart` 的
+      // `LabLine`(`status == null` 那一档)同一套颜色,不再继承墨色 `ink`。
       expect(
         valueColor(tester, '95 umol/L', '95').toARGB32(),
-        MedColors.light.ink.toARGB32(),
+        MedBrand.normalInk.toARGB32(),
       );
     });
 

@@ -91,10 +91,11 @@ void main() {
   });
 }
 
-/// `_PanelChip` 是 `trends_screen.dart` 的私有类,同文件外拿不到;这里改拿
-/// `PanelChipsRow`(本 Task 把它从私有的 `_PanelChipsRow` 改公开,专为这条测试
-/// ——不然「未选中/选中各断一次」这条测试写不出来)喂两颗 chip,一颗选中
-/// 一颗不选中,同样能触到 `_PanelChip` 两条分支。
+/// `MedChip`(原 `trends_screen.dart` 私有的 `_PanelChip`,Task 10 提到
+/// `widgets/med_card.dart` 改公开共用,R8)今天已经可以直接拿到,但这里仍然
+/// 经 `PanelChipsRow`(本 Task 把它从私有的 `_PanelChipsRow` 改公开)喂两颗
+/// chip,一颗选中一颗不选中——顺带把「选中态/未选中态」在 `PanelChipsRow`
+/// 这一层的接线也验了,不只是验 `MedChip` 自己。
 class _ChipsProbe extends StatelessWidget {
   const _ChipsProbe();
 

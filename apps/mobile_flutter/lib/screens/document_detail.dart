@@ -12,9 +12,11 @@ import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
-import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 手动录入的两个 doc_type(与 `doc.dart`/`core_model::DocType` 的取值一致)——
 /// 这两类文档没有原件(合成文本本身当"文件"存进 CAS),详情页要换一套展示。
@@ -158,53 +160,12 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       ),
       // 还没核对文档:底部一对按钮,逐字按 `s7`——「看原件」(次)+「没问题」(主),
       // 核对后一键归入正常时间线(去掉琥珀框)。「没问题」是本屏**唯一**的
-      // 主按钮:seal 纯色不用渐变(规范 §六:一屏只允许一个)。
+      // 主按钮(渐变预算表:s7 = 1 颗 `MedPrimaryButton`)。纯 widget 提出去
+      // (`DocumentReviewActionBar`),不碰 FFI,测试测得到(R22)。
       bottomNavigationBar: pending
-          ? Container(
-              decoration: BoxDecoration(
-                color: c.surface,
-                border: Border(top: BorderSide(color: c.line)),
-              ),
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    MedShape.s3,
-                    MedShape.s2,
-                    MedShape.s3,
-                    MedShape.s2,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _viewOriginal,
-                          icon: const Icon(Icons.visibility_outlined, size: 18),
-                          label: const Text('看原件'),
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: c.sealWash,
-                            foregroundColor: c.sealInk,
-                            side: BorderSide(color: c.line),
-                            minimumSize: const Size.fromHeight(48),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: MedShape.s2),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: _confirm,
-                          icon: const Icon(Icons.check),
-                          label: const Text('没问题'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: c.sealInk,
-                            foregroundColor: c.surface,
-                            minimumSize: const Size.fromHeight(48),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+          ? DocumentReviewActionBar(
+              onViewOriginal: _viewOriginal,
+              onConfirm: _confirm,
             )
           : null,
       body: FutureBuilder<DocumentDetailDto>(
@@ -225,16 +186,75 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
               ),
             );
           }
-          return _DetailBody(detail: snap.data!);
+          return DetailBody(detail: snap.data!);
         },
       ),
     );
   }
 }
 
-class _DetailBody extends StatelessWidget {
+/// 「还没核对」文档的底部操作条(mockup `s7` `.two`:次 + 主两颗按钮)。
+/// **纯 widget,不碰 FFI** —— 与 `ForDoctorActions`/`VisitSummaryBody` 同一手法,
+/// 从 `_DocumentDetailScreenState.build()` 里提出来,测试测得到(R22)。
+class DocumentReviewActionBar extends StatelessWidget {
+  const DocumentReviewActionBar({
+    super.key,
+    required this.onViewOriginal,
+    required this.onConfirm,
+  });
+
+  final VoidCallback onViewOriginal;
+  final VoidCallback onConfirm;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surface,
+        border: Border(top: BorderSide(color: c.line)),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            MedShape.s3,
+            MedShape.s2,
+            MedShape.s3,
+            MedShape.s2,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: MedSecondaryButton(
+                  icon: Icons.visibility_outlined,
+                  label: '看原件',
+                  onPressed: onViewOriginal,
+                ),
+              ),
+              const SizedBox(width: MedShape.s2),
+              // 「没问题」是本屏**唯一**的主按钮(渐变预算表:s7 = 1)。
+              Expanded(
+                child: MedPrimaryButton(
+                  icon: Icons.check,
+                  label: '没问题',
+                  onPressed: onConfirm,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 「一份病历」屏(mockup s8)的正文。**纯 widget,不碰 FFI** —— 与
+/// `ForDoctorActions`/`VisitSummaryBody` 同一手法,原是私有的 `_DetailBody`,
+/// R22 改公开,测试不必经 `DocumentDetailScreen`(它在字段初始化就碰 FFI,
+/// `flutter test` 挂不住)就能直接 pump。
+class DetailBody extends StatelessWidget {
   final DocumentDetailDto detail;
-  const _DetailBody({required this.detail});
+  const DetailBody({super.key, required this.detail});
 
   @override
   Widget build(BuildContext context) {
@@ -273,17 +293,11 @@ class _DetailBody extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: c.sealWash,
-                        borderRadius: BorderRadius.circular(
-                          MedShape.radiusBlock,
-                        ),
-                      ),
-                      child: Icon(Icons.description_outlined, color: c.seal),
+                    // 光泽图标块(R22):类别按文档类型走 `categoryForDocType`
+                    // (Task 8 已有、doc_labels.dart 公开),图标沿用原来这颗。
+                    GlossIconTile(
+                      icon: Icons.description_outlined,
+                      category: categoryForDocType(doc.docType),
                     ),
                     const SizedBox(width: MedShape.s2),
                     Expanded(
@@ -326,33 +340,27 @@ class _DetailBody extends StatelessWidget {
                     style: MedType.secondary.copyWith(color: c.ink3),
                   ),
                   const SizedBox(height: MedShape.s2),
-                  // 次级按钮(规范 §六 btn-2):seal-wash 底 + seal-ink 字,与
-                  // 其它文档类型「查看原件」同一视觉分量——编辑对这类文档而言
-                  // 就是它的「原件永远可达」等价物:能回去改。
-                  OutlinedButton.icon(
-                    onPressed: () => _editManualEntry(context),
-                    icon: const Icon(Icons.edit_outlined, size: 18),
-                    label: const Text('编辑'),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: c.sealWash,
-                      foregroundColor: c.sealInk,
-                      side: BorderSide(color: c.line),
-                      minimumSize: const Size.fromHeight(44),
+                  // 次级按钮(R22:`MedSecondaryButton`),与其它文档类型「查看
+                  // 原件」同一视觉分量——编辑对这类文档而言就是它的「原件永远
+                  // 可达」等价物:能回去改。
+                  SizedBox(
+                    width: double.infinity,
+                    child: MedSecondaryButton(
+                      icon: Icons.edit_outlined,
+                      label: '编辑',
+                      onPressed: () => _editManualEntry(context),
                     ),
                   ),
                 ] else
-                  // 次级按钮(规范 §六 btn-2):seal-wash 底 + seal-ink 字。
-                  // 「原件永远可达」是 007 §2.1 的铁律,所以它不能是最弱的那一级;
-                  // 但本屏的主按钮位置留给底部的「确认无误」,它就不该是纯色主按钮。
-                  OutlinedButton.icon(
-                    onPressed: () => _openOriginal(context, sf),
-                    icon: const Icon(Icons.visibility_outlined, size: 18),
-                    label: const Text('查看原件'),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: c.sealWash,
-                      foregroundColor: c.sealInk,
-                      side: BorderSide(color: c.line),
-                      minimumSize: const Size.fromHeight(44),
+                  // 次级按钮(R22:`MedSecondaryButton`)。「原件永远可达」是
+                  // 007 §2.1 的铁律,所以它不能是最弱的那一级;但本屏的主按钮
+                  // 位置留给底部的「没问题」,它就不该是渐变主按钮。
+                  SizedBox(
+                    width: double.infinity,
+                    child: MedSecondaryButton(
+                      icon: Icons.visibility_outlined,
+                      label: '查看原件',
+                      onPressed: () => _openOriginal(context, sf),
                     ),
                   ),
               ],

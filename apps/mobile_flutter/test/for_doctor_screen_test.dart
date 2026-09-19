@@ -59,6 +59,16 @@ void main() {
   });
 
   testWidgets('整页四条出口全部有去处 —— 一条都不许是摆设', (tester) async {
+    // R23 fix round 1:「我最近的变化/过敏史/记录中出现的药物」三节现在共用
+    //一张 `MedCard`、标题行各带一枚 44px 光泽图标块,比原来三个裸标题高不少。
+    // `flutter test` 的默认画布是 800×600 逻辑像素(近似横屏平板,不是手机),
+    // 这个高度下 `ListView` 的 sliver 缓冲区够不到 footer(`ForDoctorActions`),
+    // `find.byType` 找到 0 个——不是接线断了,是画布不像手机。换成这套 Stage 3
+    // 测试统一在用的真机尺寸(`stage3_visual_helpers.dart` 的 `pumpStage3`
+    // 默认值,400×800 @ 1.0x)。
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(wrapScreen(ForDoctorScreen(load: () async => _empty)));
     await tester.pumpAndSettle();
 

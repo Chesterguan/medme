@@ -9,12 +9,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/screens/emergency_card_screen.dart';
 import 'package:mobile_flutter/screens/for_doctor_screen.dart';
+import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/brand_gradient.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/long_text_row.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'stage3_visual_helpers.dart';
 
 /// 与 `for_doctor_screen_test.dart` 的 `_empty` 同一形状——本文件独立成一份,
@@ -153,5 +155,92 @@ void main() {
         expect(tester.takeException(), isNull, reason: '$size @ ${scale}x 溢出了');
       }
     }
+  });
+
+  // ── R23 fix round 1:VisitSummaryBody 三节共用一张 MedCard,标题行各加
+  // 一枚光泽图标块 ────────────────────────────────────────────────────
+
+  final realisticSummary = VisitSummaryDto(
+    patient: const PatientProfileDto(
+      name: '张建国',
+      gender: '男',
+      age: '61岁',
+      recordCount: 42,
+    ),
+    allergies: [
+      AllergyItemDto(
+        substance: '磺胺甲噁唑-甲氧苄啶复方制剂(SMZ-TMP,复方新诺明)',
+        reaction: '全身荨麻疹伴呼吸困难,曾送急诊',
+        documentIds: Int64List(0),
+      ),
+    ],
+    activeMeds: [
+      ActiveMedDto(
+        name: '吗替麦考酚酯分散片(骁悉)',
+        dose: '1.5 g 每日两次,饭前空腹服用',
+        documentIds: Int64List(0),
+      ),
+    ],
+    recentLabs: const [],
+    recentChanges: [
+      VisitLabDto(
+        name: '抗核抗体谱定量(ANA)',
+        date: '2026-08-05',
+        value: 128.5,
+        unit: 'mmol/L',
+        flag: 'H',
+        refLow: 0,
+        refHigh: 20,
+        valuesConverted: false,
+        documentId: 1,
+        selfMeasured: false,
+        unverified: false,
+      ),
+    ],
+    recentVisits: const [],
+    recentNotes: const [],
+    plainText: '',
+  );
+
+  testWidgets('给医生看正文:我最近的变化/过敏史/记录中出现的药物 共用一张 MedCard', (
+    tester,
+  ) async {
+    await pumpStage3(
+      tester,
+      Scaffold(
+        body: VisitSummaryBody(
+          summary: realisticSummary,
+          onOpenDoc: (_) {},
+          onAddNote: () {},
+        ),
+      ),
+    );
+    expect(find.byType(MedCard), findsOneWidget, reason: '三节应该只共用一张 MedCard');
+    // 三节的文案一个字不动。
+    expect(find.text('我最近的变化'), findsOneWidget);
+    expect(find.text('过敏史'), findsOneWidget);
+    expect(find.text(kRecordedMedsTitle), findsOneWidget);
+    // 三节标题各自的光泽图标块类别照 R23:lab / alert / med。
+    final cats = tester
+        .widgetList<GlossIconTile>(find.byType(GlossIconTile))
+        .map((w) => w.category)
+        .toList();
+    expect(cats, containsAll(<GlossCategory>[GlossCategory.lab, GlossCategory.alert, GlossCategory.med]));
+    // 这一屏(正文本身,不含固定底部的出码按钮)渐变预算是 0。
+    expect(find.byType(MedPrimaryButton), findsNothing);
+    expectNoGradientInsideCards();
+  });
+
+  testWidgets('VisitSummaryBody(真实数据)在两种尺寸×两档字号都不溢出', (tester) async {
+    await expectNoOverflowAtBothSizes(
+      tester,
+      Scaffold(
+        body: VisitSummaryBody(
+          summary: realisticSummary,
+          onOpenDoc: (_) {},
+          onAddNote: () {},
+        ),
+      ),
+    );
   });
 }
