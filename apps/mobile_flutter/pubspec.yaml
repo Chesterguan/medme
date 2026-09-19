@@ -126,6 +126,9 @@ flutter:
 
   assets:
     - assets/icon/app_icon.png
+    # 真 logo(毛笔「医」)。brief §品牌:出现在主页顶栏 30、病历本书脊旁 40、
+    # 病程档案页头 30、首启场景中央 104,圆角一律 22%。见 lib/widgets/brand_logo.dart。
+    - assets/brand/logo112.png
 
   # 数字与字母用 Manrope,中文用系统字体(见 lib/design_tokens.dart 的 MedType)。
   # **可变字体,一个文件**:Google Fonts 已不再提供 Manrope 的静态字重,只有

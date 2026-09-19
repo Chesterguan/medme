@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../design_tokens.dart';
+import 'brand_logo.dart';
 
 /// 病历本条(brief §形「病历本条」;mockup `.book`)。
 ///
@@ -16,7 +17,7 @@ class RecordBookStrip extends StatelessWidget {
     this.bigNumberSuffix,
     this.bigNumberCaption,
     this.titleTrailing,
-    this.logo,
+    this.logo = const BrandLogo(size: BrandLogo.bookSpine),
     this.onTap,
   });
 
@@ -31,7 +32,8 @@ class RecordBookStrip extends StatelessWidget {
   /// 标题后面那枚 pill(「示例」)。
   final Widget? titleTrailing;
 
-  /// 书脊旁的真 logo,40px(brief §品牌)。Task 7 起由调用方传 `BrandLogo(size: 40)`。
+  /// 书脊旁的真 logo,40px(brief §品牌)。默认就是 `BrandLogo(size: BrandLogo.bookSpine)`,
+  /// 调用方不用每次传;传 `null` 则不画 logo。
   final Widget? logo;
 
   final VoidCallback? onTap;

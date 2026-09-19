@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_logo.dart';
 import 'package:mobile_flutter/widgets/record_book_strip.dart';
 
 void main() {
@@ -23,6 +24,11 @@ void main() {
     expect(d.borderRadius, BorderRadius.circular(MedShape.radiusEntry));
     expect(d.boxShadow, MedBrand.cardShadow);
     expect(d.border, isNull);   // brief §形:卡无边框
+  });
+
+  testWidgets('默认书脊旁就有真 logo(Task 7:BrandLogo 接入,调用方不用传)', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: strip)));
+    expect(find.byType(BrandLogo), findsOneWidget);
   });
 
   testWidgets('左 34px 书脊,180° 两段渐变', (tester) async {
