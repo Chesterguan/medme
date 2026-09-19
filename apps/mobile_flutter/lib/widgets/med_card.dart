@@ -220,6 +220,126 @@ class MedBanner extends StatelessWidget {
   }
 }
 
+/// 一颗可点选的分类 chip(mockup `.chips span` / `.chips .on`):未选中是白底药丸 +
+/// 小阴影,选中是 `seal` 实底白字 —— 与 [MedPill] 系的「前景 + 浅底」状态色不同,
+/// 这里表达的是「可点选的一个开关」,不是化验状态。
+///
+/// 原是「趋势」页(`trends_screen.dart`)的私有 `_PanelChip`;「一份病历」页
+/// `.tab2` 的三段切换与它同一形状,Task 10 提到这里两边共用,不复制第二份
+/// (R8)。`trends_screen.dart` 内继续用 `PanelChipsRow` 管选中态与横向滚动布局,
+/// 只是每一颗渲染换成这里。
+class MedChip extends StatelessWidget {
+  const MedChip({
+    super.key,
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(MedShape.radiusPill),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: MedShape.s2),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? c.seal : Colors.white,
+          borderRadius: BorderRadius.circular(MedShape.radiusPill),
+          // mockup `.chips span` 恒有这道小阴影,`.on` 只覆盖 background/color,
+          // 阴影两态相同(不是只有未选中才有)。
+          boxShadow: MedBrand.chipShadow,
+        ),
+        child: Text(
+          // 计数直接跟在文案后面(「肾功能 6」),不用括号 —— 与卡头「最新值 +
+          // 单位」同一套「数字紧挨着它描述的东西」的排法。
+          '$label $count',
+          style: MedType.secondary.copyWith(
+            fontSize: 14,
+            color: selected ? Colors.white : c.ink2,
+            fontFeatures: MedType.tabular,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 「看懂」蓝横幅(mockup `.read`:底 `MedBrand.bannerBlue`、圆角
+/// `MedShape.radiusBanner`,引用某份报告「提示」一栏的原文)。
+///
+/// **[text]/[source] 都不传时**仍然显示那句「还在做」的占位 —— 真内容(哪份报告、
+/// 原文哪一段)由另一条线接,在那之前一个字都不许编,这两个参数因此默认 `null`,
+/// 不默认成任何编出来的话。两个参数是为了视觉验收测试能喂样例文字去断言横幅的
+/// 底色/圆角/字色,不代表生产环境已经接了真内容。
+///
+/// 原是「趋势」页的私有 `UnderstandBanner`,Task 10 提到这里改名共用(R8);
+/// `trends_screen.dart` 用 `typedef UnderstandBanner = MedReadBanner` 保留原名,
+/// 调用方一个字不用改。
+class MedReadBanner extends StatelessWidget {
+  const MedReadBanner({super.key, this.text, this.source});
+
+  /// 报告「提示」一栏摘出来的原文。`null` → 占位那句「还在做」。
+  final String? text;
+
+  /// 原文出处的一句交代。`null` → 不画这一行(与 `SeriesCard` 的
+  /// `refSourceCitation` 同一条「查不到出处就不画」的规矩)。
+  final String? source;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: MedShape.s3,
+        vertical: MedShape.s2,
+      ),
+      decoration: BoxDecoration(
+        color: MedBrand.bannerBlue,
+        borderRadius: BorderRadius.circular(MedShape.radiusBanner),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '看懂',
+            style: MedType.caption.copyWith(
+              color: MedBrand.bannerBlueInk,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            text ?? '把报告上那段「提示」原文摘出来放这里 —— 还在做。',
+            style: MedType.body.copyWith(fontSize: 15, height: 1.55),
+          ),
+          if (source case final s?) ...[
+            const SizedBox(height: 4),
+            // 不加任何前缀文案(比如「出处:」)——那会是这份文件里没出现过的新
+            // 字。真内容接进来那天,这一行该怎么措辞是那条线的事,这里只给
+            // 样式,原样显示调用方给的这句话。
+            Text(
+              s,
+              style: MedType.caption.copyWith(
+                color: c.ink2,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// 「示例」标(mockup `.pill.demo`):白底 + 虚线框,**不是**实心 pill —— demo 数据
 /// 需要一眼与真实数据区分开,用「只剩轮廓、没有实色底」的克制画法。
 class MedDemoPill extends StatelessWidget {

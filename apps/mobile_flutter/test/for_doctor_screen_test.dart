@@ -16,6 +16,7 @@ import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
 
 const _empty = VisitSummaryDto(
   patient: PatientProfileDto(recordCount: 0),
@@ -61,15 +62,10 @@ void main() {
     await tester.pumpWidget(wrapScreen(ForDoctorScreen(load: () async => _empty)));
     await tester.pumpAndSettle();
 
-    // 「出码」是固定在底部的那一颗(`s4`),不在跟着滚的那一组里。
-    // `FilledButton.icon` 建的是 `FilledButton` 的私有子类,`find.byType` 是
-    // **精确类型**匹配,套不中 —— 所以这里按「是不是 FilledButton」找。
-    final qr = tester.widget<FilledButton>(
-      find.ancestor(
-        of: find.text('出码给医生看'),
-        matching: find.byWidgetPredicate((w) => w is FilledButton),
-      ),
-    );
+    // 「出码」是固定在底部的那一颗(`s4`),不在跟着滚的那一组里。Task 10 把它
+    // 从 `FilledButton.icon` 换成了 `MedPrimaryButton`(brief §品牌 最后一条 +
+    // 渐变预算表:s4 的那 1 颗主按钮就是它),按类型直接找。
+    final qr = tester.widget<MedPrimaryButton>(find.byType(MedPrimaryButton));
     expect(qr.onPressed, isNotNull, reason: '「出码」还是禁用态');
 
     final actions = tester.widget<ForDoctorActions>(

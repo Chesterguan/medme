@@ -21,6 +21,9 @@ import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 class ForDoctorScreen extends StatefulWidget {
   const ForDoctorScreen({super.key, this.load, this.onRequestAddNote});
@@ -96,31 +99,6 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
     if (nav.canPop()) nav.popUntil((route) => route.isFirst);
   }
 
-  /// 固定在底部的主动作 —— **只有这一颗**(`s4`:「真机上这颗按钮固定在底部」)。
-  /// 一屏只允许一颗主按钮(规范 §六),诊室里那一下就是把码递过去。
-  Widget _qrBar(MedColors c) => Container(
-    padding: const EdgeInsets.fromLTRB(
-      MedShape.s4,
-      MedShape.s2,
-      MedShape.s4,
-      MedShape.s2,
-    ),
-    decoration: BoxDecoration(
-      color: c.surface,
-      border: Border(top: BorderSide(color: c.line)),
-    ),
-    child: SizedBox(
-      width: double.infinity,
-      child: FilledButton.icon(
-        onPressed: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => const QrShareScreen()),
-        ),
-        icon: const Icon(Icons.qr_code_2, size: 20),
-        label: const Text('出码给医生看'),
-      ),
-    ),
-  );
-
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
@@ -134,6 +112,28 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
+        ),
+      ),
+      // 固定在底部的主动作 —— **只有这一颗**(brief §品牌 最后一条:「出码给
+      // 医生看」固定底部;渐变预算表 `s4` = 1 颗 `MedPrimaryButton`)。一屏只
+      // 允许一颗主按钮(规范 §六),诊室里那一下就是把码递过去。挪进
+      // `Scaffold.bottomNavigationBar` 而不是留在正文末尾 —— `s4` 的正文是全
+      // app 最长的一屏(12 种药 + 6 个诊断),滚到底才看见主动作等于没有主动作。
+      // 出码这条动作不读 `_future`(它是另一条 FFI),放在这一层不必等
+      // `VisitSummaryDto` 加载完才出现。
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(
+          MedShape.s3,
+          0,
+          MedShape.s3,
+          MedShape.s2,
+        ),
+        child: MedPrimaryButton(
+          label: '出码给医生看',
+          icon: Icons.qr_code_2_outlined,
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const QrShareScreen()),
+          ),
         ),
       ),
       body: FutureBuilder<VisitSummaryDto>(
@@ -162,41 +162,32 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
           // 而且多一整块「检查与手术」—— 那次重排连同各行的迷你折线一起,
           // 归 Stage 2。**别照这段注释以为顺序已经对了。**
           //
-          // 页脚与底部的分工照 `s4`:「出码给医生看」是主动作,真机上固定在
-          // 底部;「导出文件」「急救卡」「代拍」跟着内容滚(否则固定区在
-          // 大字号下会把正文挤没 —— ×3.0 时整块直接溢出)。
+          // 页脚与底部的分工照 `s4`:「出码给医生看」是主动作,挪进了
+          // `Scaffold.bottomNavigationBar`(见上),真机上固定在底部,内容
+          // 再长也在;「导出文件」「急救卡」「代拍」跟着内容滚。
           //
           // `VisitSummaryBody` 自己就是一个 `ListView`,**不能**再塞进外层
           // `ListView` 的 children(纵向 viewport 拿到无穷高约束,当场炸),
           // 所以那三条是经 `footer` 接进它自己的滚动流里的。
-          return Column(
-            children: [
-              Expanded(
-                child: VisitSummaryBody(
-                  summary: snap.data!,
-                  onOpenDoc: _openDoc,
-                  onAddNote: _addNote,
-                  // AppBar 上已经写着「给医生看」,正文不再画一次旧名字。
-                  showHeading: false,
-                  // 「急救卡」在概览解散之后**一个入口都不剩**了,`s4` 给它的
-                  // 归宿就是这一页(ia-proposal §7 决定 3)。
-                  footer: ForDoctorActions(
-                    onExport: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const ExportScreen(),
-                      ),
-                    ),
-                    onEmergency: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const EmergencyCardScreen(),
-                      ),
-                    ),
-                    onProxy: _enterProxy,
-                  ),
+          return VisitSummaryBody(
+            summary: snap.data!,
+            onOpenDoc: _openDoc,
+            onAddNote: _addNote,
+            // AppBar 上已经写着「给医生看」,正文不再画一次旧名字。
+            showHeading: false,
+            // 「急救卡」在概览解散之后**一个入口都不剩**了,`s4` 给它的
+            // 归宿就是这一页(ia-proposal §7 决定 3)。
+            footer: ForDoctorActions(
+              onExport: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const ExportScreen()),
+              ),
+              onEmergency: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const EmergencyCardScreen(),
                 ),
               ),
-              SafeArea(top: false, child: _qrBar(c)),
-            ],
+              onProxy: _enterProxy,
+            ),
           );
         },
       ),
@@ -224,7 +215,8 @@ class ForDoctorActions extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 逐字照 `s4`:急救那颗是「急救卡」。
+        // 逐字照 `s4`:急救那颗是「急救卡」。leading 换成光泽图标块(brief
+        // §形):导出=中性、急救=警示。
         //
         // 「导出文件」是这一页唯一的次要行,排在固定于底部的「出码」之后——出码
         // 才是诊室里那个主动作(本地、离线、30 秒),这一行是低频、要联网的
@@ -233,26 +225,37 @@ class ForDoctorActions extends StatelessWidget {
         // 文案刻意不用「分享」二字——见 `test/glossary_guard_test.dart` 顶部
         // 关于这个词的收窄说明。
         ListTile(
-          leading: const Icon(Icons.print_outlined),
+          leading: const GlossIconTile(
+            icon: Icons.print_outlined,
+            category: GlossCategory.neutral,
+          ),
           title: const Text('导出文件'),
           subtitle: const Text('报销、留档用的可打印文件'),
           onTap: onExport,
         ),
         ListTile(
-          leading: const Icon(Icons.emergency_outlined),
+          leading: const GlossIconTile(
+            icon: Icons.favorite_outline,
+            category: GlossCategory.alert,
+          ),
           title: const Text('急救卡'),
           onTap: onEmergency,
         ),
-        ListTile(
-          // 全 App 唯一一句代拍入口文案 —— `doctor_home_screen.dart:264` 的
-          // 主按钮用**同一句**(Task 15)。此前存在的另外几种说法已经被
-          // `test/glossary_guard_test.dart` 的禁词闸关掉,**这条注释里也不许
-          // 复述它们**,否则闸会扫到自己。
-          leading: const Icon(Icons.medical_services_outlined),
-          title: const Text('我是医生,替病人代拍'),
-          // `s4` 的副标题,逐字。
-          subtitle: const Text('病人不用装 App、不用账号'),
-          onTap: onProxy,
+        const SizedBox(height: MedShape.s1),
+        // 换成 mockup `s4` 的蓝横幅(brief §色:横幅=蓝)——全 App 唯一一句
+        // 代拍入口文案:`doctor_home_screen.dart:264` 的主按钮用**同一句**
+        // (Task 15)。此前存在的另外几种说法已经被 `test/glossary_guard_test.dart`
+        // 的禁词闸关掉,**这条注释里也不许复述它们**,否则闸会扫到自己。
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: MedShape.s3),
+          child: MedBanner(
+            icon: Icons.photo_camera_outlined,
+            iconCategory: GlossCategory.brand,
+            title: '我是医生,替病人代拍',
+            // `s4` 的副标题,逐字。
+            subtitle: '病人不用装 App、不用账号',
+            onTap: onProxy,
+          ),
         ),
       ],
     );

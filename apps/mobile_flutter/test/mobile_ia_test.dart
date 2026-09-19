@@ -881,18 +881,14 @@ void main() {
 
     testWidgets('跟着滚的三条逐字照 mockup s4,顺序也照它', (t) async {
       await t.pumpWidget(wrap(const ForDoctorActions()));
-      // 断言**顺序**,不是「都在」—— 三条换个位置照样能逐条 findsOneWidget。
-      expect(
-        find
-            .descendant(
-              of: find.byType(ForDoctorActions),
-              matching: find.byType(ListTile),
-            )
-            .evaluate()
-            .map((e) => ((e.widget as ListTile).title as Text).data)
-            .toList(),
-        ['导出文件', '急救卡', '我是医生,替病人代拍'],
-      );
+      // 断言**顺序**,不是「都在」—— 三条换个位置照样能逐条 findsOneWidget。Task 10
+      // 把第三条换成了 mockup `s4` 的蓝横幅(`MedBanner`,不再是 `ListTile`)——
+      // 按**纵向位置**比顺序,不再假设三条都是同一个 widget 类型。
+      final labels = ['导出文件', '急救卡', '我是医生,替病人代拍'];
+      final dys = labels.map((l) => t.getTopLeft(find.text(l)).dy).toList();
+      for (var i = 1; i < dys.length; i++) {
+        expect(dys[i - 1], lessThan(dys[i]), reason: '「${labels[i - 1]}」应排在「${labels[i]}」前面');
+      }
       // 代拍入口全 App 只有这一句话(Task 15 让医生端主按钮也用它)。
       expect(find.text('病人不用装 App、不用账号'), findsOneWidget);
       // 出码不在这一组里 —— 它是固定在底部的那一颗(`s4`)。

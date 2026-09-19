@@ -535,8 +535,9 @@ String _panelChipLabel(String? panel) =>
 /// 等于什么都点不了,是纯噪音。
 ///
 /// **公开是为了可测**(与 `SeriesCard`/`ProvenanceFooter` 同一先例):
-/// `test/trends_visual_test.dart` 要分别断言 `_PanelChip` 选中/未选中两种
-/// 底色,而 `_PanelChip` 自己是私有的,同文件外拿不到——只能从这一层拿。
+/// 每一颗的渲染是共用的 [MedChip](Task 10 从这里的私有 `_PanelChip` 提到
+/// `med_card.dart`,R8——「一份病历」页的 `.tab2` 同一形状);这一层继续留着,
+/// 管选中态与横向滚动布局。
 class PanelChipsRow extends StatelessWidget {
   const PanelChipsRow({
     super.key,
@@ -559,7 +560,7 @@ class PanelChipsRow extends StatelessWidget {
         separatorBuilder: (_, _) => const SizedBox(width: MedShape.s1),
         itemBuilder: (context, i) {
           final chip = chips[i];
-          return _PanelChip(
+          return MedChip(
             label: chip.label,
             count: chip.count,
             selected: chip.panel == selectedPanel,
@@ -618,53 +619,6 @@ class _AbnormalOnlyRow extends StatelessWidget {
         ),
         Switch(value: abnormalOnly, onChanged: onToggle),
       ],
-    );
-  }
-}
-
-/// 一颗大类 chip:未选中是白底药丸 + 小阴影,选中是 `seal` 实底白字(mockup
-/// `.chips span` / `.chips .on`——与 `labStatusPill` 系的「前景+浅底」不同,
-/// 这里要表达的是「可点选的一个开关」,不是化验状态)。
-class _PanelChip extends StatelessWidget {
-  const _PanelChip({
-    required this.label,
-    required this.count,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final int count;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(MedShape.radiusPill),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: MedShape.s2),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: selected ? c.seal : Colors.white,
-          borderRadius: BorderRadius.circular(MedShape.radiusPill),
-          // mockup `.chips span` 恒有这道小阴影,`.on` 只覆盖 background/color,
-          // 阴影两态相同(不是只有未选中才有)。
-          boxShadow: MedBrand.chipShadow,
-        ),
-        child: Text(
-          // 计数直接跟在文案后面(「肾功能 6」),不用括号 —— 与卡头「最新值 +
-          // 单位」同一套「数字紧挨着它描述的东西」的排法。
-          '$label $count',
-          style: MedType.secondary.copyWith(
-            fontSize: 14,
-            color: selected ? Colors.white : c.ink2,
-            fontFeatures: MedType.tabular,
-          ),
-        ),
-      ),
     );
   }
 }
@@ -1456,69 +1410,11 @@ class _SectionHeader extends StatelessWidget {
 // 「病程档案」入口卡搬去了 `widgets/disease_profile_card.dart`:它现在是有状态、
 // 要取数的一块(装着哪个包、开没开启、包给的摘要),不再是这一屏里的一张死卡。
 
-/// 「看懂」蓝横幅(mockup `s2` 的 `.read`:底 `MedBrand.bannerBlue`、圆角
-/// `MedShape.radiusBanner`,引用某份报告「提示」一栏的原文)。
-///
-/// **[text]/[source] 都不传时**([TrendsScreen] 今天唯一的调用点)仍然显示
-/// 那句「还在做」的占位 —— 真内容(哪份报告、原文哪一段)由另一条线接,在那
-/// 之前一个字都不许编,这两个参数因此默认 `null`,不默认成任何编出来的话。
-/// 两个参数是为了这一屏的视觉验收测试(`test/trends_visual_test.dart`)能喂
-/// 样例文字去断言横幅的底色/圆角/字色,不代表生产环境已经接了真内容。
-class UnderstandBanner extends StatelessWidget {
-  const UnderstandBanner({super.key, this.text, this.source});
-
-  /// 报告「提示」一栏摘出来的原文。`null` → 占位那句「还在做」。
-  final String? text;
-
-  /// 原文出处的一句交代。`null` → 不画这一行(与 `SeriesCard` 的
-  /// `refSourceCitation` 同一条「查不到出处就不画」的规矩)。
-  final String? source;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: MedShape.s3,
-        vertical: MedShape.s2,
-      ),
-      decoration: BoxDecoration(
-        color: MedBrand.bannerBlue,
-        borderRadius: BorderRadius.circular(MedShape.radiusBanner),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '看懂',
-            style: MedType.caption.copyWith(
-              color: MedBrand.bannerBlueInk,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            text ?? '把报告上那段「提示」原文摘出来放这里 —— 还在做。',
-            style: MedType.body.copyWith(fontSize: 15, height: 1.55),
-          ),
-          if (source case final s?) ...[
-            const SizedBox(height: 4),
-            // 不加任何前缀文案(比如「出处:」)——那会是这份文件里没出现过的新
-            // 字。真内容接进来那天,这一行该怎么措辞是那条线的事,这里只给
-            // 样式,原样显示调用方给的这句话。
-            Text(
-              s,
-              style: MedType.caption.copyWith(
-                color: c.ink2,
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
+/// 「看懂」蓝横幅——Task 10 把实现提到 `widgets/med_card.dart` 改名
+/// [MedReadBanner] 共用(「一份病历」页同款横幅,R8),这里留一个类型别名:
+/// [TrendsScreen] 内的构造写法、`test/trends_visual_test.dart` /
+/// `test/trends_screen_test.dart` 的既有引用都不用改一个字。
+typedef UnderstandBanner = MedReadBanner;
 
 /// 「记录一下」入口(`s2` 底部那颗;点开是 `s9`:血压 / 体重 / 今天不舒服 /
 /// 血糖 / 写句话)。从解散的概览快捷操作搬过来 —— 自己填的数和医院的数看的是
