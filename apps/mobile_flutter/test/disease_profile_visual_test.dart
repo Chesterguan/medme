@@ -39,7 +39,7 @@ void main() {
   });
 
   testWidgets('ProfileIconTile 就是光泽图标块 —— 不再是 sealWash 方块', (tester) async {
-    await pumpStage3(tester, const Scaffold(body: ProfileIconTile(icon: Icons.timeline_outlined)));
+    await pumpStage3(tester, const Scaffold(body: GlossIconTile(icon: Icons.timeline_outlined)));
     expect(find.byType(GlossIconTile), findsOneWidget);
     expect(tester.getSize(find.byType(GlossIconTile)), const Size(44, 44));
   });
@@ -56,7 +56,7 @@ void main() {
   });
 
   testWidgets('零个品牌渐变面,卡里没有渐变', (tester) async {
-    await pumpStage3(tester, const Scaffold(body: MedCard(child: ProfileIconTile(icon: Icons.science_outlined))));
+    await pumpStage3(tester, const Scaffold(body: MedCard(child: GlossIconTile(icon: Icons.science_outlined))));
     expectGradientBudget();
     expectNoGradientInsideCards();
   });

@@ -79,12 +79,34 @@ final _cjk = RegExp(r'[一-鿿]');
 
 /// 去掉行注释(`//…`/`///…`,行内截断到行尾)和块注释(`/* … */`,可跨行)——
 /// 注释里的中文(设计说明、踩坑记录)Stage 3 会大改,那不算文案变更。
+///
+/// R35b:原来对整行找**第一个** `//` 就截断,连字符串字面量里的 `//`(URL)也当
+/// 成注释起点——字面量本身连同它后面真正的注释一起被吞掉,`settings_screen.dart:
+/// 556/754/762` 的 `_openWeb('https://…', '主页')` 这类调用因此整行消失(HEAD/
+/// 基线两侧一样瞎,闸不红,但漏了覆盖)。改成:整行(trim 后)以 `//` 开头才
+/// 整行丢;否则只有当 `//` 前面是空白、且不在单引号字符串里面(数「前面有几个
+/// 没被转义的 `'`」,奇数 = 在字符串里)才截断——反斜杠转义按「紧邻前一个字符
+/// 是不是 `\`」这一层判断,不处理连续反斜杠这种更深的转义链(这份代码里的
+/// 字面量不出现裸反斜杠,见 R35 报告)。
 String _stripComments(String src) => src
     .replaceAll(RegExp(r'/\*[\s\S]*?\*/'), '')
     .split('\n')
     .map((l) {
-      final i = l.indexOf('//');
-      return i < 0 ? l : l.substring(0, i);
+      if (l.trimLeft().startsWith('//')) return '';
+      var quotes = 0;
+      for (var i = 0; i < l.length; i++) {
+        if (l[i] == "'" && (i == 0 || l[i - 1] != '\\')) {
+          quotes++;
+        } else if (l[i] == '/' &&
+            i + 1 < l.length &&
+            l[i + 1] == '/' &&
+            i > 0 &&
+            l[i - 1].trim().isEmpty &&
+            quotes.isEven) {
+          return l.substring(0, i);
+        }
+      }
+      return l;
     })
     .join('\n');
 
@@ -93,6 +115,44 @@ List<String> _runsIn(String src) => _cjkRun
     .map((m) => m[0]!)
     .where(_cjk.hasMatch)
     .toList();
+
+/// R35a:数字/拉丁数字本身不在 `_cjkRun` 的字符类里(见上),所以纯 CJK 段的
+/// 多重集看不见「暂存到云端 15 天」改成「30 天」这种改动。只挑**紧跟在表意字
+/// 段后面**的数字串配对成一个单元一起计数(如 `…云端|15`,中间只许隔空白,
+/// 空隙也可以是零宽——「拍了3张」的「拍了|3」)——数字一改,这个单元的次数
+/// 就变。
+///
+/// **「紧跟」按字面意思、不是「同一行里随便一个更早的表意字段」**:这条是跑
+/// 出来的——先按「同一行最近的前一个表意字段」实现过一版,`account_screen.dart`
+/// / `member_detail_screen.dart` 里 `Text('恢复码,口令忘了用它', style:
+/// TextStyle(fontSize: 15, …))` 这类同一物理行内、但隔着一串 Dart 代码
+/// (`style: TextStyle(fontSize: `)的 `15`,以及颜色令牌命名 `.ink3`、
+/// `FontWeight.w400` 里的后缀数字,全被当成跟前面的中文段"配对",而这些数字
+/// 全是 Stage 3 改样式(字号/字重/取色令牌名)带来的代码噪音,跟中文文案
+/// 半点关系没有——两侧一比就假红。改成「中间只许空白」之后,digit 与它要配对
+/// 的表意字段之间不能隔着任何非空白代码字符,这类噪音天然配不上(数字前面
+/// 不是空白衔接的表意字,直接跳过、不计入),闸回到绿。
+final _digitRun = RegExp(r'[0-9]+(?:[.~/-][0-9]+)*');
+
+List<String> _digitPairsIn(String src) {
+  final pairs = <String>[];
+  for (final line in _stripComments(src).split('\n')) {
+    if (!_cjk.hasMatch(line)) continue;
+    final cjkRuns = _cjkRun.allMatches(line).where((m) => _cjk.hasMatch(m[0]!)).toList();
+    for (final d in _digitRun.allMatches(line)) {
+      RegExpMatch? nearest;
+      for (final c in cjkRuns) {
+        if (c.end <= d.start &&
+            line.substring(c.end, d.start).trim().isEmpty &&
+            (nearest == null || c.end > nearest.end)) {
+          nearest = c;
+        }
+      }
+      if (nearest != null) pairs.add('${nearest[0]}|${d[0]}');
+    }
+  }
+  return pairs;
+}
 
 /// 段文本 → 出现次数(多重集)。
 Map<String, int> _multiset(Iterable<String> runs) {
@@ -103,68 +163,96 @@ Map<String, int> _multiset(Iterable<String> runs) {
   return m;
 }
 
+/// HEAD 的 `lib/**`(排除令牌层)与基线 [kBaseline] 的同一份文件集,各自喂给
+/// [extract]、按文件去重(`.toSet()`——同一段文字在同一个文件里出现几次只算
+/// 1,见文件头注释)后聚成多重集,回 added/removed 差异描述(带文件名,供失败
+/// 信息用)。CJK 段闸与 R35a 数字配对闸共用这一套「怎么比」,只有「抽什么」
+/// ([extract])不同。
+({List<String> added, List<String> removed}) _diffAgainstBaseline(
+  List<String> Function(String) extract,
+) {
+  // HEAD:当前工作区 lib/** 下所有 .dart 文件——不限 screens/widgets。
+  final headFiles = Directory('lib')
+      .listSync(recursive: true)
+      .whereType<File>()
+      .where((f) => f.path.endsWith('.dart') && !_isTokenFile(f.path));
+  final headRuns = <String>[];
+  final headFilesByRun = <String, Set<String>>{};
+  for (final f in headFiles) {
+    final runs = extract(f.readAsStringSync()).toSet();
+    headRuns.addAll(runs);
+    for (final r in runs) {
+      (headFilesByRun[r] ??= <String>{}).add(f.path);
+    }
+  }
+
+  // 基线:`git ls-tree` 拿文件名单(HEAD 之后新增/删掉的文件天然只在一侧
+  // 名单里出现,不要求两侧文件集合相同),逐个 `git show` 取内容——一个
+  // 文件一次子进程调用,workingDirectory 在上两级(仓库根),路径按 git
+  // 的相对写法。
+  final ls = Process.runSync('git', [
+    'ls-tree',
+    '-r',
+    '--name-only',
+    kBaseline,
+    '--',
+    'apps/mobile_flutter/lib',
+  ], workingDirectory: '../..');
+  final baselinePaths = (ls.stdout as String)
+      .trim()
+      .split('\n')
+      .where((p) => p.endsWith('.dart') && !_isTokenFile(p));
+  final baselineRuns = <String>[];
+  final baselineFilesByRun = <String, Set<String>>{};
+  for (final path in baselinePaths) {
+    final show = Process.runSync('git', ['show', '$kBaseline:$path'], workingDirectory: '../..');
+    final runs = extract(show.stdout as String).toSet();
+    baselineRuns.addAll(runs);
+    for (final r in runs) {
+      (baselineFilesByRun[r] ??= <String>{}).add(path);
+    }
+  }
+
+  final now = _multiset(headRuns);
+  final before = _multiset(baselineRuns);
+
+  final added = <String>[];
+  final removed = <String>[];
+  for (final r in {...now.keys, ...before.keys}) {
+    final n = now[r] ?? 0, b = before[r] ?? 0;
+    if (n > b) {
+      added.add('「$r」多了 ${n - b} 次 —— 现存于:${(headFilesByRun[r] ?? const {}).join(', ')}');
+    }
+    if (b > n) {
+      removed.add('「$r」少了 ${b - n} 次 —— 基线里在:${(baselineFilesByRun[r] ?? const {}).join(', ')}');
+    }
+  }
+  return (added: added, removed: removed);
+}
+
 void main() {
   test('用户可见 CJK 文本段的多重集与基线 $kBaseline 相同(允许挪动/拆分,不许增删)', () {
-    // HEAD:当前工作区 lib/** 下所有 .dart 文件——不限 screens/widgets。
-    final headFiles = Directory('lib')
-        .listSync(recursive: true)
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.dart') && !_isTokenFile(f.path));
-    final headRuns = <String>[];
-    final headFilesByRun = <String, Set<String>>{};
-    for (final f in headFiles) {
-      // `.toSet()`:同一段文字在同一个文件里出现几次只算 1,见文件头注释。
-      final runs = _runsIn(f.readAsStringSync()).toSet();
-      headRuns.addAll(runs);
-      for (final r in runs) {
-        (headFilesByRun[r] ??= <String>{}).add(f.path);
-      }
-    }
+    final diff = _diffAgainstBaseline(_runsIn);
+    expect(diff.added, isEmpty, reason: '多出来的文案段(Stage 3 不许加字):\n${diff.added.join('\n')}');
+    expect(diff.removed, isEmpty, reason: '丢掉的文案段(Stage 3 不许删字):\n${diff.removed.join('\n')}');
+  });
 
-    // 基线:`git ls-tree` 拿文件名单(HEAD 之后新增/删掉的文件天然只在一侧
-    // 名单里出现,不要求两侧文件集合相同),逐个 `git show` 取内容——一个
-    // 文件一次子进程调用,workingDirectory 在上两级(仓库根),路径按 git
-    // 的相对写法。
-    final ls = Process.runSync('git', [
-      'ls-tree',
-      '-r',
-      '--name-only',
-      kBaseline,
-      '--',
-      'apps/mobile_flutter/lib',
-    ], workingDirectory: '../..');
-    final baselinePaths = (ls.stdout as String)
-        .trim()
-        .split('\n')
-        .where((p) => p.endsWith('.dart') && !_isTokenFile(p));
-    final baselineRuns = <String>[];
-    final baselineFilesByRun = <String, Set<String>>{};
-    for (final path in baselinePaths) {
-      final show = Process.runSync('git', ['show', '$kBaseline:$path'], workingDirectory: '../..');
-      // `.toSet()`:同一段文字在同一个文件里出现几次只算 1,见文件头注释。
-      final runs = _runsIn(show.stdout as String).toSet();
-      baselineRuns.addAll(runs);
-      for (final r in runs) {
-        (baselineFilesByRun[r] ??= <String>{}).add(path);
-      }
-    }
+  test('R35a:表意字|数字配对的多重集与基线 $kBaseline 相同(数字改了要测得出来)', () {
+    final diff = _diffAgainstBaseline(_digitPairsIn);
+    expect(diff.added, isEmpty, reason: '多出来的「表意字|数字」配对:\n${diff.added.join('\n')}');
+    expect(diff.removed, isEmpty, reason: '丢掉的「表意字|数字」配对:\n${diff.removed.join('\n')}');
+  });
 
-    final now = _multiset(headRuns);
-    final before = _multiset(baselineRuns);
+  test('_digitPairsIn 自测(纯函数,不碰 git):15 天改成 30 天,多重集必须不同', () {
+    // 原句取自 `lib/screens/qr_notice_sheet.dart` 的 kQrNoticeText。
+    const before = '会把加密后的病历暂存到云端 15 天,只有扫这个码的人能看;我们打不开。';
+    const after = '会把加密后的病历暂存到云端 30 天,只有扫这个码的人能看;我们打不开。';
+    expect(_multiset(_digitPairsIn(before)), isNot(equals(_multiset(_digitPairsIn(after)))));
+  });
 
-    final added = <String>[];
-    final removed = <String>[];
-    for (final r in {...now.keys, ...before.keys}) {
-      final n = now[r] ?? 0, b = before[r] ?? 0;
-      if (n > b) {
-        added.add('「$r」多了 ${n - b} 次 —— 现存于:${(headFilesByRun[r] ?? const {}).join(', ')}');
-      }
-      if (b > n) {
-        removed.add('「$r」少了 ${b - n} 次 —— 基线里在:${(baselineFilesByRun[r] ?? const {}).join(', ')}');
-      }
-    }
-
-    expect(added, isEmpty, reason: '多出来的文案段(Stage 3 不许加字):\n${added.join('\n')}');
-    expect(removed, isEmpty, reason: '丢掉的文案段(Stage 3 不许删字):\n${removed.join('\n')}');
+  test('_stripComments 自测(纯函数):字符串字面量里的 // 不是注释起点', () {
+    const line = "  Text('https://medme.example/主页'), // 主页链接";
+    // 保留字面量里的「主页」、丢掉注释里的「主页」——不是「两个都保留」。
+    expect(_runsIn(line), ['主页']);
   });
 }

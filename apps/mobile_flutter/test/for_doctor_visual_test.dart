@@ -14,7 +14,6 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/brand_gradient.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
-import 'package:mobile_flutter/widgets/long_text_row.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'stage3_visual_helpers.dart';
@@ -72,24 +71,56 @@ void main() {
     expect(find.text('病人不用装 App、不用账号'), findsOneWidget);
   });
 
-  testWidgets('长清单用 LongTextRow,一项一行,12 项不溢出', (tester) async {
-    const meds = LongTextRow(category: GlossCategory.med, icon: Icons.medication_outlined,
-      items: [
-        (text: '阿司匹林肠溶片', meta: '100 mg 每日'),
-        (text: '氯吡格雷', meta: '75 mg 每日,至 2027 年 7 月'),
-        (text: '阿托伐他汀', meta: '20 mg 每晚'),
-        (text: '氨氯地平', meta: '5 mg 早晚'),
-        (text: '美托洛尔', meta: '剂量未记'),
-        (text: '二甲双胍缓释片', meta: '0.5 g 每日 2 次'),
-        (text: '达格列净', meta: '10 mg 每日'),
-        (text: '非布司他', meta: '40 mg 每日'),
-        (text: '泼尼松', meta: '7.5 mg 每日'),
-        (text: '羟氯喹', meta: '400 mg 每日'),
-        (text: '吗替麦考酚酯', meta: '1.5 g 每日'),
-        (text: '贝利尤单抗', meta: '每 4 周'),
-      ]);
+  testWidgets('长清单一项一行,不溢出', (tester) async {
+    // R35 Task 2:原来这里建的那个独立「长文本行」widget 已删(零生产调用点——
+    // mockup 的这个形状实际由 `visit_summary_sheet.dart` 的私有 `_LineRow`
+    // 实现)。压力测试的关心点没变:一枚图标块 + 一长串「正文左、说明右」的
+    // Wrap 行,12 项长文案在两种尺寸×两档字号下不溢出——内联同一棵 widget 树,
+    // 不重新建一个独立 class。
+    const List<({String text, String? meta})> items = [
+      (text: '阿司匹林肠溶片', meta: '100 mg 每日'),
+      (text: '氯吡格雷', meta: '75 mg 每日,至 2027 年 7 月'),
+      (text: '阿托伐他汀', meta: '20 mg 每晚'),
+      (text: '氨氯地平', meta: '5 mg 早晚'),
+      (text: '美托洛尔', meta: '剂量未记'),
+      (text: '二甲双胍缓释片', meta: '0.5 g 每日 2 次'),
+      (text: '达格列净', meta: '10 mg 每日'),
+      (text: '非布司他', meta: '40 mg 每日'),
+      (text: '泼尼松', meta: '7.5 mg 每日'),
+      (text: '羟氯喹', meta: '400 mg 每日'),
+      (text: '吗替麦考酚酯', meta: '1.5 g 每日'),
+      (text: '贝利尤单抗', meta: '每 4 周'),
+    ];
+    final meds = Builder(builder: (context) {
+      final c = MedColors.of(context);
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const GlossIconTile(icon: Icons.medication_outlined, category: GlossCategory.med),
+          const SizedBox(width: MedShape.s2),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            for (final item in items)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.end,
+                  spacing: 10,
+                  runSpacing: 2,
+                  children: [
+                    Text(item.text, style: MedType.body.copyWith(fontSize: 15, height: 1.5)),
+                    if (item.meta != null)
+                      Text(item.meta!, softWrap: false,
+                        style: MedType.secondary.copyWith(color: c.ink3)),
+                  ],
+                ),
+              ),
+          ])),
+        ]),
+      );
+    });
     await expectNoOverflowAtBothSizes(tester,
-        const Scaffold(body: SingleChildScrollView(child: meds)));
+        Scaffold(body: SingleChildScrollView(child: meds)));
   });
 
   // ── 以下补充测试(controller 的任务说明书,不在 brief 字面里)──────────

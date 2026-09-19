@@ -504,6 +504,7 @@ class MedBrand {
   static const Color glossBottom = Color(0x1A000000);       // inset rgba(0,0,0,.10)
   static const double tileSize = 44;
   static const double tileIconSize = 22;
+  // ponytail: 无消费者 —— Material Icons 没有描边轴;要用它得换可变图标字体(加依赖),brief 值先留着。
   static const double tileIconStroke = 1.9;
 
   // ── 状态 ────────────────────────────────────────────────

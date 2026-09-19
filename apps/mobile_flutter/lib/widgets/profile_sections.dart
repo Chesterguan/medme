@@ -98,8 +98,8 @@ const Map<String, IconData> _kIconFor = {
 /// 监测项,如复查肝功/血常规);指南更新(`checklist`,达标情况/治疗里程碑都是
 /// 照指南对照)= clinic;病程事件(`timeline`)= note;`handoff` 目前没有引擎
 /// 产出(见 `_HandoffBody` 文档),按「异常/警示」归 alert。认不出的 kind 用
-/// brand(与 [ProfileIconTile] 的默认值一致,理论上到不了这里——上层已经用
-/// `_kIconFor` 守过一遍)。
+/// brand(与 [_SectionCard] 的 `category` 默认值一致,理论上到不了这里——
+/// 上层已经用 `_kIconFor` 守过一遍)。
 GlossCategory _categoryForKind(String? kind) => switch (kind) {
   'status_card' => GlossCategory.med,
   'score_card' || 'series_chart' => GlossCategory.lab,
@@ -242,7 +242,7 @@ class _SectionCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ProfileIconTile(icon: icon, category: category),
+              GlossIconTile(icon: icon, category: category),
               const SizedBox(width: MedShape.s3),
               Expanded(
                 child: Column(
@@ -262,28 +262,6 @@ class _SectionCard extends StatelessWidget {
       ),
     );
   }
-}
-
-/// 病程档案里那一档图标底。Stage 3 起它就是 `GlossIconTile` —— 36×36 的 sealWash
-/// 方块被 brief §形 的「3D 图标语言」取代,全 app 只留一种图标底。
-///
-/// 保留这个类名、不直接改成 `GlossIconTile`:调用方(`_SectionCard`)按
-/// section kind 传不同 [category](见 `_categoryForKind`),[category] 的默认值
-/// 让日后任何新调用点不用现补参数。公开是因为「趋势」tab 上那张入口卡
-/// (`widgets/disease_profile_card.dart`)曾经与这里共用同一档色块的历史——见类
-/// 保留的原因不是外部还在用它,是构造参数不必跟着 Stage 3 重排一遍调用点。
-class ProfileIconTile extends StatelessWidget {
-  const ProfileIconTile({
-    super.key,
-    required this.icon,
-    this.category = GlossCategory.brand,
-  });
-
-  final IconData icon;
-  final GlossCategory category;
-
-  @override
-  Widget build(BuildContext context) => GlossIconTile(icon: icon, category: category);
 }
 
 /// 折叠态的那一行提示——`empty_hint` 原样显示,不额外拼标题上去(拼了就不再是
