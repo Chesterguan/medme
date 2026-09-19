@@ -174,7 +174,6 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
           bigNumber: bigNumber,
           bigNumberCaption: bigNumberCaption,
           onTap: () => _open(packageId),
-          chevron: true,
         );
       },
     );
@@ -223,7 +222,8 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
 }
 
 /// 卡片外壳:病历本条(白卡 + 34px 渐变书脊 + logo + 右列大数,`widgets/
-/// record_book_strip.dart`)+「开启」按钮或 chevron 独立一行摆在它下面。
+/// record_book_strip.dart`)+「开启」按钮独立一行摆在它下面。整条可点,不画
+/// chevron —— mockup `.book` 没有这个格子(R21)。
 ///
 /// **不上渐变面**:病历本条自己的书脊是渐变,但不经过 `BrandGradientBox`,
 /// 不计入这一屏的品牌渐变预算(`s2` 是 0/0/0,见 `trends_visual_test.dart`)。
@@ -235,7 +235,6 @@ class _ProfileEntry extends StatelessWidget {
     this.bigNumberCaption,
     this.action,
     this.onTap,
-    this.chevron = false,
   });
 
   final String title;
@@ -252,14 +251,8 @@ class _ProfileEntry extends StatelessWidget {
 
   final VoidCallback? onTap;
 
-  /// 右边那个 `>`。**只在点下去真的会推开另一页时画** —— 「还没准备好」那一态
-  /// 点下去是原地重试,画一个箭头就是在许一个不存在的去处。病历本条自己没有
-  /// chevron 这个格子,所以放在它下面独立一行,不塞进条里。
-  final bool chevron;
-
   @override
   Widget build(BuildContext context) {
-    final c = MedColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -273,13 +266,6 @@ class _ProfileEntry extends StatelessWidget {
         if (action case final a?) ...[
           const SizedBox(height: MedShape.s3),
           Align(alignment: Alignment.centerLeft, child: a),
-        ],
-        if (chevron) ...[
-          const SizedBox(height: MedShape.s1),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Icon(Icons.chevron_right, size: 20, color: c.ink3),
-          ),
         ],
       ],
     );

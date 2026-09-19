@@ -114,4 +114,15 @@ void main() {
     )));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('标题最多两行(R21:病名不许被右列大数截成「系统性…」)', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: Scaffold(
+      body: SizedBox(width: 360, child: RecordBookStrip(
+        title: '病程档案 · 系统性红斑狼疮', subtitle: '2 项该复查',
+        bigNumber: '0', bigNumberSuffix: '/18', bigNumberCaption: '活动度(化验可算部分)')))));
+    final t = tester.widget<Text>(find.text('病程档案 · 系统性红斑狼疮'));
+    expect(t.maxLines, 2);
+    expect(t.overflow, TextOverflow.ellipsis);
+    expect(tester.takeException(), isNull);
+  });
 }

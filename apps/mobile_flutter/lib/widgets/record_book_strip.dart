@@ -71,7 +71,9 @@ class RecordBookStrip extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(children: [
-                      Flexible(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      // R21:标题可到两行 —— 病名(「病程档案 · 系统性红斑狼疮」)是这条的
+                      // 主体,右列大数占宽后一行放不下,截成「系统性…」等于没说。
+                      Flexible(child: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: MedType.body.copyWith(fontWeight: FontWeight.w600,
                             fontVariations: MedType.w600, height: 1.25))),
                       if (titleTrailing != null) ...[const SizedBox(width: 6), titleTrailing!],
