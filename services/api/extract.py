@@ -9,7 +9,9 @@ MODEL_VISION = os.environ.get("DEEPSEEK_MODEL_VISION", "deepseek-flash")
 # `packages/ocr/examples/medrep_llm.rs` 共用同一份文件(`packages/deid/prompts/`),
 # 改哪边的行为都只改那份文件——两边 byte-identical 由
 # `test_api.py::test_extract_system_prompt_matches_eval_fixture` 兜底。
-_PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "deid", "prompts")
+# 部署到函数计算时仓库树不在,用 MEDME_PROMPTS_DIR 指到打进包里的那份(与 MEDME_SKILLS_DIR 同一手法)。
+_PROMPTS_DIR = os.environ.get("MEDME_PROMPTS_DIR") or os.path.join(
+    os.path.dirname(__file__), "..", "..", "packages", "deid", "prompts")
 with open(os.path.join(_PROMPTS_DIR, "extract_v1_system.txt"), encoding="utf-8") as _f:
     SYSTEM_PROMPT_V1 = _f.read()
 with open(os.path.join(_PROMPTS_DIR, "extract_v1_image_user.txt"), encoding="utf-8") as _f:
