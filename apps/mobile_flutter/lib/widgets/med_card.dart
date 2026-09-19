@@ -463,6 +463,40 @@ class MedEntryTile extends StatelessWidget {
   );
 }
 
+/// 底部 sheet 里的一条选项(mockup `.opt`):paper 底圆角块 + 光泽图标块 + 17 号字
+/// + 右侧一句灰色小注。[highlighted] 的那条换成蓝底 —— `s6` 用它标出推荐的那条。
+class MedSheetOption extends StatelessWidget {
+  const MedSheetOption({super.key, required this.icon, required this.category,
+      required this.label, this.note, this.highlighted = false, this.onTap});
+  final IconData icon; final GlossCategory category;
+  final String label; final String? note;
+  final bool highlighted; final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(type: MaterialType.transparency, child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(MedShape.radiusBanner),
+        child: Container(
+          decoration: BoxDecoration(
+            color: highlighted ? MedBrand.bannerBlue : c.paper,
+            borderRadius: BorderRadius.circular(MedShape.radiusBanner)),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Row(children: [
+            GlossIconTile(icon: icon, category: category),
+            const SizedBox(width: MedShape.s2),
+            Expanded(child: Text(label, style: MedType.body.copyWith(fontSize: 17))),
+            if (note != null) Text(note!, style: MedType.secondary.copyWith(color: c.ink3)),
+          ]),
+        ),
+      )),
+    );
+  }
+}
+
 /// 空态的虚线框(规范 §六:`1.5px dashed --line`,圆角取分块这一档 14)。
 ///
 /// Flutter 没有虚线边框,自己画 —— 不为一条虚线加依赖(007 §2.4)。

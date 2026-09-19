@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
 
 void main() {
   group('问不问', () {
@@ -21,14 +22,17 @@ void main() {
   });
 
   group('sheet 本体', () {
-    testWidgets('两颗按钮权重相同,没有预选;说清楚送出去的是什么', (tester) async {
+    testWidgets('两颗按钮点击行为不预设默认答案;说清楚送出去的是什么', (tester) async {
       await tester.pumpWidget(
         MaterialApp(theme: MedMe.theme(), home: const Scaffold(body: CloudExtractAskBody())),
       );
       expect(find.text('开,帮我整理'), findsOneWidget);
       expect(find.text('不开'), findsOneWidget);
-      // 默认值不预设:两颗都不是 FilledButton 独占主按钮位。
-      expect(find.byType(FilledButton), findsNWidgets(2));
+      // Stage 3(task-14):s17 渐变预算 = 1 颗主按钮,「开,帮我整理」视觉上比
+      // 「不开」重一点(brief 明确点名的那颗)——但两颗仍是各自独立的按钮,
+      // 谁都不是提前选好的默认值,点哪颗都是用户自己按的那一下才算数。
+      expect(find.byType(MedPrimaryButton), findsOneWidget);
+      expect(find.byType(MedSecondaryButton), findsOneWidget);
       // 必须说出:先在本机涂掉身份信息,再送出去。
       expect(find.textContaining('涂黑'), findsOneWidget);
       expect(find.textContaining('「我 → 云端」随时改'), findsOneWidget);

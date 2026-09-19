@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
+import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
 
 /// 这次该不该问。纯判断,方便单测。
 ///
@@ -59,7 +61,13 @@ Future<void> showCloudExtractAskSheet(BuildContext context) async {
 }
 
 /// sheet 的内容主体。**纯 widget,不碰 prefs** —— 这样 `flutter test` 测得到。
-/// 两颗按钮都用 `FilledButton`:**默认值不预设**,不给任何一边额外的视觉权重。
+///
+/// Stage 3(task-14):两颗按钮换成 `MedPrimaryButton`/`MedSecondaryButton`
+/// (s17 渐变预算 = 1 颗主按钮)。**顺序照现有代码**——「不开」在左、
+/// 「开,帮我整理」在右;mockup `s17` 画的是反过来的左右,但调换按钮位置是
+/// 结构改动,越了 Stage 3 的界,这里不跟(记在 task-14-report.md)。决定权重
+/// 仍然只在用户读完这句话之后自己按:两颗按钮点击行为不变,「开,帮我整理」
+/// 只是视觉上多一点重量(brief 明确点名的那颗主按钮),不是预设的默认答案。
 class CloudExtractAskBody extends StatelessWidget {
   const CloudExtractAskBody({super.key});
 
@@ -74,29 +82,29 @@ class CloudExtractAskBody extends StatelessWidget {
           const Text(
             // 下面这三段逐字照 mockup `s17`,改字 = 改对外说法,要同步隐私政策。
             '要不要让云端帮你整理?',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            style: MedType.subtitle,
           ),
           const SizedBox(height: 12),
-          const Text(
+          Text(
             '开了以后,每次添加的病历照片会先在手机上把姓名、证件号、医院名涂黑,'
             '再送到云端整理成表格。不开就只用手机自己识别,能认出来的字段少一点。'
             '以后在「我 → 云端」随时改。',
-            style: TextStyle(height: 1.6),
+            style: MedType.body.copyWith(fontSize: 15, height: 1.6),
           ),
           const SizedBox(height: 24),
           Row(
             children: [
               Expanded(
-                child: FilledButton(
+                child: MedSecondaryButton(
+                  label: '不开',
                   onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('不开'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: FilledButton(
+                child: MedPrimaryButton(
+                  label: '开,帮我整理',
                   onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('开,帮我整理'),
                 ),
               ),
             ],

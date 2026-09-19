@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_flutter/analytics.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_boot.dart' show vaultOpenedOkThisLaunch;
 import 'package:mobile_flutter/vault_events.dart' show bumpVaultRevision;
+import 'package:mobile_flutter/widgets/brand_logo.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -178,23 +181,16 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: Image.asset(
-                              'assets/icon/app_icon.png',
-                              width: 64,
-                              height: 64,
-                            ),
-                          ),
+                          const FirstRunScene(),
                           const SizedBox(height: 20),
                           Text(
                             // 条数由 `_points` 派生,不是手写的数字 —— 见该列表
                             // 处的注释:硬编码的「四」在加删一条声明时会悄悄说错。
                             '开始之前,有${_chineseCount(_points.length)}件事',
-                            style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
-                              color: MedMe.tealDark,
+                            style: MedType.title.copyWith(
+                              fontSize: 30,
+                              height: 1.25,
+                              color: MedColors.of(context).ink,
                             ),
                           ),
                           const SizedBox(height: 22),
@@ -288,6 +284,16 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                     ),
                   SizedBox(
                     width: double.infinity,
+                    // ⚠️ Stage 3(task-14)**没有**把这颗换成 `MedPrimaryButton`——
+                    // 不是漏改,是量过之后故意不换,见 task-14-report.md。品牌渐变
+                    // 最浅那一段(`#1FB0C6`)压白字实测只有 2.60:1,过不了下面
+                    // disabled 这份配色已经验过的 WCAG AA 4.5:1(`test/
+                    // first_run_consent_test.dart` 那条对比度测试)。`MedPrimaryButton`
+                    // 没有 disabled 专属外观(`account_screen.dart` 那颗「我抄好了」
+                    // 从没被禁用态渲染过,不构成先例)——换了就等于让这道「读完才能
+                    // 点」的合规闸门在禁用时既过不了对比度、又和启用态长得一样、
+                    // 用户分不出还能不能点。这颗按钮不是装饰,继续用原生
+                    // `FilledButton` + 手调的 disabled 配色。
                     child: FilledButton(
                       onPressed: (_busy || !_scrolledToEnd) ? null : _agree,
                       style: FilledButton.styleFrom(
@@ -395,8 +401,8 @@ class _Point extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 21, color: MedMe.teal),
-          const SizedBox(width: 13),
+          GlossIconTile(icon: icon),
+          const SizedBox(width: MedShape.s2),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -425,16 +431,19 @@ class _Link extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Text(
-      label,
-      style: const TextStyle(
-        color: MedMe.teal,
-        fontWeight: FontWeight.w600,
-        decoration: TextDecoration.underline,
-        decorationColor: MedMe.teal,
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Text(
+        label,
+        style: TextStyle(
+          color: c.sealInk,
+          fontWeight: FontWeight.w600,
+          decoration: TextDecoration.underline,
+          decorationColor: c.sealInk,
+        ),
       ),
-    ),
-  );
+    );
+  }
 }

@@ -22,6 +22,7 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 /// 一次导入运行的结果,供调用方判断要不要、往哪儿带用户去核对新东西。
 ///
@@ -108,30 +109,33 @@ Future<ImportRunResult?> showImportSheet(BuildContext context) async {
               alignment: Alignment.centerLeft,
               child: Text(
                 '添加病历',
-                style: MedType.title.copyWith(color: MedColors.of(context).ink),
+                style: MedType.subtitle.copyWith(color: MedColors.of(context).ink),
               ),
             ),
           ),
           _SheetTile(
             icon: Icons.photo_camera_outlined,
+            category: GlossCategory.brand,
             title: '拍照',
             subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
             choice: ImportChoice.camera,
             // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
             // 改版后那一排快捷操作整个没了(今天「病历」首页只剩「添加」与
             // 「给医生看」两颗方块),拍照要多经一次这个选择表才能到达。视觉上
-            // 做成主选项(填色图标块 + 加粗标题)抵消这多出来的一次点击——它
+            // 做成主选项(蓝底块 + `highlighted`)抵消这多出来的一次点击——它
             // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
             primary: true,
           ),
           _SheetTile(
             icon: Icons.photo_library_outlined,
+            category: GlossCategory.lab,
             title: '从相册选',
             subtitle: '选一张或多张已经拍好的病历照片',
             choice: ImportChoice.gallery,
           ),
           _SheetTile(
             icon: Icons.folder_open_outlined,
+            category: GlossCategory.neutral,
             title: '选择文件',
             subtitle: 'PDF、图片、TXT',
             choice: ImportChoice.files,
@@ -939,9 +943,15 @@ Future<Map<int, OcrResult>> _ocrScannedPdfPages(
   return byPage;
 }
 
+/// 添加病历三选一的一条选项(mockup `s6` 的 `.opt`)。图标 + 标题这一行是
+/// [MedSheetOption](paper 底圆角块 + 光泽图标块,`primary` 那条换蓝底);
+/// [subtitle] 是这条选项原有的说明句,`MedSheetOption.note` 是给短短一句
+/// 「右侧小注」用的(见其类文档),放不下这句完整说明,所以单独起一行摆在
+/// 选项块下方,缩进对齐到标题(不在文案上做任何删改)。
 class _SheetTile extends StatelessWidget {
   const _SheetTile({
     required this.icon,
+    required this.category,
     required this.title,
     required this.subtitle,
     required this.choice,
@@ -949,43 +959,37 @@ class _SheetTile extends StatelessWidget {
   });
 
   final IconData icon;
+  final GlossCategory category;
   final String title;
   final String subtitle;
   final ImportChoice choice;
 
-  /// 视觉主选项:图标块填实色(而不是浅底描边),标题加粗。**不改变点击行为**,
-  /// 只是这一屏三个选项里最推荐的那个多一点视觉重量。
+  /// 视觉主选项:paper 换成蓝底(`MedSheetOption.highlighted`)。**不改变点击
+  /// 行为**,只是这一屏三个选项里最推荐的那个多一点视觉重量。
   final bool primary;
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    return ListTile(
-      // 图标装进 seal-wash 方块,与档案时间线上的类型徽标同一形状语言 ——
-      // 圆角取控件这一档 10,比卡片(20)和分块(14)都小,层级不同级。
-      // 主选项换成填实色块 + 反白图标,一眼比另外两个「重」。
-      leading: Container(
-        width: 40,
-        height: 40,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: primary ? c.sealInk : c.sealWash,
-          borderRadius: BorderRadius.circular(MedShape.radiusControl),
-        ),
-        child: Icon(icon, color: primary ? c.surface : c.seal, size: 22),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(MedShape.s4, 0, MedShape.s4, MedShape.s1),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          MedSheetOption(
+            icon: icon,
+            category: category,
+            label: title,
+            highlighted: primary,
+            onTap: () => Navigator.of(context).pop(choice),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              MedBrand.tileSize + MedShape.s2, 0, MedShape.s2, 0),
+            child: Text(subtitle, style: MedType.secondary.copyWith(color: c.ink3)),
+          ),
+        ],
       ),
-      title: Text(
-        title,
-        style: MedType.subtitle.copyWith(
-          color: c.ink,
-          fontWeight: primary ? FontWeight.w700 : null,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: MedType.secondary.copyWith(color: c.ink2),
-      ),
-      onTap: () => Navigator.of(context).pop(choice),
     );
   }
 }
