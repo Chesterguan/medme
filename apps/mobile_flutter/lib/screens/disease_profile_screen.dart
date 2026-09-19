@@ -18,6 +18,7 @@ import 'package:mobile_flutter/doc_labels.dart' show fmtDate;
 import 'package:mobile_flutter/skill_packages.dart';
 import 'package:mobile_flutter/src/rust/api/vault_profile.dart' as rust_profile;
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/brand_logo.dart';
 import 'package:mobile_flutter/widgets/profile_sections.dart';
 
 /// 病程档案这一块要碰的四样原生能力,拢在一个口子上:装着哪几个包、拉一次清单、
@@ -210,8 +211,24 @@ class _DiseaseProfileScreenState extends State<DiseaseProfileScreen> {
         final view = snap.data;
         return Scaffold(
           appBar: AppBar(
-            // 标题是包给的病名;拿到之前先用这一块自己的名字,不占位编一个病名。
-            title: Text(view?['display_name'] as String? ?? '病程档案'),
+            // 真 logo 30px(brief §品牌:病程档案页头,与主页顶栏同一尺寸)+
+            // 标题——字符串不动,标题前面多了一枚图。标题是包给的病名;拿到之前
+            // 先用这一块自己的名字,不占位编一个病名。`Flexible` + 省略号防止
+            // 病名一旦很长顶出顶栏(`archive_screen.dart` 的标题是固定的「病历」
+            // 两个字,没有这个风险;这里是包给的动态字符串,得防一手)。
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const BrandLogo(size: BrandLogo.topBar),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Text(
+                    view?['display_name'] as String? ?? '病程档案',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
             bottom: PreferredSize(
               preferredSize: const Size.fromHeight(1),
               child: Container(height: 1, color: c.line),
