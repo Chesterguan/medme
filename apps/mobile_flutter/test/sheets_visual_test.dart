@@ -33,11 +33,16 @@ void main() {
     expect(find.byType(MedSecondaryButton), findsOneWidget);
   });
 
-  testWidgets('s16:场景中央 104px 真 logo,微微左旋', (tester) async {
+  testWidgets('s16:场景中央 104px 真 logo,微微左旋,一颗渐变主按钮', (tester) async {
     await pumpStage3(tester, const Scaffold(body: Center(child: FirstRunScene())));
     expect(tester.getSize(find.byType(BrandLogo)), const Size(104, 104));
     expect(find.byType(Transform), findsWidgets);          // rotate(-6deg)
     expect(find.byType(GlossIconTile), findsNWidgets(3));  // 三个飘着的小块
+
+    // fix round 2(R30):「同意并开始使用」迁到 MedPrimaryButton 之后,s16 的
+    // 渐变预算是 1(禁用态用 ink2 字 + line2 底,不画渐变,不占这个数)。
+    await pumpStage3(tester, FirstRunConsentScreen(onAgreed: () {}));
+    expectGradientBudget(button: 1);
   });
 
   testWidgets('三张 sheet 在两个尺寸 × 两档字号下不溢出', (tester) async {

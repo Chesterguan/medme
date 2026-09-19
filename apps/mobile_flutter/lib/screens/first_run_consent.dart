@@ -4,6 +4,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_boot.dart' show vaultOpenedOkThisLaunch;
 import 'package:mobile_flutter/vault_events.dart' show bumpVaultRevision;
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -284,32 +285,12 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                     ),
                   SizedBox(
                     width: double.infinity,
-                    // ⚠️ Stage 3(task-14)**没有**把这颗换成 `MedPrimaryButton`——
-                    // 不是漏改,是量过之后故意不换,见 task-14-report.md。品牌渐变
-                    // 最浅那一段(`#1FB0C6`)压白字实测只有 2.60:1,过不了下面
-                    // disabled 这份配色已经验过的 WCAG AA 4.5:1(`test/
-                    // first_run_consent_test.dart` 那条对比度测试)。`MedPrimaryButton`
-                    // 没有 disabled 专属外观(`account_screen.dart` 那颗「我抄好了」
-                    // 从没被禁用态渲染过,不构成先例)——换了就等于让这道「读完才能
-                    // 点」的合规闸门在禁用时既过不了对比度、又和启用态长得一样、
-                    // 用户分不出还能不能点。这颗按钮不是装饰,继续用原生
-                    // `FilledButton` + 手调的 disabled 配色。
-                    child: FilledButton(
+                    // Stage 3(task-14)round 1(R29)量出 MedPrimaryButton disabled
+                    // 态用 ink3 字不够 4.5:1,没敢换;round 2(R30)把字色改成
+                    // ink2(≈8.1:1)之后达标,这里补上迁移。
+                    child: MedPrimaryButton(
+                      label: '同意并开始使用',
                       onPressed: (_busy || !_scrolledToEnd) ? null : _agree,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: MedMe.teal,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        // 不用 Material 3 默认的禁用配色(onSurface 12% 底 / 38% 字
-                        // —— 实测低于 WCAG AA 的 4.5:1)。这里的禁用态可能不是一闪
-                        // 而过:要等用户读完才会解除,得撑得住被盯着看。
-                        // `line` 底 + `tealDark` 字实测 5.21:1,过 4.5:1 门槛。
-                        disabledBackgroundColor: MedMe.line,
-                        disabledForegroundColor: MedMe.tealDark,
-                      ),
-                      child: const Text(
-                        '同意并开始使用',
-                        style: TextStyle(fontSize: 16),
-                      ),
                     ),
                   ),
                   TextButton(

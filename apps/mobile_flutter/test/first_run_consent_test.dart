@@ -16,6 +16,7 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 华为 Mate 9 同款的矮屏视口(逻辑分辨率约 360×640)—— 复现内容溢出首屏的场景。
@@ -45,8 +46,11 @@ Future<void> pumpScreen(WidgetTester tester, {double textScale = 1.0}) async {
   await tester.pumpAndSettle();
 }
 
-FilledButton _agreeButton(WidgetTester tester) => tester.widget<FilledButton>(
-  find.widgetWithText(FilledButton, '同意并开始使用'),
+// fix round 2(task-14-review R30):按钮换成 MedPrimaryButton(R29/R30)——
+// `onPressed` 仍是公开字段,直接读,门槛判断(下面一串 `.onPressed` 断言)
+// 一个字不用改。
+MedPrimaryButton _agreeButton(WidgetTester tester) => tester.widget<MedPrimaryButton>(
+  find.widgetWithText(MedPrimaryButton, '同意并开始使用'),
 );
 
 TextButton _declineButton(WidgetTester tester) =>
@@ -126,9 +130,13 @@ void main() {
     useShortPhone(tester);
     await pumpScreen(tester);
 
-    final style = _agreeButton(tester).style!;
-    final bg = style.backgroundColor!.resolve({WidgetState.disabled})!;
-    final fg = style.foregroundColor!.resolve({WidgetState.disabled})!;
+    // fix round 2(R30):MedPrimaryButton 没有 ButtonStyle 可读,改成直接读
+    // 禁用态实际画出来的容器底色(line2)和标签文字色(ink2)——口径与
+    // test/brand_gradient_test.dart 那条结构性断言一致。
+    final container = tester.widget<Container>(find.descendant(
+      of: find.byType(MedPrimaryButton), matching: find.byType(Container)).first);
+    final bg = (container.decoration! as BoxDecoration).color!;
+    final fg = tester.widget<Text>(find.text('同意并开始使用')).style!.color!;
     expect(
       _contrast(fg, bg),
       greaterThanOrEqualTo(4.5),

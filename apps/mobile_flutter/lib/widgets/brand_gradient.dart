@@ -160,12 +160,17 @@ class PrimaryEntryTile extends StatelessWidget {
 /// 主按钮(mockup `.btn`):药丸、渐变、17·w500 白字。
 ///
 /// **禁用态**(`onPressed == null`)不画渐变(fix round 1,task-14-review R29):
-/// 换成 `line2` 底 + `ink3` 字的纯色药丸,同一档圆角/内边距,无阴影、无光晕、
+/// 换成 `line2` 底 + `ink2` 字的纯色药丸,同一档圆角/内边距,无阴影、无光晕、
 /// 无水波纹。原因:`BrandGradientBox` 的渐变最浅一段压白字实测只有 2.60:1,
 /// 过不了 WCAG AA——但那是渐变边缘,标签实际压在渐变中段(`#1789C1` ≈
 /// 3.9:1,与全 app 每一颗启用态主按钮相同,R11 hero 规则已经接受这个数,不
 /// 在本次改动范围)。真正的缺口只在禁用态:disabled 之前和 enabled 画得一模
-/// 一样,用户分不出还能不能点,而且那份白字落在最浅渐变上时对比度更差。
+/// 一样,用户分不出还能不能点。
+///
+/// **字色是 `ink2` 不是 `ink3`**(fix round 2,R30):「这是禁用态」这件事由
+/// 「纯色底、无渐变、无阴影、无水波纹」这一整套来表达,不是靠字变浅——round 1
+/// 量出 `ink3`/`line2` 只有 4.23:1,没到 WCAG AA 4.5:1;`ink2`/`line2` ≈
+/// 7.9:1,两者都在 `test/brand_gradient_test.dart` 里实测钉住。
 /// **启用态渲染一个字没动。**
 class MedPrimaryButton extends StatelessWidget {
   const MedPrimaryButton({super.key, required this.label, this.icon, this.onPressed});
@@ -185,10 +190,10 @@ class MedPrimaryButton extends StatelessWidget {
         ),
         padding: const EdgeInsets.all(13),
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          if (icon != null) ...[Icon(icon, size: 20, color: c.ink3), const SizedBox(width: 8)],
+          if (icon != null) ...[Icon(icon, size: 20, color: c.ink2), const SizedBox(width: 8)],
           Flexible(child: Text(label, textAlign: TextAlign.center,
             style: MedType.body.copyWith(fontSize: 17, fontWeight: FontWeight.w500,
-                fontVariations: MedType.w500, color: c.ink3))),
+                fontVariations: MedType.w500, color: c.ink2))),
         ]),
       );
     }
