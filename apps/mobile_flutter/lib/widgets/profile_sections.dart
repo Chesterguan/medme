@@ -305,8 +305,7 @@ class _HintLine extends StatelessWidget {
 /// 中间切断(mockup 的「长文字走整行」)。
 class _ItemRow extends StatelessWidget {
   const _ItemRow({
-    required this.icon,
-    this.showIcon = true,
+    this.icon,
     this.leading,
     required this.label,
     this.labelColor,
@@ -317,14 +316,12 @@ class _ItemRow extends StatelessWidget {
     this.barColor,
   });
 
-  final IconData icon;
-
-  /// 时间轴那一路不画这颗小图标——圆点已经是它的标记,两个标记会打架。见
-  /// `_TimelineEventRow`。其余调用点都不传,保持原样。
-  final bool showIcon;
+  /// 左边那颗 18px 小图标,`null` 就不画。时间轴那一路传 `null`——圆点已经是
+  /// 它的标记,两个标记会打架,见 `_TimelineEventRow`。其余调用点都传,原样画出。
+  final IconData? icon;
 
   /// 整枚替换掉左边那颗小图标(R26:提醒行要一枚 44×44 `GlossIconTile`,不是
-  /// 18px 的小图标)。非空时优先于 [icon]/[showIcon]——mockup `.banner` 的签名
+  /// 18px 的小图标)。非空时优先于 [icon]——mockup `.banner` 的签名
   /// 元素就是这枚大图标块,`MedBanner` 本身用不了(见 `_ReminderRow` 类文档),
   /// 但左边那颗图标不该跟着退化成小图标。默认 `null`,其余调用点一个像素都不变。
   ///
@@ -369,7 +366,7 @@ class _ItemRow extends StatelessWidget {
           if (leading != null) ...[
             leading!,
             const SizedBox(width: MedShape.s2),
-          ] else if (showIcon) ...[
+          ] else if (icon != null) ...[
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Icon(icon, size: 18, color: c.ink2),
@@ -1144,8 +1141,7 @@ class _YearGroup extends StatelessWidget {
 }
 
 /// 一条病程事件:左边是竖线 + 圆点的「轨道」,右边是既有的 `_ItemRow` 内容
-/// (换掉它自带的小图标——圆点已经是这一行的标记,两个标记会打架,见
-/// [_ItemRow.showIcon])。
+/// (不传 [_ItemRow.icon]——圆点已经是这一行的标记,两个标记会打架)。
 ///
 /// 竖线用 `IntrinsicHeight` 撑满这一行的实际高度(内容行数不定:有的事件只有
 /// 一个日期,有的还带 `note`/`longText`),再用 `Positioned(top:0, bottom:0)`
@@ -1169,8 +1165,6 @@ class _TimelineEventRow extends StatelessWidget {
     final text = event['text'] as String?;
 
     final content = _ItemRow(
-      icon: severityHigh ? Icons.warning_amber_outlined : Icons.circle,
-      showIcon: false,
       label: text ?? typeLabel ?? (event['type'] as String? ?? ''),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,

@@ -110,6 +110,10 @@ class TrendChart extends StatefulWidget {
 
   /// 首次出现时要不要描线动画。默认 `true`;`false` 与 reduced-motion 同效果——
   /// 直接给终态,不跑 `AnimationController`。
+  ///
+  /// **只在 State 构造时读一次**:这里没有覆写 `didUpdateWidget`,所以同一个
+  /// State 存活期间(同 key 复用、父级重建)再改这个字段不会追溯生效——要切换
+  /// 动效,得让这个 widget 换一个新 State(比如换 key)。
   final bool animate;
 
   @override
@@ -121,6 +125,9 @@ class _TrendChartState extends State<TrendChart> with SingleTickerProviderStateM
     vsync: this,
     duration: const Duration(milliseconds: 1200),
   );
+  /// 是否已经描过一次。跟 `AnimationController.forward()` 在 value 已等于目标值时
+  /// 自身也会短路(不重启 ticker、直接返回已完成的 future)有点重复——但显式记一次
+  /// 不依赖框架这条内部行为,留着当保险,故意的。
   bool _played = false;
 
   @override

@@ -25,6 +25,12 @@ void main() {
       .where((d) => d.borderRadius == BorderRadius.circular(MedShape.radiusBanner)).toList();
     expect(decos.map((d) => d.color), [MedBrand.bannerBlue, MedColors.light.paper]);
     expect(find.byType(GlossIconTile), findsNWidgets(2));
+
+    // Task 16 budget-table audit:s6 那一行(0/0/0)之前只拿两颗手摆的
+    // MedSheetOption 断言过颜色,没有在真正的 AddSheetBody 上钉过预算——补上
+    // (真 widget 下面第 55 行的溢出矩阵已经在用同一个)。
+    await pumpStage3(tester, const Scaffold(body: AddSheetBody()));
+    expectGradientBudget();
   });
 
   testWidgets('s17:一颗渐变主按钮 + 一颗次按钮,标题 19·600', (tester) async {

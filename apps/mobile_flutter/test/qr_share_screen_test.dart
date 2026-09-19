@@ -26,7 +26,10 @@ import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/disease_profile_screen.dart';
 import 'package:mobile_flutter/screens/qr_notice_sheet.dart';
 import 'package:mobile_flutter/screens/qr_share_screen.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'stage3_visual_helpers.dart';
 
 class _ThrowingApi extends ApiClient {
   _ThrowingApi() : super(base: 'http://x');
@@ -182,6 +185,52 @@ void main() {
     // 不再重写一遍(Task 11)。这一行只在 `_url != null` 时才画。
     expect(find.text('15 天内有效;只有扫这个码的人能看'), findsOneWidget);
     expect(find.text('生成失败'), findsNothing);
+  });
+
+  // Task 16:s13 真身是这一屏(`qr_share_screen.dart:591` 的 `MedCard` 包
+  // `MedQrFrame`),不是 account_visual_test.dart 里个人模式「交给别人」弹窗
+  // 复用的同一颗 `MedQrFrame`(那条路没有 `MedCard`,详见那份测试文件头部
+  // 说明)。渐变预算表:s13 = 0/0/0(唯一一颗主按钮在「第一次出码」那张
+  // sheet 上,`account_visual_test.dart` 已经测过)。复用上面「出码成功」
+  // 那条用例的 fixture(`_SucceedingGrants` 给一个短的假 token,不碰真实
+  // FFI 密文生成)。
+  group('Task 16:s13 渐变预算 + 溢出矩阵', () {
+    Future<void> pumpQr(WidgetTester t, {Size size = const Size(400, 800), double scale = 1.0}) async {
+      await pumpStage3(
+        t,
+        QrShareScreen(grants: _SucceedingGrants(), qrShareBlobFn: _fakeQrShareBlobFails),
+        size: size,
+        textScale: scale,
+      );
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets('零品牌渐变;MedCard 包 MedQrFrame', (t) async {
+      SharedPreferences.setMockInitialValues({'qr_share_grant_mode': true, 'qr_notice_seen': true});
+      await setUpOwnerProfile(t);
+      await pumpQr(t);
+
+      // 先确认真的出码了(同「出码成功」那条用例的证据行),预算才有意义。
+      expect(find.text('15 天内有效;只有扫这个码的人能看'), findsOneWidget);
+      expectGradientBudget();
+      expect(
+        find.descendant(of: find.byType(MedCard), matching: find.byType(MedQrFrame)),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('两个尺寸 × 两档字号不溢出', (t) async {
+      SharedPreferences.setMockInitialValues({'qr_share_grant_mode': true, 'qr_notice_seen': true});
+      await setUpOwnerProfile(t);
+
+      for (final size in kStage3Sizes) {
+        for (final scale in [1.0, 2.0]) {
+          await pumpQr(t, size: size, scale: scale);
+          expect(t.takeException(), isNull, reason: '$size @ ${scale}x 溢出了');
+        }
+      }
+    });
   });
 
   // ---- UX 第二轮:出码屏二选一,默认旧路径 ----

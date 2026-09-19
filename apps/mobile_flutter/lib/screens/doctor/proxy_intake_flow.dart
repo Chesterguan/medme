@@ -531,7 +531,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       final p = ProxyPatientManager.instance.byId(_patientId ?? '');
       final confirmed = p?.confirmedIds ?? const <int>{};
       final groups = await vault.loadArchive();
-      final docs = _PendingListStep.flatten(groups);
+      final docs = PendingListStep.flatten(groups);
       final summary = await vault.proxySummary(
         confirmedIds: Int64List.fromList(confirmed.toList()),
       );
@@ -781,7 +781,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
           onDone: _capturedCount > 0 ? _goToPreview : null,
         );
       case _ProxyPhase.preview:
-        return _PendingListStep(
+        return PendingListStep(
           groups: _preview,
           summary: _summary,
           confirmedMap: _confirmedMap,
@@ -950,8 +950,9 @@ class _CaptureStep extends StatelessWidget {
 /// 列表(图标+类型色块、标题、日期、副标题),每份一行,不再像上一版那样把识别
 /// 内容摊开在列表里——点进一份才看原件 + 识别内容(见 `proxy_document_detail.dart`),
 /// 列表本身只负责「核对拍了什么、哪些还没点开确认」。
-class _PendingListStep extends StatelessWidget {
-  const _PendingListStep({
+class PendingListStep extends StatelessWidget {
+  const PendingListStep({
+    super.key,
     required this.groups,
     required this.summary,
     required this.confirmedMap,

@@ -20,7 +20,6 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart' show roleLabel;
-import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_boot.dart' show removeProfileAndReopen;
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
@@ -76,7 +75,7 @@ Future<bool> confirmRemoveMember(
   final ok = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      icon: const Icon(Icons.warning_amber_rounded, color: MedMe.danger, size: 44),
+      icon: Icon(Icons.warning_amber_rounded, color: MedColors.of(context).critical, size: 44),
       title: Text(
         '删除「$name」的全部病历?',
         textAlign: TextAlign.center,
@@ -90,13 +89,13 @@ Future<bool> confirmRemoveMember(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 12),
               decoration: BoxDecoration(
-                color: MedMe.danger.withValues(alpha: 0.08),
+                color: MedColors.of(context).critical.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
                 '$n 份病历',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: MedMe.danger),
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: MedColors.of(context).critical),
               ),
             ),
           const SizedBox(height: 14),
@@ -112,7 +111,7 @@ Future<bool> confirmRemoveMember(
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
         FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: MedMe.danger),
+          style: FilledButton.styleFrom(backgroundColor: MedColors.of(context).critical),
           onPressed: () => Navigator.of(context).pop(true),
           child: const Text('确认删除'),
         ),
@@ -213,14 +212,14 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
                 ListTile(
                   leading: const GlossIconTile(icon: Icons.edit_outlined, category: GlossCategory.note),
                   title: const Text('改名字'),
-                  trailing: const Icon(Icons.chevron_right, color: MedMe.faint),
+                  trailing: Icon(Icons.chevron_right, color: c.ink3),
                   onTap: _rename,
                 ),
-                const Divider(height: 1, color: MedMe.line),
+                Divider(height: 1, color: c.line2),
                 ListTile(
                   leading: const GlossIconTile(icon: Icons.person_remove_outlined, category: GlossCategory.alert),
                   title: Text('删除这个成员', style: TextStyle(color: c.critical)),
-                  trailing: const Icon(Icons.chevron_right, color: MedMe.danger),
+                  trailing: Icon(Icons.chevron_right, color: c.critical),
                   onTap: _delete,
                 ),
               ],
@@ -241,7 +240,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
         padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
         child: Text(
           '谁能看$_name的病历',
-          style: const TextStyle(color: MedMe.faint, fontSize: 13, fontWeight: FontWeight.w600),
+          style: TextStyle(color: MedColors.of(context).ink3, fontSize: 13, fontWeight: FontWeight.w600),
         ),
       ),
       FutureBuilder<List<Map<String, dynamic>>>(
@@ -254,19 +253,19 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
             );
           }
           if (snap.hasError) {
-            return Text('加载失败:${friendlyApiError(snap.error!)}', style: const TextStyle(color: MedMe.danger));
+            return Text('加载失败:${friendlyApiError(snap.error!)}', style: TextStyle(color: MedColors.of(context).critical));
           }
           final rows = (snap.data ?? const <Map<String, dynamic>>[])
               .where((g) => g['role'] != 'owner')
               .toList();
           if (rows.isEmpty) {
-            return const Text('还没有人被邀请', style: TextStyle(color: MedMe.faint));
+            return Text('还没有人被邀请', style: TextStyle(color: MedColors.of(context).ink3));
           }
           return MedCard(
             child: Column(
               children: [
                 for (final g in rows) ...[
-                  if (g != rows.first) const Divider(height: 1, color: MedMe.line),
+                  if (g != rows.first) Divider(height: 1, color: MedColors.of(context).line2),
                   ListTile(
                     title: Text(_grantRowLabel(g)),
                     trailing: TextButton(
@@ -318,7 +317,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
             child: const Text('取消'),
           ),
           TextButton(
-            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            style: TextButton.styleFrom(foregroundColor: MedColors.of(context).critical),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('撤销'),
           ),
@@ -344,15 +343,15 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
   /// (同 [_canManageGrants] 的理由)——返回 `null` 让调用方连带的间距也一起省掉。
   Widget? _addPersonRow() {
     if (widget.member.cloudId == null) {
-      return const MedCard(
-        child: ListTile(title: Text('这个成员还没开通云端备份,暂时加不了人', style: TextStyle(color: MedMe.faint))),
+      return MedCard(
+        child: ListTile(title: Text('这个成员还没开通云端备份,暂时加不了人', style: TextStyle(color: MedColors.of(context).ink3))),
       );
     }
     if (widget.member.role != 'owner') return null;
     return MedCard(
       child: ListTile(
         leading: const GlossIconTile(icon: Icons.add, category: GlossCategory.note),
-        title: const Text('加一个人', style: TextStyle(fontWeight: FontWeight.w600, color: MedMe.teal)),
+        title: Text('加一个人', style: TextStyle(fontWeight: FontWeight.w600, color: MedColors.of(context).seal)),
         subtitle: const Text('手机号或扫码'),
         onTap: _addPerson,
       ),
@@ -415,7 +414,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
               if (error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text(error!, style: const TextStyle(color: MedMe.danger)),
+                  child: Text(error!, style: TextStyle(color: MedColors.of(context).critical)),
                 ),
             ],
           ),
