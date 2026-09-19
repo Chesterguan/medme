@@ -16,13 +16,16 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/api_client.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart' show roleLabel;
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_boot.dart' show removeProfileAndReopen;
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 /// 「谁能看」列表上的到期倒计时——`s10` 的原话是「剩 N 天」,不是
 /// `account_screen.dart` 的 `expiryLabel`(那个给「我授权给谁」用,「至 M月D日」)。
@@ -193,6 +196,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     final addRow = _addPersonRow();
     return Scaffold(
       appBar: AppBar(title: Text(_name)),
@@ -201,21 +205,28 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
         children: [
           if (_canManageGrants) ...[..._grantsSection(), const SizedBox(height: 16)],
           if (addRow != null) ...[addRow, const SizedBox(height: 16)],
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  title: const Text('改名字'),
-                  trailing: const Icon(Icons.chevron_right, color: MedMe.faint),
-                  onTap: _rename,
-                ),
-                const Divider(height: 1, color: MedMe.line),
-                ListTile(
-                  title: const Text('删除这个成员', style: TextStyle(color: MedMe.danger)),
-                  trailing: const Icon(Icons.chevron_right, color: MedMe.danger),
-                  onTap: _delete,
-                ),
-              ],
+          MedCard(
+            // 透明 Material:ListTile 的水波纹要画在这一层上,否则被 MedCard 的
+            // 白底盖住(Flutter debug 断言;`doctor_home_screen.dart` 已有写法)。
+            child: Material(
+              color: Colors.transparent,
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const GlossIconTile(icon: Icons.edit_outlined, category: GlossCategory.note),
+                    title: const Text('改名字'),
+                    trailing: const Icon(Icons.chevron_right, color: MedMe.faint),
+                    onTap: _rename,
+                  ),
+                  const Divider(height: 1, color: MedMe.line),
+                  ListTile(
+                    leading: const GlossIconTile(icon: Icons.person_remove_outlined, category: GlossCategory.alert),
+                    title: Text('删除这个成员', style: TextStyle(color: c.critical)),
+                    trailing: const Icon(Icons.chevron_right, color: MedMe.danger),
+                    onTap: _delete,
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -254,20 +265,23 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
           if (rows.isEmpty) {
             return const Text('还没有人被邀请', style: TextStyle(color: MedMe.faint));
           }
-          return Card(
-            child: Column(
-              children: [
-                for (final g in rows) ...[
-                  if (g != rows.first) const Divider(height: 1, color: MedMe.line),
-                  ListTile(
-                    title: Text(_grantRowLabel(g)),
-                    trailing: TextButton(
-                      onPressed: () => _revoke(g['grant_id'] as String),
-                      child: const Text('撤销'),
+          return MedCard(
+            child: Material(
+              color: Colors.transparent,
+              child: Column(
+                children: [
+                  for (final g in rows) ...[
+                    if (g != rows.first) const Divider(height: 1, color: MedMe.line),
+                    ListTile(
+                      title: Text(_grantRowLabel(g)),
+                      trailing: TextButton(
+                        onPressed: () => _revoke(g['grant_id'] as String),
+                        child: const Text('撤销'),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
-              ],
+              ),
             ),
           );
         },
@@ -336,20 +350,23 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
   /// (同 [_canManageGrants] 的理由)——返回 `null` 让调用方连带的间距也一起省掉。
   Widget? _addPersonRow() {
     if (widget.member.cloudId == null) {
-      return const Card(
-        child: ListTile(title: Text('这个成员还没开通云端备份,暂时加不了人', style: TextStyle(color: MedMe.faint))),
+      return const MedCard(
+        child: Material(
+          color: Colors.transparent,
+          child: ListTile(title: Text('这个成员还没开通云端备份,暂时加不了人', style: TextStyle(color: MedMe.faint))),
+        ),
       );
     }
     if (widget.member.role != 'owner') return null;
-    return Card(
-      child: ListTile(
-        leading: const CircleAvatar(
-          backgroundColor: MedMe.tealSoft,
-          child: Icon(Icons.add, color: MedMe.teal, size: 20),
+    return MedCard(
+      child: Material(
+        color: Colors.transparent,
+        child: ListTile(
+          leading: const GlossIconTile(icon: Icons.add, category: GlossCategory.note),
+          title: const Text('加一个人', style: TextStyle(fontWeight: FontWeight.w600, color: MedMe.teal)),
+          subtitle: const Text('手机号或扫码'),
+          onTap: _addPerson,
         ),
-        title: const Text('加一个人', style: TextStyle(fontWeight: FontWeight.w600, color: MedMe.teal)),
-        subtitle: const Text('手机号或扫码'),
-        onTap: _addPerson,
       ),
     );
   }

@@ -9,6 +9,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/sync_engine.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 /// 「我」tab 第一行的**副标题那半句**(Task 12;这一行原来住在概览屏顶部,
 /// 概览已在 Task 9 解散)。
@@ -169,7 +170,6 @@ class _BackupStatusLineState extends State<BackupStatusLine> {
 
   @override
   Widget build(BuildContext context) {
-    final c = MedColors.of(context);
     final s = backupStatus(
       loggedIn: AccountSession.instance.loggedIn.value,
       profile: ProfileManager.instance.current,
@@ -179,19 +179,15 @@ class _BackupStatusLineState extends State<BackupStatusLine> {
     // **不靠文案里有没有「失败」两个字**判断这一行是不是红的 —— 那句话改一个词就
     // 悄悄失灵。上次那一笔自己就写着成没成。
     final failed = s.canRetry && _last?.ok == false;
-    // `s5`:标题恒为「云端」,副标题随状态变,末尾一个 `›`。这一行住在「我」的
-    // 第一张卡里,分隔线由那张卡画,自己不再画底边。
-    return ListTile(
-      leading: Icon(
-        failed ? Icons.cloud_off_outlined : Icons.cloud_done_outlined,
-        color: failed ? c.high : c.seal,
-      ),
-      title: Text('云端', style: MedType.subtitle.copyWith(color: c.ink)),
-      subtitle: Text(
-        _busy ? '正在备份…' : s.text,
-        style: MedType.secondary.copyWith(color: failed ? c.high : c.ink3),
-      ),
-      trailing: Icon(Icons.chevron_right, color: c.ink3),
+    // `s5`:标题恒为「云端」,副标题随状态变,末尾一个 `›`。整条换成 MedBanner
+    // (brief §形横幅):失败态用琥珀,其余(含没登录/关着/加载中)用蓝——图标类别
+    // 定成 lab(brief 「云端相关=lab」),不再按失败与否切换图标本身。
+    return MedBanner(
+      icon: Icons.cloud_outlined,
+      iconCategory: GlossCategory.lab,
+      title: '云端',
+      subtitle: _busy ? '正在备份…' : s.text,
+      amber: failed,
       // 终审 I3:这一行是四处文案承诺的那条路(首启同意页与 ask sheet 都写着
       // 「可以在『我 → 云端』关掉」),所以**七态里的哪一态点下去都得进得去**。
       // 原来可重试的三态(还没开始备份 / 还没备份过 / 上次没备份成功)`onTap`

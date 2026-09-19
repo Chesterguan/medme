@@ -87,7 +87,7 @@ class MedColors extends ThemeExtension<MedColors> {
   /// 该更冷静,不是更花哨。
   ///
   /// 不能用 [low] / [high] / [critical]:它们是化验状态专用,借来当 chrome 就会
-  /// 稀释语义。也不能用绿:色板刻意没有绿(「正常值不上色」)。
+  /// 稀释语义。也不能用绿:绿是「正常」化验状态专用色(`normalInk`/`barNormal`),同样犯不得。
   final Color proxy;
 
   /// 代拍主色的深调,用于浅底上的文字(对比度需要)。

@@ -15,6 +15,7 @@ import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/widgets/backup_status_line.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -245,7 +246,9 @@ void main() {
 
       // 整个「云端」分区就这**一行**(`s5`):标题 + 副标题 + `›`,不是两条各说一半。
       // 复审 round 1:这一行下面原来还挂着一条「登录 / 注册」,同一件事说了两遍。
-      expect(find.byType(ListTile), findsOneWidget);
+      // Task 11:这一行整条换成了 MedBanner(brief §形横幅),不再是 ListTile——
+      // 断言按同一意图(这一整段只有一个可点的行)改判 widget 类型,行为覆盖不变。
+      expect(find.byType(MedBanner), findsOneWidget);
       expect(find.text('云端'), findsOneWidget);
       expect(find.byIcon(Icons.chevron_right), findsOneWidget);
       // 副标题里不许再出现「云端」两个字 —— 标题已经说过一次了。

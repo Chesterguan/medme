@@ -60,7 +60,7 @@ class MedMe {
     final controlShape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(MedShape.radiusControl),
     );
-    // 按钮文字统一 body(15·600)—— 比 Material 默认的 14 大一档,目标用户含老年人。
+    // 按钮文字统一 body(16·600)—— 比 Material 默认的 14 大一档,目标用户含老年人。
     final buttonLabel = WidgetStatePropertyAll(
       MedType.body.copyWith(fontWeight: FontWeight.w600),
     );
@@ -111,9 +111,11 @@ class MedMe {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         showDragHandle: true,
+        // R6:mockup `.sheet{border-radius:26px 26px 0 0}`—— 走 MedShape.radiusSheet
+        // 令牌(全 app 最大的一档),不写裸数字。
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(
-            top: Radius.circular(MedShape.radiusCard),
+            top: Radius.circular(MedShape.radiusSheet),
           ),
         ),
       ),
