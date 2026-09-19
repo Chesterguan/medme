@@ -284,16 +284,13 @@ class _SettingsGroup extends StatelessWidget {
       // Container(有底色),中间不隔一层透明 Material 的话,水波纹会被那层底色
       // 盖住(Flutter 的 debug 断言原话,`doctor_home_screen.dart`/
       // `emergency_card_screen.dart` 已有的写法)。
-      child: Material(
-        color: Colors.transparent,
-        child: Column(
-          children: [
-            for (var i = 0; i < children.length; i++) ...[
-              if (i > 0) Divider(height: 1, color: c.line2),
-              children[i],
-            ],
+      child: Column(
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0) Divider(height: 1, color: c.line2),
+            children[i],
           ],
-        ),
+        ],
       ),
     );
   }
@@ -454,41 +451,38 @@ class MembersCard extends StatelessWidget {
     return MedCard(
       // 透明 Material:见 `_SettingsGroup` 同一条注释——不隔这一层,ListTile 的
       // 水波纹会被 MedCard 的白底盖住(Flutter debug 断言)。
-      child: Material(
-        color: Colors.transparent,
-        child: Column(
-          children: [
-            for (final m in members) ...[
-              if (m != members.first) Divider(height: 1, color: c.line2),
-              ListTile(
-                // brief §色:成员头像 = 品牌渐变——GlossIconTile.letter 默认就是
-                // brand 类别,不用另传 category(mockup 里是圆角方块不是圆)。
-                leading: GlossIconTile.letter(
-                  letter: m.name.isNotEmpty ? m.name.characters.first : '?',
-                ),
-                title: Text(m.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      countOf(m.id) == null ? '—' : '${countOf(m.id)} 份',
-                      style: MedType.secondary.copyWith(color: c.ink3),
-                    ),
-                    Icon(Icons.chevron_right, size: 18, color: c.ink3),
-                  ],
-                ),
-                onTap: () => onOpen(m),
-              ),
-            ],
-            Divider(height: 1, color: c.line2),
+      child: Column(
+        children: [
+          for (final m in members) ...[
+            if (m != members.first) Divider(height: 1, color: c.line2),
             ListTile(
-              // mockup `s5` 那一行用的是 note 绿。
-              leading: const GlossIconTile(icon: Icons.add, category: GlossCategory.note),
-              title: Text('添加成员', style: MedType.body.copyWith(color: c.sealInk)),
-              onTap: onAdd,
+              // brief §色:成员头像 = 品牌渐变——GlossIconTile.letter 默认就是
+              // brand 类别,不用另传 category(mockup 里是圆角方块不是圆)。
+              leading: GlossIconTile.letter(
+                letter: m.name.isNotEmpty ? m.name.characters.first : '?',
+              ),
+              title: Text(m.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    countOf(m.id) == null ? '—' : '${countOf(m.id)} 份',
+                    style: MedType.secondary.copyWith(color: c.ink3),
+                  ),
+                  Icon(Icons.chevron_right, size: 18, color: c.ink3),
+                ],
+              ),
+              onTap: () => onOpen(m),
             ),
           ],
-        ),
+          Divider(height: 1, color: c.line2),
+          ListTile(
+            // mockup `s5` 那一行用的是 note 绿。
+            leading: const GlossIconTile(icon: Icons.add, category: GlossCategory.note),
+            title: Text('添加成员', style: MedType.body.copyWith(color: c.sealInk)),
+            onTap: onAdd,
+          ),
+        ],
       ),
     );
   }

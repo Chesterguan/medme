@@ -1180,57 +1180,54 @@ class _PendingRow extends StatelessWidget {
     return MedCard(
       perforated: true,
       // 还没核对的整卡描琥珀边(加粗到 1.5),核对过的回到普通 line 边。
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(MedShape.s2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: c.proxyWash,
-                    borderRadius: BorderRadius.circular(MedShape.radiusControl),
-                  ),
-                  child: Icon(
-                    Icons.description_outlined,
-                    size: 19,
-                    color: c.proxy,
-                  ),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(MedShape.s2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: c.proxyWash,
+                  borderRadius: BorderRadius.circular(MedShape.radiusControl),
                 ),
-                const SizedBox(width: MedShape.s2),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        docDisplayTitle(doc),
-                        style: MedType.subtitle.copyWith(color: c.ink),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        date.isEmpty ? label : '$label · $date',
-                        style: MedType.secondary.copyWith(
-                          color: c.ink2,
-                          fontFeatures: MedType.tabular,
-                        ),
-                      ),
-                    ],
-                  ),
+                child: Icon(
+                  Icons.description_outlined,
+                  size: 19,
+                  color: c.proxy,
                 ),
-                const SizedBox(width: MedShape.s1),
-                _StatusBadge(confirmed: confirmed),
-                const SizedBox(width: 4),
-                Icon(Icons.chevron_right, size: 20, color: c.ink3),
-              ],
-            ),
+              ),
+              const SizedBox(width: MedShape.s2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      docDisplayTitle(doc),
+                      style: MedType.subtitle.copyWith(color: c.ink),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      date.isEmpty ? label : '$label · $date',
+                      style: MedType.secondary.copyWith(
+                        color: c.ink2,
+                        fontFeatures: MedType.tabular,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: MedShape.s1),
+              _StatusBadge(confirmed: confirmed),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 20, color: c.ink3),
+            ],
           ),
         ),
       ),

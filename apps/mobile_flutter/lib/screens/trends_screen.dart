@@ -1297,69 +1297,66 @@ class _VisitCard extends StatelessWidget {
 
     return MedCard(
       perforated: single,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: single
-              ? () => onOpenDoc(visit.documentIds.first.toInt())
-              // 多份的一组在这里不展开 —— 展开是「病历」的事,那里才有删除、
-              // 子文档列表这些配套。这里只负责把人送过去。
-              : goToRecords,
-          child: Padding(
-            padding: const EdgeInsets.all(MedShape.s2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 光泽图标块(brief §形 的 3D 图标语言),类别按 `visit.kind`
-                // 归类(`categoryForVisitKind`——与 Task 8 `archive_screen.dart`
-                // 的 `_categoryOf` 同一映射来源:`categoryForDocType`)。默认
-                // 44×44,不为了这里挤一点就调小(`gloss_tile.dart` 类文档)。
-                GlossIconTile(
-                  icon: iconForVisitKind(visit.kind),
-                  category: categoryForVisitKind(visit.kind),
-                ),
-                const SizedBox(width: MedShape.s2),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              title,
-                              style: MedType.subtitle.copyWith(color: c.ink),
-                              overflow: TextOverflow.ellipsis,
+      child: InkWell(
+        onTap: single
+            ? () => onOpenDoc(visit.documentIds.first.toInt())
+            // 多份的一组在这里不展开 —— 展开是「病历」的事,那里才有删除、
+            // 子文档列表这些配套。这里只负责把人送过去。
+            : goToRecords,
+        child: Padding(
+          padding: const EdgeInsets.all(MedShape.s2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 光泽图标块(brief §形 的 3D 图标语言),类别按 `visit.kind`
+              // 归类(`categoryForVisitKind`——与 Task 8 `archive_screen.dart`
+              // 的 `_categoryOf` 同一映射来源:`categoryForDocType`)。默认
+              // 44×44,不为了这里挤一点就调小(`gloss_tile.dart` 类文档)。
+              GlossIconTile(
+                icon: iconForVisitKind(visit.kind),
+                category: categoryForVisitKind(visit.kind),
+              ),
+              const SizedBox(width: MedShape.s2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: MedType.subtitle.copyWith(color: c.ink),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (showDate) ...[
+                          const SizedBox(width: MedShape.s1),
+                          Text(
+                            date,
+                            style: MedType.secondary.copyWith(
+                              color: c.ink3,
+                              fontFeatures: MedType.tabular,
                             ),
                           ),
-                          if (showDate) ...[
-                            const SizedBox(width: MedShape.s1),
-                            Text(
-                              date,
-                              style: MedType.secondary.copyWith(
-                                color: c.ink3,
-                                fontFeatures: MedType.tabular,
-                              ),
-                            ),
-                          ],
                         ],
-                      ),
-                      // 全被标题涵盖时整行不渲染 —— 空的副标题只会留一道空隙。
-                      if (desc.isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          desc,
-                          style: MedType.secondary.copyWith(color: c.ink2),
-                        ),
                       ],
+                    ),
+                    // 全被标题涵盖时整行不渲染 —— 空的副标题只会留一道空隙。
+                    if (desc.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        desc,
+                        style: MedType.secondary.copyWith(color: c.ink2),
+                      ),
                     ],
-                  ),
+                  ],
                 ),
-                Icon(Icons.chevron_right, size: 20, color: c.ink3),
-              ],
-            ),
+              ),
+              Icon(Icons.chevron_right, size: 20, color: c.ink3),
+            ],
           ),
         ),
       ),

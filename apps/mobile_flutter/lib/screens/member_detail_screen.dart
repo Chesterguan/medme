@@ -208,25 +208,22 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
           MedCard(
             // 透明 Material:ListTile 的水波纹要画在这一层上,否则被 MedCard 的
             // 白底盖住(Flutter debug 断言;`doctor_home_screen.dart` 已有写法)。
-            child: Material(
-              color: Colors.transparent,
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const GlossIconTile(icon: Icons.edit_outlined, category: GlossCategory.note),
-                    title: const Text('改名字'),
-                    trailing: const Icon(Icons.chevron_right, color: MedMe.faint),
-                    onTap: _rename,
-                  ),
-                  const Divider(height: 1, color: MedMe.line),
-                  ListTile(
-                    leading: const GlossIconTile(icon: Icons.person_remove_outlined, category: GlossCategory.alert),
-                    title: Text('删除这个成员', style: TextStyle(color: c.critical)),
-                    trailing: const Icon(Icons.chevron_right, color: MedMe.danger),
-                    onTap: _delete,
-                  ),
-                ],
-              ),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const GlossIconTile(icon: Icons.edit_outlined, category: GlossCategory.note),
+                  title: const Text('改名字'),
+                  trailing: const Icon(Icons.chevron_right, color: MedMe.faint),
+                  onTap: _rename,
+                ),
+                const Divider(height: 1, color: MedMe.line),
+                ListTile(
+                  leading: const GlossIconTile(icon: Icons.person_remove_outlined, category: GlossCategory.alert),
+                  title: Text('删除这个成员', style: TextStyle(color: c.critical)),
+                  trailing: const Icon(Icons.chevron_right, color: MedMe.danger),
+                  onTap: _delete,
+                ),
+              ],
             ),
           ),
         ],
@@ -266,22 +263,19 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
             return const Text('还没有人被邀请', style: TextStyle(color: MedMe.faint));
           }
           return MedCard(
-            child: Material(
-              color: Colors.transparent,
-              child: Column(
-                children: [
-                  for (final g in rows) ...[
-                    if (g != rows.first) const Divider(height: 1, color: MedMe.line),
-                    ListTile(
-                      title: Text(_grantRowLabel(g)),
-                      trailing: TextButton(
-                        onPressed: () => _revoke(g['grant_id'] as String),
-                        child: const Text('撤销'),
-                      ),
+            child: Column(
+              children: [
+                for (final g in rows) ...[
+                  if (g != rows.first) const Divider(height: 1, color: MedMe.line),
+                  ListTile(
+                    title: Text(_grantRowLabel(g)),
+                    trailing: TextButton(
+                      onPressed: () => _revoke(g['grant_id'] as String),
+                      child: const Text('撤销'),
                     ),
-                  ],
+                  ),
                 ],
-              ),
+              ],
             ),
           );
         },
@@ -351,22 +345,16 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
   Widget? _addPersonRow() {
     if (widget.member.cloudId == null) {
       return const MedCard(
-        child: Material(
-          color: Colors.transparent,
-          child: ListTile(title: Text('这个成员还没开通云端备份,暂时加不了人', style: TextStyle(color: MedMe.faint))),
-        ),
+        child: ListTile(title: Text('这个成员还没开通云端备份,暂时加不了人', style: TextStyle(color: MedMe.faint))),
       );
     }
     if (widget.member.role != 'owner') return null;
     return MedCard(
-      child: Material(
-        color: Colors.transparent,
-        child: ListTile(
-          leading: const GlossIconTile(icon: Icons.add, category: GlossCategory.note),
-          title: const Text('加一个人', style: TextStyle(fontWeight: FontWeight.w600, color: MedMe.teal)),
-          subtitle: const Text('手机号或扫码'),
-          onTap: _addPerson,
-        ),
+      child: ListTile(
+        leading: const GlossIconTile(icon: Icons.add, category: GlossCategory.note),
+        title: const Text('加一个人', style: TextStyle(fontWeight: FontWeight.w600, color: MedMe.teal)),
+        subtitle: const Text('手机号或扫码'),
+        onTap: _addPerson,
       ),
     );
   }

@@ -50,7 +50,10 @@ class MedCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (perforated) const MedPerforation(),
-          child,
+          // R24:child 槽位统一垫一层透明 Material,卡内 ListTile/InkWell 才有
+          // Material 祖先(否则墨水飞溅不可见,Flutter 文档里的经典坑)。调用方
+          // 不必再各自手抄这一层——见 MedBanner 内同款用法。
+          Material(type: MaterialType.transparency, child: child),
         ],
       ),
     );

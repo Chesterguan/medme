@@ -77,6 +77,32 @@ void main() {
     });
   });
 
+  group('R24:child 槽位内置的透明 Material', () {
+    testWidgets('恰好一层 type: transparency,ListTile 的墨水飞溅点得动、不报错', (tester) async {
+      await tester.pumpWidget(
+        wrap(MedCard(child: ListTile(title: const Text('x'), onTap: () {}))),
+      );
+      final transparencyMaterials = tester
+          .widgetList<Material>(
+            find.descendant(
+              of: find.byType(MedCard),
+              matching: find.byType(Material),
+            ),
+          )
+          .where((m) => m.type == MaterialType.transparency);
+      expect(
+        transparencyMaterials,
+        hasLength(1),
+        reason: 'MedCard 内置这一层,调用方不必再各自手抄',
+      );
+      await tester.tap(find.byType(ListTile));
+      await tester.pump();
+      // 没有这层 Material,ListTile 的 InkWell 会在 debug 下断言
+      // 「No Material widget found」——这里钉住的正是这条不再发生。
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   group('MedBanner / MedDemoPill', () {
     testWidgets('MedBanner:蓝 #DDEDF8 / 文 #0E6285,琥珀 #FBE7D2 / 文 #9A4A12,圆角 16', (tester) async {
       await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Column(children: [

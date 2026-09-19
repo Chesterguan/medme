@@ -540,80 +540,77 @@ class _TimelineItem extends StatelessWidget {
       //    背后没有「一张纸」叫做「门诊·某某医院」→ **不画**。组里每一份文档
       //    展开后各自可点开,那是下一层的事。
       perforated: !isEncounter,
-      child: Material(
-        color: Colors.transparent,
-        child: Column(
-          children: [
-            InkWell(
-              onTap: onTap,
-              child: Padding(
-                padding: const EdgeInsets.all(MedShape.s2),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    GlossIconTile(icon: icon, category: _categoryOf(group)),
-                    const SizedBox(width: MedShape.s2),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.baseline,
-                            textBaseline: TextBaseline.alphabetic,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _groupTitle(group),
-                                  style: MedType.body.copyWith(
-                                    color: c.ink,
-                                    fontWeight: FontWeight.w500,
-                                    fontVariations: MedType.w500,
-                                    height: 1.3,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
+      child: Column(
+        children: [
+          InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(MedShape.s2),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  GlossIconTile(icon: icon, category: _categoryOf(group)),
+                  const SizedBox(width: MedShape.s2),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.baseline,
+                          textBaseline: TextBaseline.alphabetic,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _groupTitle(group),
+                                style: MedType.body.copyWith(
+                                  color: c.ink,
+                                  fontWeight: FontWeight.w500,
+                                  fontVariations: MedType.w500,
+                                  height: 1.3,
                                 ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              const SizedBox(width: MedShape.s1),
-                              Text(
-                                _groupDate(group),
-                                // 日期是数字,等宽 —— 一列日期才对得齐。
-                                style: MedType.secondary.copyWith(
-                                  color: c.ink3,
-                                  fontFeatures: MedType.tabular,
-                                ),
+                            ),
+                            const SizedBox(width: MedShape.s1),
+                            Text(
+                              _groupDate(group),
+                              // 日期是数字,等宽 —— 一列日期才对得齐。
+                              style: MedType.secondary.copyWith(
+                                color: c.ink3,
+                                fontFeatures: MedType.tabular,
                               ),
-                            ],
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            _groupDesc(group),
-                            style: MedType.secondary.copyWith(color: c.ink3),
-                          ),
-                        ],
-                      ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          _groupDesc(group),
+                          style: MedType.secondary.copyWith(color: c.ink3),
+                        ),
+                      ],
                     ),
-                    if (isEncounter)
-                      Icon(
-                        expanded ? Icons.expand_less : Icons.expand_more,
-                        size: 20,
-                        color: c.ink3,
-                      ),
-                  ],
-                ),
+                  ),
+                  if (isEncounter)
+                    Icon(
+                      expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 20,
+                      color: c.ink3,
+                    ),
+                ],
               ),
             ),
-            if (expanded)
-              switch (group) {
-                TimelineGroupDto_Encounter(:final docs) => _SubDocList(
-                  docs: docs,
-                  onOpenSubDoc: onOpenSubDoc,
-                  onDelete: onDelete,
-                ),
-                TimelineGroupDto_Document() => const SizedBox.shrink(),
-              },
-          ],
-        ),
+          ),
+          if (expanded)
+            switch (group) {
+              TimelineGroupDto_Encounter(:final docs) => _SubDocList(
+                docs: docs,
+                onOpenSubDoc: onOpenSubDoc,
+                onDelete: onDelete,
+              ),
+              TimelineGroupDto_Document() => const SizedBox.shrink(),
+            },
+        ],
       ),
     );
 
@@ -736,71 +733,68 @@ class _PendingCard extends StatelessWidget {
     final card = MedCard(
       // 这张卡背后就是刚导入的那份原件,点开即达 → 画骑缝线。
       perforated: true,
-      child: Material(
-        color: Colors.transparent,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            InkWell(
-              onTap: () => onOpen(doc.id),
-              child: Padding(
-                padding: const EdgeInsets.all(MedShape.s2),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    GlossIconTile(
-                      icon: iconForDoc(doc.docType),
-                      category: categoryForDocType(doc.docType),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => onOpen(doc.id),
+            child: Padding(
+              padding: const EdgeInsets.all(MedShape.s2),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  GlossIconTile(
+                    icon: iconForDoc(doc.docType),
+                    category: categoryForDocType(doc.docType),
+                  ),
+                  const SizedBox(width: MedShape.s2),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // 标题行会挤:pill + 标题 + 日期。用 Wrap 让它在窄屏
+                        // 或大字号下自然折行,而不是把标题省略成两个字。
+                        Wrap(
+                          spacing: MedShape.s1,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            MedPill(
+                              text: '还没核对',
+                              foreground: c.high,
+                              background: c.highWash,
+                            ),
+                            Text(
+                              label,
+                              style: MedType.subtitle.copyWith(color: c.ink),
+                            ),
+                            Text(
+                              fmtDate(doc.docDate),
+                              style: MedType.secondary.copyWith(
+                                color: c.ink3,
+                                fontFeatures: MedType.tabular,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        // 原来每行都催一句「点开核对」,7 份就是 7 条错误提示
+                        // (ux-audit P6)。那句话现在只在列表顶部说一次,行上
+                        // 只留类型标签 +「还没核对」那枚 pill。
+                        Text(
+                          docRowLabel(doc),
+                          style: MedType.secondary.copyWith(color: c.ink2),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: MedShape.s2),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // 标题行会挤:pill + 标题 + 日期。用 Wrap 让它在窄屏
-                          // 或大字号下自然折行,而不是把标题省略成两个字。
-                          Wrap(
-                            spacing: MedShape.s1,
-                            runSpacing: 4,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              MedPill(
-                                text: '还没核对',
-                                foreground: c.high,
-                                background: c.highWash,
-                              ),
-                              Text(
-                                label,
-                                style: MedType.subtitle.copyWith(color: c.ink),
-                              ),
-                              Text(
-                                fmtDate(doc.docDate),
-                                style: MedType.secondary.copyWith(
-                                  color: c.ink3,
-                                  fontFeatures: MedType.tabular,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 3),
-                          // 原来每行都催一句「点开核对」,7 份就是 7 条错误提示
-                          // (ux-audit P6)。那句话现在只在列表顶部说一次,行上
-                          // 只留类型标签 +「还没核对」那枚 pill。
-                          Text(
-                            docRowLabel(doc),
-                            style: MedType.secondary.copyWith(color: c.ink2),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(Icons.chevron_right, size: 20, color: c.ink3),
-                  ],
-                ),
+                  ),
+                  Icon(Icons.chevron_right, size: 20, color: c.ink3),
+                ],
               ),
             ),
-            if (mismatchName case final who?) _MismatchBanner(who: who),
-          ],
-        ),
+          ),
+          if (mismatchName case final who?) _MismatchBanner(who: who),
+        ],
       ),
     );
     return Dismissible(

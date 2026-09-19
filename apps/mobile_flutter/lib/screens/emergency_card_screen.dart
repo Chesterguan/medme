@@ -485,59 +485,56 @@ class _ExtrasSection extends StatelessWidget {
         ]),
         const SizedBox(height: MedShape.s1),
         MedCard(
-          child: Material(
-            color: Colors.transparent,
-            child: Column(
-              children: [
-                ListTile(
-                  leading: Icon(Icons.phone_outlined, color: c.seal),
-                  title: Text(
-                    '紧急联系人',
-                    style: MedType.body.copyWith(
-                      color: c.ink,
-                      fontWeight: FontWeight.w600,
-                    ),
+          child: Column(
+            children: [
+              ListTile(
+                leading: Icon(Icons.phone_outlined, color: c.seal),
+                title: Text(
+                  '紧急联系人',
+                  style: MedType.body.copyWith(
+                    color: c.ink,
+                    fontWeight: FontWeight.w600,
                   ),
-                  subtitle: Text(
-                    extras.hasPhone
-                        ? [
-                            if (who.isNotEmpty) who,
-                            extras.contactPhone,
-                          ].join(' · ')
-                        : '未填写 —— 急救人员需要一个能打通的号码',
-                    style: MedType.secondary.copyWith(
-                      color: c.ink2,
-                      fontFeatures: MedType.tabular,
-                    ),
-                  ),
-                  trailing: Icon(Icons.edit_outlined, size: 20, color: c.ink3),
-                  onTap: () => _editContact(context, extras),
                 ),
-                Divider(height: 1, thickness: 1, color: c.line2),
-                ListTile(
-                  leading: Icon(Icons.favorite_outline, color: c.seal),
-                  title: Text(
-                    '器官捐献意愿',
-                    style: MedType.body.copyWith(
-                      color: c.ink,
-                      fontWeight: FontWeight.w600,
-                    ),
+                subtitle: Text(
+                  extras.hasPhone
+                      ? [
+                          if (who.isNotEmpty) who,
+                          extras.contactPhone,
+                        ].join(' · ')
+                      : '未填写 —— 急救人员需要一个能打通的号码',
+                  style: MedType.secondary.copyWith(
+                    color: c.ink2,
+                    fontFeatures: MedType.tabular,
                   ),
-                  subtitle: Text(
-                    // 「未登记」不等于「不愿意」—— 见 `OrganDonation` 的文档。
-                    '${extras.organDonation.label} · 这只是你在 App 里的记录,'
-                    '不具法律效力;正式登记在中国人体器官捐献管理中心。',
-                    style: MedType.secondary.copyWith(
-                      color: c.ink2,
-                      height: 1.4,
-                    ),
-                  ),
-                  isThreeLine: true,
-                  trailing: Icon(Icons.edit_outlined, size: 20, color: c.ink3),
-                  onTap: () => _editOrgan(context, extras),
                 ),
-              ],
-            ),
+                trailing: Icon(Icons.edit_outlined, size: 20, color: c.ink3),
+                onTap: () => _editContact(context, extras),
+              ),
+              Divider(height: 1, thickness: 1, color: c.line2),
+              ListTile(
+                leading: Icon(Icons.favorite_outline, color: c.seal),
+                title: Text(
+                  '器官捐献意愿',
+                  style: MedType.body.copyWith(
+                    color: c.ink,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  // 「未登记」不等于「不愿意」—— 见 `OrganDonation` 的文档。
+                  '${extras.organDonation.label} · 这只是你在 App 里的记录,'
+                  '不具法律效力;正式登记在中国人体器官捐献管理中心。',
+                  style: MedType.secondary.copyWith(
+                    color: c.ink2,
+                    height: 1.4,
+                  ),
+                ),
+                isThreeLine: true,
+                trailing: Icon(Icons.edit_outlined, size: 20, color: c.ink3),
+                onTap: () => _editOrgan(context, extras),
+              ),
+            ],
           ),
         ),
       ],

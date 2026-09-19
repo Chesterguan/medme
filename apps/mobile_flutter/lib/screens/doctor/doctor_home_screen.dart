@@ -365,22 +365,19 @@ class PatientGrantedSection extends StatelessWidget {
           ),
           for (final p in profiles)
             MedCard(
-              child: Material(
-                color: Colors.transparent,
-                child: ListTile(
-                  key: Key('granted_${p.id}'),
-                  leading: CircleAvatar(
-                    backgroundColor: c.proxyWash,
-                    child: Icon(Icons.folder_shared_outlined, size: 19, color: c.proxy),
-                  ),
-                  title: Text(p.name, style: MedType.subtitle.copyWith(color: c.ink)),
-                  subtitle: Text(
-                    patientGrantedSubtitle(p),
-                    style: MedType.secondary.copyWith(color: c.ink2),
-                  ),
-                  trailing: Icon(Icons.chevron_right, color: c.ink3),
-                  onTap: () => onTap(p),
+              child: ListTile(
+                key: Key('granted_${p.id}'),
+                leading: CircleAvatar(
+                  backgroundColor: c.proxyWash,
+                  child: Icon(Icons.folder_shared_outlined, size: 19, color: c.proxy),
                 ),
+                title: Text(p.name, style: MedType.subtitle.copyWith(color: c.ink)),
+                subtitle: Text(
+                  patientGrantedSubtitle(p),
+                  style: MedType.secondary.copyWith(color: c.ink2),
+                ),
+                trailing: Icon(Icons.chevron_right, color: c.ink3),
+                onTap: () => onTap(p),
               ),
             ),
         ],
@@ -409,60 +406,57 @@ class _PatientRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     return MedCard(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              MedShape.s2,
-              MedShape.s2,
-              4,
-              MedShape.s2,
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: c.proxyWash,
-                    borderRadius: BorderRadius.circular(MedShape.radiusControl),
-                  ),
-                  child: Icon(Icons.person_outline, size: 19, color: c.proxy),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            MedShape.s2,
+            MedShape.s2,
+            4,
+            MedShape.s2,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: c.proxyWash,
+                  borderRadius: BorderRadius.circular(MedShape.radiusControl),
                 ),
-                const SizedBox(width: MedShape.s2),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        patient.displayName,
-                        style: MedType.subtitle.copyWith(color: c.ink),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                child: Icon(Icons.person_outline, size: 19, color: c.proxy),
+              ),
+              const SizedBox(width: MedShape.s2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      patient.displayName,
+                      style: MedType.subtitle.copyWith(color: c.ink),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '拍了 ${patient.docCount} 份 · ${_remainingLabel(patient.remaining)}',
+                      // 份数与倒计时都是数字,等宽才对得齐。
+                      style: MedType.secondary.copyWith(
+                        color: c.ink2,
+                        fontFeatures: MedType.tabular,
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        '拍了 ${patient.docCount} 份 · ${_remainingLabel(patient.remaining)}',
-                        // 份数与倒计时都是数字,等宽才对得齐。
-                        style: MedType.secondary.copyWith(
-                          color: c.ink2,
-                          fontFeatures: MedType.tabular,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                  color: c.ink3,
-                  tooltip: '删除这个病人',
-                  onPressed: onDelete,
-                ),
-              ],
-            ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline, size: 20),
+                color: c.ink3,
+                tooltip: '删除这个病人',
+                onPressed: onDelete,
+              ),
+            ],
           ),
         ),
       ),
