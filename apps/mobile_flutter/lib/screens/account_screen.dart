@@ -16,7 +16,6 @@ import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart'
 import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncKdfBenchMs;
 import 'package:mobile_flutter/sync_engine.dart';
-import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/brand_gradient.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
@@ -600,9 +599,9 @@ class _AccountScreenState extends State<AccountScreen> {
       style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
     ),
     const SizedBox(height: 8),
-    const Text(
+    Text(
       '换手机能找回病历、和家人一起看、云端帮你认字。不登录不影响这台手机上用。',
-      style: TextStyle(color: MedMe.faint),
+      style: TextStyle(color: MedColors.of(context).ink3),
     ),
     const SizedBox(height: 20),
     TextField(
@@ -630,7 +629,7 @@ class _AccountScreenState extends State<AccountScreen> {
       style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
     ),
     const SizedBox(height: 8),
-    Text('已发送到 ${_phoneCtrl.text}', style: const TextStyle(color: MedMe.faint)),
+    Text('已发送到 ${_phoneCtrl.text}', style: TextStyle(color: MedColors.of(context).ink3)),
     const SizedBox(height: 20),
     TextField(
       key: const Key('code'),
@@ -652,9 +651,9 @@ class _AccountScreenState extends State<AccountScreen> {
   List<Widget> _keySetupContent() => [
     const Text('设一个口令', style: MedType.title),
     const SizedBox(height: 8),
-    const Text(
+    Text(
       '换手机时用它解开云端那份;我们没有这把钥匙',
-      style: TextStyle(color: MedMe.faint, height: 1.5),
+      style: TextStyle(color: MedColors.of(context).ink3, height: 1.5),
     ),
     const SizedBox(height: 20),
     MedFieldPanel(
@@ -684,9 +683,9 @@ class _AccountScreenState extends State<AccountScreen> {
       // 分区标题,不是页面标题(mockup `s12` 的 `.sec`):15 号 ink2,字符串不动。
       Text('恢复码,口令忘了用它', style: TextStyle(fontSize: 15, color: c.ink2)),
       const SizedBox(height: 8),
-      const Text(
+      Text(
         '抄在纸上或存到别处。口令、恢复码、登录过的手机,三样都丢了,云端那份谁也打不开。',
-        style: TextStyle(color: MedMe.danger, height: 1.5, fontWeight: FontWeight.w600),
+        style: TextStyle(color: c.critical, height: 1.5, fontWeight: FontWeight.w600),
       ),
       const SizedBox(height: 20),
       RecoveryCodeBox(code: _recoveryCode!),
@@ -778,9 +777,9 @@ class _AccountScreenState extends State<AccountScreen> {
     return [
       const Text('拿回你的病历', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
       const SizedBox(height: 8),
-      const Text(
+      Text(
         '已登录;云端有你的病历,选一种方式解开',
-        style: TextStyle(color: MedMe.faint),
+        style: TextStyle(color: c.ink3),
       ),
       const SizedBox(height: 20),
       // **先给这条**(spec A2 的「旧设备批准」):换手机的人口袋里通常还揣着旧手机,
@@ -806,12 +805,12 @@ class _AccountScreenState extends State<AccountScreen> {
         )),
       ]),
       const SizedBox(height: 8),
-      const Text(
+      Text(
         // ux-audit §4 第 9 条:原文「这台设备之前没解锁过这个账号」在「本机注册 →
         // 退出 → 重新登录」这条最常见的路上是假话——这台设备恰恰就是当初注册它的
         // 那台。改说要做什么,不猜设备的历史。
         '打开你的病历需要口令。忘了口令就用恢复码。',
-        style: TextStyle(color: MedMe.faint),
+        style: TextStyle(color: c.ink3),
       ),
       const SizedBox(height: 20),
       MedFieldPanel(
@@ -880,7 +879,7 @@ class _AccountScreenState extends State<AccountScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
           TextButton(
-            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            style: TextButton.styleFrom(foregroundColor: MedColors.of(context).critical),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('退出登录,重新开始'),
           ),
@@ -1081,7 +1080,7 @@ class _AccountScreenState extends State<AccountScreen> {
   List<Widget> _readyContent() => [
     const Text('已登录', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
     const SizedBox(height: 4),
-    Text(_accountLabel(), style: const TextStyle(color: MedMe.faint)),
+    Text(_accountLabel(), style: TextStyle(color: MedColors.of(context).ink3)),
     const SizedBox(height: 24),
     const Text('云端', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
@@ -1107,7 +1106,7 @@ class _AccountScreenState extends State<AccountScreen> {
       // 内部 id 只在 debug 包里露出来(排查问题要用),正式包里一个字都没有。
       Text(
         'debug · accountId=${widget.flow.session.accountId ?? '-'}',
-        style: const TextStyle(color: MedMe.faint, fontSize: 11),
+        style: TextStyle(color: MedColors.of(context).ink3, fontSize: 11),
       ),
     ],
   ];
@@ -1140,7 +1139,7 @@ class _AccountScreenState extends State<AccountScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(_cloudDefaultCopy, style: TextStyle(color: MedMe.faint, height: 1.5)),
+        Text(_cloudDefaultCopy, style: TextStyle(color: MedColors.of(context).ink3, height: 1.5)),
         const SizedBox(height: 8),
         // R25:每行现在是 MedCard(无边框、纯阴影分层),不再是自带外边距的
         // Material `Card` —— 多个成员时行与行之间要显式补一条缝,否则会贴在一起。
@@ -1156,11 +1155,11 @@ class _AccountScreenState extends State<AccountScreen> {
           const SizedBox(height: 8),
           const Center(child: CircularProgressIndicator()),
           const SizedBox(height: 8),
-          const Text('正在开通云端备份…', textAlign: TextAlign.center, style: TextStyle(color: MedMe.faint)),
+          Text('正在开通云端备份…', textAlign: TextAlign.center, style: TextStyle(color: MedColors.of(context).ink3)),
         ],
         const SizedBox(height: 8),
         if (_lastSyncReport != null)
-          Text(_syncSummary(_lastSyncReport!), style: const TextStyle(color: MedMe.faint)),
+          Text(_syncSummary(_lastSyncReport!), style: TextStyle(color: MedColors.of(context).ink3)),
         if (_syncError != null) _errorText(_syncError!),
         if (_cloudError != null) _errorText(_cloudError!),
         // C9:**一颗按钮。** 原来这里是两颗:上一次失败时多出一颗「已开通,点击
@@ -1379,7 +1378,7 @@ class _AccountScreenState extends State<AccountScreen> {
     } else {
       children.add(
         OutlinedButton(
-          style: OutlinedButton.styleFrom(foregroundColor: MedMe.danger, side: const BorderSide(color: MedMe.danger)),
+          style: OutlinedButton.styleFrom(foregroundColor: MedColors.of(context).critical, side: BorderSide(color: MedColors.of(context).critical)),
           onPressed: _confirmDeleteAccount,
           child: const Text('注销账号'),
         ),
@@ -1402,7 +1401,7 @@ class _AccountScreenState extends State<AccountScreen> {
       const SizedBox(height: 4),
       Text(
         '${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
-        style: const TextStyle(color: MedMe.faint, fontSize: 12),
+        style: TextStyle(color: MedColors.of(context).ink3, fontSize: 12),
       ),
       const SizedBox(height: 8),
     ];
@@ -1455,7 +1454,7 @@ class _AccountScreenState extends State<AccountScreen> {
             Text('${r.mKib}'),
             Text('${r.t}'),
             r.error != null
-                ? Text('ERROR: ${r.error}', style: const TextStyle(color: MedMe.danger, fontSize: 12))
+                ? Text('ERROR: ${r.error}', style: TextStyle(color: MedColors.of(context).critical, fontSize: 12))
                 : Text('${r.ms}'),
           ],
         ),
@@ -1543,7 +1542,7 @@ class _AccountScreenState extends State<AccountScreen> {
     final proceed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        icon: const Icon(Icons.warning_amber_rounded, color: MedMe.danger, size: 44),
+        icon: Icon(Icons.warning_amber_rounded, color: MedColors.of(context).critical, size: 44),
         title: const Text('注销账号?', textAlign: TextAlign.center),
         content: const Text(
           '注销后:账号里的云端病历全部永久删除,成员与医生也会立刻'
@@ -1566,7 +1565,7 @@ class _AccountScreenState extends State<AccountScreen> {
             child: const Text('先导出'),
           ),
           TextButton(
-            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            style: TextButton.styleFrom(foregroundColor: MedColors.of(context).critical),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('继续注销'),
           ),
@@ -1590,7 +1589,7 @@ class _AccountScreenState extends State<AccountScreen> {
       children: [
         Text(
           isApple ? '需要重新用 Apple 验证一次,确认是本人操作。' : '需要重新验证手机号,确认是本人操作。',
-          style: const TextStyle(color: MedMe.faint),
+          style: TextStyle(color: MedColors.of(context).ink3),
         ),
         const SizedBox(height: 8),
         if (!isApple) ...[
@@ -1616,7 +1615,7 @@ class _AccountScreenState extends State<AccountScreen> {
         _deleteBusy
             ? const Center(child: CircularProgressIndicator())
             : FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: MedMe.danger),
+                style: FilledButton.styleFrom(backgroundColor: MedColors.of(context).critical),
                 onPressed: isApple ? _submitDeleteAccountApple : _submitDeleteAccountOtp,
                 child: const Text('确认注销'),
               ),
@@ -1684,10 +1683,10 @@ class _AccountScreenState extends State<AccountScreen> {
     children: [
       // 「扫码批准新设备」排在列表**上面**:用户来这一节十次里九次就是为了这件事
       // (另一台手机正举着一张码等他),而设备列表是用来核对的,不是用来操作的。
-      const Text(
+      Text(
         '换了新手机、又想不起口令?在新手机的解锁屏点「用旧手机扫码批准」,'
         '然后用这里扫它那张码。',
-        style: TextStyle(color: MedMe.faint, height: 1.5),
+        style: TextStyle(color: MedColors.of(context).ink3, height: 1.5),
       ),
       const SizedBox(height: 8),
       // 忙的时候只是**禁用**,不换成进度圈:`_approveBusy` 在确认弹窗开着的整段时间
@@ -1804,7 +1803,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return _errorText('设备列表加载失败:${friendlyApiError(snap.error!)}');
       }
       final devices = snap.data ?? const [];
-      if (devices.isEmpty) return const Text('没有其它设备', style: TextStyle(color: MedMe.faint));
+      if (devices.isEmpty) return Text('没有其它设备', style: TextStyle(color: MedColors.of(context).ink3));
       return Column(
         children: [
           for (final d in devices.cast<Map<String, dynamic>>())
@@ -1839,7 +1838,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return _errorText('加载失败:${friendlyApiError(snap.error!)}');
       }
       final grants = snap.data ?? const [];
-      if (grants.isEmpty) return const Text('没有共享的病历', style: TextStyle(color: MedMe.faint));
+      if (grants.isEmpty) return Text('没有共享的病历', style: TextStyle(color: MedColors.of(context).ink3));
       return Column(
         children: [
           for (final g in grants.cast<Map<String, dynamic>>())
@@ -1868,7 +1867,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return _errorText('加载失败:${friendlyApiError(snap.error!)}');
       }
       final rows = snap.data ?? const [];
-      if (rows.isEmpty) return const Text('还没让任何人看过', style: TextStyle(color: MedMe.faint));
+      if (rows.isEmpty) return Text('还没让任何人看过', style: TextStyle(color: MedColors.of(context).ink3));
       return Column(
         children: [
           for (final g in rows)
@@ -1989,7 +1988,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
   Widget _errorText(String text) => Padding(
     padding: const EdgeInsets.only(top: 8),
-    child: Text(text, style: const TextStyle(color: MedMe.danger)),
+    child: Text(text, style: TextStyle(color: MedColors.of(context).critical)),
   );
 
   /// 口令输入框 + A4 的「显示/隐藏」眼睛。注册与解锁共用(两屏不同时在,所以
@@ -2045,7 +2044,7 @@ class _AccountScreenState extends State<AccountScreen> {
             Text(
               busyHint,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: MedMe.faint, height: 1.5),
+              style: TextStyle(color: MedColors.of(context).ink3, height: 1.5),
             ),
           ],
         ],

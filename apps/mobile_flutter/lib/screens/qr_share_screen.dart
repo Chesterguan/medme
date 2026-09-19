@@ -19,10 +19,10 @@ import '../account.dart';
 import '../analytics.dart';
 import '../api_client.dart';
 import '../claim_upload.dart';
+import '../design_tokens.dart';
 import '../grants.dart';
 import '../profile_manager.dart';
 import '../src/rust/api/vault.dart';
-import '../theme.dart';
 import '../widgets/med_card.dart';
 import 'disease_profile_screen.dart' show DiseaseProfileSource;
 import 'qr_notice_sheet.dart';
@@ -438,8 +438,8 @@ class _QrShareScreenState extends State<QrShareScreen> {
       children: [
         SegmentedButton<bool>(
           showSelectedIcon: false,
-          segments: const [
-            ButtonSegment<bool>(
+          segments: [
+            const ButtonSegment<bool>(
               value: false,
               label: Text('医生当场看(任何手机)', textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
             ),
@@ -449,11 +449,11 @@ class _QrShareScreenState extends State<QrShareScreen> {
               label: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('医生要长期看(15 天)',
+                  const Text('医生要长期看(15 天)',
                       textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
                   Text('医生也要装 MedMe',
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 10, color: MedMe.faint)),
+                      style: TextStyle(fontSize: 10, color: MedColors.of(context).ink3)),
                 ],
               ),
             ),
@@ -467,7 +467,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
               ? '医生用他自己的 MedMe 扫码(需要他已经装了 App 并登录),这份病历进他的列表,只能看,15 天后自动看不到。'
               : '医生用任何手机的相机扫码,在浏览器里打开看 —— 他不用装 App、不用注册。看完收起手机即可。',
           textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 12, color: MedMe.faint, height: 1.5),
+          style: TextStyle(fontSize: 12, color: MedColors.of(context).ink3, height: 1.5),
         ),
       ],
     ),
@@ -480,14 +480,14 @@ class _QrShareScreenState extends State<QrShareScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline, size: 40, color: MedMe.danger),
+            Icon(Icons.error_outline, size: 40, color: MedColors.of(context).critical),
             const SizedBox(height: 12),
             const Text('生成失败', style: TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text(
               _error!,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: MedMe.faint),
+              style: TextStyle(fontSize: 13, color: MedColors.of(context).ink3),
             ),
             const SizedBox(height: 16),
             FilledButton(onPressed: _generate, child: const Text('重试')),
@@ -504,7 +504,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.cloud_off, size: 40, color: MedMe.faint),
+            Icon(Icons.cloud_off, size: 40, color: MedColors.of(context).ink3),
             const SizedBox(height: 14),
             Text(resumable,
                 textAlign: TextAlign.center,
@@ -512,12 +512,12 @@ class _QrShareScreenState extends State<QrShareScreen> {
             const SizedBox(height: 6),
             Text('已传 ${_pct(_progress ?? 0)},继续会接着传,不用从头来。',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 12.5, color: MedMe.faint, height: 1.6)),
+                style: TextStyle(fontSize: 12.5, color: MedColors.of(context).ink3, height: 1.6)),
             const SizedBox(height: 20),
             FilledButton(
               onPressed: _retry,
               style: FilledButton.styleFrom(
-                  backgroundColor: MedMe.teal,
+                  backgroundColor: MedColors.of(context).seal,
                   padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 13)),
               child: const Text('继续上传'),
             ),
@@ -544,7 +544,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
                 child: LinearProgressIndicator(
                   value: _progress,
                   minHeight: 7,
-                  backgroundColor: MedMe.tealSoft,
+                  backgroundColor: MedColors.of(context).sealWash,
                 ),
               )
             else
@@ -553,13 +553,13 @@ class _QrShareScreenState extends State<QrShareScreen> {
             Text(
               _stage ?? '正在准备…',
               textAlign: TextAlign.center,
-              style: const TextStyle(color: MedMe.faint, fontSize: 13),
+              style: TextStyle(color: MedColors.of(context).ink3, fontSize: 13),
             ),
             if (_progress != null) ...[
               const SizedBox(height: 6),
               // 只给百分比不够 —— 病人在诊室里等,得能判断「还要多久」。
               Text('${_pct(_progress!)} · ${_mb(_uploadedBytes)} / ${_mb(_totalBytes)}',
-                  style: const TextStyle(color: MedMe.faint, fontSize: 12)),
+                  style: TextStyle(color: MedColors.of(context).ink3, fontSize: 12)),
               const SizedBox(height: 14),
               // 没有取消按钮的话,慢的时候只能退出页面,而退出等于白传。
               TextButton(
@@ -583,7 +583,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
                 ? '医生用他自己的 MedMe 扫码,15 天内都能看'
                 // 自动调亮成功了就别再让患者做一遍已经做了的事。
                 : (_brightnessBoosted ? '医生用手机扫一下就能看' : '把屏幕亮度调高,对着医生的手机相机'),
-            style: const TextStyle(fontSize: 13.5, color: MedMe.faint),
+            style: TextStyle(fontSize: 13.5, color: MedColors.of(context).ink3),
           ),
           const SizedBox(height: 20),
           // 白底 + 留白是二维码可扫性的硬要求,别加装饰。
@@ -607,10 +607,10 @@ class _QrShareScreenState extends State<QrShareScreen> {
           // 没有上传,15 天这个期限说的是云上那份密文,对它不成立。
           if (!_degraded) ...[
             const SizedBox(height: 10),
-            const Text(
+            Text(
               '15 天内有效;只有扫这个码的人能看',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12.5, color: MedMe.faint),
+              style: TextStyle(fontSize: 12.5, color: MedColors.of(context).ink3),
             ),
           ],
           const SizedBox(height: 18),
@@ -619,7 +619,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: MedMe.tealSoft,
+              color: MedColors.of(context).sealWash,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
@@ -638,7 +638,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
                           ? '当前在治的疾病、关键指标趋势、正在吃的药。'
                           '这次没能上传,所以不含原件 —— 医生要看原件,请当场用手机翻给他。'
                           : '你的完整病历:在治的疾病、化验趋势、正在吃的药,以及每一份原件。'),
-                  style: const TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.ink),
+                  style: TextStyle(fontSize: 12.5, height: 1.6, color: MedColors.of(context).ink),
                 ),
                 const SizedBox(height: 10),
                 Text(
@@ -649,7 +649,7 @@ class _QrShareScreenState extends State<QrShareScreen> {
                           '这次的内容全在码里,没有上传到任何地方。'
                           : '这张码就是钥匙:被拍下就等于把这份病历给了对方,看完收起手机即可。'
                           '内容已加密临时存放,保留期结束后自动删除 —— 钥匙只在这张码里,我们解不开。'),
-                  style: const TextStyle(fontSize: 12.5, height: 1.6, color: MedMe.faint),
+                  style: TextStyle(fontSize: 12.5, height: 1.6, color: MedColors.of(context).ink3),
                 ),
               ],
             ),
@@ -667,12 +667,12 @@ class _QrShareScreenState extends State<QrShareScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Icon(Icons.lock_outline, size: 15, color: MedMe.faint),
+        Icon(Icons.lock_outline, size: 15, color: MedColors.of(context).ink3),
         const SizedBox(width: 6),
         Flexible(
           child: Text(
             text,
-            style: const TextStyle(fontSize: 12.5, color: MedMe.faint),
+            style: TextStyle(fontSize: 12.5, color: MedColors.of(context).ink3),
           ),
         ),
       ],

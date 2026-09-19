@@ -11,7 +11,6 @@ import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/member_detail_screen.dart';
 import 'package:mobile_flutter/sync_engine.dart';
-import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/vault_boot.dart';
@@ -369,6 +368,7 @@ class _DemoDataRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       leading: loading
@@ -377,21 +377,21 @@ class _DemoDataRow extends StatelessWidget {
               height: 24,
               child: CircularProgressIndicator(strokeWidth: 2.5),
             )
-          : const Icon(Icons.download_outlined, color: MedMe.teal),
+          : Icon(Icons.download_outlined, color: c.seal),
       title: Text(
         loading ? '正在载入示例数据…' : '载入示例数据(张建国)',
-        style: const TextStyle(fontWeight: FontWeight.w600, color: MedMe.ink),
+        style: TextStyle(fontWeight: FontWeight.w600, color: c.ink),
       ),
       subtitle: Text(
         loading
             ? (progressText ?? '正在载入示例数据…')
             : '单独放一个成员里,不和你的病历混在一起;看完可以去「我」首页的「这台手机上的病历」里把这个成员整个移除',
-        style: const TextStyle(color: MedMe.faint),
+        style: TextStyle(color: c.ink3),
       ),
       trailing: loading
           ? null
           : (onTap != null
-                ? const Icon(Icons.chevron_right, color: MedMe.faint)
+                ? Icon(Icons.chevron_right, color: c.ink3)
                 : null),
       onTap: onTap,
       enabled: onTap != null || loading,
@@ -701,7 +701,7 @@ class _AboutScreenState extends State<AboutScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            style: TextButton.styleFrom(foregroundColor: MedColors.of(context).critical),
             child: const Text('清空'),
           ),
         ],
@@ -802,7 +802,7 @@ class _AboutScreenState extends State<AboutScreen> {
                     style: TextStyle(fontSize: 12.5, height: 1.5),
                   ),
                   isThreeLine: true,
-                  activeThumbColor: MedMe.teal,
+                  activeThumbColor: MedColors.of(context).seal,
                 ),
               ],
             ),

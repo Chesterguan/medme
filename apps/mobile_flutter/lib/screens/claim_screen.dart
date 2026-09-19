@@ -3,8 +3,8 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/claim_link.dart';
 import 'package:mobile_flutter/claim_target.dart';
 import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
-import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_boot.dart'
     show createProfileAndReopen, openCurrentProfileVault, switchProfileAndReopen;
 import 'package:mobile_flutter/vault_events.dart';
@@ -117,7 +117,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: MedMe.bg,
+      backgroundColor: MedColors.of(context).paper,
       appBar: AppBar(title: const Text('存进我的病历箱')),
       body: SafeArea(
         child: Padding(
@@ -128,8 +128,8 @@ class _ClaimScreenState extends State<ClaimScreen> {
                   future: _preview,
                   builder: (context, snap) {
                     if (snap.connectionState != ConnectionState.done) {
-                      return const Center(
-                        child: CircularProgressIndicator(color: MedMe.teal),
+                      return Center(
+                        child: CircularProgressIndicator(color: MedColors.of(context).seal),
                       );
                     }
                     if (snap.hasError) return _fatal(snap.error.toString());
@@ -148,32 +148,32 @@ class _ClaimScreenState extends State<ClaimScreen> {
       children: [
         Text(
           name.isEmpty ? '医生为你建的病历' : '$name 的病历',
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w700,
-            color: MedMe.tealDark,
+            color: MedColors.of(context).sealInk,
           ),
         ),
         const SizedBox(height: 6),
-        Text('共 $n 份记录', style: const TextStyle(color: MedMe.faint)),
+        Text('共 $n 份记录', style: TextStyle(color: MedColors.of(context).ink3)),
         const SizedBox(height: 24),
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: MedMe.panel,
-            border: Border.all(color: MedMe.line),
+            color: MedColors.of(context).surface,
+            border: Border.all(color: MedColors.of(context).line2),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.person_outline, color: MedMe.teal),
+              Icon(Icons.person_outline, color: MedColors.of(context).seal),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('存进', style: TextStyle(color: MedMe.faint, fontSize: 12)),
+                    Text('存进', style: TextStyle(color: MedColors.of(context).ink3, fontSize: 12)),
                     Text(
                       t.name,
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
@@ -181,8 +181,8 @@ class _ClaimScreenState extends State<ClaimScreen> {
                     const SizedBox(height: 4),
                     Text(
                       t.note,
-                      style: const TextStyle(
-                        color: MedMe.faint,
+                      style: TextStyle(
+                        color: MedColors.of(context).ink3,
                         fontSize: 12.5,
                         height: 1.4,
                       ),
@@ -194,19 +194,19 @@ class _ClaimScreenState extends State<ClaimScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        const Text(
+        Text(
           '存进来之后,这份病历就只在你自己的手机上。云端那份会在保留期结束时删除。',
-          style: TextStyle(color: MedMe.faint, fontSize: 13, height: 1.5),
+          style: TextStyle(color: MedColors.of(context).ink3, fontSize: 13, height: 1.5),
         ),
         if (_error != null) ...[
           const SizedBox(height: 16),
-          Text(_error!, style: const TextStyle(color: MedMe.danger, height: 1.5)),
+          Text(_error!, style: TextStyle(color: MedColors.of(context).critical, height: 1.5)),
         ],
         const Spacer(),
         FilledButton(
           onPressed: _busy ? null : () => _claim(t),
           style: FilledButton.styleFrom(
-            backgroundColor: MedMe.teal,
+            backgroundColor: MedColors.of(context).seal,
             padding: const EdgeInsets.symmetric(vertical: 16),
           ),
           child: _busy
@@ -232,7 +232,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 12),
-        const Icon(Icons.check_circle, color: MedMe.teal, size: 56),
+        Icon(Icons.check_circle, color: MedColors.of(context).seal, size: 56),
         const SizedBox(height: 16),
         const Text(
           '已存进你的病历箱',
@@ -243,20 +243,20 @@ class _ClaimScreenState extends State<ClaimScreen> {
         Text(
           lines.isEmpty ? '没有新内容' : lines.join('·'),
           textAlign: TextAlign.center,
-          style: const TextStyle(color: MedMe.faint, height: 1.6),
+          style: TextStyle(color: MedColors.of(context).ink3, height: 1.6),
         ),
         const SizedBox(height: 20),
-        const Text(
+        Text(
           '医生识别的文字直接带了过来,没有在你手机上重跑一遍 —— 所以内容与医生看到的一致。'
           '有拿不准的地方,请以纸质原件为准。',
           textAlign: TextAlign.center,
-          style: TextStyle(color: MedMe.faint, fontSize: 13, height: 1.5),
+          style: TextStyle(color: MedColors.of(context).ink3, fontSize: 13, height: 1.5),
         ),
         const Spacer(),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(),
           style: FilledButton.styleFrom(
-            backgroundColor: MedMe.teal,
+            backgroundColor: MedColors.of(context).seal,
             padding: const EdgeInsets.symmetric(vertical: 16),
           ),
           child: const Text('去看看', style: TextStyle(fontSize: 16)),
@@ -268,7 +268,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
   Widget _fatal(String msg) => Column(
     mainAxisAlignment: MainAxisAlignment.center,
     children: [
-      const Icon(Icons.link_off, color: MedMe.faint, size: 48),
+      Icon(Icons.link_off, color: MedColors.of(context).ink3, size: 48),
       const SizedBox(height: 16),
       Text(msg, textAlign: TextAlign.center, style: const TextStyle(height: 1.6)),
       const SizedBox(height: 24),

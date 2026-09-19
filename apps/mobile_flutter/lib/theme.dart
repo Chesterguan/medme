@@ -2,27 +2,14 @@ import 'package:flutter/material.dart';
 
 import 'design_tokens.dart';
 
-/// MedMe 医我 设计令牌 —— 与桌面 / 现有移动端(App.css)一致:teal 品牌色、
-/// 柔和背景、圆角卡片。P3 各屏统一从这里取样式,别散落硬编码。
+/// MedMe 医我 主题装配 —— 把 `design_tokens.dart` 的规范化令牌(`MedColors` /
+/// `MedType` / `MedShape`)接进 Flutter 的 `ThemeData`。P3 各屏统一从
+/// `MedColors.of(context)` 取样式,别散落硬编码。
 ///
-/// 设计系统 v1 的规范化令牌在 `design_tokens.dart`(`MedColors` / `MedType` /
-/// `MedShape`),已作为 `ThemeExtension` 挂进下面的主题。本类的常量仍被各屏引用,
-/// 保留不动;新代码用 `MedColors.of(context)`。
+/// 本类曾经还有一套 `MedMe.teal`/`bg`/`faint`/`danger` 等旧颜色常量供各屏直接
+/// 引用;2026-09 逐屏迁完、清零后已删除。
 class MedMe {
   MedMe._();
-
-  // 品牌
-  static const Color teal = Color(0xFF1789C1); // = seal,不动
-  static const Color tealDark = Color(0xFF0E6285); // 原 #1560A8 → sealInk
-  static const Color tealSoft = Color(0xFFEAF5FA); // 原 #E6F6FA → sealWash
-
-  // 中性
-  static const Color bg = Color(0xFFF1F4F8); // 原 #F6F8FB → paper
-  static const Color panel = Colors.white;
-  static const Color line = Color(0xFFEEF2F5); // 原 #E2E8F0 → line2(分隔线)
-  static const Color ink = Color(0xFF101A23); // 原 #1E293B
-  static const Color faint = Color(0xFF657581); // 原 #5F7390 → ink3
-  static const Color danger = Color(0xFFBE123C); // 不动
 
   // 代拍专属强调色曾经是橙 `#C2570C` —— **已删**。
   // 它离化验「偏高」的琥珀 `#B45309` 太近(色相差 1°),同一个 app 里一个橙点既
@@ -31,16 +18,11 @@ class MedMe {
   // 空档上,见 `design_tokens.dart` 的字段文档。
 
   /// 全 app 主题。**设计系统 v1 的落点**:底色/边框/字阶/圆角一律取自
-  /// `MedColors.light` / `MedType` / `MedShape`,不再从上面那些旧常量取。
-  ///
-  /// 上面的 `MedMe.*` 常量仍被若干未迁移的屏(设置、导出、认领、首启同意、出码)
-  /// 引用,故保留;个人模式主链路与**代拍全部各屏**已改走
-  /// `MedColors.of(context)`。旧常量与令牌的中性色有细微差(旧 ink #1E293B 偏蓝、
-  /// faint #94A3B8 偏浅),剩下那几屏的收敛是独立一件事。
+  /// `MedColors.light` / `MedType` / `MedShape`。全部屏(含个人模式主链路与代拍)
+  /// 都已改走 `MedColors.of(context)`,不再有旧颜色常量这条岔路。
   ///
   /// **深色主题刻意没挂。** `MedColors.dark` 已备好(含代拍的深色主色),但挂上
-  /// `darkTheme:` 会立刻改动每一屏 —— 包括仍在读旧常量的那几屏,那会得到一个半深不
-  /// 浅的 app。挂它是独立一件事。
+  /// `darkTheme:` 会立刻改动每一屏视觉。挂它是独立一件事。
   static ThemeData theme() {
     const c = MedColors.light;
     final scheme = ColorScheme.fromSeed(

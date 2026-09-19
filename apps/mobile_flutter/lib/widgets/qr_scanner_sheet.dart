@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 
 /// 扫一张二维码,返回它的内容(取消/扫不到返回 null)。
 ///
@@ -61,7 +61,7 @@ class _QrScannerScreenState extends State<_QrScannerScreen> {
                 '打不开相机($error)。请在系统设置里允许 MedMe 使用相机,'
                 '或者改用口令/恢复码那条路。',
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: MedMe.faint, height: 1.6),
+                style: TextStyle(color: MedColors.of(context).ink3, height: 1.6),
               ),
             ),
           ),

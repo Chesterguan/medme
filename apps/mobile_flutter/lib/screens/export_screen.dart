@@ -4,7 +4,6 @@ import 'package:share_plus/share_plus.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/theme.dart';
 
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
@@ -63,12 +62,12 @@ class _ExportScreenState extends State<ExportScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   '导出病历时间线为可打印文件(HTML),未加密,用浏览器打开后可直接打印或另存为 PDF,适合报销或给医生留档。',
                   style: TextStyle(
                     fontSize: 13.5,
                     height: 1.5,
-                    color: MedMe.faint,
+                    color: MedColors.of(context).ink3,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -260,6 +259,7 @@ class _ActionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -268,14 +268,14 @@ class _ActionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(icon, color: MedMe.teal, size: 26),
+                Icon(icon, color: c.seal, size: 26),
                 const SizedBox(width: 10),
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
-                    color: MedMe.ink,
+                    color: c.ink,
                   ),
                 ),
               ],
@@ -283,9 +283,9 @@ class _ActionCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               subtitle,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13.5,
-                color: MedMe.faint,
+                color: c.ink3,
                 height: 1.5,
               ),
             ),

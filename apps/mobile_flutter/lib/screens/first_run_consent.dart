@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_boot.dart' show vaultOpenedOkThisLaunch;
 import 'package:mobile_flutter/vault_events.dart' show bumpVaultRevision;
 import 'package:mobile_flutter/widgets/brand_gradient.dart';
@@ -160,7 +159,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: MedMe.bg,
+      backgroundColor: MedColors.of(context).paper,
       body: SafeArea(
         child: Column(
           children: [
@@ -208,21 +207,21 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                           // (`Analytics.isConfigured` 为 false),这一行也不该说「默认
                           // 开、可以关」——两句话得一起成立或一起不成立,不能各说各话。
                           if (Analytics.isConfigured)
-                            const Text(
+                            Text(
                               '匿名使用统计默认开,我 → 关于 里可关。',
-                              style: TextStyle(fontSize: 12.5, color: MedMe.faint, height: 1.6),
+                              style: TextStyle(fontSize: 12.5, color: MedColors.of(context).ink3, height: 1.6),
                             ),
                           const SizedBox(height: 8),
                           Wrap(
                             children: [
-                              const Text(
+                              Text(
                                 '详见 ',
-                                style: TextStyle(color: MedMe.faint),
+                                style: TextStyle(color: MedColors.of(context).ink3),
                               ),
                               _Link('用户协议', () => _open('terms.html')),
-                              const Text(
+                              Text(
                                 ' 与 ',
-                                style: TextStyle(color: MedMe.faint),
+                                style: TextStyle(color: MedColors.of(context).ink3),
                               ),
                               _Link('隐私政策', () => _open('privacy.html')),
                             ],
@@ -250,14 +249,14 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                               colors: [
-                                MedMe.bg.withValues(alpha: 0),
-                                MedMe.bg,
+                                MedColors.of(context).paper.withValues(alpha: 0),
+                                MedColors.of(context).paper,
                               ],
                             ),
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.keyboard_arrow_down_rounded,
-                            color: MedMe.tealDark,
+                            color: MedColors.of(context).sealInk,
                             size: 26,
                           ),
                         ),
@@ -279,7 +278,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                         style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w600,
-                          color: MedMe.tealDark,
+                          color: MedColors.of(context).sealInk,
                         ),
                       ),
                     ),
@@ -297,9 +296,9 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                     // 「不同意」不受 `_scrolledToEnd` 限制 —— 拒绝任何时候都能点,
                     // 只有「同意」需要读完这道门槛。
                     onPressed: _busy ? null : _decline,
-                    child: const Text(
+                    child: Text(
                       '不同意',
-                      style: TextStyle(color: MedMe.faint),
+                      style: TextStyle(color: MedColors.of(context).ink3),
                     ),
                   ),
                 ],
@@ -395,7 +394,7 @@ class _Point extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   body,
-                  style: const TextStyle(fontSize: 13.5, color: MedMe.faint, height: 1.6),
+                  style: TextStyle(fontSize: 13.5, color: MedColors.of(context).ink3, height: 1.6),
                 ),
               ],
             ),
