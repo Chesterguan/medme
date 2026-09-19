@@ -97,39 +97,44 @@ class IdentityHeroCard extends StatelessWidget {
                 // 停两次。MergeSemantics 把这一整行合并回一个语义节点,读起来还是
                 // 一句话——不改字符串、不改布局,只改语义树。
                 MergeSemantics(
-                  child: Row(
+                  // R20:标签本征宽度、数值靠右(mockup .rule 的 space-between)。
+                  // 用 Wrap 而不是 Row:Row 里两个 Flexible 会把剩余空间 50/50
+                  // 预分,393pt 宽下日期明明放得下也被截成「2026-09…」(实测);
+                  // 而标签单独非 flex 又会在 360×640 @2× 溢出。Wrap 让数值在
+                  // 放不下时折到下一行,永不溢出。
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Icon(
-                        Icons.event_note_outlined,
-                        size: 15,
-                        color: Colors.white.withValues(alpha: 0.88),
-                      ),
-                      const SizedBox(width: 4),
-                      // R17:图标保持本征宽度。标签与数值都包 Flexible,按比例
-                      // 收缩——单独给数值让路在 360×640 @2× 下仍不够(标签自己
-                      // 在那个尺寸也已经比可用宽度宽),两个都要能让。
-                      Flexible(
-                        child: Text(
-                          '最近就诊 · ',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: MedType.secondary.copyWith(
-                            fontSize: 14,
-                            color: MedColors.of(context).onDarkMeta,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.event_note_outlined,
+                            size: 15,
+                            color: Colors.white.withValues(alpha: 0.88),
                           ),
-                        ),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              '最近就诊 · ',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: MedType.secondary.copyWith(
+                                fontSize: 14,
+                                color: MedColors.of(context).onDarkMeta,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      // 数值可能比整行都宽(如 400 宽屏 + 长日期串)。Flexible +
-                      // maxLines:1 + ellipsis:让它收缩/截断,而不是把 Row 撑溢出。
                       // R18:22/600 是 MedType.heroValue(mockup `.hero .rule b`)
                       // ——颜色不在令牌里,按卡面确定性白字规则(R11)在用处给。
-                      Flexible(
-                        child: Text(
-                          recentVisitText.isEmpty ? '暂无' : recentVisitText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: MedType.heroValue.copyWith(color: Colors.white),
-                        ),
+                      Text(
+                        recentVisitText.isEmpty ? '暂无' : recentVisitText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: MedType.heroValue.copyWith(color: Colors.white),
                       ),
                     ],
                   ),
