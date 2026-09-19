@@ -10,6 +10,7 @@ import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/disease_profile_card.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
@@ -324,7 +325,7 @@ class _TrendsScreenState extends State<TrendsScreen> {
                 const _SectionHeader(title: '关键化验'),
                 const SizedBox(height: MedShape.s1),
                 if (chips.length > 1) ...[
-                  _PanelChipsRow(
+                  PanelChipsRow(
                     chips: chips,
                     selectedPanel: _selectedPanel,
                     onSelectPanel: _onSelectPanel,
@@ -532,8 +533,13 @@ String _panelChipLabel(String? panel) =>
 /// 这一排是**检索的主路径**;搜索收进了标题栏的放大镜(见 `_searchOpen`)。
 /// 少于两颗(只有恒在的「全部」)时调用方整排不画 —— 一整排只能点「全部」
 /// 等于什么都点不了,是纯噪音。
-class _PanelChipsRow extends StatelessWidget {
-  const _PanelChipsRow({
+///
+/// **公开是为了可测**(与 `SeriesCard`/`ProvenanceFooter` 同一先例):
+/// `test/trends_visual_test.dart` 要分别断言 `_PanelChip` 选中/未选中两种
+/// 底色,而 `_PanelChip` 自己是私有的,同文件外拿不到——只能从这一层拿。
+class PanelChipsRow extends StatelessWidget {
+  const PanelChipsRow({
+    super.key,
     required this.chips,
     required this.selectedPanel,
     required this.onSelectPanel,
@@ -616,8 +622,9 @@ class _AbnormalOnlyRow extends StatelessWidget {
   }
 }
 
-/// 一颗大类 chip:未选中是描边,选中是印章色实底(与 `labStatusPill` 系的
-/// 「前景+浅底」不同 —— 这里要表达的是「可点选的一个开关」,不是化验状态)。
+/// 一颗大类 chip:未选中是白底药丸 + 小阴影,选中是 `seal` 实底白字(mockup
+/// `.chips span` / `.chips .on`——与 `labStatusPill` 系的「前景+浅底」不同,
+/// 这里要表达的是「可点选的一个开关」,不是化验状态)。
 class _PanelChip extends StatelessWidget {
   const _PanelChip({
     required this.label,
@@ -641,16 +648,19 @@ class _PanelChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: MedShape.s2),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? c.sealWash : c.surface,
+          color: selected ? c.seal : Colors.white,
           borderRadius: BorderRadius.circular(MedShape.radiusPill),
-          border: Border.all(color: selected ? c.sealInk : c.line),
+          // mockup `.chips span` 恒有这道小阴影,`.on` 只覆盖 background/color,
+          // 阴影两态相同(不是只有未选中才有)。
+          boxShadow: MedBrand.chipShadow,
         ),
         child: Text(
           // 计数直接跟在文案后面(「肾功能 6」),不用括号 —— 与卡头「最新值 +
           // 单位」同一套「数字紧挨着它描述的东西」的排法。
           '$label $count',
-          style: MedType.body.copyWith(
-            color: selected ? c.sealInk : c.ink2,
+          style: MedType.secondary.copyWith(
+            fontSize: 14,
+            color: selected ? Colors.white : c.ink2,
             fontFeatures: MedType.tabular,
           ),
         ),
@@ -665,7 +675,7 @@ class _PanelChip extends StatelessWidget {
 /// **不画骑缝线。** 这是一张派生卡:一条趋势是从许多份原件里算出来的结论,背后没有
 /// 「某一张纸」叫做「肌酐趋势」(规范 §五,那里正是拿趋势汇总卡当反例的)。可溯源
 /// 由卡底那颗「最新一次的原件」兑现 —— 它指向一个具体的 `documentId`。
-class SeriesCard extends StatelessWidget {
+class SeriesCard extends StatefulWidget {
   /// **公开是为了可测。** 「自测序列必须带文字图例」这条只能在渲染出来的卡上验证
   /// —— 整屏 pump 需要 `viewTrends()` 的 Rust FFI,测试环境没有原生库。与
   /// `manualEntryRangeError` 同一个先例:把被测单元暴露出来,而不是把断言降级成
@@ -676,8 +686,18 @@ class SeriesCard extends StatelessWidget {
   final void Function(int docId) onOpenDoc;
 
   @override
+  State<SeriesCard> createState() => _SeriesCardState();
+}
+
+/// 现在是 `StatefulWidget`——趋势行按 mockup `.tr` 加了「点开原地展开」
+/// (`▾`/`▴`),需要一个本地的展开态。
+class _SeriesCardState extends State<SeriesCard> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
+    final series = widget.series;
     final pts = trendDatedPoints(series);
     // 调用方已经 gate 过 `trendSeriesIsRenderable`,这里必不为空;真为空也只是
     // 少画一张卡,不崩。
@@ -692,147 +712,213 @@ class SeriesCard extends StatelessWidget {
     // 最后一个点的(见 DTO 文档)。这里显示的就是最后一个点,两者其实同源。
     final unit = last.unit ?? series.unit;
     final undated = series.points.length - pts.length;
+    // 行的状态色:与化验行(`LabLine`)同一套 token,`labStripeColor`/
+    // `labStatusColor` 是这一屏与「给医生看」共用的唯一判定点(007 §2.5)。
+    final stripe = labStripeColor(context, status);
+    // 「第二行历年数值」的字阶(brief §形):12 · ink3 · tabular · 400。这一屏
+    // 里几段图例/引文原来各写各的 `secondary`,统一成这一档,颜色/字号不变文字。
+    final metaStyle = MedType.caption.copyWith(
+      color: c.ink3,
+      fontFeatures: MedType.tabular,
+      fontWeight: FontWeight.w400,
+    );
 
     return MedCard(
-      child: Padding(
-        padding: const EdgeInsets.all(MedShape.s3),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── 卡头 ──
-            Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── 趋势行本体(mockup `.tr`):名称+pill | 78×24 小折线 | 数值 + ▾ ──
+          Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Container(
+                // 4px 左色条贴着卡边(与化验行同一条规矩),点开原地展开的
+                // `.xp` 用同一个颜色,两者在视觉上是同一条状态线的延续。
+                decoration: BoxDecoration(
+                  border: Border(left: BorderSide(color: stripe, width: 4)),
+                ),
+                padding: const EdgeInsets.fromLTRB(
+                  MedShape.s2,
+                  MedShape.s2,
+                  MedShape.s3,
+                  MedShape.s2,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Wrap(
+                            spacing: MedShape.s1,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                series.name,
+                                style: MedType.subtitle.copyWith(color: c.ink),
+                              ),
+                              ?pill,
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: MedShape.s2),
+                        // 78×24 的小折线占位。**Stage 3 只管这一行的样式**;真折线(数据 → 路径)是
+                        // Stage 2 的活,到时候把这个 SizedBox 换成 TrendChart 的 mini 版即可,行的布局不用动。
+                        const SizedBox(width: 78, height: 24),
+                        const SizedBox(width: MedShape.s2),
+                        // 最新值用 `value` 字阶(16 · 500 · 等宽表格数字,mockup
+                        // `.tr .v`)。sparkSVG 是把它用 10px 画在图里的 —— 10 低于
+                        // 字阶下限 12,而且画布里的字不跟系统字号放大。放在行里
+                        // 既更大也更可放大。
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              fmtLabNumber(last.value),
+                              style: MedType.value.copyWith(
+                                color: labStatusColor(context, status),
+                              ),
+                            ),
+                            if (unit != null && unit.isNotEmpty) ...[
+                              const SizedBox(width: 4),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Text(
+                                  unit,
+                                  style: MedType.secondary.copyWith(color: c.ink3),
+                                ),
+                              ),
+                            ],
+                            const SizedBox(width: 2),
+                            // `▾`/`▴`:mockup 用一个文字字形,这里改用 Icon——
+                            // 与本文件其余展开/收起箭头(`_TimelineItem` 的
+                            // `expand_more`/`expand_less`)同一个画法,不额外
+                            // 造一个新的可见字符串。
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Icon(
+                                _expanded ? Icons.expand_less : Icons.expand_more,
+                                size: 18,
+                                color: c.ink3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+
+                    // ── 第二行:历年数值/图例(mockup `.tr .m`,跨满整行)──
+                    Wrap(
+                      spacing: MedShape.s2,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        // 自测序列必须**用文字**说出来。图上的空心点是区分手段,但形状不能
+                        // 是唯一载体 —— 没有图例的形状编码等于没有编码,没人知道空心圈是
+                        // 「这是你自己填的」。这与 `lab_status.dart` 那条同源:状态同时编码
+                        // 在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
+                        //
+                        // 同屏的化验快照([KeyLabsSnapshot])和「给医生看」
+                        // (`visit_summary_sheet.dart` 的 `_LabRow`)早就在日期旁标了
+                        // 「· 家测」,只有这张折线卡漏了。措辞与它们一致,不另造一套。
+                        if (series.selfMeasured) _SelfMeasuredLegend(style: metaStyle),
+                        // 图例本身只加一句短后缀交代出处:医院化验的出处是化验单原件
+                        // 本身,不新造一个跳转入口 —— 卡底「查看最新一次的原件」按钮
+                        // 已经能兑现它,这里只是指一下。家测序列的出处(指南/共识引文)
+                        // 往往一句话放不下,另起一段显示在展开区下面,见下方
+                        // `refSourceCitation`。
+                        if (ref != null)
+                          _RefLegend(text: trendRefLegendText(series, ref), style: metaStyle)
+                        // 家测但**没有**参考区间(体温/体重/血糖)—— 不是漏配,是
+                        // `self_entry::home_ref_range` 的拍板决定(查不到出处就不给
+                        // 区间)。裸值旁边说一句,免得用户以为是 bug。
+                        else if (series.selfMeasured)
+                          Text(trendNoHomeRangeNote, style: metaStyle),
+                        // 这条线上混了不同医院/不同单位的报告,Rust 把值和参考区间一起
+                        // 换算到了规范单位(否则连不成一条线)。**说出来** —— 屏幕上
+                        // 这些数字在用户手里那张化验单上找不到,不说等于改写原文。
+                        if (series.valuesConverted)
+                          Text(unitConvertedNote(unit), style: metaStyle),
+                        Text(
+                          pts.length == 1
+                              ? '只有 ${pts.first.date} 这一次'
+                              : '${pts.first.date} 起 ${pts.length} 次',
+                          style: metaStyle,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // ── 展开区(mockup `.xp`):点开原地放大。Stage 3 只给它样式(底色、
+          // 左色条、82px 高),真折线是 Stage 2 的活。 ──
+          if (_expanded)
+            Container(
+              height: 82,
+              decoration: BoxDecoration(
+                color: MedBrand.expandedChartBg,
+                border: Border(left: BorderSide(color: stripe, width: 4)),
+              ),
+            ),
+
+          // ── 其余:出处引文 / 未定日说明 / 查看原件 —— 不受展开态影响,恒在 ──
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              MedShape.s3,
+              MedShape.s2,
+              MedShape.s3,
+              MedShape.s3,
+            ),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Wrap(
-                    spacing: MedShape.s1,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text(
-                        series.name,
-                        style: MedType.subtitle.copyWith(color: c.ink),
-                      ),
-                      ?pill,
-                    ],
+                // 家测参考区间的完整引文 —— 一句指南/共识原话往往比 Wrap 里能塞下的
+                // 短图例长得多,另起一段,不挤在图例那一行里。医院化验序列
+                // `refSourceCitation` 恒为 null(见 `trendRefSourceCitation` 的文档),
+                // 这一段不出现。
+                if (refSourceCitation != null) ...[
+                  Text(
+                    '出处:$refSourceCitation',
+                    style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
                   ),
-                ),
-                const SizedBox(width: MedShape.s2),
-                // 最新值用 `value` 字阶(22 · 600 · 等宽表格数字)。sparkSVG 是把
-                // 它用 10px 画在图里的 —— 10 低于字阶下限 12,而且画布里的字不跟
-                // 系统字号放大。搬到这里既更大也更可放大。
-                Text(
-                  fmtLabNumber(last.value),
-                  style: MedType.value.copyWith(
-                    color: labStatusColor(context, status),
-                  ),
-                ),
-                if (unit != null && unit.isNotEmpty) ...[
-                  const SizedBox(width: 4),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      unit,
-                      style: MedType.secondary.copyWith(color: c.ink3),
-                    ),
-                  ),
+                  const SizedBox(height: 4),
                 ],
-              ],
-            ),
-            const SizedBox(height: MedShape.s2),
 
-            // ── 图 ──
-            TrendChart(series: series),
-            const SizedBox(height: MedShape.s1),
+                // 无日期的点画不到时间轴上,所以图里没有它们。**说出来** —— 否则用户
+                // 数图上的点会发现比他记忆里的次数少,而少掉的那几次没有任何交代。
+                if (undated > 0) ...[
+                  Text(
+                    '另有 $undated 次没能从报告上定出日期,画不到时间轴上;它们在「病历」里照样能翻到。',
+                    style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
+                  ),
+                  const SizedBox(height: 4),
+                ],
 
-            // ── 图例与跨度 ──
-            Wrap(
-              spacing: MedShape.s2,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                // 自测序列必须**用文字**说出来。图上的空心点是区分手段,但形状不能
-                // 是唯一载体 —— 没有图例的形状编码等于没有编码,没人知道空心圈是
-                // 「这是你自己填的」。这与 `lab_status.dart` 那条同源:状态同时编码
-                // 在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
-                //
-                // 同屏的化验快照([KeyLabsSnapshot])和「给医生看」
-                // (`visit_summary_sheet.dart` 的 `_LabRow`)早就在日期旁标了
-                // 「· 家测」,只有这张折线卡漏了。措辞与它们一致,不另造一套。
-                if (series.selfMeasured) const _SelfMeasuredLegend(),
-                // 图例本身只加一句短后缀交代出处:医院化验的出处是化验单原件
-                // 本身,不新造一个跳转入口 —— 卡底「查看最新一次的原件」按钮
-                // 已经能兑现它,这里只是指一下。家测序列的出处(指南/共识引文)
-                // 往往一句话放不下,另起一段显示在 Wrap 外面,见下方
-                // `refSourceCitation`。
-                if (ref != null)
-                  _RefLegend(text: trendRefLegendText(series, ref))
-                // 家测但**没有**参考区间(体温/体重/血糖)—— 不是漏配,是
-                // `self_entry::home_ref_range` 的拍板决定(查不到出处就不给
-                // 区间)。裸值旁边说一句,免得用户以为是 bug。
-                else if (series.selfMeasured)
-                  Text(
-                    trendNoHomeRangeNote,
-                    style: MedType.secondary.copyWith(color: c.ink3),
-                  ),
-                // 这条线上混了不同医院/不同单位的报告,Rust 把值和参考区间一起
-                // 换算到了规范单位(否则连不成一条线)。**说出来** —— 屏幕上
-                // 这些数字在用户手里那张化验单上找不到,不说等于改写原文。
-                if (series.valuesConverted)
-                  Text(
-                    unitConvertedNote(unit),
-                    style: MedType.secondary.copyWith(color: c.ink3),
-                  ),
-                Text(
-                  pts.length == 1
-                      ? '只有 ${pts.first.date} 这一次'
-                      : '${pts.first.date} 起 ${pts.length} 次',
-                  style: MedType.secondary.copyWith(
-                    color: c.ink3,
-                    fontFeatures: MedType.tabular,
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: () => widget.onOpenDoc(last.documentId),
+                    style: TextButton.styleFrom(
+                      foregroundColor: c.sealInk,
+                      padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text('查看最新一次的原件', style: MedType.secondary),
                   ),
                 ),
               ],
             ),
-
-            // 家测参考区间的完整引文 —— 一句指南/共识原话往往比 Wrap 里能塞下的
-            // 短图例长得多,另起一段,不挤在图例那一行里。医院化验序列
-            // `refSourceCitation` 恒为 null(见 `trendRefSourceCitation` 的文档),
-            // 这一段不出现。
-            if (refSourceCitation != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                '出处:$refSourceCitation',
-                style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
-              ),
-            ],
-
-            // 无日期的点画不到时间轴上,所以图里没有它们。**说出来** —— 否则用户
-            // 数图上的点会发现比他记忆里的次数少,而少掉的那几次没有任何交代。
-            if (undated > 0) ...[
-              const SizedBox(height: 4),
-              Text(
-                '另有 $undated 次没能从报告上定出日期,画不到时间轴上;它们在「病历」里照样能翻到。',
-                style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
-              ),
-            ],
-
-            const SizedBox(height: MedShape.s1),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: () => onOpenDoc(last.documentId),
-                style: TextButton.styleFrom(
-                  foregroundColor: c.sealInk,
-                  padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text('查看最新一次的原件', style: MedType.secondary),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -852,7 +938,11 @@ class SeriesCard extends StatelessWidget {
 /// 圈的画法(线宽 1.5、半径 3.4、`seal` 描边、`surface` 填心)与
 /// `_TrendPainter` 里末点的自测画法一致 —— 图例和图不一致,比没有图例更糟。
 class _SelfMeasuredLegend extends StatelessWidget {
-  const _SelfMeasuredLegend();
+  const _SelfMeasuredLegend({required this.style});
+
+  /// 「历年数值」那一行的字阶(`SeriesCard` 的 `metaStyle`)——只此一处调用,
+  /// 颜色/字号跟着行走,不在这里另存一份裸样式。
+  final TextStyle style;
 
   @override
   Widget build(BuildContext context) {
@@ -870,7 +960,7 @@ class _SelfMeasuredLegend extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 4),
-        Text('家测', style: MedType.secondary.copyWith(color: c.ink3)),
+        Text('家测', style: style),
       ],
     );
   }
@@ -898,9 +988,13 @@ String? trendRefSourceCitation(TrendSeriesDto series) =>
 const trendNoHomeRangeNote = '暂无公认家测正常区间,仅显示数值';
 
 class _RefLegend extends StatelessWidget {
-  const _RefLegend({required this.text});
+  const _RefLegend({required this.text, required this.style});
 
   final String text;
+
+  /// 同 [_SelfMeasuredLegend.style]:「历年数值」那一行的字阶,不在这里另存
+  /// 一份裸样式。
+  final TextStyle style;
 
   @override
   Widget build(BuildContext context) {
@@ -918,13 +1012,7 @@ class _RefLegend extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 4),
-        Text(
-          text,
-          style: MedType.secondary.copyWith(
-            color: c.ink3,
-            fontFeatures: MedType.tabular,
-          ),
-        ),
+        Text(text, style: style),
       ],
     );
   }
@@ -1113,9 +1201,10 @@ class KeyLabsSnapshot extends StatelessWidget {
                   for (var i = 0; i < labs.length; i++) ...[
                     if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: MedShape.s2,
-                      ),
+                      // 4px 色条要贴着卡边(mockup `.lr{border-left:4px}` 就在
+                      // 卡的边上)——不再留左右内边距,`LabLine` 自己的左边框
+                      // 加内边距已经够了。
+                      padding: EdgeInsets.zero,
                       child: LabLine(
                         name: labs[i].name,
                         value: labs[i].value,
@@ -1256,19 +1345,13 @@ class _VisitCard extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: c.sealWash,
-                    borderRadius: BorderRadius.circular(MedShape.radiusControl),
-                  ),
-                  child: Icon(
-                    iconForVisitKind(visit.kind),
-                    size: 20,
-                    color: c.seal,
-                  ),
+                // 光泽图标块(brief §形 的 3D 图标语言),类别按 `visit.kind`
+                // 归类(`categoryForVisitKind`——与 Task 8 `archive_screen.dart`
+                // 的 `_categoryOf` 同一映射来源:`categoryForDocType`)。默认
+                // 44×44,不为了这里挤一点就调小(`gloss_tile.dart` 类文档)。
+                GlossIconTile(
+                  icon: iconForVisitKind(visit.kind),
+                  category: categoryForVisitKind(visit.kind),
                 ),
                 const SizedBox(width: MedShape.s2),
                 Expanded(
@@ -1319,7 +1402,8 @@ class _VisitCard extends StatelessWidget {
   }
 }
 
-/// 分区标题 + 右侧的一个次级动作。
+/// 分区标题 + 右侧的一个次级动作。与 `archive_screen.dart` 的 `MonthHeader`
+/// 同一档:15 号 `ink2` 左、14·500 `seal` 右,padding `0 4`。
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({required this.title, this.actionLabel, this.onAction});
 
@@ -1330,24 +1414,28 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    return Row(
-      children: [
-        Expanded(
-          child: Text(title, style: MedType.caption.copyWith(color: c.ink3)),
-        ),
-        if (actionLabel != null)
-          // 正文级链接用 `sealInk`(6.76:1),不用 `seal`(3.90:1,不过 AA)。
-          TextButton(
-            onPressed: onAction,
-            style: TextButton.styleFrom(
-              foregroundColor: c.sealInk,
-              padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: Text(actionLabel!, style: MedType.secondary),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(title, style: MedType.body.copyWith(fontSize: 15, color: c.ink2)),
           ),
-      ],
+          if (actionLabel != null)
+            TextButton(
+              onPressed: onAction,
+              style: TextButton.styleFrom(
+                foregroundColor: c.seal,
+                padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(actionLabel!, style: MedType.secondary.copyWith(
+                  fontSize: 14, color: c.seal, fontWeight: FontWeight.w500,
+                  fontVariations: MedType.w500)),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1357,30 +1445,65 @@ class _SectionHeader extends StatelessWidget {
 // 「病程档案」入口卡搬去了 `widgets/disease_profile_card.dart`:它现在是有状态、
 // 要取数的一块(装着哪个包、开没开启、包给的摘要),不再是这一屏里的一张死卡。
 
-/// 「看懂」横幅的**占位**(`s2` 里它引用某份报告「提示」一栏的原文)。
+/// 「看懂」蓝横幅(mockup `s2` 的 `.read`:底 `MedBrand.bannerBlue`、圆角
+/// `MedShape.radiusBanner`,引用某份报告「提示」一栏的原文)。
 ///
-/// **Stage 1 只有壳。** 真内容(哪份报告、原文哪一段)由另一条线做;在那之前
-/// 一个字都不许编 —— 这一块摆的是医学结论,编出来的那句会被当成医生说的话。
+/// **[text]/[source] 都不传时**([TrendsScreen] 今天唯一的调用点)仍然显示
+/// 那句「还在做」的占位 —— 真内容(哪份报告、原文哪一段)由另一条线接,在那
+/// 之前一个字都不许编,这两个参数因此默认 `null`,不默认成任何编出来的话。
+/// 两个参数是为了这一屏的视觉验收测试(`test/trends_visual_test.dart`)能喂
+/// 样例文字去断言横幅的底色/圆角/字色,不代表生产环境已经接了真内容。
 class UnderstandBanner extends StatelessWidget {
-  const UnderstandBanner({super.key});
+  const UnderstandBanner({super.key, this.text, this.source});
+
+  /// 报告「提示」一栏摘出来的原文。`null` → 占位那句「还在做」。
+  final String? text;
+
+  /// 原文出处的一句交代。`null` → 不画这一行(与 `SeriesCard` 的
+  /// `refSourceCitation` 同一条「查不到出处就不画」的规矩)。
+  final String? source;
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    return MedCard(
-      child: Padding(
-        padding: const EdgeInsets.all(MedShape.s3),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('看懂', style: MedType.caption.copyWith(color: c.ink3)),
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: MedShape.s3,
+        vertical: MedShape.s2,
+      ),
+      decoration: BoxDecoration(
+        color: MedBrand.bannerBlue,
+        borderRadius: BorderRadius.circular(MedShape.radiusBanner),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '看懂',
+            style: MedType.caption.copyWith(
+              color: MedBrand.bannerBlueInk,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            text ?? '把报告上那段「提示」原文摘出来放这里 —— 还在做。',
+            style: MedType.body.copyWith(fontSize: 15, height: 1.55),
+          ),
+          if (source case final s?) ...[
             const SizedBox(height: 4),
+            // 不加任何前缀文案(比如「出处:」)——那会是这份文件里没出现过的新
+            // 字。真内容接进来那天,这一行该怎么措辞是那条线的事,这里只给
+            // 样式,原样显示调用方给的这句话。
             Text(
-              '把报告上那段「提示」原文摘出来放这里 —— 还在做。',
-              style: MedType.secondary.copyWith(color: c.ink2),
+              s,
+              style: MedType.caption.copyWith(
+                color: c.ink2,
+                fontWeight: FontWeight.w400,
+              ),
             ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -1397,10 +1520,16 @@ class RecordEntryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    return Card(
+    // mockup 的 `.btn.ghost`:透明底、`seal` 字、字重 400、无阴影 —— **不用**
+    // `MedPrimaryButton`(那是品牌渐变面,会让这一屏的渐变预算从 0 变成 1)。
+    return Material(
+      type: MaterialType.transparency,
       child: ListTile(
-        leading: Icon(Icons.edit_note_outlined, color: c.ink3),
-        title: Text('记录一下', style: MedType.body.copyWith(color: c.ink)),
+        leading: Icon(Icons.edit_note_outlined, color: c.seal),
+        title: Text(
+          '记录一下',
+          style: MedType.body.copyWith(color: c.seal, fontWeight: FontWeight.w400),
+        ),
         subtitle: Text(
           '自己量的血压、体重,或者想记一句话',
           style: MedType.secondary.copyWith(color: c.ink2),

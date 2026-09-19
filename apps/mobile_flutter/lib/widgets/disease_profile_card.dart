@@ -22,8 +22,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/screens/disease_profile_screen.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-import 'package:mobile_flutter/widgets/med_card.dart';
-import 'package:mobile_flutter/widgets/profile_sections.dart' show ProfileIconTile;
+import 'package:mobile_flutter/widgets/record_book_strip.dart';
 
 // 入口卡的调用方(「趋势」tab)要拿 [DiseaseProfileSource] 去注入,一个 import 就够。
 export 'package:mobile_flutter/screens/disease_profile_screen.dart'
@@ -143,11 +142,11 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
         if (snap.connectionState != ConnectionState.done) {
           // 加载中也是一句话,不摆转圈:这张卡是整屏的第一眼,一个转菊花的
           // 方块什么也没告诉用户,而这一句同时把「这一块是干什么的」说清楚了。
-          return const _EntryCard(title: _kTitle, subtitle: '$_kWhatItIs正在准备…');
+          return const _ProfileEntry(title: _kTitle, subtitle: '$_kWhatItIs正在准备…');
         }
         final entry = snap.data;
         if (entry == null) {
-          return _EntryCard(
+          return _ProfileEntry(
             title: _kTitle,
             subtitle: '$_kWhatItIs还没准备好 —— 联网之后点一下重试。',
             onTap: _reload,
@@ -156,7 +155,7 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
         final (packageId, view) = entry;
         final name = view['display_name'] as String? ?? '';
         if (view['enabled'] != true) {
-          return _EntryCard(
+          return _ProfileEntry(
             title: _kTitle,
             subtitle: name.isEmpty
                 ? '开启之后,这个病的用药、检查、该复查的会串成一页。'
@@ -168,11 +167,12 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
           );
         }
         final summary = _summaryOf(view);
-        return _EntryCard(
+        final (subtitle, bigNumber, bigNumberCaption) = _splitSummary(summary);
+        return _ProfileEntry(
           title: name.isEmpty ? _kTitle : '$_kTitle · $name',
-          row: summary == null
-              ? null
-              : _SummaryRow(label: summary.$1, value: summary.$2),
+          subtitle: subtitle,
+          bigNumber: bigNumber,
+          bigNumberCaption: bigNumberCaption,
           onTap: () => _open(packageId),
           chevron: true,
         );
@@ -206,15 +206,33 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
   return null;
 }
 
-/// 卡片外壳:白卡 + 主色描边 + 图标色块 + 整行的内容(mockup 那条账本书脊)。
+/// 把 `_summaryOf` 那对 `(label, value)` 拆成 `RecordBookStrip` 的三个格子:
+/// `(subtitle, bigNumber, bigNumberCaption)`。**字符串一个不动**,只决定它落进
+/// 哪一格:
+///  · 没有 `value`(空态提示,或者压根没有摘要)—— 整句进 `subtitle`,右列不画;
+///  · 有 `value`(「N 项」「N / M」这类)—— `value` **整个不拆**地进 `bigNumber`,
+///    `label` 进 `bigNumberCaption`,`subtitle` 空着。不拆开是因为「2 项」拆成
+///    「2」+「项」就不再是同一个字符串——`disease_profile_card_test.dart` 那条
+///    `find.text('2 项')` 断言靠的正是它是**一整块**;拆开的形状(mockup 的
+///    「4」+「/18」)没有现成测试钉住,与其猜一个拆法,不如保底不丢一个字。
+(String, String?, String?) _splitSummary((String, String?)? summary) {
+  if (summary == null) return ('', null, null);
+  final (label, value) = summary;
+  if (value == null) return (label, null, null);
+  return ('', value, label);
+}
+
+/// 卡片外壳:病历本条(白卡 + 34px 渐变书脊 + logo + 右列大数,`widgets/
+/// record_book_strip.dart`)+「开启」按钮或 chevron 独立一行摆在它下面。
 ///
-/// **不上渐变**:渐变 hero 全 app 只留给身份卡一张(设计系统 §四,
-/// `widgets/profile_sections.dart` 的 `_SectionCard` 同一条)。
-class _EntryCard extends StatelessWidget {
-  const _EntryCard({
+/// **不上渐变面**:病历本条自己的书脊是渐变,但不经过 `BrandGradientBox`,
+/// 不计入这一屏的品牌渐变预算(`s2` 是 0/0/0,见 `trends_visual_test.dart`)。
+class _ProfileEntry extends StatelessWidget {
+  const _ProfileEntry({
     required this.title,
-    this.subtitle,
-    this.row,
+    required this.subtitle,
+    this.bigNumber,
+    this.bigNumberCaption,
     this.action,
     this.onTap,
     this.chevron = false,
@@ -222,11 +240,12 @@ class _EntryCard extends StatelessWidget {
 
   final String title;
 
-  /// 一句说明(这一块是干什么的 / 这一刻在等什么)。
-  final String? subtitle;
+  /// 一句说明(这一块是干什么的 / 这一刻在等什么),或包给的摘要整句
+  /// (见 [_splitSummary])。
+  final String subtitle;
 
-  /// 包给的那条摘要。整行,不挤在标题右边。
-  final Widget? row;
+  final String? bigNumber;
+  final String? bigNumberCaption;
 
   /// 「开启」。**只在没开启时出现**。
   final Widget? action;
@@ -234,84 +253,33 @@ class _EntryCard extends StatelessWidget {
   final VoidCallback? onTap;
 
   /// 右边那个 `>`。**只在点下去真的会推开另一页时画** —— 「还没准备好」那一态
-  /// 点下去是原地重试,画一个箭头就是在许一个不存在的去处。
+  /// 点下去是原地重试,画一个箭头就是在许一个不存在的去处。病历本条自己没有
+  /// chevron 这个格子,所以放在它下面独立一行,不塞进条里。
   final bool chevron;
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    return MedCard(
-      // 主色描边:这是这一屏的第一块,也是唯一一块「点进去是另一整页」的卡。
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(MedShape.s4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const ProfileIconTile(icon: Icons.timeline_outlined),
-                  const SizedBox(width: MedShape.s3),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title, style: MedType.title.copyWith(color: c.ink)),
-                        if (subtitle case final s?) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            s,
-                            style: MedType.secondary.copyWith(
-                              color: c.ink2,
-                              height: 1.5,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  if (chevron)
-                    Icon(Icons.chevron_right, size: 20, color: c.ink3),
-                ],
-              ),
-              if (row case final r?) ...[
-                const SizedBox(height: MedShape.s3),
-                r,
-              ],
-              if (action case final a?) ...[
-                const SizedBox(height: MedShape.s3),
-                Align(alignment: Alignment.centerLeft, child: a),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 摘要行:左边是包给的那句话,右边是那个数。**整行**,左边长了就换行,
-/// 不把长句从中间切断(`_ItemRow` 同一条)。
-class _SummaryRow extends StatelessWidget {
-  const _SummaryRow({required this.label, this.value});
-
-  final String label;
-  final String? value;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: Text(label, style: MedType.body.copyWith(color: c.ink2)),
+        RecordBookStrip(
+          title: title,
+          subtitle: subtitle,
+          bigNumber: bigNumber,
+          bigNumberCaption: bigNumberCaption,
+          onTap: onTap,
         ),
-        if (value case final v?) ...[
-          const SizedBox(width: MedShape.s2),
-          Text(v, style: MedType.body.copyWith(color: c.ink)),
+        if (action case final a?) ...[
+          const SizedBox(height: MedShape.s3),
+          Align(alignment: Alignment.centerLeft, child: a),
+        ],
+        if (chevron) ...[
+          const SizedBox(height: MedShape.s1),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Icon(Icons.chevron_right, size: 20, color: c.ink3),
+          ),
         ],
       ],
     );

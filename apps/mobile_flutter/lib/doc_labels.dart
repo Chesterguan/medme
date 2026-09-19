@@ -183,6 +183,18 @@ String visitKindLabel(String kind) => kindLabel[kind] ?? docLabel[kind] ?? kind;
 IconData iconForVisitKind(String kind) =>
     _kindIcon[kind] ?? _docIcon[kind] ?? Icons.local_hospital_outlined;
 
+/// `VisitRecordDto.kind` 的光泽图标块类别。同一条「两张表都查一遍」的思路:
+/// 就诊组命名空间(住院/门诊/急诊/检查)一律 [GlossCategory.clinic]——都是「到
+/// 医疗机构走了一趟」,九档里没有更细的桶(与 `archive_screen.dart` 的
+/// `_categoryOf` 对 `TimelineGroupDto_Encounter` 的归类同一处理);独立文档命名
+/// 空间(`lab_report` 这类)直接交给 [categoryForDocType](Task 8 已有、Task 9
+/// 复用,R3 裁定:不再另写一份文档类型映射)。都不中的按 [categoryForDocType]
+/// 自己的兜底走 [GlossCategory.neutral]。
+GlossCategory categoryForVisitKind(String kind) => switch (kind) {
+  'inpatient' || 'outpatient' || 'emergency' || 'exam' => GlossCategory.clinic,
+  _ => categoryForDocType(kind),
+};
+
 /// 一条信息的**最后一份**来源文档 id;没有来源时返回 null。
 ///
 /// 三个投影 DTO 的 `documentIds` 类型是 flutter_rust_bridge 的 `Int64List`,元素是
