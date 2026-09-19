@@ -105,22 +105,33 @@ class IdentityHeroCard extends StatelessWidget {
                         color: Colors.white.withValues(alpha: 0.88),
                       ),
                       const SizedBox(width: 4),
-                      Expanded(
+                      // R17:图标保持本征宽度。标签与数值都包 Flexible,按比例
+                      // 收缩——单独给数值让路在 360×640 @2× 下仍不够(标签自己
+                      // 在那个尺寸也已经比可用宽度宽),两个都要能让。
+                      Flexible(
                         child: Text(
                           '最近就诊 · ',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: MedType.secondary.copyWith(
                             fontSize: 14,
                             color: Colors.white.withValues(alpha: 0.88),
                           ),
                         ),
                       ),
-                      Text(
-                        recentVisitText.isEmpty ? '暂无' : recentVisitText,
-                        style: MedType.value.copyWith(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w600,
-                          fontVariations: MedType.w600,
-                          color: Colors.white,
+                      // 数值可能比整行都宽(如 400 宽屏 + 长日期串)。Flexible +
+                      // maxLines:1 + ellipsis:让它收缩/截断,而不是把 Row 撑溢出。
+                      Flexible(
+                        child: Text(
+                          recentVisitText.isEmpty ? '暂无' : recentVisitText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: MedType.value.copyWith(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w600,
+                            fontVariations: MedType.w600,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ],
