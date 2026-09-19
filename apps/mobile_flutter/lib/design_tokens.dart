@@ -117,12 +117,6 @@ class MedColors extends ThemeExtension<MedColors> {
   /// 全 app 唯一一档阴影的颜色(含透明度)。层次靠**边框**不靠阴影。
   final Color shadowColor;
 
-  /// 化验状态四级里的**正常**刻意没有令牌 —— 正常值不上色,继承正文。
-  ///
-  /// 一份血常规 22 项通常只有 1–2 项异常;若给正常配色,整屏都是彩的,真正需要
-  /// 注意的那两项反而被淹没。要「正常」的颜色时用当前正文色,不要来这里找。
-  static const String normalIsUncolored = '正常不上色:继承正文。见 DESIGN-SYSTEM-v1 §二。';
-
   /// 全 app 唯一一档阴影:`0 1px 2px rgba(…)`。
   List<BoxShadow> get shadow => [
     BoxShadow(color: shadowColor, offset: const Offset(0, 1), blurRadius: 2),

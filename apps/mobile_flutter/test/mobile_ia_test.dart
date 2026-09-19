@@ -98,10 +98,11 @@ void main() {
       expect(labStatusOf(' N '), isNull, reason: '两头的空白不该改变判定');
     });
 
-    testWidgets('flag = N 的行:没有 pill、正文墨色、色条透明', (tester) async {
-      // 上面那条纯函数断言的用户可见兑现 —— 「正常不上色」这条规则(设计系统 §二)
-      // 对「明确正常」和「没有标记」必须给出同一个结果,否则一份血常规里 1–2 项真正
-      // 的异常会被二十个 N 淹没。
+    testWidgets('flag = N 的行:没有 pill、数值 normalInk、色条 barNormal', (tester) async {
+      // 上面那条纯函数断言的用户可见兑现——「明确正常」和「没有标记」必须给出同一个
+      // 结果,否则一份血常规里 1–2 项真正的异常会被二十个 N 淹没。R2:「正常」不再
+      // 是「不上色」,而是 barNormal 色条 + normalInk 数值,只是不额外画 pill、不
+      // 加字。
       await tester.pumpWidget(
         wrap(
           const LabLine(
@@ -116,12 +117,17 @@ void main() {
       );
       expect(find.text('N'), findsNothing, reason: '内部编码不许出现在界面上');
       expect(find.byType(MedPill), findsNothing, reason: '正常不给 pill');
-      final ctx = tester.element(find.byType(LabLine));
+      expect(find.text('210'), findsOneWidget);
+      expect(find.text('10^9/L'), findsOneWidget);
       expect(
-        tester.widget<Text>(find.text('210 10^9/L')).style?.color,
-        MedColors.of(ctx).ink,
-        reason: '正常值用正文墨色,不上高/低色',
+        tester.widget<Text>(find.text('210')).style?.color,
+        MedBrand.normalInk,
+        reason: 'R2:正常数值用 normalInk,不是继承正文墨色',
       );
+      final border = (tester.widget<Container>(find.descendant(
+        of: find.byType(LabLine), matching: find.byType(Container)).first)
+        .decoration! as BoxDecoration).border! as Border;
+      expect(border.left.color, MedBrand.barNormal, reason: 'R2:正常色条不再透明');
       // 参考区间照常显示 —— 显示与判定是两件事。
       expect(find.textContaining('参考 125–350'), findsOneWidget);
     });
@@ -152,13 +158,14 @@ void main() {
         ),
       );
       expect(find.text('需核对'), findsOneWidget);
-      expect(find.text('1.2 mg/dL'), findsOneWidget, reason: '标记归标记,值照常显示');
-      // 用主色系,不借 high/low/critical —— 那三套是化验状态专用,借来会被读成
-      // 一档临床结论。
-      final ctx = tester.element(find.byType(LabLine));
+      expect(find.text('1.2'), findsOneWidget, reason: '标记归标记,值照常显示');
+      expect(find.text('mg/dL'), findsOneWidget, reason: '标记归标记,单位照常显示');
+      // 用 R4 的中性 check 配色(MedPill.check),不借 high/low/critical —— 那三套是
+      // 化验状态专用,借来会被读成一档临床结论;也不借主色 seal —— 那是「点这里去
+      // 做什么」的强调色,这枚 chip 说的是「App 没能替你核对」,不是一个动作。
       final chip = tester.widget<MedPill>(find.byType(MedPill));
-      expect(chip.background, MedColors.of(ctx).sealWash);
-      expect(chip.foreground, isNot(MedColors.of(ctx).high));
+      expect(chip.background, MedBrand.checkWash);
+      expect(chip.foreground, MedBrand.checkInk);
     });
 
     testWidgets('核对过的行:没有这枚 chip', (tester) async {
@@ -186,7 +193,7 @@ void main() {
       expect(labStatusOf('*'), LabStatus.unknown);
     });
 
-    testWidgets('值远超参考区间但 flag 为空 → **不上色**', (tester) async {
+    testWidgets('值远超参考区间但 flag 为空 → 仍按「正常」处理,不按 high/low 上色', (tester) async {
       // 这是整个改动里最要紧的一条断言。三个投影 DTO 每个点都带着 refLow/refHigh,
       // 拿来反推异常唾手可得(hosted-viewer 的 sparkSVG 就是这么干的)。谁哪天
       // 「顺手补上」那个判定,红的应该是这里 —— 007 §2.5:怎么算在 Rust。
@@ -205,10 +212,12 @@ void main() {
       // 没有 pill —— UI 没有替化验单下任何结论。
       expect(find.text('偏高'), findsNothing);
       expect(find.text('偏低'), findsNothing);
-      // 数值墨色是正文 ink,不是 high。
-      final ctx = tester.element(find.byType(LabLine));
-      final valueText = tester.widget<Text>(find.text('99.9 10^9/L'));
-      expect(valueText.style?.color, MedColors.of(ctx).ink);
+      expect(find.text('99.9'), findsOneWidget);
+      expect(find.text('10^9/L'), findsOneWidget);
+      // 数值墨色是 R2 的正常档 normalInk,不是 high —— 没有从参考区间反推出一个
+      // 临床结论。
+      final valueText = tester.widget<Text>(find.text('99.9'));
+      expect(valueText.style?.color, MedBrand.normalInk);
       // 参考区间照样显示给人看 —— 显示与判定是两件事。
       expect(find.textContaining('参考 4–10'), findsOneWidget);
     });
