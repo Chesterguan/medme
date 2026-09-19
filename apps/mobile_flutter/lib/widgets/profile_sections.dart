@@ -306,9 +306,10 @@ class _HintLine extends StatelessWidget {
 class _ItemRow extends StatelessWidget {
   const _ItemRow({
     required this.icon,
-    this.iconColor,
     this.showIcon = true,
+    this.leading,
     required this.label,
+    this.labelColor,
     this.trailing,
     this.meta = const [],
     this.longText,
@@ -317,12 +318,27 @@ class _ItemRow extends StatelessWidget {
   });
 
   final IconData icon;
-  final Color? iconColor;
 
   /// 时间轴那一路不画这颗小图标——圆点已经是它的标记,两个标记会打架。见
   /// `_TimelineEventRow`。其余调用点都不传,保持原样。
   final bool showIcon;
+
+  /// 整枚替换掉左边那颗小图标(R26:提醒行要一枚 44×44 `GlossIconTile`,不是
+  /// 18px 的小图标)。非空时优先于 [icon]/[showIcon]——mockup `.banner` 的签名
+  /// 元素就是这枚大图标块,`MedBanner` 本身用不了(见 `_ReminderRow` 类文档),
+  /// 但左边那颗图标不该跟着退化成小图标。默认 `null`,其余调用点一个像素都不变。
+  ///
+  /// R26 fix round 1 顺带删掉了原来的 `iconColor` 参数:那颗小图标唯一会变色的
+  /// 调用点(`_ReminderRow` 的琥珀提醒)已经改用 [leading] 整个换成大图标块,
+  /// `iconColor` 从此没有任何调用点传值,`flutter analyze` 会报
+  /// `unused_element_parameter`——删掉比留一个死参数干净。其余调用点的小图标
+  /// 一直就是固定的 `c.ink2`,不受影响。
+  final Widget? leading;
   final String label;
+
+  /// 标题文字色。默认 `null` → `c.ink`(原有调用点不变)。R26:琥珀提醒行要
+  /// `MedBrand.bannerAmberInk`,与 `MedBanner.title` 同一处理。
+  final Color? labelColor;
   final Widget? trailing;
   final List<String?> meta;
   final String? longText;
@@ -350,10 +366,13 @@ class _ItemRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (showIcon) ...[
+          if (leading != null) ...[
+            leading!,
+            const SizedBox(width: MedShape.s2),
+          ] else if (showIcon) ...[
             Padding(
               padding: const EdgeInsets.only(top: 2),
-              child: Icon(icon, size: 18, color: iconColor ?? c.ink2),
+              child: Icon(icon, size: 18, color: c.ink2),
             ),
             const SizedBox(width: MedShape.s2),
           ],
@@ -366,7 +385,7 @@ class _ItemRow extends StatelessWidget {
                   spacing: MedShape.s1,
                   runSpacing: 4,
                   children: [
-                    Text(label, style: MedType.body.copyWith(color: c.ink)),
+                    Text(label, style: MedType.body.copyWith(color: labelColor ?? c.ink)),
                     ?trailing,
                   ],
                 ),
@@ -1003,8 +1022,10 @@ class _RemindersBody extends StatelessWidget {
 /// 就要么截断信息,要么把好几个独立 pill 拼成一句话(两者都会被
 /// `test/profile_sections_test.dart` 的「every reminder shows its basis
 /// label」「a reminder row prints the package note it was handed」逮到)。这里
-/// 借的是 `MedBanner` 的两个颜色 token(`MedBrand.bannerAmber`/`bannerAmberInk`)
-/// 与圆角,内容仍是 `_ItemRow` 的既有排法——视觉是琥珀横幅,信息一个字不丢。
+/// 借的是 `MedBanner` 的颜色 token(`MedBrand.bannerAmber`/`bannerAmberInk`)与
+/// 圆角,连同它的签名元素——44×44 `GlossIconTile`(R26:`_ItemRow.leading`)与
+/// 标题字色(R26:`_ItemRow.labelColor`)——内容仍是 `_ItemRow` 的既有排法,视觉
+/// 是琥珀横幅,信息一个字不丢。
 class _ReminderRow extends StatelessWidget {
   const _ReminderRow(this.item);
 
@@ -1039,8 +1060,12 @@ class _ReminderRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: MedShape.s2),
       child: _ItemRow(
         icon: Icons.notifications_outlined,
-        iconColor: MedBrand.bannerAmberInk,
+        leading: const GlossIconTile(
+          icon: Icons.notifications_outlined,
+          category: GlossCategory.med,
+        ),
         label: text,
+        labelColor: MedBrand.bannerAmberInk,
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

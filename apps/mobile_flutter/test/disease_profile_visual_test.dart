@@ -66,6 +66,36 @@ void main() {
         const Scaffold(body: SingleChildScrollView(child: _TimelineProbe())));
   });
 
+  // R26 fix round 1:`_ReminderRow` 有琥珀底,但漏了 mockup `.banner` 的签名元素
+  // ——44×44 `GlossIconTile`,原来还是一颗 18px 小图标。这里精确定位到那一条
+  // 琥珀底 `Container`(靠 `MedBrand.bannerAmber` 找,不靠 icon/category——section
+  // 头本身的 `ProfileIconTile` 也是 med 类别、也是同一个铃铛图标,两枚图标块光看
+  // icon/category 分不开,只有靠「是不是长在琥珀底容器里面」才分得开),
+  // 确认里面**只有一枚** `GlossIconTile`、类别是 `med`;标题字色是
+  // `MedBrand.bannerAmberInk`(跟 `MedBanner.title` 同一处理)。
+  testWidgets('提醒行:琥珀底里是一枚 44px med 光泽图标块,标题走横幅字色', (tester) async {
+    await pumpStage3(tester, Scaffold(body: ProfileSectionView({
+      'kind': 'reminders', 'title': '待补 / 逾期',
+      'body': {'items': [
+        {'id': 'mmf_cbc', 'text': '血常规', 'state': 'overdue', 'overdue_days': 12,
+         'basis': 'label', 'source': 'L1'},
+      ]},
+    })));
+    final amberBox = find.byWidgetPredicate((w) {
+      if (w is! Container) return false;
+      final d = w.decoration;
+      return d is BoxDecoration && d.color == MedBrand.bannerAmber;
+    });
+    expect(amberBox, findsOneWidget);
+    final tileFinder = find.descendant(of: amberBox, matching: find.byType(GlossIconTile));
+    expect(tileFinder, findsOneWidget);
+    expect(tester.widget<GlossIconTile>(tileFinder).category, GlossCategory.med);
+    final label = tester.widget<Text>(
+      find.descendant(of: amberBox, matching: find.text('血常规')),
+    );
+    expect(label.style?.color, MedBrand.bannerAmberInk);
+  });
+
   // 控制者裁定的溢出矩阵不只管时间轴——`_ItemRow` 新加的 `barColor`(现行方案/
   // 活动度)与 `_ReminderRow` 新加的琥珀底(提醒)都是这个 Task 改的形状,同样要
   // 在 360×640 × 2.0 字号下不溢出。golden fixture 里这三节本来就带着长药名/长
