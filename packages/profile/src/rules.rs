@@ -1035,10 +1035,8 @@ fn dose_mg(s: &str) -> Option<f64> {
     let t = s.split_whitespace().next()?.to_ascii_lowercase();
     let mg = if let Some(v) = t.strip_suffix("mg") {
         v.parse::<f64>().ok()?
-    } else if let Some(v) = t.strip_suffix('g') {
-        v.parse::<f64>().ok()? * 1000.0
     } else {
-        return None;
+        t.strip_suffix('g')?.parse::<f64>().ok()? * 1000.0
     };
     (mg.is_finite() && mg > 0.0).then_some(mg)
 }
