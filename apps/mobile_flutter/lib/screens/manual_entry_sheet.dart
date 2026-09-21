@@ -26,7 +26,7 @@ import 'package:mobile_flutter/vault_events.dart';
 /// 返回 `true` = 保存成功(调用方据此 `bumpVaultRevision`);`false`/`null` = 取消。
 ///
 /// [initialKind] 让调用方跳过六选一,直接落在某一种类型上——目前唯一的用途是
-/// 「看病带这个」的「我想问医生的」空态那颗「加一条」:用户已经点的是"记笔记"
+/// 「给医生看」的「我想问医生的」空态那颗「加一条」:用户已经点的是"记笔记"
 /// 这个意图,没有理由让他再从六个图标里点一次「笔记」。`editing` 不为空时这个
 /// 参数被忽略(编辑态的类型来自 `editing.kind`,见 [_ManualEntrySheetState]
 /// 的初始化)。
@@ -742,7 +742,7 @@ class _WhenRow extends StatelessWidget {
         // 只有 ×2.0 露出来)。007 §2.5「字号可放大,不可砍」:不能截断日期、不能
         // 缩字号,只能让它换行。
         //
-        // 改成 `Wrap` —— 与同屏 `QuickActions` 同一条处理。两组([图标+文字] 与
+        // 改成 `Wrap` —— 007 §2.5 那条的通用处理。两组([图标+文字] 与
         // [日期+箭头])各自 `MainAxisSize.min`:放得下时同一行,`spaceBetween` 把
         // 日期推到最右边,与原来的观感一模一样;放不下时日期整组落到第二行,而不是
         // 溢出。两处文字再各套一层 `Flexible`,因为 ×2.0 时单是日期那一组就可能宽

@@ -46,16 +46,22 @@ jobs:
 
       # Mobile is Flutter now (apps/mobile_flutter), built by mobile.yml; its Rust
       # crate is workspace-excluded, so this desktop/core check never touches it.
+      #
+      # 病程档案那条线的 profile / terminology / deid 与 sync 同样逐个列在下面三步里:
+      # 包里「每个数都有出处」的 ONE LAW 守卫、术语覆盖层、facts 的反幻觉闸,不列进来
+      # 就只有人在本地 `--workspace` 才会红(终审 I1)。
       - name: rustfmt
         run: >
           cargo fmt --check
           -p core-model -p parser -p pipeline -p ocr -p dicom
           -p medme-share -p medme-cli -p medme-desktop
+          -p profile -p terminology -p deid -p sync
 
       - name: clippy
         run: >
           cargo clippy
           -p core-model -p parser -p pipeline -p ocr -p dicom -p medme-share
+          -p profile -p terminology -p deid -p sync
           --all-targets -- -D warnings
 
       - name: test
@@ -63,6 +69,7 @@ jobs:
           cargo test
           -p core-model -p parser -p pipeline -p ocr -p dicom
           -p medme-share -p medme-cli
+          -p profile -p terminology -p deid -p sync
 
   # Desktop frontend: type-check and production build (Vite).
   # Vite 7 requires Node ^20.19 || >=22.12, so we pin Node 20 (not 18).

@@ -30,7 +30,8 @@
 用**最成熟稳定**版本,别用 bleeding-edge:
 - 安卓:AGP 8.9.1 / Gradle 8.11.1 / Kotlin 2.1.0(FRB 模板默认给的 AGP 9 / Gradle 9 不兼容 Flutter Gradle 插件)。
 - 插件对齐 win32 版本:file_picker ^8.x 与 share_plus ^11.x(share_plus 13.x 要 win32^6 会把 file_picker 顶回无 namespace 的老版)。
-- iOS 部署目标 15.5(ML Kit 要求);模拟器 `EXCLUDED_ARCHS=arm64`(ML Kit 无模拟器切片)。
+- iOS 部署目标 15.5;模拟器 `EXCLUDED_ARCHS[sdk=iphonesimulator*]=x86_64`(ML Kit 已移除,约束
+  来自 PP-OCRv5 依赖的 ONNX Runtime——只有 `arm64-apple-ios-sim` 切片,没有 x86_64)。
 
 ## 出包(仅发布时,优先 CI)
 

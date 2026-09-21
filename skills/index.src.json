@@ -1,0 +1,10 @@
+{
+  "skills": [
+    {
+      "id": "sle",
+      "version": "2026.09.1",
+      "min_engine": 1,
+      "name": "系统性红斑狼疮"
+    }
+  ]
+}

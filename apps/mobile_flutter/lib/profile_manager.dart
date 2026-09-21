@@ -1,12 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 
-/// 家庭多成员管理:每个成员一个独立保险箱(子文件夹)。成员表持久化到沙盒
+/// 家庭多成员管理:每个成员一个独立病历箱(子文件夹)。成员表持久化到沙盒
 /// `<support>/profiles.json`,与 Apple ID 无关——纯本地 + 子文件夹。
 ///
 /// **成员一律平等**:没有权限差别、没有特殊的那一个,路径规则只有一条 ——
@@ -24,11 +25,11 @@ class ProfileManager {
   ProfileManager._();
   static final ProfileManager instance = ProfileManager._();
 
-  /// 保险箱默认名字(家庭/个人层面)。用户可在设置里改成「我家」「张建国的病历」等。
-  static const defaultVaultName = '我的医疗档案';
+  /// 病历箱默认名字(家庭/个人层面)。用户可在设置里改成「我家」「张建国的病历」等。
+  static const defaultVaultName = '我的病历箱';
 
   /// 初始成员的默认名字。**必须与 [defaultVaultName] 不同** —— 两者曾经用同一个字符串,
-  /// 于是设置页会显示成「保险箱:我的医疗档案 → 成员:我的医疗档案」,同一个名字在两个
+  /// 于是设置页会显示成「病历箱:我的病历箱 → 成员:我的病历箱」,同一个名字在两个
   /// 层级上各出现一次,用户看不懂谁包含谁。
   ///
   /// 而且成员名会进档案屏顶部那条**常驻 tab**(横向排列,见 `_MemberTabs`):六个字的名字
@@ -43,14 +44,32 @@ class ProfileManager {
   /// 初始成员的 id。固定值,让全新安装是确定的。
   static const _bootstrapId = 'p-1';
 
-  /// 当前成员 **id** 变化时通知各屏重载(切换成员 = 重开保险箱)。用 id 而不是名字:
+  /// 换机时领回来的云成员的占位名(`AccountFlow.restoreProfileKeys`)。真名在病历
+  /// 里,而病历此刻还没同步下来 —— 所以先摆一个**说明此刻在发生什么**的名字。
+  ///
+  /// 原来是「云端档案 a1b2c3」(cloudId 前 6 位)。用户换了台新手机,解锁完账号,
+  /// 第一眼看到的是一串内部 id:既看不懂,也不知道它会不会变成正常的。
+  static const restoringPlaceholderName = '正在恢复的成员';
+
+  /// 兑换授权时的占位名(`Grants.redeem`)。
+  static const redeemingPlaceholderName = '(同步中)';
+
+  /// 上面两个。首同步拉到病历之后,只有名字还是这两个之一的成员才会被自动改名
+  /// (见 [nameCloudProfileOnFirstSync])—— 用户自己改过的名字绝不覆盖。
+  static const cloudPlaceholderNames = {restoringPlaceholderName, redeemingPlaceholderName};
+
+  /// 首同步成功了、但病历里**抽不出姓名**时给的中性名字(空档案,或者正则一个都
+  /// 没命中)。见 [nameCloudProfileOnFirstSync] 对"为什么必须改掉占位名"的说明。
+  static const restoredFallbackName = '云端成员';
+
+  /// 当前成员 **id** 变化时通知各屏重载(切换成员 = 重开病历箱)。用 id 而不是名字:
   /// 改名不该触发重开,换人才该。
   final ValueNotifier<String> currentId = ValueNotifier<String>(_bootstrapId);
 
   List<Profile> _profiles = const [
     Profile(id: _bootstrapId, name: defaultMemberName),
   ];
-  // 整个保险箱的名字(家庭/个人层面,与「成员」是两回事);设置页展示 + 可改。
+  // 整个病历箱的名字(家庭/个人层面,与「成员」是两回事);设置页展示 + 可改。
   String _vaultName = defaultVaultName;
   // 成员 id → 最近一次已知记录数(档案屏加载时回填);设置页展示每人多少份,不必开各自库去数。
   final Map<String, int> _counts = {};
@@ -73,10 +92,13 @@ class ProfileManager {
     return null;
   }
 
-  /// 档案屏顶部展示名:只有一个、且还没被数据/用户命过名的默认成员时,显示保险箱名
-  /// (不把占位名露出来,彻底避开「我」);否则显示当前成员真名。
-  String get displayName =>
-      (_profiles.length == 1 && _autoNamePending) ? _vaultName : current.name;
+  /// 档案屏顶部展示名:当前成员的名字。**不回退到病历箱名**(task-20b A3)——
+  /// 这里原来在"只有一个、还没被命过名的默认成员"时显示 [_vaultName]
+  /// (「我的病历箱」),而 `member_switcher.dart` 的切换器名单在同一种状态下
+  /// 显示的是 [current.name](占位默认值「我」),两处各说一套,是 Stage 1 冒烟
+  /// 记录的必修项之一。统一显示成员名,导入后的自动改名逻辑([maybeAutoNameCurrent])
+  /// 不受影响。
+  String get displayName => current.name;
 
   /// 某成员最近已知记录数(没加载过为 null)。
   int? countFor(String id) => _counts[id];
@@ -121,6 +143,15 @@ class ProfileManager {
       // 读坏了不致命:退回单成员默认档案。
     }
     _loaded = true;
+    // 补 [Profile.secretHex]:老档案没有这个字段,全新安装的那个 const 默认成员也
+    // 没有。**补完立刻落盘**——秘密只有稳定才有意义,每次启动重生成等于同一个人的
+    // 云端时间线每次都换一套偏移。`_loaded` 必须先置 true,否则 `_save` 走不通。
+    if (_profiles.any((p) => p.secretHex.isEmpty)) {
+      _profiles = _profiles
+          .map((p) => p.secretHex.isEmpty ? p.copyWith(secretHex: Profile.newSecretHex()) : p)
+          .toList();
+      await _save();
+    }
     _publishMemberCount();
   }
 
@@ -160,7 +191,7 @@ class ProfileManager {
     } catch (_) {}
   }
 
-  /// 切到某成员(需已存在)。调用方随后重开保险箱(见 `openCurrentProfileVault`)。
+  /// 切到某成员(需已存在)。调用方随后重开病历箱(见 `openCurrentProfileVault`)。
   Future<void> switchTo(String id) async {
     await ensureLoaded();
     if (byId(id) == null || currentId.value == id) return;
@@ -179,7 +210,7 @@ class ProfileManager {
     await ensureLoaded();
     final trimmed = name.trim();
     if (trimmed.isEmpty) return null;
-    final p = Profile(id: _newId(), name: trimmed);
+    final p = Profile(id: _newId(), name: trimmed, secretHex: Profile.newSecretHex());
     _profiles = [..._profiles, p];
     if (userManaged) _autoNamePending = false;
     currentId.value = p.id;
@@ -200,7 +231,7 @@ class ProfileManager {
     _profiles = _profiles.map((p) {
       if (p.id != id || p.name == trimmed) return p;
       changed = true;
-      return Profile(id: p.id, name: trimmed);
+      return p.copyWith(name: trimmed);
     }).toList();
     if (changed) {
       _autoNamePending = false;
@@ -208,9 +239,36 @@ class ProfileManager {
     }
   }
 
+  /// 记下这个成员已开通云端备份:服务端 `profile_id`([cloudId])、本设备对它的
+  /// 角色([role])、这份授权的到期时间([expiresAt],owner 为 null)。
+  /// 调用方(`SyncEngine.enableCloud`)在这之前已经把档案钥匙存进
+  /// `AccountSession`——这里只落 profiles.json 里的元数据。
+  Future<void> markCloud(String id, String cloudId, String role, DateTime? expiresAt) async {
+    await ensureLoaded();
+    _profiles = _profiles.map((p) {
+      if (p.id != id) return p;
+      // `expiresAt` 是"owner 没有到期日"这件事的载体,必须能被写成 null ——
+      // 所以这里不用 `copyWith`(那个分不清"不传"和"传 null")。
+      return Profile(id: p.id, name: p.name, cloudId: cloudId, role: role, expiresAt: expiresAt, cloudPaused: p.cloudPaused, secretHex: p.secretHex);
+    }).toList();
+    await _save();
+  }
+
+  /// 这个成员的「云端备份」开关(UX 第二轮,创始人拍板:**有账号默认开云,可手动关**)。
+  ///
+  /// `true` = 用户把它关了:后台触发器、「同步」按钮、以及"默认给没开通的成员开通"
+  /// 那条队列都跳过它。**不删云端已有的密文**(那是注销账号才做的事),也不清本机
+  /// 钥匙 —— 用户随时可以再打开,而且已经同步过的内容照样能在别的设备上看。
+  Future<void> setCloudPaused(String id, bool paused) async {
+    await ensureLoaded();
+    if (byId(id)?.cloudPaused == paused) return;
+    _profiles = _profiles.map((p) => p.id == id ? p.copyWith(cloudPaused: paused) : p).toList();
+    await _save();
+  }
+
   /// 能不能删这个成员。成员一律平等,**谁都能删**;删任何一个都只影响它自己
   /// (每人一个独立目录,没有谁的路径依赖别人)。唯一的限制是**不能删到一个不剩** ——
-  /// 那等于清空整个保险箱,该走设置里「清空所有数据 · 重置保险箱」那条更明确的路。
+  /// 那等于清空整个病历箱,该走设置里「清空所有数据 · 重置病历箱」那条更明确的路。
   bool canRemove(String id) => _profiles.length > 1 && byId(id) != null;
 
   /// 删除一个成员(仅从成员表移除;**磁盘上的目录由调用方删**,见
@@ -242,7 +300,67 @@ class ProfileManager {
     return name;
   }
 
-  /// 改保险箱名字(设置页)。空或没变则忽略。
+  /// 刚领回来/刚兑换到的云成员,首同步把病历拉下来之后用识别到的姓名给它命名。
+  /// 返回是否真的改了。
+  ///
+  /// **不能复用 [maybeAutoNameCurrent]**(A5 的根因就在这儿):那个方法是
+  /// 「首次导入给默认成员命名」,带着两道守卫 —— `_autoNamePending` 和"只有一个
+  /// 成员"。换机这条路上两道**都不成立**:用户家里可能早就有三个成员,默认成员
+  /// 也早被命过名。于是哪怕首同步真的拉到了姓名,名字也永远停在占位串上。
+  ///
+  /// 这里只认一条判据:**这个成员的名字还是我们自己写上去的占位串吗**
+  /// ([cloudPlaceholderNames])。用户自己改过的名字一律不覆盖。
+  ///
+  /// **抽不出姓名也要改名**(复审新问题 2)。这个方法只在首同步**成功之后**被调用
+  /// (`sync_engine.firstSyncAndName`:同步抛异常就走不到这儿),所以"名字还是占位
+  /// 串"这条证据在这一刻必须被消费掉 —— 留着的后果是一个死循环:空档案(或者正则
+  /// 一个都没命中)的成员名字永远停在「正在恢复的成员」→ 每次启动
+  /// `restoreProfileKeys` 都把它重新排进首同步队列 → 反复切成员、屏幕闪烁,切换器
+  /// 一直显示「正在恢复…点这里重试」,而它其实早就同步好了。
+  /// 抽不出来就给一个中性的 [restoredFallbackName] —— 用户随时可以在设置里改名。
+  Future<bool> nameCloudProfileOnFirstSync(String id, String? detectedName) async {
+    await ensureLoaded();
+    final p = byId(id);
+    if (p == null || !cloudPlaceholderNames.contains(p.name)) return false;
+    final name = detectedName?.trim() ?? '';
+    await rename(id, name.isEmpty ? _nextRestoredFallbackName() : name);
+    return true;
+  }
+
+  /// 「云端成员」/「云端成员 2」/…… —— 挑一个本机还没用过的,免得两个空档案撞成
+  /// 同一个名字(名字只是标签、同名本来不违法,但两行一样的字用户分不出哪个是哪个)。
+  String _nextRestoredFallbackName() {
+    final used = _profiles.map((p) => p.name).toSet();
+    for (var i = 1;; i++) {
+      final candidate = i == 1 ? restoredFallbackName : '$restoredFallbackName $i';
+      if (!used.contains(candidate)) return candidate;
+    }
+  }
+
+  /// 这个成员是不是「从没被用过的默认成员」。A5 最后一步拿它决定:换机领回云档案
+  /// 之后,要不要把旁边那个空的「我」删掉 —— 不删的话,用户新手机上永远多一个
+  /// 空成员杵着,而他从没建过它。
+  ///
+  /// 三条都成立才算:还是 bootstrap 那个 id;名字还是占位默认名(没被用户改过、
+  /// 也没被报告里识别到的姓名命过,即 `_autoNamePending` 仍为 true);**已知记录数
+  /// 确认是 0**。
+  ///
+  /// ⚠️ 第三条原来写的是 `(_counts[id] ?? 0) == 0` —— 把「**还没人数过**」也当成
+  /// 「空」。评审证明那不是理论情形:`claim_target.dart` 的 `ClaimHow.current`
+  /// 分支(「这份病历里没有姓名,存进你当前的档案」)是一条真实产品路径,它把认领
+  /// 到的病历写进 `p-1` 并且**刻意不改名** —— 于是 `_autoNamePending` 仍为 true、
+  /// 名字仍是「我」,前两条全部成立。此刻挡在这些病历和一次
+  /// `Directory.delete(recursive: true)`(本机 + iCloud 两处,无确认、无撤销、
+  /// 无声、发生在启动序列里)之间的,只剩那个缓存有没有恰好被填上。
+  ///
+  /// 要一个**已知的 0**,实践上什么都不损失:`ArchiveScreen` 是 `IndexedStack` 五个
+  /// 孩子之一(`main.dart` 的 `HomeShell.tabScreens`),所以首次启动它就会 build 并
+  /// 调一次 `setCount(p-1, 0)`,远早于用户能走到账号屏登录。读不到这个数(比如
+  /// 启动序列比首帧还快)就**不删** —— 多一个空成员远好过删掉一份病历。
+  bool isUntouchedDefaultMember(String id) =>
+      id == _bootstrapId && _autoNamePending && byId(id)?.name == defaultMemberName && _counts[id] == 0;
+
+  /// 改病历箱名字(设置页)。空或没变则忽略。
   Future<void> setVaultName(String name) async {
     await ensureLoaded();
     final t = name.trim();
@@ -259,10 +377,11 @@ class ProfileManager {
     await _save();
   }
 
-  /// 恢复出厂:成员表清回单一默认、清份数缓存、保险箱名回默认、允许自动命名。
+  /// 恢复出厂:成员表清回单一默认、清份数缓存、病历箱名回默认、允许自动命名。
   /// 「清空所有数据」调它(配合删各成员目录),而不是只清当前成员。
   Future<void> factoryReset() async {
-    _profiles = const [Profile(id: _bootstrapId, name: defaultMemberName)];
+    // 恢复出厂顺带换一把新秘密——旧秘密属于被清掉的那份档案。
+    _profiles = [Profile(id: _bootstrapId, name: defaultMemberName, secretHex: Profile.newSecretHex())];
     _vaultName = defaultVaultName;
     _counts.clear();
     _autoNamePending = true;
@@ -288,14 +407,84 @@ class ProfileManager {
 }
 
 /// 一个成员:[id] 是主键与目录名(生成后永不变),[name] 只是给人看的标签(随时可改)。
+///
+/// [cloudId]/[role]/[expiresAt] 是开通云端备份之后才有的:[cloudId] 是服务端的
+/// `profile_id`,[role] 是这台设备对这个云档案的角色(`owner`/`editor`/`viewer`),
+/// [expiresAt] 是这份授权的到期时间(owner 永不过期,为 null)。三者一起决定
+/// `openCurrentProfileVault` 走 keyed 开箱还是原路径——见 `vault_boot.dart`。
 class Profile {
-  const Profile({required this.id, required this.name});
+  const Profile({
+    required this.id,
+    required this.name,
+    this.cloudId,
+    this.role,
+    this.expiresAt,
+    this.cloudPaused = false,
+    this.secretHex = '',
+  });
 
   final String id;
   final String name;
+  final String? cloudId;
+  final String? role;
+  final DateTime? expiresAt;
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name};
+  /// 用户手动关掉了这个成员的云端备份(见 [ProfileManager.setCloudPaused])。
+  /// 默认 false = 开着 —— "有账号默认开云"是产品决定,不是用户要逐个打开的东西。
+  final bool cloudPaused;
 
-  static Profile fromJson(Map<String, dynamic> j) =>
-      Profile(id: j['id'] as String, name: j['name'] as String);
+  /// 这个成员的 32 字节随机秘密(hex)。**只有一个用途**:云抽取脱敏时派生这份档案
+  /// 的日期偏移天数(`deid::dates::shift_days_from_secret`)——同一个人的所有报告
+  /// 偏移同样的天数,时间间隔因此保持真实,而绝对日期出不去。
+  ///
+  /// 所以它必须**跨启动稳定**:换一个秘密 = 换一个偏移 = 同一个人的病历时间线在
+  /// 云端断成两截。落在 `profiles.json` 里,由 [ProfileManager.ensureLoaded] 保证
+  /// 每个成员都有(老档案缺就补一次并落盘)。
+  ///
+  /// 默认空串只是为了让既有的 `const Profile(...)` 构造点不用全改;真实成员经
+  /// [ProfileManager] 之后一律非空,空串的成员不走云抽取(见 `cloud_extract.dart`)。
+  /// 子项目 B 落地后换成档案钥匙,这个字段随之退休。
+  final String secretHex;
+
+  /// 只动给得出的那几个字段。**不带 `expiresAt`**:它需要能被写成 null
+  /// (owner 没有到期日),而 `copyWith` 的 `?? this.x` 表达不了"显式 null" ——
+  /// 那条路走 `markCloud` 里的显式构造。
+  Profile copyWith({String? name, bool? cloudPaused, String? secretHex}) => Profile(
+    id: id,
+    name: name ?? this.name,
+    cloudId: cloudId,
+    role: role,
+    expiresAt: expiresAt,
+    cloudPaused: cloudPaused ?? this.cloudPaused,
+    secretHex: secretHex ?? this.secretHex,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    if (cloudId != null) 'cloudId': cloudId,
+    if (role != null) 'role': role,
+    if (expiresAt != null) 'expiresAt': expiresAt!.toIso8601String(),
+    if (cloudPaused) 'cloudPaused': true,
+    if (secretHex.isNotEmpty) 'secretHex': secretHex,
+  };
+
+  static Profile fromJson(Map<String, dynamic> j) => Profile(
+    id: j['id'] as String,
+    name: j['name'] as String,
+    cloudId: j['cloudId'] as String?,
+    role: j['role'] as String?,
+    expiresAt: j['expiresAt'] == null ? null : DateTime.parse(j['expiresAt'] as String),
+    cloudPaused: j['cloudPaused'] as bool? ?? false,
+    secretHex: j['secretHex'] as String? ?? '',
+  );
+
+  /// 新成员的秘密:`Random.secure()` 32 字节 hex。
+  static String newSecretHex() {
+    final r = Random.secure();
+    return List.generate(
+      32,
+      (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+  }
 }

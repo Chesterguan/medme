@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <!-- SECURITY (GHSA-j7fx): 本页只运行三段固定的内联脚本(首屏防闪 + 内联 dicom-parser + 查看器逻辑),
-     故 script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk=';并加 form-action/base-uri/
+     故 CSP 只放行它们各自的脚本哈希 ——**唯一一份**写在下面那个 meta 里,这里不再抄:
+     抄来的那份会悄悄过期,而 share.rs 的 CSP 测试读的是本文件里第一段出现的那个
+     指令,于是过期的注释会把测试变成在校验注释;并加 form-action/base-uri/
      frame-ancestors 'none' 锁死导航/表单/框架,断掉潜在注入外泄 DECRYPTED PHI 的路径。
      connect-src 只放行认领密文所在的那一个源(CLAIM_BASE):托管查看器要按 id 取回医生
      代拍的密文,别的地方一概连不上,解密后的 PHI 仍无处可外泄。**离线分享文件不吃这条**
@@ -15,7 +17,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aOpY5Szf6Y4a2vz7aWnAaJlXjjBywslEroLTLGznUkk=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-ptSlCuQNCYvkhSvhUn2F9vbFHYAJZjuqRShVEzpFzCk='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-1W78FH/BnYVBaSZPQ8EiW/CSi++FJj/q5GxT2mdqVnc='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -28,16 +30,30 @@
     border-radius:50%;animation:pw-spin .9s linear infinite}
   @keyframes pw-spin{to{transform:rotate(360deg)}}
   @media (prefers-reduced-motion:reduce){#payload-wait .sp{animation:none}}
+  /* 授权链接(`#g1.`):这张网页打不开也不该去打开它 —— 只给一句能照做的话。 */
+  #grant-hint{display:none}
+  html.grantlink #gate{display:none}
+  html.grantlink #grant-hint{display:flex}
+  #grant-hint{min-height:100vh;flex-direction:column;align-items:center;justify-content:center;
+    gap:12px;padding:24px;text-align:center;color:#334155}
+  #grant-hint h1{font-size:19px;color:#1560a8;margin:0}
+  #grant-hint p{font-size:14px;color:#64748b;line-height:1.7;margin:0;max-width:30em}
+  #grant-hint a{color:#1789c1}
 </style>
 <script>
 // 首屏防闪:二维码/认领链接进来时,载荷在 `#` 后面,根本不需要口令屏。若等到 body
 // 末尾的主脚本才隐藏它,医生扫码会先看到「请输入口令」一闪 —— 会让他以为要向病人
 // 要口令。这里在**首次绘制之前**就按 fragment 前缀判定并藏掉。
 // 只读 location.hash、只加一个 class,不碰任何数据。
+// `g1.` 是授权链接(邀请号 + 令牌),网页这边**不解析、不读取、不发送**它:
+// 只认出前缀、亮出「请用 MedMe App 打开」那一屏。下面的主脚本不认这个前缀,
+// 托管查看器里会原样 return(见 `if (!selfContained) return;`)。
 (function () {
   var h = location.hash;
   if (h && /^#(q1\.|q2\.|c1\.)/.test(h)) {
     document.documentElement.className += " payload";
+  } else if (h && h.indexOf("#g1.") === 0) {
+    document.documentElement.className += " grantlink";
   }
 })();
 </script>
@@ -219,12 +235,46 @@
   .rn { font-weight: 600; font-size: 14px; } .rf { color: #94a3b8; font-size: 11.5px; font-variant-numeric: tabular-nums; }
   .rv { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 15px; } .rv.bad { color: #be123c; }
   .ev2 { cursor: pointer; color: #1560a8; font-size: 11.5px; border: 1px solid #c8ebf1; background: #f0fafe; border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
+  /* 「需核对」——不可点(不跳原件),也**不用**偏高/偏低那套红:那是化验结论的颜色,
+     借来会被读成一档临床判断。这枚 chip 说的是"MedMe 没能替你核对这个数"。 */
+  .nr2 { color: #92400e; font-size: 11.5px; border: 1px solid #fcd9a4; background: #fffaf0; border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
   .med2 { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
   .md { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; } .md.on { background: #1789c1; } .md.off { background: #94a3b8; }
   .mn { font-weight: 600; font-size: 14px; } .mn.off { color: #94a3b8; text-decoration: line-through; }
   .mmv { color: #94a3b8; font-size: 12.5px; }
   .mt2 { margin-left: auto; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 6px; }
   .mt2.on { color: #1560a8; background: #e6f6fa; } .mt2.off { color: #94a3b8; background: #eef2f6; }
+  /* 病程档案(Task 23)—— 复用 summary 的白卡语言,只补这一块自己的行与记号 */
+  .pf { margin-bottom: 22px; }
+  .pf-top { font-size: 15px; font-weight: 700; color: #1e293b; margin: 0 2px 10px; }
+  .pf-ver { font-size: 11px; font-weight: 400; color: #94a3b8; margin-left: 8px; font-variant-numeric: tabular-nums; }
+  .pf-sec { margin-bottom: 12px; }
+  .pf-sec > .sum-h { margin-bottom: 8px; }
+  .pf-hint { font-size: 13.5px; color: #64748b; }
+  .pf-row { display: flex; gap: 8px; padding: 4px 0; align-items: flex-start; }
+  .pf-bd { flex: 1; min-width: 0; }
+  .pf-mk { width: 14px; flex-shrink: 0; font-size: 12px; line-height: 1.75; color: #94a3b8; text-align: center; }
+  .pf-mk.ok { color: #1560a8; } .pf-mk.no { color: #be123c; } .pf-mk.un { color: #94a3b8; }
+  .pf-lb { font-size: 14px; color: #1e293b; line-height: 1.5; }
+  .pf-meta { color: #94a3b8; font-size: 11.5px; font-variant-numeric: tabular-nums; line-height: 1.6; }
+  .pf-long { font-size: 12.5px; color: #1e293b; line-height: 1.65; margin-top: 2px; }
+  .pf-ind { margin-left: 22px; } .pf-ind2 { margin-left: 22px; } .pf-top { margin-top: 8px; }
+  .pf-sub { font-size: 11px; letter-spacing: .06em; color: #94a3b8; font-weight: 700; margin: 10px 0 2px; }
+  .pf-sub:first-child { margin-top: 0; }
+  .pf-grp { font-weight: 700; font-size: 13.5px; color: #1e293b; margin: 10px 0 2px; }
+  .pf-grp.pf-flat { margin: 0; }
+  .pf-pill { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 6px; color: #64748b; background: #eef2f6; white-space: nowrap; }
+  .pf-pill.src { color: #1560a8; background: #e6f6fa; }
+  /* 「待核 / 逾期」用琥珀色:说的是"这里缺信息 / 该去补",不是化验结论的红 */
+  .pf-pill.warn { color: #92400e; background: #fffaf0; }
+  .pf-score { font-size: 24px; color: #94a3b8; font-variant-numeric: tabular-nums; }
+  .pf-score b { font-size: 30px; color: #1e293b; }
+  .pf-chiprow { margin: 2px 0 4px; }
+  .pf-div { border-top: 1px solid #eef2f6; margin: 8px 0 4px; }
+  .pf-src { margin-top: 4px; }
+  .pf-srcline { font-size: 12px; color: #64748b; line-height: 1.7; padding: 0 12px 6px; word-break: break-word; }
+  .pf-src summary { padding: 9px 12px; font-size: 12.5px; color: #94a3b8; cursor: pointer; }
+  .pf-disc { margin: 8px 2px 0; font-size: 12px; color: #94a3b8; line-height: 1.7; }
 </style>
 </head>
 <body>
@@ -232,6 +282,13 @@
 <!-- 等待态:静态写在页面里,首帧即可见。内容出现或出错时由脚本移除 .payload 收起。
      这不是装样子 —— 取几 MB 密文 + 本地解密确实要时间,用户有权知道在等什么。 -->
 <div id="payload-wait"><div class="sp"></div><div>正在取回病历…</div></div>
+<!-- 授权链接(`#g1.`)落到网页上时的唯一出口:这条链接只有 MedMe App 能兑换,
+     网页既不读它、也不向任何地方发送它。由首屏那段脚本按前缀加 class 显示。 -->
+<div id="grant-hint">
+  <h1>这是一个 MedMe 授权链接</h1>
+  <p>请用 <b>MedMe App</b> 打开这条链接:在手机上装好 MedMe 之后,重新点开给你的那条链接(或在 App 里扫一次那个二维码),就能接受这份病历授权。</p>
+  <p>还没有 MedMe?<a href="../download.html">下载 MedMe →</a></p>
+</div>
 <div id="gate" class="gate">
   <div class="gate-card">
     <div class="brand-row" style="margin-bottom:6px">
@@ -760,6 +817,21 @@ function openDicomViewer(slices, name) {
 const SUM_MN = s => { const a = String(s || "").split("-"); return (+a[0]) * 12 + ((+a[1] || 1) - 1); };
 function sumFlag(v, lo, hi) { return (hi != null && v > hi) || (lo != null && v < lo); }
 
+// 参考区间的显示文本。**两头都要说。**
+//
+// 老写法只印一头(`lo != null ? "≥"+lo : …`),于是下限为 0 的区间 —— CRP 0–5、
+// 抗 dsDNA 0–30 —— 被印成「参考 ≥0」,等于告诉医生这条线没有上限。两头都没有时
+// 返回空串,调用方据此**连「参考」两个字都不印**(印一个光秃秃的「参考 」更难读)。
+//
+// 摘要(`renderSummary`)与病程档案(`pfSeriesChart`)共用这一个 —— 它们画在**同一页**上,
+// 各写一套的下场就是同一个指标在上下两块里给出两种参考区间。
+function refRangeText(lo, hi) {
+  if (lo != null && hi != null) return lo + "–" + hi;
+  if (lo != null) return "≥" + lo;
+  if (hi != null) return "<" + hi;
+  return "";
+}
+
 function sparkSVG(L) {
   const W = 190, H = 42, padL = 4, padR = 32, padT = 6, padB = 12;
   const pts = L.pts || []; if (!pts.length) return "";
@@ -854,6 +926,18 @@ function renderSummary(sm, asOf, patient) {
   const STEP = 12 / SPAN * 100;
   const gridBg = "repeating-linear-gradient(90deg,#eef2f6 0 1px,transparent 1px " + STEP.toFixed(3) + "%)";
   const evChip = ev => (ev && ev.length) ? '<span class="ev2" data-ev="' + (ev[0] | 0) + '">原件</span>' : "";
+  // 「需核对」:一条点是 [日期, 值],第三格 === true 表示这个值是云端整理出来的、
+  // 本机**没能逐字核对上**(spec §4;`handoff.rs` 的 points_json)。手机端对这样的
+  // 值加了同名 chip,医生这端不能让它看起来和已核实的值一模一样。
+  // `needsReviewCount` 是整条序列里这样的点数:最新那个值自己核实过、但更早的没有
+  // 时,标记照样要出——否则只看最新值的人会以为整条都核实过——并用计数说明有几个。
+  // 这枚 chip 不可点(不是 `.ev2` 那种跳原件的链接),说的是 MedMe 自己的话。
+  const nrChip = (L, last) => {
+    const n = L.needsReviewCount | 0;
+    if (last[2] !== true && !n) return "";
+    return '<span class="nr2" title="这个值由云端整理得出,MedMe 没能逐字核对上,请以原件为准">需核对'
+      + (n > 1 ? " ×" + n : "") + '</span>';
+  };
 
   let axis = "";
   for (let y = minYear; y <= maxYear; y++) { const xp = Math.max(2, Math.min(98, X(y * 12))); axis += '<div class="sum-yr" style="left:' + xp.toFixed(2) + '%">' + y + '</div>'; }
@@ -887,10 +971,11 @@ function renderSummary(sm, asOf, patient) {
         db += '<div class="bh">相关化验</div>';
         shownLabs.forEach(L => {
           const pts = L.pts; const last = pts[pts.length - 1], bad = sumFlag(last[1], L.refLow, L.refHigh);
-          const refTxt = L.refLow != null ? "≥" + L.refLow : (L.refHigh != null ? "<" + L.refHigh : "");
-          db += '<div class="lr2"><div style="flex:1;min-width:0"><div class="rn">' + esc(L.name) + '</div><div class="rf">参考 ' + esc(refTxt) + ' ' + esc(L.unit || "") + '</div></div>'
+          const refTxt = refRangeText(L.refLow, L.refHigh);
+          db += '<div class="lr2"><div style="flex:1;min-width:0"><div class="rn">' + esc(L.name) + '</div><div class="rf">'
+            + [refTxt ? "参考 " + esc(refTxt) : "", esc(L.unit || "")].filter(x => x).join(" ") + '</div></div>'
             + sparkSVG(L)
-            + '<div style="text-align:right;min-width:52px"><span class="rv' + (bad ? " bad" : "") + '">' + last[1] + '</span><div class="rf">' + esc(last[0]) + " " + evChip(L.evidence) + '</div></div></div>';
+            + '<div style="text-align:right;min-width:52px"><span class="rv' + (bad ? " bad" : "") + '">' + last[1] + '</span><div class="rf">' + esc(last[0]) + " " + nrChip(L, last) + " " + evChip(L.evidence) + '</div></div></div>';
         });
       }
       if ((pr.meds || []).length) {
@@ -1100,6 +1185,351 @@ function renderImaging(imaging, records) {
   return h + '</div>';
 }
 
+// ── 病程档案(Task 23)─────────────────────────────────────────────────────
+// `payload.profile` = `profile::ProfileView` 的 JSON,由患者手机在**出码前**算好、
+// 随同一份密文一起送过来(`share.rs::build_own_share_blob_with_profile`)。老分享包
+// 没有这个键 —— 那时一行都不画,不报错、不画空块。
+//
+// ## 这一段里不许出现的东西
+//
+// **任何一句写死的病种文案。** 标题、空态提示、每条规则的措辞全部读 section 自己的
+// `title`/`empty_hint`/body 字段,与手机端渲染引擎(`lib/widgets/profile_sections.dart`)
+// 同一条规矩:加一个病不发版。这里允许出现的中文字面量只有**引擎级、跨病种通用**的
+// 结构词(下面那四张枚举表 + 「激素」「羟氯喹」两个固定 schema key 的药物类名),
+// 它们与手机端**逐字相同** —— 两边各写一套词,医生会以为是两个东西。
+//
+// ## 认不出的 kind
+//
+// 整块跳过,不抛异常 —— 给引擎日后加新 kind 留后路(手机端同款)。
+//
+// ## 数值原则
+//
+// 能拿到化验单原文那个字符串的地方(`evidence[].value`)一律显示那个字符串,不显示
+// 旁边算好的 `value_canonical`。其余算出来的数(`score`/`mg_per_kg`)原样打印,不在
+// 这里四舍五入。每个值旁边显示它的出处 id,全文在末尾的「出处」里。
+//
+// 五张表都建在 **null 原型**上(`Object.create(null)`):普通对象字面量遇到
+// `verdict === "constructor"` 这种键会取到 `Object` 函数,而记号是**不转义**拼进
+// HTML 的 —— 结果是医生那一行上多出一串 `function Object() { [native code] }`。
+// 载荷来自我们自己的引擎,但它是解密出来的、可被构造的东西,不该靠「引擎不会这么写」。
+const PF_BASIS = Object.assign(Object.create(null), { guideline: "指南", label: "说明书", literature: "文献", package_default: "包默认" });
+const PF_VERDICT = Object.assign(Object.create(null), { yes: "满足", no: "未满足", unknown: "未知" });
+const PF_REM_STATE = Object.assign(Object.create(null), { overdue: "逾期", never: "没查到", unknown: "未知", pending: "待核" });
+const PF_TL_TYPE = Object.assign(Object.create(null), { flare: "复发", hospitalization: "住院", biopsy: "活检", infusion: "输注", dose_change: "调整用药", infection: "感染", pregnancy: "妊娠" });
+const PF_WEIGHT_SRC = Object.assign(Object.create(null), { self_reported: "自测", record: "病历" });
+// 判定 → 记号。与手机端的图标一一对应(✔/✘/?),达标表逐条对照、不下结论。
+const PF_MARK = Object.assign(Object.create(null), { yes: '<span class="pf-mk ok">✔</span>', no: '<span class="pf-mk no">✘</span>', unknown: '<span class="pf-mk un">?</span>' });
+
+function pfArr(v) { return Array.isArray(v) ? v : []; }
+function pfObj(v) { return (v && typeof v === "object" && !Array.isArray(v)) ? v : {}; }
+// 数值/文本一律先转字符串再转义:载荷是「对方递过来的任意密文」,一个本该是数字的
+// 字段完全可以是一段 HTML(issue #143 在 record_count 上踩过)。
+function pfTxt(v) { return (v === null || v === undefined) ? "" : esc(String(v)); }
+function pfMark(verdict) { return PF_MARK[verdict] || PF_MARK.unknown; }
+function pfPill(text, cls) { return text ? '<span class="pf-pill' + (cls ? " " + cls : "") + '">' + esc(text) + "</span>" : ""; }
+function pfSrc(id) { return (id === null || id === undefined || id === "") ? "" : "出处 " + String(id); }
+// 次要说明行:日期、出处这类信息,`·` 分隔,空值自动跳过(手机端 `_metaLine` 同款)。
+function pfMeta(parts) {
+  const items = parts.filter(s => typeof s === "string" && s.length > 0);
+  return items.length ? '<div class="pf-meta">' + items.map(esc).join(" · ") + "</div>" : "";
+}
+function pfSpan(since, asOf) {
+  return [since, asOf].filter(s => typeof s === "string" && s.length > 0).join(" – ");
+}
+// 一行条目:记号 + 标题(可带一枚 pill)+ 次要说明行 + 可选整段长文本。
+// **长文本永远独占一行**,不挤在标题右边(手机端 `_ItemRow` 同款)。
+function pfRow(mark, label, trailing, meta, longText) {
+  let h = '<div class="pf-row">' + (mark || '<span class="pf-mk"></span>') + '<div class="pf-bd">';
+  h += '<div class="pf-lb">' + label + (trailing ? " " + trailing : "") + "</div>";
+  h += pfMeta(meta || []);
+  if (longText) h += '<div class="pf-long">' + esc(longText) + "</div>";
+  return h + "</div></div>";
+}
+// `evidence[]` → 一行可读文本:**原文字符串** `value`(不是算好的 `value_canonical`)
+// + 单位 + 日期。数值旁边永远带它的日期(手机端 `_evidenceText` 同款)。
+function pfEvidence(ev) {
+  const items = pfArr(ev).map(e => {
+    const u = typeof e.unit === "string" ? e.unit : "";
+    const head = String(e.value === null || e.value === undefined ? "" : e.value) + (u ? " " + u : "");
+    const d = typeof e.date === "string" ? e.date : "";
+    return d ? head + " · " + d : head;
+  }).filter(s => s.length > 0);
+  return items.length ? items.join("; ") : "";
+}
+
+// status_card —— 现行方案
+function pfStatusCard(body) {
+  const gc = pfObj(body.gc), hcq = body.hcq ? pfObj(body.hcq) : null;
+  const others = pfArr(body.others), lastVisit = body.last_visit ? pfObj(body.last_visit) : null;
+  let h = "";
+
+  const targets = pfArr(gc.targets), unconv = pfArr(gc.unconvertible);
+  if (gc.drug || targets.length || unconv.length) {
+    // 「激素」「羟氯喹」是 `status_card` 两个固定 schema key 的药物类名(引擎级,
+    // 不是哪个包自己的措辞),与手机端逐字相同。
+    h += '<div class="pf-sub">激素</div>';
+    if (gc.drug) {
+      const head = [gc.drug, gc.dose, gc.daily_pred_equiv_mg === null || gc.daily_pred_equiv_mg === undefined
+        ? null : "(等效 " + gc.daily_pred_equiv_mg + " mg/日)"].filter(x => x !== null && x !== undefined && x !== "");
+      h += pfRow("", pfTxt(head.join(" ")), "", [pfSpan(gc.since, gc.as_of)], null);
+    } else if (!unconv.length) {
+      h += pfRow("", "激素", "", [], typeof gc.blocked_reason === "string" ? gc.blocked_reason : null);
+    }
+    targets.forEach(t => {
+      h += '<div class="pf-meta pf-ind">维持目标 ' + pfTxt(t.value) + " mg/日 · " + pfTxt(t.label) + "</div>";
+    });
+    // `reason` 是引擎给的原串(如「换算表待核」),原样显示,不另写一句。
+    unconv.forEach(u => {
+      h += pfRow('<span class="pf-mk no">!</span>', pfTxt([u.name, u.dose].filter(x => x).join(" ")), "", [],
+        typeof u.reason === "string" ? u.reason : null);
+    });
+  }
+
+  if (hcq) {
+    h += '<div class="pf-sub">羟氯喹</div>';
+    if (hcq.daily_mg !== null && hcq.daily_mg !== undefined) {
+      const wsrc = PF_WEIGHT_SRC[hcq.weight_source];
+      h += pfRow("", pfTxt([hcq.dose, hcq.daily_mg + " mg/日"].filter(x => x).join(" ")), "", [
+        hcq.dose_at ? "剂量 " + hcq.dose_at : "",
+        (hcq.weight_kg === null || hcq.weight_kg === undefined) ? ""
+          : "体重 " + hcq.weight_kg + " kg" + (wsrc ? "(" + wsrc + ")" : "") + (hcq.weight_at ? " " + hcq.weight_at : ""),
+        (hcq.mg_per_kg === null || hcq.mg_per_kg === undefined) ? ""
+          : "mg/kg " + hcq.mg_per_kg + ((hcq.target === null || hcq.target === undefined) ? "" : "(目标 ≤ " + hcq.target + ")"),
+      ], null);
+    } else {
+      h += pfRow("", "羟氯喹", "", [], typeof hcq.reason === "string" ? hcq.reason : null);
+    }
+    // `label_rule_pending` 只能显示成「待核」,不许显示成任何一种判定(fail closed)。
+    if (typeof hcq.label_rule === "string" && hcq.label_rule) {
+      h += '<div class="pf-meta pf-ind">说明书:' + esc(hcq.label_rule) + " "
+        + pfPill(hcq.label_rule_pending === true ? "待核" : "已核对", hcq.label_rule_pending === true ? "warn" : "") + "</div>";
+    }
+  }
+
+  others.forEach(o => {
+    // 给药途径的 key(`iv`/`sc`)必须留着:同一个药不同途径的剂量常常不一样,
+    // 丢了 key 只拼 value 会把两句话读成一句。
+    const inf = o.infusion ? Object.keys(pfObj(o.infusion)).map(k => k + ": " + pfObj(o.infusion)[k]).join(" / ") : "";
+    h += pfRow("", pfTxt([o.name, o.latest_dose].filter(x => x).join(" ")), "", [pfSpan(o.since, o.as_of)], inf || null);
+  });
+
+  if (lastVisit) {
+    // 只是「最近一份病历」,不是「上次就诊」—— 这里没有科室信息,不许替它加一个没有的意思。
+    h += '<div class="pf-meta pf-top">' + ["最近一份病历", lastVisit.date, lastVisit.title]
+      .filter(s => typeof s === "string" && s.length > 0).map(esc).join(" · ") + "</div>";
+  }
+  return h;
+}
+
+// score_card —— 活动度(化验可算部分)
+function pfScoreCard(body) {
+  let h = '<div class="pf-score"><b>' + pfTxt(body.score) + "</b> / " + pfTxt(body.max) + "</div>";
+  h += '<div class="pf-meta pf-chiprow">' + (body.label ? pfPill(String(body.label), "src") + " " : "")
+    + [(body.window_days === null || body.window_days === undefined) ? "" : "窗口 " + body.window_days + " 天",
+       typeof body.as_of === "string" ? body.as_of : ""].filter(s => s).map(esc).join(" · ") + "</div>";
+  const hits = pfArr(body.hits), missed = pfArr(body.missed), unscored = pfArr(body.unscored);
+  if (!hits.length && !missed.length && !unscored.length) return h;
+  h += '<div class="pf-div"></div>';
+  hits.forEach(x => {
+    h += pfRow(pfMark("yes"), pfTxt(x.label),
+      (x.weight === null || x.weight === undefined) ? "" : pfPill("+" + x.weight + " 分", ""),
+      [pfSrc(x.source)], pfEvidence(x.evidence) || null);
+    // `caveat`(临床限定语)与证据行是两句不同的话,原样单独成行,不拼进证据里。
+    if (typeof x.caveat === "string" && x.caveat) h += '<div class="pf-long pf-ind">' + esc(x.caveat) + "</div>";
+  });
+  // `Missed`(`rules.rs:160`)与 `Unscored`(`rules.rs:170`)**没有** `source` 字段
+  // (只有 `Hit` 有),所以这两行不带出处 —— 以前这里各挂一个 `pfSrc(x.source)`,恒为空。
+  missed.forEach(x => { h += pfRow(pfMark("no"), pfTxt(x.label), "", [], pfEvidence(x.evidence) || null); });
+  // 算不出来的那几条**永远说明白为什么**(`reason`),空着会被读成「查了没事」。
+  unscored.forEach(x => {
+    h += pfRow(pfMark("unknown"), pfTxt(x.label), pfPill(PF_VERDICT.unknown, ""), [],
+      typeof x.reason === "string" ? x.reason : null);
+  });
+  return h;
+}
+
+// series_chart —— 指标趋势。复用 summary 那套折线(`sparkSVG`)与 `.lr2` 行,
+// 医生在同一页里看到的是同一种图。
+function pfSeriesChart(body) {
+  let h = "";
+  pfArr(body.groups).forEach(g => {
+    h += '<div class="pf-grp">' + pfTxt(g.name) + "</div>";
+    pfArr(g.series).forEach(s => {
+      const unit = typeof s.unit === "string" ? s.unit : "";
+      const name = (typeof s.name === "string" && s.name) ? s.name : (typeof s.analyte_key === "string" ? s.analyte_key : "");
+      // 只画有日期的数值点(没日期的另有 `undated` 计数)。sparkSVG 的横轴按**月**
+      // 取点,但值旁边那行**必须是原始日期** —— 把 2026-09-10 显示成 2026-09 是在
+      // 一份要拿去看病的东西上抹掉一天。
+      const dated = pfArr(s.points)
+        .filter(p => typeof p.value === "number" && typeof p.date === "string" && /^\d{4}-\d{2}/.test(p.date));
+      const L = {
+        pts: dated.map(p => [p.date.slice(0, 7), p.value]),
+        refLow: typeof s.ref_low === "number" ? s.ref_low : null,
+        refHigh: typeof s.ref_high === "number" ? s.ref_high : null,
+      };
+      const last = dated.length ? dated[dated.length - 1] : null;
+      const bad = last ? sumFlag(last.value, L.refLow, L.refHigh) : false;
+      // 参考区间两头都说,与摘要那块共用同一个 `refRangeText`。
+      const refTxt = refRangeText(L.refLow, L.refHigh);
+      const nr = (s.needs_review_count | 0) > 0
+        ? '<span class="nr2" title="这个值由云端整理得出,MedMe 没能逐字核对上,请以原件为准">需核对 ×' + (s.needs_review_count | 0) + "</span>" : "";
+      // 「已换算」:这条线上混了不同印刷单位,画的是统一后的规范单位 —— 病人在自己
+      // 那张化验单上找不到这个数。手机端同一枚标记。
+      const cv = s.values_converted === true ? pfPill("已换算", "") : "";
+      h += '<div class="lr2"><div style="flex:1;min-width:0"><div class="rn">'
+        + [esc(name), nr, cv].filter(x => x).join(" ")
+        + '</div><div class="rf">' + [refTxt ? "参考 " + esc(refTxt) : "", esc(unit)].filter(x => x).join(" ") + "</div></div>"
+        + (L.pts.length ? sparkSVG(L) : "")
+        + '<div style="text-align:right;min-width:52px">'
+        + (last ? '<span class="rv' + (bad ? " bad" : "") + '">' + pfTxt(last.value) + '</span><div class="rf">' + esc(last.date) + "</div>" : "")
+        + "</div></div>";
+      const undated = pfArr(s.undated).length, future = s.future_points | 0;
+      h += pfMeta([undated ? "另有 " + undated + " 项没有日期" : "", future > 0 ? future + " 项日期在未来" : ""]);
+      // 定性结果(阴/阳性这类)没有数可画,原文逐字列出来。
+      pfArr(s.qualitative).forEach(q => {
+        h += '<div class="pf-meta">' + [q.date, q.value].filter(x => x !== null && x !== undefined && x !== "")
+          .map(x => esc(String(x))).join(" · ") + "</div>";
+      });
+    });
+  });
+  // 「没查到」= 这个指标在这些病历里一条都没有,不等于没查过。
+  pfArr(body.missing).forEach(m => {
+    h += '<div class="pf-meta">没查到 · ' + pfTxt((typeof m.name === "string" && m.name) ? m.name : m.key) + "</div>";
+  });
+  return h;
+}
+
+// reminders —— 待补 / 逾期
+function pfReminders(body) {
+  let h = "";
+  pfArr(body.items).forEach(it => {
+    // `pending:true` = 这条规则的数没核实,只显示不算到期 —— 永远显示成「待核」,
+    // 不许显示成一个算出来的到期日。
+    const pending = it.pending === true;
+    const state = pending ? "待核" : (PF_REM_STATE[it.state] || PF_VERDICT.unknown);
+    const basis = PF_BASIS[it.basis] || (typeof it.basis === "string" ? it.basis : "");
+    const text = [it.text, it.action, it.id].filter(x => typeof x === "string" && x)[0] || "";
+    const ds = it.disease_state === "active" ? "活动期" : (it.disease_state === "stable" ? "稳定期" : "");
+    h += pfRow("", pfTxt(text),
+      pfPill(state, (pending || it.state === "overdue") ? "warn" : "") + (basis ? " " + pfPill(basis, "src") : ""),
+      [(!pending && it.state === "overdue" && it.overdue_days !== null && it.overdue_days !== undefined)
+        ? "超期 " + it.overdue_days + " 天" : "",
+       ds, pfSpan(it.since, it.as_of), pfSrc(it.source)],
+      typeof it.reason === "string" ? it.reason : null) + pfNote(it.note);
+  });
+  return h;
+}
+
+// timeline —— 病程时间轴
+function pfTimelineEvent(e) {
+  const typeLabel = PF_TL_TYPE[e.type] || "";
+  const text = typeof e.text === "string" ? e.text : "";
+  const mark = e.severity === "high" ? '<span class="pf-mk no">▲</span>' : '<span class="pf-mk">•</span>';
+  return pfRow(mark, pfTxt(text || typeLabel || e.type),
+    (typeLabel && text ? pfPill(typeLabel, "") : "")
+    + (e.unverified === true ? ' <span class="nr2">需核对</span>' : ""),
+    [typeof e.date === "string" ? e.date : ""], null);
+}
+function pfTimeline(body) {
+  let h = "";
+  pfArr(body.years).forEach(y => {
+    h += '<div class="pf-grp">' + pfTxt(y.year) + "</div>";
+    pfArr(y.events).forEach(e => { h += pfTimelineEvent(e); });
+  });
+  // 没有日期的事件**必须自己一组**。跟在最后一个年份后面等于把它们说成那一年发生的:
+  // 一条没有日期的「肾活检」排在 `2026` 表头下、和 2026-03-01 的复发并排,医生只会
+  // 读成 2026 年做的活检。引擎的原意是「不进年,但不丢」(`rules.rs::timeline_section`)。
+  // 「日期不详」是**引擎级结构词**,不是哪个病的措辞;手机端同一个词。
+  const undated = pfArr(body.undated);
+  if (undated.length) {
+    h += '<div class="pf-grp">日期不详</div>';
+    undated.forEach(e => { h += pfTimelineEvent(e); });
+  }
+  return h;
+}
+
+// checklist —— 达标情况 / 里程碑(同一个 kind,复用同一套渲染)
+function pfChecklistItem(it) {
+  const actual = (it.actual === null || it.actual === undefined) ? ""
+    : String(it.actual) + (typeof it.actual_unit === "string" && it.actual_unit ? " " + it.actual_unit : "");
+  return pfRow(pfMark(it.verdict), pfTxt(it.label), pfPill(PF_VERDICT[it.verdict] || PF_VERDICT.unknown, ""),
+    // 数值旁边永远带它的日期与出处。
+    [actual, typeof it.actual_at === "string" ? it.actual_at : "", pfSrc(it.source)],
+    // `reason` 只有 unknown 才有,原样显示。
+    typeof it.reason === "string" ? it.reason : null) + pfNote(it.note);
+}
+// 包里那条「与指南口径有差」的话(`gfr_80_baseline.note` 的 ⚠️ 段)。引擎特意把包的
+// `note` 原样带进 body,**就是要医生看见**;与 `caveat` 同一手法:单独成行、原样逐字,
+// 不拼进 `reason` 里。
+function pfNote(note) {
+  return (typeof note === "string" && note) ? '<div class="pf-long pf-ind">' + esc(note) + "</div>" : "";
+}
+function pfChecklist(sectionId, body) {
+  // 按 `section.id` 认里程碑表,body 形状只当兜底 —— 两块 checklist 复用同一个 kind,
+  // id 才是渲染层认它们的唯一钥匙(手机端同一条)。
+  if (sectionId === "ln_milestones" || ((body.states === null || body.states === undefined) && body.items)) {
+    return pfArr(body.items).map(pfChecklistItem).join("");
+  }
+  let h = "";
+  pfArr(body.states).forEach((st, i) => {
+    if (i > 0) h += '<div class="pf-div"></div>';
+    // 组头只用记号提示走向,**不重复** item 已经在下面逐条说的「满足/未满足/未知」——
+    // 「逐条对照,不下结论」不该在组一级再喊一遍。
+    h += '<div class="pf-row">' + pfMark(st.verdict) + '<div class="pf-bd"><div class="pf-grp pf-flat">' + pfTxt(st.label) + "</div></div></div>";
+    h += '<div class="pf-ind2">' + pfArr(st.items).map(pfChecklistItem).join("") + "</div>";
+  });
+  return h;
+}
+
+function pfSection(s) {
+  const kind = s.kind;
+  const title = typeof s.title === "string" ? s.title : "";
+  // 空态:折叠成一行,**原样**显示包给的 `empty_hint`,不拼标题上去。
+  if (typeof s.empty_hint === "string" && s.empty_hint) {
+    return '<div class="sum-card pf-sec">' + (title ? '<div class="sum-h">' + esc(title) + "</div>" : "")
+      + '<div class="pf-hint">' + esc(s.empty_hint) + "</div></div>";
+  }
+  const body = pfObj(s.body);
+  let inner;
+  if (kind === "status_card") inner = pfStatusCard(body);
+  else if (kind === "score_card") inner = pfScoreCard(body);
+  else if (kind === "series_chart") inner = pfSeriesChart(body);
+  else if (kind === "reminders") inner = pfReminders(body);
+  else if (kind === "timeline") inner = pfTimeline(body);
+  else if (kind === "checklist") inner = pfChecklist(typeof s.id === "string" ? s.id : null, body);
+  // `handoff`:spec §6 的第 7 种。**今天引擎一块都不产** —— `rules.rs` 没有
+  // `handoff_section`,`ProfileView` 里也没有 `views` 字段,golden 里一块都没有。
+  // 所以这里什么都不画,与「认不出的 kind」同一个结果;**但它是一个有名字的分支**:
+  // 哪天引擎真开始产这一块,改的是这一行,而不是有人先花半天查「为什么医生那屏
+  // 少了一块」(在仓库里 grep `handoff` 就会撞见这段话)。
+  // 引擎产出 + 两端按 `views.handoff` 排序 = 单独一个后续任务,不在本轮。
+  else if (kind === "handoff") return "";
+  else return ""; // 认不出的 kind:整块跳过,不抛异常
+  // `inner` 为空但包**没给** `empty_hint`,是引擎的一个决定(`rules.rs` 的 timeline:
+  // 读到过处方就不许说「还没有记录」)。那就出一张只有标题的空卡 —— 与手机端同款,
+  // 查看器既不替它编一句话,也不让整块消失。
+  return '<div class="sum-card pf-sec">' + (title ? '<div class="sum-h">' + esc(title) + "</div>" : "") + inner + "</div>";
+}
+
+function renderProfile(pv) {
+  const sections = pfArr(pv.sections).map(pfSection).join("");
+  if (!sections) return "";
+  // 标题是包给的病名(`display_name`),不是查看器写死的任何一句话。
+  let h = '<div class="pf"><div class="pf-top">' + esc(typeof pv.display_name === "string" ? pv.display_name : "")
+    + '<span class="pf-ver">' + pfTxt(pv.package_version) + "</span></div>";
+  h += sections;
+  // 出处全文:卡片上那些「出处 S12」在这里查得到。
+  const sources = pfArr(pv.sources);
+  if (sources.length) {
+    h += '<details class="sum-emr pf-src"><summary>出处(' + sources.length + " 条)▾</summary><div>"
+      + sources.map(s => '<div class="pf-srcline"><b>' + pfTxt(s.id) + "</b> " + pfTxt(s.cite) + "</div>").join("")
+      + "</div></details>";
+  }
+  // 免责声明逐字来自包,放在最后 —— 查看器不改一个字。
+  if (typeof pv.disclaimer === "string" && pv.disclaimer) h += '<div class="pf-disc">' + esc(pv.disclaimer) + "</div>";
+  return h + "</div>";
+}
+
 function render(payload) {
   // 内容要出来了,收起首屏等待态(render 是所有载荷路径的共同出口)。
   document.documentElement.classList.remove("payload");
@@ -1160,6 +1590,9 @@ function render(payload) {
     html += renderSummary(payload.summary, payload.generated, payload.patient);
     html += renderImaging(payload.summary.imaging, records); // 影像检查 · 按部位/时间
   }
+
+  // 病程档案(可选)。老分享包没有这个键 —— 一行都不多画。
+  if (payload.profile) html += renderProfile(payload.profile);
 
   // 全部原件:有 summary 时默认折叠(医生先看泳道 + 影像,原件按需展开);无 summary 时展开(唯一视图)。
   html += '<details class="allrecs"' + (hasSummary ? '' : ' open') + '>'

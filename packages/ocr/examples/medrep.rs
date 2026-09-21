@@ -26,11 +26,19 @@
 //
 // ## 跑法
 //
+// 先 `export MEDREP_ROOT=<medrepbench 下载目录>`(内容见下一节)。
+//
 // ```
 // cargo run --release -p ocr --example medrep --features engine,testing -- \
 //   --produce --models <结构模型目录> [--limit N]
 // cargo run --release -p ocr --example medrep --features engine,testing -- --score
 // ```
+//
+// ## `MEDREP_ROOT` 下何处找到什么
+//
+// `$MEDREP_ROOT/gt.tsv`(`medrep_make_gt.py` 生成)、`$MEDREP_ROOT/images/`
+// (原始报告图,按需从 HF `MedRepBench/MedRepBench` 数据集下载)、
+// `$MEDREP_ROOT/<out>/arm{1,2,3}_*/`、`arm4_llm/deepseek-<text|image>/`(各臂产出)。
 
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
@@ -40,7 +48,13 @@ use std::time::Instant;
 use oar_ocr::domain::tasks::LayoutDetectionConfig;
 use oar_ocr::prelude::OARStructureBuilder;
 
-const ROOT: &str = "/private/tmp/claude-501/-Volumes-extraSupply-Projects-openmed/3c224b0f-768e-498c-b5ef-328c3ba3b549/scratchpad/datasets/medrepbench";
+/// medrepbench 下载目录(gt.tsv、images/、各臂产出都在它下面)。之前这里是个
+/// 写死的 scratchpad 路径,那个 scratchpad 早被清了,写死也没意义——换成环境
+/// 变量,谁跑谁指定自己机器上的下载位置。
+fn root() -> String {
+    std::env::var("MEDREP_ROOT")
+        .expect("设置 MEDREP_ROOT=<medrepbench 目录>(见本文件头注释「MEDREP_ROOT 下何处找到什么」)")
+}
 
 const VALUE_EPS: f64 = 0.01;
 
@@ -50,7 +64,7 @@ const VALUE_EPS: f64 = 0.01;
 /// 一个 `out/`,后跑的会覆盖先跑的,两边的 `--score` 就都在读对方的产出 ——
 /// 数字看着有变化,其实是串了。每条线用 `--out out_<线名>`,互不相干。
 fn out_root(name: &str) -> PathBuf {
-    PathBuf::from(ROOT).join(name)
+    PathBuf::from(root()).join(name)
 }
 
 /// 真值里的一条项目(已由 `make_gt.py` 规范化,参考区间的 18 种写法在那里统一解析)。
@@ -64,7 +78,7 @@ struct GtItem {
 }
 
 fn load_gt() -> Result<BTreeMap<String, Vec<GtItem>>> {
-    let text = std::fs::read_to_string(format!("{ROOT}/gt.tsv")).context("读 gt.tsv")?;
+    let text = std::fs::read_to_string(format!("{}/gt.tsv", root())).context("读 gt.tsv")?;
     let mut out: BTreeMap<String, Vec<GtItem>> = BTreeMap::new();
     for line in text.lines() {
         let c: Vec<&str> = line.split('\t').collect();
@@ -162,7 +176,7 @@ fn produce(models: &Path, limit: Option<usize>, out: &str) -> Result<()> {
     let mut arm_fail = [0usize; 3];
     let mut skipped = 0usize;
     for (i, doc) in docs.iter().enumerate() {
-        let img_path = PathBuf::from(ROOT).join("images").join(doc);
+        let img_path = PathBuf::from(root()).join("images").join(doc);
         let Ok(bytes) = std::fs::read(&img_path) else {
             skipped += 1;
             continue;
@@ -476,6 +490,26 @@ fn score(out: &str) -> Result<()> {
         }
     }
 
+    // 样本为空必须**报错**,不能安静地打一张 0/0 的表。0/0 在 `pct` 里是 0.0%,
+    // 在「幻觉率 = 丢弃/总数」里也是 0.0% —— 后者会被读成"一条幻觉都没有",
+    // 而实际情况是一条都没跑到(典型原因:某条臂目录空、图片路径不对、产出
+    // 文件名与 gt.tsv 第一列对不上)。门是拿这些数字过的,宁可炸,不许给一个
+    // 好看的空数。
+    anyhow::ensure!(
+        counted_docs > 0,
+        "没有一份文档是**所有臂都产出**的(各臂目录:{}),分母为 0,拒绝出分。\
+         先确认每条臂的 <doc>.txt 都写出来了、文件名与 gt.tsv 第一列一致。",
+        arms.iter()
+            .map(|(n, d)| format!("{n}={}", d.display()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    anyhow::ensure!(
+        tally[0].recall.1 > 0,
+        "{counted_docs} 份文档里没有一条**可比条目**(词典认得 + 数值是纯数字),\
+         三条指标的分母为 0,拒绝出分。"
+    );
+
     let pct = |h: usize, d: usize| {
         if d == 0 {
             0.0
@@ -615,6 +649,123 @@ fn score(out: &str) -> Result<()> {
     println!();
     for (n, c) in miss.iter().take(40) {
         println!("- {c:>4}  {n}");
+    }
+
+    println!();
+    println!("## 第 ④ 臂(LLM)幻觉率——逐字校验不过的条目占比");
+    println!();
+    // 每份文档的 {doc}.halluc.json 由 medrep_llm.rs 写,这里跨全部文档累加,
+    // 不重新跑校验。
+    //
+    // **两个分母必须分开标注**(评审:原来分子跨全字段、分母只算 labs,比出来的
+    // 数没有意义):
+    //   - `labs_rejected/labs_total`:只看化验条目,与上面三条指标同一批对象。
+    //   - `all_rejected/all_total`:`deid::verify` 真正校验的全部对象 ——
+    //     labs + meds + diagnoses 三类条目,加 doc_date/impression/notes 三个
+    //     顶层标量字段。
+    // 文本档不过 = 丢弃(rejected);图片档不过 = 保留但标 unverified(待核)。
+    for (n, dir) in &arms {
+        if !n.starts_with("④") {
+            continue;
+        }
+        let mut s: BTreeMap<&str, u64> = BTreeMap::new();
+        let mut docs_with_usage = 0u64;
+        // 每份产出自报是哪个模型跑的(medrep_llm 的模型可由环境变量换)。
+        // 一个目录里出现两个模型名 = 两轮结果混在一起了,必须看得见。
+        let mut models: std::collections::BTreeSet<String> = Default::default();
+        for e in std::fs::read_dir(dir)?.flatten() {
+            let p = e.path();
+            // **只认 `.halluc.json`**,不是"任何 .json"。同目录下还有
+            // `{doc}.raw.json`(模型原话),按扩展名收会把它也数成一份产出,
+            // 分子全是 0、分母翻倍 —— 每份 token / 每份延迟直接砍半。
+            // (亲手踩过:第一版打出"用量 1363 份",实际 683 份。)
+            if !p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|f| f.ends_with(".halluc.json"))
+            {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&p)?)
+            else {
+                continue;
+            };
+            for k in [
+                "labs_total",
+                "labs_rejected",
+                "labs_unverified",
+                "all_total",
+                "all_rejected",
+                "all_unverified",
+                "prompt_tokens",
+                "completion_tokens",
+                "llm_ms",
+            ] {
+                *s.entry(k).or_default() += v[k].as_u64().unwrap_or(0);
+            }
+            if let Some(m) = v["model"].as_str() {
+                models.insert(m.to_string());
+            }
+            docs_with_usage += 1;
+        }
+        // 没有 halluc.json 的 ④ 目录 = **派生列**(如 `-verified`:同一批调用换个
+        // 渲染口径重写的行)。它没有自己的 API 调用,打 0/0 会被读成"一条幻觉都
+        // 没有" —— 正是零样本守卫要挡的那种假好数。指回母列,不出数。
+        if docs_with_usage == 0 {
+            println!("### {n}");
+            println!();
+            println!(
+                "- 派生列(没有自己的 API 调用,不单独计幻觉率/用量);\
+                 幻觉率与 token 见它的母列。"
+            );
+            println!();
+            continue;
+        }
+        let g = |k: &str| *s.get(k).unwrap_or(&0);
+        let rate = |r: u64, t: u64| {
+            if t > 0 {
+                r as f64 * 100.0 / t as f64
+            } else {
+                0.0
+            }
+        };
+        println!("### {n}");
+        println!();
+        println!(
+            "- 模型:{}",
+            if models.is_empty() {
+                "未记录于产出(这批是加 model 字段之前跑的,见 docs/log)".to_string()
+            } else {
+                models.iter().cloned().collect::<Vec<_>>().join(" + ")
+            }
+        );
+        println!(
+            "- 化验条目(labs_rejected/labs_total)= {}/{} = {:.1}%;待核 {}",
+            g("labs_rejected"),
+            g("labs_total"),
+            rate(g("labs_rejected"), g("labs_total")),
+            g("labs_unverified")
+        );
+        println!(
+            "- 全部校验对象(all_rejected/all_total)= {}/{} = {:.1}%;待核 {}",
+            g("all_rejected"),
+            g("all_total"),
+            rate(g("all_rejected"), g("all_total")),
+            g("all_unverified")
+        );
+        if docs_with_usage > 0 {
+            let d = docs_with_usage as f64;
+            println!(
+                "- 用量:{} 份,prompt {} + completion {} token(每份 {:.0});\
+                 LLM 每份 {:.2}s",
+                docs_with_usage,
+                g("prompt_tokens"),
+                g("completion_tokens"),
+                (g("prompt_tokens") + g("completion_tokens")) as f64 / d,
+                g("llm_ms") as f64 / 1000.0 / d
+            );
+        }
+        println!();
     }
     Ok(())
 }

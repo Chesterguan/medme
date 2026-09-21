@@ -4,13 +4,13 @@
 //
 // 用了 —— 但那条路只能拿截图肉眼看。这一条用例走的是
 // `TestPlatformDispatcher.textScaleFactorTestValue`,效果与系统字号一致,但
-// **可复现、可断言**:字号 × 视口 × 五个 tab 组合着扫,一次跑完把全部溢出点
+// **可复现、可断言**:字号 × 视口 × 三个 tab 组合着扫,一次跑完把全部溢出点
 // 报出来。
 //
 // ⚠️ RenderFlex 溢出走 `FlutterError.reportError`,`tester.takeException()`
 // **抓不到** —— 靠 `OverflowWatch` 挂 `FlutterError.onError`(见 harness)。
 //
-//     flutter test integration_test/journey_a11y_test.dart -d emulator-5554
+//     flutter test integration_test/journey_a11y_test.dart -d <device>
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,14 +52,12 @@ Future<void> seed() async {
   bumpVaultRevision();
 }
 
-/// 把五个 tab 都翻一遍(顺带滚一屏,让屏下的内容也参与布局)。
+/// 把三个 tab 都翻一遍(顺带滚一屏,让屏下的内容也参与布局)。
 Future<void> sweepTabs(WidgetTester tester) async {
   for (final (idx, label) in [
-    (HomeTab.overview, '概览'),
+    (HomeTab.records, '病历'),
     (HomeTab.trends, '趋势'),
-    (HomeTab.archive, '档案'),
-    (HomeTab.emergency, '应急卡'),
-    (HomeTab.settings, '设置'),
+    (HomeTab.me, '我'),
   ]) {
     selectedTab.value = idx;
     await waitFor(
@@ -83,7 +81,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   for (final scale in [1.0, 1.3, 1.5, 2.0]) {
-    testWidgets('系统字号 ×$scale:五个 tab + 看病带这个,全程无 RenderFlex 溢出', (
+    testWidgets('系统字号 ×$scale:三个 tab + 给医生看 + 录入弹层,全程无 RenderFlex 溢出', (
       tester,
     ) async {
       await resetEverything();
@@ -96,21 +94,15 @@ void main() {
       await withTextScale(tester, scale, () async {
         await sweepTabs(tester);
 
-        // 「看病带这个」浮层单独过一遍 —— 它是一屏里信息最密的地方。
-        // 概览刚被 `sweepTabs` 滚到了底,banner 不在可视区、`ListView` 也就
-        // 没构建它 —— 先滚回顶部。
-        selectedTab.value = HomeTab.overview;
-        await settle(tester, total: const Duration(seconds: 2));
-        await scrollToTop(tester);
-        await waitFor(tester, find.text('看病带这个'));
-        await tester.tap(find.text('看病带这个').first);
-        await settle(tester, total: const Duration(seconds: 3));
-        await waitFor(tester, find.text('复制全文给医生'),
-            timeout: const Duration(seconds: 40));
+        // 「给医生看」整页单独过一遍 —— 它是一屏里信息最密的地方,而且底部还
+        // 钉着一颗主按钮(大字号下最容易把正文挤没)。
+        // 「病历」刚被 `sweepTabs` 滚到了底,hero 卡下面那两颗方块不在可视区、
+        // `ListView` 也就没构建它们 —— `gotoForDoctor` 自己会先滚回顶部。
+        await gotoForDoctor(tester);
         for (var i = 0; i < 6; i++) {
-          final sheetList = find.byType(ListView);
-          if (sheetList.evaluate().isEmpty) break;
-          await tester.drag(sheetList.last, const Offset(0, -400),
+          final pageList = find.byType(ListView);
+          if (pageList.evaluate().isEmpty) break;
+          await tester.drag(pageList.last, const Offset(0, -400),
               warnIfMissed: false);
           await tester.pump(const Duration(milliseconds: 100));
         }
@@ -121,15 +113,11 @@ void main() {
           await tester.tap(meds.first, warnIfMissed: false);
           await settle(tester, total: const Duration(seconds: 2));
         }
-        await tester.tapAt(const Offset(10, 10));
+        await popToShell(tester);
         await settle(tester, total: const Duration(seconds: 2));
 
         // 录入弹层也过一遍(六个 chip 一排,最容易在大字号下换行/挤爆)。
-        await scrollToTop(tester);
-        await waitFor(tester, find.text('记录'));
-        await tester.tap(find.text('记录').first);
-        await settle(tester, total: const Duration(seconds: 2));
-        await waitFor(tester, find.text('保存'));
+        await openRecordSheet(tester);
         await tester.tapAt(const Offset(10, 10));
         await settle(tester, total: const Duration(seconds: 2));
       });
@@ -142,40 +130,20 @@ void main() {
         }
       }
 
-      if (scale >= 2.0) {
-        // ── BUG-5(未修,只报告)──
-        // 复现:系统字号拉到最大(`adb shell settings put system font_scale 2.0`,
-        //       或系统设置里「字体大小」最右)→ 概览 →「记录」。
-        // 现象:弹层底部「测量时间」那一行**横向溢出 31px**,右边的
-        //       「2026-08-05 14:23」被裁掉一截,黄黑条纹压在上面。
-        // 位置:`manual_entry_sheet.dart:701` 的 `_WhenRow`。那个 `Row` 是
-        //       [图标][「测量时间」][Spacer][日期时间][箭头],**两个 `Text` 都
-        //       没有 `Flexible`/`Expanded`**,字号翻倍之后它们各自变宽,
-        //       `Spacer` 挤没了也不够,只能溢出。
-        // 违反:`007 §2.5` 的「字号可放大,不可砍」。同一个文件里
-        //       `QuickActions` 专门用 `Wrap` 而不是 `GridView` 就是为这条;
-        //       `_MemberTabs` 也按 `textScaler` 算了高度。这一行漏了。
-        // 修法参考(不在本轮做):把日期那个 `Text` 包 `Flexible` +
-        //       `overflow: TextOverflow.ellipsis`,或者放不下时改成上下两行
-        //       ——`lab_status.dart` 的 `LabLine` 已经有「实测宽度决定并排还是
-        //       两行」的现成做法。
-        // 严重度:**中**(只在最大字号出现,不丢数据;但受影响的正好是需要放大
-        //       字号的那批用户,而这一行是他们核对/修改测量时间的唯一入口)。
-        expect(
-          watch.overflows.length,
-          1,
-          reason: '字号 ×2.0 下的溢出数量变了(原本只有 BUG-5 那一处):\n'
-              '${watch.overflows.join('\n')}',
-        );
-        expect(
-          watch.overflows.first,
-          contains('manual_entry_sheet.dart:701'),
-          reason: 'BUG-5 已经修好了(或换了位置)—— 请更新这段判断。\n'
-              '${watch.overflows.first}',
-        );
-      } else {
-        watch.assertClean();
-      }
+      // ── BUG-5 的历史 ──────────────────────────────────────────────────
+      // 这里原本给 ×2.0 开了一个口子:「允许恰好一处溢出,且必须是
+      // `manual_entry_sheet.dart` 的 `_WhenRow`」。
+      // 当年的复现:系统字号拉到最大 → 概览 →「记录」,弹层底部「测量时间」那一行
+      //       横向溢出 31px,右边的日期时间被裁掉一截。那个 `Row` 是
+      //       [图标][「测量时间」][Spacer][日期时间][箭头],两个 `Text` 都没有
+      //       `Flexible`/`Expanded`,字号翻倍之后 `Spacer` 挤没了也不够。
+      // 违反:`007 §2.5`「字号可放大,不可砍」。
+      //
+      // **2026-09-18 在 iPhone 17 模拟器(393dp)上重跑:×2.0 一处溢出都没有。**
+      // 所以口子收掉,四档字号一律要求干净 —— 这比原来的「恰好一处」更严:
+      // 它一旦在更窄的机器(当年那台 360dp)上回来,`OverflowWatch` 会连同
+      // 文件与行号一起报出来,而不是被一条「允许一处」的规则放过去。
+      watch.assertClean();
     }, timeout: const Timeout(Duration(minutes: 12)));
   }
 

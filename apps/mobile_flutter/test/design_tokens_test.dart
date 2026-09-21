@@ -16,24 +16,26 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 
-/// 规范里的浅色一套,逐字抄自 DESIGN-SYSTEM-v1.html 的 `:root`。
+/// 正本 = `stage3-visual-tokens-brief.md`(mockup v24,2026-09-17 认可)。
+/// **它 supersede 了 DESIGN-SYSTEM-v1.html 的色板** —— 底色、偏高/偏低/危急三档
+/// 都换了值。改这张表 = 改设计,不是改代码。
 const Map<String, int> specLight = {
   'ink': 0xFF101A23,
   'ink-2': 0xFF3A4A57,
   'ink-3': 0xFF657581,
-  'paper': 0xFFF6F8FA,
+  'paper': 0xFFF1F4F8,
   'surface': 0xFFFFFFFF,
   'line': 0xFFE3E9EE,
   'line-2': 0xFFEEF2F5,
   'seal': 0xFF1789C1,
   'seal-ink': 0xFF0E6285,
   'seal-wash': 0xFFEAF5FA,
-  'low': 0xFF1D4ED8,
-  'low-wash': 0xFFE8EEFC,
-  'high': 0xFFAB4E08,
-  'high-wash': 0xFFFBF1E4,
+  'low': 0xFF1F5FB8,
+  'low-wash': 0xFFDCE8FB,
+  'high': 0xFFC25E18,
+  'high-wash': 0xFFFDE3CC,
   'critical': 0xFFBE123C,
-  'critical-wash': 0xFFFCEAEF,
+  'critical-wash': 0xFFFBDDE4,
 };
 
 /// 规范里的深色一套(`prefers-color-scheme:dark` / `[data-theme="dark"]`)。
@@ -157,13 +159,13 @@ void main() {
   group('字阶', () {
     test('七档字号 / 字重与规范一致', () {
       const expected = <String, (double, FontWeight)>{
-        'display': (28, FontWeight.w700),
-        'value': (22, FontWeight.w600),
-        'title': (20, FontWeight.w700),
-        'subtitle': (17, FontWeight.w600),
-        'body': (15, FontWeight.w400),
+        'display': (30, FontWeight.w600),
+        'value': (16, FontWeight.w500),
+        'title': (26, FontWeight.w600),
+        'subtitle': (19, FontWeight.w600),
+        'body': (16, FontWeight.w400),
         'secondary': (13, FontWeight.w400),
-        'caption': (12, FontWeight.w600),
+        'caption': (12, FontWeight.w500),
       };
       const actual = <String, TextStyle>{
         'display': MedType.display,
@@ -191,10 +193,6 @@ void main() {
       }
     });
 
-    test('caption 字距 .05em @12px = 0.6 逻辑像素', () {
-      expect(MedType.caption.letterSpacing, 0.6);
-    });
-
     test('数值档必须是等宽表格数字', () {
       expect(
         MedType.value.fontFeatures,
@@ -217,8 +215,8 @@ void main() {
         ),
       );
       final richText = tester.widget<RichText>(find.byType(RichText));
-      // body = 15px,系统放大 2× 后实际排版应为 30px。
-      expect(richText.textScaler.scale(15), 30);
+      // body = 16px,系统放大 2× 后实际排版应为 32px。
+      expect(richText.textScaler.scale(16), 32);
     });
   });
 
@@ -272,24 +270,27 @@ void main() {
       ),
     );
 
-    testWidgets('偏高 = --high #AB4E08,偏低 = --low #1D4ED8,正常不上色', (tester) async {
+    testWidgets('偏高 = --high #C25E18,偏低 = --low #1F5FB8,正常 = MedBrand.normalInk(R22)', (
+      tester,
+    ) async {
       await pumpLab(tester);
 
       expect(
         valueColor(tester, '6.05 mmol/L', '6.05').toARGB32(),
         MedColors.light.high.toARGB32(),
       );
-      expect(valueColor(tester, '6.05 mmol/L', '6.05').toARGB32(), 0xFFAB4E08);
+      expect(valueColor(tester, '6.05 mmol/L', '6.05').toARGB32(), 0xFFC25E18);
       expect(
         valueColor(tester, '0.98 mmol/L', '0.98').toARGB32(),
         MedColors.light.low.toARGB32(),
       );
-      expect(valueColor(tester, '0.98 mmol/L', '0.98').toARGB32(), 0xFF1D4ED8);
-      // 正常行继承正文墨色(令牌 `ink`),不走任何状态色 —— 规范 §二 的
-      // 「正常不上色」:22 项里 1–2 项异常,给正常配色会把异常淹没。
+      expect(valueColor(tester, '0.98 mmol/L', '0.98').toARGB32(), 0xFF1F5FB8);
+      // R22 fix round 1:「正常不上色」的旧规则已被 Stage 3 视觉令牌取代 ——
+      // `LabFlag.normal` 现在走 `MedBrand.normalInk`,与 `lab_status.dart` 的
+      // `LabLine`(`status == null` 那一档)同一套颜色,不再继承墨色 `ink`。
       expect(
         valueColor(tester, '95 umol/L', '95').toARGB32(),
-        MedColors.light.ink.toARGB32(),
+        MedBrand.normalInk.toARGB32(),
       );
     });
 
@@ -467,6 +468,170 @@ void main() {
       final mid = MedColors.light.lerp(MedColors.dark, 0.5);
       expect(mid.proxy, isNot(MedColors.light.proxy));
       expect(mid.proxyWash, isNot(MedColors.light.proxyWash));
+    });
+  });
+
+  group('MedBrand —— Stage 3 brief §色 / §形', () {
+    test('品牌渐变 135°,三段,逐字', () {
+      expect(MedBrand.gradientColors, [
+        const Color(0xFF1FB0C6),
+        const Color(0xFF1789C1),
+        const Color(0xFF16508E),
+      ]);
+      expect(MedBrand.gradientStops, [0.0, 0.5, 1.0]);
+      // 135° = 左上 → 右下。
+      expect(MedBrand.gradientBegin, Alignment.topLeft);
+      expect(MedBrand.gradientEnd, Alignment.bottomRight);
+      expect(MedBrand.heroGlow, const Color(0x38FFFFFF)); // rgba(255,255,255,.22)
+    });
+
+    test('九档类别渐变与同色投影', () {
+      expect(MedBrand.tile(GlossCategory.lab),
+          (const Color(0xFF25B5C2), const Color(0xFF0B7A87), const Color(0x5A0E8A96)));
+      expect(MedBrand.tile(GlossCategory.clinic),
+          (const Color(0xFF4A90E8), const Color(0xFF1A5BC0), const Color(0x5A1F6FD2)));
+      expect(MedBrand.tile(GlossCategory.imaging),
+          (const Color(0xFF9A7BE0), const Color(0xFF5B3FAE), const Color(0x5A6A4DBF)));
+      expect(MedBrand.tile(GlossCategory.med),
+          (const Color(0xFFF4A04A), const Color(0xFFD0661A), const Color(0x5AE07A25)));
+      expect(MedBrand.tile(GlossCategory.note),
+          (const Color(0xFF5CC28A), const Color(0xFF227A4C), const Color(0x5A2F8F5B)));
+      expect(MedBrand.tile(GlossCategory.alert),
+          (const Color(0xFFF06A86), const Color(0xFFB92A4A), const Color(0x5ACF3A5A)));
+      expect(MedBrand.tile(GlossCategory.neutral),
+          (const Color(0xFF8A98A4), const Color(0xFF4A5A67), const Color(0x4D4A5A67)));
+      expect(MedBrand.tile(GlossCategory.brand),
+          (const Color(0xFF1FB0C6), const Color(0xFF16508E), const Color(0x5A1789C1)));
+      expect(MedBrand.tile(GlossCategory.busy),
+          (const Color(0xFFB7C2CC), const Color(0xFF8A98A4), const Color(0x334A5A67)));
+    });
+
+    test('状态左色条、横幅、示例框、看一眼', () {
+      expect(MedBrand.barHigh, const Color(0xFFE07A25));
+      expect(MedBrand.barLow, const Color(0xFF1F6FD2));
+      expect(MedBrand.barNormal, const Color(0xFF2F8F5B));
+      expect(MedBrand.barCritical, const Color(0xFFCF3A5A));
+      expect(MedBrand.normalInk, const Color(0xFF227A4C));
+      expect(MedBrand.pillHighInk, const Color(0xFF9A4A12));
+      expect(MedBrand.bannerBlue, const Color(0xFFDDEDF8));
+      expect(MedBrand.bannerBlueInk, const Color(0xFF0E6285));
+      expect(MedBrand.bannerAmber, const Color(0xFFFBE7D2));
+      expect(MedBrand.bannerAmberInk, const Color(0xFF9A4A12));
+      expect(MedBrand.demoBorder, const Color(0xFFB7C2CC));
+      expect(MedBrand.demoInk, const Color(0xFF657581));
+      expect(MedBrand.checkWash, const Color(0xFFE6EBF0));
+      expect(MedBrand.checkInk, const Color(0xFF3A4A57));
+      expect(MedBrand.timelineLine, const Color(0xFFDCE3EA));
+      expect(MedBrand.expandedChartBg, const Color(0xFFF7FAFC));
+    });
+
+    // Fix round 1(R19):趋势行右侧值簇的换行上限——Task 9 review 的溢出根因。
+    test('趋势行右侧值簇的最大宽度', () {
+      expect(MedBrand.trendValueMaxWidth, 150);
+    });
+
+    test('五档阴影,逐字', () {
+      expect(MedBrand.cardShadow.single.blurRadius, 18);
+      expect(MedBrand.cardShadow.single.offset, const Offset(0, 6));
+      expect(MedBrand.cardShadow.single.color, const Color(0x14101A23)); // rgba(16,26,35,.08)
+      expect(MedBrand.heroShadow.single.blurRadius, 30);
+      expect(MedBrand.heroShadow.single.offset, const Offset(0, 14));
+      expect(MedBrand.heroShadow.single.color, const Color(0x5216508E)); // rgba(22,80,142,.32)
+      expect(MedBrand.entryShadow.single.blurRadius, 26);
+      expect(MedBrand.entryShadow.single.offset, const Offset(0, 12));
+      expect(MedBrand.buttonShadow.single.blurRadius, 24);
+      expect(MedBrand.buttonShadow.single.offset, const Offset(0, 10));
+      expect(MedBrand.buttonShadow.single.color, const Color(0x4D16508E)); // rgba(22,80,142,.3)
+      expect(MedBrand.navShadow.single.offset, const Offset(0, -6));
+    });
+
+    test('头像块令牌(R18,mockup .hero .tile):尺寸/字号/inset/投影', () {
+      expect(MedBrand.heroTileSize, 54);
+      expect(MedBrand.heroTileLetterSize, 28);
+      // 圆角数值上与 MedShape.radiusBlock(14,「卡内分块」那档,头像本来就在
+      // 用它)重复,不另开一个 MedBrand.heroTileRadius。
+      expect(MedShape.radiusBlock, 14);
+      expect(MedBrand.heroTileInset, const Color(0x1F16508E)); // rgba(22,80,142,.12)
+      expect(MedBrand.heroTileShadow.single.color, const Color(0x590E3C64)); // rgba(14,60,100,.35)
+      expect(MedBrand.heroTileShadow.single.offset, const Offset(0, 8));
+      expect(MedBrand.heroTileShadow.single.blurRadius, 18);
+    });
+  });
+
+  group('MedShape / MedType —— Stage 3 brief §形 §字', () {
+    test('七档圆角', () {
+      // R6:sheet(26)压过主卡 hero(22),现在是全 app 最大的一档。
+      expect(MedShape.radiusSheet, 26);
+      expect(MedShape.radiusHero, 22);
+      expect(MedShape.radiusCard, 20);
+      expect(MedShape.radiusEntry, 18);
+      expect(MedShape.radiusBanner, 16);
+      expect(MedShape.radiusTile, 12);
+      expect(MedShape.radiusPill, 999);
+    });
+
+    test('字号字重', () {
+      expect(MedType.title.fontSize, 26);
+      expect(MedType.title.fontWeight, FontWeight.w600);
+      expect(MedType.body.fontSize, 16);
+      // body 不显式写 fontWeight(null,渲染时默认 w400)—— 同文件里「七档字号」
+      // 测试一样用 `?? FontWeight.w400`;brief 原文这行是裸 `expect(..., w400)`,
+      // 对着实际是 `null` 的字段直接会红。
+      expect(MedType.body.fontWeight ?? FontWeight.w400, FontWeight.w400);
+      expect(MedType.secondary.fontSize, 13);
+      expect(MedType.value.fontSize, 16);
+      expect(MedType.value.fontWeight, FontWeight.w500);
+      expect(MedType.value.fontFeatures, MedType.tabular);
+      expect(MedType.display.fontSize, 30);
+      expect(MedType.display.fontWeight, FontWeight.w600);
+      // R18:hero 卡「最近就诊」的值(mockup `.hero .rule b`)。
+      expect(MedType.heroValue.fontSize, 22);
+      expect(MedType.heroValue.fontWeight, FontWeight.w600);
+      expect(MedType.heroValue.fontFeatures, MedType.tabular);
+      // 700 不许出现:mockup 里没有一处 Latin/数字用它(见计划「已知分歧 3」)。
+      for (final s in [MedType.display, MedType.value, MedType.heroValue, MedType.title,
+                       MedType.subtitle, MedType.body, MedType.secondary, MedType.caption]) {
+        // body/secondary 不显式写 fontWeight(null = 默认 w400)—— 同上面
+        // 「七档字号」测试一样用 `?? FontWeight.w400`,不能直接 `!`(会在这两个
+        // 空值上抛 null-check 异常,brief 原文这行漏了这一步)。用 `.value`
+        // 而不是 brief 原文的 `.index`:后者在当前 Flutter 版本已标记 deprecated。
+        expect(
+          (s.fontWeight ?? FontWeight.w400).value,
+          lessThanOrEqualTo(FontWeight.w600.value),
+        );
+      }
+    });
+
+    test('底色是实心 #F1F4F8,主题拿的就是它', () {
+      expect(MedMe.theme().scaffoldBackgroundColor, const Color(0xFFF1F4F8));
+    });
+
+    test('卡片无边框', () {
+      final shape = MedMe.theme().cardTheme.shape! as RoundedRectangleBorder;
+      expect(shape.side, BorderSide.none);
+    });
+  });
+
+  group('预检裁定 R5 —— 暗幕令牌取代 Colors.black54/black26/white70', () {
+    test('scrim / scrimLight 是 ink 的透明度变体,不是纯黑', () {
+      for (final c in [MedColors.light, MedColors.dark]) {
+        expect(c.scrim.a, closeTo(0.54, 0.001));
+        expect(c.scrim.toARGB32() & 0x00FFFFFF, c.ink.toARGB32() & 0x00FFFFFF);
+        expect(c.scrimLight.a, closeTo(0.26, 0.001));
+        expect(c.scrimLight.toARGB32() & 0x00FFFFFF, c.ink.toARGB32() & 0x00FFFFFF);
+      }
+    });
+
+    test('onDarkFaint 恒定白 70%,不随 ink 变(深底本身已经是深的)', () {
+      expect(MedColors.light.onDarkFaint, const Color(0xB3FFFFFF));
+      expect(MedColors.dark.onDarkFaint, const Color(0xB3FFFFFF));
+    });
+
+    // 严格说这条是 R18 加的(hero 卡「最近就诊」标签),不是 R5——放在这里是因为
+    // 它和 onDarkFaint 同一类「深底恒定白、不随 ink 变」的令牌。
+    test('onDarkMeta 恒定白 88%,不随 ink 变(R18,hero 卡「最近就诊」标签)', () {
+      expect(MedColors.light.onDarkMeta, const Color(0xE0FFFFFF));
+      expect(MedColors.dark.onDarkMeta, const Color(0xE0FFFFFF));
     });
   });
 }

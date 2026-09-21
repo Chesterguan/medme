@@ -10,17 +10,23 @@ use std::sync::OnceLock;
 
 mod aggregate;
 mod conditions;
+pub mod extraction;
 mod handoff;
 mod labs;
 mod meds;
+mod profile_event;
 mod self_entry;
 pub use aggregate::{
     aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedSpan, SourceDoc,
 };
 pub use conditions::{extract_conditions, ConditionMention};
+pub use extraction::{labs_from_json, LabsFromJson};
 pub use handoff::{assemble_summary, match_disease};
 pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};
+pub use profile_event::{
+    parse_profile_event_payload, render_profile_event_text, ProfileEvent, PROFILE_EVENT_MARKER,
+};
 pub use self_entry::{
     home_ref_range, parse_self_measurement_payload, plausible_range, render_self_measurement_text,
     validate_self_measured_values, HomeRefRange, PlausibilityViolation, PlausibleRange,
@@ -244,13 +250,72 @@ pub struct Demographics {
     pub age: Option<String>,        // 年龄数字(字符串)
 }
 
+/// 英文报告里抽到的「姓名」还得再过这一道:**词典认得的化验项目名、以及报告版式里的
+/// 字段词,一律不是患者姓名**。
+///
+/// 理由是 `deid/gate.rs:5` 的姓名闸**只检查这一个字符串** —— 抽错了不是少一层保护,
+/// 而是整条闸对着错的字符串空转(`Test Name: Hemoglobin` 抽出 `Hemoglobin`,闸检查
+/// `Hemoglobin`,真姓名原样过闸上云;顺带 K 层还会把整张表里的项目名换成 `[P1]`,
+/// 抽取质量一起塌)。宁可判否退回成员名,那至少是 BASE 的行为。
+fn english_name_value_ok(v: &str) -> bool {
+    const FIELD_WORDS: &[&str] = &[
+        "result",
+        "results",
+        "unit",
+        "units",
+        "value",
+        "range",
+        "reference",
+        "normal range",
+        "whole blood",
+        "blood",
+        "serum",
+        "plasma",
+        "urine",
+        "id",
+        "no",
+        "number",
+        "name",
+        "date",
+        "sex",
+        "age",
+        "dob",
+        "test",
+        "specimen",
+        "sample",
+    ];
+    let lower = v.trim().to_lowercase();
+    if lower.is_empty() || FIELD_WORDS.contains(&lower.as_str()) {
+        return false;
+    }
+    // 整串命中词典(置信度 1.0 的精确命中)判否:`Name: Hemoglobin` 这种。
+    if terminology::normalize(&lower).is_some_and(|m| m.confidence >= 1.0) {
+        return false;
+    }
+    // 逐词再看一遍:`Glucose Fasting` 整串查不到,但 `Glucose` 查得到 —— 那是一行化验,
+    // 不是人。**但只对 4 个字母以上的词这么判**:词典里 `ana`(抗核抗体)/`alt`/`cea`
+    // 这类三字母缩写与真实的人名撞车,`Ana Betz` 里的 `Ana` 正是本轮要抽出来的那个
+    // 患者名。短缩写是弱证据,长词才是强证据。
+    !v.split_whitespace().any(|w| {
+        let lw = w.to_lowercase();
+        FIELD_WORDS.contains(&lw.as_str())
+            || (w.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 4
+                && terminology::normalize(&lw).is_some_and(|m| m.confidence >= 1.0))
+    })
+}
+
 pub fn extract_demographics(text: &str) -> Demographics {
     static NAME: OnceLock<Regex> = OnceLock::new();
     static NAME_LOOSE: OnceLock<Regex> = OnceLock::new();
     static GENDER: OnceLock<Regex> = OnceLock::new();
     static AGE: OnceLock<Regex> = OnceLock::new();
     static BIRTH: OnceLock<Regex> = OnceLock::new();
+    static NAME_EN: OnceLock<Regex> = OnceLock::new();
     let name = NAME.get_or_init(|| {
+        // **英文标签不能进这一条。** 这条没有任何左边界,`Test Name: Hemoglobin` 会直接
+        // 抽出 `Hemoglobin` —— 那之后 `deid/gate.rs` 的姓名闸就对着一个化验项目名空转,
+        // 真正的患者姓名原样过闸上云,比抽不到还糟(review-21-22.md Critical 1)。
+        // 英文走下面 `NAME_EN` 那条(行首锚定 + 前缀词排除 + 取值复核)。
         Regex::new(r"(?:姓名|名字)[:：]\s*([^\s，,;；、\d]{1,10})").expect("name regex")
     });
     // 无冒号的兜底:纸质报告里「姓名 / 性别 / 年龄」是靠**表格对齐**排的,拍照 OCR
@@ -259,6 +324,28 @@ pub fn extract_demographics(text: &str) -> Demographics {
     // 所以「姓名孟丁性别男」这种粘连的情况宁可提不出,也不会把「孟丁性别」当成名字。
     let name_loose = NAME_LOOSE.get_or_init(|| {
         Regex::new(r"(?:姓名|名字)\s*([\u{4e00}-\u{9fa5}]{2,4})(?:\s|$)").expect("loose name regex")
+    });
+    // 英文报告的同一件事(extract-repro-report.md §5):`Name      Ana Betz` 靠**列对齐**
+    // 排版,冒号同样不存在,而整条姓名闸(`deid/gate.rs` 要求 >= 2 字)就靠这里抽到的
+    // 名字 —— 抽不到就退回成员名「我」,闸直接空转,患者姓名原样上云。
+    //
+    // **抽错比抽不到更糟**:闸只检查这一个字符串(`gate.rs:5`),抽到 `Result` 就等于
+    // 闸在检查 `Result`,真姓名照样过。所以四道收紧,缺一不可
+    // (review-21-22.md Critical 1 的四个反例):
+    // * **行首锚定**(`(?m)^[ \t]*`)。挡住 `Test Name` / `Doctor Name` /
+    //   `Specimen Name` / `Item Name` —— 标签左边还有一个词的,一律不是患者姓名标签。
+    // * 只认 `Patient Name` / `Pt Name` / `Patient` / `Name`(不区分大小写),标签与
+    //   取值之间必须是**冒号**或 **2 个以上空格**(列对齐的证据):`Patient ID PAC001`
+    //   只隔一个空格,进不来。
+    // * 取值是 1–4 个**首字母大写**的词,不含数字。
+    // * 取值再过一道复核(`english_name_value_ok`):词典认得的化验项目名、以及
+    //   `Result`/`Unit`/`ID` 这类字段词一律判否 —— 宁可退回成员名(= BASE 的行为),
+    //   也不能拿错的字符串去喂姓名闸。
+    let name_en = NAME_EN.get_or_init(|| {
+        Regex::new(
+            r"(?mi)^[ \t]*(?:patient name|pt name|patient|name)(?:[ \t]*[:：][ \t]*|[ \t]{2,})([A-Z][A-Za-z.'\-]*(?:[ \t][A-Z][A-Za-z.'\-]*){0,3})",
+        )
+        .expect("english name regex")
     });
     let gender = GENDER.get_or_init(|| Regex::new(r"性别[:：]?\s*([男女])").expect("gender regex"));
     let age = AGE.get_or_init(|| Regex::new(r"年龄[:：]?\s*(\d{1,3})").expect("age regex"));
@@ -274,9 +361,19 @@ pub fn extract_demographics(text: &str) -> Demographics {
     let birth_date = birth
         .captures(text)
         .map(|c| format!("{}-{:0>2}-{:0>2}", &c[1], &c[2], &c[3]));
+    // 英文那条要逐个候选复核,取第一个过得了 `english_name_value_ok` 的;整行都不合格
+    // 就当抽不到(退回成员名 = BASE 的行为),不拿一个错的去喂姓名闸。
+    let name_en_value = || {
+        name_en
+            .captures_iter(text)
+            .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
+            .find(|v| english_name_value_ok(v))
+    };
     Demographics {
-        // 带冒号的优先;提不出再用无冒号兜底(拍照 OCR 的表格式报告)。
-        name: cap1(name).or_else(|| cap1(name_loose)),
+        // 带冒号的优先;提不出再用无冒号兜底(拍照 OCR 的表格式报告),中文兜底优先于英文。
+        name: cap1(name)
+            .or_else(|| cap1(name_loose))
+            .or_else(name_en_value),
         gender: cap1(gender),
         birth_date,
         age: cap1(age),
@@ -631,6 +728,59 @@ mod tests {
         // 带冒号的旧形态仍优先,且不被宽松规则改写。
         let colon = extract_demographics("姓名:张建国  性别:男");
         assert_eq!(colon.name.as_deref(), Some("张建国"));
+    }
+
+    /// 英文报告的姓名。**抽错比抽不到更糟**:`deid/gate.rs:5` 的姓名闸只检查这一个
+    /// 字符串,抽到 `Result` 等于闸在检查 `Result`,真姓名原样过闸上云
+    /// (review-21-22.md Critical 1)。这里钉住四个反例 + 正例。
+    #[test]
+    fn english_patient_name_never_captures_a_column_header() {
+        // 标签左边还有一个词的,一律不是患者姓名标签(行首锚定挡下)。
+        for t in [
+            "Test Name: Hemoglobin",
+            "Test Name   Result   Unit",
+            "Specimen Name    Whole Blood",
+            "Item Name     Glucose Fasting",
+            "Doctor Name    Cameron Cordara",
+            "Physician Name   J Doe",
+            "Lab Name    Quest",
+            "Sample Name   Serum",
+            // 标签与取值之间只有一个空格 → 不是列对齐,`ID` 不是姓名。
+            "Patient ID PAC001",
+            // 取值本身就是化验项目名 / 字段词 → 复核判否。
+            "Name: Hemoglobin",
+            "Name    Glucose Fasting",
+            "Patient Name:  Result",
+        ] {
+            assert_eq!(extract_demographics(t).name, None, "{t} 不该被当成患者姓名");
+        }
+
+        // 正例:真实 GNU_Health 版式(列对齐)、冒号式、以及多词姓名。
+        assert_eq!(
+            extract_demographics(
+                "Name      Ana Betz                                Patient ID PAC001"
+            )
+            .name
+            .as_deref(),
+            Some("Ana Betz"),
+            "`Ana` 撞上词典里 ana(抗核抗体)这个三字母缩写,但它就是本轮要抽的患者名"
+        );
+        assert_eq!(
+            extract_demographics("Patient Name: Ana Betz")
+                .name
+                .as_deref(),
+            Some("Ana Betz")
+        );
+        assert_eq!(
+            extract_demographics("Pt Name   Mary Jane O'Neil")
+                .name
+                .as_deref(),
+            Some("Mary Jane O'Neil")
+        );
+        assert_eq!(
+            extract_demographics("Patient   John Smith").name.as_deref(),
+            Some("John Smith")
+        );
     }
 
     #[test]

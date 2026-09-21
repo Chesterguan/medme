@@ -1,18 +1,27 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/account_flow.dart';
 import 'package:mobile_flutter/analytics.dart';
+import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/screens/export_screen.dart';
-import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/screens/account_screen.dart';
+import 'package:mobile_flutter/screens/member_detail_screen.dart';
+import 'package:mobile_flutter/sync_engine.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/backup_status_line.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/member_switcher.dart';
 
 /// 与 `pubspec.yaml` 的 `version:` 字段(`x.y.z+build`)保持一致。P3 范围内没有为
 /// 读版本号新增 `package_info_plus` 依赖(约束里明确不加新依赖),手工同步即可——
@@ -21,19 +30,29 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// 这颗常量已经漂过两次(团队靠它核「有没有装到最新版」,结果显示的还是两个小版本
 /// 前的号)。`test/app_version_test.dart` 会拿这里的字面量去和 `pubspec.yaml` 比对,
 /// 漂了就会红——改这两行时记得同时改 `pubspec.yaml`,或者反过来。
-const _appVersionName = '1.6.0';
-const _appBuildNumber = '56';
+const _appVersionName = '3.0.0';
+const _appBuildNumber = '57';
 
-/// 底部导航一级 tab「设置」—— 保险箱/成员 / 载入示例数据 / 清空重置 / 关于。
+/// 底部导航一级 tab「我」(`s5`)—— 云端 / 这台手机上的病历 / 口令与恢复码 ·
+/// 我的设备 · 关于 / 给医生看 · 导出 / 删掉全部。
 ///
+/// **「示例数据」「使用情况」「iCloud 同步」三节在下一层**([AboutScreen]):它们
+/// 一年碰一次,平铺在首屏上占掉的是「这台手机上的病历」该占的位置。
 /// 同步(iCloud)入口当前收起,见 [_showIcloudSync]。
 
-/// 是否在设置里露出「iCloud 同步」入口。当前 false —— 全力做手机端本体,跨设备
-/// 同步先不投入。底层能力未删,改回 true 即恢复。
+/// 是否在「我 → 关于」里露出「iCloud 同步」入口。当前 false —— 全力做手机端本体,
+/// 跨设备同步先不投入。底层能力未删,改回 true 即恢复。
 const bool _showIcloudSync = false;
 
+/// 这一节到底该不该露出来:总开关收着的情况下,如果这台设备**已经**开着 iCloud
+/// 同步(老用户,在总开关收起之前开的),照样要露出来——不然这些用户找不到任何
+/// 入口关掉它(C3:「请先在「我 → 关于」里关闭 iCloud 同步」这句提示指向的正是
+/// 这个开关)。`icloud` 为 null(状态还没查回来)时按未开处理。
+@visibleForTesting
+bool shouldShowIcloudSection(IcloudStatusDto? icloud) => _showIcloudSync || (icloud?.enabled ?? false);
+
 /// 分组卡片列表,视觉还原自 `apps/mobile/src/App.tsx` 的设置区(sect + group + row)。
-/// 保险箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。
+/// 病历箱在 `main.dart` 启动时已打开,这里直接调 FFI,不重复任何 Rust 侧逻辑。
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -42,14 +61,454 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  IcloudStatusDto? _icloud;
   PatientProfileDto? _profile;
-  // iCloud 容器是否可用(登录了 iCloud):Rust 拿不到,由原生 channel 判断。
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+    // 导入/清空等在别的 tab 发生时,身份卡的记录数等也要跟着更新(本屏保活)。
+    vaultRevision.addListener(_refresh);
+  }
+
+  @override
+  void dispose() {
+    vaultRevision.removeListener(_refresh);
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final p = await patientProfile();
+      if (!mounted) return;
+      setState(() => _profile = p);
+    } catch (_) {
+      // 状态读取失败不影响本屏其它功能(删成员/清空仍可用),静默忽略即可。
+    }
+  }
+
+  /// 切换「个人 / 医生」模式:写入持久化后,`main.dart` 的 `AppRoot` 监听同一个
+  /// notifier 自动换到另一个根界面;本屏若是被 push 进来的(代拍模式下,设置没有
+  /// 自己的 tab,是从 `DoctorHomeScreen` 点进来的),顺手把导航栈弹回第一层,让
+  /// 换好的根界面露出来。个人模式下设置本来就是 tab、没有可弹的栈,`canPop()` 为
+  /// false,这一步是 no-op。
+  Future<void> _switchMode() async {
+    final current = AppMode.instance.mode.value;
+    final target = current == AppModeKind.doctor
+        ? AppModeKind.personal
+        : AppModeKind.doctor;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('切换模式?'),
+        content: Text(
+          target == AppModeKind.doctor
+              ? '切换到代拍:主界面变成「我是医生,替病人代拍」,你自己的病历仍在——'
+                    '随时可以再切回来查看。'
+              : '切换到「自己/家人的病历」模式,回到「病历」「趋势」「我」三个入口。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('切换'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    // `where: settings` —— 事后切换。它和首屏那次选择数量上的比,直接说明
+    // 「你是?」那一屏问得清不清楚。
+    Analytics.track(AnalyticsEvent.modeSelected, {
+      'mode': target.name,
+      'where': 'settings',
+    });
+    Analytics.setContext({'mode': target.name});
+    await AppMode.instance.setMode(target);
+    if (mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentMode = AppMode.instance.mode.value;
+    return Scaffold(
+      appBar: AppBar(title: const Text('我')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        children: [
+          // `s5` 的「我」里**没有**模式这一节 —— 进代拍的入口在「给医生看」那一页
+          // (Task 9)。但**出来**那条路今天只剩这一处:代拍模式下这一屏是从
+          // `DoctorHomeScreen` 右上角 push 进来的,整节删掉等于把人永久关在代拍里。
+          // 所以只在代拍模式下留这一行;Task 15 给代拍首页自己的出口之后再删。
+          if (currentMode == AppModeKind.doctor) ...[
+            _SectionLabel('模式'),
+            _SettingsGroup(
+              children: [
+                _SettingsRow(
+                  icon: Icons.medical_services_outlined,
+                  title: '退出代拍',
+                  subtitle: '点一下回到你自己的病历箱',
+                  // 代拍模式下的临时出口,不在 `s5` 的行列里——mockup 没给这一行
+                  // 的类别,归中性(同「关于/隐私政策」那一档,不带特殊语义)。
+                  category: GlossCategory.neutral,
+                  onTap: _switchMode,
+                ),
+              ],
+            ),
+          ],
+          // `s5` 第一行,**整节只有这一行**:标题「云端」+ 副标题「已备份,刚刚」+「›」。
+          // 整行可点,点进去才是云端那一层(「云端整理」开关在里面,不在这一屏平铺)。
+          // 云的说法全 App 只有两件事:云端备份 / 云端整理。
+          //
+          // 没登录时这一行自己就写着「没登录,换手机找不回来」并且点进账号那一屏,
+          // 所以不再另挂一条「登录 / 注册」—— 同一件事两行说,正是这次要收掉的毛病。
+          // 登录之后进账号那一屏的路仍在:下面的「口令与恢复码」「我的设备」。
+          _SectionLabel('云端'),
+          const _SettingsGroup(children: [BackupStatusLine()]),
+          _SectionLabel('这台手机上的病历'),
+          MembersCard(
+            members: ProfileManager.instance.profiles,
+            countOf: _countOf,
+            onOpen: _openMember,
+            onAdd: _addMember,
+          ),
+          const SizedBox(height: 16),
+          _SettingsGroup(
+            children: [
+              _SettingsRow(
+                icon: Icons.key_outlined,
+                title: '口令与恢复码',
+                category: GlossCategory.med,
+                onTap: _openAccount,
+              ),
+              _SettingsRow(
+                icon: Icons.devices_outlined,
+                title: '我的设备',
+                category: GlossCategory.note,
+                onTap: _openAccount,
+              ),
+              _SettingsRow(
+                icon: Icons.info_outline,
+                title: '关于 / 隐私政策',
+                category: GlossCategory.neutral,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const AboutScreen()),
+                ),
+              ),
+            ],
+          ),
+          // ⚠️ Task 17:「给医生看 · 导出」这一节与下面的「删掉全部」都撤掉了——
+          // 「给医生看」首页那颗方块是导出/出码唯一的门(不在「我」首屏另开一条),
+          // 「导出文件」现在是那一整页里跟着滚的次要一行(`for_doctor_screen.dart`
+          // 的 `ForDoctorActions`);「删掉全部」挪到了「我 → 关于」页面的最后一行
+          // (`AboutScreen`),同一套确认流程原样搬了过去。
+        ],
+      ),
+    );
+  }
+
+  /// 账号那一层。「云端」「口令与恢复码」「我的设备」三行都进这里 —— 今天它们
+  /// 确实是同一屏上的三节(云端备份 / 口令解锁 / 设备),Task 14 拆开各自的屏
+  /// 之后再把这三行各自指过去。
+  void _openAccount() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => AccountScreen(
+        flow: AccountFlow(
+          ApiClient.forSession(AccountSession.instance),
+          AccountSession.instance,
+        ),
+        onReadyCloudSync: runBackgroundSync,
+      ),
+    ),
+  );
+
+  /// 当前成员用刚查到的最新记录数,其余成员用缓存(没加载过为 null)。
+  int? _countOf(String id) {
+    final pm = ProfileManager.instance;
+    if (id == pm.currentId.value && _profile != null) return _profile!.recordCount;
+    return pm.countFor(id);
+  }
+
+  /// 点开一个成员:去他自己的页面(`s10`,`MemberDetailScreen`)——谁能看他的病历 /
+  /// 加一个人 / 改名字 / 删除这个成员。Task 12 时这一步还是「切过去看病历」(那正是
+  /// 这张卡上「31 份 ›」承诺的事);`s10` 到位后这颗承诺改由「病历」tab 的成员
+  /// 切换器兑现,这一行变成管理入口(Task 13 fix round 1)。
+  Future<void> _openMember(Profile m) => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => MemberDetailScreen(
+        member: m,
+        onChanged: () => setState(() {}),
+      ),
+    ),
+  );
+
+  /// 「添加成员」:与档案屏成员条末尾那颗「+」同一条路(`promptAddMember`),
+  /// 不另起一套。
+  Future<void> _addMember() =>
+      promptAddMember(context, onChanged: () => setState(() {}));
+}
+
+/// 分组标题(灰色小字),对应旧版 `App.css` 里的 `.sect`。
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Padding(
+      // 与 MonthHeader 一档:mockup `.sec{padding:0 4px}`,上下沿按分组前后的
+      // 间距留白(见 `archive_screen.dart` 的 `MonthHeader`)。
+      padding: const EdgeInsets.fromLTRB(4, MedShape.s4, 4, MedShape.s1),
+      child: Text(text, style: MedType.body.copyWith(fontSize: 15, color: c.ink2)),
+    );
+  }
+}
+
+/// 白色圆角卡片,内部若干行,行间用分隔线隔开——对应旧版 `.group`。
+class _SettingsGroup extends StatelessWidget {
+  const _SettingsGroup({required this.children});
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return MedCard(
+      // ListTile 把背景/水波纹画在最近的 Material 祖先上;MedCard 的外壳是纯
+      // Container(有底色),中间不隔一层透明 Material 的话,水波纹会被那层底色
+      // 盖住(Flutter 的 debug 断言原话,`doctor_home_screen.dart`/
+      // `emergency_card_screen.dart` 已有的写法)。
+      child: Column(
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0) Divider(height: 1, color: c.line2),
+            children[i],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 可点击的一行:图标 + 标题 + 说明 + 尾部箭头(或自定义 trailing)。
+/// 对应旧版 `.row`;`danger` 对应 `.row.danger`(清空按钮用 `c.critical`)。
+class _SettingsRow extends StatelessWidget {
+  const _SettingsRow({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.onTap,
+    this.trailing,
+    this.danger = false,
+    this.category = GlossCategory.neutral,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final VoidCallback? onTap;
+  final Widget? trailing;
+  final bool danger;
+
+  /// 光泽图标块的类别,按 mockup `s5` 逐行给(口令与恢复码=med、我的设备=note、
+  /// 关于/隐私政策=neutral、云端相关=lab)。`danger` 恒压过它,改用 alert。
+  final GlossCategory category;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return ListTile(
+      leading: GlossIconTile(icon: icon, category: danger ? GlossCategory.alert : category),
+      title: Text(
+        title,
+        style: MedType.body.copyWith(color: danger ? c.critical : c.ink),
+      ),
+      subtitle: subtitle == null
+          ? null
+          : Text(subtitle!, style: MedType.secondary.copyWith(color: c.ink3)),
+      trailing:
+          trailing ??
+          (onTap != null
+              ? Icon(Icons.chevron_right, color: c.ink3)
+              : null),
+      onTap: onTap,
+      enabled: onTap != null || trailing != null,
+    );
+  }
+}
+
+/// 「载入示例数据」专属行:载入中要换成 spinner + 「正在载入 N/22…」,
+/// [_SettingsRow] 那套「图标/标题/说明」是静态的,管不了这种按状态切换内容的
+/// 需求,所以单独一个 widget,外观仍与 [_SettingsRow] 保持一致。
+///
+/// **`contentPadding` 比 [_SettingsRow] 更大**:真机实测(华为 Mate 9)踩到过
+/// 一次点在这张卡与上一张卡的缝隙里、11 秒后才发现「点空了」——加大这一行的
+/// 点击热区(等于加大这张卡的可点范围),降低再次点空的概率。
+///
+/// **载入中特意不让 [ListTile] 整行变暗**(`enabled` 恒为 true):默认禁用态会把
+/// 文字连同新画的进度文案一起压暗,削弱这次改动本来要解决的「反馈不够显眼」。
+class _DemoDataRow extends StatelessWidget {
+  const _DemoDataRow({
+    required this.loading,
+    required this.progressText,
+    required this.onTap,
+  });
+
+  final bool loading;
+
+  /// 逐份进度文案(如「正在载入 3/22…」)。拿不到具体进度(刚点下去、第一条
+  /// 还没从 Rust 侧报回来)时为 null——退化成一句不确定进度的提示,总比空着强。
+  final String? progressText;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      leading: loading
+          ? const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            )
+          : Icon(Icons.download_outlined, color: c.seal),
+      title: Text(
+        loading ? '正在载入示例数据…' : '载入示例数据(张建国)',
+        style: TextStyle(fontWeight: FontWeight.w600, color: c.ink),
+      ),
+      subtitle: Text(
+        loading
+            ? (progressText ?? '正在载入示例数据…')
+            : '单独放一个成员里,不和你的病历混在一起;看完可以去「我」首页的「这台手机上的病历」里把这个成员整个移除',
+        style: TextStyle(color: c.ink3),
+      ),
+      trailing: loading
+          ? null
+          : (onTap != null
+                ? Icon(Icons.chevron_right, color: c.ink3)
+                : null),
+      onTap: onTap,
+      enabled: onTap != null || loading,
+    );
+  }
+}
+
+/// 纯展示的一行(无点击),用于「关于」里的静态信息。
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({required this.title, required this.subtitle});
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return ListTile(
+      title: Text(title, style: MedType.body.copyWith(color: c.ink)),
+      subtitle: Text(subtitle, style: MedType.secondary.copyWith(color: c.ink3)),
+    );
+  }
+}
+
+/// `s5` 的「这台手机上的病历」卡:一个成员一行 —— 头像 + 名字 + `N 份 ›`,
+/// 最后一行是「添加成员」。
+///
+/// **这张卡上一个角色词都没有**(不写「主人 / 家人 / 能改 / 只能看」):摆在挑人的
+/// 列表上,用户读到的是「家里谁是谁」,而那不是那个字段的意思 —— 授权级别只在某个
+/// 成员自己的页面里说,那里有上下文(`s10`,Task 13)。
+///
+/// 纯 widget,**不碰 FFI、不碰 ProfileManager**(成员表和份数都由调用方传进来),
+/// 这样 `flutter test` 测得到 —— [SettingsScreen] 整屏是 pump 不了的(`initState`
+/// 里直接调 FFI)。见 `test/members_card_test.dart`。
+class MembersCard extends StatelessWidget {
+  const MembersCard({
+    super.key,
+    required this.members,
+    required this.countOf,
+    required this.onOpen,
+    required this.onAdd,
+  });
+
+  final List<Profile> members;
+
+  /// 这个成员有多少份病历;还没数出来返回 null(显示「—」,不编一个数)。
+  final int? Function(String id) countOf;
+
+  /// 点一行:去这个成员自己的页面(`s10`,`MemberDetailScreen`)。删除成员的入口
+  /// 挪到那一页的「删除这个成员」去了(Task 13 fix round 1)——这张卡回到 `s5`
+  /// 原本的样子,一个角色词、一颗多余的图标都没有,只有名字和份数。
+  final void Function(Profile m) onOpen;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return MedCard(
+      // 透明 Material:见 `_SettingsGroup` 同一条注释——不隔这一层,ListTile 的
+      // 水波纹会被 MedCard 的白底盖住(Flutter debug 断言)。
+      child: Column(
+        children: [
+          for (final m in members) ...[
+            if (m != members.first) Divider(height: 1, color: c.line2),
+            ListTile(
+              // brief §色:成员头像 = 品牌渐变——GlossIconTile.letter 默认就是
+              // brand 类别,不用另传 category(mockup 里是圆角方块不是圆)。
+              leading: GlossIconTile.letter(
+                letter: m.name.isNotEmpty ? m.name.characters.first : '?',
+              ),
+              title: Text(m.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    countOf(m.id) == null ? '—' : '${countOf(m.id)} 份',
+                    style: MedType.secondary.copyWith(color: c.ink3),
+                  ),
+                  Icon(Icons.chevron_right, size: 18, color: c.ink3),
+                ],
+              ),
+              onTap: () => onOpen(m),
+            ),
+          ],
+          Divider(height: 1, color: c.line2),
+          ListTile(
+            // mockup `s5` 那一行用的是 note 绿。
+            leading: const GlossIconTile(icon: Icons.add, category: GlossCategory.note),
+            title: Text('添加成员', style: MedType.body.copyWith(color: c.sealInk)),
+            onTap: onAdd,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「我 → 关于」那一层(`s5`:首屏只留一行「关于 / 隐私政策 ›」)。
+///
+/// 三节从首屏挪进来:**示例数据 / 使用情况 / iCloud 同步**。它们都是一年碰一次的
+/// 东西,平铺在首屏上占掉的是「这台手机上的病历」该占的位置。
+///
+/// 这一屏 `initState` 里直接调 FFI(`icloudStatus`),同 [SettingsScreen]
+/// **不能整屏 pump**。
+class AboutScreen extends StatefulWidget {
+  const AboutScreen({super.key});
+
+  @override
+  State<AboutScreen> createState() => _AboutScreenState();
+}
+
+class _AboutScreenState extends State<AboutScreen> {
+  IcloudStatusDto? _icloud;
+
+  /// iCloud 容器是否可用(登录了 iCloud):Rust 拿不到,由原生 channel 判断。
   bool _icloudAvailable = false;
 
-  /// 载入示例 / 清空时置真,禁用所有操作按钮,防止重复点击(尤其清空——
-  /// 用户反馈过「载入示例后清空点了没反应」,这里确保按钮忙时不可再点,
-  /// 而不是悄悄丢弃点击)。
+  /// 载入示例 / 开关 iCloud 时置真,禁用本屏其它按钮,防止重复点击。
   bool _busy = false;
 
   /// 「载入示例数据」这一颗按钮**自己的**进行中状态,与 [_busy] 分开管:[_busy]
@@ -73,28 +532,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _refresh();
-    // 导入/清空等在别的 tab 发生时,身份卡的记录数等也要跟着更新(本屏保活)。
-    vaultRevision.addListener(_refresh);
-  }
-
-  @override
-  void dispose() {
-    vaultRevision.removeListener(_refresh);
-    super.dispose();
   }
 
   Future<void> _refresh() async {
     try {
-      final results = await Future.wait([icloudStatus(), patientProfile()]);
+      final status = await icloudStatus();
       final available = await IcloudBridge.available(); // 原生判断容器是否可用
       if (!mounted) return;
       setState(() {
-        _icloud = results[0] as IcloudStatusDto;
-        _profile = results[1] as PatientProfileDto;
+        _icloud = status;
         _icloudAvailable = available;
       });
     } catch (_) {
-      // 状态读取失败不影响本屏其它功能(载入示例/清空仍可用),静默忽略即可。
+      // 状态读取失败不影响本屏其它功能(载入示例仍可用),静默忽略即可。
     }
   }
 
@@ -114,8 +564,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!ok) _showSnack('无法打开$label,请稍后重试');
   }
 
-  /// 示例数据落进**它自己的成员**,不混进你的档案 —— 于是看完可以直接在「保险箱」
-  /// 里把这个成员整个移除,你自己导入的东西一份不动。(早先是灌进当前成员,再被
+  /// 示例数据落进**它自己的成员**,不混进你的档案 —— 于是看完可以直接去「我」首页的
+  /// 「这台手机上的病历」里把这个成员整个移除,你自己导入的东西一份不动。(早先是灌进当前成员,再被
   /// 自动命名成「张建国」,想清掉就只能动用「清空所有数据」那颗核弹。)
   static const _demoMember = '张建国(示例)';
 
@@ -128,7 +578,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   ///
   /// 现在的分工:切成员是**手段**,载入完立刻切回用户载入前正看着的那个人;
   /// 是否要去看示例数据,交给 SnackBar 上的「去看看」——用户自己点了,才在同一次
-  /// 点击里把视角切过去 + 跳到「健康档案」,两件事绑在一起,而不是替他做主。
+  /// 点击里把视角切过去 + 跳到「病历」,两件事绑在一起,而不是替他做主。
   Future<void> _loadDemoData() async {
     setState(() {
       _busy = true;
@@ -186,8 +636,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (pm.currentId.value != originalMemberId) {
         await switchProfileAndReopen(originalMemberId);
       }
-      bumpVaultRevision(); // 通知「健康档案」屏自动重载(并按识别姓名自动命名档案)
-      await _refresh();
+      // 通知「病历」「我」两屏自动重载(并按识别姓名自动命名档案)—— 份数这件事
+      // 由那边自己重读,本屏不持有它。
+      bumpVaultRevision();
       if (!mounted) return;
 
       if (failure != null) {
@@ -204,7 +655,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (pm.currentId.value != demoMemberId) {
                 await switchProfileAndReopen(demoMemberId);
               }
-              goToArchive();
+              goToRecords();
             },
           ),
         ),
@@ -230,14 +681,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await Analytics.setEnabled(on);
   }
 
+  /// 「删掉全部」——原是「我」首屏单独一节,Task 17 挪到这里当「关于」页的最后
+  /// 一行:那一屏只在「云端 / 这台手机上的病历」之外还留三条二级入口(口令与
+  /// 恢复码 / 我的设备 / 关于),清空整个病历箱是一年碰不到一次的动作,不该占
+  /// 首屏的位置。确认流程与顺序契约原样保留,见 `test/wipe_all_data_test.dart`。
   Future<void> _confirmAndResetVault() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('清空所有数据?'),
         content: const Text(
-          '确定清空全部记录?所有成员的示例数据和已导入病历都会被删除,'
-          '保险箱恢复到初始状态,此操作不可撤销。',
+          '确定清空全部记录?所有成员的示例数据和已添加病历都会被删除,'
+          '病历箱恢复到初始状态,此操作不可撤销。',
         ),
         actions: [
           TextButton(
@@ -246,7 +701,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: MedMe.danger),
+            style: TextButton.styleFrom(foregroundColor: MedColors.of(context).critical),
             child: const Text('清空'),
           ),
         ],
@@ -256,7 +711,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _busy = true);
     try {
-      await wipeAllData(); // 全清:所有成员 vault + 份数缓存 + 待确认 + 恢复出厂
+      await wipeAllData(); // 全清:所有成员 vault + 份数缓存 + 还没核对 + 恢复出厂
       // 埋点:**无属性**,而且此刻设备上已经什么都不剩了。
       // 这是没有持久 ID 的情况下我们能看见的最强负面信号(卸载永远看不到),
       // 而且它在一道二次确认之后 —— 不会是误触。配合上下文的 `tenure_bucket`
@@ -265,7 +720,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // 发在 `wipeAllData()` **之后**:清空失败(磁盘故障)不该记成一次清空,
       // 那是另一件事,由用户看到的错误提示承担。
       Analytics.track(AnalyticsEvent.dataWiped);
-      await _refresh();
       _showSnack('已清空');
     } catch (e) {
       _showSnack('清空失败:$e');
@@ -274,104 +728,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  /// 切换「个人 / 医生」模式:写入持久化后,`main.dart` 的 `AppRoot` 监听同一个
-  /// notifier 自动换到另一个根界面;本屏若是被 push 进来的(医生模式下,设置没有
-  /// 自己的 tab,是从 `DoctorHomeScreen` 点进来的),顺手把导航栈弹回第一层,让
-  /// 换好的根界面露出来。个人模式下设置本来就是 tab、没有可弹的栈,`canPop()` 为
-  /// false,这一步是 no-op。
-  Future<void> _switchMode() async {
-    final current = AppMode.instance.mode.value;
-    final target = current == AppModeKind.doctor
-        ? AppModeKind.personal
-        : AppModeKind.doctor;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('切换模式?'),
-        content: Text(
-          target == AppModeKind.doctor
-              ? '切换到「医生模式」:主界面变成「为病人代拍」,你自己的病历仍在——'
-                    '随时可以再切回来查看。'
-              : '切换到「自己/家人的病历」模式,回到健康档案 / 导出分享 / 设置。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('切换'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    // `where: settings` —— 事后切换。它和首屏那次选择数量上的比,直接说明
-    // 「你是?」那一屏问得清不清楚。
-    Analytics.track(AnalyticsEvent.modeSelected, {
-      'mode': target.name,
-      'where': 'settings',
-    });
-    Analytics.setContext({'mode': target.name});
-    await AppMode.instance.setMode(target);
-    if (mounted && Navigator.of(context).canPop()) {
-      Navigator.of(context).popUntil((route) => route.isFirst);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final currentMode = AppMode.instance.mode.value;
     return Scaffold(
-      appBar: AppBar(title: const Text('设置')),
+      appBar: AppBar(title: const Text('关于')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          _SectionLabel('模式'),
+          _SectionLabel('关于'),
           _SettingsGroup(
             children: [
               _SettingsRow(
-                icon: currentMode == AppModeKind.doctor
-                    ? Icons.medical_services_outlined
-                    : Icons.folder_shared_outlined,
-                title: currentMode == AppModeKind.doctor ? '医生模式' : '自己/家人的病历',
-                subtitle: currentMode == AppModeKind.doctor
-                    ? '点击切换到你自己的家庭档案'
-                    : '点击切换到「为病人代拍」',
-                onTap: _switchMode,
+                icon: Icons.home_outlined,
+                title: 'MedMe 主页',
+                subtitle: '了解更多、下载其它平台版本',
+                category: GlossCategory.neutral,
+                onTap: _openHomepage,
               ),
-            ],
-          ),
-          _SectionLabel('保险箱'),
-          _VaultCard(profile: _profile, onChanged: () => setState(() {})),
-          // ⚠️ 「导出·分享」原本是一个一级 tab。五 tab 信息架构(设计系统 §八)按
-          // 「使用时刻」重排之后,它没有属于自己的时刻:它不是「日常打开」、不是
-          // 「复诊前」、不是「找单子」、更不是急诊室。它是**低频、正式、要联网**的
-          // 一次交付动作,心智恰好落在这个 tab 的定义上 ——「数据主权:我的数据往
-          // 哪去」,和下面的「清空所有数据」是同一件事的两个方向。
-          //
-          // 它没有并进「看病带这个」(原名「就诊单」,2026-08-05 改名),因为那是
-          // 两个场景:「看病带这个」是本地的、离线的、一页纸、三十秒;这里是端到
-          // 端加密、把**完整病历含原件**交出去。
-          //
-          // 诊室现场那条最高频的路没有变长:「看病带这个」浮层底部直接就有
-          // 「医生要看原件 · 出示二维码」,一步到同一个界面(见
-          // `visit_summary_sheet.dart`)。
-          _SectionLabel('数据出口'),
-          _SettingsGroup(
-            children: [
               _SettingsRow(
-                icon: Icons.ios_share_outlined,
-                title: '导出 · 分享',
-                subtitle: '当面出示二维码给医生,或导出可打印文件用于报销、留档',
-                onTap: _busy
-                    ? null
-                    : () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const ExportScreen(),
-                        ),
-                      ),
+                icon: Icons.privacy_tip_outlined,
+                title: '隐私政策',
+                subtitle: '我们收集什么、什么情况下数据会离开你的手机',
+                category: GlossCategory.neutral,
+                onTap: () =>
+                    _openWeb('https://medmenow.com/privacy.html', '隐私政策'),
+              ),
+              _SettingsRow(
+                icon: Icons.description_outlined,
+                title: '用户协议',
+                subtitle: '工具定位、责任边界与开源许可',
+                category: GlossCategory.neutral,
+                onTap: () =>
+                    _openWeb('https://medmenow.com/terms.html', '用户协议'),
+              ),
+              _InfoRow(
+                title: 'MedMe 医我',
+                subtitle:
+                    'v$_appVersionName ($_appBuildNumber) · 端到端加密:云端备份只有密文,我们打不开;'
+                    '云端整理送出的是涂黑后的病历照片或文字,交给深度求索(DeepSeek)的模型整理,服务器在境内。',
+              ),
+              const _InfoRow(
+                title: '医疗免责声明',
+                subtitle:
+                    'MedMe 是个人病历整理工具,不是医疗器械,不提供诊断或治疗建议;'
+                    '一切以原始医疗文件为准,请遵医嘱。',
               ),
             ],
           ),
@@ -396,29 +796,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onChanged: _busy ? null : _setAnalytics,
                   title: const Text('帮助改进 MedMe'),
                   subtitle: const Text(
-                    '只上报「导入了几份、用了多久、成没成」这类计数,'
+                    '只上报「添加了几份、用了多久、成没成」这类计数,'
                     '不含任何病历内容 —— 文字、文件名、药名、化验值一个字都不会离开这台手机。'
                     '也不会给你分配可追踪的标识。',
                     style: TextStyle(fontSize: 12.5, height: 1.5),
                   ),
                   isThreeLine: true,
-                  activeThumbColor: MedMe.teal,
+                  activeThumbColor: MedColors.of(context).seal,
                 ),
               ],
             ),
           ],
-          _SectionLabel('数据管理'),
-          _SettingsGroup(
-            children: [
-              _SettingsRow(
-                icon: Icons.delete_outline,
-                title: '清空所有数据 · 重置保险箱',
-                // 灰字说明与点击后的确认弹窗内容重复,去掉省空间(用户反馈)。
-                danger: true,
-                onTap: _busy ? null : _confirmAndResetVault,
-              ),
-            ],
-          ),
           // **同步整条线暂时收起**(2026-07-27):现阶段全力做手机端本体,跨设备同步
           // 先不投入。iCloud 只覆盖 iOS,安卓另有一套,做一半反而给用户一个半成品开关。
           // Rust/原生那一侧的能力**没有删**(`icloudStatus`/`enableIcloudSync` 都还在,
@@ -427,7 +815,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           //
           // 原来的注释保留备查:iCloud 同步是 iOS 原生能力,安卓无 iCloud,所以这一节
           // 本来就只对 iOS 显示,否则安卓用户会看到一个永远开不了的死开关。
-          if (_showIcloudSync && Platform.isIOS) ...[
+          if (shouldShowIcloudSection(_icloud) && Platform.isIOS) ...[
             _SectionLabel('iCloud 同步(实验性)'),
             _SettingsGroup(
               children: [
@@ -437,6 +825,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       : Icons.cloud_outlined,
                   title: 'iCloud 同步',
                   subtitle: _icloudSubtitle(),
+                  // 云端相关=lab(brief §色 mapping)。
+                  category: GlossCategory.lab,
                   trailing: Switch(
                     value: _icloud?.enabled ?? false,
                     onChanged: (_busy || !_icloudAvailable)
@@ -447,39 +837,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ],
-          _SectionLabel('关于'),
+          _SectionLabel('删掉全部'),
           _SettingsGroup(
             children: [
               _SettingsRow(
-                icon: Icons.home_outlined,
-                title: 'MedMe 主页',
-                subtitle: '了解更多、下载其它平台版本',
-                onTap: _openHomepage,
-              ),
-              _SettingsRow(
-                icon: Icons.privacy_tip_outlined,
-                title: '隐私政策',
-                subtitle: '我们收集什么、什么情况下数据会离开你的手机',
-                onTap: () =>
-                    _openWeb('https://medmenow.com/privacy.html', '隐私政策'),
-              ),
-              _SettingsRow(
-                icon: Icons.description_outlined,
-                title: '用户协议',
-                subtitle: '工具定位、责任边界与开源许可',
-                onTap: () =>
-                    _openWeb('https://medmenow.com/terms.html', '用户协议'),
-              ),
-              _InfoRow(
-                title: 'MedMe 医我',
-                subtitle:
-                    'v$_appVersionName ($_appBuildNumber) · 本地优先:你的病历只保存在你自己的设备上',
-              ),
-              const _InfoRow(
-                title: '医疗免责声明',
-                subtitle:
-                    'MedMe 是个人病历整理工具,不是医疗器械,不提供诊断或治疗建议;'
-                    '一切以原始医疗文件为准,请遵医嘱。',
+                icon: Icons.delete_outline,
+                title: '清空所有数据 · 重置病历箱',
+                // 灰字说明与点击后的确认弹窗内容重复,去掉省空间(用户反馈)。
+                danger: true,
+                onTap: _busy ? null : _confirmAndResetVault,
               ),
             ],
           ),
@@ -534,7 +900,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       } else {
         await disableIcloudSync();
       }
-      bumpVaultRevision(); // 保险箱已重开,通知档案屏刷新
+      bumpVaultRevision(); // 病历箱已重开,通知档案屏刷新
       await _refresh();
       _showSnack(want ? '已开启 iCloud 同步' : '已关闭(本机保留一份副本)');
     } catch (e) {
@@ -542,349 +908,5 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-  }
-}
-
-/// 保险箱卡:展示 + 可改**保险箱名字**(整个箱子的名字,不是某个人),多成员时列出
-/// 每位成员各有多少份档案。切换成员/导入/加成员都在「健康档案」页,这里不重复那些
-/// 功能——只做「这是哪个箱子、里面各人多少份」。
-///
-/// **箱子名与成员名必须不同**:箱子默认「我的医疗档案」(家庭/个人层面),初始成员默认
-/// 「我」。两者曾用同一个字符串,导致这里显示成「我的医疗档案 → 我的医疗档案」,层级
-/// 读不出来。
-class _VaultCard extends StatelessWidget {
-  const _VaultCard({required this.profile, required this.onChanged});
-  final PatientProfileDto? profile;
-  final VoidCallback onChanged;
-
-  /// 当前成员用刚查到的最新记录数,其余成员用缓存(没加载过为 null)。
-  int? _countOf(String id) {
-    final pm = ProfileManager.instance;
-    if (id == pm.currentId.value && profile != null) {
-      return profile!.recordCount;
-    }
-    return pm.countFor(id);
-  }
-
-  /// 移除一个成员:连同他的全部病历一起删,不可撤销。当前成员被删时会自动切回
-  /// 第一个成员(`ProfileManager.remove` 负责),各屏随 `bumpVaultRevision` 刷新。
-  Future<void> _confirmRemove(BuildContext context, Profile p) async {
-    final name = p.name;
-    final n = _countOf(p.id);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        icon: const Icon(
-          Icons.warning_amber_rounded,
-          color: MedMe.danger,
-          size: 44,
-        ),
-        title: Text(
-          '删除「$name」的全部病历?',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontWeight: FontWeight.w800),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (n != null && n > 0)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: MedMe.danger.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '$n 份病历',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: MedMe.danger,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 14),
-            const Text(
-              '连同拍摄的原件一起,从这台手机上彻底删除。\n'
-              '删除后无法恢复,我们也帮不了你。',
-              textAlign: TextAlign.center,
-              style: TextStyle(height: 1.5),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: MedMe.danger),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('确认删除'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    final removed = await removeProfileAndReopen(p.id);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(appSnackBar(content: Text(removed ? '已移除「$name」' : '无法移除该成员')));
-    onChanged();
-  }
-
-  Future<void> _rename(BuildContext context) async {
-    final pm = ProfileManager.instance;
-    final controller = TextEditingController(text: pm.vaultName);
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('保险箱名字'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '例如:我家、张建国的病历'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-    if (name != null && name.trim().isNotEmpty) {
-      await pm.setVaultName(name);
-      onChanged();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final pm = ProfileManager.instance;
-    final members = pm.profiles;
-    final multi = members.length > 1;
-    return Card(
-      child: Column(
-        children: [
-          ListTile(
-            leading: const CircleAvatar(
-              radius: 24,
-              backgroundColor: MedMe.tealSoft,
-              child: Icon(Icons.folder_shared, color: MedMe.teal, size: 26),
-            ),
-            title: Text(
-              pm.vaultName,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            subtitle: Text(
-              multi
-                  ? '${members.length} 位成员'
-                  : '${_countOf(pm.currentId.value) ?? 0} 份记录',
-              style: const TextStyle(color: MedMe.faint),
-            ),
-            trailing: IconButton(
-              icon: const Icon(Icons.edit_outlined, color: MedMe.faint),
-              tooltip: '改名字',
-              onPressed: () => _rename(context),
-            ),
-          ),
-          if (multi) ...[
-            const Divider(height: 1, color: MedMe.line),
-            for (final m in members)
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  20,
-                  8,
-                  pm.canRemove(m.id) ? 8 : 20,
-                  8,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(m.name, style: const TextStyle(fontSize: 14)),
-                    ),
-                    Text(
-                      _countOf(m.id) == null ? '—' : '${_countOf(m.id)} 份',
-                      style: const TextStyle(color: MedMe.faint, fontSize: 13),
-                    ),
-                    // 只剩一个成员时不给删:那等于清空整个保险箱,该走「清空所有
-                    // 数据」那条更明确的路(见 `ProfileManager.canRemove`)。
-                    if (pm.canRemove(m.id))
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 20),
-                        color: MedMe.faint,
-                        tooltip: '移除「${m.name}」',
-                        onPressed: () => _confirmRemove(context, m),
-                      ),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 6),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// 分组标题(灰色小字),对应旧版 `App.css` 里的 `.sect`。
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: MedMe.faint,
-        ),
-      ),
-    );
-  }
-}
-
-/// 白色圆角卡片,内部若干行,行间用分隔线隔开——对应旧版 `.group`。
-class _SettingsGroup extends StatelessWidget {
-  const _SettingsGroup({required this.children});
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Column(
-        children: [
-          for (var i = 0; i < children.length; i++) ...[
-            if (i > 0) const Divider(height: 1, color: MedMe.line),
-            children[i],
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// 可点击的一行:图标 + 标题 + 说明 + 尾部箭头(或自定义 trailing)。
-/// 对应旧版 `.row`;`danger` 对应 `.row.danger`(清空按钮用 `MedMe.danger`)。
-class _SettingsRow extends StatelessWidget {
-  const _SettingsRow({
-    required this.icon,
-    required this.title,
-    this.subtitle,
-    this.onTap,
-    this.trailing,
-    this.danger = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final VoidCallback? onTap;
-  final Widget? trailing;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = danger ? MedMe.danger : MedMe.ink;
-    return ListTile(
-      leading: Icon(icon, color: danger ? MedMe.danger : MedMe.teal),
-      title: Text(
-        title,
-        style: TextStyle(fontWeight: FontWeight.w600, color: color),
-      ),
-      subtitle: subtitle == null
-          ? null
-          : Text(subtitle!, style: const TextStyle(color: MedMe.faint)),
-      trailing:
-          trailing ??
-          (onTap != null
-              ? const Icon(Icons.chevron_right, color: MedMe.faint)
-              : null),
-      onTap: onTap,
-      enabled: onTap != null || trailing != null,
-    );
-  }
-}
-
-/// 「载入示例数据」专属行:载入中要换成 spinner + 「正在载入 N/22…」,
-/// [_SettingsRow] 那套「图标/标题/说明」是静态的,管不了这种按状态切换内容的
-/// 需求,所以单独一个 widget,外观仍与 [_SettingsRow] 保持一致。
-///
-/// **`contentPadding` 比 [_SettingsRow] 更大**:真机实测(华为 Mate 9)踩到过
-/// 一次点在这张卡与上一张卡的缝隙里、11 秒后才发现「点空了」——加大这一行的
-/// 点击热区(等于加大这张卡的可点范围),降低再次点空的概率。
-///
-/// **载入中特意不让 [ListTile] 整行变暗**(`enabled` 恒为 true):默认禁用态会把
-/// 文字连同新画的进度文案一起压暗,削弱这次改动本来要解决的「反馈不够显眼」。
-class _DemoDataRow extends StatelessWidget {
-  const _DemoDataRow({
-    required this.loading,
-    required this.progressText,
-    required this.onTap,
-  });
-
-  final bool loading;
-
-  /// 逐份进度文案(如「正在载入 3/22…」)。拿不到具体进度(刚点下去、第一条
-  /// 还没从 Rust 侧报回来)时为 null——退化成一句不确定进度的提示,总比空着强。
-  final String? progressText;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      leading: loading
-          ? const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2.5),
-            )
-          : const Icon(Icons.download_outlined, color: MedMe.teal),
-      title: Text(
-        loading ? '正在载入示例数据…' : '载入示例数据(张建国)',
-        style: const TextStyle(fontWeight: FontWeight.w600, color: MedMe.ink),
-      ),
-      subtitle: Text(
-        loading
-            ? (progressText ?? '正在载入示例数据…')
-            : '单独放一个成员里,不和你的病历混在一起;看完可在上面「保险箱」里整个移除',
-        style: const TextStyle(color: MedMe.faint),
-      ),
-      trailing: loading
-          ? null
-          : (onTap != null
-                ? const Icon(Icons.chevron_right, color: MedMe.faint)
-                : null),
-      onTap: onTap,
-      enabled: onTap != null || loading,
-    );
-  }
-}
-
-/// 纯展示的一行(无点击),用于「关于」里的静态信息。
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.title, required this.subtitle});
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(subtitle, style: const TextStyle(color: MedMe.faint)),
-    );
   }
 }

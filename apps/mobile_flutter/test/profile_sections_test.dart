@@ -1,0 +1,326 @@
+// `ProfileSectionView`(`widgets/profile_sections.dart`)的看门测试——病程档案
+// 渲染引擎按 `kind` 分派到 7 种卡片。这里钉住的都是硬规矩,不是外观细节:
+//
+//  1. **标题/空态文案一律来自包**,widget 里没有一句写死的病种文案(不然测
+//     `2026 年的新病` 这句反证——同一份 widget 代码,换一个包传进来的 JSON,
+//     不该出现任何 SLE/SLEDAI 字样);
+//  2. **认不出的 kind 整块跳过**,不抛异常——给引擎以后加新 kind 留后路;
+//  3. **未知就是未知**,不许塌成「未达标」/「失败」这类更重的结论;
+//  4. **待核 / 需核对 / 换算表待核这类旗子必须原样举着**,不许被含糊成一句
+//     看不出原因的「算不出来」;
+//  5. 7 种 kind 各自吃真实的引擎产出(`packages/profile/testdata/
+//     golden_profile_view.json`,合成 SLE 语料跑出来的 golden fixture)都不能
+//     崩、在窄屏 + 2× 系统字号下都不能溢出。
+//
+// fix round 1(task-21-review.md I1/I2):caveat/给药途径 key 两条钉子测试见下方
+// 「fix round 1」分节。
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/profile_sections.dart';
+
+/// 与 `test/identity_hero_card_test.dart` 同一个 `wrap` 写法:`MedMe.theme()` +
+/// 可调 `textScale` 的 `MediaQuery` + 可滚动的 `Scaffold`。
+Widget _wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
+  theme: MedMe.theme(),
+  home: MediaQuery(
+    data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
+    child: Scaffold(body: SingleChildScrollView(child: child)),
+  ),
+);
+
+// golden fixture:7 种 kind 各吃一遍真实引擎产出(`packages/profile/testdata/
+// golden_profile_view.json`,Task 20 的合成 SLE 语料)。`analytics_catalog_test.dart`
+// 已经示范过同一种「读仓库里另一个包的文件」的写法(CWD 是 `apps/mobile_flutter`,
+// 相对路径两层上到仓库根)。提到文件顶层,好让下面 fix round 1 的 I2 测试也用得上
+// 同一份数据——不为了同一份 JSON 再手抄一遍贝利尤单抗那一行。
+final _goldenFile = File(
+  '../../packages/profile/testdata/golden_profile_view.json',
+);
+final _golden =
+    jsonDecode(_goldenFile.readAsStringSync()) as Map<String, dynamic>;
+final _goldenSections = (_golden['sections'] as List)
+    .map((s) => (s as Map).cast<String, dynamic>())
+    .toList();
+
+Map<String, dynamic> _asMapForTest(dynamic v) =>
+    (v as Map).cast<String, dynamic>();
+
+void main() {
+  // section 的标题、顺序、空态文案**全部来自包** —— 这几条测试就是在钉住
+  // 「App 里没有任何一句写死的病种文案」这件事。
+  testWidgets('titles come from the package, not from the widget', (t) async {
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'score_card', 'title': '活动度(化验可算部分)', 'empty_hint': null,
+      'body': {'score': 6, 'max': 18, 'label': '化验可算部分', 'window_days': 10,
+               'as_of': '2026-09-16', 'hits': []},
+    })));
+    expect(find.text('活动度(化验可算部分)'), findsOneWidget);
+    expect(find.textContaining('6'), findsWidgets);
+    expect(find.textContaining('18'), findsWidgets);
+  });
+
+  testWidgets('an unknown section kind renders nothing instead of crashing', (t) async {
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'something_from_2027', 'title': 'x', 'body': {},
+    })));
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('an empty section collapses to its package-supplied hint', (t) async {
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'timeline', 'title': '病程时间轴',
+      'empty_hint': '还没有可以放上时间轴的记录',
+      'body': {'years': []},
+    })));
+    expect(find.text('还没有可以放上时间轴的记录'), findsOneWidget);
+  });
+
+  testWidgets('undated timeline events get their own group, not the last year', (t) async {
+    // 跟在最后一个年份后面等于把它们说成那一年发生的:一条没有日期的活检排在
+    // `2026` 表头下、和 2026-03-01 的复发并排,只会被读成 2026 年做的活检。
+    // 引擎的原意是「不进年,但不丢」(`rules.rs::timeline_section`)。
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'timeline', 'title': '病程时间轴',
+      'body': {
+        'years': [{'year': 2026, 'events': [
+          {'type': 'flare', 'text': '皮疹加重', 'date': '2026-03-01', 'severity': 'high'}]}],
+        'undated': [{'type': 'biopsy', 'text': '肾活检'}],
+      },
+    })));
+    expect(find.text('日期不详'), findsOneWidget);
+    // 两条事件都还在 —— 分组头不是把无日期那条藏起来的借口。
+    expect(find.text('皮疹加重'), findsOneWidget);
+    expect(find.text('肾活检'), findsOneWidget);
+    // 「日期不详」排在 2026 那组之后、无日期那条之前。
+    final y = t.getTopLeft(find.text('2026')).dy;
+    final u = t.getTopLeft(find.text('日期不详')).dy;
+    expect(u, greaterThan(y));
+    expect(t.getTopLeft(find.text('肾活检')).dy, greaterThan(u));
+  });
+
+  testWidgets('the score card never renders the words SLEDAI total', (t) async {
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'score_card', 'title': '活动度(化验可算部分)',
+      'body': {'score': 6, 'max': 18, 'label': '化验可算部分', 'window_days': 10,
+               'as_of': '2026-09-16', 'hits': []},
+    })));
+    expect(find.textContaining('SLEDAI 总分'), findsNothing);
+    expect(find.textContaining('计算 SLEDAI'), findsNothing);
+  });
+
+  testWidgets('a checklist renders unknown as unknown, not as a failure', (t) async {
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'checklist', 'title': '达标情况(逐条对照)',
+      'body': {'states': [{'id': 'doris', 'label': 'DORIS', 'verdict': 'unknown', 'items': [
+        {'id': 'phga', 'label': 'PhGA < 0.5', 'verdict': 'unknown', 'actual': null,
+         'note': null, 'source': 'S5'}]}]},
+    })));
+    expect(find.text('未知'), findsOneWidget);
+    expect(find.text('未达标'), findsNothing);
+  });
+
+  testWidgets('an unverified point is drawn hollow and labelled 需核对', (t) async {
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'series_chart', 'title': '指标趋势',
+      'body': {'groups': [{'name': '补体', 'series': [{
+        'analyte_key': 'complement_c3', 'name': '补体C3', 'unit': 'g/L',
+        'ref_low': 0.9, 'ref_high': 1.8, 'values_converted': false,
+        'needs_review_count': 1, 'dir': 'low_is_active', 'role': 'activity',
+        'points': [{'date': '2026-09-01', 'value': 0.4, 'flag': 'L',
+                    'unverified': true, 'document_index': 0}]}]}], 'missing': []},
+    })));
+    expect(find.textContaining('需核对'), findsOneWidget);
+  });
+
+  testWidgets('an unconvertible glucocorticoid says 换算表待核, not a vague failure', (t) async {
+    // 缺的是**换算表**,不是缺药。含糊成「无法计算」会让人以为是 bug。
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'status_card', 'title': '现行方案',
+      'body': {'gc': {'daily_pred_equiv_mg': null, 'drug': null, 'since': null,
+                      'targets': [], 'unconvertible': [
+                        {'name': '甲泼尼龙', 'dose': '8mg', 'reason': '换算表待核'}]},
+               'hcq': null, 'others': [], 'last_visit': null},
+    })));
+    expect(find.textContaining('甲泼尼龙'), findsOneWidget);
+    expect(find.text('换算表待核'), findsOneWidget);
+  });
+
+  testWidgets('every reminder shows its basis label', (t) async {
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'reminders', 'title': '待补 / 逾期',
+      'body': {'items': [
+        {'id': 'mmf_cbc', 'text': '血常规', 'state': 'overdue', 'overdue_days': 12,
+         'basis': 'label', 'source': 'L1'},
+        {'id': 'mtx_labs', 'text': '血常规 + 肝功', 'state': 'never',
+         'basis': 'package_default', 'source': 'PKG'}]},
+    })));
+    expect(find.text('说明书'), findsOneWidget);
+    expect(find.text('包默认'), findsOneWidget);   // 包默认必须看得见,不能冒充指南
+  });
+
+  testWidgets('values converted to a canonical unit say so', (t) async {
+    // 用户在纸上找不到这个数字,不说就等于改写原文(AnalyteSeries.values_converted 的既有约定)。
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'series_chart', 'title': '指标趋势',
+      'body': {'groups': [{'name': '肾', 'series': [{
+        'analyte_key': 'urine_pcr', 'name': '尿蛋白肌酐比值', 'unit': 'mg/g',
+        'ref_low': null, 'ref_high': null, 'values_converted': true,
+        'needs_review_count': 0, 'dir': 'high_is_active', 'role': 'organ:kidney',
+        'points': [{'date': '2026-09-01', 'value': 884.0, 'flag': null,
+                    'unverified': false, 'document_index': 0}]}]}], 'missing': []},
+    })));
+    expect(find.textContaining('已换算'), findsOneWidget);
+  });
+
+  // ---------------------------------------------------------------------
+  // fix round 1(task-21-review.md)
+  // ---------------------------------------------------------------------
+
+  testWidgets('a score card hit shows its clinical caveat (I1)', (t) async {
+    // 出厂包原文(`skills/sle/2026.09.1.src.json:177`),不是编的字符串——
+    // dsDNA/血尿/脓尿三条 hit 里出厂包真的带 `caveat`,golden fixture 唯一的
+    // hit 恰好 `caveat: null`,所以这个洞之前测不出来。
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'score_card', 'title': '活动度(化验可算部分)',
+      'body': {'score': 4, 'max': 18, 'label': '化验可算部分', 'window_days': 10,
+               'as_of': '2026-09-16', 'hits': [
+        {'id': 'hematuria', 'label': '血尿', 'weight': 4, 'source': 'S1',
+         'caveat': '需排除结石、感染或其它原因,需医生确认', 'evidence': []},
+      ]},
+    })));
+    expect(find.text('需排除结石、感染或其它原因,需医生确认'), findsOneWidget);
+  });
+
+  testWidgets(
+    'infusion routes keep their iv/sc keys instead of running the doses together (I2)',
+    (t) async {
+      // 用 golden 里真实的贝利尤单抗那一行(`others[]` 唯一带 `infusion` 的
+      // 条目)——IV 与 SC 的剂量原文不一样,拼掉 key 就分不出哪半句是哪种
+      // 给药方式。
+      final statusBody = _asMapForTest(
+        _goldenSections.firstWhere((s) => s['kind'] == 'status_card')['body'],
+      );
+      final others = (statusBody['others'] as List).map(_asMapForTest).toList();
+      final belimumab = others.firstWhere((o) => o['name'] == '贝利尤单抗');
+      expect(belimumab['infusion'], isNotNull, reason: 'golden 的形状变了,先看那边');
+
+      await t.pumpWidget(_wrap(ProfileSectionView({
+        'kind': 'status_card', 'title': '现行方案',
+        'body': {
+          'gc': {'daily_pred_equiv_mg': null, 'drug': null, 'targets': [],
+                 'unconvertible': []},
+          'hcq': null,
+          'others': [belimumab],
+          'last_visit': null,
+        },
+      })));
+      expect(find.textContaining('iv: 10 mg/kg'), findsOneWidget);
+      expect(find.textContaining('sc: SLE 每周 200 mg'), findsOneWidget);
+    },
+  );
+
+  // ---------------------------------------------------------------------
+  // 终审 fix round 1(I3):包的 `note` 必须印到医生眼前
+  // ---------------------------------------------------------------------
+
+  /// 引擎特意把包的 `note` 原样带进 body,就是为了让「与指南口径有差」这句话
+  /// 出现在医生那一屏上(`rules.rs::gfr_item` / `biopsy_item` 的文档)。之前两个
+  /// 渲染器都在最后一米把它丢了。两条都用 golden 里**真实那一条**,不手抄。
+  testWidgets('a milestone row prints the package note it was handed', (t) async {
+    final ms = _goldenSections.firstWhere((s) => s['id'] == 'ln_milestones');
+    final items = (_asMapForTest(ms['body'])['items'] as List)
+        .map(_asMapForTest)
+        .toList();
+    final gfr = items.firstWhere((i) => i['id'] == 'gfr_80_baseline');
+    expect(gfr['note'], isNotNull, reason: 'golden 的形状变了,先看那边');
+
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'checklist', 'id': 'ln_milestones', 'title': '狼疮肾炎治疗里程碑',
+      'body': {'items': [gfr]},
+    })));
+    expect(find.text(gfr['note'] as String), findsOneWidget);
+  });
+
+  testWidgets('a reminder row prints the package note it was handed', (t) async {
+    final rem = _goldenSections.firstWhere((s) => s['kind'] == 'reminders');
+    final items = (_asMapForTest(rem['body'])['items'] as List)
+        .map(_asMapForTest)
+        .toList();
+    final mmf = items.firstWhere((i) => i['id'] == 'mmf_cbc');
+    expect(mmf['note'], isNotNull, reason: 'golden 的形状变了,先看那边');
+
+    await t.pumpWidget(_wrap(ProfileSectionView({
+      'kind': 'reminders', 'title': '待补 / 逾期',
+      'body': {'items': [mmf]},
+    })));
+    expect(find.text(mmf['note'] as String), findsOneWidget);
+  });
+
+  // ---------------------------------------------------------------------
+  // golden fixture:窄屏 + 2× 字号都不能崩、不能溢出。
+  // ---------------------------------------------------------------------
+
+  // golden fixture 本身要有点东西,不然下面的循环悄悄跑 0 次、测试全绿但什么
+  // 都没测——golden 目前覆盖 status_card/score_card/reminders/series_chart/
+  // timeline/checklist(两块,达标表与里程碑),独缺 handoff(引擎还没有会产出
+  // 这个 kind 的构建函数,见 `profile_sections.dart` 里 `_HandoffBody` 的文档)。
+  test('golden fixture actually has sections to iterate (sanity)', () {
+    expect(_goldenSections, isNotEmpty);
+    expect(_goldenSections.map((s) => s['kind']).toSet(), {
+      'status_card', 'score_card', 'reminders', 'series_chart', 'timeline',
+      'checklist',
+    });
+  });
+
+  Future<List<FlutterErrorDetails>> pumpAtSize(
+    WidgetTester tester,
+    Map<String, dynamic> section, {
+    required double textScale,
+  }) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // `RenderFlex` 溢出走 `FlutterError.reportError`,不是同步抛出的 Dart
+    // 异常,`tester.takeException()` 接不住——与
+    // `test/lab_line_row_overflow_test.dart::pumpLabRows` 同一处理,包括
+    // 「必须在下面的 expect 之前恢复」那条理由。
+    final errors = <FlutterErrorDetails>[];
+    final originalOnError = FlutterError.onError;
+    FlutterError.onError = errors.add;
+    addTearDown(() => FlutterError.onError = originalOnError);
+
+    await tester.pumpWidget(
+      _wrap(ProfileSectionView(section), textScale: textScale),
+    );
+    await tester.pump();
+    FlutterError.onError = originalOnError;
+    return errors;
+  }
+
+  for (var i = 0; i < _goldenSections.length; i++) {
+    final section = _goldenSections[i];
+    final label = '${section['kind']}${section['id'] != null ? '/${section['id']}' : ''}';
+
+    testWidgets('golden $label renders at 400×800 without exceptions', (
+      tester,
+    ) async {
+      final overflow = await pumpAtSize(tester, section, textScale: 1.0);
+      expect(tester.takeException(), isNull, reason: label);
+      expect(overflow, isEmpty, reason: label);
+    });
+
+    testWidgets('golden $label renders at 2.0 text scale without overflow', (
+      tester,
+    ) async {
+      final overflow = await pumpAtSize(tester, section, textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: label);
+      expect(overflow, isEmpty, reason: label);
+    });
+  }
+}

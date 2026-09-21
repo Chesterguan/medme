@@ -14,7 +14,7 @@ import 'package:mobile_flutter/widgets/med_card.dart';
 /// (chips),不做图表——「清楚够用就行」。没有任何结构化问题时不占地方(原文仍在
 /// 审阅屏下方「逐份识别内容」区块完整展开,不丢信息)。
 ///
-/// **整张卡不带医生模式的紫。** 卡里全是**病人的数据**(疾病、化验、用药),不是
+/// **整张卡不带代拍的紫。** 卡里全是**病人的数据**(疾病、化验、用药),不是
 /// 界面 chrome —— 同一份数据在哪个模式下都该长一样,所以这里只用中性色与化验状态
 /// 色。紫色留给「这是代拍」那类关于**当前模式**的信号(横幅、主按钮、图标底)。
 ///
@@ -97,7 +97,7 @@ class _ProblemBlock extends StatelessWidget {
 ///
 /// **只有 `warn` 才上色(危急红),不 warn 的一律中性** —— 与「正常不上色」同一条
 /// 道理(规范 §二):一个病人常有 4–6 条问题,若条条都染成主色,真正在报警的那条
-/// 就被淹没了。原先不 warn 走 teal(= 个人模式主色),在医生模式里既错色又稀释
+/// 就被淹没了。原先不 warn 走 teal(= 个人模式主色),在代拍里既错色又稀释
 /// 语义;原先 warn 那个 `#FDECEF` 也是裸色值,现在归位到令牌 `criticalWash`。
 class _StatusChip extends StatelessWidget {
   const _StatusChip({
@@ -144,7 +144,7 @@ class _StatusChip extends StatelessWidget {
 // (`MedColors.high` / `MedColors.low`),与 `widgets/report_content.dart` 同源 ——
 // 这两个色值不再在任何屏里复述,改一处全 app 生效。
 //
-// **医生模式不碰这里的任何一个颜色。** 同一份化验值在个人模式和医生模式下必须
+// **代拍不碰这里的任何一个颜色。** 同一份化验值在个人模式和代拍模式下必须
 // 长得一模一样,否则「偏高」就成了两个意思。
 
 class _LabRow extends StatelessWidget {

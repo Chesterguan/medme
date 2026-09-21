@@ -1,6 +1,6 @@
 # 埋点目录(Analytics Catalog)
 
-**最后更新:2026-08-06**(补齐 1.6.0 五 tab / 记录 / 看病带这个 / 趋势筛选 / 数据主权)
+**最后更新:2026-09-18**(UX Stage 1:五 tab → 三 tab,「给医生看」由浮层升格成整页,代拍入口改道;`AnalyticsTab` 取值整组换过,查数前先看下面那张新旧对照表)
 
 这份文档是「我们到底采了什么」的唯一权威清单。三个用途:
 
@@ -81,7 +81,7 @@
 
 ---
 
-## 四、事件全集(27 条)
+## 四、事件全集(31 条)
 
 每条对应**一个决定**。答不出决定的事件不该存在。
 
@@ -109,11 +109,11 @@
 | `doc_import_failed` | `source`, `count_bucket`, `failed_bucket`, `duration_bucket`, `per_doc_duration_bucket`, `is_first`, `stage`, `reason_code` | `import_flow.dart`、`screens/doctor/proxy_intake_flow.dart` | 失败集中在哪一步、哪个原因 |
 | `doc_capture_degraded` | `source`, `reason` | `import_flow.dart` | **「点拍照没反应」到底是哪一种病因。** 采集器没起来、已降级到普通相机 —— 是 GMS 检测自己炸了、扫描器抛异常、还是扫描器永久挂起 |
 | `doc_capture_aborted` | `source`, `reason` | `import_flow.dart` | **用户主动取消 vs 采集器静默返回空。** 这两者在屏上完全一样,不分开就永远算不出「没反应」的真实占比 |
-| `doc_opened` | 无 | `screens/archive_screen.dart`、`overview_screen.dart`、`trends_screen.dart`、`emergency_card_screen.dart`、`visit_summary_sheet.dart` | **档案是被看的还是被堆的。** 导入了从不打开 = 垃圾桶不是助手 |
+| `doc_opened` | 无 | `screens/archive_screen.dart`、`screens/trends_screen.dart`、`screens/for_doctor_screen.dart`、`screens/emergency_card_screen.dart` | **病历是被看的还是被堆的。** 导入了从不打开 = 垃圾桶不是助手 |
 
-> 五 tab 之后「点开一份」有五个入口,这条**仍然不带来源** —— 「被看还是被堆」不需要
-> 知道从哪一屏点的,而多一维就多一次泄露面评估。(触发点那一列 2026-08-06 补齐:
-> 此前只写了档案屏,而它早就散到五处。)
+> 「点开一份」有四个入口,这条**仍然不带来源** —— 「被看还是被堆」不需要
+> 知道从哪一屏点的,而多一维就多一次泄露面评估。(触发点那一列 2026-09-18 再校一次:
+> Stage 1 删掉了概览屏与「给医生看」浮层,那两处换成了「给医生看」整页。)
 
 **两个耗时不是重复。** 总时长被份数主导,只能回答「用户要等多久」;单份时长才是引擎质量 —— 5 份各 2 秒,总时长报 `3-10s` 像是慢,单份报 `1-3s` 其实正常。当初只报总时长,等于把批量冒充成了引擎问题。
 
@@ -179,16 +179,34 @@
 `docs/log/2026-07-18-qr-share-security-and-community-prep.md` 的 07-21 追记),
 因为异常文本里常带文件名和绝对路径 —— 那是病历内容。
 
-### 界面骨架(五 tab)
+### 界面骨架(三 tab)
 
-> 1.6.0 把三 tab(健康档案 / 导出分享 / 设置)换成五 tab(概览 / 趋势 / 档案 /
-> 应急卡 / 设置)。**席位之争是这一版最大的赌注,而它此前一个数都没有。**
+> 1.6.0 是五 tab(概览 / 趋势 / 档案 / 应急卡 / 设置)。**UX Stage 1 收成三 tab:
+> 病历 / 趋势 / 我。** 概览整屏解散;急救卡退出底栏,收进「给医生看」那一页。
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `home_tab_selected` | `tab`(枚举 `AnalyticsTab`:`overview`/`trends`/`archive`/`emergency`/`settings`) | `main.dart` | **五个一级席位该给谁。** `HomeShell` 的文档里那句「做成 tab 就是给一个一年用十次的动作一个常驻席位,而把它挤掉的会是应急卡」到今天为止纯属推理 —— 这条把它变成可证伪的 |
+| `home_tab_selected` | `tab`(枚举 `AnalyticsTab`:`records`/`trends`/`me`) | `main.dart` | **三个一级席位分别被用多少。** 「把一年用十次的动作做成常驻席位」那个赌注,五 tab 版赌输了(概览与急救卡都被撤了);这条继续盯剩下三个 |
 
-**只在手点底栏时发。** 程序化跳转(`goToArchive()`、载入示例后的「去看看」)不发 ——
+⚠️ **取值在 UX Stage 1 整组换过,查数的人要先按版本切一刀。**
+最后一个发五个旧值的版本是 `1.6.0`(`apps/mobile_flutter/pubspec.yaml`),新值随其后
+第一个版本上线。对照(与 `lib/analytics.dart` 的 `AnalyticsTab` 文档同一张表):
+
+| 旧值 | 新值 | 同一块屏吗 |
+|---|---|---|
+| `tab=archive` | `tab=records` | 是 —— `ArchiveScreen` 只是换了槽位、改了名 |
+| `tab=settings` | `tab=me` | 是 —— `SettingsScreen` 同理 |
+| `tab=trends` | `tab=trends` | 是 |
+| `tab=overview` | 无 | **否**,概览整屏解散了 |
+| `tab=emergency` | 无 | **否**,这一屏退出底栏,收进「给医生看」那一页 |
+
+> 第一列刻意写成 `tab=xxx` 而不是光秃秃的 `` `xxx` `` —— 第四节的目录闸按
+> 「行首反引号标识符」认事件名,写成裸值会把这五个取值当成五个不存在的事件。
+
+不切这一刀,新的 `records` 会被旧的 `archive` 和一块已经不存在的 `overview` 一起
+稀释,而**图上看不出来**。
+
+**只在手点底栏时发。** 程序化跳转(`goToRecords()`、载入示例后的「去看看」)不发 ——
 那是别的功能的副作用,不是用户想去哪;混进来会把一个功能的成功记成另一个 tab 的人气。
 
 `tab` 上报的是**名字不是下标**:下标会随 tab 顺序调整而变,顺序一改后台里所有历史
@@ -207,29 +225,35 @@
 已经足够分开两条产品路线 —— 这是这条事件上能安全拿到的最大信息量。
 数值、单位、笔记原文、测量时间一概不出设备。
 
-### 看病带这个
+### 「给医生看」浮层时代(两条事件已停发)
 
-> 原名「就诊单」。**刻意不是 tab**,只从概览与档案两处顶栏以浮层唤起。
+> 原名「就诊单」/「看病带这个」。当年**刻意不是 tab**,只从概览与档案两处顶栏以浮层唤起。
+> **UX Stage 1 把浮层整个删了**,内容升格成「给医生看」整页(从「病历」tab 那颗
+> 白底方块推进去)。下面两条事件在代码里仍留着枚举(标了 `@Deprecated`)但**已无调用点**,
+> 新版本一条都不会再发 —— 留着只为对上 PostHog 里的历史数据。
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `visit_sheet_opened` | `where`(`overview`/`archive`) | `screens/visit_summary_sheet.dart` | **「它不占 tab」这个赌注成不成立。** 打开次数接近零 = 没人找得到它,那这一屏(本版最重的一屏)要么给席位要么砍。`where` 说两个入口谁在起作用,决定另一个该不该留 |
-| `visit_sheet_action` | `action`(`copy`/`qr`/`addNote`) | `screens/visit_summary_sheet.dart` | **诊室里真正走的是「复制全文」还是「出示二维码」。** 两条路成本差一个数量级:复制是本地几行代码,出码要联网 + E2E 加密 + 托管查看器 + 12 小时过期清理。出码几乎没人按的话,那整条云链路该退成次要入口而不是并列 |
+| `visit_sheet_opened` | `where`(`overview`/`archive`) | `analytics.dart`(仅剩枚举,已无调用点) | **已停发。** 当年问的是「它不占 tab」这个赌注成不成立:打开次数接近零 = 没人找得到它,那这一屏(本版最重的一屏)要么给席位要么砍。`where` 说两个入口谁在起作用,决定另一个该不该留 |
+| `visit_sheet_action` | `action`(`copy`/`qr`/`addNote`) | `analytics.dart`(仅剩枚举,已无调用点) | **已停发。** 当年问的是诊室里真正走的是「复制全文」还是「出示二维码」:两条路成本差一个数量级:复制是本地几行代码,出码要联网 + E2E 加密 + 托管查看器 + 12 小时过期清理。出码几乎没人按的话,那整条云链路该退成次要入口而不是并列 |
 
-两条组成漏斗:**打开了却一颗都没按** = 这一屏只是被瞄了一眼,内容没用起来 ——
-那是排版问题不是入口问题,两者要修的地方不同。
+两条当年组成漏斗:**打开了却一颗都没按** = 这一屏只是被瞄了一眼,内容没用起来 ——
+那是排版问题不是入口问题,两者要修的地方不同。**只对 1.6.0 及更早的数据有效。**
 
-`action=qr` 与 `action=addNote` 只做**入口归属**:出码本身仍由 `share_qr_shown` 计数
-(出码还能从设置 →「导出 · 分享」进,两条路的占比决定哪条是主路径),存下来的笔记
-仍由 `record_added` 计数。
+`action=qr` 与 `action=addNote` 当年只做**入口归属**:出码本身一直由 `share_qr_shown`
+计数,存下来的笔记一直由 `record_added` 计数 —— 那两条没受影响,**漏斗的这一半从
+Stage 1 起断了**,别再拿它算空转率。
 
 ⚠️ 复制走的文本就是整页病历摘要,**一个片段都不上报**;二维码载荷、笔记原文同理。
 
-### 应急卡
+### 急救卡
+
+> UX Stage 1 之后**它不再是 tab**:入口收进「给医生看」那一页的第三行。
+> 屏名与入口名统一成「急救卡」(此前顶栏写「应急卡」、入口写「急救卡」)。
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `emergency_big_mode_opened` | 无 | `screens/emergency_card_screen.dart` | **应急卡该不该继续占一个一级席位。** 代码里写着「大字模式才是这个 tab 的产品本体,平时这一屏只是它的维护界面」—— 若 tab 有人进(`home_tab_selected`)而大字模式没人开,那句话就是错的:它实际是个资料编辑页,「急救现场」的前提从未被验证 |
+| `emergency_big_mode_opened` | 无 | `screens/emergency_card_screen.dart` | **这一屏是不是只是个资料编辑页。** 五 tab 版的问题是「该不该占一个一级席位」,而席位已经在 Stage 1 撤掉了;现在问的是:从「给医生看」进来的人里,有几个真的开了大字模式 |
 
 **无属性**是刻意的:这一屏上的每一样东西(姓名、血型、过敏史、紧急联系人和电话)
 都是最敏感的那一类,一个都不带。
@@ -253,10 +277,12 @@
 
 ### 导出与出码
 
-> **「导出 · 分享」1.6.0 起不再是一级 tab**,收进了「设置」(数据主权:我的数据往哪去)。
-> 事件本身**没有变**,该发的照发 —— 变的只是入口深了一层。若 `export_completed` 在
-> 1.6.0 之后明显掉下来,那是**入口变深**的代价,不是导出没人要,别读反。
-> 出码另有第二个入口:「看病带这个」浮层底部(见 `visit_sheet_action` 的 `qr`)。
+> 入口搬过两次:1.6.0 从一级 tab 收进「设置」;**UX Stage 1 再搬进「给医生看」那一页,
+> 并改名「导出文件」**(病历 → 给医生看 → 导出文件)。事件本身**没有变**,该发的照发 ——
+> 变的只是入口。若 `export_completed` 在这两个版本之后掉下来,那是**入口变深**的代价,
+> 不是导出没人要,别读反。
+> **出码现在只有一条路**:病历 → 给医生看 → 底部那颗「出码给医生看」。浮层那个入口
+> (`visit_sheet_action` 的 `qr`)与「导出文件」里那张重复的出码卡都已删掉。
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
@@ -273,7 +299,7 @@
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `mode_selected` | `mode`, `where`(first/settings) | `screens/mode_picker_screen.dart`、`screens/settings_screen.dart` | 几成用户是医生。**`where=settings` 占比高 = 「你是?」那一屏问得不清楚** |
+| `mode_selected` | `mode`, `where`(settings/for_doctor) | `screens/settings_screen.dart`、`screens/for_doctor_screen.dart` | 几成用户是医生。**UX Stage 1 删掉了首屏那个「你是?」选择页**(`mode_picker_screen.dart`),`where=first` 从此不再发;新值 `for_doctor` = 从「给医生看」那一页最后一行进来的,它和 `settings` 的比说明代拍的人是本来就在找它,还是逛设置逛到的 |
 | `proxy_session_started` | `resumed` | `screens/doctor/proxy_intake_flow.dart` | 代拍到底有没有人用。`resumed=true` = 12 小时内回来补拍 |
 | `proxy_consent_signed` | 无 | `screens/doctor/proxy_intake_flow.dart` | **同意书是最可能的流失点。** started 与它的差 = 病人在同意环节走掉了 |
 | `proxy_share_shown` | `count_bucket`, `confirmed_bucket`, `size_bucket`, `duration_bucket` | `screens/doctor/proxy_intake_flow.dart` | **一次代拍要多久**(要五分钟就不会有第二次);`confirmed_bucket` 与 `count_bucket` 的差 = 医生确认了却没交付的份数 |
@@ -294,7 +320,7 @@
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `demo_data_loaded` | `ok` | `screens/settings_screen.dart` | **示例数据该提到空态里,还是该整个砍掉。** 它现在埋在「设置」第三节,而需要它的人正站在「概览」的空态上。载入的人多它就该上第一屏;几乎没人载入,那条 Rust 流式 API + 合成成员 + 一串进度文案就是净负担 |
+| `demo_data_loaded` | `ok` | `screens/settings_screen.dart` | **示例数据该提到空态里,还是该整个砍掉。** 它现在埋在「我 → 关于」里,而需要它的人正站在「病历」的空态上。载入的人多它就该上第一屏;几乎没人载入,那条 Rust 流式 API + 合成成员 + 一串进度文案就是净负担 |
 | `data_wiped` | 无 | `screens/settings_screen.dart` | **我们能看见的最强负面信号。** 没有持久 ID 就永远看不到卸载,清空是仅次于它的一步,而且在二次确认之后 —— 不会误触。配合 `tenure_bucket` 分得开「第一天就清掉」(首次体验问题)和「用了一个月才清」(出了什么事),这是两种病 |
 
 `ok=false` 另有用处:`load_demo_data` **恒不返回 `Err`**(失败靠字段带出来),
@@ -302,6 +328,21 @@
 
 ⚠️ 失败原因是 Rust 侧的一段文本、可能带路径,**不上报**(与 `doc_import_failed`
 只报 `reason_code` 同一条规矩)。`data_wiped` 无属性 —— 而且此刻设备上已经什么都不剩了。
+
+### 账号与同步
+
+> 账号登录、云同步、家属/医生授权——这几条路径此前一个事件都没有。
+
+| 事件 | 属性 | 触发点 | 回答什么决定 |
+|---|---|---|---|
+| `account_login` | `method`(otp/apple), `ok` | `account_flow.dart` | 登录走哪种方式、成不成功——`ok=false` 集中在哪个 `method`,决定该修哪条登录路径 |
+| `sync_run` | `ok`, `pushed_bucket`, `pulled_bucket` | `sync_engine.dart` | **云同步到底跑没跑通。** `ok` 的失败率,以及 `pushed_bucket`/`pulled_bucket` 是不是长期为 `0`,决定这套推拉引擎值不值得继续投入 |
+| `grant_created` | `role` | `grants.dart` | 医生看诊码(`viewer`)与代拍转移(`owner`)两条授权路径谁在被用 |
+| `grant_redeemed` | `role`, `ok` | `grants.dart` | 兑换授权成不成功——失败率高说明链接或流程有问题,不是「没人用」 |
+
+⚠️ **不带任何 id、手机号、档案名。** `account_login` 不报手机号/账号 id;`sync_run` 只报
+布尔与分桶后的事件数,不报同步了什么内容;`grant_created`/`grant_redeemed` 只报角色,
+不报邀请 token、profile id、对方账号。
 
 ### 分析自身
 
@@ -346,9 +387,9 @@
 | 认领转化率 | `claim_imported / proxy_share_shown`(总量比,非逐条) |
 | 开箱失败率 | `app_open` 里 `vault_ok=false` 的占比 |
 | **入库总量**(两条路之和) | `doc_import_completed + record_added` —— 手动录入刻意不发 `doc_import_*`,理由见「导入」一节 |
-| 「看病带这个」空转率 | `visit_sheet_opened − visit_sheet_action`(打开了一颗按钮都没按) |
-| 应急卡是不是只是个编辑页 | `emergency_big_mode_opened / home_tab_selected(tab=emergency)` |
-| 「记录」入口谁在用 | `record_added` 减去 `visit_sheet_action(action=addNote)`,余下的基本是概览那颗快捷键 |
+| 「给医生看」空转率(**只对 1.6.0 及更早有效**) | `visit_sheet_opened − visit_sheet_action`(打开了一颗按钮都没按);浮层删掉之后这两条已停发,Stage 1 之后没有等价算法 |
+| 急救卡是不是只是个编辑页 | 1.6.0 及更早:`emergency_big_mode_opened / home_tab_selected(tab=emergency)`。Stage 1 之后它不是 tab 了,分母没了 —— 只能看 `emergency_big_mode_opened` 的绝对量 |
+| 「记录」入口谁在用 | 1.6.0 及更早:`record_added` 减去 `visit_sheet_action(action=addNote)`。Stage 1 之后「记录一下」只剩「趋势」tab 一个入口,`record_added` 本身就是它 |
 | 多成员真实占比 | `member_count_bucket ≥ 2` 里剔掉发过 `demo_data_loaded` 的会话(示例成员会多算一个) |
 
 ---
@@ -370,8 +411,8 @@
 | **趋势的搜索词** | 用户直接打进去的字,会是指标名甚至病名 —— 是内容里最直白的一种。搜索只在**展开搜索栏**时计一次,不随输入发 |
 | **成员名字** | 病历里最直接的身份信息。只报成员**个数**的桶(上限 5,实际只有 `1` / `2-5` 两档) |
 | **手动录入的数值、单位、测量时间、笔记原文** | 那就是病历本身 |
-| **「看病带这个」复制走的文本 / 二维码载荷** | 整页病历摘要,一个片段都不带 |
-| **应急卡上的任何字段** | 姓名、血型、过敏史、紧急联系人和电话 —— 这一屏是全 App 最敏感的一屏,所以 `emergency_big_mode_opened` **一个属性都没有** |
+| **「给医生看」复制走的文本 / 二维码载荷** | 整页病历摘要,一个片段都不带 |
+| **急救卡上的任何字段** | 姓名、血型、过敏史、紧急联系人和电话 —— 这一屏是全 App 最敏感的一屏,所以 `emergency_big_mode_opened` **一个属性都没有** |
 | 载入示例数据的失败原因文本 | Rust 侧的字符串,可能带路径。只报 `ok` 这个布尔 |
 
 ---

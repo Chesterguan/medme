@@ -17,6 +17,11 @@ pub enum DocType {
     SelfMeasurement,
     /// 手动录入的纯文本笔记。原文即内容,不解析、不关联到具体用药/诊断。
     Note,
+    /// 用户在病程档案里主动做的事(开启/关闭某个病、确认诊断、记一次复发、
+    /// 勾一次症状分、忽略一条提醒、开停药…)。与 `SelfMeasurement`/`Note` 同一
+    /// 手法:合成文本当「文件」过一遍 `Vault::import`,**零新 Event 变体**。
+    /// 载荷格式见 `parser::profile_event`。
+    ProfileEvent,
     Other,
     Unknown,
 }
@@ -32,6 +37,7 @@ impl DocType {
             DocType::Surgery => "surgery",
             DocType::SelfMeasurement => "self_measurement",
             DocType::Note => "note",
+            DocType::ProfileEvent => "profile_event",
             DocType::Other => "other",
             DocType::Unknown => "unknown",
         }
@@ -48,6 +54,7 @@ impl DocType {
             "surgery" => DocType::Surgery,
             "self_measurement" => DocType::SelfMeasurement,
             "note" => DocType::Note,
+            "profile_event" => DocType::ProfileEvent,
             "other" => DocType::Other,
             _ => DocType::Unknown,
         }
@@ -78,6 +85,22 @@ impl OcrBackendKind {
             OcrBackendKind::AppleVision => "apple_vision",
             OcrBackendKind::WindowsOcr => "windows_ocr",
             OcrBackendKind::MlKit => "mlkit",
+        }
+    }
+
+    /// `ocr_result.backend` 里存的字符串反解回来(与 [`as_str`](Self::as_str)
+    /// 互为逆)。认不出的值一律 `Native` —— 溯源信息读坏了不该让调用方失败,
+    /// 但也绝不能猜成某个具体引擎。`pipeline::merge_documents_into_pdf` 把原
+    /// 文档的 OCR 行带到合并后的文档上时要用它。
+    #[allow(clippy::should_implement_trait)] // inherent infallible mapping (Native fallback), not std::str::FromStr
+    pub fn from_str(s: &str) -> OcrBackendKind {
+        match s {
+            "onnx" => OcrBackendKind::Onnx,
+            "vlm" => OcrBackendKind::Vlm,
+            "apple_vision" => OcrBackendKind::AppleVision,
+            "windows_ocr" => OcrBackendKind::WindowsOcr,
+            "mlkit" => OcrBackendKind::MlKit,
+            _ => OcrBackendKind::Native,
         }
     }
 }
@@ -169,6 +192,21 @@ pub struct NewOcr {
     pub model_version: String,
     pub text: String,
     pub confidence: Option<f32>,
+}
+
+/// 一次云 LLM 结构化抽取的写入请求。`result_json` 存 CAS,事件只留哈希——同
+/// 文档再次调用(重跑模型)覆盖先前结果,原件永远不动。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewExtraction {
+    pub document_id: i64,
+    pub backend: String,
+    pub model_version: String,
+    pub mode: String,
+    /// 抽取输出 schema 版本(1 = labs/meds/diagnoses;2 = 再加族级 facts)。
+    /// **由调用方给**:写死在这里会让 schema 2 的结果在库里伪装成 schema 1,
+    /// 消费方按 1 去读就永远看不到 facts。
+    pub schema: i32,
+    pub result_json: String,
 }
 
 /// One DICOM slice (instance) attached to an imaging-study document.
@@ -307,6 +345,30 @@ impl Vault {
             |r| r.get(0),
         )?;
         Ok(ocr_id)
+    }
+
+    /// 追加一条云 LLM 结构化抽取结果:JSON 存 CAS,事件只引用哈希——与
+    /// `add_ocr` 同构。同一文档再次调用(重跑模型)覆盖先前结果(latest-wins)。
+    pub fn add_extraction(&self, e: NewExtraction) -> Result<(), MedmeError> {
+        let doc = self
+            .document_by_id(e.document_id)?
+            .ok_or_else(|| MedmeError::Other(format!("document {} not found", e.document_id)))?;
+        let sf = self.source_file_by_id(doc.source_file_id)?.ok_or_else(|| {
+            MedmeError::Other(format!("source_file {} not found", doc.source_file_id))
+        })?;
+        let (result_hash, _rel, _written) = self.store_object(e.result_json.as_bytes())?;
+        self.append_event(crate::event::Event::ExtractionAdded {
+            document_ref: crate::event::DocRef {
+                source_file_hash: sf.content_hash,
+            },
+            backend: e.backend,
+            model_version: e.model_version,
+            mode: e.mode,
+            schema: e.schema,
+            result_hash,
+            created_at: Self::now_rfc3339(),
+        })?;
+        self.materialize()
     }
 }
 

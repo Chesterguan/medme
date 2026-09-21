@@ -1,7 +1,7 @@
 // 用户视角三:**有一大堆记录的用户**。
 //
-// 载入示例数据(22 份真实版式的病历)之后再叠上上百条手动记录,看概览「最近的
-// 关键化验」、档案列表、趋势列表在数据量上去之后有没有溢出 / 错位 / 卡顿。
+// 载入示例数据(22 份真实版式的病历)之后再叠上上百条手动记录,看「趋势」的
+// 关键化验、「病历」列表、趋势列表在数据量上去之后有没有溢出 / 错位 / 卡顿。
 //
 // 「卡顿」这里用可测的口径:切到某个 tab 后首帧可用的耗时,超过阈值只 debugPrint
 // 记录不硬失败(模拟器性能与真机差太多,拿它当断言会变成假信号),真正硬失败的
@@ -50,7 +50,7 @@ Future<void> bulkSelfMeasurements(int days) async {
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('示例数据 + 120 天手动记录 —— 五个 tab 全过一遍', (tester) async {
+  testWidgets('示例数据 + 120 天手动记录 —— 三个 tab + 给医生看 全过一遍', (tester) async {
     final watch = OverflowWatch('大数据量')..start();
     addTearDown(watch.stop);
 
@@ -82,13 +82,11 @@ void main() {
     bumpVaultRevision();
     await bootApp(tester, reset: false);
 
-    // ③ 五个 tab 逐个进,记录首屏耗时。
+    // ③ 三个 tab 逐个进,记录首屏耗时。
     for (final (idx, label) in [
-      (HomeTab.overview, '概览'),
+      (HomeTab.records, '病历'),
       (HomeTab.trends, '趋势'),
-      (HomeTab.archive, '档案'),
-      (HomeTab.emergency, '应急卡'),
-      (HomeTab.settings, '设置'),
+      (HomeTab.me, '我'),
     ]) {
       final t = Stopwatch()..start();
       selectedTab.value = idx;
@@ -109,14 +107,14 @@ void main() {
       await settle(tester, total: const Duration(seconds: 2));
     }
 
-    // ④ 概览「最近的关键化验」不该被 200+ 条撑爆(投影自己有上限)。
+    // ④ 「关键化验」不该被 200+ 条撑爆(投影自己有上限)。
     final s = await viewVisitSummary();
     debugPrint('[大数据量] recentLabs=${s.recentLabs.length} '
         'recentVisits=${s.recentVisits.length} '
         'recentNotes=${s.recentNotes.length} '
         'plainText=${s.plainText.length}字');
     expect(s.recentLabs.length, lessThan(60),
-        reason: '概览「最近的关键化验」一次要画 ${s.recentLabs.length} 行');
+        reason: '「关键化验」一次要画 ${s.recentLabs.length} 行');
 
     // ⑤ 趋势列表滚到底不崩。
     await gotoTab(tester, HomeTab.trends);
@@ -127,8 +125,8 @@ void main() {
     }
     await settle(tester, total: const Duration(seconds: 2));
 
-    // ⑥ 档案列表滚到底不崩。
-    await gotoTab(tester, HomeTab.archive);
+    // ⑥ 「病历」列表滚到底不崩。
+    await gotoTab(tester, HomeTab.records);
     await settle(tester, total: const Duration(seconds: 2));
     for (var i = 0; i < 12; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -600));
@@ -136,13 +134,8 @@ void main() {
     }
     await settle(tester, total: const Duration(seconds: 2));
 
-    // ⑦「看病带这个」在大数据量下也得开得出来。
-    await gotoTab(tester, HomeTab.overview);
-    await waitFor(tester, find.text('看病带这个'));
-    await tester.tap(find.text('看病带这个').first);
-    await settle(tester, total: const Duration(seconds: 4));
-    await waitFor(tester, find.text('复制全文给医生'),
-        timeout: const Duration(seconds: 60));
+    // ⑦「给医生看」整页在大数据量下也得开得出来(它是一屏里信息最密的地方)。
+    await gotoForDoctor(tester);
     for (var i = 0; i < 8; i++) {
       await tester.drag(find.byType(ListView).last, const Offset(0, -500));
       await tester.pump(const Duration(milliseconds: 120));

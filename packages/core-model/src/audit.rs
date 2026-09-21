@@ -99,7 +99,12 @@ impl Vault {
                 ),
                 Event::DocumentAdded { .. }
                 | Event::OcrAdded { .. }
+                | Event::ExtractionAdded { .. }
                 | Event::ImagingInstanceAdded { .. } => continue,
+                // 本二进制不认识的事件类型(新版本写的)。`read_all` 已经把它挡在
+                // 外面了,这一支只是把「不展示」写死在类型上:字段都解不开,给不出
+                // 一行可读的审计。
+                Event::Unknown => continue,
             };
             out.push(AuditEntry {
                 seq: e.seq,

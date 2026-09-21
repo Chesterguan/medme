@@ -8,8 +8,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `doc_summary`, `extraction_item_count`, `from_encounter`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
 ///
@@ -38,6 +38,60 @@ class ClaimResultDto {
           imported == other.imported &&
           deduped == other.deduped &&
           textOnly == other.textOnly;
+}
+
+/// `vault_cloud_prepare_extraction` 的产出:脱敏后待发云端的文本、要涂黑的框
+/// (图片档,文本档为空)、还原映射(JSON,**永不离开手机**——只用来把云端结果里
+/// 的占位符/偏移日期换回真值,见 `vault_cloud_commit_extraction`)。
+class CloudExtractionRequestDto {
+  final String payloadText;
+  final List<RectDto> paint;
+  final String restoreMapJson;
+
+  const CloudExtractionRequestDto({
+    required this.payloadText,
+    required this.paint,
+    required this.restoreMapJson,
+  });
+
+  @override
+  int get hashCode =>
+      payloadText.hashCode ^ paint.hashCode ^ restoreMapJson.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudExtractionRequestDto &&
+          runtimeType == other.runtimeType &&
+          payloadText == other.payloadText &&
+          paint == other.paint &&
+          restoreMapJson == other.restoreMapJson;
+}
+
+/// `vault_cloud_commit_extraction` 的产出:这次落盘的化验条数、因未过校验被丢弃的
+/// 条数(文本档)、未能校验但保留的条数(图片档,见 `deid::verify`)。
+class CloudExtractionResultDto {
+  final PlatformInt64 labs;
+  final PlatformInt64 rejected;
+  final PlatformInt64 unverified;
+
+  const CloudExtractionResultDto({
+    required this.labs,
+    required this.rejected,
+    required this.unverified,
+  });
+
+  @override
+  int get hashCode => labs.hashCode ^ rejected.hashCode ^ unverified.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudExtractionResultDto &&
+          runtimeType == other.runtimeType &&
+          labs == other.labs &&
+          rejected == other.rejected &&
+          unverified == other.unverified;
 }
 
 /// 一份文档当前的「已确认」状态(医生代拍待确认列表)。**不**塞进共享的
@@ -206,6 +260,25 @@ class DocumentSummaryDto {
   /// 影像检查文档的切片数;非影像文档为 None。
   final int? sliceCount;
 
+  /// 云抽取(`extraction` 表,schema v6)读出的条目数,**三态**:
+  /// `None` = 还没跑过 / 被拒发 / 离线;`Some(0)` = 跑过了,一条都没读出来;
+  /// `Some(n)` = 读出 n 条。
+  ///
+  /// 前端(`doc_labels.dart` 的 `docRowLabel`)靠它区分「待归类」的两种成因:
+  /// 还没轮到 vs 整理过但白跑。原先两种都显示「待归类」,用户看到的是一份
+  /// 永远停在待归类的文档,分不清是还在跑还是失败了(冒烟 friction 2)。
+  final int? extractionItemCount;
+
+  /// 这份病历上印的**机构名**(「北京协和医院」),取自它自己的 OCR 文本,用的是
+  /// `extract_provider_clean` —— 就诊组头上那个 `extract_provider` 的**不带噪**变体
+  /// (页脚签名切不准时它返回 `None`,而不是「王涛北京协和医院」)。
+  /// 文档里确实没有机构(自测记录、笔记)时也是 `None` —— 编一个院名比空着糟。
+  ///
+  /// 存在的理由:`document` 表里没有这一列,而档案行此前显示的是
+  /// `image_picker_….jpg`。前端(`doc_labels.dart` 的 `docDisplayTitle`)拿它
+  /// 拼出「协和医院 · 化验」,不用再把一个临时文件名端给用户看。
+  final String? provider;
+
   const DocumentSummaryDto({
     required this.id,
     required this.docType,
@@ -214,6 +287,8 @@ class DocumentSummaryDto {
     this.title,
     required this.pageCount,
     this.sliceCount,
+    this.extractionItemCount,
+    this.provider,
   });
 
   @override
@@ -224,7 +299,9 @@ class DocumentSummaryDto {
       docDateEnd.hashCode ^
       title.hashCode ^
       pageCount.hashCode ^
-      sliceCount.hashCode;
+      sliceCount.hashCode ^
+      extractionItemCount.hashCode ^
+      provider.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -237,7 +314,9 @@ class DocumentSummaryDto {
           docDateEnd == other.docDateEnd &&
           title == other.title &&
           pageCount == other.pageCount &&
-          sliceCount == other.sliceCount;
+          sliceCount == other.sliceCount &&
+          extractionItemCount == other.extractionItemCount &&
+          provider == other.provider;
 }
 
 class EncounterSummaryDto {
@@ -432,6 +511,42 @@ class MergeOutcomeDto {
           mergedCount == other.mergedCount;
 }
 
+/// [`OcrPpResultDto::lines`] 的一行:文本 + 检测框。
+class OcrLineDto {
+  final String text;
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+
+  const OcrLineDto({
+    required this.text,
+    required this.left,
+    required this.top,
+    required this.right,
+    required this.bottom,
+  });
+
+  @override
+  int get hashCode =>
+      text.hashCode ^
+      left.hashCode ^
+      top.hashCode ^
+      right.hashCode ^
+      bottom.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OcrLineDto &&
+          runtimeType == other.runtimeType &&
+          text == other.text &&
+          left == other.left &&
+          top == other.top &&
+          right == other.right &&
+          bottom == other.bottom;
+}
+
 /// **iOS PP-OCRv5 测试路径**结果(feat/ios-pp-ocr-test 分支,探索性——ADR 0005
 /// 尚未 supersede)。镜像 Dart `OcrResult`(`ocr_bridge.dart`),供
 /// `recognize_image_pp` 返回,让真机能对比 Apple Vision vs PP-OCRv5 的识别质量。
@@ -439,10 +554,32 @@ class OcrPpResultDto {
   final String text;
   final double confidence;
 
-  const OcrPpResultDto({required this.text, required this.confidence});
+  /// 每行的检测框(识别引擎 working frame 像素坐标,origin 左上)。云抽取
+  /// 图片档脱敏靠它定位要涂黑的区域(`deid::redact_boxes`);文本档忽略。
+  final List<OcrLineDto> lines;
+
+  /// `lines` 所在那张 working frame 的宽高(像素)——识别引擎内部预处理(降采样/
+  /// 90°摆正/去斜)之后的图,**不是原图尺寸**。调用 `vault_cloud_prepare_extraction`
+  /// 时必须原样传这两个数作 `page_w`/`page_h`;传原始图片宽高会导致涂黑框整体
+  /// 算错坐标系(静默漏涂 PHI),传原图尺寸这类明显不对的值不会有任何报错提示。
+  final double frameW;
+  final double frameH;
+
+  const OcrPpResultDto({
+    required this.text,
+    required this.confidence,
+    required this.lines,
+    required this.frameW,
+    required this.frameH,
+  });
 
   @override
-  int get hashCode => text.hashCode ^ confidence.hashCode;
+  int get hashCode =>
+      text.hashCode ^
+      confidence.hashCode ^
+      lines.hashCode ^
+      frameW.hashCode ^
+      frameH.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -450,7 +587,10 @@ class OcrPpResultDto {
       other is OcrPpResultDto &&
           runtimeType == other.runtimeType &&
           text == other.text &&
-          confidence == other.confidence;
+          confidence == other.confidence &&
+          lines == other.lines &&
+          frameW == other.frameW &&
+          frameH == other.frameH;
 }
 
 class PatientProfileDto {
@@ -667,6 +807,35 @@ class QrShareDto {
           fitsQr == other.fitsQr;
 }
 
+/// 要涂黑的矩形(与 [`OcrLineDto`] 同一坐标系——同一次识别的 working frame)。
+class RectDto {
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+
+  const RectDto({
+    required this.left,
+    required this.top,
+    required this.right,
+    required this.bottom,
+  });
+
+  @override
+  int get hashCode =>
+      left.hashCode ^ top.hashCode ^ right.hashCode ^ bottom.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RectDto &&
+          runtimeType == other.runtimeType &&
+          left == other.left &&
+          top == other.top &&
+          right == other.right &&
+          bottom == other.bottom;
+}
+
 /// 一次「记录」(手动录入)里的一个数值 —— 血压一次记录有两个(收缩压+舒张压,
 /// 共享同一份文档/`measuredAt`,见 `add_self_measurement` 的文档),其余四项各
 /// 一个。`analyteKey`/`unit` 都是 `terminology` 词典里现成的规范键/单位
@@ -765,6 +934,98 @@ class SourceFileMetaDto {
           mimeType == other.mimeType &&
           byteSize == other.byteSize &&
           importedAt == other.importedAt;
+}
+
+/// 一条云同步事件的加密信封(`api::vault_sync::sync_export_events` 产出 /
+/// `sync_import_events` 消费)。`device_id`/`seq` 明文携带(服务端按
+/// `(device_id, seq)` 去重/排序、Dart 侧按 `device_seq_map` 过滤都不需要解密);
+/// `ciphertext` 是整条 `core_model::LogEntry` 的 JSON 序列化经档案密钥 AEAD
+/// 加密的结果(AAD = `device_id:seq`),真正敏感的内容(含本机真实的
+/// `event_id` 与真实时间戳)都在这里面。**`event_id` 这个字段本身是服务端看到的
+/// HMAC 马甲**(`sync::event_id_for_wire`),不是本机内容哈希——服务端只拿它当一个
+/// 不透明校验值存,dedup 靠 `(device_id, seq)`;`sync_import_events` 不读这个字段。
+///
+/// **`ts` 恒为常量 `"0"`**(最终评审 I4):服务端排序从来只看
+/// `(device_id, seq)`,而一串明文时间戳等于白送一条「这个人什么时候、多久一次
+/// 产生病历事件」的时间线。真实 `ts` 在 `ciphertext` 里的 `LogEntry` 上,解密后
+/// 原样恢复;`sync_import_events` 同样不读信封上的这个字段。
+class SyncEventDto {
+  final String deviceId;
+  final PlatformInt64 seq;
+  final String eventId;
+  final String ts;
+  final Uint8List ciphertext;
+
+  const SyncEventDto({
+    required this.deviceId,
+    required this.seq,
+    required this.eventId,
+    required this.ts,
+    required this.ciphertext,
+  });
+
+  @override
+  int get hashCode =>
+      deviceId.hashCode ^
+      seq.hashCode ^
+      eventId.hashCode ^
+      ts.hashCode ^
+      ciphertext.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncEventDto &&
+          runtimeType == other.runtimeType &&
+          deviceId == other.deviceId &&
+          seq == other.seq &&
+          eventId == other.eventId &&
+          ts == other.ts &&
+          ciphertext == other.ciphertext;
+}
+
+/// `core_model::sync_io::PeerAppendOutcome` 的 FRB 镜像,外加 `undecodable`。
+/// 五个计数不互斥,Dart 侧都要看:`applied`/`skipped_existing`/`out_of_order`
+/// 是磁盘层面的去重/排序结果,`out_of_order` 提示调用方该把这个 device 的拉取
+/// 水位下调重推;`untrusted` 是 MAC/链校验层面的隔离计数(错误账号密钥或被
+/// 篡改),不看这个字段、只盯 `device_seq_map`(可信水位)会导致"越推越推不动"
+/// 的死循环。`undecodable` 是 `sync_import_events` 自己这一层的计数(在交给
+/// `append_peer_entries` 之前就没能解密/反序列化/信封校验通过的条目数,按设备
+/// 只算撞到的第一条——见该函数文档),非零说明有台设备卡在了某条解不开的事件
+/// 上,该设备后面还有条目排队等着,不是"已经全部同步完"。
+class SyncImportOutcomeDto {
+  final int applied;
+  final int skippedExisting;
+  final int outOfOrder;
+  final int untrusted;
+  final int undecodable;
+
+  const SyncImportOutcomeDto({
+    required this.applied,
+    required this.skippedExisting,
+    required this.outOfOrder,
+    required this.untrusted,
+    required this.undecodable,
+  });
+
+  @override
+  int get hashCode =>
+      applied.hashCode ^
+      skippedExisting.hashCode ^
+      outOfOrder.hashCode ^
+      untrusted.hashCode ^
+      undecodable.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncImportOutcomeDto &&
+          runtimeType == other.runtimeType &&
+          applied == other.applied &&
+          skippedExisting == other.skippedExisting &&
+          outOfOrder == other.outOfOrder &&
+          untrusted == other.untrusted &&
+          undecodable == other.undecodable;
 }
 
 @freezed

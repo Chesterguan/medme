@@ -1,7 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 关掉安卓系统自动备份(最终评审 I6)。沙盒里躺着的是**明文的病历保险箱**
+         和账号 refresh token;系统自动备份默认是开的,会把它们整包传进用户的
+         Google Drive —— 一份我们看不见、也无法撤回的副本。
+         allowBackup="false" 管 Android 11 及以下(它一关,fullBackup 那套整个失效,
+         不必再写 fullBackupContent);12+ 认 dataExtractionRules
+         (见 res/xml/data_extraction_rules.xml,云备份与设备迁移都排除干净)。
+         两条一起写,不是重复。换机恢复走账号云同步(密文上云),不靠系统备份。
+         ⚠️ 动这两个属性 = 动「数据会不会离开手机」,必须同步隐私政策。 -->
     <application
         android:label="${appLabel}"
         android:name="${applicationName}"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

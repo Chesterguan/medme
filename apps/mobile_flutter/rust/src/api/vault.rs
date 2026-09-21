@@ -47,28 +47,47 @@ static DEMO_DATA: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIF
 /// Vault 一起存(`reset_vault` 需要同时读写这几样)。`data_dir` 是 App 沙盒 data
 /// 目录,存 `device_id` 文件,也是 `ingest_bytes`/`load_demo_data` 的临时文件落点
 /// (镜像 Tauri 版用 `app_cache_dir()` 存一次性导入临时文件的做法)。
-struct VaultState {
-    vault: Vault,
+// `pub(crate)`(struct + 全部字段):`api::vault_sync` 的 keyed open
+// (`sync_open_profile_vault`)需要直接构造这个结构体、其余 `sync_*` 函数经
+// `with_state` 读 `vault`/`device_id` 等字段——它们跟本模块是兄弟模块而非子
+// 模块,私有字段(默认可见性)在那边看不到。
+pub(crate) struct VaultState {
+    pub(crate) vault: Vault,
     /// 真相(`objects/` + `log/`)所在目录:本机 `<docs_dir>/vault`,或(开了 iCloud
     /// 同步且容器可用时)iCloud 容器 `<container>/Documents/vault`。
-    truth_root: PathBuf,
-    db_path: PathBuf,
-    device_id: String,
+    pub(crate) truth_root: PathBuf,
+    pub(crate) db_path: PathBuf,
+    pub(crate) device_id: String,
     /// App 沙盒 Documents 目录;本机保险箱固定 `<docs_dir>/vault`(关 iCloud 时复制回这)。
-    docs_dir: PathBuf,
-    data_dir: PathBuf,
+    pub(crate) docs_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
+    /// 云同步档案密钥(仅 `sync_open_profile_vault` 打开的 keyed vault 有值)。
+    /// 普通 `open_vault` 恒为 `None`——不影响本机专用的既有能力。读取方见
+    /// `api::vault_sync::sync_current_vault_is_keyed`。
+    pub(crate) profile_key: Option<[u8; 32]>,
 }
 
 static VAULT: OnceLock<Mutex<Option<VaultState>>> = OnceLock::new();
 
-fn vault_cell() -> &'static Mutex<Option<VaultState>> {
+pub(crate) fn vault_cell() -> &'static Mutex<Option<VaultState>> {
     VAULT.get_or_init(|| Mutex::new(None))
 }
+
+/// 一把跨文件共享的粗互斥锁,给所有需要打开/替换真实进程级 `VAULT`(经
+/// `open_vault` 或 `vault_sync::sync_open_profile_vault`)的测试用(本文件的
+/// `cloud_extraction_tests`、`vault_projections` 的端到端测试、`vault_sync`)。
+/// 必须共享同一把锁——`cargo test` 默认多线程并发跑各文件的测试,`VAULT` 是
+/// 货真价实的进程单例,各模块各建一把互不相干的锁挡不住彼此同时
+/// `open_vault`/`ingest_bytes` 操作同一个单例,会相互冲掉对方的保险箱状态、
+/// 断言随机失败(曾经就是两把不共享的锁,复现为 `vault_projections` 的用例
+/// 间歇性失败)。
+#[cfg(test)]
+pub(crate) static VAULT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// 在已打开的 vault 状态上跑 `f`。恢复被污染的锁而不是让此后每次调用都失败——
 /// 镜像 Tauri 版 `commands::lock()` 的理由:Vault 的「真相」是追加式日志 + CAS,
 /// 一把被 panic 污染过的锁里的 Vault 仍然可用。
-fn with_state<T>(f: impl FnOnce(&VaultState) -> anyhow::Result<T>) -> anyhow::Result<T> {
+pub(crate) fn with_state<T>(f: impl FnOnce(&VaultState) -> anyhow::Result<T>) -> anyhow::Result<T> {
     let guard = vault_cell().lock().unwrap_or_else(|p| p.into_inner());
     let state = guard
         .as_ref()
@@ -88,7 +107,7 @@ fn with_state_mut<T>(f: impl FnOnce(&mut VaultState) -> anyhow::Result<T>) -> an
 /// 本机持久设备 id,存在 `<data_dir>/device_id`(沙盒 data 目录,不进保险箱本身——
 /// 保险箱可能是个跨设备共享/同步的文件夹,设备 id 必须留在本机)。首次打开时生成
 /// 并落盘。镜像 Tauri 版 `lib.rs::machine_device_id`。
-fn machine_device_id(data_dir: &Path) -> anyhow::Result<String> {
+pub(crate) fn machine_device_id(data_dir: &Path) -> anyhow::Result<String> {
     let file = data_dir.join("device_id");
     if let Ok(s) = std::fs::read_to_string(&file) {
         let trimmed = s.trim();
@@ -99,19 +118,6 @@ fn machine_device_id(data_dir: &Path) -> anyhow::Result<String> {
     let id = core_model::generate_device_id();
     std::fs::write(&file, &id)?;
     Ok(id)
-}
-
-/// 影像 study 文档在时间线上显示切片数;非影像文档 slice_count 为 None。
-fn doc_summary(v: &Vault, d: &core_model::Document) -> DocumentSummaryDto {
-    let mut s = DocumentSummaryDto::from(d);
-    if d.doc_type == DocType::ImagingReport {
-        if let Ok(n) = v.imaging_instance_count(d.id) {
-            if n > 0 {
-                s.slice_count = Some(n as i32);
-            }
-        }
-    }
-    s
 }
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -148,8 +154,28 @@ pub fn open_vault(
         device_id,
         docs_dir,
         data_dir,
+        profile_key: None,
     });
+    clear_terminology_overlay();
     Ok(())
+}
+
+/// 换箱之后把病种包带来的术语覆盖层退回内置(见 `api::vault_profile` 的
+/// `vault_profile_refresh_terms`)。
+///
+/// 覆盖层是**进程级全局**,而保险箱一次只开一个:不清的话,上一个成员开的病种的
+/// 别名与新分析物会继续挂在全局词典上、给下一个成员的化验识别用 —— spec §4
+/// 「从未开启 = 不算、不显示、不提醒」在跨成员这一侧就被绕过了。
+///
+/// 清空是**失败安全**的那一侧(退回内置词典,永远不会多认一个词);重装由开完箱的
+/// 调用方(`lib/vault_boot.dart` → `vault_profile_refresh_terms`)按新箱子做,打开
+/// 病程档案页时还会再装一次。
+///
+/// `vault_sync::sync_open_profile_vault`(keyed 开箱)也调它 —— 两条换箱路径,同一条
+/// 规矩。`pub(crate)` 而非 `pub`:名字字典序排在 `recognize_image_pp` 前面,改 `pub`
+/// 会被 FRB 扫成 FFI、把下标 44 顶走(同 `extraction_json_for` / `add_synthetic_document`)。
+pub(crate) fn clear_terminology_overlay() {
+    terminology::set_overlay(Vec::new());
 }
 
 /// 决定真相/派生库路径:开了 iCloud 标记且 Dart 传入了容器根 → 真相在
@@ -508,6 +534,15 @@ pub fn ingest_bytes(filename: String, data: Vec<u8>) -> anyhow::Result<ImportOut
         format!("{base}.jpg")
     };
 
+    // 导入前压图(长边 2000px、JPEG q85):这条路径也接 PDF/TXT/DICOM,只对图片
+    // 压(按扩展名判 mime,与 `pipeline::ingest` 判类型的口径一致)。
+    // HEIC/多页 TIFF/已经够小的一律原样返回(见 `pipeline::compress_photo`)。
+    let data = if pipeline::mime_for(Path::new(&safe_name)).starts_with("image/") {
+        pipeline::compress_photo(&data)
+    } else {
+        data
+    };
+
     with_state(|state| {
         let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S%f");
         let tmp_dir = state.data_dir.join("medme-ingest").join(stamp.to_string());
@@ -608,6 +643,10 @@ pub fn ingest_image_with_text(
     } else {
         format!("{base}.jpg")
     };
+
+    // 导入前压图(长边 2000px、JPEG q85):这条路径全是图片,直接压,不用按
+    // mime 判断。HEIC/多页 TIFF/已经够小的一律原样返回(见 `pipeline::compress_photo`)。
+    let bytes = pipeline::compress_photo(&bytes);
 
     // 原件真实页数(多页 TIFF>1,其余一律 1)。`ocr_text` 只可能是第 1 页的,
     // 故 2..=n 是「没读到的页」;一页文字都没识别出来时 1..=n 全都没读到。
@@ -809,6 +848,77 @@ fn parse_measured_at(measured_at: Option<&str>) -> chrono::DateTime<chrono::Utc>
         .unwrap_or_else(chrono::Utc::now)
 }
 
+/// 「没有原件的文档」的唯一写入路径:合成文本当"文件"过一遍 `vault.import`,再
+/// `add_document` + `add_ocr` + `rebuild_encounters`。自测记录、笔记、病程档案的
+/// 动作日志(`DocType::ProfileEvent`)全走这里 —— 三处的差异只有文件名/类型/标题/
+/// 语言四样,抽出来是为了**不写第三份**同样的五步(pipeline 的
+/// `add_text_layer_document`、DICOM 摘要是更早的同一手法先例)。
+///
+/// `name` 只是溯源用的合成文件名:CAS 去重按**字节**,不按名字。逐字节重复且已
+/// 建过档 = 真·重复提交,回传已有 document id 不再建档(`document.source_file_id`
+/// 唯一,重复建档会违反约束)。
+///
+/// 不经全局 `VAULT` 锁(收 `&Vault`):`load_demo_data` 与单测调用时已经持有
+/// `&state.vault` 或自己的临时保险箱,再抢一次同一把锁会死锁。
+///
+/// ⚠️ **必须是 `pub(crate)`,不能是 `pub`**:FRB 只扫 `pub fn`,而这个名字的字典序
+/// 排在 `recognize_image_pp` **前面** —— 一旦 `pub`,它会被生成成 FFI 并把那个函数
+/// 的派发下标 44 顶走(本 SDD `global-constraints` 的硬约束;`extraction_json_for`
+/// 是同一条理由的先例)。`rust/tests/frb_dispatch_indices.rs` 会当场抓住,但一句
+/// 注释比一次 CI 红省事。
+///
+/// 调用方要留意 CAS:正文逐字节相同 = 同一份文档、不追加事件。凡是「同样的内容
+/// 可能被记两次、而两次都必须留下」的调用方(动作日志就是),正文里必须有一行随
+/// 记录时刻变的字节 —— 见 `add_self_measurement_to` 的「记录时间」与
+/// `vault_profile::human_lines`。
+pub(crate) fn add_synthetic_document(
+    v: &Vault,
+    doc_type: DocType,
+    when: chrono::DateTime<chrono::Utc>,
+    name: &str,
+    title: String,
+    language: Option<String>,
+    text: String,
+) -> anyhow::Result<i64> {
+    let imp = v
+        .import(name, "text/plain", text.as_bytes())
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let sid = imp.source_file.id;
+    if imp.deduped
+        && v.has_document(sid)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+    {
+        return v
+            .document_by_source_file_id(sid)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .map(|d| d.id)
+            .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
+    }
+    let doc = v
+        .add_document(NewDocument {
+            source_file_id: sid,
+            doc_type,
+            doc_date: Some(when),
+            doc_date_end: None,
+            title: Some(title),
+            language,
+            page_count: 1,
+        })
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    v.add_ocr(NewOcr {
+        document_id: doc.id,
+        page_no: 1,
+        backend: OcrBackendKind::Native,
+        model_version: "self-entry".into(),
+        text,
+        confidence: None,
+    })
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    v.rebuild_encounters()
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    Ok(doc.id)
+}
+
 /// 写一条自测记录(结构化,append-only)。血压两个值(收缩压+舒张压)共享
 /// 同一份文档/同一个 `measured_at` —— 一次测量是最小操作单元,一起删一起改
 /// (MANUAL-ENTRY-DESIGN.md §5.3);其余四项(心率/体重/体温/血糖)各自单独一条
@@ -882,46 +992,15 @@ fn add_self_measurement_to(
     let title = self_measured_title(values);
 
     let name = format!("self-measurement-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
-    let imp = v
-        .import(&name, "text/plain", text.as_bytes())
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let sid = imp.source_file.id;
-    // 合成文本逐字节相同(极少见,但见 `Vault::import` 的 CAS 去重)且已建过
-    // 档 —— 真·重复提交,直接回传已有文档 id,不再建档(`document.source_file_id`
-    // 唯一,重复建档会违反约束)。与 `ingest_image_with_text` 的同一防线同构。
-    if imp.deduped
-        && v.has_document(sid)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?
-    {
-        return v
-            .document_by_source_file_id(sid)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?
-            .map(|d| d.id)
-            .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
-    }
-    let doc = v
-        .add_document(NewDocument {
-            source_file_id: sid,
-            doc_type: DocType::SelfMeasurement,
-            doc_date: Some(when),
-            doc_date_end: None,
-            title: Some(title),
-            language: Some("zh".into()),
-            page_count: 1,
-        })
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    v.add_ocr(NewOcr {
-        document_id: doc.id,
-        page_no: 1,
-        backend: OcrBackendKind::Native,
-        model_version: "self-entry".into(),
+    add_synthetic_document(
+        v,
+        DocType::SelfMeasurement,
+        when,
+        &name,
+        title,
+        Some("zh".into()),
         text,
-        confidence: None,
-    })
-    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    v.rebuild_encounters()
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    Ok(doc.id)
+    )
 }
 
 /// 读回一份 `self_measurement` 文档的结构化值 —— 供「编辑」预填表单用(编辑=
@@ -972,45 +1051,17 @@ pub fn add_note(text: String, measured_at: Option<String>) -> anyhow::Result<i64
         .collect();
 
     with_state(|state| {
-        let v = &state.vault;
         let name = format!("note-{}.txt", when.format("%Y%m%dT%H%M%S%.f"));
-        let imp = v
-            .import(&name, "text/plain", text.as_bytes())
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let sid = imp.source_file.id;
-        if imp.deduped
-            && v.has_document(sid)
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?
-        {
-            return v
-                .document_by_source_file_id(sid)
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?
-                .map(|d| d.id)
-                .ok_or_else(|| anyhow::anyhow!("去重后未能找到已有文档"));
-        }
-        let doc = v
-            .add_document(NewDocument {
-                source_file_id: sid,
-                doc_type: DocType::Note,
-                doc_date: Some(when),
-                doc_date_end: None,
-                title: Some(title),
-                language: parser::detect_language(&text),
-                page_count: 1,
-            })
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        v.add_ocr(NewOcr {
-            document_id: doc.id,
-            page_no: 1,
-            backend: OcrBackendKind::Native,
-            model_version: "self-entry".into(),
+        let language = parser::detect_language(&text);
+        add_synthetic_document(
+            &state.vault,
+            DocType::Note,
+            when,
+            &name,
+            title,
+            language,
             text,
-            confidence: None,
-        })
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        v.rebuild_encounters()
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        Ok(doc.id)
+        )
     })
 }
 
@@ -1093,15 +1144,32 @@ pub fn current_vault_root() -> anyhow::Result<String> {
 /// `<查看器>/#q2.<id>.<密钥>` —— 八十来个字符,格子稀疏、隔着桌子好扫。
 ///
 /// **密钥不上传**,只进二维码的 `#` 之后。云上那份我们自己也解不开。
-pub fn qr_share_blob(expires_days: i64) -> anyhow::Result<(Vec<u8>, String, i64)> {
+///
+/// `profile_json`:`vault_profile_view` 的返回值原样带下来,没开启病程档案就传 `None`。
+/// **解析失败当场报错**,不降级成「没有档案」—— 那样会静默产出一份少了交接单的分享,
+/// 医生那边看不出少了东西。
+///
+/// 函数名不变(只加参数):FRB 派发表按函数名字典序编号,改名会把
+/// `recognize_image_pp` 的下标 44 挪走(`rust/tests/frb_dispatch_indices.rs` 钉着)。
+pub fn qr_share_blob(
+    expires_days: i64,
+    profile_json: Option<String>,
+) -> anyhow::Result<(Vec<u8>, String, i64)> {
     let days: u32 = expires_days
         .try_into()
         .map_err(|_| anyhow::anyhow!("expires_days 取值无效:{expires_days}"))?;
+    let profile: Option<serde_json::Value> = match profile_json.as_deref() {
+        Some(s) => {
+            Some(serde_json::from_str(s).map_err(|e| anyhow::anyhow!("档案 JSON 解析失败:{e}"))?)
+        }
+        None => None,
+    };
     with_state(|state| {
-        medme_share::share::build_own_share_blob(
+        medme_share::share::build_own_share_blob_with_profile(
             &state.vault,
             days,
             &medme_share::render_dicom_png_in_process,
+            profile.as_ref(),
         )
         .map_err(|e| anyhow::anyhow!(e))
     })
@@ -1236,6 +1304,7 @@ pub fn proxy_summary(confirmed_ids: Vec<i64>) -> anyhow::Result<ProxySummaryDto>
                 text: &d.text,
                 doc_type: d.doc_type.clone(),
                 title: d.title.clone(),
+                extraction_json: d.extraction_json.as_deref(),
             })
             .collect();
         let summary = parser::assemble_summary(&docs);
@@ -1676,11 +1745,34 @@ pub fn recognize_image_pp(bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
     }
     let data_dir = with_state(|state| Ok(state.data_dir.clone()))?;
     ensure_pp_models_ready(&data_dir)?;
-    let outcome =
-        ocr::recognize_engine_layout(&bytes).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    // 换成 `recognize_engine_lines`(而不是 `recognize_engine_layout`):后者只吐
+    // 拼好的文本,前者连检测框一起交出来——云抽取图片档脱敏(`vault_cloud_prepare_extraction`
+    // → `deid::redact_boxes`)要按框涂黑,必须要有框。文本仍用同一个
+    // `rebuild_layout_text` 拼,逐字节不变。
+    let (engine_lines, confidence) =
+        ocr::recognize_engine_lines(&bytes).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let text = ocr::rebuild_layout_text(&engine_lines.lines);
+    // working frame 的尺寸(降采样/摆正/去斜之后那张,`lines` 的坐标就是量在这张
+    // 图上的)——`OcrLineDto` 的框只有配这两个数才有意义。`.width()`/`.height()`
+    // 是 `DynamicImage` 的固有方法,不用额外 `use image::GenericImageView`。
+    let frame_w = engine_lines.frame.width() as f32;
+    let frame_h = engine_lines.frame.height() as f32;
     Ok(OcrPpResultDto {
-        text: outcome.text,
-        confidence: outcome.confidence,
+        text,
+        confidence,
+        lines: engine_lines
+            .lines
+            .into_iter()
+            .map(|l| OcrLineDto {
+                text: l.text,
+                left: l.left,
+                top: l.top,
+                right: l.right,
+                bottom: l.top + l.height,
+            })
+            .collect(),
+        frame_w,
+        frame_h,
     })
 }
 
@@ -1693,6 +1785,299 @@ pub fn recognize_image_pp(bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
 #[cfg(not(pp_ocr))]
 pub fn recognize_image_pp(_bytes: Vec<u8>) -> anyhow::Result<OcrPpResultDto> {
     anyhow::bail!("PP-OCR 路径仅 iOS/安卓构建可用")
+}
+
+/// 组一份 `deid::KnownIdentity`(FRB 三个可选字段 → deid 的结构体,纯搬运)。
+fn known_identity(
+    name: String,
+    id_number: Option<String>,
+    phone: Option<String>,
+) -> deid::KnownIdentity {
+    deid::KnownIdentity {
+        name,
+        id_number,
+        phone,
+    }
+}
+
+/// 十六进制字符串 → 字节(`profile_secret_hex` → `deid::dates::shift_days_from_secret`
+/// 要的 `&[u8]`)。非法的一对十六进制字符直接丢弃,不 panic——`shift_days_from_secret`
+/// 对任意长度字节都能算(HMAC key),空字节数组也有一个确定的偏移,不需要额外校验。
+fn hex_to_bytes(s: &str) -> Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
+}
+
+/// 给 `restore_map_json` 裹一层 `document_id`(不改 `deid::RestoreMap` 自身形状——
+/// 那是另一个已知的、留到以后再做的改动)。理由:`deid::RestoreMap` 不认文档,
+/// 占位符编号又是「每次从 1 开始」独立计数,两份互不相干的映射拿去互相替换,不会
+/// 有任何天然的报错信号,只会静默地把 A 文档的占位符换算规则套到 B 文档头上——
+/// 复核审阅抓出的真实风险(fix round 1 item 3)。用 `serde_json::Value` 手搭信封,
+/// 不必新增 `serde`(derive)直接依赖——`deid::RestoreMap` 已经 `Serialize`/
+/// `Deserialize`,`json!`/`from_value` 足够。
+fn wrap_restore_map(document_id: i64, map: &deid::RestoreMap) -> anyhow::Result<String> {
+    Ok(serde_json::to_string(&serde_json::json!({
+        "document_id": document_id,
+        "map": map,
+    }))?)
+}
+
+/// [`wrap_restore_map`] 的逆操作。`document_id` 对不上直接 `bail!`——类型化错误,
+/// 不 panic;调用方(`vault_cloud_commit_extraction`)在任何 `add_extraction` 之前
+/// 就退出,不落盘。
+fn unwrap_restore_map(
+    document_id: i64,
+    restore_map_json: &str,
+) -> anyhow::Result<deid::RestoreMap> {
+    let envelope: serde_json::Value = serde_json::from_str(restore_map_json)?;
+    if envelope.get("document_id").and_then(|v| v.as_i64()) != Some(document_id) {
+        anyhow::bail!("还原映射与目标文档不匹配,拒绝提交");
+    }
+    let map_value = envelope
+        .get("map")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("还原映射格式不对:缺少 map"))?;
+    Ok(serde_json::from_value(map_value)?)
+}
+
+/// 云抽取第一步:本地脱敏 + 发送前硬闸。取该文档的 OCR 全文,按已知身份
+/// (`known_name`/`known_id_number`/`known_phone`,来自 Dart 侧当前档案成员的
+/// `Profile`)+ 档案秘密派生的日期偏移天数跑 `deid::redact_text`;`assert_clean`
+/// 闸不过(身份信息仍在脱敏结果里)直接报错——**错误信息只报类别(姓名/证件号/
+/// 手机号),绝不回显值**,调用方(Dart)据此退回本地正则路径、不发云。
+///
+/// `lines` 非空(图片档,来自 `recognize_image_pp` 的 `OcrPpResultDto::lines`)时
+/// 一并跑 `deid::redact_boxes` 算出要涂黑的框——`page_w`/`page_h` **必须**是
+/// `OcrPpResultDto::frame_w`/`frame_h`(识别引擎那张 working frame 的尺寸,已经过
+/// 降采样/90°摆正/去斜),**不能**是原始图片的宽高:两者坐标系不同,传错了涂黑
+/// 框会整体偏移,静默漏涂 PHI,且 `deid::redact_boxes` 内部的健全性检查只在
+/// debug build 生效(release 编译掉)。`lines` 非空但 `page_w`/`page_h` 不是正数
+/// (明显不是真实 frame 尺寸)直接 `bail!`,不生成看似正常、实则错位的涂黑框。
+/// 文本档(`lines` 为空)不产生任何框,不检查这两个参数。
+///
+/// 该文档没有任何 OCR 文字(`ocr_text` 是空串——比如原件只是照片没识别出字、或
+/// 页面识别彻底失败)时 `bail!`:发一个空 payload 出去没有意义,`commit` 那边要是
+/// 照样把这个空结果当成"抽取成功"落盘,会让 `parser::SourceDoc.extraction_json`
+/// 误以为这份文档"抽取过、就是没有化验",反而把本该退回去跑的正则结果**藏起来**
+/// (fix round 1 item 4)。
+///
+/// 返回的 `restore_map_json`(占位符/日期偏移 ↔ 原文,外裹 `document_id`——见
+/// [`wrap_restore_map`])只在本机使用(`vault_cloud_commit_extraction` 拿它做还原)
+/// ——**经 FFI 到 Dart 只是为了原样带回下一次调用,从不上传、从不落盘**。
+pub fn vault_cloud_prepare_extraction(
+    document_id: i64,
+    lines: Vec<OcrLineDto>,
+    known_name: String,
+    known_id_number: Option<String>,
+    known_phone: Option<String>,
+    profile_secret_hex: String,
+    page_w: f32,
+    page_h: f32,
+) -> anyhow::Result<CloudExtractionRequestDto> {
+    if !lines.is_empty() && (page_w <= 0.0 || page_h <= 0.0) {
+        anyhow::bail!(
+            "page_w/page_h 必须传 OcrPpResultDto 的 frame_w/frame_h(working frame 尺寸),\
+             不能是 0 或原图尺寸"
+        );
+    }
+    with_state(|state| {
+        let text = state
+            .vault
+            .ocr_text(document_id)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        if text.trim().is_empty() {
+            anyhow::bail!("该文档没有 OCR 文字,无法云抽取");
+        }
+        let known = known_identity(known_name, known_id_number, known_phone);
+        let days = deid::dates::shift_days_from_secret(&hex_to_bytes(&profile_secret_hex));
+        let red = deid::redact_text(&text, &known, days);
+        deid::assert_clean(&red.text, &known).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let boxes: Vec<deid::Box> = lines
+            .iter()
+            .map(|l| deid::Box {
+                text: l.text.clone(),
+                left: l.left,
+                top: l.top,
+                right: l.right,
+                bottom: l.bottom,
+            })
+            .collect();
+        let paint = if boxes.is_empty() {
+            Vec::new()
+        } else {
+            deid::redact_boxes(&boxes, &known, page_w, page_h)
+                .into_iter()
+                .map(|r| RectDto {
+                    left: r.left,
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom,
+                })
+                .collect()
+        };
+
+        Ok(CloudExtractionRequestDto {
+            payload_text: red.text,
+            paint,
+            restore_map_json: wrap_restore_map(document_id, &red.map)?,
+        })
+    })
+}
+
+/// 云抽取结果回来后按框涂黑(图片档)。`bytes` 是原始图片字节;`paint` 来自
+/// `vault_cloud_prepare_extraction` 的 `paint`,坐标系是识别引擎的 working frame,不是
+/// `bytes` 原始朝向帧(`ocr::redact_image_bytes` 的坐标系警告)——所以这里**重新
+/// 跑一次 `recognize_engine_lines` 只取它的 `frame`**(丢弃这次重新识别出的行,
+/// 只要那张预处理过的图),保证涂黑用的图跟算框时是同一张。preprocess 是纯函数,
+/// 同样的字节必然产出同样的 frame,不会因为重跑而跟原来的框错位。
+/// ponytail:这样会多跑一次检测推理(只为拿 frame);涂黑只在云抽取确认后跑一次,
+/// 不是高频路径,暂不做「prepare 时把 frame 存住等 commit 再用」的缓存。
+///
+/// 画在哪张图上,按「**框能对得上的最高画质**」选(Task 18):框按比例放大、画回
+/// **原分辨率彩色原图**(`ocr::redact_image_full_res`),这次预处理转过的两个角度
+/// (`EngineLines::rotation_deg` 去斜残量 + `EngineLines::orient_deg` 侧拍摆正,就在
+/// 上面这次 `recognize_engine_lines` 的产出里,**不经 FRB**)在原图上原样转回来:
+/// 摆正走精确整数转向、去斜走绕中心旋转,绕中心旋转与绕中心等比缩放可交换,映射是
+/// 精确的。去斜角拿不到/不可信(非有限、超过 20°)或几何对不上时退回画在 frame 上
+/// ——**宁可送画质差一点的,也绝不把框画到几何对不上的图上**(那是静默漏涂 PHI)。
+/// 两条路都按 `ocr::REDACT_MAX_BYTES` 压:先降 JPEG 质量、再降长边,且绝不低于识别
+/// 时的分辨率。
+#[cfg(pp_ocr)]
+pub fn vault_cloud_redact_image(bytes: Vec<u8>, paint: Vec<RectDto>) -> anyhow::Result<Vec<u8>> {
+    let data_dir = with_state(|state| Ok(state.data_dir.clone()))?;
+    ensure_pp_models_ready(&data_dir)?;
+    let (engine_lines, _confidence) =
+        ocr::recognize_engine_lines(&bytes).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let rects: Vec<ocr::PaintRect> = paint
+        .iter()
+        .map(|r| ocr::PaintRect {
+            left: r.left,
+            top: r.top,
+            right: r.right,
+            bottom: r.bottom,
+        })
+        .collect();
+    let frame_w = engine_lines.frame.width() as f32;
+    let frame_h = engine_lines.frame.height() as f32;
+    // 原图这条路出错(解不开/编码不了)不算致命:静默退回 frame 那条,照样有图可送。
+    if let Ok(Some(full)) = ocr::redact_image_full_res(
+        &bytes,
+        frame_w,
+        frame_h,
+        engine_lines.rotation_deg,
+        engine_lines.orient_deg,
+        &rects,
+        ocr::REDACT_MAX_BYTES,
+    ) {
+        return Ok(full);
+    }
+    ocr::redact_image_capped(&engine_lines.frame, &rects, ocr::REDACT_MAX_BYTES)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+/// 非 iOS/安卓构建的占位实现,理由同 `recognize_image_pp` 的 `cfg(not(pp_ocr))` 分支。
+#[cfg(not(pp_ocr))]
+pub fn vault_cloud_redact_image(_bytes: Vec<u8>, _paint: Vec<RectDto>) -> anyhow::Result<Vec<u8>> {
+    anyhow::bail!("图片涂黑仅 iOS/安卓构建可用")
+}
+
+/// 云抽取第二步:LLM 结果回来后校验 + 还原 + 落盘。
+///
+/// 校验基准**必须是本机重新算出的脱敏文本,不能信 Dart 传来的任何文本**——否则
+/// 校验形同虚设(Dart 说校验过就过)。做法:对该文档当前的 OCR 全文重新跑一遍
+/// `deid::redact_text`,**用与 `vault_cloud_prepare_extraction` 完全相同的三个
+/// 已知身份参数**(`known_name`/`known_id_number`/`known_phone`,`shift_days` 取自
+/// `restore_map_json` 里记的那个)——同样的文本 + 同样的已知身份 + 同样的偏移天数,
+/// `redact_text` 是纯函数,重算出来的文本与 `prepare` 那次发给 LLM 的
+/// `payload_text` **逐字节相同**,`deid::verify` 才能诚实地判断 LLM 返回的字段是不是
+/// 「原文逐字」。
+///
+/// （曾经的实现用**空**身份重算 + 手动把 `restore_map` 登记的每对占位符/原值在
+/// 重算结果里做字符串替换,企图"补回"K 层本该做的事——这站不住脚:A/P 层的占位符
+/// 编号是"按扫描到的顺序从 1 开始"独立计数的,跳过 K 层会让 A/P 层重新抢注册顺序,
+/// 编号完全对不上 `prepare` 那次的真实编号(复核审阅实测复现:真实 payload 是
+/// 「门诊号:[N2] 身份证号:[N1]」,那种重建法算出「[N1]/[N2]」,顺序颠倒)。带来的
+/// 风险不只是「误伤该通过的字段」,更危险的是反过来:一个本该被拒的字段可能因为
+/// 编号巧合而被误判通过,`deid::restore` 再拿正确的 `map` 把**错的占位符**换成了
+/// 真实值,等于经这条路径泄漏。改成两边用同一个 `known_identity`,不再需要,也
+/// 删掉了那段手工替换。）
+///
+/// 身份传错(与 `prepare` 那次不一致)时,重算文本与真实 payload 不再逐字节相同,
+/// `deid::verify` 的行为只会更严格(该通过的可能被误拒),不会更松(不会把不该
+/// 通过的放过)——这正是「宁可错杀、不可放过」在这里的体现。
+///
+/// 还原映射解出来的 `document_id` 与 `document_id` 参数对不上(比如 Dart 不小心把
+/// A 文档 `prepare` 的映射喂给了 B 文档的 `commit`)时 `bail!`,不落盘(见
+/// [`unwrap_restore_map`])。该文档没有 OCR 文字时同样 `bail!`(理由见
+/// `vault_cloud_prepare_extraction` 文档——两边都要挡,`commit` 不能只信任
+/// `prepare` 已经挡过一次)。
+///
+/// 通过校验后 `deid::restore` 把占位符/偏移日期换回真值,再 `add_extraction`
+/// 落盘(`NewExtraction`,latest-wins,见 `core_model::add_extraction` 文档)。
+pub fn vault_cloud_commit_extraction(
+    document_id: i64,
+    mode: String,
+    schema: i32,
+    model_version: String,
+    llm_json: String,
+    restore_map_json: String,
+    known_name: String,
+    known_id_number: Option<String>,
+    known_phone: Option<String>,
+) -> anyhow::Result<CloudExtractionResultDto> {
+    with_state(|state| {
+        let text = state
+            .vault
+            .ocr_text(document_id)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        if text.trim().is_empty() {
+            anyhow::bail!("该文档没有 OCR 文字,无法云抽取");
+        }
+        let map = unwrap_restore_map(document_id, &restore_map_json)?;
+        let known = known_identity(known_name, known_id_number, known_phone);
+        let seen = deid::redact_text(&text, &known, map.shift_days);
+
+        let m = if mode == "image" {
+            deid::Mode::Image
+        } else {
+            deid::Mode::Text
+        };
+        let parsed = deid::parse_extraction(&llm_json).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let v = deid::verify(parsed, &seen.text, m);
+        let restored = deid::restore(&serde_json::to_string(&v.extraction)?, &map);
+
+        state
+            .vault
+            .add_extraction(core_model::NewExtraction {
+                document_id,
+                backend: "deepseek".into(),
+                model_version,
+                mode,
+                // **发的是几就记几**:Dart 那一头往 `/v1/extract` 发的 `schema`
+                // 原样传进来(`cloud_extract.dart` 的 `postExtract`)。写死在这里
+                // 会让 schema 2 的结果在库里伪装成 schema 1(`NewExtraction::schema`
+                // 的文档),下游按 1 解就再也看不见 facts。
+                schema,
+                result_json: restored,
+            })
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        Ok(CloudExtractionResultDto {
+            labs: v.extraction.labs.len() as i64,
+            rejected: v.rejected as i64,
+            unverified: v.unverified as i64,
+        })
+    })
+}
+
+/// 云抽取结果(schema v1 JSON);没跑过/离线为 `None`。给 `vault_projections`
+/// 装配 `parser::SourceDoc` 用——不经全局 `with_state` 直接暴露 `Vault`,`get_document`
+/// 之外再单独取一次(那边的 `gather()` 不在任何 `with_state` 闭包里)。取不到就当
+/// 没有,不让整张投影因为一份文档的抽取结果读取失败而打不开。
+pub(crate) fn extraction_json_for(document_id: i64) -> Option<String> {
+    with_state(|state| Ok(state.vault.extraction_json(document_id).unwrap_or(None))).unwrap_or(None)
 }
 
 #[cfg(test)]
@@ -1876,6 +2261,581 @@ mod measured_at_timezone_tests {
                 .to_string(),
             "2026-05-01",
             "应按传入偏移下的字面日期落库,不因转 UTC 跨到下一天",
+        );
+    }
+}
+
+#[cfg(test)]
+mod cloud_extraction_tests {
+    use super::*;
+
+    // `vault_cloud_prepare_extraction`/`vault_cloud_commit_extraction`/`ingest_image_with_text`
+    // 都经全局 `VAULT` cell(与生产代码一样一次只有一个打开的保险箱),不能并发跑;
+    // 必须用 `VAULT_TEST_LOCK`(见其文档)——本模块单独一把锁挡不住
+    // `vault_projections` 的端到端测试同时动同一个全局单例。
+    use super::VAULT_TEST_LOCK as TEST_LOCK;
+
+    /// 三态钉死:没跑过 = `None`,跑过零条 = `Some(0)`,跑出内容 = `Some(n)`。
+    /// 前端只有靠这三态才能把「待归类」拆成「还没轮到」和「整理过但白跑」
+    /// (`doc_labels.dart` 的 `docRowLabel`)——两者显示同一句话正是冒烟 friction 2。
+    #[test]
+    fn archive_reports_extraction_item_count_in_three_states() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let mut ingest = |name: &str, byte: u8| {
+            ingest_image_with_text(
+                name.into(),
+                vec![0xFF, 0xD8, byte, 0xD9],
+                "北京协和医院 姓名:张建国 白细胞计数 11.8 10^9/L 4.0-10.0".into(),
+                0.9,
+            )
+            .unwrap()
+            .document_id
+            .expect("应建出文档")
+        };
+        let never_ran = ingest("never.jpg", 0x01);
+        let found_nothing = ingest("nothing.jpg", 0x02);
+        let found_one = ingest("one.jpg", 0x03);
+
+        let mut commit = |doc_id: i64, llm_json: &str| {
+            let req = vault_cloud_prepare_extraction(
+                doc_id,
+                vec![],
+                "张建国".into(),
+                None,
+                None,
+                "00ff".into(),
+                0.0,
+                0.0,
+            )
+            .unwrap();
+            vault_cloud_commit_extraction(
+                doc_id,
+                "text".into(),
+                2,
+                "v4".into(),
+                llm_json.into(),
+                req.restore_map_json,
+                "张建国".into(),
+                None,
+                None,
+            )
+            .unwrap();
+        };
+        // 模型返回了合法 JSON、但一条都没读出来 —— 这正是要和「还没跑」分开的那一态。
+        commit(found_nothing, "{}");
+        commit(
+            found_one,
+            r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0"}]}"#,
+        );
+
+        let counts: std::collections::HashMap<i64, Option<i32>> = load_archive()
+            .unwrap()
+            .iter()
+            .flat_map(|g| match g {
+                TimelineGroupDto::Encounter { docs, .. } => docs.clone(),
+                TimelineGroupDto::Document { doc } => vec![doc.clone()],
+            })
+            .map(|d| (d.id, d.extraction_item_count))
+            .collect();
+
+        assert_eq!(counts[&never_ran], None, "没跑过云抽取的文档应为 None");
+        assert_eq!(counts[&found_nothing], Some(0), "跑过但零条应为 Some(0)");
+        assert_eq!(counts[&found_one], Some(1), "读出一条化验应为 Some(1)");
+    }
+
+    fn open_test_vault() -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+        home
+    }
+
+    #[test]
+    fn prepare_redacts_and_gates_then_commit_verifies_restores_and_persists() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let outcome = ingest_image_with_text(
+            "a.jpg".into(),
+            vec![0xFF, 0xD8, 0xFF, 0xD9], // 假字节:import 只按内容哈希去重,不解码
+            "北京协和医院 姓名:张建国 白细胞计数 11.8 10^9/L 4.0-10.0".into(),
+            0.9,
+        )
+        .unwrap();
+        let doc_id = outcome.document_id.expect("应建出文档");
+
+        let req = vault_cloud_prepare_extraction(
+            doc_id,
+            vec![],
+            "张建国".into(),
+            None,
+            None,
+            "00ff".into(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        assert!(!req.payload_text.contains("张建国"), "{}", req.payload_text);
+        assert!(req.payload_text.contains("[H1]"), "{}", req.payload_text);
+        assert!(req.paint.is_empty(), "文本档不该产生涂黑框");
+
+        let llm_json = r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0"}]}"#;
+        let result = vault_cloud_commit_extraction(
+            doc_id,
+            "text".into(),
+            2,
+            "v4".into(),
+            llm_json.into(),
+            req.restore_map_json.clone(),
+            "张建国".into(),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.labs, 1);
+        assert_eq!(result.rejected, 0);
+        assert_eq!(result.unverified, 0);
+
+        let stored = extraction_json_for(doc_id).expect("落盘后应能读到抽取结果");
+        assert!(stored.contains("11.8"), "{stored}");
+        assert!(
+            !stored.contains("[H1]"),
+            "落盘结果应已还原,不该残留占位符:{stored}"
+        );
+    }
+
+    /// 闸失败路径:身份不是靠 K 层字面命中,而是**日期偏移的巧合副作用**——一个跟
+    /// 证件号毫不相干的紧凑日期,偏移后字面上变成了证件号那串数字。K 层只删了
+    /// 「证件号」那处原样出现的字面值,挡不住偏移后才诞生的这一份,`assert_clean`
+    /// 就是为这类巧合兜底的最后一道闸。钉住:调用方拿到 `Err`,且错误信息只报
+    /// 类别(证件号),不回显值。
+    #[test]
+    fn prepare_bails_when_a_shifted_date_coincides_with_the_known_id_number() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        // 找一个偏移不为 0 的秘密——HMAC 派生,枚举几个候选即可,不需要手算。
+        let (hex, shift) = (0u8..40)
+            .map(|i| format!("{i:02x}"))
+            .find_map(|hex| {
+                let s = deid::dates::shift_days_from_secret(&hex_to_bytes(&hex));
+                (s != 0).then_some((hex, s))
+            })
+            .expect("40 个候选里应该总能找到一个非零偏移");
+
+        let target = chrono::NaiveDate::from_ymd_opt(2024, 3, 5).unwrap();
+        let base = target - chrono::Duration::days(shift);
+        let base_str = base.format("%Y%m%d").to_string();
+        let id_number = target.format("%Y%m%d").to_string();
+
+        let text = format!(
+            "北京协和医院 住院号:{id_number}\n检测日期 {base_str} 白细胞计数 5.6 10^9/L 4.0-10.0"
+        );
+        let outcome = ingest_image_with_text("b.jpg".into(), vec![1, 2, 3, 4], text, 0.9).unwrap();
+        let doc_id = outcome.document_id.expect("应建出文档");
+
+        let err = vault_cloud_prepare_extraction(
+            doc_id,
+            vec![],
+            String::new(),
+            Some(id_number.clone()),
+            None,
+            hex,
+            0.0,
+            0.0,
+        )
+        .expect_err("偏移后的日期与证件号撞了,应闸住不发");
+        let msg = err.to_string();
+        assert!(msg.contains("证件号"), "{msg}");
+        assert!(!msg.contains(&id_number), "错误信息不能回显身份:{msg}");
+    }
+
+    /// 图片档:未能逐字校验的字段保留但打 `unverified` 标——不是文本档那种直接丢弃。
+    #[test]
+    fn commit_flags_unverified_fields_in_image_mode_instead_of_dropping_them() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let outcome = ingest_image_with_text(
+            "c.jpg".into(),
+            vec![9, 9, 9],
+            "白细胞计数 11.8 10^9/L 4.0-10.0".into(),
+            0.9,
+        )
+        .unwrap();
+        let doc_id = outcome.document_id.expect("应建出文档");
+
+        let req = vault_cloud_prepare_extraction(
+            doc_id,
+            vec![],
+            String::new(),
+            None,
+            None,
+            "00ff".into(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+
+        // "999" 不在原文里——文本档会整条丢弃,图片档应保留并标 unverified。
+        let llm_json = r#"{"labs":[{"name":"白细胞计数","value":"999","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0"}]}"#;
+        let result = vault_cloud_commit_extraction(
+            doc_id,
+            "image".into(),
+            2,
+            "v4".into(),
+            llm_json.into(),
+            req.restore_map_json,
+            String::new(),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.labs, 1, "图片档保留该条,不丢弃");
+        assert_eq!(result.rejected, 0);
+        assert_eq!(result.unverified, 1);
+    }
+
+    /// fix round 1 item 1:`commit` 用与 `prepare` **相同**的已知身份重算校验基准,
+    /// 复现复核审阅抓到的真实场景——"门诊号"(锚点捕获)与已知证件号(K 层)分别
+    /// 是 `[N2]`/`[N1]`(证件号先于门诊号在 `known::apply` 里登记,不看它在文本里
+    /// 出现的位置)。LLM 把这两个占位符原样写进 `notes` 字段(如实转录,常见的
+    /// LLM 行为);同身份重算应逐字节复现同一份 payload,校验通过、还原出两个真值。
+    #[test]
+    fn commit_with_same_identity_restores_placeholders_to_their_correct_slots() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let id_number = "110101199001011234";
+        let text = format!(
+            "北京协和医院 门诊号:20230615 身份证号:{id_number} 白细胞计数 11.8 10^9/L 4.0-10.0"
+        );
+        let outcome = ingest_image_with_text("g.jpg".into(), vec![1, 2], text, 0.9).unwrap();
+        let doc_id = outcome.document_id.expect("应建出文档");
+
+        let req = vault_cloud_prepare_extraction(
+            doc_id,
+            vec![],
+            String::new(),
+            Some(id_number.into()),
+            None,
+            "00ff".into(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        assert!(
+            req.payload_text.contains("门诊号:[N2] 身份证号:[N1]"),
+            "复现审阅报告的确切编号形状:{}",
+            req.payload_text
+        );
+
+        let llm_json = r#"{"notes":"门诊号:[N2] 身份证号:[N1]"}"#;
+        let result = vault_cloud_commit_extraction(
+            doc_id,
+            "text".into(),
+            2,
+            "v4".into(),
+            llm_json.into(),
+            req.restore_map_json,
+            String::new(),
+            Some(id_number.into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            result.rejected, 0,
+            "同身份重算应逐字节相同,notes 字段该通过校验"
+        );
+
+        let stored = extraction_json_for(doc_id).expect("应已落盘");
+        assert!(
+            stored.contains(&format!("门诊号:20230615 身份证号:{id_number}")),
+            "两个占位符都应换回各自的真值,槽位不能错:{stored}"
+        );
+    }
+
+    /// fix round 1 item 1 的反面:`commit` 传了跟 `prepare` **不一致**的身份,重算出的
+    /// 校验基准与 LLM 真正看到的 payload 不再逐字节相同——只应该更严格(该通过的
+    /// 可能被误拒),绝不能更松(把不该通过的放过、进而用错的槽位还原出真值,这是
+    /// 复核审阅点名的"误还原"风险)。
+    #[test]
+    fn commit_with_a_different_identity_rejects_rather_than_falsely_accepting() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let id_number = "110101199001011234";
+        let text = format!(
+            "北京协和医院 门诊号:20230615 身份证号:{id_number} 白细胞计数 11.8 10^9/L 4.0-10.0"
+        );
+        let outcome = ingest_image_with_text("h.jpg".into(), vec![1, 2], text, 0.9).unwrap();
+        let doc_id = outcome.document_id.expect("应建出文档");
+
+        let req = vault_cloud_prepare_extraction(
+            doc_id,
+            vec![],
+            String::new(),
+            Some(id_number.into()),
+            None,
+            "00ff".into(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+
+        // LLM 如实转录了它看到的那份 payload 里的两个占位符。
+        let llm_json = r#"{"notes":"门诊号:[N2] 身份证号:[N1]"}"#;
+        // commit 传一个与 prepare 不同的证件号(真实证件号完全没出现在这个值里)。
+        let result = vault_cloud_commit_extraction(
+            doc_id,
+            "text".into(),
+            2,
+            "v4".into(),
+            llm_json.into(),
+            req.restore_map_json,
+            String::new(),
+            Some("999999999999999999".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            result.rejected, 1,
+            "身份不一致,notes 字段应被拒,而不是被错误接受"
+        );
+
+        let stored =
+            extraction_json_for(doc_id).expect("commit 本身仍应成功落盘(只是这个字段被拒)");
+        assert!(
+            !stored.contains(id_number),
+            "被拒字段清空后不该残留真实证件号:{stored}"
+        );
+    }
+
+    /// fix round 1 item 2:图片档的 `page_w`/`page_h` 必须是 `OcrPpResultDto::frame_w`/
+    /// `frame_h`(识别引擎 working frame 尺寸),不能是 0 或原图尺寸——Dart 传错了
+    /// 没有任何天然报错信号(`deid::redact_boxes` 内部的健全性检查是 `debug_assert`,
+    /// release 编译直接没有),所以在 FRB 这层显式挡一道。这个检查发生在打开保险箱
+    /// 之前,用不存在的 `document_id` 也能验证。
+    #[test]
+    fn prepare_bails_when_image_mode_page_dims_are_not_positive() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let lines = vec![OcrLineDto {
+            text: "姓名:张建国".into(),
+            left: 0.0,
+            top: 0.0,
+            right: 100.0,
+            bottom: 20.0,
+        }];
+        let err = vault_cloud_prepare_extraction(
+            1,
+            lines,
+            String::new(),
+            None,
+            None,
+            "00ff".into(),
+            0.0,
+            0.0,
+        )
+        .expect_err("有检测框但页面尺寸不是正数,应直接拒绝");
+        assert!(err.to_string().contains("frame_w"), "{err}");
+    }
+
+    /// fix round 1 item 3(前半):图片档脱敏——身份框该涂,化验行不该涂。镜像
+    /// `deid::redact_boxes` 自己的单元测试,这里是验证 FRB 这一层的 `OcrLineDto` →
+    /// `deid::Box` 转换、`page_w`/`page_h` 透传没有接错。
+    #[test]
+    fn prepare_image_mode_paints_the_identity_box_but_not_the_lab_row() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let text = "姓名:张建国\n白细胞 5.6 10^9/L 4.0-10.0";
+        let outcome = ingest_image_with_text("i.jpg".into(), vec![1], text.into(), 0.9).unwrap();
+        let doc_id = outcome.document_id.expect("应建出文档");
+
+        let lines = vec![
+            OcrLineDto {
+                text: "姓名:张建国".into(),
+                left: 10.0,
+                top: 30.0,
+                right: 300.0,
+                bottom: 50.0,
+            },
+            OcrLineDto {
+                text: "白细胞 5.6 10^9/L 4.0-10.0".into(),
+                left: 10.0,
+                top: 100.0,
+                right: 300.0,
+                bottom: 120.0,
+            },
+        ];
+        let req = vault_cloud_prepare_extraction(
+            doc_id,
+            lines,
+            "张建国".into(),
+            None,
+            None,
+            "00ff".into(),
+            400.0,
+            500.0,
+        )
+        .unwrap();
+
+        assert!(
+            req.paint
+                .iter()
+                .any(|r| r.top <= 30.0 && r.bottom >= 50.0 && r.right >= 300.0),
+            "身份框(含姓名)应被涂黑:{:?}",
+            req.paint
+        );
+        assert!(
+            !req.paint
+                .iter()
+                .any(|r| (r.top - 100.0).abs() < 5.0 && r.right <= 310.0),
+            "化验行不该被单独涂黑:{:?}",
+            req.paint
+        );
+    }
+
+    /// fix round 1 item 3(后半):`restore_map_json` 裹了 `document_id`
+    /// ([`wrap_restore_map`]/[`unwrap_restore_map`])——拿 B 文档 `prepare` 产出的
+    /// 映射去 `commit` A 文档,必须干净地报错,而不是静默地把 B 的占位符注册规则
+    /// 套到 A 头上。
+    #[test]
+    fn commit_with_a_restore_map_from_a_different_document_fails_cleanly_without_persisting() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let doc_a = ingest_image_with_text(
+            "j.jpg".into(),
+            vec![1],
+            "白细胞计数 11.8 10^9/L 4.0-10.0".into(),
+            0.9,
+        )
+        .unwrap()
+        .document_id
+        .expect("应建出文档 A");
+        let doc_b = ingest_image_with_text(
+            "k.jpg".into(),
+            vec![2],
+            "血红蛋白 130 g/L 115-150".into(),
+            0.9,
+        )
+        .unwrap()
+        .document_id
+        .expect("应建出文档 B");
+
+        let req_b = vault_cloud_prepare_extraction(
+            doc_b,
+            vec![],
+            String::new(),
+            None,
+            None,
+            "00ff".into(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+
+        let llm_json = r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0"}]}"#;
+        let err = vault_cloud_commit_extraction(
+            doc_a,
+            "text".into(),
+            2,
+            "v4".into(),
+            llm_json.into(),
+            req_b.restore_map_json,
+            String::new(),
+            None,
+            None,
+        )
+        .expect_err("B 文档的还原映射不该被 A 文档接受");
+        assert!(err.to_string().contains("不匹配"), "{err}");
+        assert!(
+            extraction_json_for(doc_a).is_none(),
+            "校验失败前应已拒绝,不落盘"
+        );
+    }
+
+    /// fix round 1 item 4(前半):文档没有任何 OCR 文字(`ocr_text` 是空串——比如
+    /// 只存了文件名元数据、没识别出字)时,`prepare` 不该发一个空 payload 出去。
+    #[test]
+    fn prepare_bails_when_the_document_has_no_ocr_text() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let outcome = ingest_image_with_text("l.jpg".into(), vec![1], String::new(), 0.0).unwrap();
+        assert_eq!(outcome.status, "stored_no_text");
+        let doc_id = outcome.document_id.expect("即使没识别出文字，也应建出文档");
+
+        let err = vault_cloud_prepare_extraction(
+            doc_id,
+            vec![],
+            String::new(),
+            None,
+            None,
+            "00ff".into(),
+            0.0,
+            0.0,
+        )
+        .expect_err("没有 OCR 文字,不该发云");
+        assert!(err.to_string().contains("OCR"), "{err}");
+    }
+
+    /// fix round 1 item 4(后半):`commit` 不能只信任 `prepare` 已经挡过一次——空
+    /// OCR 文字的文档若被落盘一条"抽取成功但什么都没有"的记录,`parser::SourceDoc`
+    /// 会把这个「存在但空」的抽取结果当权威来源,反而把本该退回去跑的正则结果
+    /// 藏起来(比正则更差,而不是至少一样好)。
+    #[test]
+    fn commit_bails_when_the_document_has_no_ocr_text_and_persists_nothing() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _home = open_test_vault();
+
+        let outcome = ingest_image_with_text("m.jpg".into(), vec![1], String::new(), 0.0).unwrap();
+        let doc_id = outcome.document_id.expect("即使没识别出文字，也应建出文档");
+
+        let err = vault_cloud_commit_extraction(
+            doc_id,
+            "text".into(),
+            2,
+            "v4".into(),
+            r#"{"labs":[]}"#.into(),
+            "{}".into(),
+            String::new(),
+            None,
+            None,
+        )
+        .expect_err("没有 OCR 文字,commit 也该拒绝");
+        assert!(err.to_string().contains("OCR"), "{err}");
+        assert!(
+            extraction_json_for(doc_id).is_none(),
+            "不该落盘一条空抽取结果"
+        );
+    }
+}
+
+#[cfg(test)]
+mod qr_share_profile_tests {
+    use super::*;
+
+    /// Dart 传下来的是一个字符串;坏字符串要当场报错,不能悄悄当成「没有档案」
+    /// 去生成一份**少了交接单**的分享 —— 医生那边看不出少了东西。
+    ///
+    /// 不需要打开的保险箱:这道校验排在 `with_state` 之前,正是为了让坏输入在
+    /// 碰保险箱之前就被挡回去。
+    #[test]
+    fn qr_share_blob_rejects_a_profile_json_that_is_not_json() {
+        let err = qr_share_blob(5, Some("{not json".into())).unwrap_err();
+        assert!(
+            err.to_string().contains("档案 JSON"),
+            "错误里要说清楚是档案 JSON 坏了:{err}"
         );
     }
 }

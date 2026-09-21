@@ -77,6 +77,9 @@ pub struct SourceDoc<'a> {
     /// The record's title (e.g. `"胸部CT"`); helps derive an imaging group label.
     /// `None` when unknown. Ignored by `aggregate`.
     pub title: Option<String>,
+    /// 云抽取结果(deid schema v1 JSON);`Some` 时 labs 用它,不再对 `text` 跑
+    /// `extract_labs`。`None`(老文档/离线/未通过校验)时退回原正则路径。
+    pub extraction_json: Option<&'a str>,
 }
 
 /// One measured value of an analyte, tagged with the document it came from.
@@ -97,6 +100,12 @@ pub struct LabPoint {
     pub flag: Option<String>,
     /// The [`SourceDoc::index`] this point came from.
     pub source: usize,
+    /// `true` only for cloud-extraction values the local verifier couldn't
+    /// confirm against source text (`deid` image mode, spec §4) — a charting-
+    /// safety mark, distinct from `analyte_key`/`confidence` matching. Always
+    /// `false` for the OCR/regex path and for self-measured points. See
+    /// `LabObservation::unverified`.
+    pub unverified: bool,
 }
 
 /// A single analyte's trend across all documents.
@@ -136,6 +145,10 @@ pub struct AnalyteSeries {
     /// see `GroupKey::SelfMeasured`, which keeps self-measured points out of any
     /// group that also holds hospital-sourced points for the same analyte.
     pub self_measured: bool,
+    /// 序列里 `points[..].unverified == true` 的点数(见 `LabPoint::unverified`
+    /// 的文档)。`0` = 这条序列全是已核实的值。渲染层用这个决定要不要在这条
+    /// 序列上加"需核对"的提示,不必自己去数 `points`。
+    pub needs_review_count: usize,
 }
 
 /// A medication's span across all documents that mention it.
@@ -145,9 +158,30 @@ pub struct MedSpan {
     pub drug_key: Option<String>,
     /// Canonical name if resolved, else the raw name.
     pub name: String,
+    /// Every distinct name **as actually written**, deduped and sorted — the
+    /// whole span's history.
+    ///
+    /// `name` is the dictionary's canonical form, and normalising to it throws
+    /// away the dosage form: 「地塞米松注射液」 and 「地塞米松片」 both become
+    /// 「地塞米松」. Kept as a list because one drug can be written several ways
+    /// across documents.
+    ///
+    /// ⚠️ **This is a union over all mentions, so it must not be used to judge
+    /// what the patient is on today.** One IV pulse in the history would
+    /// otherwise disqualify the oral tablet in this month's prescription. For
+    /// anything that pairs with [`Self::latest_dose`], use
+    /// [`Self::latest_raw_name`] instead.
+    pub raw_names: Vec<String>,
     pub atc: Option<String>,
     /// e.g. "0.5g bid", taken from the most recent mention (fallback: any).
     pub latest_dose: Option<String>,
+    /// The name **as written on the same mention that supplied
+    /// [`Self::latest_dose`]** — the two always describe one prescription.
+    ///
+    /// Dosage form/route decisions belong here, not in [`Self::raw_names`]:
+    /// "is this dose an oral tablet or an infusion" is a question about the
+    /// order being read, not about everything the patient has ever taken.
+    pub latest_raw_name: Option<String>,
     /// Earliest dated mention (`None` if no mention carried a date).
     pub start: Option<NaiveDate>,
     /// Latest dated mention.
@@ -455,6 +489,7 @@ struct PendingPoint {
     value_canonical: Option<f64>,
     flag: Option<String>,
     source: usize,
+    unverified: bool,
 }
 
 struct LabBuilder {
@@ -483,18 +518,24 @@ struct LabBuilder {
     /// changed — `GroupKey::SelfMeasured` guarantees every observation folded
     /// into this builder agrees (see the struct-level doc on `AnalyteSeries`).
     self_measured: bool,
+    /// Running count of `points[..].unverified == true`; copied to
+    /// `AnalyteSeries::needs_review_count` at finalize.
+    needs_review_count: usize,
 }
 
 struct MedBuilder {
     drug_key: Option<String>,
     name: String,
+    /// `BTreeSet` so the output order never depends on document order.
+    raw_names: BTreeSet<String>,
     atc: Option<String>,
     meta_from_match: bool,
     start: Option<NaiveDate>,
     end: Option<NaiveDate>,
     sources: BTreeSet<usize>,
-    /// Dose/date of the mention currently winning "most recent".
+    /// Dose/raw name/date of the mention currently winning "most recent".
     best_dose: Option<String>,
+    best_raw_name: Option<String>,
     best_date: Option<NaiveDate>,
     has_best: bool,
 }
@@ -558,6 +599,8 @@ fn build_self_measured_observation(v: &self_entry::SelfMeasuredValue) -> LabObse
         // 五选一里选的项,结构上精确无歧义" —— 满置信度是如实的,不是编的。
         confidence: 1.0,
         self_measured: true,
+        // 用户在封闭五选一里选的、结构上精确的值,不是需要人核对的抽取结果。
+        unverified: false,
     }
 }
 
@@ -639,6 +682,7 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
             value_canonical: p.value_canonical,
             flag: p.flag,
             source: p.source,
+            unverified: p.unverified,
         })
         .collect();
 
@@ -655,6 +699,7 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
         points,
         any_abnormal: b.any_abnormal,
         self_measured: b.self_measured,
+        needs_review_count: b.needs_review_count,
     }
 }
 
@@ -673,7 +718,13 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // 诊断。两类文档都显式跳过 meds/conditions —— 比"恰好没触发"更安全、更好
         // 审计,且对每一个调用方(手机端投影、`assemble_summary`/加密分享/二维码)
         // 统一生效,不依赖每个调用方自己记得先过滤。
-        let is_manual_entry = matches!(dt, Some("self_measurement") | Some("note"));
+        // `profile_event` 与前两者同理,而且更危险:它的人读文字里**就是**药名和
+        // 诊断名(「开启狼疮病程档案」「泼尼松 20mg」),不挡就等于用户点一下按钮
+        // 就凭空多一条诊断,还会跟着二维码分享出去。
+        let is_manual_entry = matches!(
+            dt,
+            Some("self_measurement") | Some("note") | Some("profile_event")
+        );
 
         // --- labs: self_measurement 文档直接读回结构化载荷(不跑 extract_labs——
         // 那是给 OCR 报告用的模糊正则,我们自己写的、自己读的格式不需要模糊匹配);
@@ -681,7 +732,22 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // 抽(section-scoped,so a discharge summary's prose 血压 stays out) —— #148。
         // whole-doc 那条路上先把 出院医嘱/带药 段屏蔽掉:一行药读起来就是一行化验,
         // 而 `wants_labs` 会对一份标题被 OCR 丢掉的出院小结点头 —— 见 mask_meds_blocks。 ---
-        let doc_labs: Vec<LabObservation> = if dt == Some("self_measurement") {
+        let doc_labs: Vec<LabObservation> = if let Some(parsed) = doc
+            .extraction_json
+            .and_then(|j| crate::extraction::labs_from_json(j).ok())
+            .filter(|p| !p.labs.is_empty())
+        {
+            // 有云抽取结果、能解析、**且真读出了东西**才用它,不再对 text 跑正则;
+            // `Err`(格式不对/被拒收)才落到下面几条分支,退回正则。
+            //
+            // 零条 lab 也退回正则(extract-repro-report.md §4):云端漏读一份单子
+            // (上游超时、图被涂黑带盖住、模型返回 `labs: []`)时,旧代码把「正则本来
+            // 能读出 8–18 条」变成**整份空白**;而这个空结果是无条件落盘的
+            // (`vault_cloud_commit_extraction`),此后每次投影都读它 —— 一次失败永久
+            // 生效。落盘行为不变(那份文档仍要能显示「云端整理没有读出内容」),只是
+            // summary 不再拿它当准。
+            parsed.labs
+        } else if dt == Some("self_measurement") {
             self_entry::parse_self_measurement_payload(doc.text)
                 .unwrap_or_default()
                 .iter()
@@ -713,6 +779,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 value_canonical: obs.value_canonical,
                 flag: obs.flag.clone(),
                 source: doc.index,
+                unverified: obs.unverified,
             };
             let abnormal = matches!(obs.flag.as_deref(), Some("H") | Some("L"));
             let b = labs.entry(key).or_insert_with(|| LabBuilder {
@@ -731,6 +798,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 points: Vec::new(),
                 any_abnormal: false,
                 self_measured: obs.self_measured,
+                needs_review_count: 0,
             });
             // 序列内恒定(见字段文档);第一个换算得出来的点供出即可。
             if b.unit_canonical.is_none() {
@@ -769,6 +837,9 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 }
             }
             b.any_abnormal |= abnormal;
+            if point.unverified {
+                b.needs_review_count += 1;
+            }
             b.points.push(point);
         }
 
@@ -817,15 +888,18 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             let b = meds.entry(key).or_insert_with(|| MedBuilder {
                 drug_key: obs.drug_key.clone(),
                 name: obs.raw_name.clone(),
+                raw_names: BTreeSet::new(),
                 atc: None,
                 meta_from_match: false,
                 start: None,
                 end: None,
                 sources: BTreeSet::new(),
                 best_dose: None,
+                best_raw_name: None,
                 best_date: None,
                 has_best: false,
             });
+            b.raw_names.insert(obs.raw_name.clone());
             if !b.meta_from_match && matched {
                 if let Some(name) = &obs.canonical_name {
                     b.name = name.clone();
@@ -850,6 +924,9 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             if replace {
                 b.best_date = doc.date;
                 b.best_dose = this_dose;
+                // 跟 `best_dose` **同一条 mention** 的原样写法。分开取会把「今天这片
+                // 口服药」和「三月那次静脉冲击」拼成一条自相矛盾的记录。
+                b.best_raw_name = Some(obs.raw_name.clone());
                 b.has_best = true;
             }
         }
@@ -901,8 +978,10 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         .map(|b| MedSpan {
             drug_key: b.drug_key,
             name: b.name,
+            raw_names: b.raw_names.into_iter().collect(),
             atc: b.atc,
             latest_dose: b.best_dose,
+            latest_raw_name: b.best_raw_name,
             start: b.start,
             end: b.end,
             status: "active".to_string(),
@@ -948,6 +1027,7 @@ mod tests {
             index,
             doc_type: Some("lab_report".into()),
             title: Some("生化".into()),
+            extraction_json: None,
             date,
             text,
         }
@@ -958,6 +1038,174 @@ mod tests {
             .iter()
             .find(|s| s.analyte_key.as_deref() == Some(key))
             .unwrap_or_else(|| panic!("no series for {key}"))
+    }
+
+    /// 同一份文档:`extraction_json` 给「白细胞计数」,`text` 里写的是「肌酐」的
+    /// 正则可抽内容。`Some(有效 JSON)` 时必须用抽取结果,`text` 不再跑
+    /// `extract_labs` —— 见不到 creatinine 序列,只见得到 wbc。
+    #[test]
+    fn extraction_json_present_is_preferred_over_regex() {
+        let j = r#"{"labs":[{"name":"白细胞计数","value":"11.8","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0","flag":""}]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 1, 1),
+            text: "肌酐: 1.2 mg/dL (参考 0.6-1.3)",
+        }];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "wbc");
+        assert_eq!(s.points.len(), 1);
+        assert_eq!(
+            s.points[0].value, 11.8,
+            "值必须是抽取结果给的那个数,不是正则从 text 里读出的"
+        );
+        assert_eq!(s.points[0].unit.as_deref(), Some("10^9/L"));
+        assert_eq!(
+            s.points[0].flag.as_deref(),
+            Some("H"),
+            "11.8 > ref_high 10.0"
+        );
+        assert_eq!((s.ref_low, s.ref_high), (Some(4.0), Some(10.0)));
+        assert!(
+            agg.labs
+                .iter()
+                .all(|s| s.analyte_key.as_deref() != Some("creatinine")),
+            "有抽取结果时不该再对 text 跑正则"
+        );
+    }
+
+    /// `extraction_json: Some("{}")`(有效 JSON,但 LLM 一条 lab 都没给)——**退回
+    /// 正则**。这条曾经断言的是反面(零条也算「用抽取结果」),而那正是把「云端漏读
+    /// 一份单子」放大成「整份文档永久空白」的那个放大器:空结果是无条件落盘的,之后
+    /// 每次投影都读它(extract-repro-report.md §4)。
+    #[test]
+    fn extraction_json_valid_but_empty_falls_back_to_regex() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: Some("{}"),
+            date: d(2026, 1, 1),
+            text: "肌酐: 1.2 mg/dL (参考 0.6-1.3)",
+        }];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+        assert_eq!(
+            s.points.len(),
+            1,
+            "零条的云结果不许把正则读得出来的那条也抹掉"
+        );
+    }
+
+    /// **缺陷钉子**:云抽取路径曾对 `value_canonical`/`unit_canonical`/
+    /// `ref_*_canonical` 做无条件恒等"换算"(`extraction.rs` 曾经的
+    /// `value_canonical: Some(value_num)`),不管词典认不认识这份印刷单位。混进
+    /// 一份正则文档(88 umol/L,真实换算)后,`finalize_lab_series` 会把两份
+    /// **本该视为同一单位**的观测正确地统一到 `umol/L`——但换算是否发生必须由
+    /// 词典的真实 `UnitConversion` 决定,不能靠云路径的恒等式蒙混过关。
+    ///
+    /// `肌酐` 词典条目**真的**同时认识 `umol/L`(canonical,slope=1)与 `mg/dL`
+    /// (slope=88.42,见 `packages/terminology/dictionary.json`),所以这个具体
+    /// 场景修复后的**正确**结果是两份观测被真实换算并统一到 `umol/L`(88.0 与
+    /// 1.2mg/dL→106.104umol/L),而不是每次都恒等式地把云端那条的印刷值原样当
+    /// 成"规范值"——那才是 identity 转换的错误行为。
+    #[test]
+    fn mixed_unit_series_across_regex_and_cloud_docs_uses_real_conversion_not_identity() {
+        let docs = vec![
+            lab_doc(0, d(2026, 1, 1), "肌酐: 88 umol/L (参考 59-104)"),
+            SourceDoc {
+                index: 1,
+                doc_type: Some("lab_report".into()),
+                title: None,
+                extraction_json: Some(
+                    r#"{"labs":[{"name":"肌酐","value":"1.2","unit":"mg/dL","ref_low":"0.6","ref_high":"1.3","flag":""}]}"#,
+                ),
+                date: d(2026, 6, 1),
+                text: "(忽略;extraction_json 存在时不跑正则)",
+            },
+        ];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+        assert!(s.values_converted, "混单位但两边都真能换算,必须统一显示");
+        assert_eq!(s.unit_canonical.as_deref(), Some("umol/L"));
+        let vals: Vec<f64> = s.points.iter().map(|p| p.value).collect();
+        assert!(
+            (vals[0] - 88.0).abs() < 0.001,
+            "umol/L 就是规范单位,恒等映射:{vals:?}"
+        );
+        assert!(
+            (vals[1] - 106.104).abs() < 0.01,
+            "1.2 mg/dL 必须真乘 88.42,不能被云端识别式转换直接当成 106.104 以外的任何数(比如恒等式的 1.2):{vals:?}"
+        );
+        // 最近一次(云端文档,6 月)供出的参考区间同样走真实换算,而非恒等式。
+        assert!((s.ref_low.unwrap() - 53.052).abs() < 0.01);
+        assert!((s.ref_high.unwrap() - 114.946).abs() < 0.01);
+    }
+
+    /// **同一枚缺陷钉子,另一半**:当词典**真的**认不出任何一份报告印的单位
+    /// 时(而不是上一条测试里"两边都认识,只是印的不一样"),换算必须整体留
+    /// 空——`unit_canonical: None`、`values_converted: false`、序列级参考区间
+    /// 留空——这正是 ruling 描述的"否则四个字段整体为 `None`"那道安全网,证明
+    /// 云路径不再对词典完全不认识的单位编一个恒等式出来。
+    #[test]
+    fn mixed_unrecognized_units_across_regex_and_cloud_docs_leave_canonical_fields_none() {
+        let docs = vec![
+            lab_doc(0, d(2026, 1, 1), "白细胞计数: 5.0 个/uL (参考 4.0-10.0)"),
+            // 注意:两份报告印的单位**不同**(个/uL vs cells/uL),缺一不可——
+            // 若两边印刷单位相同,`finalize_lab_series` 会判定"印刷同质"直接用
+            // 印刷区间(不需要规范化),测不出「换算失败该整体留空」这条闸。
+            SourceDoc {
+                index: 1,
+                doc_type: Some("lab_report".into()),
+                title: None,
+                extraction_json: Some(
+                    r#"{"labs":[{"name":"白细胞计数","value":"5.5","unit":"cells/uL","ref_low":"4.0","ref_high":"10.0","flag":""}]}"#,
+                ),
+                date: d(2026, 6, 1),
+                text: "(忽略;extraction_json 存在时不跑正则)",
+            },
+        ];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "wbc");
+        assert_eq!(
+            s.unit_canonical, None,
+            "词典不认识“个/uL”,不能恒等式地当规范单位"
+        );
+        assert!(!s.values_converted);
+        assert_eq!(
+            (s.ref_low, s.ref_high),
+            (None, None),
+            "混印刷单位又换不出规范套,序列级区间必须留空"
+        );
+    }
+
+    /// `extraction_json: None`(老文档/离线)——原样退回 `extract_labs` 的正则
+    /// 路径,行为不变。
+    #[test]
+    fn extraction_json_absent_falls_back_to_regex() {
+        let docs = vec![lab_doc(0, d(2026, 1, 1), "肌酐: 1.2 mg/dL (参考 0.6-1.3)")];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+        assert_eq!(s.points.len(), 1);
+    }
+
+    /// `extraction_json: Some(格式不对的 JSON)`(被拒收/损坏的云回包)—— 同样要
+    /// 退回正则,不能因为字段是 `Some` 就把这份文档的化验直接吞掉。
+    #[test]
+    fn extraction_json_malformed_falls_back_to_regex() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: Some("not json"),
+            date: d(2026, 1, 1),
+            text: "肌酐: 1.2 mg/dL (参考 0.6-1.3)",
+        }];
+        let agg = aggregate(&docs);
+        let s = series(&agg, "creatinine");
+        assert_eq!(s.points.len(), 1, "解析失败要退回正则");
     }
 
     /// 「值和区间必须同单位」——这是本模块对每一个渲染层的硬承诺。任何一条序列
@@ -1133,6 +1381,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 6, 1),
             text: &text,
         }];
@@ -1154,6 +1403,7 @@ mod tests {
             index: 0,
             doc_type: Some("discharge_summary".into()),
             title: None,
+            extraction_json: None,
             date: d(2023, 5, 1),
             text: "出院诊断:急性脑梗死\n出院医嘱:低盐低脂饮食;继续口服阿司匹林 100mg qd、阿托伐他汀 20mg qn、氨氯地平 5mg qd、二甲双胍 0.5g bid;门诊随访。",
         }];
@@ -1192,6 +1442,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2023, 5, 1),
                 text: &text,
             }];
@@ -1228,6 +1479,7 @@ mod tests {
                     index: 0,
                     doc_type: Some("discharge_summary".into()),
                     title: None,
+                    extraction_json: None,
                     date: d(2026, 5, 1),
                     text: t,
                 }];
@@ -1265,6 +1517,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2023, 5, 1),
                 text: &text,
             }];
@@ -1288,6 +1541,7 @@ mod tests {
             index: 0,
             doc_type: Some(crate::classify(text).as_str().to_lowercase()),
             title: None,
+            extraction_json: None,
             date: d(2026, 5, 1),
             text,
         }];
@@ -1391,6 +1645,7 @@ mod tests {
             index: 0,
             doc_type: None,
             title: None,
+            extraction_json: None,
             date: d(2026, 5, 1),
             text: "血红蛋白 122 g/L 120-160\n出院带药:\n二甲双胍 0.5g bid\n",
         }];
@@ -1414,6 +1669,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 5, 1),
             text: "检验报告单\n血红蛋白 122 g/L 120-160\n肌酐 145 umol/L 57-97",
         }];
@@ -1454,6 +1710,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2023, 6, 1),
                 text: "肌酐 96 μmol/L 59-104",
             },
@@ -1461,6 +1718,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2022, 1, 1),
                 text: "肌酐 88 μmol/L 59-104",
             },
@@ -1468,6 +1726,7 @@ mod tests {
                 index: 2,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2023, 1, 1),
                 text: "肌酐 120 μmol/L 59-104", // > 104 -> H
             },
@@ -1493,6 +1752,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 1, 1),
                 text: "肌酐 88 μmol/L 59-104",
             },
@@ -1500,6 +1760,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 2, 1),
                 text: "神秘指标XYZ 12.3 mg/L 0-5",
             },
@@ -1529,6 +1790,7 @@ mod tests {
                 index: 3,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2023, 1, 1),
                 text: "二甲双胍 0.5g bid",
             },
@@ -1536,6 +1798,7 @@ mod tests {
                 index: 7,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 3, 1),
                 text: "二甲双胍 0.85g tid",
             },
@@ -1559,6 +1822,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 5, 1),
                 text: "出院诊断:2型糖尿病",
             },
@@ -1566,6 +1830,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2023, 2, 1),
                 text: "入院诊断:2型糖尿病",
             },
@@ -1585,6 +1850,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: None,
                 text: "肌酐 88 μmol/L 59-104",
             },
@@ -1592,6 +1858,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 1, 1),
                 text: "肌酐 90 μmol/L 59-104",
             },
@@ -1612,6 +1879,7 @@ mod tests {
             index: 0,
             doc_type: None,
             title: None,
+            extraction_json: None,
             date: d(2024, 1, 1),
             text: "\
 肌酐 88 μmol/L 59-104
@@ -1661,6 +1929,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("self_measurement".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2026, 8, 1),
                 text: &self_text,
             },
@@ -1668,6 +1937,7 @@ mod tests {
                 index: 1,
                 doc_type: Some("lab_report".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2026, 8, 1),
                 text: "收缩压 140 mmHg",
             },
@@ -1716,6 +1986,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: &text,
         }];
@@ -1754,6 +2025,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: &text,
         }];
@@ -1791,6 +2063,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("self_measurement".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2026, 8, 1),
                 text: &text,
             }];
@@ -1820,6 +2093,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: &text,
         }];
@@ -1842,6 +2116,7 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: &text,
         }];
@@ -1858,6 +2133,7 @@ mod tests {
             index: 0,
             doc_type: Some("note".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: "今天有点头晕,是不是又高血压了,下次问问医生。",
         }];
@@ -1883,10 +2159,42 @@ mod tests {
             index: 0,
             doc_type: Some("self_measurement".into()),
             title: None,
+            extraction_json: None,
             date: d(2026, 8, 1),
             text: "损坏的自测记录,没有任何标记行。",
         }];
         let agg = aggregate(&docs);
         assert!(agg.labs.is_empty());
+    }
+
+    #[test]
+    fn profile_event_documents_never_enter_clinical_aggregation() {
+        // profile_event 的合成文本里有「泼尼松」「狼疮性肾炎」这类词。它要是被
+        // extract_conditions/extract_meds 读一遍,用户点一下「开启档案」就会凭空
+        // 多出一条诊断和一条用药 —— 而且会跟着二维码分享给医生。
+        let text = crate::render_profile_event_text(
+            &[
+                "开启狼疮病程档案".to_string(),
+                "记录:泼尼松 20mg qd,狼疮性肾炎 IV 型".to_string(),
+            ],
+            &crate::ProfileEvent {
+                kind: "enable".into(),
+                package: "sle".into(),
+                at: "2026-09-16".into(),
+                payload: serde_json::json!({}),
+            },
+        );
+        let docs = vec![SourceDoc {
+            index: 0,
+            date: "2026-09-16".parse().ok(),
+            text: &text,
+            doc_type: Some("profile_event".into()),
+            title: None,
+            extraction_json: None,
+        }];
+        let out = aggregate(&docs);
+        assert!(out.conditions.is_empty(), "profile_event 不该产出诊断");
+        assert!(out.meds.is_empty(), "profile_event 不该产出用药");
+        assert!(out.labs.is_empty(), "profile_event 不该产出化验");
     }
 }

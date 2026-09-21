@@ -49,3 +49,10 @@ __pycache__/
 
 # 上传口令(签名端点用)——与 .posthog_key 同类,绝不进仓库
 .medme_upload_token
+
+# skill 包签名私钥(scripts/sign_skill.py)——只应活在 ~/.medme_skill_signing_key,
+# 这条是万一被误拷进工作树时的兜底,不是预期路径。
+.medme_skill_signing_key*
+
+# 合成 SLE 病程语料的生成产物(入库的那份在 packages/profile/testdata/corpus/)
+examples/*/corpus-sle/

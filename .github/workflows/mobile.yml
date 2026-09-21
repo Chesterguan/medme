@@ -35,6 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # test/copy_unchanged_test.dart 要 `git show 2a629a2:…`(文案零变更基线),浅克隆拿不到
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0 # TODO: 按仓库惯例改成 SHA 钉版
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -49,6 +51,18 @@ jobs:
       - name: dart 单元测试
         working-directory: ${{ env.WORKDIR }}
         run: flutter test
+      # 移动端 Rust crate 的单测。**`ci.yml` 覆盖不到它** —— 它自成 workspace(根
+      # `Cargo.toml` 的 `exclude`),那边的 cargo 步骤按 `-p` 逐个列 crate,列不到这一个。
+      # 于是 `rust/tests/frb_dispatch_indices.rs`(钉住 `recognize_image_pp` 的派发下标 44,
+      # 本 SDD global-constraints 的硬约束)此前只有人工在本地跑才会红 —— 守卫本身没有守卫。
+      # 只跑 host 单测,不编任何 release / 交叉目标(那是下面 workflow_dispatch 的活)。
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: apps/mobile_flutter/rust -> target
+          shared-key: flutter-rust-host-test
+      - name: Rust 单元测试(含 FRB 派发下标守卫)
+        run: cargo test --manifest-path apps/mobile_flutter/rust/Cargo.toml
 
   # ── 安卓 release:arm64-v8a,产出可安装 APK(正式签名)+ 发布到 GitHub Release ──
   android-release:
@@ -118,6 +132,7 @@ jobs:
           flutter build apk --release --target-platform android-arm64
           --dart-define=POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
           --dart-define=MEDME_UPLOAD_TOKEN=${{ secrets.MEDME_UPLOAD_TOKEN }}
+          ${{ vars.MEDME_API_BASE != '' && format('--dart-define=MEDME_API_BASE={0}', vars.MEDME_API_BASE) || '' }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 # TODO: SHA 钉版
         with:
           name: medme-android
@@ -223,6 +238,7 @@ jobs:
           --export-options-plist=$RUNNER_TEMP/ExportOptions.plist
           --dart-define=POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
           --dart-define=MEDME_UPLOAD_TOKEN=${{ secrets.MEDME_UPLOAD_TOKEN }}
+          ${{ vars.MEDME_API_BASE != '' && format('--dart-define=MEDME_API_BASE={0}', vars.MEDME_API_BASE) || '' }}
       # ⚠️ **依赖漂移哨兵。** iOS 插件走 Swift Package Manager(不是 CocoaPods ——
       # Podfile.lock 里只有 5 个 pod 是对的,别再以为它「不完整」)。而 `file_picker`
       # 的 Package.swift 把 DKImagePickerController 依赖成 **branch** 而非 tag,

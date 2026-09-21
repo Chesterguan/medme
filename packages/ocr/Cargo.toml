@@ -32,6 +32,12 @@ pdf-extract.workspace = true
 parser = { path = "../parser" }
 # medrep.rs 直接用词典解析真值项目名,以便把「词典未覆盖」单独计一栏。
 terminology = { path = "../terminology" }
+# medrep_llm.rs:第 ④ 臂,脱敏后直调 DeepSeek。
+deid = { path = "../deid" }
+# medrep_llm 直调 DeepSeek(评测期不经代理)。3.3.0 已在 Cargo.lock(ort 传递依赖),不新增 crate。
+ureq = { version = "3.3", features = ["json"] }
+base64 = "0.23"
+serde_json.workspace = true
 
 [[example]]
 name = "layout_eval"
@@ -50,6 +56,10 @@ required-features = ["engine", "testing"]
 
 [[example]]
 name = "medrep"
+required-features = ["engine", "testing"]
+
+[[example]]
+name = "medrep_llm"
 required-features = ["engine", "testing"]
 
 [[example]]

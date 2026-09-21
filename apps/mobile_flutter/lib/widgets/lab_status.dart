@@ -34,8 +34,10 @@ enum LabStatus {
   unknown,
 }
 
-/// 原始 flag 字符串 → [LabStatus]。返回 null = **正常,不上色、不给 pill**
-/// (设计系统 §二:一份血常规 22 项只有 1–2 项异常,给正常配色会把异常淹没)。
+/// 原始 flag 字符串 → [LabStatus]。返回 null = **正常,不给 pill、不加字**——左侧
+/// 色条与数值文字仍然上色([MedBrand.barNormal] / [MedBrand.normalInk]),只是
+/// 不额外画 pill(预检裁定 R2;设计系统 §二原来的「正常不上色」规则已被 Stage 3
+/// 视觉令牌取代)。
 ///
 /// ## `"N"` 也是正常,不是「读不懂的记号」
 ///
@@ -52,9 +54,10 @@ enum LabStatus {
 /// 两者的语义确实不同(「明确判定为正常」vs「没有标记/无从判断」),但在**这一层**
 /// 不该区分,理由有三条:
 ///
-/// 1. 这个函数的产出只喂给三样东西 —— 色条色、数值前景色、pill。而「正常」在设计
-///    系统里恰恰只有一种呈现:透明色条 + 正文墨色 + 没有 pill。给「明确正常」再发明
-///    第四种视觉状态,就是本文件开头那条规则(「正常不上色」)的直接违反。
+/// 1. 这个函数的产出只喂给三样东西 —— 色条色、数值前景色、pill。而「正常」现在也
+///    恰恰只有一种呈现:[MedBrand.barNormal] 色条 + [MedBrand.normalInk] 数值 +
+///    没有 pill(预检裁定 R2)。给「明确正常」再发明第四种视觉状态,就是这一条
+///    规则的直接违反。
 /// 2. 信息没有丢:原始 `flag` 仍然挂在 DTO 上,谁要区分自己读。
 /// 3. `"N"` 本来就是可推的 —— 它等价于「refLow/refHigh 至少有一个且值在区间内」,
 ///    而参考区间同一个 DTO 里就带着。
@@ -69,7 +72,9 @@ LabStatus? labStatusOf(String? flag) {
   };
 }
 
-/// 状态 → 前景色。正常与「认不出的标记」都继承正文墨色。
+/// 状态 → 前景色。「认不出的标记」继承正文墨色;正常(`null`)是
+/// [MedBrand.normalInk](预检裁定 R2 —— brief 给了正常档的文字色,旧「正常不
+/// 上色」规则作废)。
 ///
 /// 认不出的标记刻意**不上色**:我们不知道它是高是低,涂个颜色就是在替化验单
 /// 下一个我们没读懂的结论。
@@ -78,29 +83,33 @@ Color labStatusColor(BuildContext context, LabStatus? s) {
   return switch (s) {
     LabStatus.high => c.high,
     LabStatus.low => c.low,
-    LabStatus.unknown || null => c.ink,
+    LabStatus.unknown => c.ink,
+    null => MedBrand.normalInk,
   };
 }
 
-/// 状态 → 左侧色条色。正常/未知是**透明**的,但色条本身照画 —— 3px 的占位恒定,
-/// 整列文字起点才不会因为有没有色条而左右跳(与 `report_content.dart` 同一处理)。
+/// 状态 → 左侧色条色。正常(`null`)是 [MedBrand.barNormal];「认不出的标记」仍是
+/// **透明**——色条 4px 的占位恒定(brief §形,旧代码是 3px),整列文字起点才不会
+/// 因为有没有色条而左右跳(与 `report_content.dart` 的独立实现同一处理思路)。
 Color labStripeColor(BuildContext context, LabStatus? s) {
-  final c = MedColors.of(context);
   return switch (s) {
-    LabStatus.high => c.high,
-    LabStatus.low => c.low,
-    LabStatus.unknown || null => Colors.transparent,
+    LabStatus.high => MedBrand.barHigh,
+    LabStatus.low => MedBrand.barLow,
+    LabStatus.unknown => Colors.transparent,
+    null => MedBrand.barNormal,
   };
 }
 
-/// 状态 → 文字 pill。正常不给 pill;未知给一个中性 pill,**文字是原始标记本身**。
+/// 状态 → 文字 pill。正常(`null`)不给 pill(预检裁定 R2);未知给一个「看一眼」
+/// 中性 pill(`MedPill.check`),**文字是原始标记本身**。
 ///
 /// 状态同时编码在色条和 pill 上:色盲用户靠 pill 读语义,正常视力扫视靠色条
 /// (设计系统 §二)。少任何一个,就有一类用户读不到这一行的结论。
 ///
 /// ⚠️ 规范的第四级「危急值」这里画不出来:它得由 Rust 明确给出,而当前三个投影
 /// DTO 的 `flag` 里没有这一级。**不在 UI 层拿参考区间反推** —— 令牌 `critical` /
-/// `criticalWash` 因此在化验语境下暂时无人消费,等抽取侧补上。
+/// `barCritical` 因此在化验语境下暂时无人消费,等抽取侧补上(预检裁定 R2:危急
+/// 档暂无数据来源,只保留 token,不做行为)。
 Widget? labStatusPill(BuildContext context, String? flag) {
   final c = MedColors.of(context);
   final s = labStatusOf(flag);
@@ -108,7 +117,7 @@ Widget? labStatusPill(BuildContext context, String? flag) {
     null => null,
     LabStatus.high => MedPill(
       text: '偏高',
-      foreground: c.high,
+      foreground: MedBrand.pillHighInk,
       background: c.highWash,
     ),
     LabStatus.low => MedPill(
@@ -116,13 +125,9 @@ Widget? labStatusPill(BuildContext context, String? flag) {
       foreground: c.low,
       background: c.lowWash,
     ),
-    // 原样透出。底色用中性的 `line2`,读起来是「单子上还印了个这个」,
-    // 不是任何一档临床结论。
-    LabStatus.unknown => MedPill(
-      text: flag!.trim(),
-      foreground: c.ink2,
-      background: c.line2,
-    ),
+    // 原样透出,换成「看一眼」共用的中性配色(与「需核对」chip 同一处
+    // MedPill.check —— 都是「App 没能替你判定,自己看一眼」这句话)。
+    LabStatus.unknown => MedPill.check(flag!.trim()),
   };
 }
 
@@ -145,8 +150,8 @@ String? refRangeText(double? low, double? high) {
 /// 数字在用户那张纸上**找不到**,必须说出来 —— 不说等于改写原文
 /// (`docs/007_UI_Guidelines.md` §2.1「原件永远可达」)。
 ///
-/// 措辞只写这一份,趋势卡/概览/「看病带这个」共用 —— 同一件事在三个屏上不该有
-/// 三种说法(与 `LabLine` 只有一个实现同源)。
+/// 措辞只写这一份,「趋势」与「给医生看」共用 —— 同一件事在两个屏上不该有
+/// 两种说法(与 `LabLine` 只有一个实现同源)。
 String unitConvertedNote(String? unit) =>
     (unit == null || unit.isEmpty) ? '已统一换算' : '已统一换算为 $unit';
 
@@ -164,9 +169,9 @@ String fmtLabNumber(double v) {
 
 /// 一行化验的**唯一**渲染实现:左侧状态色条 + 名称 + pill + 次要说明 + 右侧数值。
 ///
-/// 概览、「看病带这个」浮层、趋势页共用它。规范 §七「三端映射」要求同一个化验值
-/// 在哪里都长一样;同一端里的三个屏各写一遍,是同一个问题的更近版本 —— 「偏高」
-/// 会变成三个略微不同的意思。
+/// 「给医生看」与「趋势」共用它。规范 §七「三端映射」要求同一个化验值
+/// 在哪里都长一样;同一端里的几个屏各写一遍,是同一个问题的更近版本 —— 「偏高」
+/// 会变成几个略微不同的意思。
 class LabLine extends StatelessWidget {
   const LabLine({
     super.key,
@@ -178,6 +183,7 @@ class LabLine extends StatelessWidget {
     this.refHigh,
     this.meta,
     this.onTap,
+    this.unverified = false,
   });
 
   final String name;
@@ -197,11 +203,24 @@ class LabLine extends StatelessWidget {
   /// 点进原件。为 null 时不显示箭头 —— **不给点不动的行画箭头**,那是假承诺。
   final VoidCallback? onTap;
 
+  /// 这个值**本机没能逐字核对上**(云抽取图片档;`VisitLabDto.unverified` /
+  /// `TrendPointDto.unverified` 透传)。
+  ///
+  /// `true` 时这一行**照常显示**,只是多一枚「需核对」chip —— 丢掉它更糟:用户
+  /// 看不到这个数,也就无从核对。这条是 spec §4 定的:图片档校验不过的行保留、
+  /// 标记,不丢弃(文本档才整条丢)。
+  final bool unverified;
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     final status = labStatusOf(flag);
     final pill = labStatusPill(context, flag);
+    // 「需核对」用 MedBrand 的中性 check 配色(R4:只在 MedPill.check 一处定义)——
+    // **不用** low/high/critical 那三套,也不借主色 seal:那三套是化验状态专用,
+    // 借来会让人读成一档临床结论;这枚 chip 说的是"MedMe 没能替你核对这个数",
+    // 是 App 在说话,不是化验单在说话,也不是「点这里去做什么」的主色动作。
+    final reviewPill = unverified ? MedPill.check('需核对') : null;
     final ref = refRangeText(refLow, refHigh);
     final sub = [
       if (meta case final m? when m.isNotEmpty) m,
@@ -212,10 +231,12 @@ class LabLine extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(MedShape.radiusControl),
       child: Container(
-        // 3px 色条恒定占位(正常行透明)—— 整列文字起点不会因为有没有色条而左右跳。
+        // 4px 色条恒定占位(brief §形,旧代码是 3px)——正常行现在也是
+        // MedBrand.barNormal,只有「认不出的标记」那档还是透明,占位宽度不因此
+        // 变化,整列文字起点不会因为有没有色条而左右跳。
         decoration: BoxDecoration(
           border: Border(
-            left: BorderSide(color: labStripeColor(context, status), width: 3),
+            left: BorderSide(color: labStripeColor(context, status), width: 4),
           ),
         ),
         padding: const EdgeInsets.fromLTRB(
@@ -230,16 +251,33 @@ class LabLine extends StatelessWidget {
               name,
               style: MedType.body.copyWith(color: c.ink),
             );
-            final valueText = Text(
-              [
-                fmtLabNumber(value),
-                if (unit case final u? when u.isNotEmpty) u,
-              ].join(' '),
-              style: MedType.body.copyWith(
+            final numberText = Text(
+              fmtLabNumber(value),
+              style: MedType.value.copyWith(
                 color: labStatusColor(context, status),
-                fontWeight: FontWeight.w600,
-                fontFeatures: MedType.tabular,
               ),
+            );
+            // 单位是独立的小字(brief §形「单位小字可折到数值下一行」),不再跟
+            // 数值拼进同一个 Text —— 两者字号/字重/颜色本来就不同。
+            Text? unitText;
+            if (unit case final u? when u.isNotEmpty) {
+              unitText = Text(
+                u,
+                style: MedType.caption.copyWith(
+                  fontSize: 12,
+                  color: c.ink3,
+                  fontWeight: FontWeight.w400,
+                ),
+              );
+            }
+            // 放进 Wrap 而不是 Row:宽屏这一路它拿到的是无限宽(非 flex 的 Row
+            // 子项在主轴上天然如此),两者正常挤一行;窄屏那条分支里 valueText
+            // 被 Expanded 收紧了宽度,装不下时单位自己掉到下一行,数值本身
+            // 永远不折 —— 这就是 brief 要的效果。
+            final valueText = Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 4,
+              children: [numberText, ?unitText],
             );
             final subText = sub.isEmpty
                 ? null
@@ -273,14 +311,17 @@ class LabLine extends StatelessWidget {
               )..layout(maxWidth: double.infinity);
               return tp.width;
             }
-            final pillW = pill == null ? 0.0 : 56.0; // pill 的保守估宽,宁可早换行
+            // pill 的保守估宽,宁可早换行。「需核对」三个字比「偏高」宽一档。
+            final pillW =
+                (pill == null ? 0.0 : 56.0) + (reviewPill == null ? 0.0 : 64.0);
             final chevronW = chevron == null ? 0.0 : 20.0;
             final needed =
                 probe(nameText) +
                 pillW +
                 MedShape.s1 +
                 MedShape.s2 +
-                probe(valueText) +
+                probe(numberText) +
+                (unitText == null ? 0.0 : 4 + probe(unitText)) +
                 chevronW;
             final sideBySide = needed <= box.maxWidth;
 
@@ -298,6 +339,10 @@ class LabLine extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (pill != null) ...[pill, const SizedBox(width: MedShape.s1)],
+                if (reviewPill != null) ...[
+                  reviewPill,
+                  const SizedBox(width: MedShape.s1),
+                ],
                 Flexible(child: nameText),
               ],
             );

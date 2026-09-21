@@ -22,10 +22,20 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_flutter/cloud_extract.dart' show readCurrentVaultRoot;
 import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
+import 'package:mobile_flutter/vault_boot.dart' show resetVaultQueueForTest;
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// 采集那一刻的成员与箱子。回填是**写事件**(`OcrAdded`),写之前必须确认箱子还是
+/// 当初那个 —— 导入搬到后台之后,这段渲染 + OCR 最长跑 20 页,分钟级,用户完全
+/// 来得及在档案屏上切成员。
+const _profile = Profile(id: 'p-1', name: '我');
+const _root = '/docs/profiles/p-1/vault';
 
 ImportOutcomeDto _outcome({
   String status = 'new',
@@ -77,12 +87,25 @@ class _Recorder {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    resetVaultQueueForTest();
+    await ProfileManager.instance.ensureLoaded();
+    // 回填现在排进 vault 队列并核对身份;host 上 `currentVaultRoot` 会抛,只能注入。
+    readCurrentVaultRoot = () async => _root;
+  });
+  tearDown(resetVaultQueueForTest);
+
   group('backfillPagesWithoutText —— 抽取自患者模式,行为逐条不变', () {
     test('没有缺文本层的页:直接返回 0,不渲染、不回填、不动 stage', () async {
       final rec = _Recorder();
       final missing = await backfillPagesWithoutText(
         _outcome(),
         '/tmp/a.pdf',
+        profile: _profile,
+        vaultRoot: _root,
         onStage: rec.stages.add,
         ocrPages: rec.ocrReturning(const {}),
         backfill: rec.backfill,
@@ -102,6 +125,8 @@ void main() {
       final missing = await backfillPagesWithoutText(
         _outcome(pagesWithoutText: [1, 2], documentId: null),
         '/tmp/a.pdf',
+        profile: _profile,
+        vaultRoot: _root,
         onStage: rec.stages.add,
         ocrPages: rec.ocrReturning(const {2: OcrResult('x', 0.9)}),
         backfill: rec.backfill,
@@ -116,6 +141,8 @@ void main() {
       await backfillPagesWithoutText(
         _outcome(pagesWithoutText: [3, 4, 7]),
         '/tmp/mixed.pdf',
+        profile: _profile,
+        vaultRoot: _root,
         onStage: rec.stages.add,
         ocrPages: rec.ocrReturning(const {}),
         backfill: rec.backfill,
@@ -131,6 +158,8 @@ void main() {
       final missing = await backfillPagesWithoutText(
         _outcome(pagesWithoutText: [2, 3]),
         '/tmp/a.pdf',
+        profile: _profile,
+        vaultRoot: _root,
         onStage: rec.stages.add,
         ocrPages: rec.ocrReturning(const {
           2: OcrResult('第二页', 0.81),
@@ -150,6 +179,8 @@ void main() {
       final missing = await backfillPagesWithoutText(
         _outcome(pagesWithoutText: [2, 3, 4]),
         '/tmp/a.pdf',
+        profile: _profile,
+        vaultRoot: _root,
         onStage: rec.stages.add,
         ocrPages: rec.ocrReturning(const {3: OcrResult('第三页', 0.9)}),
         backfill: rec.backfill,
@@ -163,6 +194,8 @@ void main() {
       final missing = await backfillPagesWithoutText(
         _outcome(status: 'stored_no_text', pagesWithoutText: [1, 2, 3]),
         '/tmp/a.pdf',
+        profile: _profile,
+        vaultRoot: _root,
         onStage: rec.stages.add,
         ocrPages: rec.ocrReturning(const {}),
         backfill: rec.backfill,
@@ -176,6 +209,8 @@ void main() {
       await backfillPagesWithoutText(
         _outcome(pagesWithoutText: [2]),
         '/tmp/a.pdf',
+        profile: _profile,
+        vaultRoot: _root,
         onStage: rec.stages.add,
         ocrPages: rec.ocrReturning(const {2: OcrResult('x', 0.9)}),
         backfill: rec.backfill,
@@ -192,6 +227,8 @@ void main() {
       final missing = await backfillPagesWithoutText(
         outcome,
         '/tmp/a.pdf',
+        profile: _profile,
+        vaultRoot: _root,
         ocrPages: rec.ocrReturning(const {2: OcrResult('x', 0.9)}),
         backfill: rec.backfill,
       );
@@ -209,6 +246,8 @@ void main() {
       final missing = await backfillPagesWithoutText(
         _outcome(pagesWithoutText: [2, 3]),
         '/tmp/两页化验单.tiff',
+        profile: _profile,
+        vaultRoot: _root,
         onStage: rec.stages.add,
         ocrPages: rec.ocrReturning(const {2: OcrResult('绝不该被用上', 0.9)}),
         backfill: rec.backfill,
@@ -239,6 +278,8 @@ void main() {
       final missing = await backfillPagesWithoutText(
         _outcome(pagesWithoutText: [2]),
         '/tmp/a.pdf',
+        profile: _profile,
+        vaultRoot: _root,
         onStage: rec.stages.add,
         ocrPages: rec.ocrReturning(const {2: OcrResult('第二页', 0.9)}),
         backfill: rec.backfill,
@@ -248,6 +289,65 @@ void main() {
         [2],
       ]);
       expect(rec.stages, ['ocr', 'save']);
+    });
+  });
+
+  group('C1 身份闸:回填是写事件,箱子换了就一个字都不许写', () {
+    // `backfill_pdf_text` 走 Rust 的 `with_state` = **此刻开着的那个箱子**,再进
+    // `add_ocr` → `append_event(OcrAdded)`:写下去就进历史、会同步。而每个 vault 的
+    // rowid 都从 1 开始,拿旧库的 document_id 去新库,大概率命中另一个人的文档。
+    //
+    // 改造前这个窗口打不开(导入被 `barrierDismissible: false` 的模态框钉着);
+    // 导入搬到后台之后,用户点完就回到档案屏,成员 tab 条就在眼前。
+    test('成员在渲染/OCR 期间被切走 → 一页都不回填,如实报「全都没补上」', () async {
+      final rec = _Recorder();
+      final missing = await backfillPagesWithoutText(
+        _outcome(pagesWithoutText: [2, 3]),
+        '/tmp/a.pdf',
+        // 采集时捕获的是别人 —— 等价于「渲染跑到一半用户切了成员」。
+        profile: const Profile(id: 'someone-else', name: '别人'),
+        vaultRoot: _root,
+        onStage: rec.stages.add,
+        ocrPages: rec.ocrReturning(const {
+          2: OcrResult('第二页', 0.9),
+          3: OcrResult('第三页', 0.9),
+        }),
+        backfill: rec.backfill,
+      );
+      expect(rec.backfills, isEmpty, reason: '一个字节都不许落进新成员的箱子');
+      expect(missing, 2, reason: '没写进去就是没补上,绝不报成 0');
+    });
+
+    test('成员没变但箱子被换掉(医生代拍)→ 同样一页都不回填', () async {
+      readCurrentVaultRoot = () async => '/docs/proxy/patient-9/vault';
+      final rec = _Recorder();
+      final missing = await backfillPagesWithoutText(
+        _outcome(pagesWithoutText: [2]),
+        '/tmp/a.pdf',
+        profile: ProfileManager.instance.current,
+        vaultRoot: _root,
+        ocrPages: rec.ocrReturning(const {2: OcrResult('第二页', 0.9)}),
+        backfill: rec.backfill,
+      );
+      expect(rec.backfills, isEmpty);
+      expect(missing, 1);
+    });
+
+    test('箱子没变 → 照常逐页回填(闸不许误伤正常路径)', () async {
+      final rec = _Recorder();
+      final missing = await backfillPagesWithoutText(
+        _outcome(pagesWithoutText: [2, 3]),
+        '/tmp/a.pdf',
+        profile: ProfileManager.instance.current,
+        vaultRoot: _root,
+        ocrPages: rec.ocrReturning(const {
+          2: OcrResult('第二页', 0.81),
+          3: OcrResult('第三页', 0.92),
+        }),
+        backfill: rec.backfill,
+      );
+      expect(missing, 0);
+      expect(rec.backfills.map((b) => b.pageNo), [2, 3]);
     });
   });
 

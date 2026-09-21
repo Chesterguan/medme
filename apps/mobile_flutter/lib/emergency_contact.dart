@@ -1,10 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 应急卡上**没有数据来源**的两项:紧急联系人 与 器官捐献意愿。
+/// 急救卡上**没有数据来源**的两项:紧急联系人 与 器官捐献意愿。
 ///
 /// 设计系统 §九 那张表里,过敏史 / 用药 / 慢病三项都能从已导入的病历抽出来,只有
-/// 这两项写着「无来源 · 手填」。它们不进保险箱(保险箱存的是**病历原件与从原件抽
+/// 这两项写着「无来源 · 手填」。它们不进病历箱(病历箱存的是**病历原件与从原件抽
 /// 出的事实**,而这两项是用户此刻的意愿声明,不是任何一张纸上的内容),用
 /// `SharedPreferences` 存在本机,和别的本地偏好一个待遇。
 ///
@@ -103,7 +103,7 @@ class EmergencyExtrasStore {
         organDonation: OrganDonation.fromKey(sp.getString(_kOrgan)),
       );
     } catch (e) {
-      // 读不出来就当没填过 —— 应急卡的其余部分(过敏、用药、慢病)照常显示。
+      // 读不出来就当没填过 —— 急救卡的其余部分(过敏、用药、慢病)照常显示。
       // 一个偏好读失败绝不能让急救时唯一有用的那一屏白掉。
       debugPrint('[emergency] 读取手填项失败: $e');
     }

@@ -1,4 +1,4 @@
-// 五 tab 信息架构 + 三块新界面的看门测试。
+// 三 tab 信息架构 + 三块新界面的看门测试。
 //
 // 这个文件盯的**不是排版**,是几条一旦破掉就会在临床上说假话的规矩:
 //
@@ -14,10 +14,12 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show Int64List;
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/emergency_contact.dart';
 import 'package:mobile_flutter/main.dart';
 import 'package:mobile_flutter/screens/emergency_card_screen.dart';
+import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/theme.dart';
@@ -26,6 +28,7 @@ import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
+import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
@@ -48,8 +51,8 @@ Widget wrapScreen(Widget screen, {double textScale = 1.0}) => MaterialApp(
 
 Int64List ids(List<int> xs) => Int64List.fromList(xs);
 
-TrendPointDto pt(String? date, double v, {String? flag}) =>
-    TrendPointDto(date: date, value: v, flag: flag, documentId: 1);
+TrendPointDto pt(String? date, double v, {String? flag, bool unverified = false}) =>
+    TrendPointDto(date: date, value: v, flag: flag, documentId: 1, unverified: unverified);
 
 TrendSeriesDto series(List<TrendPointDto> points, {double? lo, double? hi}) =>
     TrendSeriesDto(
@@ -95,10 +98,11 @@ void main() {
       expect(labStatusOf(' N '), isNull, reason: '两头的空白不该改变判定');
     });
 
-    testWidgets('flag = N 的行:没有 pill、正文墨色、色条透明', (tester) async {
-      // 上面那条纯函数断言的用户可见兑现 —— 「正常不上色」这条规则(设计系统 §二)
-      // 对「明确正常」和「没有标记」必须给出同一个结果,否则一份血常规里 1–2 项真正
-      // 的异常会被二十个 N 淹没。
+    testWidgets('flag = N 的行:没有 pill、数值 normalInk、色条 barNormal', (tester) async {
+      // 上面那条纯函数断言的用户可见兑现——「明确正常」和「没有标记」必须给出同一个
+      // 结果,否则一份血常规里 1–2 项真正的异常会被二十个 N 淹没。R2:「正常」不再
+      // 是「不上色」,而是 barNormal 色条 + normalInk 数值,只是不额外画 pill、不
+      // 加字。
       await tester.pumpWidget(
         wrap(
           const LabLine(
@@ -113,12 +117,17 @@ void main() {
       );
       expect(find.text('N'), findsNothing, reason: '内部编码不许出现在界面上');
       expect(find.byType(MedPill), findsNothing, reason: '正常不给 pill');
-      final ctx = tester.element(find.byType(LabLine));
+      expect(find.text('210'), findsOneWidget);
+      expect(find.text('10^9/L'), findsOneWidget);
       expect(
-        tester.widget<Text>(find.text('210 10^9/L')).style?.color,
-        MedColors.of(ctx).ink,
-        reason: '正常值用正文墨色,不上高/低色',
+        tester.widget<Text>(find.text('210')).style?.color,
+        MedBrand.normalInk,
+        reason: 'R2:正常数值用 normalInk,不是继承正文墨色',
       );
+      final border = (tester.widget<Container>(find.descendant(
+        of: find.byType(LabLine), matching: find.byType(Container)).first)
+        .decoration! as BoxDecoration).border! as Border;
+      expect(border.left.color, MedBrand.barNormal, reason: 'R2:正常色条不再透明');
       // 参考区间照常显示 —— 显示与判定是两件事。
       expect(find.textContaining('参考 125–350'), findsOneWidget);
     });
@@ -133,6 +142,49 @@ void main() {
       expect(find.text('HH'), findsOneWidget);
     });
 
+    // 云抽取图片档:本机拿不到原文逐字比对的那些值。规矩是**保留 + 标记**
+    // (spec §4),不是丢弃 —— 丢掉的话用户连"有这么个数"都不知道,更无从核对。
+    testWidgets('unverified 的行:照常显示数值,多一枚「需核对」', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          const LabLine(
+            name: '肌酐',
+            value: 1.2,
+            unit: 'mg/dL',
+            refLow: 0.6,
+            refHigh: 1.3,
+            unverified: true,
+          ),
+        ),
+      );
+      expect(find.text('需核对'), findsOneWidget);
+      expect(find.text('1.2'), findsOneWidget, reason: '标记归标记,值照常显示');
+      expect(find.text('mg/dL'), findsOneWidget, reason: '标记归标记,单位照常显示');
+      // 用 R4 的中性 check 配色(MedPill.check),不借 high/low/critical —— 那三套是
+      // 化验状态专用,借来会被读成一档临床结论;也不借主色 seal —— 那是「点这里去
+      // 做什么」的强调色,这枚 chip 说的是「App 没能替你核对」,不是一个动作。
+      final chip = tester.widget<MedPill>(find.byType(MedPill));
+      expect(chip.background, MedBrand.checkWash);
+      expect(chip.foreground, MedBrand.checkInk);
+    });
+
+    testWidgets('核对过的行:没有这枚 chip', (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          const LabLine(name: '肌酐', value: 1.2, unit: 'mg/dL', refLow: 0.6, refHigh: 1.3),
+        ),
+      );
+      expect(find.text('需核对'), findsNothing);
+    });
+
+    testWidgets('既偏高又需核对:两枚 chip 并排,各说各的', (tester) async {
+      await tester.pumpWidget(
+        wrap(const LabLine(name: '肌酐', value: 2.0, flag: 'H', unverified: true)),
+      );
+      expect(find.text('偏高'), findsOneWidget, reason: '化验单说的');
+      expect(find.text('需核对'), findsOneWidget, reason: 'MedMe 说的');
+    });
+
     test('认不出的标记不吞掉,原样成为 unknown', () {
       // 某些医院印「HH」(危急高)、「危」、「*」。我们读到了就得显示,
       // 悄悄当成正常比显示得难看危险得多。
@@ -141,7 +193,7 @@ void main() {
       expect(labStatusOf('*'), LabStatus.unknown);
     });
 
-    testWidgets('值远超参考区间但 flag 为空 → **不上色**', (tester) async {
+    testWidgets('值远超参考区间但 flag 为空 → 仍按「正常」处理,不按 high/low 上色', (tester) async {
       // 这是整个改动里最要紧的一条断言。三个投影 DTO 每个点都带着 refLow/refHigh,
       // 拿来反推异常唾手可得(hosted-viewer 的 sparkSVG 就是这么干的)。谁哪天
       // 「顺手补上」那个判定,红的应该是这里 —— 007 §2.5:怎么算在 Rust。
@@ -160,10 +212,12 @@ void main() {
       // 没有 pill —— UI 没有替化验单下任何结论。
       expect(find.text('偏高'), findsNothing);
       expect(find.text('偏低'), findsNothing);
-      // 数值墨色是正文 ink,不是 high。
-      final ctx = tester.element(find.byType(LabLine));
-      final valueText = tester.widget<Text>(find.text('99.9 10^9/L'));
-      expect(valueText.style?.color, MedColors.of(ctx).ink);
+      expect(find.text('99.9'), findsOneWidget);
+      expect(find.text('10^9/L'), findsOneWidget);
+      // 数值墨色是 R2 的正常档 normalInk,不是 high —— 没有从参考区间反推出一个
+      // 临床结论。
+      final valueText = tester.widget<Text>(find.text('99.9'));
+      expect(valueText.style?.color, MedBrand.normalInk);
       // 参考区间照样显示给人看 —— 显示与判定是两件事。
       expect(find.textContaining('参考 4–10'), findsOneWidget);
     });
@@ -723,45 +777,165 @@ void main() {
       expect(OrganDonation.fromKey('nonsense'), OrganDonation.unset);
       expect(OrganDonation.fromKey('yes'), OrganDonation.yes);
     });
+
+    testWidgets('降级之后大字模式一字未动:深色、高对比、没有输入框', (tester) async {
+      // ia-proposal §7 决定 3:降的是位置不是质量。这条测试存在的唯一理由是
+      // 「顺手」—— 把一屏从 tab 降成 push 进来的一页时,最容易发生的事是有人
+      // 觉得「既然不常用了」就顺便简化它。
+      await tester.pumpWidget(
+        wrapScreen(EmergencyBigCardScreen(card: emptyCard, profile: profile)),
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.byType(TextFormField), findsNothing);
+      expect(find.text('未登记'), findsOneWidget);
+      // 它不再是底栏的一项(底栏只有三个:病历 / 趋势 / 我)。
+      expect(
+        HomeShell.tabDestinations.map((d) => d.label),
+        isNot(contains('急救卡')),
+      );
+      expect(HomeShell.tabDestinations.length, 3);
+    });
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  group('五 tab 信息架构', () {
+  group('三 tab 信息架构', () {
     test('tab 数 == 页面数 == 底栏项数', () {
       // 这三个数字散在两处 const 列表和一组常量里。加一个 tab 时最容易漏掉其中
       // 一处,而漏掉的表现是运行时越界或**点 A 进了 B**,不是编译错误。
-      expect(HomeTab.count, 5);
+      expect(HomeTab.count, 3);
       expect(HomeShell.tabScreens.length, HomeTab.count);
       expect(HomeShell.tabDestinations.length, HomeTab.count);
     });
 
-    test('下标连续、互不重复,顺序即「使用时刻」从慢到急', () {
-      const order = [
-        HomeTab.overview,
-        HomeTab.trends,
-        HomeTab.archive,
-        HomeTab.emergency,
-        HomeTab.settings,
-      ];
-      expect(order, [0, 1, 2, 3, 4]);
+    test('下标连续、互不重复', () {
+      const order = [HomeTab.records, HomeTab.trends, HomeTab.me];
+      expect(order, [0, 1, 2]);
       expect(order.toSet().length, HomeTab.count);
     });
 
-    test('底栏文案就是规范 §八 那五个词', () {
+    test('底栏文案就是 mockup 那三个词', () {
       expect(
         HomeShell.tabDestinations.map((d) => d.label).toList(),
-        ['概览', '趋势', '档案', '应急卡', '设置'],
+        ['病历', '趋势', '我'],
+      );
+    });
+
+    test('「给医生看」**不在**底栏 —— 它是从「病历」推进去的一整页', () {
+      // mockup。这条断言存在的理由:ia-proposal §2 推荐的是把它放进底栏,
+      // 谁照着那份提案改回去,红的应该是这里,而不是到了真机上才发现两处打架。
+      expect(
+        HomeShell.tabDestinations.map((d) => d.label),
+        isNot(contains('给医生看')),
+      );
+      expect(
+        HomeShell.tabDestinations.map((d) => d.label),
+        isNot(contains('急救卡')),
       );
     });
 
     test('程序化跳转落在正确的 tab 上', () {
-      goToArchive();
-      expect(selectedTab.value, HomeTab.archive);
       goToTrends();
       expect(selectedTab.value, HomeTab.trends);
-      goToEmergencyCard();
-      expect(selectedTab.value, HomeTab.emergency);
-      selectedTab.value = HomeTab.overview; // 复位,别污染别的测试
+      goToMe();
+      expect(selectedTab.value, HomeTab.me);
+      goToRecords();
+      expect(selectedTab.value, HomeTab.records);
+    });
+
+    test('埋点枚举与 tab 一一对应 —— 少一个就会把 A 的人气记成 B', () {
+      expect(AnalyticsTab.values.length, HomeTab.count);
+      expect(AnalyticsTab.of(HomeTab.records), AnalyticsTab.records);
+      expect(AnalyticsTab.of(HomeTab.me), AnalyticsTab.me);
+      expect(AnalyticsTab.of(3), isNull);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  group('「给医生看」那一页', () {
+    // 不注入 `load` 时整屏在字段初始化那一刻就走 FFI,`flutter test` 不带原生库 ——
+    // 注入一份空摘要就能把整屏 pump 起来(与 `EmergencyCardScreen.load` 同一手法)。
+    const empty = VisitSummaryDto(
+      patient: PatientProfileDto(recordCount: 0),
+      allergies: [],
+      activeMeds: [],
+      recentLabs: [],
+      recentChanges: [],
+      recentVisits: [],
+      recentNotes: [],
+      plainText: '',
+    );
+
+    testWidgets('整页立得住 —— 摘要主体本身是 ListView,不能再嵌进一层滚动里', (t) async {
+      // 这条钉的是**组合方式**:`VisitSummaryBody` 返回的是 `ListView`,把它放进
+      // 另一个 `ListView` 的 children 会拿到无穷高约束当场炸(见 `wrapScreen` 的
+      // 文档)。所以正文占 `Expanded`,「出码」那一颗固定在它下面,另外三条经
+      // `footer` 接进正文自己的滚动流 —— 与浮层那边同一个形状。
+      await t.pumpWidget(
+        wrapScreen(ForDoctorScreen(load: () async => empty)),
+      );
+      await t.pumpAndSettle();
+      expect(find.text('给医生看'), findsOneWidget);
+      expect(find.text('出码给医生看'), findsOneWidget);
+    });
+
+    testWidgets('跟着滚的三条逐字照 mockup s4,顺序也照它', (t) async {
+      await t.pumpWidget(wrap(const ForDoctorActions()));
+      // 断言**顺序**,不是「都在」—— 三条换个位置照样能逐条 findsOneWidget。Task 10
+      // 把第三条换成了 mockup `s4` 的蓝横幅(`MedBanner`,不再是 `ListTile`)——
+      // 按**纵向位置**比顺序,不再假设三条都是同一个 widget 类型。
+      final labels = ['导出文件', '急救卡', '我是医生,替病人代拍'];
+      final dys = labels.map((l) => t.getTopLeft(find.text(l)).dy).toList();
+      for (var i = 1; i < dys.length; i++) {
+        expect(dys[i - 1], lessThan(dys[i]), reason: '「${labels[i - 1]}」应排在「${labels[i]}」前面');
+      }
+      // 代拍入口全 App 只有这一句话(Task 15 让医生端主按钮也用它)。
+      expect(find.text('病人不用装 App、不用账号'), findsOneWidget);
+      // 出码不在这一组里 —— 它是固定在底部的那一颗(`s4`)。
+      expect(find.text('出码给医生看'), findsNothing);
+    });
+
+    testWidgets('正文不重复画「给医生看」—— AppBar 已经写着这个名字了', (t) async {
+      await t.pumpWidget(wrapScreen(ForDoctorScreen(load: () async => empty)));
+      await t.pumpAndSettle();
+      // 只出现一次(AppBar 那一处)——`showHeading: false` 时正文不该再画一遍,
+      // 同屏两个自己的名字。
+      expect(find.text('给医生看'), findsOneWidget);
+      // 不带自己标题栏的调用方(`showHeading` 默认值 `true`)则要自己画一遍抬头。
+      await t.pumpWidget(
+        wrapScreen(
+          Scaffold(
+            body: VisitSummaryBody(
+              summary: empty,
+              onOpenDoc: (_) {},
+              onAddNote: () {},
+            ),
+          ),
+        ),
+      );
+      await t.pumpAndSettle();
+      expect(find.text('给医生看'), findsOneWidget);
+    });
+
+    testWidgets('360×640 上 ×1 / ×2 / ×3 字号都不溢出 —— 老人是主要用户', (t) async {
+      // 固定区一旦不止一颗按钮,大字号下会把正文挤没:四条一起钉死时
+      // ×2.0 只剩 34% 的正文高度,×3.0 直接 `RenderFlex overflowed`。
+      // 现在只有「出码」钉在底部,另外三条跟着滚。
+      t.view.physicalSize = const Size(360, 640);
+      t.view.devicePixelRatio = 1.0;
+      addTearDown(t.view.resetPhysicalSize);
+      addTearDown(t.view.resetDevicePixelRatio);
+      for (final scale in [1.0, 2.0, 3.0]) {
+        await t.pumpWidget(
+          wrapScreen(
+            ForDoctorScreen(load: () async => empty),
+            textScale: scale,
+          ),
+        );
+        await t.pumpAndSettle();
+        expect(t.takeException(), isNull, reason: '×$scale 字号下溢出了');
+        expect(find.text('出码给医生看'), findsOneWidget);
+      }
     });
   });
 

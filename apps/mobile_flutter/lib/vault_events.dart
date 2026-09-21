@@ -1,51 +1,48 @@
 import 'package:flutter/foundation.dart';
 
-/// 保险箱内容变更的全局信号。导入、清空、载入示例后调用 [bumpVaultRevision]，
-/// 监听者(尤其「健康档案」屏)据此重新加载。
+/// 病历箱内容变更的全局信号。导入、清空、载入示例后调用 [bumpVaultRevision]，
+/// 监听者(尤其「病历」屏)据此重新加载。
 ///
 /// 为什么需要:底部三 tab 用 `IndexedStack` 承载,切走的屏会**保活**(state 不销毁),
-/// 所以在「设置」里清空、或在「导入导出」里导入后,「健康档案」屏的 `initState` 不会
+/// 所以在「我 → 关于」里清空、或在导入后,「病历」屏的 `initState` 不会
 /// 再跑一次 → 切回去还是旧数据,用户以为没生效。让档案屏监听这个信号即可自动刷新。
 final ValueNotifier<int> vaultRevision = ValueNotifier<int>(0);
 
-/// 保险箱内容变了(导入/清空/载入示例),通知所有监听屏重载。
+/// 病历箱内容变了(导入/清空/载入示例),通知所有监听屏重载。
 void bumpVaultRevision() => vaultRevision.value++;
 
-/// 底部一级 tab 的下标。**按「使用时刻」排序,不按数据类型** —— 设计系统 v1 §八。
+/// 底部一级 tab 的下标。**三个**(mockup,创始人拍板):
 ///
-/// 概览(日常打开,看一眼我现在怎么样)→ 趋势(复诊前自己看这两年怎么变的)→
-/// 档案(找某一张单子)→ 应急卡(急诊室,**别人**拿着你的手机)→ 设置(数据主权)。
+/// | tab | 用户在干什么 |
+/// |---|---|
+/// | 病历 | 拍/添加一份,以及回头找某一张 |
+/// | 趋势 | 这个病现在怎么样、吃过什么药、该查没查 |
+/// | 我 | 云端、成员、口令与恢复码、设置 |
 ///
-/// 顺序不是随手排的:它按「这一刻有多着急」从慢到急,再收在设置。应急卡放在设置
-/// 左边而不是塞进设置里,是因为**用它的人不是你** —— 急救人员在陌生手机上找东西,
-/// 只会扫一眼底栏,不会进设置翻。
-///
-/// 「看病带这个」刻意**不是** tab(原名「就诊单」,2026-08-05 改名,见
-/// `screens/visit_summary_sheet.dart` 顶部文档):它是诊室里那 30 秒的动作,从
-/// 概览与档案两处以浮层唤起,不是一个你会常驻浏览的空间。
+/// **「给医生看」不是 tab** —— 它是「病历」首页那颗主按钮推进去的一整页
+/// (`screens/for_doctor_screen.dart`)。急救大字模式在那一页里。
+/// ⚠️ ia-proposal §2 推荐的是把它放进底栏(候选 A);mockup 改了主意。
+/// 两处打架时**以 mockup 为准**,理由见计划的 Global Constraints。
 class HomeTab {
   HomeTab._();
 
-  static const int overview = 0;
+  static const int records = 0;
   static const int trends = 1;
-  static const int archive = 2;
-  static const int emergency = 3;
-  static const int settings = 4;
+  static const int me = 2;
 
   /// tab 总数。`HomeShell` 的页面列表与底栏项数都对它断言,少一个就崩在测试里,
   /// 而不是运行时 `IndexedStack` 越界。
-  static const int count = 5;
+  static const int count = 3;
 }
 
-/// 当前底部一级 tab 下标(取值见 [HomeTab])。`HomeShell` 监听它切换页面 ——
-/// 让「设置」里载入示例后能自动跳回「档案」,不用用户再手点。
-final ValueNotifier<int> selectedTab = ValueNotifier<int>(HomeTab.overview);
+/// 当前底部一级 tab 下标(取值见 [HomeTab])。`HomeShell` 监听它切换页面。
+final ValueNotifier<int> selectedTab = ValueNotifier<int>(HomeTab.records);
 
-/// 跳到「档案」tab。
-void goToArchive() => selectedTab.value = HomeTab.archive;
+/// 跳到「病历」tab。
+void goToRecords() => selectedTab.value = HomeTab.records;
 
 /// 跳到「趋势」tab。
 void goToTrends() => selectedTab.value = HomeTab.trends;
 
-/// 跳到「应急卡」tab。
-void goToEmergencyCard() => selectedTab.value = HomeTab.emergency;
+/// 跳到「我」tab。
+void goToMe() => selectedTab.value = HomeTab.me;

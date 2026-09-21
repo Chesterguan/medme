@@ -17,7 +17,7 @@
 //! 的 git diff 恒为 0。
 use crate::api::dto::*;
 use crate::diagnostics::warn as log_warn;
-use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind, Vault};
+use core_model::{NewDocument, NewOcr, OcrBackendKind, Vault};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -348,20 +348,6 @@ pub fn ephemeral_ingest_image_with_text(
     })
 }
 
-/// 影像 study 文档在时间线上显示切片数;与 `vault.rs::doc_summary` 同逻辑
-/// (逐字复制)。
-fn doc_summary(v: &Vault, d: &core_model::Document) -> DocumentSummaryDto {
-    let mut s = DocumentSummaryDto::from(d);
-    if d.doc_type == DocType::ImagingReport {
-        if let Ok(n) = v.imaging_instance_count(d.id) {
-            if n > 0 {
-                s.slice_count = Some(n as i32);
-            }
-        }
-    }
-    s
-}
-
 /// 预览时间线:与 `vault.rs::load_archive` 同逻辑(逐段复制),给医生在交付前
 /// 核对这次代拍收了什么、分类对不对。
 pub fn ephemeral_load_preview() -> anyhow::Result<Vec<TimelineGroupDto>> {
@@ -442,6 +428,9 @@ pub(crate) struct EphemeralSourceDoc {
     pub(crate) text: String,
     pub(crate) doc_type: Option<String>,
     pub(crate) title: Option<String>,
+    /// 云抽取结果(schema v1 JSON);没跑过/离线为 `None`(见 `parser::SourceDoc`
+    /// 同名字段的文档——`None` 时装配退回对 `text` 跑正则)。
+    pub(crate) extraction_json: Option<String>,
 }
 
 /// 按病程正序(旧→新,无日期最后)遍历临时会话箱,取出每份文档的识别文本 ——
@@ -466,6 +455,7 @@ pub(crate) fn gather_ephemeral_docs(v: &Vault) -> anyhow::Result<Vec<EphemeralSo
             text,
             doc_type: Some(entry.doc_type.as_str().to_lowercase()),
             title: entry.title.clone(),
+            extraction_json: v.extraction_json(entry.document_id).unwrap_or(None),
         });
     }
     Ok(out)
@@ -628,6 +618,7 @@ pub fn ephemeral_summary() -> anyhow::Result<ProxySummaryDto> {
                 text: &d.text,
                 doc_type: d.doc_type.clone(),
                 title: d.title.clone(),
+                extraction_json: d.extraction_json.as_deref(),
             })
             .collect();
         let summary = parser::assemble_summary(&docs);

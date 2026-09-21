@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 
@@ -45,20 +46,15 @@ void main() {
   });
 
   group('卡片形状', () {
-    testWidgets('圆角 20 + 一像素 line 边框 + 只有一档阴影', (tester) async {
-      await tester.pumpWidget(wrap(const MedCard(child: Text('x'))));
-      final box = tester
-          .widget<Container>(find.byType(Container).first)
-          .decoration as BoxDecoration;
-      expect(
-        box.borderRadius,
-        BorderRadius.circular(MedShape.radiusCard),
-        reason: '外层卡片必须是 20 —— 圆角严格递减,卡片 20 > 分块 14 > 控件 10',
-      );
-      expect(box.border!.top.color, MedColors.light.line);
-      expect(box.border!.top.width, 1);
-      expect(box.color, MedColors.light.surface);
-      expect(box.boxShadow, hasLength(1), reason: '阴影只有一档,层次靠边框');
+    testWidgets('卡无边框、圆角 20、阴影 0 6px 18px', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MedCard(child: Text('x')))));
+      final d = tester.widget<Container>(find.descendant(
+        of: find.byType(MedCard), matching: find.byType(Container)).first)
+        .decoration! as BoxDecoration;
+      expect(d.border, isNull, reason: 'brief §形:卡无边框');
+      expect(d.borderRadius, BorderRadius.circular(MedShape.radiusCard));
+      expect(d.boxShadow, MedBrand.cardShadow);
+      expect(d.color, Colors.white);
     });
 
     testWidgets('pill 圆角 999,字号不低于 12', (tester) async {
@@ -81,25 +77,87 @@ void main() {
     });
   });
 
+  group('R24:child 槽位内置的透明 Material', () {
+    testWidgets('恰好一层 type: transparency,ListTile 的墨水飞溅点得动、不报错', (tester) async {
+      await tester.pumpWidget(
+        wrap(MedCard(child: ListTile(title: const Text('x'), onTap: () {}))),
+      );
+      final transparencyMaterials = tester
+          .widgetList<Material>(
+            find.descendant(
+              of: find.byType(MedCard),
+              matching: find.byType(Material),
+            ),
+          )
+          .where((m) => m.type == MaterialType.transparency);
+      expect(
+        transparencyMaterials,
+        hasLength(1),
+        reason: 'MedCard 内置这一层,调用方不必再各自手抄',
+      );
+      await tester.tap(find.byType(ListTile));
+      await tester.pump();
+      // 没有这层 Material,ListTile 的 InkWell 会在 debug 下断言
+      // 「No Material widget found」——这里钉住的正是这条不再发生。
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('MedBanner / MedDemoPill', () {
+    testWidgets('MedBanner:蓝 #DDEDF8 / 文 #0E6285,琥珀 #FBE7D2 / 文 #9A4A12,圆角 16', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Column(children: [
+        MedBanner(icon: Icons.cloud_outlined, iconCategory: GlossCategory.lab,
+                  title: '云端', subtitle: '已备份,刚刚'),
+        MedBanner(icon: Icons.warning_amber_outlined, iconCategory: GlossCategory.med,
+                  title: '2 份还没核对', subtitle: '扫描件,识别出的字有几处不确定', amber: true),
+      ]))));
+      final decos = tester.widgetList<Container>(find.descendant(
+        of: find.byType(MedBanner), matching: find.byType(Container)))
+        .map((w) => w.decoration).whereType<BoxDecoration>()
+        .where((d) => d.borderRadius == BorderRadius.circular(MedShape.radiusBanner)).toList();
+      expect(decos.map((d) => d.color), [MedBrand.bannerBlue, MedBrand.bannerAmber]);
+      expect(tester.widget<Text>(find.text('云端')).style!.color, MedBrand.bannerBlueInk);
+      expect(tester.widget<Text>(find.text('2 份还没核对')).style!.color, MedBrand.bannerAmberInk);
+      expect(tester.widget<Text>(find.text('已备份,刚刚')).style!.fontSize, 13);
+      expect(find.byType(GlossIconTile), findsNWidgets(2));
+    });
+
+    testWidgets('MedDemoPill:白底 + 虚线框 + 灰字', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MedDemoPill(text: '示例'))));
+      expect(tester.widget<Text>(find.text('示例')).style!.color, MedBrand.demoInk);
+      // R9:测试名字说了「白底」,但原来没有断言真的验过 —— 补上。
+      final d = tester.widget<Container>(find.descendant(
+        of: find.byType(MedDemoPill), matching: find.byType(Container)).first)
+        .decoration! as BoxDecoration;
+      expect(d.color, Colors.white);
+      // 虚线框自己画:CustomPaint 存在,而且真的带了一个 painter(不是占位)。
+      final paint = tester.widget<CustomPaint>(find.descendant(
+        of: find.byType(MedDemoPill), matching: find.byType(CustomPaint)).first);
+      expect(paint.painter, isNotNull);
+    });
+  });
+
   group('化验行的左侧色条', () {
-    testWidgets('异常行有色条、正常行的色条是透明的(占位恒定,文字不左右跳)', (tester) async {
+    testWidgets('三档 LabFlag 各有色条,恒定 4px(R22:正常也上色,不再透明)', (tester) async {
       await tester.pumpWidget(
         wrap(const ReportContent(text: labText, docType: 'lab_report')),
       );
       final lefts = decorations(tester)
           .map((d) => d.border)
           .whereType<Border>()
-          .where((b) => b.left.width == 3)
+          .where((b) => b.left.width == 4)
           .map((b) => b.left.color)
           .toList();
-      // 三行 → 三条 3px 的左边框:高、低、透明各一。
+      // 三行 → 三条 4px 的左边框:偏高、偏低、正常各一色 —— R22 之前正常行是
+      // 透明的,现在与 `lab_status.dart` 的 `LabLine` 同一套规则,正常也上色
+      // (`MedBrand.barNormal`),色条恒定占位这条不变。
       expect(lefts, hasLength(3));
-      expect(lefts, contains(MedColors.light.high));
-      expect(lefts, contains(MedColors.light.low));
+      expect(lefts, contains(MedBrand.barHigh));
+      expect(lefts, contains(MedBrand.barLow));
       expect(
         lefts,
-        contains(Colors.transparent),
-        reason: '正常行不上色,但色条照样占 3px —— 否则整列项目名会随异常与否左右错位',
+        contains(MedBrand.barNormal),
+        reason: 'R22:LabFlag.normal 现在也有色条(MedBrand.barNormal),不再透明',
       );
     });
   });

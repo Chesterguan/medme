@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:mobile_flutter/analytics.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/theme.dart';
 
-import 'qr_share_screen.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
-/// 底部导航一级 tab「导出·分享」—— 当面出示二维码给医生,或把病历导出成可打印文件
-/// (可按日期区间筛选)。手机端只做「轻」的导出/筛选;全文搜索、趋势等「重」功能在
-/// 桌面端与医生查看器。导出全在 Rust core(`medme_share`),这里只调 FFI + 分享。
+/// 从「给医生看」页的「导出文件」那一行进(Task 17 之后不再是底栏 tab)——只做
+/// 可打印文件(HTML,可按日期区间筛选)。**出码不在这里**:那条路全 App 只有
+/// 一条,就是「给医生看」页钉底的那颗「出码给医生看」(终审 I2)。手机端只做
+/// 「轻」的导出/筛选;全文搜索、趋势等「重」功能在桌面端与医生查看器。导出全在
+/// Rust core(`medme_share`),这里只调 FFI + 分享。
 class ExportScreen extends StatefulWidget {
   const ExportScreen({super.key});
 
@@ -61,12 +62,12 @@ class _ExportScreenState extends State<ExportScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   '导出病历时间线为可打印文件(HTML),未加密,用浏览器打开后可直接打印或另存为 PDF,适合报销或给医生留档。',
                   style: TextStyle(
                     fontSize: 13.5,
                     height: 1.5,
-                    color: MedMe.faint,
+                    color: MedColors.of(context).ink3,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -120,7 +121,7 @@ class _ExportScreenState extends State<ExportScreen> {
                   }
                   Navigator.of(context).pop(true);
                 },
-                child: const Text('导出并分享'),
+                child: const Text('导出'),
               ),
             ],
           );
@@ -191,28 +192,15 @@ class _ExportScreenState extends State<ExportScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('导出 · 分享')),
+      appBar: AppBar(title: const Text('导出文件')),
       body: Stack(
         children: [
           ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
             children: [
-              // 门诊现场最高频的一步放最前:医生扫码,三十秒看懂当下病情。
-              _ActionCard(
-                icon: Icons.qr_code_2,
-                title: '当面给医生看',
-                subtitle: '生成二维码,医生用自己手机扫一下就能看到你的完整病历 —— '
-                    '在治疾病、指标趋势、在用药物,以及每一份原件。',
-                buttonLabel: '出示二维码',
-                onPressed: _busy
-                    ? null
-                    : () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const QrShareScreen(),
-                        ),
-                      ),
-              ),
-              const SizedBox(height: 14),
+              // 出码只有一条路:「病历 → 给医生看 → 出码给医生看」那颗钉底的按钮。
+              // 这一屏原来也放过一张「当面给医生看 / 出示二维码」的卡,那是第二扇
+              // 同名的门(深度 4,超过硬约束的「核心流程 ≤3」),终审 I2 删掉。
               _ActionCard(
                 icon: Icons.description_outlined,
                 title: '导出时间线',
@@ -225,7 +213,7 @@ class _ExportScreenState extends State<ExportScreen> {
           if (_busy)
             Positioned.fill(
               child: ColoredBox(
-                color: Colors.black26,
+                color: MedColors.of(context).scrimLight,
                 child: Center(
                   child: Card(
                     child: Padding(
@@ -271,6 +259,7 @@ class _ActionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = MedColors.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -279,14 +268,14 @@ class _ActionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(icon, color: MedMe.teal, size: 26),
+                Icon(icon, color: c.seal, size: 26),
                 const SizedBox(width: 10),
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
-                    color: MedMe.ink,
+                    color: c.ink,
                   ),
                 ),
               ],
@@ -294,9 +283,9 @@ class _ActionCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               subtitle,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13.5,
-                color: MedMe.faint,
+                color: c.ink3,
                 height: 1.5,
               ),
             ),

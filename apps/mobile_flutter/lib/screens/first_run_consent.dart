@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_flutter/analytics.dart';
-import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/vault_boot.dart' show vaultOpenedOkThisLaunch;
+import 'package:mobile_flutter/vault_events.dart' show bumpVaultRevision;
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_logo.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -11,12 +15,13 @@ import 'package:url_launcher/url_launcher.dart';
 /// 不是什么(不是医疗器械、不做诊断)、数据去哪、我们能看到什么。国内应用商店与
 /// 《个人信息保护法》都要求首次启动以显著方式告知并取得同意,不能藏在设置里事后补。
 ///
-/// 一个声明、一个按钮。匿名使用统计在声明里写明,随同意一并开启;
-/// 不想要的人在「设置 → 帮助改进 MedMe」里随时关。
+/// 一个声明、一个按钮。同意的同时会打开匿名使用统计——不在三条正式声明里单列
+/// (见 `_points` 处的注释),但滚动区末尾单独有一行写明这件事;
+/// 不想要的人在「我 → 关于 → 帮助改进 MedMe」里随时关。
 ///
 /// **同意按钮在用户看到声明末尾之前不可点**(见 `_FirstRunConsentScreenState`
 /// 的 `_scrolledToEnd`)。这不是装饰:声明与协议链接是本屏存在的全部理由,一个
-/// 首屏就够着的按钮会让用户在没看过第四条、没点开过任何协议的情况下就点了同意。
+/// 首屏就够着的按钮会让用户在没看过最后一条、没点开过任何协议的情况下就点了同意。
 class FirstRunConsent {
   FirstRunConsent._();
 
@@ -33,11 +38,19 @@ class FirstRunConsent {
     }
   }
 
+  /// 记下「同意过了」,**并把被这道门挡下的活儿叫起来**。
+  ///
+  /// 病程档案的入口卡在同意之前不许拉病种包(`skill_packages.dart` 的闸),而首启时
+  /// 它可能已经跟着「趋势」tab 挂在 tab 栈里、显示着「还没准备好」——它的取数只在
+  /// 挂载和收到「重新取数」信号时跑,没人推一把就会一直停在那句话上。借
+  /// [bumpVaultRevision] 这个各屏本来就听着的全局信号推一下,它自己会再拉一次;
+  /// 此刻还没挂上的(常见路径:同意之后才建主界面)本来就会在挂载时拉,一样不漏。
   static Future<void> markAgreed() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefAgreed, true);
     } catch (_) {}
+    bumpVaultRevision();
   }
 }
 
@@ -55,7 +68,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
   bool _busy = false;
   final ScrollController _scrollController = ScrollController();
 
-  /// 是否已经看到声明区的末尾 —— 「我知道了,开始使用」的门槛。「不同意」不受
+  /// 是否已经看到声明区的末尾 —— 「同意并开始使用」的门槛。「不同意」不受
   /// 这个门槛限制,任何时候都能点(拒绝不需要读完)。
   ///
   /// 初值 false 是故意的:宁可开局的一帧按钮不可点,也不要反过来「万一没纠正回来
@@ -101,7 +114,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
   Future<void> _agree() async {
     setState(() => _busy = true);
     await FirstRunConsent.markAgreed();
-    // 匿名统计随同意一并开启 —— 声明里已写明采什么,设置里随时可关。
+    // 匿名统计随同意一并开启 —— 声明区末尾说了这件事,设置里随时可关。
     if (Analytics.isConfigured) {
       await Analytics.setEnabled(true);
       await Analytics.markAsked();
@@ -125,7 +138,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
     builder: (context) => AlertDialog(
       title: const Text('需要你的同意才能使用'),
       content: const Text(
-        'MedMe 会把你的病历保存在这台手机上。在你同意之前,我们不会创建任何档案。\n\n'
+        'MedMe 会把你的病历保存在这台手机上。在你同意之前,我们不会保存你的任何病历。\n\n'
         '如果不同意,请直接关闭 App。',
         style: TextStyle(height: 1.6),
       ),
@@ -146,7 +159,7 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: MedMe.bg,
+      backgroundColor: MedColors.of(context).paper,
       body: SafeArea(
         child: Column(
           children: [
@@ -168,23 +181,16 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: Image.asset(
-                              'assets/icon/app_icon.png',
-                              width: 64,
-                              height: 64,
-                            ),
-                          ),
+                          const FirstRunScene(),
                           const SizedBox(height: 20),
                           Text(
                             // 条数由 `_points` 派生,不是手写的数字 —— 见该列表
                             // 处的注释:硬编码的「四」在加删一条声明时会悄悄说错。
                             '开始之前,有${_chineseCount(_points.length)}件事',
-                            style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
-                              color: MedMe.tealDark,
+                            style: MedType.title.copyWith(
+                              fontSize: 30,
+                              height: 1.25,
+                              color: MedColors.of(context).ink,
                             ),
                           ),
                           const SizedBox(height: 22),
@@ -194,17 +200,28 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                               title: point.title,
                               body: point.body,
                             ),
+                          // F5:埋点确实随同意打开(见 `_agree`),不能只删声明不说——
+                          // 不算进上面「有几件事」的计数,同「详见 用户协议…」一样是
+                          // 附在正式声明下面的一行说明。**同 `settings_screen.dart:441`
+                          // 一样的条件**:没配 Key 的构建里 `_agree` 那半根本不会执行
+                          // (`Analytics.isConfigured` 为 false),这一行也不该说「默认
+                          // 开、可以关」——两句话得一起成立或一起不成立,不能各说各话。
+                          if (Analytics.isConfigured)
+                            Text(
+                              '匿名使用统计默认开,我 → 关于 里可关。',
+                              style: TextStyle(fontSize: 12.5, color: MedColors.of(context).ink3, height: 1.6),
+                            ),
                           const SizedBox(height: 8),
                           Wrap(
                             children: [
-                              const Text(
+                              Text(
                                 '详见 ',
-                                style: TextStyle(color: MedMe.faint),
+                                style: TextStyle(color: MedColors.of(context).ink3),
                               ),
                               _Link('用户协议', () => _open('terms.html')),
-                              const Text(
+                              Text(
                                 ' 与 ',
-                                style: TextStyle(color: MedMe.faint),
+                                style: TextStyle(color: MedColors.of(context).ink3),
                               ),
                               _Link('隐私政策', () => _open('privacy.html')),
                             ],
@@ -232,14 +249,14 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                               colors: [
-                                MedMe.bg.withValues(alpha: 0),
-                                MedMe.bg,
+                                MedColors.of(context).paper.withValues(alpha: 0),
+                                MedColors.of(context).paper,
                               ],
                             ),
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.keyboard_arrow_down_rounded,
-                            color: MedMe.tealDark,
+                            color: MedColors.of(context).sealInk,
                             size: 26,
                           ),
                         ),
@@ -261,37 +278,27 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                         style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w600,
-                          color: MedMe.tealDark,
+                          color: MedColors.of(context).sealInk,
                         ),
                       ),
                     ),
                   SizedBox(
                     width: double.infinity,
-                    child: FilledButton(
+                    // Stage 3(task-14)round 1(R29)量出 MedPrimaryButton disabled
+                    // 态用 ink3 字不够 4.5:1,没敢换;round 2(R30)把字色改成
+                    // ink2(≈8.1:1)之后达标,这里补上迁移。
+                    child: MedPrimaryButton(
+                      label: '同意并开始使用',
                       onPressed: (_busy || !_scrolledToEnd) ? null : _agree,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: MedMe.teal,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        // 不用 Material 3 默认的禁用配色(onSurface 12% 底 / 38% 字
-                        // —— 实测低于 WCAG AA 的 4.5:1)。这里的禁用态可能不是一闪
-                        // 而过:要等用户读完才会解除,得撑得住被盯着看。
-                        // `line` 底 + `tealDark` 字实测 5.21:1,过 4.5:1 门槛。
-                        disabledBackgroundColor: MedMe.line,
-                        disabledForegroundColor: MedMe.tealDark,
-                      ),
-                      child: const Text(
-                        '我知道了,开始使用',
-                        style: TextStyle(fontSize: 16),
-                      ),
                     ),
                   ),
                   TextButton(
                     // 「不同意」不受 `_scrolledToEnd` 限制 —— 拒绝任何时候都能点,
                     // 只有「同意」需要读完这道门槛。
                     onPressed: _busy ? null : _decline,
-                    child: const Text(
+                    child: Text(
                       '不同意',
-                      style: TextStyle(color: MedMe.faint),
+                      style: TextStyle(color: MedColors.of(context).ink3),
                     ),
                   ),
                 ],
@@ -311,35 +318,46 @@ const _chineseDigits = ['零', '一', '二', '三', '四', '五', '六', '七', 
 String _chineseCount(int n) =>
     (n >= 0 && n < _chineseDigits.length) ? _chineseDigits[n] : '$n';
 
-/// 首屏四条声明的内容。**标题「有几件事」由这份列表的长度派生**(见上面
+/// 首屏各条声明的内容。**标题「有几件事」由这份列表的长度派生**(见上面
 /// `_chineseCount` 的调用处),不是分开手写的数字 —— 以前标题和条目数各写各的,
 /// 以后加删一条声明,标题会悄悄说错而不报错(没有任何编译检查或测试会因为「标题
 /// 数字对不上条目数」而失败)。派生之后这类改动只需要动这一份列表。
+///
+/// 三条逐字照 mockup `s16` 改写(Task 2),fix round 1(task-2-review.md)又改了
+/// 第 1、3 条:旧的「只存在这台手机上 / 没有账号 / 我们那里本来就没有」已经是
+/// 对外不实陈述(ux-audit §4 第 1-5 条)。原第 2 条(不是医生)并进第 1 条,
+/// 补回「不是医疗器械」(F4,同一句话类文档 `:11` 那句「不是什么」才对得上)。
+/// 原第 4 条(匿名使用计数)不再单列成点,但埋点确实随同意打开
+/// (`_agree` 的 `Analytics.setEnabled`)——不能真删声明,见下面 `build` 里
+/// points 循环之后那一行独立的 `Text`(F5)。
+///
+/// **第 3 条现在写"会问你一次"**(task-20b A1)。Task 16 落地了 `cloud_extract_ask_sheet.dart`
+/// 的 ask-once 流程(`import_flow.dart:195` 调用 `shouldAskCloudExtract`/
+/// `showCloudExtractAskSheet`)之后这句才站得住——W1 那条「本分支没有事前
+/// 询问,只能说直接送、没问」的旧注留到了 Task 20 才被发现没跟着回改,这里补上,
+/// 同时把措辞对齐 privacy.html(commit b936361)。同一句还点名了收货的第三方
+/// (W3,PIPL 第二十三条单独告知):`api_client.dart` 的注释自己写着"服务端还要等
+/// DeepSeek 出结果"。
 const _points = [
   _PointData(
+    icon: Icons.document_scanner_outlined,
+    title: '拍一下单子变成表和趋势',
+    body: '化验单、处方、出院记录拍进来,自动认字、排好队、能看变化。'
+        '文字识别可能出错 —— 以原件和医师判断为准,MedMe 不是医生,'
+        '不是医疗器械,不提供诊断或用药建议。',
+  ),
+  _PointData(
+    icon: Icons.assignment_outlined,
+    title: '看病时一页给医生',
+    body: '过敏、在治、在吃、最近的数,收在一页里。诊室里点开就能递过去。',
+  ),
+  _PointData(
     icon: Icons.lock_outline,
-    title: '你的病历只存在这台手机上',
-    body: '没有账号,不需要注册。只有你主动分享时,内容才会以加密形式离开手机。',
-  ),
-  _PointData(
-    icon: Icons.medical_information_outlined,
-    title: 'MedMe 不是医生',
-    body: '它不是医疗器械,不提供诊断或用药建议。文字识别可能出错 —— '
-        '以原件和医师判断为准。',
-  ),
-  _PointData(
-    icon: Icons.folder_shared_outlined,
-    title: '数据在你手上,也只在你手上',
-    body: '你随时可以删。但手机丢了、误删了我们也帮不上忙 —— '
-        '我们那里本来就没有。',
-  ),
-  // 不按 `Analytics.isConfigured` 分支 —— **法律声明的内容不能随构建参数变化**,
-  // 否则两个包对用户说的话不一样。没配 Key 的构建只是实际不采,声明照说。
-  _PointData(
-    icon: Icons.insights_outlined,
-    title: '我们只看得到匿名的使用计数',
-    body: '只上报「导入了几份、成没成」这类计数,不含病历内容,'
-        '也不做能认出你的标识。设置里随时可关。',
+    title: '加密存在手机,登录后云端备份,我们打不开',
+    body: '不登录也能用,只是换手机找不回来。登录后第一次添加病历时会问你'
+        '一次要不要让云端帮忙整理;答应了,添加的病历才会先在手机上涂黑'
+        '姓名、证件号、医院名,再交给深度求索(DeepSeek)的模型整理,'
+        '服务器在境内;可以在「我 → 云端」关掉。',
   ),
 ];
 
@@ -363,8 +381,8 @@ class _Point extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 21, color: MedMe.teal),
-          const SizedBox(width: 13),
+          GlossIconTile(icon: icon),
+          const SizedBox(width: MedShape.s2),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -376,7 +394,7 @@ class _Point extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   body,
-                  style: const TextStyle(fontSize: 13.5, color: MedMe.faint, height: 1.6),
+                  style: TextStyle(fontSize: 13.5, color: MedColors.of(context).ink3, height: 1.6),
                 ),
               ],
             ),
@@ -393,16 +411,19 @@ class _Link extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Text(
-      label,
-      style: const TextStyle(
-        color: MedMe.teal,
-        fontWeight: FontWeight.w600,
-        decoration: TextDecoration.underline,
-        decorationColor: MedMe.teal,
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Text(
+        label,
+        style: TextStyle(
+          color: c.sealInk,
+          fontWeight: FontWeight.w600,
+          decoration: TextDecoration.underline,
+          decorationColor: c.sealInk,
+        ),
       ),
-    ),
-  );
+    );
+  }
 }

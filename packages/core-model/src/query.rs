@@ -156,6 +156,24 @@ fn first_named_provider(tok: &str) -> Option<String> {
 /// 所以顺位是:**干净的赢,带噪的兜底,只有文档里确实没有医院才是 `None`**。
 /// 家庭自测记录那种压根没有机构的文档,仍然、也应该返回 `None`。
 pub fn extract_provider(text: &str) -> Option<String> {
+    extract_provider_inner(text, true)
+}
+
+/// 同 [`extract_provider`],但**只要干净的那两轮**(抬头 / 有自己左边界的紧凑写法),
+/// 切不准的签名串一律返回 `None`。
+///
+/// 为什么要第二个入口:上面那条「宁可带噪也不能为空」的取舍是**为就诊卡定的** ——
+/// 卡片正文就一句 `门诊 · {provider}`,抽不出来整张卡就没有理由存在。而档案行的
+/// 标题(`apps/mobile_flutter/rust/src/api/dto.rs` 的 `doc_summary`)不是这个处境:
+/// 拿不到院名还有「化验」「出院小结」顶着,标题不会塌。那里再印一个
+/// 「王涛北京协和医院」,就是把审核医师的名字当成了这份病历的名字。
+pub fn extract_provider_clean(text: &str) -> Option<String> {
+    extract_provider_inner(text, false)
+}
+
+/// [`extract_provider`] 与 [`extract_provider_clean`] 的共同本体。
+/// `signature_fallback` = 第三轮(页脚签名串)要不要跑。
+fn extract_provider_inner(text: &str, signature_fallback: bool) -> Option<String> {
     // 第 0 步:折部首。不折,后面三轮全部空手而归(见上「三层根因」第 1 条)。
     let text = crate::text::normalize_cjk_radicals(text);
     // 第一轮:抬头,权威出处。字间空格只是排版,收进结果前去掉。
@@ -174,6 +192,10 @@ pub fn extract_provider(text: &str) -> Option<String> {
         return Some(name);
     }
     // 第三轮:兜底。只剩签名串了,切不准也要给出名字 —— 带上人名前缀也比空着强。
+    // 标题那条路不走这一轮(见 [`extract_provider_clean`])。
+    if !signature_fallback {
+        return None;
+    }
     signer_toks
         .iter()
         .find_map(|tok| first_named_provider(strip_signer_label(tok)))
@@ -625,6 +647,18 @@ impl Vault {
         Ok(parts.join("\n"))
     }
 
+    /// 文档的云抽取结果(schema v1 JSON);没跑过/被拒发/离线为 None → 调用方退回正则。
+    pub fn extraction_json(&self, document_id: i64) -> Result<Option<String>, MedmeError> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT result_json FROM extraction WHERE document_id = ?1",
+                [document_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?)
+    }
+
     /// 所有 OCR 文本(用于派生病人档案等跨文档聚合)。
     pub fn all_ocr_texts(&self) -> Result<Vec<String>, MedmeError> {
         let mut stmt = self.conn().prepare("SELECT text FROM ocr_result")?;
@@ -647,6 +681,21 @@ impl Vault {
         Ok(v)
     }
 
+    /// 文档的 OCR 模型版本(如 "ppocr-v5"/"apple-vision"/"text-layer"):同
+    /// [`ocr_backend`](Self::ocr_backend) 的口径,取第一页那条。合并文档时要把
+    /// 原文档的溯源(哪个引擎、哪个版本认出来的)一并带到新文档上,不能编。
+    pub fn ocr_model_version(&self, document_id: i64) -> Result<Option<String>, MedmeError> {
+        let row = self
+            .conn()
+            .query_row(
+                "SELECT model_version FROM ocr_result WHERE document_id = ?1 ORDER BY page_no ASC LIMIT 1",
+                [document_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     /// 文档的 OCR 后端(如 "onnx"/"native"/"vlm"):取该文档 ocr_result 的第一条
     /// 记录(按 page_no)。无 ocr_result 行时返回 None。
     pub fn ocr_backend(&self, document_id: i64) -> Result<Option<String>, MedmeError> {
@@ -664,7 +713,7 @@ impl Vault {
 
 #[cfg(test)]
 mod tests {
-    use crate::query::extract_provider;
+    use crate::query::{extract_provider, extract_provider_clean};
     use crate::types::{NewDocument, NewOcr};
     use crate::Vault;
     use crate::{DocType, EncounterKind, OcrBackendKind};
@@ -1196,6 +1245,33 @@ mod tests {
         assert_eq!(
             extract_provider("审核医师:孙立复旦大学附属华山医院").as_deref(),
             Some("孙立复旦大学附属华山医院")
+        );
+    }
+
+    /// 同一份文本,**给标题用**的那个变体拿不到带噪的名字 —— 它宁可什么都不给。
+    ///
+    /// 两个调用点要的东西不一样,所以门槛也不一样:
+    /// * 就诊卡的 `门诊 · {provider}`:抽不出来整张卡就没有理由存在,所以带噪也要给;
+    /// * 档案行的标题(`dto.rs` 的 `doc_summary`):抽不出来还有「化验」「出院小结」
+    ///   顶着,标题不会塌 —— 那就别把「王涛北京协和医院」印成这份病历的名字。
+    #[test]
+    fn the_title_variant_refuses_a_name_it_had_to_cut_out_of_a_signature() {
+        for line in [
+            "审核者:王涛北京协和医院",
+            "报告医师:郑华浙江大学医学院附属第一医院",
+            "检验者:李梅 审核者:王涛四川大学华西医院医疗文书专用章",
+            "审核医师:孙立复旦大学附属华山医院",
+        ] {
+            assert_eq!(extract_provider_clean(line), None, "{line:?}");
+        }
+        // 干净的那两轮一字不变:抬头、以及有自己左边界的紧凑写法照抽不误。
+        assert_eq!(
+            extract_provider_clean("北 京 协 和 医 院\n血常规检验报告单\n").as_deref(),
+            Some("北京协和医院"),
+        );
+        assert_eq!(
+            extract_provider_clean("检验者:韩梅 审核者:王涛 北京协和医院").as_deref(),
+            Some("北京协和医院"),
         );
     }
 

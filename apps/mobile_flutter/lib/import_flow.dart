@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cunning_document_scanner/cunning_document_scanner.dart';
@@ -5,158 +6,170 @@ import 'package:file_picker/file_picker.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:google_api_availability/google_api_availability.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
 import 'package:image_picker/image_picker.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:mobile_flutter/account.dart';
+import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/import_queue.dart';
 import 'package:mobile_flutter/ocr_bridge.dart';
+import 'package:mobile_flutter/profile_manager.dart';
+import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/review_state.dart';
-import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 /// 一次导入运行的结果,供调用方判断要不要、往哪儿带用户去核对新东西。
 ///
-/// 「待确认」是这个产品最重要的一道质量闸门(抽取质量是已知短板,见
-/// `review_state.dart`)——但它要用户自己走到档案屏才看得见。从概览发起的导入
-/// 若原地刷新、不带用户过去,这道闸门在那条路径上对所有人都不可见:不是 UI
+/// 「还没核对」是这个产品最重要的一道质量闸门(抽取质量是已知短板,见
+/// `review_state.dart`)——但它要用户自己翻到「病历」tab 才看得见。若一次添加
+/// 原地刷新、不把用户带过去,这道闸门在那条路径上就对用户不可见:不是 UI
 /// 疏漏,是一整套写好的核对机制在这条路上悄悄失效。这个结果类型就是让调用方
 /// 接住「这次是不是真的有新东西要核对」,自己决定带不带用户过去、去哪儿。
 class ImportRunResult {
-  const ImportRunResult(this.newDocumentIds);
+  const ImportRunResult(this.newDocumentIds, {this.queuedCount = 0});
 
-  /// 本次真正新入库的文档 id——与 [ReviewState.markPending] 标记的是同一批
-  /// (见下方 `_runImport` 里的 `newDocs`)。去重、失败的文档不落库,不在这里面;
-  /// 空列表 = 没有新东西要核对,用户取消、全部失败、全部是重复都落在这里。
+  /// 本次真正新入库的文档 id——与 [ReviewState.markPending] 标记的是同一批。
+  /// 去重、失败的文档不落库,不在这里面;空列表 = 没有新东西要核对。
+  ///
+  /// **走后台队列的导入(现在患者模式的全部导入)这里恒为空**:添加一结束就返回,
+  /// 那时一份都还没识别完,自然也没有 id。要不要带用户去核对由 [queuedCount] 说了
+  /// 算。医生代拍那条路不走队列,仍然按 id 走。
   final List<int> newDocumentIds;
+
+  /// 这次**排进队列**的份数(见 `import_queue.enqueueImport`)。
+  final int queuedCount;
 
   bool get hasNewDocs => newDocumentIds.isNotEmpty;
 }
 
 /// 导入结果该不该带用户去复核、去哪复核——纯判断,不碰 `Navigator`/`BuildContext`,
-/// 方便直接单测(见 `test/import_review_navigation_test.dart`)。实际跳转由调用方
-/// (概览屏)按这个结果自己决定怎么导航,这里不管 UI。
+/// 方便直接单测(见 `test/import_review_navigation_test.dart`)。实际跳转该怎么
+/// 导航(`push` 什么、会不会动底部 tab 状态)交给调用方自己决定,这里不管 UI。
 enum ImportReviewDestination {
-  /// 没有新文档——原地不动。跳到一个空的待确认列表比不跳更糟。
+  /// 没有新文档——原地不动。跳到一个空的还没核对列表比不跳更糟。
   none,
 
   /// 恰好一份新文档——直接进它的详情最直接,复核动作就在那儿。
   singleDocument,
 
-  /// 多份新文档——档案屏置顶的「待确认」节已经把它们聚好了,不用另拼一份列表。
+  /// 多份新文档——「病历」tab 置顶的「还没核对」节已经把它们聚好了,不用另拼一份列表。
   archive,
 }
 
-/// [result] 为 `null` 覆盖「用户在选择表/原生选择器里取消」与「context 在采集
+/// [result] 为 `null` 覆盖「用户在选择表/原生选择器里取消」与「context 在添加
 /// 过程中失效」两种情况(`runImport` / `showImportSheet` 在这些分支上返回
 /// `null`)——语义上与「有结果但没有新文档」一样:都不该跳。
+///
+/// ⚠️ **概览整屏解散后(Task 9)暂时没有生产调用方**——「病历」tab 的「添加」
+/// 排进后台队列,靠「还没核对」横幅接人,不再当场判断跳去哪。这条纯判断逻辑
+/// 保留:哪天需要「添加完直接带去复核」这类跳转,直接量这个结果(见
+/// `test/import_review_navigation_test.dart`)。
 ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
-  if (result == null || !result.hasNewDocs) return ImportReviewDestination.none;
+  if (result == null) return ImportReviewDestination.none;
+  // 排进了后台队列 → 一律去档案:那几行「识别中」和识别完长出来的文档都在那儿,
+  // 置顶的「还没核对」节也在那儿。此刻还没有任何一份识别完,谈不上"进哪一份的详情"。
+  if (result.queuedCount > 0) return ImportReviewDestination.archive;
+  if (!result.hasNewDocs) return ImportReviewDestination.none;
   return result.newDocumentIds.length == 1
       ? ImportReviewDestination.singleDocument
       : ImportReviewDestination.archive;
 }
 
-/// 按 [reviewDestinationFor] 的判断,把用户带去复核入口 —— 只在真的有新文档
-/// 落库时才调用其中一个回调,取消/全部失败/全部重复都不调用任何一个。
+/// 「病历」tab 那颗「添加」触发的添加流程:弹三选一(拍照 / 相册 / 选文件),
+/// 选定后**把这一批交给后台队列就返回**(见 `import_queue.dart`)——识别不再把用户
+/// 钉在一个模态进度框里等,「病历」tab 顶部那几行「识别中」替代了它,每识别完
+/// 一份,那份文档就自己长到时间线上。
 ///
-/// 只管「该不该调、调哪个」,不碰 `Navigator`——具体怎么导航(`push` 什么、
-/// 会不会动底部 tab 状态)完全由调用方通过回调自己决定。这样测试可以直接断言
-/// 「哪种结果触发了哪个回调」,不需要真正拉起一整个 `OverviewScreen`(它的
-/// `FutureBuilder` 依赖 Rust FFI,在纯 dart test 环境里起不来)。
-void dispatchImportReview(
-  ImportRunResult? result, {
-  required void Function(int docId) openSingleDocument,
-  required VoidCallback openArchive,
-}) {
-  switch (reviewDestinationFor(result)) {
-    case ImportReviewDestination.none:
-      return;
-    case ImportReviewDestination.singleDocument:
-      openSingleDocument(result!.newDocumentIds.first);
-      return;
-    case ImportReviewDestination.archive:
-      openArchive();
-      return;
-  }
-}
-
-/// 「健康档案」右上角「+ 导入」触发的采集流程:弹三选一(拍照 / 相册 / 选文件),
-/// 选定后逐个采集→(图片先 ML Kit 中文 OCR)→落库,期间显示进度对话框,结束弹汇总,
-/// 并 [bumpVaultRevision] 通知档案自动刷新看到新记录。
+/// 这一层只管**拉起原生取件器**和**问一句合不合并**;OCR、落库、补页、
+/// 云抽取全在队列那边。医疗判断全在 Rust core,这里只搬字节 + 调 FFI。
 ///
-/// 采集/OCR/落库逻辑与原「导入导出」屏一致,只是进度改用模态对话框(从档案触发,
-/// 不再挂在某个屏的持久状态上)。医疗判断全在 Rust core,这里只搬字节 + 调 FFI。
-///
-/// 返回值见 [ImportRunResult]:取消/未选文件返回 `null`,否则是这次运行的结果
-/// (可能没有新文档——全部失败或全部重复)。
+/// 返回值见 [ImportRunResult]:取消/未选文件返回 `null`,否则带上这次排了几份。
 Future<ImportRunResult?> showImportSheet(BuildContext context) async {
   final choice = await showModalBottomSheet<ImportChoice>(
     context: context,
     showDragHandle: true,
-    builder: (context) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              MedShape.s4,
-              4,
-              MedShape.s4,
-              MedShape.s1,
-            ),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '添加病历',
-                style: MedType.title.copyWith(color: MedColors.of(context).ink),
-              ),
-            ),
-          ),
-          _SheetTile(
-            icon: Icons.photo_camera_outlined,
-            title: '拍照',
-            subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
-            choice: ImportChoice.camera,
-            // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
-            // 改版后那颗快捷操作让位给了「记录」(见 overview_screen.dart 的
-            // `_QuickActions` 文档),拍照要多经一次这个选择表才能到达。视觉上
-            // 做成主选项(填色图标块 + 加粗标题)抵消这多出来的一次点击——它
-            // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
-            primary: true,
-          ),
-          _SheetTile(
-            icon: Icons.photo_library_outlined,
-            title: '从相册选',
-            subtitle: '选一张或多张已经拍好的病历照片',
-            choice: ImportChoice.gallery,
-          ),
-          _SheetTile(
-            icon: Icons.folder_open_outlined,
-            title: '选择文件',
-            subtitle: 'PDF、图片、TXT',
-            choice: ImportChoice.files,
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    ),
+    builder: (context) => const SafeArea(child: AddSheetBody()),
   );
   if (choice == null || !context.mounted) return null;
   return runImport(context, choice);
 }
 
-/// 跳过三选一,**直接**走某一种采集来源。
+/// [showImportSheet] 的正文(mockup `s6`)。fix round 1(task-14-review
+/// Important):从 `builder:` 里原样搬出来(纯搬家,内容一字未改)——只有
+/// 提成一个公开 widget,视觉溢出矩阵才 pump 得到这一屏,而不是只测到
+/// `CloudExtractAskBody` 一家。**纯 widget,不碰 `Navigator`**——三个
+/// `_SheetTile.onTap` 各自 `Navigator.of(context).pop(choice)`,这个 widget
+/// 本身不需要知道选完之后去哪儿。
+class AddSheetBody extends StatelessWidget {
+  const AddSheetBody({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            MedShape.s4,
+            4,
+            MedShape.s4,
+            MedShape.s1,
+          ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '添加病历',
+              style: MedType.subtitle.copyWith(color: MedColors.of(context).ink),
+            ),
+          ),
+        ),
+        _SheetTile(
+          icon: Icons.photo_camera_outlined,
+          category: GlossCategory.brand,
+          title: '拍照',
+          subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
+          choice: ImportChoice.camera,
+          // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
+          // 改版后那一排快捷操作整个没了(今天「病历」首页只剩「添加」与
+          // 「给医生看」两颗方块),拍照要多经一次这个选择表才能到达。视觉上
+          // 做成主选项(蓝底块 + `highlighted`)抵消这多出来的一次点击——它
+          // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
+          primary: true,
+        ),
+        _SheetTile(
+          icon: Icons.photo_library_outlined,
+          category: GlossCategory.lab,
+          title: '从相册选',
+          subtitle: '选一张或多张已经拍好的病历照片',
+          choice: ImportChoice.gallery,
+        ),
+        _SheetTile(
+          icon: Icons.folder_open_outlined,
+          category: GlossCategory.neutral,
+          title: '选择文件',
+          subtitle: 'PDF、图片、TXT',
+          choice: ImportChoice.files,
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+/// 跳过三选一,**直接**走某一种取件来源。
 ///
-/// 从 [showImportSheet] 里原样切出来的后半段(逻辑一字未改),为的是让「概览」页
-/// 的快捷操作能有一颗真正的「拍照」—— 那一屏的使用时刻是「日常打开」,而拍一张
-/// 化验单是这个时刻里最高频的动作;让它先弹一张三选一的表,等于在最短的路上多设
-/// 一道门。「存档」那颗仍然走 [showImportSheet](相册 / 文件在那里选)。
+/// 从 [showImportSheet] 里原样切出来的后半段(逻辑一字未改)——留着这一刀是为了
+/// 让将来任何一颗「直接拍照」式的快捷入口都能跳过三选一,不用重新拼一遍后半段
+/// 逻辑。⚠️ 今天**只有** [showImportSheet] 一个调用方(概览页那一排快捷操作已在
+/// Task 9 随整屏解散,「病历」首页只剩「添加」与「给医生看」两颗方块,都不是
+/// 直接拍照的捷径)——这条切分暂时没有第二个用武之地,但保留成本低,拆开来
+/// 反而要在两处各写一遍前置等待与埋点。
 ///
 /// 前面那 350ms 的等待对直接调用**同样必要**:调用方多半也是从一个 bottom sheet
 /// 或菜单里点过来的,原生扫描器一样会被正在退场的浮层挡下。
@@ -167,7 +180,7 @@ Future<ImportRunResult?> runImport(
   BuildContext context,
   ImportChoice choice,
 ) async {
-  // 等 bottom sheet 的关闭动画播完再拉起原生采集器。文档扫描器
+  // 等 bottom sheet 的关闭动画播完再拉起原生取件器。文档扫描器
   // (VNDocumentCameraViewController)靠 rootViewController.present 弹出;若 sheet
   // 尚未完全消失,present 会被正在退场的 sheet 挡下、静默失败,method channel 永不
   // 回调 —— 表现就是「点了没反应」。ImagePicker 内部自己处理了这个时序,这个扫描器
@@ -176,7 +189,7 @@ Future<ImportRunResult?> runImport(
   if (!context.mounted) return null;
 
   // 屏上探针的出口。**在任何 await 之前同步取出**,之后就不再碰 context ——
-  // 采集期间用户可能把这一屏推走,而 `ScaffoldMessengerState` 自己知道有没有 mounted。
+  // 添加期间用户可能把这一屏推走,而 `ScaffoldMessengerState` 自己知道有没有 mounted。
   final probe = ScaffoldMessenger.of(context);
 
   final List<PendingImport> items;
@@ -186,26 +199,40 @@ Future<ImportRunResult?> runImport(
     // 兜底。[pickImportItems] 内部每个分支都已自己 catch,所以这里理论上不可达 ——
     // 但「理论上不可达」正是前五版每次都栽的地方:一个漏网的异常从这里飘走,
     // 上面 `await` 的调用方什么都不做,屏上就是「点了没反应」。
-    debugPrint('[import] 采集环节未捕获异常: $e');
-    _report(probe, choice, ImportCaptureIssue.unknown, '采集没能开始:$e');
+    debugPrint('[import] 添加环节未捕获异常: $e');
+    _report(probe, choice, ImportCaptureIssue.unknown, '添加没能开始:$e');
     return null;
   }
   if (items.isEmpty || !context.mounted) return null;
+
+  // 第一次添加病历时问一次「云端整理」(ia-proposal §7 决定 5)。放在这里、
+  // 而不是拉起相机之前:问的是「刚刚这张照片要不要送云端」,手上有东西的时候
+  // 这句话才成立。一次 `runImport` 调用就是一次「run」——排在 `_runImport` 之前、
+  // 每次运行只问这一次,不会跟着 `items` 里的每一份文档重复问。
+  if (shouldAskCloudExtract(
+    loggedIn: AccountSession.instance.loggedIn.value,
+    asked: await loadCloudExtractAsked(),
+  )) {
+    if (!context.mounted) return null;
+    await showCloudExtractAskSheet(context);
+  }
+  if (!context.mounted) return null;
+
   return _runImport(context, items, choice);
 }
 
-/// 采集来源:拍照(含文档扫描器)/ 从相册选 / 选择文件。`public`——除了本文件的
+/// 添加来源:拍照(含文档扫描器)/ 从相册选 / 选择文件。`public`——除了本文件的
 /// [showImportSheet],「医生代拍」临时会话流程(`screens/doctor/proxy_intake_flow.dart`)
-/// 也复用 [pickImportItems] 拿采集入口(自己另起一个只含「拍照/选择文件」的选择
+/// 也复用 [pickImportItems] 拿取件入口(自己另起一个只含「拍照/选择文件」的选择
 /// 表,不复用 `showImportSheet` 的三选一 UI)。
 enum ImportChoice { camera, gallery, files }
 
-/// 按 [choice] 走对应的原生采集器,返回待导入项(用户取消为空列表)。**纯采集,
-/// 不碰 OCR/落库**——OCR 识别文本、往哪个保险箱落库,都由调用方在拿到
+/// 按 [choice] 走对应的原生取件器,返回待导入项(用户取消为空列表)。**纯取件,
+/// 不碰 OCR/落库**——OCR 识别出来的文字、往哪个病历箱落库,都由调用方在拿到
 /// [PendingImport] 列表后自己决定(见 [showImportSheet] 与
 /// `proxy_intake_flow.dart` 两个不同的下游处理)。
 ///
-/// **本函数不再向外抛异常。** 每个采集分支都自己 catch,失败一律「屏上说清 + 分类
+/// **本函数不再向外抛异常。** 每个分支都自己 catch,失败一律「屏上说清 + 分类
 /// 埋点 + 返回空」——因为这条链路上的每一种失败,在 UI 上都长得一模一样(什么都没
 /// 发生),不主动说就只能靠猜。[probe] 是屏上探针的出口(`ScaffoldMessenger`),
 /// 调用方在进入本函数**之前**同步取好;不传就只剩埋点和 `debugPrint`。
@@ -587,8 +614,8 @@ void _report(
   String? detail,
 ) {
   Analytics.track(issue.event, {
-    // 注意:这里的 `source` 是**采集器**(camera/gallery/files),与 `doc_import_*`
-    // 的 `source`(那里代拍会报 `proxy`)口径不同 —— 坏掉的是哪个采集器才是这条
+    // 注意:这里的 `source` 是**取件方式**(camera/gallery/files),与 `doc_import_*`
+    // 的 `source`(那里代拍会报 `proxy`)口径不同 —— 坏掉的是哪种取件方式才是这条
     // 事件要回答的。个人模式 vs 代拍由会话上下文的 `mode` 切开,不占这个字段。
     'source': source.name,
     'reason': issue.name,
@@ -610,197 +637,48 @@ Future<ImportRunResult> _runImport(
   List<PendingImport> items,
   ImportChoice source,
 ) async {
-  // 埋点:只报「从哪来、开始了、几份」——**份数分桶**,不报文件名、不报内容。
-  final startedAt = DateTime.now();
-  // 导入前的库存:0 就是首次导入。**首次导入成功率是最重要的一个数**,而它端上
-  // 就能判断,不需要任何 ID。读不到(冷启动早期)就不报,绝不猜。
-  final sizeBefore = Analytics.librarySize;
-  Analytics.track(AnalyticsEvent.docImportStarted, {
-    'source': source.name,
-    'count_bucket': Bucket.count(items.length),
-  });
-  final progress = ValueNotifier<String>('正在导入 1/${items.length}…');
-  // 模态进度对话框(不可点走);导入结束后由本函数关闭。
-  showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      content: Row(
-        children: [
-          const SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
-          ),
-          const SizedBox(width: MedShape.s3),
-          Expanded(
-            child: ValueListenableBuilder<String>(
-              valueListenable: progress,
-              // 「3/12」这类进度数字用等宽 —— 否则每换一份文字宽度都在抖。
-              builder: (context, text, _) => Text(
-                text,
-                style: MedType.body.copyWith(
-                  color: MedColors.of(context).ink,
-                  fontFeatures: MedType.tabular,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
+  // 「合并成一份」**问在识别之前**。改造前它问在整批识别完之后 —— 那时用户还被
+  // 一个模态进度框钉在原地,所以问得到。识别搬去后台之后人早就走了,只剩两条路:
+  // 要么让队列跑到一半再弹一个框(要多一套「识别中 N/M」的等待态,而且会在用户
+  // 正在别的屏上操作时突然打断他),要么在他还站在这儿的时候问掉。选后者:
+  // **状态最少**(没有等待态、没有中途打断),代价是万一这几张里有重复/失败,
+  // 实际能合并的份数会少于问的时候说的那个数 —— 队列在收尾时按真正入库的照片
+  // 份数再判一次(`imageDocIds.length >= 2`),少于两份就不合并。
+  final imageCount = items.where((i) => i.isImage).length;
+  var mergePhotos = false;
+  if (shouldOfferPhotoMerge(imageCount) && context.mounted) {
+    mergePhotos = await askPhotoMerge(context, imageCount);
+  }
 
-  final rows = <ImportResultRow>[];
-  // 本次新建文档 id → 报告里识别到的患者姓名(识别不到为 null),进「待确认」队列;
-  // 姓名与当前成员不符者会被标红,识别到的姓名还用来自动命名默认档案。
-  final newDocs = <int, String?>{};
-  // 本次新建的**照片**文档 id(`newDocs` 的子集,排除 PDF/TXT 等非图片来源)——
-  // 「合并成一份」只对着这批照片问,见循环末尾与 `_offerPhotoMerge`。
-  final imageDocIds = <int>[];
-  // 埋点用:整批里**第一次**失败发生在哪一步、归到哪个原因码。只留第一条 ——
-  // 一次批量导入报一条事件,报第一个失败足以定位;报全部会把事件量和基数都吹起来。
-  String? failStage;
-  ImportFailReason? failReason;
-  // 每份耗时的累计(仅成功的份),用来算单份平均 —— 那才是引擎质量指标。
-  var okElapsedMs = 0;
-  var okCount = 0;
-
-  for (var i = 0; i < items.length; i++) {
-    final item = items[i];
-    progress.value = '正在导入 ${i + 1}/${items.length}…';
-    // 每份从「采集完、待处理」开始;下面逐步推进,失败时它就是失败所在的步骤。
-    var stage = 'capture';
-    final itemStartedAt = DateTime.now();
-    try {
-      final ImportOutcomeDto outcome;
-      if (item.isImage) {
-        // 各平台原生最强 OCR:iOS Apple Vision / 安卓 ML Kit(见 ocr_bridge.dart)。
-        stage = 'ocr';
-        final ocr = await recognizeImageText(item.path);
-        stage = 'save';
-        final bytes = await File(item.path).readAsBytes();
-        outcome = await ingestImageWithText(
-          name: item.name,
-          bytes: bytes,
-          ocrText: ocr.text,
-          confidence: ocr.confidence,
-        );
-      } else {
-        stage = 'save';
-        final bytes = await File(item.path).readAsBytes();
-        outcome = await ingestBytes(filename: item.name, data: bytes);
-      }
-
-      // 按页补 OCR:哪些页缺文本层由 `outcome.pagesWithoutText` 点名。逻辑本身
-      // 见 [backfillPagesWithoutText] —— 医生代拍(`proxy_intake_flow.dart`)
-      // 共用同一个函数,两条路不许各写一份。
-      final stillMissingPages = await backfillPagesWithoutText(
-        outcome,
-        item.path,
-        onStage: (s) => stage = s,
+  // 落库那一刻的成员与箱子,就地捕获交给队列 —— 整批都认它们(见
+  // `import_queue._Batch`)。根路径拿不到就只能放弃这一批:没有它,后台跑到一半
+  // 用户切了成员/医生切去代拍,这几张就会写进**别人的**箱子。
+  final String root;
+  try {
+    root = await currentVaultRoot();
+  } catch (e) {
+    debugPrint('[import] 读不到当前病历箱根目录,这一批没有排队: $e');
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        appSnackBar(content: const Text('病历还没打开,这次没能添加')),
       );
-
-      if (outcome.documentId case final id?) {
-        newDocs[id] = outcome.detectedName;
-        if (item.isImage) imageDocIds.add(id);
-      }
-      rows.add(rowForOutcome(outcome, stillMissingPages: stillMissingPages));
-      okElapsedMs += DateTime.now().difference(itemStartedAt).inMilliseconds;
-      okCount++;
-    } catch (e) {
-      // 原始错误留日志给开发者;用户看到的是 rowFromError 里的简单提示。
-      debugPrint('[import] ${item.name} 导入失败: $e');
-      rows.add(rowFromError(item.name, e));
-      // ⚠️ 只记步骤和**原因码**,绝不记 `e` 本身 —— 异常文本里常带文件名和路径。
-      failStage ??= stage;
-      failReason ??= ImportFailReason.of(e);
     }
+    return const ImportRunResult([]);
   }
 
-  // 本次新建的文档显式加入「待确认」队列(健康档案顶部据此置顶让用户核对)。
-  if (newDocs.isNotEmpty) {
-    // 默认档案还没定过名字时,用识别到的第一个患者姓名自动命名它(迁移待确认键)。
-    final detected = newDocs.values.firstWhere(
-      (n) => n != null && n.trim().isNotEmpty,
-      orElse: () => null,
-    );
-    await autoNameCurrentProfileFrom(detected);
-    await ReviewState.instance.markPending(newDocs);
-  }
-  // 有任一份成功落库,通知「健康档案」屏自动刷新。
-  if (rows.any((r) => r.kind != ImportRowKind.failed)) {
-    bumpVaultRevision();
-  }
-
-  // 埋点:成功几份、失败几份、总共花了多久。**耗时是判断要不要优化 OCR 引擎的唯一
-  // 客观依据**;失败只报计数,不报任何异常消息(那里面常有文件名和路径)。
-  final failedCount = rows.where((r) => r.kind == ImportRowKind.failed).length;
-  final allFailed = failedCount == rows.length;
-  Analytics.track(
-    allFailed
-        ? AnalyticsEvent.docImportFailed
-        : AnalyticsEvent.docImportCompleted,
-    {
-      'source': source.name,
-      'count_bucket': Bucket.count(rows.length),
-      'failed_bucket': Bucket.count(failedCount),
-      // 总时长 = 用户要等多久(决定要不要做后台导入)。
-      'duration_bucket': Bucket.duration(DateTime.now().difference(startedAt)),
-      // 单份平均 = 引擎快不快(决定换不换 OCR)。两个数回答两个不同的决定,
-      // 只报总时长的话前一个问题根本答不出来 —— 它被份数主导了。
-      if (okCount > 0)
-        'per_doc_duration_bucket': Bucket.perDoc(
-          Duration(milliseconds: okElapsedMs ~/ okCount),
-        ),
-      // 首次导入成功率。库存读不到时**不报**,不猜。
-      if (sizeBefore != null) 'is_first': sizeBefore == 0,
-      if (allFailed) ...{
-        'stage': failStage ?? 'capture',
-        'reason_code': (failReason ?? ImportFailReason.unknown).name,
-      },
-    },
+  final queued = enqueueImport(
+    items: items,
+    profile: ProfileManager.instance.current,
+    vaultRoot: root,
+    source: source,
+    mergePhotos: mergePhotos,
   );
-
-  // newDocs 的 key 就是 ImportRunResult 要交出去的东西——早前几行已经把它喂给
-  // ReviewState.markPending,这里不重算,只是把同一份数据也交给调用方。
-  // （若下面发生了合并,`newDocs` 会在合并后就地更新,`ImportRunResult` 在
-  // 函数末尾才构造,始终反映最终状态。）
-  if (!context.mounted) return ImportRunResult(newDocs.keys.toList());
-  Navigator.of(context).pop(); // 关进度对话框
-  await _showImportSummary(context, rows);
-
-  // 这次一起导入的照片里有 ≥2 张各自建了文档:问要不要合并成一份——见
-  // `_offerPhotoMerge` 文档注释(为什么每次都问、不自动合并)。只在这里问一次,
-  // 用户选「分开保存」或合并失败都保持原状,不重复打扰。
-  if (shouldOfferPhotoMerge(imageDocIds.length) && context.mounted) {
-    final mergedId = await _offerPhotoMerge(context, imageDocIds);
-    if (mergedId != null) {
-      // 姓名核对(「导错人」标红)要接着起作用:合并前几份里第一个识别到的
-      // 姓名带到合并后这一份上——内容是同一批照片的文字,姓名不会因为合并
-      // 变化,但 `ReviewState` 是按文档 id 记的,原 id 已经不存在了,必须
-      // 显式搬一次。
-      final mergedDetectedName = imageDocIds
-          .map((id) => newDocs[id])
-          .firstWhere(
-            (n) => n != null && n.trim().isNotEmpty,
-            orElse: () => null,
-          );
-      for (final id in imageDocIds) {
-        newDocs.remove(id);
-        await ReviewState.instance.markReviewed(id);
-      }
-      newDocs[mergedId] = mergedDetectedName;
-      await ReviewState.instance.markPending({mergedId: mergedDetectedName});
-      bumpVaultRevision();
-    }
-  }
-
-  progress.dispose();
-  return ImportRunResult(newDocs.keys.toList());
+  return ImportRunResult(const [], queuedCount: queued);
 }
 
-/// 合并前的确认弹窗 + 实际调用合并 FFI(`mergePhotosIntoDocument`)。
+/// 「要合并成一份吗?」这一问 —— **只问,不合并**:真正调 `mergePhotosIntoDocument`
+/// 的是后台队列(`import_queue._mergeBatchPhotos`),因为那时候这几张才刚识别完、
+/// 有了文档 id,而用户早就走了。
 ///
 /// **为什么每次都问,不自动合并**:一批拍进来的照片不保证真的是同一份文件的
 /// 连续页——顺手把上次剩的一张也扫进来、或者一次选了两份不同的化验单,都是
@@ -813,55 +691,48 @@ Future<ImportRunResult> _runImport(
 /// 情况下原来的文档都原样保留(合并失败时的这条保证来自 Rust 侧
 /// `merge_documents_into_pdf` 的顺序保证:任何校验/解码失败都发生在删除任何
 /// 原文档之前)。
-Future<int?> _offerPhotoMerge(
-  BuildContext context,
-  List<int> imageDocIds,
-) async {
+///
+/// **合并成功时也不许丢东西**:每张照片已经识别出来的文字由
+/// `merge_documents_into_pdf` 逐页带到合并出的这份上(否则原文档一墓碑,
+/// `ocr_result` 就跟着没了——2026-09-15 冒烟里 2135 字一次点击归零);云抽取
+/// 由调用方改排到新文档上(见 [pendingForMergedDocument])。
+Future<bool> askPhotoMerge(BuildContext context, int photoCount) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) {
       final c = MedColors.of(context);
       return AlertDialog(
-        title: const Text('合并成一份?'),
+        title: const Text('要合并成一份吗?'),
         content: Text(
-          '刚才这 ${imageDocIds.length} 张,如果是同一份病历的连续页,可以合并'
-          '成一份多页文档,时间线上只显示一条。原始照片仍然保留,只是不再各自'
-          '显示成一条记录。',
+          '刚才这 $photoCount 张,如果是同一份病历的连续页,可以合并'
+          '成一份多页文档,时间线上只显示一条。原始照片仍然保留,已经识别出的'
+          '文字也会一并带进合并后的这一份,云端整理重新跑一次。\n\n'
+          '合并不可撤销:要拆开得重新添加这几张照片。',
           style: MedType.body.copyWith(color: c.ink2),
         ),
+        // ⚠️ 顺序是**故意**这样的:主按钮(右下角)必须是「分开保存」。这一问
+        // 紧跟在导入结果弹窗后面,那一个的「知道了」也是右下角的 FilledButton
+        // —— 两次点在同一个位置,第二次就被合并弹窗接住了(2026-09-15 冒烟里
+        // 真的这么误触了一次)。误触落在「分开保存」上什么都不会发生;落在
+        // 「合并成一份」上则是一次不可撤销的操作。
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('分开保存'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('合并成一份'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(context).pop(false),
             style: FilledButton.styleFrom(
               backgroundColor: c.sealInk,
               foregroundColor: c.surface,
             ),
-            child: const Text('合并成一份'),
+            child: const Text('分开保存'),
           ),
         ],
       );
     },
   );
-  if (confirmed != true || !context.mounted) return null;
-
-  final messenger = ScaffoldMessenger.of(context);
-  try {
-    final outcome = await mergePhotosIntoDocument(
-      name: '合并文档.pdf',
-      documentIds: Int64List.fromList(imageDocIds),
-    );
-    return outcome.documentId;
-  } catch (e) {
-    debugPrint('[import] 合并失败: $e');
-    messenger.showSnackBar(
-      appSnackBar(content: Text('合并失败,原来的 ${imageDocIds.length} 份都还在:$e')),
-    );
-    return null;
-  }
+  return confirmed == true;
 }
 
 /// 该不该在导入完成后主动问「是否合并成一份」——纯判断,方便单测。至少 2 张
@@ -933,11 +804,25 @@ Future<void> _defaultBackfill({
 /// 返回了空表」就把它混成一次失败的补救。判据用的是 [isImageName],与调用方
 /// 当初把这份文件判成图片(`PendingImport.isImage`)时是同一个谓词、同一个文件。
 ///
+/// ⚠️ [profile] / [vaultRoot] 是**落库那一刻的成员和箱子**,必填。回填不是只读的
+/// 补救,它是一条**写事件**:`backfill_pdf_text` → `add_ocr` →
+/// `append_event(OcrAdded)`,写下去就进历史、会同步。而 Rust 侧的 vault 是进程级
+/// 单例、每个箱子的 rowid 都从 1 开始 —— 拿甲库的 `documentId` 写进乙库,大概率
+/// 正好命中乙的另一份文档,甲的扫描页文字就追加进了**别人的病历**。
+///
+/// 这段渲染 + OCR 最长跑 20 页([_kMaxPdfOcrPagesPerImport]),分钟级。导入还钉在
+/// 模态进度框里时这个窗口打不开;搬到后台队列之后,用户点完就回到档案屏,成员
+/// tab 条就在眼前。所以每页写之前都过一遍 [ifVaultUnchanged](与落库、云抽取
+/// 同一道闸、同一条 vault 队列);换掉了就**一页都不写**,剩下的如实计回返回值
+/// —— 补不上就说补不上,绝不悄悄算成补上了。
+///
 /// [ocrPages] / [backfill] 只为测试注入替身:真实实现要碰 `pdfx` 渲染和 Rust
 /// FFI,在 `flutter test` 的纯 dart 进程里都跑不起来。生产调用一律用默认值。
 Future<int> backfillPagesWithoutText(
   ImportOutcomeDto outcome,
   String path, {
+  required Profile profile,
+  required String vaultRoot,
   void Function(String stage)? onStage,
   PdfPageOcr ocrPages = _ocrScannedPdfPages,
   PdfTextBackfill backfill = _defaultBackfill,
@@ -949,15 +834,28 @@ Future<int> backfillPagesWithoutText(
   final targetPages = outcome.pagesWithoutText.toList();
   final scan = await ocrPages(path, targetPages);
   onStage?.call('save');
+  var written = 0;
   for (final entry in scan.entries) {
-    await backfill(
-      documentId: outcome.documentId!,
-      pageNo: entry.key,
-      text: entry.value.text,
-      confidence: entry.value.confidence,
+    // 渲染/OCR 留在 vault 队列**外**(它慢),只有这一行写入进队列 + 核身份。
+    final ok = await ifVaultUnchanged(
+      profile,
+      vaultRoot,
+      '补第 ${entry.key} 页',
+      () async {
+        await backfill(
+          documentId: outcome.documentId!,
+          pageNo: entry.key,
+          text: entry.value.text,
+          confidence: entry.value.confidence,
+        );
+        return true;
+      },
     );
+    // 换箱子了:后面几页同样不许写,直接收手(闸只会越来越不成立)。
+    if (ok == null) break;
+    written++;
   }
-  return targetPages.length - scan.length;
+  return targetPages.length - written;
 }
 
 /// 一次导入单份文件时,`_ocrScannedPdfPages` 实际会渲染 + OCR 的页数上限
@@ -1058,128 +956,15 @@ Future<Map<int, OcrResult>> _ocrScannedPdfPages(
   return byPage;
 }
 
-Future<void> _showImportSummary(
-  BuildContext context,
-  List<ImportResultRow> rows,
-) async {
-  final success = rows.where((r) => r.kind == ImportRowKind.success).length;
-  final duplicate = rows.where((r) => r.kind == ImportRowKind.duplicate).length;
-  final storedNoText = rows
-      .where((r) => r.kind == ImportRowKind.storedNoText)
-      .length;
-  final partial = rows.where((r) => r.kind == ImportRowKind.partial).length;
-  final failed = rows.where((r) => r.kind == ImportRowKind.failed).length;
-
-  if (!context.mounted) return;
-  await showDialog<void>(
-    context: context,
-    builder: (context) {
-      final c = MedColors.of(context);
-      return AlertDialog(
-        title: Text(failed == rows.length ? '导入未成功' : '导入完成'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 四条汇总各占一档语义色:成功=主色,去重=三级墨(不是问题,
-              // 只是没事发生),仅存原件=`high`(要你回头补一张),失败=`critical`。
-              // 原先「仅存原件」用的是 Material 的 `Colors.orange`,不在色板里。
-              if (success > 0)
-                _summaryLine(
-                  context,
-                  Icons.check_circle,
-                  c.seal,
-                  '成功识别入库 $success 份',
-                ),
-              if (duplicate > 0)
-                _summaryLine(
-                  context,
-                  Icons.content_copy,
-                  c.ink3,
-                  '重复,已跳过 $duplicate 份',
-                ),
-              if (storedNoText > 0)
-                _summaryLine(
-                  context,
-                  Icons.warning_amber_rounded,
-                  c.high,
-                  ImportIncompleteNotice.storedNoText(storedNoText),
-                ),
-              // 部分识别:PDF 有些页认出来了、有些没有——同样是 `high`(要你
-              // 回头核对/补拍),但和「彻底没识别」用不同文案,别混在一起。
-              if (partial > 0)
-                _summaryLine(
-                  context,
-                  Icons.warning_amber_rounded,
-                  c.high,
-                  ImportIncompleteNotice.partialPages(partial),
-                ),
-              if (failed > 0)
-                _summaryLine(
-                  context,
-                  Icons.error_outline,
-                  c.critical,
-                  '未能处理 $failed 份',
-                ),
-              const SizedBox(height: MedShape.s2),
-              const Divider(),
-              const SizedBox(height: MedShape.s1),
-              for (final row in rows)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Text(
-                    '${row.name} —— ${row.statusLabel}',
-                    style: MedType.secondary.copyWith(color: c.ink2),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
-            style: FilledButton.styleFrom(
-              backgroundColor: c.sealInk,
-              foregroundColor: c.surface,
-            ),
-            child: const Text('知道了'),
-          ),
-        ],
-      );
-    },
-  );
-}
-
-Widget _summaryLine(
-  BuildContext context,
-  IconData icon,
-  Color color,
-  String text,
-) => Padding(
-  padding: const EdgeInsets.symmetric(vertical: 4),
-  child: Row(
-    children: [
-      Icon(icon, color: color, size: 20),
-      const SizedBox(width: MedShape.s1),
-      Expanded(
-        child: Text(
-          text,
-          // 份数是数字 —— 等宽,四行汇总的数字才在同一列上。
-          style: MedType.body.copyWith(
-            fontWeight: FontWeight.w600,
-            color: MedColors.of(context).ink,
-            fontFeatures: MedType.tabular,
-          ),
-        ),
-      ),
-    ],
-  ),
-);
-
+/// 添加病历三选一的一条选项(mockup `s6` 的 `.opt`)。图标 + 标题这一行是
+/// [MedSheetOption](paper 底圆角块 + 光泽图标块,`primary` 那条换蓝底);
+/// [subtitle] 是这条选项原有的说明句,`MedSheetOption.note` 是给短短一句
+/// 「右侧小注」用的(见其类文档),放不下这句完整说明,所以单独起一行摆在
+/// 选项块下方,缩进对齐到标题(不在文案上做任何删改)。
 class _SheetTile extends StatelessWidget {
   const _SheetTile({
     required this.icon,
+    required this.category,
     required this.title,
     required this.subtitle,
     required this.choice,
@@ -1187,43 +972,42 @@ class _SheetTile extends StatelessWidget {
   });
 
   final IconData icon;
+  final GlossCategory category;
   final String title;
   final String subtitle;
   final ImportChoice choice;
 
-  /// 视觉主选项:图标块填实色(而不是浅底描边),标题加粗。**不改变点击行为**,
-  /// 只是这一屏三个选项里最推荐的那个多一点视觉重量。
+  /// 视觉主选项:paper 换成蓝底(`MedSheetOption.highlighted`)。**不改变点击
+  /// 行为**,只是这一屏三个选项里最推荐的那个多一点视觉重量。
   final bool primary;
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    return ListTile(
-      // 图标装进 seal-wash 方块,与档案时间线上的类型徽标同一形状语言 ——
-      // 圆角取控件这一档 10,比卡片(20)和分块(14)都小,层级不同级。
-      // 主选项换成填实色块 + 反白图标,一眼比另外两个「重」。
-      leading: Container(
-        width: 40,
-        height: 40,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: primary ? c.sealInk : c.sealWash,
-          borderRadius: BorderRadius.circular(MedShape.radiusControl),
-        ),
-        child: Icon(icon, color: primary ? c.surface : c.seal, size: 22),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(MedShape.s4, 0, MedShape.s4, MedShape.s1),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          MedSheetOption(
+            icon: icon,
+            category: category,
+            label: title,
+            highlighted: primary,
+            onTap: () => Navigator.of(context).pop(choice),
+          ),
+          Padding(
+            // fix round 1(task-14-review Minor):缩进要从 MedSheetOption 自己
+            // 的水平内边距算起(hPad),不是从 0 算起——标题实际起点是
+            // hPad(12) + 图标块(44) + 间距(12) = 68,少算 hPad 会跟标题错位。
+            // 点击区域是上面那一整行图标+标题(MedSheetOption 自带的
+            // InkWell);这句说明文字不参与点击。
+            padding: const EdgeInsets.fromLTRB(
+              MedSheetOption.hPad + MedBrand.tileSize + MedShape.s2, 0, MedShape.s2, 0),
+            child: Text(subtitle, style: MedType.secondary.copyWith(color: c.ink3)),
+          ),
+        ],
       ),
-      title: Text(
-        title,
-        style: MedType.subtitle.copyWith(
-          color: c.ink,
-          fontWeight: primary ? FontWeight.w700 : null,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: MedType.secondary.copyWith(color: c.ink2),
-      ),
-      onTap: () => Navigator.of(context).pop(choice),
     );
   }
 }

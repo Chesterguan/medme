@@ -7,9 +7,11 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/import_flow.dart'
     show ImportChoice, backfillPagesWithoutText, pickImportItems;
 import 'package:mobile_flutter/ocr_bridge.dart';
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/doctor/consent_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_delivery_count.dart';
@@ -37,29 +39,29 @@ const int kProxyShareExpiresDays = 15;
 
 enum _ProxyPhase { consent, capture, preview, delivering }
 
-/// 「为病人代建档」全屏流程(医生/护士专用,Phase 1:本地交付,不含云)。
-/// 同意(签名/按住确认)→ 为这个病人建一个**独立保险箱** → 采集(拍照/相册/文件,
-/// 可多轮混合来源累加)→ **待确认列表**(每份一行,点进去核对原件+识别内容、逐份点
-/// 「确认这一份」;可随时「继续采集」再累加更多)→ 生成加密文件交付给病人(摘要只
-/// 统计已确认的文档,未确认的原件仍全部进分享包并标注待确认)。
+/// 「代拍」全屏流程(医生/护士专用,Phase 1:本地交付,不含云)。
+/// 同意(签名/按住确认)→ 为这个病人建一个**独立病历箱** → 添加(拍照/相册/文件,
+/// 可多轮混合来源累加)→ **还没核对列表**(每份一行,点进去核对原件+识别内容、逐份点
+/// 「没问题」;可随时「继续添加」再累加更多)→ 生成加密文件交付给病人(摘要只
+/// 统计已确认的文档,未确认的原件仍全部进分享包并标注还没核对)。
 ///
 /// **交付后不即焚**:病人留在本机最多 12 小时(医生通常要几小时内写完病历,期间可
 /// 回来补拍/重发),到点由 [ProxyPatientManager] 自动删——与同意告知里那句话对齐。
 /// 病人数据落在 [ProxyPatientManager] 的独立命名空间,**绝不写入医生自己的档案**;
 /// **紫色 chrome**(令牌 `MedColors.proxy`)+ 顶部常驻横幅是每一屏都在的信号,提醒
-/// 「这不是我的箱」。紫是医生模式专属:个人模式主色是蓝(`seal`),两个模式一眼
+/// 「这不是我的箱」。紫是代拍专属:个人模式主色是蓝(`seal`),两个模式一眼
 /// 可辨 —— 代拍最危险的失误是拍到别人的单子、或在错的模式下动手,让两者长得不一样
 /// 是**安全设计**,不是装饰。
 ///
-/// [patientId] 为 null = 新病人(从同意屏开始);非 null = 从主页「今日病历表」点回
-/// 一个已建档的病人(同意已签过,直接进待确认列表继续核对/交付)。
+/// [patientId] 为 null = 新病人(从同意屏开始);非 null = 从主页「今天代拍的」点回
+/// 一个已建档的病人(同意已签过,直接进还没核对列表继续核对/交付)。
 ///
 /// 打开代拍病人的箱子会**顶掉进程级 vault**(医生自己的档案)。这件事不靠调用顺序的
 /// 约定来保证正确:所有开箱走 `vault_boot` 的 FIFO 队列(先发出先生效),并且每次落库
 /// /交付前都过 `ensureProxyVaultOpen` 硬校验(开着的不是这个病人的箱子就重开,重开还
 /// 不对就中止写入)。[dispose] 里换回医生自己的档案因此可以安全地不 await。
 ///
-/// **采集走与患者模式完全相同的那条链路**:`pickImportItems` + `recognizeImageText`
+/// **添加走与患者模式完全相同的那条链路**:`pickImportItems` + `recognizeImageText`
 /// (`ocr_bridge.dart`,iOS/安卓各自原生 OCR)+ `vault.ingestImageWithText` —— 本文件
 /// 不重写任何 OCR/入库逻辑,唯一差别是此刻进程里打开的是这个病人的箱子(见
 /// `openProxyPatientVault`)。
@@ -88,8 +90,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   Map<int, String> _mismatch = const {};
   List<TimelineGroupDto> _preview = const [];
   ProxySummaryDto? _summary;
-  // 文档 id → 是否已确认(待确认列表用它渲染「待确认/已确认」标签)。真相在
-  // `ProxyPatientManager`(落盘),这里只是这一屏的快照;查不到的 id 按「待确认」处理。
+  // 文档 id → 是否已确认(还没核对列表用它渲染「还没核对/已确认」标签)。真相在
+  // `ProxyPatientManager`(落盘),这里只是这一屏的快照;查不到的 id 按「还没核对」处理。
   Map<int, bool> _confirmedMap = const {};
   int _capturedCount = 0;
   bool _busy = false;
@@ -120,7 +122,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     super.dispose();
   }
 
-  /// 从主页点回一个已建档的病人:开它的箱子,直接进待确认列表(同意早签过了)。
+  /// 从主页点回一个已建档的病人:开它的箱子,直接进还没核对列表(同意早签过了)。
   Future<void> _resume(String id) async {
     setState(() {
       _busy = true;
@@ -148,7 +150,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _busy = false;
         _progress = null;
       });
-      await _showError('打开病人档案失败', '$e');
+      await _showError('打开病人的病历箱失败', '$e');
     }
   }
 
@@ -178,7 +180,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       _consent = consent;
       await ProxyPatientManager.instance.setConsent(id, consent);
       if (!mounted) {
-        // 组件已在这段 await 期间被卸载:这个病人一份都没采集,不该留在今日病历表里。
+        // 组件已在这段 await 期间被卸载:这个病人一份都没添加,不该留在今天代拍的列表里。
         await ProxyPatientManager.instance.remove(id);
         return;
       }
@@ -193,12 +195,12 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _busy = false;
         _progress = null;
       });
-      await _showError('新建病人档案失败', '$e');
+      await _showError('新建病人的病历箱失败', '$e');
     }
   }
 
-  /// 退出这一屏。**不删数据**——已采集的病人留在今日病历表里(12 小时内可回来续拍
-  /// /交付),这正是「不再用完即焚」的意思。一份都没采集的空病人不留(不然主页会
+  /// 退出这一屏。**不删数据**——已添加过的病人留在今天代拍的列表里(12 小时内可回来
+  /// 续拍/交付),这正是「不再用完即焚」的意思。一份都没添加的空病人不留(不然主页会
   /// 攒一堆空条目)。进程级 vault 由主页在本路由返回后换回(见类注释)。
   Future<void> _cancelAndExit() async {
     final id = _patientId;
@@ -209,8 +211,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  /// AppBar 返回箭头点了先确认再退出。已经采集过东西的:退出**不会**丢数据(病人
-  /// 留在今日病历表),所以不必吓唬人;一份都没拍的:退出就是放弃这个病人。
+  /// AppBar 返回箭头点了先确认再退出。已经添加过东西的:退出**不会**丢数据(病人
+  /// 留在今天代拍的列表里),所以不必吓唬人;一份都没拍的:退出就是放弃这个病人。
   Future<void> _confirmExit() async {
     if (_capturedCount == 0) {
       await _cancelAndExit();
@@ -220,7 +222,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('先退出?'),
-        content: const Text('已经拍好的会留在「今日病历表」里,12 小时内可以随时回来继续。'),
+        content: const Text('已经拍好的会留在「今天代拍的」里,12 小时内可以随时回来继续。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -255,7 +257,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  '拍摄病历材料',
+                  '添加',
                   style: MedType.subtitle.copyWith(color: c.ink),
                 ),
               ),
@@ -339,15 +341,15 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     } catch (e) {
       // 兜底:[pickImportItems] 内部每个分支都已自己 catch,这里理论上不可达。
       // 但诊室里「点了没反应」比在家更贵 —— 医生当着病人的面无从判断,只能重来。
-      debugPrint('[proxy] 采集环节未捕获异常: $e');
-      if (mounted) await _showError('采集没能开始', '$e');
+      debugPrint('[proxy] 添加环节未捕获异常: $e');
+      if (mounted) await _showError('添加没能开始', '$e');
       return;
     }
     if (items.isEmpty || !mounted) return;
     await _ingest(items);
   }
 
-  /// 采集落库——走**与患者模式同一条**链路(`vault.ingestImageWithText` /
+  /// 添加落库——走**与患者模式同一条**链路(`vault.ingestImageWithText` /
   /// `vault.ingestBytes`),此刻进程里打开的是这个病人的箱子,所以东西落进他自己的
   /// vault。OCR 仍是未改动的 [recognizeImageText](`ocr_bridge.dart`,iOS/安卓各自
   /// 原生引擎)。
@@ -360,7 +362,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
   /// 患者模式同一来源,见 `import_helpers.dart` 的 [ImportIncompleteNotice])。
   ///
   /// 顺手拿 Rust 回传的 `detectedName`:第一份识别到姓名就给这个病人命名(主页
-  /// 「今日病历表」按名字列);之后再识别到**别的**名字就记进 [_mismatch],在待确认
+  /// 「今天代拍的」按名字列);之后再识别到**别的**名字就记进 [_mismatch],在还没核对
   /// 列表顶上提醒「可能拍到了别人的单子」。
   Future<void> _ingest(List<PendingImport> items) async {
     final patientId = _patientId;
@@ -369,14 +371,25 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       // 动手前确认此刻开着的确实是这个病人的箱子(见 `ensureProxyVaultOpen`)。
       await ensureProxyVaultOpen(patientId);
     } catch (e) {
-      if (mounted) await _showError('采集已中止', '$e');
+      if (mounted) await _showError('添加已中止', '$e');
+      return;
+    }
+    // 补页那一步是**写事件**,要认「此刻开的是哪个箱子」(见
+    // `backfillPagesWithoutText` 的 ⚠️)。代拍开的是病人的箱子、压根不碰
+    // `ProfileManager`,所以真正分得清的是这个根目录;成员一并捕获,两道闸缺一不可。
+    final capturedProfile = ProfileManager.instance.current;
+    final String capturedRoot;
+    try {
+      capturedRoot = await vault.currentVaultRoot();
+    } catch (e) {
+      if (mounted) await _showError('添加已中止', '读不到当前病历箱:$e');
       return;
     }
     setState(() {
       _busy = true;
       _progress = '正在处理 1/${items.length}…';
     });
-    // 埋点:代拍的采集**也走 doc_import_***。早先只有患者模式的导入有埋点,于是
+    // 埋点:代拍的添加**也走 doc_import_***。早先只有患者模式的导入有埋点,于是
     // 「拍纸质件的 OCR 要多久」——最需要这个数的那条路——反而完全测不到。
     // `source: proxy` 把两条路分开,好知道拍纸和导入截图的耗时差多少。
     final startedAt = DateTime.now();
@@ -390,8 +403,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     ImportFailReason? failReason;
 
     var failed = 0;
-    // 每份的展示态(与患者模式同一个 `rowForOutcome`)。代拍不弹汇总弹窗——诊室里
-    // 多一次「知道了」是多一次点击——但「哪几份没收全」必须留下来,采集完汇总成一条
+    // 每份的展示态(与患者模式同一个 `rowForOutcome`)。代拍不在屏上留结果行——
+    // 诊室里多一次点击都是多的——但「哪几份没收全」必须留下来,添加完汇总成一条
     // 提示条说出去。
     final rows = <ImportResultRow>[];
     for (var i = 0; i < items.length; i++) {
@@ -424,6 +437,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         final stillMissingPages = await backfillPagesWithoutText(
           outcome,
           item.path,
+          profile: capturedProfile,
+          vaultRoot: capturedRoot,
           onStage: (s) => stage = s,
         );
         rows.add(rowForOutcome(outcome, stillMissingPages: stillMissingPages));
@@ -432,7 +447,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         okElapsedMs += DateTime.now().difference(itemStartedAt).inMilliseconds;
         okCount++;
       } catch (e) {
-        debugPrint('[doctor-proxy] ${item.name} 采集失败: $e');
+        debugPrint('[doctor-proxy] ${item.name} 添加失败: $e');
         failed++;
         // 只记步骤和原因码,**绝不记 `e`** —— 异常文本里常带文件名和路径。
         failStage ??= stage;
@@ -468,14 +483,14 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       _progress = null;
     });
     // 「没能处理」和「落库了但没收全」是两件事,一条提示条里分行说完 ——
-    // 分两条 snackbar 的话第二条要排队等 4 秒,而这一屏紧接着就切到待确认列表了。
+    // 分两条 snackbar 的话第二条要排队等 4 秒,而这一屏紧接着就切到还没核对列表了。
     final notice = proxyIntakeNotice(rows: rows, failed: failed);
     if (notice != null) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(appSnackBar(content: Text(notice)));
     }
-    // 采集完直接进审阅屏(病情摘要 + 逐份识别内容摊开),不再停在采集屏问「继续 / 去
+    // 添加完直接进审阅屏(病情摘要 + 逐份识别内容摊开),不再停在添加屏问「继续 / 去
     // 预览」——「继续拍摄」是审阅屏上的一个按钮。让「拍完 → 看到审阅」一步到位。
     if (mounted && _capturedCount > 0) {
       await _goToPreview();
@@ -500,8 +515,8 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     }
   }
 
-  /// 加载/刷新待确认列表:就诊时间线(铺平成文档清单)+ 病情摘要卡(只统计已确认
-  /// 文档)+ 每份文档的确认状态。采集完成后、以及每次从详情页返回(确认/删除/重拍)
+  /// 加载/刷新还没核对列表:就诊时间线(铺平成文档清单)+ 病情摘要卡(只统计已确认
+  /// 文档)+ 每份文档的确认状态。添加完成后、以及每次从详情页返回(确认/删除/重拍)
   /// 后都调这个来刷新——单一数据源,不另维护一套局部更新逻辑。`_capturedCount`
   /// 顺带用这次拿到的真实文档数覆盖,不再靠调用方手动加减去维持同步。
   ///
@@ -516,7 +531,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
       final p = ProxyPatientManager.instance.byId(_patientId ?? '');
       final confirmed = p?.confirmedIds ?? const <int>{};
       final groups = await vault.loadArchive();
-      final docs = _PendingListStep.flatten(groups);
+      final docs = PendingListStep.flatten(groups);
       final summary = await vault.proxySummary(
         confirmedIds: Int64List.fromList(confirmed.toList()),
       );
@@ -536,7 +551,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _progress = null;
         _phase = _ProxyPhase.preview;
       });
-      // 回填份数,主页「今日病历表」列表直接读它,不必为了数数把每个箱子都开一遍。
+      // 回填份数,主页「今天代拍的」列表直接读它,不必为了数数把每个箱子都开一遍。
       if (_patientId case final id?) {
         await ProxyPatientManager.instance.setDocCount(id, docs.length);
       }
@@ -550,10 +565,10 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     }
   }
 
-  /// 点进一份的详情页:核对原件 + 识别内容,「确认这一份」/ 删除 / 重拍都在那一屏
+  /// 点进一份的详情页:核对原件 + 识别内容,「没问题」/ 删除 / 重拍都在那一屏
   /// 完成(见 `proxy_document_detail.dart`)。回来后按详情页汇报的结果决定下一步:
-  /// 有变化(确认或删除)就刷新列表;是「重拍」则刷新后紧接着重新弹采集入口——
-  /// 复用现有的 [_pickCaptureSource]/[_ingest] 链路,不在详情页重复一遍采集逻辑。
+  /// 有变化(确认或删除)就刷新列表;是「重拍」则刷新后紧接着重新弹取件入口——
+  /// 复用现有的 [_pickCaptureSource]/[_ingest] 链路,不在详情页重复一遍取件逻辑。
   Future<void> _openDocument(DocumentSummaryDto doc) async {
     final patientId = _patientId;
     if (patientId == null) return;
@@ -580,7 +595,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
     if (consent == null) return;
     setState(() {
       _busy = true;
-      _progress = '正在生成认领链接…';
+      _progress = '正在生成取件码…';
       _phase = _ProxyPhase.delivering;
     });
     try {
@@ -648,7 +663,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         shareOrigin: _shareOrigin,
       );
       if (!mounted) return;
-      // **交付后不删**:病人留在今日病历表里,12 小时内医生可以回来补拍/重发,到点
+      // **交付后不删**:病人留在今天代拍的列表里,12 小时内医生可以回来补拍/重发,到点
       // 由 `ProxyPatientManager` 自动清(与同意告知里的口径一致)。
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
@@ -658,13 +673,13 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
         _progress = null;
         _phase = _ProxyPhase.preview;
       });
-      await _showError('生成分享失败', '$e');
+      await _showError('交付失败', '$e');
     }
   }
 
   /// 把这次代拍打成密文传上瞬时云,返回 `(认领链接, 记录数)`;传不上去返回 null。
   ///
-  /// **密钥不上传** —— 它只进链接 `#` 之后那一段,云上那份我们自己也解不开。
+  /// **钥匙不上传** —— 它只进链接 `#` 之后那一段,云上那份我们自己也解不开。
   /// 用的是与病人出码同一条上传通道([ResumableUpload],断了能续),同一种密文格式,
   /// 查看器那边也只有一套解密逻辑。
   Future<(String, int)?> _deliverAsLink(
@@ -766,7 +781,7 @@ class _ProxyIntakeFlowState extends State<ProxyIntakeFlow> {
           onDone: _capturedCount > 0 ? _goToPreview : null,
         );
       case _ProxyPhase.preview:
-        return _PendingListStep(
+        return PendingListStep(
           groups: _preview,
           summary: _summary,
           confirmedMap: _confirmedMap,
@@ -799,7 +814,7 @@ class _ProxyBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 白字压在 `proxy` 紫上,对比度 6.9:1 —— 医生模式里最常出现的一块颜色,
+    // 白字压在 `proxy` 紫上,对比度 6.9:1 —— 代拍里最常出现的一块颜色,
     // 诊室灯光下也要读得清(个人模式的 seal 蓝在同样搭配下只有 3.9:1)。
     return Container(
       width: double.infinity,
@@ -814,7 +829,7 @@ class _ProxyBanner extends StatelessWidget {
           const SizedBox(width: MedShape.s1),
           Expanded(
             child: Text(
-              '为病人代建档 · 本机最多留 12 小时 · 不进你自己的档案',
+              '代拍 · 本机最多留 12 小时 · 不进你自己的病历箱',
               style: MedType.secondary.copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.w600,
@@ -897,7 +912,7 @@ class _CaptureStep extends StatelessWidget {
         if (busy)
           Positioned.fill(
             child: ColoredBox(
-              color: Colors.black26,
+              color: c.scrimLight,
               child: Center(
                 child: MedCard(
                   child: Padding(
@@ -931,12 +946,13 @@ class _CaptureStep extends StatelessWidget {
   }
 }
 
-/// 待确认列表:采集完进这一屏。渲染风格复用 `archive_screen.dart` 的时间线
+/// 还没核对列表:添加完进这一屏。渲染风格复用 `archive_screen.dart` 的时间线
 /// 列表(图标+类型色块、标题、日期、副标题),每份一行,不再像上一版那样把识别
 /// 内容摊开在列表里——点进一份才看原件 + 识别内容(见 `proxy_document_detail.dart`),
 /// 列表本身只负责「核对拍了什么、哪些还没点开确认」。
-class _PendingListStep extends StatelessWidget {
-  const _PendingListStep({
+class PendingListStep extends StatelessWidget {
+  const PendingListStep({
+    super.key,
     required this.groups,
     required this.summary,
     required this.confirmedMap,
@@ -964,7 +980,7 @@ class _PendingListStep extends StatelessWidget {
   final VoidCallback onDeliver;
   final ValueChanged<DocumentSummaryDto> onOpenDocument;
 
-  /// 铺平就诊组/独立文档为一份纯清单——待确认列表只需要「拍了什么」,不需要档案屏
+  /// 铺平就诊组/独立文档为一份纯清单——还没核对列表只需要「拍了什么」,不需要档案屏
   /// 那套就诊分组展示。与 `archive_screen.dart` 的展开模式同一匹配写法。
   static List<DocumentSummaryDto> flatten(List<TimelineGroupDto> groups) {
     final out = <DocumentSummaryDto>[];
@@ -1039,7 +1055,7 @@ class _PendingListStep extends StatelessWidget {
                             MedShape.s1,
                           ),
                           child: Text(
-                            '逐份核对',
+                            '核对',
                             style: MedType.caption.copyWith(color: c.ink3),
                           ),
                         ),
@@ -1078,7 +1094,7 @@ class _PendingListStep extends StatelessWidget {
                         side: BorderSide(color: c.line),
                         minimumSize: const Size.fromHeight(48),
                       ),
-                      child: const Text('继续采集'),
+                      child: const Text('添加'),
                     ),
                   ),
                   const SizedBox(width: MedShape.s2),
@@ -1091,7 +1107,7 @@ class _PendingListStep extends StatelessWidget {
                         minimumSize: const Size.fromHeight(48),
                       ),
                       onPressed: busy || docs.isEmpty ? null : onDeliver,
-                      child: const Text('生成认领码,交给病人'),
+                      child: const Text('生成取件码,交给病人'),
                     ),
                   ),
                 ],
@@ -1102,7 +1118,7 @@ class _PendingListStep extends StatelessWidget {
         if (busy)
           Positioned.fill(
             child: ColoredBox(
-              color: Colors.black26,
+              color: c.scrimLight,
               child: Center(
                 child: MedCard(
                   child: Padding(
@@ -1136,15 +1152,15 @@ class _PendingListStep extends StatelessWidget {
   }
 }
 
-/// 待确认列表一行:类型图标 + 标题/日期/类型 + 「待确认/已确认」状态标签。样式
+/// 还没核对列表一行:类型图标 + 标题/日期/类型 + 「还没核对/已确认」状态标签。样式
 /// 参照 `archive_screen.dart` 的时间线行(图标底色块 + 标题/副标题两行)。
 ///
 /// **带骑缝线**:每一行背后就是刚拍下的那一张纸,点进去就是原件(规范 §五)。
 ///
-/// **状态两级的配色跟着个人模式走,不另发明一套**:待确认 = 琥珀(`high`),
+/// **状态两级的配色跟着个人模式走,不另发明一套**:还没核对 = 琥珀(`high`),
 /// 与 `archive_screen.dart` 的 `_PendingCard` 同一处理 —— 「刚拍完还没核对」是常态
 /// 不是事故,红色天天出现就会被学会忽略;真正该报红的是下面那条姓名不符。
-/// 已确认 = 医生模式主色的淡底版(`proxyWash`/`proxyInk`),与详情屏底栏那块
+/// 已确认 = 代拍主色的淡底版(`proxyWash`/`proxyInk`),与详情屏底栏那块
 /// 「已确认」同色同分量,点进去点回来不会觉得换了个东西。
 class _PendingRow extends StatelessWidget {
   const _PendingRow({
@@ -1164,60 +1180,54 @@ class _PendingRow extends StatelessWidget {
     final date = _fmtDate(doc.docDate);
     return MedCard(
       perforated: true,
-      // 还没核对的整卡描琥珀边(加粗到 1.5),核对过的回到普通 line 边。
-      borderColor: confirmed ? c.line : c.high,
-      borderWidth: confirmed ? 1 : 1.5,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(MedShape.s2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: c.proxyWash,
-                    borderRadius: BorderRadius.circular(MedShape.radiusControl),
-                  ),
-                  child: Icon(
-                    Icons.description_outlined,
-                    size: 19,
-                    color: c.proxy,
-                  ),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(MedShape.s2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: c.proxyWash,
+                  borderRadius: BorderRadius.circular(MedShape.radiusControl),
                 ),
-                const SizedBox(width: MedShape.s2),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        doc.title ?? label,
-                        style: MedType.subtitle.copyWith(color: c.ink),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        date.isEmpty ? label : '$label · $date',
-                        style: MedType.secondary.copyWith(
-                          color: c.ink2,
-                          fontFeatures: MedType.tabular,
-                        ),
-                      ),
-                    ],
-                  ),
+                child: Icon(
+                  Icons.description_outlined,
+                  size: 19,
+                  color: c.proxy,
                 ),
-                const SizedBox(width: MedShape.s1),
-                _StatusBadge(confirmed: confirmed),
-                const SizedBox(width: 4),
-                Icon(Icons.chevron_right, size: 20, color: c.ink3),
-              ],
-            ),
+              ),
+              const SizedBox(width: MedShape.s2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      docDisplayTitle(doc),
+                      style: MedType.subtitle.copyWith(color: c.ink),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      date.isEmpty ? label : '$label · $date',
+                      style: MedType.secondary.copyWith(
+                        color: c.ink2,
+                        fontFeatures: MedType.tabular,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: MedShape.s1),
+              _StatusBadge(confirmed: confirmed),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 20, color: c.ink3),
+            ],
           ),
         ),
       ),
@@ -1231,7 +1241,7 @@ class _PendingRow extends StatelessWidget {
 /// 的,这条就是防它。只提醒、不自动移动任何东西:该删哪份由医生点进详情自己判断。
 ///
 /// **配色从「主色 10% 淡底」改成 `critical` 红 + 左侧三像素竖条**,与个人模式逐处
-/// 对齐。原先它用的是医生模式主色 —— 而主色在这一屏满屏都是(横幅、图标底、主
+/// 对齐。原先它用的是代拍主色 —— 而主色在这一屏满屏都是(横幅、图标底、主
 /// 按钮),用它报警等于没报警。这是全 app 最高一级的提醒:**可能拍到了别人的病历**,
 /// 它必须和「代拍中」这个常态信号长得完全不一样。
 class _MismatchBanner extends StatelessWidget {
@@ -1291,7 +1301,7 @@ class _StatusBadge extends StatelessWidget {
     // 圆角从 6 提到 pill 那一档,与个人模式的状态标签同一个外壳。
     return confirmed
         ? MedPill(text: '已确认', foreground: c.proxyInk, background: c.proxyWash)
-        : MedPill(text: '待确认', foreground: c.high, background: c.highWash);
+        : MedPill(text: '还没核对', foreground: c.high, background: c.highWash);
   }
 }
 

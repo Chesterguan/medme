@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["packages/core-model", "packages/parser", "packages/terminology", "packages/pipeline", "packages/ocr", "packages/dicom", "packages/share", "apps/cli", "apps/desktop/src-tauri"]
+members = ["packages/core-model", "packages/parser", "packages/profile", "packages/deid", "packages/terminology", "packages/pipeline", "packages/ocr", "packages/dicom", "packages/share", "packages/sync", "apps/cli", "apps/desktop/src-tauri"]
 # Flutter 移动端(P1+)的 FRB rust crate 自成一体、由 cargokit 为 iOS/安卓单独构建,
 # 不进桌面 workspace(否则 host `cargo build --workspace` 会去编它)。它经 path 依赖
 # 复用 packages/* 数据核。
@@ -28,3 +28,12 @@ lopdf = "0.45"
 # mobile release build (debug builds were 400MB+ unstripped). Defaults for
 # everything else (opt-level 3, no LTO) are sane; not over-tuning further.
 strip = true
+
+# Debug 档也把依赖按优化编译(ONNX Runtime、Argon2、image 等算力活在 opt-level 0 下慢 10 倍+,
+# 模拟器/调试包上 OCR 和解锁根本没法测)。只对依赖和 ocr 生效,自己的代码仍是快编译 + 调试断言。
+# 依赖只编一次就缓存,不影响日常增量构建。WORKLIST A26。
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.ocr]
+opt-level = 3

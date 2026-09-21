@@ -5,32 +5,18 @@ import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
-import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-
-// doc_type → 中文标签,与 archive_screen.dart 保持同一份映射(桌面/旧移动端
-// 同构,来自 core-model types.rs)。
-const Map<String, String> _docLabel = {
-  'lab_report': '化验',
-  'imaging_report': '影像',
-  'discharge_summary': '出院小结',
-  'prescription': '处方',
-  'clinical_note': '病历',
-  'pathology': '病理',
-  'surgery': '手术',
-  // 手动录入(「记录」入口产出,没有原件——见 MANUAL-ENTRY-DESIGN.md)。
-  'self_measurement': '自测记录',
-  'note': '笔记',
-  'other': '其他',
-  'unknown': '待归类',
-};
 
 /// 手动录入的两个 doc_type(与 `doc.dart`/`core_model::DocType` 的取值一致)——
 /// 这两类文档没有原件(合成文本本身当"文件"存进 CAS),详情页要换一套展示。
@@ -81,7 +67,7 @@ Future<Uint8List> _renderDicomMaterialized(int sourceFileId) async {
   return renderDicomPng(id: sourceFileId);
 }
 
-/// 文档详情屏:类型/日期/来源 + 识别文本(复用 ReportContent 内容感知渲染)+
+/// 「一份病历」屏(mockup s8):类型/日期/来源 + 识别出来的文字(复用 ReportContent 内容感知渲染)+
 /// 查看原件(图片/PDF/DICOM 各自渲染,其余格式优雅降级不崩)。
 class DocumentDetailScreen extends StatefulWidget {
   final int docId;
@@ -100,7 +86,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除这份记录?'),
-        content: const Text('将从健康档案移除,此操作不可撤销。'),
+        content: const Text('将从病历箱移除,此操作不可撤销。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -130,11 +116,27 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
     }
   }
 
-  /// 确认这份待确认文档无误:移出待确认(去掉红框)→ 通知档案刷新 → 退回。
+  /// 确认这份还没核对文档无误:移出还没核对(去掉红框)→ 通知档案刷新 → 退回。
   Future<void> _confirm() async {
     await ReviewState.instance.markReviewed(widget.docId);
     bumpVaultRevision();
     if (mounted) Navigator.of(context).pop();
+  }
+
+  /// 底部「看原件」(`s7` 那一对按钮之一):复用 [_openOriginal] 那套按 mime
+  /// 分流的查看器。原件信息在 [_future] 里,本屏已经在拉,不必再读一次。
+  Future<void> _viewOriginal() async {
+    try {
+      final detail = await _future;
+      if (!mounted) return;
+      await _openOriginal(context, detail.sourceFile);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(appSnackBar(content: Text('打开失败:$e')));
+      }
+    }
   }
 
   @override
@@ -143,7 +145,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
     final pending = ReviewState.instance.isPending(widget.docId);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('文档详情'),
+        title: const Text('一份病历'),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
@@ -156,34 +158,14 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
           ),
         ],
       ),
-      // 待确认文档:底部「确认无误」栏,核对后一键归档(去掉琥珀框、进标准时间线)。
-      // 这是本屏**唯一**的主按钮:seal 纯色不用渐变(规范 §六:一屏只允许一个)。
+      // 还没核对文档:底部一对按钮,逐字按 `s7`——「看原件」(次)+「没问题」(主),
+      // 核对后一键归入正常时间线(去掉琥珀框)。「没问题」是本屏**唯一**的
+      // 主按钮(渐变预算表:s7 = 1 颗 `MedPrimaryButton`)。纯 widget 提出去
+      // (`DocumentReviewActionBar`),不碰 FFI,测试测得到(R22)。
       bottomNavigationBar: pending
-          ? Container(
-              decoration: BoxDecoration(
-                color: c.surface,
-                border: Border(top: BorderSide(color: c.line)),
-              ),
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    MedShape.s3,
-                    MedShape.s2,
-                    MedShape.s3,
-                    MedShape.s2,
-                  ),
-                  child: FilledButton.icon(
-                    onPressed: _confirm,
-                    icon: const Icon(Icons.check),
-                    label: const Text('确认无误,归入档案'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: c.sealInk,
-                      foregroundColor: c.surface,
-                      minimumSize: const Size.fromHeight(48),
-                    ),
-                  ),
-                ),
-              ),
+          ? DocumentReviewActionBar(
+              onViewOriginal: _viewOriginal,
+              onConfirm: _confirm,
             )
           : null,
       body: FutureBuilder<DocumentDetailDto>(
@@ -204,35 +186,84 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
               ),
             );
           }
-          return _DetailBody(detail: snap.data!);
+          return DetailBody(detail: snap.data!);
         },
       ),
     );
   }
 }
 
-class _DetailBody extends StatelessWidget {
+/// 「还没核对」文档的底部操作条(mockup `s7` `.two`:次 + 主两颗按钮)。
+/// **纯 widget,不碰 FFI** —— 与 `ForDoctorActions`/`VisitSummaryBody` 同一手法,
+/// 从 `_DocumentDetailScreenState.build()` 里提出来,测试测得到(R22)。
+class DocumentReviewActionBar extends StatelessWidget {
+  const DocumentReviewActionBar({
+    super.key,
+    required this.onViewOriginal,
+    required this.onConfirm,
+  });
+
+  final VoidCallback onViewOriginal;
+  final VoidCallback onConfirm;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surface,
+        border: Border(top: BorderSide(color: c.line)),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            MedShape.s3,
+            MedShape.s2,
+            MedShape.s3,
+            MedShape.s2,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: MedSecondaryButton(
+                  icon: Icons.visibility_outlined,
+                  label: '看原件',
+                  onPressed: onViewOriginal,
+                ),
+              ),
+              const SizedBox(width: MedShape.s2),
+              // 「没问题」是本屏**唯一**的主按钮(渐变预算表:s7 = 1)。
+              Expanded(
+                child: MedPrimaryButton(
+                  icon: Icons.check,
+                  label: '没问题',
+                  onPressed: onConfirm,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 「一份病历」屏(mockup s8)的正文。**纯 widget,不碰 FFI** —— 与
+/// `ForDoctorActions`/`VisitSummaryBody` 同一手法,原是私有的 `_DetailBody`,
+/// R22 改公开,测试不必经 `DocumentDetailScreen`(它在字段初始化就碰 FFI,
+/// `flutter test` 挂不住)就能直接 pump。
+class DetailBody extends StatelessWidget {
   final DocumentDetailDto detail;
-  const _DetailBody({required this.detail});
+  const DetailBody({super.key, required this.detail});
 
   @override
   Widget build(BuildContext context) {
     final doc = detail.document;
     final sf = detail.sourceFile;
-    final typeLabel = _docLabel[doc.docType] ?? doc.docType;
+    // 与档案行同一句话(`docRowLabel`):这里原先抄了一份 `docLabel` 映射,
+    // 于是「待归类」在详情页永远只有一种说法。
+    final typeLabel = docRowLabel(doc);
     final isManualEntry = _isManualEntry(doc.docType);
-
-    // OCR 置信度:换算成患者能看懂的三档,而非裸百分比(与旧 App.tsx 一致)。
-    // 手动录入没有 OCR 这一步,`ocrConfidence` 恒为 null,这里自然算不出档位,
-    // 不需要额外判断。
-    final conf = detail.ocrConfidence;
-    final confTier = conf == null
-        ? null
-        : conf >= 0.9
-        ? _ConfTier.high
-        : conf >= 0.75
-        ? _ConfTier.mid
-        : _ConfTier.low;
 
     final c = MedColors.of(context);
 
@@ -246,7 +277,7 @@ class _DetailBody extends StatelessWidget {
       children: [
         // 抬头卡带骑缝线:这一整屏讲的就是**某一份原件**,而且「查看原件」就在
         // 卡里 —— 「背后有原件、点得进去」两条都成立(规范 §五)。全屏只有这
-        // 一道骑缝线,下面的识别文本是从它派生出来的,不重复。
+        // 一道骑缝线,下面识别出来的文字是从它派生出来的,不重复。
         MedCard(
           perforated: true,
           child: Padding(
@@ -262,17 +293,11 @@ class _DetailBody extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: c.sealWash,
-                        borderRadius: BorderRadius.circular(
-                          MedShape.radiusBlock,
-                        ),
-                      ),
-                      child: Icon(Icons.description_outlined, color: c.seal),
+                    // 光泽图标块(R22):类别按文档类型走 `categoryForDocType`
+                    // (Task 8 已有、doc_labels.dart 公开),图标沿用原来这颗。
+                    GlossIconTile(
+                      icon: Icons.description_outlined,
+                      category: categoryForDocType(doc.docType),
                     ),
                     const SizedBox(width: MedShape.s2),
                     Expanded(
@@ -280,7 +305,7 @@ class _DetailBody extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            doc.title ?? typeLabel,
+                            docDisplayTitle(doc),
                             style: MedType.title.copyWith(color: c.ink),
                           ),
                           const SizedBox(height: 2),
@@ -297,17 +322,13 @@ class _DetailBody extends StatelessWidget {
                           Text(
                             '来源:${sf.originalName}',
                             style: MedType.secondary.copyWith(color: c.ink3),
+                            softWrap: false,
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-
-                if (confTier != null) ...[
-                  const SizedBox(height: MedShape.s3),
-                  _ConfBadge(tier: confTier),
-                ],
 
                 const SizedBox(height: MedShape.s3),
                 if (isManualEntry) ...[
@@ -319,33 +340,27 @@ class _DetailBody extends StatelessWidget {
                     style: MedType.secondary.copyWith(color: c.ink3),
                   ),
                   const SizedBox(height: MedShape.s2),
-                  // 次级按钮(规范 §六 btn-2):seal-wash 底 + seal-ink 字,与
-                  // 其它文档类型「查看原件」同一视觉分量——编辑对这类文档而言
-                  // 就是它的「原件永远可达」等价物:能回去改。
-                  OutlinedButton.icon(
-                    onPressed: () => _editManualEntry(context),
-                    icon: const Icon(Icons.edit_outlined, size: 18),
-                    label: const Text('编辑'),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: c.sealWash,
-                      foregroundColor: c.sealInk,
-                      side: BorderSide(color: c.line),
-                      minimumSize: const Size.fromHeight(44),
+                  // 次级按钮(R22:`MedSecondaryButton`),与其它文档类型「查看
+                  // 原件」同一视觉分量——编辑对这类文档而言就是它的「原件永远
+                  // 可达」等价物:能回去改。
+                  SizedBox(
+                    width: double.infinity,
+                    child: MedSecondaryButton(
+                      icon: Icons.edit_outlined,
+                      label: '编辑',
+                      onPressed: () => _editManualEntry(context),
                     ),
                   ),
                 ] else
-                  // 次级按钮(规范 §六 btn-2):seal-wash 底 + seal-ink 字。
-                  // 「原件永远可达」是 007 §2.1 的铁律,所以它不能是最弱的那一级;
-                  // 但本屏的主按钮位置留给底部的「确认无误」,它就不该是纯色主按钮。
-                  OutlinedButton.icon(
-                    onPressed: () => _openOriginal(context, sf),
-                    icon: const Icon(Icons.visibility_outlined, size: 18),
-                    label: const Text('查看原件'),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: c.sealWash,
-                      foregroundColor: c.sealInk,
-                      side: BorderSide(color: c.line),
-                      minimumSize: const Size.fromHeight(44),
+                  // 次级按钮(R22:`MedSecondaryButton`)。「原件永远可达」是
+                  // 007 §2.1 的铁律,所以它不能是最弱的那一级;但本屏的主按钮
+                  // 位置留给底部的「没问题」,它就不该是渐变主按钮。
+                  SizedBox(
+                    width: double.infinity,
+                    child: MedSecondaryButton(
+                      icon: Icons.visibility_outlined,
+                      label: '查看原件',
+                      onPressed: () => _openOriginal(context, sf),
                     ),
                   ),
               ],
@@ -358,10 +373,7 @@ class _DetailBody extends StatelessWidget {
           children: [
             Icon(Icons.article_outlined, size: 15, color: c.ink3),
             const SizedBox(width: MedShape.s1),
-            Text(
-              sf.mimeType.startsWith('image/') ? '识别文本' : '文档内容',
-              style: MedType.caption.copyWith(color: c.ink3),
-            ),
+            Text('文字', style: MedType.caption.copyWith(color: c.ink3)),
           ],
         ),
         const SizedBox(height: MedShape.s2),
@@ -403,106 +415,47 @@ class _DetailBody extends StatelessWidget {
       Navigator.of(context).pop();
     }
   }
-
-  Future<void> _openOriginal(BuildContext context, SourceFileMetaDto sf) async {
-    final mime = sf.mimeType;
-    if (mime.startsWith('image/')) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => _ImageViewerScreen(sourceFileId: sf.id),
-        ),
-      );
-      return;
-    }
-    if (mime == 'application/pdf') {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => _PdfViewerScreen(sourceFileId: sf.id),
-        ),
-      );
-      return;
-    }
-    if (mime == 'application/dicom') {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => _DicomViewerScreen(sourceFileId: sf.id),
-        ),
-      );
-      return;
-    }
-    // 其余格式手机端无法内联预览——如实告知,原件仍安全保存,不静默空白。
-    if (!context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('暂不能预览'),
-        content: Text('此格式($mime)暂不能在手机上预览,原件已安全保存在健康档案里。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('知道了'),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
-enum _ConfTier { high, mid, low }
-
-/// 识别质量徽标:高/中/低三档,比裸百分比更易懂(与旧 App.tsx .conf 一致)。
-///
-/// 「高」原先是 emerald 绿(#ECFDF5/#047857)。绿不在规范色板里,而且规范 §二
-/// 明确不要「绿=没问题」这层暗示 —— 识别质量高**不代表**化验结果正常,两件事
-/// 用同一种「放心色」讲容易混。改成主色的极浅底:是一条中性的状态说明,不是
-/// 一句安慰。中/低两档接规范的 `high` / `critical`。
-class _ConfBadge extends StatelessWidget {
-  final _ConfTier tier;
-  const _ConfBadge({required this.tier});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    final (bg, fg, icon, text) = switch (tier) {
-      _ConfTier.high => (
-        c.sealWash,
-        c.sealInk,
-        Icons.check_circle_outline,
-        '识别质量:高',
-      ),
-      _ConfTier.mid => (
-        c.highWash,
-        c.high,
-        Icons.error_outline,
-        '识别质量:中 · 个别字可能有误,可核对原件',
-      ),
-      _ConfTier.low => (
-        c.criticalWash,
-        c.critical,
-        Icons.error_outline,
-        '识别质量:低 · 建议重新拍摄',
-      ),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: MedShape.s2,
-        vertical: MedShape.s1,
-      ),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(MedShape.radiusBlock),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 17, color: fg),
-          const SizedBox(width: MedShape.s1),
-          Expanded(
-            child: Text(text, style: MedType.secondary.copyWith(color: fg)),
-          ),
-        ],
-      ),
-    );
+/// 查看原件(图片/PDF/DICOM 各自渲染,其余格式优雅降级不崩)。抬头卡里的
+/// 「查看原件」与还没核对底栏的「看原件」共用这一份——按 mime 分流去哪个
+/// 查看器只有一处判断(见 Task 6:后者要在按钮敲下去那一刻才知道 [sf],
+/// 等的是本屏已经在拉的 `_future`,不是重开一次)。
+Future<void> _openOriginal(BuildContext context, SourceFileMetaDto sf) async {
+  final mime = sf.mimeType;
+  if (mime.startsWith('image/')) {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => _ImageViewerScreen(sourceFileId: sf.id)));
+    return;
   }
+  if (mime == 'application/pdf') {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => _PdfViewerScreen(sourceFileId: sf.id)));
+    return;
+  }
+  if (mime == 'application/dicom') {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => _DicomViewerScreen(sourceFileId: sf.id)));
+    return;
+  }
+  // 其余格式手机端无法内联预览——如实告知,原件仍安全保存,不静默空白。
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('暂不能预览'),
+      content: Text('此格式($mime)暂不能在手机上预览,原件已安全保存在病历箱里。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('知道了'),
+        ),
+      ],
+    ),
+  );
 }
 
 /// 图片原件全屏查看(可缩放),字节来自 `readSourceBytes`。
@@ -526,7 +479,7 @@ class _ImageViewerScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           if (snap.hasError || !snap.hasData) {
-            return const _ViewerFallback(message: '原件加载失败,已安全保存在档案里,可稍后重试。');
+            return const _ViewerFallback(message: '原件加载失败,已安全保存在病历箱里,可稍后重试。');
           }
           return PhotoView(
             imageProvider: MemoryImage(snap.data!),
@@ -581,7 +534,7 @@ class _PdfViewerScreenState extends State<_PdfViewerScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('原件')),
       body: _error != null
-          ? const _ViewerFallback(message: '此文件暂不能预览,原件已安全保存在档案里。')
+          ? const _ViewerFallback(message: '此文件暂不能预览,原件已安全保存在病历箱里。')
           : _controller == null
           ? const Center(child: CircularProgressIndicator())
           : PdfView(controller: _controller!, onDocumentError: (_) {}),
@@ -633,9 +586,9 @@ class _ViewerFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 深色查看器(图片/DICOM 是黑底)上用 white70;浅底上用 ink-2 ——
-    // 原先浅底用的是最浅的 faint,一段要认真读的告知文案不该是最低对比度。
-    final color = light ? MedColors.of(context).ink2 : Colors.white70;
+    // 深色查看器(图片/DICOM 是黑底)上用 onDarkFaint(即 white70);浅底上用
+    // ink-2 —— 原先浅底用的是最浅的 faint,一段要认真读的告知文案不该是最低对比度。
+    final color = light ? MedColors.of(context).ink2 : MedColors.of(context).onDarkFaint;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(MedShape.s6),

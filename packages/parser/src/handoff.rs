@@ -345,12 +345,27 @@ fn change_significance(s: &AnalyteSeries) -> (bool, f64) {
 
 /// `[["YYYY-MM", value], …]` for the dated points, chronological. Undated points
 /// are skipped (the viewer's x-axis is monthly and can't place them).
+///
+/// 一条点**恒为二元数组**——除了 `p.unverified == true`(spec §4:deid 图片
+/// 模式没法逐字核实的抽取值)的那些点,它们多带一个第三格 `true`,变成
+/// `[date, value, true]`。这是刻意选的最小改法,不是把每个点都换成对象:
+/// `web/hosted-viewer/index.html` 直接拿 `pts[i][1]` 当数值(见
+/// `series_to_json` 下面那条注释),二元数组是既有契约,不能说改就改;三元数
+/// 组多出来的 `pt[2]` 对老消费方是「读不到的索引」(`undefined`/`Null`),不
+/// 会撞车,`.unverified == false` 的点(现状 100%)保持字节级不变。新消费方
+/// (Task 12/13 之后的分享/查看器)读 `pt[2] === true` 就知道这个点没核实过。
 fn points_json(s: &AnalyteSeries) -> Vec<Value> {
     s.points
         .iter()
         .filter_map(|p| {
-            p.date
-                .map(|d| json!([d.format("%Y-%m").to_string(), p.value]))
+            p.date.map(|d| {
+                let month = d.format("%Y-%m").to_string();
+                if p.unverified {
+                    json!([month, p.value, true])
+                } else {
+                    json!([month, p.value])
+                }
+            })
         })
         .collect()
 }
@@ -398,6 +413,11 @@ fn series_to_json(s: &AnalyteSeries) -> Value {
     // 认这个字段、不显示"家测"两个字,拿这份数据算出的 H/L/N 也不会算错——
     // 区间本来就是对的,`selfMeasured` 只是让将来的渲染层能加一句标注。
     m.insert("selfMeasured".into(), json!(s.self_measured));
+    // spec §4:云抽取(image 模式)没法逐字核实的值——additive,只在真有需要
+    // 复核的点时才出现,老消费方（不认这个字段）忽略不影响其余渲染。
+    if s.needs_review_count > 0 {
+        m.insert("needsReviewCount".into(), json!(s.needs_review_count));
+    }
     Value::Object(m)
 }
 
@@ -1176,6 +1196,7 @@ mod tests {
                 text: t,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
+                extraction_json: None,
             })
             .collect();
         let sm = assemble_summary(&docs);
@@ -1200,6 +1221,7 @@ mod tests {
                 text: t,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
+                extraction_json: None,
             })
             .collect();
         let sm2 = assemble_summary(&docs2);
@@ -1255,6 +1277,7 @@ mod tests {
                 text: t,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
+                extraction_json: None,
             })
             .collect();
         let sm = assemble_summary(&docs);
@@ -1287,6 +1310,7 @@ mod tests {
                 text: t,
                 doc_type: Some("lab_report".into()),
                 title: None,
+                extraction_json: None,
             })
             .collect();
         let sm = assemble_summary(&docs);
@@ -1321,6 +1345,7 @@ mod tests {
             text,
             doc_type: Some("lab_report".into()),
             title: None,
+            extraction_json: None,
         }];
         let sm = assemble_summary(&docs);
         let problems = sm["problems"].as_array().expect("problems array");
@@ -1362,6 +1387,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: Some("生化".into()),
+            extraction_json: None,
             date: d(2026, 8, 1),
             // 一份完全正常的报告:1.2 落在 0.6–1.3 内。
             text: "临床诊断:慢性肾脏病\n肌酐: 1.2 mg/dL (参考 0.6-1.3)",
@@ -1412,6 +1438,7 @@ mod tests {
                 index: 0,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2024, 6, 1),
                 text: "生化检验报告单\n糖化血红蛋白 7.9 % 4-6.5\n神秘指标XYZ 12.3 mg/L 0-5",
             },
@@ -1419,6 +1446,7 @@ mod tests {
                 index: 1,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2026, 6, 1),
                 text: "生化检验报告单\n糖化血红蛋白 7.2 % 4-6.5",
             },
@@ -1426,6 +1454,7 @@ mod tests {
                 index: 2,
                 doc_type: None,
                 title: None,
+                extraction_json: None,
                 date: d(2021, 5, 1),
                 text: "门诊病历\n诊断:2型糖尿病\n二甲双胍 0.5g bid\n过敏史:青霉素(皮疹)",
             },
@@ -1483,12 +1512,67 @@ mod tests {
         assert_eq!(allergies[0]["reaction"], "皮疹");
     }
 
+    /// spec §4:deid 图片模式没法逐字核实的云抽取值,必须在 `assemble_summary`
+    /// 的输出里带上「需核对」的标记——不能悄悄跟已核实的值长得一模一样。
+    #[test]
+    fn assemble_summary_marks_unverified_extraction_values_needing_review() {
+        let j = r#"{"labs":[
+            {"name":"肌酐","value":"1.2","unit":"mg/dL","ref_low":"0.6","ref_high":"1.3","flag":"","unverified":true},
+            {"name":"白细胞计数","value":"5.5","unit":"10^9/L","ref_low":"4.0","ref_high":"10.0","flag":""}
+        ]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 1, 1),
+            text: "(忽略;extraction_json 存在时不跑正则)",
+        }];
+        let sm = assemble_summary(&docs);
+        let problems = sm["problems"].as_array().expect("problems");
+        let other = problems
+            .iter()
+            .find(|p| p["term"] == "其他")
+            .expect("两个分析物都没关联诊断,落在其他 bucket");
+        let labs = other["labs"].as_array().expect("labs");
+
+        let cr = labs
+            .iter()
+            .find(|l| l["name"] == "肌酐")
+            .expect("creatinine series present");
+        assert_eq!(
+            cr["needsReviewCount"],
+            json!(1),
+            "unverified 的这条要计进序列级计数"
+        );
+        assert_eq!(
+            cr["pts"][0][2],
+            json!(true),
+            "unverified 的点必须带上第三格 needsReview 标记"
+        );
+
+        let wbc = labs
+            .iter()
+            .find(|l| l["name"] == "白细胞")
+            .expect("wbc series present");
+        assert!(
+            wbc.get("needsReviewCount").is_none(),
+            "已核实的序列不该带 needsReviewCount 字段"
+        );
+        assert!(
+            matches!(wbc["pts"][0].get(2), None | Some(Value::Null)),
+            "已核实的点不该有第三格 needsReview 标记: {:?}",
+            wbc["pts"][0]
+        );
+    }
+
     #[test]
     fn unmapped_condition_still_becomes_a_problem_without_groups() {
         let docs = vec![SourceDoc {
             index: 0,
             doc_type: None,
             title: None,
+            extraction_json: None,
             date: d(2022, 12, 1),
             text: "出院诊断:社区获得性肺炎",
         }];
@@ -1733,6 +1817,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("imaging_report".into()),
                 title: Some("胸部CT".into()),
+                extraction_json: None,
                 date: d(2024, 3, 1),
                 text: "结论:两肺未见明显异常。",
             },
@@ -1740,6 +1825,7 @@ mod tests {
                 index: 1,
                 doc_type: Some("imaging_report".into()),
                 title: Some("胸部CT".into()),
+                extraction_json: None,
                 date: d(2025, 1, 1),
                 text: "结论:右肺上叶小结节,较前稳定。",
             },
@@ -1748,6 +1834,7 @@ mod tests {
                 index: 2,
                 doc_type: Some("clinical_note".into()),
                 title: Some("门诊病历".into()),
+                extraction_json: None,
                 date: d(2024, 6, 1),
                 text: "诊断:2型糖尿病",
             },
@@ -1776,6 +1863,7 @@ mod tests {
             index: 11,
             doc_type: Some("pathology".into()),
             title: Some("胃镜活检病理".into()),
+            extraction_json: None,
             date: d(2024, 9, 1),
             text: "病理诊断:(胃窦)慢性活动性胃炎,伴轻度肠上皮化生,Hp阳性(++)。未见异型增生及恶性证据。",
         }];
@@ -1800,6 +1888,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: Some("血常规".into()),
+            extraction_json: None,
             date: d(2024, 1, 1),
             text: "白细胞 10.5",
         }];
@@ -1815,6 +1904,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: Some("血常规".into()),
+            extraction_json: None,
             date: d(2024, 1, 1),
             text: "白细胞 10.5",
         }];
@@ -1858,6 +1948,7 @@ mod tests {
                 index: 0,
                 doc_type: Some("discharge_summary".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2024, 1, 1),
                 text: "出院诊断:高血压",
             },
@@ -1865,6 +1956,7 @@ mod tests {
                 index: 1,
                 doc_type: Some("self_measurement".into()),
                 title: None,
+                extraction_json: None,
                 date: d(2024, 2, 1),
                 text: &self_text,
             },
@@ -1910,6 +2002,7 @@ mod tests {
             index: 0,
             doc_type: Some("lab_report".into()),
             title: None,
+            extraction_json: None,
             date: d(2024, 1, 1),
             text: "肌酐 88 μmol/L 59-104",
         }];

@@ -129,6 +129,20 @@ pub fn migrate(conn: &Connection) -> Result<(), MedmeError> {
              COMMIT;",
         )?;
     }
+    if v < 6 {
+        // 云 LLM 结构化抽取结果的派生表(deid-cloud-extraction spec §5):同一文档
+        // UNIQUE,后来的事件覆盖先前的(重跑模型 = 再 append 一条)。
+        conn.execute_batch(
+            "BEGIN;\n\
+             CREATE TABLE extraction (\
+               id INTEGER PRIMARY KEY, \
+               document_id INTEGER NOT NULL UNIQUE REFERENCES document(id) ON DELETE CASCADE, \
+               backend TEXT NOT NULL, model_version TEXT NOT NULL, mode TEXT NOT NULL, \
+               schema INTEGER NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL);\n\
+             PRAGMA user_version = 6;\n\
+             COMMIT;",
+        )?;
+    }
     Ok(())
 }
 
@@ -145,7 +159,7 @@ mod tests {
     fn migration_is_v2_with_doc_date_end() {
         let dir = tempfile::tempdir().unwrap();
         let v = Vault::open(dir.path()).unwrap();
-        assert_eq!(v.user_version().unwrap(), 5);
+        assert_eq!(v.user_version().unwrap(), 6);
         // 列存在且可空:round-trip 一个区间
         let imp = v.import("h.txt", "text/plain", b"stay").unwrap();
         let start = chrono::DateTime::parse_from_rfc3339("2023-01-01T00:00:00Z")
@@ -192,7 +206,7 @@ mod tests {
         assert_eq!(
             conn.query_row::<i64, _, _>("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap(),
-            5
+            6
         );
         // 新列可用
         conn.execute("INSERT INTO source_file (content_hash,original_name,mime_type,byte_size,storage_path,imported_at) VALUES ('h','n','m',1,'p','t')", []).unwrap();

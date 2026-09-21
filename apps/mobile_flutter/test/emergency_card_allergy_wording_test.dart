@@ -114,7 +114,7 @@ void main() {
       // 「未识别 ≠ 没有」这条核心结论,措辞不必逐字一样。
       expect(find.textContaining('未识别'), findsWidgets);
       final bigModeBody = tester
-          .widgetList<Text>(find.textContaining('请立刻向本人/家属确认'))
+          .widgetList<Text>(find.textContaining('请立刻向本人或家人确认'))
           .single;
       expect(
         bigModeBody.data!.length,

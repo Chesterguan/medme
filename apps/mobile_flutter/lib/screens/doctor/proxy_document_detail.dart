@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/proxy_patient_manager.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart' show kDocTypeLabel;
 import 'package:mobile_flutter/src/rust/api/vault.dart' as vault;
@@ -11,25 +12,25 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 
-/// [ProxyDocumentDetailScreen] 弹出时告诉调用方(待确认列表屏)接下来该做什么:
+/// [ProxyDocumentDetailScreen] 弹出时告诉调用方(还没核对列表屏)接下来该做什么:
 /// [none] 什么都没变(用户直接返回);[changed] 确认或删除了这一份,列表需要重新拉
 /// `loadPreview`/`summary`/`confirmedMap` 刷新;[retake] 这一份已被删除且调用方
-/// 应紧接着重新弹「拍照/相册/文件」采集入口——由列表屏统一编排(复用它已有的采集
-/// 方法),本屏自己不碰采集逻辑,避免两处维护同一套 `pickImportItems` 调用。
+/// 应紧接着重新弹「拍照/相册/文件」取件入口——由列表屏统一编排(复用它已有的取件
+/// 方法),本屏自己不碰取件逻辑,避免两处维护同一套 `pickImportItems` 调用。
 enum ProxyDetailResult { none, changed, retake }
 
-/// 待确认列表「点进一份」的详情屏(医生代拍流程专用)——**与 `document_detail.dart`
+/// 还没核对列表「点进一份」的详情屏(医生代拍流程专用)——**与 `document_detail.dart`
 /// 是独立副本,不是共享组件**。读的是同一套 `api::vault`,但此刻进程里打开的是**这
 /// 个代拍病人的箱子**(见 `openProxyPatientVault`),不是医生自己的档案。宁可这份
 /// 代码与 `document_detail.dart` 重复大半,也不去改那个文件抽公共组件——保持「不碰
 /// 普通人模式一行代码」这条硬规矩在这两个文件上都显而易见成立。
 ///
-/// 布局复用 `document_detail.dart` 的呈现方式:抬头卡(带骑缝线)+ 识别文本
-/// (`ReportContent`)。底部按钮换成本流程要的三个动作:确认这一份 / 删除 / 重拍。
+/// 布局复用 `document_detail.dart` 的呈现方式:抬头卡(带骑缝线)+ 识别出来的文字
+/// (`ReportContent`)。底部按钮换成本流程要的三个动作:没问题 / 删除 / 重拍。
 ///
 /// **视觉上与 `document_detail.dart` 逐处对齐,只把主色 `seal`(蓝)换成 `proxy`
-/// (紫)** —— 结构、字阶、圆角、骑缝线、间距全部同源。识别文本区整块交给共用的
-/// `ReportContent`,它一个字节都不为医生模式改:同一份化验值在两个模式下必须
+/// (紫)** —— 结构、字阶、圆角、骑缝线、间距全部同源。识别出来的文字区整块交给共用的
+/// `ReportContent`,它一个字节都不为代拍改:同一份化验值在两个模式下必须
 /// 长得一模一样。
 class ProxyDocumentDetailScreen extends StatefulWidget {
   const ProxyDocumentDetailScreen({
@@ -39,7 +40,7 @@ class ProxyDocumentDetailScreen extends StatefulWidget {
     required this.initiallyConfirmed,
   });
 
-  /// 这一份属于哪个代拍病人——「确认这一份」落在 [ProxyPatientManager] 的这个病人
+  /// 这一份属于哪个代拍病人——「没问题」落在 [ProxyPatientManager] 的这个病人
   /// 名下(要跨 12 小时保留窗口和 app 重启存活,所以落盘,不放 Rust 进程内存)。
   final String patientId;
 
@@ -107,7 +108,7 @@ class _ProxyDocumentDetailScreenState extends State<ProxyDocumentDetailScreen> {
     }
   }
 
-  /// 重拍:这一份拍得不好(糊/切歪/拍错页),删掉后回列表屏由它重新弹采集入口。
+  /// 重拍:这一份拍得不好(糊/切歪/拍错页),删掉后回列表屏由它重新弹取件入口。
   Future<void> _retake() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -150,7 +151,7 @@ class _ProxyDocumentDetailScreenState extends State<ProxyDocumentDetailScreen> {
     }
   }
 
-  /// 核对无误,确认这一份(整份确认,不细到每一项)。
+  /// 核对无误,「没问题」(整份确认,不细到每一项)。
   Future<void> _confirm() async {
     setState(() => _busy = true);
     try {
@@ -244,7 +245,7 @@ class _ProxyDocumentDetailScreenState extends State<ProxyDocumentDetailScreen> {
                 : FilledButton.icon(
                     onPressed: _busy ? null : _confirm,
                     icon: const Icon(Icons.check),
-                    label: const Text('确认这一份'),
+                    label: const Text('没问题'),
                     style: FilledButton.styleFrom(
                       backgroundColor: c.proxy,
                       minimumSize: const Size.fromHeight(48),
@@ -333,7 +334,7 @@ class _ProxyDetailBody extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            doc.title ?? typeLabel,
+                            docDisplayTitle(doc),
                             style: MedType.title.copyWith(color: c.ink),
                           ),
                           const SizedBox(height: 2),
@@ -350,6 +351,7 @@ class _ProxyDetailBody extends StatelessWidget {
                           Text(
                             '来源:${sf.originalName}',
                             style: MedType.secondary.copyWith(color: c.ink3),
+                            softWrap: false,
                           ),
                         ],
                       ),
@@ -360,7 +362,7 @@ class _ProxyDetailBody extends StatelessWidget {
                 const SizedBox(height: MedShape.s3),
                 // 次级按钮(规范 §六 btn-2):proxy-wash 底 + proxy-ink 字。
                 // 「原件永远可达」是 007 §2.1 的铁律,所以它不能是最弱的那一级;
-                // 但本屏的主按钮位置留给底部的「确认这一份」,它就不该是纯色主按钮。
+                // 但本屏的主按钮位置留给底部的「没问题」,它就不该是纯色主按钮。
                 // 原先它是紫(当时的橙)描边 + 同色字,与底部主按钮同分量 ——
                 // 一屏两个「主」,医生在赶时间时得读文字才知道该按哪个。
                 OutlinedButton.icon(
@@ -384,10 +386,7 @@ class _ProxyDetailBody extends StatelessWidget {
           children: [
             Icon(Icons.article_outlined, size: 15, color: c.ink3),
             const SizedBox(width: MedShape.s1),
-            Text(
-              sf.mimeType.startsWith('image/') ? '识别文本' : '文档内容',
-              style: MedType.caption.copyWith(color: c.ink3),
-            ),
+            Text('文字', style: MedType.caption.copyWith(color: c.ink3)),
           ],
         ),
         const SizedBox(height: MedShape.s2),
@@ -592,7 +591,7 @@ class _ProxyViewerFallback extends StatelessWidget {
   Widget build(BuildContext context) {
     // 全屏看片是黑底(`_ProxyImageViewerScreen` / DICOM),那一档只能用白系文字;
     // 浅底那一档走令牌 `ink2`。
-    final color = light ? MedColors.of(context).ink2 : Colors.white70;
+    final color = light ? MedColors.of(context).ink2 : MedColors.of(context).onDarkFaint;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(MedShape.s6),

@@ -16,6 +16,7 @@ fuzz_target!(|data: &[u8]| {
             text,
             doc_type: None,
             title: None,
+            extraction_json: None,
         },
         parser::SourceDoc {
             index: 1,
@@ -23,6 +24,7 @@ fuzz_target!(|data: &[u8]| {
             text,
             doc_type: Some("imaging_report".into()),
             title: Some(text.chars().take(24).collect()),
+            extraction_json: None,
         },
     ];
     let _ = parser::assemble_summary(&docs);

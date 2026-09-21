@@ -90,6 +90,7 @@ fn source_docs(raw: &[(String, String)]) -> Vec<SourceDoc<'_>> {
             text: text.as_str(),
             doc_type: Some(format!("{:?}", parser::classify(text)).to_lowercase()),
             title: Some(name.clone()),
+            extraction_json: None,
         })
         .collect()
 }

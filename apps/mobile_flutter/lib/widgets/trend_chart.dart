@@ -95,32 +95,86 @@ double? _dayOf(String? iso) {
 /// 这也是与 `sparkSVG` 唯一一处刻意的偏离:它把末点数值用 10px 画在画布里,而
 /// 10px 低于字阶下限 12,并且画布里的字不会跟着系统字号放大。那个数值改由卡头
 /// 的 22px 承担,比原来更大也更好读。
-class TrendChart extends StatelessWidget {
-  const TrendChart({super.key, required this.series, this.height = 96});
+///
+/// ## 动效:折线只描一次
+///
+/// brief §品牌:**唯一**允许的动效就是这条折线首次画出来时「描」一次
+/// (1200ms)。`animate: false` 或系统「减弱动态效果」开着时,直接给终态——不是
+/// 装饰,是无障碍基线(前庭功能敏感的人会因为动画头晕)。「描一次」意味着重建
+/// (切面板、换成员)不重播,见 [_TrendChartState] 的 `_played`。
+class TrendChart extends StatefulWidget {
+  const TrendChart({super.key, required this.series, this.height = 96, this.animate = true});
 
   final TrendSeriesDto series;
   final double height;
 
+  /// 首次出现时要不要描线动画。默认 `true`;`false` 与 reduced-motion 同效果——
+  /// 直接给终态,不跑 `AnimationController`。
+  ///
+  /// **只在 State 构造时读一次**:这里没有覆写 `didUpdateWidget`,所以同一个
+  /// State 存活期间(同 key 复用、父级重建)再改这个字段不会追溯生效——要切换
+  /// 动效,得让这个 widget 换一个新 State(比如换 key)。
+  final bool animate;
+
+  @override
+  State<TrendChart> createState() => _TrendChartState();
+}
+
+class _TrendChartState extends State<TrendChart> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+  /// 是否已经描过一次。跟 `AnimationController.forward()` 在 value 已等于目标值时
+  /// 自身也会短路(不重启 ticker、直接返回已完成的 future)有点重复——但显式记一次
+  /// 不依赖框架这条内部行为,留着当保险,故意的。
+  bool _played = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // brief §品牌:reduced-motion 下不描画。系统开关一变就跟着变,不是只在首帧读
+    // 一次。这是无障碍基线,不是装饰 —— 前庭功能敏感的人会因为动画头晕。
+    // `animate: false`(调用方主动要求不描)走同一条路:直接给终态。
+    if (!widget.animate || MediaQuery.disableAnimationsOf(context)) {
+      _c.value = 1; // 直接终态
+      _played = true;
+    } else if (!_played) {
+      _played = true; // **只描一次**:重建(切面板、换成员)不重播。
+      _c.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final pts = trendDatedPoints(series);
-    return SizedBox(
-      height: height,
-      width: double.infinity,
-      child: CustomPaint(
-        painter: _TrendPainter(
-          points: pts,
-          selfMeasured: series.selfMeasured,
-          refLow: series.refLow,
-          refHigh: series.refHigh,
-          band: c.sealWash,
-          bandEdge: c.ink3,
-          line: c.seal,
-          dot: c.seal,
-          dotHigh: c.high,
-          dotLow: c.low,
-          ring: c.surface,
+    final pts = trendDatedPoints(widget.series);
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, _) => SizedBox(
+        height: widget.height,
+        width: double.infinity,
+        child: CustomPaint(
+          painter: _TrendPainter(
+            points: pts,
+            selfMeasured: widget.series.selfMeasured,
+            refLow: widget.series.refLow,
+            refHigh: widget.series.refHigh,
+            band: c.sealWash,
+            bandEdge: c.ink3,
+            line: c.seal,
+            dot: c.seal,
+            dotHigh: c.high,
+            dotLow: c.low,
+            ring: c.surface,
+            progress: _c.value,
+          ),
         ),
       ),
     );
@@ -140,6 +194,7 @@ class _TrendPainter extends CustomPainter {
     required this.dotHigh,
     required this.dotLow,
     required this.ring,
+    required this.progress,
   });
 
   final List<TrendPointDto> points;
@@ -155,6 +210,12 @@ class _TrendPainter extends CustomPainter {
   final Color dotHigh;
   final Color dotLow;
   final Color ring;
+
+  /// 折线描到哪了,`[0, 1]`。1 = 描完(终态);`TrendChart` 的
+  /// `AnimationController` 驱动,reduced-motion / `animate: false` 下恒为 1 ——
+  /// **只有折线本身响应它**,参考带、点位置、点半径都不随它变化(brief §品牌
+  /// 「只有折线描画一次」,没有说点也要动画进场)。
+  final double progress;
 
   // 内边距沿用 sparkSVG 的取法,右侧收窄:它留 32 是给画在图内的末点数值文字,
   // 而那个数值这里搬到卡头去了,只需给 r=3.4 的末点 + 白圈留出余地。
@@ -227,21 +288,27 @@ class _TrendPainter extends CustomPainter {
       }
     }
 
-    // ── 折线:**直线段,不平滑** ──
-    if (points.length >= 2) {
+    // ── 折线:**直线段,不平滑**,首次出现时描一次(progress 驱动,见
+    // `TrendChart` 的动效文档)。reduced-motion / `animate: false` 下 progress
+    // 恒为 1,等于没有这一段特殊处理。──
+    if (points.length >= 2 && progress > 0) {
       final path = Path()..moveTo(x(0), y(points[0].value));
       for (var i = 1; i < points.length; i++) {
         path.lineTo(x(i), y(points[i].value));
       }
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = line
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.8
-          ..strokeJoin = StrokeJoin.round
-          ..strokeCap = StrokeCap.round,
-      );
+      final paint = Paint()
+        ..color = line
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.8
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round;
+      if (progress >= 1) {
+        canvas.drawPath(path, paint);
+      } else {
+        for (final metric in path.computeMetrics()) {
+          canvas.drawPath(metric.extractPath(0, metric.length * progress), paint);
+        }
+      }
     }
 
     // ── 点 ──
@@ -298,5 +365,6 @@ class _TrendPainter extends CustomPainter {
       old.selfMeasured != selfMeasured ||
       old.refLow != refLow ||
       old.refHigh != refHigh ||
-      old.line != line;
+      old.line != line ||
+      old.progress != progress;
 }

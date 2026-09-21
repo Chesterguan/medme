@@ -149,6 +149,16 @@ pub struct TrendPointDto {
     /// 这个点来自哪份文档 —— **真正的 document_id**,可直接喂
     /// `api::vault::get_document` / `read_source_bytes` 跳回原件。
     pub document_id: i64,
+    /// 这个值**本机没能逐字核对上**(云抽取图片档,`parser::LabPoint::unverified`
+    /// 原样透传)。OCR/正则那条路、以及手动录入的自测值恒为 `false`。
+    ///
+    /// `true` 的行仍然**照常显示、绝不丢弃**(spec §4),但 UI 必须标出来:这个
+    /// 数字是模型从涂黑后的图上读的,本机拿不到原文来逐字比对。见
+    /// `lib/widgets/lab_status.dart` 的「需核对」chip。
+    ///
+    /// **追加在结尾**,理由同 `TrendSeriesDto::ref_source` 那条注释(FRB 按字段声明
+    /// 顺序编解码,新字段放最后不挪动既有形状)。
+    pub unverified: bool,
 }
 
 /// 应急卡:过敏史 + 在用药 + 确诊慢病,每一项都带来源。
@@ -248,6 +258,8 @@ pub struct VisitLabDto {
     /// 见 `TrendSeriesDto::self_measured` 的文档 —— 同一份透传,就诊单据此在
     /// 「复制给医生」纯文本里追加"(家测)"(`render_plain_text`)。
     pub self_measured: bool,
+    /// 见 [`TrendPointDto::unverified`] —— 同一份透传。**追加在结尾**。
+    pub unverified: bool,
 }
 
 /// 摘要单上的一行就诊记录 —— 一个就诊组,或一份不属于任何就诊的独立文档。
@@ -313,6 +325,9 @@ struct ProjectionDoc {
     text: String,
     doc_type: Option<String>,
     title: Option<String>,
+    /// 云抽取结果(schema v1 JSON);没跑过/离线为 `None`(见 `parser::SourceDoc`
+    /// 同名字段的文档)。
+    extraction_json: Option<String>,
 }
 
 /// 一次 `load_archive` 取到的全部投影输入:文档(带 index→document_id 绑定)+ 就诊记录。
@@ -350,10 +365,33 @@ fn document_ids_for(docs: &[ProjectionDoc], indices: &[usize]) -> Vec<i64> {
 /// 而不是让整个投影失败 —— 一份坏文档不该让整张趋势图/应急卡打不开。它仍占一个
 /// index,序号与 document_id 的对应关系因此不受影响。
 fn gather() -> anyhow::Result<VaultProjection> {
+    let (flat, visits) = flat_docs()?;
+    let docs = flat
+        .into_iter()
+        .map(|(id, date, doc_type, title)| ProjectionDoc {
+            document_id: id,
+            date,
+            text: read_text(id),
+            doc_type: Some(doc_type),
+            title,
+            extraction_json: crate::api::vault::extraction_json_for(id),
+        })
+        .collect();
+    Ok(VaultProjection { docs, visits })
+}
+
+/// 一份文档的元信息:`(document_id, 临床日期, doc_type, 标题)`。
+type FlatDoc = (i64, Option<NaiveDate>, String, Option<String>);
+
+/// 病历箱里全部文档的**元信息** + 就诊记录行,按病程正序排好。
+///
+/// **一份正文都不读。** 逐份解密读正文(与抽取结果)是这一趟里最贵的部分,谁真的
+/// 要用谁自己读:[`gather`] 读全部,[`gather_profile_events`] 只读动作日志那几份。
+fn flat_docs() -> anyhow::Result<(Vec<FlatDoc>, Vec<VisitRecordDto>)> {
     let groups = crate::api::vault::load_archive()?;
 
     // 展平成 (document_id, date, doc_type, title),同时记下就诊记录行。
-    let mut flat: Vec<(i64, Option<NaiveDate>, String, Option<String>)> = Vec::new();
+    let mut flat: Vec<FlatDoc> = Vec::new();
     let mut visits: Vec<VisitRecordDto> = Vec::new();
     for g in &groups {
         match g {
@@ -398,20 +436,39 @@ fn gather() -> anyhow::Result<VaultProjection> {
         (None, None) => a.0.cmp(&b.0),
     });
 
-    let docs = flat
-        .into_iter()
-        .map(|(id, date, doc_type, title)| ProjectionDoc {
-            document_id: id,
-            date,
-            text: crate::api::vault::get_document(id)
-                .map(|d| d.ocr_text)
-                .unwrap_or_default(),
-            doc_type: Some(doc_type),
-            title,
-        })
-        .collect();
+    Ok((flat, visits))
+}
 
-    Ok(VaultProjection { docs, visits })
+/// 读一份文档的正文。**投影里最贵的一步**(每份都要解密 + 读盘),所以
+/// 「这一趟到底逐份读了几份」的计数也放在这唯一的一处。
+fn read_text(id: i64) -> String {
+    #[cfg(test)]
+    DOC_TEXT_READS.with(|c| c.set(c.get() + 1));
+    crate::api::vault::get_document(id)
+        .map(|d| d.ocr_text)
+        .unwrap_or_default()
+}
+
+// 测试用:`read_text` 在**当前线程**至今被调用了多少次。只在 `cfg(test)` 下存在 ——
+// 「没开启病程档案就一份临床正文都不读」这条断言需要一个能观察的量,而给生产
+// 热路径挂一个常驻计数器不值得。(普通注释而非 ///:宏调用上的文档注释 clippy 会报 unused。)
+//
+// 线程局部而不是进程全局:cargo test 并行跑,别的测试在自己线程里读正文会把一个
+// 全局计数器顶高(CI 上出现过 4 ≠ 3);投影是同步的、在调用线程上读,所以按线程数
+// 正好只数自己这一趟。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static DOC_TEXT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_doc_text_reads() {
+    DOC_TEXT_READS.with(|c| c.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn doc_text_reads() -> usize {
+    DOC_TEXT_READS.with(|c| c.get())
 }
 
 fn source_docs(docs: &[ProjectionDoc]) -> Vec<parser::SourceDoc<'_>> {
@@ -423,8 +480,63 @@ fn source_docs(docs: &[ProjectionDoc]) -> Vec<parser::SourceDoc<'_>> {
             text: &d.text,
             doc_type: d.doc_type.clone(),
             title: d.title.clone(),
+            extraction_json: d.extraction_json.as_deref(),
         })
         .collect()
+}
+
+// ─────────────────────── 病程档案的输入投影 ───────────────────────
+
+/// 病程档案(`api::vault_profile`)要的两份输入:全部文档 + 其中的动作日志。
+///
+/// 自有数据、不是借用:`parser::SourceDoc` 借的是 `ProjectionDoc::text`,借用关系
+/// 留在调用方那一侧 —— 调用方拿着这个结构体,现借现用([`ProfileInput::source_docs`])。
+pub(crate) struct ProfileInput {
+    docs: Vec<ProjectionDoc>,
+    /// 解得出载荷的 `profile_event` 文档,**按保险箱追加顺序**(见
+    /// [`gather_for_profile`])。解不出来的跳过,不猜。
+    pub(crate) events: Vec<parser::ProfileEvent>,
+}
+
+impl ProfileInput {
+    pub(crate) fn source_docs(&self) -> Vec<parser::SourceDoc<'_>> {
+        source_docs(&self.docs)
+    }
+}
+
+/// 读一遍保险箱,顺带把 `doc_type == "profile_event"` 的文档解成动作日志。
+///
+/// **顺序就是 [`gather`] 的顺序**(临床日期升序、同日按 document_id 升序);动作
+/// 日志的 `doc_date` 是它被记下来的那一刻,所以同一天里先后追加的两条,靠
+/// document_id 升序仍然排在正确的先后上 —— `profile::materialize` 要的正是这个
+/// (它的文档:`at` 只到天,日内的真实先后只剩数组顺序这一个信息源)。
+pub(crate) fn gather_for_profile() -> anyhow::Result<ProfileInput> {
+    let projection = gather()?;
+    let events = projection
+        .docs
+        .iter()
+        .filter(|d| d.doc_type.as_deref() == Some("profile_event"))
+        .filter_map(|d| parser::parse_profile_event_payload(&d.text))
+        .collect();
+    Ok(ProfileInput {
+        docs: projection.docs,
+        events,
+    })
+}
+
+/// **只**把动作日志(`doc_type == "profile_event"`)那几份读出来解成事件,顺序与
+/// [`gather_for_profile`] 完全一致(同一份 [`flat_docs`] 排序,只是少读了别的文档)。
+///
+/// 存在的理由是**闸要排在整箱逐份读之前**:开关闸(`profile::is_enabled`)与术语
+/// 覆盖层都只认这几条,而「从没开启」时引擎一块都不算(spec §4)—— 那就没有任何
+/// 理由去解一整箱病历的正文与抽取结果。动作日志通常是个位数份。
+pub(crate) fn gather_profile_events() -> anyhow::Result<Vec<parser::ProfileEvent>> {
+    let (flat, _visits) = flat_docs()?;
+    Ok(flat
+        .into_iter()
+        .filter(|(_, _, doc_type, _)| doc_type == "profile_event")
+        .filter_map(|(id, _, _, _)| parser::parse_profile_event_payload(&read_text(id)))
+        .collect())
 }
 
 // ─────────────────────── 契约:可渲染的序列 ───────────────────────
@@ -724,6 +836,7 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
                     unit: p.unit.clone(),
                     flag: p.flag.clone(),
                     document_id,
+                    unverified: p.unverified,
                 })
             })
             .collect(),
@@ -816,6 +929,7 @@ pub fn view_visit_summary() -> anyhow::Result<VisitSummaryDto> {
                 values_converted: s.values_converted,
                 document_id: projection.docs.get(p.source)?.document_id,
                 self_measured: s.self_measured,
+                unverified: p.unverified,
             })
         })
         .collect();
@@ -1055,12 +1169,14 @@ fn render_plain_text(
 mod tests {
     use super::*;
     use crate::api::dto::SelfMeasuredValueDto;
-    use std::sync::Mutex;
 
     // 端到端测试跑同一个进程级 `api::vault::VAULT` cell(和生产代码一样,一次只有一个
-    // 打开的保险箱),不能并发跑;用一把粗互斥锁串行化 —— 与 `vault_ephemeral` 的
-    // 测试同一手法。
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    // 打开的保险箱),不能并发跑;串行化用 `api::vault::VAULT_TEST_LOCK`——一把
+    // 全 crate 共享的锁,而不是本模块自己再开一把(`api::vault` 自己的
+    // `cloud_extraction_tests`、`api::vault_sync` 的测试也会打开同一个 `VAULT`,
+    // 各开各的锁互相不认识,锁了也白锁;曾经就是两把不共享的锁,复现为本模块
+    // 用例间歇性失败)。
+    use crate::api::vault::VAULT_TEST_LOCK as TEST_LOCK;
 
     /// 造一批 `ProjectionDoc`(纯函数测试用,不开保险箱)。document_id 故意**不等于**
     /// index —— 从 100 起跳,这样任何把 index 当 document_id 用的 bug 都会立刻暴露。
@@ -1074,6 +1190,7 @@ mod tests {
                 text: (*text).to_string(),
                 doc_type: Some((*doc_type).to_string()),
                 title: None,
+                extraction_json: None,
             })
             .collect()
     }
@@ -1673,6 +1790,7 @@ mod tests {
             values_converted: false,
             document_id: 102,
             self_measured: false,
+            unverified: false,
         }];
         let text = render_plain_text(&patient, &allergies, &[], &labs, &[]);
 

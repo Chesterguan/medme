@@ -140,6 +140,7 @@ impl Vault {
             let tx = self.conn().unchecked_transaction()?;
             tx.execute("DELETE FROM document_fts", [])?;
             tx.execute("DELETE FROM ocr_result", [])?;
+            tx.execute("DELETE FROM extraction", [])?;
             tx.execute("DELETE FROM imaging_instance", [])?;
             tx.execute("DELETE FROM document", [])?;
             tx.execute("DELETE FROM encounter", [])?;
@@ -410,6 +411,7 @@ fn compute_delete_suppressions(entries: &[LogEntry]) -> HashSet<(String, i64)> {
                 }
             }
             Event::OcrAdded { document_ref, .. }
+            | Event::ExtractionAdded { document_ref, .. }
             | Event::ImagingInstanceAdded { document_ref, .. } => {
                 let live = states
                     .get(document_ref.source_file_hash.as_str())
@@ -617,6 +619,74 @@ fn apply_event(
                 rusqlite::params![document_id, title_tok, body],
             )?;
         }
+        // 云 LLM 结构化抽取结果(deid-cloud-extraction spec §5)。与 OcrAdded 同构:
+        // suppressed 检查 → 找 document_id(没有则 Deferred)→ 校验/读 CAS 三态 →
+        // UTF-8 → 写表(同文档 UNIQUE,后来的覆盖先前的——重跑模型 = 再 append 一条)。
+        Event::ExtractionAdded {
+            document_ref,
+            backend,
+            model_version,
+            mode,
+            schema,
+            result_hash,
+            created_at,
+        } => {
+            if suppressed.contains(&(entry.device_id.clone(), entry.seq)) {
+                return Ok(ApplyOutcome::Applied);
+            }
+            let document_id: i64 = match tx
+                .query_row(
+                    "SELECT d.id FROM document d JOIN source_file sf ON d.source_file_id = sf.id
+                     WHERE sf.content_hash = ?1",
+                    [&document_ref.source_file_hash],
+                    |r| r.get(0),
+                )
+                .optional()?
+            {
+                Some(id) => id,
+                None => return Ok(ApplyOutcome::Deferred),
+            };
+            if !cas::is_object_hash(result_hash) {
+                eprintln!("[materialize] skip ExtractionAdded: malformed result_hash");
+                return Ok(ApplyOutcome::Applied);
+            }
+            let bytes = match vault.read_object(result_hash) {
+                Ok(b) => b,
+                Err(MedmeError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(ApplyOutcome::Deferred);
+                }
+                Err(MedmeError::Other(msg)) => {
+                    eprintln!("[materialize] skip ExtractionAdded: {msg}");
+                    return Ok(ApplyOutcome::Applied);
+                }
+                Err(e) => return Err(e),
+            };
+            let Ok(result_json) = String::from_utf8(bytes) else {
+                eprintln!("[materialize] skip ExtractionAdded: not UTF-8");
+                return Ok(ApplyOutcome::Applied);
+            };
+            // Latest-`created_at`-wins, NOT last-applied-wins: on the incremental
+            // `materialize()` path, a peer segment that shows up later
+            // (watermark 0) is applied after everything already in the DB
+            // regardless of its own `created_at`, so an unconditional upsert
+            // would let an OLDER peer result overwrite a newer local one —
+            // diverging from `rebuild_from_log`, which always replays the full
+            // log in one global order. The `WHERE` makes the outcome depend
+            // only on `created_at`, never on apply order, so incremental and
+            // full-rebuild materialize always agree. `created_at` is RFC3339
+            // with a fixed `+00:00` offset (`Utc::now().to_rfc3339()`), so a
+            // plain lexical string compare is exactly a chronological compare.
+            // Strict `>` (not `>=`): on an exact tie, the first-applied row
+            // wins (see `extraction_added_upsert_equal_created_at_first_applied_wins`).
+            tx.execute(
+                "INSERT INTO extraction (document_id, backend, model_version, mode, schema, result_json, created_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7)
+                 ON CONFLICT(document_id) DO UPDATE SET backend=excluded.backend, model_version=excluded.model_version,
+                 mode=excluded.mode, schema=excluded.schema, result_json=excluded.result_json, created_at=excluded.created_at
+                 WHERE excluded.created_at > extraction.created_at",
+                rusqlite::params![document_id, backend, model_version, mode, schema, result_json, created_at],
+            )?;
+        }
         // 影像切片挂载(imaging overhaul P1):把 DICOM 切片行插入 imaging_instance,
         // 并把 study_uid 落到 study 文档上(供 study→document 查找)。两个引用都用
         // 内容哈希解析成当前库的行 id,保证 rebuild_from_log 脱库重放也一致。
@@ -703,6 +773,7 @@ fn apply_event(
             if let Some(id) = document_id {
                 tx.execute("DELETE FROM document_fts WHERE document_id = ?1", [id])?;
                 tx.execute("DELETE FROM ocr_result WHERE document_id = ?1", [id])?;
+                tx.execute("DELETE FROM extraction WHERE document_id = ?1", [id])?;
                 tx.execute("DELETE FROM imaging_instance WHERE document_id = ?1", [id])?;
                 tx.execute("DELETE FROM document WHERE id = ?1", [id])?;
             }
@@ -710,6 +781,10 @@ fn apply_event(
         // 审计事件:纯粹的日志留痕(见 crate::audit),对 DB 投影是 no-op —— 不
         // 建任何表行,`rebuild_from_log` 重放时必须能安全跳过而不报错。
         Event::ExportPerformed { .. } | Event::ShareCreated { .. } => {}
+        // 本二进制不认识的事件类型(新版本写的,见 `Event::Unknown`)。实际走不到
+        // 这里 —— `EventLog::read_all` 在 verify 阶段就把它丢了 —— 但重放路径不许
+        // 靠"上游应该已经挡住了"活着:投影里当 no-op,绝不 panic。
+        Event::Unknown => {}
     }
     Ok(ApplyOutcome::Applied)
 }
@@ -756,6 +831,414 @@ mod tests {
         assert!(matches!(events[0].event, Event::FileImported { .. }));
         assert!(matches!(events[1].event, Event::DocumentAdded { .. }));
         assert!(matches!(events[2].event, Event::OcrAdded { .. }));
+    }
+
+    #[test]
+    fn extraction_added_materializes_and_latest_wins_and_rebuilds() {
+        use crate::types::NewExtraction;
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let imp = v.import("a.jpg", "image/jpeg", b"jpgbytes").unwrap();
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: None,
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        v.add_extraction(NewExtraction {
+            document_id: doc.id,
+            backend: "deepseek".into(),
+            model_version: "v4-flash".into(),
+            mode: "text".into(),
+            schema: 1,
+            result_json: r#"{"labs":[]}"#.into(),
+        })
+        .unwrap();
+        v.add_extraction(NewExtraction {
+            document_id: doc.id,
+            backend: "deepseek".into(),
+            model_version: "v4-flash".into(),
+            mode: "image".into(),
+            schema: 1,
+            result_json: r#"{"labs":[{"name":"WBC"}]}"#.into(),
+        })
+        .unwrap();
+        assert_eq!(
+            v.extraction_json(doc.id).unwrap().as_deref(),
+            Some(r#"{"labs":[{"name":"WBC"}]}"#)
+        );
+        v.rebuild_from_log().unwrap();
+        assert_eq!(
+            v.extraction_json(doc.id).unwrap().as_deref(),
+            Some(r#"{"labs":[{"name":"WBC"}]}"#),
+            "重放后仍是最后一条"
+        );
+        v.delete_document(doc.id).unwrap();
+        assert!(
+            v.extraction_json(doc.id).unwrap().is_none(),
+            "删文档连抽取一起删"
+        );
+    }
+
+    #[test]
+    fn extraction_schema_is_carried_from_the_caller_not_hardcoded() {
+        use crate::types::NewExtraction;
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let imp = v.import("a.jpg", "image/jpeg", b"jpgbytes").unwrap();
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: None,
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        v.add_extraction(NewExtraction {
+            document_id: doc.id,
+            backend: "deepseek".into(),
+            model_version: "m".into(),
+            mode: "text".into(),
+            schema: 2,
+            result_json: r#"{"labs":[],"facts":[]}"#.into(),
+        })
+        .unwrap();
+        let got: i32 = v
+            .conn()
+            .query_row(
+                "SELECT schema FROM extraction WHERE document_id=?1",
+                [doc.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            got, 2,
+            "写死 schema:1 会让 schema 2 的结果在库里伪装成 schema 1"
+        );
+    }
+
+    /// Bug (code review): `apply_event`'s `ExtractionAdded` upsert was
+    /// unconditional "last APPLIED wins", not "last created_at wins" — so a
+    /// peer segment that shows up later (watermark 0) but carries an OLDER
+    /// `ExtractionAdded.created_at` could overwrite a newer local result on the
+    /// incremental `materialize()` path, diverging from `rebuild_from_log`
+    /// (which always replays the full log in one global `(ts, device_id, seq)`
+    /// order) — breaking the "incremental == full replay" invariant.
+    ///
+    /// Fix: the upsert only overwrites when `excluded.created_at >
+    /// extraction.created_at` (`created_at` is RFC3339 with a fixed `+00:00`
+    /// offset from `Utc::now().to_rfc3339()`, so lexical string compare is
+    /// exactly chronological compare). This test builds the SAME two
+    /// `ExtractionAdded` events (one with a lower seq but a LATER
+    /// `created_at`) under two different PHYSICAL apply orders — by swapping
+    /// which one gets the earlier envelope `ts`, which is what
+    /// `EventLog::read_all` sorts by, i.e. what actually determines apply
+    /// order — and asserts the row with the later `created_at` wins in ALL of:
+    /// order 1 (later-created_at applied first), order 2 (later-created_at
+    /// applied second), and a full `rebuild_from_log` of each.
+    #[test]
+    fn extraction_added_upsert_keeps_latest_created_at_regardless_of_apply_order() {
+        use crate::event::{DocRef, Event, LogEntry};
+
+        fn seed_anchor_doc(dir: &std::path::Path) -> (Vault, String, String, i64) {
+            let v = Vault::open(dir).unwrap();
+            let dev = v.device_id.clone();
+            let sfh = cas::sha256_hex(b"extraction-order-anchor");
+            let append = |seq: i64, ts: &str, ev: Event| {
+                v.log
+                    .append(&LogEntry::new(seq, ts.into(), dev.clone(), ev).unwrap())
+                    .unwrap();
+            };
+            append(
+                1,
+                "2024-01-01T00:00:01Z",
+                Event::FileImported {
+                    content_hash: sfh.clone(),
+                    original_name: "a.jpg".into(),
+                    mime_type: "image/jpeg".into(),
+                    byte_size: 6,
+                    imported_at: "2024-01-01T00:00:01Z".into(),
+                },
+            );
+            append(
+                2,
+                "2024-01-01T00:00:02Z",
+                Event::DocumentAdded {
+                    source_file_hash: sfh.clone(),
+                    doc_type: "lab_report".into(),
+                    doc_date: None,
+                    doc_date_end: None,
+                    title: None,
+                    language: None,
+                    page_count: 1,
+                    created_at: "2024-01-01T00:00:02Z".into(),
+                },
+            );
+            v.materialize().unwrap();
+            let doc_id: i64 = v
+                .conn()
+                .query_row("SELECT id FROM document LIMIT 1", [], |r| r.get(0))
+                .unwrap();
+            (v, dev, sfh, doc_id)
+        }
+
+        // ---- order 1: the LATER-created_at event (seq 3) gets the EARLIER
+        // envelope ts → applied FIRST; the EARLIER-created_at event (seq 4)
+        // gets the later ts → applied SECOND.
+        let dir_a = tempfile::tempdir().unwrap();
+        let (va, dev_a, sfh_a, doc_a) = seed_anchor_doc(dir_a.path());
+        let (hash_late, _, _) = va.store_object(br#"{"marker":"LATE"}"#).unwrap();
+        let (hash_early, _, _) = va.store_object(br#"{"marker":"EARLY"}"#).unwrap();
+        va.log
+            .append(
+                &LogEntry::new(
+                    3,
+                    "2024-01-01T00:00:10Z".into(),
+                    dev_a.clone(),
+                    Event::ExtractionAdded {
+                        document_ref: DocRef {
+                            source_file_hash: sfh_a.clone(),
+                        },
+                        backend: "deepseek".into(),
+                        model_version: "v4".into(),
+                        mode: "text".into(),
+                        schema: 1,
+                        result_hash: hash_late.clone(),
+                        created_at: "2024-01-01T00:00:20Z".into(), // LATER created_at
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        va.log
+            .append(
+                &LogEntry::new(
+                    4,
+                    "2024-01-01T00:00:11Z".into(),
+                    dev_a.clone(),
+                    Event::ExtractionAdded {
+                        document_ref: DocRef {
+                            source_file_hash: sfh_a.clone(),
+                        },
+                        backend: "deepseek".into(),
+                        model_version: "v4".into(),
+                        mode: "image".into(),
+                        schema: 1,
+                        result_hash: hash_early.clone(),
+                        created_at: "2024-01-01T00:00:10Z".into(), // EARLIER created_at
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        va.materialize().unwrap();
+        assert_eq!(
+            va.extraction_json(doc_a).unwrap().as_deref(),
+            Some(r#"{"marker":"LATE"}"#),
+            "order 1: later created_at wins even though it was applied first"
+        );
+        va.rebuild_from_log().unwrap();
+        assert_eq!(
+            va.extraction_json(doc_a).unwrap().as_deref(),
+            Some(r#"{"marker":"LATE"}"#),
+            "rebuild_from_log agrees with incremental materialize"
+        );
+
+        // ---- order 2 (reversed physical apply order): swap which event gets
+        // the earlier envelope ts, so the EARLIER-created_at one is applied
+        // FIRST and the LATER-created_at one is applied SECOND.
+        let dir_b = tempfile::tempdir().unwrap();
+        let (vb, dev_b, sfh_b, doc_b) = seed_anchor_doc(dir_b.path());
+        let (hash_late_b, _, _) = vb.store_object(br#"{"marker":"LATE"}"#).unwrap();
+        let (hash_early_b, _, _) = vb.store_object(br#"{"marker":"EARLY"}"#).unwrap();
+        vb.log
+            .append(
+                &LogEntry::new(
+                    3,
+                    "2024-01-01T00:00:10Z".into(), // applied FIRST
+                    dev_b.clone(),
+                    Event::ExtractionAdded {
+                        document_ref: DocRef {
+                            source_file_hash: sfh_b.clone(),
+                        },
+                        backend: "deepseek".into(),
+                        model_version: "v4".into(),
+                        mode: "image".into(),
+                        schema: 1,
+                        result_hash: hash_early_b.clone(),
+                        created_at: "2024-01-01T00:00:10Z".into(), // EARLIER created_at
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        vb.log
+            .append(
+                &LogEntry::new(
+                    4,
+                    "2024-01-01T00:00:11Z".into(), // applied SECOND
+                    dev_b.clone(),
+                    Event::ExtractionAdded {
+                        document_ref: DocRef {
+                            source_file_hash: sfh_b.clone(),
+                        },
+                        backend: "deepseek".into(),
+                        model_version: "v4".into(),
+                        mode: "text".into(),
+                        schema: 1,
+                        result_hash: hash_late_b.clone(),
+                        created_at: "2024-01-01T00:00:20Z".into(), // LATER created_at
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        vb.materialize().unwrap();
+        assert_eq!(
+            vb.extraction_json(doc_b).unwrap().as_deref(),
+            Some(r#"{"marker":"LATE"}"#),
+            "order 2 (reversed apply order): later created_at still wins"
+        );
+        vb.rebuild_from_log().unwrap();
+        assert_eq!(
+            vb.extraction_json(doc_b).unwrap().as_deref(),
+            Some(r#"{"marker":"LATE"}"#),
+            "rebuild_from_log agrees regardless of original apply order"
+        );
+    }
+
+    /// Tie-break: when two `ExtractionAdded` events for the same document
+    /// carry the SAME `created_at`, the upsert's `WHERE excluded.created_at >
+    /// extraction.created_at` is strict (`>`, not `>=`), so the update never
+    /// fires on a tie — the FIRST-applied row wins. Documented here so the
+    /// behavior is a deliberate, tested choice rather than an accident.
+    #[test]
+    fn extraction_added_upsert_equal_created_at_first_applied_wins() {
+        use crate::event::{DocRef, Event, LogEntry};
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let dev = v.device_id.clone();
+        let sfh = cas::sha256_hex(b"extraction-tie-anchor");
+        let append = |seq: i64, ts: &str, ev: Event| {
+            v.log
+                .append(&LogEntry::new(seq, ts.into(), dev.clone(), ev).unwrap())
+                .unwrap();
+        };
+        append(
+            1,
+            "2024-01-01T00:00:01Z",
+            Event::FileImported {
+                content_hash: sfh.clone(),
+                original_name: "a.jpg".into(),
+                mime_type: "image/jpeg".into(),
+                byte_size: 6,
+                imported_at: "2024-01-01T00:00:01Z".into(),
+            },
+        );
+        append(
+            2,
+            "2024-01-01T00:00:02Z",
+            Event::DocumentAdded {
+                source_file_hash: sfh.clone(),
+                doc_type: "lab_report".into(),
+                doc_date: None,
+                doc_date_end: None,
+                title: None,
+                language: None,
+                page_count: 1,
+                created_at: "2024-01-01T00:00:02Z".into(),
+            },
+        );
+        v.materialize().unwrap();
+        let doc_id: i64 = v
+            .conn()
+            .query_row("SELECT id FROM document LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+
+        let (hash_first, _, _) = v.store_object(br#"{"marker":"FIRST"}"#).unwrap();
+        let (hash_second, _, _) = v.store_object(br#"{"marker":"SECOND"}"#).unwrap();
+        append(
+            3,
+            "2024-01-01T00:00:10Z", // applied first
+            Event::ExtractionAdded {
+                document_ref: DocRef {
+                    source_file_hash: sfh.clone(),
+                },
+                backend: "deepseek".into(),
+                model_version: "v4".into(),
+                mode: "text".into(),
+                schema: 1,
+                result_hash: hash_first,
+                created_at: "2024-01-01T00:00:15Z".into(), // same created_at as below
+            },
+        );
+        append(
+            4,
+            "2024-01-01T00:00:11Z", // applied second
+            Event::ExtractionAdded {
+                document_ref: DocRef {
+                    source_file_hash: sfh.clone(),
+                },
+                backend: "deepseek".into(),
+                model_version: "v4".into(),
+                mode: "image".into(),
+                schema: 1,
+                result_hash: hash_second,
+                created_at: "2024-01-01T00:00:15Z".into(), // same created_at as above
+            },
+        );
+        v.materialize().unwrap();
+        assert_eq!(
+            v.extraction_json(doc_id).unwrap().as_deref(),
+            Some(r#"{"marker":"FIRST"}"#),
+            "equal created_at: strict '>' means the update never fires — first-applied wins"
+        );
+    }
+
+    /// 老日志(不含任何 ExtractionAdded)重放后与加本功能前的投影结果一致——
+    /// 新事件类型必须是纯加法,不能改变既有事件的重放结果。
+    #[test]
+    fn old_log_without_extraction_added_materializes_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let imp = v.import("a.txt", "text/plain", b"hello world").unwrap();
+        let doc = v
+            .add_document(NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: DocType::LabReport,
+                doc_date: None,
+                doc_date_end: None,
+                title: Some("t".into()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap();
+        v.add_ocr(NewOcr {
+            document_id: doc.id,
+            page_no: 1,
+            backend: OcrBackendKind::Native,
+            model_version: "text-layer".into(),
+            text: "some ocr text".into(),
+            confidence: None,
+        })
+        .unwrap();
+        assert_eq!(v.debug_count("source_file"), 1);
+        assert_eq!(v.debug_count("document"), 1);
+        assert_eq!(v.debug_count("ocr_result"), 1);
+        assert_eq!(v.debug_count("extraction"), 0);
+        v.rebuild_from_log().unwrap();
+        assert_eq!(v.debug_count("source_file"), 1);
+        assert_eq!(v.debug_count("document"), 1);
+        assert_eq!(v.debug_count("ocr_result"), 1);
+        assert_eq!(v.debug_count("extraction"), 0);
     }
 
     #[test]

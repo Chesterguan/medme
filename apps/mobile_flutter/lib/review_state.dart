@@ -5,18 +5,18 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/profile_manager.dart';
 
-/// 「新导入待确认」本地状态,**按成员分命名空间**(每个成员独立的待确认集,不同
-/// 成员的保险箱各自从 id 1 起,共用一个集合会撞车)。持久化到沙盒
-/// `<support>/review_state.json`(纯本设备 UI 状态,不进保险箱)。
+/// 「新导入还没核对」本地状态,**按成员分命名空间**(每个成员独立的还没核对集,不同
+/// 成员的病历箱各自从 id 1 起,共用一个集合会撞车)。持久化到沙盒
+/// `<support>/review_state.json`(纯本设备 UI 状态,不进病历箱)。
 ///
-/// 除了待确认集,还记录每份新导入报告里**识别到的患者姓名**——若它和当前成员档案
-/// 名字不一致([_flagged]),说明可能导错了人,健康档案会给这份标红警告。
+/// 除了还没核对集,还记录每份新导入报告里**识别到的患者姓名**——若它和当前成员档案
+/// 名字不一致([_flagged]),说明可能导错了人,「病历」屏会给这份标红警告。
 ///
 /// 分区键是**成员 id**,不是名字:名字是可变标签(自动命名会改),用它当键的话改一次
 /// 名这些状态就全丢了;而且不同成员可以重名。
 ///
-/// 语义:导入时把本次新建文档 id 显式加入**当前成员**的待确认集([markPending]);
-/// 健康档案顶部把当前成员待确认集里的文档置顶让用户核对;点「确认」移除([markReviewed])。
+/// 语义:导入时把本次新建文档 id 显式加入**当前成员**的还没核对集([markPending]);
+/// 「病历」屏顶部把当前成员还没核对集里的文档置顶让用户核对;点「确认」移除([markReviewed])。
 class ReviewState {
   ReviewState._();
   static final ReviewState instance = ReviewState._();
@@ -88,13 +88,13 @@ class ReviewState {
     } catch (_) {}
   }
 
-  /// 当前成员下,该文档是否「新导入·待确认」。
+  /// 当前成员下,该文档是否「新导入·还没核对」。
   bool isPending(int docId) => _cur().contains(docId);
 
-  /// 该待确认文档识别到的、与当前成员名字不符的患者姓名;一致或无则 null。
+  /// 该还没核对文档识别到的、与当前成员名字不符的患者姓名;一致或无则 null。
   String? mismatchName(int docId) => _curFlagged()[docId];
 
-  /// 导入后把新建文档加入当前成员的待确认集。`docs` = 文档 id → 报告里识别到的
+  /// 导入后把新建文档加入当前成员的还没核对集。`docs` = 文档 id → 报告里识别到的
   /// 患者姓名(识别不到为 null);姓名与当前成员不符的记为「疑似导错人」。
   Future<void> markPending(Map<int, String?> docs) async {
     await ensureLoaded();
@@ -114,7 +114,7 @@ class ReviewState {
     if (changed) await _save();
   }
 
-  /// 确认通过一份 → 移出当前成员待确认集(连同标红)。
+  /// 确认通过一份 → 移出当前成员还没核对集(连同标红)。
   Future<void> markReviewed(int docId) async {
     await ensureLoaded();
     final a = _cur().remove(docId);
@@ -133,7 +133,7 @@ class ReviewState {
     if (changed) await _save();
   }
 
-  /// 清空全部成员的待确认/标红状态(「清空所有数据」恢复出厂时调)。
+  /// 清空全部成员的还没核对/标红状态(「清空所有数据」恢复出厂时调)。
   Future<void> clearAll() async {
     await ensureLoaded();
     _byMember.clear();
@@ -141,7 +141,7 @@ class ReviewState {
     await _save();
   }
 
-  /// 成员被删除时清掉它的待确认/标红(**按成员 id**,不是名字 —— 名字会变、会重复)。
+  /// 成员被删除时清掉它的还没核对/标红(**按成员 id**,不是名字 —— 名字会变、会重复)。
   Future<void> removeMember(String id) async {
     await ensureLoaded();
     final hadPending = _byMember.remove(id) != null;

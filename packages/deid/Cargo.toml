@@ -1,0 +1,18 @@
+[package]
+name = "deid"
+version = "0.1.0"
+edition = "2021"
+description = "本地脱敏:发给云 LLM 之前删已知身份、掩锚点字段、偏移日期;结果回来后还原与逐字校验。纯函数,无 IO。"
+
+[dependencies]
+# 图片档名字容错要用词典(缩写 ↔ 规范名;以及「模糊命中的其实是邻项」那条护栏)。
+# terminology 不依赖任何本地 crate,不成环;parser 早就同时依赖它俩,手机端也早
+# 已打包这份词典,不是新增体积。
+terminology = { path = "../terminology" }
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+chrono.workspace = true
+thiserror.workspace = true

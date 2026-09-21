@@ -6,7 +6,9 @@
 import 'api/dto.dart';
 import 'api/vault.dart';
 import 'api/vault_ephemeral.dart';
+import 'api/vault_profile.dart';
 import 'api/vault_projections.dart';
+import 'api/vault_sync.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -69,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -278280637;
+  int get rustContentHash => 905592103;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -239,6 +241,7 @@ abstract class RustLibApi extends BaseApi {
 
   Future<(Uint8List, String, PlatformInt64)> crateApiVaultQrShareBlob({
     required PlatformInt64 expiresDays,
+    String? profileJson,
   });
 
   Future<Uint8List> crateApiVaultReadSourceBytes({required PlatformInt64 id});
@@ -256,6 +259,162 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<String> crateApiVaultSourceFileObjectPath({required PlatformInt64 id});
+
+  Future<(Uint8List, Uint8List)> crateApiVaultSyncSyncAccountKeysNew();
+
+  Future<List<(String, String)>> crateApiVaultSyncSyncAllObjectIds({
+    required List<int> profileKey,
+  });
+
+  Future<bool> crateApiVaultSyncSyncCurrentVaultIsKeyed();
+
+  Future<int> crateApiVaultSyncSyncDateShiftDays({
+    required List<int> profileKey,
+  });
+
+  Future<(String, Uint8List)> crateApiVaultSyncSyncEncryptObject({
+    required List<int> profileKey,
+    required String hash,
+  });
+
+  Future<List<SyncEventDto>> crateApiVaultSyncSyncExportEvents({
+    required List<int> profileKey,
+    required List<(String, PlatformInt64)> after,
+  });
+
+  Future<SyncImportOutcomeDto> crateApiVaultSyncSyncImportEvents({
+    required List<int> profileKey,
+    required List<SyncEventDto> events,
+  });
+
+  Future<BigInt> crateApiVaultSyncSyncKdfBenchMs({
+    required int mKib,
+    required int t,
+    required int p,
+  });
+
+  Future<List<(String, PlatformInt64)>> crateApiVaultSyncSyncLocalSeqMap();
+
+  Future<List<(String, String)>> crateApiVaultSyncSyncMissingObjects({
+    required List<int> profileKey,
+  });
+
+  Future<void> crateApiVaultSyncSyncOpenProfileVault({
+    required String docsDir,
+    required String dataDir,
+    required List<int> profileKey,
+  });
+
+  Future<Uint8List> crateApiVaultSyncSyncOpenSealed({
+    required List<int> secret,
+    required List<int> blob,
+  });
+
+  Future<Uint8List> crateApiVaultSyncSyncProfileKeyNew();
+
+  Future<String> crateApiVaultSyncSyncRecoveryCodeNew();
+
+  Future<Uint8List> crateApiVaultSyncSyncSealTo({
+    required List<int> public,
+    required List<int> plaintext,
+  });
+
+  Future<String> crateApiVaultSyncSyncStoreObject({
+    required List<int> profileKey,
+    required String objectId,
+    required List<int> ciphertext,
+  });
+
+  Future<Uint8List> crateApiVaultSyncSyncUnwrapPrivatePw({
+    required List<int> blob,
+    required String password,
+    required List<int> salt,
+    required int mKib,
+    required int t,
+    required int p,
+  });
+
+  Future<Uint8List> crateApiVaultSyncSyncUnwrapPrivateRc({
+    required List<int> blob,
+    required String code,
+  });
+
+  Future<Uint8List> crateApiVaultSyncSyncUnwrapWithToken({
+    required List<int> blob,
+    required String token,
+  });
+
+  Future<Uint8List> crateApiVaultSyncSyncWrapPrivate({
+    required List<int> secret,
+    required String password,
+    required List<int> salt,
+    required int mKib,
+    required int t,
+    required int p,
+  });
+
+  Future<Uint8List> crateApiVaultSyncSyncWrapPrivateRc({
+    required List<int> secret,
+    required String code,
+  });
+
+  Future<Uint8List> crateApiVaultSyncSyncWrapWithToken({
+    required List<int> plaintext,
+    required String token,
+  });
+
+  Future<CloudExtractionResultDto> crateApiVaultVaultCloudCommitExtraction({
+    required PlatformInt64 documentId,
+    required String mode,
+    required int schema,
+    required String modelVersion,
+    required String llmJson,
+    required String restoreMapJson,
+    required String knownName,
+    String? knownIdNumber,
+    String? knownPhone,
+  });
+
+  Future<CloudExtractionRequestDto> crateApiVaultVaultCloudPrepareExtraction({
+    required PlatformInt64 documentId,
+    required List<OcrLineDto> lines,
+    required String knownName,
+    String? knownIdNumber,
+    String? knownPhone,
+    required String profileSecretHex,
+    required double pageW,
+    required double pageH,
+  });
+
+  Future<Uint8List> crateApiVaultVaultCloudRedactImage({
+    required List<int> bytes,
+    required List<RectDto> paint,
+  });
+
+  Future<String> crateApiVaultProfileVaultProfileInstallPackage({
+    required String dir,
+    required String envelopeJson,
+  });
+
+  Future<PlatformInt64> crateApiVaultProfileVaultProfileRecordEvent({
+    required String kind,
+    required String package,
+    required String at,
+    required String payloadJson,
+  });
+
+  Future<void> crateApiVaultProfileVaultProfileRefreshTerms({
+    required String dir,
+  });
+
+  Future<String> crateApiVaultProfileVaultProfileVerifyIndex({
+    required String envelopeJson,
+  });
+
+  Future<String> crateApiVaultProfileVaultProfileView({
+    required String dir,
+    required String packageId,
+  });
 
   Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard();
 
@@ -1597,12 +1756,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<(Uint8List, String, PlatformInt64)> crateApiVaultQrShareBlob({
     required PlatformInt64 expiresDays,
+    String? profileJson,
   }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_i_64(expiresDays, serializer);
+          sse_encode_opt_String(profileJson, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1615,7 +1776,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiVaultQrShareBlobConstMeta,
-        argValues: [expiresDays],
+        argValues: [expiresDays, profileJson],
         apiImpl: this,
       ),
     );
@@ -1623,7 +1784,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiVaultQrShareBlobConstMeta => const TaskConstMeta(
     debugName: "qr_share_blob",
-    argNames: ["expiresDays"],
+    argNames: ["expiresDays", "profileJson"],
   );
 
   @override
@@ -1806,7 +1967,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard() {
+  Future<(Uint8List, Uint8List)> crateApiVaultSyncSyncAccountKeysNew() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -1815,6 +1976,1100 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             generalizedFrbRustBinding,
             serializer,
             funcId: 49,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_record_list_prim_u_8_strict_list_prim_u_8_strict,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiVaultSyncSyncAccountKeysNewConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncAccountKeysNewConstMeta =>
+      const TaskConstMeta(debugName: "sync_account_keys_new", argNames: []);
+
+  @override
+  Future<List<(String, String)>> crateApiVaultSyncSyncAllObjectIds({
+    required List<int> profileKey,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(profileKey, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 50,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_record_string_string,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncAllObjectIdsConstMeta,
+        argValues: [profileKey],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncAllObjectIdsConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_all_object_ids",
+        argNames: ["profileKey"],
+      );
+
+  @override
+  Future<bool> crateApiVaultSyncSyncCurrentVaultIsKeyed() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 51,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiVaultSyncSyncCurrentVaultIsKeyedConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncCurrentVaultIsKeyedConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_current_vault_is_keyed",
+        argNames: [],
+      );
+
+  @override
+  Future<int> crateApiVaultSyncSyncDateShiftDays({
+    required List<int> profileKey,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(profileKey, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 52,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_32,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncDateShiftDaysConstMeta,
+        argValues: [profileKey],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncDateShiftDaysConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_date_shift_days",
+        argNames: ["profileKey"],
+      );
+
+  @override
+  Future<(String, Uint8List)> crateApiVaultSyncSyncEncryptObject({
+    required List<int> profileKey,
+    required String hash,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(profileKey, serializer);
+          sse_encode_String(hash, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 53,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_record_string_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncEncryptObjectConstMeta,
+        argValues: [profileKey, hash],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncEncryptObjectConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_encrypt_object",
+        argNames: ["profileKey", "hash"],
+      );
+
+  @override
+  Future<List<SyncEventDto>> crateApiVaultSyncSyncExportEvents({
+    required List<int> profileKey,
+    required List<(String, PlatformInt64)> after,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(profileKey, serializer);
+          sse_encode_list_record_string_i_64(after, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 54,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_sync_event_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncExportEventsConstMeta,
+        argValues: [profileKey, after],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncExportEventsConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_export_events",
+        argNames: ["profileKey", "after"],
+      );
+
+  @override
+  Future<SyncImportOutcomeDto> crateApiVaultSyncSyncImportEvents({
+    required List<int> profileKey,
+    required List<SyncEventDto> events,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(profileKey, serializer);
+          sse_encode_list_sync_event_dto(events, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 55,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_sync_import_outcome_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncImportEventsConstMeta,
+        argValues: [profileKey, events],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncImportEventsConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_import_events",
+        argNames: ["profileKey", "events"],
+      );
+
+  @override
+  Future<BigInt> crateApiVaultSyncSyncKdfBenchMs({
+    required int mKib,
+    required int t,
+    required int p,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(mKib, serializer);
+          sse_encode_u_32(t, serializer);
+          sse_encode_u_32(p, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 56,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_64,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncKdfBenchMsConstMeta,
+        argValues: [mKib, t, p],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncKdfBenchMsConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_kdf_bench_ms",
+        argNames: ["mKib", "t", "p"],
+      );
+
+  @override
+  Future<List<(String, PlatformInt64)>> crateApiVaultSyncSyncLocalSeqMap() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 57,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_record_string_i_64,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncLocalSeqMapConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncLocalSeqMapConstMeta =>
+      const TaskConstMeta(debugName: "sync_local_seq_map", argNames: []);
+
+  @override
+  Future<List<(String, String)>> crateApiVaultSyncSyncMissingObjects({
+    required List<int> profileKey,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(profileKey, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 58,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_record_string_string,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncMissingObjectsConstMeta,
+        argValues: [profileKey],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncMissingObjectsConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_missing_objects",
+        argNames: ["profileKey"],
+      );
+
+  @override
+  Future<void> crateApiVaultSyncSyncOpenProfileVault({
+    required String docsDir,
+    required String dataDir,
+    required List<int> profileKey,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(docsDir, serializer);
+          sse_encode_String(dataDir, serializer);
+          sse_encode_list_prim_u_8_loose(profileKey, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 59,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncOpenProfileVaultConstMeta,
+        argValues: [docsDir, dataDir, profileKey],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncOpenProfileVaultConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_open_profile_vault",
+        argNames: ["docsDir", "dataDir", "profileKey"],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultSyncSyncOpenSealed({
+    required List<int> secret,
+    required List<int> blob,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(secret, serializer);
+          sse_encode_list_prim_u_8_loose(blob, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 60,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncOpenSealedConstMeta,
+        argValues: [secret, blob],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncOpenSealedConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_open_sealed",
+        argNames: ["secret", "blob"],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultSyncSyncProfileKeyNew() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 61,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiVaultSyncSyncProfileKeyNewConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncProfileKeyNewConstMeta =>
+      const TaskConstMeta(debugName: "sync_profile_key_new", argNames: []);
+
+  @override
+  Future<String> crateApiVaultSyncSyncRecoveryCodeNew() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 62,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiVaultSyncSyncRecoveryCodeNewConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncRecoveryCodeNewConstMeta =>
+      const TaskConstMeta(debugName: "sync_recovery_code_new", argNames: []);
+
+  @override
+  Future<Uint8List> crateApiVaultSyncSyncSealTo({
+    required List<int> public,
+    required List<int> plaintext,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(public, serializer);
+          sse_encode_list_prim_u_8_loose(plaintext, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 63,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncSealToConstMeta,
+        argValues: [public, plaintext],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncSealToConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_seal_to",
+        argNames: ["public", "plaintext"],
+      );
+
+  @override
+  Future<String> crateApiVaultSyncSyncStoreObject({
+    required List<int> profileKey,
+    required String objectId,
+    required List<int> ciphertext,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(profileKey, serializer);
+          sse_encode_String(objectId, serializer);
+          sse_encode_list_prim_u_8_loose(ciphertext, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 64,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncStoreObjectConstMeta,
+        argValues: [profileKey, objectId, ciphertext],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncStoreObjectConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_store_object",
+        argNames: ["profileKey", "objectId", "ciphertext"],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultSyncSyncUnwrapPrivatePw({
+    required List<int> blob,
+    required String password,
+    required List<int> salt,
+    required int mKib,
+    required int t,
+    required int p,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(blob, serializer);
+          sse_encode_String(password, serializer);
+          sse_encode_list_prim_u_8_loose(salt, serializer);
+          sse_encode_u_32(mKib, serializer);
+          sse_encode_u_32(t, serializer);
+          sse_encode_u_32(p, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 65,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncUnwrapPrivatePwConstMeta,
+        argValues: [blob, password, salt, mKib, t, p],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncUnwrapPrivatePwConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_unwrap_private_pw",
+        argNames: ["blob", "password", "salt", "mKib", "t", "p"],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultSyncSyncUnwrapPrivateRc({
+    required List<int> blob,
+    required String code,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(blob, serializer);
+          sse_encode_String(code, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 66,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncUnwrapPrivateRcConstMeta,
+        argValues: [blob, code],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncUnwrapPrivateRcConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_unwrap_private_rc",
+        argNames: ["blob", "code"],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultSyncSyncUnwrapWithToken({
+    required List<int> blob,
+    required String token,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(blob, serializer);
+          sse_encode_String(token, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 67,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncUnwrapWithTokenConstMeta,
+        argValues: [blob, token],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncUnwrapWithTokenConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_unwrap_with_token",
+        argNames: ["blob", "token"],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultSyncSyncWrapPrivate({
+    required List<int> secret,
+    required String password,
+    required List<int> salt,
+    required int mKib,
+    required int t,
+    required int p,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(secret, serializer);
+          sse_encode_String(password, serializer);
+          sse_encode_list_prim_u_8_loose(salt, serializer);
+          sse_encode_u_32(mKib, serializer);
+          sse_encode_u_32(t, serializer);
+          sse_encode_u_32(p, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 68,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncWrapPrivateConstMeta,
+        argValues: [secret, password, salt, mKib, t, p],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncWrapPrivateConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_wrap_private",
+        argNames: ["secret", "password", "salt", "mKib", "t", "p"],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultSyncSyncWrapPrivateRc({
+    required List<int> secret,
+    required String code,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(secret, serializer);
+          sse_encode_String(code, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 69,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncWrapPrivateRcConstMeta,
+        argValues: [secret, code],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncWrapPrivateRcConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_wrap_private_rc",
+        argNames: ["secret", "code"],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultSyncSyncWrapWithToken({
+    required List<int> plaintext,
+    required String token,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(plaintext, serializer);
+          sse_encode_String(token, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 70,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultSyncSyncWrapWithTokenConstMeta,
+        argValues: [plaintext, token],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultSyncSyncWrapWithTokenConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_wrap_with_token",
+        argNames: ["plaintext", "token"],
+      );
+
+  @override
+  Future<CloudExtractionResultDto> crateApiVaultVaultCloudCommitExtraction({
+    required PlatformInt64 documentId,
+    required String mode,
+    required int schema,
+    required String modelVersion,
+    required String llmJson,
+    required String restoreMapJson,
+    required String knownName,
+    String? knownIdNumber,
+    String? knownPhone,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_i_64(documentId, serializer);
+          sse_encode_String(mode, serializer);
+          sse_encode_i_32(schema, serializer);
+          sse_encode_String(modelVersion, serializer);
+          sse_encode_String(llmJson, serializer);
+          sse_encode_String(restoreMapJson, serializer);
+          sse_encode_String(knownName, serializer);
+          sse_encode_opt_String(knownIdNumber, serializer);
+          sse_encode_opt_String(knownPhone, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 71,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_cloud_extraction_result_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultVaultCloudCommitExtractionConstMeta,
+        argValues: [
+          documentId,
+          mode,
+          schema,
+          modelVersion,
+          llmJson,
+          restoreMapJson,
+          knownName,
+          knownIdNumber,
+          knownPhone,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultVaultCloudCommitExtractionConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_cloud_commit_extraction",
+        argNames: [
+          "documentId",
+          "mode",
+          "schema",
+          "modelVersion",
+          "llmJson",
+          "restoreMapJson",
+          "knownName",
+          "knownIdNumber",
+          "knownPhone",
+        ],
+      );
+
+  @override
+  Future<CloudExtractionRequestDto> crateApiVaultVaultCloudPrepareExtraction({
+    required PlatformInt64 documentId,
+    required List<OcrLineDto> lines,
+    required String knownName,
+    String? knownIdNumber,
+    String? knownPhone,
+    required String profileSecretHex,
+    required double pageW,
+    required double pageH,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_i_64(documentId, serializer);
+          sse_encode_list_ocr_line_dto(lines, serializer);
+          sse_encode_String(knownName, serializer);
+          sse_encode_opt_String(knownIdNumber, serializer);
+          sse_encode_opt_String(knownPhone, serializer);
+          sse_encode_String(profileSecretHex, serializer);
+          sse_encode_f_32(pageW, serializer);
+          sse_encode_f_32(pageH, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 72,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_cloud_extraction_request_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultVaultCloudPrepareExtractionConstMeta,
+        argValues: [
+          documentId,
+          lines,
+          knownName,
+          knownIdNumber,
+          knownPhone,
+          profileSecretHex,
+          pageW,
+          pageH,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultVaultCloudPrepareExtractionConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_cloud_prepare_extraction",
+        argNames: [
+          "documentId",
+          "lines",
+          "knownName",
+          "knownIdNumber",
+          "knownPhone",
+          "profileSecretHex",
+          "pageW",
+          "pageH",
+        ],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultVaultCloudRedactImage({
+    required List<int> bytes,
+    required List<RectDto> paint,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          sse_encode_list_rect_dto(paint, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 73,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultVaultCloudRedactImageConstMeta,
+        argValues: [bytes, paint],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultVaultCloudRedactImageConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_cloud_redact_image",
+        argNames: ["bytes", "paint"],
+      );
+
+  @override
+  Future<String> crateApiVaultProfileVaultProfileInstallPackage({
+    required String dir,
+    required String envelopeJson,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(dir, serializer);
+          sse_encode_String(envelopeJson, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 74,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProfileVaultProfileInstallPackageConstMeta,
+        argValues: [dir, envelopeJson],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProfileVaultProfileInstallPackageConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_profile_install_package",
+        argNames: ["dir", "envelopeJson"],
+      );
+
+  @override
+  Future<PlatformInt64> crateApiVaultProfileVaultProfileRecordEvent({
+    required String kind,
+    required String package,
+    required String at,
+    required String payloadJson,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(kind, serializer);
+          sse_encode_String(package, serializer);
+          sse_encode_String(at, serializer);
+          sse_encode_String(payloadJson, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 75,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProfileVaultProfileRecordEventConstMeta,
+        argValues: [kind, package, at, payloadJson],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProfileVaultProfileRecordEventConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_profile_record_event",
+        argNames: ["kind", "package", "at", "payloadJson"],
+      );
+
+  @override
+  Future<void> crateApiVaultProfileVaultProfileRefreshTerms({
+    required String dir,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(dir, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 76,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProfileVaultProfileRefreshTermsConstMeta,
+        argValues: [dir],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProfileVaultProfileRefreshTermsConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_profile_refresh_terms",
+        argNames: ["dir"],
+      );
+
+  @override
+  Future<String> crateApiVaultProfileVaultProfileVerifyIndex({
+    required String envelopeJson,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(envelopeJson, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 77,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProfileVaultProfileVerifyIndexConstMeta,
+        argValues: [envelopeJson],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProfileVaultProfileVerifyIndexConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_profile_verify_index",
+        argNames: ["envelopeJson"],
+      );
+
+  @override
+  Future<String> crateApiVaultProfileVaultProfileView({
+    required String dir,
+    required String packageId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(dir, serializer);
+          sse_encode_String(packageId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 78,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProfileVaultProfileViewConstMeta,
+        argValues: [dir, packageId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProfileVaultProfileViewConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_profile_view",
+        argNames: ["dir", "packageId"],
+      );
+
+  @override
+  Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 79,
             port: port_,
           );
         },
@@ -1841,7 +3096,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 50,
+            funcId: 80,
             port: port_,
           );
         },
@@ -1868,7 +3123,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 51,
+            funcId: 81,
             port: port_,
           );
         },
@@ -1895,7 +3150,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 52,
+            funcId: 82,
             port: port_,
           );
         },
@@ -2039,6 +3294,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudExtractionRequestDto dco_decode_cloud_extraction_request_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return CloudExtractionRequestDto(
+      payloadText: dco_decode_String(arr[0]),
+      paint: dco_decode_list_rect_dto(arr[1]),
+      restoreMapJson: dco_decode_String(arr[2]),
+    );
+  }
+
+  @protected
+  CloudExtractionResultDto dco_decode_cloud_extraction_result_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return CloudExtractionResultDto(
+      labs: dco_decode_i_64(arr[0]),
+      rejected: dco_decode_i_64(arr[1]),
+      unverified: dco_decode_i_64(arr[2]),
+    );
+  }
+
+  @protected
   ConfirmedStatusDto dco_decode_confirmed_status_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2098,8 +3381,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DocumentSummaryDto dco_decode_document_summary_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return DocumentSummaryDto(
       id: dco_decode_i_64(arr[0]),
       docType: dco_decode_String(arr[1]),
@@ -2108,6 +3391,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       title: dco_decode_opt_String(arr[4]),
       pageCount: dco_decode_i_32(arr[5]),
       sliceCount: dco_decode_opt_box_autoadd_i_32(arr[6]),
+      extractionItemCount: dco_decode_opt_box_autoadd_i_32(arr[7]),
+      provider: dco_decode_opt_String(arr[8]),
     );
   }
 
@@ -2248,6 +3533,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<OcrLineDto> dco_decode_list_ocr_line_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_ocr_line_dto).toList();
+  }
+
+  @protected
   Int32List dco_decode_list_prim_i_32_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Int32List;
@@ -2296,6 +3587,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<(String, PlatformInt64)> dco_decode_list_record_string_i_64(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_record_string_i_64).toList();
+  }
+
+  @protected
+  List<(String, String)> dco_decode_list_record_string_string(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_record_string_string).toList();
+  }
+
+  @protected
+  List<RectDto> dco_decode_list_rect_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_rect_dto).toList();
+  }
+
+  @protected
   List<SelfMeasuredValueDto> dco_decode_list_self_measured_value_dto(
     dynamic raw,
   ) {
@@ -2303,6 +3614,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return (raw as List<dynamic>)
         .map(dco_decode_self_measured_value_dto)
         .toList();
+  }
+
+  @protected
+  List<SyncEventDto> dco_decode_list_sync_event_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_sync_event_dto).toList();
   }
 
   @protected
@@ -2356,14 +3673,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  OcrLineDto dco_decode_ocr_line_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return OcrLineDto(
+      text: dco_decode_String(arr[0]),
+      left: dco_decode_f_32(arr[1]),
+      top: dco_decode_f_32(arr[2]),
+      right: dco_decode_f_32(arr[3]),
+      bottom: dco_decode_f_32(arr[4]),
+    );
+  }
+
+  @protected
   OcrPpResultDto dco_decode_ocr_pp_result_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return OcrPpResultDto(
       text: dco_decode_String(arr[0]),
       confidence: dco_decode_f_32(arr[1]),
+      lines: dco_decode_list_ocr_line_dto(arr[2]),
+      frameW: dco_decode_f_32(arr[3]),
+      frameH: dco_decode_f_32(arr[4]),
     );
   }
 
@@ -2502,6 +3837,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (Uint8List, Uint8List)
+  dco_decode_record_list_prim_u_8_strict_list_prim_u_8_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2) {
+      throw Exception('Expected 2 elements, got ${arr.length}');
+    }
+    return (
+      dco_decode_list_prim_u_8_strict(arr[0]),
+      dco_decode_list_prim_u_8_strict(arr[1]),
+    );
+  }
+
+  @protected
   (Uint8List, String, PlatformInt64)
   dco_decode_record_list_prim_u_8_strict_string_i_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -2513,6 +3862,52 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       dco_decode_list_prim_u_8_strict(arr[0]),
       dco_decode_String(arr[1]),
       dco_decode_i_64(arr[2]),
+    );
+  }
+
+  @protected
+  (String, PlatformInt64) dco_decode_record_string_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2) {
+      throw Exception('Expected 2 elements, got ${arr.length}');
+    }
+    return (dco_decode_String(arr[0]), dco_decode_i_64(arr[1]));
+  }
+
+  @protected
+  (String, Uint8List) dco_decode_record_string_list_prim_u_8_strict(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2) {
+      throw Exception('Expected 2 elements, got ${arr.length}');
+    }
+    return (dco_decode_String(arr[0]), dco_decode_list_prim_u_8_strict(arr[1]));
+  }
+
+  @protected
+  (String, String) dco_decode_record_string_string(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2) {
+      throw Exception('Expected 2 elements, got ${arr.length}');
+    }
+    return (dco_decode_String(arr[0]), dco_decode_String(arr[1]));
+  }
+
+  @protected
+  RectDto dco_decode_rect_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return RectDto(
+      left: dco_decode_f_32(arr[0]),
+      top: dco_decode_f_32(arr[1]),
+      right: dco_decode_f_32(arr[2]),
+      bottom: dco_decode_f_32(arr[3]),
     );
   }
 
@@ -2559,6 +3954,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SyncEventDto dco_decode_sync_event_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return SyncEventDto(
+      deviceId: dco_decode_String(arr[0]),
+      seq: dco_decode_i_64(arr[1]),
+      eventId: dco_decode_String(arr[2]),
+      ts: dco_decode_String(arr[3]),
+      ciphertext: dco_decode_list_prim_u_8_strict(arr[4]),
+    );
+  }
+
+  @protected
+  SyncImportOutcomeDto dco_decode_sync_import_outcome_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return SyncImportOutcomeDto(
+      applied: dco_decode_u_32(arr[0]),
+      skippedExisting: dco_decode_u_32(arr[1]),
+      outOfOrder: dco_decode_u_32(arr[2]),
+      untrusted: dco_decode_u_32(arr[3]),
+      undecodable: dco_decode_u_32(arr[4]),
+    );
+  }
+
+  @protected
   TimelineGroupDto dco_decode_timeline_group_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
@@ -2580,14 +4005,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TrendPointDto dco_decode_trend_point_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return TrendPointDto(
       date: dco_decode_opt_String(arr[0]),
       value: dco_decode_f_64(arr[1]),
       unit: dco_decode_opt_String(arr[2]),
       flag: dco_decode_opt_String(arr[3]),
       documentId: dco_decode_i_64(arr[4]),
+      unverified: dco_decode_bool(arr[5]),
     );
   }
 
@@ -2614,6 +4040,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  int dco_decode_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeU64(raw);
+  }
+
+  @protected
   int dco_decode_u_8(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
@@ -2629,8 +4067,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   VisitLabDto dco_decode_visit_lab_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return VisitLabDto(
       name: dco_decode_String(arr[0]),
       date: dco_decode_String(arr[1]),
@@ -2642,6 +4080,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       valuesConverted: dco_decode_bool(arr[7]),
       documentId: dco_decode_i_64(arr[8]),
       selfMeasured: dco_decode_bool(arr[9]),
+      unverified: dco_decode_bool(arr[10]),
     );
   }
 
@@ -2828,6 +4267,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudExtractionRequestDto sse_decode_cloud_extraction_request_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_payloadText = sse_decode_String(deserializer);
+    var var_paint = sse_decode_list_rect_dto(deserializer);
+    var var_restoreMapJson = sse_decode_String(deserializer);
+    return CloudExtractionRequestDto(
+      payloadText: var_payloadText,
+      paint: var_paint,
+      restoreMapJson: var_restoreMapJson,
+    );
+  }
+
+  @protected
+  CloudExtractionResultDto sse_decode_cloud_extraction_result_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_labs = sse_decode_i_64(deserializer);
+    var var_rejected = sse_decode_i_64(deserializer);
+    var var_unverified = sse_decode_i_64(deserializer);
+    return CloudExtractionResultDto(
+      labs: var_labs,
+      rejected: var_rejected,
+      unverified: var_unverified,
+    );
+  }
+
+  @protected
   ConfirmedStatusDto sse_decode_confirmed_status_dto(
     SseDeserializer deserializer,
   ) {
@@ -2905,6 +4374,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_title = sse_decode_opt_String(deserializer);
     var var_pageCount = sse_decode_i_32(deserializer);
     var var_sliceCount = sse_decode_opt_box_autoadd_i_32(deserializer);
+    var var_extractionItemCount = sse_decode_opt_box_autoadd_i_32(deserializer);
+    var var_provider = sse_decode_opt_String(deserializer);
     return DocumentSummaryDto(
       id: var_id,
       docType: var_docType,
@@ -2913,6 +4384,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       title: var_title,
       pageCount: var_pageCount,
       sliceCount: var_sliceCount,
+      extractionItemCount: var_extractionItemCount,
+      provider: var_provider,
     );
   }
 
@@ -3105,6 +4578,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<OcrLineDto> sse_decode_list_ocr_line_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <OcrLineDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_ocr_line_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   Int32List sse_decode_list_prim_i_32_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -3189,6 +4674,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<(String, PlatformInt64)> sse_decode_list_record_string_i_64(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <(String, PlatformInt64)>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_record_string_i_64(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<(String, String)> sse_decode_list_record_string_string(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <(String, String)>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_record_string_string(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<RectDto> sse_decode_list_rect_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <RectDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_rect_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<SelfMeasuredValueDto> sse_decode_list_self_measured_value_dto(
     SseDeserializer deserializer,
   ) {
@@ -3198,6 +4723,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <SelfMeasuredValueDto>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_self_measured_value_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<SyncEventDto> sse_decode_list_sync_event_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <SyncEventDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_sync_event_dto(deserializer));
     }
     return ans_;
   }
@@ -3302,11 +4841,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  OcrLineDto sse_decode_ocr_line_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_text = sse_decode_String(deserializer);
+    var var_left = sse_decode_f_32(deserializer);
+    var var_top = sse_decode_f_32(deserializer);
+    var var_right = sse_decode_f_32(deserializer);
+    var var_bottom = sse_decode_f_32(deserializer);
+    return OcrLineDto(
+      text: var_text,
+      left: var_left,
+      top: var_top,
+      right: var_right,
+      bottom: var_bottom,
+    );
+  }
+
+  @protected
   OcrPpResultDto sse_decode_ocr_pp_result_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_text = sse_decode_String(deserializer);
     var var_confidence = sse_decode_f_32(deserializer);
-    return OcrPpResultDto(text: var_text, confidence: var_confidence);
+    var var_lines = sse_decode_list_ocr_line_dto(deserializer);
+    var var_frameW = sse_decode_f_32(deserializer);
+    var var_frameH = sse_decode_f_32(deserializer);
+    return OcrPpResultDto(
+      text: var_text,
+      confidence: var_confidence,
+      lines: var_lines,
+      frameW: var_frameW,
+      frameH: var_frameH,
+    );
   }
 
   @protected
@@ -3471,6 +5036,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (Uint8List, Uint8List)
+  sse_decode_record_list_prim_u_8_strict_list_prim_u_8_strict(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_field0 = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_field1 = sse_decode_list_prim_u_8_strict(deserializer);
+    return (var_field0, var_field1);
+  }
+
+  @protected
   (Uint8List, String, PlatformInt64)
   sse_decode_record_list_prim_u_8_strict_string_i_64(
     SseDeserializer deserializer,
@@ -3480,6 +5056,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_field1 = sse_decode_String(deserializer);
     var var_field2 = sse_decode_i_64(deserializer);
     return (var_field0, var_field1, var_field2);
+  }
+
+  @protected
+  (String, PlatformInt64) sse_decode_record_string_i_64(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_field0 = sse_decode_String(deserializer);
+    var var_field1 = sse_decode_i_64(deserializer);
+    return (var_field0, var_field1);
+  }
+
+  @protected
+  (String, Uint8List) sse_decode_record_string_list_prim_u_8_strict(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_field0 = sse_decode_String(deserializer);
+    var var_field1 = sse_decode_list_prim_u_8_strict(deserializer);
+    return (var_field0, var_field1);
+  }
+
+  @protected
+  (String, String) sse_decode_record_string_string(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_field0 = sse_decode_String(deserializer);
+    var var_field1 = sse_decode_String(deserializer);
+    return (var_field0, var_field1);
+  }
+
+  @protected
+  RectDto sse_decode_rect_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_left = sse_decode_f_32(deserializer);
+    var var_top = sse_decode_f_32(deserializer);
+    var var_right = sse_decode_f_32(deserializer);
+    var var_bottom = sse_decode_f_32(deserializer);
+    return RectDto(
+      left: var_left,
+      top: var_top,
+      right: var_right,
+      bottom: var_bottom,
+    );
   }
 
   @protected
@@ -3532,6 +5153,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SyncEventDto sse_decode_sync_event_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_deviceId = sse_decode_String(deserializer);
+    var var_seq = sse_decode_i_64(deserializer);
+    var var_eventId = sse_decode_String(deserializer);
+    var var_ts = sse_decode_String(deserializer);
+    var var_ciphertext = sse_decode_list_prim_u_8_strict(deserializer);
+    return SyncEventDto(
+      deviceId: var_deviceId,
+      seq: var_seq,
+      eventId: var_eventId,
+      ts: var_ts,
+      ciphertext: var_ciphertext,
+    );
+  }
+
+  @protected
+  SyncImportOutcomeDto sse_decode_sync_import_outcome_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_applied = sse_decode_u_32(deserializer);
+    var var_skippedExisting = sse_decode_u_32(deserializer);
+    var var_outOfOrder = sse_decode_u_32(deserializer);
+    var var_untrusted = sse_decode_u_32(deserializer);
+    var var_undecodable = sse_decode_u_32(deserializer);
+    return SyncImportOutcomeDto(
+      applied: var_applied,
+      skippedExisting: var_skippedExisting,
+      outOfOrder: var_outOfOrder,
+      untrusted: var_untrusted,
+      undecodable: var_undecodable,
+    );
+  }
+
+  @protected
   TimelineGroupDto sse_decode_timeline_group_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -3562,12 +5219,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_unit = sse_decode_opt_String(deserializer);
     var var_flag = sse_decode_opt_String(deserializer);
     var var_documentId = sse_decode_i_64(deserializer);
+    var var_unverified = sse_decode_bool(deserializer);
     return TrendPointDto(
       date: var_date,
       value: var_value,
       unit: var_unit,
       flag: var_flag,
       documentId: var_documentId,
+      unverified: var_unverified,
     );
   }
 
@@ -3603,6 +5262,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  int sse_decode_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint32();
+  }
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getBigUint64();
+  }
+
+  @protected
   int sse_decode_u_8(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8();
@@ -3626,6 +5297,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_valuesConverted = sse_decode_bool(deserializer);
     var var_documentId = sse_decode_i_64(deserializer);
     var var_selfMeasured = sse_decode_bool(deserializer);
+    var var_unverified = sse_decode_bool(deserializer);
     return VisitLabDto(
       name: var_name,
       date: var_date,
@@ -3637,6 +5309,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       valuesConverted: var_valuesConverted,
       documentId: var_documentId,
       selfMeasured: var_selfMeasured,
+      unverified: var_unverified,
     );
   }
 
@@ -3829,6 +5502,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_cloud_extraction_request_dto(
+    CloudExtractionRequestDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.payloadText, serializer);
+    sse_encode_list_rect_dto(self.paint, serializer);
+    sse_encode_String(self.restoreMapJson, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_extraction_result_dto(
+    CloudExtractionResultDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.labs, serializer);
+    sse_encode_i_64(self.rejected, serializer);
+    sse_encode_i_64(self.unverified, serializer);
+  }
+
+  @protected
   void sse_encode_confirmed_status_dto(
     ConfirmedStatusDto self,
     SseSerializer serializer,
@@ -3886,6 +5581,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.title, serializer);
     sse_encode_i_32(self.pageCount, serializer);
     sse_encode_opt_box_autoadd_i_32(self.sliceCount, serializer);
+    sse_encode_opt_box_autoadd_i_32(self.extractionItemCount, serializer);
+    sse_encode_opt_String(self.provider, serializer);
   }
 
   @protected
@@ -4046,6 +5743,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_ocr_line_dto(
+    List<OcrLineDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_ocr_line_dto(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_prim_i_32_strict(
     Int32List self,
     SseSerializer serializer,
@@ -4136,6 +5845,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_record_string_i_64(
+    List<(String, PlatformInt64)> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_record_string_i_64(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_record_string_string(
+    List<(String, String)> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_record_string_string(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_rect_dto(List<RectDto> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_rect_dto(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_self_measured_value_dto(
     List<SelfMeasuredValueDto> self,
     SseSerializer serializer,
@@ -4144,6 +5886,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_self_measured_value_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_sync_event_dto(
+    List<SyncEventDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_sync_event_dto(item, serializer);
     }
   }
 
@@ -4232,6 +5986,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_ocr_line_dto(OcrLineDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.text, serializer);
+    sse_encode_f_32(self.left, serializer);
+    sse_encode_f_32(self.top, serializer);
+    sse_encode_f_32(self.right, serializer);
+    sse_encode_f_32(self.bottom, serializer);
+  }
+
+  @protected
   void sse_encode_ocr_pp_result_dto(
     OcrPpResultDto self,
     SseSerializer serializer,
@@ -4239,6 +6003,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.text, serializer);
     sse_encode_f_32(self.confidence, serializer);
+    sse_encode_list_ocr_line_dto(self.lines, serializer);
+    sse_encode_f_32(self.frameW, serializer);
+    sse_encode_f_32(self.frameH, serializer);
   }
 
   @protected
@@ -4378,6 +6145,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_record_list_prim_u_8_strict_list_prim_u_8_strict(
+    (Uint8List, Uint8List) self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.$1, serializer);
+    sse_encode_list_prim_u_8_strict(self.$2, serializer);
+  }
+
+  @protected
   void sse_encode_record_list_prim_u_8_strict_string_i_64(
     (Uint8List, String, PlatformInt64) self,
     SseSerializer serializer,
@@ -4386,6 +6163,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_prim_u_8_strict(self.$1, serializer);
     sse_encode_String(self.$2, serializer);
     sse_encode_i_64(self.$3, serializer);
+  }
+
+  @protected
+  void sse_encode_record_string_i_64(
+    (String, PlatformInt64) self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.$1, serializer);
+    sse_encode_i_64(self.$2, serializer);
+  }
+
+  @protected
+  void sse_encode_record_string_list_prim_u_8_strict(
+    (String, Uint8List) self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.$1, serializer);
+    sse_encode_list_prim_u_8_strict(self.$2, serializer);
+  }
+
+  @protected
+  void sse_encode_record_string_string(
+    (String, String) self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.$1, serializer);
+    sse_encode_String(self.$2, serializer);
+  }
+
+  @protected
+  void sse_encode_rect_dto(RectDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_32(self.left, serializer);
+    sse_encode_f_32(self.top, serializer);
+    sse_encode_f_32(self.right, serializer);
+    sse_encode_f_32(self.bottom, serializer);
   }
 
   @protected
@@ -4425,6 +6241,29 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_sync_event_dto(SyncEventDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.deviceId, serializer);
+    sse_encode_i_64(self.seq, serializer);
+    sse_encode_String(self.eventId, serializer);
+    sse_encode_String(self.ts, serializer);
+    sse_encode_list_prim_u_8_strict(self.ciphertext, serializer);
+  }
+
+  @protected
+  void sse_encode_sync_import_outcome_dto(
+    SyncImportOutcomeDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.applied, serializer);
+    sse_encode_u_32(self.skippedExisting, serializer);
+    sse_encode_u_32(self.outOfOrder, serializer);
+    sse_encode_u_32(self.untrusted, serializer);
+    sse_encode_u_32(self.undecodable, serializer);
+  }
+
+  @protected
   void sse_encode_timeline_group_dto(
     TimelineGroupDto self,
     SseSerializer serializer,
@@ -4455,6 +6294,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.unit, serializer);
     sse_encode_opt_String(self.flag, serializer);
     sse_encode_i_64(self.documentId, serializer);
+    sse_encode_bool(self.unverified, serializer);
   }
 
   @protected
@@ -4475,6 +6315,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_trend_point_dto(self.points, serializer);
     sse_encode_bool(self.selfMeasured, serializer);
     sse_encode_opt_String(self.refSource, serializer);
+  }
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint32(self);
+  }
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putBigUint64(self);
   }
 
   @protected
@@ -4501,6 +6353,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.valuesConverted, serializer);
     sse_encode_i_64(self.documentId, serializer);
     sse_encode_bool(self.selfMeasured, serializer);
+    sse_encode_bool(self.unverified, serializer);
   }
 
   @protected

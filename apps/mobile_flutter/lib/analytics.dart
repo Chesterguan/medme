@@ -1,11 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:posthog_flutter/posthog_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 行为分析。**只采行为骨架,绝不采内容。**
 ///
-/// 这是一个装病历的 App,所以采集的红线比一般产品低得多:病历文字、文件名、OCR 结果、
+/// 这是一个装病历的 App,所以收集的红线比一般产品低得多:病历文字、文件名、OCR 结果、
 /// 药名、诊断、检验值、日期、医院名 —— 一个字都不能出去。这里能上报的只有「发生了什么
 /// 动作、成没成、花了多久(分桶)」。
 ///
@@ -61,7 +62,7 @@ class Analytics {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefAsked, true);
     } catch (_) {
-      // 写失败就下次再问一遍 —— 多问一次比偷偷采集好。
+      // 写失败就下次再问一遍 —— 多问一次比偷偷收集好。
     }
   }
 
@@ -118,7 +119,7 @@ class Analytics {
     _context.addAll(kv);
   }
 
-  /// 当前已知的库存份数;`null` = 还没读到(冷启动早期,或医生模式没有个人档案)。
+  /// 当前已知的库存份数;`null` = 还没读到(冷启动早期,或代拍模式下没有个人档案)。
   /// 导入埋点用它判断 `is_first`——**不知道就不报**,绝不猜。
   static int? _librarySize;
 
@@ -164,7 +165,7 @@ class Analytics {
       await Posthog().setup(
         PostHogConfig(_apiKey)
           ..host = _host
-          // ── 把所有「自动采集」逐个关掉 ────────────────────────────────
+          // ── 把所有「自动收集」逐个关掉 ────────────────────────────────
           // 关键:`beforeSend` 钩子**拦不住原生发起的事件**(生命周期、feature flag、
           // 问卷),所以「只报我们指定的事件」不能靠白名单兜底,必须在这里逐个关死。
           ..captureApplicationLifecycleEvents = false
@@ -215,6 +216,15 @@ class Analytics {
     }
   }
 
+  /// **仅测试用的钩子。** `track` 没有别的测试seam(真实上报走 Posthog 单例,
+  /// `flutter test` 既不配 Key 也不该真的联网)——调用点想断言"到底报没报、报了
+  /// 几次、带了什么属性",此前只能通过 UI 副作用间接猜。设了它,`track` 每次调用
+  /// 都会把 event/props 转发给它,除此之外**不改变任何行为**(不影响
+  /// `_started`/`_enabled` 判断、不影响真实发送)。测试用完记得置回 `null`,
+  /// 否则会漏到下一个测试里。
+  @visibleForTesting
+  static void Function(AnalyticsEvent event, Map<String, Object> props)? debugSink;
+
   /// 上报一个事件。**fire-and-forget** —— 不 await、不抛错、不阻塞调用方。
   static void track(AnalyticsEvent event, [Map<String, Object>? props]) {
     // 调用点发了 [AnalyticsEvent.props] 里没有的键 = 目录必然漂。只在 debug/测试里
@@ -230,6 +240,7 @@ class Analytics {
       }
       return true;
     }());
+    debugSink?.call(event, props ?? const {});
     if (!_started || !_enabled) return;
     unawaited(_send(event, props ?? const {}));
   }
@@ -247,7 +258,7 @@ class Analytics {
           // 低到不构成定位信息。
           'hour_bucket': Bucket.hour(DateTime.now()),
           // 服务端 GeoIP 富化会按 IP 补上省市 —— 我们不需要,明确禁掉。
-          // (IP 采集本身还要在 PostHog 项目设置里关,SDK 侧关不了。)
+          // (IP 收集本身还要在 PostHog 项目设置里关,SDK 侧关不了。)
           r'$geoip_disable': true,
         },
       );
@@ -264,7 +275,7 @@ class Analytics {
 /// 对照表在 `docs/analytics-catalog.md`,由 `test/analytics_catalog_test.dart`
 /// 双向钉住 —— 这里加了那里没写(或反过来)都会红。
 enum AnalyticsEvent {
-  /// 打开 App。DAU 基线。注意:**不靠 SDK 的生命周期自动采集**(那个 beforeSend
+  /// 打开 App。DAU 基线。注意:**不靠 SDK 的生命周期自动收集**(那个 beforeSend
   /// 拦不住,已关掉),而是我们自己在启动时发一条。
   appOpen('app_open', {'vault_ok'}),
 
@@ -300,21 +311,21 @@ enum AnalyticsEvent {
     'reason_code',
   }),
 
-  /// 采集器**没起来**,已降级到备用路径(普通系统相机)。属性:`source`、`reason`。
+  /// 扫描器**没起来**,已降级到备用路径(普通系统相机)。属性:`source`、`reason`。
   ///
   /// 回答的决定:安卓「点拍照没反应」到底是哪一种病因 —— GMS 检测自己炸了、扫描器
   /// 抛异常、还是 `getStartScanIntent` 的 Task 既不 success 也不 failure(模块下不
   /// 下来)导致 method channel 永不回调。这三种在 UI 上是**字节级相同**的症状,
   /// 五版没修对就是因为在数据里也一样是零 —— [docImportStarted] 要等到拿着文件了
-  /// 才发,整个采集环节此前是彻底的盲区。
+  /// 才发,整个添加环节此前是彻底的盲区。
   ///
   /// ⚠️ `reason` 必须是预定义枚举([ImportCaptureIssue]);异常文本**只上屏,不上报**。
   docCaptureDegraded('doc_capture_degraded', {'source', 'reason'}),
 
-  /// 采集这一轮结束,但**一份都没拿到**。属性:`source`、`reason`。
+  /// 这一轮添加结束,但**一份都没拿到**。属性:`source`、`reason`。
   ///
   /// 回答的决定:「点了没反应」里有多少是**用户自己取消**(正常,不用修)、多少是
-  /// 采集器**静默返回空**(bug,要修)。这两者在屏上完全一样,此前一律
+  /// 取件器**静默返回空**(bug,要修)。这两者在屏上完全一样,此前一律
   /// `return const []`,连分子分母都分不开。
   docCaptureAborted('doc_capture_aborted', {'source', 'reason'}),
 
@@ -322,25 +333,25 @@ enum AnalyticsEvent {
   /// 回答的决定:档案是被**看**的还是被**堆**的 —— 如果导入了从不打开,
   /// 这就是个垃圾桶,不是助手。
   ///
-  /// 五 tab 之后概览 / 趋势 / 档案 / 应急卡 /「看病带这个」五处都能打开一份,
+  /// 病历 / 趋势 /「给医生看」几处都能打开一份,
   /// 这条**仍然不带来源** —— 「是被看的还是被堆的」不需要知道从哪一屏点的,
   /// 而多一维就多一次泄露面的评估。
   docOpened('doc_opened', {}),
 
-  // ── 五 tab 信息架构 ───────────────────────────────────────────────────────
+  // ── 三 tab 信息架构 ───────────────────────────────────────────────────────
 
   /// 用户**手点**了底栏的某个一级 tab。属性:`tab`(枚举 [AnalyticsTab])。
   ///
-  /// 回答的决定:**五个一级席位该给谁。** 1.6.0 把三 tab 拆成五个,「趋势」和
-  /// 「应急卡」各占掉一格,而 `HomeShell` 的文档里那句「做成 tab 就是给一个一年
-  /// 用十次的动作一个常驻席位,而把它挤掉的会是应急卡」到今天为止纯属推理 ——
-  /// 席位之争是本版最大的赌注,却一个数都没有。这条把它变成可证伪的。
+  /// 回答的决定:**三个一级席位该给谁。** Stage 1 收成三个,「给医生看」与
+  /// 「急救卡」都退出了底栏 —— 而 `HomeShell` 的文档里那句「老人在底栏找不到
+  /// 『给医生看』」到今天为止纯属推理,席位之争是本版最大的赌注,却一个数都没有。
+  /// 这条把它变成可证伪的。
   ///
-  /// **只在手点时发**(`onDestinationSelected`)。程序化跳转(`goToArchive()`、
+  /// **只在手点时发**(`onDestinationSelected`)。程序化跳转(`goToRecords()`、
   /// 载入示例后的「去看看」)不发 —— 那是别的功能的副作用,不是用户想去哪,
   /// 混进来会把一个功能的成功记成另一个 tab 的人气。
   ///
-  /// 不泄露内容:`tab` 是五个界面名,与病历、成员、数值全都无关。
+  /// 不泄露内容:`tab` 是三个界面名,与病历、成员、数值全都无关。
   homeTabSelected('home_tab_selected', {'tab'}),
 
   // ── 手动录入「记录」 ──────────────────────────────────────────────────────
@@ -349,8 +360,8 @@ enum AnalyticsEvent {
   /// `edited`(这次是在改一条已有的,不是新增)。
   ///
   /// 回答的决定:**「记录」这条路该往数值走还是往笔记走。** 它是本版新开的
-  /// **第二条入库路径**,而两种用法通向完全不同的路线图 —— 数值要喂趋势与概览的
-  /// 自测序列(单位换算、参考区间、血压双值),笔记要喂「看病带这个」的「我想问
+  /// **第二条入库路径**,而两种用法通向完全不同的路线图 —— 数值要喂趋势的
+  /// 自测序列(单位换算、参考区间、血压双值),笔记要喂「给医生看」的「我想问
   /// 医生的」。两边现在都在做,这个比值说该收哪一半。
   ///
   /// `edited` 回答第二个决定:编辑走的是「先删再写」,那条顺序有过一个会**静默
@@ -368,42 +379,27 @@ enum AnalyticsEvent {
   /// 数值、单位、笔记原文、测量时间一概不出设备。
   recordAdded('record_added', {'kind_group', 'edited'}),
 
-  // ── 「看病带这个」 ────────────────────────────────────────────────────────
+  // ── 「给医生看」浮层时代(Stage 1 已删,埋点定义保留对上 PostHog 历史) ──────
 
-  /// 「看病带这个」浮层被打开。属性:`where`(枚举 [VisitSheetEntry])。
-  ///
-  /// 回答的决定:**「它刻意不占 tab」这个赌注成不成立。** 它只从概览和档案两处
-  /// 顶栏唤起,依据是「进诊室前你本来就在其中之一」这个假设。打开次数接近零就说明
-  /// 没人找得到它 —— 那这一屏(本版最重的一屏)要么给席位,要么砍。
-  /// `where` 说的是两个入口谁在起作用,决定另一个该不该留。
-  ///
-  /// 不泄露内容:只有「哪一屏唤起的」。屏上显示的药名、过敏史、化验值一个字不带。
+  /// 「给医生看」还是浮层时,记的是它从哪一屏被唤起的。
+  @Deprecated('Stage 1: 浮层已删,保留枚举以对上 PostHog 历史')
   visitSheetOpened('visit_sheet_opened', {'where'}),
 
-  /// 在「看病带这个」里按下了一颗动作键。属性:`action`(枚举 [VisitSheetAction])。
-  ///
-  /// 回答的决定:**「复制全文」和「出示二维码」哪一条才是诊室里真正走的路。**
-  /// 两条路的成本差一个数量级 —— 复制是本地几行代码,出码要联网、要 E2E 加密、
-  /// 要托管查看器、要 12 小时过期清理。产品验收已经指出这两颗按钮「分不清,得
-  /// 自己推」;若出码几乎没人按,那整条云链路就该退成次要入口而不是并列。
-  ///
-  /// 与 [visitSheetOpened] 组成漏斗:**打开了却一颗都没按**,说明这一屏只是被
-  /// 瞄了一眼,内容没能用起来 —— 那是排版问题,不是入口问题,两者要修的地方不同。
-  ///
-  /// `addNote` 单独一档:「我想问医生的」是本版新加的、这一屏唯一属于患者自己的
-  /// 一节,有没有人真的往里写,决定它排最前是对是错。
-  ///
-  /// 不泄露内容:只有按了哪颗键。复制走的文本、二维码载荷、笔记原文都不上报。
+  /// 「给医生看」还是浮层时,记的是按了哪颗动作键(复制全文 / 出示二维码 / 加一条)。
+  @Deprecated('Stage 1: 浮层已删,保留枚举以对上 PostHog 历史')
   visitSheetAction('visit_sheet_action', {'action'}),
 
-  // ── 应急卡 ───────────────────────────────────────────────────────────────
+  // ── 急救卡 ───────────────────────────────────────────────────────────────
 
-  /// 打开了应急卡的**大字模式**。无属性。
+  /// 打开了急救卡的**大字模式**。无属性。
   ///
-  /// 回答的决定:**应急卡该不该继续占一个一级席位。** `emergency_card_screen.dart`
-  /// 自己写着「大字模式才是这个 tab 的产品本体,平时这一屏只是它的维护界面」。
-  /// 若 tab 有人进([homeTabSelected])而大字模式没人开,那句话就是错的:这个 tab
-  /// 实际是个资料编辑页,「急救现场」的前提从未被验证过,席位该还给别人。
+  /// 回答的决定:**急救卡这一屏到底是不是为急救现场准备的。**
+  /// `emergency_card_screen.dart` 自己写着「大字模式才是这一屏的产品本体,平时
+  /// 这一屏只是它的维护界面」。这一屏有人进而大字模式没人开,那句话就是错的:
+  /// 它实际是个资料编辑页,「急救现场」的前提从未被验证过。
+  ///
+  /// 席位那一问已经在 Stage 1 裁完了 —— 急救卡不再是 tab,是「给医生看」那一页
+  /// 里的一条(ia-proposal §7 决定 3)。这条事件从此回答的是**降级降对了没有**。
   ///
   /// 不泄露内容:**没有任何属性。** 姓名、血型、过敏史、联系人一个都不带 ——
   /// 这一屏上的每一样东西都是最敏感的那一类。
@@ -448,7 +444,10 @@ enum AnalyticsEvent {
   // 「代拍到底成不成立」是盲飞。
 
   /// 选了身份。属性:`mode`(personal/doctor)、`where`(first=首屏首次选 /
-  /// settings=事后在设置里切)。`where` 值钱在于:事后切换说明第一次选错了。
+  /// settings=历史值,「我」里那一节只在代拍模式下才有(出口) / for_doctor=从
+  /// 「给医生看」那一页最后一行进代拍)。
+  /// `where` 值钱在于:事后切换说明第一次选错了;`for_doctor` 与 `settings` 的
+  /// 比说明医生是照着入口来的,还是逛设置逛到的。
   modeSelected('mode_selected', {'mode', 'where'}),
 
   /// 医生开始了一次代拍(进入代拍流程屏)。属性:`resumed`(是否是回到已建档的病人)。
@@ -490,7 +489,7 @@ enum AnalyticsEvent {
   /// 载入了示例数据。属性:`ok`(整条流有没有跑完)。
   ///
   /// 回答的决定:**示例数据该被提到空态里,还是该整个砍掉。** 它现在埋在「设置」
-  /// 的第三节,而需要它的人正站在「概览」的空态上。载入的人多,它就该出现在第一屏;
+  /// 的第三节,而需要它的人正站在「病历」的空态上。载入的人多,它就该出现在第一屏;
   /// 几乎没人载入,那条 Rust 流式 API + 合成成员 + 一串进度文案就是净负担,可以删。
   ///
   /// `ok=false` 另有用处:`load_demo_data` **恒不返回 `Err`**(失败靠字段带出来),
@@ -500,7 +499,7 @@ enum AnalyticsEvent {
   /// (与 `doc_import_failed` 只报 `reason_code` 同一条规矩)。
   demoDataLoaded('demo_data_loaded', {'ok'}),
 
-  /// 用户确认了「清空所有数据 · 重置保险箱」。无属性。
+  /// 用户确认了「清空所有数据 · 重置病历箱」。无属性。
   ///
   /// 回答的决定:**这是我们能看见的最强的负面信号。** 没有持久 ID 就永远看不到
   /// 卸载,而清空是仅次于卸载的一步,并且它在一道二次确认之后 —— 不会误触。
@@ -512,7 +511,30 @@ enum AnalyticsEvent {
   dataWiped('data_wiped', {}),
 
   /// 用户关掉了分析。**最后一条上报**,发完即停。
-  analyticsOptOut('analytics_opt_out', {});
+  analyticsOptOut('analytics_opt_out', {}),
+
+  // ── 账号与同步 ───────────────────────────────────────────────────────────
+
+  /// 登录尝试(成功或失败)。属性:`method`(otp/apple)、`ok`。
+  /// 回答的决定:登录走哪种方式、成不成功 —— `ok=false` 集中在哪个 `method`,
+  /// 决定该修哪条登录路径。不带手机号、账号 id。
+  accountLogin('account_login', {'method', 'ok'}),
+
+  /// 一次 `syncProfile` 跑完(成功或失败)。属性:`ok`、`pushed_bucket`、
+  /// `pulled_bucket`。
+  ///
+  /// 回答的决定:**云端备份到底跑没跑通。** `ok` 的失败率,以及两个分桶是不是
+  /// 长期为 `0`,决定这套推拉引擎值不值得继续投入。不报同步了什么内容。
+  syncRun('sync_run', {'ok', 'pushed_bucket', 'pulled_bucket'}),
+
+  /// 生成了一条授权邀请(医生看诊码 / 代拍转移)。属性:`role`。
+  /// 回答的决定:`viewer`(医生)与 `owner`(代拍转移)两条授权路径谁在被用。
+  grantCreated('grant_created', {'role'}),
+
+  /// 兑换一条授权邀请(成功或失败)。属性:`role`、`ok`。
+  /// 回答的决定:兑换成不成功 —— 失败率高说明链接或流程有问题,不是「没人用」。
+  /// 失败时不知道 `role`,只报 `ok`。
+  grantRedeemed('grant_redeemed', {'role', 'ok'});
 
   const AnalyticsEvent(this.name, this.props);
   final String name;
@@ -616,7 +638,7 @@ enum ImportFailReason {
   /// OCR 跑完没有任何文字(拍糊了、拍到白纸)。
   ocrEmpty,
 
-  /// 落库失败(磁盘满、保险箱写入错误)。
+  /// 落库失败(磁盘满、病历箱写入错误)。
   storage,
 
   /// 缺权限(相机/相册被拒)。
@@ -641,7 +663,7 @@ enum ImportFailReason {
   }
 }
 
-/// 采集环节(拍照 / 相册 / 选文件,`import_flow.dart` 的 `pickImportItems`)出了
+/// 添加环节(拍照 / 相册 / 选文件,`import_flow.dart` 的 `pickImportItems`)出了
 /// 什么事。**与 [ImportFailReason] 分工明确**:那个说的是「拿到文件之后处理失败」,
 /// 这个说的是「压根没拿到文件」。
 ///
@@ -651,7 +673,7 @@ enum ImportFailReason {
 /// ⚠️ 上报的永远是**这个枚举的名字**,绝不是异常文本 —— 异常里常带文件名和路径。
 /// 异常文本可以显示在屏上(屏上探针),但不出设备。
 enum ImportCaptureIssue {
-  // ── 降级类:采集器没起来,已落到备用路径,后面可能还是成功的 ──────────────
+  // ── 降级类:扫描器没起来,已落到备用路径,后面可能还是成功的 ──────────────
   /// GMS 可用性检测本身抛了异常。**此前是裸 await**,炸了整个流程直接消失。
   gmsCheckThrew(AnalyticsEvent.docCaptureDegraded),
 
@@ -673,12 +695,12 @@ enum ImportCaptureIssue {
   /// 扫描器」的机器越多 —— 这正是判断要不要换掉整个扫描方案的那个数。
   scannerSkippedUnavailable(AnalyticsEvent.docCaptureDegraded),
 
-  // ── 中止类:这一轮采集一份都没拿到 ────────────────────────────────────────
+  // ── 中止类:这一轮添加一份都没拿到 ────────────────────────────────────────
   /// 用户主动取消。**正常,不是 bug** —— 但必须和下面那条分开,否则
   /// 「点拍照没反应」永远算不出真实占比。
   userCancelled(AnalyticsEvent.docCaptureAborted),
 
-  /// 采集器**返回了结果,但里面什么都没有**。用户没取消,东西却没了 —— 这是 bug。
+  /// 取件器**返回了结果,但里面什么都没有**。用户没取消,东西却没了 —— 这是 bug。
   /// 具体是哪一种由同事件的 `source` 区分:`camera` = 扫描器回了 0 页;
   /// `files` = 选中的文件在本机取不到(云盘上还没下载完的文件就是这样)。
   emptyResult(AnalyticsEvent.docCaptureAborted),
@@ -686,7 +708,7 @@ enum ImportCaptureIssue {
   /// 系统相册 / 相机 / 文件选择器抛异常。
   pickerThrew(AnalyticsEvent.docCaptureAborted),
 
-  /// 没归上类(采集函数外层的兜底 catch)。占比一高就说明还有没枚举到的分支。
+  /// 没归上类(`pickImportItems` 外层的兜底 catch)。占比一高就说明还有没枚举到的分支。
   unknown(AnalyticsEvent.docCaptureAborted);
 
   const ImportCaptureIssue(this.event);
@@ -701,12 +723,25 @@ enum ImportCaptureIssue {
 /// 与 `vault_events.dart` 的 `HomeTab` 下标一一对应,但**刻意不共用那组 int**:
 /// 上报的必须是稳定的名字,而下标会随 tab 顺序调整而变 —— 顺序一改,后台里所有
 /// 历史数据就整体错位,而且看不出来。
+///
+/// ⚠️ **取值在 2026-09 的三 tab 改版(UX Stage 1)换过一次,查数的人要先按版本
+/// 切一刀。** 最后一个发五个旧值的版本是 `1.6.0`(`pubspec.yaml`),新值随其后
+/// 第一个版本上线。对照:
+///
+/// | 旧值 | 新值 | 同一块屏吗 |
+/// |---|---|---|
+/// | `archive` | `records` | 是 —— `ArchiveScreen` 只是换了槽位、改了名 |
+/// | `settings` | `me` | 是 —— `SettingsScreen` 同理 |
+/// | `trends` | `trends` | 是 |
+/// | `overview` | 无 | **否**,概览整屏解散了 |
+/// | `emergency` | 无 | **否**,这一屏退出底栏,收进「给医生看」那一页 |
+///
+/// 不切这一刀,新的 `records` 会被旧的 `archive` 和一块已经不存在的 `overview`
+/// 一起稀释,而**图上看不出来**。
 enum AnalyticsTab {
-  overview,
+  records,
   trends,
-  archive,
-  emergency,
-  settings;
+  me;
 
   /// 下标 → 名字。越界返回 `null`,调用点据此**不报**(与 `is_first` 同一条
   /// 「不知道就不报,绝不猜」的规矩)。
@@ -723,12 +758,12 @@ enum AnalyticsTab {
 /// vs 喂「我想问医生的」)。这是这条事件上能安全拿到的最大信息量。
 enum RecordKindGroup { measurement, note }
 
-/// 「看病带这个」是从哪一屏唤起的([AnalyticsEvent.visitSheetOpened] 的 `where`)。
-/// 它没有 tab 席位,只有这两个入口 —— 这个枚举就是那两个入口的全集。
+/// 浮层时代的两个入口(概览 / 档案)。两处都已不存在。
+@Deprecated('Stage 1: 浮层已删,保留枚举以对上 PostHog 历史')
 enum VisitSheetEntry { overview, archive }
 
-/// 在「看病带这个」里按了哪颗动作键([AnalyticsEvent.visitSheetAction] 的
-/// `action`)。三颗按钮的全集,不含任何被复制/被分享/被写下的内容。
+/// 浮层时代按过的三颗动作键(复制全文 / 出示二维码 / 加一条)。浮层本体已删。
+@Deprecated('Stage 1: 浮层已删,保留枚举以对上 PostHog 历史')
 enum VisitSheetAction {
   /// 「复制全文给医生」。**只报按了,不报文本。**
   copy,

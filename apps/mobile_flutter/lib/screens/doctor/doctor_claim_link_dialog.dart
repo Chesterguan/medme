@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
-import 'package:qr_flutter/qr_flutter.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 
-/// 代拍交付成功后的结果:**一条认领链接,直接显示成二维码**。
+/// 代拍交付成功后的结果:**一条取件链接,直接显示成二维码**。
 ///
 /// 为什么是二维码而不是「发文件」:代拍面对的病人常常没有微信、加不上好友、也不会
-/// 收文件。屏幕上摆一张码,他自己或家属**用任何相机拍一下**就带走了 —— 不需要建立
+/// 收文件。屏幕上摆一张码,他自己或家人**用任何相机拍一下**就带走了 —— 不需要建立
 /// 任何传输通道。旁边再给一条可复制的链接,方便能用微信/短信的人。
 ///
 /// 与「病人自己出码给医生看」(`qr_share_screen.dart`)方向相反:那是给医生**当场看**,
 /// 这是给病人**带走**。所以这里必须给可复制的链接,那边不需要。
+///
+/// **代拍永远只出取件码这一条路。** 这里曾经有一条 `cloudProfile` 分支,想在医生
+/// 已登录、且代拍档案已开通云端备份时改发 `role=owner` 的转移邀请 —— 但「把代拍
+/// 病人的临时病历箱注册成云档案」那一步从来没接线,所以没有任何调用方会传那个
+/// 参数,分支一次都没跑过。删掉:没跑过的分支不是前向兼容,是一份读者每次都要
+/// 重新判断「这条到底走不走」的负担。
 Future<void> showDoctorClaimLinkDialog(
   BuildContext context,
   String url,
@@ -21,83 +24,20 @@ Future<void> showDoctorClaimLinkDialog(
   required Rect Function() shareOrigin,
 }) async {
   if (!context.mounted) return;
-  await showDialog<void>(
-    context: context,
-    builder: (context) {
-      final c = MedColors.of(context);
-      return AlertDialog(
-        title: const Text('好了,请病人扫这个码'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                '共 $recordCount 份记录。请病人本人(或家属)用手机相机拍下这个码,'
-                '带走后随时能看。',
-                style: MedType.body.copyWith(color: c.ink2, height: 1.5),
-              ),
-              const SizedBox(height: MedShape.s2),
-              Center(
-                child: Container(
-                  // 码本身**不上主题**:白底黑码是相机能扫的前提,深色主题也不能动。
-                  padding: const EdgeInsets.all(MedShape.s1),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(MedShape.radiusBlock),
-                    border: Border.all(color: c.line),
-                  ),
-                  child: QrImageView(
-                    data: url,
-                    version: QrVersions.auto,
-                    size: 220,
-                    backgroundColor: Colors.white,
-                    errorCorrectionLevel: QrErrorCorrectLevel.M,
-                  ),
-                ),
-              ),
-              const SizedBox(height: MedShape.s2),
-              Text(
-                '只有拿到这个码的人能打开,医生和我们都看不到里面的内容。'
-                '15 天后自动失效。',
-                style: MedType.secondary.copyWith(color: c.ink3, height: 1.5),
-              ),
-              const SizedBox(height: MedShape.s2),
-              // 能用微信/短信的病人走这条:复制链接直接发。
-              OutlinedButton.icon(
-                onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: url));
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      appSnackBar(content: Text('链接已复制,可以发给病人')),
-                    );
-                  }
-                },
-                icon: const Icon(Icons.link, size: 18),
-                label: const Text('复制链接'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('关闭'),
-          ),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: c.proxy),
-            onPressed: () => SharePlus.instance.share(
-              ShareParams(
-                text: url,
-                subject: '你的病历',
-                sharePositionOrigin: shareOrigin(),
-              ),
-            ),
-            icon: const Icon(Icons.ios_share, size: 18),
-            label: const Text('发给病人'),
-          ),
-        ],
-      );
-    },
+  // 展示本身(码 + 复制 + 分享)共用 `showLinkQrDialog` —— 「交给他」那条路
+  // (`account_screen.dart` 的 B5)要的是同一套东西,不该重写一遍。
+  await showLinkQrDialog(
+    context,
+    title: '好了,请病人扫这个码',
+    url: url,
+    body: '共 $recordCount 份记录。请病人本人(或家人)用手机相机拍下这个码,带走后随时能看。',
+    footnote: '只有拿到这个码的人能打开,医生和我们都看不到里面的内容。15 天后自动失效。',
+    shareSubject: '你的病历',
+    shareLabel: '发给病人',
+    copiedMessage: '链接已复制,可以发给病人',
+    shareOrigin: shareOrigin,
+    accent: MedColors.of(context).proxy,
+    // R27:mockup `s14`「替病人代拍」的 `.hero`——这一屏唯一的品牌渐变面。
+    hero: true,
   );
 }
