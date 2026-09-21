@@ -65,6 +65,14 @@ import 'package:flutter_test/flutter_test.dart';
 /// Stage 3 开工前的 HEAD。
 const kBaseline = '2a629a2';
 
+/// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败
+/// 不是文案变了,是 checkout 没带历史;把原因直接写进断言消息。
+void _requireBaseline() {
+  final r = Process.runSync('git', ['cat-file', '-e', '$kBaseline^{commit}'], workingDirectory: '../..');
+  expect(r.exitCode, 0,
+      reason: '基线 $kBaseline 不在本地仓库里(浅克隆?mobile.yml 的 checkout 需要 fetch-depth: 0)');
+}
+
 /// R34:令牌层,不渲染任何用户可见文本,按路径整个排除——见文件头注释。
 bool _isTokenFile(String path) =>
     path.endsWith('lib/design_tokens.dart') || path.endsWith('lib/theme.dart');
@@ -232,12 +240,14 @@ Map<String, int> _multiset(Iterable<String> runs) {
 
 void main() {
   test('用户可见 CJK 文本段的多重集与基线 $kBaseline 相同(允许挪动/拆分,不许增删)', () {
+    _requireBaseline();
     final diff = _diffAgainstBaseline(_runsIn);
     expect(diff.added, isEmpty, reason: '多出来的文案段(Stage 3 不许加字):\n${diff.added.join('\n')}');
     expect(diff.removed, isEmpty, reason: '丢掉的文案段(Stage 3 不许删字):\n${diff.removed.join('\n')}');
   });
 
   test('R35a:表意字|数字配对的多重集与基线 $kBaseline 相同(数字改了要测得出来)', () {
+    _requireBaseline();
     final diff = _diffAgainstBaseline(_digitPairsIn);
     expect(diff.added, isEmpty, reason: '多出来的「表意字|数字」配对:\n${diff.added.join('\n')}');
     expect(diff.removed, isEmpty, reason: '丢掉的「表意字|数字」配对:\n${diff.removed.join('\n')}');

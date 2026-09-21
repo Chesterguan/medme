@@ -35,6 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # test/copy_unchanged_test.dart 要 `git show 2a629a2:…`(文案零变更基线),浅克隆拿不到
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0 # TODO: 按仓库惯例改成 SHA 钉版
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
