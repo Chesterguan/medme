@@ -56,7 +56,8 @@
 // 分析、不做单条字符串的特例。
 //
 // **闸红了怎么办:** 不是改这个测试,是把文案改回去(唯一合法例外是删掉整个
-// widget 时带走它的字符串,Stage 3 不删 widget)。红的信息会打印每个差异段、
+// widget 时带走它的字符串,Stage 3 不删 widget)。Stage 3.5 起另有
+// `kRemovedByDecision`:用户点名删的字。红的信息会打印每个差异段、
 // 次数差,以及 HEAD/基线两侧各自含有它的文件——"哪个文件"只是调试线索,
 // 判定依据是次数本身。
 import 'dart:io';
@@ -64,6 +65,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Stage 3 开工前的 HEAD。
 const kBaseline = '2a629a2';
+
+/// Stage 3.5(减法,2026-09-22)用户裁定删掉的字:「没有用的就删掉,有需要再加」。
+/// 这些段在 HEAD 里少掉是**预期**,不算丢文案。只许往这里加用户点名删的字,不许拿
+/// 它放行任何改写;它只对「少了」生效,「多了」照旧红。
+const Set<String> kRemovedByDecision = {
+  '找一找', // 主页月份标题右侧的搜索占位,点了只弹一句「找一找还在做」
+  '找一找还在做',
+  '看懂', // 趋势页「看懂」横幅:只有壳,内容线从没接上
+  '把报告上那段「提示」原文摘出来放这里',
+  '还在做。',
+};
 
 /// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败
 /// 不是文案变了,是 checkout 没带历史;把原因直接写进断言消息。
@@ -231,7 +243,7 @@ Map<String, int> _multiset(Iterable<String> runs) {
     if (n > b) {
       added.add('「$r」多了 ${n - b} 次 —— 现存于:${(headFilesByRun[r] ?? const {}).join(', ')}');
     }
-    if (b > n) {
+    if (b > n && !kRemovedByDecision.contains(r)) {
       removed.add('「$r」少了 ${b - n} 次 —— 基线里在:${(baselineFilesByRun[r] ?? const {}).join(', ')}');
     }
   }

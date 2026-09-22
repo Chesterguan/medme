@@ -50,7 +50,7 @@ void main() {
       home: Scaffold(body: Center(child: GlossIconTile(icon: Icons.science_outlined))),
     ));
     final icon = tester.widget<Icon>(find.byType(Icon));
-    expect(icon.size, MedBrand.tileIconSize);
+    expect(icon.size, MedBrand.iconSize);
     expect(icon.color, Colors.white);
   });
 
@@ -90,12 +90,12 @@ void main() {
     expect(tester.getSize(find.byType(GlossIconTile)), const Size(52, 52));
     // 按实现里同样的运算顺序算(先除再乘):`a*52/b` 是 `(a*52)/b`,浮点上和
     // 实现的 `a*(52/b)` 未必位级相等,直接抄字面表达式会碰运气挂测试。
-    expect(d.borderRadius, BorderRadius.circular(MedShape.radiusTile * (52 / MedBrand.tileSize)));
+    expect(d.borderRadius, BorderRadius.circular(MedShape.radiusTile * (52 / MedBrand.iconSlot)));
 
     await tester.pumpWidget(const MaterialApp(
       home: Scaffold(body: Center(child: GlossIconTile(icon: Icons.add, size: 52))),
     ));
     final icon = tester.widget<Icon>(find.byType(Icon));
-    expect(icon.size, MedBrand.tileIconSize * (52 / MedBrand.tileSize));
+    expect(icon.size, MedBrand.iconSize * (52 / MedBrand.iconSlot));
   });
 }

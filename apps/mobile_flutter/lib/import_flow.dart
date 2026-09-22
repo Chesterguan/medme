@@ -1003,7 +1003,7 @@ class _SheetTile extends StatelessWidget {
             // 点击区域是上面那一整行图标+标题(MedSheetOption 自带的
             // InkWell);这句说明文字不参与点击。
             padding: const EdgeInsets.fromLTRB(
-              MedSheetOption.hPad + MedBrand.tileSize + MedShape.s2, 0, MedShape.s2, 0),
+              MedSheetOption.hPad + MedBrand.iconSlot + MedShape.s2, 0, MedShape.s2, 0),
             child: Text(subtitle, style: MedType.secondary.copyWith(color: c.ink3)),
           ),
         ],

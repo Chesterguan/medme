@@ -17,7 +17,7 @@ class GlossIconTile extends StatelessWidget {
     super.key,
     required IconData this.icon,
     this.category = GlossCategory.brand,
-    this.size = MedBrand.tileSize,
+    this.size = MedBrand.iconSlot,
   }) : letter = null;
 
   /// 字母款:成员头像。底色固定走品牌渐变(brief §色:成员头像 = 品牌渐变)。
@@ -25,7 +25,7 @@ class GlossIconTile extends StatelessWidget {
     super.key,
     required String this.letter,
     this.category = GlossCategory.brand,
-    this.size = MedBrand.tileSize,
+    this.size = MedBrand.iconSlot,
   }) : icon = null;
 
   final IconData? icon;
@@ -39,7 +39,7 @@ class GlossIconTile extends StatelessWidget {
     // CSS 的 `linear-gradient(150deg, …)`:0° 朝上、顺时针。Flutter 的
     // topCenter→bottomCenter 是 180°,所以要旋转 (150-180) = -30°。
     const rotation = -30 * math.pi / 180;
-    final radius = MedShape.radiusTile * (size / MedBrand.tileSize);
+    final radius = MedShape.radiusTile * (size / MedBrand.iconSlot);
 
     return Container(
       width: size,
@@ -70,7 +70,7 @@ class GlossIconTile extends StatelessWidget {
               child: const SizedBox(height: 1, width: double.infinity),
             )),
             if (icon != null)
-              Icon(icon, size: MedBrand.tileIconSize * (size / MedBrand.tileSize), color: Colors.white)
+              Icon(icon, size: MedBrand.iconSize * (size / MedBrand.iconSlot), color: Colors.white)
             else
               // **不跟系统字号放大**:块是固定尺寸,字放大就溢出。见
               // design_tokens.dart MedType 文档里的唯一例外。

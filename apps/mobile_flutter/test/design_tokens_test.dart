@@ -23,9 +23,9 @@ const Map<String, int> specLight = {
   'ink': 0xFF101A23,
   'ink-2': 0xFF3A4A57,
   'ink-3': 0xFF657581,
-  'paper': 0xFFF1F4F8,
+  'paper': 0xFFF6F8FA,
   'surface': 0xFFFFFFFF,
-  'line': 0xFFE3E9EE,
+  'line': 0xFFE9EEF2,
   'line-2': 0xFFEEF2F5,
   'seal': 0xFF1789C1,
   'seal-ink': 0xFF0E6285,
@@ -222,7 +222,7 @@ void main() {
 
   group('形状与间距', () {
     test('圆角严格递减', () {
-      expect(MedShape.radiusCard, 20);
+      expect(MedShape.radiusCard, 16);
       expect(MedShape.radiusBlock, 14);
       expect(MedShape.radiusControl, 10);
       expect(MedShape.radiusPill, 999);
@@ -556,6 +556,15 @@ void main() {
       expect(MedBrand.heroTileShadow.single.offset, const Offset(0, 8));
       expect(MedBrand.heroTileShadow.single.blurRadius, 18);
     });
+
+    test('减法稿:图标槽、化验刻度条', () {
+      expect(MedBrand.iconSlot, 44);
+      expect(MedBrand.iconSize, 22);
+      expect(MedBrand.rangeBarWidth, 74);
+      expect(MedBrand.rangeBarHeight, 3);
+      expect(MedBrand.rangeMarkerSize, 9);
+      expect(MedBrand.rangeBandAlpha, 0.3);
+    });
   });
 
   group('MedShape / MedType —— Stage 3 brief §形 §字', () {
@@ -563,7 +572,7 @@ void main() {
       // R6:sheet(26)压过主卡 hero(22),现在是全 app 最大的一档。
       expect(MedShape.radiusSheet, 26);
       expect(MedShape.radiusHero, 22);
-      expect(MedShape.radiusCard, 20);
+      expect(MedShape.radiusCard, 16);
       expect(MedShape.radiusEntry, 18);
       expect(MedShape.radiusBanner, 16);
       expect(MedShape.radiusTile, 12);
@@ -602,8 +611,8 @@ void main() {
       }
     });
 
-    test('底色是实心 #F1F4F8,主题拿的就是它', () {
-      expect(MedMe.theme().scaffoldBackgroundColor, const Color(0xFFF1F4F8));
+    test('底色是实心 #F6F8FA,主题拿的就是它', () {
+      expect(MedMe.theme().scaffoldBackgroundColor, const Color(0xFFF6F8FA));
     });
 
     test('卡片无边框', () {

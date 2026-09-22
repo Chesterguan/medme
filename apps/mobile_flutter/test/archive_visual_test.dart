@@ -61,10 +61,10 @@ void main() {
     expect(search.style!.color, MedColors.light.seal);
   });
 
-  testWidgets('底色是实心 #F1F4F8,没有第二个渐变面', (tester) async {
+  testWidgets('底色是实心 #F6F8FA,没有第二个渐变面', (tester) async {
     await pumpStage3(tester, _homeBlock());
     expect(tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
-        const Color(0xFFF1F4F8));
+        const Color(0xFFF6F8FA));
     expect(find.byType(BrandGradientBox), findsNWidgets(2));  // 主卡 + 主入口块
   });
 
