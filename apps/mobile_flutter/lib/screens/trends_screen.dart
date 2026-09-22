@@ -12,7 +12,6 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/disease_profile_card.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
-import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
 /// 底部导航一级 tab「趋势」—— 使用时刻:**复诊前自己看「这两年怎么变的」**
@@ -1291,8 +1290,6 @@ class _VisitCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              MedIcon(iconForVisitKind(visit.kind)),
-              const SizedBox(width: MedShape.s2),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1341,7 +1338,7 @@ class _VisitCard extends StatelessWidget {
 }
 
 /// 分区标题 + 右侧的一个次级动作。与 `archive_screen.dart` 的 `MonthHeader`
-/// 同一档:15 号 `ink2` 左、14·500 `seal` 右,padding `0 4`。
+/// 同一档:13 号 `ink3` 左、14·500 `seal` 右,padding `0 4`。
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({required this.title, this.actionLabel, this.onAction});
 
@@ -1357,7 +1354,7 @@ class _SectionHeader extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Text(title, style: MedType.body.copyWith(fontSize: 15, color: c.ink2)),
+            child: Text(title, style: MedType.secondary.copyWith(color: c.ink3)),
           ),
           if (actionLabel != null)
             TextButton(

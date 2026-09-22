@@ -474,14 +474,6 @@ class MedBrand {
     BoxShadow(color: Color(0x590E3C64), offset: Offset(0, 8), blurRadius: 18),
   ];
 
-  /// 病历本书脊:180°(上 → 下),两段。
-  static const List<Color> spineColors = [Color(0xFF1FB0C6), Color(0xFF16508E)];
-  /// 书脊上的细横纹:2px 实、9px 周期。
-  static const Color spineStripe = Color(0x24FFFFFF);       // rgba(255,255,255,.14)
-  static const double spineStripeOn = 2;
-  static const double spineStripePeriod = 9;
-  static const double spineWidth = 34;
-
   /// 行首图标槽 44、图标 22(减法稿:单色线性图标,没有底块)。
   static const double iconSlot = 44;
   static const double iconSize = 22;

@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
-/// 真 logo(毛笔「医」)。**brief §品牌 只允许它出现在四处**:
+/// 真 logo(毛笔「医」)。**brief §品牌 只允许它出现在三处**:
 ///
 ///  · 主页顶栏 [topBar] 30 —— `archive_screen.dart` 的标题行;
-///  · 病历本条书脊旁 [bookSpine] 40 —— `record_book_strip.dart`;
 ///  · 病程档案页头 [topBar] 30 —— `disease_profile_screen.dart`;
 ///  · 首启场景中央 [splash] 104 —— `first_run_consent.dart`。
 ///
@@ -18,7 +17,6 @@ class BrandLogo extends StatelessWidget {
   static const String assetPath = 'assets/brand/logo112.png';
 
   static const double topBar = 30;
-  static const double bookSpine = 40;
   static const double splash = 104;
 
   final double size;

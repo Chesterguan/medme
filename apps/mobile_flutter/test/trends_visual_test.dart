@@ -1,5 +1,5 @@
 // 「趋势」页的视觉验收(mockup s2)。这一屏**一个品牌颜色面都没有** —— 顶上那条
-// 是病历本条(白卡 + 34px 渐变书脊),形状故意和主页的成员主卡不一样。
+// 是病历本条(白卡一行),形状故意和主页的成员主卡不一样。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
