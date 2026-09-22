@@ -534,11 +534,6 @@ class _TimelineItem extends StatelessWidget {
     };
 
     final Widget card = MedCard(
-      // 骑缝线 = 「背后有一份原件、点得进去」(规范 §五)。
-      //  · 独立文档卡 → 点了就是那一份原件的详情 → **画**。
-      //  · 就诊组卡 → 点了是展开一个分组;这个组本身是按日期/机构算出来的,
-      //    背后没有「一张纸」叫做「门诊·某某医院」→ **不画**。组里每一份文档
-      //    展开后各自可点开,那是下一层的事。
       child: Column(
         children: [
           InkWell(
@@ -730,7 +725,6 @@ class _PendingCard extends StatelessWidget {
     final c = MedColors.of(context);
     final label = docDisplayTitle(doc);
     final card = MedCard(
-      // 这张卡背后就是刚导入的那份原件,点开即达 → 画骑缝线。
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

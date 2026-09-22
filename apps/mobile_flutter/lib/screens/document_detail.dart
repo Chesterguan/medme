@@ -275,9 +275,6 @@ class DetailBody extends StatelessWidget {
         MedShape.s6,
       ),
       children: [
-        // 抬头卡带骑缝线:这一整屏讲的就是**某一份原件**,而且「查看原件」就在
-        // 卡里 —— 「背后有原件、点得进去」两条都成立(规范 §五)。全屏只有这
-        // 一道骑缝线,下面识别出来的文字是从它派生出来的,不重复。
         MedCard(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(

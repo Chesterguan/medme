@@ -42,7 +42,7 @@ void main() {
     final tile = tester.widget<GlossIconTile>(find.byType(GlossIconTile));
     expect(tile.category, categoryForDocType('lab_report'));
     expect(tile.category, GlossCategory.lab);
-    // 抬头卡本身是 MedCard(无边框 + cardShadow),这条自动满足,顺带钉一下。
+    // 抬头卡本身是 MedCard(1px line 细边、无阴影),这条自动满足,顺带钉一下。
     expect(find.byType(MedCard), findsWidgets);
     // 这一屏渐变预算是 0(brief 的每屏预算表:一份病历 s8 = 0/0/0)。
     expectSurfaceBudget();

@@ -136,7 +136,7 @@ void main() {
       AccountSession.instance.resetForTest();
     });
 
-    testWidgets('没登录(默认态):蓝色横幅,lab 图标', (tester) async {
+    testWidgets('没登录(默认态):蓝色横幅,云图标', (tester) async {
       await pumpStage3(tester, const Scaffold(body: BackupStatusLine()));
       final banner = tester.widget<MedBanner>(find.byType(MedBanner));
       expect(banner.amber, isFalse);

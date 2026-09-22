@@ -298,9 +298,6 @@ class _ProxyDetailBody extends StatelessWidget {
         MedShape.s6,
       ),
       children: [
-        // 抬头卡带骑缝线:这一整屏讲的就是**某一份原件**,而且「查看原件」就在卡
-        // 里 —— 「背后有原件、点得进去」两条都成立(规范 §五)。与个人模式的
-        // `document_detail.dart` 同一处理,一道也不多、不少。
         MedCard(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(

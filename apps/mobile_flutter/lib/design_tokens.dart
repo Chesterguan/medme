@@ -450,7 +450,9 @@ class MedBrand {
   MedBrand._();
 
   // ── 品牌渐变 ────────────────────────────────────────────
-  /// 135°,三段。**只许 `BrandGradientBox` 用**(见 `widgets/brand_surfaces.dart`)。
+  /// 135°,三段。**减法稿(Task 2)删了唯一的消费者 `BrandGradientBox`**——这四个
+  /// 常量目前没有任何 widget 在读,只是 `test/design_tokens_test.dart` 还钉着
+  /// 它们的值,留给 Token 清扫(Task 8)一并删,这里不单独先删。
   static const List<Color> gradientColors = [
     Color(0xFF1FB0C6), Color(0xFF1789C1), Color(0xFF16508E),
   ];
