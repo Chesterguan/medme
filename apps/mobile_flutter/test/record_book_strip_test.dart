@@ -71,5 +71,9 @@ void main() {
           bigNumberCaption: '活动度(化验可算部分)', bigNumber: '0 / 18')),
     )));
     expect(tester.takeException(), isNull);
+    // R21 回归钉子:标题退回一行省略号(而不是抛异常)也算破 —— 光看
+    // `takeException` 抓不到。
+    final title = tester.widget<Text>(find.text('病程档案 · 系统性红斑狼疮'));
+    expect(title.maxLines, 2);
   });
 }
