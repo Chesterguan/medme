@@ -680,8 +680,11 @@ class _SeriesCardState extends State<SeriesCard> {
             child: InkWell(
               onTap: () => setState(() => _expanded = !_expanded),
               child: Container(
+                // 左内边距 s3(16):减法稿去掉 4px 色条前是 s2(12)+4px 色条=16,
+                // 与卡片下方分块(同样 s3 起手)对齐;色条没了,内边距直接改 s3,
+                // 不然内容会比卡里其余内容整体左移 4px。
                 padding: const EdgeInsets.fromLTRB(
-                  MedShape.s2,
+                  MedShape.s3,
                   MedShape.s2,
                   MedShape.s3,
                   MedShape.s2,

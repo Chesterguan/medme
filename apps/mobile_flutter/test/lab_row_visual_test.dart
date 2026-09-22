@@ -1,5 +1,6 @@
 // 化验行(减法稿 2026-09-22):无左色条;右列 = 数值 + 状态词 + 细刻度条;正常不上色不加字。
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
@@ -75,6 +76,27 @@ void main() {
         flag: 'L', refLow: 90, meta: '2026-02-14', unverified: true, onTap: null),
       size: const Size(360, 640), scale: 2.0);
     expect(t.takeException(), isNull);
+  });
+
+  testWidgets('360×640 @2×:meta + 参考区间连在一起时,数值不在破折号处被夹断', (t) async {
+    const fullText = '2026-02-14 · 参考 3.1–8';
+    await pump(t, const LabLine(name: '肌酐', value: 95, meta: '2026-02-14', refLow: 3.1, refHigh: 8),
+      size: const Size(360, 640), scale: 2.0);
+    // 这一行曾经塞在名字那个窄 Expanded 里(360dp 上约 114dp 宽)。实测过:
+    // 日期+分隔号+参考区间这一整句在 360dp@2× 下本来就超过一行能装的宽度,
+    // 挪到整宽之后仍会在「· 」处折成两行——这是正常换行,不是本条要盯的问题。
+    // 真正的缺陷是旧代码把它挤进窄列后连「参考 3.1–8」自己都装不下,在破折号
+    // 处被夹断成「参考 3.1–」/「8」两行,孤零零的「8」读起来像另一个值。
+    // 所以这里不断言「整句不换行」(测过是假的),断言更精确的那件事:量出
+    // 「3.1–8」这个子串的包围盒,必须只有一个 top——它完整地待在同一行里,
+    // 不管上面那句整体折不折行。用真实的 RenderParagraph(不是另起一个
+    // TextPainter 重算一遍布局,那样可能和实际渲染对不上)。
+    final rp = t.renderObject<RenderParagraph>(find.text(fullText));
+    final rangeStart = fullText.indexOf('3.1');
+    final boxes = rp.getBoxesForSelection(
+      TextSelection(baseOffset: rangeStart, extentOffset: fullText.length));
+    expect(boxes.map((b) => b.top).toSet(), hasLength(1),
+      reason: '参考区间的数值不许在破折号处被夹断成两行');
   });
 
   group('labRangeFractions(纯函数,与折线图同一个值域)', () {

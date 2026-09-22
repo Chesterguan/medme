@@ -43,8 +43,10 @@ class MedCard extends StatelessWidget {
 
 /// 状态 pill:圆角 999,`caption` 字阶(12·600),前景 + 极浅底一对色。
 ///
-/// 化验状态**同时**编码在左侧色条和这个文字 pill 上 —— 色盲用户靠 pill 读语义,
-/// 正常视力扫视靠色条(规范 §二)。所以 pill 的文字不能省成一个纯色点。
+/// 减法稿 2026-09-22:化验「偏高/偏低」不再用它——那两档现在是一个上了色、
+/// 无底的状态词([statusWord])。`MedPill` 留给别的标签:类型(`profile_sections.dart`
+/// 的 typeLabel/stateLabel)、分数(`+N 分`)、已换算、需核对、看一眼
+/// ([MedPill.check])这类**不是化验高低判定**的中性/带底标注。
 class MedPill extends StatelessWidget {
   const MedPill({
     super.key,

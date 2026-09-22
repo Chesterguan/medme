@@ -5,7 +5,7 @@ import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart' show trendYDomain;
 
 /// 化验状态的**唯一**映射点:`TrendPointDto.flag` / `VisitLabDto.flag` 这类
-/// **Rust 给的原始标记字符串** → 颜色与文字 pill。
+/// **Rust 给的原始标记字符串** → 颜色、右列的状态词与刻度条上圆点的位置。
 ///
 /// ## 这里绝不做判定
 ///
@@ -310,28 +310,32 @@ class LabLine extends StatelessWidget {
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: MedShape.s3, vertical: MedShape.s2),
-        child: Row(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Row(children: [
                     if (reviewPill != null) ...[reviewPill, const SizedBox(width: MedShape.s1)],
                     Flexible(child: Text(name, style: MedType.body.copyWith(
                         color: c.ink, fontWeight: FontWeight.w500, fontVariations: MedType.w500))),
                   ]),
-                  if (sub.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(sub, style: MedType.secondary.copyWith(color: c.ink3, fontFeatures: MedType.tabular)),
-                  ],
-                ],
-              ),
+                ),
+                const SizedBox(width: MedShape.s2),
+                right,
+                if (onTap != null) Icon(Icons.chevron_right, size: 20, color: c.ink3),
+              ],
             ),
-            const SizedBox(width: MedShape.s2),
-            right,
-            if (onTap != null) Icon(Icons.chevron_right, size: 20, color: c.ink3),
+            // 次要说明行**整宽**,不塞进上面那个窄 Expanded——它一度被放在那里,
+            // 于是只拿到「总宽减去右列和箭头」的宽度(360dp 上约 114dp),参考区间
+            // 在破折号处被夹断成两行(`参考 3.1–` / `8`),孤零零的 `8` 读起来像
+            // 另一个值。这一行下面右边没有东西占着,整宽摊开才对。
+            if (sub.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(sub, style: MedType.secondary.copyWith(color: c.ink3, fontFeatures: MedType.tabular)),
+            ],
           ],
         ),
       ),

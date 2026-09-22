@@ -295,13 +295,13 @@ void main() {
       expect(find.text('正常'), findsNothing);
     });
 
-    testWidgets('状态同时给文字 pill —— 色盲用户靠它读语义,不能只有色条', (tester) async {
+    testWidgets('状态同时给文字状态词 —— 色盲用户靠它读语义,不能只靠颜色', (tester) async {
       await pumpLab(tester);
       // 样本三行:6.05 偏高、0.98 偏低、95 正常。
       expect(find.text('偏高'), findsOneWidget);
       expect(find.text('偏低'), findsOneWidget);
-      // 正常行不给 pill —— pill 本身也是一种上色。参考区间那格里的
-      // 「57 - 97 正常」是原件抄下来的文本,不是 pill,精确匹配不会命中。
+      // 正常行两样都不给——不上色也不加字。参考区间那格里的
+      // 「57 - 97 正常」是原件抄下来的文本,不是状态词,精确匹配不会命中。
       expect(find.text('正常'), findsNothing);
     });
 
