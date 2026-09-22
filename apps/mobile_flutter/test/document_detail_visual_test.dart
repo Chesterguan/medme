@@ -78,9 +78,10 @@ void main() {
     expect(confirmed, isTrue, reason: '「没问题」回调没接上');
   });
 
-  testWidgets('_LabRowView:色条 4px,颜色按 LabFlag 分(high/low/normal 各一色)', (
+  testWidgets('化验表格行:无 4px 色条,偏高/偏低是上色的状态词,正常不上色不加字', (
     tester,
   ) async {
+    const c = MedColors.light;
     // 与 report_content_test.dart 已验证过的形状一致(单空格、表头 + 连续
     // 数据行),只是名字换成好认的测试夹具,不是真的化验项目。
     const header = '项目缩写 项目名称 结果 单位 参考范围 提示';
@@ -100,18 +101,15 @@ void main() {
         ),
       ),
     );
-    final stripes = tester
+    expect(tester.widget<Text>(find.text('偏高')).style!.color, c.high);
+    expect(tester.widget<Text>(find.text('偏低')).style!.color, c.low);
+    expect(find.text('正常'), findsNothing);
+    final hasLeftBar = tester
         .widgetList<Container>(find.byType(Container))
         .map((w) => w.decoration)
         .whereType<BoxDecoration>()
-        .where((d) => d.border is Border && (d.border! as Border).left.width == 4)
-        .map((d) => (d.border! as Border).left.color)
-        .toList();
-    expect(
-      stripes,
-      containsAll(<Color>[MedBrand.barHigh, MedBrand.barLow, MedBrand.barNormal]),
-      reason: '三档 LabFlag 的色条颜色没有都对上',
-    );
+        .any((d) => d.border is Border && (d.border! as Border).left.width == 4);
+    expect(hasLeftBar, isFalse, reason: '减法稿:化验表格行不再画左侧色条');
   });
 
   testWidgets('抬头卡在两种尺寸×两档字号都不溢出(长机构名/长来源文件名/长正文)', (tester) async {

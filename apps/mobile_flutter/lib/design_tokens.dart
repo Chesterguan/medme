@@ -87,7 +87,8 @@ class MedColors extends ThemeExtension<MedColors> {
   /// 该更冷静,不是更花哨。
   ///
   /// 不能用 [low] / [high] / [critical]:它们是化验状态专用,借来当 chrome 就会
-  /// 稀释语义。也不能用绿:绿是「正常」化验状态专用色(`normalInk`/`barNormal`),同样犯不得。
+  /// 稀释语义。也不能用绿:绿曾是化验「正常」专用色,减法稿后正常已不上色,
+  /// 这个色相仍旧避开,不给历史化验语境留混淆空间。
   final Color proxy;
 
   /// 代拍主色的深调,用于浅底上的文字(对比度需要)。
@@ -490,16 +491,6 @@ class MedBrand {
   static const double rangeBarHeight = 3;
   static const double rangeMarkerSize = 9;
   static const double rangeBandAlpha = 0.3;
-
-  // ── 状态 ────────────────────────────────────────────────
-  static const Color barHigh = Color(0xFFE07A25);
-  static const Color barLow = Color(0xFF1F6FD2);
-  static const Color barNormal = Color(0xFF2F8F5B);
-  static const Color barCritical = Color(0xFFCF3A5A);
-  /// 「正常」的文字色。**底是透明的** —— brief 只给了文和条,没给底(见计划「已知分歧 5」)。
-  static const Color normalInk = Color(0xFF227A4C);
-  /// 「偏高」pill 压在 `highWash` 上的那档更深的琥珀(与琥珀横幅同色)。
-  static const Color pillHighInk = Color(0xFF9A4A12);
 
   static const Color bannerBlue = Color(0xFFDDEDF8);
   static const Color bannerBlueInk = Color(0xFF0E6285);

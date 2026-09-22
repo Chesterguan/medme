@@ -110,28 +110,22 @@ void main() {
     });
   });
 
-  group('化验行的左侧色条', () {
-    testWidgets('三档 LabFlag 各有色条,恒定 4px(R22:正常也上色,不再透明)', (tester) async {
+  group('化验表格行的状态词', () {
+    testWidgets('三档 LabFlag:偏高/偏低是上色的词,正常不上色不加字', (tester) async {
+      const c = MedColors.light;
       await tester.pumpWidget(
         wrap(const ReportContent(text: labText, docType: 'lab_report')),
       );
+      expect(tester.widget<Text>(find.text('偏高')).style!.color, c.high);
+      expect(tester.widget<Text>(find.text('偏低')).style!.color, c.low);
+      expect(find.text('正常'), findsNothing);
+      // 减法稿 2026-09-22:不再画左侧状态色条。
       final lefts = decorations(tester)
           .map((d) => d.border)
           .whereType<Border>()
           .where((b) => b.left.width == 4)
-          .map((b) => b.left.color)
           .toList();
-      // 三行 → 三条 4px 的左边框:偏高、偏低、正常各一色 —— R22 之前正常行是
-      // 透明的,现在与 `lab_status.dart` 的 `LabLine` 同一套规则,正常也上色
-      // (`MedBrand.barNormal`),色条恒定占位这条不变。
-      expect(lefts, hasLength(3));
-      expect(lefts, contains(MedBrand.barHigh));
-      expect(lefts, contains(MedBrand.barLow));
-      expect(
-        lefts,
-        contains(MedBrand.barNormal),
-        reason: 'R22:LabFlag.normal 现在也有色条(MedBrand.barNormal),不再透明',
-      );
+      expect(lefts, isEmpty);
     });
   });
 

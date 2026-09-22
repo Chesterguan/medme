@@ -270,7 +270,7 @@ void main() {
       ),
     );
 
-    testWidgets('偏高 = --high #C25E18,偏低 = --low #1F5FB8,正常 = MedBrand.normalInk(R22)', (
+    testWidgets('偏高 = --high #C25E18,偏低 = --low #1F5FB8,正常 = ink(减法稿:不上色)', (
       tester,
     ) async {
       await pumpLab(tester);
@@ -285,13 +285,14 @@ void main() {
         MedColors.light.low.toARGB32(),
       );
       expect(valueColor(tester, '0.98 mmol/L', '0.98').toARGB32(), 0xFF1F5FB8);
-      // R22 fix round 1:「正常不上色」的旧规则已被 Stage 3 视觉令牌取代 ——
-      // `LabFlag.normal` 现在走 `MedBrand.normalInk`,与 `lab_status.dart` 的
-      // `LabLine`(`status == null` 那一档)同一套颜色,不再继承墨色 `ink`。
+      // 减法稿 2026-09-22:「正常不上色」——`LabFlag.normal` 现在走 `c.ink`,
+      // 与 `lab_status.dart` 的 `labStatusColor`(`status == null` 那一档)
+      // 同一套规则,预检裁定 R2 的「正常档也上色」作废。
       expect(
         valueColor(tester, '95 umol/L', '95').toARGB32(),
-        MedBrand.normalInk.toARGB32(),
+        MedColors.light.ink.toARGB32(),
       );
+      expect(find.text('正常'), findsNothing);
     });
 
     testWidgets('状态同时给文字 pill —— 色盲用户靠它读语义,不能只有色条', (tester) async {
@@ -485,13 +486,7 @@ void main() {
       expect(MedBrand.heroGlow, const Color(0x38FFFFFF)); // rgba(255,255,255,.22)
     });
 
-    test('状态左色条、横幅、示例框、看一眼', () {
-      expect(MedBrand.barHigh, const Color(0xFFE07A25));
-      expect(MedBrand.barLow, const Color(0xFF1F6FD2));
-      expect(MedBrand.barNormal, const Color(0xFF2F8F5B));
-      expect(MedBrand.barCritical, const Color(0xFFCF3A5A));
-      expect(MedBrand.normalInk, const Color(0xFF227A4C));
-      expect(MedBrand.pillHighInk, const Color(0xFF9A4A12));
+    test('横幅、示例框、看一眼、时间轴', () {
       expect(MedBrand.bannerBlue, const Color(0xFFDDEDF8));
       expect(MedBrand.bannerBlueInk, const Color(0xFF0E6285));
       expect(MedBrand.bannerAmber, const Color(0xFFFBE7D2));

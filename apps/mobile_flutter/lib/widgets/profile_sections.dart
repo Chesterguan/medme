@@ -301,12 +301,12 @@ class _ItemRow extends StatelessWidget {
   /// 不拼在一起 —— 拼了就核不到这一句的逐字原文(与 score_card 的 `caveat` 同一手法)。
   final String? note;
 
-  /// brief §形「化验行:左 4px 色条」——现在在用/活动度两张卡里的行不是
-  /// `LabLine`(没有干净的数值+单位可拆,见 `_GcBlock`/`_HcqBlock`/`_OtherDrugRow`/
-  /// `_ScoreCardBody` 的调用点),所以不强行换组件,只借这根色条把视觉语言对齐。
-  /// **不借 [MedBrand.barHigh]/[barLow]/[barCritical]** 这几个化验状态色——这些行
-  /// 没有 flag,借状态色就是替一个没有判定的数据编一个判定(`lab_status.dart` 头部
-  /// 同一条戒律)。传 `null`(默认)不画条,原有调用点一个像素都不变。
+  /// 现在在用/活动度两张卡里的行不是 `LabLine`(没有干净的数值+单位可拆,见
+  /// `_GcBlock`/`_HcqBlock`/`_OtherDrugRow`/`_ScoreCardBody` 的调用点),所以不
+  /// 强行换组件,只借这根条把视觉语言对齐。**不借化验状态色**(偏高/偏低/危急值
+  /// 那几个专用色)——这些行没有 flag,借状态色就是替一个没有判定的数据编一个
+  /// 判定(`lab_status.dart` 头部同一条戒律)。传 `null`(默认)不画条,原有调用点
+  /// 一个像素都不变。
   final Color? barColor;
 
   @override
@@ -1161,7 +1161,7 @@ class _TimelineEventRow extends StatelessWidget {
   }
 }
 
-/// 时间轴圆点:10×10 实心 `seal`(异常事件换 `MedBrand.barCritical`)、2px 白边、
+/// 时间轴圆点:10×10 实心 `seal`(异常事件换 `MedColors.critical`)、2px 白边、
 /// 外面再一圈 1px `MedBrand.timelineLine`——三层同心圆,逐层套 `Container`
 /// (Flutter 没有 CSS 那种叠 `box-shadow`/多层 border,套色块是最省事的等价画法)。
 class _TimelineDot extends StatelessWidget {
@@ -1194,7 +1194,7 @@ class _TimelineDot extends StatelessWidget {
           height: _core,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: critical ? MedBrand.barCritical : c.seal,
+            color: critical ? c.critical : c.seal,
           ),
         ),
       ),

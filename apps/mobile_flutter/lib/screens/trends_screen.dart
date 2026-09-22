@@ -655,16 +655,13 @@ class _SeriesCardState extends State<SeriesCard> {
 
     final last = pts.last;
     final status = labStatusOf(last.flag);
-    final pill = labStatusPill(context, last.flag);
+    final word = labStatusWord(context, last.flag);
     final ref = refRangeText(series.refLow, series.refHigh);
     final refSourceCitation = trendRefSourceCitation(series);
     // 单位以**点自己的**为准:同一指标跨报告单位可能不一致,序列级 unit 只是取了
     // 最后一个点的(见 DTO 文档)。这里显示的就是最后一个点,两者其实同源。
     final unit = last.unit ?? series.unit;
     final undated = series.points.length - pts.length;
-    // 行的状态色:与化验行(`LabLine`)同一套 token,`labStripeColor`/
-    // `labStatusColor` 是这一屏与「给医生看」共用的唯一判定点(007 §2.5)。
-    final stripe = labStripeColor(context, status);
     // 「第二行历年数值」的字阶(brief §形):12 · ink3 · tabular · 400。这一屏
     // 里几段图例/引文原来各写各的 `secondary`,统一成这一档,颜色/字号不变文字。
     final metaStyle = MedType.caption.copyWith(
@@ -683,11 +680,6 @@ class _SeriesCardState extends State<SeriesCard> {
             child: InkWell(
               onTap: () => setState(() => _expanded = !_expanded),
               child: Container(
-                // 4px 左色条贴着卡边(与化验行同一条规矩),点开原地展开的
-                // `.xp` 用同一个颜色,两者在视觉上是同一条状态线的延续。
-                decoration: BoxDecoration(
-                  border: Border(left: BorderSide(color: stripe, width: 4)),
-                ),
                 padding: const EdgeInsets.fromLTRB(
                   MedShape.s2,
                   MedShape.s2,
@@ -710,7 +702,7 @@ class _SeriesCardState extends State<SeriesCard> {
                                 series.name,
                                 style: MedType.subtitle.copyWith(color: c.ink),
                               ),
-                              ?pill,
+                              ?word,
                             ],
                           ),
                         ),
@@ -775,7 +767,8 @@ class _SeriesCardState extends State<SeriesCard> {
                         // 自测序列必须**用文字**说出来。图上的空心点是区分手段,但形状不能
                         // 是唯一载体 —— 没有图例的形状编码等于没有编码,没人知道空心圈是
                         // 「这是你自己填的」。这与 `lab_status.dart` 那条同源:状态同时编码
-                        // 在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
+                        // 在状态词的文字和刻度条上圆点的颜色/位置上,少任何一个就有一类
+                        // 用户读不到结论。
                         //
                         // 同屏的化验快照([KeyLabsSnapshot])和「给医生看」
                         // (`visit_summary_sheet.dart` 的 `_LabRow`)早就在日期旁标了
@@ -813,14 +806,11 @@ class _SeriesCardState extends State<SeriesCard> {
           ),
 
           // ── 展开区(mockup `.xp`):点开原地放大。Stage 3 只给它样式(底色、
-          // 左色条、82px 高),真折线是 Stage 2 的活。 ──
+          // 82px 高),真折线是 Stage 2 的活。减法稿 2026-09-22:不再画左色条。──
           if (_expanded)
             Container(
               height: 82,
-              decoration: BoxDecoration(
-                color: MedBrand.expandedChartBg,
-                border: Border(left: BorderSide(color: stripe, width: 4)),
-              ),
+              decoration: const BoxDecoration(color: MedBrand.expandedChartBg),
             ),
 
           // ── 其余:出处引文 / 未定日说明 / 查看原件 —— 不受展开态影响,恒在 ──
@@ -887,7 +877,8 @@ class _SeriesCardState extends State<SeriesCard> {
 ///
 /// 图上的自测点画成空心圈(见 `TrendChart` 的 `selfMeasured`),但**形状不能是唯一
 /// 载体** —— 没有图例的形状编码等于没有编码。这与 `lab_status.dart` 那条同源:
-/// 偏高/偏低同时编码在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
+/// 偏高/偏低同时编码在状态词的文字和刻度条上圆点的颜色/位置上,少任何一个就有
+/// 一类用户读不到结论。
 ///
 /// 圈的画法(线宽 1.5、半径 3.4、`seal` 描边、`surface` 填心)与
 /// `_TrendPainter` 里末点的自测画法一致 —— 图例和图不一致,比没有图例更糟。
@@ -956,8 +947,8 @@ class _RefLegend extends StatelessWidget {
     return Row(
       // Fix round 1(R19):原来是 `mainAxisSize: min` + 裸 `Text`——一句长参考
       // 区间图例(`"参考区间 ... · 出自化验单原件"`)在这个 Row 里没有宽度上限,
-      // 会把整行挤出卡外。文字不能拿宽度上限硬砍(那是「化验行 4px 左色条」同一条
-      // 「单位小字可折到数值下一行」的精神,不是删字),所以让色块非 flex、文字
+      // 会把整行挤出卡外。文字不能拿宽度上限硬砍(与化验行数值簇同一条「单位小字
+      // 可折到数值下一行」的精神,不是删字),所以让色块非 flex、文字
       // `Expanded` 吃掉剩余宽度、允许自己换行——色块位置不受影响,行只会变高。
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1161,29 +1152,23 @@ class KeyLabsSnapshot extends StatelessWidget {
                 children: [
                   for (var i = 0; i < labs.length; i++) ...[
                     if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
-                    Padding(
-                      // 4px 色条要贴着卡边(mockup `.lr{border-left:4px}` 就在
-                      // 卡的边上)——不再留左右内边距,`LabLine` 自己的左边框
-                      // 加内边距已经够了。
-                      padding: EdgeInsets.zero,
-                      child: LabLine(
-                        name: labs[i].name,
-                        value: labs[i].value,
-                        unit: labs[i].unit,
-                        flag: labs[i].flag,
-                        refLow: labs[i].refLow,
-                        refHigh: labs[i].refHigh,
-                        // 见 visit_summary_sheet.dart 的 `_LabRow` 同一处注释。
-                        meta: [
-                          labs[i].date,
-                          if (labs[i].selfMeasured) '家测',
-                          if (labs[i].valuesConverted)
-                            unitConvertedNote(labs[i].unit),
-                        ].join(' · '),
-                        // 云抽取图片档没能逐字核对上的行:照常显示,标出来。
-                        unverified: labs[i].unverified,
-                        onTap: () => onOpenDoc(labs[i].documentId),
-                      ),
+                    LabLine(
+                      name: labs[i].name,
+                      value: labs[i].value,
+                      unit: labs[i].unit,
+                      flag: labs[i].flag,
+                      refLow: labs[i].refLow,
+                      refHigh: labs[i].refHigh,
+                      // 见 visit_summary_sheet.dart 的 `_LabRow` 同一处注释。
+                      meta: [
+                        labs[i].date,
+                        if (labs[i].selfMeasured) '家测',
+                        if (labs[i].valuesConverted)
+                          unitConvertedNote(labs[i].unit),
+                      ].join(' · '),
+                      // 云抽取图片档没能逐字核对上的行:照常显示,标出来。
+                      unverified: labs[i].unverified,
+                      onTap: () => onOpenDoc(labs[i].documentId),
                     ),
                   ],
                 ],
