@@ -32,16 +32,16 @@ class MedAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    // 误报:width/height/decoration 都在用,触发只因 child 是
-    // `MediaQuery.withNoTextScaling`(探过:child 换成裸 Text 就不报)。
-    // ignore: avoid_unnecessary_containers
-    return Container(
+    return SizedBox(
       width: size,
       height: size,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(color: c.line2, shape: BoxShape.circle),
-      child: MediaQuery.withNoTextScaling(
-        child: Text(letter, style: MedType.subtitle.copyWith(color: c.ink2, fontSize: size * 0.41)),
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: c.line2, shape: BoxShape.circle),
+        child: Center(
+          child: MediaQuery.withNoTextScaling(
+            child: Text(letter, style: MedType.subtitle.copyWith(color: c.ink2, fontSize: size * 0.41)),
+          ),
+        ),
       ),
     );
   }

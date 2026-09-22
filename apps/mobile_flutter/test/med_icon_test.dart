@@ -26,7 +26,7 @@ void main() {
   testWidgets('MedAvatar:line2 圆底 + ink2 首字,3× 字号不放大不溢出', (t) async {
     await pump(t, const MedAvatar('李'), scale: 3.0);
     expect(t.getSize(find.byType(MedAvatar)), const Size(44, 44));
-    final d = t.widget<Container>(find.byType(Container)).decoration as BoxDecoration;
+    final d = t.widget<DecoratedBox>(find.byType(DecoratedBox)).decoration as BoxDecoration;
     expect(d.color, MedColors.light.line2);
     expect(d.shape, BoxShape.circle);
     expect(t.widget<Text>(find.text('李')).style!.color, MedColors.light.ink2);
