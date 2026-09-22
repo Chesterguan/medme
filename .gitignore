@@ -56,3 +56,5 @@ __pycache__/
 
 # 合成 SLE 病程语料的生成产物(入库的那份在 packages/profile/testdata/corpus/)
 examples/*/corpus-sle/
+.deepseek_key
+.DS_Store
