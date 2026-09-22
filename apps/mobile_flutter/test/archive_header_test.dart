@@ -1,4 +1,4 @@
-// 「病历」首页 hero 下面那两颗药丸、「还没核对」横幅、月份标题(`s1`)。
+// 「病历」首页成员一行下面那两颗药丸、「还没核对」横幅、月份标题(`s1`)。
 //
 // 整屏 `ArchiveScreen` 在字段初始化处碰 FFI,`flutter test` 不带原生库,**不可
 // pump 整屏** —— 这里 pump 的是从那一屏里拆出来的三个纯 widget。
@@ -74,17 +74,6 @@ void main() {
     // PendingReviewBanner 类文档的约定)。
     await tester.pumpWidget(wrap(const PendingReviewBanner(count: 2)));
     expect(find.byIcon(Icons.chevron_right), findsNothing);
-  });
-
-  testWidgets('月份标题 + 「找一找」占位', (tester) async {
-    useNarrowPhone(tester);
-    var searched = false;
-    await tester.pumpWidget(
-      wrap(MonthHeader(label: '2026 年 8 月', onSearch: () => searched = true)),
-    );
-    expect(find.text('2026 年 8 月'), findsOneWidget);
-    await tester.tap(find.text('找一找'));
-    expect(searched, isTrue);
   });
 
   test('monthLabel:按月分组的那一行字;没日期的不许归进某个月', () {

@@ -364,9 +364,10 @@ class MedType {
     fontVariations: w500, fontFeatures: tabular,
   );
 
-  /// 22 · 600 · tabular —— hero 卡「最近就诊」的值(R18,mockup `.hero .rule b`)。
-  /// 颜色不在这里定:这张卡的白字规则是全卡统一的确定性规则(R11,见
-  /// `identity_hero_card.dart` 类文档),用处按 `.copyWith(color: Colors.white)`。
+  /// 22 · 600 · tabular —— mockup `.hero .rule b`,`HeroCard` 卡面大数值一档
+  /// (R18)。减法稿 2026-09-22:主页身份卡换成了一行文字的 `MemberHeader`,
+  /// 不再用这一档;`account_screen.dart` 换新手机扫码那张 `HeroCard` 还在用
+  /// 同一条白字规则(R11),这档数值留给它与以后同类场景。
   static const TextStyle heroValue = TextStyle(
     fontSize: 22, fontWeight: FontWeight.w600,
     fontVariations: w600, fontFeatures: tabular,

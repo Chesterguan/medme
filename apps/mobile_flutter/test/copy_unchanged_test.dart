@@ -75,6 +75,13 @@ const Set<String> kRemovedByDecision = {
   '看懂', // 趋势页「看懂」横幅:只有壳,内容线从没接上
   '把报告上那段「提示」原文摘出来放这里',
   '还在做。',
+  // Task 5(2026-09-22):`IdentityHeroCard` 连同它的头像块(`_Avatar`)整个删掉,
+  // 换成一行文字的 `MemberHeader`(没有头像)。`_Avatar` 里唯一的字面量是姓名
+  // 取不到首字时的兜底显示 `name.isNotEmpty ? name[0] : '我'`——删掉整个 widget
+  // 带走它的字符串,是这份闸自己文件头注释写的合法例外;「我」作为词本身在
+  // main.dart(底栏「我」tab)/settings_screen.dart/profile_manager.dart 三处
+  // 原样还在,没有消失。
+  '我',
 };
 
 /// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败

@@ -17,7 +17,7 @@ import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
-import 'package:mobile_flutter/widgets/identity_hero_card.dart';
+import 'package:mobile_flutter/widgets/member_header.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
@@ -26,7 +26,7 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// (见 lib/src/rust/api/vault.dart)。
 ///
 /// 三 tab 信息架构里这一屏**同时是首页**:概览整屏解散之后,「你是谁、现在看的是谁」
-/// 那张 [IdentityHeroCard] 搬到了这里的最上面,底下是两颗等宽方块
+/// 那一行([MemberHeader])搬到了这里的最上面,底下是两颗等宽方块
 /// ([HomeTiles]:`添加` / `给医生看`)。「给医生看」没有底栏席位 —— 那颗方块是它
 /// **全 App 唯一的入口**。
 ///
@@ -59,6 +59,19 @@ String _groupDate(TimelineGroupDto g) {
 String monthLabel(String? iso) {
   final d = iso == null ? null : DateTime.tryParse(iso);
   return d == null ? '没有日期' : '${d.year} 年 ${d.month} 月';
+}
+
+/// 时间线按月切段。列表本来就按日期倒序,所以「这一条和上一条不同月」就是新一段。
+List<List<TimelineGroupDto>> _byMonth(List<TimelineGroupDto> groups) {
+  final out = <List<TimelineGroupDto>>[];
+  for (final g in groups) {
+    if (out.isEmpty || monthLabel(_groupDate(out.last.first)) != monthLabel(_groupDate(g))) {
+      out.add([g]);
+    } else {
+      out.last.add(g);
+    }
+  }
+  return out;
 }
 
 String _groupDesc(TimelineGroupDto g) {
@@ -214,9 +227,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     if (await _confirmDelete(label)) await _delete(docId);
   }
 
-  /// hero 卡上那对 `⌃⌄`:弹出成员切换器。**换成员只有这一条路**(`s1` 不在顶栏
-  /// 再放成员 chip)。UI 与状态更新路径都在 `widgets/member_switcher.dart` 里 ——
-  /// 真相只有 `ProfileManager.instance.currentId` 一处。
+  /// 顶部那一行([MemberHeader])右边那对 `⌃⌄`:弹出成员切换器。**换成员只有
+  /// 这一条路**(`s1` 不在顶栏再放成员 chip)。UI 与状态更新路径都在
+  /// `widgets/member_switcher.dart` 里 —— 真相只有 `ProfileManager.instance.currentId` 一处。
   Future<void> _showProfileSwitcher() => showMemberSwitcherSheet(
     context,
     onChanged: () {
@@ -245,14 +258,6 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
         ),
       );
     }
-  }
-
-  /// 「找一找」:Stage 1 只摆入口位,搜索本身(医院 / 日期 / 类型 / 指标 / 药名)
-  /// 是 Stage 2(ia-proposal §6)。点了**明说还在做**,不装作能用。
-  void _search() {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(appSnackBar(content: const Text('找一找还在做')));
   }
 
   Future<void> _refresh() async {
@@ -302,7 +307,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
         ),
-        // 顶栏不放按钮(mockup s1):「添加」只有 hero 卡下面那颗方块一条路,
+        // 顶栏不放按钮(mockup s1):「添加」只有成员一行下面那颗方块一条路,
         // 「给医生看」同理 —— 每个功能只有一条路到达(ia-proposal §2)。
       ),
       body: FutureBuilder<(PatientProfileDto, List<TimelineGroupDto>)>(
@@ -351,18 +356,18 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 MedShape.s6,
               ),
               children: [
-                // 「你是谁、现在看的是谁」(`s1`)。换成员点卡上那对 `⌃⌄` ——
+                // 「你是谁、现在看的是谁」(`s1`)。换成员点这一行右边那对 `⌃⌄` ——
                 // 顶栏**不再**放成员 tab 条/chip:同一件事两个入口,人下次
                 // 找不到自己上回是从哪儿进的。
-                IdentityHeroCard(
+                MemberHeader(
                   // 显示名取当前成员(用户自己给档案起的名),不取报告里抽出来的
                   // `profile.name` —— 后者可能因为某一张单子上印着别人而漂。
                   name: ProfileManager.instance.displayName,
                   gender: profile.gender,
                   age: profile.age,
                   recordCount: profile.recordCount.toInt(),
-                  // 「最近就诊」取时间线最新一条的日期(`s1` 那一行),不是本卡
-                  // 单独算的数:没有记录、或那条没识别到日期,卡片自己显示「暂无」。
+                  // 「最近就诊」取时间线最新一条的日期(`s1` 那一行),不是这一行
+                  // 单独算的数:没有记录、或那条没识别到日期,这一行自己显示「暂无」。
                   recentVisitDate: groups.isNotEmpty
                       ? _groupDate(groups.first)
                       : null,
@@ -403,42 +408,37 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 if (pending.isEmpty && confirmed.isEmpty)
                   const _EmptyState()
                 else
-                  for (var i = 0; i < confirmed.length; i++) ...[
-                    // 时间线按**月份**分组(`s1`)。列表本来就按日期倒序,所以
-                    // 「这一条和上一条不同月」就是一段的开头,不必先建一张分组表。
-                    if (i == 0 ||
-                        monthLabel(_groupDate(confirmed[i])) !=
-                            monthLabel(_groupDate(confirmed[i - 1])))
-                      MonthHeader(
-                        label: monthLabel(_groupDate(confirmed[i])),
-                        // 「找一找」只在**最上面那条**月份标题右边(`s1`):它是
-                        // 搜索的入口位,每个月都挂一条就成了噪音。
-                        onSearch: i == 0 ? _search : null,
-                      )
-                    else
-                      const SizedBox(height: MedShape.s2),
-                    _TimelineItem(
-                      group: confirmed[i],
-                      // 按就诊组 id 记展开态(不用列表下标)——删除/导入后下标会错位到别的组。
-                      expanded: switch (confirmed[i]) {
-                        TimelineGroupDto_Encounter(:final encounter) =>
-                          _expanded.contains(encounter.id),
-                        _ => false,
-                      },
-                      onTap: () {
-                        switch (confirmed[i]) {
-                          case TimelineGroupDto_Document(:final doc):
-                            _openDoc(doc.id);
-                          case TimelineGroupDto_Encounter(:final encounter):
-                            setState(() {
-                              if (!_expanded.add(encounter.id)) {
-                                _expanded.remove(encounter.id);
-                              }
-                            });
-                        }
-                      },
-                      onOpenSubDoc: _openDoc,
-                      onDelete: _confirmAndDelete,
+                  for (final section in _byMonth(confirmed)) ...[
+                    MonthHeader(label: monthLabel(_groupDate(section.first))),
+                    // 整月的行在一张卡里,行间细分隔线(减法稿:白卡浅底,层级靠留白)。
+                    MedCard(
+                      child: Column(
+                        children: [
+                          for (var i = 0; i < section.length; i++) ...[
+                            if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
+                            _TimelineItem(
+                              group: section[i],
+                              // 按就诊组 id 记展开态(不用列表下标)——删除/导入后下标会错位到别的组。
+                              expanded: switch (section[i]) {
+                                TimelineGroupDto_Encounter(:final encounter) => _expanded.contains(encounter.id),
+                                _ => false,
+                              },
+                              onTap: () {
+                                switch (section[i]) {
+                                  case TimelineGroupDto_Document(:final doc):
+                                    _openDoc(doc.id);
+                                  case TimelineGroupDto_Encounter(:final encounter):
+                                    setState(() {
+                                      if (!_expanded.add(encounter.id)) _expanded.remove(encounter.id);
+                                    });
+                                }
+                              },
+                              onOpenSubDoc: _openDoc,
+                              onDelete: _confirmAndDelete,
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
               ],
@@ -516,86 +516,79 @@ class _TimelineItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     final isEncounter = group is TimelineGroupDto_Encounter;
-    final icon = switch (group) {
-      TimelineGroupDto_Encounter(:final encounter) => iconForKind(
-        encounter.kind,
-      ),
-      TimelineGroupDto_Document(:final doc) => iconForDoc(doc.docType),
-    };
 
-    final Widget card = MedCard(
-      child: Column(
-        children: [
-          InkWell(
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.all(MedShape.s2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  MedIcon(icon),
-                  const SizedBox(width: MedShape.s2),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.baseline,
-                          textBaseline: TextBaseline.alphabetic,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _groupTitle(group),
-                                style: MedType.body.copyWith(
-                                  color: c.ink,
-                                  fontWeight: FontWeight.w500,
-                                  fontVariations: MedType.w500,
-                                  height: 1.3,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
+    final Widget row = Column(
+      children: [
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: MedShape.s3,
+              vertical: MedShape.s2,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _groupTitle(group),
+                              style: MedType.body.copyWith(
+                                color: c.ink,
+                                fontWeight: FontWeight.w500,
+                                fontVariations: MedType.w500,
+                                height: 1.3,
                               ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(width: MedShape.s1),
-                            Text(
-                              _groupDate(group),
-                              // 日期是数字,等宽 —— 一列日期才对得齐。
-                              style: MedType.secondary.copyWith(
-                                color: c.ink3,
-                                fontFeatures: MedType.tabular,
-                              ),
+                          ),
+                          const SizedBox(width: MedShape.s1),
+                          Text(
+                            _groupDate(group),
+                            // 日期是数字,等宽 —— 一列日期才对得齐。
+                            style: MedType.secondary.copyWith(
+                              color: c.ink3,
+                              fontFeatures: MedType.tabular,
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          _groupDesc(group),
-                          style: MedType.secondary.copyWith(color: c.ink3),
-                        ),
-                      ],
-                    ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _groupDesc(group),
+                        style: MedType.secondary.copyWith(color: c.ink3),
+                      ),
+                    ],
                   ),
-                  if (isEncounter)
-                    Icon(
-                      expanded ? Icons.expand_less : Icons.expand_more,
-                      size: 20,
-                      color: c.ink3,
-                    ),
-                ],
-              ),
+                ),
+                if (isEncounter)
+                  Icon(
+                    expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 20,
+                    color: c.ink3,
+                  ),
+              ],
             ),
           ),
-          if (expanded)
-            switch (group) {
-              TimelineGroupDto_Encounter(:final docs) => _SubDocList(
-                docs: docs,
-                onOpenSubDoc: onOpenSubDoc,
-                onDelete: onDelete,
-              ),
-              TimelineGroupDto_Document() => const SizedBox.shrink(),
-            },
-        ],
-      ),
+        ),
+        if (expanded)
+          switch (group) {
+            TimelineGroupDto_Encounter(:final docs) => _SubDocList(
+              docs: docs,
+              onOpenSubDoc: onOpenSubDoc,
+              onDelete: onDelete,
+            ),
+            TimelineGroupDto_Document() => const SizedBox.shrink(),
+          },
+      ],
     );
 
     // 独立文档项:左滑删除(Outlook 式)。就诊组不整组删——展开后删组内单份。
@@ -608,10 +601,10 @@ class _TimelineItem extends StatelessWidget {
           await onDelete(doc.id, _groupTitle(group));
           return false; // 由数据重载移除,避免与 Dismissible 自身移除冲突
         },
-        child: card,
+        child: row,
       );
     }
-    return card;
+    return row;
   }
 }
 
@@ -650,13 +643,11 @@ class _SubDocList extends StatelessWidget {
                 onTap: () => onOpenSubDoc(d.id),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: MedShape.s2,
+                    horizontal: MedShape.s3 + MedShape.s2,
                     vertical: MedShape.s2,
                   ),
                   child: Row(
                     children: [
-                      MedIcon(iconForDoc(d.docType)),
-                      const SizedBox(width: MedShape.s2),
                       Expanded(
                         child: Text(
                           docRowLabel(d),
@@ -722,24 +713,18 @@ class _PendingCard extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  MedIcon(iconForDoc(doc.docType)),
-                  const SizedBox(width: MedShape.s2),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 标题行会挤:pill + 标题 + 日期。用 Wrap 让它在窄屏
+                        // 标题行会挤:状态词 + 标题 + 日期。用 Wrap 让它在窄屏
                         // 或大字号下自然折行,而不是把标题省略成两个字。
                         Wrap(
                           spacing: MedShape.s1,
                           runSpacing: 4,
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            MedPill(
-                              text: '还没核对',
-                              foreground: c.high,
-                              background: c.highWash,
-                            ),
+                            statusWord('还没核对', c.high),
                             Text(
                               label,
                               style: MedType.subtitle.copyWith(color: c.ink),
@@ -756,7 +741,7 @@ class _PendingCard extends StatelessWidget {
                         const SizedBox(height: 3),
                         // 原来每行都催一句「点开核对」,7 份就是 7 条错误提示
                         // (ux-audit P6)。那句话现在只在列表顶部说一次,行上
-                        // 只留类型标签 +「还没核对」那枚 pill。
+                        // 只留「还没核对」那个状态词。
                         Text(
                           docRowLabel(doc),
                           style: MedType.secondary.copyWith(color: c.ink2),
@@ -836,7 +821,7 @@ class _MismatchBanner extends StatelessWidget {
   }
 }
 
-/// 「病历」首页 hero 下面那两颗药丸(`s1`)。
+/// 「病历」首页成员一行下面那两颗药丸(`s1`)。
 ///
 /// **两颗等宽同高**,区别只在底色:`添加` 填主色(最高频的动作),`给医生看` 白底
 /// 带描边。**不做成一条通栏大按钮** —— 它们是一对并列的动作,不是一主一次。
@@ -886,44 +871,17 @@ class PendingReviewBanner extends StatelessWidget {
   }
 }
 
-/// 月份分组标题(`s1`)。右边那条「找一找」是**搜索的入口位**:Stage 1 点了只说
-/// 一句「还在做」,搜索本身(医院 / 日期 / 类型 / 指标 / 药名)是 Stage 2。
-///
-/// 为什么现在就摆出来:ux-audit P10「找不回东西」是这个定位的核心动作,而一个
-/// 空白的月份标题不会让任何人想起「原来可以搜」。占位不等于假装能用 —— 点了
-/// 明说还在做。
+/// 月份分组标题(`s1`):13 号 `ink3` 小标题,下面接整月的一张卡。
+/// 「找一找」搜索占位已删(用户 2026-09-22:没有用的就删掉,Stage 2 搜索做出来再放回)。
 class MonthHeader extends StatelessWidget {
-  const MonthHeader({super.key, required this.label, this.onSearch});
+  const MonthHeader({super.key, required this.label});
 
   final String label;
-  final VoidCallback? onSearch;
 
   @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return Padding(
-      // mockup `.sec{padding:0 4px}`,上下沿仍按分组前后的间距留白。
-      padding: const EdgeInsets.fromLTRB(4, MedShape.s4, 4, MedShape.s1),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          // Expanded + ellipsis:月份标题在 2× 字号下可能比「找一找」+ 月份标题
-          // 两者加起来还宽(中英文数字混排,`s1` 里没给这一行的溢出预案)——
-          // 「找一找」是可点的搜索入口,固定不裁;标题让出空间,裁的是信息性
-          // 文字,不是交互入口。
-          Expanded(
-            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: MedType.body.copyWith(fontSize: 15, color: c.ink2)),
-          ),
-          if (onSearch != null)
-            GestureDetector(
-              onTap: onSearch,
-              child: Text('找一找', style: MedType.secondary.copyWith(
-                  fontSize: 14, color: c.seal, fontWeight: FontWeight.w500,
-                  fontVariations: MedType.w500)),
-            ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(4, MedShape.s4, 4, 6),
+    child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+        style: MedType.secondary.copyWith(color: MedColors.of(context).ink3)),
+  );
 }

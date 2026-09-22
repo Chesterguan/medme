@@ -23,7 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/profile_sections.dart';
 
-/// 与 `test/identity_hero_card_test.dart` 同一个 `wrap` 写法:`MedMe.theme()` +
+/// 与 `test/member_header_test.dart` 同一个 `wrap` 写法:`MedMe.theme()` +
 /// 可调 `textScale` 的 `MediaQuery` + 可滚动的 `Scaffold`。
 Widget _wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
   theme: MedMe.theme(),
