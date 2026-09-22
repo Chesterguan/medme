@@ -131,7 +131,6 @@ class AddSheetBody extends StatelessWidget {
         ),
         _SheetTile(
           icon: Icons.photo_camera_outlined,
-          category: GlossCategory.brand,
           title: '拍照',
           subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
           choice: ImportChoice.camera,
@@ -144,14 +143,12 @@ class AddSheetBody extends StatelessWidget {
         ),
         _SheetTile(
           icon: Icons.photo_library_outlined,
-          category: GlossCategory.lab,
           title: '从相册选',
           subtitle: '选一张或多张已经拍好的病历照片',
           choice: ImportChoice.gallery,
         ),
         _SheetTile(
           icon: Icons.folder_open_outlined,
-          category: GlossCategory.neutral,
           title: '选择文件',
           subtitle: 'PDF、图片、TXT',
           choice: ImportChoice.files,
@@ -957,14 +954,13 @@ Future<Map<int, OcrResult>> _ocrScannedPdfPages(
 }
 
 /// 添加病历三选一的一条选项(mockup `s6` 的 `.opt`)。图标 + 标题这一行是
-/// [MedSheetOption](paper 底圆角块 + 光泽图标块,`primary` 那条换蓝底);
+/// [MedSheetOption](paper 底圆角块 + [MedIcon],`primary` 那条换蓝底);
 /// [subtitle] 是这条选项原有的说明句,`MedSheetOption.note` 是给短短一句
 /// 「右侧小注」用的(见其类文档),放不下这句完整说明,所以单独起一行摆在
 /// 选项块下方,缩进对齐到标题(不在文案上做任何删改)。
 class _SheetTile extends StatelessWidget {
   const _SheetTile({
     required this.icon,
-    required this.category,
     required this.title,
     required this.subtitle,
     required this.choice,
@@ -972,7 +968,6 @@ class _SheetTile extends StatelessWidget {
   });
 
   final IconData icon;
-  final GlossCategory category;
   final String title;
   final String subtitle;
   final ImportChoice choice;
@@ -991,7 +986,6 @@ class _SheetTile extends StatelessWidget {
         children: [
           MedSheetOption(
             icon: icon,
-            category: category,
             label: title,
             highlighted: primary,
             onTap: () => Navigator.of(context).pop(choice),

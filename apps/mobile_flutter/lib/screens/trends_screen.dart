@@ -10,9 +10,9 @@ import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/disease_profile_card.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
 /// 底部导航一级 tab「趋势」—— 使用时刻:**复诊前自己看「这两年怎么变的」**
@@ -1303,14 +1303,7 @@ class _VisitCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 光泽图标块(brief §形 的 3D 图标语言),类别按 `visit.kind`
-              // 归类(`categoryForVisitKind`——与 Task 8 `archive_screen.dart`
-              // 的 `_categoryOf` 同一映射来源:`categoryForDocType`)。默认
-              // 44×44,不为了这里挤一点就调小(`gloss_tile.dart` 类文档)。
-              GlossIconTile(
-                icon: iconForVisitKind(visit.kind),
-                category: categoryForVisitKind(visit.kind),
-              ),
+              MedIcon(iconForVisitKind(visit.kind)),
               const SizedBox(width: MedShape.s2),
               Expanded(
                 child: Column(

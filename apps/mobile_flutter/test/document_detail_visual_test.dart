@@ -3,12 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 import 'stage3_visual_helpers.dart';
 
@@ -32,16 +31,14 @@ DocumentDetailDto _detail({required String docType, required String ocrText}) =>
     );
 
 void main() {
-  testWidgets('抬头卡:GlossIconTile 类别按 docType 走 categoryForDocType', (
+  testWidgets('抬头卡:一枚 MedIcon,MedCard 外壳,渐变预算 0', (
     tester,
   ) async {
     await pumpStage3(
       tester,
       Scaffold(body: DetailBody(detail: _detail(docType: 'lab_report', ocrText: '正文'))),
     );
-    final tile = tester.widget<GlossIconTile>(find.byType(GlossIconTile));
-    expect(tile.category, categoryForDocType('lab_report'));
-    expect(tile.category, GlossCategory.lab);
+    expect(find.byType(MedIcon), findsWidgets);
     // 抬头卡本身是 MedCard(1px line 细边、无阴影),这条自动满足,顺带钉一下。
     expect(find.byType(MedCard), findsWidgets);
     // 这一屏渐变预算是 0(brief 的每屏预算表:一份病历 s8 = 0/0/0)。

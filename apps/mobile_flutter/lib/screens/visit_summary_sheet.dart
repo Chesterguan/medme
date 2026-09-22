@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 
 /// 「给医生看」正文——诊室里那 30 秒要看的东西,纯渲染,见 [VisitSummaryBody]。
@@ -110,7 +110,7 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
 
         // mockup `s4`:一张 `.card` 装着「我最近的变化」/「医生可能要问的」
         // (过敏史 + 用药)三节 `.blk`(R23)——内容/顺序/文案不动,只是从三个
-        // 各自独立的块改成一张共用的 `MedCard`,标题行各加一枚光泽图标块。
+        // 各自独立的块改成一张共用的 `MedCard`,标题行各加一枚 `MedIcon`。
         MedCard(
           child: Padding(
             padding: const EdgeInsets.all(MedShape.s4),
@@ -121,7 +121,6 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
                 _Section(
                   title: '我最近的变化',
                   icon: Icons.science_outlined,
-                  category: GlossCategory.lab,
                   // 这里刻意不说"都正常"——空态只说"我们观察到什么",不对身体
                   // 状况下结论(规范 §六 的空态写法与 `_LabSnapshot` 同一条
                   // 准则)。真没有任何化验数据(而不是"有数据但都不异常")也会
@@ -314,7 +313,6 @@ class _DoctorMayAskSection extends StatelessWidget {
         _Section(
           title: '过敏史',
           icon: Icons.warning_amber_outlined,
-          category: GlossCategory.alert,
           // 空过敏史必须自己说话:留白会被医生读成「无过敏史」,而我们只知道
           // 「已导入的这些纸上没写」。这两件事在临床上差着一条命。
           emptyText: '已添加的病历里没有找到过敏记录 —— 这不等于你不过敏,请当面告诉医生。',
@@ -362,7 +360,6 @@ class _MedsSubsection extends StatelessWidget {
       return const _Section(
         title: kRecordedMedsTitle,
         icon: Icons.medication_outlined,
-        category: GlossCategory.med,
         emptyText: '已添加的病历里没有读到药名。',
         isEmpty: true,
         children: [],
@@ -381,10 +378,7 @@ class _MedsSubsection extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 children: [
-                  const GlossIconTile(
-                    icon: Icons.medication_outlined,
-                    category: GlossCategory.med,
-                  ),
+                  const MedIcon(Icons.medication_outlined),
                   const SizedBox(width: MedShape.s2),
                   Expanded(
                     child: Text(
@@ -421,14 +415,12 @@ class _MedsSubsection extends StatelessWidget {
 
 /// 这一屏上的一节:标题 + 内容,或标题 + 一句诚实的空态。
 ///
-/// [icon]/[category] 是 R23 加的——标题行前一枚光泽图标块,三个调用方各给
-/// 自己的类别(我最近的变化=lab、过敏史=alert、记录中出现的药物=med),标题
-/// 字符串一个字没改。
+/// [icon] 是 R23 加的——标题行前一枚图标,三个调用方各给自己的图标(我最近的
+/// 变化/过敏史/记录中出现的药物),标题字符串一个字没改。
 class _Section extends StatelessWidget {
   const _Section({
     required this.title,
     required this.icon,
-    required this.category,
     required this.emptyText,
     required this.isEmpty,
     required this.children,
@@ -436,7 +428,6 @@ class _Section extends StatelessWidget {
 
   final String title;
   final IconData icon;
-  final GlossCategory category;
   final String emptyText;
   final bool isEmpty;
   final List<Widget> children;
@@ -451,7 +442,7 @@ class _Section extends StatelessWidget {
         children: [
           Row(
             children: [
-              GlossIconTile(icon: icon, category: category),
+              MedIcon(icon),
               const SizedBox(width: MedShape.s2),
               Expanded(
                 child: Text(title, style: MedType.caption.copyWith(color: c.ink3)),

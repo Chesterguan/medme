@@ -485,27 +485,6 @@ void main() {
       expect(MedBrand.heroGlow, const Color(0x38FFFFFF)); // rgba(255,255,255,.22)
     });
 
-    test('九档类别渐变与同色投影', () {
-      expect(MedBrand.tile(GlossCategory.lab),
-          (const Color(0xFF25B5C2), const Color(0xFF0B7A87), const Color(0x5A0E8A96)));
-      expect(MedBrand.tile(GlossCategory.clinic),
-          (const Color(0xFF4A90E8), const Color(0xFF1A5BC0), const Color(0x5A1F6FD2)));
-      expect(MedBrand.tile(GlossCategory.imaging),
-          (const Color(0xFF9A7BE0), const Color(0xFF5B3FAE), const Color(0x5A6A4DBF)));
-      expect(MedBrand.tile(GlossCategory.med),
-          (const Color(0xFFF4A04A), const Color(0xFFD0661A), const Color(0x5AE07A25)));
-      expect(MedBrand.tile(GlossCategory.note),
-          (const Color(0xFF5CC28A), const Color(0xFF227A4C), const Color(0x5A2F8F5B)));
-      expect(MedBrand.tile(GlossCategory.alert),
-          (const Color(0xFFF06A86), const Color(0xFFB92A4A), const Color(0x5ACF3A5A)));
-      expect(MedBrand.tile(GlossCategory.neutral),
-          (const Color(0xFF8A98A4), const Color(0xFF4A5A67), const Color(0x4D4A5A67)));
-      expect(MedBrand.tile(GlossCategory.brand),
-          (const Color(0xFF1FB0C6), const Color(0xFF16508E), const Color(0x5A1789C1)));
-      expect(MedBrand.tile(GlossCategory.busy),
-          (const Color(0xFFB7C2CC), const Color(0xFF8A98A4), const Color(0x334A5A67)));
-    });
-
     test('状态左色条、横幅、示例框、看一眼', () {
       expect(MedBrand.barHigh, const Color(0xFFE07A25));
       expect(MedBrand.barLow, const Color(0xFF1F6FD2));
@@ -568,14 +547,13 @@ void main() {
   });
 
   group('MedShape / MedType —— Stage 3 brief §形 §字', () {
-    test('七档圆角', () {
+    test('六档圆角', () {
       // R6:sheet(26)压过主卡 hero(22),现在是全 app 最大的一档。
       expect(MedShape.radiusSheet, 26);
       expect(MedShape.radiusHero, 22);
       expect(MedShape.radiusCard, 16);
       expect(MedShape.radiusEntry, 18);
       expect(MedShape.radiusBanner, 16);
-      expect(MedShape.radiusTile, 12);
       expect(MedShape.radiusPill, 999);
     });
 

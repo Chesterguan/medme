@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../design_tokens.dart';
-import 'gloss_tile.dart';
-
 /// 真 logo(毛笔「医」)。**brief §品牌 只允许它出现在四处**:
 ///
 ///  · 主页顶栏 [topBar] 30 —— `archive_screen.dart` 的标题行;
@@ -34,29 +31,15 @@ class BrandLogo extends StatelessWidget {
   );
 }
 
-/// 首启那一屏中央的场景(mockup `s16` 的 `.scene`):104px 的真 logo 微微左旋,
-/// 三个光泽图标块飘在周围 —— brief §插画 说的「用光泽图标块语言拼场景」。
-///
-/// 这是**占位级**的场景:brief 里那套统一风格的 3D 图标还在外包/生成中。用现有
-/// 语言先拼一个,到货后整体换掉,这一屏的其余部分不用动。
+/// 首启那一屏中央:104px 的真 logo,微微左旋。减法稿 2026-09-22:原来飘在周围的三个
+/// 光泽块删了——它们没有信息。
 class FirstRunScene extends StatelessWidget {
   const FirstRunScene({super.key});
 
   @override
   Widget build(BuildContext context) => SizedBox(
     height: 160,
-    child: Stack(alignment: Alignment.center, children: [
-      Positioned(left: 40, top: 14, child: Transform.rotate(angle: 10 * 3.14159 / 180,
-        child: const GlossIconTile(icon: Icons.water_drop_outlined,
-            category: GlossCategory.lab, size: 52))),
-      Positioned(right: 70, top: 6, child: Transform.rotate(angle: 6 * 3.14159 / 180,
-        child: const GlossIconTile(icon: Icons.medication_outlined,
-            category: GlossCategory.med, size: 40))),
-      Positioned(right: 40, bottom: 8, child: Transform.rotate(angle: -12 * 3.14159 / 180,
-        child: const GlossIconTile(icon: Icons.show_chart,
-            category: GlossCategory.imaging, size: 56))),
-      Transform.rotate(angle: -6 * 3.14159 / 180,
-        child: const BrandLogo(size: BrandLogo.splash)),
-    ]),
+    child: Center(child: Transform.rotate(angle: -6 * 3.14159 / 180,
+      child: const BrandLogo(size: BrandLogo.splash))),
   );
 }

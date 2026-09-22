@@ -4,8 +4,8 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart'
     show TrendPointDto, TrendSeriesDto;
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
 /// 病程档案渲染引擎 —— `ProfileView.sections[]`(`packages/profile/src/view.rs`)
@@ -43,13 +43,11 @@ class ProfileSectionView extends StatelessWidget {
     final kind = section['kind'] as String?;
     final icon = _kIconFor[kind];
     if (icon == null) return const SizedBox.shrink();
-    final category = _categoryForKind(kind);
 
     final emptyHint = section['empty_hint'] as String?;
     if (emptyHint != null) {
       return _SectionCard(
         icon: icon,
-        category: category,
         child: _HintLine(emptyHint),
       );
     }
@@ -71,7 +69,6 @@ class ProfileSectionView extends StatelessWidget {
 
     return _SectionCard(
       icon: icon,
-      category: category,
       title: section['title'] as String?,
       child: child,
     );
@@ -90,24 +87,6 @@ const Map<String, IconData> _kIconFor = {
   'timeline': Icons.timeline,
   'checklist': Icons.checklist,
   'handoff': Icons.share_outlined,
-};
-
-/// section kind → 光泽图标块类别(brief §形「调用点按 mockup s3 补类别」)。
-/// 用药相关(`status_card`)= med;化验/活动度(`score_card`/`series_chart`,
-/// 两者都是化验数出来的)= lab;提醒(`reminders`)= med(它提醒的是用药相关的
-/// 监测项,如复查肝功/血常规);指南更新(`checklist`,达标情况/治疗里程碑都是
-/// 照指南对照)= clinic;病程事件(`timeline`)= note;`handoff` 目前没有引擎
-/// 产出(见 `_HandoffBody` 文档),按「异常/警示」归 alert。认不出的 kind 用
-/// brand(与 [_SectionCard] 的 `category` 默认值一致,理论上到不了这里——
-/// 上层已经用 `_kIconFor` 守过一遍)。
-GlossCategory _categoryForKind(String? kind) => switch (kind) {
-  'status_card' => GlossCategory.med,
-  'score_card' || 'series_chart' => GlossCategory.lab,
-  'reminders' => GlossCategory.med,
-  'checklist' => GlossCategory.clinic,
-  'timeline' => GlossCategory.note,
-  'handoff' => GlossCategory.alert,
-  _ => GlossCategory.brand,
 };
 
 /// `basis` 四档(spec §5.4):监测提醒到底是指南写的、说明书写的、文献写的,
@@ -214,20 +193,18 @@ Widget? _metaLine(BuildContext context, List<String?> parts) {
 // 共用外壳
 // ---------------------------------------------------------------------------
 
-/// 一块 section 的外壳:白卡 + 图标块 + 标题(可选,来自包)+ 内容。
+/// 一块 section 的外壳:白卡 + 图标 + 标题(可选,来自包)+ 内容。
 ///
 /// **一个 section 只有一个 [MedCard]**,不嵌套渐变、不嵌套第二张卡——mockup 的
 /// 「白卡 + 彩色描边、渐变 hero 只留给身份卡一张」这条规矩在这一层落地。
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.icon,
-    this.category = GlossCategory.brand,
     this.title,
     required this.child,
   });
 
   final IconData icon;
-  final GlossCategory category;
   final String? title;
   final Widget child;
 
@@ -242,7 +219,7 @@ class _SectionCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              GlossIconTile(icon: icon, category: category),
+              MedIcon(icon),
               const SizedBox(width: MedShape.s3),
               Expanded(
                 child: Column(
@@ -298,9 +275,9 @@ class _ItemRow extends StatelessWidget {
   /// 它的标记,两个标记会打架,见 `_TimelineEventRow`。其余调用点都传,原样画出。
   final IconData? icon;
 
-  /// 整枚替换掉左边那颗小图标(R26:提醒行要一枚 44×44 `GlossIconTile`,不是
+  /// 整枚替换掉左边那颗小图标(R26:提醒行要一枚 44×44 `MedIcon`,不是
   /// 18px 的小图标)。非空时优先于 [icon]——mockup `.banner` 的签名
-  /// 元素就是这枚大图标块,`MedBanner` 本身用不了(见 `_ReminderRow` 类文档),
+  /// 元素就是这枚大图标,`MedBanner` 本身用不了(见 `_ReminderRow` 类文档),
   /// 但左边那颗图标不该跟着退化成小图标。默认 `null`,其余调用点一个像素都不变。
   ///
   /// R26 fix round 1 顺带删掉了原来的 `iconColor` 参数:那颗小图标唯一会变色的
@@ -994,7 +971,7 @@ class _RemindersBody extends StatelessWidget {
 /// `test/profile_sections_test.dart` 的「every reminder shows its basis
 /// label」「a reminder row prints the package note it was handed」逮到)。这里
 /// 借的是 `MedBanner` 的颜色 token(`MedBrand.bannerAmber`/`bannerAmberInk`)与
-/// 圆角,连同它的签名元素——44×44 `GlossIconTile`(R26:`_ItemRow.leading`)与
+/// 圆角,连同它的签名元素——44×44 `MedIcon`(R26:`_ItemRow.leading`)与
 /// 标题字色(R26:`_ItemRow.labelColor`)——内容仍是 `_ItemRow` 的既有排法,视觉
 /// 是琥珀横幅,信息一个字不丢。
 class _ReminderRow extends StatelessWidget {
@@ -1031,10 +1008,7 @@ class _ReminderRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: MedShape.s2),
       child: _ItemRow(
         icon: Icons.notifications_outlined,
-        leading: const GlossIconTile(
-          icon: Icons.notifications_outlined,
-          category: GlossCategory.med,
-        ),
+        leading: const MedIcon(Icons.notifications_outlined),
         label: text,
         labelColor: MedBrand.bannerAmberInk,
         trailing: Row(

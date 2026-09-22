@@ -1,11 +1,11 @@
 // 「我」(s5)与「成员页」(s10)+ 成员切换器 + 备份状态行(Task 11)。四屏一个品牌
-// 渐变面都没有 —— 成员头像那几个小方块是**光泽图标块**(brief §色:成员头像 =
-// 品牌渐变),不是 hero。
+// 渐变面都没有 —— 成员头像那几个小圆是 `MedAvatar`(line2 圆底 + ink2 首字),
+// 不是 hero。
 //
 // `_SettingsRow`/`_SettingsGroup`/`_SectionLabel` 是 settings_screen.dart 的私有
 // 类——Dart 的隐私按文件分,测试文件跨文件引用不到,也不该为了测试把它们改公开
 // (brief 原话)。凡是本该探 `_SettingsRow` 的断言,改成探 `MembersCard`(公开、
-// 结构等价:leading 光泽块 + 标题 + 尾部说明,同一套 token)。
+// 结构等价:leading `MedAvatar` + 标题 + 尾部说明,同一套 token)。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,8 +16,8 @@ import 'package:mobile_flutter/screens/member_detail_screen.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/backup_status_line.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
 import 'stage3_visual_helpers.dart';
 
@@ -30,13 +30,12 @@ const _members = [
 int? _countOf(String id) => id == 'p-1' ? 31 : 8;
 
 void main() {
-  testWidgets('成员头像是品牌渐变的光泽方块,不是 CircleAvatar', (tester) async {
+  testWidgets('成员头像是 MedAvatar,不是 Flutter 的 CircleAvatar', (tester) async {
     await pumpStage3(tester, Scaffold(body: MembersCard(
         members: _members, countOf: _countOf, onOpen: (_) {}, onAdd: () {})));
-    expect(find.byType(CircleAvatar), findsNothing, reason: 'mockup 里是圆角方块不是圆');
+    expect(find.byType(CircleAvatar), findsNothing, reason: '自绘的 MedAvatar,不借 Flutter 这个类');
     expect(find.byType(Card), findsNothing, reason: '外壳应换成 MedCard');
-    expect(tester.widgetList<GlossIconTile>(find.byType(GlossIconTile))
-        .any((w) => w.category == GlossCategory.brand), isTrue);
+    expect(find.byType(MedAvatar), findsWidgets);
   });
 
   testWidgets('零个品牌渐变面', (tester) async {
@@ -95,13 +94,13 @@ void main() {
     });
   });
 
-  group('成员切换器:头像换光泽方块', () {
+  group('成员切换器:头像换 MedAvatar', () {
     setUp(() async {
       await ProfileManager.instance.ensureLoaded();
       await ProfileManager.instance.factoryReset();
     });
 
-    testWidgets('不再是 CircleAvatar,而是品牌光泽方块', (tester) async {
+    testWidgets('不再是 CircleAvatar,而是 MedAvatar', (tester) async {
       late BuildContext ctx;
       await tester.pumpWidget(MaterialApp(
         theme: MedMe.theme(),
@@ -121,8 +120,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(CircleAvatar), findsNothing);
-      expect(tester.widgetList<GlossIconTile>(find.byType(GlossIconTile))
-          .any((w) => w.category == GlossCategory.brand), isTrue);
+      expect(find.byType(MedAvatar), findsWidgets);
     });
   });
 

@@ -18,9 +18,9 @@ import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncKdfBenchMs
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/qr_scanner_sheet.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
@@ -789,17 +789,17 @@ class _AccountScreenState extends State<AccountScreen> {
       const Divider(height: 32),
       // ux-audit §4 第 11 条:切到恢复码后原来的分区标题不跟着变,与下面已经
       // 换成的恢复码输入框对不上。s15 把两条路分别画成两块可点的白块(与
-      // `HomeTiles` 的入口块同款,`MedEntryTile`),各带一枚光泽图标块 ——
-      // 「输口令」= 钥匙(med)、「用恢复码」= 文档(clinic),点哪块切到哪条路。
+      // `HomeTiles` 的入口块同款,`MedEntryTile`),各带一枚图标 ——
+      // 「输口令」= 钥匙、「用恢复码」= 文档,点哪块切到哪条路。
       Row(children: [
         Expanded(child: MedEntryTile(
-          icon: Icons.vpn_key_outlined, category: GlossCategory.med,
+          icon: Icons.vpn_key_outlined,
           label: '输口令',
           onTap: _busy ? null : () => setState(() { _useRecoveryUnlock = false; _error = null; }),
         )),
         const SizedBox(width: 14),
         Expanded(child: MedEntryTile(
-          icon: Icons.description_outlined, category: GlossCategory.clinic,
+          icon: Icons.description_outlined,
           label: '用恢复码',
           onTap: _busy ? null : () => setState(() { _useRecoveryUnlock = true; _error = null; }),
         )),
@@ -1204,16 +1204,15 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// 一个成员一行:名字 + 此刻的状态 + 「云端备份」开关。
   ///
-  /// R25:`Card` → `MedCard`(无边框、卡阴影),前面补一枚 lab 类别的光泽图标块
-  /// (与 `settings_screen.dart` 的 `_SettingsRow`「云端相关=lab」同一张映射
-  /// 表)。开关本身的值/回调一个字没动。
+  /// R25:`Card` → `MedCard`(无边框、卡阴影),前面补一枚 [MedIcon]。开关本身的
+  /// 值/回调一个字没动。
   Widget _cloudMemberRow(Profile m) {
     final c = MedColors.of(context);
     final on = m.cloudId != null && !m.cloudPaused;
     return MedCard(
       child: SwitchListTile(
         key: Key('cloud_switch_${m.id}'),
-        secondary: const GlossIconTile(icon: Icons.cloud_outlined, category: GlossCategory.lab),
+        secondary: const MedIcon(Icons.cloud_outlined),
         title: Text(m.name, style: MedType.body.copyWith(color: c.ink)),
         subtitle: Text(
           cloudRowStatus(m, icloudOn: _icloudBlocks),
@@ -1240,14 +1239,13 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 自相矛盾,而且下一次 `runImport` 里的 `shouldAskCloudExtract` 还会再弹一次
   /// ask sheet、把这次手动选择覆盖掉。两个方向(开/关)都算数——同 ask sheet 自己
   /// 「不看答案是什么,退出就算问过」那条规矩一致。
-  /// R25:同 [_cloudMemberRow] 的 `Card` → `MedCard` + 光泽图标块处理,类别
-  /// 换成 clinic(与 `_cloudMemberRow` 的 lab 区分开,两行不撞色)。
+  /// R25:同 [_cloudMemberRow] 的 `Card` → `MedCard` + [MedIcon] 处理。
   Widget _cloudExtractSwitch() {
     final c = MedColors.of(context);
     return MedCard(
       child: SwitchListTile(
         key: const Key('cloud_extract_switch'),
-        secondary: const GlossIconTile(icon: Icons.auto_awesome_outlined, category: GlossCategory.clinic),
+        secondary: const MedIcon(Icons.auto_awesome_outlined),
         title: Text('云端整理', style: MedType.body.copyWith(color: c.ink)),
         subtitle: Text(
           _cloudExtractAsked

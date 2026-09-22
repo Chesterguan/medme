@@ -14,8 +14,8 @@ import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 
 /// 手动录入的两个 doc_type(与 `doc.dart`/`core_model::DocType` 的取值一致)——
@@ -289,12 +289,7 @@ class DetailBody extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 光泽图标块(R22):类别按文档类型走 `categoryForDocType`
-                    // (Task 8 已有、doc_labels.dart 公开),图标沿用原来这颗。
-                    GlossIconTile(
-                      icon: Icons.description_outlined,
-                      category: categoryForDocType(doc.docType),
-                    ),
+                    const MedIcon(Icons.description_outlined),
                     const SizedBox(width: MedShape.s2),
                     Expanded(
                       child: Column(

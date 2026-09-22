@@ -7,9 +7,9 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/import_queue_card.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/vault_events.dart';
@@ -80,16 +80,6 @@ String _groupDesc(TimelineGroupDto g) {
     ].join(' · '),
   };
 }
-
-/// 时间线一项的光泽图标块类别(brief §色 的类别色表)。就诊组(门诊/住院/急诊/
-/// 检查,`encounter.kind` 与 `categoryForDocType` 认得的文档类型不是同一命名空间)
-/// 一律归 [GlossCategory.clinic] —— 都是「到医疗机构走了一趟」,九档里没有更细的
-/// 桶;独立文档按它自己的类型走 `lib/doc_labels.dart` 的 [categoryForDocType]
-/// (R3,与 Task 9「趋势」页共用同一份映射)。
-GlossCategory _categoryOf(TimelineGroupDto group) => switch (group) {
-  TimelineGroupDto_Encounter() => GlossCategory.clinic,
-  TimelineGroupDto_Document(:final doc) => categoryForDocType(doc.docType),
-};
 
 /// 把时间线分组拍平成文档列表(就诊组内文档 + 独立文档),用于「还没核对」筛选。
 List<DocumentSummaryDto> _allDocs(List<TimelineGroupDto> groups) {
@@ -543,7 +533,7 @@ class _TimelineItem extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  GlossIconTile(icon: icon, category: _categoryOf(group)),
+                  MedIcon(icon),
                   const SizedBox(width: MedShape.s2),
                   Expanded(
                     child: Column(
@@ -665,10 +655,7 @@ class _SubDocList extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      GlossIconTile(
-                        icon: iconForDoc(d.docType),
-                        category: categoryForDocType(d.docType),
-                      ),
+                      MedIcon(iconForDoc(d.docType)),
                       const SizedBox(width: MedShape.s2),
                       Expanded(
                         child: Text(
@@ -735,10 +722,7 @@ class _PendingCard extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  GlossIconTile(
-                    icon: iconForDoc(doc.docType),
-                    category: categoryForDocType(doc.docType),
-                  ),
+                  MedIcon(iconForDoc(doc.docType)),
                   const SizedBox(width: MedShape.s2),
                   Expanded(
                     child: Column(
@@ -835,10 +819,9 @@ class _MismatchBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // 光泽图标块统一 44×44(gloss_tile.dart 类文档:别处一律用默认尺寸,
-          // 不为了挤下去而调小)。类别用 alert(警示)—— 这不是文档类型,是本屏
-          // 最高一级的提醒,与外层 `criticalWash`/`critical` 同一层语义。
-          const GlossIconTile(icon: Icons.warning_amber_rounded, category: GlossCategory.alert),
+          // 这一枚图标传 critical 红 —— 这不是文档类型,是本屏最高一级的提醒,
+          // 与外层 `criticalWash`/`critical` 同一层语义(减法稿两处传色例外之一)。
+          MedIcon(Icons.warning_amber_rounded, color: c.critical),
           const SizedBox(width: MedShape.s2),
           Expanded(
             child: Text(

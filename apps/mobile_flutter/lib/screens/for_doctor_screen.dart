@@ -22,8 +22,8 @@ import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 
 class ForDoctorScreen extends StatefulWidget {
   const ForDoctorScreen({super.key, this.load, this.onRequestAddNote});
@@ -215,8 +215,7 @@ class ForDoctorActions extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 逐字照 `s4`:急救那颗是「急救卡」。leading 换成光泽图标块(brief
-        // §形):导出=中性、急救=警示。
+        // 逐字照 `s4`:急救那颗是「急救卡」。
         //
         // 「导出文件」是这一页唯一的次要行,排在固定于底部的「出码」之后——出码
         // 才是诊室里那个主动作(本地、离线、30 秒),这一行是低频、要联网的
@@ -225,19 +224,13 @@ class ForDoctorActions extends StatelessWidget {
         // 文案刻意不用「分享」二字——见 `test/glossary_guard_test.dart` 顶部
         // 关于这个词的收窄说明。
         ListTile(
-          leading: const GlossIconTile(
-            icon: Icons.print_outlined,
-            category: GlossCategory.neutral,
-          ),
+          leading: const MedIcon(Icons.print_outlined),
           title: const Text('导出文件'),
           subtitle: const Text('报销、留档用的可打印文件'),
           onTap: onExport,
         ),
         ListTile(
-          leading: const GlossIconTile(
-            icon: Icons.favorite_outline,
-            category: GlossCategory.alert,
-          ),
+          leading: const MedIcon(Icons.favorite_outline),
           title: const Text('急救卡'),
           onTap: onEmergency,
         ),

@@ -16,8 +16,8 @@ import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 
 /// A3b:「病人授权给我的档案」列哪些成员 —— 纯函数,好单独钉住。
 ///
@@ -375,9 +375,7 @@ class PatientGrantedSection extends StatelessWidget {
             MedCard(
               child: ListTile(
                 key: Key('granted_${p.id}'),
-                // 「med 文件」:这是病人授权给医生看的一份病历文件(brief §形
-                // 光泽图标块语汇,med 类别)。
-                leading: const GlossIconTile(icon: Icons.description_outlined, category: GlossCategory.med),
+                leading: const MedIcon(Icons.description_outlined),
                 title: Text(p.name, style: MedType.subtitle.copyWith(color: c.ink)),
                 subtitle: Text(
                   patientGrantedSubtitle(p),
@@ -424,9 +422,7 @@ class _PatientRow extends StatelessWidget {
           ),
           child: Row(
             children: [
-              // 「lab 相机」:这一行是拍下来的病人材料(brief §形 光泽图标块
-              // 语汇,lab 类别 —— 与化验单共用同一档只是借色,不代表这是化验)。
-              const GlossIconTile(icon: Icons.camera_alt_outlined, category: GlossCategory.lab),
+              const MedIcon(Icons.camera_alt_outlined),
               const SizedBox(width: MedShape.s2),
               Expanded(
                 child: Column(

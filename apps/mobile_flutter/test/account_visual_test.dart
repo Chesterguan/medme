@@ -17,9 +17,9 @@ import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
 import 'package:mobile_flutter/screens/qr_notice_sheet.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'account_screen_test.dart' show FakeApi, FakeCrypto;
@@ -133,17 +133,16 @@ void main() {
       var tapped = false;
       await pumpStage3(tester, Scaffold(body: Row(children: [
         Expanded(child: MedEntryTile(
-          icon: Icons.vpn_key_outlined, category: GlossCategory.med,
+          icon: Icons.vpn_key_outlined,
           label: '输口令', onTap: () => tapped = true)),
         const SizedBox(width: 14),
         Expanded(child: MedEntryTile(
-          icon: Icons.description_outlined, category: GlossCategory.clinic,
+          icon: Icons.description_outlined,
           label: '用恢复码', onTap: () {})),
       ])));
       expect(find.text('输口令'), findsOneWidget);
       expect(find.text('用恢复码'), findsOneWidget);
-      expect(tester.widgetList<GlossIconTile>(find.byType(GlossIconTile)).map((g) => g.category),
-          [GlossCategory.med, GlossCategory.clinic]);
+      expect(find.byType(MedIcon), findsWidgets);
       await tester.tap(find.text('输口令'));
       expect(tapped, isTrue);
     });
@@ -151,18 +150,18 @@ void main() {
     testWidgets('400×800 与 360×640 × 1.0/2.0 字号不溢出(s15 的两块并排样式)', (tester) async {
       await expectNoOverflowAtBothSizes(tester, Scaffold(body: Row(children: [
         Expanded(child: MedEntryTile(
-          icon: Icons.vpn_key_outlined, category: GlossCategory.med,
+          icon: Icons.vpn_key_outlined,
           label: '输口令', onTap: () {})),
         const SizedBox(width: 14),
         Expanded(child: MedEntryTile(
-          icon: Icons.description_outlined, category: GlossCategory.clinic,
+          icon: Icons.description_outlined,
           label: '用恢复码', onTap: () {})),
       ])));
     });
   });
 
-  // ── s14:doctor_home_screen.dart 的 PatientGrantedSection 改光泽图标块(med) ──
-  testWidgets('PatientGrantedSection:「病人让我看的病历」行改用 med 光泽图标块', (tester) async {
+  // ── s14:doctor_home_screen.dart 的 PatientGrantedSection 改 MedIcon ──
+  testWidgets('PatientGrantedSection:「病人让我看的病历」行改用 MedIcon', (tester) async {
     await pumpStage3(tester, Scaffold(body: PatientGrantedSection(
       profiles: const [
         Profile(id: 'p-1', name: '张建国', cloudId: 'prf_1', role: 'viewer'),
@@ -170,9 +169,8 @@ void main() {
       onTap: (_) {},
     )));
     expect(
-      tester.widgetList<GlossIconTile>(find.descendant(
-        of: find.byType(PatientGrantedSection), matching: find.byType(GlossIconTile))).single.category,
-      GlossCategory.med,
+      find.descendant(of: find.byType(PatientGrantedSection), matching: find.byType(MedIcon)),
+      findsWidgets,
     );
   });
 
@@ -198,7 +196,7 @@ void main() {
 
     tearDown(() async => support.delete(recursive: true));
 
-    testWidgets('云端备份行(lab)与云端整理行(clinic):MedCard + 光泽图标块,字符串不变', (t) async {
+    testWidgets('云端备份行与云端整理行:MedCard + MedIcon,字符串不变', (t) async {
       await t.runAsync(() async {
         await ProfileManager.instance.ensureLoaded();
         await ProfileManager.instance.factoryReset();
@@ -211,19 +209,13 @@ void main() {
       expect(memberSwitch, findsOneWidget);
       final memberCard = find.ancestor(of: memberSwitch, matching: find.byType(MedCard));
       expect(memberCard, findsOneWidget, reason: '不再是 Material Card');
-      expect(
-        t.widget<GlossIconTile>(find.descendant(of: memberCard, matching: find.byType(GlossIconTile))).category,
-        GlossCategory.lab,
-      );
+      expect(find.descendant(of: memberCard, matching: find.byType(MedIcon)), findsWidgets);
 
       final extractSwitch = find.byKey(const Key('cloud_extract_switch'));
       expect(extractSwitch, findsOneWidget);
       final extractCard = find.ancestor(of: extractSwitch, matching: find.byType(MedCard));
       expect(extractCard, findsOneWidget);
-      expect(
-        t.widget<GlossIconTile>(find.descendant(of: extractCard, matching: find.byType(GlossIconTile))).category,
-        GlossCategory.clinic,
-      );
+      expect(find.descendant(of: extractCard, matching: find.byType(MedIcon)), findsWidgets);
 
       // 字符串一个没变,开关语义/回调也没变——只是外壳换了。
       expect(find.text('云端整理'), findsOneWidget);
@@ -246,7 +238,7 @@ void main() {
         t.widget<Text>(find.descendant(of: btn, matching: find.text('把这份病历交给别人'))).style!.color,
         MedColors.light.sealInk,
       );
-      expect(find.descendant(of: btn, matching: find.byType(GlossIconTile)), findsNothing,
+      expect(find.descendant(of: btn, matching: find.byType(MedIcon)), findsNothing,
           reason: '这一行本来就没有图标位,不许给它新加一个');
     });
   });

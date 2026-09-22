@@ -8,23 +8,23 @@ import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'stage3_visual_helpers.dart';
 
 void main() {
   testWidgets('s6 选项行:paper 底圆角 16,第一条是蓝底', (tester) async {
     await pumpStage3(tester, const Scaffold(body: Column(children: [
-      MedSheetOption(icon: Icons.photo_camera_outlined, category: GlossCategory.brand,
+      MedSheetOption(icon: Icons.photo_camera_outlined,
           label: '拍照', note: '可以连拍几张', highlighted: true),
-      MedSheetOption(icon: Icons.image_outlined, category: GlossCategory.lab, label: '从相册选'),
+      MedSheetOption(icon: Icons.image_outlined, label: '从相册选'),
     ])));
     final decos = tester.widgetList<Container>(find.descendant(
       of: find.byType(MedSheetOption), matching: find.byType(Container)))
       .map((w) => w.decoration).whereType<BoxDecoration>()
       .where((d) => d.borderRadius == BorderRadius.circular(MedShape.radiusBanner)).toList();
     expect(decos.map((d) => d.color), [MedBrand.bannerBlue, MedColors.light.paper]);
-    expect(find.byType(GlossIconTile), findsNWidgets(2));
+    expect(find.byType(MedIcon), findsNWidgets(2));
 
     // Task 16 budget-table audit:s6 那一行(0/0/0)之前只拿两颗手摆的
     // MedSheetOption 断言过颜色,没有在真正的 AddSheetBody 上钉过预算——补上
@@ -43,7 +43,6 @@ void main() {
     await pumpStage3(tester, const Scaffold(body: Center(child: FirstRunScene())));
     expect(tester.getSize(find.byType(BrandLogo)), const Size(104, 104));
     expect(find.byType(Transform), findsWidgets);          // rotate(-6deg)
-    expect(find.byType(GlossIconTile), findsNWidgets(3));  // 三个飘着的小块
 
     // fix round 2(R30):「同意并开始使用」迁到 MedPrimaryButton 之后,s16 的
     // 渐变预算是 1(禁用态用 ink2 字 + line2 底,不画渐变,不占这个数)。

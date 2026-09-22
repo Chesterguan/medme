@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../design_tokens.dart';
-import 'gloss_tile.dart';
+import 'med_icon.dart';
 
 /// 设计系统 v1 的共用外壳:卡片、状态 pill、横幅。
 ///
@@ -255,16 +255,15 @@ class MedQrFrame extends StatelessWidget {
 }
 
 /// 「病历」首页 hero 下面那两颗药丸(`s1`)与「换新手机」(`s15`)输口令/用恢复码
-/// 两块共用的白块样式(mockup 的 `.qa`):白底 + 一枚光泽图标块 + 标题下的短标签。
+/// 两块共用的白块样式(mockup 的 `.qa`):白底 + 一枚 [MedIcon] + 标题下的短标签。
 ///
 /// R8:原是 `archive_screen.dart` 的私有 `_Tile`,只给 `HomeTiles` 用;Task 13
 /// 把它提到这里改名共用(纯搬家改名,布局/参数一个字没变),`archive_screen.dart`
 /// 的 `HomeTiles` 与 `account_screen.dart` 换新手机屏两处都调它,不再各写一份。
 class MedEntryTile extends StatelessWidget {
-  const MedEntryTile({super.key, required this.icon, required this.category, required this.label, this.onTap});
+  const MedEntryTile({super.key, required this.icon, required this.label, this.onTap});
 
   final IconData icon;
-  final GlossCategory category;
   final String label;
   final VoidCallback? onTap;
 
@@ -283,7 +282,7 @@ class MedEntryTile extends StatelessWidget {
           border: Border.all(color: MedColors.of(context).line),
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          GlossIconTile(icon: icon, category: category),
+          MedIcon(icon),
           const SizedBox(height: 6),
           Text(label, textAlign: TextAlign.center,
             style: MedType.body.copyWith(fontWeight: FontWeight.w500,
@@ -294,12 +293,12 @@ class MedEntryTile extends StatelessWidget {
   );
 }
 
-/// 底部 sheet 里的一条选项(mockup `.opt`):paper 底圆角块 + 光泽图标块 + 17 号字
+/// 底部 sheet 里的一条选项(mockup `.opt`):paper 底圆角块 + [MedIcon] + 17 号字
 /// + 右侧一句灰色小注。[highlighted] 的那条换成蓝底 —— `s6` 用它标出推荐的那条。
 class MedSheetOption extends StatelessWidget {
-  const MedSheetOption({super.key, required this.icon, required this.category,
+  const MedSheetOption({super.key, required this.icon,
       required this.label, this.note, this.highlighted = false, this.onTap});
-  final IconData icon; final GlossCategory category;
+  final IconData icon;
   final String label; final String? note;
   final bool highlighted; final VoidCallback? onTap;
 
@@ -322,7 +321,7 @@ class MedSheetOption extends StatelessWidget {
             borderRadius: BorderRadius.circular(MedShape.radiusBanner)),
           padding: const EdgeInsets.fromLTRB(hPad, 10, hPad, 10),
           child: Row(children: [
-            GlossIconTile(icon: icon, category: category),
+            MedIcon(icon),
             const SizedBox(width: MedShape.s2),
             Expanded(child: Text(label, style: MedType.body.copyWith(fontSize: 17))),
             if (note != null) Text(note!, style: MedType.secondary.copyWith(color: c.ink3)),

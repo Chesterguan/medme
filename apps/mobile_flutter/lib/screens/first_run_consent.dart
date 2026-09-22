@@ -5,7 +5,7 @@ import 'package:mobile_flutter/vault_boot.dart' show vaultOpenedOkThisLaunch;
 import 'package:mobile_flutter/vault_events.dart' show bumpVaultRevision;
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -381,7 +381,7 @@ class _Point extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GlossIconTile(icon: icon),
+          MedIcon(icon),
           const SizedBox(width: MedShape.s2),
           Expanded(
             child: Column(

@@ -323,7 +323,7 @@ class MedColors extends ThemeExtension<MedColors> {
 /// 走 `MediaQuery.textScaler`,系统字号放大会照常生效。**不要**在任何地方用
 /// `MediaQuery.withNoTextScaling` 或给 `Text` 传死的 `textScaler` 去抵消它。
 ///
-/// 唯一例外:`GlossIconTile.letter` 里的头像首字母 —— 固定尺寸的装饰字形,不
+/// 唯一例外:`MedAvatar` 里的头像首字母 —— 固定尺寸的装饰字形,不
 /// 承载信息(姓名在旁边、照常放大)。
 class MedType {
   MedType._();
@@ -400,8 +400,6 @@ class MedShape {
   static const double radiusEntry = 18;
   /// 16 —— 横幅、输入框面板、二维码框。
   static const double radiusBanner = 16;
-  /// 12 —— 光泽图标块。
-  static const double radiusTile = 12;
 
   /// 16 —— 外层卡片(减法稿 `.card{border-radius:16px}`)。
   static const double radiusCard = 16;
@@ -434,11 +432,7 @@ class MedShape {
   static const List<double> spacing = [s1, s2, s3, s4, s5, s6];
 }
 
-/// 光泽图标块的九档类别。**这是 app 里唯一的「图标底色」词表** —— 加一档等于
-/// 加一个语义,要先在 brief 里有。
-enum GlossCategory { lab, clinic, imaging, med, note, alert, neutral, brand, busy }
-
-/// Stage 3 视觉层:渐变、阴影、类别色、状态条、横幅。
+/// Stage 3 视觉层:渐变、阴影、状态条、横幅。
 ///
 /// **不做成 `ThemeExtension`**:这些值不随明暗主题变(app 只挂了浅色),而
 /// `ThemeExtension` 每加一个字段要在 copyWith / lerp / == / hashCode 四处各补一行。
@@ -486,29 +480,9 @@ class MedBrand {
   static const double spineStripePeriod = 9;
   static const double spineWidth = 34;
 
-  // ── 类别色 ──────────────────────────────────────────────
-  /// 返回 (起色, 止色, 同色投影)。渐变角度一律 150°。
-  static (Color, Color, Color) tile(GlossCategory c) => switch (c) {
-    GlossCategory.lab =>     (Color(0xFF25B5C2), Color(0xFF0B7A87), Color(0x5A0E8A96)),
-    GlossCategory.clinic =>  (Color(0xFF4A90E8), Color(0xFF1A5BC0), Color(0x5A1F6FD2)),
-    GlossCategory.imaging => (Color(0xFF9A7BE0), Color(0xFF5B3FAE), Color(0x5A6A4DBF)),
-    GlossCategory.med =>     (Color(0xFFF4A04A), Color(0xFFD0661A), Color(0x5AE07A25)),
-    GlossCategory.note =>    (Color(0xFF5CC28A), Color(0xFF227A4C), Color(0x5A2F8F5B)),
-    GlossCategory.alert =>   (Color(0xFFF06A86), Color(0xFFB92A4A), Color(0x5ACF3A5A)),
-    GlossCategory.neutral => (Color(0xFF8A98A4), Color(0xFF4A5A67), Color(0x4D4A5A67)),
-    GlossCategory.brand =>   (Color(0xFF1FB0C6), Color(0xFF16508E), Color(0x5A1789C1)),
-    GlossCategory.busy =>    (Color(0xFFB7C2CC), Color(0xFF8A98A4), Color(0x334A5A67)),
-  };
-
-  /// 光泽块的两道内高光/内暗边,与 44×44、圆角 12、白线图标 22/1.9 一起,
-  /// 构成 brief §形 的「3D 图标语言」。
-  static const Color glossTop = Color(0x73FFFFFF);          // inset rgba(255,255,255,.45)
-  static const Color glossBottom = Color(0x1A000000);       // inset rgba(0,0,0,.10)
   /// 行首图标槽 44、图标 22(减法稿:单色线性图标,没有底块)。
   static const double iconSlot = 44;
   static const double iconSize = 22;
-  // ponytail: 无消费者 —— Material Icons 没有描边轴;要用它得换可变图标字体(加依赖),brief 值先留着。
-  static const double tileIconStroke = 1.9;
 
   // ── 化验行的细刻度条(减法稿 `.bar`)────────────────────────
   /// 74×3 的浅条,参考区间那一段用 `ink3` 压 30% 不透明度,一枚 9px 圆点标出这次的值。
@@ -568,8 +542,4 @@ class MedBrand {
   static const List<BoxShadow> qrShadow = [
     BoxShadow(color: Color(0x1A101A23), offset: Offset(0, 6), blurRadius: 18),
   ];
-
-  /// 光泽块的同色投影,统一 `0 5px 12px`,颜色由 [tile] 的第三项给。
-  static List<BoxShadow> tileShadow(Color c) =>
-      [BoxShadow(color: c, offset: const Offset(0, 5), blurRadius: 12)];
 }

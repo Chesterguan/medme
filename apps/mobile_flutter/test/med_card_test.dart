@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 
@@ -105,10 +104,9 @@ void main() {
       expect(tester.widget<Text>(find.text('云端')).style!.color, MedBrand.bannerBlueInk);
       expect(tester.widget<Text>(find.text('2 份还没核对')).style!.color, MedBrand.bannerAmberInk);
       expect(tester.widget<Text>(find.text('已备份,刚刚')).style!.fontSize, 13);
-      // 减法稿:图标换成一枚纯 Icon,颜色与横幅文字色同一个 ink,不再是 GlossIconTile。
+      // 减法稿:图标是一枚纯 Icon,颜色与横幅文字色同一个 ink。
       expect(tester.widget<Icon>(find.byIcon(Icons.cloud_outlined)).color, MedBrand.bannerBlueInk);
       expect(tester.widget<Icon>(find.byIcon(Icons.warning_amber_outlined)).color, MedBrand.bannerAmberInk);
-      expect(find.byType(GlossIconTile), findsNothing);
     });
   });
 

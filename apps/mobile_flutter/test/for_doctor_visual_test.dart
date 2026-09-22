@@ -13,8 +13,8 @@ import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'stage3_visual_helpers.dart';
 
@@ -55,12 +55,10 @@ void main() {
     expect(tester.getTopLeft(find.byType(MedPrimaryButton)), before, reason: '按钮跟着滚了');
   });
 
-  testWidgets('三条入口:导出=中性块、急救卡=警示块、代拍=蓝横幅', (tester) async {
+  testWidgets('三条入口:导出/急救卡各一枚 MedIcon,代拍=蓝横幅', (tester) async {
     await pumpStage3(tester, const Scaffold(body: SingleChildScrollView(child: ForDoctorActions())));
-    final cats = tester.widgetList<GlossIconTile>(find.byType(GlossIconTile))
-        .map((w) => w.category).toList();
-    expect(cats, containsAll(<GlossCategory>[GlossCategory.neutral, GlossCategory.alert]));
-    // 代拍那条落地成 MedBanner(brand 光泽图标块 + 蓝横幅),不是第三个 ListTile ——
+    expect(find.byType(MedIcon), findsWidgets);
+    // 代拍那条落地成 MedBanner(蓝横幅),不是第三个 ListTile ——
     // 钉住实际用的 widget,不只是钉颜色。
     expect(find.byType(MedBanner), findsOneWidget);
     // 文案一个字不动 —— 这三句是 Stage 1 定死的。
@@ -95,7 +93,7 @@ void main() {
       return Padding(
         padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const GlossIconTile(icon: Icons.medication_outlined, category: GlossCategory.med),
+          const MedIcon(Icons.medication_outlined),
           const SizedBox(width: MedShape.s2),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             for (final item in items)
@@ -249,12 +247,8 @@ void main() {
     expect(find.text('我最近的变化'), findsOneWidget);
     expect(find.text('过敏史'), findsOneWidget);
     expect(find.text(kRecordedMedsTitle), findsOneWidget);
-    // 三节标题各自的光泽图标块类别照 R23:lab / alert / med。
-    final cats = tester
-        .widgetList<GlossIconTile>(find.byType(GlossIconTile))
-        .map((w) => w.category)
-        .toList();
-    expect(cats, containsAll(<GlossCategory>[GlossCategory.lab, GlossCategory.alert, GlossCategory.med]));
+    // 三节标题各自带一枚 MedIcon(R23)。
+    expect(find.byType(MedIcon), findsWidgets);
     // 这一屏(正文本身,不含固定底部的出码按钮)渐变预算是 0。
     expect(find.byType(MedPrimaryButton), findsNothing);
   });
