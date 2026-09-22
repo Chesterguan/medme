@@ -66,22 +66,35 @@ import 'package:flutter_test/flutter_test.dart';
 /// Stage 3 开工前的 HEAD。
 const kBaseline = '2a629a2';
 
-/// Stage 3.5(减法,2026-09-22)用户裁定删掉的字:「没有用的就删掉,有需要再加」。
-/// 这些段在 HEAD 里少掉是**预期**,不算丢文案。只许往这里加用户点名删的字,不许拿
-/// 它放行任何改写;它只对「少了」生效,「多了」照旧红。
-const Set<String> kRemovedByDecision = {
-  '找一找', // 主页月份标题右侧的搜索占位,点了只弹一句「找一找还在做」
-  '找一找还在做',
-  '看懂', // 趋势页「看懂」横幅:只有壳,内容线从没接上
-  '把报告上那段「提示」原文摘出来放这里',
-  '还在做。',
+/// Stage 3.5(减法,2026-09-22)用户裁定删掉的字,或删掉整个 widget 时带走的字面量
+/// (文件头注释写的合法例外)。**值是这个段允许消失的次数上限——一份预算,不是
+/// 开关。** HEAD 比基线少的次数(`b - n`)在预算内才放行,超出预算照旧红
+/// (`(b - n) > (kRemovedByDecision[r] ?? 0)`)。
+///
+/// 原来是个 `Set`,判法是「在集合里就放行任意次数」——这条闸本身对同一个段以后
+/// **再** 消失多少次完全没有上限。`'我'` 这种全 app 到处用的常见词一旦放进这个
+/// 集合,以后不管哪个 widget 不小心删漏了一处「我」,这条闸都会悄悄放行,不会
+/// 再红。换成按次数记预算之后,每加一条都要想清楚「这次刚好消失几次」,消失
+/// 第二次(没人点名要删、也没有第二个 widget 被整个删掉)就该重新审、重新红。
+///
+/// 新增条目的数量:用户点名要删的字数「就是它这次实际消失的次数」(通常 1);
+/// 删掉整个 widget 带走的字面量,数量是那个 widget **出现过的文件数**(通常
+/// 也是 1)——不是这段文字在那个文件里写了几遍(文件内去重见文件头注释)。
+const Map<String, int> kRemovedByDecision = {
+  '找一找': 1, // 主页月份标题右侧的搜索占位,点了只弹一句「找一找还在做」
+  '找一找还在做': 1,
+  '看懂': 1, // 趋势页「看懂」横幅:只有壳,内容线从没接上
+  '把报告上那段「提示」原文摘出来放这里': 1,
+  '还在做。': 1,
   // Task 5(2026-09-22):`IdentityHeroCard` 连同它的头像块(`_Avatar`)整个删掉,
   // 换成一行文字的 `MemberHeader`(没有头像)。`_Avatar` 里唯一的字面量是姓名
   // 取不到首字时的兜底显示 `name.isNotEmpty ? name[0] : '我'`——删掉整个 widget
-  // 带走它的字符串,是这份闸自己文件头注释写的合法例外;「我」作为词本身在
-  // main.dart(底栏「我」tab)/settings_screen.dart/profile_manager.dart 三处
-  // 原样还在,没有消失。
-  '我',
+  // 带走它的字符串,是这份闸自己文件头注释写的合法例外(**不是**用户点名删
+  // 「我」这个词本身)。预算记 1——只有 `identity_hero_card.dart` 这一个文件
+  // 消失了;「我」作为词本身在 main.dart(底栏「我」tab)/settings_screen.dart/
+  // profile_manager.dart 三处原样还在。这个词往后再消失第二次,预算用完,
+  // 闸重新红——那时候得说清楚是哪个 widget、为什么。
+  '我': 1,
 };
 
 /// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败
@@ -190,6 +203,24 @@ Map<String, int> _multiset(Iterable<String> runs) {
   return m;
 }
 
+/// `kRemovedByDecision` 预算判法的核心:纯函数、不碰文件系统/git,从
+/// [_diffAgainstBaseline] 里单独挑出来方便单测。`before`/`now` 是「段 → 次数」
+/// 的多重集,`budget` 就是 [kRemovedByDecision](或测试自己搭的小样本)。
+/// 少的次数(`b - n`)超过预算才算违规——返回违规的段集合,判定依据只有
+/// 次数本身,不看是哪个文件(文件名只在调用方拼失败信息时用来调试)。
+Set<String> _overBudgetRemovals(
+  Map<String, int> before,
+  Map<String, int> now,
+  Map<String, int> budget,
+) {
+  final over = <String>{};
+  for (final r in {...now.keys, ...before.keys}) {
+    final n = now[r] ?? 0, b = before[r] ?? 0;
+    if (b > n && (b - n) > (budget[r] ?? 0)) over.add(r);
+  }
+  return over;
+}
+
 /// HEAD 的 `lib/**`(排除令牌层)与基线 [kBaseline] 的同一份文件集,各自喂给
 /// [extract]、按文件去重(`.toSet()`——同一段文字在同一个文件里出现几次只算
 /// 1,见文件头注释)后聚成多重集,回 added/removed 差异描述(带文件名,供失败
@@ -242,6 +273,7 @@ Map<String, int> _multiset(Iterable<String> runs) {
 
   final now = _multiset(headRuns);
   final before = _multiset(baselineRuns);
+  final overBudget = _overBudgetRemovals(before, now, kRemovedByDecision);
 
   final added = <String>[];
   final removed = <String>[];
@@ -250,7 +282,7 @@ Map<String, int> _multiset(Iterable<String> runs) {
     if (n > b) {
       added.add('「$r」多了 ${n - b} 次 —— 现存于:${(headFilesByRun[r] ?? const {}).join(', ')}');
     }
-    if (b > n && !kRemovedByDecision.contains(r)) {
+    if (overBudget.contains(r)) {
       removed.add('「$r」少了 ${b - n} 次 —— 基线里在:${(baselineFilesByRun[r] ?? const {}).join(', ')}');
     }
   }
@@ -270,6 +302,14 @@ void main() {
     final diff = _diffAgainstBaseline(_digitPairsIn);
     expect(diff.added, isEmpty, reason: '多出来的「表意字|数字」配对:\n${diff.added.join('\n')}');
     expect(diff.removed, isEmpty, reason: '丢掉的「表意字|数字」配对:\n${diff.removed.join('\n')}');
+  });
+
+  test('kRemovedByDecision 预算自测(纯函数,不碰 git):预算 1 放一次、拦第二次', () {
+    const budget = {'我': 1};
+    // 基线 2 次、HEAD 1 次 —— 少了 1 次,预算 1,放行。
+    expect(_overBudgetRemovals({'我': 2}, {'我': 1}, budget), isEmpty);
+    // 基线 2 次、HEAD 0 次 —— 少了 2 次,超过预算 1,照旧红。
+    expect(_overBudgetRemovals({'我': 2}, {'我': 0}, budget), {'我'});
   });
 
   test('_digitPairsIn 自测(纯函数,不碰 git):15 天改成 30 天,多重集必须不同', () {

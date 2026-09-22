@@ -125,12 +125,30 @@ void main() {
   });
 
   testWidgets('一行元数据:性别 · 年龄 · N 份记录 · 最近就诊 · 日期,ink3、tabular', (t) async {
+    final handle = t.ensureSemantics();
     await pump(t, MemberHeader(name: '张建国', gender: '男', age: '59', recordCount: 52,
         recentVisitDate: '2026-09-18', onSwitchMember: () {}));
     final meta = t.widget<Text>(find.text('男 · 59 · 52 份记录 · 最近就诊 · 2026-09-18'));
     expect(meta.style!.color, MedColors.light.ink3);
     expect(meta.style!.fontFeatures, MedType.tabular);
     expect(find.byType(HeroCard), findsNothing);
+
+    final nameStyle = t.widget<Text>(find.text('张建国')).style!;
+    expect(nameStyle.fontSize, 16);
+    expect(nameStyle.fontWeight, FontWeight.w600);
+    expect(nameStyle.color, MedColors.light.ink);
+    expect(find.byIcon(Icons.unfold_more), findsOneWidget);
+    // Semantics 节点会把没有 excludeSemantics 的子节点(姓名/元数据两个 Text)
+    // 合并进这一个节点,换行拼在显式 label 后面——精确匹配整串会跟着子文本
+    // 一起碎;用正则找子串,只钉「这句 label 在」这一件事。
+    expect(
+      find.bySemanticsLabel(RegExp(RegExp.escape('当前查看:张建国。点击切换成员'))),
+      findsOneWidget,
+    );
+    // 必须在 testWidgets body 内同步 dispose——`_endOfTestVerifications` 检查
+    // SemanticsHandle 是否已释放,跑在 addTearDown 的回调之前,用 addTearDown
+    // 会被判定为「测试结束时还有一个活着的 handle」而红。
+    handle.dispose();
   });
 }
 

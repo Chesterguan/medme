@@ -5,8 +5,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
+import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
+
+/// 最小可用的独立文档时间线项,只填 `byMonth` 分段要看的 `docDate`——同一份
+/// `_doc` 写法见 `test/doc_display_title_test.dart`。
+TimelineGroupDto _doc(String? docDate) => TimelineGroupDto.document(
+  doc: DocumentSummaryDto(id: 1, docType: 'lab_report', docDate: docDate, pageCount: 1),
+);
 
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
   theme: MedMe.theme(),
@@ -85,5 +92,24 @@ void main() {
     expect(monthLabel(null), '没有日期');
     expect(monthLabel(''), '没有日期');
     expect(monthLabel('不是日期'), '没有日期');
+  });
+
+  test('byMonth:空列表 → 空', () {
+    expect(byMonth([]), isEmpty);
+  });
+
+  test('byMonth:一条 → 一段一条', () {
+    final g = _doc('2026-08-12');
+    expect(byMonth([g]), [[g]]);
+  });
+
+  test('byMonth:两条同月 → 一段两条', () {
+    final a = _doc('2026-08-12'), b = _doc('2026-08-01');
+    expect(byMonth([a, b]), [[a, b]]);
+  });
+
+  test('byMonth:两条跨月 → 两段', () {
+    final a = _doc('2026-08-12'), b = _doc('2026-07-20');
+    expect(byMonth([a, b]), [[a], [b]]);
   });
 }

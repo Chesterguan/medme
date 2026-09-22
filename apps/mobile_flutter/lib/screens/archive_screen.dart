@@ -62,7 +62,7 @@ String monthLabel(String? iso) {
 }
 
 /// 时间线按月切段。列表本来就按日期倒序,所以「这一条和上一条不同月」就是新一段。
-List<List<TimelineGroupDto>> _byMonth(List<TimelineGroupDto> groups) {
+List<List<TimelineGroupDto>> byMonth(List<TimelineGroupDto> groups) {
   final out = <List<TimelineGroupDto>>[];
   for (final g in groups) {
     if (out.isEmpty || monthLabel(_groupDate(out.last.first)) != monthLabel(_groupDate(g))) {
@@ -408,7 +408,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 if (pending.isEmpty && confirmed.isEmpty)
                   const _EmptyState()
                 else
-                  for (final section in _byMonth(confirmed)) ...[
+                  for (final section in byMonth(confirmed)) ...[
                     MonthHeader(label: monthLabel(_groupDate(section.first))),
                     // 整月的行在一张卡里,行间细分隔线(减法稿:白卡浅底,层级靠留白)。
                     MedCard(
@@ -483,20 +483,26 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-/// 时间线一项:就诊组(可展开子文档)或独立文档。
 /// 时间线/还没核对项左滑删除时的红底背景(靠右露出删除图标),Outlook 邮件式。
-/// 圆角必须与卡片同档(20),否则滑动过程中会露出一圈错位的直角。
-Widget swipeDeleteBackground(BuildContext context) => Container(
-  alignment: Alignment.centerRight,
-  padding: const EdgeInsets.symmetric(horizontal: MedShape.s4),
-  decoration: BoxDecoration(
-    // 删除是销毁性动作 —— `critical` 在个人模式里只用在这里和危急值上。
-    color: MedColors.of(context).critical,
-    borderRadius: BorderRadius.circular(MedShape.radiusCard),
-  ),
-  child: const Icon(Icons.delete_outline, color: Colors.white),
-);
+///
+/// [rounded] 默认 true:`_PendingCard` 仍是独立的一张 `MedCard`,背景圆角要跟它
+/// 同一个令牌(`MedShape.radiusCard`,不写死数字)。时间线行/子文档行减法稿后
+/// 不再各自有 `MedCard` 外壳(整月共用一张卡,圆角只在卡的最外沿)——那两处传
+/// `rounded: false` 画直角背景,否则滑动到扁平的行中间会露出一圈裁不掉的圆角
+/// 缺口(卡片圆角在别处,这条红底自己却还想画圆角)。
+Widget swipeDeleteBackground(BuildContext context, {bool rounded = true}) =>
+    Container(
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: MedShape.s4),
+      decoration: BoxDecoration(
+        // 删除是销毁性动作 —— `critical` 在个人模式里只用在这里和危急值上。
+        color: MedColors.of(context).critical,
+        borderRadius: rounded ? BorderRadius.circular(MedShape.radiusCard) : null,
+      ),
+      child: const Icon(Icons.delete_outline, color: Colors.white),
+    );
 
+/// 时间线一项:就诊组(可展开子文档)或独立文档。
 class _TimelineItem extends StatelessWidget {
   final TimelineGroupDto group;
   final bool expanded;
@@ -596,7 +602,8 @@ class _TimelineItem extends StatelessWidget {
       return Dismissible(
         key: ValueKey('tl-doc-${doc.id}'),
         direction: DismissDirection.endToStart,
-        background: swipeDeleteBackground(context),
+        // 行现在是共享月卡里的一条扁行,自己没有圆角边界——见 swipeDeleteBackground 类文档。
+        background: swipeDeleteBackground(context, rounded: false),
         confirmDismiss: (_) async {
           await onDelete(doc.id, _groupTitle(group));
           return false; // 由数据重载移除,避免与 Dismissible 自身移除冲突
@@ -628,7 +635,7 @@ class _SubDocList extends StatelessWidget {
           Dismissible(
             key: ValueKey('sub-doc-${d.id}'),
             direction: DismissDirection.endToStart,
-            background: swipeDeleteBackground(context),
+            background: swipeDeleteBackground(context, rounded: false),
             confirmDismiss: (_) async {
               await onDelete(d.id, docRowLabel(d));
               return false;

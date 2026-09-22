@@ -145,12 +145,6 @@ const Map<String, IconData> _kindIcon = {
   'inpatient': Icons.bed_outlined,
 };
 
-IconData iconForDoc(String docType) =>
-    _docIcon[docType] ?? Icons.description_outlined;
-
-IconData iconForKind(String kind) =>
-    _kindIcon[kind] ?? Icons.local_hospital_outlined;
-
 /// `VisitRecordDto.kind` 的取值**跨了两个命名空间**:就诊组用 `inpatient` 这类,
 /// 独立文档用 `lab_report` 这类(见 DTO 文档)。两张表都查一遍,都不中就原样透出
 /// —— 编一个好看的名字不如把我们读到的原值给人看。
