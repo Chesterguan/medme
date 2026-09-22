@@ -15,7 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/identity_hero_card.dart';
 
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
@@ -133,7 +133,7 @@ void main() {
     // 旧版本这里直接导入 `IdentityHeroPalette` 算出来的深色渐变端点,拿
     // `Color.computeLuminance()` 对每种文字/图标颜色实测 WCAG 对比度。Stage 3
     // 视觉令牌 brief 把卡片换成了全 app 统一收口的品牌渐变(`HeroCard` →
-    // `BrandGradientBox`,见 `widgets/brand_gradient.dart`),那套渐变最亮的
+    // `BrandGradientBox`,见 `widgets/brand_surfaces.dart`),那套渐变最亮的
     // 一段 #1FB0C6 上压白字只有 2.4:1,达不到 AA——`IdentityHeroPalette` 已经
     // 整个删掉,不再有渐变端点可测。
     //
@@ -144,7 +144,7 @@ void main() {
     // 头像固定占住卡片左上角——正是渐变最亮的那个角——姓名与「最近就诊」
     // 这些非装饰性文字都排在头像右侧、渐变中点(#1789C1)之后的区域,所以
     // 白字实际压的是中段及更深的颜色,不是最亮那一角。
-    testWidgets('渐变是 MedBrand.gradientColors,135°(begin=左上,头像占住这个角)', (tester) async {
+    testWidgets('卡面是实色 sealInk,没有渐变(减法稿 2026-09-22)', (tester) async {
       await tester.pumpWidget(wrap(IdentityHeroCard(
         name: '我',
         gender: '男',
@@ -153,13 +153,13 @@ void main() {
         recentVisitDate: null,
         onSwitchMember: () {},
       )));
-      // R13:渐变面是 Ink,不是 Container(见 brand_gradient_test.dart 同一处改动)。
-      final box = tester.widget<Ink>(find.descendant(
-        of: find.byType(BrandGradientBox), matching: find.byType(Ink)).first);
-      final g = (box.decoration! as BoxDecoration).gradient! as LinearGradient;
-      expect(g.colors, MedBrand.gradientColors);
-      expect(g.begin, MedBrand.gradientBegin);
-      expect(g.begin, Alignment.topLeft);
+      final m = tester.widget<Material>(find.descendant(
+        of: find.byType(HeroCard), matching: find.byType(Material)).first);
+      expect(m.color, MedColors.light.sealInk);
+      expect(
+        find.byWidgetPredicate((w) => w is Ink && (w.decoration as BoxDecoration?)?.gradient != null),
+        findsNothing,
+      );
     });
 
     testWidgets('非装饰性文字(姓名、最近就诊数值)一律 Colors.white', (tester) async {

@@ -1179,7 +1179,6 @@ class _PendingRow extends StatelessWidget {
     final label = kDocTypeLabel[doc.docType] ?? doc.docType;
     final date = _fmtDate(doc.docDate);
     return MedCard(
-      perforated: true,
       child: InkWell(
         onTap: onTap,
         child: Padding(

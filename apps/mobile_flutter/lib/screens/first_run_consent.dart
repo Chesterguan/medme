@@ -3,7 +3,7 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/vault_boot.dart' show vaultOpenedOkThisLaunch;
 import 'package:mobile_flutter/vault_events.dart' show bumpVaultRevision;
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:shared_preferences/shared_preferences.dart';

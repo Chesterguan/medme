@@ -302,7 +302,6 @@ class _ProxyDetailBody extends StatelessWidget {
         // 里 —— 「背后有原件、点得进去」两条都成立(规范 §五)。与个人模式的
         // `document_detail.dart` 同一处理,一道也不多、不少。
         MedCard(
-          perforated: true,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(
               MedShape.s4,

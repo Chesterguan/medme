@@ -450,7 +450,7 @@ class MedBrand {
   MedBrand._();
 
   // ── 品牌渐变 ────────────────────────────────────────────
-  /// 135°,三段。**只许 `BrandGradientBox` 用**(见 `widgets/brand_gradient.dart`)。
+  /// 135°,三段。**只许 `BrandGradientBox` 用**(见 `widgets/brand_surfaces.dart`)。
   static const List<Color> gradientColors = [
     Color(0xFF1FB0C6), Color(0xFF1789C1), Color(0xFF16508E),
   ];

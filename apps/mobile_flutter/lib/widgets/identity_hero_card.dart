@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 
 /// 概览页顶部的身份 hero 卡:**你是谁,现在看的是谁**。
 ///
@@ -16,7 +16,7 @@ import 'package:mobile_flutter/widgets/brand_gradient.dart';
 /// 骑缝线只在 `MedCard` 里画,不用它就不会被误加。
 ///
 /// 渐变、阴影、右上光晕全部来自 [HeroCard](经 `BrandGradientBox` 收口的品牌
-/// 渐变唯一出口,见 `widgets/brand_gradient.dart`)——这张卡自己不再推导颜色。
+/// 渐变唯一出口,见 `widgets/brand_surfaces.dart`)——这张卡自己不再推导颜色。
 /// 旧版本这里有一个独立用 HSL 算深色渐变的 `IdentityHeroPalette`,Stage 3
 /// 视觉令牌 brief 把它替换成了全 app 统一的那三段品牌蓝,整个类删掉了。
 ///

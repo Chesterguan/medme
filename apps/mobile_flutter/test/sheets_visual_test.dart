@@ -6,7 +6,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/import_flow.dart';
 import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
@@ -30,12 +30,12 @@ void main() {
     // MedSheetOption 断言过颜色,没有在真正的 AddSheetBody 上钉过预算——补上
     // (真 widget 下面第 55 行的溢出矩阵已经在用同一个)。
     await pumpStage3(tester, const Scaffold(body: AddSheetBody()));
-    expectGradientBudget();
+    expectSurfaceBudget();
   });
 
   testWidgets('s17:一颗渐变主按钮 + 一颗次按钮,标题 19·600', (tester) async {
     await pumpStage3(tester, const Scaffold(body: CloudExtractAskBody()));
-    expectGradientBudget(button: 1);
+    expectSurfaceBudget(button: 1);
     expect(find.byType(MedSecondaryButton), findsOneWidget);
   });
 
@@ -48,7 +48,7 @@ void main() {
     // fix round 2(R30):「同意并开始使用」迁到 MedPrimaryButton 之后,s16 的
     // 渐变预算是 1(禁用态用 ink2 字 + line2 底,不画渐变,不占这个数)。
     await pumpStage3(tester, FirstRunConsentScreen(onAgreed: () {}));
-    expectGradientBudget(button: 1);
+    expectSurfaceBudget(button: 1);
   });
 
   testWidgets('三张 sheet 在两个尺寸 × 两档字号下不溢出', (tester) async {

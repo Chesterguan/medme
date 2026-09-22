@@ -12,7 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 
 /// 逐字文案。**单独拎成常量**,让测试和这一屏引用同一份字符串 —— 两处各写一遍,
 /// 改一处忘一处时测试反而是绿的。

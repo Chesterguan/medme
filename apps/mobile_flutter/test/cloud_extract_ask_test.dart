@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/theme.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 
 void main() {
   group('问不问', () {

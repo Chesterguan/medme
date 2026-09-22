@@ -31,29 +31,15 @@ Iterable<BoxDecoration> decorations(WidgetTester tester) => tester
     .whereType<BoxDecoration>();
 
 void main() {
-  group('骑缝线只画在「背后有原件」的卡上', () {
-    testWidgets('perforated: true → 画', (tester) async {
-      await tester.pumpWidget(
-        wrap(const MedCard(perforated: true, child: Text('血常规'))),
-      );
-      expect(find.byType(MedPerforation), findsOneWidget);
-    });
-
-    testWidgets('默认不画 —— 派生数据卡(汇总、趋势)走这条路', (tester) async {
-      await tester.pumpWidget(wrap(const MedCard(child: Text('近期变化'))));
-      expect(find.byType(MedPerforation), findsNothing);
-    });
-  });
-
   group('卡片形状', () {
-    testWidgets('卡无边框、圆角 20、阴影 0 6px 18px', (tester) async {
+    testWidgets('卡 1px line 细边、圆角 16、无阴影', (tester) async {
       await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MedCard(child: Text('x')))));
       final d = tester.widget<Container>(find.descendant(
         of: find.byType(MedCard), matching: find.byType(Container)).first)
         .decoration! as BoxDecoration;
-      expect(d.border, isNull, reason: 'brief §形:卡无边框');
+      expect(d.border, Border.all(color: MedColors.light.line));
       expect(d.borderRadius, BorderRadius.circular(MedShape.radiusCard));
-      expect(d.boxShadow, MedBrand.cardShadow);
+      expect(d.boxShadow, isNull);
       expect(d.color, Colors.white);
     });
 
@@ -103,12 +89,12 @@ void main() {
     });
   });
 
-  group('MedBanner / MedDemoPill', () {
+  group('MedBanner', () {
     testWidgets('MedBanner:蓝 #DDEDF8 / 文 #0E6285,琥珀 #FBE7D2 / 文 #9A4A12,圆角 16', (tester) async {
       await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Column(children: [
-        MedBanner(icon: Icons.cloud_outlined, iconCategory: GlossCategory.lab,
+        MedBanner(icon: Icons.cloud_outlined,
                   title: '云端', subtitle: '已备份,刚刚'),
-        MedBanner(icon: Icons.warning_amber_outlined, iconCategory: GlossCategory.med,
+        MedBanner(icon: Icons.warning_amber_outlined,
                   title: '2 份还没核对', subtitle: '扫描件,识别出的字有几处不确定', amber: true),
       ]))));
       final decos = tester.widgetList<Container>(find.descendant(
@@ -119,21 +105,10 @@ void main() {
       expect(tester.widget<Text>(find.text('云端')).style!.color, MedBrand.bannerBlueInk);
       expect(tester.widget<Text>(find.text('2 份还没核对')).style!.color, MedBrand.bannerAmberInk);
       expect(tester.widget<Text>(find.text('已备份,刚刚')).style!.fontSize, 13);
-      expect(find.byType(GlossIconTile), findsNWidgets(2));
-    });
-
-    testWidgets('MedDemoPill:白底 + 虚线框 + 灰字', (tester) async {
-      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MedDemoPill(text: '示例'))));
-      expect(tester.widget<Text>(find.text('示例')).style!.color, MedBrand.demoInk);
-      // R9:测试名字说了「白底」,但原来没有断言真的验过 —— 补上。
-      final d = tester.widget<Container>(find.descendant(
-        of: find.byType(MedDemoPill), matching: find.byType(Container)).first)
-        .decoration! as BoxDecoration;
-      expect(d.color, Colors.white);
-      // 虚线框自己画:CustomPaint 存在,而且真的带了一个 painter(不是占位)。
-      final paint = tester.widget<CustomPaint>(find.descendant(
-        of: find.byType(MedDemoPill), matching: find.byType(CustomPaint)).first);
-      expect(paint.painter, isNotNull);
+      // 减法稿:图标换成一枚纯 Icon,颜色与横幅文字色同一个 ink,不再是 GlossIconTile。
+      expect(tester.widget<Icon>(find.byIcon(Icons.cloud_outlined)).color, MedBrand.bannerBlueInk);
+      expect(tester.widget<Icon>(find.byIcon(Icons.warning_amber_outlined)).color, MedBrand.bannerAmberInk);
+      expect(find.byType(GlossIconTile), findsNothing);
     });
   });
 

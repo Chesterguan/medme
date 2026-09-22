@@ -5,7 +5,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/import_queue_card.dart';
@@ -539,7 +539,6 @@ class _TimelineItem extends StatelessWidget {
       //  · 就诊组卡 → 点了是展开一个分组;这个组本身是按日期/机构算出来的,
       //    背后没有「一张纸」叫做「门诊·某某医院」→ **不画**。组里每一份文档
       //    展开后各自可点开,那是下一层的事。
-      perforated: !isEncounter,
       child: Column(
         children: [
           InkWell(
@@ -732,7 +731,6 @@ class _PendingCard extends StatelessWidget {
     final label = docDisplayTitle(doc);
     final card = MedCard(
       // 这张卡背后就是刚导入的那份原件,点开即达 → 画骑缝线。
-      perforated: true,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -861,13 +859,13 @@ class _MismatchBanner extends StatelessWidget {
   }
 }
 
-/// 「病历」首页 hero 下面那两颗方块(`s1`)。
+/// 「病历」首页 hero 下面那两颗药丸(`s1`)。
 ///
 /// **两颗等宽同高**,区别只在底色:`添加` 填主色(最高频的动作),`给医生看` 白底
 /// 带描边。**不做成一条通栏大按钮** —— 它们是一对并列的动作,不是一主一次。
 ///
-/// 「给医生看」没有底栏席位,这颗方块是它**全 App 唯一的入口**;ia-proposal §2
-/// 拒绝候选 B 的理由正是「老人在底栏找不到它」,那条风险现在压在这颗方块上。
+/// 「给医生看」没有底栏席位,这颗药丸是它**全 App 唯一的入口**;ia-proposal §2
+/// 拒绝候选 B 的理由正是「老人在底栏找不到它」,那条风险现在压在这颗药丸上。
 /// 谁把它改小、改成纯图标、或者塞进某个菜单里,就是在把那条风险放大 ——
 /// 它在 iPhone SE + 2× 字号下必须仍然写得全那四个字(见 `test/archive_header_test.dart`)。
 class HomeTiles extends StatelessWidget {
@@ -878,16 +876,10 @@ class HomeTiles extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(children: [
-    // mockup `s1` 的 `.qa.pri`:主入口块,整块品牌渐变。**一屏只此一个。**
-    Expanded(child: PrimaryEntryTile(
-      icon: Icons.add_a_photo_outlined, label: '添加', onTap: onAdd)),
-    const SizedBox(width: 14),   // mockup `.tiles{gap:14px}`
-    // mockup 的 `.qa`:白块 + 一枚光泽图标块。
-    // R8:_Tile 已提到 `widgets/med_card.dart` 改名 `MedEntryTile` 共用
-    // (Task 13,与「换新手机」屏的输口令/用恢复码两块同款),这里不再自己定义。
-    Expanded(child: MedEntryTile(
-      icon: Icons.assignment_outlined, category: GlossCategory.clinic,
-      label: '给医生看', onTap: onForDoctor)),
+    // 减法稿:「添加」实心药丸(这一屏唯一的主按钮),「给医生看」描边药丸。
+    Expanded(child: MedPrimaryButton(label: '添加', onPressed: onAdd)),
+    const SizedBox(width: MedShape.s2),
+    Expanded(child: MedSecondaryButton(label: '给医生看', onPressed: onForDoctor)),
   ]);
 }
 
@@ -909,7 +901,6 @@ class PendingReviewBanner extends StatelessWidget {
     if (count == 0) return const SizedBox.shrink();
     return MedBanner(
       icon: Icons.warning_amber_outlined,
-      iconCategory: GlossCategory.med,
       amber: true,
       title: '$count 份还没核对',
       subtitle: '扫描件,识别出的字有几处不确定',

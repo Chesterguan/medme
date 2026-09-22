@@ -563,11 +563,7 @@ class _HcqBlock extends StatelessWidget {
         if (labelRule != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            // brief §形「指南更新」那段引用文字换蓝横幅——**不直接套
-            // `MedReadBanner`**:那个共用组件自带一句固定的「看懂」抬头、且没有
-            // 插槽放这里必须留着的「待核/已核对」fail-closed 判定 pill(见下),
-            // 套上去等于给这一屏加一句新字、丢一枚安全判定 pill——两条都撞硬规矩
-            // 「一个用户可见字符串都不许改」。这里只借它的两个色token
+            // brief §形「指南更新」那段引用文字换蓝横幅——这里只借它的两个色token
             // (`MedBrand.bannerBlue`/`bannerBlueInk`)与横幅圆角,文字和 pill
             // 原样不动。
             child: Container(

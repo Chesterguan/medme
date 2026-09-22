@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 
 /// 这次该不该问。纯判断,方便单测。
 ///

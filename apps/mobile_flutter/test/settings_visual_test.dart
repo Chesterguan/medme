@@ -42,8 +42,7 @@ void main() {
   testWidgets('零个品牌渐变面', (tester) async {
     await pumpStage3(tester, Scaffold(body: MembersCard(
         members: const [], countOf: (_) => 0, onOpen: (_) {}, onAdd: () {})));
-    expectGradientBudget();
-    expectNoGradientInsideCards();
+    expectSurfaceBudget();
   });
 
   // `_RowProbe` 探不到私有的 `_SettingsRow`(见文件头注释)——改探 `MembersCard`
@@ -86,8 +85,7 @@ void main() {
       expect(find.byType(MedCard), findsNWidgets(2));
       expect(find.byType(Card), findsNothing);
       expect(find.byType(CircleAvatar), findsNothing);
-      expectGradientBudget();
-      expectNoGradientInsideCards();
+      expectSurfaceBudget();
     });
 
     testWidgets('「删除这个成员」标题色是 critical', (tester) async {
@@ -142,7 +140,6 @@ void main() {
       await pumpStage3(tester, const Scaffold(body: BackupStatusLine()));
       final banner = tester.widget<MedBanner>(find.byType(MedBanner));
       expect(banner.amber, isFalse);
-      expect(banner.iconCategory, GlossCategory.lab);
       expect(banner.icon, Icons.cloud_outlined);
       expect(banner.title, '云端');
     });

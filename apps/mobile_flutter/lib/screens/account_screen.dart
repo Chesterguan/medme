@@ -17,7 +17,7 @@ import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncKdfBenchMs;
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';

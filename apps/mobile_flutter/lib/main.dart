@@ -680,11 +680,12 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(index: _index, children: HomeShell.tabScreens),
-      // 底栏(mockup `.nav`):白底 + 向上的一档阴影,不再靠边框分层——
-      // brief §形把「层次靠边框」的旧规范翻了过来,这一档阴影专属底栏
-      // (`MedBrand.navShadow`),不与卡片的 `cardShadow` 混用。
+      // 底栏:白底 + 顶部一道 `line`(减法稿:层次靠边框,不靠阴影)。
       bottomNavigationBar: DecoratedBox(
-        decoration: BoxDecoration(color: Colors.white, boxShadow: MedBrand.navShadow),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: MedColors.light.line)),
+        ),
         // 选中/未选中的图标色只在这一处覆盖,不动 `theme.dart` 的全局
         // NavigationBarThemeData(那是 Task 11 的文件,见预检裁定 R8)——
         // `NavigationBarTheme.of` 会先并上全局主题(background/indicator/
@@ -693,9 +694,7 @@ class _HomeShellState extends State<HomeShell> {
           data: NavigationBarTheme.of(context).copyWith(
             iconTheme: WidgetStateProperty.resolveWith((states) => IconThemeData(
               size: 22,
-              color: states.contains(WidgetState.selected)
-                  ? MedColors.light.seal            // mockup `.nav .on`
-                  : MedBrand.tile(GlossCategory.neutral).$1, // mockup `.nav span` #8A98A4
+              color: states.contains(WidgetState.selected) ? MedColors.light.seal : MedColors.light.ink3,
             )),
           ),
           child: NavigationBar(

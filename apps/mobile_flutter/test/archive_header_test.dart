@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
   theme: MedMe.theme(),
@@ -22,27 +23,20 @@ void useNarrowPhone(WidgetTester tester) {
 }
 
 void main() {
-  testWidgets('两颗方块:等宽、都点得动', (tester) async {
+  testWidgets('两颗药丸:等宽、都点得动', (tester) async {
     useNarrowPhone(tester);
     var add = false, doc = false;
     await tester.pumpWidget(
       wrap(HomeTiles(onAdd: () => add = true, onForDoctor: () => doc = true)),
     );
-    expect(find.text('添加'), findsOneWidget);
-    expect(find.text('给医生看'), findsOneWidget);
+    expect(find.widgetWithText(MedPrimaryButton, '添加'), findsOneWidget);
+    expect(find.widgetWithText(MedSecondaryButton, '给医生看'), findsOneWidget);
     // 等宽 —— 它们是一对并列的动作,不是一主一次。
-    expect(
-      tester.getSize(find.text('添加').first).width > 0 &&
-          tester.getSize(find.byType(HomeTiles)).width > 0,
-      isTrue,
-    );
-    final w1 = tester.getRect(find.ancestor(
-      of: find.text('添加'), matching: find.byType(Material)).first).width;
-    final w2 = tester.getRect(find.ancestor(
-      of: find.text('给医生看'), matching: find.byType(Material)).first).width;
+    final w1 = tester.getSize(find.byType(MedPrimaryButton)).width;
+    final w2 = tester.getSize(find.byType(MedSecondaryButton)).width;
     expect((w1 - w2).abs() < 1.0, isTrue, reason: '两颗必须等宽');
-    await tester.tap(find.text('添加'));
-    await tester.tap(find.text('给医生看'));
+    await tester.tap(find.byType(MedPrimaryButton));
+    await tester.tap(find.byType(MedSecondaryButton));
     expect([add, doc], [true, true]);
   });
 

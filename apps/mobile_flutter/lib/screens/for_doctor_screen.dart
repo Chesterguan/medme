@@ -21,7 +21,7 @@ import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 
@@ -250,7 +250,6 @@ class ForDoctorActions extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: MedShape.s3),
           child: MedBanner(
             icon: Icons.photo_camera_outlined,
-            iconCategory: GlossCategory.brand,
             title: '我是医生,替病人代拍',
             // `s4` 的副标题,逐字。
             subtitle: '病人不用装 App、不用账号',

@@ -12,7 +12,7 @@ import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
@@ -39,8 +39,7 @@ void main() {
         padding: EdgeInsets.all(MedShape.s3),
         child: MedPrimaryButton(label: '出码给医生看', icon: Icons.qr_code_2_outlined))),
     ));
-    expectGradientBudget(button: 1);
-    expectNoGradientInsideCards();
+    expectSurfaceBudget(button: 1);
   });
 
   testWidgets('主按钮在 bottomNavigationBar 里 —— 滚动不会把它带走', (tester) async {
@@ -135,8 +134,7 @@ void main() {
   testWidgets('真实 ForDoctorScreen:渐变预算同样是 0/0/1,卡里没有渐变', (tester) async {
     await pumpStage3(tester, ForDoctorScreen(load: () async => _emptySummary));
     await tester.pumpAndSettle();
-    expectGradientBudget(button: 1);
-    expectNoGradientInsideCards();
+    expectSurfaceBudget(button: 1);
   });
 
   testWidgets('急救卡五个 section 在两种尺寸×两档字号都不溢出(长过敏名/长药名/长诊断名)', (
@@ -259,7 +257,6 @@ void main() {
     expect(cats, containsAll(<GlossCategory>[GlossCategory.lab, GlossCategory.alert, GlossCategory.med]));
     // 这一屏(正文本身,不含固定底部的出码按钮)渐变预算是 0。
     expect(find.byType(MedPrimaryButton), findsNothing);
-    expectNoGradientInsideCards();
   });
 
   testWidgets('VisitSummaryBody(真实数据)在两种尺寸×两档字号都不溢出', (tester) async {

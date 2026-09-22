@@ -13,7 +13,7 @@ import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
@@ -279,7 +279,6 @@ class DetailBody extends StatelessWidget {
         // 卡里 —— 「背后有原件、点得进去」两条都成立(规范 §五)。全屏只有这
         // 一道骑缝线,下面识别出来的文字是从它派生出来的,不重复。
         MedCard(
-          perforated: true,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(
               MedShape.s4,

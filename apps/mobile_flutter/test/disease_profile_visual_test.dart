@@ -57,8 +57,7 @@ void main() {
 
   testWidgets('零个品牌渐变面,卡里没有渐变', (tester) async {
     await pumpStage3(tester, const Scaffold(body: MedCard(child: GlossIconTile(icon: Icons.science_outlined))));
-    expectGradientBudget();
-    expectNoGradientInsideCards();
+    expectSurfaceBudget();
   });
 
   testWidgets('两个尺寸 × 两档字号不溢出', (tester) async {

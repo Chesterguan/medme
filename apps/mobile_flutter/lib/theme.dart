@@ -55,7 +55,7 @@ class MedMe {
         backgroundColor: c.surface,
         foregroundColor: c.ink,
         elevation: 0,
-        scrolledUnderElevation: 0.5,
+        scrolledUnderElevation: 0,
         centerTitle: false,
         titleTextStyle: MedType.title.copyWith(color: c.ink),
       ),

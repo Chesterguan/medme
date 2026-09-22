@@ -15,7 +15,7 @@ import 'package:mobile_flutter/screens/doctor/proxy_intake_flow.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 
@@ -241,8 +241,9 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                 MedShape.s5,
                 MedShape.s1,
               ),
-              // s14 的一屏一处品牌渐变:这一屏唯一的 HeroCard。
+              // s14 的一屏一处品牌色面:这一屏唯一的 HeroCard。
               child: HeroCard(
+                color: c.proxyInk,
                 child: Column(
                   children: [
                     CircleAvatar(

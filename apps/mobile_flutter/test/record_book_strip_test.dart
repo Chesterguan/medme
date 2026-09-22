@@ -1,10 +1,10 @@
 // 病历本条(brief §形「病历本条」)。它是「病程档案」在趋势页的入口,形状**故意**
-// 和主页的成员主卡不一样 —— 一个是渐变卡面,一个是白卡 + 渐变书脊。所以这里同时
-// 断言:它不是 HeroCard,也不含 BrandGradientBox。
+// 和主页的成员主卡不一样 —— 一个是实色卡面,一个是白卡 + 渐变书脊。所以这里
+// 断言:它不是 HeroCard。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
 import 'package:mobile_flutter/widgets/record_book_strip.dart';
 
@@ -14,9 +14,9 @@ void main() {
     bigNumber: '4', bigNumberSuffix: '/18', bigNumberCaption: '化验可算活动度',
   );
 
-  testWidgets('白底、圆角 18、标准卡阴影 —— 不是渐变卡面', (tester) async {
+  testWidgets('白底、圆角 18、标准卡阴影 —— 不是 HeroCard 实色卡面', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: strip)));
-    expect(find.byType(BrandGradientBox), findsNothing);
+    expect(find.byType(HeroCard), findsNothing);
     final d = tester.widget<Container>(find.descendant(
         of: find.byType(RecordBookStrip), matching: find.byType(Container)).first)
       .decoration! as BoxDecoration;

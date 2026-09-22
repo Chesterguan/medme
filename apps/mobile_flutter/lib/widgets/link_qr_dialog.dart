@@ -5,7 +5,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 
 /// 「一条链接 → 摆成一张码,旁边给复制和分享」。

@@ -16,7 +16,7 @@ import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/theme.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 
 const _empty = VisitSummaryDto(
   patient: PatientProfileDto(recordCount: 0),

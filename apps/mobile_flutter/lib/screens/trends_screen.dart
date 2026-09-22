@@ -23,14 +23,13 @@ import 'package:mobile_flutter/widgets/trend_chart.dart';
 /// 先搬到这里 —— 自己量的数和医院的数看的是同一件事,归在同一个 tab。
 ///
 /// **自上而下的顺序是 `s2` 定死的,别自己重排:**
-/// 病程档案入口 → 关键化验(标题 + 分类 chip + 各行)→ 「看懂」→ 最近就诊 →
+/// 病程档案入口 → 关键化验(标题 + 分类 chip + 各行)→ 最近就诊 →
 /// 记录一下。`s2` 在关键化验各行上画了迷你折线、点开那一行原地放大 —— 那是
 /// Stage 2;Stage 1 保持今天的取值行,全序列的折线卡([SeriesCard])照旧摆在
 /// 它下面,位置先摆对,内容不提前做。
 ///
 /// 「病程档案」那一块的内容在 [DiseaseProfileCard] 自己里头(没有病种包 / 装上了
-/// 还没开启 / 开启了,三态各说各的话),这一屏只负责把它摆在第一位;
-/// 「看懂」([UnderstandBanner])仍然只摆一句「还在做」。
+/// 还没开启 / 开启了,三态各说各的话),这一屏只负责把它摆在第一位。
 ///
 /// ## 这一屏最容易撒的谎
 ///
@@ -383,17 +382,14 @@ class _TrendsScreenState extends State<TrendsScreen> {
                     ),
                 ],
                 const SizedBox(height: MedShape.s5),
-                // ④ 「看懂」横幅。**Stage 1 只有壳**,内容由另一条线做。
-                const UnderstandBanner(),
-                const SizedBox(height: MedShape.s5),
-                // ⑤ 最近就诊(从解散的概览搬过来)。
+                // ④ 最近就诊(从解散的概览搬过来)。
                 RecentVisitsCard(
                   visits: summary.recentVisits,
                   total: summary.patient.recordCount.toInt(),
                   onOpenDoc: _openDoc,
                 ),
                 const SizedBox(height: MedShape.s4),
-                // ⑥ 记录一下(`s9`:血压 / 体重 / 今天不舒服 / 血糖 / 写句话)。
+                // ⑤ 记录一下(`s9`:血压 / 体重 / 今天不舒服 / 血糖 / 写句话)。
                 RecordEntryCard(onTap: _addRecord),
                 // 页脚只交代一次「参考区间的三种出处」,不重复在每张卡上说——
                 // 只要 `all` 非空(这一屏至少能画出一条线)就露出来,不随筛选
@@ -1296,7 +1292,6 @@ class _VisitCard extends StatelessWidget {
     );
 
     return MedCard(
-      perforated: single,
       child: InkWell(
         onTap: single
             ? () => onOpenDoc(visit.documentIds.first.toInt())
@@ -1406,12 +1401,6 @@ class _SectionHeader extends StatelessWidget {
 //
 // 「病程档案」入口卡搬去了 `widgets/disease_profile_card.dart`:它现在是有状态、
 // 要取数的一块(装着哪个包、开没开启、包给的摘要),不再是这一屏里的一张死卡。
-
-/// 「看懂」蓝横幅——Task 10 把实现提到 `widgets/med_card.dart` 改名
-/// [MedReadBanner] 共用(「一份病历」页同款横幅,R8),这里留一个类型别名:
-/// [TrendsScreen] 内的构造写法、`test/trends_visual_test.dart` /
-/// `test/trends_screen_test.dart` 的既有引用都不用改一个字。
-typedef UnderstandBanner = MedReadBanner;
 
 /// 「记录一下」入口(`s2` 底部那颗;点开是 `s9`:血压 / 体重 / 今天不舒服 /
 /// 血糖 / 写句话)。从解散的概览快捷操作搬过来 —— 自己填的数和医院的数看的是

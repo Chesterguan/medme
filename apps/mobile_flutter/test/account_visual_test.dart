@@ -16,7 +16,7 @@ import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
 import 'package:mobile_flutter/screens/qr_notice_sheet.dart';
 import 'package:mobile_flutter/sync_engine.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
@@ -59,7 +59,20 @@ void main() {
     await t.pumpAndSettle();
     await t.enterText(find.byKey(const Key('password')), 'right');
     await t.pump();
-    await t.tap(find.text('解锁'));
+    // 减法稿(Task 2):MedFieldPanel/两块 MedEntryTile 从阴影换成描边后解锁屏
+    // 又长高了几像素,「解锁」默认视口下常年滚出可点区域——先滚到位再点
+    // (同 account_screen_test.dart `_tapUnlockButton` 那个坑)。`scrollUntilVisible`
+    // 只保证矩形与视口有交集,不保证整块都进来、点得中它的几何中心,还要
+    // `ensureVisible` 再对齐一次。
+    final unlockButton = find.text('解锁');
+    await t.scrollUntilVisible(unlockButton, 200, scrollable: find.byType(Scrollable).first);
+    await t.ensureVisible(unlockButton);
+    await t.pumpAndSettle();
+    await t.tap(unlockButton);
+    await t.pumpAndSettle();
+    // 切到「已就绪」用的是同一个 ListView,上面那截滚动偏移原样继承下来——滚回去,
+    // 让调用方拿到的起点跟减法稿之前一样(「已登录」排在已就绪内容最前面)。
+    await t.scrollUntilVisible(find.text('已登录'), -200, scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();
   }
 
@@ -77,30 +90,32 @@ void main() {
     expect(d.borderRadius, BorderRadius.circular(MedShape.radiusBlock));  // 14
   });
 
-  testWidgets('输入框面板:白底、圆角 16、卡阴影', (tester) async {
+  testWidgets('输入框面板:白底、圆角 16、1px line 细边', (tester) async {
     await pumpStage3(tester, const Scaffold(body: Center(child: MedFieldPanel(child: Text('口令,至少 6 位')))));
     final d = tester.widget<Container>(find.descendant(
       of: find.byType(MedFieldPanel), matching: find.byType(Container)).first)
       .decoration! as BoxDecoration;
     expect(d.color, Colors.white);
     expect(d.borderRadius, BorderRadius.circular(MedShape.radiusBanner));  // 16
-    expect(d.boxShadow, MedBrand.cardShadow);
+    expect(d.border, Border.all(color: MedColors.light.line));
+    expect(d.boxShadow, isNull);
   });
 
-  testWidgets('二维码框:白底 160×160 + 10 padding + 圆角 16 + qrShadow', (tester) async {
+  testWidgets('二维码框:白底 160×160 + 10 padding + 圆角 16 + 1px line 细边', (tester) async {
     await pumpStage3(tester, const Scaffold(body: Center(child: MedQrFrame(child: SizedBox(width: 160, height: 160)))));
     final d = tester.widget<Container>(find.descendant(
       of: find.byType(MedQrFrame), matching: find.byType(Container)).first)
       .decoration! as BoxDecoration;
     expect(d.color, Colors.white);
-    expect(d.boxShadow, MedBrand.qrShadow);
+    expect(d.border, Border.all(color: MedColors.light.line));
+    expect(d.boxShadow, isNull);
     // R9:圆角 16 也要断言,不能只停在名字里。
     expect(d.borderRadius, BorderRadius.circular(MedShape.radiusBanner));
   });
 
   testWidgets('出码首次 sheet:一颗主按钮 + 一颗次按钮,零主卡', (tester) async {
     await pumpStage3(tester, const Scaffold(body: QrNoticeBody()));
-    expectGradientBudget(button: 1);
+    expectSurfaceBudget(button: 1);
     expect(find.byType(MedSecondaryButton), findsOneWidget);
   });
 
@@ -322,7 +337,7 @@ void main() {
 
     testWidgets('s12:渐变预算 1(「我抄好了」),复制/分享是 Wrap 里两颗按钮', (t) async {
       await toRecoveryScreen(t);
-      expectGradientBudget(button: 1);
+      expectSurfaceBudget(button: 1);
       expect(find.byType(Wrap), findsOneWidget);
       expect(find.widgetWithText(TextButton, '复制'), findsOneWidget);
       expect(find.widgetWithText(MedSecondaryButton, '发给自己'), findsOneWidget);
@@ -330,7 +345,7 @@ void main() {
 
     testWidgets('s15:渐变预算 1(HeroCard 包住 device-approval 块)', (t) async {
       await toUnlockScreen(t);
-      expectGradientBudget(hero: 1);
+      expectSurfaceBudget(hero: 1);
       expect(find.byType(HeroCard), findsOneWidget);
     });
 

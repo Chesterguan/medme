@@ -213,7 +213,7 @@ void main() {
 
       // 先确认真的出码了(同「出码成功」那条用例的证据行),预算才有意义。
       expect(find.text('15 天内有效;只有扫这个码的人能看'), findsOneWidget);
-      expectGradientBudget();
+      expectSurfaceBudget();
       expect(
         find.descendant(of: find.byType(MedCard), matching: find.byType(MedQrFrame)),
         findsOneWidget,

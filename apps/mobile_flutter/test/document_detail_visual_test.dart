@@ -6,7 +6,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
@@ -45,8 +45,7 @@ void main() {
     // 抬头卡本身是 MedCard(无边框 + cardShadow),这条自动满足,顺带钉一下。
     expect(find.byType(MedCard), findsWidgets);
     // 这一屏渐变预算是 0(brief 的每屏预算表:一份病历 s8 = 0/0/0)。
-    expectGradientBudget();
-    expectNoGradientInsideCards();
+    expectSurfaceBudget();
   });
 
   testWidgets('抬头卡「查看原件」是 MedSecondaryButton,不是 OutlinedButton', (tester) async {
@@ -73,8 +72,8 @@ void main() {
     );
     expect(find.widgetWithText(MedSecondaryButton, '看原件'), findsOneWidget);
     expect(find.widgetWithText(MedPrimaryButton, '没问题'), findsOneWidget);
-    // 渐变预算表:s7 = 1 颗 MedPrimaryButton,没有 HeroCard / PrimaryEntryTile。
-    expectGradientBudget(button: 1);
+    // 颜色面预算表:s7 = 1 颗 MedPrimaryButton,没有 HeroCard。
+    expectSurfaceBudget(button: 1);
 
     await tester.tap(find.text('看原件'));
     expect(viewed, isTrue, reason: '「看原件」回调没接上');

@@ -45,7 +45,7 @@ void main() {
   testWidgets('还没核对列表:零品牌渐变(代拍紫不进个人模式的预算表)', (tester) async {
     await pumpStage3(tester, _harness());
 
-    expectGradientBudget();
+    expectSurfaceBudget();
     expect(find.widgetWithText(OutlinedButton, '添加'), findsOneWidget);
     expect(
       find.widgetWithText(FilledButton, '生成取件码,交给病人'),
