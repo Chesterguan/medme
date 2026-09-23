@@ -164,13 +164,15 @@ class MedChip extends StatelessWidget {
   const MedChip({
     super.key,
     required this.label,
-    required this.count,
+    this.count,
     required this.selected,
     required this.onTap,
   });
 
   final String label;
-  final int count;
+
+  /// `null` → 只显示 [label],不带数字(如「只看异常」这类不需要计数的开关)。
+  final int? count;
   final bool selected;
   final VoidCallback onTap;
 
@@ -190,8 +192,9 @@ class MedChip extends StatelessWidget {
         ),
         child: Text(
           // 计数直接跟在文案后面(「肾功能 6」),不用括号 —— 与卡头「最新值 +
-          // 单位」同一套「数字紧挨着它描述的东西」的排法。
-          '$label $count',
+          // 单位」同一套「数字紧挨着它描述的东西」的排法。`count == null` 时
+          // 只有 label 本身。
+          count == null ? label : '$label $count',
           style: MedType.secondary.copyWith(
             fontSize: 14,
             color: selected ? c.sealInk : c.ink2,

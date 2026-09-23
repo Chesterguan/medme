@@ -97,6 +97,30 @@ const Map<String, int> kRemovedByDecision = {
   '我': 1,
 };
 
+/// 与 [kRemovedByDecision] 对称:这一阶段**允许多出来**的段,值 = 允许多出的文件数。
+/// 只登记本阶段计划里列出的新字(见 docs/superpowers/plans/2026-09-23-home-todo-and-trends-rework.md
+/// Global Constraints);登记之外的新字照旧红。每个 Task 只登记自己引入的段。
+///
+/// Task 3(2026-09-23):`doc_labels.dart` 新增 `fmtDay`/`fmtDayRange`/
+/// `selfAnalyteLabel`,以下六条是跑这个闸实际报告的多出的段,逐条核对与这一
+/// 处改动对应(评审再核一遍):
+const Map<String, int> kAddedByDecision = {
+  // `fmtDay` 的 `'${d.month} 月 ${d.day} 日'`——`月`/`日` 这两个字本已在
+  // account_screen.dart/backup_status_line.dart 等多处「M月D日」写法里出现过,
+  // `doc_labels.dart` 只是新增了一个也含它们的文件。
+  '月': 1,
+  '日': 1,
+  // `selfAnalyteLabel` 的心率/体重/体温/血糖四个标签。`manual_entry_sheet.dart`
+  // 里原有的同一份(`_analyteDisplay`,校验错误提示用)照旧留着没删,所以这四个
+  // 字是「多了一个文件」,不是「搬空了旧文件」——「血压」那一档因为
+  // `_KindMeta.label` 真的改读 `selfAnalyteLabel`(旧字面量删掉了),两侧净变化
+  // 为 0,闸没有把它报进来,这里也不登记。
+  '心率': 1,
+  '体重': 1,
+  '体温': 1,
+  '血糖': 1,
+};
+
 /// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败
 /// 不是文案变了,是 checkout 没带历史;把原因直接写进断言消息。
 void _requireBaseline() {
@@ -221,6 +245,21 @@ Set<String> _overBudgetRemovals(
   return over;
 }
 
+/// `_overBudgetRemovals` 的镜像:多的次数(`n - b`)超过预算才算违规,`budget`
+/// 就是 [kAddedByDecision](或测试自己搭的小样本)。
+Set<String> _overBudgetAdditions(
+  Map<String, int> before,
+  Map<String, int> now,
+  Map<String, int> budget,
+) {
+  final over = <String>{};
+  for (final r in {...now.keys, ...before.keys}) {
+    final n = now[r] ?? 0, b = before[r] ?? 0;
+    if (n > b && (n - b) > (budget[r] ?? 0)) over.add(r);
+  }
+  return over;
+}
+
 /// HEAD 的 `lib/**`(排除令牌层)与基线 [kBaseline] 的同一份文件集,各自喂给
 /// [extract]、按文件去重(`.toSet()`——同一段文字在同一个文件里出现几次只算
 /// 1,见文件头注释)后聚成多重集,回 added/removed 差异描述(带文件名,供失败
@@ -274,12 +313,13 @@ Set<String> _overBudgetRemovals(
   final now = _multiset(headRuns);
   final before = _multiset(baselineRuns);
   final overBudget = _overBudgetRemovals(before, now, kRemovedByDecision);
+  final overAdded = _overBudgetAdditions(before, now, kAddedByDecision);
 
   final added = <String>[];
   final removed = <String>[];
   for (final r in {...now.keys, ...before.keys}) {
     final n = now[r] ?? 0, b = before[r] ?? 0;
-    if (n > b) {
+    if (overAdded.contains(r)) {
       added.add('「$r」多了 ${n - b} 次 —— 现存于:${(headFilesByRun[r] ?? const {}).join(', ')}');
     }
     if (overBudget.contains(r)) {
@@ -310,6 +350,14 @@ void main() {
     expect(_overBudgetRemovals({'我': 2}, {'我': 1}, budget), isEmpty);
     // 基线 2 次、HEAD 0 次 —— 少了 2 次,超过预算 1,照旧红。
     expect(_overBudgetRemovals({'我': 2}, {'我': 0}, budget), {'我'});
+  });
+
+  test('kAddedByDecision 预算自测(纯函数,不碰 git):预算 1 放一次、拦第二次', () {
+    const budget = {'日': 1};
+    // 基线 0 次、HEAD 1 次 —— 多了 1 次,预算 1,放行。
+    expect(_overBudgetAdditions({'日': 0}, {'日': 1}, budget), isEmpty);
+    // 基线 0 次、HEAD 2 次 —— 多了 2 次,超过预算 1,照旧红。
+    expect(_overBudgetAdditions({'日': 0}, {'日': 2}, budget), {'日'});
   });
 
   test('_digitPairsIn 自测(纯函数,不碰 git):15 天改成 30 天,多重集必须不同', () {

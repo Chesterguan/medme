@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/vault_events.dart';
@@ -56,12 +57,15 @@ enum ManualEntryKind {
 }
 
 extension _KindMeta on ManualEntryKind {
+  // 五个 analyte 标签搬到 `doc_labels.dart` 的 `selfAnalyteLabel`(与
+  // `selfAnalyteLabel` 共用同一份中文名,不留两份)——`note` 不是 analyte,
+  // 留在这里。
   String get label => switch (this) {
-    ManualEntryKind.bloodPressure => '血压',
-    ManualEntryKind.heartRate => '心率',
-    ManualEntryKind.weight => '体重',
-    ManualEntryKind.temperature => '体温',
-    ManualEntryKind.glucose => '血糖',
+    ManualEntryKind.bloodPressure => selfAnalyteLabel('bp_systolic'),
+    ManualEntryKind.heartRate => selfAnalyteLabel('heart_rate'),
+    ManualEntryKind.weight => selfAnalyteLabel('body_weight'),
+    ManualEntryKind.temperature => selfAnalyteLabel('body_temperature'),
+    ManualEntryKind.glucose => selfAnalyteLabel('glucose'),
     ManualEntryKind.note => '笔记',
   };
 
