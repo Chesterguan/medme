@@ -1,11 +1,13 @@
-// 「趋势」tab 顶部四块:化验快照 / 最近就诊 / 病程档案入口 / 记录入口。
+// 「趋势」tab 顶部三块:化验快照 / 最近就诊 / 病程档案入口。
 // 整屏**不注入 `load` 时**不可 pump —— `TrendsScreen` 在字段初始化那一刻就调
 // `viewTrends()` 与 `viewVisitSummary()`(FFI),`flutter test` 不带原生库会
-// 直接崩(与 `test/mobile_ia_test.dart` 顶部注释同一条限制)。这四块都是
+// 直接崩(与 `test/mobile_ia_test.dart` 顶部注释同一条限制)。这三块都是
 // 纯 widget;整屏顺序那一条靠注入 `load` 绕开 FFI(与 `ForDoctorScreen` 同款)。
 //
 // 前两块是从概览屏搬过来的(概览已在 Task 9 整屏解散)。**搬家必须先于拆房**:
-// 这个文件的存在就是证明搬到了。
+// 这个文件的存在就是证明搬到了。「记录入口」原来是第四块(`RecordEntryCard`),
+// Task 5 挪进了「病历」tab 的「添加」四选一,这个文件不再测它——见
+// `test/sheets_visual_test.dart`。
 import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show Int64List;
@@ -121,32 +123,6 @@ void main() {
     });
   });
 
-  testWidgets('记录一下:点得动', (tester) async {
-    useNarrowPhone(tester);
-    var tapped = false;
-    await tester.pumpWidget(wrap(RecordEntryCard(onTap: () => tapped = true)));
-    expect(find.text('记录一下'), findsOneWidget);
-    await tester.tap(find.text('记录一下'));
-    expect(tapped, isTrue);
-  });
-
-  testWidgets('2× 字号不溢出', (tester) async {
-    useNarrowPhone(tester);
-    await tester.pumpWidget(
-      wrap(
-        Column(
-          children: [
-            DiseaseProfileCard(source: noProfilePackage()),
-            const RecordEntryCard(),
-          ],
-        ),
-        textScale: 2.0,
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-  });
-
   // ── 整屏:s2 的顺序是固定的 ─────────────────────────────────────────────────
   testWidgets('整屏按 s2 自上而下摆;病程档案没内容时不占位', (tester) async {
     // 注入 `load` 就一次 FFI 都不碰,整屏 pump 得起来(与 `ForDoctorScreen.load`
@@ -198,58 +174,16 @@ void main() {
     await tester.pumpAndSettle();
 
     double dy(String text) => tester.getTopLeft(find.text(text)).dy;
-    // ① 病程档案 → ② 关键化验 → ③ 各行 → ④ 最近就诊 → ⑤ 记录一下。
+    // ① 病程档案 → ② 关键化验 → ③ 各行 → ④ 最近就诊。「记录一下」Task 5 挪去
+    //   了「添加」四选一,这一屏不再有它(顺序断言少了原来的 ⑤)。
     expect(dy('病程档案'), lessThan(dy('关键化验')));
     expect(dy('关键化验'), lessThan(dy('肌酐')));
     expect(dy('肌酐'), lessThan(dy('最近就诊')));
-    expect(dy('最近就诊'), lessThan(dy('记录一下')));
     // ① 病程档案入口**恒在**(mockup `s2` 的第一块)。这一屏的测试里一个病种包都
     // 没装上,所以它说的是「还没准备好」——「装上了 / 开启了」那两态在
     // `test/disease_profile_card_test.dart` 里验。
     expect(find.textContaining('还没准备好'), findsOneWidget);
     // 顶栏只有「趋势」两个字,不加成员 chip(s2)。
     expect(find.text('趋势'), findsOneWidget);
-  });
-
-  // ── BUG-4 同形状:「记录」存完不刷新,刚量的值不出现 ─────────────────────────
-  //
-  // 化验快照(`KeyLabsSnapshot`)来自与「给医生看」同一份 `viewVisitSummary()`。
-  // 用户在「记录一下」里存完一条自测值,不重新拉一次就看不到它 —— 与
-  // `test/for_doctor_refresh_test.dart` 钉的是同一类 bug(`setState` 必须是语句块
-  // 不是箭头,见 `_refresh` 的文档),这里补上「趋势」这一侧同形状的回归。
-  testWidgets('「趋势」里存完一条记录,化验快照当场重新拉一次', (tester) async {
-    tester.view.physicalSize = const Size(360 * 3, 2400 * 3);
-    tester.view.devicePixelRatio = 3.0;
-    addTearDown(tester.view.reset);
-
-    var loads = 0;
-    final summary = VisitSummaryDto(
-      patient: const PatientProfileDto(recordCount: 0),
-      allergies: const [],
-      activeMeds: const [],
-      recentLabs: const [],
-      recentChanges: const [],
-      recentVisits: const [],
-      recentNotes: const [],
-      plainText: '',
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: MedMe.theme(),
-        home: TrendsScreen(
-          load: () async {
-            loads++;
-            return (const <TrendSeriesDto>[], const <String>[], summary);
-          },
-          onRequestAddNote: (_) async => true,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(loads, 1);
-
-    await tester.tap(find.text('记录一下'));
-    await tester.pumpAndSettle();
-    expect(loads, 2, reason: '存完必须重新拉一次,否则刚量的血压不出现');
   });
 }

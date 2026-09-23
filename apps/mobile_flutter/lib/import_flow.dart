@@ -18,6 +18,7 @@ import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
+import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/review_state.dart';
@@ -81,29 +82,43 @@ ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
       : ImportReviewDestination.archive;
 }
 
-/// 「病历」tab 那颗「添加」触发的添加流程:弹三选一(拍照 / 相册 / 选文件),
-/// 选定后**把这一批交给后台队列就返回**(见 `import_queue.dart`)——识别不再把用户
-/// 钉在一个模态进度框里等,「病历」tab 顶部那几行「识别中」替代了它,每识别完
-/// 一份,那份文档就自己长到时间线上。
+/// 「病历」tab 那颗「添加」触发的添加流程:弹四选一(拍照 / 相册 / 选文件 /
+/// 记录一下)。前三项选定后**把这一批交给后台队列就返回**(见
+/// `import_queue.dart`)——识别不再把用户钉在一个模态进度框里等,「病历」tab
+/// 顶部那几行「识别中」替代了它,每识别完一份,那份文档就自己长到时间线上。
+/// 第四项「记录一下」不走取件/队列这一套,直接开录入弹层
+/// ([showManualEntrySheet])——存完那边自己会 `bumpVaultRevision()`,首页/趋势
+/// 靠既有的 `vaultRevision` 监听自己刷新(Task 5:这颗入口原来只能从「趋势」页
+/// 的 `RecordEntryCard` 进,现在挪进「添加」,不用先去「趋势」才找得到)。
 ///
 /// 这一层只管**拉起原生取件器**和**问一句合不合并**;OCR、落库、补页、
 /// 云抽取全在队列那边。医疗判断全在 Rust core,这里只搬字节 + 调 FFI。
 ///
-/// 返回值见 [ImportRunResult]:取消/未选文件返回 `null`,否则带上这次排了几份。
+/// 返回值见 [ImportRunResult]:取消/未选文件返回 `null`,「记录一下」这条也恒
+/// 返回 `null`(见上);否则带上这次排了几份。
 Future<ImportRunResult?> showImportSheet(BuildContext context) async {
   final choice = await showModalBottomSheet<ImportChoice>(
     context: context,
     showDragHandle: true,
+    // 四选一之后(Task 5 加了「记录一下」)内容比默认 bottom sheet 那道 9/16
+    // 高度上限高——不加这个,矮一点的屏幕上第四项会被切掉一截(2026-09-23 用
+    // `sheets_visual_test.dart` 新测的那条实测复现过)。与 `showCloudExtractAskSheet`
+    // 同一个手法(见 `cloud_extract_ask_sheet.dart`)。
+    isScrollControlled: true,
     builder: (context) => const SafeArea(child: AddSheetBody()),
   );
   if (choice == null || !context.mounted) return null;
+  if (choice == ImportChoice.record) {
+    await showManualEntrySheet(context);
+    return null;
+  }
   return runImport(context, choice);
 }
 
 /// [showImportSheet] 的正文(mockup `s6`)。fix round 1(task-14-review
 /// Important):从 `builder:` 里原样搬出来(纯搬家,内容一字未改)——只有
 /// 提成一个公开 widget,视觉溢出矩阵才 pump 得到这一屏,而不是只测到
-/// `CloudExtractAskBody` 一家。**纯 widget,不碰 `Navigator`**——三个
+/// `CloudExtractAskBody` 一家。**纯 widget,不碰 `Navigator`**——四个
 /// `_SheetTile.onTap` 各自 `Navigator.of(context).pop(choice)`,这个 widget
 /// 本身不需要知道选完之后去哪儿。
 class AddSheetBody extends StatelessWidget {
@@ -152,6 +167,14 @@ class AddSheetBody extends StatelessWidget {
           title: '选择文件',
           subtitle: 'PDF、图片、TXT',
           choice: ImportChoice.files,
+        ),
+        // 第四项:从「趋势」页的 `RecordEntryCard` 搬来(Task 5)——自己量的数
+        // 和医院的数走同一个添加入口,不用先去「趋势」才找得到「记录一下」。
+        _SheetTile(
+          icon: Icons.edit_note_outlined,
+          title: '记录一下',
+          subtitle: '自己量的血压、体重,或者想记一句话',
+          choice: ImportChoice.record,
         ),
         const SizedBox(height: 8),
       ],
@@ -218,11 +241,15 @@ Future<ImportRunResult?> runImport(
   return _runImport(context, items, choice);
 }
 
-/// 添加来源:拍照(含文档扫描器)/ 从相册选 / 选择文件。`public`——除了本文件的
-/// [showImportSheet],「医生代拍」临时会话流程(`screens/doctor/proxy_intake_flow.dart`)
-/// 也复用 [pickImportItems] 拿取件入口(自己另起一个只含「拍照/选择文件」的选择
-/// 表,不复用 `showImportSheet` 的三选一 UI)。
-enum ImportChoice { camera, gallery, files }
+/// 添加来源。前三项(拍照含文档扫描器 / 从相册选 / 选择文件)真的走
+/// [pickImportItems] 取文件;`record`(记录一下)不取件,是 [showImportSheet]
+/// 直接分流去开录入弹层的第四个选项——[pickImportItems] 的 `record` 分支只为
+/// 保持 `switch` 穷尽,不可达(见那里的注释)。`public`——除了本文件的
+/// [showImportSheet],「医生代拍」临时会话流程
+/// (`screens/doctor/proxy_intake_flow.dart`)也复用 [pickImportItems] 拿取件
+/// 入口(自己另起一个只含「拍照/选择文件」的选择表,不复用 `showImportSheet`
+/// 的四选一 UI)。
+enum ImportChoice { camera, gallery, files, record }
 
 /// 按 [choice] 走对应的原生取件器,返回待导入项(用户取消为空列表)。**纯取件,
 /// 不碰 OCR/落库**——OCR 识别出来的文字、往哪个病历箱落库,都由调用方在拿到
@@ -476,6 +503,10 @@ Future<List<PendingImport>> pickImportItems(
         _report(probe, choice, ImportCaptureIssue.pickerThrew, '打不开文件选择器:$e');
         return const [];
       }
+    case ImportChoice.record:
+      // 不可达:[showImportSheet] 在 `choice == record` 时直接开录入弹层就
+      // 返回,根本不会调用到这个函数。这个分支只是让 `switch` 保持穷尽。
+      return const [];
   }
 }
 
@@ -953,7 +984,7 @@ Future<Map<int, OcrResult>> _ocrScannedPdfPages(
   return byPage;
 }
 
-/// 添加病历三选一的一条选项(mockup `s6` 的 `.opt`)。图标 + 标题这一行是
+/// 添加病历四选一的一条选项(mockup `s6` 的 `.opt`)。图标 + 标题这一行是
 /// [MedSheetOption](paper 底圆角块 + [MedIcon],`primary` 那条换蓝底);
 /// [subtitle] 是这条选项原有的说明句,`MedSheetOption.note` 是给短短一句
 /// 「右侧小注」用的(见其类文档),放不下这句完整说明,所以单独起一行摆在
@@ -973,7 +1004,7 @@ class _SheetTile extends StatelessWidget {
   final ImportChoice choice;
 
   /// 视觉主选项:paper 换成蓝底(`MedSheetOption.highlighted`)。**不改变点击
-  /// 行为**,只是这一屏三个选项里最推荐的那个多一点视觉重量。
+  /// 行为**,只是这一屏四个选项里最推荐的那个多一点视觉重量。
   final bool primary;
 
   @override

@@ -5,7 +5,6 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
-import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
@@ -22,10 +21,11 @@ import 'package:mobile_flutter/widgets/trend_chart.dart';
 /// 先搬到这里 —— 自己量的数和医院的数看的是同一件事,归在同一个 tab。
 ///
 /// **自上而下的顺序是 `s2` 定死的,别自己重排:**
-/// 病程档案入口 → 关键化验(标题 + 分类 chip + 各行)→ 最近就诊 →
-/// 记录一下。`s2` 在关键化验各行上画了迷你折线、点开那一行原地放大 —— 那是
-/// Stage 2;Stage 1 保持今天的取值行,全序列的折线卡([SeriesCard])照旧摆在
-/// 它下面,位置先摆对,内容不提前做。
+/// 病程档案入口 → 关键化验(标题 + 分类 chip + 各行)→ 最近就诊。`s2` 在
+/// 关键化验各行上画了迷你折线、点开那一行原地放大 —— 那是 Stage 2;Stage 1
+/// 保持今天的取值行,全序列的折线卡([SeriesCard])照旧摆在它下面,位置先摆
+/// 对,内容不提前做。「记录一下」原来是这一屏底部第五块(`s2`),Task 5 挪进了
+/// 「病历」tab 的「添加」四选一,这一屏不再有它。
 ///
 /// 「病程档案」那一块的内容在 [DiseaseProfileCard] 自己里头(没有病种包 / 装上了
 /// 还没开启 / 开启了,三态各说各的话),这一屏只负责把它摆在第一位。
@@ -44,12 +44,7 @@ import 'package:mobile_flutter/widgets/trend_chart.dart';
 /// (`s2` 没有它):这件事现在只在搜不到指标时的空态里说一句「同一项在不同医院
 /// 可能印成「肌酐」「血肌酐」「Cr」」,别把那段话又搬回顶部。
 class TrendsScreen extends StatefulWidget {
-  const TrendsScreen({
-    super.key,
-    this.load,
-    this.onRequestAddNote,
-    this.profileSource,
-  });
+  const TrendsScreen({super.key, this.load, this.profileSource});
 
   /// 数据源。null → 三个真实投影(FFI)。
   ///
@@ -57,9 +52,6 @@ class TrendsScreen extends StatefulWidget {
   /// `flutter test` 不带原生库;而「存完一条记录要当场刷新」这条回归
   /// (BUG-4)只有整屏能验。
   final Future<TrendsData> Function()? load;
-
-  /// 「记录一下」按下时走的动作,返回「是否真的存了一条」。null → 开录入弹层(FFI)。
-  final Future<bool?> Function(BuildContext context)? onRequestAddNote;
 
   /// 病程档案那一块的取数口子(装着哪个包 / 算一份视图 / 记一条开关)。
   /// null → 真的那一套(FFI + 平台通道)。**摆成注入点只为测试**,与 [load] 同款。
@@ -90,21 +82,6 @@ class _TrendsScreenState extends State<TrendsScreen> {
       r[1] as List<String>,
       r[2] as VisitSummaryDto,
     );
-  }
-
-  /// 「记录一下」(`s9`:血压 / 体重 / 今天不舒服 / 血糖 / 写句话)。
-  ///
-  /// **只有真的存下了才重新拉一次** —— 与 `ForDoctorScreen._addNote` 同一条
-  /// 规矩(BUG-4):划掉弹层什么也没写时白拉一次是浪费,而存了却不拉,用户
-  /// 看着自己刚量的血压没出现。刷新走 [_refresh],它的 `setState` 是**语句块
-  /// 不是箭头**(理由见 `known_defect_setstate_future_test.dart`)。
-  Future<void> _addRecord() async {
-    final add = widget.onRequestAddNote;
-    final saved = add != null
-        ? await add(context)
-        : await showManualEntrySheet(context);
-    if (saved != true || !mounted) return;
-    await _refresh();
   }
 
   /// 「只看非正常项」。**默认开。**
@@ -387,9 +364,6 @@ class _TrendsScreenState extends State<TrendsScreen> {
                   total: summary.patient.recordCount.toInt(),
                   onOpenDoc: _openDoc,
                 ),
-                const SizedBox(height: MedShape.s4),
-                // ⑤ 记录一下(`s9`:血压 / 体重 / 今天不舒服 / 血糖 / 写句话)。
-                RecordEntryCard(onTap: _addRecord),
                 // 页脚只交代一次「参考区间的三种出处」,不重复在每张卡上说——
                 // 只要 `all` 非空(这一屏至少能画出一条线)就露出来,不随筛选
                 // 结果(`shown`)增减而消失,免得用户搜/筛到没有结果时反而看不
@@ -1378,38 +1352,7 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-// ── `s2` 上的两张新卡 ────────────────────────────────────────────────────────
-//
 // 「病程档案」入口卡搬去了 `widgets/disease_profile_card.dart`:它现在是有状态、
 // 要取数的一块(装着哪个包、开没开启、包给的摘要),不再是这一屏里的一张死卡。
-
-/// 「记录一下」入口(`s2` 底部那颗;点开是 `s9`:血压 / 体重 / 今天不舒服 /
-/// 血糖 / 写句话)。从解散的概览快捷操作搬过来 —— 自己填的数和医院的数看的是
-/// 同一件事,归属在「趋势」。
-class RecordEntryCard extends StatelessWidget {
-  const RecordEntryCard({super.key, this.onTap});
-
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    // mockup 的 `.btn.ghost`:透明底、`seal` 字、字重 400、无阴影 —— **不用**
-    // `MedPrimaryButton`(那是一块颜色面,会让这一屏的颜色面预算从 0 变成 1)。
-    return Material(
-      type: MaterialType.transparency,
-      child: ListTile(
-        leading: Icon(Icons.edit_note_outlined, color: c.seal),
-        title: Text(
-          '记录一下',
-          style: MedType.body.copyWith(color: c.seal, fontWeight: FontWeight.w400),
-        ),
-        subtitle: Text(
-          '自己量的血压、体重,或者想记一句话',
-          style: MedType.secondary.copyWith(color: c.ink2),
-        ),
-        onTap: onTap,
-      ),
-    );
-  }
-}
+// 「记录一下」入口(原来住在这里的 `RecordEntryCard`)Task 5 挪进了「病历」
+// tab 的「添加」四选一(`import_flow.dart` 的 `AddSheetBody`)。

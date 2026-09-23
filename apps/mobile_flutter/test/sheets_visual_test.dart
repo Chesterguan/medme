@@ -34,6 +34,47 @@ void main() {
     expectNoGradientAnywhere();
   });
 
+  testWidgets('AddSheetBody 有四项,第四项「记录一下」点了 pop(ImportChoice.record)', (
+    tester,
+  ) async {
+    // Task 5:「记录一下」从「趋势」页的 `RecordEntryCard` 搬来,成为这个四选一
+    // 的第四项。走真实的 `showModalBottomSheet`(而不是直接 pump `AddSheetBody`
+    // 本身)才测得到 `_SheetTile.onTap` 真的 `pop` 出了选中的 `ImportChoice`——
+    // `AddSheetBody` 自己不碰 `Navigator`,见它的类文档。
+    ImportChoice? popped;
+    await pumpStage3(
+      tester,
+      Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            key: const Key('open_add_sheet'),
+            onPressed: () async {
+              // `isScrollControlled: true` 跟 [showImportSheet] 的真实配置一致——
+              // 四项内容比默认 bottom sheet 的 9/16 高度上限高,不加这个,400×800
+              // 这个尺寸就先溢出了(踩过,见 `showImportSheet` 旁边的注释)。
+              popped = await showModalBottomSheet<ImportChoice>(
+                context: context,
+                isScrollControlled: true,
+                builder: (_) => const AddSheetBody(),
+              );
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('open_add_sheet')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MedSheetOption), findsNWidgets(4));
+    expect(find.text('记录一下'), findsOneWidget);
+    expect(find.text('自己量的血压、体重,或者想记一句话'), findsOneWidget);
+
+    await tester.tap(find.text('记录一下'));
+    await tester.pumpAndSettle();
+    expect(popped, ImportChoice.record);
+  });
+
   testWidgets('s17:一颗主按钮 + 一颗次按钮,标题 19·600', (tester) async {
     await pumpStage3(tester, const Scaffold(body: CloudExtractAskBody()));
     expectSurfaceBudget(button: 1);

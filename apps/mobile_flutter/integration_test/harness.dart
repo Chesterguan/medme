@@ -438,17 +438,19 @@ Future<void> gotoEmergencyCard(WidgetTester tester) async {
   );
 }
 
-/// 「趋势」→「记录一下」→ 录入弹层(`s9`)。
+/// 「病历」→「添加」→「记录一下」→ 录入弹层(`s9`)。
 ///
-/// 这颗快捷键原来在概览上,概览 Task 9 解散之后归到「趋势」—— 自己量的数和医院
-/// 的数看的是同一件事(`trends_screen.dart` 的 `RecordEntryCard`)。
+/// 这颗入口原来是「趋势」页自己的 `RecordEntryCard`,Task 5 挪进了「病历」tab
+/// 「添加」三选一变四选一的第四项(`import_flow.dart` 的 `AddSheetBody`)——
+/// 自己量的数和医院的数走同一个添加入口。
 Future<void> openRecordSheet(WidgetTester tester) async {
-  await gotoTab(tester, HomeTab.trends);
-  // 「记录一下」在「趋势」最底下(`s2`),而这一屏上面那几块在有数据时很长 ——
-  // 先往回翻到顶,再一路往下找,两个方向都给足次数。
-  await scrollUpToFind(tester, find.text('关键化验'));
-  final found = await scrollToFind(tester, find.text('记录一下'), maxSwipes: 40);
-  if (!found) throw TestFailure('「趋势」里翻不到「记录一下」');
+  await gotoTab(tester, HomeTab.records);
+  if (!await scrollUpToFind(tester, find.text('添加'))) {
+    throw TestFailure('「病历」翻回顶部也找不到「添加」');
+  }
+  await tester.tap(find.text('添加').first);
+  await settle(tester, total: const Duration(seconds: 2));
+  await waitFor(tester, find.text('记录一下'), what: '「添加」弹层里的「记录一下」');
   await tester.tap(find.text('记录一下').last);
   await settle(tester, total: const Duration(seconds: 2));
   await waitFor(tester, find.text('保存'), what: '录入弹层的「保存」按钮');
