@@ -350,15 +350,6 @@ class MedType {
     fontVariations: w500, fontFeatures: tabular,
   );
 
-  /// 22 · 600 · tabular —— mockup `.hero .rule b`,`HeroCard` 卡面大数值一档
-  /// (R18)。减法稿 2026-09-22:主页身份卡换成了一行文字的 `MemberHeader`,
-  /// 不再用这一档;`account_screen.dart` 换新手机扫码那张 `HeroCard` 还在用
-  /// 同一条白字规则(R11),这档数值留给它与以后同类场景。
-  static const TextStyle heroValue = TextStyle(
-    fontSize: 22, fontWeight: FontWeight.w600,
-    fontVariations: w600, fontFeatures: tabular,
-  );
-
   /// 13 · 400 —— 行元数据、横幅小字(brief §字:两处都是 13)。
   static const TextStyle secondary = TextStyle(fontSize: 13);
 
@@ -419,7 +410,7 @@ class MedShape {
 }
 
 /// Stage 3.5 减法(2026-09-22):无渐变、无阴影、无类别色。`MedBrand` 只剩横幅 /
-/// 示例 / 看一眼配色、时间轴与展开区底、图标槽、化验刻度条尺寸。
+/// 看一眼配色、时间轴与展开区底、图标槽、化验刻度条尺寸。
 ///
 /// **不做成 `ThemeExtension`**:这些值不随明暗主题变(app 只挂了浅色),不值得为
 /// 它们背上 copyWith / lerp / == / hashCode 四件套样板。

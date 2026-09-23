@@ -907,8 +907,8 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 解锁屏顶部那一块。三态都在这儿:还没生成(一颗按钮)/ 举着码等批准(码 +
   /// 倒计时 + 取消)/ 失败(红字 + 按钮还在,可以再来一次)。
   /// `s15` 的一屏一处颜色面:整块（标题/说明/二维码/倒计时/取消)包进一张
-  /// `HeroCard`。卡面白字规则(design_tokens.dart `MedType.heroValue` 类文档
-  /// 「全卡统一的确定性规则」)照搬:标题/正文一律换成白字系的 token。
+  /// `HeroCard`。卡面白字规则:标题/正文一律换成白色系的 token(`Colors.white`/
+  /// `c.onDarkMeta`/`c.onDarkFaint`),不跟着 `ink` 走。
   List<Widget> _deviceApprovalBlock() {
     final code = _approvalCode;
     final c = MedColors.of(context);
@@ -1141,7 +1141,7 @@ class _AccountScreenState extends State<AccountScreen> {
       children: [
         Text(_cloudDefaultCopy, style: TextStyle(color: MedColors.of(context).ink3, height: 1.5)),
         const SizedBox(height: 8),
-        // R25:每行现在是 MedCard(无边框、纯阴影分层),不再是自带外边距的
+        // R25:每行现在是 MedCard(1px line 细边、无阴影),不再是自带外边距的
         // Material `Card` —— 多个成员时行与行之间要显式补一条缝,否则会贴在一起。
         for (final m in ProfileManager.instance.profiles) ...[
           _cloudMemberRow(m),
@@ -1204,7 +1204,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// 一个成员一行:名字 + 此刻的状态 + 「云端备份」开关。
   ///
-  /// R25:`Card` → `MedCard`(无边框、卡阴影),前面补一枚 [MedIcon]。开关本身的
+  /// R25:`Card` → `MedCard`(1px line 细边、无阴影),前面补一枚 [MedIcon]。开关本身的
   /// 值/回调一个字没动。
   Widget _cloudMemberRow(Profile m) {
     final c = MedColors.of(context);

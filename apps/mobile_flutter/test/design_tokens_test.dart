@@ -513,12 +513,8 @@ void main() {
       expect(MedType.value.fontFeatures, MedType.tabular);
       expect(MedType.display.fontSize, 30);
       expect(MedType.display.fontWeight, FontWeight.w600);
-      // R18:hero 卡「最近就诊」的值(mockup `.hero .rule b`)。
-      expect(MedType.heroValue.fontSize, 22);
-      expect(MedType.heroValue.fontWeight, FontWeight.w600);
-      expect(MedType.heroValue.fontFeatures, MedType.tabular);
       // 700 不许出现:mockup 里没有一处 Latin/数字用它(见计划「已知分歧 3」)。
-      for (final s in [MedType.display, MedType.value, MedType.heroValue, MedType.title,
+      for (final s in [MedType.display, MedType.value, MedType.title,
                        MedType.subtitle, MedType.body, MedType.secondary, MedType.caption]) {
         // body/secondary 不显式写 fontWeight(null = 默认 w400)—— 同上面
         // 「七档字号」测试一样用 `?? FontWeight.w400`,不能直接 `!`(会在这两个
