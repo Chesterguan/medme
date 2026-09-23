@@ -425,6 +425,22 @@ fn flat_docs() -> anyhow::Result<(Vec<FlatDoc>, Vec<VisitRecordDto>)> {
                     document_ids: vec![doc.id],
                 });
             }
+            // 趋势图/应急卡/就诊摘要单三个投影按单份文档读(`gather_profile_events`
+            // 逐份重读正文抽取事件),不理解「自测周」这个只在首页时间线存在的
+            // 展示层折叠——原样展开回每一份自测文档,行为与折叠前逐字一致。
+            TimelineGroupDto::SelfWeek { docs, .. } => {
+                for d in docs {
+                    let doc = &d.doc;
+                    let date = doc.doc_date.as_deref().and_then(parse_rfc3339_date);
+                    flat.push((doc.id, date, doc.doc_type.to_lowercase(), doc.title.clone()));
+                    visits.push(VisitRecordDto {
+                        title: doc.title.clone(),
+                        kind: doc.doc_type.to_lowercase(),
+                        date: date.map(fmt_date),
+                        document_ids: vec![doc.id],
+                    });
+                }
+            }
         }
     }
 

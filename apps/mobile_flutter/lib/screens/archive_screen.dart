@@ -33,6 +33,8 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// 文档类型标签与图标已挪到 `lib/doc_labels.dart`(四个屏共用,免得同一份病历在
 /// 两个 tab 上叫两个名字)。
 
+// `TimelineGroupDto_SelfWeek` 分支(下面几处 switch 各一个):Task 1 只求
+// `flutter analyze` 干净、不引入新的用户可见字——真正的自测周渲染是 Task 4。
 String _groupTitle(TimelineGroupDto g) {
   return switch (g) {
     TimelineGroupDto_Encounter(:final encounter) =>
@@ -40,6 +42,7 @@ String _groupTitle(TimelineGroupDto g) {
           ? '${kindLabel[encounter.kind] ?? encounter.kind} · ${encounter.provider}'
           : (kindLabel[encounter.kind] ?? encounter.kind),
     TimelineGroupDto_Document(:final doc) => docDisplayTitle(doc),
+    TimelineGroupDto_SelfWeek(:final weekStart) => weekStart,
   };
 }
 
@@ -49,6 +52,7 @@ String _groupDate(TimelineGroupDto g) {
       encounter.startDate,
     ),
     TimelineGroupDto_Document(:final doc) => fmtDate(doc.docDate),
+    TimelineGroupDto_SelfWeek(:final weekStart) => weekStart,
   };
 }
 
@@ -91,6 +95,7 @@ String _groupDesc(TimelineGroupDto g) {
       docRowLabel(doc),
       if (doc.sliceCount != null) '影像 ${doc.sliceCount} 张',
     ].join(' · '),
+    TimelineGroupDto_SelfWeek() => '',
   };
 }
 
@@ -103,6 +108,8 @@ List<DocumentSummaryDto> _allDocs(List<TimelineGroupDto> groups) {
         out.addAll(docs);
       case TimelineGroupDto_Document(:final doc):
         out.add(doc);
+      case TimelineGroupDto_SelfWeek(:final docs):
+        out.addAll(docs.map((d) => d.doc));
     }
   }
   return out;
@@ -126,6 +133,10 @@ List<TimelineGroupDto> _confirmedOnly(List<TimelineGroupDto> groups) {
               ? g
               : TimelineGroupDto.encounter(encounter: encounter, docs: kept),
         );
+      case TimelineGroupDto_SelfWeek():
+        // 自测文档不走「还没核对」流程(add_self_measurement 落库即确认),
+        // 原样透传;Task 4 再决定要不要按文档级核对状态过滤周内条目。
+        out.add(g);
     }
   }
   return out;
@@ -431,6 +442,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                                     setState(() {
                                       if (!_expanded.add(encounter.id)) _expanded.remove(encounter.id);
                                     });
+                                  case TimelineGroupDto_SelfWeek():
+                                    break; // 占位,不展开、不导航——Task 4 换真实交互。
                                 }
                               },
                               onOpenSubDoc: _openDoc,
@@ -593,6 +606,7 @@ class _TimelineItem extends StatelessWidget {
               onDelete: onDelete,
             ),
             TimelineGroupDto_Document() => const SizedBox.shrink(),
+            TimelineGroupDto_SelfWeek() => const SizedBox.shrink(),
           },
       ],
     );

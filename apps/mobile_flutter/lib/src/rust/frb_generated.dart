@@ -3617,6 +3617,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<SelfWeekDocDto> dco_decode_list_self_week_doc_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_self_week_doc_dto).toList();
+  }
+
+  @protected
+  List<SelfWeekItemDto> dco_decode_list_self_week_item_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_self_week_item_dto).toList();
+  }
+
+  @protected
   List<SyncEventDto> dco_decode_list_sync_event_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_sync_event_dto).toList();
@@ -3925,6 +3937,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SelfWeekDocDto dco_decode_self_week_doc_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return SelfWeekDocDto(
+      doc: dco_decode_document_summary_dto(arr[0]),
+      values: dco_decode_list_self_measured_value_dto(arr[1]),
+    );
+  }
+
+  @protected
+  SelfWeekItemDto dco_decode_self_week_item_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return SelfWeekItemDto(
+      analyteKey: dco_decode_String(arr[0]),
+      count: dco_decode_i_64(arr[1]),
+      min: dco_decode_f_64(arr[2]),
+      max: dco_decode_f_64(arr[3]),
+      unit: dco_decode_String(arr[4]),
+    );
+  }
+
+  @protected
   ShareResultDto dco_decode_share_result_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -3995,6 +4034,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 1:
         return TimelineGroupDto_Document(
           doc: dco_decode_box_autoadd_document_summary_dto(raw[1]),
+        );
+      case 2:
+        return TimelineGroupDto_SelfWeek(
+          weekStart: dco_decode_String(raw[1]),
+          weekEnd: dco_decode_String(raw[2]),
+          docs: dco_decode_list_self_week_doc_dto(raw[3]),
+          summary: dco_decode_list_self_week_item_dto(raw[4]),
         );
       default:
         throw Exception("unreachable");
@@ -4728,6 +4774,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<SelfWeekDocDto> sse_decode_list_self_week_doc_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <SelfWeekDocDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_self_week_doc_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<SelfWeekItemDto> sse_decode_list_self_week_item_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <SelfWeekItemDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_self_week_item_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<SyncEventDto> sse_decode_list_sync_event_dto(
     SseDeserializer deserializer,
   ) {
@@ -5119,6 +5193,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SelfWeekDocDto sse_decode_self_week_doc_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_doc = sse_decode_document_summary_dto(deserializer);
+    var var_values = sse_decode_list_self_measured_value_dto(deserializer);
+    return SelfWeekDocDto(doc: var_doc, values: var_values);
+  }
+
+  @protected
+  SelfWeekItemDto sse_decode_self_week_item_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_analyteKey = sse_decode_String(deserializer);
+    var var_count = sse_decode_i_64(deserializer);
+    var var_min = sse_decode_f_64(deserializer);
+    var var_max = sse_decode_f_64(deserializer);
+    var var_unit = sse_decode_String(deserializer);
+    return SelfWeekItemDto(
+      analyteKey: var_analyteKey,
+      count: var_count,
+      min: var_min,
+      max: var_max,
+      unit: var_unit,
+    );
+  }
+
+  @protected
   ShareResultDto sse_decode_share_result_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_passphrase = sse_decode_String(deserializer);
@@ -5206,6 +5305,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 1:
         var var_doc = sse_decode_box_autoadd_document_summary_dto(deserializer);
         return TimelineGroupDto_Document(doc: var_doc);
+      case 2:
+        var var_weekStart = sse_decode_String(deserializer);
+        var var_weekEnd = sse_decode_String(deserializer);
+        var var_docs = sse_decode_list_self_week_doc_dto(deserializer);
+        var var_summary = sse_decode_list_self_week_item_dto(deserializer);
+        return TimelineGroupDto_SelfWeek(
+          weekStart: var_weekStart,
+          weekEnd: var_weekEnd,
+          docs: var_docs,
+          summary: var_summary,
+        );
       default:
         throw UnimplementedError('');
     }
@@ -5890,6 +6000,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_self_week_doc_dto(
+    List<SelfWeekDocDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_self_week_doc_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_self_week_item_dto(
+    List<SelfWeekItemDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_self_week_item_dto(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_sync_event_dto(
     List<SyncEventDto> self,
     SseSerializer serializer,
@@ -6216,6 +6350,29 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_self_week_doc_dto(
+    SelfWeekDocDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_document_summary_dto(self.doc, serializer);
+    sse_encode_list_self_measured_value_dto(self.values, serializer);
+  }
+
+  @protected
+  void sse_encode_self_week_item_dto(
+    SelfWeekItemDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.analyteKey, serializer);
+    sse_encode_i_64(self.count, serializer);
+    sse_encode_f_64(self.min, serializer);
+    sse_encode_f_64(self.max, serializer);
+    sse_encode_String(self.unit, serializer);
+  }
+
+  @protected
   void sse_encode_share_result_dto(
     ShareResultDto self,
     SseSerializer serializer,
@@ -6280,6 +6437,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case TimelineGroupDto_Document(doc: final doc):
         sse_encode_i_32(1, serializer);
         sse_encode_box_autoadd_document_summary_dto(doc, serializer);
+      case TimelineGroupDto_SelfWeek(
+        weekStart: final weekStart,
+        weekEnd: final weekEnd,
+        docs: final docs,
+        summary: final summary,
+      ):
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(weekStart, serializer);
+        sse_encode_String(weekEnd, serializer);
+        sse_encode_list_self_week_doc_dto(docs, serializer);
+        sse_encode_list_self_week_item_dto(summary, serializer);
     }
   }
 
