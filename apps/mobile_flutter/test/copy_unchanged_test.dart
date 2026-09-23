@@ -102,7 +102,7 @@ const Map<String, int> kRemovedByDecision = {
 /// Global Constraints);登记之外的新字照旧红。每个 Task 只登记自己引入的段。
 ///
 /// Task 3(2026-09-23):`doc_labels.dart` 新增 `fmtDay`/`fmtDayRange`/
-/// `selfAnalyteLabel`,以下六条是跑这个闸实际报告的多出的段,逐条核对与这一
+/// `selfAnalyteLabel`,以下两条是跑这个闸实际报告的多出的段,逐条核对与这一
 /// 处改动对应(评审再核一遍):
 const Map<String, int> kAddedByDecision = {
   // `fmtDay` 的 `'${d.month} 月 ${d.day} 日'`——`月`/`日` 这两个字本已在
@@ -110,15 +110,10 @@ const Map<String, int> kAddedByDecision = {
   // `doc_labels.dart` 只是新增了一个也含它们的文件。
   '月': 1,
   '日': 1,
-  // `selfAnalyteLabel` 的心率/体重/体温/血糖四个标签。`manual_entry_sheet.dart`
-  // 里原有的同一份(`_analyteDisplay`,校验错误提示用)照旧留着没删,所以这四个
-  // 字是「多了一个文件」,不是「搬空了旧文件」——「血压」那一档因为
-  // `_KindMeta.label` 真的改读 `selfAnalyteLabel`(旧字面量删掉了),两侧净变化
-  // 为 0,闸没有把它报进来,这里也不登记。
-  '心率': 1,
-  '体重': 1,
-  '体温': 1,
-  '血糖': 1,
+  // Fix round 1(评审 Critical 1):`selfAnalyteLabel` 的心率/体重/体温/血糖
+  // 四个标签**不**登记在这里——`manual_entry_sheet.dart` 的 `_analyteErrorLabel`
+  // 已改成委托 `selfAnalyteLabel`,不再各自持有一份字面量,两侧净变化为 0,
+  // 闸本就不报,登记进来反而是把不该放行的重复默许掉。
 };
 
 /// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败

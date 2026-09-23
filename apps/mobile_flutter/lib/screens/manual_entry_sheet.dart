@@ -136,17 +136,28 @@ double? _valueFor(List<SelfMeasuredValueDto> values, String analyteKey) {
   return null;
 }
 
-/// analyte_key → (中文标签, 展示用单位)。展示单位与写进 [SelfMeasuredValueDto]
-/// 的规范单位不总相同(体温规范单位是 UCUM 的 `Cel`,展示给用户用更常见的
-/// `°C`,与下面 [_SingleValueField] 的 `displayUnit` 取法一致)——这张表只用于
-/// 拼错误提示文案,不影响实际写入的值/单位。
-const _analyteDisplay = <String, (String, String)>{
-  'bp_systolic': ('收缩压', 'mmHg'),
-  'bp_diastolic': ('舒张压', 'mmHg'),
-  'heart_rate': ('心率', '次/分'),
-  'body_weight': ('体重', 'kg'),
-  'body_temperature': ('体温', '°C'),
-  'glucose': ('血糖', 'mmol/L'),
+/// analyte_key → 展示用单位。与写进 [SelfMeasuredValueDto] 的规范单位不总相同
+/// (体温规范单位是 UCUM 的 `Cel`,展示给用户用更常见的 `°C`,与下面
+/// [_SingleValueField] 的 `displayUnit` 取法一致)——这张表只用于拼错误提示
+/// 文案,不影响实际写入的值/单位。
+const _analyteUnit = <String, String>{
+  'bp_systolic': 'mmHg',
+  'bp_diastolic': 'mmHg',
+  'heart_rate': '次/分',
+  'body_weight': 'kg',
+  'body_temperature': '°C',
+  'glucose': 'mmol/L',
+};
+
+/// 错误提示文案里的中文标签。`bp_systolic`/`bp_diastolic` 留「收缩压」/「舒张压」
+/// ——`selfAnalyteLabel` 把两者都归成「血压」(界面把两者并成一行),但这里恰恰
+/// 要说清是哪一个数超了,不能合并,这两个词只在这一处出现。其余四项与
+/// `doc_labels.dart` 的 `selfAnalyteLabel` 是同一份中文名,直接委托过去,不重复
+/// 一份字面量(brief「不留两份」)。
+String _analyteErrorLabel(String key) => switch (key) {
+  'bp_systolic' => '收缩压',
+  'bp_diastolic' => '舒张压',
+  _ => selfAnalyteLabel(key),
 };
 
 /// 一个自测项的「可能性范围」——挡的是打错(如华为 Mate 9 真机实测里,手填
@@ -217,9 +228,8 @@ String? manualEntryRangeError(List<SelfMeasuredValueDto> values) {
     if (range == null || (v.value >= range.low && v.value <= range.high)) {
       continue;
     }
-    final meta = _analyteDisplay[v.analyteKey];
-    final label = meta?.$1 ?? v.analyteKey;
-    final unit = meta?.$2 ?? v.unit;
+    final label = _analyteErrorLabel(v.analyteKey);
+    final unit = _analyteUnit[v.analyteKey] ?? v.unit;
     return '$label ${_fmtNum(v.value)} $unit 超出可能范围'
         '(${_fmtNum(range.low)}–${_fmtNum(range.high)} $unit),请检查后重新输入';
   }
