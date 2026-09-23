@@ -15,6 +15,7 @@ import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/med_icon.dart';
+import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'stage3_visual_helpers.dart';
 
 /// 与 `for_doctor_screen_test.dart` 的 `_empty` 同一形状——本文件独立成一份,
@@ -251,10 +252,17 @@ void main() {
   testWidgets('顺序:我最近的变化 → 过敏史 → 记录中出现的药物 → 我想问医生的;每节一张卡;节内无图标', (t) async {
     await pumpStage3(t, screenWithData());
     await t.pumpAndSettle();
-    double y(String s) => t.getTopLeft(find.text(s).first).dy;
+    // 每个标题先断言 findsOneWidget 再取 y——找不到时报「哪个标题」,不是
+    // Dart 原生 `Iterable.first` 那句读不出意思的 "Bad state: No element"。
+    double y(String s) {
+      final finder = find.text(s);
+      expect(finder, findsOneWidget, reason: '找不到「$s」这个标题');
+      return t.getTopLeft(finder).dy;
+    }
+
     expect(y('我最近的变化'), lessThan(y('过敏史')));
-    expect(y('过敏史'), lessThan(y('记录中出现的药物')));
-    expect(y('记录中出现的药物'), lessThan(y('我想问医生的')));
+    expect(y('过敏史'), lessThan(y(kRecordedMedsTitle)));
+    expect(y(kRecordedMedsTitle), lessThan(y('我想问医生的')));
     // `skipOffstage: false` on both:展开用药那张卡带着免责声明,内容变高,会把
     // 「我想问医生的」那张卡推到 400×800 视口的折线以下——这两条断言问的是
     // 「树里有没有」这件结构性的事,不该因为一时滚不到而假红(同屏是否装得下
@@ -271,7 +279,14 @@ void main() {
     );
     expect(medIconInBody, findsNothing);
     expect(medCardInBody, findsNWidgets(3));
-    await t.tap(find.text('记录中出现的药物'));
+    // 折叠状态下这是正文里唯一的可点行——去掉图标槽之后不能只剩文字那 22px
+    // 高,ConstrainedBox 把它钉在 ≥48dp,这里核实真落到位了。
+    final medsHeader = find.ancestor(
+      of: find.text(kRecordedMedsTitle),
+      matching: find.byType(InkWell),
+    );
+    expect(t.getSize(medsHeader).height, greaterThanOrEqualTo(48));
+    await t.tap(find.text(kRecordedMedsTitle));
     await t.pumpAndSettle();
     expect(medCardInBody, findsNWidgets(4));
     expectSurfaceBudget(button: 1);

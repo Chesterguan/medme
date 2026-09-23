@@ -29,7 +29,9 @@ import 'package:mobile_flutter/widgets/recorded_meds.dart';
 ///   按钮——出码前最后看一眼自己还有什么想问的。
 ///
 /// 每节现在是「小标题 + 一张卡」(见 [_Section]),不再共用一张外层 `MedCard`,
-/// 标题前也不再有图标(减法稿:类别上色/图标没有信息)。
+/// 标题前也不再有图标(减法稿:类别上色/图标没有信息)。用药子节是唯一的例外
+/// (见 [_MedsSubsection]):折叠且有药时只有「标题 + 箭头」,没有卡,卡要等
+/// 展开才出现。四处标题字号统一成一份共用的 [_SectionLabel]。
 ///
 /// 内容全部来自 `viewVisitSummary()` 返回的 [VisitSummaryDto],对结构化字段
 /// **只搬运原文逐字内容与抽出的数值/日期,不生成任何解释或结论**——「我想问医生的」是
@@ -167,63 +169,67 @@ class _NotesSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '我想问医生的',
-                  style: MedType.caption.copyWith(color: c.ink3),
-                ),
-              ),
-              // 「加一条」常驻(不只是空态才有)——见过一次医生之后往往又会想起
-              // 新的问题,不该只在这一节空着的时候才给出路。
-              TextButton.icon(
-                onPressed: onAddNote,
-                style: TextButton.styleFrom(
-                  foregroundColor: c.sealInk,
-                  padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('加一条', style: MedType.secondary),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: MedShape.s1),
-        MedCard(
-          child: notes.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.all(MedShape.s3),
-                  // 空态必须有出路(规范 §六)——这里的出路就是上面那颗「加一条」,
-                  // 文案直接指给它看,不是空泛的"暂无内容"。
+    return Padding(
+      padding: const EdgeInsets.only(bottom: MedShape.s4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+            child: Row(
+              children: [
+                Expanded(
                   child: Text(
-                    // 不要在这里塞 `\n`。硬换行会在窄屏上把句子折成一条提前结束的
-                    // 短行(真机 360dp 上就是「……见医生前翻开」独占半行),而
-                    // `Text` 自己会按可用宽度断行——排版交给布局,不要在文案里
-                    // 手工排。
-                    '还没有记下想问的问题。想到什么随时点右上角「加一条」——'
-                    '见医生前翻开这一屏,就不会到了诊室才想起来忘了问什么。',
-                    style: MedType.body.copyWith(color: c.ink2, height: 1.5),
+                    '我想问医生的',
+                    style: MedType.secondary.copyWith(color: c.ink3),
                   ),
-                )
-              : Column(
-                  children: [
-                    for (var i = 0; i < notes.length; i++) ...[
-                      if (i > 0)
-                        Divider(height: 1, thickness: 1, color: c.line2),
-                      _NoteRow(note: notes[i], onOpenDoc: onOpenDoc),
-                    ],
-                  ],
                 ),
-        ),
-      ],
+                // 「加一条」常驻(不只是空态才有)——见过一次医生之后往往又会想起
+                // 新的问题,不该只在这一节空着的时候才给出路。
+                TextButton.icon(
+                  onPressed: onAddNote,
+                  style: TextButton.styleFrom(
+                    foregroundColor: c.sealInk,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: MedShape.s1,
+                    ),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('加一条', style: MedType.secondary),
+                ),
+              ],
+            ),
+          ),
+          MedCard(
+            child: notes.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(MedShape.s3),
+                    // 空态必须有出路(规范 §六)——这里的出路就是上面那颗「加一条」,
+                    // 文案直接指给它看,不是空泛的"暂无内容"。
+                    child: Text(
+                      // 不要在这里塞 `\n`。硬换行会在窄屏上把句子折成一条提前结束的
+                      // 短行(真机 360dp 上就是「……见医生前翻开」独占半行),而
+                      // `Text` 自己会按可用宽度断行——排版交给布局,不要在文案里
+                      // 手工排。
+                      '还没有记下想问的问题。想到什么随时点右上角「加一条」——'
+                      '见医生前翻开这一屏,就不会到了诊室才想起来忘了问什么。',
+                      style: MedType.body.copyWith(color: c.ink2, height: 1.5),
+                    ),
+                  )
+                : Column(
+                    children: [
+                      for (var i = 0; i < notes.length; i++) ...[
+                        if (i > 0)
+                          Divider(height: 1, thickness: 1, color: c.line2),
+                        _NoteRow(note: notes[i], onOpenDoc: onOpenDoc),
+                      ],
+                    ],
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -308,7 +314,10 @@ class _DoctorMayAskSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('医生可能要问的', style: MedType.caption.copyWith(color: c.ink3)),
+              Text(
+                '医生可能要问的',
+                style: MedType.secondary.copyWith(color: c.ink3),
+              ),
               const SizedBox(height: 2),
               Text(
                 '下面每一个字都逐字来自你已添加的病历。MedMe 不做判断,也不生成结论。',
@@ -350,6 +359,9 @@ class _DoctorMayAskSection extends StatelessWidget {
 
 /// 「记录里的用药」——默认折叠。没有药可显示时不折叠:空态文案必须一进来就
 /// 看得见(规范 §六:空态是"出路",藏在一次多余的点击后面就不是出路了)。
+///
+/// 有药但折叠时,这一节只有「标题 + 箭头」,没有卡——`_Section` 的「小标题 +
+/// 一张卡」规则在这里唯一的例外:卡(免责声明 + 药名列表)要等展开才出现。
 class _MedsSubsection extends StatelessWidget {
   const _MedsSubsection({
     required this.activeMeds,
@@ -375,37 +387,43 @@ class _MedsSubsection extends StatelessWidget {
     }
     final c = MedColors.of(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: MedShape.s5),
+      padding: const EdgeInsets.only(bottom: MedShape.s4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            // 与 _SectionLabel 同一份外框(4,0,4,6)——展开时卡跟标题的间距
+            // 也靠这个 6,不再另加 SizedBox。
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
             child: InkWell(
               onTap: onToggle,
               borderRadius: BorderRadius.circular(MedShape.radiusControl),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        kRecordedMedsTitle,
-                        style: MedType.caption.copyWith(color: c.ink3),
+                // 去掉图标槽之后这是正文里唯一的可点行,ConstrainedBox 把
+                // 可点高度钉在 ≥48——不能只剩文字那 22px 高。
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          kRecordedMedsTitle,
+                          style: MedType.secondary.copyWith(color: c.ink3),
+                        ),
                       ),
-                    ),
-                    Icon(
-                      expanded ? Icons.expand_less : Icons.expand_more,
-                      size: 18,
-                      color: c.ink3,
-                    ),
-                  ],
+                      Icon(
+                        expanded ? Icons.expand_less : Icons.expand_more,
+                        size: 18,
+                        color: c.ink3,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
           if (expanded) ...[
-            const SizedBox(height: MedShape.s1),
             MedCard(
               child: Column(
                 children: [
@@ -432,9 +450,15 @@ class _MedsSubsection extends StatelessWidget {
   }
 }
 
-/// 一节 = 小标题(13·ink3)+ 一张卡。空态那句话就在卡里。减法稿:标题前不再有图标。
+/// 一节 = 小标题(见 [_SectionLabel])+ 一张卡。空态那句话就在卡里。减法稿:
+/// 标题前不再有图标。
 class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.emptyText, required this.isEmpty, required this.children});
+  const _Section({
+    required this.title,
+    required this.emptyText,
+    required this.isEmpty,
+    required this.children,
+  });
 
   final String title;
   final String emptyText;
@@ -449,10 +473,7 @@ class _Section extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
-            child: Text(title, style: MedType.secondary.copyWith(color: c.ink3)),
-          ),
+          _SectionLabel(title),
           MedCard(
             child: isEmpty
                 ? Padding(
@@ -468,6 +489,28 @@ class _Section extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 这一屏上小标题的共用样式(13·400·ink3)。`_Section` 直接用这个 widget;
+/// `_NotesSection`/`_DoctorMayAskSection`/`_MedsSubsection` 折叠头三处标题各自
+/// 还带着别的东西同排(「加一条」按钮/免责声明段落/展开箭头),套不进同一个
+/// `Padding` 外框(会跟同排的旁的东西对不齐左边),就地复用这里的
+/// `MedType.secondary.copyWith(color: c.ink3)`。四处原来分 13/400 与 12/500
+/// 两种字号各写各的,「记录中出现的药物」会随列表是不是空换字号——现在统一
+/// 成这一份,不会再有第二种。
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+      child: Text(text, style: MedType.secondary.copyWith(color: c.ink3)),
     );
   }
 }
