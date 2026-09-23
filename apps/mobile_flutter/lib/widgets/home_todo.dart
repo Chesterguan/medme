@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/profile_sections.dart'
-    show reminderOverdueNote, reminderStateLabel;
+    show reminderBasisLabel, reminderOverdueNote, reminderStateLabel;
 
 /// `vaultProfileDueReminders(dir:)` 那份 JSON 数组的一条。Rust 已经把 `pending`
 /// (规则没核实,档案页里「只显示不到期」的东西)过滤掉了——`state` 到这里恒为
@@ -45,12 +45,18 @@ class DueReminder {
   );
 }
 
-/// 一条提醒在待办卡上的次要说明:超期的写「超期 N 天」(与病程档案页 meta 行
-/// 逐字同一句),其余(`never`)沿用档案页的状态标签——不写第二份措辞。
-String reminderNote(DueReminder r) =>
-    (r.state == 'overdue' && r.overdueDays != null)
-        ? reminderOverdueNote(r.overdueDays)
-        : reminderStateLabel(r.state);
+/// 一条提醒在待办卡上的次要说明:状态部分 + `依据`(fix round 1 Important 1,
+/// spec §一/§五:「超期 N 天 / 从没查过 · 依据」)。状态部分超期的写「超期 N 天」
+/// (与病程档案页 meta 行逐字同一句),其余(`never`)沿用档案页的状态标签;
+/// `basis` 取不到(包没给)就只有状态部分,不留一个悬空的 ` · `——两处都不写
+/// 第二份措辞,原样调用 `profile_sections.dart` 已有的三个函数。
+String reminderNote(DueReminder r) {
+  final statePart = (r.state == 'overdue' && r.overdueDays != null)
+      ? reminderOverdueNote(r.overdueDays)
+      : reminderStateLabel(r.state);
+  final basis = reminderBasisLabel(r.basis);
+  return [statePart, ?basis].join(' · ');
+}
 
 class HomeTodoItem {
   const HomeTodoItem({required this.title, this.note, this.titleColor, required this.onTap});

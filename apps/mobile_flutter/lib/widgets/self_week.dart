@@ -51,17 +51,22 @@ String selfWeekDesc(List<SelfWeekItemDto> items) {
 }
 
 /// 展开行里一份自测的值:「血压 122/76 mmHg」「血糖 6.3 mmol/L」—— 血压两个数
-/// 合成「收缩/舒张」,其余指标本来就只有一条,原样显示。
+/// 合成「收缩/舒张」,其余指标各自一条。**血压凑成一项不等于把其余值丢掉**
+/// (fix round 1 Minor 3):`values` 今天虽然要么是血压一对、要么单独一条
+/// (`SelfMeasuredValueDto` 类文档),但这是把值原样摆出来的展示函数,不是只认
+/// 「一份文档一种形状」的解析器——万一哪天同一份文档真的混着记,也不该悄悄漏答案。
 String selfValuesLine(List<SelfMeasuredValueDto> values) {
   final byKey = {for (final v in values) v.analyteKey: v};
   final sys = byKey['bp_systolic'];
   final dia = byKey['bp_diastolic'];
-  if (sys != null && dia != null) {
-    return '${selfAnalyteLabel(sys.analyteKey)} ${fmtLabNumber(sys.value)}/${fmtLabNumber(dia.value)} ${sys.unit}';
-  }
-  return values
-      .map((v) => '${selfAnalyteLabel(v.analyteKey)} ${fmtLabNumber(v.value)} ${v.unit}')
-      .join(' · ');
+  final parts = <String>[
+    if (sys != null && dia != null)
+      '${selfAnalyteLabel(sys.analyteKey)} ${fmtLabNumber(sys.value)}/${fmtLabNumber(dia.value)} ${sys.unit}',
+    for (final v in values)
+      if (v.analyteKey != 'bp_systolic' && v.analyteKey != 'bp_diastolic')
+        '${selfAnalyteLabel(v.analyteKey)} ${fmtLabNumber(v.value)} ${v.unit}',
+  ];
+  return parts.join(' · ');
 }
 
 /// 自测周展开后的子行:一行一份自测(`fmtDate` + [selfValuesLine]),可点开

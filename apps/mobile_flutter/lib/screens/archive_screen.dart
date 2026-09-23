@@ -426,6 +426,25 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           }
 
           final (profile, groups, reminders, abnormal30d) = snap.data!;
+          // 待办卡条目——单独算好,好判断「一条都没有就不画那道间距」(fix round 1
+          // Minor 2:`if (widget.showTodo)` 只管 FFI 拉不拉,不代表一定有条目;
+          // 拉到了但两样都是空/0 时,`HomeTodo` 自己会 `SizedBox.shrink()`,
+          // 上面那道 `SizedBox(height: s3)` 间距不能跟着一起画)。
+          final todoItems = [
+            for (final r in reminders)
+              HomeTodoItem(
+                title: r.text,
+                note: reminderNote(r),
+                titleColor: r.state == 'overdue' ? c.high : null,
+                onTap: () => _openProfile(r.packageId),
+              ),
+            if (abnormal30d > 0)
+              HomeTodoItem(
+                title: '最近 30 天有 $abnormal30d 项偏高或偏低',
+                note: '给医生看',
+                onTap: _openForDoctor,
+              ),
+          ];
           // 还没核对(新导入)文档:置顶,新的(id 大)在前;确认在详情页做。
           final pending =
               _allDocs(
@@ -471,24 +490,12 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 // 待办卡:档案到期提醒 + 30 天异常项数,`HomeTiles` 之下、
                 // `ImportQueueCard` 之上——`PendingReviewBanner`/`ImportQueueCard`
                 // 已经是待办的前两条,位置不动。代拍模式(`showTodo: false`)整块
-                // 不装配,两个 FFI 调用也不会跑(见 `_load`)。
-                if (widget.showTodo) ...[
+                // 不装配,两个 FFI 调用也不会跑(见 `_load`);个人模式下两样都没有
+                // 条目时同样不画(含那道间距——`HomeTodo` 空列表已经 `shrink`,
+                // 间距若不跟着一起省,空手时还是会多出一道 32px 的空白)。
+                if (widget.showTodo && todoItems.isNotEmpty) ...[
                   const SizedBox(height: MedShape.s3),
-                  HomeTodo(items: [
-                    for (final r in reminders)
-                      HomeTodoItem(
-                        title: r.text,
-                        note: reminderNote(r),
-                        titleColor: r.state == 'overdue' ? c.high : null,
-                        onTap: () => _openProfile(r.packageId),
-                      ),
-                    if (abnormal30d > 0)
-                      HomeTodoItem(
-                        title: '最近 30 天有 $abnormal30d 项偏高或偏低',
-                        note: '给医生看',
-                        onTap: _openForDoctor,
-                      ),
-                  ]),
+                  HomeTodo(items: todoItems),
                 ],
                 const SizedBox(height: MedShape.s3),
                 // 后台识别队列:添加点完就回到这一屏,这几行是「东西确实在处理」

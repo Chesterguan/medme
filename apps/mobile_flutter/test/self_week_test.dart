@@ -32,6 +32,18 @@ void main() {
     );
   });
 
+  // fix round 1 Minor 3:血压凑成一项之前不许把同一份 values 里其余的值丢掉。
+  test('selfValuesLine:血压 + 其余指标同框,血压合成一项后其余原样跟上', () {
+    expect(
+      selfValuesLine([
+        SelfMeasuredValueDto(analyteKey: 'bp_systolic', value: 122, unit: 'mmHg'),
+        SelfMeasuredValueDto(analyteKey: 'bp_diastolic', value: 76, unit: 'mmHg'),
+        SelfMeasuredValueDto(analyteKey: 'heart_rate', value: 70, unit: '/min'),
+      ]),
+      '血压 122/76 mmHg · 心率 70 /min',
+    );
+  });
+
   DocumentSummaryDto doc(int id, String? docDate) =>
       DocumentSummaryDto(id: id, docType: 'self_measurement', docDate: docDate, pageCount: 1);
 

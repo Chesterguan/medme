@@ -2,6 +2,7 @@
 // [reminderNote] 拼接规则。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/widgets/home_todo.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'stage3_visual_helpers.dart';
@@ -28,6 +29,22 @@ void main() {
 
     await tester.tap(find.text('眼底检查还没查过'));
     expect(tapped, 1);
+  });
+
+  testWidgets('超期行:标题上色 c.high、字重 w500;note 是 ink3(fix round 1 Minor 6)', (tester) async {
+    await pumpStage3(tester, HomeTodo(items: [
+      HomeTodoItem(
+        title: '血常规逾期 8 个月',
+        note: '超期 240 天',
+        titleColor: MedColors.light.high,
+        onTap: () {},
+      ),
+    ]));
+    final title = tester.widget<Text>(find.text('血常规逾期 8 个月'));
+    expect(title.style!.color, MedColors.light.high);
+    expect(title.style!.fontWeight, FontWeight.w500);
+    final note = tester.widget<Text>(find.text('超期 240 天'));
+    expect(note.style!.color, MedColors.light.ink3);
   });
 
   testWidgets('2× 字号 360×640 不溢出', (tester) async {
@@ -63,6 +80,25 @@ void main() {
       reminderNote(const DueReminder(
         packageId: 'sle', packageName: '狼疮', id: 'r2', text: '眼底检查',
         state: 'never',
+      )),
+      '没查到',
+    );
+  });
+
+  test('reminderNote:超期 + basis 拼成「超期 N 天 · 依据」(fix round 1 Important 1)', () {
+    expect(
+      reminderNote(const DueReminder(
+        packageId: 'sle', packageName: '狼疮', id: 'r3', text: '复查血常规',
+        state: 'overdue', overdueDays: 12, basis: 'guideline',
+      )),
+      '超期 12 天 · 指南',
+    );
+    // basis 取不到(包没给)时不留悬空的 ` · `——与既有的两条 reminderNote 用例
+    // (上面那条,没有 basis 字段)一致,只是这里显式传 null 把这条约定钉住。
+    expect(
+      reminderNote(const DueReminder(
+        packageId: 'sle', packageName: '狼疮', id: 'r4', text: '眼底检查',
+        state: 'never', basis: null,
       )),
       '没查到',
     );
