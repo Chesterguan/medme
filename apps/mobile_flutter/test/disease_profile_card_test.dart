@@ -250,7 +250,12 @@ void main() {
       expect(fake.calls.length, 1, reason: '恰好一条');
       expect(fake.calls.single.sublist(0, 2), ['enable', 'sle']);
       expect(fake.calls.single[2], _today(), reason: 'at = 今天,YYYY-MM-DD');
-      expect(fake.views, 2, reason: '记完重算');
+      // 记完重算现在走两条路:`record()` 记上了会 `bumpVaultRevision()`(F-A 修
+      // 复,首页待办卡与防抖同步推送靠这个信号才知道要重算),而这张卡自己也
+      // 监听着 `vaultRevision`(收外部改动的信号,见下面「添加了新病历」那条)——
+      // 于是一次 enable 触发两次重算:bump 同步唤醒监听器一次,`_enable` 自己
+      // 在 `record()` 之后又显式重算一次。两次都是纯投影,多算不是错,只是多余。
+      expect(fake.views, 3, reason: '记完重算(bump 一次 + _enable 自己一次)');
       expect(find.text('待补 / 逾期'), findsOneWidget);
     });
 
@@ -436,6 +441,32 @@ void main() {
         await t.pumpAndSettle();
         expect(t.takeException(), isNull, reason: '第 $i 屏溢出');
       }
+    });
+  });
+
+  group('record 记上了要唤醒首页待办与同步推送', () {
+    // 开关病程档案写下的是一条真实的病历箱文档 —— 首页待办卡(`ArchiveScreen`
+    // 监听 `vaultRevision`)和防抖同步推送都靠这个信号才知道要重新算一次。
+    test('记上了:vaultRevision +1', () async {
+      final source = DiseaseProfileSource(record: (kind, pkg, at) async {});
+      final before = vaultRevision.value;
+
+      final ok = await source.record('enable', 'x');
+
+      expect(ok, isTrue);
+      expect(vaultRevision.value, before + 1);
+    });
+
+    test('没记上:vaultRevision 不动', () async {
+      final source = DiseaseProfileSource(
+        record: (kind, pkg, at) async => throw StateError('x'),
+      );
+      final before = vaultRevision.value;
+
+      final ok = await source.record('enable', 'x');
+
+      expect(ok, isFalse);
+      expect(vaultRevision.value, before);
     });
   });
 }

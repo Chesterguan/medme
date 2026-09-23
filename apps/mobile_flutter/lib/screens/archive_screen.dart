@@ -84,6 +84,25 @@ List<List<TimelineGroupDto>> byMonth(List<TimelineGroupDto> groups) {
   return out;
 }
 
+/// 时间线只留事件:开关病程档案写下的动作日志(`doc_type == 'profile_event'`)
+/// 是设置动作,不是病历记录 —— 不进时间线、不参与「最近就诊」。只在这一处过滤:
+/// Rust 的 `load_archive` 必须继续把它们带回来(`gather_profile_events` 靠它算
+/// 档案开没开),所以不能在 Rust 那边排除。
+List<TimelineGroupDto> timelineGroups(List<TimelineGroupDto> raw) => [
+  for (final g in raw)
+    if (g is! TimelineGroupDto_Document || g.doc.docType != 'profile_event') g,
+];
+
+/// 「最近就诊」= 时间线最新一条**非自测周**的日期:在家量的血压不是就诊。
+/// 没有这样的一条 → null(成员头那一行自己显示「暂无」)。
+String? recentVisitDate(List<TimelineGroupDto> groups) {
+  for (final g in groups) {
+    if (g is TimelineGroupDto_SelfWeek) continue;
+    return _groupDate(g);
+  }
+  return null;
+}
+
 String _groupDesc(TimelineGroupDto g) {
   return switch (g) {
     TimelineGroupDto_Encounter(:final encounter, :final docs) => () {
@@ -200,7 +219,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   Future<(PatientProfileDto, List<TimelineGroupDto>, List<DueReminder>, int)> _load() async {
     final results = await Future.wait([patientProfile(), loadArchive()]);
     final profile = results[0] as PatientProfileDto;
-    final groups = results[1] as List<TimelineGroupDto>;
+    final groups = timelineGroups(results[1] as List<TimelineGroupDto>);
     // 载入「还没核对」集(build 里同步判断 isPending 前要先加载好)。
     await ReviewState.instance.ensureLoaded();
     // 兜底自动命名:示例数据等不走导入流程的路径,也能把默认档案改成识别到的姓名。
@@ -477,11 +496,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   gender: profile.gender,
                   age: profile.age,
                   recordCount: profile.recordCount.toInt(),
-                  // 「最近就诊」取时间线最新一条的日期(`s1` 那一行),不是这一行
-                  // 单独算的数:没有记录、或那条没识别到日期,这一行自己显示「暂无」。
-                  recentVisitDate: groups.isNotEmpty
-                      ? _groupDate(groups.first)
-                      : null,
+                  // 「最近就诊」取时间线最新一条**非自测周**的日期:在家量的血压不是
+                  // 就诊。没有这样的一条(或那条没识别到日期),这一行自己显示「暂无」。
+                  recentVisitDate: recentVisitDate(groups),
                   onSwitchMember: _showProfileSwitcher,
                 ),
                 const SizedBox(height: MedShape.s3),

@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/disease_profile_card.dart';
 
 /// 病程档案那一块的假口子:这一屏的测试不关心它的内容,只要它别去碰 FFI 与网络
@@ -180,6 +181,45 @@ void main() {
       );
       expect(find.text('只看异常'), findsOneWidget, reason: '关掉搜索,开关回来');
     });
+
+    testWidgets(
+      'I-2:选中的大类被「只看异常」筛空——说筛子筛空的,不说大类没有指标',
+      (tester) async {
+        useNarrowPhone(tester);
+        // 唯一一条序列,唯一一个大类,永远不异常(没有 H/L 点)——选中大类之后
+        // 再开「只看异常」,visible 会变空,但大类本身不是空的。
+        final normalOnly = [
+          TrendSeriesDto(
+            name: '肌酐',
+            unit: 'umol/L',
+            valuesConverted: false,
+            anyAbnormal: false,
+            panel: '肾功能',
+            selfMeasured: false,
+            points: [_pt('2026-01-05', 80), _pt('2026-06-05', 84)],
+          ),
+        ];
+        await tester.pumpWidget(_app(normalOnly, catalog: const ['肾功能']));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('肾功能 1'));
+        await tester.pumpAndSettle();
+        expect(find.text('肌酐'), findsOneWidget, reason: '选中大类之后还在——还没被只看异常筛掉');
+
+        await tester.dragUntilVisible(
+          find.text('只看异常'),
+          find.byType(PanelChipsRow),
+          const Offset(-80, 0),
+        );
+        await tester.tap(find.text('只看异常'));
+        await tester.pumpAndSettle();
+
+        // 这个大类明明有一条指标(肌酐)——是「只看异常」把它筛空的,不是大类
+        // 本身没有可显示的指标,两句话不能张冠李戴。
+        expect(find.text('这些记录里没有非正常项。'), findsOneWidget);
+        expect(find.text('这个大类下没有可显示的指标。'), findsNothing);
+      },
+    );
   });
 
   group('页尾折叠:只测过一次的序列', () {
@@ -294,5 +334,30 @@ void main() {
     // Task 5/6:「记录一下」「最近就诊」都不再是这一屏的一部分。
     expect(find.text('记录一下'), findsNothing);
     expect(find.text('最近就诊'), findsNothing);
+  });
+
+  // BUG-4 回归:「趋势」屏监听 `vaultRevision`(`trends_screen.dart` 的
+  // `_onVaultChanged`),存完一条记录要当场重新拉一次,不能停在冷启动那一刻的
+  // 内容——与 `test/emergency_card_refresh_test.dart` 同一手法。
+  testWidgets('保险箱一变,趋势屏就重新拉一次数据', (tester) async {
+    var loads = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: MedMe.theme(),
+        home: TrendsScreen(
+          load: () async {
+            loads++;
+            return (_fixture(), const ['肾功能', '甲状腺功能']);
+          },
+          profileSource: noProfilePackage(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(loads, 1);
+
+    bumpVaultRevision();
+    await tester.pumpAndSettle();
+    expect(loads, 2, reason: '收到保险箱变更信号后必须重新拉一次');
   });
 }

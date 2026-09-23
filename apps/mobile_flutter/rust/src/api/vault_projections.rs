@@ -1205,7 +1205,8 @@ pub fn view_abnormal_30d() -> anyhow::Result<u32> {
             continue;
         };
         let Some(d) = last.date else { continue };
-        if (today - d).num_days() > 30 {
+        // 未来日期(页脚年份 OCR 错行的常见错法)不算「最近」——不能只挡下界。
+        if !(0..=30).contains(&(today - d).num_days()) {
             continue;
         }
         // 与 view_visit_summary 的 recent_changes 同一条判法:只认 "H" / "L",印的
@@ -2544,6 +2545,7 @@ mod tests {
         let today = today();
         let d20 = today - chrono::Duration::days(20);
         let d60 = today - chrono::Duration::days(60);
+        let d_future = today + chrono::Duration::days(400);
 
         // 20 天前:一份化验单,一项偏高(H)——落在 30 天窗口内,该数。
         crate::api::vault::ingest_bytes(
@@ -2576,6 +2578,18 @@ mod tests {
                 unit: "/min".into(),
             }],
             Some(format!("{}T08:00:00Z", d20.format("%Y-%m-%d"))),
+        )
+        .unwrap();
+
+        // 未来日期(页脚年份 OCR 错行的常见错法):一项偏高(H),但日期在
+        // 「今天」之后 400 天——不落在 0..=30 窗口内,不该数。
+        crate::api::vault::ingest_bytes(
+            "化验-未来日期.txt".into(),
+            format!(
+                "生化检验报告单\n检验日期 {}\n血糖 15.0 mmol/L 3.9-6.1 H\n",
+                d_future.format("%Y-%m-%d")
+            )
+            .into_bytes(),
         )
         .unwrap();
 

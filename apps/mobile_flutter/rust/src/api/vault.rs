@@ -297,7 +297,10 @@ fn self_week_groups(
         let mut agg: BTreeMap<String, (i64, f64, f64, String)> = BTreeMap::new();
         let mut week_docs = Vec::with_capacity(ds.len());
         for d in &ds {
-            let text = v.ocr_text(d.id).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            // 一份自测读不出正文不能拖垮整个 `load_archive`——与 `doc_summary`
+            // 读同一列的方式一致(`dto.rs:163` 「同一条读法,读不出就是空」):
+            // 读不出就当它没有值,不能把 `?` 往上抛。
+            let text = v.ocr_text(d.id).unwrap_or_default();
             let values: Vec<SelfMeasuredValueDto> = parser::parse_self_measurement_payload(&text)
                 .unwrap_or_default()
                 .into_iter()
@@ -314,7 +317,6 @@ fn self_week_groups(
         let mut summary: Vec<SelfWeekItemDto> = Vec::new();
         for key in ORDER.iter().map(|k| k.to_string()).chain(agg.keys().filter(|k| !ORDER.contains(&k.as_str())).cloned()) {
             if let Some((count, min, max, unit)) = agg.get(&key) {
-                if summary.iter().any(|s| s.analyte_key == key) { continue; }
                 summary.push(SelfWeekItemDto { analyte_key: key.clone(), count: *count, min: *min, max: *max, unit: unit.clone() });
             }
         }

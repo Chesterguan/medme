@@ -330,12 +330,12 @@ class _TrendsScreenState extends State<TrendsScreen> {
                                       '「$_query」的指标。\n清空搜索可以看这个大类下的全部。'
                                 : '这些记录里没有名字含「$_query」的指标。\n'
                                       '换个叫法试试 —— 同一项在不同医院可能印成「肌酐」「血肌酐」「Cr」。')
-                          // chip 只在大类下至少有一条可渲染序列时才出现(见
-                          // `trendPanelChips`),选中后过滤为空理论上到不了这里;
-                          // 留一句兜底文案而不是让页面崩掉或空白一片。
-                          : (panelSelected
-                                ? '这个大类下没有可显示的指标。'
-                                : '这些记录里没有非正常项。'),
+                          // 「只看异常」与选中大类是叠加关系(`trendVisible`,两个
+                          // 条件都作用在同一份 `visible` 上),所以选中的大类可能
+                          // 恰好被「只看异常」筛空 —— 让筛子先说话,而不是大类。
+                          : (_abnormalOnly
+                                ? '这些记录里没有非正常项。'
+                                : '这个大类下没有可显示的指标。'),
                       textAlign: TextAlign.center,
                       style: MedType.body.copyWith(
                         color: c.ink2,
