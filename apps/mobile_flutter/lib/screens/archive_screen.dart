@@ -302,8 +302,10 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     },
   );
 
-  /// 「添加」:弹三选一(拍照 / 相册 / 选文件),排进后台队列后本屏经
-  /// `vaultRevision` 自动刷新。顶栏那颗和 [HomeTiles] 那颗走的是**同一条**。
+  /// 「添加」:弹四选一(拍照 / 相册 / 选文件 / 记录一下)。前三项排进后台队列,
+  /// 第四项直接开录入弹层——两条路都靠 `vaultRevision` 让本屏自动刷新(前三项
+  /// 队列跑完自己 bump,第四项录入弹层存完自己 bump,见 `import_flow.dart` 的
+  /// `showImportSheet`)。顶栏那颗和 [HomeTiles] 那颗走的是**同一条**。
   ///
   /// ⚠️ 这里曾是 `() => showImportSheet(context)` —— 一个**没人 await、没有
   /// catchError 的 Future**。里面抛出的任何异常都只会掉进 zone,屏上一片安静,

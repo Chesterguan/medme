@@ -97,7 +97,25 @@ ImportReviewDestination reviewDestinationFor(ImportRunResult? result) {
 /// 返回值见 [ImportRunResult]:取消/未选文件返回 `null`,「记录一下」这条也恒
 /// 返回 `null`(见上);否则带上这次排了几份。
 Future<ImportRunResult?> showImportSheet(BuildContext context) async {
-  final choice = await showModalBottomSheet<ImportChoice>(
+  final choice = await openAddSheet(context);
+  if (choice == null || !context.mounted) return null;
+  if (choice == ImportChoice.record) {
+    await showManualEntrySheet(context);
+    return null;
+  }
+  return runImport(context, choice);
+}
+
+/// 只拉起「添加」四选一 sheet 本身,返回用户选中的哪一项(取消/`context` 已经
+/// 失效都是 `null`)——不管选完之后做什么,那是 [showImportSheet] 的事。
+///
+/// 拆成独立函数是为了让 `sheets_visual_test.dart` 的真实溢出矩阵测试跟生产
+/// 复用**同一份** `showModalBottomSheet` 配置(fix round 1,coordinator
+/// review):测试如果自己另拼一份参数,production 这边哪天再调一个开关,测试
+/// 很容易忘记同步改,那条测试就测不出真实会不会溢出——两边调同一个函数,不
+/// 存在「测一套、生产另一套」。
+Future<ImportChoice?> openAddSheet(BuildContext context) {
+  return showModalBottomSheet<ImportChoice>(
     context: context,
     showDragHandle: true,
     // 四选一之后(Task 5 加了「记录一下」)内容比默认 bottom sheet 那道 9/16
@@ -107,12 +125,6 @@ Future<ImportRunResult?> showImportSheet(BuildContext context) async {
     isScrollControlled: true,
     builder: (context) => const SafeArea(child: AddSheetBody()),
   );
-  if (choice == null || !context.mounted) return null;
-  if (choice == ImportChoice.record) {
-    await showManualEntrySheet(context);
-    return null;
-  }
-  return runImport(context, choice);
 }
 
 /// [showImportSheet] 的正文(mockup `s6`)。fix round 1(task-14-review
@@ -149,7 +161,7 @@ class AddSheetBody extends StatelessWidget {
           title: '拍照',
           subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
           choice: ImportChoice.camera,
-          // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
+          // 首页快捷操作原先专门有一颗「拍照」,直达这四选一里的这一项;
           // 改版后那一排快捷操作整个没了(今天「病历」首页只剩「添加」与
           // 「给医生看」两颗方块),拍照要多经一次这个选择表才能到达。视觉上
           // 做成主选项(蓝底块 + `highlighted`)抵消这多出来的一次点击——它
@@ -182,10 +194,12 @@ class AddSheetBody extends StatelessWidget {
   }
 }
 
-/// 跳过三选一,**直接**走某一种取件来源。
+/// 跳过四选一那张选择表,**直接**走某一种取件来源(拍照 / 相册 / 选文件之一
+/// ——不含「记录一下」,那个选项在 [showImportSheet] 里已经被
+/// `choice == ImportChoice.record` 那支分流掉,不会走到这个函数)。
 ///
 /// 从 [showImportSheet] 里原样切出来的后半段(逻辑一字未改)——留着这一刀是为了
-/// 让将来任何一颗「直接拍照」式的快捷入口都能跳过三选一,不用重新拼一遍后半段
+/// 让将来任何一颗「直接拍照」式的快捷入口都能跳过选择表,不用重新拼一遍后半段
 /// 逻辑。⚠️ 今天**只有** [showImportSheet] 一个调用方(概览页那一排快捷操作已在
 /// Task 9 随整屏解散,「病历」首页只剩「添加」与「给医生看」两颗方块,都不是
 /// 直接拍照的捷径)——这条切分暂时没有第二个用武之地,但保留成本低,拆开来

@@ -58,7 +58,7 @@ void main() {
 
     await gotoEmergencyCard(tester);
 
-    // 回去存一条 —— 走真实 UI(趋势 →「记录一下」)。
+    // 回去存一条 —— 走真实 UI(病历 →「添加」→「记录一下」)。
     await openRecordSheet(tester);
     await tester.enterText(find.byType(TextField).at(0), '128');
     await tester.enterText(find.byType(TextField).at(1), '82');
