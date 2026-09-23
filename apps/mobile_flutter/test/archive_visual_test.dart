@@ -67,11 +67,12 @@ void main() {
 
   test('主页时间线的行上没有图标(源码级)', () {
     // 整月的行现在都在一张 MedCard 里,行间 line2 分隔线,行上没有 MedIcon——
-    // 这个结构在 pump 层面测不出来:_TimelineItem 需要真实 TimelineGroupDto,
-    // 这一屏和 ArchiveScreen 一样,字段初始化就碰 FFI,测试环境没有原生库,
-    // pump 不了(见文件头注释)。改为断言源码:全文件只许剩一处 `MedIcon(`——
-    // _MismatchBanner 的警告图标(减法稿两处传色例外之一),时间线行/子文档行/
-    // 还没核对卡片上的图标本任务已删光。
+    // 这个结构在 pump 层面测不出来:不是 TimelineGroupDto 造不出来(它是个普通
+    // 构造函数,`archive_header_test.dart` 已经在这么用了),而是 `_TimelineItem`
+    // 是私有类,月份卡的组装又写死在 ArchiveScreen 那个绑了 FFI 的
+    // FutureBuilder 里面,单独 pump 不出这一小块。改为断言源码:全文件只许剩
+    // 一处 `MedIcon(`——_MismatchBanner 的警告图标(减法稿两处传色例外之一),
+    // 时间线行/子文档行/还没核对卡片上的图标本任务已删光。
     final src = File('lib/screens/archive_screen.dart').readAsStringSync();
     final count = 'MedIcon('.allMatches(src).length;
     expect(count, 1, reason: '只有 _MismatchBanner 的警告图标还该有 MedIcon(,其余行上的图标本任务删掉了');

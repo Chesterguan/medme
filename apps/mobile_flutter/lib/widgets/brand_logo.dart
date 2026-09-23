@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 
-/// 真 logo(毛笔「医」)。**brief §品牌 只允许它出现在三处**:
+/// 真 logo(毛笔「医」)。**brief §品牌 只允许它出现在四处**:
 ///
 ///  · 主页顶栏 [topBar] 30 —— `archive_screen.dart` 的标题行;
 ///  · 病程档案页头 [topBar] 30 —— `disease_profile_screen.dart`;
-///  · 首启场景中央 [splash] 104 —— `first_run_consent.dart`。
+///  · 首启场景中央 [splash] 104 —— `first_run_consent.dart`;
+///  · 病程档案入口卡 [topBar] 30 —— `record_book_strip.dart`。
 ///
 /// 别处想放品牌,用 `brand_surfaces.dart` 的实色面(`HeroCard`/`MedPrimaryButton`),
-/// 不要再摆一个 logo —— 到处都是
-/// 的标志等于没有标志。
+/// 不要再摆一个 logo —— 标志到处都是,就等于没有标志。
 ///
 /// **不是 app 图标**:`assets/icon/app_icon.png` 是启动/桌面图标,那一张继续用在
 /// `main.dart` 的启动画面上,两者不互换。

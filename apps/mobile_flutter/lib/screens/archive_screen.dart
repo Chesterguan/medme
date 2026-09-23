@@ -26,8 +26,8 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 /// (见 lib/src/rust/api/vault.dart)。
 ///
 /// 三 tab 信息架构里这一屏**同时是首页**:概览整屏解散之后,「你是谁、现在看的是谁」
-/// 那一行([MemberHeader])搬到了这里的最上面,底下是两颗等宽方块
-/// ([HomeTiles]:`添加` / `给医生看`)。「给医生看」没有底栏席位 —— 那颗方块是它
+/// 那一行([MemberHeader])搬到了这里的最上面,底下是两颗等宽药丸
+/// ([HomeTiles]:`添加` / `给医生看`)。「给医生看」没有底栏席位 —— 那颗药丸是它
 /// **全 App 唯一的入口**。
 ///
 /// 文档类型标签与图标已挪到 `lib/doc_labels.dart`(四个屏共用,免得同一份病历在
@@ -108,7 +108,7 @@ List<DocumentSummaryDto> _allDocs(List<TimelineGroupDto> groups) {
   return out;
 }
 
-/// 「已确认」时间线:把还没核对文档从分组里剔除(它们单独在顶部红框区展示,避免重复)。
+/// 「已确认」时间线:把还没核对文档从分组里剔除(它们单独在顶部还没核对区展示,避免重复)。
 /// 就诊组里若有部分文档还没核对,重建一个只含已确认文档的组;整组都还没核对则整组略去。
 List<TimelineGroupDto> _confirmedOnly(List<TimelineGroupDto> groups) {
   final out = <TimelineGroupDto>[];
@@ -307,7 +307,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: c.line),
         ),
-        // 顶栏不放按钮(mockup s1):「添加」只有成员一行下面那颗方块一条路,
+        // 顶栏不放按钮(mockup s1):「添加」只有成员一行下面那颗药丸一条路,
         // 「给医生看」同理 —— 每个功能只有一条路到达(ia-proposal §2)。
       ),
       body: FutureBuilder<(PatientProfileDto, List<TimelineGroupDto>)>(
@@ -336,13 +336,13 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
           }
 
           final (profile, groups) = snap.data!;
-          // 还没核对(新导入)文档:红框置顶,新的(id 大)在前;确认在详情页做。
+          // 还没核对(新导入)文档:置顶,新的(id 大)在前;确认在详情页做。
           final pending =
               _allDocs(
                   groups,
                 ).where((d) => ReviewState.instance.isPending(d.id)).toList()
                 ..sort((a, b) => b.id.compareTo(a.id));
-          // 已确认时间线:剔除还没核对文档,避免和上面红框区重复。
+          // 已确认时间线:剔除还没核对文档,避免和上面还没核对区重复。
           final confirmed = _confirmedOnly(groups);
           return RefreshIndicator(
             onRefresh: _refresh,
@@ -395,7 +395,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   onTap: _scrollToPending,
                 ),
                 if (pending.isNotEmpty) const SizedBox(height: MedShape.s2),
-                // 还没核对的:琥珀框卡片,点开进详情核对;左滑删除。
+                // 还没核对的:白卡 + 琥珀状态词,点开进详情核对;左滑删除。
                 for (final d in pending) ...[
                   _PendingCard(
                     doc: d,
@@ -461,7 +461,7 @@ class _EmptyState extends StatelessWidget {
     // 框起来 + 明说下一步该点哪,才是「给出路」。
     //
     // 规范的空态样例里还有一颗按钮。这里**刻意没加** —— 加一颗按钮就是新增一个
-    // 交互入口。出路由文案给:上面那颗「添加」方块一直在。
+    // 交互入口。出路由文案给:上面那颗「添加」药丸一直在。
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: MedShape.s6),
       child: DottedBorderBox(
@@ -683,15 +683,15 @@ class _SubDocList extends StatelessWidget {
   }
 }
 
-/// 还没核对(新导入)卡片:琥珀框 + 「还没核对」pill,点开进**详情页**核对并确认
-/// (确认按钮在详情页,不在这里)。左滑删除。识别姓名与当前档案不符时下方警告。
-/// 确认后本卡消失,该文档以标准样式进入下方时间线。
+/// 还没核对(新导入)卡片:白底 `MedCard` + 琥珀「还没核对」状态词([statusWord]),
+/// 点开进**详情页**核对并确认(确认按钮在详情页,不在这里)。左滑删除。识别姓名
+/// 与当前档案不符时下方跟一条红色 `_MismatchBanner` 警告。确认后本卡消失,该
+/// 文档以标准样式进入下方时间线。
 ///
-/// **框色从红(`critical`)降到琥珀(`high`),同时把姓名不符的警告从橙升到红。**
-/// 原先每一份刚导入的文档都顶着一圈红框 —— 而「刚导入、还没核对」是导入成功后的
-/// 常态,不是事故;红色天天出现就会被学会忽略。真正该报红的是它下面那条「这张单
-/// 子上的名字不是你」——那才是可能把别人的病历归进你档案的一步。两级现在分开了:
-/// 琥珀 = 请你看一眼,红 = 可能导错人。
+/// **两级分开:状态词琥珀 = 请你看一眼,姓名不符横幅红 = 可能导错人。**
+/// 「刚导入、还没核对」是导入成功后的常态,不是事故;天天出现的红色会被学会
+/// 忽略。真正该报红的是下面那条「这张单子上的名字不是你」——那才是可能把别人
+/// 的病历归进你档案的一步。
 class _PendingCard extends StatelessWidget {
   const _PendingCard({
     required this.doc,
@@ -716,7 +716,10 @@ class _PendingCard extends StatelessWidget {
           InkWell(
             onTap: () => onOpen(doc.id),
             child: Padding(
-              padding: const EdgeInsets.all(MedShape.s2),
+              padding: const EdgeInsets.symmetric(
+                horizontal: MedShape.s3,
+                vertical: MedShape.s2,
+              ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

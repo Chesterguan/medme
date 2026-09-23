@@ -373,7 +373,9 @@ class MedShape {
   /// 26 —— 底部 sheet(出处 mockup CSS;预检裁定 R6)。全 app 最大的一档。
   static const double radiusSheet = 26;
 
-  /// 18 —— 入口块(主页两个方块、病历本条)。
+  /// 18 —— 入口块。唯一读者是 `MedEntryTile`(「换新手机」屏的两个入口)。比
+  /// `radiusCard` 大,不许嵌进卡片里——嵌套要求圆角严格递减(卡片 > 分块 >
+  /// 控件),这一档比卡片还大,只能用在卡外。
   static const double radiusEntry = 18;
   /// 16 —— 横幅、输入框面板、二维码框。
   static const double radiusBanner = 16;

@@ -1286,7 +1286,10 @@ class _VisitCard extends StatelessWidget {
             // 子文档列表这些配套。这里只负责把人送过去。
             : goToRecords,
         child: Padding(
-          padding: const EdgeInsets.all(MedShape.s2),
+          padding: const EdgeInsets.symmetric(
+            horizontal: MedShape.s3,
+            vertical: MedShape.s2,
+          ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

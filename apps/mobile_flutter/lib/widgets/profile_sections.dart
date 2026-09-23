@@ -268,7 +268,6 @@ class _ItemRow extends StatelessWidget {
     this.meta = const [],
     this.longText,
     this.note,
-    this.barColor,
   });
 
   /// 左边那颗 18px 小图标,`null` 就不画。时间轴那一路传 `null`——圆点已经是
@@ -300,14 +299,6 @@ class _ItemRow extends StatelessWidget {
   /// (`rules.rs::gfr_item` / `biopsy_item` 的文档写了这件事);与 `longText` 分两行,
   /// 不拼在一起 —— 拼了就核不到这一句的逐字原文(与 score_card 的 `caveat` 同一手法)。
   final String? note;
-
-  /// 现在在用/活动度两张卡里的行不是 `LabLine`(没有干净的数值+单位可拆,见
-  /// `_GcBlock`/`_HcqBlock`/`_OtherDrugRow`/`_ScoreCardBody` 的调用点),所以不
-  /// 强行换组件,只借这根条把视觉语言对齐。**不借化验状态色**(偏高/偏低/危急值
-  /// 那几个专用色)——这些行没有 flag,借状态色就是替一个没有判定的数据编一个
-  /// 判定(`lab_status.dart` 头部同一条戒律)。传 `null`(默认)不画条,原有调用点
-  /// 一个像素都不变。
-  final Color? barColor;
 
   @override
   Widget build(BuildContext context) {
@@ -356,14 +347,7 @@ class _ItemRow extends StatelessWidget {
         ],
       ),
     );
-    if (barColor == null) return row;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(left: BorderSide(color: barColor!, width: 4)),
-      ),
-      padding: const EdgeInsets.only(left: MedShape.s1),
-      child: row,
-    );
+    return row;
   }
 }
 
@@ -430,7 +414,6 @@ class _GcBlock extends StatelessWidget {
         if (drug != null)
           _ItemRow(
             icon: Icons.medication_outlined,
-            barColor: c.line2,
             label: [
               drug,
               if (gc['dose'] != null) gc['dose'],
@@ -452,7 +435,6 @@ class _GcBlock extends StatelessWidget {
           // 同一天多条医嘱分支),两处都画就是同一句话说两遍。
           _ItemRow(
             icon: Icons.medication_outlined,
-            barColor: c.line2,
             label: '激素',
             longText: gc['blocked_reason'] as String?,
           ),
@@ -470,7 +452,6 @@ class _GcBlock extends StatelessWidget {
         for (final u in unconvertible)
           _ItemRow(
             icon: Icons.error_outline,
-            barColor: c.line2,
             label: [
               u['name'],
               u['dose'],
@@ -511,7 +492,6 @@ class _HcqBlock extends StatelessWidget {
         if (dailyMg != null)
           _ItemRow(
             icon: Icons.medication_outlined,
-            barColor: c.line2,
             label: [
               ?dose,
               '$dailyMg mg/日',
@@ -533,7 +513,6 @@ class _HcqBlock extends StatelessWidget {
           // 一),原样显示,不另写一句——同一条理由见 `_GcBlock` 的 unconvertible。
           _ItemRow(
             icon: Icons.medication_outlined,
-            barColor: c.line2,
             label: '羟氯喹',
             longText: hcq['reason'] as String?,
           ),
@@ -587,7 +566,6 @@ class _OtherDrugRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = MedColors.of(context);
     final infusion = med['infusion'] == null ? null : _asMap(med['infusion']);
     // 给药途径的 key(`"iv"`/`"sc"`,`package.rs::Drug.infusion`)必须留着——同一个
     // 药不同途径的剂量常常不一样(贝利尤单抗 IV 与 SC 的方案原文都不同),丢了 key
@@ -597,7 +575,6 @@ class _OtherDrugRow extends StatelessWidget {
         .join(' / ');
     return _ItemRow(
       icon: Icons.medication_outlined,
-      barColor: c.line2,
       label: [
         med['name'],
         med['latest_dose'],
@@ -692,7 +669,7 @@ class _ScoreCardBody extends StatelessWidget {
             runSpacing: 4,
             children: [
               if (label case final l? when l.isNotEmpty)
-                MedPill(text: l, foreground: c.sealInk, background: c.sealWash),
+                MedPill(text: l, foreground: c.ink2, background: c.line2),
               ?_metaLine(context, [
                 windowDays == null ? null : '窗口 $windowDays 天',
                 asOf,
@@ -704,8 +681,8 @@ class _ScoreCardBody extends StatelessWidget {
           const SizedBox(height: MedShape.s2),
           const Divider(height: 1),
           for (final h in hits) _hitRow(c, h),
-          for (final m in missed) _missedRow(c, m),
-          for (final u in unscored) _unscoredRow(c, u),
+          for (final m in missed) _missedRow(m),
+          for (final u in unscored) _unscoredRow(u),
         ],
       ],
     );
@@ -715,7 +692,6 @@ class _ScoreCardBody extends StatelessWidget {
     final weight = h['weight'];
     final row = _ItemRow(
       icon: Icons.check_circle_outline,
-      barColor: c.line2,
       label: '${h['label']}',
       trailing: weight == null
           ? null
@@ -743,19 +719,17 @@ class _ScoreCardBody extends StatelessWidget {
     );
   }
 
-  Widget _missedRow(MedColors c, Map<String, dynamic> m) {
+  Widget _missedRow(Map<String, dynamic> m) {
     return _ItemRow(
       icon: Icons.cancel_outlined,
-      barColor: c.line2,
       label: '${m['label']}',
       longText: _evidenceText(_asMapList(m['evidence'])),
     );
   }
 
-  Widget _unscoredRow(MedColors c, Map<String, dynamic> u) {
+  Widget _unscoredRow(Map<String, dynamic> u) {
     return _ItemRow(
       icon: Icons.help_outline,
-      barColor: c.line2,
       label: '${u['label']}',
       longText: u['reason'] as String?,
     );
@@ -870,8 +844,8 @@ class _SeriesCard extends StatelessWidget {
             if (needsReview is num && needsReview > 0)
               MedPill(
                 text: '需核对 ×$needsReview',
-                foreground: c.sealInk,
-                background: c.sealWash,
+                foreground: c.ink2,
+                background: c.line2,
               ),
             if (valuesConverted)
               // 「已换算」——这条线上混了不同印刷单位,画的是统一后的规范单位,
@@ -1017,7 +991,7 @@ class _ReminderRow extends StatelessWidget {
             MedPill(text: stateLabel, foreground: c.ink2, background: c.line2),
             if (basis != null) ...[
               const SizedBox(width: 4),
-              MedPill(text: basis, foreground: c.sealInk, background: c.sealWash),
+              MedPill(text: basis, foreground: c.ink2, background: c.line2),
             ],
           ],
         ),
@@ -1121,7 +1095,7 @@ class _TimelineEventRow extends StatelessWidget {
             MedPill(text: typeLabel, foreground: c.ink2, background: c.line2),
           if (event['unverified'] == true) ...[
             const SizedBox(width: 4),
-            // R4:「需核对」只许用 `MedPill.check`,不许再各写各的 sealInk/sealWash。
+            // R4:「需核对」只许用 `MedPill.check`,不许再各写各的配色。
             MedPill.check('需核对'),
           ],
         ],

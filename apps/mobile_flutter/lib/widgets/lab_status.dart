@@ -106,9 +106,13 @@ Widget? labStatusWord(BuildContext context, String? flag) {
 }) {
   final (lo, hi) = trendYDomain([value], refLow: refLow, refHigh: refHigh);
   double at(double v) => ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+  final bandFrom = refLow == null ? 0.0 : at(refLow);
+  final bandTo = refHigh == null ? 1.0 : at(refHigh);
   return (
-    bandFrom: refLow == null ? 0.0 : at(refLow),
-    bandTo: refHigh == null ? 1.0 : at(refHigh),
+    bandFrom: bandFrom,
+    // 参考区间倒挂(单据印刷错误,`refLow > refHigh`)时不画负宽的带子——夹到
+    // `bandFrom`,退化成一条 0 宽的线,而不是让 `_RangeBarPainter` 拿到负数宽度。
+    bandTo: bandTo < bandFrom ? bandFrom : bandTo,
     markerAt: at(value),
   );
 }

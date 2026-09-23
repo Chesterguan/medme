@@ -120,5 +120,9 @@ void main() {
         expect(v, inInclusiveRange(0.0, 1.0));
       }
     });
+    test('refLow > refHigh(参考区间倒挂,单据印刷错误):不画负宽,bandTo ≥ bandFrom', () {
+      final f = labRangeFractions(value: 5, refLow: 10, refHigh: 2);
+      expect(f.bandTo, greaterThanOrEqualTo(f.bandFrom));
+    });
   });
 }

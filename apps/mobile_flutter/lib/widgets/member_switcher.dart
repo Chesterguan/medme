@@ -80,7 +80,7 @@ Future<void> showMemberSwitcherSheet(
             ),
             for (final m in members)
               ListTile(
-                leading: MedAvatar(m.name.isNotEmpty ? m.name[0] : '?'),
+                leading: MedAvatar(m.name.isNotEmpty ? m.name.characters.first : '?'),
                 title: Text(m.name, style: MedType.subtitle.copyWith(color: c.ink)),
                 subtitle: _memberSubtitle(m, MedType.secondary.copyWith(color: c.ink3)),
                 trailing: m.id == currentId

@@ -1,5 +1,5 @@
 // 「病程档案」入口卡 —— 「趋势」tab 自上而下的**第一块**(mockup `s2`:
-// 病程档案入口 → 关键化验 → 「看懂」→ 最近就诊 → 记录一下)。
+// 病程档案入口 → 关键化验 → 最近就诊 → 记录一下)。
 //
 // 三态,各说各的实话:
 //  · **一个病种包都没装上** —— 只说「还没准备好」,并**静默**拉一次清单
@@ -262,7 +262,7 @@ class _ProfileEntry extends StatelessWidget {
         ),
         if (action case final a?) ...[
           const SizedBox(height: MedShape.s3),
-          Align(alignment: Alignment.centerLeft, child: a),
+          a,
         ],
       ],
     );

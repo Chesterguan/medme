@@ -1298,7 +1298,7 @@ class _StatusBadge extends StatelessWidget {
     // 圆角从 6 提到 pill 那一档,与个人模式的状态标签同一个外壳。
     return confirmed
         ? MedPill(text: '已确认', foreground: c.proxyInk, background: c.proxyWash)
-        : MedPill(text: '还没核对', foreground: c.high, background: c.highWash);
+        : statusWord('还没核对', c.high);
   }
 }
 

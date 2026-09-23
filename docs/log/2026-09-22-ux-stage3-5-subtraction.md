@@ -18,12 +18,12 @@
 - 化验左色条 → 状态词 + 刻度点;化验单表格(`report_content.dart`)同规则
 - 主页身份卡 `IdentityHeroCard` → `MemberHeader` 一行文字
 - 病程档案入口渐变书脊与 `MedBrand.spine*`;首启三个光泽块;底栏阴影 → 顶部一道 `line`
-- 令牌(零读者,Task 8):`gradientColors`/`Stops`/`Begin`/`End`、`heroGlow`、`heroTile*`(Size/LetterSize/Inset/Shadow)、`cardShadow`/`heroShadow`/`entryShadow`/`buttonShadow`/`navShadow`/`chipShadow`/`qrShadow`、`radiusHero`、`demoBorder`/`demoInk`、`MedColors.shadowColor` 与 `shadow` getter(连 `ThemeExtension` 四件套一起删)
+- 令牌(零读者,Task 8):`gradientColors`/`Stops`/`Begin`/`End`、`heroGlow`、`heroTile*`(Size/LetterSize/Inset/Shadow)、`cardShadow`/`heroShadow`/`entryShadow`/`buttonShadow`/`navShadow`/`chipShadow`/`qrShadow`、`radiusHero`、`MedType.heroValue`、`demoBorder`/`demoInk`、`MedColors.shadowColor` 与 `shadow` getter(连 `ThemeExtension` 四件套一起删)
 
 **三道闸的变化**:
-- 文案闸 `kRemovedByDecision` 登记用户点名删的四段(「找一找」「找一找还在做」「看懂」、报告页那句提示)
+- 文案闸 `kRemovedByDecision` 六项预算:用户点名删的四段(「找一找」「找一找还在做」「看懂」、报告页那句提示)+「还在做。」(提示句破折号后那半截,单独算一个 CJK 段)+「我」(`IdentityHeroCard` 头像兜底字,随整个 widget 删除带走,预算 1)
 - 预算闸 `expectGradientBudget` → `expectSurfaceBudget`(一屏至多一张 `HeroCard`/一颗 `MedPrimaryButton`)
-- 新增静态闸 `no_gradient_no_shadow_test.dart`:扫 `lib/` 源码禁止渐变/阴影;`expectNoGradientAnywhere()` 补扫渲染树——源码、渲染两层都不许漏
+- 新增静态闸 `no_gradient_no_shadow_test.dart`:扫 `lib/` 源码禁止渐变/阴影;`expectNoGradientAnywhere()` 补扫渲染树的渐变——阴影只由源码闸挡,渲染层不查
 
 **与稿子的三处有意偏差**:
 1. 给医生看的血压/心率:app 里是三条独立化验行,正常行不显示「正常」二字(稿子写了「正常」)

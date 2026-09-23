@@ -1,5 +1,5 @@
 // 「病程档案」(s3)。页头带真 logo(brief §品牌 四处摆位之一),提醒是琥珀横幅,
-// 活动度与用药走化验行(4px 左色条),病程是时间轴。零个颜色面。
+// 活动度与用药走化验行的排法,病程是时间轴。零个颜色面。
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,7 +14,7 @@ import 'stage3_visual_helpers.dart';
 
 // golden fixture:同 `test/profile_sections_test.dart` 那份(Task 20 合成 SLE
 // 语料),这里只用它给控制者要求的溢出矩阵喂真实数据——status_card/score_card/
-// reminders 这三节被 Task 12 动过颜色/形状(barColor 色条、琥珀横幅),而
+// reminders 这三节被 Task 12 动过颜色/形状(琥珀横幅;色条已在终审删除),而
 // `profile_sections_test.dart` 的 golden 溢出测试只钉 400×800,不钉 360×640
 // (那份测试跨很多个 Task,不属于本 Task 的 Files 清单,不在这里改它)。
 final _goldenFile = File(
@@ -94,10 +94,10 @@ void main() {
     expect(label.style?.color, MedBrand.bannerAmberInk);
   });
 
-  // 控制者裁定的溢出矩阵不只管时间轴——`_ItemRow` 新加的 `barColor`(现行方案/
-  // 活动度)与 `_ReminderRow` 新加的琥珀底(提醒)都是这个 Task 改的形状,同样要
-  // 在 360×640 × 2.0 字号下不溢出。golden fixture 里这三节本来就带着长药名/长
-  // 出处/长 reason,是最接近真机的压力数据。
+  // 控制者裁定的溢出矩阵不只管时间轴——现行方案/活动度两节与 `_ReminderRow`
+  // 新加的琥珀底(提醒)都是这个 Task 改过的形状,同样要在 360×640 × 2.0 字号下
+  // 不溢出。golden fixture 里这三节本来就带着长药名/长出处/长 reason,是最接近
+  // 真机的压力数据。
   testWidgets('现行方案/活动度/提醒三节(golden)两个尺寸 × 两档字号不溢出', (tester) async {
     await expectNoOverflowAtBothSizes(
       tester,

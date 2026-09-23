@@ -188,7 +188,9 @@ Color _flagColor(BuildContext context, LabFlag? flag) {
 /// ⚠️ 规范的第四级「危急值」这里画不出来:它得由 Rust 在 `LabFlag` 里给出,而
 /// 现在的 `LabFlag` 只有 high/low/normal 三个值。**不在 UI 层拿参考区间反推**
 /// —— 007 §2.5「所有『怎么算』在 Rust,UI 只『怎么显示』」。令牌 `critical` /
-/// `criticalWash` 因此暂时无人消费,等抽取侧补上这一级。
+/// `criticalWash` 在别处已有消费者(`archive_screen.dart` 的姓名不符横幅、
+/// `profile_sections.dart` 的时间轴异常圆点),只是这张化验表自己还够不到
+/// 「危急值」这一级,等抽取侧补上再接。
 Widget? _flagWord(BuildContext context, LabFlag? flag) {
   final c = MedColors.of(context);
   return switch (flag) {
