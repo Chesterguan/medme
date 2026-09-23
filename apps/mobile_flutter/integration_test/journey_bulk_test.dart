@@ -13,10 +13,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/trend_chart.dart';
 
 import 'harness.dart';
 
@@ -107,14 +109,22 @@ void main() {
       await settle(tester, total: const Duration(seconds: 2));
     }
 
-    // ④ 「关键化验」不该被 200+ 条撑爆(投影自己有上限)。
+    // ④ 「关键化验」不该被 200+ 条撑爆——它画的是 `viewTrends()` 里
+    //    `trendSplit` 出来的 `multi`(测过 ≥ 2 次的序列),**不是**
+    //    `s.recentLabs`(那是 `viewVisitSummary()` 给「给医生看」摘要用的
+    //    另一份数据,投影自己已经封顶,与这一屏无关——sdd task-6 fix round 1
+    //    之前这里错测了它,断言从来没有真正盯住「关键化验」这一块)。
+    //    `recentLabs` 仍然值得打印(它自己的上限也要盯着),只是不该拿它当
+    //    「关键化验」的证据。
     final s = await viewVisitSummary();
+    final trendSeries = (await viewTrends()).where(trendSeriesIsRenderable).toList();
+    final multiCount = trendSplit(trendSeries).multi.length;
     debugPrint('[大数据量] recentLabs=${s.recentLabs.length} '
         'recentVisits=${s.recentVisits.length} '
         'recentNotes=${s.recentNotes.length} '
-        'plainText=${s.plainText.length}字');
-    expect(s.recentLabs.length, lessThan(60),
-        reason: '「关键化验」一次要画 ${s.recentLabs.length} 行');
+        'plainText=${s.plainText.length}字 '
+        'trend multi=$multiCount');
+    expect(multiCount, lessThan(60), reason: '「关键化验」一次要画 $multiCount 行');
 
     // ⑤ 趋势列表滚到底不崩。
     await gotoTab(tester, HomeTab.trends);

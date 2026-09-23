@@ -701,7 +701,7 @@ void main() {
       );
     });
 
-    testWidgets('家测且有出处 → 卡上出现「出处:引文原文」这一整段', (tester) async {
+    testWidgets('家测且有出处 → 点开后出现「出处:引文原文」这一整段', (tester) async {
       await tester.pumpWidget(
         wrap(
           TrendRow(
@@ -710,6 +710,11 @@ void main() {
           ),
         ),
       );
+      // Fix round 1(Important 4,controller ruling):出处引文挪进了展开态,
+      // 折叠着找不到——这一行不受展开态影响、恒在的说法已经不对了。
+      expect(find.text('出处:成年人静息心率正常范围'), findsNothing);
+      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.pump();
       expect(find.text('出处:成年人静息心率正常范围'), findsOneWidget);
     });
 
@@ -719,8 +724,14 @@ void main() {
       await tester.pumpWidget(
         wrap(TrendRow(series: homeSeries(), onOpenDoc: (_) {})),
       );
+      // `trendNoHomeRangeNote` 是「历年数值/图例」那一行的内容,折叠态就有,
+      // 不用展开(Fix round 1,Important 4:只有出处/未定日/查看原件挪去了
+      // 展开态,这一句没有跟着挪)。
       expect(find.text(trendNoHomeRangeNote), findsOneWidget);
-      // 没有区间就没有出处可言,「出处:」那一段不该出现。
+      // 没有区间就没有出处可言,折叠态、展开态都不该出现「出处:」那一段。
+      expect(find.textContaining('出处:'), findsNothing);
+      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.pump();
       expect(find.textContaining('出处:'), findsNothing);
     });
 
@@ -731,6 +742,30 @@ void main() {
         wrap(TrendRow(series: hospitalSeries(), onOpenDoc: (_) {})),
       );
       expect(find.text(trendNoHomeRangeNote), findsNothing);
+      // 展开态只加出处/未定日/查看原件这几行,不会凭空生出这句只给家测用的
+      // 提示。
+      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.pump();
+      expect(find.text(trendNoHomeRangeNote), findsNothing);
+    });
+
+    testWidgets('「查看最新一次的原件」只在展开态才出现,点了触发 onOpenDoc', (
+      tester,
+    ) async {
+      var opened = 0;
+      await tester.pumpWidget(
+        wrap(TrendRow(series: hospitalSeries(), onOpenDoc: (id) => opened = id)),
+      );
+      expect(
+        find.text('查看最新一次的原件'),
+        findsNothing,
+        reason: 'Fix round 1(Important 4):这颗按钮挪进了展开态',
+      );
+      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.pump();
+      expect(find.text('查看最新一次的原件'), findsOneWidget);
+      await tester.tap(find.text('查看最新一次的原件'));
+      expect(opened, 1, reason: 'hospitalSeries() 唯一那个点的 documentId 是 1(见 pt() 默认值)');
     });
 
     testWidgets('页脚:三种出处都说到,且给出那条验证过的指南链接', (tester) async {

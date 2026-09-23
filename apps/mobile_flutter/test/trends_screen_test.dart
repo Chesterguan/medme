@@ -138,6 +138,48 @@ void main() {
         expect(find.text('估算肾小球滤过率'), findsNothing, reason: '名字不含「肌酐」');
       },
     );
+
+    testWidgets('搜索有输入时「只看异常」chip 整颗不画;关掉搜索它回来', (tester) async {
+      useNarrowPhone(tester);
+      await tester.pumpWidget(_app(_fixture()));
+      await tester.pumpAndSettle();
+      await tester.dragUntilVisible(
+        find.text('只看异常'),
+        find.byType(PanelChipsRow),
+        const Offset(-80, 0),
+      );
+      expect(find.text('只看异常'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.search));
+      await tester.pumpAndSettle();
+      // 搜索栏刚展开、还没输入字(`_query` 仍是空串)时开关还在。
+      await tester.dragUntilVisible(
+        find.text('只看异常'),
+        find.byType(PanelChipsRow),
+        const Offset(-80, 0),
+      );
+      expect(find.text('只看异常'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), '肌酐');
+      await tester.pumpAndSettle();
+      // Fix round 1(Important 3,controller ruling):搜索本来就无视这个开关
+      // (见 `trendVisible` 的文档),留着看得见却点了没用,像是坏了——搜索时
+      // 整颗不画。
+      expect(
+        find.text('只看异常'),
+        findsNothing,
+        reason: '有搜索词时开关整颗不画——搜索本来就无视它',
+      );
+
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+      await tester.dragUntilVisible(
+        find.text('只看异常'),
+        find.byType(PanelChipsRow),
+        const Offset(-80, 0),
+      );
+      expect(find.text('只看异常'), findsOneWidget, reason: '关掉搜索,开关回来');
+    });
   });
 
   group('页尾折叠:只测过一次的序列', () {
@@ -172,6 +214,53 @@ void main() {
       expect(find.text('促甲状腺激素'), findsOneWidget);
       expect(find.text('2026-06-05'), findsOneWidget);
     });
+
+    testWidgets('单次的家测序列在折叠区里也带「家测」标注', (tester) async {
+      useNarrowPhone(tester);
+      final singleHomeBp = [
+        TrendSeriesDto(
+          name: '收缩压',
+          unit: 'mmHg',
+          valuesConverted: false,
+          anyAbnormal: false,
+          panel: '生命体征',
+          selfMeasured: true,
+          points: [_pt('2026-06-05', 118)],
+        ),
+      ];
+      await tester.pumpWidget(_app(singleHomeBp, catalog: const ['生命体征']));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('只测过一次的 1 项'));
+      await tester.pumpAndSettle();
+      // Fix round 1(Important 1):原来 `_SinglesFold` 只传 `meta: p.date`,
+      // 「家测」标注丢了——只测过一次的家测序列(比如只量过一次的血压)会被
+      // 误读成医院化验值。
+      expect(find.text('2026-06-05 · 家测'), findsOneWidget);
+    });
+
+    testWidgets('全部序列都只测过一次时,「没有结果」那句不画,折叠区照常出现', (
+      tester,
+    ) async {
+      useNarrowPhone(tester);
+      final onlySingles = [
+        TrendSeriesDto(
+          name: '肌酐',
+          unit: 'umol/L',
+          valuesConverted: false,
+          anyAbnormal: false,
+          panel: '肾功能',
+          selfMeasured: false,
+          points: [_pt('2026-06-05', 80)],
+        ),
+      ];
+      await tester.pumpWidget(_app(onlySingles, catalog: const ['肾功能']));
+      await tester.pumpAndSettle();
+      // Fix round 1(Important 2):原来拿 `multi.isEmpty` 当「没有结果」的
+      // 判据,会把「全部序列都只测过一次(multi 空但 single 非空)」错说成
+      // 「这些记录里没有非正常项」——明明有一条记录,只是在折叠区里。
+      expect(find.textContaining('这些记录里没有'), findsNothing);
+      expect(find.text('只测过一次的 1 项'), findsOneWidget);
+    });
   });
 
   // ── 整屏:自上而下的顺序是固定的 ────────────────────────────────────────────
@@ -191,6 +280,10 @@ void main() {
     // 先于「肌酐」,见 `trendSplit` 的文档)→ 只测过一次的。
     expect(dy('病程档案'), lessThan(dy('关键化验')));
     expect(dy('关键化验'), lessThan(dy('估算肾小球滤过率')));
+    // Minor 5:异常排前面这条(trendSplit 的稳定排序)不只在纯函数层面成立,
+    // 钉在整屏渲染的 y 坐标上——「估算肾小球滤过率」(异常)必须先于「肌酐」
+    // (正常),两条都在同一张 `MedCard` 里。
+    expect(dy('估算肾小球滤过率'), lessThan(dy('肌酐')));
     expect(dy('估算肾小球滤过率'), lessThan(dy('只测过一次的 1 项')));
     // 病程档案入口**恒在**(mockup `s2` 的第一块)。这一屏的测试里一个病种包都
     // 没装上,所以它说的是「还没准备好」——「装上了 / 开启了」那两态在

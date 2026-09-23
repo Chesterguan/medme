@@ -119,5 +119,6 @@ class _ChipsProbe extends StatelessWidget {
     onSelectPanel: (_) {},
     abnormalOnly: false,
     onToggleAbnormal: () {},
+    showAbnormalToggle: true,
   );
 }
