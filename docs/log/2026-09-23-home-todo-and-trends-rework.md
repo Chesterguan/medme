@@ -11,7 +11,7 @@
 - 「添加」四选一加第四项「记录一下」(沿用趋势页原两句文案),趋势页删除录入卡。
 - 趋势页重整:`KeyLabsSnapshot`+`SeriesCard` 合成 `TrendRow`(迷你折线,点开展开);类别 chip 与「只看异常」开关叠加;≥2 次才算趋势,单次序列折进页尾;删 `RecentVisitsCard`。
 - 收尾(本 Task):闸对账、清扫两处过期注释、regenerate FRB、全量测试。
-- 最终复查修复:一条自测正文读不出不再拖垮整个病历页;开启档案后首页待办即时刷新;动作日志不进时间线;30 天异常不算未来日期。`Cargo.lock` 顺带升级一事核实后发现**不能**还原,见下方「没做」。
+- 最终复查修复:一条自测正文读不出不再拖垮整个病历页;开启档案后首页待办即时刷新;动作日志不进时间线;30 天异常不算未来日期。`Cargo.lock` 的升级核实为主干早已要求的版本,保留(见「没做」末尾)。
 
 **与 spec 的偏差(controller ruling)**:
 1. 首页待办不含 pending 档案提醒(spec 表格写了三档,收窄成两档——pending 规则没核实,不该催人)。
@@ -25,4 +25,4 @@
 
 **闸**:`kAddedByDecision` 新增 11 段(月/日/自测/次/最近/天有/项偏高或偏低/最近|30/只看异常/只测过一次的/项),逐条对应计划允许的 5 句新字;`kRemovedByDecision` 追加 `KeyLabsSnapshot`/`RecentVisitsCard`/`_AbnormalOnlyRow` 整块删除带走的 11 段字面量。Task 7 闸对账:两表逐条核对基线→HEAD 的实际 diff,一一对应,无多余登记。
 
-**没做**:笔记折叠;按条深链到档案提醒(`DiseaseProfileScreen` 没有该参数,点进去是整页);上次给医生看的时间(没有这个数据);`SelfWeekRows` 排版复刻 `archive_screen.dart` 的 `_SubDocList`,两者结构重复;`self_week_groups` 里每份自测文档 `ocr_text` 被读两次(一次解析数值,`doc_summary` 内部取院名又读一次)。首页每次载入跑 3–4 遍 `load_archive` + 两遍全库正文扫描(`view_abnormal_30d` 走 `gather()` 全扫再筛 30 天;`vault_profile_due_reminders` 又扫一遍)——结构性修法是三条查询共用一次 `gather()`、或 `view_abnormal_30d` 先按文档日期筛再读抽取结果,单独一条改;趋势空态那句仍写「非正常项」(与 chip 的「只看异常」不一致,改字要动文案闸,攒着);`selfWeekDesc` 血压次数取收缩压那一路(两路次数不等时会差一,今天录入弹层总是成对写);成员头「N 份记录」仍把动作日志算在内(`patient_profile` 那条投影,本分支没动)。`Cargo.lock` 的 `jieba-rs`/`lopdf` 升级(review I-4)**没有还原**:核实发现根 `Cargo.toml` 的 `[workspace.dependencies]`(`jieba-rs = "0.11"`/`lopdf = "0.45"`)早于本分支就已要求这两个版本(dependabot #225,583556f,是 e33539d 的祖先),`apps/mobile_flutter/rust` 自己的旧锁file 本来就没跟上——`git checkout e33539d -- Cargo.lock` 后 `cargo test --locked` 直接报错要求改锁,`cargo check --offline`(不锁)会自动重新收敛回与当前 HEAD 完全一致的锁文件。470ce87 那次「顺带升级」实际是 cargo 第一次在这个目录跑非 `--locked` 命令时,把一个早就存在的锁漂移悄悄修好,不是本分支引入的新依赖;真要修,得回到 #225 去看那次 root workspace 的版本跳跃有没有做过 jieba 分词器回归检查,不是这个分支能单独改的。
+**没做**:笔记折叠;按条深链到档案提醒(`DiseaseProfileScreen` 没有该参数,点进去是整页);上次给医生看的时间(没有这个数据);`SelfWeekRows` 排版复刻 `archive_screen.dart` 的 `_SubDocList`,两者结构重复;`self_week_groups` 里每份自测文档 `ocr_text` 被读两次(一次解析数值,`doc_summary` 内部取院名又读一次)。首页每次载入跑 3–4 遍 `load_archive` + 两遍全库正文扫描(`view_abnormal_30d` 走 `gather()` 全扫再筛 30 天;`vault_profile_due_reminders` 又扫一遍)——结构性修法是三条查询共用一次 `gather()`、或 `view_abnormal_30d` 先按文档日期筛再读抽取结果,单独一条改;趋势空态那句仍写「非正常项」(与 chip 的「只看异常」不一致,改字要动文案闸,攒着);`selfWeekDesc` 血压次数取收缩压那一路(两路次数不等时会差一,今天录入弹层总是成对写);成员头「N 份记录」仍把动作日志算在内(`patient_profile` 那条投影,本分支没动)。`Cargo.lock` 里 `jieba-rs` 0.10→0.11、`lopdf` 0.44→0.45 不是本分支加的依赖:根 `Cargo.toml` 早在 dependabot #225(583556f,e33539d 的祖先)就要求这两个版本,`apps/mobile_flutter/rust` 自己的锁文件一直没跟上,470ce87 只是第一次跑非 `--locked` 命令时把它补齐;旧锁 `--locked` 直接报错,所以保留。jieba 升级有没有改分词(影响全文检索索引)要回 #225 看,不归这条分支。
