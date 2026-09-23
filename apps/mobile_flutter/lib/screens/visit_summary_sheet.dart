@@ -5,7 +5,6 @@ import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
-import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 
 /// 「给医生看」正文——诊室里那 30 秒要看的东西,纯渲染,见 [VisitSummaryBody]。
@@ -19,18 +18,18 @@ import 'package:mobile_flutter/widgets/recorded_meds.dart';
 /// `visitSheetAction`/`VisitSheetAction`)几个埋点定义仍标 `@Deprecated` 留在
 /// `analytics.dart`——PostHog 里有它们的历史数据,删了对不上账。
 ///
-/// ## 段落顺序:「我想问医生的」排最前
+/// ## 段落顺序:我最近的变化 → 医生可能要问的 → 我想问医生的
 ///
-/// 2026-08-05 产品真机验收拆出的顺序问题(浮层删了,内容和顺序没变):前三屏全是
-/// 免责声明(MedMe 不判断 → 过敏史没找到不等于没有 → 用药不代表当前医嘱)会把
-/// 内容压没;药排在化验前面,医生问诊通常是先问现在怎么了、再看指标、最后核药,
-/// 顺序反了;而且整屏原是"系统从病历里读到了什么",没有一处是"患者自己带来的"。
-/// 四个区块(见 [_VisitSummaryBodyState.build])因此按这个顺序排:
-/// - **我想问医生的**(笔记)排最前——这是这一屏唯一一处"你自己的东西";
-/// - **我最近的变化**紧跟着(自测数值 + 异常化验)——回答"最近有什么不一样";
-/// - **医生可能要问的**(过敏史 + 用药)收在后面,过敏史保持展开(唯一一条
-///   "用错会当场出事"的信息),用药默认折叠——两节各自的免责声明跟着自己的
-///   内容走,不再连着堆在开场。
+/// 2026-09-22 UX Stage 3.5「减法」Task 7 定的顺序,取代上一版(2026-08-05,
+/// 「我想问医生的」排最前)。三节现在按医生问诊的顺序走:
+/// - **我最近的变化**(自测数值 + 异常化验)排最前——回答"最近有什么不一样";
+/// - **医生可能要问的**(过敏史 + 用药)紧跟着,过敏史保持展开(唯一一条
+///   "用错会当场出事"的信息),用药默认折叠;
+/// - **我想问医生的**(笔记)排最后,紧挨着固定在底部的「出码给医生看」
+///   按钮——出码前最后看一眼自己还有什么想问的。
+///
+/// 每节现在是「小标题 + 一张卡」(见 [_Section]),不再共用一张外层 `MedCard`,
+/// 标题前也不再有图标(减法稿:类别上色/图标没有信息)。
 ///
 /// 内容全部来自 `viewVisitSummary()` 返回的 [VisitSummaryDto],对结构化字段
 /// **只搬运原文逐字内容与抽出的数值/日期,不生成任何解释或结论**——「我想问医生的」是
@@ -97,55 +96,40 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
         ],
         if (who.isNotEmpty)
           Text(who, style: MedType.subtitle.copyWith(color: c.ink)),
-        const SizedBox(height: MedShape.s4),
+        const SizedBox(height: MedShape.s3),
 
-        // ── 我想问医生的:这一屏唯一一处"患者自己带来的东西",排最前。 ──
+        // ── 我最近的变化:自测数值 + 异常化验,排最前,回答"最近有什么不一样"。 ──
+        _Section(
+          title: '我最近的变化',
+          // 这里刻意不说"都正常"——空态只说"我们观察到什么",不对身体
+          // 状况下结论(规范 §六 的空态写法与 `_LabSnapshot` 同一条
+          // 准则)。真没有任何化验数据(而不是"有数据但都不异常")也会
+          // 走到这句,两种情况文案上不强行区分:对患者来说"要不要在意"
+          // 这件事,答案都是"这里没有要提醒你的"。
+          emptyText: '已添加的病历里没有自测数值,也没有标为异常的化验。',
+          isEmpty: s.recentChanges.isEmpty,
+          children: [
+            for (final l in s.recentChanges)
+              _LabRow(lab: l, onOpenDoc: widget.onOpenDoc),
+          ],
+        ),
+
+        // ── 医生可能要问的:过敏史(展开)+ 用药(默认折叠)。 ──
+        _DoctorMayAskSection(
+          allergies: s.allergies,
+          activeMeds: s.activeMeds,
+          medsExpanded: _medsExpanded,
+          onToggleMeds: () =>
+              setState(() => _medsExpanded = !_medsExpanded),
+          onOpenDoc: widget.onOpenDoc,
+        ),
+
+        // ── 我想问医生的:这一屏唯一一处"患者自己带来的东西",紧挨着固定在
+        // 底部的「出码给医生看」按钮,排最后。 ──
         _NotesSection(
           notes: s.recentNotes,
           onAddNote: widget.onAddNote,
           onOpenDoc: widget.onOpenDoc,
-        ),
-
-        const SizedBox(height: MedShape.s5),
-
-        // mockup `s4`:一张 `.card` 装着「我最近的变化」/「医生可能要问的」
-        // (过敏史 + 用药)三节 `.blk`(R23)——内容/顺序/文案不动,只是从三个
-        // 各自独立的块改成一张共用的 `MedCard`,标题行各加一枚 `MedIcon`。
-        MedCard(
-          child: Padding(
-            padding: const EdgeInsets.all(MedShape.s4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ── 我最近的变化:自测数值 + 异常化验,医生问诊的第二步。 ──
-                _Section(
-                  title: '我最近的变化',
-                  icon: Icons.science_outlined,
-                  // 这里刻意不说"都正常"——空态只说"我们观察到什么",不对身体
-                  // 状况下结论(规范 §六 的空态写法与 `_LabSnapshot` 同一条
-                  // 准则)。真没有任何化验数据(而不是"有数据但都不异常")也会
-                  // 走到这句,两种情况文案上不强行区分:对患者来说"要不要在意"
-                  // 这件事,答案都是"这里没有要提醒你的"。
-                  emptyText: '已添加的病历里没有自测数值,也没有标为异常的化验。',
-                  isEmpty: s.recentChanges.isEmpty,
-                  children: [
-                    for (final l in s.recentChanges)
-                      _LabRow(lab: l, onOpenDoc: widget.onOpenDoc),
-                  ],
-                ),
-
-                // ── 医生可能要问的:过敏史(展开)+ 用药(默认折叠)。 ──
-                _DoctorMayAskSection(
-                  allergies: s.allergies,
-                  activeMeds: s.activeMeds,
-                  medsExpanded: _medsExpanded,
-                  onToggleMeds: () =>
-                      setState(() => _medsExpanded = !_medsExpanded),
-                  onOpenDoc: widget.onOpenDoc,
-                ),
-              ],
-            ),
-          ),
         ),
 
         if (widget.footer != null) widget.footer!,
@@ -186,43 +170,59 @@ class _NotesSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '我想问医生的',
-                style: MedType.caption.copyWith(color: c.ink3),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '我想问医生的',
+                  style: MedType.caption.copyWith(color: c.ink3),
+                ),
               ),
-            ),
-            // 「加一条」常驻(不只是空态才有)——见过一次医生之后往往又会想起
-            // 新的问题,不该只在这一节空着的时候才给出路。
-            TextButton.icon(
-              onPressed: onAddNote,
-              style: TextButton.styleFrom(
-                foregroundColor: c.sealInk,
-                padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              // 「加一条」常驻(不只是空态才有)——见过一次医生之后往往又会想起
+              // 新的问题,不该只在这一节空着的时候才给出路。
+              TextButton.icon(
+                onPressed: onAddNote,
+                style: TextButton.styleFrom(
+                  foregroundColor: c.sealInk,
+                  padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('加一条', style: MedType.secondary),
               ),
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('加一条', style: MedType.secondary),
-            ),
-          ],
+            ],
+          ),
         ),
         const SizedBox(height: MedShape.s1),
-        if (notes.isEmpty)
-          // 空态必须有出路(规范 §六)——这里的出路就是上面那颗「加一条」,文案
-          // 直接指给它看,不是空泛的"暂无内容"。
-          Text(
-            // 不要在这里塞 `\n`。硬换行会在窄屏上把句子折成一条提前结束的短行
-            // (真机 360dp 上就是「……见医生前翻开」独占半行),而 `Text` 自己会
-            // 按可用宽度断行——排版交给布局,不要在文案里手工排。
-            '还没有记下想问的问题。想到什么随时点右上角「加一条」——'
-            '见医生前翻开这一屏,就不会到了诊室才想起来忘了问什么。',
-            style: MedType.body.copyWith(color: c.ink2, height: 1.5),
-          )
-        else
-          for (final n in notes) _NoteRow(note: n, onOpenDoc: onOpenDoc),
+        MedCard(
+          child: notes.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.all(MedShape.s3),
+                  // 空态必须有出路(规范 §六)——这里的出路就是上面那颗「加一条」,
+                  // 文案直接指给它看,不是空泛的"暂无内容"。
+                  child: Text(
+                    // 不要在这里塞 `\n`。硬换行会在窄屏上把句子折成一条提前结束的
+                    // 短行(真机 360dp 上就是「……见医生前翻开」独占半行),而
+                    // `Text` 自己会按可用宽度断行——排版交给布局,不要在文案里
+                    // 手工排。
+                    '还没有记下想问的问题。想到什么随时点右上角「加一条」——'
+                    '见医生前翻开这一屏,就不会到了诊室才想起来忘了问什么。',
+                    style: MedType.body.copyWith(color: c.ink2, height: 1.5),
+                  ),
+                )
+              : Column(
+                  children: [
+                    for (var i = 0; i < notes.length; i++) ...[
+                      if (i > 0)
+                        Divider(height: 1, thickness: 1, color: c.line2),
+                      _NoteRow(note: notes[i], onOpenDoc: onOpenDoc),
+                    ],
+                  ],
+                ),
+        ),
       ],
     );
   }
@@ -243,7 +243,10 @@ class _NoteRow extends StatelessWidget {
       onTap: () => onOpenDoc(note.documentId),
       borderRadius: BorderRadius.circular(MedShape.radiusControl),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
+        padding: const EdgeInsets.symmetric(
+          horizontal: MedShape.s3,
+          vertical: MedShape.s2,
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -276,7 +279,7 @@ class _NoteRow extends StatelessWidget {
 /// 「医生可能要问的」:过敏史(展开)+ 用药(默认折叠)。
 ///
 /// 「下面每一个字都逐字来自你已导入的病历」这句总说明**从第一屏最上头挪到了这
-/// 里**——它准确描述的是这两节(过敏史、用药都是从原文抽出来的),不是上面
+/// 里**——它准确描述的是这两节(过敏史、用药都是从原文抽出来的),不是
 /// 「我想问医生的」(患者自己写的笔记)或「我最近的变化」(部分是自测值,同样
 /// 不是"从病历读出来的")。位置换了,意思一个字没改。
 class _DoctorMayAskSection extends StatelessWidget {
@@ -300,19 +303,25 @@ class _DoctorMayAskSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('医生可能要问的', style: MedType.caption.copyWith(color: c.ink3)),
-        const SizedBox(height: 2),
-        Text(
-          '下面每一个字都逐字来自你已添加的病历。MedMe 不做判断,也不生成结论。',
-          style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, MedShape.s2),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('医生可能要问的', style: MedType.caption.copyWith(color: c.ink3)),
+              const SizedBox(height: 2),
+              Text(
+                '下面每一个字都逐字来自你已添加的病历。MedMe 不做判断,也不生成结论。',
+                style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
+              ),
+            ],
+          ),
         ),
-        const SizedBox(height: MedShape.s3),
 
         // 过敏史排在第一位,不是按数据量排的 —— 它是这一屏里唯一一条**用错会
         // 当场出事**的信息,所以它是「医生可能要问的」两节里唯一保持展开的那个。
         _Section(
           title: '过敏史',
-          icon: Icons.warning_amber_outlined,
           // 空过敏史必须自己说话:留白会被医生读成「无过敏史」,而我们只知道
           // 「已导入的这些纸上没写」。这两件事在临床上差着一条命。
           emptyText: '已添加的病历里没有找到过敏记录 —— 这不等于你不过敏,请当面告诉医生。',
@@ -359,7 +368,6 @@ class _MedsSubsection extends StatelessWidget {
     if (activeMeds.isEmpty) {
       return const _Section(
         title: kRecordedMedsTitle,
-        icon: Icons.medication_outlined,
         emptyText: '已添加的病历里没有读到药名。',
         isEmpty: true,
         children: [],
@@ -371,41 +379,52 @@ class _MedsSubsection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            onTap: onToggle,
-            borderRadius: BorderRadius.circular(MedShape.radiusControl),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                children: [
-                  const MedIcon(Icons.medication_outlined),
-                  const SizedBox(width: MedShape.s2),
-                  Expanded(
-                    child: Text(
-                      kRecordedMedsTitle,
-                      style: MedType.caption.copyWith(color: c.ink3),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: InkWell(
+              onTap: onToggle,
+              borderRadius: BorderRadius.circular(MedShape.radiusControl),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        kRecordedMedsTitle,
+                        style: MedType.caption.copyWith(color: c.ink3),
+                      ),
                     ),
-                  ),
-                  Icon(
-                    expanded ? Icons.expand_less : Icons.expand_more,
-                    size: 18,
-                    color: c.ink3,
-                  ),
-                ],
+                    Icon(
+                      expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 18,
+                      color: c.ink3,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
           if (expanded) ...[
             const SizedBox(height: MedShape.s1),
-            const RecordedMedsCaveat(),
-            const SizedBox(height: MedShape.s1),
-            for (final m in activeMeds)
-              _LineRow(
-                title: m.name,
-                subtitle: recordedMedTiming(m),
-                documentIds: m.documentIds,
-                onOpenDoc: onOpenDoc,
+            MedCard(
+              child: Column(
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.all(MedShape.s3),
+                    child: RecordedMedsCaveat(),
+                  ),
+                  for (final m in activeMeds) ...[
+                    Divider(height: 1, thickness: 1, color: c.line2),
+                    _LineRow(
+                      title: m.name,
+                      subtitle: recordedMedTiming(m),
+                      documentIds: m.documentIds,
+                      onOpenDoc: onOpenDoc,
+                    ),
+                  ],
+                ],
               ),
+            ),
           ],
         ],
       ),
@@ -413,21 +432,11 @@ class _MedsSubsection extends StatelessWidget {
   }
 }
 
-/// 这一屏上的一节:标题 + 内容,或标题 + 一句诚实的空态。
-///
-/// [icon] 是 R23 加的——标题行前一枚图标,三个调用方各给自己的图标(我最近的
-/// 变化/过敏史/记录中出现的药物),标题字符串一个字没改。
+/// 一节 = 小标题(13·ink3)+ 一张卡。空态那句话就在卡里。减法稿:标题前不再有图标。
 class _Section extends StatelessWidget {
-  const _Section({
-    required this.title,
-    required this.icon,
-    required this.emptyText,
-    required this.isEmpty,
-    required this.children,
-  });
+  const _Section({required this.title, required this.emptyText, required this.isEmpty, required this.children});
 
   final String title;
-  final IconData icon;
   final String emptyText;
   final bool isEmpty;
   final List<Widget> children;
@@ -436,27 +445,27 @@ class _Section extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: MedShape.s5),
+      padding: const EdgeInsets.only(bottom: MedShape.s4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              MedIcon(icon),
-              const SizedBox(width: MedShape.s2),
-              Expanded(
-                child: Text(title, style: MedType.caption.copyWith(color: c.ink3)),
-              ),
-            ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+            child: Text(title, style: MedType.secondary.copyWith(color: c.ink3)),
           ),
-          const SizedBox(height: MedShape.s1),
-          if (isEmpty)
-            Text(
-              emptyText,
-              style: MedType.body.copyWith(color: c.ink2, height: 1.5),
-            )
-          else
-            ...children,
+          MedCard(
+            child: isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(MedShape.s3),
+                    child: Text(emptyText, style: MedType.body.copyWith(color: c.ink2, height: 1.5)),
+                  )
+                : Column(children: [
+                    for (var i = 0; i < children.length; i++) ...[
+                      if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
+                      children[i],
+                    ],
+                  ]),
+          ),
         ],
       ),
     );
@@ -492,7 +501,10 @@ class _LineRow extends StatelessWidget {
       onTap: target == null ? null : () => onOpenDoc(target),
       borderRadius: BorderRadius.circular(MedShape.radiusControl),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
+        padding: const EdgeInsets.symmetric(
+          horizontal: MedShape.s3,
+          vertical: MedShape.s2,
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

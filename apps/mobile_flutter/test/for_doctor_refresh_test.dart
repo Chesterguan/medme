@@ -32,12 +32,13 @@ void useViewport(WidgetTester tester, double width, double height) {
 
 /// `VisitSummaryBody` 用 `ListView(children: ...)`,底层是
 /// `SliverChildListDelegate`——只有落在视口 + 缓存区内的子节点才会被挂载
-/// (没挂载的 widget `find` 不到)。「医生可能要问的」排在最后一节,矮屏 + 2×
-/// 字号下经常还没被滚到,常规的 `tester.ensureVisible()` 对还没挂载的 widget
-/// 无能为力(它得先在树里找到目标,才知道要滚多远)——一次 `jumpTo(maxScrollExtent)`
-/// 也不够:懒加载的 sliver 在后面的子节点还没挂载时,`maxScrollExtent` 只是按
-/// 已挂载的子节点估出来的,可能比真实值小,一次跳跃跳不到位。`scrollUntilVisible`
-/// 就是为这个场景写的:一点点滚、每滚一点就重新查找,直到目标出现。
+/// (没挂载的 widget `find` 不到)。「记录中出现的药物」这个切换钮不一定落在
+/// 首屏内,矮屏 + 2× 字号下经常还没被滚到,常规的 `tester.ensureVisible()`
+/// 对还没挂载的 widget 无能为力(它得先在树里找到目标,才知道要滚多远)——
+/// 一次 `jumpTo(maxScrollExtent)` 也不够:懒加载的 sliver 在后面的子节点还
+/// 没挂载时,`maxScrollExtent` 只是按已挂载的子节点估出来的,可能比真实值
+/// 小,一次跳跃跳不到位。`scrollUntilVisible` 就是为这个场景写的:一点点滚、
+/// 每滚一点就重新查找,直到目标出现。
 ///
 /// `scrollUntilVisible` 满足的是"挂载了"(在树里能找到),不是"整块都在可视
 /// 区内"——懒加载的 sliver 缓存区(默认约 250 逻辑像素)会先把目标挂载在视口
@@ -198,14 +199,14 @@ void main() {
       expect(find.text('就诊单'), findsNothing);
     });
 
-    testWidgets('四节按「我想问医生的→我最近的变化→医生可能要问的」出现,且顺序如此', (tester) async {
+    testWidgets('三节按「我最近的变化→医生可能要问的→我想问医生的」出现,且顺序如此', (tester) async {
       useViewport(tester, 390, 844);
       await tester.pumpWidget(wrap(richSummary()));
 
       final order = [
-        tester.getTopLeft(find.text('我想问医生的')).dy,
         tester.getTopLeft(find.text('我最近的变化')).dy,
         tester.getTopLeft(find.text('医生可能要问的')).dy,
+        tester.getTopLeft(find.text('我想问医生的')).dy,
       ];
       expect(
         order,
