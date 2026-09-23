@@ -23,6 +23,11 @@ TimelineGroupDto _selfWeek(String weekStart, String weekEnd) => TimelineGroupDto
   summary: const [],
 );
 
+/// 开关病程档案写下的动作日志:`doc_type == 'profile_event'`,日期 = 记的那天。
+TimelineGroupDto _profileEvent(String docDate) => TimelineGroupDto.document(
+  doc: DocumentSummaryDto(id: 9, docType: 'profile_event', docDate: docDate, pageCount: 1),
+);
+
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
   theme: MedMe.theme(),
   home: MediaQuery(
@@ -127,5 +132,29 @@ void main() {
     final aug = _doc('2026-08-12');
     // 若误按 weekEnd 分月,这条周会跟 8 月的 `aug` 并成一段;归 weekStart 才各自一段。
     expect(byMonth([aug, week]), [[aug], [week]]);
+  });
+
+  test('timelineGroups:动作日志(profile_event)不进时间线,别的原样保留', () {
+    final event = _profileEvent('2026-09-23');
+    final lab = _doc('2026-05-04');
+    final week = _selfWeek('2026-04-27', '2026-05-03');
+    expect(timelineGroups([event, lab, week]), [lab, week]);
+    expect(timelineGroups([]), isEmpty);
+  });
+
+  test('recentVisitDate:跳过自测周,取最新一条非自测周的日期', () {
+    final week = _selfWeek('2026-09-21', '2026-09-27');
+    final lab = _doc('2026-09-10');
+    expect(recentVisitDate([week, lab]), '2026-09-10');
+  });
+
+  test('recentVisitDate:只有自测周、或空列表 → null(成员头显示「暂无」)', () {
+    expect(recentVisitDate([_selfWeek('2026-09-21', '2026-09-27')]), isNull);
+    expect(recentVisitDate([]), isNull);
+  });
+
+  test('F-B 回归:开启档案当天,「最近就诊」不会变成今天', () {
+    final groups = timelineGroups([_profileEvent('2026-09-23'), _doc('2026-09-10')]);
+    expect(recentVisitDate(groups), '2026-09-10');
   });
 }
