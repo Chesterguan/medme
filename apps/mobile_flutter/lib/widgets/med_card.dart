@@ -41,6 +41,28 @@ class MedCard extends StatelessWidget {
   }
 }
 
+/// 时间线/还没核对项左滑删除时的红底背景(靠右露出删除图标),Outlook 邮件式。
+/// `archive_screen.dart`(时间线行、子文档行、还没核对卡片)与 `self_week.dart`
+/// 的 `SelfWeekRows`(自测周子行)共用——原是 `archive_screen.dart` 的私有函数,
+/// 两个文件都要用之后挪到这里,不重写第二份。
+///
+/// [rounded] 默认 true:独立一张 `MedCard` 的场合(如「还没核对」卡片),背景圆角
+/// 要跟卡片同一个令牌(`MedShape.radiusCard`,不写死数字)。时间线行/子文档行/
+/// 自测周子行减法稿后不再各自有 `MedCard` 外壳(整月共用一张卡,圆角只在卡的
+/// 最外沿)——这几处传 `rounded: false` 画直角背景,否则滑动到扁平的行中间会
+/// 露出一圈裁不掉的圆角缺口(卡片圆角在别处,这条红底自己却还想画圆角)。
+Widget swipeDeleteBackground(BuildContext context, {bool rounded = true}) =>
+    Container(
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: MedShape.s4),
+      decoration: BoxDecoration(
+        // 删除是销毁性动作 —— `critical` 在个人模式里只用在这里和危急值上。
+        color: MedColors.of(context).critical,
+        borderRadius: rounded ? BorderRadius.circular(MedShape.radiusCard) : null,
+      ),
+      child: const Icon(Icons.delete_outline, color: Colors.white),
+    );
+
 /// 状态 pill:圆角 999,`caption` 字阶(12·600),前景 + 极浅底一对色。
 ///
 /// 减法稿 2026-09-22:化验「偏高/偏低」不再用它——那两档现在是一个上了色、

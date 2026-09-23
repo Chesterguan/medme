@@ -15,6 +15,14 @@ TimelineGroupDto _doc(String? docDate) => TimelineGroupDto.document(
   doc: DocumentSummaryDto(id: 1, docType: 'lab_report', docDate: docDate, pageCount: 1),
 );
 
+/// 最小可用的自测周,只填 `byMonth` 分段要看的 `weekStart`/`weekEnd`。
+TimelineGroupDto _selfWeek(String weekStart, String weekEnd) => TimelineGroupDto.selfWeek(
+  weekStart: weekStart,
+  weekEnd: weekEnd,
+  docs: const [],
+  summary: const [],
+);
+
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
   theme: MedMe.theme(),
   home: MediaQuery(
@@ -111,5 +119,13 @@ void main() {
   test('byMonth:两条跨月 → 两段', () {
     final a = _doc('2026-08-12'), b = _doc('2026-07-20');
     expect(byMonth([a, b]), [[a], [b]]);
+  });
+
+  test('byMonth:自测周按 weekStart 分月——跨月的周归周一所在月,不归 weekEnd 那个月', () {
+    // 周一(weekStart)7 月 27 日、周日(weekEnd)已经跨到 8 月 2 日。
+    final week = _selfWeek('2026-07-27', '2026-08-02');
+    final aug = _doc('2026-08-12');
+    // 若误按 weekEnd 分月,这条周会跟 8 月的 `aug` 并成一段;归 weekStart 才各自一段。
+    expect(byMonth([aug, week]), [[aug], [week]]);
   });
 }

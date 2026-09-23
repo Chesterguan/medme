@@ -114,6 +114,24 @@ const Map<String, int> kAddedByDecision = {
   // 四个标签**不**登记在这里——`manual_entry_sheet.dart` 的 `_analyteErrorLabel`
   // 已改成委托 `selfAnalyteLabel`,不再各自持有一份字面量,两侧净变化为 0,
   // 闸本就不报,登记进来反而是把不该放行的重复默许掉。
+
+  // Task 4(2026-09-23):`widgets/self_week.dart` 新增 `selfWeekTitle`
+  // (`'自测 · ${fmtDayRange(...)}'`)与 `selfWeekDesc`(`'... $count 次 ...'`)——
+  // 逐条对应计划里登记的新字「自测 · M 月 D 日 – M 月 D 日」「N 次」。
+  '自测': 1,
+  '次': 1,
+  // `archive_screen.dart` 新增的「最近 30 天有 $abnormal30d 项偏高或偏低」
+  // (`'最近'`/`'天有'`/`'项偏高或偏低'` 三段,数字被拆在中间不成段;R35a 的
+  // 表意字|数字配对闸另加一条 `'最近|30'`)——逐条对应计划里登记的新字
+  // 「最近 30 天有 N 项偏高或偏低」。「给医生看」这一段在本文件里已有(`HomeTiles`
+  // 的按钮文案),待办卡的「给医生看」note 是同一份字符串,净变化为 0,不登记。
+  // 超期 N 天/没查到(状态标签)/血压等指标名全部经既有函数复用(见
+  // `reminderOverdueNote`/`reminderStateLabel`/`selfAnalyteLabel`),没有产生
+  // 第二份字面量,闸本就不报,不登记。
+  '最近': 1,
+  '天有': 1,
+  '项偏高或偏低': 1,
+  '最近|30': 1,
 };
 
 /// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败
