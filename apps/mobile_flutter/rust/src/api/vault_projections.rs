@@ -347,6 +347,16 @@ fn fmt_date(d: NaiveDate) -> String {
     d.format("%Y-%m-%d").to_string()
 }
 
+/// 设备本地日期。与 `vault_profile.rs` 里同名的私有函数逐字同一实现(`chrono::Local`
+/// 不是 `chrono::Utc`),理由也一样:「最近 30 天」要按用户所在时区的今天算,UTC
+/// 会把东八区的清晨算成昨天,让 30 天窗口整体错一天。两个模块各留一份私有实现,
+/// 不把 `vault_profile` 那份改成 `pub(crate)` 互相导出 —— `vault_profile.rs` 本来就
+/// 依赖 `vault_projections`(投影层在下,档案在上),反向再导出一个一行函数只会
+/// 添耦合,不添价值。
+fn today() -> NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
 /// 把 `AnalyteSeries` 等结构里的 `SourceDoc::index` 列表翻译成真实 document_id。
 /// 越界的序号(不该出现)静默跳过,不 panic。
 fn document_ids_for(docs: &[ProjectionDoc], indices: &[usize]) -> Vec<i64> {
@@ -1187,7 +1197,7 @@ pub fn view_abnormal_30d() -> anyhow::Result<u32> {
     let p = gather()?;
     let src = source_docs(&p.docs);
     let agg = parser::aggregate(&src);
-    let today = chrono::Utc::now().date_naive();
+    let today = today();
     let mut n = 0u32;
     for s in agg.labs.iter().filter(|s| !s.self_measured && is_renderable(s)) {
         let Some(last) = s.points.iter().filter(|pt| pt.date.is_some()).max_by_key(|pt| pt.date)
@@ -2529,7 +2539,9 @@ mod tests {
         )
         .unwrap();
 
-        let today = chrono::Utc::now().date_naive();
+        // 同一个私有 `today()`(设备本地日期)——与被测函数用的是同一份,窗口
+        // 边界不会因为测试自己另算一遍 UTC 今天而偏移。
+        let today = today();
         let d20 = today - chrono::Duration::days(20);
         let d60 = today - chrono::Duration::days(60);
 

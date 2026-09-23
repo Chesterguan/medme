@@ -711,7 +711,7 @@ mod tests {
             "pending/unknown 不该出现在首页列表里,实际={items:?}"
         );
         assert!(items.iter().all(|i| i["package_id"] == "sle"));
-        assert!(items[0]["text"].is_string() && items[0]["basis"].is_string());
+        assert!(items.iter().all(|i| i["text"].is_string() && i["basis"].is_string()));
 
         terminology::set_overlay(Vec::new());
     }
