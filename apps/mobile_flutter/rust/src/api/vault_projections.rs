@@ -1181,6 +1181,32 @@ fn render_plain_text(
     out
 }
 
+/// 首页待办第 4 条:最近 30 天内、最近一次被 Rust 标为 H/L 的化验项数。自测不算
+/// (自测的 flag 来自家测区间,不是化验单印的)。**只数,不判定。**
+pub fn view_abnormal_30d() -> anyhow::Result<u32> {
+    let p = gather()?;
+    let src = source_docs(&p.docs);
+    let agg = parser::aggregate(&src);
+    let today = chrono::Utc::now().date_naive();
+    let mut n = 0u32;
+    for s in agg.labs.iter().filter(|s| !s.self_measured && is_renderable(s)) {
+        let Some(last) = s.points.iter().filter(|pt| pt.date.is_some()).max_by_key(|pt| pt.date)
+        else {
+            continue;
+        };
+        let Some(d) = last.date else { continue };
+        if (today - d).num_days() > 30 {
+            continue;
+        }
+        // 与 view_visit_summary 的 recent_changes 同一条判法:只认 "H" / "L",印的
+        // "N" 不算(`last.flag: Option<String>`,同一份 `parser::LabPoint::flag`)。
+        if matches!(last.flag.as_deref(), Some("H") | Some("L")) {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2487,5 +2513,60 @@ mod tests {
             view_trends().unwrap().is_empty(),
             "这就是错误顺序的后果:记录整个消失了"
         );
+    }
+
+    /// 首页待办「最近 30 天有 N 项偏高或偏低」:只数**医院化验**、最近一次被标
+    /// H/L、且在 30 天窗口内的序列;30 天外的(哪怕标了 H/L)与自测(哪怕数值
+    /// 落在家测区间外、被标了 H)都不算。
+    #[test]
+    fn abnormal_30d_counts_only_recent_hospital_h_l() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        let today = chrono::Utc::now().date_naive();
+        let d20 = today - chrono::Duration::days(20);
+        let d60 = today - chrono::Duration::days(60);
+
+        // 20 天前:一份化验单,一项偏高(H)——落在 30 天窗口内,该数。
+        crate::api::vault::ingest_bytes(
+            "化验-20天前.txt".into(),
+            format!(
+                "生化检验报告单\n检验日期 {}\n甘油三酯 2.90 mmol/L 0.00-1.70 H\n",
+                d20.format("%Y-%m-%d")
+            )
+            .into_bytes(),
+        )
+        .unwrap();
+
+        // 60 天前:一份化验单,一项偏低(L)——窗口外,不该数。
+        crate::api::vault::ingest_bytes(
+            "化验-60天前.txt".into(),
+            format!(
+                "生化检验报告单\n检验日期 {}\n血钾 3.0 mmol/L 3.5-5.5 L\n",
+                d60.format("%Y-%m-%d")
+            )
+            .into_bytes(),
+        )
+        .unwrap();
+
+        // 同一天(20 天前)还自测了一次心率,160 远超家测区间上限 100、会被标
+        // H —— 但自测不算,不该数。
+        crate::api::vault::add_self_measurement(
+            vec![SelfMeasuredValueDto {
+                analyte_key: "heart_rate".into(),
+                value: 160.0,
+                unit: "/min".into(),
+            }],
+            Some(format!("{}T08:00:00Z", d20.format("%Y-%m-%d"))),
+        )
+        .unwrap();
+
+        assert_eq!(view_abnormal_30d().unwrap(), 1);
     }
 }

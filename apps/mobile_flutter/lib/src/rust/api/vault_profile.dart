@@ -37,6 +37,12 @@ Future<String> vaultProfileView({
   packageId: packageId,
 );
 
+/// 首页待办:所有**已开启**档案里到期的提醒(`never` / `overdue`)。整箱病历只读一次,
+/// 每个包各算一遍 `materialize`;没开启的包一块都不算(spec §4)。`pending`(规则没
+/// 核实)不进首页——那是档案页里「只显示不到期」的东西。
+Future<String> vaultProfileDueReminders({required String dir}) =>
+    RustLib.instance.api.crateApiVaultProfileVaultProfileDueReminders(dir: dir);
+
 /// 按**当前开着的保险箱**重装术语覆盖层(装着且开着的包的 `terms` 合并成一份)。
 ///
 /// 覆盖层是**进程级全局**,而保险箱是一次一个:换成员之后不重装,上一个成员开的

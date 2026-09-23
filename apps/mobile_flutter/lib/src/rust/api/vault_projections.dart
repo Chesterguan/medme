@@ -47,6 +47,11 @@ Future<EmergencyCardDto> viewEmergencyCard() =>
 Future<VisitSummaryDto> viewVisitSummary() =>
     RustLib.instance.api.crateApiVaultProjectionsViewVisitSummary();
 
+/// 首页待办第 4 条:最近 30 天内、最近一次被 Rust 标为 H/L 的化验项数。自测不算
+/// (自测的 flag 来自家测区间,不是化验单印的)。**只数,不判定。**
+Future<int> viewAbnormal30D() =>
+    RustLib.instance.api.crateApiVaultProjectionsViewAbnormal30D();
+
 /// 一条在用药。
 class ActiveMedDto {
   final String name;
