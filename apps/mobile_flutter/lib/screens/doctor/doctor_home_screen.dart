@@ -272,9 +272,8 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                       width: double.infinity,
                       height: 54,
                       child: FilledButton.icon(
-                        // 一屏唯一的主按钮:紫色纯色不用渐变(规范 §六)。代拍
-                        // 主色 proxy 原样保留——brief 没动它,紫也不是品牌渐变,
-                        // 不占这一屏 hero:1 的名额。
+                        // 一屏唯一的主按钮,紫色纯色(规范 §六)。代拍主色 proxy
+                        // 原样保留——brief 没动它,这颗按钮不占这一屏 hero:1 的名额。
                         style: FilledButton.styleFrom(backgroundColor: c.proxy),
                         onPressed: _startCapture,
                         icon: const Icon(Icons.camera_alt_outlined),
@@ -393,9 +392,8 @@ class PatientGrantedSection extends StatelessWidget {
 
 /// 「今天代拍的」列表一行:病人名 + 份数 + 还剩多久自动删 + 删除按钮。
 ///
-/// **不带骑缝线。** 这是一张派生卡:名字是从若干份原件里识别出来的、份数是数出来
-/// 的,背后没有「某一张纸」可点进去(点进去是这个病人的清单)。骑缝线只给点得进
-/// 原件的卡(规范 §五),当装饰用就把「可溯源」这句话说成了假话。
+/// 这是一张派生卡:名字是从若干份原件里识别出来的、份数是数出来的,背后没有
+/// 「某一张纸」可点进去(点进去是这个病人的清单)。
 class _PatientRow extends StatelessWidget {
   const _PatientRow({
     required this.patient,

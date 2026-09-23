@@ -1,8 +1,5 @@
-// 设计系统 v1 共用外壳的看门测试。
-//
-// 重点不在「画得好不好看」,在**骑缝线的出现规则**:它是「这条数据背后有一份
-// 原件、并且点得进去」的视觉承诺(规范 §五)。哪天有人图好看给一张派生卡也加
-// 上,红的应该是这里 —— 那等于拿签名元素说了句假话。
+// 设计系统 v1 共用外壳的看门测试:卡片形状(细边、圆角、无阴影)、pill、内置
+// Material 层、MedBanner 配色、化验表状态词——钉数值,不测「画得好不好看」。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';

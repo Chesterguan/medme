@@ -1,5 +1,5 @@
 // 「病程档案」(s3)。页头带真 logo(brief §品牌 四处摆位之一),提醒是琥珀横幅,
-// 活动度与用药走化验行(4px 左色条),病程是时间轴。零个品牌渐变面。
+// 活动度与用药走化验行(4px 左色条),病程是时间轴。零个颜色面。
 import 'dart:convert';
 import 'dart:io';
 
@@ -55,9 +55,10 @@ void main() {
     expect(lines, contains(MedBrand.timelineLine));
   });
 
-  testWidgets('零个品牌渐变面,卡里没有渐变', (tester) async {
+  testWidgets('零个颜色面,卡里没有渐变', (tester) async {
     await pumpStage3(tester, const Scaffold(body: MedCard(child: MedIcon(Icons.science_outlined))));
     expectSurfaceBudget();
+    expectNoGradientAnywhere();
   });
 
   testWidgets('两个尺寸 × 两档字号不溢出', (tester) async {

@@ -115,7 +115,7 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
         ),
       ),
       // 固定在底部的主动作 —— **只有这一颗**(brief §品牌 最后一条:「出码给
-      // 医生看」固定底部;渐变预算表 `s4` = 1 颗 `MedPrimaryButton`)。一屏只
+      // 医生看」固定底部;颜色面预算表 `s4` = 1 颗 `MedPrimaryButton`)。一屏只
       // 允许一颗主按钮(规范 §六),诊室里那一下就是把码递过去。挪进
       // `Scaffold.bottomNavigationBar` 而不是留在正文末尾 —— `s4` 的正文是全
       // app 最长的一屏(12 种药 + 6 个诊断),滚到底才看见主动作等于没有主动作。

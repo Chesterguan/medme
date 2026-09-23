@@ -15,6 +15,7 @@ void main() {
           bigNumber: '4', bigNumberSuffix: '/18', bigNumberCaption: '化验可算活动度'),
     ]))));
     expectSurfaceBudget();                      // 两个全 0
+    expectNoGradientAnywhere();
     expect(find.byType(RecordBookStrip), findsOneWidget);
   });
 

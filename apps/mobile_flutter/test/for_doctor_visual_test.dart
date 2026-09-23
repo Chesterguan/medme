@@ -32,7 +32,7 @@ const _emptySummary = VisitSummaryDto(
 );
 
 void main() {
-  testWidgets('渐变预算:零主卡、零入口块、一颗主按钮', (tester) async {
+  testWidgets('颜色面预算:零主卡、零入口块、一颗主按钮', (tester) async {
     await pumpStage3(tester, Scaffold(
       body: const SingleChildScrollView(child: ForDoctorActions()),
       bottomNavigationBar: const SafeArea(child: Padding(
@@ -40,6 +40,7 @@ void main() {
         child: MedPrimaryButton(label: '出码给医生看', icon: Icons.qr_code_2_outlined))),
     ));
     expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
   });
 
   testWidgets('主按钮在 bottomNavigationBar 里 —— 滚动不会把它带走', (tester) async {
@@ -129,10 +130,11 @@ void main() {
         const Scaffold(body: SingleChildScrollView(child: ForDoctorActions())));
   });
 
-  testWidgets('真实 ForDoctorScreen:渐变预算同样是 0/0/1,卡里没有渐变', (tester) async {
+  testWidgets('真实 ForDoctorScreen:颜色面预算同样是 0/0/1,卡里没有渐变', (tester) async {
     await pumpStage3(tester, ForDoctorScreen(load: () async => _emptySummary));
     await tester.pumpAndSettle();
     expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
   });
 
   testWidgets('急救卡五个 section 在两种尺寸×两档字号都不溢出(长过敏名/长药名/长诊断名)', (
@@ -234,7 +236,7 @@ void main() {
   /// 带过敏/用药/化验/笔记夹具的「给医生看」整页——`VisitSummaryBody` 不带自己的
   /// `footer`(那三条导出/急救卡/代拍入口由 `ForDoctorScreen` 接进正文的滚动流,
   /// 这里只关心 `VisitSummaryBody` 本身),固定底部的「出码给医生看」按钮走
-  /// `bottomNavigationBar`——与本文件第一个用例同一形状,渐变预算照旧是 1 颗按钮。
+  /// `bottomNavigationBar`——与本文件第一个用例同一形状,颜色面预算照旧是 1 颗按钮。
   Widget screenWithData() => Scaffold(
     body: VisitSummaryBody(
       summary: realisticSummary,
@@ -290,6 +292,7 @@ void main() {
     await t.pumpAndSettle();
     expect(medCardInBody, findsNWidgets(4));
     expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
   });
 
   testWidgets('VisitSummaryBody(真实数据)在两种尺寸×两档字号都不溢出', (tester) async {

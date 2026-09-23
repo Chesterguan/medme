@@ -33,6 +33,19 @@ void expectSurfaceBudget({int hero = 0, int button = 0}) {
   expect(find.byType(MedPrimaryButton), findsNWidgets(button), reason: '主按钮数不对');
 }
 
+/// 减法稿的另一半:整棵树里一个渐变都没有(静态闸管源码,这条管渲染出来的树)。
+void expectNoGradientAnywhere() {
+  bool hasGradient(Decoration? d) => d is BoxDecoration && d.gradient != null;
+  expect(
+    find.byWidgetPredicate((w) =>
+        (w is Container && hasGradient(w.decoration)) ||
+        (w is DecoratedBox && hasGradient(w.decoration)) ||
+        (w is Ink && hasGradient(w.decoration))),
+    findsNothing,
+    reason: '树里还有渐变面',
+  );
+}
+
 /// 2.0 字号 × 两个尺寸,四次 pump,一次溢出都不许有。
 Future<void> expectNoOverflowAtBothSizes(WidgetTester tester, Widget screen) async {
   for (final size in kStage3Sizes) {

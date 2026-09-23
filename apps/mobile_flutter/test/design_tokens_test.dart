@@ -130,19 +130,6 @@ void main() {
       }
     });
 
-    test('阴影只有一档:0 1px 2px rgba(16,26,35,.05)', () {
-      final light = MedColors.light;
-      expect(light.shadowColor.toARGB32() & 0x00FFFFFF, 0x101A23);
-      expect(light.shadowColor.a, closeTo(0.05, 0.005));
-      expect(light.shadow, hasLength(1));
-      expect(light.shadow.single.offset, const Offset(0, 1));
-      expect(light.shadow.single.blurRadius, 2);
-
-      final dark = MedColors.dark;
-      expect(dark.shadowColor.toARGB32() & 0x00FFFFFF, 0x000000);
-      expect(dark.shadowColor.a, closeTo(0.3, 0.005));
-    });
-
     test('lerp / copyWith 不丢字段', () {
       expect(MedColors.light.lerp(MedColors.dark, 0), MedColors.light);
       expect(MedColors.light.lerp(MedColors.dark, 1), MedColors.dark);
@@ -473,26 +460,11 @@ void main() {
   });
 
   group('MedBrand —— Stage 3 brief §色 / §形', () {
-    test('品牌渐变 135°,三段,逐字', () {
-      expect(MedBrand.gradientColors, [
-        const Color(0xFF1FB0C6),
-        const Color(0xFF1789C1),
-        const Color(0xFF16508E),
-      ]);
-      expect(MedBrand.gradientStops, [0.0, 0.5, 1.0]);
-      // 135° = 左上 → 右下。
-      expect(MedBrand.gradientBegin, Alignment.topLeft);
-      expect(MedBrand.gradientEnd, Alignment.bottomRight);
-      expect(MedBrand.heroGlow, const Color(0x38FFFFFF)); // rgba(255,255,255,.22)
-    });
-
-    test('横幅、示例框、看一眼、时间轴', () {
+    test('横幅、看一眼、时间轴', () {
       expect(MedBrand.bannerBlue, const Color(0xFFDDEDF8));
       expect(MedBrand.bannerBlueInk, const Color(0xFF0E6285));
       expect(MedBrand.bannerAmber, const Color(0xFFFBE7D2));
       expect(MedBrand.bannerAmberInk, const Color(0xFF9A4A12));
-      expect(MedBrand.demoBorder, const Color(0xFFB7C2CC));
-      expect(MedBrand.demoInk, const Color(0xFF657581));
       expect(MedBrand.checkWash, const Color(0xFFE6EBF0));
       expect(MedBrand.checkInk, const Color(0xFF3A4A57));
       expect(MedBrand.timelineLine, const Color(0xFFDCE3EA));
@@ -502,33 +474,6 @@ void main() {
     // Fix round 1(R19):趋势行右侧值簇的换行上限——Task 9 review 的溢出根因。
     test('趋势行右侧值簇的最大宽度', () {
       expect(MedBrand.trendValueMaxWidth, 150);
-    });
-
-    test('五档阴影,逐字', () {
-      expect(MedBrand.cardShadow.single.blurRadius, 18);
-      expect(MedBrand.cardShadow.single.offset, const Offset(0, 6));
-      expect(MedBrand.cardShadow.single.color, const Color(0x14101A23)); // rgba(16,26,35,.08)
-      expect(MedBrand.heroShadow.single.blurRadius, 30);
-      expect(MedBrand.heroShadow.single.offset, const Offset(0, 14));
-      expect(MedBrand.heroShadow.single.color, const Color(0x5216508E)); // rgba(22,80,142,.32)
-      expect(MedBrand.entryShadow.single.blurRadius, 26);
-      expect(MedBrand.entryShadow.single.offset, const Offset(0, 12));
-      expect(MedBrand.buttonShadow.single.blurRadius, 24);
-      expect(MedBrand.buttonShadow.single.offset, const Offset(0, 10));
-      expect(MedBrand.buttonShadow.single.color, const Color(0x4D16508E)); // rgba(22,80,142,.3)
-      expect(MedBrand.navShadow.single.offset, const Offset(0, -6));
-    });
-
-    test('头像块令牌(R18,mockup .hero .tile):尺寸/字号/inset/投影', () {
-      expect(MedBrand.heroTileSize, 54);
-      expect(MedBrand.heroTileLetterSize, 28);
-      // 圆角数值上与 MedShape.radiusBlock(14,「卡内分块」那档,头像本来就在
-      // 用它)重复,不另开一个 MedBrand.heroTileRadius。
-      expect(MedShape.radiusBlock, 14);
-      expect(MedBrand.heroTileInset, const Color(0x1F16508E)); // rgba(22,80,142,.12)
-      expect(MedBrand.heroTileShadow.single.color, const Color(0x590E3C64)); // rgba(14,60,100,.35)
-      expect(MedBrand.heroTileShadow.single.offset, const Offset(0, 8));
-      expect(MedBrand.heroTileShadow.single.blurRadius, 18);
     });
 
     test('减法稿:图标槽、化验刻度条', () {
@@ -543,12 +488,14 @@ void main() {
 
   group('MedShape / MedType —— Stage 3 brief §形 §字', () {
     test('六档圆角', () {
-      // R6:sheet(26)压过主卡 hero(22),现在是全 app 最大的一档。
+      // R6:sheet(26)现在是全 app 最大的一档 —— 减法稿删了 hero 专属的 22px 那档。
+      // 六档 = 六个不同的圆角数值:26 / 18 / 16(card 与 banner 同档)/ 14 / 10 / 999。
       expect(MedShape.radiusSheet, 26);
-      expect(MedShape.radiusHero, 22);
-      expect(MedShape.radiusCard, 16);
       expect(MedShape.radiusEntry, 18);
       expect(MedShape.radiusBanner, 16);
+      expect(MedShape.radiusCard, 16);
+      expect(MedShape.radiusBlock, 14);
+      expect(MedShape.radiusControl, 10);
       expect(MedShape.radiusPill, 999);
     });
 

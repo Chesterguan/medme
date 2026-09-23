@@ -18,8 +18,7 @@ import 'package:mobile_flutter/widgets/med_card.dart';
 /// 界面 chrome —— 同一份数据在哪个模式下都该长一样,所以这里只用中性色与化验状态
 /// 色。紫色留给「这是代拍」那类关于**当前模式**的信号(横幅、主按钮、图标底)。
 ///
-/// **不带骑缝线**:这是从若干份已确认文档算出来的汇总,背后没有「某一张纸」可点
-/// 进去(规范 §五)。
+/// 这是从若干份已确认文档算出来的汇总,背后没有「某一张纸」可点进去(规范 §五)。
 class ProxySummaryCard extends StatelessWidget {
   const ProxySummaryCard({super.key, required this.summary});
 

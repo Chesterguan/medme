@@ -181,7 +181,7 @@ class _NotesSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     '我想问医生的',
-                    style: MedType.secondary.copyWith(color: c.ink3),
+                    style: _SectionLabel.style(context),
                   ),
                 ),
                 // 「加一条」常驻(不只是空态才有)——见过一次医生之后往往又会想起
@@ -316,7 +316,7 @@ class _DoctorMayAskSection extends StatelessWidget {
             children: [
               Text(
                 '医生可能要问的',
-                style: MedType.secondary.copyWith(color: c.ink3),
+                style: _SectionLabel.style(context),
               ),
               const SizedBox(height: 2),
               Text(
@@ -409,7 +409,7 @@ class _MedsSubsection extends StatelessWidget {
                       Expanded(
                         child: Text(
                           kRecordedMedsTitle,
-                          style: MedType.secondary.copyWith(color: c.ink3),
+                          style: _SectionLabel.style(context),
                         ),
                       ),
                       Icon(
@@ -496,29 +496,31 @@ class _Section extends StatelessWidget {
 /// 这一屏上小标题的共用样式(13·400·ink3)。`_Section` 直接用这个 widget;
 /// `_NotesSection`/`_DoctorMayAskSection`/`_MedsSubsection` 折叠头三处标题各自
 /// 还带着别的东西同排(「加一条」按钮/免责声明段落/展开箭头),套不进同一个
-/// `Padding` 外框(会跟同排的旁的东西对不齐左边),就地复用这里的
-/// `MedType.secondary.copyWith(color: c.ink3)`。四处原来分 13/400 与 12/500
-/// 两种字号各写各的,「记录中出现的药物」会随列表是不是空换字号——现在统一
-/// 成这一份,不会再有第二种。
+/// `Padding` 外框(会跟同排的旁的东西对不齐左边),改用 [style] 取同一份样式。
+/// 四处原来分 13/400 与 12/500 两种字号各写各的,「记录中出现的药物」会随列表
+/// 是不是空换字号——现在统一成这一份,不会再有第二种。
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.text);
 
   final String text;
 
+  /// 单一样式来源——[_SectionLabel] 自己的 [build] 与另外三处套不进同一个
+  /// `Padding` 外框的标题都调这个,不再各自写一份 `MedType.secondary.copyWith`。
+  static TextStyle style(BuildContext context) =>
+      MedType.secondary.copyWith(color: MedColors.of(context).ink3);
+
   @override
   Widget build(BuildContext context) {
-    final c = MedColors.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
-      child: Text(text, style: MedType.secondary.copyWith(color: c.ink3)),
+      child: Text(text, style: style(context)),
     );
   }
 }
 
 /// 一行「名称 + 说明」,右侧箭头点进原件。
 ///
-/// 骑缝线不画在这里 —— 这是浮层里的一**行**不是一张卡,而骑缝线是卡级的签名元素
-/// (规范 §五)。可溯源在这一层由**右侧的箭头 + 可点**兑现:`documentIds` 为空时
+/// 可溯源在这一层由**右侧的箭头 + 可点**兑现(规范 §五):`documentIds` 为空时
 /// 箭头不出现,行也点不动,不给假承诺。
 class _LineRow extends StatelessWidget {
   const _LineRow({

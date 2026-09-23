@@ -160,7 +160,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       ),
       // 还没核对文档:底部一对按钮,逐字按 `s7`——「看原件」(次)+「没问题」(主),
       // 核对后一键归入正常时间线(去掉琥珀框)。「没问题」是本屏**唯一**的
-      // 主按钮(渐变预算表:s7 = 1 颗 `MedPrimaryButton`)。纯 widget 提出去
+      // 主按钮(颜色面预算表:s7 = 1 颗 `MedPrimaryButton`)。纯 widget 提出去
       // (`DocumentReviewActionBar`),不碰 FFI,测试测得到(R22)。
       bottomNavigationBar: pending
           ? DocumentReviewActionBar(
@@ -232,7 +232,7 @@ class DocumentReviewActionBar extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: MedShape.s2),
-              // 「没问题」是本屏**唯一**的主按钮(渐变预算表:s7 = 1)。
+              // 「没问题」是本屏**唯一**的主按钮(颜色面预算表:s7 = 1)。
               Expanded(
                 child: MedPrimaryButton(
                   icon: Icons.check,
@@ -345,7 +345,7 @@ class DetailBody extends StatelessWidget {
                 ] else
                   // 次级按钮(R22:`MedSecondaryButton`)。「原件永远可达」是
                   // 007 §2.1 的铁律,所以它不能是最弱的那一级;但本屏的主按钮
-                  // 位置留给底部的「没问题」,它就不该是渐变主按钮。
+                  // 位置留给底部的「没问题」,它就不该是 `MedPrimaryButton`。
                   SizedBox(
                     width: double.infinity,
                     child: MedSecondaryButton(

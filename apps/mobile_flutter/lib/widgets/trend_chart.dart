@@ -275,7 +275,7 @@ class _TrendPainter extends CustomPainter {
         math.max(top, bottom),
       );
       canvas.drawRect(rect, Paint()..color = band);
-      // 上下缘各一条虚线。用 `ink3` 而不是 `line`:`line`(#E3E9EE)压在
+      // 上下缘各一条虚线。用 `ink3` 而不是 `line`:`line`(#E9EEF2)压在
       // `seal-wash`(#EAF5FA)上几乎看不见,画了等于没画。这条线是非文本 UI 元素
       // (3:1 门槛),`ink3` 既看得清又明显不是「数据色」,不会和折线抢读。
       final edge = Paint()

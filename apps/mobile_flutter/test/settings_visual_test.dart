@@ -38,10 +38,11 @@ void main() {
     expect(find.byType(MedAvatar), findsWidgets);
   });
 
-  testWidgets('零个品牌渐变面', (tester) async {
+  testWidgets('零个颜色面', (tester) async {
     await pumpStage3(tester, Scaffold(body: MembersCard(
         members: const [], countOf: (_) => 0, onOpen: (_) {}, onAdd: () {})));
     expectSurfaceBudget();
+    expectNoGradientAnywhere();
   });
 
   // `_RowProbe` 探不到私有的 `_SettingsRow`(见文件头注释)——改探 `MembersCard`
@@ -72,7 +73,7 @@ void main() {
   group('成员页(s10):三组卡换 MedCard', () {
     const local = Profile(id: 'p-1', name: '张建国');
 
-    testWidgets('本地成员(无云端授权):没有 Card/CircleAvatar 残留,零个品牌渐变面,不溢出', (tester) async {
+    testWidgets('本地成员(无云端授权):没有 Card/CircleAvatar 残留,零个颜色面,不溢出', (tester) async {
       await expectNoOverflowAtBothSizes(
         tester,
         Scaffold(body: MemberDetailScreen(member: local)),
@@ -85,6 +86,7 @@ void main() {
       expect(find.byType(Card), findsNothing);
       expect(find.byType(CircleAvatar), findsNothing);
       expectSurfaceBudget();
+      expectNoGradientAnywhere();
     });
 
     testWidgets('「删除这个成员」标题色是 critical', (tester) async {

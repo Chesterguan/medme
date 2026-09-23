@@ -2,7 +2,7 @@
 // (`proxy_intake_flow.dart` 的 `PendingListStep`)的两颗按钮。
 //
 // **没有按 carry-forward 字面意思换成 MedSecondaryButton/MedPrimaryButton——
-// 这两个 token 组件写死蓝色(`MedBrand.gradientColors`/`c.seal`/`c.sealInk`,
+// 这两个 token 组件写死蓝色(`c.seal`/`c.sealInk`,
 // 没有颜色参数),而代拍模式全程是紫色 `c.proxy`:文件头部类文档写明『紫是
 // 代拍专属……两个模式一眼可辨是安全设计,不是装饰』——防的是拍错病人的单子/
 // 在错模式下动手。同一个文件里 `_CaptureStep`(891 行一带)、以及
@@ -11,7 +11,7 @@
 // `FilledButton.styleFrom(backgroundColor: c.proxy)`——`lib/screens/doctor/`
 // 整个目录没有一处用 MedPrimaryButton/MedSecondaryButton,而这五处全部是
 // Stage 3 期间(Task 12/13/13b)已经过审、原样保留的代拍配色。换成蓝会破坏
-// 这条一直保持一致的安全区分。`global-constraints.md` 的品牌渐变预算表
+// 这条一直保持一致的安全区分。`global-constraints.md` 的品牌颜色面预算表
 // (九屏/十五行)也没有任何一行是代拍屏——预算表本来就只管个人模式。
 //
 // 这个测试只钉两件没有争议的事:①「添加」/「生成取件码,交给病人」原样是
@@ -42,10 +42,11 @@ Widget _harness() => PendingListStep(
 );
 
 void main() {
-  testWidgets('还没核对列表:零品牌渐变(代拍紫不进个人模式的预算表)', (tester) async {
+  testWidgets('还没核对列表:零颜色面(代拍紫不进个人模式的预算表)', (tester) async {
     await pumpStage3(tester, _harness());
 
     expectSurfaceBudget();
+    expectNoGradientAnywhere();
     expect(find.widgetWithText(OutlinedButton, '添加'), findsOneWidget);
     expect(
       find.widgetWithText(FilledButton, '生成取件码,交给病人'),

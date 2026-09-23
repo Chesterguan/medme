@@ -195,8 +195,8 @@ Widget? _metaLine(BuildContext context, List<String?> parts) {
 
 /// 一块 section 的外壳:白卡 + 图标 + 标题(可选,来自包)+ 内容。
 ///
-/// **一个 section 只有一个 [MedCard]**,不嵌套渐变、不嵌套第二张卡——mockup 的
-/// 「白卡 + 彩色描边、渐变 hero 只留给身份卡一张」这条规矩在这一层落地。
+/// **一个 section 只有一个 [MedCard]**,不嵌套第二张卡——同一屏里的卡不互相
+/// 抢注意力,层次交给字号和留白分。
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.icon,

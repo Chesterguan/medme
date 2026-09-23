@@ -31,7 +31,7 @@ DocumentDetailDto _detail({required String docType, required String ocrText}) =>
     );
 
 void main() {
-  testWidgets('抬头卡:一枚 MedIcon,MedCard 外壳,渐变预算 0', (
+  testWidgets('抬头卡:一枚 MedIcon,MedCard 外壳,颜色面预算 0', (
     tester,
   ) async {
     await pumpStage3(
@@ -41,8 +41,9 @@ void main() {
     expect(find.byType(MedIcon), findsWidgets);
     // 抬头卡本身是 MedCard(1px line 细边、无阴影),这条自动满足,顺带钉一下。
     expect(find.byType(MedCard), findsWidgets);
-    // 这一屏渐变预算是 0(brief 的每屏预算表:一份病历 s8 = 0/0/0)。
+    // 这一屏颜色面预算是 0(brief 的每屏预算表:一份病历 s8 = 0/0/0)。
     expectSurfaceBudget();
+    expectNoGradientAnywhere();
   });
 
   testWidgets('抬头卡「查看原件」是 MedSecondaryButton,不是 OutlinedButton', (tester) async {
@@ -71,6 +72,7 @@ void main() {
     expect(find.widgetWithText(MedPrimaryButton, '没问题'), findsOneWidget);
     // 颜色面预算表:s7 = 1 颗 MedPrimaryButton,没有 HeroCard。
     expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
 
     await tester.tap(find.text('看原件'));
     expect(viewed, isTrue, reason: '「看原件」回调没接上');

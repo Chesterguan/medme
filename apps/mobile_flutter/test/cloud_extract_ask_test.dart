@@ -28,7 +28,7 @@ void main() {
       );
       expect(find.text('开,帮我整理'), findsOneWidget);
       expect(find.text('不开'), findsOneWidget);
-      // Stage 3(task-14):s17 渐变预算 = 1 颗主按钮,「开,帮我整理」视觉上比
+      // Stage 3(task-14):s17 颜色面预算 = 1 颗主按钮,「开,帮我整理」视觉上比
       // 「不开」重一点(brief 明确点名的那颗)——但两颗仍是各自独立的按钮,
       // 谁都不是提前选好的默认值,点哪颗都是用户自己按的那一下才算数。
       expect(find.byType(MedPrimaryButton), findsOneWidget);

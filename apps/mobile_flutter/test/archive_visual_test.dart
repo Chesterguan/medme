@@ -32,6 +32,7 @@ void main() {
   testWidgets('颜色面预算:没有主卡,一颗主按钮', (tester) async {
     await pumpStage3(tester, _homeBlock());
     expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
   });
 
   testWidgets('「添加」是实心药丸(MedPrimaryButton),「给医生看」是描边药丸(MedSecondaryButton)', (tester) async {

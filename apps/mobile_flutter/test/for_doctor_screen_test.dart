@@ -74,7 +74,7 @@ void main() {
 
     // 「出码」是固定在底部的那一颗(`s4`),不在跟着滚的那一组里。Task 10 把它
     // 从 `FilledButton.icon` 换成了 `MedPrimaryButton`(brief §品牌 最后一条 +
-    // 渐变预算表:s4 的那 1 颗主按钮就是它),按类型直接找。
+    // 颜色面预算表:s4 的那 1 颗主按钮就是它),按类型直接找。
     final qr = tester.widget<MedPrimaryButton>(find.byType(MedPrimaryButton));
     expect(qr.onPressed, isNotNull, reason: '「出码」还是禁用态');
 

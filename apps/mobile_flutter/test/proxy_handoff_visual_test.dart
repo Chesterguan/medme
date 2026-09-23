@@ -62,6 +62,7 @@ void main() {
     await _openDialog(tester);
 
     expectSurfaceBudget(hero: 1);
+    expectNoGradientAnywhere();
     expect(find.byType(MedQrFrame), findsOneWidget);
   });
 

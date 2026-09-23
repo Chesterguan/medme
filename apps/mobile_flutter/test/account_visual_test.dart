@@ -1,5 +1,5 @@
-// 口令/换机/出码/代拍四屏。三屏各有一处品牌渐变(s12 的主按钮、s15 与 s14 的
-// 居中主卡),s13 的渐变在首次那张 sheet 的「好,出码」上。
+// 口令/换机/出码/代拍四屏。三屏各有一处颜色面(s12 的主按钮、s15 与 s14 的
+// 居中主卡),s13 的颜色面在首次那张 sheet 的「好,出码」上。
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -76,7 +76,7 @@ void main() {
     await t.pumpAndSettle();
   }
 
-  testWidgets('恢复码框:等宽 20 号、字距 .1em、#F1F4F8 底、#0E6285 字、圆角 14', (tester) async {
+  testWidgets('恢复码框:等宽 20 号、字距 .1em、paper 底、#0E6285 字、圆角 14', (tester) async {
     await pumpStage3(tester, const Scaffold(body: Center(child: RecoveryCodeBox(
       code: '7K3M-QW9P-XR2D-HB8N-4TVL'))));
     final t = tester.widget<Text>(find.text('7K3M-QW9P-XR2D-HB8N-4TVL'));
@@ -116,6 +116,7 @@ void main() {
   testWidgets('出码首次 sheet:一颗主按钮 + 一颗次按钮,零主卡', (tester) async {
     await pumpStage3(tester, const Scaffold(body: QrNoticeBody()));
     expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
     expect(find.byType(MedSecondaryButton), findsOneWidget);
   });
 
@@ -245,9 +246,9 @@ void main() {
 
   // ── Task 16(Task 13 review Important 遗留):s12/s15/s13 三个组合屏之前只测过
   // 拆出来的小组件(RecoveryCodeBox/MedFieldPanel/MedQrFrame/MedEntryTile 对),
-  // 没有走真实登录流程,在「真的那一屏」上断言过渐变预算、也没跑过溢出矩阵——
+  // 没有走真实登录流程,在「真的那一屏」上断言过颜色面预算、也没跑过溢出矩阵——
   // 这三处都得先登录才碰得到,复用上面 R25 那组的 FakeApi 驱动手法。
-  group('Task 16:s12/s15/s13 组合屏的渐变预算 + 溢出矩阵', () {
+  group('Task 16:s12/s15/s13 组合屏的颜色面预算 + 溢出矩阵', () {
     late Directory support;
 
     setUp(() async {
@@ -327,17 +328,19 @@ void main() {
       await t.pumpAndSettle();
     }
 
-    testWidgets('s12:渐变预算 1(「我抄好了」),复制/分享是 Wrap 里两颗按钮', (t) async {
+    testWidgets('s12:颜色面预算 1(「我抄好了」),复制/分享是 Wrap 里两颗按钮', (t) async {
       await toRecoveryScreen(t);
       expectSurfaceBudget(button: 1);
+      expectNoGradientAnywhere();
       expect(find.byType(Wrap), findsOneWidget);
       expect(find.widgetWithText(TextButton, '复制'), findsOneWidget);
       expect(find.widgetWithText(MedSecondaryButton, '发给自己'), findsOneWidget);
     });
 
-    testWidgets('s15:渐变预算 1(HeroCard 包住 device-approval 块)', (t) async {
+    testWidgets('s15:颜色面预算 1(HeroCard 包住 device-approval 块)', (t) async {
       await toUnlockScreen(t);
       expectSurfaceBudget(hero: 1);
+      expectNoGradientAnywhere();
       expect(find.byType(HeroCard), findsOneWidget);
     });
 

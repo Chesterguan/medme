@@ -242,7 +242,6 @@ class _BloodTypeCard extends StatelessWidget {
           Expanded(child: Text('血型', style: MedType.caption.copyWith(color: c.ink3))),
         ]),
         const SizedBox(height: MedShape.s1),
-        // 派生自「我们没有」这个事实,背后没有原件 → 不画骑缝线。
         MedCard(
           child: Padding(
             padding: const EdgeInsets.all(MedShape.s4),

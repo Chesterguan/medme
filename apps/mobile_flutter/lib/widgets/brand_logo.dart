@@ -6,7 +6,8 @@ import 'package:flutter/material.dart';
 ///  · 病程档案页头 [topBar] 30 —— `disease_profile_screen.dart`;
 ///  · 首启场景中央 [splash] 104 —— `first_run_consent.dart`。
 ///
-/// 别处想放品牌,用品牌渐变(`BrandGradientBox`),不要再摆一个 logo —— 到处都是
+/// 别处想放品牌,用 `brand_surfaces.dart` 的实色面(`HeroCard`/`MedPrimaryButton`),
+/// 不要再摆一个 logo —— 到处都是
 /// 的标志等于没有标志。
 ///
 /// **不是 app 图标**:`assets/icon/app_icon.png` 是启动/桌面图标,那一张继续用在

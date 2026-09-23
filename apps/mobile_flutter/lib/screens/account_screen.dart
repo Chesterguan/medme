@@ -906,7 +906,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// 解锁屏顶部那一块。三态都在这儿:还没生成(一颗按钮)/ 举着码等批准(码 +
   /// 倒计时 + 取消)/ 失败(红字 + 按钮还在,可以再来一次)。
-  /// `s15` 的一屏一处品牌渐变:整块（标题/说明/二维码/倒计时/取消)包进一张
+  /// `s15` 的一屏一处颜色面:整块（标题/说明/二维码/倒计时/取消)包进一张
   /// `HeroCard`。卡面白字规则(design_tokens.dart `MedType.heroValue` 类文档
   /// 「全卡统一的确定性规则」)照搬:标题/正文一律换成白字系的 token。
   List<Widget> _deviceApprovalBlock() {
@@ -1191,7 +1191,7 @@ class _AccountScreenState extends State<AccountScreen> {
           // `pumpAndSettle` 永远 settle 不下来(踩过)。同「谁能看」那一行的写法。
           //
           // R25:仍然是纯文字按钮,只是颜色从主题默认换成 token 的 sealInk ——
-          // 这一行本来就没有图标位,不新增一个(与另外两行的光泽图标块不同)。
+          // 这一行本来就没有图标位,不新增一个(与另外两行的 MedIcon 不同)。
           TextButton(
             key: const Key('transfer_current_profile'),
             onPressed: _transferBusy ? null : () => _transferOwnership(profile),
@@ -2022,10 +2022,10 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 起来:用户得看见下一步在哪、为什么还不能点(提示就在按钮上方)。
   /// [busyHint] 是转圈时那句话,见 [_kdfWaitHint]。
   ///
-  /// [primary] 只给 brief 明确点名要品牌渐变的那一颗按钮用(目前只有恢复码
-  /// 画面的「我抄好了」,s12 的渐变预算恰好是 1)——其余调用点(发送验证码/
+  /// [primary] 只给 brief 明确点名要颜色面的那一颗按钮用(目前只有恢复码
+  /// 画面的「我抄好了」,s12 的颜色面预算恰好是 1)——其余调用点(发送验证码/
   /// 登录/设好了/解锁)默认 false,继续走原来的 `FilledButton`,不许一并改掉,
-  /// 否则每屏的渐变预算就对不上了。
+  /// 否则每屏的颜色面预算就对不上了。
   Widget _asyncButton({
     required String label,
     required VoidCallback onPressed,

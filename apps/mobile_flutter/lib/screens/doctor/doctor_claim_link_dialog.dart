@@ -37,7 +37,7 @@ Future<void> showDoctorClaimLinkDialog(
     copiedMessage: '链接已复制,可以发给病人',
     shareOrigin: shareOrigin,
     accent: MedColors.of(context).proxy,
-    // R27:mockup `s14`「替病人代拍」的 `.hero`——这一屏唯一的品牌渐变面。
+    // R27:mockup `s14`「替病人代拍」的 `.hero`——这一屏唯一的颜色面。
     hero: true,
   );
 }

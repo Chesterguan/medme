@@ -49,7 +49,7 @@ Future<void> showLinkQrDialog(
   /// `HeroCard`,「复制链接」换成 `MedSecondaryButton`(mockup `.btn.ghost`)。
   /// **只有代拍那条调用方传 `true`**——`account_screen.dart`/
   /// `member_detail_screen.dart` 的「交给他」还没轮到 Stage 3,不能被这里的
-  /// 改动捎带着变(那两条路的品牌渐变预算至今是 0)。
+  /// 改动捎带着变(那两条路的颜色面预算至今是 0)。
   bool hero = false,
 }) async {
   if (!context.mounted) return;

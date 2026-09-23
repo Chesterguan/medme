@@ -621,9 +621,9 @@ class _AbnormalOnlyRow extends StatelessWidget {
 /// 一条序列一张卡:卡头(项目名 + pill + 最新值)→ 折线 → 参考区间图例 + 时间跨度
 /// → 最新一次的原件入口。
 ///
-/// **不画骑缝线。** 这是一张派生卡:一条趋势是从许多份原件里算出来的结论,背后没有
-/// 「某一张纸」叫做「肌酐趋势」(规范 §五,那里正是拿趋势汇总卡当反例的)。可溯源
-/// 由卡底那颗「最新一次的原件」兑现 —— 它指向一个具体的 `documentId`。
+/// 这是一张派生卡:一条趋势是从许多份原件里算出来的结论,背后没有「某一张纸」
+/// 叫做「肌酐趋势」(规范 §五,那里正是拿趋势汇总卡当反例的)。可溯源由卡底那颗
+/// 「最新一次的原件」兑现 —— 它指向一个具体的 `documentId`。
 class SeriesCard extends StatefulWidget {
   /// **公开是为了可测。** 「自测序列必须带文字图例」这条只能在渲染出来的卡上验证
   /// —— 整屏 pump 需要 `viewTrends()` 的 Rust FFI,测试环境没有原生库。与
@@ -1116,8 +1116,8 @@ class _EmptyTrends extends StatelessWidget {
 /// (`s2` 的固定顺序),这块只负责各行 —— 搬过来之前它自带一个「最近的关键化验 /
 /// 看趋势」的抬头,那颗「看趋势」在这一屏上是指向自己的链接。
 ///
-/// **不带骑缝线**:卡里每一行来自不同的原件,这张卡本身不对应任何一张纸。可溯源
-/// 由每一行右侧的箭头兑现(点进去就是那一次化验的那份报告)。
+/// 卡里每一行来自不同的原件,这张卡本身不对应任何一张纸。可溯源由每一行右侧的
+/// 箭头兑现(点进去就是那一次化验的那份报告)。
 ///
 /// **公开是为了可测**,与 [SeriesCard] 同一先例:整屏要 FFI,这一块不要。
 class KeyLabsSnapshot extends StatelessWidget {
@@ -1182,9 +1182,9 @@ class KeyLabsSnapshot extends StatelessWidget {
 
 /// 「东西在哪」—— 最近就诊的几份(`s2` 的「最近就诊」)。
 ///
-/// 每一条各自一张卡,**骑缝线按档案屏的同一条规则画**:
-///  · 只含一份文档的记录 → 点了就是那一份原件 → 画;
-///  · 一次就诊含好几份 → 点了是去「病历」里展开那一组,背后没有「一张纸」→ 不画。
+/// 每一条各自一张卡,点进哪里按文档数分:
+///  · 只含一份文档的记录 → 点了就是那一份原件;
+///  · 一次就诊含好几份 → 点了是去「病历」里展开那一组。
 class RecentVisitsCard extends StatelessWidget {
   const RecentVisitsCard({
     super.key,
@@ -1392,7 +1392,7 @@ class RecordEntryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     // mockup 的 `.btn.ghost`:透明底、`seal` 字、字重 400、无阴影 —— **不用**
-    // `MedPrimaryButton`(那是品牌渐变面,会让这一屏的渐变预算从 0 变成 1)。
+    // `MedPrimaryButton`(那是一块颜色面,会让这一屏的颜色面预算从 0 变成 1)。
     return Material(
       type: MaterialType.transparency,
       child: ListTile(
