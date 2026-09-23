@@ -95,6 +95,34 @@ const Map<String, int> kRemovedByDecision = {
   // profile_manager.dart 三处原样还在。这个词往后再消失第二次,预算用完,
   // 闸重新红——那时候得说清楚是哪个 widget、为什么。
   '我': 1,
+
+  // Task 6(2026-09-23,趋势重整):`KeyLabsSnapshot`(关键化验各行,并进了
+  // `TrendRow` 列表)、`RecentVisitsCard`/`_VisitCard`/`visitCardShowsDate`/
+  // `visitCardDesc`(最近就诊,没有下家)、`_AbnormalOnlyRow`(整行 `Switch`,
+  // 换成 `PanelChipsRow` 末尾一颗 `MedChip`)三个 widget 整块删掉,带走它们的
+  // 字面量——闸自己文件头注释写的合法例外(不是用户点名删这几个词本身)。
+  // 以下逐条对应闸实际报告的段,数量按「删掉整个 widget 时字面量出现过的文件
+  // 数」记(全部是 1,`trends_screen.dart` 单独一个文件)。
+  //
+  // `RecentVisitsCard`(`_SectionHeader(title: '最近就诊', actionLabel: '全部
+  // $total 份')`+空态「还没有添加过病历。」)与 `_VisitCard`
+  // (`visitCardDesc` 的 `'$docCount 份记录'`):
+  '最近就诊': 1,
+  '份': 1,
+  '份记录': 1,
+  '还没有添加过病历。': 1,
+  // `KeyLabsSnapshot` 的空态:
+  '已添加的病历里还没有读到可显示的化验数值。拍一张化验单试试。': 1,
+  // `_AbnormalOnlyRow` 的四句(基础开关文案、隐藏计数后缀、搜索/选中大类时
+  // 让位说明各一句)——`」下不过滤` 前半的引号来自
+  // `'「${_panelChipLabel(selectedPanel)}」下不过滤 …'`,插值把整句切开,
+  // 剩下这一段是闸实际认到的字面量,不是漏字:
+  '只看非正常项': 1,
+  '条正常或判断不了': 1,
+  '搜索时不过滤': 1,
+  '正常项也一起找。': 1,
+  '」下不过滤': 1,
+  '这类检查查过的都在这。': 1,
 };
 
 /// 与 [kRemovedByDecision] 对称:这一阶段**允许多出来**的段,值 = 允许多出的文件数。
@@ -132,6 +160,17 @@ const Map<String, int> kAddedByDecision = {
   '天有': 1,
   '项偏高或偏低': 1,
   '最近|30': 1,
+
+  // Task 6(2026-09-23,趋势重整):`trends_screen.dart` 的 `PanelChipsRow`
+  // 新增末尾的「只看异常」开关 chip(`MedChip(label: '只看异常', ...)`,替换
+  // 删掉的 `_AbnormalOnlyRow` 那颗 `Switch`),`_SinglesFold` 新增页尾折叠标题
+  // 「只测过一次的 N 项」——逐条对应计划里登记的新字「只看异常」「只测过一次的
+  // N 项」。数字把「只测过一次的」和「项」隔成两段(R35a 同款,不成一个整段)。
+  // 「项」本已出现在 `disease_profile_card.dart`(病种包条目数「N 项」,基线里
+  // 就有、未改动)——净变化只来自 `trends_screen.dart` 新增的这一处,预算 1。
+  '只看异常': 1,
+  '只测过一次的': 1,
+  '项': 1,
 };
 
 /// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败

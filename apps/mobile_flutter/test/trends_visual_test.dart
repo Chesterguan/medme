@@ -6,6 +6,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/widgets/record_book_strip.dart';
+import 'package:mobile_flutter/widgets/trend_chart.dart';
 import 'stage3_visual_helpers.dart';
 
 void main() {
@@ -41,7 +42,7 @@ void main() {
   });
 
   // ── Fix round 1(controller ruling R19,Important #2):trends_visual_test.dart
-  // 原来一次都没 pump 过真的 `SeriesCard`,漏掉了这一屏计划要求覆盖的那一行的
+  // 原来一次都没 pump 过真的趋势行,漏掉了这一屏计划要求覆盖的那一行的
   // 几何形状。补上:长名称/长单位这组真实会溢出的数据(见 R19 的复现用例)。
   TrendSeriesDto longNameSeries() => TrendSeriesDto(
     name: '抗核抗体谱定量(ANA)',
@@ -57,36 +58,54 @@ void main() {
     selfMeasured: false,
   );
 
-  testWidgets('趋势行(SeriesCard):长名称 + 长单位,两个尺寸 × 两档字号不溢出', (tester) async {
+  testWidgets('趋势行(TrendRow):长名称 + 长单位,两个尺寸 × 两档字号不溢出', (tester) async {
     await expectNoOverflowAtBothSizes(tester, Scaffold(body: SingleChildScrollView(
-        child: SeriesCard(series: longNameSeries(), onOpenDoc: (_) {}))));
+        child: TrendRow(series: longNameSeries(), onOpenDoc: (_) {}))));
   });
 
-  testWidgets('趋势行:78×24 小折线占位;点开 ▾ 原地展开 82px、底 #F7FAFC', (tester) async {
+  testWidgets('趋势行:78×24 迷你折线(compact、不描动画);点开 ▾ 原地展开真图(96 高)、底 #F7FAFC', (tester) async {
     await pumpStage3(tester, Scaffold(body: SingleChildScrollView(
-        child: SeriesCard(series: longNameSeries(), onOpenDoc: (_) {}))));
+        child: TrendRow(series: longNameSeries(), onOpenDoc: (_) {}))));
 
     final spark = find.byWidgetPredicate((w) => w is SizedBox && w.width == 78 && w.height == 24);
     expect(spark, findsOneWidget);
     expect(tester.getSize(spark), const Size(78, 24));
 
-    Finder expandArea() => find.byWidgetPredicate((w) =>
-        w is Container && (w.decoration as BoxDecoration?)?.color == MedBrand.expandedChartBg);
+    // 折叠态只有一个 `TrendChart`:78×24 的迷你折线,compact 且不描动画——
+    // 与 `test/motion_test.dart` 的动效闸同一条硬约束(`animate:false` 才能
+    // 保证进页面不会一次性描一屏的线)。
+    var charts = tester.widgetList<TrendChart>(find.byType(TrendChart)).toList();
+    expect(charts, hasLength(1));
+    expect(charts.single.compact, isTrue);
+    expect(charts.single.animate, isFalse);
+    expect(charts.single.height, 24);
+
+    Finder expandArea() =>
+        find.byWidgetPredicate((w) => w is Container && w.color == MedBrand.expandedChartBg);
     expect(expandArea(), findsNothing, reason: '默认收起,不占位');
 
     await tester.tap(find.byIcon(Icons.expand_more));
     await tester.pump();
 
     expect(expandArea(), findsOneWidget, reason: '点开之后原地展开一块占位区');
-    expect(tester.getSize(expandArea()).height, 82);
+    // 96(TrendChart 默认高)+ 上下各一份 s2(12)内边距 = 120。
+    expect(tester.getSize(expandArea()).height, 120);
+
+    // 展开后多出第二个 `TrendChart`:96 高的真图(默认 compact:false)。
+    charts = tester.widgetList<TrendChart>(find.byType(TrendChart)).toList();
+    expect(charts, hasLength(2));
+    final big = charts.firstWhere((c) => c.height == 96);
+    expect(big.compact, isFalse);
+
+    await tester.pumpAndSettle();
   });
 }
 
 /// `MedChip`(原 `trends_screen.dart` 私有的 `_PanelChip`,Task 10 提到
 /// `widgets/med_card.dart` 改公开共用,R8)今天已经可以直接拿到,但这里仍然
-/// 经 `PanelChipsRow`(本 Task 把它从私有的 `_PanelChipsRow` 改公开)喂两颗
-/// chip,一颗选中一颗不选中——顺带把「选中态/未选中态」在 `PanelChipsRow`
-/// 这一层的接线也验了,不只是验 `MedChip` 自己。
+/// 经 `PanelChipsRow` 喂两颗大类 chip(一颗选中一颗不选中)+ 末尾一颗「只看
+/// 异常」开关 chip——顺带把「选中态/未选中态」在 `PanelChipsRow` 这一层的
+/// 接线也验了,不只是验 `MedChip` 自己。
 class _ChipsProbe extends StatelessWidget {
   const _ChipsProbe();
 
@@ -98,5 +117,7 @@ class _ChipsProbe extends StatelessWidget {
     ],
     selectedPanel: null,
     onSelectPanel: (_) {},
+    abnormalOnly: false,
+    onToggleAbnormal: () {},
   );
 }

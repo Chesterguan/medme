@@ -333,7 +333,10 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  group('趋势:搜索与「只看非正常项」', () {
+  // 筛选语义(Task 6 趋势重整):大类与「只看异常」**叠加**(不再互相让位,
+  // 原来「选中大类 / 搜索时开关整个失效」的两条测试删掉,见下面两组新断言);
+  // 搜索仍然无视「只看异常」,但仍受大类约束。
+  group('趋势:筛选 —— 大类、只看异常、搜索', () {
     TrendSeriesDto s(String name, {required bool abnormal, String? panel}) =>
         TrendSeriesDto(
           name: name,
@@ -351,20 +354,35 @@ void main() {
       s('Cr 血肌酐', abnormal: false),
     ];
 
-    test('默认只列非正常项', () {
+    test('默认开关关:全部趋势项都列', () {
+      expect(trendVisible(all, query: '', abnormalOnly: false).length, 3);
+    });
+
+    test('只看异常单独生效(没有大类、没有搜索时)', () {
       final v = trendVisible(all, query: '', abnormalOnly: true);
       expect(v.map((e) => e.name), ['血红蛋白']);
     });
 
-    test('关掉开关就全列', () {
-      expect(trendVisible(all, query: '', abnormalOnly: false).length, 3);
-    });
-
     // 这条是整个特性最容易写错的地方:叠加会让「搜正常项」永远搜不到。
-    test('搜索时绕过「只看非正常项」—— 正常的也要找得到', () {
-      final v = trendVisible(all, query: '肌酐', abnormalOnly: true);
-      expect(v.map((e) => e.name), ['肌酐', 'Cr 血肌酐'],
-          reason: '两条都正常,若与非正常过滤叠加就会一条都搜不到');
+    test('搜索时忽略只看异常,但仍受大类约束', () {
+      final byName = trendVisible(all, query: '肌酐', abnormalOnly: true);
+      expect(byName.map((e) => e.name), ['肌酐', 'Cr 血肌酐'],
+          reason: '两条都正常,若与只看异常叠加就会一条都搜不到');
+
+      // 搜索无视只看异常,但大类约束仍然生效——不是「搜索让一切都放开」。
+      final withPanel = [
+        s('肌酐', abnormal: false, panel: '肾功能'),
+        s('尿素', abnormal: false, panel: '肾功能'),
+        s('Cr 血肌酐', abnormal: false, panel: '其他专科'),
+      ];
+      final byNameAndPanel = trendVisible(
+        withPanel,
+        query: '肌酐',
+        abnormalOnly: true,
+        panel: '肾功能',
+      );
+      expect(byNameAndPanel.map((e) => e.name), ['肌酐'],
+          reason: '「Cr 血肌酐」名字也含「肌酐」,但不在肾功能这个大类里,该被挡在外面');
     });
 
     test('大小写无关', () {
@@ -441,19 +459,21 @@ void main() {
       );
     });
 
-    test('选中大类时「只看非正常项」让位,与搜索同一条理由', () {
+    test('只看异常与大类叠加:选肾功能 + 开关开 = 肾功能里的异常项', () {
       final all = [
         s('肌酐', panel: '肾功能', abnormal: false),
-        s('estimated 肾小球滤过率', panel: '肾功能', abnormal: false),
+        s('估算肾小球滤过率', panel: '肾功能', abnormal: true),
+        s('促甲状腺激素', panel: '甲状腺功能', abnormal: true),
       ];
-      // 两条都正常;若选中大类时仍叠加 abnormalOnly,会把刚打开的大类过滤成空。
       final shown = trendVisible(
         all,
         query: '',
         abnormalOnly: true,
         panel: '肾功能',
       );
-      expect(shown.length, 2, reason: '选中大类后不该再被「只看非正常项」清空');
+      // 叠加,不是让位:肾功能里两条,只有「估算肾小球滤过率」异常;
+      // 「促甲状腺激素」虽然异常,但不在肾功能这个大类里,不该出现。
+      expect(shown.map((e) => e.name), ['估算肾小球滤过率']);
     });
 
     test('大类与搜索可以叠加:先按大类筛,再按名字筛', () {
@@ -493,6 +513,53 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
+  // trendSplit:测过 ≥ 2 次(有日期的点)的才算「趋势」,进 multi;不到 2 次的
+  // 进 single,页尾折叠(`_SinglesFold`)另外列。
+  group('趋势:trendSplit —— 测过 ≥ 2 次才算趋势', () {
+    TrendSeriesDto s(
+      String name, {
+      required List<TrendPointDto> points,
+      bool abnormal = false,
+    }) => TrendSeriesDto(
+      name: name,
+      unit: 'umol/L',
+      valuesConverted: false,
+      anyAbnormal: abnormal,
+      points: points,
+      selfMeasured: false,
+    );
+
+    test('有日期点 < 2 的进 single,≥ 2 的进 multi', () {
+      final once = s('甲', points: [pt('2024-01-01', 1)]);
+      final twice = s('乙', points: [pt('2024-01-01', 1), pt('2024-02-01', 2)]);
+      final result = trendSplit([once, twice]);
+      expect(result.multi.map((e) => e.name), ['乙']);
+      expect(result.single.map((e) => e.name), ['甲']);
+    });
+
+    test('只数「有日期」的点:总点数 ≥ 2 但只有 1 个带日期,仍进 single', () {
+      final mixed = s('甲', points: [pt('2024-01-01', 1), pt(null, 2)]);
+      final result = trendSplit([mixed]);
+      expect(result.single.map((e) => e.name), ['甲']);
+      expect(result.multi, isEmpty);
+    });
+
+    test('multi 组内有异常的排前面,稳定排序(各自保持传入的相对顺序)', () {
+      final twoPts = [pt('2024-01-01', 1), pt('2024-02-01', 2)];
+      final normal1 = s('甲', points: twoPts, abnormal: false);
+      final abnormal1 = s('乙', points: twoPts, abnormal: true);
+      final normal2 = s('丙', points: twoPts, abnormal: false);
+      final abnormal2 = s('丁', points: twoPts, abnormal: true);
+      final result = trendSplit([normal1, abnormal1, normal2, abnormal2]);
+      expect(
+        result.multi.map((e) => e.name),
+        ['乙', '丁', '甲', '丙'],
+        reason: '异常的排前面;组内各自保持乙先于丁、甲先于丙的原有顺序',
+      );
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
   group('趋势:自测序列必须有文字图例', () {
     // 图上的自测点画成空心圈,但形状不能是唯一载体 —— 没有图例的形状编码等于
     // 没有编码。产品负责人真机看到图后原话:「trend 里面没有 legend,谁知道
@@ -510,14 +577,14 @@ void main() {
 
     testWidgets('自测序列的卡上出现「家测」二字', (tester) async {
       await tester.pumpWidget(
-        wrap(SeriesCard(series: s(self: true), onOpenDoc: (_) {})),
+        wrap(TrendRow(series: s(self: true), onOpenDoc: (_) {})),
       );
       expect(find.text('家测'), findsOneWidget);
     });
 
     testWidgets('医院序列不出现「家测」', (tester) async {
       await tester.pumpWidget(
-        wrap(SeriesCard(series: s(self: false), onOpenDoc: (_) {})),
+        wrap(TrendRow(series: s(self: false), onOpenDoc: (_) {})),
       );
       expect(find.text('家测'), findsNothing);
     });
@@ -543,7 +610,7 @@ void main() {
 
     testWidgets('换算过 → 卡上出现「已统一换算为 umol/L」', (tester) async {
       await tester.pumpWidget(
-        wrap(SeriesCard(series: s(converted: true), onOpenDoc: (_) {})),
+        wrap(TrendRow(series: s(converted: true), onOpenDoc: (_) {})),
       );
       expect(find.text('已统一换算为 umol/L'), findsOneWidget);
     });
@@ -552,7 +619,7 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        wrap(SeriesCard(series: s(converted: false), onOpenDoc: (_) {})),
+        wrap(TrendRow(series: s(converted: false), onOpenDoc: (_) {})),
       );
       expect(find.textContaining('已统一换算'), findsNothing);
       // 卡上就是纸上那一套:1.2 与 参考区间 0.6–1.3。医院化验序列(`selfMeasured:
@@ -637,7 +704,7 @@ void main() {
     testWidgets('家测且有出处 → 卡上出现「出处:引文原文」这一整段', (tester) async {
       await tester.pumpWidget(
         wrap(
-          SeriesCard(
+          TrendRow(
             series: homeSeries(refHigh: 100, refSource: '成年人静息心率正常范围'),
             onOpenDoc: (_) {},
           ),
@@ -650,7 +717,7 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        wrap(SeriesCard(series: homeSeries(), onOpenDoc: (_) {})),
+        wrap(TrendRow(series: homeSeries(), onOpenDoc: (_) {})),
       );
       expect(find.text(trendNoHomeRangeNote), findsOneWidget);
       // 没有区间就没有出处可言,「出处:」那一段不该出现。
@@ -661,7 +728,7 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        wrap(SeriesCard(series: hospitalSeries(), onOpenDoc: (_) {})),
+        wrap(TrendRow(series: hospitalSeries(), onOpenDoc: (_) {})),
       );
       expect(find.text(trendNoHomeRangeNote), findsNothing);
     });
