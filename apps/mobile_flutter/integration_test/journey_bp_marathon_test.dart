@@ -142,7 +142,7 @@ void main() {
 
     final start = DateTime(2026, 6, 1, 7, 30);
     for (var d = 0; d < 30; d++) {
-      // 前 15 天正常、后 15 天偏高 —— 让「只看非正常项」有东西可过滤。
+      // 前 15 天正常、后 15 天偏高 —— 让「只看异常」有东西可过滤。
       final sys = d < 15 ? 120.0 + d % 5 : 150.0 + d % 7;
       final dia = d < 15 ? 78.0 + d % 4 : 95.0 + d % 5;
       await addBp(sys, dia, start.add(Duration(days: d)));

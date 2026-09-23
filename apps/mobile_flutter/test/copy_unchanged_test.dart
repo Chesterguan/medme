@@ -173,6 +173,12 @@ const Map<String, int> kAddedByDecision = {
   '项': 1,
 };
 
+/// Task 7(2026-09-23,收尾)闸对账:跑一遍不套预算的原始 diff(添加/删除各段的
+/// 实际次数),逐条核对 [kAddedByDecision] 的 11 条与 Global Constraints 新字清单
+/// 逐字对应、[kRemovedByDecision] 的全部条目与「基线到 HEAD 实际消失的段」逐条
+/// 一一配对(键相同、次数相同)——两个表**没有一条登记多余或对不上**,原样保留,
+/// 不需要改动。
+
 /// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败
 /// 不是文案变了,是 checkout 没带历史;把原因直接写进断言消息。
 void _requireBaseline() {

@@ -125,8 +125,8 @@ pub struct TrendSeriesDto {
     ///
     /// 医院化验序列(`self_measured == false`)恒为 `None`:那条序列的参考区间
     /// 出处是化验单原件本身,不是这段可引用的指南/共识文字能替代的——UI 改用卡底
-    /// 「查看原件」入口交代来源(`trends_screen.dart` 的 `SeriesCard`),不读这个
-    /// 字段。
+    /// 「查看原件」入口交代来源(`trends_screen.dart` 的 `TrendRow`,sdd task-6
+    /// 把原来的 `SeriesCard` 合并进了这个 widget),不读这个字段。
     ///
     /// **追加在结尾**,不插进中间——与本文件头「函数命名为什么统一 `view_`
     /// 前缀」那条注释同一个用意:FRB 的 `sse_encode`/`sse_decode` 按字段声明顺序

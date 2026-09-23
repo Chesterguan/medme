@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `extract_allergies_pairs`, `flat_docs`, `fmt_date`, `fmt_num`, `gather_for_profile`, `gather_profile_events`, `gather`, `is_allergy_negation`, `is_allergy_unclear`, `is_renderable`, `parse_allergy_item`, `parse_rfc3339_date`, `read_text`, `render_plain_text`, `source_docs`, `source_docs`, `trend_series`
+// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `extract_allergies_pairs`, `flat_docs`, `fmt_date`, `fmt_num`, `gather_for_profile`, `gather_profile_events`, `gather`, `is_allergy_negation`, `is_allergy_unclear`, `is_renderable`, `parse_allergy_item`, `parse_rfc3339_date`, `read_text`, `render_plain_text`, `source_docs`, `source_docs`, `today`, `trend_series`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ProfileInput`, `ProjectionDoc`, `VaultProjection`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -318,8 +318,8 @@ class TrendSeriesDto {
   ///
   /// 医院化验序列(`self_measured == false`)恒为 `None`:那条序列的参考区间
   /// 出处是化验单原件本身,不是这段可引用的指南/共识文字能替代的——UI 改用卡底
-  /// 「查看原件」入口交代来源(`trends_screen.dart` 的 `SeriesCard`),不读这个
-  /// 字段。
+  /// 「查看原件」入口交代来源(`trends_screen.dart` 的 `TrendRow`,sdd task-6
+  /// 把原来的 `SeriesCard` 合并进了这个 widget),不读这个字段。
   ///
   /// **追加在结尾**,不插进中间——与本文件头「函数命名为什么统一 `view_`
   /// 前缀」那条注释同一个用意:FRB 的 `sse_encode`/`sse_decode` 按字段声明顺序

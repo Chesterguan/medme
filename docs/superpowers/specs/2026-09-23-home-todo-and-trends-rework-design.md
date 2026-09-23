@@ -1,6 +1,6 @@
 # 首页待办 + 自测按周折叠 + 添加里记数 + 趋势重整 —— 设计
 
-**日期** 2026-09-23 · **状态** 用户已同意(2026-09-23);计划 `docs/superpowers/plans/2026-09-23-home-todo-and-trends-rework.md` · **上游** 减法(PR #229)之后
+**日期** 2026-09-23 · **状态** 已实现(2026-09-23);计划 `docs/superpowers/plans/2026-09-23-home-todo-and-trends-rework.md` · **上游** 减法(PR #229)之后 · **log** `docs/log/2026-09-23-home-todo-and-trends-rework.md`
 **方案页** https://claude.ai/artifact/XR4NmY7A5jYY4D16YHnmMa(第三、四、六、九节)· 档案推开另开 spec
 
 ## 为什么
@@ -82,3 +82,8 @@
 
 1. 待办第 4 条要:「最近 30 天有 N 项偏高或偏低 › 给医生看」。
 2. 自测周行副行写次数 + 范围(「血压 5 次 118–132 / 74–80」),不写平均——平均会把一次高血压抹平。
+3. Task 7 controller ruling(收窄自 §一表格):首页待办**不含** `pending` 档案提醒——`pending` 是规则没核实,不该催人;`vault_profile_due_reminders` 在 Rust 层就把它过滤掉,只回 `never`/`overdue`。
+4. Task 7 controller ruling:「记一个数」沿用趋势页原「记录一下」两句文案搬家,零新增文案(不是 §五文案表暗示的新造)。
+5. Task 7 controller ruling:`_abnormalOnly` 默认**关**(推翻这一屏诞生时「默认只看非正常项」的旧默认)——合并列表(§四.3)后异常序列本就排在前面,默认再藏一半正常项反而让「只测过一次」和「趋势」分不清。
+6. Task 7 controller ruling:「只看异常」chip 搜索时整颗隐藏——搜索优先于过滤,不然搜得到的指标被过滤成空白,像是从没查过。
+7. Task 7 controller ruling:`TrendRow` 的展开区(出处引文/查看原件)只在展开态渲染,折叠时不占地方(原来这些内容与折叠态无关地恒在)。
