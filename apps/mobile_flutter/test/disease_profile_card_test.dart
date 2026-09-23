@@ -250,12 +250,12 @@ void main() {
       expect(fake.calls.length, 1, reason: '恰好一条');
       expect(fake.calls.single.sublist(0, 2), ['enable', 'sle']);
       expect(fake.calls.single[2], _today(), reason: 'at = 今天,YYYY-MM-DD');
-      // 记完重算现在走两条路:`record()` 记上了会 `bumpVaultRevision()`(F-A 修
-      // 复,首页待办卡与防抖同步推送靠这个信号才知道要重算),而这张卡自己也
-      // 监听着 `vaultRevision`(收外部改动的信号,见下面「添加了新病历」那条)——
-      // 于是一次 enable 触发两次重算:bump 同步唤醒监听器一次,`_enable` 自己
-      // 在 `record()` 之后又显式重算一次。两次都是纯投影,多算不是错,只是多余。
-      expect(fake.views, 3, reason: '记完重算(bump 一次 + _enable 自己一次)');
+      // 记完重算走的是信号那条路:`record()` 记上了会 `bumpVaultRevision()`
+      // (F-A 修复,首页待办卡与防抖同步推送也靠这个信号),这张卡自己监听着
+      // `vaultRevision`(见下面「添加了新病历」那条),记上的那一刻就重算了
+      // 一次——`_enable` 自己不再另外调 `_reload()`,不然是同一份投影白算
+      // 第二遍。
+      expect(fake.views, 2, reason: '记完重算(经 vaultRevision 信号,不是显式调用)');
       expect(find.text('待补 / 逾期'), findsOneWidget);
     });
 

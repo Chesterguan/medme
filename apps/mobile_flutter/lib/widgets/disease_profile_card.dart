@@ -108,16 +108,18 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
     });
   }
 
-  /// 开启:记一条 `enable`,**记上了才重算** —— 开关状态由事件算出来,不在本地猜。
+  /// 开启:记一条 `enable`。**不在这里显式重算**——记上了 `record()` 会
+  /// `bumpVaultRevision()`,这张卡自己就监听着这个信号(`_onVaultChanged`),
+  /// 记上的那一刻已经重算过一次;这里再调一次 `_reload()` 只是把同一份投影
+  /// 白算第二遍。开关状态由事件算出来,不在本地猜——「没记上」那一态仍然
+  /// 原地说清楚,不重算。
   Future<void> _enable(String packageId) async {
     if (_busy) return;
     setState(() => _busy = true);
     final ok = await _source.record('enable', packageId);
     if (!mounted) return;
     setState(() => _busy = false);
-    if (ok) {
-      _reload();
-    } else {
+    if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         appSnackBar(content: const Text('这次没记上 —— 再点一下试试')),
       );
