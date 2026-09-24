@@ -3,12 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 import 'stage3_visual_helpers.dart';
 
@@ -32,21 +31,19 @@ DocumentDetailDto _detail({required String docType, required String ocrText}) =>
     );
 
 void main() {
-  testWidgets('抬头卡:GlossIconTile 类别按 docType 走 categoryForDocType', (
+  testWidgets('抬头卡:一枚 MedIcon,MedCard 外壳,颜色面预算 0', (
     tester,
   ) async {
     await pumpStage3(
       tester,
       Scaffold(body: DetailBody(detail: _detail(docType: 'lab_report', ocrText: '正文'))),
     );
-    final tile = tester.widget<GlossIconTile>(find.byType(GlossIconTile));
-    expect(tile.category, categoryForDocType('lab_report'));
-    expect(tile.category, GlossCategory.lab);
-    // 抬头卡本身是 MedCard(无边框 + cardShadow),这条自动满足,顺带钉一下。
+    expect(find.byType(MedIcon), findsWidgets);
+    // 抬头卡本身是 MedCard(1px line 细边、无阴影),这条自动满足,顺带钉一下。
     expect(find.byType(MedCard), findsWidgets);
-    // 这一屏渐变预算是 0(brief 的每屏预算表:一份病历 s8 = 0/0/0)。
-    expectGradientBudget();
-    expectNoGradientInsideCards();
+    // 这一屏颜色面预算是 0(brief 的每屏预算表:一份病历 s8 = 0/0/0)。
+    expectSurfaceBudget();
+    expectNoGradientAnywhere();
   });
 
   testWidgets('抬头卡「查看原件」是 MedSecondaryButton,不是 OutlinedButton', (tester) async {
@@ -73,8 +70,9 @@ void main() {
     );
     expect(find.widgetWithText(MedSecondaryButton, '看原件'), findsOneWidget);
     expect(find.widgetWithText(MedPrimaryButton, '没问题'), findsOneWidget);
-    // 渐变预算表:s7 = 1 颗 MedPrimaryButton,没有 HeroCard / PrimaryEntryTile。
-    expectGradientBudget(button: 1);
+    // 颜色面预算表:s7 = 1 颗 MedPrimaryButton,没有 HeroCard。
+    expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
 
     await tester.tap(find.text('看原件'));
     expect(viewed, isTrue, reason: '「看原件」回调没接上');
@@ -82,9 +80,10 @@ void main() {
     expect(confirmed, isTrue, reason: '「没问题」回调没接上');
   });
 
-  testWidgets('_LabRowView:色条 4px,颜色按 LabFlag 分(high/low/normal 各一色)', (
+  testWidgets('化验表格行:无 4px 色条,偏高/偏低是上色的状态词,正常不上色不加字', (
     tester,
   ) async {
+    const c = MedColors.light;
     // 与 report_content_test.dart 已验证过的形状一致(单空格、表头 + 连续
     // 数据行),只是名字换成好认的测试夹具,不是真的化验项目。
     const header = '项目缩写 项目名称 结果 单位 参考范围 提示';
@@ -104,18 +103,15 @@ void main() {
         ),
       ),
     );
-    final stripes = tester
+    expect(tester.widget<Text>(find.text('偏高')).style!.color, c.high);
+    expect(tester.widget<Text>(find.text('偏低')).style!.color, c.low);
+    expect(find.text('正常'), findsNothing);
+    final hasLeftBar = tester
         .widgetList<Container>(find.byType(Container))
         .map((w) => w.decoration)
         .whereType<BoxDecoration>()
-        .where((d) => d.border is Border && (d.border! as Border).left.width == 4)
-        .map((d) => (d.border! as Border).left.color)
-        .toList();
-    expect(
-      stripes,
-      containsAll(<Color>[MedBrand.barHigh, MedBrand.barLow, MedBrand.barNormal]),
-      reason: '三档 LabFlag 的色条颜色没有都对上',
-    );
+        .any((d) => d.border is Border && (d.border! as Border).left.width == 4);
+    expect(hasLeftBar, isFalse, reason: '减法稿:化验表格行不再画左侧色条');
   });
 
   testWidgets('抬头卡在两种尺寸×两档字号都不溢出(长机构名/长来源文件名/长正文)', (tester) async {

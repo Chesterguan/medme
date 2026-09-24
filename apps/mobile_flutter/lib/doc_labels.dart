@@ -1,9 +1,6 @@
-import 'package:flutter/material.dart';
-
-import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 
-/// 文档类型 / 就诊类型的中文标签与图标 —— 全 app **唯一**一份。
+/// 文档类型 / 就诊类型的中文标签 —— 全 app **唯一**一份。
 ///
 /// 这些映射原本私有在 `screens/archive_screen.dart` 里。「趋势」「给医生看」等
 /// 好几个屏也要显示同样的「化验 / 影像 / 出院小结」,再抄一份就意味着同一份
@@ -117,83 +114,10 @@ const Map<String, String> kindLabel = {
   'exam': '检查',
 };
 
-// 文档类型/就诊类型 → 图标。
-//
-// **配色表整张删掉了。** 原先每种文档类型一个颜色(化验蓝 #1D4ED8、影像橙
-// #B45309、病理红 #BE123C、处方绿、出院靛、手术紫……九色),问题不是花,是
-// **撞语义**:那三个色值正是设计系统里「偏低 / 偏高 / 危急值」的化验状态色。
-// 一枚 #1D4ED8 的「化验」徽标和一行 #1D4ED8 的「偏低」在同一屏上,颜色在讲
-// 两件毫不相干的事 —— 而这一屏的用户正在学「蓝=偏低」。
-//
-// 现在类型只靠**图标形状**区分,底色统一用主色 `seal` 的极浅底。三个状态色
-// 从此在个人模式里只有一个含义:化验值不正常。
-const Map<String, IconData> _docIcon = {
-  'lab_report': Icons.science_outlined,
-  'imaging_report': Icons.document_scanner_outlined,
-  'prescription': Icons.medication_outlined,
-  'discharge_summary': Icons.bed_outlined,
-  'clinical_note': Icons.medical_services_outlined,
-  'pathology': Icons.biotech_outlined,
-  'surgery': Icons.content_cut,
-  'self_measurement': Icons.monitor_heart_outlined,
-  'note': Icons.sticky_note_2_outlined,
-  'other': Icons.description_outlined,
-  'unknown': Icons.help_outline,
-};
-
-const Map<String, IconData> _kindIcon = {
-  'outpatient': Icons.medical_services_outlined,
-  'inpatient': Icons.bed_outlined,
-};
-
-IconData iconForDoc(String docType) =>
-    _docIcon[docType] ?? Icons.description_outlined;
-
-IconData iconForKind(String kind) =>
-    _kindIcon[kind] ?? Icons.local_hospital_outlined;
-
-/// 文档类型 → 光泽图标块的类别色(brief §色 的类别色表;R3:`GlossCategory` 只有
-/// 九档,不为文档类型新增语义,这里只挑最贴切的既有档归类)。
-///
-/// · `lab_report` 直接对应 [GlossCategory.lab];`pathology`(病理)同归一档 ——
-///   两者都是检验科出具的化验/病理报告。
-/// · `imaging_report` → [GlossCategory.imaging];`prescription` → [GlossCategory.med]。
-/// · `discharge_summary`(出院小结)、`clinical_note`(病历)、`surgery`(手术)
-///   同归 [GlossCategory.clinic] —— 都是医疗机构就诊/操作留下的记录。
-/// · `note`(笔记)、`self_measurement`(自测记录)同归 [GlossCategory.note] ——
-///   两者都是「记录」入口手动录入、背后没有原件(见 [docLabel] 上方注释)。
-/// · `other` / `unknown` 与任何认不出的类型一律 [GlossCategory.neutral]:
-///   「还没分出来」不该借用某个具体类别的颜色。
-///
-/// Task 8(「病历」主页)与 Task 9(「趋势」页)共用同一份映射,不各写各的。
-GlossCategory categoryForDocType(String docType) => switch (docType) {
-  'lab_report' || 'pathology' => GlossCategory.lab,
-  'imaging_report' => GlossCategory.imaging,
-  'prescription' => GlossCategory.med,
-  'discharge_summary' || 'clinical_note' || 'surgery' => GlossCategory.clinic,
-  'note' || 'self_measurement' => GlossCategory.note,
-  _ => GlossCategory.neutral, // other / unknown / 任何认不出的类型
-};
-
 /// `VisitRecordDto.kind` 的取值**跨了两个命名空间**:就诊组用 `inpatient` 这类,
 /// 独立文档用 `lab_report` 这类(见 DTO 文档)。两张表都查一遍,都不中就原样透出
 /// —— 编一个好看的名字不如把我们读到的原值给人看。
 String visitKindLabel(String kind) => kindLabel[kind] ?? docLabel[kind] ?? kind;
-
-IconData iconForVisitKind(String kind) =>
-    _kindIcon[kind] ?? _docIcon[kind] ?? Icons.local_hospital_outlined;
-
-/// `VisitRecordDto.kind` 的光泽图标块类别。同一条「两张表都查一遍」的思路:
-/// 就诊组命名空间(住院/门诊/急诊/检查)一律 [GlossCategory.clinic]——都是「到
-/// 医疗机构走了一趟」,九档里没有更细的桶(与 `archive_screen.dart` 的
-/// `_categoryOf` 对 `TimelineGroupDto_Encounter` 的归类同一处理);独立文档命名
-/// 空间(`lab_report` 这类)直接交给 [categoryForDocType](Task 8 已有、Task 9
-/// 复用,R3 裁定:不再另写一份文档类型映射)。都不中的按 [categoryForDocType]
-/// 自己的兜底走 [GlossCategory.neutral]。
-GlossCategory categoryForVisitKind(String kind) => switch (kind) {
-  'inpatient' || 'outpatient' || 'emergency' || 'exam' => GlossCategory.clinic,
-  _ => categoryForDocType(kind),
-};
 
 /// 一条信息的**最后一份**来源文档 id;没有来源时返回 null。
 ///

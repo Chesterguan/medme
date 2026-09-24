@@ -16,7 +16,7 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 华为 Mate 9 同款的矮屏视口(逻辑分辨率约 360×640)—— 复现内容溢出首屏的场景。
@@ -131,11 +131,12 @@ void main() {
     await pumpScreen(tester);
 
     // fix round 2(R30):MedPrimaryButton 没有 ButtonStyle 可读,改成直接读
-    // 禁用态实际画出来的容器底色(line2)和标签文字色(ink2)——口径与
-    // test/brand_gradient_test.dart 那条结构性断言一致。
-    final container = tester.widget<Container>(find.descendant(
-      of: find.byType(MedPrimaryButton), matching: find.byType(Container)).first);
-    final bg = (container.decoration! as BoxDecoration).color!;
+    // 禁用态实际画出来的底色(line2)和标签文字色(ink2)——减法稿(Task 2)把
+    // MedPrimaryButton 的底色壳从 Container 换成了 Material(与
+    // test/brand_surfaces_test.dart 同一处结构性断言一致)。
+    final material = tester.widget<Material>(find.descendant(
+      of: find.byType(MedPrimaryButton), matching: find.byType(Material)).first);
+    final bg = material.color!;
     final fg = tester.widget<Text>(find.text('同意并开始使用')).style!.color!;
     expect(
       _contrast(fg, bg),

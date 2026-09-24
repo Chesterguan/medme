@@ -3,9 +3,9 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/vault_boot.dart' show vaultOpenedOkThisLaunch;
 import 'package:mobile_flutter/vault_events.dart' show bumpVaultRevision;
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -230,38 +230,6 @@ class _FirstRunConsentScreenState extends State<FirstRunConsentScreen> {
                       ),
                     ),
                   ),
-                  // 「下面还有」指示:渐隐遮罩 + 向下箭头。目标用户含老年人,纯渐变
-                  // 未必能读出「还能往下滑」,箭头给一个不需要解释的明确动作提示;
-                  // 渐变负责让内容不是硬切在遮罩边缘。滚到底后跟着 `_scrolledToEnd`
-                  // 一起消失 —— 一个用不上的箭头等于没有,还会让人怀疑「是不是卡住了」。
-                  if (!_scrolledToEnd)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: IgnorePointer(
-                        child: Container(
-                          height: 56,
-                          alignment: Alignment.bottomCenter,
-                          padding: const EdgeInsets.only(bottom: 6),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                MedColors.of(context).paper.withValues(alpha: 0),
-                                MedColors.of(context).paper,
-                              ],
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            color: MedColors.of(context).sealInk,
-                            size: 26,
-                          ),
-                        ),
-                      ),
-                    ),
                 ],
               ),
             ),
@@ -381,7 +349,7 @@ class _Point extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GlossIconTile(icon: icon),
+          MedIcon(icon),
           const SizedBox(width: MedShape.s2),
           Expanded(
             child: Column(

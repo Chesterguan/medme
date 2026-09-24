@@ -22,9 +22,9 @@ import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart' show roleLabel;
 import 'package:mobile_flutter/vault_boot.dart' show removeProfileAndReopen;
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 
 /// 「谁能看」列表上的到期倒计时——`s10` 的原话是「剩 N 天」,不是
 /// `account_screen.dart` 的 `expiryLabel`(那个给「我授权给谁」用,「至 M月D日」)。
@@ -210,14 +210,14 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
             child: Column(
               children: [
                 ListTile(
-                  leading: const GlossIconTile(icon: Icons.edit_outlined, category: GlossCategory.note),
+                  leading: const MedIcon(Icons.edit_outlined),
                   title: const Text('改名字'),
                   trailing: Icon(Icons.chevron_right, color: c.ink3),
                   onTap: _rename,
                 ),
                 Divider(height: 1, color: c.line2),
                 ListTile(
-                  leading: const GlossIconTile(icon: Icons.person_remove_outlined, category: GlossCategory.alert),
+                  leading: const MedIcon(Icons.person_remove_outlined),
                   title: Text('删除这个成员', style: TextStyle(color: c.critical)),
                   trailing: Icon(Icons.chevron_right, color: c.critical),
                   onTap: _delete,
@@ -350,7 +350,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
     if (widget.member.role != 'owner') return null;
     return MedCard(
       child: ListTile(
-        leading: const GlossIconTile(icon: Icons.add, category: GlossCategory.note),
+        leading: const MedIcon(Icons.add),
         title: Text('加一个人', style: TextStyle(fontWeight: FontWeight.w600, color: MedColors.of(context).seal)),
         subtitle: const Text('手机号或扫码'),
         onTap: _addPerson,

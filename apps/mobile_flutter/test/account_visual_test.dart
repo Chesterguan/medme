@@ -1,5 +1,5 @@
-// 口令/换机/出码/代拍四屏。三屏各有一处品牌渐变(s12 的主按钮、s15 与 s14 的
-// 居中主卡),s13 的渐变在首次那张 sheet 的「好,出码」上。
+// 口令/换机/出码/代拍四屏。三屏各有一处颜色面(s12 的主按钮、s15 与 s14 的
+// 居中主卡),s13 的颜色面在首次那张 sheet 的「好,出码」上。
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -16,10 +16,10 @@ import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
 import 'package:mobile_flutter/screens/qr_notice_sheet.dart';
 import 'package:mobile_flutter/sync_engine.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'account_screen_test.dart' show FakeApi, FakeCrypto;
@@ -59,11 +59,24 @@ void main() {
     await t.pumpAndSettle();
     await t.enterText(find.byKey(const Key('password')), 'right');
     await t.pump();
-    await t.tap(find.text('解锁'));
+    // 减法稿(Task 2):MedFieldPanel/两块 MedEntryTile 从阴影换成描边后解锁屏
+    // 又长高了几像素,「解锁」默认视口下常年滚出可点区域——先滚到位再点
+    // (同 account_screen_test.dart `_tapUnlockButton` 那个坑)。`scrollUntilVisible`
+    // 只保证矩形与视口有交集,不保证整块都进来、点得中它的几何中心,还要
+    // `ensureVisible` 再对齐一次。
+    final unlockButton = find.text('解锁');
+    await t.scrollUntilVisible(unlockButton, 200, scrollable: find.byType(Scrollable).first);
+    await t.ensureVisible(unlockButton);
+    await t.pumpAndSettle();
+    await t.tap(unlockButton);
+    await t.pumpAndSettle();
+    // 切到「已就绪」用的是同一个 ListView,上面那截滚动偏移原样继承下来——滚回去,
+    // 让调用方拿到的起点跟减法稿之前一样(「已登录」排在已就绪内容最前面)。
+    await t.scrollUntilVisible(find.text('已登录'), -200, scrollable: find.byType(Scrollable).first);
     await t.pumpAndSettle();
   }
 
-  testWidgets('恢复码框:等宽 20 号、字距 .1em、#F1F4F8 底、#0E6285 字、圆角 14', (tester) async {
+  testWidgets('恢复码框:等宽 20 号、字距 .1em、paper 底、#0E6285 字、圆角 14', (tester) async {
     await pumpStage3(tester, const Scaffold(body: Center(child: RecoveryCodeBox(
       code: '7K3M-QW9P-XR2D-HB8N-4TVL'))));
     final t = tester.widget<Text>(find.text('7K3M-QW9P-XR2D-HB8N-4TVL'));
@@ -77,30 +90,33 @@ void main() {
     expect(d.borderRadius, BorderRadius.circular(MedShape.radiusBlock));  // 14
   });
 
-  testWidgets('输入框面板:白底、圆角 16、卡阴影', (tester) async {
+  testWidgets('输入框面板:白底、圆角 16、1px line 细边', (tester) async {
     await pumpStage3(tester, const Scaffold(body: Center(child: MedFieldPanel(child: Text('口令,至少 6 位')))));
     final d = tester.widget<Container>(find.descendant(
       of: find.byType(MedFieldPanel), matching: find.byType(Container)).first)
       .decoration! as BoxDecoration;
     expect(d.color, Colors.white);
     expect(d.borderRadius, BorderRadius.circular(MedShape.radiusBanner));  // 16
-    expect(d.boxShadow, MedBrand.cardShadow);
+    expect(d.border, Border.all(color: MedColors.light.line));
+    expect(d.boxShadow, isNull);
   });
 
-  testWidgets('二维码框:白底 160×160 + 10 padding + 圆角 16 + qrShadow', (tester) async {
+  testWidgets('二维码框:白底 160×160 + 10 padding + 圆角 16 + 1px line 细边', (tester) async {
     await pumpStage3(tester, const Scaffold(body: Center(child: MedQrFrame(child: SizedBox(width: 160, height: 160)))));
     final d = tester.widget<Container>(find.descendant(
       of: find.byType(MedQrFrame), matching: find.byType(Container)).first)
       .decoration! as BoxDecoration;
     expect(d.color, Colors.white);
-    expect(d.boxShadow, MedBrand.qrShadow);
+    expect(d.border, Border.all(color: MedColors.light.line));
+    expect(d.boxShadow, isNull);
     // R9:圆角 16 也要断言,不能只停在名字里。
     expect(d.borderRadius, BorderRadius.circular(MedShape.radiusBanner));
   });
 
   testWidgets('出码首次 sheet:一颗主按钮 + 一颗次按钮,零主卡', (tester) async {
     await pumpStage3(tester, const Scaffold(body: QrNoticeBody()));
-    expectGradientBudget(button: 1);
+    expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
     expect(find.byType(MedSecondaryButton), findsOneWidget);
   });
 
@@ -118,17 +134,16 @@ void main() {
       var tapped = false;
       await pumpStage3(tester, Scaffold(body: Row(children: [
         Expanded(child: MedEntryTile(
-          icon: Icons.vpn_key_outlined, category: GlossCategory.med,
+          icon: Icons.vpn_key_outlined,
           label: '输口令', onTap: () => tapped = true)),
         const SizedBox(width: 14),
         Expanded(child: MedEntryTile(
-          icon: Icons.description_outlined, category: GlossCategory.clinic,
+          icon: Icons.description_outlined,
           label: '用恢复码', onTap: () {})),
       ])));
       expect(find.text('输口令'), findsOneWidget);
       expect(find.text('用恢复码'), findsOneWidget);
-      expect(tester.widgetList<GlossIconTile>(find.byType(GlossIconTile)).map((g) => g.category),
-          [GlossCategory.med, GlossCategory.clinic]);
+      expect(find.byType(MedIcon), findsWidgets);
       await tester.tap(find.text('输口令'));
       expect(tapped, isTrue);
     });
@@ -136,18 +151,18 @@ void main() {
     testWidgets('400×800 与 360×640 × 1.0/2.0 字号不溢出(s15 的两块并排样式)', (tester) async {
       await expectNoOverflowAtBothSizes(tester, Scaffold(body: Row(children: [
         Expanded(child: MedEntryTile(
-          icon: Icons.vpn_key_outlined, category: GlossCategory.med,
+          icon: Icons.vpn_key_outlined,
           label: '输口令', onTap: () {})),
         const SizedBox(width: 14),
         Expanded(child: MedEntryTile(
-          icon: Icons.description_outlined, category: GlossCategory.clinic,
+          icon: Icons.description_outlined,
           label: '用恢复码', onTap: () {})),
       ])));
     });
   });
 
-  // ── s14:doctor_home_screen.dart 的 PatientGrantedSection 改光泽图标块(med) ──
-  testWidgets('PatientGrantedSection:「病人让我看的病历」行改用 med 光泽图标块', (tester) async {
+  // ── s14:doctor_home_screen.dart 的 PatientGrantedSection 改 MedIcon ──
+  testWidgets('PatientGrantedSection:「病人让我看的病历」行改用 MedIcon', (tester) async {
     await pumpStage3(tester, Scaffold(body: PatientGrantedSection(
       profiles: const [
         Profile(id: 'p-1', name: '张建国', cloudId: 'prf_1', role: 'viewer'),
@@ -155,9 +170,8 @@ void main() {
       onTap: (_) {},
     )));
     expect(
-      tester.widgetList<GlossIconTile>(find.descendant(
-        of: find.byType(PatientGrantedSection), matching: find.byType(GlossIconTile))).single.category,
-      GlossCategory.med,
+      find.descendant(of: find.byType(PatientGrantedSection), matching: find.byType(MedIcon)),
+      findsWidgets,
     );
   });
 
@@ -183,7 +197,7 @@ void main() {
 
     tearDown(() async => support.delete(recursive: true));
 
-    testWidgets('云端备份行(lab)与云端整理行(clinic):MedCard + 光泽图标块,字符串不变', (t) async {
+    testWidgets('云端备份行与云端整理行:MedCard + MedIcon,字符串不变', (t) async {
       await t.runAsync(() async {
         await ProfileManager.instance.ensureLoaded();
         await ProfileManager.instance.factoryReset();
@@ -196,19 +210,13 @@ void main() {
       expect(memberSwitch, findsOneWidget);
       final memberCard = find.ancestor(of: memberSwitch, matching: find.byType(MedCard));
       expect(memberCard, findsOneWidget, reason: '不再是 Material Card');
-      expect(
-        t.widget<GlossIconTile>(find.descendant(of: memberCard, matching: find.byType(GlossIconTile))).category,
-        GlossCategory.lab,
-      );
+      expect(find.descendant(of: memberCard, matching: find.byType(MedIcon)), findsWidgets);
 
       final extractSwitch = find.byKey(const Key('cloud_extract_switch'));
       expect(extractSwitch, findsOneWidget);
       final extractCard = find.ancestor(of: extractSwitch, matching: find.byType(MedCard));
       expect(extractCard, findsOneWidget);
-      expect(
-        t.widget<GlossIconTile>(find.descendant(of: extractCard, matching: find.byType(GlossIconTile))).category,
-        GlossCategory.clinic,
-      );
+      expect(find.descendant(of: extractCard, matching: find.byType(MedIcon)), findsWidgets);
 
       // 字符串一个没变,开关语义/回调也没变——只是外壳换了。
       expect(find.text('云端整理'), findsOneWidget);
@@ -231,16 +239,16 @@ void main() {
         t.widget<Text>(find.descendant(of: btn, matching: find.text('把这份病历交给别人'))).style!.color,
         MedColors.light.sealInk,
       );
-      expect(find.descendant(of: btn, matching: find.byType(GlossIconTile)), findsNothing,
+      expect(find.descendant(of: btn, matching: find.byType(MedIcon)), findsNothing,
           reason: '这一行本来就没有图标位,不许给它新加一个');
     });
   });
 
   // ── Task 16(Task 13 review Important 遗留):s12/s15/s13 三个组合屏之前只测过
   // 拆出来的小组件(RecoveryCodeBox/MedFieldPanel/MedQrFrame/MedEntryTile 对),
-  // 没有走真实登录流程,在「真的那一屏」上断言过渐变预算、也没跑过溢出矩阵——
+  // 没有走真实登录流程,在「真的那一屏」上断言过颜色面预算、也没跑过溢出矩阵——
   // 这三处都得先登录才碰得到,复用上面 R25 那组的 FakeApi 驱动手法。
-  group('Task 16:s12/s15/s13 组合屏的渐变预算 + 溢出矩阵', () {
+  group('Task 16:s12/s15/s13 组合屏的颜色面预算 + 溢出矩阵', () {
     late Directory support;
 
     setUp(() async {
@@ -320,17 +328,19 @@ void main() {
       await t.pumpAndSettle();
     }
 
-    testWidgets('s12:渐变预算 1(「我抄好了」),复制/分享是 Wrap 里两颗按钮', (t) async {
+    testWidgets('s12:颜色面预算 1(「我抄好了」),复制/分享是 Wrap 里两颗按钮', (t) async {
       await toRecoveryScreen(t);
-      expectGradientBudget(button: 1);
+      expectSurfaceBudget(button: 1);
+      expectNoGradientAnywhere();
       expect(find.byType(Wrap), findsOneWidget);
       expect(find.widgetWithText(TextButton, '复制'), findsOneWidget);
       expect(find.widgetWithText(MedSecondaryButton, '发给自己'), findsOneWidget);
     });
 
-    testWidgets('s15:渐变预算 1(HeroCard 包住 device-approval 块)', (t) async {
+    testWidgets('s15:颜色面预算 1(HeroCard 包住 device-approval 块)', (t) async {
       await toUnlockScreen(t);
-      expectGradientBudget(hero: 1);
+      expectSurfaceBudget(hero: 1);
+      expectNoGradientAnywhere();
       expect(find.byType(HeroCard), findsOneWidget);
     });
 

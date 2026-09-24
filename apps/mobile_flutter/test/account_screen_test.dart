@@ -542,7 +542,13 @@ Future<void> _toReady(
   await _loginUpTo(t);
   await t.enterText(find.byKey(const Key('password')), 'right');
   await t.pump();
-  await t.tap(find.text('解锁'));
+  await _tapUnlockButton(t);
+  await t.pumpAndSettle();
+  // 切到「已就绪」用的是同一个 ListView,`_tapUnlockButton` 点「解锁」之前滚去
+  // 够它的那截偏移原样继承下来——「已登录」排在已就绪内容最前面,反而被带出
+  // 挂载区(与「恢复码解锁成功」那条测试同一个坑,同一个写法)。这里统一滚回去,
+  // 调用方拿到的起点跟减法稿之前一样,不用各自再滚一次。
+  await t.scrollUntilVisible(find.text('已登录'), -200, scrollable: find.byType(Scrollable).first);
   await t.pumpAndSettle();
 }
 
@@ -564,6 +570,15 @@ Future<void> _scrollToText(WidgetTester t, String text) async {
   await t.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
   await t.ensureVisible(finder);
   await t.pumpAndSettle();
+}
+
+/// 减法稿(Task 2):`MedFieldPanel`/两块 `MedEntryTile` 从阴影换成 1px 描边后
+/// 解锁屏又长高了几像素——与上面 `_scrollToRecoveryToggle` 同一个坑(Task 13
+/// 那次是 `HeroCard`/`MedEntryTile` 让屏变高),「解锁」在默认 800×600 测试视口
+/// 下常年滚出可点区域,不先滚到位,`tap()` 会打在视口外面、静默不命中。
+Future<void> _tapUnlockButton(WidgetTester t) async {
+  await _scrollToText(t, '解锁');
+  await t.tap(find.text('解锁'));
 }
 
 /// Task 13:解锁屏顶部那块「用旧手机扫码批准」进了 `HeroCard`、「输口令」/
@@ -899,7 +914,11 @@ void main() {
       await t.enterText(find.byKey(const Key('password')), 'abc');
       await t.pump();
       expect(t.widget<FilledButton>(find.widgetWithText(FilledButton, '解锁')).onPressed, isNotNull);
-      await t.tap(find.text('解锁'));
+      await _tapUnlockButton(t);
+      await t.pumpAndSettle();
+      // 切到「已就绪」的滚动偏移原样从解锁屏继承下来(同一个 ListView),往回滚
+      // 才找得到「已登录」——与下面「恢复码解锁成功」那条同一个坑,同一个写法。
+      await t.scrollUntilVisible(find.text('已登录'), -200, scrollable: find.byType(Scrollable).first);
       await t.pumpAndSettle();
       expect(find.text('已登录'), findsOneWidget);
     });
@@ -924,7 +943,7 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right');
       await t.pump();
-      await t.tap(find.text('解锁'));
+      await _tapUnlockButton(t);
       await t.pump();
       expect(find.text('正在处理口令,老一点的手机可能要等几秒,请不要退出'), findsOneWidget);
       await t.pumpAndSettle();
@@ -961,7 +980,7 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'wrong');
       await t.pump();
-      await t.tap(find.text('解锁'));
+      await _tapUnlockButton(t);
       await t.pump();
 
       await t.pumpWidget(const SizedBox.shrink());
@@ -1051,7 +1070,7 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right');
       await t.pump();
-      await t.tap(find.text('解锁'));
+      await _tapUnlockButton(t);
       await t.pumpAndSettle();
       // 先真的解锁一次,让 session 里有东西可清,再退回解锁屏重来这条路。
       expect(AccountSession.instance.privateKey, isNotNull);
@@ -1121,7 +1140,7 @@ void main() {
       expect(find.text('输口令'), findsOneWidget);
       await t.enterText(find.byKey(const Key('password')), 'right');
       await t.pump();
-      await t.tap(find.text('解锁'));
+      await _tapUnlockButton(t);
       await t.pump();
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await t.pumpAndSettle();
@@ -1137,7 +1156,7 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right');
       await t.pump();
-      await t.tap(find.text('解锁'));
+      await _tapUnlockButton(t);
       await t.pump();
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
@@ -1161,7 +1180,11 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right');
       await t.pump();
-      await t.tap(find.text('解锁'));
+      await _tapUnlockButton(t);
+      await t.pumpAndSettle();
+      // 同「解锁屏没有长度下限」那条:滚动偏移从解锁屏继承下来,往回滚才找得到
+      // 「已登录」。
+      await t.scrollUntilVisible(find.text('已登录'), -200, scrollable: find.byType(Scrollable).first);
       await t.pumpAndSettle();
       expect(find.text('已登录'), findsOneWidget);
       expect(AccountSession.instance.privateKey, isNotNull);
@@ -1174,7 +1197,7 @@ void main() {
       expect(find.text('输口令'), findsOneWidget);
       await t.enterText(find.byKey(const Key('password')), 'wrong');
       await t.pump();
-      await t.tap(find.text('解锁'));
+      await _tapUnlockButton(t);
       await t.pumpAndSettle();
       expect(find.textContaining('口令不对'), findsOneWidget);
       expect(AccountSession.instance.accountId, isNotNull);
@@ -1540,7 +1563,7 @@ void main() {
       await _loginUpTo(t);
       await t.enterText(find.byKey(const Key('password')), 'right');
       await t.pump();
-      await t.tap(find.text('解锁'));
+      await _tapUnlockButton(t);
       // 200ms:盖过解锁本身(FakeCrypto 20ms + restoreProfileKeys 的 GET
       // /v1/profiles 30ms),但远小于 myGrantsDelay(3s)——此刻应该已经落在
       // "已就绪,「谁能看」还在等" 这个窗口。

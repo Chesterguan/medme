@@ -8,8 +8,10 @@ import 'package:flutter/material.dart';
 /// 裸的 `Color(0x…)`。`test/design_tokens_test.dart` 会逐一断言这些值,谁随手改
 /// 一个色值,测试就红。
 ///
-/// **Stage 3 视觉令牌 brief 取代了 `MedColors.light` 的六个字段**:`paper`、
-/// `high`、`highWash`、`low`、`lowWash`、`criticalWash`(mockup v24,见
+/// **Stage 3.5 减法(2026-09-22)**:无渐变、无阴影、无类别色——层次改靠字号、
+/// 留白、1px 细边(`.superpowers/sdd/2026-09-22-ux-stage3-5-subtraction/`)。
+/// `MedColors.light` 的 `paper`/`high`/`highWash`/`low`/`lowWash`/`criticalWash`
+/// 六个字段是上一阶段定的值(Stage 3 视觉令牌 brief,mockup v24,见
 /// `.superpowers/sdd/2026-09-18-ux-stage3-visual-tokens/task-1-brief.md`)。
 /// 其余字段与 `MedColors.dark` 全套仍以 `DESIGN-SYSTEM-v1.html` 为正本。
 ///
@@ -19,8 +21,8 @@ import 'package:flutter/material.dart';
 ///
 /// **规范之外唯一的增补是 `proxy` / `proxyInk` / `proxyWash`** —— 医生代拍模式的
 /// 主色。规范正本只有个人模式那一套(`seal`),而代拍是「当面替别人拍」,两个模式
-/// 必须一眼可辨。除主色外,代拍模式与个人模式共用**同一套**中性色、字阶、圆角、
-/// 阴影,尤其共用**同一套化验状态色**:同一份化验值在哪个模式下都长一样。
+/// 必须一眼可辨。除主色外,代拍模式与个人模式共用**同一套**中性色、字阶、圆角,
+/// 尤其共用**同一套化验状态色**:同一份化验值在哪个模式下都长一样。
 @immutable
 class MedColors extends ThemeExtension<MedColors> {
   const MedColors({
@@ -43,7 +45,6 @@ class MedColors extends ThemeExtension<MedColors> {
     required this.highWash,
     required this.critical,
     required this.criticalWash,
-    required this.shadowColor,
   });
 
   /// 主文字 / 深色卡。
@@ -87,7 +88,8 @@ class MedColors extends ThemeExtension<MedColors> {
   /// 该更冷静,不是更花哨。
   ///
   /// 不能用 [low] / [high] / [critical]:它们是化验状态专用,借来当 chrome 就会
-  /// 稀释语义。也不能用绿:绿是「正常」化验状态专用色(`normalInk`/`barNormal`),同样犯不得。
+  /// 稀释语义。也不能用绿:绿曾是化验「正常」专用色,减法稿后正常已不上色,
+  /// 这个色相仍旧避开,不给历史化验语境留混淆空间。
   final Color proxy;
 
   /// 代拍主色的深调,用于浅底上的文字(对比度需要)。
@@ -114,14 +116,6 @@ class MedColors extends ThemeExtension<MedColors> {
   /// 化验「危急值」底色。
   final Color criticalWash;
 
-  /// 全 app 唯一一档阴影的颜色(含透明度)。层次靠**边框**不靠阴影。
-  final Color shadowColor;
-
-  /// 全 app 唯一一档阴影:`0 1px 2px rgba(…)`。
-  List<BoxShadow> get shadow => [
-    BoxShadow(color: shadowColor, offset: const Offset(0, 1), blurRadius: 2),
-  ];
-
   /// 预检裁定 R5 的两档暗幕 —— 取代散落各屏的 `Colors.black54` / `Colors.black26`:
   /// 同样的不透明度,但底色用 [ink](暖黑 #101A23)而不是纯黑,与全 app 墨色系一致。
   /// 遮罩层、弹层背后的暗幕都走这两个,不再各写各的裸色值。
@@ -142,9 +136,9 @@ class MedColors extends ThemeExtension<MedColors> {
     ink: Color(0xFF101A23),
     ink2: Color(0xFF3A4A57),
     ink3: Color(0xFF657581),
-    paper: Color(0xFFF1F4F8),
+    paper: Color(0xFFF6F8FA),
     surface: Color(0xFFFFFFFF),
-    line: Color(0xFFE3E9EE),
+    line: Color(0xFFE9EEF2),
     line2: Color(0xFFEEF2F5),
     seal: Color(0xFF1789C1),
     sealInk: Color(0xFF0E6285),
@@ -158,7 +152,6 @@ class MedColors extends ThemeExtension<MedColors> {
     highWash: Color(0xFFFDE3CC),
     critical: Color(0xFFBE123C),
     criticalWash: Color(0xFFFBDDE4),
-    shadowColor: Color.fromRGBO(16, 26, 35, 0.05),
   );
 
   /// 深色一套。目前 `MaterialApp` 只挂了浅色主题,这套先备好,不切换 —— 切换是
@@ -183,7 +176,6 @@ class MedColors extends ThemeExtension<MedColors> {
     highWash: Color(0xFF33260F),
     critical: Color(0xFFF2789A),
     criticalWash: Color(0xFF3A1521),
-    shadowColor: Color.fromRGBO(0, 0, 0, 0.3),
   );
 
   /// 从当前主题取令牌。主题里没挂扩展时(裸 `MaterialApp`、部分 widget test)
@@ -212,7 +204,6 @@ class MedColors extends ThemeExtension<MedColors> {
     Color? highWash,
     Color? critical,
     Color? criticalWash,
-    Color? shadowColor,
   }) {
     return MedColors(
       ink: ink ?? this.ink,
@@ -234,7 +225,6 @@ class MedColors extends ThemeExtension<MedColors> {
       highWash: highWash ?? this.highWash,
       critical: critical ?? this.critical,
       criticalWash: criticalWash ?? this.criticalWash,
-      shadowColor: shadowColor ?? this.shadowColor,
     );
   }
 
@@ -261,7 +251,6 @@ class MedColors extends ThemeExtension<MedColors> {
       highWash: Color.lerp(highWash, other.highWash, t)!,
       critical: Color.lerp(critical, other.critical, t)!,
       criticalWash: Color.lerp(criticalWash, other.criticalWash, t)!,
-      shadowColor: Color.lerp(shadowColor, other.shadowColor, t)!,
     );
   }
 
@@ -288,8 +277,7 @@ class MedColors extends ThemeExtension<MedColors> {
           high == other.high &&
           highWash == other.highWash &&
           critical == other.critical &&
-          criticalWash == other.criticalWash &&
-          shadowColor == other.shadowColor;
+          criticalWash == other.criticalWash;
 
   @override
   int get hashCode => Object.hashAll([
@@ -312,7 +300,6 @@ class MedColors extends ThemeExtension<MedColors> {
     highWash,
     critical,
     criticalWash,
-    shadowColor,
   ]);
 }
 
@@ -323,7 +310,7 @@ class MedColors extends ThemeExtension<MedColors> {
 /// 走 `MediaQuery.textScaler`,系统字号放大会照常生效。**不要**在任何地方用
 /// `MediaQuery.withNoTextScaling` 或给 `Text` 传死的 `textScaler` 去抵消它。
 ///
-/// 唯一例外:`GlossIconTile.letter` 里的头像首字母 —— 固定尺寸的装饰字形,不
+/// 唯一例外:`MedAvatar` 里的头像首字母 —— 固定尺寸的装饰字形,不
 /// 承载信息(姓名在旁边、照常放大)。
 class MedType {
   MedType._();
@@ -363,14 +350,6 @@ class MedType {
     fontVariations: w500, fontFeatures: tabular,
   );
 
-  /// 22 · 600 · tabular —— hero 卡「最近就诊」的值(R18,mockup `.hero .rule b`)。
-  /// 颜色不在这里定:这张卡的白字规则是全卡统一的确定性规则(R11,见
-  /// `identity_hero_card.dart` 类文档),用处按 `.copyWith(color: Colors.white)`。
-  static const TextStyle heroValue = TextStyle(
-    fontSize: 22, fontWeight: FontWeight.w600,
-    fontVariations: w600, fontFeatures: tabular,
-  );
-
   /// 13 · 400 —— 行元数据、横幅小字(brief §字:两处都是 13)。
   static const TextStyle secondary = TextStyle(fontSize: 13);
 
@@ -394,17 +373,15 @@ class MedShape {
   /// 26 —— 底部 sheet(出处 mockup CSS;预检裁定 R6)。全 app 最大的一档。
   static const double radiusSheet = 26;
 
-  /// 22 —— 主卡(品牌渐变那张)。
-  static const double radiusHero = 22;
-  /// 18 —— 入口块(主页两个方块、病历本条)。
+  /// 18 —— 入口块。唯一读者是 `MedEntryTile`(「换新手机」屏的两个入口)。比
+  /// `radiusCard` 大,不许嵌进卡片里——嵌套要求圆角严格递减(卡片 > 分块 >
+  /// 控件),这一档比卡片还大,只能用在卡外。
   static const double radiusEntry = 18;
   /// 16 —— 横幅、输入框面板、二维码框。
   static const double radiusBanner = 16;
-  /// 12 —— 光泽图标块。
-  static const double radiusTile = 12;
 
-  /// 20 —— 外层卡片。
-  static const double radiusCard = 20;
+  /// 16 —— 外层卡片(减法稿 `.card{border-radius:16px}`)。
+  static const double radiusCard = 16;
 
   /// 14 —— 卡内分块。
   static const double radiusBlock = 14;
@@ -434,96 +411,33 @@ class MedShape {
   static const List<double> spacing = [s1, s2, s3, s4, s5, s6];
 }
 
-/// 光泽图标块的九档类别。**这是 app 里唯一的「图标底色」词表** —— 加一档等于
-/// 加一个语义,要先在 brief 里有。
-enum GlossCategory { lab, clinic, imaging, med, note, alert, neutral, brand, busy }
-
-/// Stage 3 视觉层:渐变、阴影、类别色、状态条、横幅。
+/// Stage 3.5 减法(2026-09-22):无渐变、无阴影、无类别色。`MedBrand` 只剩横幅 /
+/// 看一眼配色、时间轴与展开区底、图标槽、化验刻度条尺寸、趋势/化验行右列值簇的
+/// 最大宽度。
 ///
-/// **不做成 `ThemeExtension`**:这些值不随明暗主题变(app 只挂了浅色),而
-/// `ThemeExtension` 每加一个字段要在 copyWith / lerp / == / hashCode 四处各补一行。
-/// 三十多个字段 = 一百多行纯样板,换不来任何东西。
+/// **不做成 `ThemeExtension`**:这些值不随明暗主题变(app 只挂了浅色),不值得为
+/// 它们背上 copyWith / lerp / == / hashCode 四件套样板。
 ///
-/// 正本 `stage3-visual-tokens-brief.md`;每个值在 `test/design_tokens_test.dart`
-/// 里逐一断言。
+/// 每个值在 `test/design_tokens_test.dart` 里逐一断言。
 class MedBrand {
   MedBrand._();
 
-  // ── 品牌渐变 ────────────────────────────────────────────
-  /// 135°,三段。**只许 `BrandGradientBox` 用**(见 `widgets/brand_gradient.dart`)。
-  static const List<Color> gradientColors = [
-    Color(0xFF1FB0C6), Color(0xFF1789C1), Color(0xFF16508E),
-  ];
-  static const List<double> gradientStops = [0.0, 0.5, 1.0];
-  static const Alignment gradientBegin = Alignment.topLeft;
-  static const Alignment gradientEnd = Alignment.bottomRight;
+  /// 行首图标槽 44、图标 22(减法稿:单色线性图标,没有底块)。
+  static const double iconSlot = 44;
+  static const double iconSize = 22;
 
-  /// 主卡右上那团弱光晕。
-  static const Color heroGlow = Color(0x38FFFFFF);          // rgba(255,255,255,.22)
-
-  /// 主卡头像块(R18,mockup `.hero .tile`):白底 54×54 圆角 14。圆角复用
-  /// [MedShape.radiusBlock](同为 14,「卡内分块」那档,旧版本头像本就在用它)
-  /// ——不再另开一个数值重复的 `heroTileRadius`。inset 底边与投影都是从 mockup
-  /// 逐字抄来的,取代旧版本借用的占位色 `glossBottom`(那是另一块光泽图标块的
-  /// 底部高光,rgba 对不上)。
-  static const double heroTileSize = 54;
-  static const double heroTileLetterSize = 28;
-  /// `inset 0 -2px 0 rgba(22,80,142,.12)`,贴一道 2px 实色边代替(CSS 的 inset
-  /// box-shadow,Flutter 没有)。
-  static const Color heroTileInset = Color(0x1F16508E);
-  /// `0 8px 18px rgba(14,60,100,.35)`。
-  static const List<BoxShadow> heroTileShadow = [
-    BoxShadow(color: Color(0x590E3C64), offset: Offset(0, 8), blurRadius: 18),
-  ];
-
-  /// 病历本书脊:180°(上 → 下),两段。
-  static const List<Color> spineColors = [Color(0xFF1FB0C6), Color(0xFF16508E)];
-  /// 书脊上的细横纹:2px 实、9px 周期。
-  static const Color spineStripe = Color(0x24FFFFFF);       // rgba(255,255,255,.14)
-  static const double spineStripeOn = 2;
-  static const double spineStripePeriod = 9;
-  static const double spineWidth = 34;
-
-  // ── 类别色 ──────────────────────────────────────────────
-  /// 返回 (起色, 止色, 同色投影)。渐变角度一律 150°。
-  static (Color, Color, Color) tile(GlossCategory c) => switch (c) {
-    GlossCategory.lab =>     (Color(0xFF25B5C2), Color(0xFF0B7A87), Color(0x5A0E8A96)),
-    GlossCategory.clinic =>  (Color(0xFF4A90E8), Color(0xFF1A5BC0), Color(0x5A1F6FD2)),
-    GlossCategory.imaging => (Color(0xFF9A7BE0), Color(0xFF5B3FAE), Color(0x5A6A4DBF)),
-    GlossCategory.med =>     (Color(0xFFF4A04A), Color(0xFFD0661A), Color(0x5AE07A25)),
-    GlossCategory.note =>    (Color(0xFF5CC28A), Color(0xFF227A4C), Color(0x5A2F8F5B)),
-    GlossCategory.alert =>   (Color(0xFFF06A86), Color(0xFFB92A4A), Color(0x5ACF3A5A)),
-    GlossCategory.neutral => (Color(0xFF8A98A4), Color(0xFF4A5A67), Color(0x4D4A5A67)),
-    GlossCategory.brand =>   (Color(0xFF1FB0C6), Color(0xFF16508E), Color(0x5A1789C1)),
-    GlossCategory.busy =>    (Color(0xFFB7C2CC), Color(0xFF8A98A4), Color(0x334A5A67)),
-  };
-
-  /// 光泽块的两道内高光/内暗边,与 44×44、圆角 12、白线图标 22/1.9 一起,
-  /// 构成 brief §形 的「3D 图标语言」。
-  static const Color glossTop = Color(0x73FFFFFF);          // inset rgba(255,255,255,.45)
-  static const Color glossBottom = Color(0x1A000000);       // inset rgba(0,0,0,.10)
-  static const double tileSize = 44;
-  static const double tileIconSize = 22;
-  // ponytail: 无消费者 —— Material Icons 没有描边轴;要用它得换可变图标字体(加依赖),brief 值先留着。
-  static const double tileIconStroke = 1.9;
-
-  // ── 状态 ────────────────────────────────────────────────
-  static const Color barHigh = Color(0xFFE07A25);
-  static const Color barLow = Color(0xFF1F6FD2);
-  static const Color barNormal = Color(0xFF2F8F5B);
-  static const Color barCritical = Color(0xFFCF3A5A);
-  /// 「正常」的文字色。**底是透明的** —— brief 只给了文和条,没给底(见计划「已知分歧 5」)。
-  static const Color normalInk = Color(0xFF227A4C);
-  /// 「偏高」pill 压在 `highWash` 上的那档更深的琥珀(与琥珀横幅同色)。
-  static const Color pillHighInk = Color(0xFF9A4A12);
+  // ── 化验行的细刻度条(减法稿 `.bar`)────────────────────────
+  /// 74×3 的浅条,参考区间那一段用 `ink3` 压 30% 不透明度,一枚 9px 圆点标出这次的值。
+  static const double rangeBarWidth = 74;
+  static const double rangeBarHeight = 3;
+  static const double rangeMarkerSize = 9;
+  static const double rangeBandAlpha = 0.3;
 
   static const Color bannerBlue = Color(0xFFDDEDF8);
   static const Color bannerBlueInk = Color(0xFF0E6285);
   static const Color bannerAmber = Color(0xFFFBE7D2);
   static const Color bannerAmberInk = Color(0xFF9A4A12);
 
-  static const Color demoBorder = Color(0xFFB7C2CC);
-  static const Color demoInk = Color(0xFF657581);
   static const Color checkWash = Color(0xFFE6EBF0);
   static const Color checkInk = Color(0xFF3A4A57);
 
@@ -535,31 +449,4 @@ class MedBrand {
   /// 长单位(「抗核抗体谱定量(ANA)」+「mmol/L」)会把这一簇顶出卡外,给它一个
   /// 硬上限、允许换行,而不是让它继续用 `Row(mainAxisSize: min)` 硬挤一行。
   static const double trendValueMaxWidth = 150;
-
-  // ── 阴影(五档,逐字抄 mockup)────────────────────────────
-  static const List<BoxShadow> cardShadow = [
-    BoxShadow(color: Color(0x14101A23), offset: Offset(0, 6), blurRadius: 18),
-  ];
-  static const List<BoxShadow> heroShadow = [
-    BoxShadow(color: Color(0x5216508E), offset: Offset(0, 14), blurRadius: 30),
-  ];
-  static const List<BoxShadow> entryShadow = [
-    BoxShadow(color: Color(0x5216508E), offset: Offset(0, 12), blurRadius: 26),
-  ];
-  static const List<BoxShadow> buttonShadow = [
-    BoxShadow(color: Color(0x4D16508E), offset: Offset(0, 10), blurRadius: 24),
-  ];
-  static const List<BoxShadow> navShadow = [
-    BoxShadow(color: Color(0x0F101A23), offset: Offset(0, -6), blurRadius: 18),
-  ];
-  static const List<BoxShadow> chipShadow = [
-    BoxShadow(color: Color(0x0F101A23), offset: Offset(0, 3), blurRadius: 10),
-  ];
-  static const List<BoxShadow> qrShadow = [
-    BoxShadow(color: Color(0x1A101A23), offset: Offset(0, 6), blurRadius: 18),
-  ];
-
-  /// 光泽块的同色投影,统一 `0 5px 12px`,颜色由 [tile] 的第三项给。
-  static List<BoxShadow> tileShadow(Color c) =>
-      [BoxShadow(color: c, offset: const Offset(0, 5), blurRadius: 12)];
 }

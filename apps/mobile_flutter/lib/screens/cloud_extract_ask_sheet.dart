@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/cloud_extract.dart';
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 
 /// 这次该不该问。纯判断,方便单测。
 ///
@@ -63,7 +63,7 @@ Future<void> showCloudExtractAskSheet(BuildContext context) async {
 /// sheet 的内容主体。**纯 widget,不碰 prefs** —— 这样 `flutter test` 测得到。
 ///
 /// Stage 3(task-14):两颗按钮换成 `MedPrimaryButton`/`MedSecondaryButton`
-/// (s17 渐变预算 = 1 颗主按钮)。**顺序照现有代码**——「不开」在左、
+/// (s17 颜色面预算 = 1 颗主按钮)。**顺序照现有代码**——「不开」在左、
 /// 「开,帮我整理」在右;mockup `s17` 画的是反过来的左右,但调换按钮位置是
 /// 结构改动,越了 Stage 3 的界,这里不跟(记在 task-14-report.md)。决定权重
 /// 仍然只在用户读完这句话之后自己按:两颗按钮点击行为不变,「开,帮我整理」

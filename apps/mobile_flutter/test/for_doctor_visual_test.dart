@@ -12,9 +12,9 @@ import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'stage3_visual_helpers.dart';
 
@@ -32,15 +32,15 @@ const _emptySummary = VisitSummaryDto(
 );
 
 void main() {
-  testWidgets('渐变预算:零主卡、零入口块、一颗主按钮', (tester) async {
+  testWidgets('颜色面预算:零主卡、零入口块、一颗主按钮', (tester) async {
     await pumpStage3(tester, Scaffold(
       body: const SingleChildScrollView(child: ForDoctorActions()),
       bottomNavigationBar: const SafeArea(child: Padding(
         padding: EdgeInsets.all(MedShape.s3),
         child: MedPrimaryButton(label: '出码给医生看', icon: Icons.qr_code_2_outlined))),
     ));
-    expectGradientBudget(button: 1);
-    expectNoGradientInsideCards();
+    expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
   });
 
   testWidgets('主按钮在 bottomNavigationBar 里 —— 滚动不会把它带走', (tester) async {
@@ -56,12 +56,10 @@ void main() {
     expect(tester.getTopLeft(find.byType(MedPrimaryButton)), before, reason: '按钮跟着滚了');
   });
 
-  testWidgets('三条入口:导出=中性块、急救卡=警示块、代拍=蓝横幅', (tester) async {
+  testWidgets('三条入口:导出/急救卡各一枚 MedIcon,代拍=蓝横幅', (tester) async {
     await pumpStage3(tester, const Scaffold(body: SingleChildScrollView(child: ForDoctorActions())));
-    final cats = tester.widgetList<GlossIconTile>(find.byType(GlossIconTile))
-        .map((w) => w.category).toList();
-    expect(cats, containsAll(<GlossCategory>[GlossCategory.neutral, GlossCategory.alert]));
-    // 代拍那条落地成 MedBanner(brand 光泽图标块 + 蓝横幅),不是第三个 ListTile ——
+    expect(find.byType(MedIcon), findsWidgets);
+    // 代拍那条落地成 MedBanner(蓝横幅),不是第三个 ListTile ——
     // 钉住实际用的 widget,不只是钉颜色。
     expect(find.byType(MedBanner), findsOneWidget);
     // 文案一个字不动 —— 这三句是 Stage 1 定死的。
@@ -96,7 +94,7 @@ void main() {
       return Padding(
         padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const GlossIconTile(icon: Icons.medication_outlined, category: GlossCategory.med),
+          const MedIcon(Icons.medication_outlined),
           const SizedBox(width: MedShape.s2),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             for (final item in items)
@@ -132,11 +130,11 @@ void main() {
         const Scaffold(body: SingleChildScrollView(child: ForDoctorActions())));
   });
 
-  testWidgets('真实 ForDoctorScreen:渐变预算同样是 0/0/1,卡里没有渐变', (tester) async {
+  testWidgets('真实 ForDoctorScreen:颜色面预算同样是 0/0/1,卡里没有渐变', (tester) async {
     await pumpStage3(tester, ForDoctorScreen(load: () async => _emptySummary));
     await tester.pumpAndSettle();
-    expectGradientBudget(button: 1);
-    expectNoGradientInsideCards();
+    expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
   });
 
   testWidgets('急救卡五个 section 在两种尺寸×两档字号都不溢出(长过敏名/长药名/长诊断名)', (
@@ -188,8 +186,8 @@ void main() {
     }
   });
 
-  // ── R23 fix round 1:VisitSummaryBody 三节共用一张 MedCard,标题行各加
-  // 一枚光泽图标块 ────────────────────────────────────────────────────
+  // ── Task 7 减法:VisitSummaryBody 每节一张卡、节内无图标,顺序
+  // 我最近的变化 → 过敏史 → 记录中出现的药物 → 我想问医生的 ──────────────
 
   final realisticSummary = VisitSummaryDto(
     patient: const PatientProfileDto(
@@ -229,37 +227,72 @@ void main() {
       ),
     ],
     recentVisits: const [],
-    recentNotes: const [],
+    recentNotes: [
+      VisitNoteDto(text: '这次想问问要不要调整用药', date: '2026-08-05', documentId: 1),
+    ],
     plainText: '',
   );
 
-  testWidgets('给医生看正文:我最近的变化/过敏史/记录中出现的药物 共用一张 MedCard', (
-    tester,
-  ) async {
-    await pumpStage3(
-      tester,
-      Scaffold(
-        body: VisitSummaryBody(
-          summary: realisticSummary,
-          onOpenDoc: (_) {},
-          onAddNote: () {},
-        ),
+  /// 带过敏/用药/化验/笔记夹具的「给医生看」整页——`VisitSummaryBody` 不带自己的
+  /// `footer`(那三条导出/急救卡/代拍入口由 `ForDoctorScreen` 接进正文的滚动流,
+  /// 这里只关心 `VisitSummaryBody` 本身),固定底部的「出码给医生看」按钮走
+  /// `bottomNavigationBar`——与本文件第一个用例同一形状,颜色面预算照旧是 1 颗按钮。
+  Widget screenWithData() => Scaffold(
+    body: VisitSummaryBody(
+      summary: realisticSummary,
+      onOpenDoc: (_) {},
+      onAddNote: () {},
+    ),
+    bottomNavigationBar: const SafeArea(
+      child: Padding(
+        padding: EdgeInsets.all(MedShape.s3),
+        child: MedPrimaryButton(label: '出码给医生看', icon: Icons.qr_code_2_outlined),
       ),
+    ),
+  );
+
+  testWidgets('顺序:我最近的变化 → 过敏史 → 记录中出现的药物 → 我想问医生的;每节一张卡;节内无图标', (t) async {
+    await pumpStage3(t, screenWithData());
+    await t.pumpAndSettle();
+    // 每个标题先断言 findsOneWidget 再取 y——找不到时报「哪个标题」,不是
+    // Dart 原生 `Iterable.first` 那句读不出意思的 "Bad state: No element"。
+    double y(String s) {
+      final finder = find.text(s);
+      expect(finder, findsOneWidget, reason: '找不到「$s」这个标题');
+      return t.getTopLeft(finder).dy;
+    }
+
+    expect(y('我最近的变化'), lessThan(y('过敏史')));
+    expect(y('过敏史'), lessThan(y(kRecordedMedsTitle)));
+    expect(y(kRecordedMedsTitle), lessThan(y('我想问医生的')));
+    // `skipOffstage: false` on both:展开用药那张卡带着免责声明,内容变高,会把
+    // 「我想问医生的」那张卡推到 400×800 视口的折线以下——这两条断言问的是
+    // 「树里有没有」这件结构性的事,不该因为一时滚不到而假红(同屏是否装得下
+    // 由 `expectNoOverflowAtBothSizes` 那条另外守着)。
+    final medIconInBody = find.descendant(
+      of: find.byType(VisitSummaryBody),
+      matching: find.byType(MedIcon, skipOffstage: false),
+      skipOffstage: false,
     );
-    expect(find.byType(MedCard), findsOneWidget, reason: '三节应该只共用一张 MedCard');
-    // 三节的文案一个字不动。
-    expect(find.text('我最近的变化'), findsOneWidget);
-    expect(find.text('过敏史'), findsOneWidget);
-    expect(find.text(kRecordedMedsTitle), findsOneWidget);
-    // 三节标题各自的光泽图标块类别照 R23:lab / alert / med。
-    final cats = tester
-        .widgetList<GlossIconTile>(find.byType(GlossIconTile))
-        .map((w) => w.category)
-        .toList();
-    expect(cats, containsAll(<GlossCategory>[GlossCategory.lab, GlossCategory.alert, GlossCategory.med]));
-    // 这一屏(正文本身,不含固定底部的出码按钮)渐变预算是 0。
-    expect(find.byType(MedPrimaryButton), findsNothing);
-    expectNoGradientInsideCards();
+    final medCardInBody = find.descendant(
+      of: find.byType(VisitSummaryBody),
+      matching: find.byType(MedCard, skipOffstage: false),
+      skipOffstage: false,
+    );
+    expect(medIconInBody, findsNothing);
+    expect(medCardInBody, findsNWidgets(3));
+    // 折叠状态下这是正文里唯一的可点行——去掉图标槽之后不能只剩文字那 22px
+    // 高,ConstrainedBox 把它钉在 ≥48dp,这里核实真落到位了。
+    final medsHeader = find.ancestor(
+      of: find.text(kRecordedMedsTitle),
+      matching: find.byType(InkWell),
+    );
+    expect(t.getSize(medsHeader).height, greaterThanOrEqualTo(48));
+    await t.tap(find.text(kRecordedMedsTitle));
+    await t.pumpAndSettle();
+    expect(medCardInBody, findsNWidgets(4));
+    expectSurfaceBudget(button: 1);
+    expectNoGradientAnywhere();
   });
 
   testWidgets('VisitSummaryBody(真实数据)在两种尺寸×两档字号都不溢出', (tester) async {

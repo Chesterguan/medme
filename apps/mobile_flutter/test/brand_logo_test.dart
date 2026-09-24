@@ -13,9 +13,8 @@ void main() {
     expect(File('pubspec.yaml').readAsStringSync(), contains(BrandLogo.assetPath));
   });
 
-  test('四档尺寸就是 brief 的数', () {
+  test('两档尺寸就是 brief 的数', () {
     expect(BrandLogo.topBar, 30);
-    expect(BrandLogo.bookSpine, 40);
     expect(BrandLogo.splash, 104);
   });
 

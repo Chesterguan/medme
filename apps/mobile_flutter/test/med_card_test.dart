@@ -1,13 +1,9 @@
-// 设计系统 v1 共用外壳的看门测试。
-//
-// 重点不在「画得好不好看」,在**骑缝线的出现规则**:它是「这条数据背后有一份
-// 原件、并且点得进去」的视觉承诺(规范 §五)。哪天有人图好看给一张派生卡也加
-// 上,红的应该是这里 —— 那等于拿签名元素说了句假话。
+// 设计系统 v1 共用外壳的看门测试:卡片形状(细边、圆角、无阴影)、pill、内置
+// Material 层、MedBanner 配色、化验表状态词——钉数值,不测「画得好不好看」。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/theme.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 
@@ -31,29 +27,15 @@ Iterable<BoxDecoration> decorations(WidgetTester tester) => tester
     .whereType<BoxDecoration>();
 
 void main() {
-  group('骑缝线只画在「背后有原件」的卡上', () {
-    testWidgets('perforated: true → 画', (tester) async {
-      await tester.pumpWidget(
-        wrap(const MedCard(perforated: true, child: Text('血常规'))),
-      );
-      expect(find.byType(MedPerforation), findsOneWidget);
-    });
-
-    testWidgets('默认不画 —— 派生数据卡(汇总、趋势)走这条路', (tester) async {
-      await tester.pumpWidget(wrap(const MedCard(child: Text('近期变化'))));
-      expect(find.byType(MedPerforation), findsNothing);
-    });
-  });
-
   group('卡片形状', () {
-    testWidgets('卡无边框、圆角 20、阴影 0 6px 18px', (tester) async {
+    testWidgets('卡 1px line 细边、圆角 16、无阴影', (tester) async {
       await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MedCard(child: Text('x')))));
       final d = tester.widget<Container>(find.descendant(
         of: find.byType(MedCard), matching: find.byType(Container)).first)
         .decoration! as BoxDecoration;
-      expect(d.border, isNull, reason: 'brief §形:卡无边框');
+      expect(d.border, Border.all(color: MedColors.light.line));
       expect(d.borderRadius, BorderRadius.circular(MedShape.radiusCard));
-      expect(d.boxShadow, MedBrand.cardShadow);
+      expect(d.boxShadow, isNull);
       expect(d.color, Colors.white);
     });
 
@@ -103,12 +85,12 @@ void main() {
     });
   });
 
-  group('MedBanner / MedDemoPill', () {
+  group('MedBanner', () {
     testWidgets('MedBanner:蓝 #DDEDF8 / 文 #0E6285,琥珀 #FBE7D2 / 文 #9A4A12,圆角 16', (tester) async {
       await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Column(children: [
-        MedBanner(icon: Icons.cloud_outlined, iconCategory: GlossCategory.lab,
+        MedBanner(icon: Icons.cloud_outlined,
                   title: '云端', subtitle: '已备份,刚刚'),
-        MedBanner(icon: Icons.warning_amber_outlined, iconCategory: GlossCategory.med,
+        MedBanner(icon: Icons.warning_amber_outlined,
                   title: '2 份还没核对', subtitle: '扫描件,识别出的字有几处不确定', amber: true),
       ]))));
       final decos = tester.widgetList<Container>(find.descendant(
@@ -119,46 +101,28 @@ void main() {
       expect(tester.widget<Text>(find.text('云端')).style!.color, MedBrand.bannerBlueInk);
       expect(tester.widget<Text>(find.text('2 份还没核对')).style!.color, MedBrand.bannerAmberInk);
       expect(tester.widget<Text>(find.text('已备份,刚刚')).style!.fontSize, 13);
-      expect(find.byType(GlossIconTile), findsNWidgets(2));
-    });
-
-    testWidgets('MedDemoPill:白底 + 虚线框 + 灰字', (tester) async {
-      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MedDemoPill(text: '示例'))));
-      expect(tester.widget<Text>(find.text('示例')).style!.color, MedBrand.demoInk);
-      // R9:测试名字说了「白底」,但原来没有断言真的验过 —— 补上。
-      final d = tester.widget<Container>(find.descendant(
-        of: find.byType(MedDemoPill), matching: find.byType(Container)).first)
-        .decoration! as BoxDecoration;
-      expect(d.color, Colors.white);
-      // 虚线框自己画:CustomPaint 存在,而且真的带了一个 painter(不是占位)。
-      final paint = tester.widget<CustomPaint>(find.descendant(
-        of: find.byType(MedDemoPill), matching: find.byType(CustomPaint)).first);
-      expect(paint.painter, isNotNull);
+      // 减法稿:图标是一枚纯 Icon,颜色与横幅文字色同一个 ink。
+      expect(tester.widget<Icon>(find.byIcon(Icons.cloud_outlined)).color, MedBrand.bannerBlueInk);
+      expect(tester.widget<Icon>(find.byIcon(Icons.warning_amber_outlined)).color, MedBrand.bannerAmberInk);
     });
   });
 
-  group('化验行的左侧色条', () {
-    testWidgets('三档 LabFlag 各有色条,恒定 4px(R22:正常也上色,不再透明)', (tester) async {
+  group('化验表格行的状态词', () {
+    testWidgets('三档 LabFlag:偏高/偏低是上色的词,正常不上色不加字', (tester) async {
+      const c = MedColors.light;
       await tester.pumpWidget(
         wrap(const ReportContent(text: labText, docType: 'lab_report')),
       );
+      expect(tester.widget<Text>(find.text('偏高')).style!.color, c.high);
+      expect(tester.widget<Text>(find.text('偏低')).style!.color, c.low);
+      expect(find.text('正常'), findsNothing);
+      // 减法稿 2026-09-22:不再画左侧状态色条。
       final lefts = decorations(tester)
           .map((d) => d.border)
           .whereType<Border>()
           .where((b) => b.left.width == 4)
-          .map((b) => b.left.color)
           .toList();
-      // 三行 → 三条 4px 的左边框:偏高、偏低、正常各一色 —— R22 之前正常行是
-      // 透明的,现在与 `lab_status.dart` 的 `LabLine` 同一套规则,正常也上色
-      // (`MedBrand.barNormal`),色条恒定占位这条不变。
-      expect(lefts, hasLength(3));
-      expect(lefts, contains(MedBrand.barHigh));
-      expect(lefts, contains(MedBrand.barLow));
-      expect(
-        lefts,
-        contains(MedBrand.barNormal),
-        reason: 'R22:LabFlag.normal 现在也有色条(MedBrand.barNormal),不再透明',
-      );
+      expect(lefts, isEmpty);
     });
   });
 

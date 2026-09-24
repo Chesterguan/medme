@@ -15,7 +15,7 @@ import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 
 /// 弹出成员切换器:列出全部成员,点即切换。**不含「添加成员」** —— 新建成员
 /// 只在档案屏那颗「+」一个入口,见下方注释。
@@ -80,10 +80,7 @@ Future<void> showMemberSwitcherSheet(
             ),
             for (final m in members)
               ListTile(
-                // brief §色:成员头像 = 品牌渐变——光泽方块,不是圆(mockup)。
-                leading: GlossIconTile.letter(
-                  letter: m.name.isNotEmpty ? m.name[0] : '?',
-                ),
+                leading: MedAvatar(m.name.isNotEmpty ? m.name.characters.first : '?'),
                 title: Text(m.name, style: MedType.subtitle.copyWith(color: c.ink)),
                 subtitle: _memberSubtitle(m, MedType.secondary.copyWith(color: c.ink3)),
                 trailing: m.id == currentId

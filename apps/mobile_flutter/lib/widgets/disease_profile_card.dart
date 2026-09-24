@@ -1,5 +1,5 @@
 // 「病程档案」入口卡 —— 「趋势」tab 自上而下的**第一块**(mockup `s2`:
-// 病程档案入口 → 关键化验 → 「看懂」→ 最近就诊 → 记录一下)。
+// 病程档案入口 → 关键化验 → 最近就诊 → 记录一下)。
 //
 // 三态,各说各的实话:
 //  · **一个病种包都没装上** —— 只说「还没准备好」,并**静默**拉一次清单
@@ -22,6 +22,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/screens/disease_profile_screen.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/record_book_strip.dart';
 
 // 入口卡的调用方(「趋势」tab)要拿 [DiseaseProfileSource] 去注入,一个 import 就够。
@@ -160,9 +161,9 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
             subtitle: name.isEmpty
                 ? '开启之后,这个病的用药、检查、该复查的会串成一页。'
                 : '可以整理「$name」这个病 —— 开启之后,用药、检查、该复查的会串成一页。',
-            action: FilledButton(
+            action: MedSecondaryButton(
+              label: '开启',
               onPressed: _busy ? null : () => _enable(packageId),
-              child: const Text('开启'),
             ),
           );
         }
@@ -208,7 +209,7 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
 /// 把 `_summaryOf` 那对 `(label, value)` 拆成 `RecordBookStrip` 的三个格子:
 /// `(subtitle, bigNumber, bigNumberCaption)`。**字符串一个不动**,只决定它落进
 /// 哪一格:
-///  · 没有 `value`(空态提示,或者压根没有摘要)—— 整句进 `subtitle`,右列不画;
+///  · 没有 `value`(空态提示,或者压根没有摘要)—— 整句进 `subtitle`,数字行不画;
 ///  · 有 `value`(「N 项」「N / M」这类)—— `value` **整个不拆**地进 `bigNumber`,
 ///    `label` 进 `bigNumberCaption`,`subtitle` 空着。不拆开是因为「2 项」拆成
 ///    「2」+「项」就不再是同一个字符串——`disease_profile_card_test.dart` 那条
@@ -221,12 +222,8 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
   return ('', value, label);
 }
 
-/// 卡片外壳:病历本条(白卡 + 34px 渐变书脊 + logo + 右列大数,`widgets/
-/// record_book_strip.dart`)+「开启」按钮独立一行摆在它下面。整条可点,不画
-/// chevron —— mockup `.book` 没有这个格子(R21)。
-///
-/// **不上渐变面**:病历本条自己的书脊是渐变,但不经过 `BrandGradientBox`,
-/// 不计入这一屏的品牌渐变预算(`s2` 是 0/0/0,见 `trends_visual_test.dart`)。
+/// 卡片外壳:病历本条(白卡一行,`widgets/record_book_strip.dart`)+「开启」
+/// 按钮独立一行摆在它下面。整条可点,有 `›`。
 class _ProfileEntry extends StatelessWidget {
   const _ProfileEntry({
     required this.title,
@@ -265,7 +262,7 @@ class _ProfileEntry extends StatelessWidget {
         ),
         if (action case final a?) ...[
           const SizedBox(height: MedShape.s3),
-          Align(alignment: Alignment.centerLeft, child: a),
+          a,
         ],
       ],
     );

@@ -1,0 +1,168 @@
+<title>MedMe 减法稿</title>
+<style>
+:root{color-scheme:light only}
+:root{--paper:#F6F8FA;--card:#fff;--ink:#101A23;--ink2:#3A4A57;--ink3:#657581;--line:#E9EEF2;--seal:#1789C1;--sealInk:#0E6285;--high:#C25E18;--low:#1F5FB8;--amber:#B45309;--amberWash:#FFF4E5}
+body{background:var(--paper);color:var(--ink);font-family:Manrope,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",system-ui,sans-serif;padding-inline:16px;padding-block:28px 48px;max-width:1180px;margin:0 auto}
+h1{font-size:26px;font-weight:600;margin:0 0 6px;text-wrap:balance}
+.lead{color:var(--ink2);font-size:15px;line-height:1.6;max-width:62ch;margin:0 0 22px}
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:0 0 30px}
+.rule{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.55;color:var(--ink2)}
+.rule b{color:var(--ink);font-weight:600}
+h2{font-size:18px;font-weight:600;margin:34px 0 4px}
+.q{color:var(--ink3);font-size:14px;margin:0 0 14px}
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px;align-items:start}
+.cap{font-size:13px;color:var(--ink3);margin:0 0 8px;letter-spacing:.02em}
+.before img{width:100%;max-width:360px;border-radius:26px;border:1px solid var(--line);display:block}
+.phone{width:100%;max-width:360px;background:var(--paper);border:1px solid var(--line);border-radius:26px;overflow:hidden;box-sizing:border-box;padding:0 0 12px}
+.sb{display:flex;justify-content:space-between;padding:12px 20px 0;font-size:13px;font-weight:600;color:var(--ink2)}
+.top{display:flex;align-items:center;justify-content:space-between;padding:10px 18px 6px}
+.top .t{font-size:24px;font-weight:600}
+.top .ic{width:22px;height:22px;stroke:var(--ink3);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.logo{width:26px;height:26px;border-radius:22%;object-fit:cover;margin-right:10px}
+.bd{padding:6px 14px}
+.card{background:var(--card);border-radius:16px;border:1px solid var(--line);margin:8px 0;overflow:hidden}
+.row{display:flex;align-items:center;gap:10px;padding:13px 14px;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.row .g{flex:1;min-width:0}
+.row .n{font-size:16px;font-weight:500;color:var(--ink);line-height:1.3}
+.row .m{font-size:13px;color:var(--ink3);margin-top:2px;font-variant-numeric:tabular-nums}
+.row .chev{color:var(--ink3);font-size:18px}
+.member{display:flex;align-items:center;gap:10px;padding:8px 14px 4px}
+.member .who{font-size:16px;font-weight:600}
+.member .meta{font-size:13px;color:var(--ink3);font-variant-numeric:tabular-nums}
+.actions{display:flex;gap:10px;padding:8px 14px 4px}
+.btn{flex:1;text-align:center;padding:13px 0;border-radius:999px;font-size:16px;font-weight:600}
+.btn.pri{background:var(--seal);color:#fff}
+.btn.sec{border:1.5px solid var(--line);color:var(--sealInk);background:var(--card)}
+.sec-label{font-size:13px;color:var(--ink3);padding:16px 14px 6px;letter-spacing:.02em}
+.todo{border-left:0;background:var(--amberWash)}
+.todo .n{color:var(--amber)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--amber);flex:none}
+.val{font-variant-numeric:tabular-nums;font-size:16px;font-weight:500;text-align:right;min-width:74px}
+.val small{font-size:12px;color:var(--ink3);font-weight:400;margin-left:3px}
+.st{font-size:12px;font-weight:600;text-align:right;min-width:74px}
+.st.high{color:var(--high)}.st.low{color:var(--low)}.st.ok{color:var(--ink3);font-weight:400}
+.bar{position:relative;height:3px;border-radius:2px;background:var(--line);margin-top:6px;width:74px;margin-left:auto}
+.bar i{position:absolute;top:-3px;width:9px;height:9px;border-radius:50%;background:var(--ink3);margin-left:-4px}
+.bar.high i{background:var(--high)}.bar.low i{background:var(--low)}
+.chips{display:flex;gap:8px;padding:6px 14px 2px;overflow:hidden}
+.chip{font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);color:var(--ink2);white-space:nowrap;background:var(--card)}
+.chip.on{border-color:var(--seal);color:var(--sealInk);font-weight:600}
+.nav{display:flex;justify-content:space-around;padding:12px 0 0;border-top:1px solid var(--line);margin-top:8px;font-size:12px;color:var(--ink3)}
+.nav div{display:flex;flex-direction:column;align-items:center;gap:3px}
+.nav svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.nav .on{color:var(--seal);font-weight:600}
+.pt{font-size:16px;font-weight:600;padding:6px 14px 0}
+.pm{font-size:13px;color:var(--ink3);padding:0 14px 6px}
+.li{display:flex;gap:8px;padding:9px 14px;border-top:1px solid var(--line);font-size:15px}
+.li:first-child{border-top:0}
+.li .k{flex:1;color:var(--ink)}.li .v{color:var(--ink3);font-size:13px;text-align:right;max-width:46%}
+.fix{padding:10px 14px 0}
+.notes{margin-top:36px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:14px;line-height:1.6;color:var(--ink2)}
+.notes b{color:var(--ink)}
+@media (max-width:700px){.pair{grid-template-columns:1fr}}
+</style>
+
+<h1>MedMe 减法稿</h1>
+<p class="lead">三屏「现在 → 减法」并排。白底黑字,只有一套浅色(不跟系统深色走)。原则借自 Guava:白卡浅底、一个品牌色、颜色只给状态、图标退到线性或不用、层级靠字号和留白。文案一字未动(仍是 Stage 1 定稿)。</p>
+<div class="rules">
+  <div class="rule"><b>一个品牌色</b>:医疗蓝只出现在主按钮、选中项、链接。渐变面、书脊、光泽块全部退场。</div>
+  <div class="rule"><b>颜色只说状态</b>:偏高橙、偏低蓝、还没核对琥珀。正常不上色,类别不上色。</div>
+  <div class="rule"><b>状态用字 + 位置</b>:化验行右侧是「偏高」两个字加一条细刻度上的点,不再是整条左色带。</div>
+  <div class="rule"><b>首屏答一个问题</b>:病历答「有没有要我做的」,趋势答「哪个指标不对」,给医生看答「一页纸」。</div>
+</div>
+
+<h2>1 · 病历(主页)</h2>
+<p class="q">打开时最想看到:有没有要我做的、最近新增、一键添加。顶栏不放搜索:现在的「找一找」点了只说「还在做」,先删,Stage 2 搜索做出来再放回。</p>
+<div class="pair">
+  <div class="before"><p class="cap">现在</p><img src="{{IMG1}}" alt="现在的病历主页"></div>
+  <div><p class="cap">减法</p>
+  <div class="phone">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="top"><div style="display:flex;align-items:center"><img class="logo" src="{{LOGO}}" alt=""><span class="t">病历</span></div></div>
+    <div class="bd">
+      <div class="member"><div class="g" style="flex:1"><div class="who">张建国(示例)</div><div class="meta">男 · 59 · 52 份记录 · 最近就诊 2026-09-18</div></div><span class="chev">⌃⌄</span></div>
+      <div class="actions"><div class="btn pri">添加</div><div class="btn sec">给医生看</div></div>
+      <div class="card">
+        <div class="row todo"><span class="dot"></span><div class="g"><div class="n">1 份还没核对</div><div class="m">扫描件,识别出的字有几处不确定</div></div><span class="chev">›</span></div>
+      </div>
+      <div class="sec-label">2026 年 9 月</div>
+      <div class="card">
+        <div class="row"><div class="g"><div class="n">北京协和医院 · 化验</div><div class="m">2026-09-21 · 化验 · 还没核对</div></div><span class="chev">›</span></div>
+        <div class="row"><div class="g"><div class="n">记录</div><div class="m">2026-09-21 · 记录</div></div><span class="chev">›</span></div>
+        <div class="row"><div class="g"><div class="n">复旦大学附属中山医院 · 病历</div><div class="m">2026-04-12 · 病历</div></div><span class="chev">›</span></div>
+      </div>
+      <div class="sec-label">2026 年 4 月</div>
+      <div class="card">
+        <div class="row"><div class="g"><div class="n">北京协和医院 · 化验</div><div class="m">2026-04-30 · 化验</div></div><span class="chev">›</span></div>
+        <div class="row"><div class="g"><div class="n">家测 · 血压 心率</div><div class="m">2026-04-30 · 记录</div></div><span class="chev">›</span></div>
+      </div>
+    </div>
+    <div class="nav"><div class="on"><svg viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>病历</div><div><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/></svg>趋势</div><div><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>我</div></div>
+  </div></div>
+</div>
+
+<h2>2 · 趋势</h2>
+<p class="q">打开时最想看到:哪些指标不对、往哪走。正常的行不需要颜色。</p>
+<div class="pair">
+  <div class="before"><p class="cap">现在</p><img src="{{IMG2}}" alt="现在的趋势页"></div>
+  <div><p class="cap">减法</p>
+  <div class="phone">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="top"><span class="t">趋势</span><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></div>
+    <div class="bd">
+      <div class="card"><div class="row"><img class="logo" src="{{LOGO}}" alt="" style="margin:0"><div class="g"><div class="n">病程档案 · 系统性红斑狼疮</div><div class="m">活动度(化验可算部分) 0 / 18</div></div><span class="chev">›</span></div></div>
+      <div class="sec-label">关键化验</div>
+      <div class="chips"><span class="chip on">全部 23</span><span class="chip">生命体征 3</span><span class="chip">血常规 4</span><span class="chip">肝功能 3</span><span class="chip">肾</span></div>
+      <div class="card">
+        <div class="row"><div class="g"><div class="n">尿素</div><div class="m">2026-02-14 · 参考 3.1–8</div></div><div><div class="val">8.2<small>mmol/L</small></div><div class="st high">偏高</div><div class="bar high"><i style="left:88%"></i></div></div></div>
+        <div class="row"><div class="g"><div class="n">估算肾小球滤过率</div><div class="m">2026-02-14 · 参考 ≥ 90</div></div><div><div class="val">63<small>ml/min/1.73m2</small></div><div class="st low">偏低</div><div class="bar low"><i style="left:14%"></i></div></div></div>
+        <div class="row"><div class="g"><div class="n">甘油三酯</div><div class="m">2026-02-14 · 参考 ≤ 1.7</div></div><div><div class="val">1.95<small>mmol/L</small></div><div class="st high">偏高</div><div class="bar high"><i style="left:82%"></i></div></div></div>
+        <div class="row"><div class="g"><div class="n">心率</div><div class="m">2026-04-30 · 家测 · 参考 60–100</div></div><div><div class="val">70<small>/min</small></div><div class="st ok"></div><div class="bar"><i style="left:36%"></i></div></div></div>
+        <div class="row"><div class="g"><div class="n">收缩压</div><div class="m">2026-04-30 · 家测 · 参考 ≤ 135</div></div><div><div class="val">122<small>mmHg</small></div><div class="st ok"></div><div class="bar"><i style="left:60%"></i></div></div></div>
+        <div class="row"><div class="g"><div class="n">血糖</div><div class="m">2026-04-30 · 家测</div></div><div><div class="val">6.3<small>mmol/L</small></div><div class="st ok"></div><div class="bar"><i style="left:52%"></i></div></div></div>
+        <div class="row"><div class="g"><div class="n">低密度脂蛋白胆固醇</div><div class="m">2026-02-14 · 参考 ≤ 3.37</div></div><div><div class="val">2.75<small>mmol/L</small></div><div class="st ok"></div><div class="bar"><i style="left:58%"></i></div></div></div>
+      </div>
+    </div>
+    <div class="nav"><div><svg viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>病历</div><div class="on"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/></svg>趋势</div><div><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>我</div></div>
+  </div></div>
+</div>
+
+<h2>3 · 给医生看</h2>
+<p class="q">打开时最想看到:医生一眼扫完的一页纸。异常在前,一屏放下,一个按钮。</p>
+<div class="pair">
+  <div class="before"><p class="cap">现在</p><img src="{{IMG3}}" alt="现在的给医生看"></div>
+  <div><p class="cap">减法</p>
+  <div class="phone">
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="top"><span class="t">给医生看</span><span style="font-size:13px;color:var(--ink3)">张建国 · 男 · 59</span></div>
+    <div class="bd">
+      <div class="sec-label">我最近的变化</div>
+      <div class="card">
+        <div class="row"><div class="g"><div class="n">尿素</div><div class="m">2026-02-14 · 参考 3.1–8</div></div><div><div class="val">8.2<small>mmol/L</small></div><div class="st high">偏高</div></div></div>
+        <div class="row"><div class="g"><div class="n">甘油三酯</div><div class="m">2026-02-14 · 参考 ≤ 1.7</div></div><div><div class="val">1.95<small>mmol/L</small></div><div class="st high">偏高</div></div></div>
+        <div class="row"><div class="g"><div class="n">糖化血红蛋白</div><div class="m">2026-02-14 · 参考 4–6</div></div><div><div class="val">6.8<small>%</small></div><div class="st high">偏高</div></div></div>
+        <div class="row"><div class="g"><div class="n">估算肾小球滤过率</div><div class="m">2026-02-14 · 参考 ≥ 90</div></div><div><div class="val">63<small>ml/min/1.73m2</small></div><div class="st low">偏低</div></div></div>
+        <div class="row"><div class="g"><div class="n">血压 心率</div><div class="m">2026-04-30 · 家测 · 122/76 · 70/min</div></div><div class="st ok">正常</div></div>
+      </div>
+      <div class="sec-label">过敏史</div>
+      <div class="card"><div class="li"><span class="k">磺胺类药物</span><span class="v">皮疹史</span></div></div>
+      <div class="sec-label">记录中出现的药物</div>
+      <div class="card">
+        <div class="li"><span class="k">氨氯地平 5mg</span><span class="v">2023-04-24 – 2024-06-10</span></div>
+        <div class="li"><span class="k">二甲双胍 0.5g</span><span class="v">2023-04-24 – 2026-06-20</span></div>
+        <div class="li"><span class="k">氯吡格雷 75mg qd</span><span class="v">2026-07-15</span></div>
+        <div class="li"><span class="k">美托洛尔 25mg</span><span class="v">2024-06-10</span></div>
+      </div>
+      <div class="sec-label">我想问医生的</div>
+      <div class="card"><div class="li"><span class="k" style="color:var(--ink3)">还没有记下想问的问题。</span><span class="v" style="color:var(--sealInk)">加一条</span></div></div>
+      <div class="fix"><div class="btn pri">出码给医生看</div></div>
+    </div>
+  </div></div>
+</div>
+
+<div class="notes">
+<b>从 Guava 借的四点</b>:① 一个品牌色 + 中性灰,状态色只有两三种;② 化验行的状态是「一个词 + 刻度上的点」,一眼能看位置;③ 卡片无阴影、细分隔线、圆角一致,层级全靠字号;④ 图标只在需要区分时出现,且是单色线性。<br>
+<b>没照搬的</b>:Guava 的顶栏是实色绿,我们保持白顶栏 + 蓝只给按钮,和 logo 更协调;Guava 每类器官一个彩色小图标,我们连这个也去掉(类别不上色)。<br>
+<b>代码代价</b>:Stage 3 的令牌都在,这次是删:渐变面 → 一个实色主按钮;光泽块 → 无图标;左色带 → 状态词 + 刻度点;正常不上色改回;阴影去掉。文案闸、裸色闸、预算闸照常挡。
+</div>

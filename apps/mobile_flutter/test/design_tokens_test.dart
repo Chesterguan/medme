@@ -23,9 +23,9 @@ const Map<String, int> specLight = {
   'ink': 0xFF101A23,
   'ink-2': 0xFF3A4A57,
   'ink-3': 0xFF657581,
-  'paper': 0xFFF1F4F8,
+  'paper': 0xFFF6F8FA,
   'surface': 0xFFFFFFFF,
-  'line': 0xFFE3E9EE,
+  'line': 0xFFE9EEF2,
   'line-2': 0xFFEEF2F5,
   'seal': 0xFF1789C1,
   'seal-ink': 0xFF0E6285,
@@ -130,19 +130,6 @@ void main() {
       }
     });
 
-    test('阴影只有一档:0 1px 2px rgba(16,26,35,.05)', () {
-      final light = MedColors.light;
-      expect(light.shadowColor.toARGB32() & 0x00FFFFFF, 0x101A23);
-      expect(light.shadowColor.a, closeTo(0.05, 0.005));
-      expect(light.shadow, hasLength(1));
-      expect(light.shadow.single.offset, const Offset(0, 1));
-      expect(light.shadow.single.blurRadius, 2);
-
-      final dark = MedColors.dark;
-      expect(dark.shadowColor.toARGB32() & 0x00FFFFFF, 0x000000);
-      expect(dark.shadowColor.a, closeTo(0.3, 0.005));
-    });
-
     test('lerp / copyWith 不丢字段', () {
       expect(MedColors.light.lerp(MedColors.dark, 0), MedColors.light);
       expect(MedColors.light.lerp(MedColors.dark, 1), MedColors.dark);
@@ -222,7 +209,7 @@ void main() {
 
   group('形状与间距', () {
     test('圆角严格递减', () {
-      expect(MedShape.radiusCard, 20);
+      expect(MedShape.radiusCard, 16);
       expect(MedShape.radiusBlock, 14);
       expect(MedShape.radiusControl, 10);
       expect(MedShape.radiusPill, 999);
@@ -270,7 +257,7 @@ void main() {
       ),
     );
 
-    testWidgets('偏高 = --high #C25E18,偏低 = --low #1F5FB8,正常 = MedBrand.normalInk(R22)', (
+    testWidgets('偏高 = --high #C25E18,偏低 = --low #1F5FB8,正常 = ink(减法稿:不上色)', (
       tester,
     ) async {
       await pumpLab(tester);
@@ -285,22 +272,23 @@ void main() {
         MedColors.light.low.toARGB32(),
       );
       expect(valueColor(tester, '0.98 mmol/L', '0.98').toARGB32(), 0xFF1F5FB8);
-      // R22 fix round 1:「正常不上色」的旧规则已被 Stage 3 视觉令牌取代 ——
-      // `LabFlag.normal` 现在走 `MedBrand.normalInk`,与 `lab_status.dart` 的
-      // `LabLine`(`status == null` 那一档)同一套颜色,不再继承墨色 `ink`。
+      // 减法稿 2026-09-22:「正常不上色」——`LabFlag.normal` 现在走 `c.ink`,
+      // 与 `lab_status.dart` 的 `labStatusColor`(`status == null` 那一档)
+      // 同一套规则,预检裁定 R2 的「正常档也上色」作废。
       expect(
         valueColor(tester, '95 umol/L', '95').toARGB32(),
-        MedBrand.normalInk.toARGB32(),
+        MedColors.light.ink.toARGB32(),
       );
+      expect(find.text('正常'), findsNothing);
     });
 
-    testWidgets('状态同时给文字 pill —— 色盲用户靠它读语义,不能只有色条', (tester) async {
+    testWidgets('状态同时给文字状态词 —— 色盲用户靠它读语义,不能只靠颜色', (tester) async {
       await pumpLab(tester);
       // 样本三行:6.05 偏高、0.98 偏低、95 正常。
       expect(find.text('偏高'), findsOneWidget);
       expect(find.text('偏低'), findsOneWidget);
-      // 正常行不给 pill —— pill 本身也是一种上色。参考区间那格里的
-      // 「57 - 97 正常」是原件抄下来的文本,不是 pill,精确匹配不会命中。
+      // 正常行两样都不给——不上色也不加字。参考区间那格里的
+      // 「57 - 97 正常」是原件抄下来的文本,不是状态词,精确匹配不会命中。
       expect(find.text('正常'), findsNothing);
     });
 
@@ -472,53 +460,11 @@ void main() {
   });
 
   group('MedBrand —— Stage 3 brief §色 / §形', () {
-    test('品牌渐变 135°,三段,逐字', () {
-      expect(MedBrand.gradientColors, [
-        const Color(0xFF1FB0C6),
-        const Color(0xFF1789C1),
-        const Color(0xFF16508E),
-      ]);
-      expect(MedBrand.gradientStops, [0.0, 0.5, 1.0]);
-      // 135° = 左上 → 右下。
-      expect(MedBrand.gradientBegin, Alignment.topLeft);
-      expect(MedBrand.gradientEnd, Alignment.bottomRight);
-      expect(MedBrand.heroGlow, const Color(0x38FFFFFF)); // rgba(255,255,255,.22)
-    });
-
-    test('九档类别渐变与同色投影', () {
-      expect(MedBrand.tile(GlossCategory.lab),
-          (const Color(0xFF25B5C2), const Color(0xFF0B7A87), const Color(0x5A0E8A96)));
-      expect(MedBrand.tile(GlossCategory.clinic),
-          (const Color(0xFF4A90E8), const Color(0xFF1A5BC0), const Color(0x5A1F6FD2)));
-      expect(MedBrand.tile(GlossCategory.imaging),
-          (const Color(0xFF9A7BE0), const Color(0xFF5B3FAE), const Color(0x5A6A4DBF)));
-      expect(MedBrand.tile(GlossCategory.med),
-          (const Color(0xFFF4A04A), const Color(0xFFD0661A), const Color(0x5AE07A25)));
-      expect(MedBrand.tile(GlossCategory.note),
-          (const Color(0xFF5CC28A), const Color(0xFF227A4C), const Color(0x5A2F8F5B)));
-      expect(MedBrand.tile(GlossCategory.alert),
-          (const Color(0xFFF06A86), const Color(0xFFB92A4A), const Color(0x5ACF3A5A)));
-      expect(MedBrand.tile(GlossCategory.neutral),
-          (const Color(0xFF8A98A4), const Color(0xFF4A5A67), const Color(0x4D4A5A67)));
-      expect(MedBrand.tile(GlossCategory.brand),
-          (const Color(0xFF1FB0C6), const Color(0xFF16508E), const Color(0x5A1789C1)));
-      expect(MedBrand.tile(GlossCategory.busy),
-          (const Color(0xFFB7C2CC), const Color(0xFF8A98A4), const Color(0x334A5A67)));
-    });
-
-    test('状态左色条、横幅、示例框、看一眼', () {
-      expect(MedBrand.barHigh, const Color(0xFFE07A25));
-      expect(MedBrand.barLow, const Color(0xFF1F6FD2));
-      expect(MedBrand.barNormal, const Color(0xFF2F8F5B));
-      expect(MedBrand.barCritical, const Color(0xFFCF3A5A));
-      expect(MedBrand.normalInk, const Color(0xFF227A4C));
-      expect(MedBrand.pillHighInk, const Color(0xFF9A4A12));
+    test('横幅、看一眼、时间轴', () {
       expect(MedBrand.bannerBlue, const Color(0xFFDDEDF8));
       expect(MedBrand.bannerBlueInk, const Color(0xFF0E6285));
       expect(MedBrand.bannerAmber, const Color(0xFFFBE7D2));
       expect(MedBrand.bannerAmberInk, const Color(0xFF9A4A12));
-      expect(MedBrand.demoBorder, const Color(0xFFB7C2CC));
-      expect(MedBrand.demoInk, const Color(0xFF657581));
       expect(MedBrand.checkWash, const Color(0xFFE6EBF0));
       expect(MedBrand.checkInk, const Color(0xFF3A4A57));
       expect(MedBrand.timelineLine, const Color(0xFFDCE3EA));
@@ -530,43 +476,26 @@ void main() {
       expect(MedBrand.trendValueMaxWidth, 150);
     });
 
-    test('五档阴影,逐字', () {
-      expect(MedBrand.cardShadow.single.blurRadius, 18);
-      expect(MedBrand.cardShadow.single.offset, const Offset(0, 6));
-      expect(MedBrand.cardShadow.single.color, const Color(0x14101A23)); // rgba(16,26,35,.08)
-      expect(MedBrand.heroShadow.single.blurRadius, 30);
-      expect(MedBrand.heroShadow.single.offset, const Offset(0, 14));
-      expect(MedBrand.heroShadow.single.color, const Color(0x5216508E)); // rgba(22,80,142,.32)
-      expect(MedBrand.entryShadow.single.blurRadius, 26);
-      expect(MedBrand.entryShadow.single.offset, const Offset(0, 12));
-      expect(MedBrand.buttonShadow.single.blurRadius, 24);
-      expect(MedBrand.buttonShadow.single.offset, const Offset(0, 10));
-      expect(MedBrand.buttonShadow.single.color, const Color(0x4D16508E)); // rgba(22,80,142,.3)
-      expect(MedBrand.navShadow.single.offset, const Offset(0, -6));
-    });
-
-    test('头像块令牌(R18,mockup .hero .tile):尺寸/字号/inset/投影', () {
-      expect(MedBrand.heroTileSize, 54);
-      expect(MedBrand.heroTileLetterSize, 28);
-      // 圆角数值上与 MedShape.radiusBlock(14,「卡内分块」那档,头像本来就在
-      // 用它)重复,不另开一个 MedBrand.heroTileRadius。
-      expect(MedShape.radiusBlock, 14);
-      expect(MedBrand.heroTileInset, const Color(0x1F16508E)); // rgba(22,80,142,.12)
-      expect(MedBrand.heroTileShadow.single.color, const Color(0x590E3C64)); // rgba(14,60,100,.35)
-      expect(MedBrand.heroTileShadow.single.offset, const Offset(0, 8));
-      expect(MedBrand.heroTileShadow.single.blurRadius, 18);
+    test('减法稿:图标槽、化验刻度条', () {
+      expect(MedBrand.iconSlot, 44);
+      expect(MedBrand.iconSize, 22);
+      expect(MedBrand.rangeBarWidth, 74);
+      expect(MedBrand.rangeBarHeight, 3);
+      expect(MedBrand.rangeMarkerSize, 9);
+      expect(MedBrand.rangeBandAlpha, 0.3);
     });
   });
 
   group('MedShape / MedType —— Stage 3 brief §形 §字', () {
-    test('七档圆角', () {
-      // R6:sheet(26)压过主卡 hero(22),现在是全 app 最大的一档。
+    test('六档圆角', () {
+      // R6:sheet(26)现在是全 app 最大的一档 —— 减法稿删了 hero 专属的 22px 那档。
+      // 六档 = 六个不同的圆角数值:26 / 18 / 16(card 与 banner 同档)/ 14 / 10 / 999。
       expect(MedShape.radiusSheet, 26);
-      expect(MedShape.radiusHero, 22);
-      expect(MedShape.radiusCard, 20);
       expect(MedShape.radiusEntry, 18);
       expect(MedShape.radiusBanner, 16);
-      expect(MedShape.radiusTile, 12);
+      expect(MedShape.radiusCard, 16);
+      expect(MedShape.radiusBlock, 14);
+      expect(MedShape.radiusControl, 10);
       expect(MedShape.radiusPill, 999);
     });
 
@@ -584,12 +513,8 @@ void main() {
       expect(MedType.value.fontFeatures, MedType.tabular);
       expect(MedType.display.fontSize, 30);
       expect(MedType.display.fontWeight, FontWeight.w600);
-      // R18:hero 卡「最近就诊」的值(mockup `.hero .rule b`)。
-      expect(MedType.heroValue.fontSize, 22);
-      expect(MedType.heroValue.fontWeight, FontWeight.w600);
-      expect(MedType.heroValue.fontFeatures, MedType.tabular);
       // 700 不许出现:mockup 里没有一处 Latin/数字用它(见计划「已知分歧 3」)。
-      for (final s in [MedType.display, MedType.value, MedType.heroValue, MedType.title,
+      for (final s in [MedType.display, MedType.value, MedType.title,
                        MedType.subtitle, MedType.body, MedType.secondary, MedType.caption]) {
         // body/secondary 不显式写 fontWeight(null = 默认 w400)—— 同上面
         // 「七档字号」测试一样用 `?? FontWeight.w400`,不能直接 `!`(会在这两个
@@ -602,8 +527,8 @@ void main() {
       }
     });
 
-    test('底色是实心 #F1F4F8,主题拿的就是它', () {
-      expect(MedMe.theme().scaffoldBackgroundColor, const Color(0xFFF1F4F8));
+    test('底色是实心 #F6F8FA,主题拿的就是它', () {
+      expect(MedMe.theme().scaffoldBackgroundColor, const Color(0xFFF6F8FA));
     });
 
     test('卡片无边框', () {

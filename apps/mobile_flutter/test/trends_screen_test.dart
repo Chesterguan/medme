@@ -121,18 +121,6 @@ void main() {
     });
   });
 
-  testWidgets('看懂横幅:占位,不假装已经有内容', (tester) async {
-    useNarrowPhone(tester);
-    await tester.pumpWidget(wrap(const UnderstandBanner()));
-    expect(find.text('看懂'), findsOneWidget);
-    expect(find.textContaining('还在做'), findsOneWidget);
-    // s2 里这条横幅引用的是某份报告「提示」一栏的原文 —— 没有真内容时,
-    // 一个像结论的字都不许摆出来。
-    for (final claim in ['提示:', '建议', '考虑']) {
-      expect(find.textContaining(claim), findsNothing);
-    }
-  });
-
   testWidgets('记录一下:点得动', (tester) async {
     useNarrowPhone(tester);
     var tapped = false;
@@ -210,11 +198,10 @@ void main() {
     await tester.pumpAndSettle();
 
     double dy(String text) => tester.getTopLeft(find.text(text)).dy;
-    // ① 病程档案 → ② 关键化验 → ③ 各行 → ④ 看懂 → ⑤ 最近就诊 → ⑥ 记录一下。
+    // ① 病程档案 → ② 关键化验 → ③ 各行 → ④ 最近就诊 → ⑤ 记录一下。
     expect(dy('病程档案'), lessThan(dy('关键化验')));
     expect(dy('关键化验'), lessThan(dy('肌酐')));
-    expect(dy('肌酐'), lessThan(dy('看懂')));
-    expect(dy('看懂'), lessThan(dy('最近就诊')));
+    expect(dy('肌酐'), lessThan(dy('最近就诊')));
     expect(dy('最近就诊'), lessThan(dy('记录一下')));
     // ① 病程档案入口**恒在**(mockup `s2` 的第一块)。这一屏的测试里一个病种包都
     // 没装上,所以它说的是「还没准备好」——「装上了 / 开启了」那两态在

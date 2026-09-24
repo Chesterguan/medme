@@ -21,9 +21,9 @@ import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 
 class ForDoctorScreen extends StatefulWidget {
   const ForDoctorScreen({super.key, this.load, this.onRequestAddNote});
@@ -115,7 +115,7 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
         ),
       ),
       // 固定在底部的主动作 —— **只有这一颗**(brief §品牌 最后一条:「出码给
-      // 医生看」固定底部;渐变预算表 `s4` = 1 颗 `MedPrimaryButton`)。一屏只
+      // 医生看」固定底部;颜色面预算表 `s4` = 1 颗 `MedPrimaryButton`)。一屏只
       // 允许一颗主按钮(规范 §六),诊室里那一下就是把码递过去。挪进
       // `Scaffold.bottomNavigationBar` 而不是留在正文末尾 —— `s4` 的正文是全
       // app 最长的一屏(12 种药 + 6 个诊断),滚到底才看见主动作等于没有主动作。
@@ -156,8 +156,8 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
           // 推进来直接就是内容,**没有「今天带给医生的」这类抬头**(`s4`)。
           //
           // ⚠️ **正文分块顺序还不是 `s4` 的顺序。** 这里渲染的是今天
-          // `VisitSummaryBody` 的既有顺序(我想问医生的 → 我最近的变化 →
-          // 医生可能要问的:过敏 + 用药)。`s4` 要的是
+          // `VisitSummaryBody` 的既有顺序(我最近的变化 → 医生可能要问的:
+          // 过敏 + 用药 → 我想问医生的)。`s4` 要的是
           // 过敏 → 在治 → 在吃 → 关键化验 → 检查与手术,过敏在**第一**行,
           // 而且多一整块「检查与手术」—— 那次重排连同各行的迷你折线一起,
           // 归 Stage 2。**别照这段注释以为顺序已经对了。**
@@ -215,8 +215,7 @@ class ForDoctorActions extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 逐字照 `s4`:急救那颗是「急救卡」。leading 换成光泽图标块(brief
-        // §形):导出=中性、急救=警示。
+        // 逐字照 `s4`:急救那颗是「急救卡」。
         //
         // 「导出文件」是这一页唯一的次要行,排在固定于底部的「出码」之后——出码
         // 才是诊室里那个主动作(本地、离线、30 秒),这一行是低频、要联网的
@@ -225,19 +224,13 @@ class ForDoctorActions extends StatelessWidget {
         // 文案刻意不用「分享」二字——见 `test/glossary_guard_test.dart` 顶部
         // 关于这个词的收窄说明。
         ListTile(
-          leading: const GlossIconTile(
-            icon: Icons.print_outlined,
-            category: GlossCategory.neutral,
-          ),
+          leading: const MedIcon(Icons.print_outlined),
           title: const Text('导出文件'),
           subtitle: const Text('报销、留档用的可打印文件'),
           onTap: onExport,
         ),
         ListTile(
-          leading: const GlossIconTile(
-            icon: Icons.favorite_outline,
-            category: GlossCategory.alert,
-          ),
+          leading: const MedIcon(Icons.favorite_outline),
           title: const Text('急救卡'),
           onTap: onEmergency,
         ),
@@ -250,7 +243,6 @@ class ForDoctorActions extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: MedShape.s3),
           child: MedBanner(
             icon: Icons.photo_camera_outlined,
-            iconCategory: GlossCategory.brand,
             title: '我是医生,替病人代拍',
             // `s4` 的副标题,逐字。
             subtitle: '病人不用装 App、不用账号',

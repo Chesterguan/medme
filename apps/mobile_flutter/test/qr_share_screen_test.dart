@@ -190,11 +190,11 @@ void main() {
   // Task 16:s13 真身是这一屏(`qr_share_screen.dart:591` 的 `MedCard` 包
   // `MedQrFrame`),不是 account_visual_test.dart 里个人模式「交给别人」弹窗
   // 复用的同一颗 `MedQrFrame`(那条路没有 `MedCard`,详见那份测试文件头部
-  // 说明)。渐变预算表:s13 = 0/0/0(唯一一颗主按钮在「第一次出码」那张
+  // 说明)。颜色面预算表:s13 = 0/0/0(唯一一颗主按钮在「第一次出码」那张
   // sheet 上,`account_visual_test.dart` 已经测过)。复用上面「出码成功」
   // 那条用例的 fixture(`_SucceedingGrants` 给一个短的假 token,不碰真实
   // FFI 密文生成)。
-  group('Task 16:s13 渐变预算 + 溢出矩阵', () {
+  group('Task 16:s13 颜色面预算 + 溢出矩阵', () {
     Future<void> pumpQr(WidgetTester t, {Size size = const Size(400, 800), double scale = 1.0}) async {
       await pumpStage3(
         t,
@@ -206,14 +206,15 @@ void main() {
       await t.pump(const Duration(milliseconds: 50));
     }
 
-    testWidgets('零品牌渐变;MedCard 包 MedQrFrame', (t) async {
+    testWidgets('零颜色面;MedCard 包 MedQrFrame', (t) async {
       SharedPreferences.setMockInitialValues({'qr_share_grant_mode': true, 'qr_notice_seen': true});
       await setUpOwnerProfile(t);
       await pumpQr(t);
 
       // 先确认真的出码了(同「出码成功」那条用例的证据行),预算才有意义。
       expect(find.text('15 天内有效;只有扫这个码的人能看'), findsOneWidget);
-      expectGradientBudget();
+      expectSurfaceBudget();
+      expectNoGradientAnywhere();
       expect(
         find.descendant(of: find.byType(MedCard), matching: find.byType(MedQrFrame)),
         findsOneWidget,

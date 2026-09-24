@@ -4,8 +4,8 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart'
     show TrendPointDto, TrendSeriesDto;
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
 /// 病程档案渲染引擎 —— `ProfileView.sections[]`(`packages/profile/src/view.rs`)
@@ -43,13 +43,11 @@ class ProfileSectionView extends StatelessWidget {
     final kind = section['kind'] as String?;
     final icon = _kIconFor[kind];
     if (icon == null) return const SizedBox.shrink();
-    final category = _categoryForKind(kind);
 
     final emptyHint = section['empty_hint'] as String?;
     if (emptyHint != null) {
       return _SectionCard(
         icon: icon,
-        category: category,
         child: _HintLine(emptyHint),
       );
     }
@@ -71,7 +69,6 @@ class ProfileSectionView extends StatelessWidget {
 
     return _SectionCard(
       icon: icon,
-      category: category,
       title: section['title'] as String?,
       child: child,
     );
@@ -90,24 +87,6 @@ const Map<String, IconData> _kIconFor = {
   'timeline': Icons.timeline,
   'checklist': Icons.checklist,
   'handoff': Icons.share_outlined,
-};
-
-/// section kind → 光泽图标块类别(brief §形「调用点按 mockup s3 补类别」)。
-/// 用药相关(`status_card`)= med;化验/活动度(`score_card`/`series_chart`,
-/// 两者都是化验数出来的)= lab;提醒(`reminders`)= med(它提醒的是用药相关的
-/// 监测项,如复查肝功/血常规);指南更新(`checklist`,达标情况/治疗里程碑都是
-/// 照指南对照)= clinic;病程事件(`timeline`)= note;`handoff` 目前没有引擎
-/// 产出(见 `_HandoffBody` 文档),按「异常/警示」归 alert。认不出的 kind 用
-/// brand(与 [_SectionCard] 的 `category` 默认值一致,理论上到不了这里——
-/// 上层已经用 `_kIconFor` 守过一遍)。
-GlossCategory _categoryForKind(String? kind) => switch (kind) {
-  'status_card' => GlossCategory.med,
-  'score_card' || 'series_chart' => GlossCategory.lab,
-  'reminders' => GlossCategory.med,
-  'checklist' => GlossCategory.clinic,
-  'timeline' => GlossCategory.note,
-  'handoff' => GlossCategory.alert,
-  _ => GlossCategory.brand,
 };
 
 /// `basis` 四档(spec §5.4):监测提醒到底是指南写的、说明书写的、文献写的,
@@ -214,20 +193,18 @@ Widget? _metaLine(BuildContext context, List<String?> parts) {
 // 共用外壳
 // ---------------------------------------------------------------------------
 
-/// 一块 section 的外壳:白卡 + 图标块 + 标题(可选,来自包)+ 内容。
+/// 一块 section 的外壳:白卡 + 图标 + 标题(可选,来自包)+ 内容。
 ///
-/// **一个 section 只有一个 [MedCard]**,不嵌套渐变、不嵌套第二张卡——mockup 的
-/// 「白卡 + 彩色描边、渐变 hero 只留给身份卡一张」这条规矩在这一层落地。
+/// **一个 section 只有一个 [MedCard]**,不嵌套第二张卡——同一屏里的卡不互相
+/// 抢注意力,层次交给字号和留白分。
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.icon,
-    this.category = GlossCategory.brand,
     this.title,
     required this.child,
   });
 
   final IconData icon;
-  final GlossCategory category;
   final String? title;
   final Widget child;
 
@@ -242,7 +219,7 @@ class _SectionCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              GlossIconTile(icon: icon, category: category),
+              MedIcon(icon),
               const SizedBox(width: MedShape.s3),
               Expanded(
                 child: Column(
@@ -291,16 +268,15 @@ class _ItemRow extends StatelessWidget {
     this.meta = const [],
     this.longText,
     this.note,
-    this.barColor,
   });
 
   /// 左边那颗 18px 小图标,`null` 就不画。时间轴那一路传 `null`——圆点已经是
   /// 它的标记,两个标记会打架,见 `_TimelineEventRow`。其余调用点都传,原样画出。
   final IconData? icon;
 
-  /// 整枚替换掉左边那颗小图标(R26:提醒行要一枚 44×44 `GlossIconTile`,不是
+  /// 整枚替换掉左边那颗小图标(R26:提醒行要一枚 44×44 `MedIcon`,不是
   /// 18px 的小图标)。非空时优先于 [icon]——mockup `.banner` 的签名
-  /// 元素就是这枚大图标块,`MedBanner` 本身用不了(见 `_ReminderRow` 类文档),
+  /// 元素就是这枚大图标,`MedBanner` 本身用不了(见 `_ReminderRow` 类文档),
   /// 但左边那颗图标不该跟着退化成小图标。默认 `null`,其余调用点一个像素都不变。
   ///
   /// R26 fix round 1 顺带删掉了原来的 `iconColor` 参数:那颗小图标唯一会变色的
@@ -323,14 +299,6 @@ class _ItemRow extends StatelessWidget {
   /// (`rules.rs::gfr_item` / `biopsy_item` 的文档写了这件事);与 `longText` 分两行,
   /// 不拼在一起 —— 拼了就核不到这一句的逐字原文(与 score_card 的 `caveat` 同一手法)。
   final String? note;
-
-  /// brief §形「化验行:左 4px 色条」——现在在用/活动度两张卡里的行不是
-  /// `LabLine`(没有干净的数值+单位可拆,见 `_GcBlock`/`_HcqBlock`/`_OtherDrugRow`/
-  /// `_ScoreCardBody` 的调用点),所以不强行换组件,只借这根色条把视觉语言对齐。
-  /// **不借 [MedBrand.barHigh]/[barLow]/[barCritical]** 这几个化验状态色——这些行
-  /// 没有 flag,借状态色就是替一个没有判定的数据编一个判定(`lab_status.dart` 头部
-  /// 同一条戒律)。传 `null`(默认)不画条,原有调用点一个像素都不变。
-  final Color? barColor;
 
   @override
   Widget build(BuildContext context) {
@@ -379,14 +347,7 @@ class _ItemRow extends StatelessWidget {
         ],
       ),
     );
-    if (barColor == null) return row;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(left: BorderSide(color: barColor!, width: 4)),
-      ),
-      padding: const EdgeInsets.only(left: MedShape.s1),
-      child: row,
-    );
+    return row;
   }
 }
 
@@ -453,7 +414,6 @@ class _GcBlock extends StatelessWidget {
         if (drug != null)
           _ItemRow(
             icon: Icons.medication_outlined,
-            barColor: c.line2,
             label: [
               drug,
               if (gc['dose'] != null) gc['dose'],
@@ -475,7 +435,6 @@ class _GcBlock extends StatelessWidget {
           // 同一天多条医嘱分支),两处都画就是同一句话说两遍。
           _ItemRow(
             icon: Icons.medication_outlined,
-            barColor: c.line2,
             label: '激素',
             longText: gc['blocked_reason'] as String?,
           ),
@@ -493,7 +452,6 @@ class _GcBlock extends StatelessWidget {
         for (final u in unconvertible)
           _ItemRow(
             icon: Icons.error_outline,
-            barColor: c.line2,
             label: [
               u['name'],
               u['dose'],
@@ -534,7 +492,6 @@ class _HcqBlock extends StatelessWidget {
         if (dailyMg != null)
           _ItemRow(
             icon: Icons.medication_outlined,
-            barColor: c.line2,
             label: [
               ?dose,
               '$dailyMg mg/日',
@@ -556,18 +513,13 @@ class _HcqBlock extends StatelessWidget {
           // 一),原样显示,不另写一句——同一条理由见 `_GcBlock` 的 unconvertible。
           _ItemRow(
             icon: Icons.medication_outlined,
-            barColor: c.line2,
             label: '羟氯喹',
             longText: hcq['reason'] as String?,
           ),
         if (labelRule != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            // brief §形「指南更新」那段引用文字换蓝横幅——**不直接套
-            // `MedReadBanner`**:那个共用组件自带一句固定的「看懂」抬头、且没有
-            // 插槽放这里必须留着的「待核/已核对」fail-closed 判定 pill(见下),
-            // 套上去等于给这一屏加一句新字、丢一枚安全判定 pill——两条都撞硬规矩
-            // 「一个用户可见字符串都不许改」。这里只借它的两个色token
+            // brief §形「指南更新」那段引用文字换蓝横幅——这里只借它的两个色token
             // (`MedBrand.bannerBlue`/`bannerBlueInk`)与横幅圆角,文字和 pill
             // 原样不动。
             child: Container(
@@ -614,7 +566,6 @@ class _OtherDrugRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = MedColors.of(context);
     final infusion = med['infusion'] == null ? null : _asMap(med['infusion']);
     // 给药途径的 key(`"iv"`/`"sc"`,`package.rs::Drug.infusion`)必须留着——同一个
     // 药不同途径的剂量常常不一样(贝利尤单抗 IV 与 SC 的方案原文都不同),丢了 key
@@ -624,7 +575,6 @@ class _OtherDrugRow extends StatelessWidget {
         .join(' / ');
     return _ItemRow(
       icon: Icons.medication_outlined,
-      barColor: c.line2,
       label: [
         med['name'],
         med['latest_dose'],
@@ -719,7 +669,7 @@ class _ScoreCardBody extends StatelessWidget {
             runSpacing: 4,
             children: [
               if (label case final l? when l.isNotEmpty)
-                MedPill(text: l, foreground: c.sealInk, background: c.sealWash),
+                MedPill(text: l, foreground: c.ink2, background: c.line2),
               ?_metaLine(context, [
                 windowDays == null ? null : '窗口 $windowDays 天',
                 asOf,
@@ -731,8 +681,8 @@ class _ScoreCardBody extends StatelessWidget {
           const SizedBox(height: MedShape.s2),
           const Divider(height: 1),
           for (final h in hits) _hitRow(c, h),
-          for (final m in missed) _missedRow(c, m),
-          for (final u in unscored) _unscoredRow(c, u),
+          for (final m in missed) _missedRow(m),
+          for (final u in unscored) _unscoredRow(u),
         ],
       ],
     );
@@ -742,7 +692,6 @@ class _ScoreCardBody extends StatelessWidget {
     final weight = h['weight'];
     final row = _ItemRow(
       icon: Icons.check_circle_outline,
-      barColor: c.line2,
       label: '${h['label']}',
       trailing: weight == null
           ? null
@@ -770,19 +719,17 @@ class _ScoreCardBody extends StatelessWidget {
     );
   }
 
-  Widget _missedRow(MedColors c, Map<String, dynamic> m) {
+  Widget _missedRow(Map<String, dynamic> m) {
     return _ItemRow(
       icon: Icons.cancel_outlined,
-      barColor: c.line2,
       label: '${m['label']}',
       longText: _evidenceText(_asMapList(m['evidence'])),
     );
   }
 
-  Widget _unscoredRow(MedColors c, Map<String, dynamic> u) {
+  Widget _unscoredRow(Map<String, dynamic> u) {
     return _ItemRow(
       icon: Icons.help_outline,
-      barColor: c.line2,
       label: '${u['label']}',
       longText: u['reason'] as String?,
     );
@@ -897,8 +844,8 @@ class _SeriesCard extends StatelessWidget {
             if (needsReview is num && needsReview > 0)
               MedPill(
                 text: '需核对 ×$needsReview',
-                foreground: c.sealInk,
-                background: c.sealWash,
+                foreground: c.ink2,
+                background: c.line2,
               ),
             if (valuesConverted)
               // 「已换算」——这条线上混了不同印刷单位,画的是统一后的规范单位,
@@ -998,7 +945,7 @@ class _RemindersBody extends StatelessWidget {
 /// `test/profile_sections_test.dart` 的「every reminder shows its basis
 /// label」「a reminder row prints the package note it was handed」逮到)。这里
 /// 借的是 `MedBanner` 的颜色 token(`MedBrand.bannerAmber`/`bannerAmberInk`)与
-/// 圆角,连同它的签名元素——44×44 `GlossIconTile`(R26:`_ItemRow.leading`)与
+/// 圆角,连同它的签名元素——44×44 `MedIcon`(R26:`_ItemRow.leading`)与
 /// 标题字色(R26:`_ItemRow.labelColor`)——内容仍是 `_ItemRow` 的既有排法,视觉
 /// 是琥珀横幅,信息一个字不丢。
 class _ReminderRow extends StatelessWidget {
@@ -1035,10 +982,7 @@ class _ReminderRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: MedShape.s2),
       child: _ItemRow(
         icon: Icons.notifications_outlined,
-        leading: const GlossIconTile(
-          icon: Icons.notifications_outlined,
-          category: GlossCategory.med,
-        ),
+        leading: const MedIcon(Icons.notifications_outlined),
         label: text,
         labelColor: MedBrand.bannerAmberInk,
         trailing: Row(
@@ -1047,7 +991,7 @@ class _ReminderRow extends StatelessWidget {
             MedPill(text: stateLabel, foreground: c.ink2, background: c.line2),
             if (basis != null) ...[
               const SizedBox(width: 4),
-              MedPill(text: basis, foreground: c.sealInk, background: c.sealWash),
+              MedPill(text: basis, foreground: c.ink2, background: c.line2),
             ],
           ],
         ),
@@ -1151,7 +1095,7 @@ class _TimelineEventRow extends StatelessWidget {
             MedPill(text: typeLabel, foreground: c.ink2, background: c.line2),
           if (event['unverified'] == true) ...[
             const SizedBox(width: 4),
-            // R4:「需核对」只许用 `MedPill.check`,不许再各写各的 sealInk/sealWash。
+            // R4:「需核对」只许用 `MedPill.check`,不许再各写各的配色。
             MedPill.check('需核对'),
           ],
         ],
@@ -1191,7 +1135,7 @@ class _TimelineEventRow extends StatelessWidget {
   }
 }
 
-/// 时间轴圆点:10×10 实心 `seal`(异常事件换 `MedBrand.barCritical`)、2px 白边、
+/// 时间轴圆点:10×10 实心 `seal`(异常事件换 `MedColors.critical`)、2px 白边、
 /// 外面再一圈 1px `MedBrand.timelineLine`——三层同心圆,逐层套 `Container`
 /// (Flutter 没有 CSS 那种叠 `box-shadow`/多层 border,套色块是最省事的等价画法)。
 class _TimelineDot extends StatelessWidget {
@@ -1224,7 +1168,7 @@ class _TimelineDot extends StatelessWidget {
           height: _core,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: critical ? MedBrand.barCritical : c.seal,
+            color: critical ? c.critical : c.seal,
           ),
         ),
       ),

@@ -11,8 +11,8 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
@@ -236,17 +236,12 @@ class _BloodTypeCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 图标底换光泽图标块(brief §形):血型=品牌(与成员头像同一档)。
         Row(children: [
-          const GlossIconTile(
-            icon: Icons.bloodtype_outlined,
-            category: GlossCategory.brand,
-          ),
+          const MedIcon(Icons.bloodtype_outlined),
           const SizedBox(width: MedShape.s2),
           Expanded(child: Text('血型', style: MedType.caption.copyWith(color: c.ink3))),
         ]),
         const SizedBox(height: MedShape.s1),
-        // 派生自「我们没有」这个事实,背后没有原件 → 不画骑缝线。
         MedCard(
           child: Padding(
             padding: const EdgeInsets.all(MedShape.s4),
@@ -294,13 +289,9 @@ class _AllergySection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 图标底换光泽图标块(brief §形):过敏=警示。R14 carry-forward——只加
-        // 这一枚图标块,不加边框、不加字、不加别的 widget。
+        // R14 carry-forward——只加这一枚图标,不加边框、不加字、不加别的 widget。
         Row(children: [
-          const GlossIconTile(
-            icon: Icons.warning_amber_outlined,
-            category: GlossCategory.alert,
-          ),
+          const MedIcon(Icons.warning_amber_outlined),
           const SizedBox(width: MedShape.s2),
           Expanded(
             child: Text(
@@ -356,12 +347,8 @@ class _MedsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 图标底换光泽图标块(brief §形):用药=用药。
         Row(children: [
-          const GlossIconTile(
-            icon: Icons.medication_outlined,
-            category: GlossCategory.med,
-          ),
+          const MedIcon(Icons.medication_outlined),
           const SizedBox(width: MedShape.s2),
           Expanded(
             child: Text(kRecordedMedsTitle, style: MedType.caption.copyWith(color: c.ink3)),
@@ -410,12 +397,8 @@ class _ConditionSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 图标底换光泽图标块(brief §形):诊断=门诊。
         Row(children: [
-          const GlossIconTile(
-            icon: Icons.monitor_heart_outlined,
-            category: GlossCategory.clinic,
-          ),
+          const MedIcon(Icons.monitor_heart_outlined),
           const SizedBox(width: MedShape.s2),
           Expanded(
             child: Text('病历里的诊断', style: MedType.caption.copyWith(color: c.ink3)),
@@ -472,12 +455,8 @@ class _ExtrasSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 图标底换光泽图标块(brief §形):其他=中性。
         Row(children: [
-          const GlossIconTile(
-            icon: Icons.badge_outlined,
-            category: GlossCategory.neutral,
-          ),
+          const MedIcon(Icons.badge_outlined),
           const SizedBox(width: MedShape.s2),
           Expanded(
             child: Text('你自己填的', style: MedType.caption.copyWith(color: c.ink3)),

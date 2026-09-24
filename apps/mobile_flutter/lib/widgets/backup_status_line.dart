@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/account_flow.dart';
 import 'package:mobile_flutter/api_client.dart';
-import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/sync_engine.dart';
@@ -180,11 +179,10 @@ class _BackupStatusLineState extends State<BackupStatusLine> {
     // 悄悄失灵。上次那一笔自己就写着成没成。
     final failed = s.canRetry && _last?.ok == false;
     // `s5`:标题恒为「云端」,副标题随状态变,末尾一个 `›`。整条换成 MedBanner
-    // (brief §形横幅):失败态用琥珀,其余(含没登录/关着/加载中)用蓝——图标类别
-    // 定成 lab(brief 「云端相关=lab」),不再按失败与否切换图标本身。
+    // (brief §形横幅):失败态用琥珀,其余(含没登录/关着/加载中)用蓝,不再按
+    // 失败与否切换图标本身。
     return MedBanner(
       icon: Icons.cloud_outlined,
-      iconCategory: GlossCategory.lab,
       title: '云端',
       subtitle: _busy ? '正在备份…' : s.text,
       amber: failed,

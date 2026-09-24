@@ -17,7 +17,7 @@ import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/vault_events.dart';
-import 'package:mobile_flutter/widgets/identity_hero_card.dart';
+import 'package:mobile_flutter/widgets/member_header.dart';
 
 import 'harness.dart';
 
@@ -71,7 +71,8 @@ void main() {
     expect((await patientProfile()).recordCount, 2);
 
     // UI:成员名单在「我 → 这台手机上的病历」那张卡里(`s5`);「病历」顶部
-    // 只有 hero 卡显示**当前**那一个人,没有成员 tab 条(`s1` 的 mockup 决定)。
+    // 只有成员一行([MemberHeader])显示**当前**那一个人,没有成员 tab 条
+    // (`s1` 的 mockup 决定)。
     await bootApp(tester, reset: false);
     await gotoTab(tester, HomeTab.me);
     await waitFor(tester, find.text('这台手机上的病历'));
@@ -144,7 +145,7 @@ void main() {
     await createProfileAndReopen('张伟');
     expect(pm.profiles.where((p) => p.name == '张伟').length, 2);
 
-    // 屏上不该被挤爆:「病历」的 hero 卡 +「我」的成员名单卡都过一遍。
+    // 屏上不该被挤爆:「病历」的成员一行 +「我」的成员名单卡都过一遍。
     await bootApp(tester, reset: false);
     await gotoTab(tester, HomeTab.records);
     await settle(tester, total: const Duration(seconds: 2));
@@ -165,7 +166,7 @@ void main() {
     expect(await scrollToFind(tester, find.text('清空所有数据 · 重置病历箱')), isTrue,
         reason: '「关于」翻到底也找不到「清空所有数据」');
 
-    // hero 身份卡拿的是当前成员名,极长名字不该把卡撑破。
+    // 顶部成员一行拿的是当前成员名,极长名字不该把它撑破。
     await gotoTab(tester, HomeTab.records);
     await settle(tester, total: const Duration(seconds: 2));
 
@@ -181,10 +182,10 @@ void main() {
 
     await bootApp(tester, reset: false);
     await gotoTab(tester, HomeTab.records);
-    await waitFor(tester, find.byType(IdentityHeroCard));
+    await waitFor(tester, find.byType(MemberHeader));
 
-    // 身份卡整卡可点 → 弹成员切换器。
-    await tester.tap(find.byType(IdentityHeroCard));
+    // 成员一行整行可点 → 弹成员切换器。
+    await tester.tap(find.byType(MemberHeader));
     await settle(tester, total: const Duration(seconds: 2));
 
     await waitFor(tester, find.text('切换成员'), what: '成员切换弹层');

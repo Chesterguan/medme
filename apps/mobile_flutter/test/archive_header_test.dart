@@ -1,11 +1,19 @@
-// 「病历」首页 hero 下面那两颗方块、「还没核对」横幅、月份标题(`s1`)。
+// 「病历」首页成员一行下面那两颗药丸、「还没核对」横幅、月份标题(`s1`)。
 //
 // 整屏 `ArchiveScreen` 在字段初始化处碰 FFI,`flutter test` 不带原生库,**不可
 // pump 整屏** —— 这里 pump 的是从那一屏里拆出来的三个纯 widget。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
+import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
+
+/// 最小可用的独立文档时间线项,只填 `byMonth` 分段要看的 `docDate`——同一份
+/// `_doc` 写法见 `test/doc_display_title_test.dart`。
+TimelineGroupDto _doc(String? docDate) => TimelineGroupDto.document(
+  doc: DocumentSummaryDto(id: 1, docType: 'lab_report', docDate: docDate, pageCount: 1),
+);
 
 Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
   theme: MedMe.theme(),
@@ -22,27 +30,20 @@ void useNarrowPhone(WidgetTester tester) {
 }
 
 void main() {
-  testWidgets('两颗方块:等宽、都点得动', (tester) async {
+  testWidgets('两颗药丸:等宽、都点得动', (tester) async {
     useNarrowPhone(tester);
     var add = false, doc = false;
     await tester.pumpWidget(
       wrap(HomeTiles(onAdd: () => add = true, onForDoctor: () => doc = true)),
     );
-    expect(find.text('添加'), findsOneWidget);
-    expect(find.text('给医生看'), findsOneWidget);
+    expect(find.widgetWithText(MedPrimaryButton, '添加'), findsOneWidget);
+    expect(find.widgetWithText(MedSecondaryButton, '给医生看'), findsOneWidget);
     // 等宽 —— 它们是一对并列的动作,不是一主一次。
-    expect(
-      tester.getSize(find.text('添加').first).width > 0 &&
-          tester.getSize(find.byType(HomeTiles)).width > 0,
-      isTrue,
-    );
-    final w1 = tester.getRect(find.ancestor(
-      of: find.text('添加'), matching: find.byType(Material)).first).width;
-    final w2 = tester.getRect(find.ancestor(
-      of: find.text('给医生看'), matching: find.byType(Material)).first).width;
+    final w1 = tester.getSize(find.byType(MedPrimaryButton)).width;
+    final w2 = tester.getSize(find.byType(MedSecondaryButton)).width;
     expect((w1 - w2).abs() < 1.0, isTrue, reason: '两颗必须等宽');
-    await tester.tap(find.text('添加'));
-    await tester.tap(find.text('给医生看'));
+    await tester.tap(find.byType(MedPrimaryButton));
+    await tester.tap(find.byType(MedSecondaryButton));
     expect([add, doc], [true, true]);
   });
 
@@ -82,17 +83,6 @@ void main() {
     expect(find.byIcon(Icons.chevron_right), findsNothing);
   });
 
-  testWidgets('月份标题 + 「找一找」占位', (tester) async {
-    useNarrowPhone(tester);
-    var searched = false;
-    await tester.pumpWidget(
-      wrap(MonthHeader(label: '2026 年 8 月', onSearch: () => searched = true)),
-    );
-    expect(find.text('2026 年 8 月'), findsOneWidget);
-    await tester.tap(find.text('找一找'));
-    expect(searched, isTrue);
-  });
-
   test('monthLabel:按月分组的那一行字;没日期的不许归进某个月', () {
     expect(monthLabel('2026-08-12'), '2026 年 8 月');
     // 不补零 —— `s1` 写的是「2026 年 7 月」。
@@ -102,5 +92,24 @@ void main() {
     expect(monthLabel(null), '没有日期');
     expect(monthLabel(''), '没有日期');
     expect(monthLabel('不是日期'), '没有日期');
+  });
+
+  test('byMonth:空列表 → 空', () {
+    expect(byMonth([]), isEmpty);
+  });
+
+  test('byMonth:一条 → 一段一条', () {
+    final g = _doc('2026-08-12');
+    expect(byMonth([g]), [[g]]);
+  });
+
+  test('byMonth:两条同月 → 一段两条', () {
+    final a = _doc('2026-08-12'), b = _doc('2026-08-01');
+    expect(byMonth([a, b]), [[a, b]]);
+  });
+
+  test('byMonth:两条跨月 → 两段', () {
+    final a = _doc('2026-08-12'), b = _doc('2026-07-20');
+    expect(byMonth([a, b]), [[a], [b]]);
   });
 }

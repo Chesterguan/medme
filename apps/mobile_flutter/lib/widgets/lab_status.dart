@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/trend_chart.dart' show trendYDomain;
 
 /// 化验状态的**唯一**映射点:`TrendPointDto.flag` / `VisitLabDto.flag` 这类
-/// **Rust 给的原始标记字符串** → 颜色与文字 pill。
+/// **Rust 给的原始标记字符串** → 颜色、右列的状态词与刻度条上圆点的位置。
 ///
 /// ## 这里绝不做判定
 ///
@@ -34,10 +35,9 @@ enum LabStatus {
   unknown,
 }
 
-/// 原始 flag 字符串 → [LabStatus]。返回 null = **正常,不给 pill、不加字**——左侧
-/// 色条与数值文字仍然上色([MedBrand.barNormal] / [MedBrand.normalInk]),只是
-/// 不额外画 pill(预检裁定 R2;设计系统 §二原来的「正常不上色」规则已被 Stage 3
-/// 视觉令牌取代)。
+/// 原始 flag 字符串 → [LabStatus]。返回 null = **正常,什么都不画**——不给状态词、
+/// 不给 pill,数值文字维持正文墨色 `MedColors.ink`(减法稿 2026-09-22:「正常
+/// 不上色」,预检裁定 R2 的「正常档也上色」作废)。
 ///
 /// ## `"N"` 也是正常,不是「读不懂的记号」
 ///
@@ -54,10 +54,9 @@ enum LabStatus {
 /// 两者的语义确实不同(「明确判定为正常」vs「没有标记/无从判断」),但在**这一层**
 /// 不该区分,理由有三条:
 ///
-/// 1. 这个函数的产出只喂给三样东西 —— 色条色、数值前景色、pill。而「正常」现在也
-///    恰恰只有一种呈现:[MedBrand.barNormal] 色条 + [MedBrand.normalInk] 数值 +
-///    没有 pill(预检裁定 R2)。给「明确正常」再发明第四种视觉状态,就是这一条
-///    规则的直接违反。
+/// 1. 这个函数的产出只喂给三样东西 —— [labStatusColor]、[labStatusWord]、刻度条
+///    上圆点的颜色。而「正常」现在恰恰只有一种呈现:什么都不上色、不加字(减法稿
+///    2026-09-22)。给「明确正常」再发明第四种视觉状态,就是这一条规则的直接违反。
 /// 2. 信息没有丢:原始 `flag` 仍然挂在 DTO 上,谁要区分自己读。
 /// 3. `"N"` 本来就是可推的 —— 它等价于「refLow/refHigh 至少有一个且值在区间内」,
 ///    而参考区间同一个 DTO 里就带着。
@@ -72,63 +71,117 @@ LabStatus? labStatusOf(String? flag) {
   };
 }
 
-/// 状态 → 前景色。「认不出的标记」继承正文墨色;正常(`null`)是
-/// [MedBrand.normalInk](预检裁定 R2 —— brief 给了正常档的文字色,旧「正常不
-/// 上色」规则作废)。
-///
-/// 认不出的标记刻意**不上色**:我们不知道它是高是低,涂个颜色就是在替化验单
-/// 下一个我们没读懂的结论。
+/// 状态 → 前景色。正常(`null`)与认不出的标记都是正文墨色——减法稿 2026-09-22:
+/// **颜色只说状态,正常不上色**(预检裁定 R2 的「正常档也上色」作废)。
 Color labStatusColor(BuildContext context, LabStatus? s) {
   final c = MedColors.of(context);
   return switch (s) {
     LabStatus.high => c.high,
     LabStatus.low => c.low,
-    LabStatus.unknown => c.ink,
-    null => MedBrand.normalInk,
+    LabStatus.unknown || null => c.ink,
   };
 }
 
-/// 状态 → 左侧色条色。正常(`null`)是 [MedBrand.barNormal];「认不出的标记」仍是
-/// **透明**——色条 4px 的占位恒定(brief §形,旧代码是 3px),整列文字起点才不会
-/// 因为有没有色条而左右跳(与 `report_content.dart` 的独立实现同一处理思路)。
-Color labStripeColor(BuildContext context, LabStatus? s) {
-  return switch (s) {
-    LabStatus.high => MedBrand.barHigh,
-    LabStatus.low => MedBrand.barLow,
-    LabStatus.unknown => Colors.transparent,
-    null => MedBrand.barNormal,
-  };
-}
-
-/// 状态 → 文字 pill。正常(`null`)不给 pill(预检裁定 R2);未知给一个「看一眼」
-/// 中性 pill(`MedPill.check`),**文字是原始标记本身**。
+/// 状态 → 右列那个词:「偏高」/「偏低」是上了色的字(无底,`statusWord`);认不出的
+/// 标记原样透出成「看一眼」中性 chip(`MedPill.check`);正常**什么都不画、不加字**。
 ///
-/// 状态同时编码在色条和 pill 上:色盲用户靠 pill 读语义,正常视力扫视靠色条
-/// (设计系统 §二)。少任何一个,就有一类用户读不到这一行的结论。
-///
-/// ⚠️ 规范的第四级「危急值」这里画不出来:它得由 Rust 明确给出,而当前三个投影
-/// DTO 的 `flag` 里没有这一级。**不在 UI 层拿参考区间反推** —— 令牌 `critical` /
-/// `barCritical` 因此在化验语境下暂时无人消费,等抽取侧补上(预检裁定 R2:危急
-/// 档暂无数据来源,只保留 token,不做行为)。
-Widget? labStatusPill(BuildContext context, String? flag) {
+/// 色盲用户靠这个词读语义,正常视力靠颜色和刻度上的点——同一行里两种编码都在。
+Widget? labStatusWord(BuildContext context, String? flag) {
   final c = MedColors.of(context);
-  final s = labStatusOf(flag);
-  return switch (s) {
+  return switch (labStatusOf(flag)) {
     null => null,
-    LabStatus.high => MedPill(
-      text: '偏高',
-      foreground: MedBrand.pillHighInk,
-      background: c.highWash,
-    ),
-    LabStatus.low => MedPill(
-      text: '偏低',
-      foreground: c.low,
-      background: c.lowWash,
-    ),
-    // 原样透出,换成「看一眼」共用的中性配色(与「需核对」chip 同一处
-    // MedPill.check —— 都是「App 没能替你判定,自己看一眼」这句话)。
+    LabStatus.high => statusWord('偏高', c.high),
+    LabStatus.low => statusWord('偏低', c.low),
     LabStatus.unknown => MedPill.check(flag!.trim()),
   };
+}
+
+/// 刻度条上三个位置(0–1):参考带起止与这次的值。值域用折线图同一个 [trendYDomain]
+/// (上下各 20% 余量、两端界值都装得进去),所以「≥ 90」而实测 63 时,点在带子左外侧,
+/// 而不是被夹到边上。**不做判定**:只是把三个数画在一条线上,颜色由 `flag` 决定。
+({double bandFrom, double bandTo, double markerAt}) labRangeFractions({
+  required double value,
+  double? refLow,
+  double? refHigh,
+}) {
+  final (lo, hi) = trendYDomain([value], refLow: refLow, refHigh: refHigh);
+  double at(double v) => ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+  final bandFrom = refLow == null ? 0.0 : at(refLow);
+  final bandTo = refHigh == null ? 1.0 : at(refHigh);
+  return (
+    bandFrom: bandFrom,
+    // 参考区间倒挂(单据印刷错误,`refLow > refHigh`)时不画负宽的带子——夹到
+    // `bandFrom`,退化成一条 0 宽的线,而不是让 `_RangeBarPainter` 拿到负数宽度。
+    bandTo: bandTo < bandFrom ? bandFrom : bandTo,
+    markerAt: at(value),
+  );
+}
+
+/// 细刻度条(减法稿 `.bar`):74×3 的浅条(`line`),参考区间那一段 `ink3` 压 30%,
+/// 一枚 9px 圆点标出这次的值。没有参考区间时调用方不画它——没有带子,点就无从落位。
+class LabRangeBar extends StatelessWidget {
+  const LabRangeBar({super.key, required this.value, this.refLow, this.refHigh, required this.markerColor});
+
+  final double value;
+  final double? refLow;
+  final double? refHigh;
+  final Color markerColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final f = labRangeFractions(value: value, refLow: refLow, refHigh: refHigh);
+    return SizedBox(
+      width: MedBrand.rangeBarWidth,
+      height: MedBrand.rangeMarkerSize,
+      child: CustomPaint(
+        painter: _RangeBarPainter(
+          track: c.line,
+          band: c.ink3.withValues(alpha: MedBrand.rangeBandAlpha),
+          marker: markerColor,
+          bandFrom: f.bandFrom,
+          bandTo: f.bandTo,
+          markerAt: f.markerAt,
+        ),
+      ),
+    );
+  }
+}
+
+class _RangeBarPainter extends CustomPainter {
+  const _RangeBarPainter({
+    required this.track, required this.band, required this.marker,
+    required this.bandFrom, required this.bandTo, required this.markerAt,
+  });
+
+  final Color track;
+  final Color band;
+  final Color marker;
+  final double bandFrom;
+  final double bandTo;
+  final double markerAt;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cy = size.height / 2;
+    const h = MedBrand.rangeBarHeight;
+    const r = Radius.circular(h / 2);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(Rect.fromLTWH(0, cy - h / 2, size.width, h), r),
+      Paint()..color = track,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(bandFrom * size.width, cy - h / 2, (bandTo - bandFrom) * size.width, h), r),
+      Paint()..color = band,
+    );
+    canvas.drawCircle(Offset(markerAt * size.width, cy), MedBrand.rangeMarkerSize / 2, Paint()..color = marker);
+  }
+
+  @override
+  bool shouldRepaint(covariant _RangeBarPainter o) =>
+      o.track != track || o.band != band || o.marker != marker ||
+      o.bandFrom != bandFrom || o.bandTo != bandTo || o.markerAt != markerAt;
 }
 
 /// 参考区间 → 一行可读文本(`4.00–10.00`)。两端都没有时返回 null。
@@ -167,7 +220,7 @@ String fmtLabNumber(double v) {
   return v.toString();
 }
 
-/// 一行化验的**唯一**渲染实现:左侧状态色条 + 名称 + pill + 次要说明 + 右侧数值。
+/// 一行化验的**唯一**渲染实现:无色条:名称 + 说明 | 数值 + 状态词 + 刻度条。
 ///
 /// 「给医生看」与「趋势」共用它。规范 §七「三端映射」要求同一个化验值
 /// 在哪里都长一样;同一端里的几个屏各写一遍,是同一个问题的更近版本 —— 「偏高」
@@ -215,196 +268,79 @@ class LabLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     final status = labStatusOf(flag);
-    final pill = labStatusPill(context, flag);
-    // 「需核对」用 MedBrand 的中性 check 配色(R4:只在 MedPill.check 一处定义)——
-    // **不用** low/high/critical 那三套,也不借主色 seal:那三套是化验状态专用,
-    // 借来会让人读成一档临床结论;这枚 chip 说的是"MedMe 没能替你核对这个数",
-    // 是 App 在说话,不是化验单在说话,也不是「点这里去做什么」的主色动作。
+    final word = labStatusWord(context, flag);
     final reviewPill = unverified ? MedPill.check('需核对') : null;
     final ref = refRangeText(refLow, refHigh);
     final sub = [
       if (meta case final m? when m.isNotEmpty) m,
       if (ref != null) '参考 $ref',
     ].join(' · ');
+    // 认不出的标记不给圆点上色:我们不知道它是高是低。
+    final markerColor = switch (status) {
+      LabStatus.high => c.high,
+      LabStatus.low => c.low,
+      LabStatus.unknown || null => c.ink3,
+    };
+    final unitText = (unit == null || unit!.isEmpty)
+        ? null
+        : Text(unit!, style: MedType.caption.copyWith(fontSize: 12, color: c.ink3, fontWeight: FontWeight.w400));
+
+    final right = ConstrainedBox(
+      // R19 同款上限:长单位(`ml/min/1.73m2`)在 2× 字号下折到数值下一行,不把名字挤没。
+      constraints: const BoxConstraints(maxWidth: MedBrand.trendValueMaxWidth),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Wrap(
+            alignment: WrapAlignment.end,
+            crossAxisAlignment: WrapCrossAlignment.end,
+            spacing: 4,
+            children: [
+              Text(fmtLabNumber(value), style: MedType.value.copyWith(color: labStatusColor(context, status))),
+              ?unitText,
+            ],
+          ),
+          if (word != null) ...[const SizedBox(height: 2), word],
+          if (refLow != null || refHigh != null) ...[
+            const SizedBox(height: 4),
+            LabRangeBar(value: value, refLow: refLow, refHigh: refHigh, markerColor: markerColor),
+          ],
+        ],
+      ),
+    );
 
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(MedShape.radiusControl),
-      child: Container(
-        // 4px 色条恒定占位(brief §形,旧代码是 3px)——正常行现在也是
-        // MedBrand.barNormal,只有「认不出的标记」那档还是透明,占位宽度不因此
-        // 变化,整列文字起点不会因为有没有色条而左右跳。
-        decoration: BoxDecoration(
-          border: Border(
-            left: BorderSide(color: labStripeColor(context, status), width: 4),
-          ),
-        ),
-        padding: const EdgeInsets.fromLTRB(
-          MedShape.s2,
-          MedShape.s1,
-          0,
-          MedShape.s1,
-        ),
-        child: LayoutBuilder(
-          builder: (context, box) {
-            final nameText = Text(
-              name,
-              style: MedType.body.copyWith(color: c.ink),
-            );
-            final numberText = Text(
-              fmtLabNumber(value),
-              style: MedType.value.copyWith(
-                color: labStatusColor(context, status),
-              ),
-            );
-            // 单位是独立的小字(brief §形「单位小字可折到数值下一行」),不再跟
-            // 数值拼进同一个 Text —— 两者字号/字重/颜色本来就不同。
-            Text? unitText;
-            if (unit case final u? when u.isNotEmpty) {
-              unitText = Text(
-                u,
-                style: MedType.caption.copyWith(
-                  fontSize: 12,
-                  color: c.ink3,
-                  fontWeight: FontWeight.w400,
-                ),
-              );
-            }
-            // 放进 Wrap 而不是 Row:宽屏这一路它拿到的是无限宽(非 flex 的 Row
-            // 子项在主轴上天然如此),两者正常挤一行;窄屏那条分支里 valueText
-            // 被 Expanded 收紧了宽度,装不下时单位自己掉到下一行,数值本身
-            // 永远不折 —— 这就是 brief 要的效果。
-            final valueText = Wrap(
-              alignment: WrapAlignment.end,
-              spacing: 4,
-              children: [numberText, ?unitText],
-            );
-            final subText = sub.isEmpty
-                ? null
-                : Text(
-                    sub,
-                    style: MedType.secondary.copyWith(
-                      color: c.ink3,
-                      fontFeatures: MedType.tabular,
-                    ),
-                  );
-            final chevron = onTap == null
-                ? null
-                : Icon(Icons.chevron_right, size: 20, color: c.ink3);
-
-            // 「名字 + pill + 数值」放不放得下同一行,**实测量,不猜**。
-            //
-            // 窄屏 + 长名 + 长单位(`估算肾小球滤过率` / `ml/min/1.73m2`)在任何
-            // 合理字号下本来就挤不进一行 —— 硬并排的结果是各种难看形态:pill 被
-            // 顶到独占一行、数值折成 `63 ml/min/` + `1.73m2`、名字被挤到第二行。
-            // 那些形态在「不溢出」的意义上都是合格的,看着却是坏的。
-            //
-            // 所以放不下时**改成为两行而设计**(名字+pill 一行,数值单独一行右对齐),
-            // 而不是继续挤。放得下时保持并排 —— 宽屏与短名不该白白多占一行。
-            // `Text('文字')` 把内容放在 `data`,`textSpan` 是 null —— 直接取
-            // `textSpan` 会 StateError。这里按 data + style 自己搭 span。
-            double probe(Text w) {
-              final tp = TextPainter(
-                text: TextSpan(text: w.data ?? '', style: w.style),
-                textDirection: Directionality.of(context),
-                textScaler: MediaQuery.textScalerOf(context),
-              )..layout(maxWidth: double.infinity);
-              return tp.width;
-            }
-            // pill 的保守估宽,宁可早换行。「需核对」三个字比「偏高」宽一档。
-            final pillW =
-                (pill == null ? 0.0 : 56.0) + (reviewPill == null ? 0.0 : 64.0);
-            final chevronW = chevron == null ? 0.0 : 20.0;
-            final needed =
-                probe(nameText) +
-                pillW +
-                MedShape.s1 +
-                MedShape.s2 +
-                probe(numberText) +
-                (unitText == null ? 0.0 : 4 + probe(unitText)) +
-                chevronW;
-            final sideBySide = needed <= box.maxWidth;
-
-            // pill 与名字**必须待在同一行里**,所以是 `Row` 而不是 `Wrap`。`Wrap` 在
-            // 宽度不够时会把名字甩到第二个 run,产出的形态是:
-            //
-            //     [N]                  2.75 mmol/L ›
-            //     低密度脂蛋白胆固醇
-            //
-            // pill 孤零零地跟数值待在一起,而它标注的那个名字在下一行 —— 一个飘着的
-            // 状态标记比没有标记更糟。名字用 `Flexible`:宽度真不够时它自己折行变高,
-            // pill 和数值都不动。
-            final head = Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (pill != null) ...[pill, const SizedBox(width: MedShape.s1)],
-                if (reviewPill != null) ...[
-                  reviewPill,
-                  const SizedBox(width: MedShape.s1),
-                ],
-                Flexible(child: nameText),
-              ],
-            );
-
-            // 次要说明行**两个分支都整宽**。它一度被放在并排分支左边那个 `Expanded`
-            // 列里,于是只拿得到「总宽减去数值和箭头」的宽度 —— 而它下面右边根本没有
-            // 东西占着。真机 360dp 上的后果是把参考区间从中间劈开:
-            //
-            //     2026-02-14 · 参考 3.1–
-            //     8
-            //
-            // 一个被折断的数字比难看更糟:那个孤零零的 `8` 读起来像另一个值。
-            if (sideBySide) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // 数值是**非 flex 子项**,这一点是有代价换来的:它和 `Expanded`
-                      // 的 head 都写成 flex 时,`RenderFlex` 会把可用宽度**对半分**
-                      // (两个 flex:1),而不是「数值取它需要的、剩下全给名字」。
-                      //
-                      // 411dp 上算出来:可用 ~375,减非 flex 的 8+20,余 347,对半
-                      // 各 ~173。而「[N] 低密度脂蛋白胆固醇」需要 ~196(名字 144 +
-                      // pill 44 + 间距 8)—— 差 23dp,于是名字被挤下去。360dp 的
-                      // 华为反而看不到:那边这一行走的是下面的窄分支。
-                      //
-                      // 非 flex 子项先按固有宽度布局,`Expanded` 拿剩下的全部,这才是
-                      // 想要的分配。上面的测量已经保证放得下;万一估偏了,head 里的
-                      // `Flexible(nameText)` 会让名字折行,pill 和数值仍在原位。
-                      Expanded(child: head),
-                      const SizedBox(width: MedShape.s2),
-                      valueText,
-                      ?chevron,
-                    ],
-                  ),
-                  if (subText != null) ...[const SizedBox(height: 2), subText],
-                ],
-              );
-            }
-            // 窄:名字+pill 一行,数值自己一行(右对齐,箭头跟着数值走)。
-            return Column(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: MedShape.s3, vertical: MedShape.s2),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                head,
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: valueText,
-                      ),
-                    ),
-                    ?chevron,
-                  ],
+                Expanded(
+                  child: Row(children: [
+                    if (reviewPill != null) ...[reviewPill, const SizedBox(width: MedShape.s1)],
+                    Flexible(child: Text(name, style: MedType.body.copyWith(
+                        color: c.ink, fontWeight: FontWeight.w500, fontVariations: MedType.w500))),
+                  ]),
                 ),
-                if (subText != null) ...[const SizedBox(height: 2), subText],
+                const SizedBox(width: MedShape.s2),
+                right,
+                if (onTap != null) Icon(Icons.chevron_right, size: 20, color: c.ink3),
               ],
-            );
-          },
+            ),
+            // 次要说明行**整宽**,不塞进上面那个窄 Expanded——它一度被放在那里,
+            // 于是只拿到「总宽减去右列和箭头」的宽度(360dp 上约 114dp),参考区间
+            // 在破折号处被夹断成两行(`参考 3.1–` / `8`),孤零零的 `8` 读起来像
+            // 另一个值。这一行下面右边没有东西占着,整宽摊开才对。
+            if (sub.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(sub, style: MedType.secondary.copyWith(color: c.ink3, fontFeatures: MedType.tabular)),
+            ],
+          ],
         ),
       ),
     );

@@ -10,7 +10,6 @@ import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/disease_profile_card.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
@@ -23,14 +22,13 @@ import 'package:mobile_flutter/widgets/trend_chart.dart';
 /// 先搬到这里 —— 自己量的数和医院的数看的是同一件事,归在同一个 tab。
 ///
 /// **自上而下的顺序是 `s2` 定死的,别自己重排:**
-/// 病程档案入口 → 关键化验(标题 + 分类 chip + 各行)→ 「看懂」→ 最近就诊 →
+/// 病程档案入口 → 关键化验(标题 + 分类 chip + 各行)→ 最近就诊 →
 /// 记录一下。`s2` 在关键化验各行上画了迷你折线、点开那一行原地放大 —— 那是
 /// Stage 2;Stage 1 保持今天的取值行,全序列的折线卡([SeriesCard])照旧摆在
 /// 它下面,位置先摆对,内容不提前做。
 ///
 /// 「病程档案」那一块的内容在 [DiseaseProfileCard] 自己里头(没有病种包 / 装上了
-/// 还没开启 / 开启了,三态各说各的话),这一屏只负责把它摆在第一位;
-/// 「看懂」([UnderstandBanner])仍然只摆一句「还在做」。
+/// 还没开启 / 开启了,三态各说各的话),这一屏只负责把它摆在第一位。
 ///
 /// ## 这一屏最容易撒的谎
 ///
@@ -383,17 +381,14 @@ class _TrendsScreenState extends State<TrendsScreen> {
                     ),
                 ],
                 const SizedBox(height: MedShape.s5),
-                // ④ 「看懂」横幅。**Stage 1 只有壳**,内容由另一条线做。
-                const UnderstandBanner(),
-                const SizedBox(height: MedShape.s5),
-                // ⑤ 最近就诊(从解散的概览搬过来)。
+                // ④ 最近就诊(从解散的概览搬过来)。
                 RecentVisitsCard(
                   visits: summary.recentVisits,
                   total: summary.patient.recordCount.toInt(),
                   onOpenDoc: _openDoc,
                 ),
                 const SizedBox(height: MedShape.s4),
-                // ⑥ 记录一下(`s9`:血压 / 体重 / 今天不舒服 / 血糖 / 写句话)。
+                // ⑤ 记录一下(`s9`:血压 / 体重 / 今天不舒服 / 血糖 / 写句话)。
                 RecordEntryCard(onTap: _addRecord),
                 // 页脚只交代一次「参考区间的三种出处」,不重复在每张卡上说——
                 // 只要 `all` 非空(这一屏至少能画出一条线)就露出来,不随筛选
@@ -626,9 +621,9 @@ class _AbnormalOnlyRow extends StatelessWidget {
 /// 一条序列一张卡:卡头(项目名 + pill + 最新值)→ 折线 → 参考区间图例 + 时间跨度
 /// → 最新一次的原件入口。
 ///
-/// **不画骑缝线。** 这是一张派生卡:一条趋势是从许多份原件里算出来的结论,背后没有
-/// 「某一张纸」叫做「肌酐趋势」(规范 §五,那里正是拿趋势汇总卡当反例的)。可溯源
-/// 由卡底那颗「最新一次的原件」兑现 —— 它指向一个具体的 `documentId`。
+/// 这是一张派生卡:一条趋势是从许多份原件里算出来的结论,背后没有「某一张纸」
+/// 叫做「肌酐趋势」(规范 §五,那里正是拿趋势汇总卡当反例的)。可溯源由卡底那颗
+/// 「最新一次的原件」兑现 —— 它指向一个具体的 `documentId`。
 class SeriesCard extends StatefulWidget {
   /// **公开是为了可测。** 「自测序列必须带文字图例」这条只能在渲染出来的卡上验证
   /// —— 整屏 pump 需要 `viewTrends()` 的 Rust FFI,测试环境没有原生库。与
@@ -659,16 +654,13 @@ class _SeriesCardState extends State<SeriesCard> {
 
     final last = pts.last;
     final status = labStatusOf(last.flag);
-    final pill = labStatusPill(context, last.flag);
+    final word = labStatusWord(context, last.flag);
     final ref = refRangeText(series.refLow, series.refHigh);
     final refSourceCitation = trendRefSourceCitation(series);
     // 单位以**点自己的**为准:同一指标跨报告单位可能不一致,序列级 unit 只是取了
     // 最后一个点的(见 DTO 文档)。这里显示的就是最后一个点,两者其实同源。
     final unit = last.unit ?? series.unit;
     final undated = series.points.length - pts.length;
-    // 行的状态色:与化验行(`LabLine`)同一套 token,`labStripeColor`/
-    // `labStatusColor` 是这一屏与「给医生看」共用的唯一判定点(007 §2.5)。
-    final stripe = labStripeColor(context, status);
     // 「第二行历年数值」的字阶(brief §形):12 · ink3 · tabular · 400。这一屏
     // 里几段图例/引文原来各写各的 `secondary`,统一成这一档,颜色/字号不变文字。
     final metaStyle = MedType.caption.copyWith(
@@ -687,13 +679,11 @@ class _SeriesCardState extends State<SeriesCard> {
             child: InkWell(
               onTap: () => setState(() => _expanded = !_expanded),
               child: Container(
-                // 4px 左色条贴着卡边(与化验行同一条规矩),点开原地展开的
-                // `.xp` 用同一个颜色,两者在视觉上是同一条状态线的延续。
-                decoration: BoxDecoration(
-                  border: Border(left: BorderSide(color: stripe, width: 4)),
-                ),
+                // 左内边距 s3(16):减法稿去掉 4px 色条前是 s2(12)+4px 色条=16,
+                // 与卡片下方分块(同样 s3 起手)对齐;色条没了,内边距直接改 s3,
+                // 不然内容会比卡里其余内容整体左移 4px。
                 padding: const EdgeInsets.fromLTRB(
-                  MedShape.s2,
+                  MedShape.s3,
                   MedShape.s2,
                   MedShape.s3,
                   MedShape.s2,
@@ -714,7 +704,7 @@ class _SeriesCardState extends State<SeriesCard> {
                                 series.name,
                                 style: MedType.subtitle.copyWith(color: c.ink),
                               ),
-                              ?pill,
+                              ?word,
                             ],
                           ),
                         ),
@@ -779,7 +769,8 @@ class _SeriesCardState extends State<SeriesCard> {
                         // 自测序列必须**用文字**说出来。图上的空心点是区分手段,但形状不能
                         // 是唯一载体 —— 没有图例的形状编码等于没有编码,没人知道空心圈是
                         // 「这是你自己填的」。这与 `lab_status.dart` 那条同源:状态同时编码
-                        // 在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
+                        // 在状态词的文字和刻度条上圆点的颜色/位置上,少任何一个就有一类
+                        // 用户读不到结论。
                         //
                         // 同屏的化验快照([KeyLabsSnapshot])和「给医生看」
                         // (`visit_summary_sheet.dart` 的 `_LabRow`)早就在日期旁标了
@@ -817,14 +808,11 @@ class _SeriesCardState extends State<SeriesCard> {
           ),
 
           // ── 展开区(mockup `.xp`):点开原地放大。Stage 3 只给它样式(底色、
-          // 左色条、82px 高),真折线是 Stage 2 的活。 ──
+          // 82px 高),真折线是 Stage 2 的活。减法稿 2026-09-22:不再画左色条。──
           if (_expanded)
             Container(
               height: 82,
-              decoration: BoxDecoration(
-                color: MedBrand.expandedChartBg,
-                border: Border(left: BorderSide(color: stripe, width: 4)),
-              ),
+              decoration: const BoxDecoration(color: MedBrand.expandedChartBg),
             ),
 
           // ── 其余:出处引文 / 未定日说明 / 查看原件 —— 不受展开态影响,恒在 ──
@@ -891,7 +879,8 @@ class _SeriesCardState extends State<SeriesCard> {
 ///
 /// 图上的自测点画成空心圈(见 `TrendChart` 的 `selfMeasured`),但**形状不能是唯一
 /// 载体** —— 没有图例的形状编码等于没有编码。这与 `lab_status.dart` 那条同源:
-/// 偏高/偏低同时编码在色条和文字 pill 上,少任何一个就有一类用户读不到结论。
+/// 偏高/偏低同时编码在状态词的文字和刻度条上圆点的颜色/位置上,少任何一个就有
+/// 一类用户读不到结论。
 ///
 /// 圈的画法(线宽 1.5、半径 3.4、`seal` 描边、`surface` 填心)与
 /// `_TrendPainter` 里末点的自测画法一致 —— 图例和图不一致,比没有图例更糟。
@@ -960,8 +949,8 @@ class _RefLegend extends StatelessWidget {
     return Row(
       // Fix round 1(R19):原来是 `mainAxisSize: min` + 裸 `Text`——一句长参考
       // 区间图例(`"参考区间 ... · 出自化验单原件"`)在这个 Row 里没有宽度上限,
-      // 会把整行挤出卡外。文字不能拿宽度上限硬砍(那是「化验行 4px 左色条」同一条
-      // 「单位小字可折到数值下一行」的精神,不是删字),所以让色块非 flex、文字
+      // 会把整行挤出卡外。文字不能拿宽度上限硬砍(与化验行数值簇同一条「单位小字
+      // 可折到数值下一行」的精神,不是删字),所以让色块非 flex、文字
       // `Expanded` 吃掉剩余宽度、允许自己换行——色块位置不受影响,行只会变高。
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1127,8 +1116,8 @@ class _EmptyTrends extends StatelessWidget {
 /// (`s2` 的固定顺序),这块只负责各行 —— 搬过来之前它自带一个「最近的关键化验 /
 /// 看趋势」的抬头,那颗「看趋势」在这一屏上是指向自己的链接。
 ///
-/// **不带骑缝线**:卡里每一行来自不同的原件,这张卡本身不对应任何一张纸。可溯源
-/// 由每一行右侧的箭头兑现(点进去就是那一次化验的那份报告)。
+/// 卡里每一行来自不同的原件,这张卡本身不对应任何一张纸。可溯源由每一行右侧的
+/// 箭头兑现(点进去就是那一次化验的那份报告)。
 ///
 /// **公开是为了可测**,与 [SeriesCard] 同一先例:整屏要 FFI,这一块不要。
 class KeyLabsSnapshot extends StatelessWidget {
@@ -1165,29 +1154,23 @@ class KeyLabsSnapshot extends StatelessWidget {
                 children: [
                   for (var i = 0; i < labs.length; i++) ...[
                     if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
-                    Padding(
-                      // 4px 色条要贴着卡边(mockup `.lr{border-left:4px}` 就在
-                      // 卡的边上)——不再留左右内边距,`LabLine` 自己的左边框
-                      // 加内边距已经够了。
-                      padding: EdgeInsets.zero,
-                      child: LabLine(
-                        name: labs[i].name,
-                        value: labs[i].value,
-                        unit: labs[i].unit,
-                        flag: labs[i].flag,
-                        refLow: labs[i].refLow,
-                        refHigh: labs[i].refHigh,
-                        // 见 visit_summary_sheet.dart 的 `_LabRow` 同一处注释。
-                        meta: [
-                          labs[i].date,
-                          if (labs[i].selfMeasured) '家测',
-                          if (labs[i].valuesConverted)
-                            unitConvertedNote(labs[i].unit),
-                        ].join(' · '),
-                        // 云抽取图片档没能逐字核对上的行:照常显示,标出来。
-                        unverified: labs[i].unverified,
-                        onTap: () => onOpenDoc(labs[i].documentId),
-                      ),
+                    LabLine(
+                      name: labs[i].name,
+                      value: labs[i].value,
+                      unit: labs[i].unit,
+                      flag: labs[i].flag,
+                      refLow: labs[i].refLow,
+                      refHigh: labs[i].refHigh,
+                      // 见 visit_summary_sheet.dart 的 `_LabRow` 同一处注释。
+                      meta: [
+                        labs[i].date,
+                        if (labs[i].selfMeasured) '家测',
+                        if (labs[i].valuesConverted)
+                          unitConvertedNote(labs[i].unit),
+                      ].join(' · '),
+                      // 云抽取图片档没能逐字核对上的行:照常显示,标出来。
+                      unverified: labs[i].unverified,
+                      onTap: () => onOpenDoc(labs[i].documentId),
                     ),
                   ],
                 ],
@@ -1199,9 +1182,9 @@ class KeyLabsSnapshot extends StatelessWidget {
 
 /// 「东西在哪」—— 最近就诊的几份(`s2` 的「最近就诊」)。
 ///
-/// 每一条各自一张卡,**骑缝线按档案屏的同一条规则画**:
-///  · 只含一份文档的记录 → 点了就是那一份原件 → 画;
-///  · 一次就诊含好几份 → 点了是去「病历」里展开那一组,背后没有「一张纸」→ 不画。
+/// 每一条各自一张卡,点进哪里按文档数分:
+///  · 只含一份文档的记录 → 点了就是那一份原件;
+///  · 一次就诊含好几份 → 点了是去「病历」里展开那一组。
 class RecentVisitsCard extends StatelessWidget {
   const RecentVisitsCard({
     super.key,
@@ -1296,7 +1279,6 @@ class _VisitCard extends StatelessWidget {
     );
 
     return MedCard(
-      perforated: single,
       child: InkWell(
         onTap: single
             ? () => onOpenDoc(visit.documentIds.first.toInt())
@@ -1304,19 +1286,13 @@ class _VisitCard extends StatelessWidget {
             // 子文档列表这些配套。这里只负责把人送过去。
             : goToRecords,
         child: Padding(
-          padding: const EdgeInsets.all(MedShape.s2),
+          padding: const EdgeInsets.symmetric(
+            horizontal: MedShape.s3,
+            vertical: MedShape.s2,
+          ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 光泽图标块(brief §形 的 3D 图标语言),类别按 `visit.kind`
-              // 归类(`categoryForVisitKind`——与 Task 8 `archive_screen.dart`
-              // 的 `_categoryOf` 同一映射来源:`categoryForDocType`)。默认
-              // 44×44,不为了这里挤一点就调小(`gloss_tile.dart` 类文档)。
-              GlossIconTile(
-                icon: iconForVisitKind(visit.kind),
-                category: categoryForVisitKind(visit.kind),
-              ),
-              const SizedBox(width: MedShape.s2),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1365,7 +1341,7 @@ class _VisitCard extends StatelessWidget {
 }
 
 /// 分区标题 + 右侧的一个次级动作。与 `archive_screen.dart` 的 `MonthHeader`
-/// 同一档:15 号 `ink2` 左、14·500 `seal` 右,padding `0 4`。
+/// 同一档:13 号 `ink3` 左、14·500 `seal` 右,padding `0 4`。
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({required this.title, this.actionLabel, this.onAction});
 
@@ -1381,7 +1357,7 @@ class _SectionHeader extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Text(title, style: MedType.body.copyWith(fontSize: 15, color: c.ink2)),
+            child: Text(title, style: MedType.secondary.copyWith(color: c.ink3)),
           ),
           if (actionLabel != null)
             TextButton(
@@ -1407,12 +1383,6 @@ class _SectionHeader extends StatelessWidget {
 // 「病程档案」入口卡搬去了 `widgets/disease_profile_card.dart`:它现在是有状态、
 // 要取数的一块(装着哪个包、开没开启、包给的摘要),不再是这一屏里的一张死卡。
 
-/// 「看懂」蓝横幅——Task 10 把实现提到 `widgets/med_card.dart` 改名
-/// [MedReadBanner] 共用(「一份病历」页同款横幅,R8),这里留一个类型别名:
-/// [TrendsScreen] 内的构造写法、`test/trends_visual_test.dart` /
-/// `test/trends_screen_test.dart` 的既有引用都不用改一个字。
-typedef UnderstandBanner = MedReadBanner;
-
 /// 「记录一下」入口(`s2` 底部那颗;点开是 `s9`:血压 / 体重 / 今天不舒服 /
 /// 血糖 / 写句话)。从解散的概览快捷操作搬过来 —— 自己填的数和医院的数看的是
 /// 同一件事,归属在「趋势」。
@@ -1425,7 +1395,7 @@ class RecordEntryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     // mockup 的 `.btn.ghost`:透明底、`seal` 字、字重 400、无阴影 —— **不用**
-    // `MedPrimaryButton`(那是品牌渐变面,会让这一屏的渐变预算从 0 变成 1)。
+    // `MedPrimaryButton`(那是一块颜色面,会让这一屏的颜色面预算从 0 变成 1)。
     return Material(
       type: MaterialType.transparency,
       child: ListTile(

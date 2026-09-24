@@ -1155,8 +1155,6 @@ class PendingListStep extends StatelessWidget {
 /// 还没核对列表一行:类型图标 + 标题/日期/类型 + 「还没核对/已确认」状态标签。样式
 /// 参照 `archive_screen.dart` 的时间线行(图标底色块 + 标题/副标题两行)。
 ///
-/// **带骑缝线**:每一行背后就是刚拍下的那一张纸,点进去就是原件(规范 §五)。
-///
 /// **状态两级的配色跟着个人模式走,不另发明一套**:还没核对 = 琥珀(`high`),
 /// 与 `archive_screen.dart` 的 `_PendingCard` 同一处理 —— 「刚拍完还没核对」是常态
 /// 不是事故,红色天天出现就会被学会忽略;真正该报红的是下面那条姓名不符。
@@ -1179,7 +1177,6 @@ class _PendingRow extends StatelessWidget {
     final label = kDocTypeLabel[doc.docType] ?? doc.docType;
     final date = _fmtDate(doc.docDate);
     return MedCard(
-      perforated: true,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -1301,7 +1298,7 @@ class _StatusBadge extends StatelessWidget {
     // 圆角从 6 提到 pill 那一档,与个人模式的状态标签同一个外壳。
     return confirmed
         ? MedPill(text: '已确认', foreground: c.proxyInk, background: c.proxyWash)
-        : MedPill(text: '还没核对', foreground: c.high, background: c.highWash);
+        : statusWord('还没核对', c.high);
   }
 }
 

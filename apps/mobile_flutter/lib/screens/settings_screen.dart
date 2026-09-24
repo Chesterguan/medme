@@ -19,8 +19,8 @@ import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/backup_status_line.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
 
 /// 与 `pubspec.yaml` 的 `version:` 字段(`x.y.z+build`)保持一致。P3 范围内没有为
@@ -153,9 +153,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   icon: Icons.medical_services_outlined,
                   title: '退出代拍',
                   subtitle: '点一下回到你自己的病历箱',
-                  // 代拍模式下的临时出口,不在 `s5` 的行列里——mockup 没给这一行
-                  // 的类别,归中性(同「关于/隐私政策」那一档,不带特殊语义)。
-                  category: GlossCategory.neutral,
                   onTap: _switchMode,
                 ),
               ],
@@ -183,19 +180,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SettingsRow(
                 icon: Icons.key_outlined,
                 title: '口令与恢复码',
-                category: GlossCategory.med,
                 onTap: _openAccount,
               ),
               _SettingsRow(
                 icon: Icons.devices_outlined,
                 title: '我的设备',
-                category: GlossCategory.note,
                 onTap: _openAccount,
               ),
               _SettingsRow(
                 icon: Icons.info_outline,
                 title: '关于 / 隐私政策',
-                category: GlossCategory.neutral,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(builder: (_) => const AboutScreen()),
                 ),
@@ -305,7 +299,6 @@ class _SettingsRow extends StatelessWidget {
     this.onTap,
     this.trailing,
     this.danger = false,
-    this.category = GlossCategory.neutral,
   });
 
   final IconData icon;
@@ -315,15 +308,11 @@ class _SettingsRow extends StatelessWidget {
   final Widget? trailing;
   final bool danger;
 
-  /// 光泽图标块的类别,按 mockup `s5` 逐行给(口令与恢复码=med、我的设备=note、
-  /// 关于/隐私政策=neutral、云端相关=lab)。`danger` 恒压过它,改用 alert。
-  final GlossCategory category;
-
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     return ListTile(
-      leading: GlossIconTile(icon: icon, category: danger ? GlossCategory.alert : category),
+      leading: MedIcon(icon, color: danger ? c.critical : null),
       title: Text(
         title,
         style: MedType.body.copyWith(color: danger ? c.critical : c.ink),
@@ -456,11 +445,7 @@ class MembersCard extends StatelessWidget {
           for (final m in members) ...[
             if (m != members.first) Divider(height: 1, color: c.line2),
             ListTile(
-              // brief §色:成员头像 = 品牌渐变——GlossIconTile.letter 默认就是
-              // brand 类别,不用另传 category(mockup 里是圆角方块不是圆)。
-              leading: GlossIconTile.letter(
-                letter: m.name.isNotEmpty ? m.name.characters.first : '?',
-              ),
+              leading: MedAvatar(m.name.isNotEmpty ? m.name.characters.first : '?'),
               title: Text(m.name, style: const TextStyle(fontWeight: FontWeight.w600)),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -477,8 +462,7 @@ class MembersCard extends StatelessWidget {
           ],
           Divider(height: 1, color: c.line2),
           ListTile(
-            // mockup `s5` 那一行用的是 note 绿。
-            leading: const GlossIconTile(icon: Icons.add, category: GlossCategory.note),
+            leading: const MedIcon(Icons.add),
             title: Text('添加成员', style: MedType.body.copyWith(color: c.sealInk)),
             onTap: onAdd,
           ),
@@ -742,14 +726,12 @@ class _AboutScreenState extends State<AboutScreen> {
                 icon: Icons.home_outlined,
                 title: 'MedMe 主页',
                 subtitle: '了解更多、下载其它平台版本',
-                category: GlossCategory.neutral,
                 onTap: _openHomepage,
               ),
               _SettingsRow(
                 icon: Icons.privacy_tip_outlined,
                 title: '隐私政策',
                 subtitle: '我们收集什么、什么情况下数据会离开你的手机',
-                category: GlossCategory.neutral,
                 onTap: () =>
                     _openWeb('https://medmenow.com/privacy.html', '隐私政策'),
               ),
@@ -757,7 +739,6 @@ class _AboutScreenState extends State<AboutScreen> {
                 icon: Icons.description_outlined,
                 title: '用户协议',
                 subtitle: '工具定位、责任边界与开源许可',
-                category: GlossCategory.neutral,
                 onTap: () =>
                     _openWeb('https://medmenow.com/terms.html', '用户协议'),
               ),
@@ -825,8 +806,6 @@ class _AboutScreenState extends State<AboutScreen> {
                       : Icons.cloud_outlined,
                   title: 'iCloud 同步',
                   subtitle: _icloudSubtitle(),
-                  // 云端相关=lab(brief §色 mapping)。
-                  category: GlossCategory.lab,
                   trailing: Switch(
                     value: _icloud?.enabled ?? false,
                     onChanged: (_busy || !_icloudAvailable)

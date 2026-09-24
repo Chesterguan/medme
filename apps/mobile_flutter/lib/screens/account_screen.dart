@@ -17,10 +17,10 @@ import 'package:mobile_flutter/screens/export_screen.dart';
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncKdfBenchMs;
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/link_qr_dialog.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/qr_scanner_sheet.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
@@ -789,17 +789,17 @@ class _AccountScreenState extends State<AccountScreen> {
       const Divider(height: 32),
       // ux-audit §4 第 11 条:切到恢复码后原来的分区标题不跟着变,与下面已经
       // 换成的恢复码输入框对不上。s15 把两条路分别画成两块可点的白块(与
-      // `HomeTiles` 的入口块同款,`MedEntryTile`),各带一枚光泽图标块 ——
-      // 「输口令」= 钥匙(med)、「用恢复码」= 文档(clinic),点哪块切到哪条路。
+      // `HomeTiles` 的入口块同款,`MedEntryTile`),各带一枚图标 ——
+      // 「输口令」= 钥匙、「用恢复码」= 文档,点哪块切到哪条路。
       Row(children: [
         Expanded(child: MedEntryTile(
-          icon: Icons.vpn_key_outlined, category: GlossCategory.med,
+          icon: Icons.vpn_key_outlined,
           label: '输口令',
           onTap: _busy ? null : () => setState(() { _useRecoveryUnlock = false; _error = null; }),
         )),
         const SizedBox(width: 14),
         Expanded(child: MedEntryTile(
-          icon: Icons.description_outlined, category: GlossCategory.clinic,
+          icon: Icons.description_outlined,
           label: '用恢复码',
           onTap: _busy ? null : () => setState(() { _useRecoveryUnlock = true; _error = null; }),
         )),
@@ -906,9 +906,9 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// 解锁屏顶部那一块。三态都在这儿:还没生成(一颗按钮)/ 举着码等批准(码 +
   /// 倒计时 + 取消)/ 失败(红字 + 按钮还在,可以再来一次)。
-  /// `s15` 的一屏一处品牌渐变:整块（标题/说明/二维码/倒计时/取消)包进一张
-  /// `HeroCard`。卡面白字规则(design_tokens.dart `MedType.heroValue` 类文档
-  /// 「全卡统一的确定性规则」)照搬:标题/正文一律换成白字系的 token。
+  /// `s15` 的一屏一处颜色面:整块（标题/说明/二维码/倒计时/取消)包进一张
+  /// `HeroCard`。卡面白字规则:标题/正文一律换成白色系的 token(`Colors.white`/
+  /// `c.onDarkMeta`/`c.onDarkFaint`),不跟着 `ink` 走。
   List<Widget> _deviceApprovalBlock() {
     final code = _approvalCode;
     final c = MedColors.of(context);
@@ -1141,7 +1141,7 @@ class _AccountScreenState extends State<AccountScreen> {
       children: [
         Text(_cloudDefaultCopy, style: TextStyle(color: MedColors.of(context).ink3, height: 1.5)),
         const SizedBox(height: 8),
-        // R25:每行现在是 MedCard(无边框、纯阴影分层),不再是自带外边距的
+        // R25:每行现在是 MedCard(1px line 细边、无阴影),不再是自带外边距的
         // Material `Card` —— 多个成员时行与行之间要显式补一条缝,否则会贴在一起。
         for (final m in ProfileManager.instance.profiles) ...[
           _cloudMemberRow(m),
@@ -1191,7 +1191,7 @@ class _AccountScreenState extends State<AccountScreen> {
           // `pumpAndSettle` 永远 settle 不下来(踩过)。同「谁能看」那一行的写法。
           //
           // R25:仍然是纯文字按钮,只是颜色从主题默认换成 token 的 sealInk ——
-          // 这一行本来就没有图标位,不新增一个(与另外两行的光泽图标块不同)。
+          // 这一行本来就没有图标位,不新增一个(与另外两行的 MedIcon 不同)。
           TextButton(
             key: const Key('transfer_current_profile'),
             onPressed: _transferBusy ? null : () => _transferOwnership(profile),
@@ -1204,16 +1204,15 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// 一个成员一行:名字 + 此刻的状态 + 「云端备份」开关。
   ///
-  /// R25:`Card` → `MedCard`(无边框、卡阴影),前面补一枚 lab 类别的光泽图标块
-  /// (与 `settings_screen.dart` 的 `_SettingsRow`「云端相关=lab」同一张映射
-  /// 表)。开关本身的值/回调一个字没动。
+  /// R25:`Card` → `MedCard`(1px line 细边、无阴影),前面补一枚 [MedIcon]。开关本身的
+  /// 值/回调一个字没动。
   Widget _cloudMemberRow(Profile m) {
     final c = MedColors.of(context);
     final on = m.cloudId != null && !m.cloudPaused;
     return MedCard(
       child: SwitchListTile(
         key: Key('cloud_switch_${m.id}'),
-        secondary: const GlossIconTile(icon: Icons.cloud_outlined, category: GlossCategory.lab),
+        secondary: const MedIcon(Icons.cloud_outlined),
         title: Text(m.name, style: MedType.body.copyWith(color: c.ink)),
         subtitle: Text(
           cloudRowStatus(m, icloudOn: _icloudBlocks),
@@ -1240,14 +1239,13 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 自相矛盾,而且下一次 `runImport` 里的 `shouldAskCloudExtract` 还会再弹一次
   /// ask sheet、把这次手动选择覆盖掉。两个方向(开/关)都算数——同 ask sheet 自己
   /// 「不看答案是什么,退出就算问过」那条规矩一致。
-  /// R25:同 [_cloudMemberRow] 的 `Card` → `MedCard` + 光泽图标块处理,类别
-  /// 换成 clinic(与 `_cloudMemberRow` 的 lab 区分开,两行不撞色)。
+  /// R25:同 [_cloudMemberRow] 的 `Card` → `MedCard` + [MedIcon] 处理。
   Widget _cloudExtractSwitch() {
     final c = MedColors.of(context);
     return MedCard(
       child: SwitchListTile(
         key: const Key('cloud_extract_switch'),
-        secondary: const GlossIconTile(icon: Icons.auto_awesome_outlined, category: GlossCategory.clinic),
+        secondary: const MedIcon(Icons.auto_awesome_outlined),
         title: Text('云端整理', style: MedType.body.copyWith(color: c.ink)),
         subtitle: Text(
           _cloudExtractAsked
@@ -2024,10 +2022,10 @@ class _AccountScreenState extends State<AccountScreen> {
   /// 起来:用户得看见下一步在哪、为什么还不能点(提示就在按钮上方)。
   /// [busyHint] 是转圈时那句话,见 [_kdfWaitHint]。
   ///
-  /// [primary] 只给 brief 明确点名要品牌渐变的那一颗按钮用(目前只有恢复码
-  /// 画面的「我抄好了」,s12 的渐变预算恰好是 1)——其余调用点(发送验证码/
+  /// [primary] 只给 brief 明确点名要颜色面的那一颗按钮用(目前只有恢复码
+  /// 画面的「我抄好了」,s12 的颜色面预算恰好是 1)——其余调用点(发送验证码/
   /// 登录/设好了/解锁)默认 false,继续走原来的 `FilledButton`,不许一并改掉,
-  /// 否则每屏的渐变预算就对不上了。
+  /// 否则每屏的颜色面预算就对不上了。
   Widget _asyncButton({
     required String label,
     required VoidCallback onPressed,

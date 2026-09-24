@@ -98,11 +98,10 @@ void main() {
       expect(labStatusOf(' N '), isNull, reason: '两头的空白不该改变判定');
     });
 
-    testWidgets('flag = N 的行:没有 pill、数值 normalInk、色条 barNormal', (tester) async {
+    testWidgets('flag = N 的行:没有状态词、没有 pill、数值 ink、无 4px 左边框', (tester) async {
       // 上面那条纯函数断言的用户可见兑现——「明确正常」和「没有标记」必须给出同一个
-      // 结果,否则一份血常规里 1–2 项真正的异常会被二十个 N 淹没。R2:「正常」不再
-      // 是「不上色」,而是 barNormal 色条 + normalInk 数值,只是不额外画 pill、不
-      // 加字。
+      // 结果,否则一份血常规里 1–2 项真正的异常会被二十个 N 淹没。减法稿
+      // 2026-09-22:「正常」什么都不画——不上色、不给状态词、不给 pill。
       await tester.pumpWidget(
         wrap(
           const LabLine(
@@ -117,17 +116,24 @@ void main() {
       );
       expect(find.text('N'), findsNothing, reason: '内部编码不许出现在界面上');
       expect(find.byType(MedPill), findsNothing, reason: '正常不给 pill');
+      expect(find.text('正常'), findsNothing);
+      expect(find.text('偏高'), findsNothing);
+      expect(find.text('偏低'), findsNothing);
       expect(find.text('210'), findsOneWidget);
       expect(find.text('10^9/L'), findsOneWidget);
       expect(
         tester.widget<Text>(find.text('210')).style?.color,
-        MedBrand.normalInk,
-        reason: 'R2:正常数值用 normalInk,不是继承正文墨色',
+        MedColors.light.ink,
+        reason: '减法稿:正常数值用 ink,不再上色',
       );
-      final border = (tester.widget<Container>(find.descendant(
-        of: find.byType(LabLine), matching: find.byType(Container)).first)
-        .decoration! as BoxDecoration).border! as Border;
-      expect(border.left.color, MedBrand.barNormal, reason: 'R2:正常色条不再透明');
+      final hasLeftBar = tester
+          .widgetList<Container>(find.descendant(
+              of: find.byType(LabLine), matching: find.byType(Container)))
+          .any((w) {
+            final d = w.decoration;
+            return d is BoxDecoration && d.border is Border && (d.border! as Border).left.width == 4;
+          });
+      expect(hasLeftBar, isFalse, reason: '减法稿:无色条');
       // 参考区间照常显示 —— 显示与判定是两件事。
       expect(find.textContaining('参考 125–350'), findsOneWidget);
     });
@@ -214,10 +220,10 @@ void main() {
       expect(find.text('偏低'), findsNothing);
       expect(find.text('99.9'), findsOneWidget);
       expect(find.text('10^9/L'), findsOneWidget);
-      // 数值墨色是 R2 的正常档 normalInk,不是 high —— 没有从参考区间反推出一个
+      // 数值墨色是减法稿的正常档 ink,不是 high —— 没有从参考区间反推出一个
       // 临床结论。
       final valueText = tester.widget<Text>(find.text('99.9'));
-      expect(valueText.style?.color, MedBrand.normalInk);
+      expect(valueText.style?.color, MedColors.light.ink);
       // 参考区间照样显示给人看 —— 显示与判定是两件事。
       expect(find.textContaining('参考 4–10'), findsOneWidget);
     });

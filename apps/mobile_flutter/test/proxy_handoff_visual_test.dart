@@ -9,7 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_claim_link_dialog.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 
 import 'stage3_visual_helpers.dart';
@@ -61,9 +61,9 @@ void main() {
     );
     await _openDialog(tester);
 
-    expectGradientBudget(hero: 1);
+    expectSurfaceBudget(hero: 1);
+    expectNoGradientAnywhere();
     expect(find.byType(MedQrFrame), findsOneWidget);
-    expectNoGradientInsideCards();
   });
 
   testWidgets('复制链接换成 MedSecondaryButton(mockup .btn.ghost)', (tester) async {

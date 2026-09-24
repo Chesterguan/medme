@@ -25,11 +25,11 @@ enum ProxyDetailResult { none, changed, retake }
 /// 代码与 `document_detail.dart` 重复大半,也不去改那个文件抽公共组件——保持「不碰
 /// 普通人模式一行代码」这条硬规矩在这两个文件上都显而易见成立。
 ///
-/// 布局复用 `document_detail.dart` 的呈现方式:抬头卡(带骑缝线)+ 识别出来的文字
+/// 布局复用 `document_detail.dart` 的呈现方式:抬头卡 + 识别出来的文字
 /// (`ReportContent`)。底部按钮换成本流程要的三个动作:没问题 / 删除 / 重拍。
 ///
 /// **视觉上与 `document_detail.dart` 逐处对齐,只把主色 `seal`(蓝)换成 `proxy`
-/// (紫)** —— 结构、字阶、圆角、骑缝线、间距全部同源。识别出来的文字区整块交给共用的
+/// (紫)** —— 结构、字阶、圆角、间距全部同源。识别出来的文字区整块交给共用的
 /// `ReportContent`,它一个字节都不为代拍改:同一份化验值在两个模式下必须
 /// 长得一模一样。
 class ProxyDocumentDetailScreen extends StatefulWidget {
@@ -298,11 +298,7 @@ class _ProxyDetailBody extends StatelessWidget {
         MedShape.s6,
       ),
       children: [
-        // 抬头卡带骑缝线:这一整屏讲的就是**某一份原件**,而且「查看原件」就在卡
-        // 里 —— 「背后有原件、点得进去」两条都成立(规范 §五)。与个人模式的
-        // `document_detail.dart` 同一处理,一道也不多、不少。
         MedCard(
-          perforated: true,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(
               MedShape.s4,

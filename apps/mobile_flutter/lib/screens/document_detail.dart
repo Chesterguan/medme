@@ -13,9 +13,9 @@ import 'package:mobile_flutter/icloud_bridge.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
-import 'package:mobile_flutter/widgets/brand_gradient.dart';
-import 'package:mobile_flutter/widgets/gloss_tile.dart';
+import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
+import 'package:mobile_flutter/widgets/med_icon.dart';
 import 'package:mobile_flutter/widgets/report_content.dart';
 
 /// 手动录入的两个 doc_type(与 `doc.dart`/`core_model::DocType` 的取值一致)——
@@ -160,7 +160,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       ),
       // 还没核对文档:底部一对按钮,逐字按 `s7`——「看原件」(次)+「没问题」(主),
       // 核对后一键归入正常时间线(去掉琥珀框)。「没问题」是本屏**唯一**的
-      // 主按钮(渐变预算表:s7 = 1 颗 `MedPrimaryButton`)。纯 widget 提出去
+      // 主按钮(颜色面预算表:s7 = 1 颗 `MedPrimaryButton`)。纯 widget 提出去
       // (`DocumentReviewActionBar`),不碰 FFI,测试测得到(R22)。
       bottomNavigationBar: pending
           ? DocumentReviewActionBar(
@@ -232,7 +232,7 @@ class DocumentReviewActionBar extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: MedShape.s2),
-              // 「没问题」是本屏**唯一**的主按钮(渐变预算表:s7 = 1)。
+              // 「没问题」是本屏**唯一**的主按钮(颜色面预算表:s7 = 1)。
               Expanded(
                 child: MedPrimaryButton(
                   icon: Icons.check,
@@ -275,11 +275,7 @@ class DetailBody extends StatelessWidget {
         MedShape.s6,
       ),
       children: [
-        // 抬头卡带骑缝线:这一整屏讲的就是**某一份原件**,而且「查看原件」就在
-        // 卡里 —— 「背后有原件、点得进去」两条都成立(规范 §五)。全屏只有这
-        // 一道骑缝线,下面识别出来的文字是从它派生出来的,不重复。
         MedCard(
-          perforated: true,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(
               MedShape.s4,
@@ -293,12 +289,7 @@ class DetailBody extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 光泽图标块(R22):类别按文档类型走 `categoryForDocType`
-                    // (Task 8 已有、doc_labels.dart 公开),图标沿用原来这颗。
-                    GlossIconTile(
-                      icon: Icons.description_outlined,
-                      category: categoryForDocType(doc.docType),
-                    ),
+                    const MedIcon(Icons.description_outlined),
                     const SizedBox(width: MedShape.s2),
                     Expanded(
                       child: Column(
@@ -354,7 +345,7 @@ class DetailBody extends StatelessWidget {
                 ] else
                   // 次级按钮(R22:`MedSecondaryButton`)。「原件永远可达」是
                   // 007 §2.1 的铁律,所以它不能是最弱的那一级;但本屏的主按钮
-                  // 位置留给底部的「没问题」,它就不该是渐变主按钮。
+                  // 位置留给底部的「没问题」,它就不该是 `MedPrimaryButton`。
                   SizedBox(
                     width: double.infinity,
                     child: MedSecondaryButton(

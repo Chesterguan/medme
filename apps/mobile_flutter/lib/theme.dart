@@ -55,7 +55,7 @@ class MedMe {
         backgroundColor: c.surface,
         foregroundColor: c.ink,
         elevation: 0,
-        scrolledUnderElevation: 0.5,
+        scrolledUnderElevation: 0,
         centerTitle: false,
         titleTextStyle: MedType.title.copyWith(color: c.ink),
       ),
@@ -67,7 +67,7 @@ class MedMe {
         labelTextStyle: WidgetStatePropertyAll(MedType.caption),
       ),
       dividerTheme: DividerThemeData(color: c.line, thickness: 1, space: 1),
-      // brief §形:卡**无边框**,靠阴影分层(旧规范是反过来的:靠边框不靠阴影)。
+      // 卡**无边框、无阴影**(减法稿 2026-09-22:层次改靠字号与留白,不靠阴影分层)。
       cardTheme: CardThemeData(
         color: c.surface,
         elevation: 0,
