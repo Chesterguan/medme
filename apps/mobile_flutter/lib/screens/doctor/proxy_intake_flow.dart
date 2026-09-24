@@ -990,6 +990,10 @@ class PendingListStep extends StatelessWidget {
           out.addAll(docs);
         case TimelineGroupDto_Document(:final doc):
           out.add(doc);
+        case TimelineGroupDto_SelfWeek(:final docs):
+          // 代拍走 ephemeral_load_preview,不折自测周——这条分支目前不可达,
+          // 只为 sealed class 的穷尽性;写法与 archive_screen.dart 的 _allDocs 一致。
+          out.addAll(docs.map((d) => d.doc));
       }
     }
     return out;

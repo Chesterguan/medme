@@ -77,6 +77,50 @@ pub fn vault_profile_view(dir: String, package_id: String) -> anyhow::Result<Str
     Ok(serde_json::to_string(&view)?)
 }
 
+/// 首页待办:所有**已开启**档案里到期的提醒(`never` / `overdue`)。整箱病历只读一次,
+/// 每个包各算一遍 `materialize`;没开启的包一块都不算(spec §4)。`pending`(规则没
+/// 核实)不进首页——那是档案页里「只显示不到期」的东西。
+pub fn vault_profile_due_reminders(dir: String) -> anyhow::Result<String> {
+    let dir = Path::new(&dir);
+    let events = vault_projections::gather_profile_events()?;
+    let enabled: Vec<profile::Package> = installed_packages(dir)
+        .into_iter()
+        .filter(|p| profile::is_enabled(&events, &p.manifest.id))
+        .collect();
+    if enabled.is_empty() {
+        return Ok("[]".into());
+    }
+    terminology::set_overlay(overlay_entries(dir, &events));
+    let input = vault_projections::gather_for_profile()?;
+    let docs = input.source_docs();
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for pkg in &enabled {
+        let view = profile::materialize(&docs, &input.events, pkg, today());
+        for sec in view.sections.iter().filter(|s| s.kind == "reminders") {
+            let Some(items) = sec.body.get("items").and_then(|i| i.as_array()) else {
+                continue;
+            };
+            for it in items {
+                let state = it.get("state").and_then(|s| s.as_str()).unwrap_or("");
+                if !matches!(state, "never" | "overdue") {
+                    continue;
+                }
+                out.push(serde_json::json!({
+                    "package_id": pkg.manifest.id,
+                    "package_name": pkg.manifest.display.short,
+                    "id": it.get("id").cloned().unwrap_or(serde_json::Value::Null),
+                    "text": it.get("text").cloned().unwrap_or(serde_json::Value::Null),
+                    "state": state,
+                    "due_at": it.get("due_at").cloned().unwrap_or(serde_json::Value::Null),
+                    "overdue_days": it.get("overdue_days").cloned().unwrap_or(serde_json::Value::Null),
+                    "basis": it.get("basis").cloned().unwrap_or(serde_json::Value::Null),
+                }));
+            }
+        }
+    }
+    Ok(serde_json::to_string(&out)?)
+}
+
 /// 按**当前开着的保险箱**重装术语覆盖层(装着且开着的包的 `terms` 合并成一份)。
 ///
 /// 覆盖层是**进程级全局**,而保险箱是一次一个:换成员之后不重装,上一个成员开的
@@ -629,5 +673,46 @@ mod tests {
         // B 自己没开过任何病 —— 重装一次也还是空的(装着不等于开着)。
         vault_profile_refresh_terms(dir_s).unwrap();
         assert!(terminology::normalize("镜检红细胞").is_none());
+    }
+
+    /// 首页待办的到期提醒:装着但没开启 = 不提醒(spec §4);开启之后至少能看到
+    /// 一条(SLE 包的复诊节律规则,`verify_status: "verified"`,从没复诊过 →
+    /// `never`),且只含 `never`/`overdue`——`pending`(规则没核实,如 SLE 包里
+    /// 的眼科检查/利妥昔单抗那几条)不该混进来。
+    #[test]
+    fn due_reminders_lists_never_items_for_enabled_package_only() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        open_temp_vault(home.path());
+        let dir_s = home.path().join("skills-cache").display().to_string();
+        vault_profile_install_package(dir_s.clone(), SLE_PACKAGE.into()).unwrap();
+
+        // 装了但没开启:一条都不提醒。
+        let before: serde_json::Value =
+            serde_json::from_str(&vault_profile_due_reminders(dir_s.clone()).unwrap()).unwrap();
+        assert_eq!(before.as_array().unwrap().len(), 0, "没开启 = 不提醒");
+
+        vault_profile_record_event(
+            "enable".into(),
+            "sle".into(),
+            "2026-01-01".into(),
+            "{}".into(),
+        )
+        .unwrap();
+
+        let after: serde_json::Value =
+            serde_json::from_str(&vault_profile_due_reminders(dir_s).unwrap()).unwrap();
+        let items = after.as_array().unwrap();
+        assert!(!items.is_empty(), "开启后至少该有一条到期/从未做过的提醒");
+        assert!(
+            items
+                .iter()
+                .all(|i| matches!(i["state"].as_str(), Some("never") | Some("overdue"))),
+            "pending/unknown 不该出现在首页列表里,实际={items:?}"
+        );
+        assert!(items.iter().all(|i| i["package_id"] == "sle"));
+        assert!(items.iter().all(|i| i["text"].is_string() && i["basis"].is_string()));
+
+        terminology::set_overlay(Vec::new());
     }
 }

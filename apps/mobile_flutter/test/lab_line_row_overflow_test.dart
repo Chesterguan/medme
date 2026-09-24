@@ -1,5 +1,5 @@
-// `LabLine`(`widgets/lab_status.dart`,概览页「最近的关键化验」卡片每一行的
-// 唯一渲染实现)的窄屏溢出回归测试。
+// `LabLine`(`widgets/lab_status.dart`,化验行的唯一渲染实现——「趋势」页尾
+// 「只测过一次的」折叠区、「给医生看」页的化验行都靠它)的窄屏溢出回归测试。
 //
 // 真机(华为 Mate 9,1080×1920,逻辑分辨率 360×640)实测发现:`估算肾小球滤过率`
 // 这一行——项目名 7 个字 + 单位 `ml/min/1.73m2` 很长——「偏低」pill 被挤到
@@ -44,9 +44,9 @@ void useTabletLandscape(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
-/// 「趋势」的「最近的关键化验」卡片里,一张卡两行的真实结构:
+/// 「趋势」页尾「只测过一次的」折叠区里,一张卡两行的真实结构:
 /// `MedCard` → 卡内 vertical padding → 每行再套一层 horizontal padding
-/// (`trends_screen.dart` 的 `KeyLabsSnapshot`)。直接拿 `LabLine` 单测,不拉起
+/// (`trends_screen.dart` 的 `_SinglesFold`)。直接拿 `LabLine` 单测,不拉起
 /// 整个趋势屏(那需要 Rust FFI),但外层套的 padding 和真实用法一致,
 /// 复现的是同一份可用宽度。
 Future<List<FlutterErrorDetails>> pumpLabRows(

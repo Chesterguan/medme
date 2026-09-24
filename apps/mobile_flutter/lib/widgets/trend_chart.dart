@@ -103,7 +103,13 @@ double? _dayOf(String? iso) {
 /// 装饰,是无障碍基线(前庭功能敏感的人会因为动画头晕)。「描一次」意味着重建
 /// (切面板、换成员)不重播,见 [_TrendChartState] 的 `_played`。
 class TrendChart extends StatefulWidget {
-  const TrendChart({super.key, required this.series, this.height = 96, this.animate = true});
+  const TrendChart({
+    super.key,
+    required this.series,
+    this.height = 96,
+    this.animate = true,
+    this.compact = false,
+  });
 
   final TrendSeriesDto series;
   final double height;
@@ -115,6 +121,11 @@ class TrendChart extends StatefulWidget {
   /// State 存活期间(同 key 复用、父级重建)再改这个字段不会追溯生效——要切换
   /// 动效,得让这个 widget 换一个新 State(比如换 key)。
   final bool animate;
+
+  /// 紧凑模式(如首页待办卡里的迷你走势):内边距、点都缩小,不画参考带/
+  /// 末点光环——见 `_TrendPainter.paint` 的分支。不影响描画进度/reduced-motion
+  /// 那套逻辑,两者正交。
+  final bool compact;
 
   @override
   State<TrendChart> createState() => _TrendChartState();
@@ -174,6 +185,7 @@ class _TrendChartState extends State<TrendChart> with SingleTickerProviderStateM
             dotLow: c.low,
             ring: c.surface,
             progress: _c.value,
+            compact: widget.compact,
           ),
         ),
       ),
@@ -195,6 +207,7 @@ class _TrendPainter extends CustomPainter {
     required this.dotLow,
     required this.ring,
     required this.progress,
+    required this.compact,
   });
 
   final List<TrendPointDto> points;
@@ -217,6 +230,11 @@ class _TrendPainter extends CustomPainter {
   /// 「只有折线描画一次」,没有说点也要动画进场)。
   final double progress;
 
+  /// 紧凑模式:内边距、点半径都缩小,不画参考带/虚线边/末点光环——见
+  /// `TrendChart.compact` 的文档。折线本身、描画进度、reduced-motion 都不受
+  /// 这个字段影响。
+  final bool compact;
+
   // 内边距沿用 sparkSVG 的取法,右侧收窄:它留 32 是给画在图内的末点数值文字,
   // 而那个数值这里搬到卡头去了,只需给 r=3.4 的末点 + 白圈留出余地。
   static const double _padL = 4;
@@ -228,12 +246,24 @@ class _TrendPainter extends CustomPainter {
   static const double _r = 2.2;
   static const double _rLast = 3.4;
 
+  // compact 的内边距/点半径,brief §品牌给的紧凑规格:内边距全 2、r=1.2/末点 2.0。
+  static const double _padCompact = 2;
+  static const double _rCompact = 1.2;
+  static const double _rLastCompact = 2.0;
+
   @override
   void paint(Canvas canvas, Size size) {
     if (points.isEmpty) return;
 
-    final plotW = size.width - _padL - _padR;
-    final plotH = size.height - _padT - _padB;
+    final padL = compact ? _padCompact : _padL;
+    final padR = compact ? _padCompact : _padR;
+    final padT = compact ? _padCompact : _padT;
+    final padB = compact ? _padCompact : _padB;
+    final baseR = compact ? _rCompact : _r;
+    final lastR = compact ? _rLastCompact : _rLast;
+
+    final plotW = size.width - padL - padR;
+    final plotH = size.height - padT - padB;
     if (plotW <= 0 || plotH <= 0) return;
 
     // ── Y 值域:数据与参考区间都要装得下,再上下各留 20% 余量(同 sparkSVG)──
@@ -243,7 +273,7 @@ class _TrendPainter extends CustomPainter {
       refHigh: refHigh,
     );
     final yr = hi - lo;
-    double y(double v) => _padT + plotH - (v - lo) / yr * plotH;
+    double y(double v) => padT + plotH - (v - lo) / yr * plotH;
 
     // ── X 位置:按**真实天数**,不是点的序号 ──
     final days = points.map((p) => _dayOf(p.date)).whereType<double>().toList();
@@ -253,8 +283,8 @@ class _TrendPainter extends CustomPainter {
     final xSpan = days.reduce(math.max) - x0;
     // 所有点同一天(或只有一个点)→ 没有横向跨度可言,居中排布,不假装有时间轴。
     double x(int i) => xSpan == 0
-        ? _padL + plotW / 2
-        : _padL + (days[i] - x0) / xSpan * plotW;
+        ? padL + plotW / 2
+        : padL + (days[i] - x0) / xSpan * plotW;
 
     // ── 参考带 ──
     // **不画网格线。** 查看器的 `sparkSVG`(index.html:760-781)一条也不画,规范 §七
@@ -264,14 +294,17 @@ class _TrendPainter extends CustomPainter {
     // 区间颠倒(refLow > refHigh)时整个带不画。OCR 在偏斜的并排双表上会把相邻记录
     // 的区间错配过来,产出 refLow=50 / refHigh=10 这种无意义区间(见 openmed 的
     // A/B 实测)。画一条位置无意义的边,比什么都不画更容易被当成结论。
+    //
+    // compact 模式整段跳过(brief §品牌):紧凑走势只有几十像素高,参考带 +
+    // 虚线边在这个尺寸下挤成一团噪音,不是信息。
     final bandOk = refLow == null || refHigh == null || refLow! <= refHigh!;
-    if ((refLow != null || refHigh != null) && bandOk) {
+    if (!compact && (refLow != null || refHigh != null) && bandOk) {
       final top = y(refHigh ?? hi);
       final bottom = y(refLow ?? lo);
       final rect = Rect.fromLTRB(
-        _padL,
+        padL,
         top,
-        size.width - _padR,
+        size.width - padR,
         math.max(top, bottom),
       );
       canvas.drawRect(rect, Paint()..color = band);
@@ -324,11 +357,12 @@ class _TrendPainter extends CustomPainter {
         _ => dot,
       };
       final at = Offset(x(i), y(p.value));
-      final r = last ? _rLast : _r;
-      if (last) {
+      final r = last ? lastR : baseR;
+      if (last && !compact) {
         // 末点先铺一圈底色再画实心 —— 与 sparkSVG 的 `stroke="#fff"` 同效果,
-        // 让它从折线和参考带上「浮」出来。
-        canvas.drawCircle(at, _rLast + 1.5, Paint()..color = ring);
+        // 让它从折线和参考带上「浮」出来。compact 模式跳过这圈光环(brief
+        // §品牌)——尺寸太小,光环会糊成一团。
+        canvas.drawCircle(at, lastR + 1.5, Paint()..color = ring);
       }
       if (selfMeasured) {
         // 自测值:空心圈(底色先垫一层背景色,再描边)——与医院值的实心圈一眼
@@ -366,5 +400,6 @@ class _TrendPainter extends CustomPainter {
       old.refLow != refLow ||
       old.refHigh != refHigh ||
       old.line != line ||
-      old.progress != progress;
+      old.progress != progress ||
+      old.compact != compact;
 }

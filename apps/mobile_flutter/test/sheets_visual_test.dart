@@ -34,6 +34,95 @@ void main() {
     expectNoGradientAnywhere();
   });
 
+  testWidgets('AddSheetBody 有四项,第四项「记录一下」点了 pop(ImportChoice.record)', (
+    tester,
+  ) async {
+    // Task 5:「记录一下」从「趋势」页的 `RecordEntryCard` 搬来,成为这个四选一
+    // 的第四项。走真实的 `showModalBottomSheet`(而不是直接 pump `AddSheetBody`
+    // 本身)才测得到 `_SheetTile.onTap` 真的 `pop` 出了选中的 `ImportChoice`——
+    // `AddSheetBody` 自己不碰 `Navigator`,见它的类文档。
+    ImportChoice? popped;
+    await pumpStage3(
+      tester,
+      Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            key: const Key('open_add_sheet'),
+            // `openAddSheet` 是生产代码(`import_flow.dart`)里 [showImportSheet]
+            // 自己也调的那个函数——两边共用同一份 `showModalBottomSheet` 配置,
+            // 这里不用自己另拼一份容易跟生产脱节的参数(fix round 1,coordinator
+            // review)。
+            onPressed: () async {
+              popped = await openAddSheet(context);
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('open_add_sheet')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MedSheetOption), findsNWidgets(4));
+    expect(find.text('记录一下'), findsOneWidget);
+    expect(find.text('自己量的血压、体重,或者想记一句话'), findsOneWidget);
+
+    await tester.tap(find.text('记录一下'));
+    await tester.pumpAndSettle();
+    expect(popped, ImportChoice.record);
+  });
+
+  testWidgets(
+    'AddSheetBody 走真实 sheet 配置(isScrollControlled,无内部 ScrollView)'
+    '在两个尺寸 × 两档字号都不溢出、四项都看得见',
+    (tester) async {
+      // Important(coordinator review,fix round 1):下面「三张 sheet 在两个
+      // 尺寸…」那条测试为了测 `_SheetTile` 自身文字/布局,把 `AddSheetBody`
+      // 套了一层 `SingleChildScrollView`——那层滚动容器恰好会把
+      // `isScrollControlled` 那个修复要挡住的溢出盖住(有得滚就不会报
+      // overflow),测不出真实 `showImportSheet` 那份配置(`showDragHandle` +
+      // `isScrollControlled`、无内部 ScrollView)会不会溢出。这里改走
+      // `openAddSheet` 本尊——跟生产同一个函数,不会测一套、生产另一套——在
+      // `kStage3Sizes` × [1.0, 2.0] 四种组合下各开一次真实 sheet。
+      Widget opener() => Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            key: const Key('open_add_sheet'),
+            onPressed: () => openAddSheet(context),
+            child: const Text('open'),
+          ),
+        ),
+      );
+      for (final size in kStage3Sizes) {
+        for (final scale in [1.0, 2.0]) {
+          await pumpStage3(tester, opener(), size: size, textScale: scale);
+          await tester.tap(find.byKey(const Key('open_add_sheet')));
+          await tester.pumpAndSettle();
+
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: '$size @ ${scale}x 溢出了',
+          );
+          expect(find.text('拍照'), findsOneWidget);
+          expect(find.text('从相册选'), findsOneWidget);
+          expect(find.text('选择文件'), findsOneWidget);
+          expect(find.text('记录一下'), findsOneWidget);
+
+          // 每轮结束前把这次开的 sheet 关掉(点「记录一下」等价于 pop 一个
+          // choice)——不关的话下一轮 `pumpStage3` 重建 `MaterialApp` 时,这次
+          // 还开着的 sheet 路由会继续叠在新树最上面(`MaterialApp` 内部
+          // `Navigator` 的元素在两次 `pumpWidget` 之间被复用,不是每次都从零
+          // 重建),下一轮的「打开」按钮会被这个没关掉的 sheet 挡住,点了没反应
+          // (真实踩过:2026-09-23 fix round 1,`tester.tap` 报 hit-test 警告,
+          // 随后 `find.text('拍照')` 找到 0 个)。
+          await tester.tap(find.text('记录一下'));
+          await tester.pumpAndSettle();
+        }
+      }
+    },
+  );
+
   testWidgets('s17:一颗主按钮 + 一颗次按钮,标题 19·600', (tester) async {
     await pumpStage3(tester, const Scaffold(body: CloudExtractAskBody()));
     expectSurfaceBudget(button: 1);

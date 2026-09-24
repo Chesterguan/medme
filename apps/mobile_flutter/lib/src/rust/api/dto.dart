@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `doc_summary`, `extraction_item_count`, `from_encounter`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
 ///
@@ -868,6 +868,63 @@ class SelfMeasuredValueDto {
           unit == other.unit;
 }
 
+/// 「自测周」里的一份自测:文档摘要 + 它的结构化值(从 `###MEDME-SELF-V1###` 载荷读出,
+/// 与 `self_measurement_values` 同一条读法,读不出就是空)。
+class SelfWeekDocDto {
+  final DocumentSummaryDto doc;
+  final List<SelfMeasuredValueDto> values;
+
+  const SelfWeekDocDto({required this.doc, required this.values});
+
+  @override
+  int get hashCode => doc.hashCode ^ values.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SelfWeekDocDto &&
+          runtimeType == other.runtimeType &&
+          doc == other.doc &&
+          values == other.values;
+}
+
+/// 一周里某个指标的汇总:次数与范围。**只汇总,不判定**——没有 flag,颜色由界面按
+/// 规则决定(减法:自测周行本来就不上色)。
+class SelfWeekItemDto {
+  final String analyteKey;
+  final PlatformInt64 count;
+  final double min;
+  final double max;
+  final String unit;
+
+  const SelfWeekItemDto({
+    required this.analyteKey,
+    required this.count,
+    required this.min,
+    required this.max,
+    required this.unit,
+  });
+
+  @override
+  int get hashCode =>
+      analyteKey.hashCode ^
+      count.hashCode ^
+      min.hashCode ^
+      max.hashCode ^
+      unit.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SelfWeekItemDto &&
+          runtimeType == other.runtimeType &&
+          analyteKey == other.analyteKey &&
+          count == other.count &&
+          min == other.min &&
+          max == other.max &&
+          unit == other.unit;
+}
+
 /// 加密分享生成结果:口令(单独告知医生)、记录数、文件字节数、分享文件路径。
 class ShareResultDto {
   final String passphrase;
@@ -1038,4 +1095,13 @@ sealed class TimelineGroupDto with _$TimelineGroupDto {
   }) = TimelineGroupDto_Encounter;
   const factory TimelineGroupDto.document({required DocumentSummaryDto doc}) =
       TimelineGroupDto_Document;
+
+  /// 同一自然周(周一到周日)的自测记录折成一行(用户 2026-09-23:单次自测没意义,
+  /// 一周才看得出东西)。`week_start`/`week_end` 是 `YYYY-MM-DD`。
+  const factory TimelineGroupDto.selfWeek({
+    required String weekStart,
+    required String weekEnd,
+    required List<SelfWeekDocDto> docs,
+    required List<SelfWeekItemDto> summary,
+  }) = TimelineGroupDto_SelfWeek;
 }

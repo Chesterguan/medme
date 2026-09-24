@@ -95,7 +95,90 @@ const Map<String, int> kRemovedByDecision = {
   // profile_manager.dart 三处原样还在。这个词往后再消失第二次,预算用完,
   // 闸重新红——那时候得说清楚是哪个 widget、为什么。
   '我': 1,
+
+  // Task 6(2026-09-23,趋势重整):`KeyLabsSnapshot`(关键化验各行,并进了
+  // `TrendRow` 列表)、`RecentVisitsCard`/`_VisitCard`/`visitCardShowsDate`/
+  // `visitCardDesc`(最近就诊,没有下家)、`_AbnormalOnlyRow`(整行 `Switch`,
+  // 换成 `PanelChipsRow` 末尾一颗 `MedChip`)三个 widget 整块删掉,带走它们的
+  // 字面量——闸自己文件头注释写的合法例外(不是用户点名删这几个词本身)。
+  // 以下逐条对应闸实际报告的段,数量按「删掉整个 widget 时字面量出现过的文件
+  // 数」记(全部是 1,`trends_screen.dart` 单独一个文件)。
+  //
+  // `RecentVisitsCard`(`_SectionHeader(title: '最近就诊', actionLabel: '全部
+  // $total 份')`+空态「还没有添加过病历。」)与 `_VisitCard`
+  // (`visitCardDesc` 的 `'$docCount 份记录'`):
+  '最近就诊': 1,
+  '份': 1,
+  '份记录': 1,
+  '还没有添加过病历。': 1,
+  // `KeyLabsSnapshot` 的空态:
+  '已添加的病历里还没有读到可显示的化验数值。拍一张化验单试试。': 1,
+  // `_AbnormalOnlyRow` 的四句(基础开关文案、隐藏计数后缀、搜索/选中大类时
+  // 让位说明各一句)——`」下不过滤` 前半的引号来自
+  // `'「${_panelChipLabel(selectedPanel)}」下不过滤 …'`,插值把整句切开,
+  // 剩下这一段是闸实际认到的字面量,不是漏字:
+  '只看非正常项': 1,
+  '条正常或判断不了': 1,
+  '搜索时不过滤': 1,
+  '正常项也一起找。': 1,
+  '」下不过滤': 1,
+  '这类检查查过的都在这。': 1,
 };
+
+/// 与 [kRemovedByDecision] 对称:这一阶段**允许多出来**的段,值 = 允许多出的文件数。
+/// 只登记本阶段计划里列出的新字(见 docs/superpowers/plans/2026-09-23-home-todo-and-trends-rework.md
+/// Global Constraints);登记之外的新字照旧红。每个 Task 只登记自己引入的段。
+///
+/// Task 3(2026-09-23):`doc_labels.dart` 新增 `fmtDay`/`fmtDayRange`/
+/// `selfAnalyteLabel`,以下两条是跑这个闸实际报告的多出的段,逐条核对与这一
+/// 处改动对应(评审再核一遍):
+const Map<String, int> kAddedByDecision = {
+  // `fmtDay` 的 `'${d.month} 月 ${d.day} 日'`——`月`/`日` 这两个字本已在
+  // account_screen.dart/backup_status_line.dart 等多处「M月D日」写法里出现过,
+  // `doc_labels.dart` 只是新增了一个也含它们的文件。
+  '月': 1,
+  '日': 1,
+  // Fix round 1(评审 Critical 1):`selfAnalyteLabel` 的心率/体重/体温/血糖
+  // 四个标签**不**登记在这里——`manual_entry_sheet.dart` 的 `_analyteErrorLabel`
+  // 已改成委托 `selfAnalyteLabel`,不再各自持有一份字面量,两侧净变化为 0,
+  // 闸本就不报,登记进来反而是把不该放行的重复默许掉。
+
+  // Task 4(2026-09-23):`widgets/self_week.dart` 新增 `selfWeekTitle`
+  // (`'自测 · ${fmtDayRange(...)}'`)与 `selfWeekDesc`(`'... $count 次 ...'`)——
+  // 逐条对应计划里登记的新字「自测 · M 月 D 日 – M 月 D 日」「N 次」。
+  '自测': 1,
+  '次': 1,
+  // `archive_screen.dart` 新增的「最近 30 天有 $abnormal30d 项偏高或偏低」
+  // (`'最近'`/`'天有'`/`'项偏高或偏低'` 三段,数字被拆在中间不成段;R35a 的
+  // 表意字|数字配对闸另加一条 `'最近|30'`)——逐条对应计划里登记的新字
+  // 「最近 30 天有 N 项偏高或偏低」。「给医生看」这一段在本文件里已有(`HomeTiles`
+  // 的按钮文案),待办卡的「给医生看」note 是同一份字符串,净变化为 0,不登记。
+  // 超期 N 天/没查到(状态标签)/血压等指标名全部经既有函数复用(见
+  // `reminderOverdueNote`/`reminderStateLabel`/`selfAnalyteLabel`),没有产生
+  // 第二份字面量,闸本就不报,不登记。
+  '最近': 1,
+  '天有': 1,
+  '项偏高或偏低': 1,
+  '最近|30': 1,
+
+  // Task 6(2026-09-23,趋势重整):`trends_screen.dart` 的 `PanelChipsRow`
+  // 新增末尾的「只看异常」开关 chip(`MedChip(label: '只看异常', ...)`,替换
+  // 删掉的 `_AbnormalOnlyRow` 那颗 `Switch`),`_SinglesFold` 新增页尾折叠标题
+  // 「只测过一次的 N 项」——逐条对应计划里登记的新字「只看异常」「只测过一次的
+  // N 项」。数字把「只测过一次的」和「项」隔成两段(R35a 同款,不成一个整段)。
+  // 「项」本已出现在 `disease_profile_card.dart`(病种包条目数「N 项」,基线里
+  // 就有、未改动)——净变化只来自 `trends_screen.dart` 新增的这一处,预算 1。
+  '只看异常': 1,
+  '只测过一次的': 1,
+  '项': 1,
+};
+
+// Task 7(2026-09-23,收尾)闸对账:跑一遍不套预算的原始 diff(添加/删除各段的
+// 实际次数),逐条核对 kAddedByDecision 的 11 条与 Global Constraints 新字清单
+// 逐字对应、kRemovedByDecision 的全部条目与「基线到 HEAD 实际消失的段」逐条
+// 一一配对(键相同、次数相同)——两个表没有一条登记多余或对不上,原样保留,
+// 不需要改动。(这是一条独立的审计记录,不是给下面 _requireBaseline 的文档,
+// 所以用 // 不用 ///。)
 
 /// 基线 commit 在浅克隆里不存在(CI 若用 fetch-depth: 1 就会这样)——那样的失败
 /// 不是文案变了,是 checkout 没带历史;把原因直接写进断言消息。
@@ -221,6 +304,21 @@ Set<String> _overBudgetRemovals(
   return over;
 }
 
+/// `_overBudgetRemovals` 的镜像:多的次数(`n - b`)超过预算才算违规,`budget`
+/// 就是 [kAddedByDecision](或测试自己搭的小样本)。
+Set<String> _overBudgetAdditions(
+  Map<String, int> before,
+  Map<String, int> now,
+  Map<String, int> budget,
+) {
+  final over = <String>{};
+  for (final r in {...now.keys, ...before.keys}) {
+    final n = now[r] ?? 0, b = before[r] ?? 0;
+    if (n > b && (n - b) > (budget[r] ?? 0)) over.add(r);
+  }
+  return over;
+}
+
 /// HEAD 的 `lib/**`(排除令牌层)与基线 [kBaseline] 的同一份文件集,各自喂给
 /// [extract]、按文件去重(`.toSet()`——同一段文字在同一个文件里出现几次只算
 /// 1,见文件头注释)后聚成多重集,回 added/removed 差异描述(带文件名,供失败
@@ -274,12 +372,13 @@ Set<String> _overBudgetRemovals(
   final now = _multiset(headRuns);
   final before = _multiset(baselineRuns);
   final overBudget = _overBudgetRemovals(before, now, kRemovedByDecision);
+  final overAdded = _overBudgetAdditions(before, now, kAddedByDecision);
 
   final added = <String>[];
   final removed = <String>[];
   for (final r in {...now.keys, ...before.keys}) {
     final n = now[r] ?? 0, b = before[r] ?? 0;
-    if (n > b) {
+    if (overAdded.contains(r)) {
       added.add('「$r」多了 ${n - b} 次 —— 现存于:${(headFilesByRun[r] ?? const {}).join(', ')}');
     }
     if (overBudget.contains(r)) {
@@ -310,6 +409,14 @@ void main() {
     expect(_overBudgetRemovals({'我': 2}, {'我': 1}, budget), isEmpty);
     // 基线 2 次、HEAD 0 次 —— 少了 2 次,超过预算 1,照旧红。
     expect(_overBudgetRemovals({'我': 2}, {'我': 0}, budget), {'我'});
+  });
+
+  test('kAddedByDecision 预算自测(纯函数,不碰 git):预算 1 放一次、拦第二次', () {
+    const budget = {'日': 1};
+    // 基线 0 次、HEAD 1 次 —— 多了 1 次,预算 1,放行。
+    expect(_overBudgetAdditions({'日': 0}, {'日': 1}, budget), isEmpty);
+    // 基线 0 次、HEAD 2 次 —— 多了 2 次,超过预算 1,照旧红。
+    expect(_overBudgetAdditions({'日': 0}, {'日': 2}, budget), {'日'});
   });
 
   test('_digitPairsIn 自测(纯函数,不碰 git):15 天改成 30 天,多重集必须不同', () {

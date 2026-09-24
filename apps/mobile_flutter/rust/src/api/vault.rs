@@ -14,7 +14,7 @@ use crate::diagnostics::warn as log_warn;
 // `frb_generated_stream_sink!` 宏把它生成进 `frb_generated.rs`,API 侧照官方
 // 约定从那里 `use`(见 `load_demo_data` 的进度回报,`DemoLoadProgressDto`)。
 use crate::frb_generated::StreamSink;
-use core_model::{DocType, NewDocument, NewOcr, OcrBackendKind, Vault};
+use core_model::{DocType, Document, NewDocument, NewOcr, OcrBackendKind, Vault};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -244,10 +244,15 @@ pub fn load_archive() -> anyhow::Result<Vec<TimelineGroupDto>> {
                 },
             ));
         }
+        let mut self_docs: Vec<Document> = Vec::new();
         for d in v
             .standalone_documents()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?
         {
+            if d.doc_type.as_str() == "self_measurement" && d.doc_date.is_some() {
+                self_docs.push(d);
+                continue;
+            }
             let sort = d.doc_date.map(|x| x.to_rfc3339());
             groups.push((
                 sort,
@@ -256,6 +261,7 @@ pub fn load_archive() -> anyhow::Result<Vec<TimelineGroupDto>> {
                 },
             ));
         }
+        groups.extend(self_week_groups(v, self_docs)?);
         groups.sort_by(|a, b| match (&a.0, &b.0) {
             (Some(x), Some(y)) => y.cmp(x),
             (Some(_), None) => std::cmp::Ordering::Less,
@@ -264,6 +270,66 @@ pub fn load_archive() -> anyhow::Result<Vec<TimelineGroupDto>> {
         });
         Ok(groups.into_iter().map(|(_, g)| g).collect())
     })
+}
+
+/// 把有日期的自测文档按 ISO 周(周一起)折成 [`TimelineGroupDto::SelfWeek`]。
+/// 排序键取周一那天的 `T23:59:59+00:00`:同一天既有门诊又有自测时,周组排在门诊前面
+/// (倒序列表里更靠上),而整周仍归到周一所在的月(`byMonth` 按 `week_start` 分月)。
+fn self_week_groups(
+    v: &Vault,
+    docs: Vec<Document>,
+) -> anyhow::Result<Vec<(Option<String>, TimelineGroupDto)>> {
+    use chrono::Datelike;
+    use std::collections::BTreeMap;
+    const ORDER: [&str; 6] = ["bp_systolic", "bp_diastolic", "heart_rate", "body_weight", "body_temperature", "glucose"];
+
+    let mut weeks: BTreeMap<chrono::NaiveDate, Vec<Document>> = BTreeMap::new();
+    for d in docs {
+        let Some(date) = d.doc_date else { continue };
+        let day = date.date_naive();
+        let monday = day - chrono::Duration::days(i64::from(day.weekday().num_days_from_monday()));
+        weeks.entry(monday).or_default().push(d);
+    }
+
+    let mut out = Vec::new();
+    for (monday, mut ds) in weeks {
+        ds.sort_by(|a, b| b.doc_date.cmp(&a.doc_date));
+        let mut agg: BTreeMap<String, (i64, f64, f64, String)> = BTreeMap::new();
+        let mut week_docs = Vec::with_capacity(ds.len());
+        for d in &ds {
+            // 一份自测读不出正文不能拖垮整个 `load_archive`——与 `doc_summary`
+            // 读同一列的方式一致(`dto.rs:163` 「同一条读法,读不出就是空」):
+            // 读不出就当它没有值,不能把 `?` 往上抛。
+            let text = v.ocr_text(d.id).unwrap_or_default();
+            let values: Vec<SelfMeasuredValueDto> = parser::parse_self_measurement_payload(&text)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|x| SelfMeasuredValueDto { analyte_key: x.analyte_key, value: x.value, unit: x.unit })
+                .collect();
+            for x in &values {
+                let e = agg.entry(x.analyte_key.clone()).or_insert((0, x.value, x.value, x.unit.clone()));
+                e.0 += 1;
+                e.1 = e.1.min(x.value);
+                e.2 = e.2.max(x.value);
+            }
+            week_docs.push(SelfWeekDocDto { doc: doc_summary(v, d), values });
+        }
+        let mut summary: Vec<SelfWeekItemDto> = Vec::new();
+        for key in ORDER.iter().map(|k| k.to_string()).chain(agg.keys().filter(|k| !ORDER.contains(&k.as_str())).cloned()) {
+            if let Some((count, min, max, unit)) = agg.get(&key) {
+                summary.push(SelfWeekItemDto { analyte_key: key.clone(), count: *count, min: *min, max: *max, unit: unit.clone() });
+            }
+        }
+        let sunday = monday + chrono::Duration::days(6);
+        let sort = Some(format!("{}T23:59:59+00:00", monday.format("%Y-%m-%d")));
+        out.push((sort, TimelineGroupDto::SelfWeek {
+            week_start: monday.format("%Y-%m-%d").to_string(),
+            week_end: sunday.format("%Y-%m-%d").to_string(),
+            docs: week_docs,
+            summary,
+        }));
+    }
+    Ok(out)
 }
 
 /// 文档详情:类型/日期 + 来源文件 + 识别文本。与桌面/Tauri 移动端的
@@ -2336,6 +2402,9 @@ mod cloud_extraction_tests {
             .flat_map(|g| match g {
                 TimelineGroupDto::Encounter { docs, .. } => docs.clone(),
                 TimelineGroupDto::Document { doc } => vec![doc.clone()],
+                TimelineGroupDto::SelfWeek { docs, .. } => {
+                    docs.iter().map(|d| d.doc.clone()).collect()
+                }
             })
             .map(|d| (d.id, d.extraction_item_count))
             .collect();
@@ -2837,5 +2906,55 @@ mod qr_share_profile_tests {
             err.to_string().contains("档案 JSON"),
             "错误里要说清楚是档案 JSON 坏了:{err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod self_week_tests {
+    use super::*;
+    use super::VAULT_TEST_LOCK as TEST_LOCK;
+
+    #[test]
+    fn timeline_folds_self_measurements_into_iso_weeks() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let docs_dir = tmp.path().join("docs");
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&docs_dir).unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+        crate::api::vault::open_vault(docs_dir.to_string_lossy().into(), data_dir.to_string_lossy().into(), None).unwrap();
+        let bp = |s: f64, d: f64| vec![
+            SelfMeasuredValueDto { analyte_key: "bp_systolic".into(), value: s, unit: "mmHg".into() },
+            SelfMeasuredValueDto { analyte_key: "bp_diastolic".into(), value: d, unit: "mmHg".into() },
+        ];
+        // 2026-04-27 是周一;4 月 27 日–5 月 3 日一周,跨月。
+        crate::api::vault::add_self_measurement(bp(118.0, 74.0), Some("2026-04-27T08:00:00Z".into())).unwrap();
+        crate::api::vault::add_self_measurement(bp(132.0, 80.0), Some("2026-05-02T08:00:00Z".into())).unwrap();
+        crate::api::vault::add_self_measurement(
+            vec![SelfMeasuredValueDto { analyte_key: "glucose".into(), value: 6.3, unit: "mmol/L".into() }],
+            Some("2026-05-04T08:00:00Z".into()),
+        ).unwrap();
+
+        let groups = crate::api::vault::load_archive().unwrap();
+        let weeks: Vec<_> = groups.iter().filter_map(|g| match g {
+            TimelineGroupDto::SelfWeek { week_start, week_end, docs, summary } => Some((week_start.clone(), week_end.clone(), docs.len(), summary.clone())),
+            _ => None,
+        }).collect();
+        assert_eq!(weeks.len(), 2, "两个自然周");
+        // 倒序:5 月 4 日那周在前。
+        assert_eq!((weeks[0].0.as_str(), weeks[0].1.as_str(), weeks[0].2), ("2026-05-04", "2026-05-10", 1));
+        assert_eq!((weeks[1].0.as_str(), weeks[1].1.as_str(), weeks[1].2), ("2026-04-27", "2026-05-03", 2));
+        let s = &weeks[1].3;
+        assert_eq!(s[0].analyte_key, "bp_systolic");
+        assert_eq!((s[0].count, s[0].min, s[0].max, s[0].unit.as_str()), (2, 118.0, 132.0, "mmHg"));
+        assert_eq!(s[1].analyte_key, "bp_diastolic");
+        assert_eq!((s[1].count, s[1].min, s[1].max), (2, 74.0, 80.0));
+        // 没有任何 self_measurement 以 Document 变体出现(全部有日期)。
+        assert!(groups.iter().all(|g| !matches!(g, TimelineGroupDto::Document { doc } if doc.doc_type == "self_measurement")));
+        // 周组里的每份自测都带着结构化值。
+        if let TimelineGroupDto::SelfWeek { docs, .. } = &groups[1] {
+            assert!(docs.iter().all(|d| !d.values.is_empty()));
+            assert!(docs[0].doc.doc_date.as_deref().unwrap() > docs[1].doc.doc_date.as_deref().unwrap(), "周内倒序");
+        }
     }
 }

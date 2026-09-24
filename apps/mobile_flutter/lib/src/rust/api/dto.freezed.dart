@@ -55,12 +55,13 @@ extension TimelineGroupDtoPatterns on TimelineGroupDto {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( TimelineGroupDto_Encounter value)?  encounter,TResult Function( TimelineGroupDto_Document value)?  document,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( TimelineGroupDto_Encounter value)?  encounter,TResult Function( TimelineGroupDto_Document value)?  document,TResult Function( TimelineGroupDto_SelfWeek value)?  selfWeek,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case TimelineGroupDto_Encounter() when encounter != null:
 return encounter(_that);case TimelineGroupDto_Document() when document != null:
-return document(_that);case _:
+return document(_that);case TimelineGroupDto_SelfWeek() when selfWeek != null:
+return selfWeek(_that);case _:
   return orElse();
 
 }
@@ -78,12 +79,13 @@ return document(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( TimelineGroupDto_Encounter value)  encounter,required TResult Function( TimelineGroupDto_Document value)  document,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( TimelineGroupDto_Encounter value)  encounter,required TResult Function( TimelineGroupDto_Document value)  document,required TResult Function( TimelineGroupDto_SelfWeek value)  selfWeek,}){
 final _that = this;
 switch (_that) {
 case TimelineGroupDto_Encounter():
 return encounter(_that);case TimelineGroupDto_Document():
-return document(_that);}
+return document(_that);case TimelineGroupDto_SelfWeek():
+return selfWeek(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -97,12 +99,13 @@ return document(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( TimelineGroupDto_Encounter value)?  encounter,TResult? Function( TimelineGroupDto_Document value)?  document,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( TimelineGroupDto_Encounter value)?  encounter,TResult? Function( TimelineGroupDto_Document value)?  document,TResult? Function( TimelineGroupDto_SelfWeek value)?  selfWeek,}){
 final _that = this;
 switch (_that) {
 case TimelineGroupDto_Encounter() when encounter != null:
 return encounter(_that);case TimelineGroupDto_Document() when document != null:
-return document(_that);case _:
+return document(_that);case TimelineGroupDto_SelfWeek() when selfWeek != null:
+return selfWeek(_that);case _:
   return null;
 
 }
@@ -119,11 +122,12 @@ return document(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( EncounterSummaryDto encounter,  List<DocumentSummaryDto> docs)?  encounter,TResult Function( DocumentSummaryDto doc)?  document,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( EncounterSummaryDto encounter,  List<DocumentSummaryDto> docs)?  encounter,TResult Function( DocumentSummaryDto doc)?  document,TResult Function( String weekStart,  String weekEnd,  List<SelfWeekDocDto> docs,  List<SelfWeekItemDto> summary)?  selfWeek,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case TimelineGroupDto_Encounter() when encounter != null:
 return encounter(_that.encounter,_that.docs);case TimelineGroupDto_Document() when document != null:
-return document(_that.doc);case _:
+return document(_that.doc);case TimelineGroupDto_SelfWeek() when selfWeek != null:
+return selfWeek(_that.weekStart,_that.weekEnd,_that.docs,_that.summary);case _:
   return orElse();
 
 }
@@ -141,11 +145,12 @@ return document(_that.doc);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( EncounterSummaryDto encounter,  List<DocumentSummaryDto> docs)  encounter,required TResult Function( DocumentSummaryDto doc)  document,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( EncounterSummaryDto encounter,  List<DocumentSummaryDto> docs)  encounter,required TResult Function( DocumentSummaryDto doc)  document,required TResult Function( String weekStart,  String weekEnd,  List<SelfWeekDocDto> docs,  List<SelfWeekItemDto> summary)  selfWeek,}) {final _that = this;
 switch (_that) {
 case TimelineGroupDto_Encounter():
 return encounter(_that.encounter,_that.docs);case TimelineGroupDto_Document():
-return document(_that.doc);}
+return document(_that.doc);case TimelineGroupDto_SelfWeek():
+return selfWeek(_that.weekStart,_that.weekEnd,_that.docs,_that.summary);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -159,11 +164,12 @@ return document(_that.doc);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( EncounterSummaryDto encounter,  List<DocumentSummaryDto> docs)?  encounter,TResult? Function( DocumentSummaryDto doc)?  document,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( EncounterSummaryDto encounter,  List<DocumentSummaryDto> docs)?  encounter,TResult? Function( DocumentSummaryDto doc)?  document,TResult? Function( String weekStart,  String weekEnd,  List<SelfWeekDocDto> docs,  List<SelfWeekItemDto> summary)?  selfWeek,}) {final _that = this;
 switch (_that) {
 case TimelineGroupDto_Encounter() when encounter != null:
 return encounter(_that.encounter,_that.docs);case TimelineGroupDto_Document() when document != null:
-return document(_that.doc);case _:
+return document(_that.doc);case TimelineGroupDto_SelfWeek() when selfWeek != null:
+return selfWeek(_that.weekStart,_that.weekEnd,_that.docs,_that.summary);case _:
   return null;
 
 }
@@ -305,6 +311,90 @@ class _$TimelineGroupDto_DocumentCopyWithImpl<$Res>
   return _then(TimelineGroupDto_Document(
 doc: null == doc ? _self.doc : doc // ignore: cast_nullable_to_non_nullable
 as DocumentSummaryDto,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class TimelineGroupDto_SelfWeek extends TimelineGroupDto {
+  const TimelineGroupDto_SelfWeek({required this.weekStart, required this.weekEnd, required final  List<SelfWeekDocDto> docs, required final  List<SelfWeekItemDto> summary}): _docs = docs,_summary = summary,super._();
+  
+
+ final  String weekStart;
+ final  String weekEnd;
+ final  List<SelfWeekDocDto> _docs;
+ List<SelfWeekDocDto> get docs {
+  if (_docs is EqualUnmodifiableListView) return _docs;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_docs);
+}
+
+ final  List<SelfWeekItemDto> _summary;
+ List<SelfWeekItemDto> get summary {
+  if (_summary is EqualUnmodifiableListView) return _summary;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_summary);
+}
+
+
+/// Create a copy of TimelineGroupDto
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$TimelineGroupDto_SelfWeekCopyWith<TimelineGroupDto_SelfWeek> get copyWith => _$TimelineGroupDto_SelfWeekCopyWithImpl<TimelineGroupDto_SelfWeek>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is TimelineGroupDto_SelfWeek&&(identical(other.weekStart, weekStart) || other.weekStart == weekStart)&&(identical(other.weekEnd, weekEnd) || other.weekEnd == weekEnd)&&const DeepCollectionEquality().equals(other._docs, _docs)&&const DeepCollectionEquality().equals(other._summary, _summary));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,weekStart,weekEnd,const DeepCollectionEquality().hash(_docs),const DeepCollectionEquality().hash(_summary));
+
+@override
+String toString() {
+  return 'TimelineGroupDto.selfWeek(weekStart: $weekStart, weekEnd: $weekEnd, docs: $docs, summary: $summary)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $TimelineGroupDto_SelfWeekCopyWith<$Res> implements $TimelineGroupDtoCopyWith<$Res> {
+  factory $TimelineGroupDto_SelfWeekCopyWith(TimelineGroupDto_SelfWeek value, $Res Function(TimelineGroupDto_SelfWeek) _then) = _$TimelineGroupDto_SelfWeekCopyWithImpl;
+@useResult
+$Res call({
+ String weekStart, String weekEnd, List<SelfWeekDocDto> docs, List<SelfWeekItemDto> summary
+});
+
+
+
+
+}
+/// @nodoc
+class _$TimelineGroupDto_SelfWeekCopyWithImpl<$Res>
+    implements $TimelineGroupDto_SelfWeekCopyWith<$Res> {
+  _$TimelineGroupDto_SelfWeekCopyWithImpl(this._self, this._then);
+
+  final TimelineGroupDto_SelfWeek _self;
+  final $Res Function(TimelineGroupDto_SelfWeek) _then;
+
+/// Create a copy of TimelineGroupDto
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? weekStart = null,Object? weekEnd = null,Object? docs = null,Object? summary = null,}) {
+  return _then(TimelineGroupDto_SelfWeek(
+weekStart: null == weekStart ? _self.weekStart : weekStart // ignore: cast_nullable_to_non_nullable
+as String,weekEnd: null == weekEnd ? _self.weekEnd : weekEnd // ignore: cast_nullable_to_non_nullable
+as String,docs: null == docs ? _self._docs : docs // ignore: cast_nullable_to_non_nullable
+as List<SelfWeekDocDto>,summary: null == summary ? _self._summary : summary // ignore: cast_nullable_to_non_nullable
+as List<SelfWeekItemDto>,
   ));
 }
 

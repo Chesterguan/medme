@@ -126,6 +126,15 @@ void main() {
     });
   });
 
+  group('MedChip', () {
+    testWidgets('count 为 null 时只显示 label,不带数字', (tester) async {
+      await tester.pumpWidget(
+        wrap(MedChip(label: '只看异常', selected: true, onTap: () {})),
+      );
+      expect(find.text('只看异常'), findsOneWidget);
+    });
+  });
+
   testWidgets('空态虚线框能画出来 —— 规范 §六「空态必须给出路」的容器', (tester) async {
     await tester.pumpWidget(
       wrap(const DottedBorderBox(child: Text('还没有病历'))),

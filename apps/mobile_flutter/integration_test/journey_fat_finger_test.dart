@@ -1,8 +1,9 @@
 // 用户视角二:**手抖 / 乱按的用户**。
 //
-// 全程走**真实 UI**(趋势 →「记录一下」→ 输入框 → 保存),不走 FFI 后门 —— 这一条
-// 用例要验的正是「UI 这一层挡不挡得住」。覆盖:空值、只填一半、0、-1、999999、
-// 小数、中文字符、超长数字串、反复快速点保存、录入中途退出。
+// 全程走**真实 UI**(病历 →「添加」→「记录一下」→ 输入框 → 保存),不走
+// FFI 后门 —— 这一条用例要验的正是「UI 这一层挡不挡得住」。覆盖:空值、只填
+// 一半、0、-1、999999、小数、中文字符、超长数字串、反复快速点保存、录入中途
+// 退出。
 //
 // 背景:真机实测里有人把收缩压存成了 138388 mmHg(见
 // `manual_entry_sheet.dart` 的 `_plausibleRanges` 文档)。
@@ -17,7 +18,7 @@ import 'package:mobile_flutter/src/rust/api/vault.dart';
 
 import 'harness.dart';
 
-/// 从「趋势」的「记录一下」打开录入弹层(概览 Task 9 解散,这颗快捷键搬去了那儿)。
+/// 从「病历」的「添加」→「记录一下」打开录入弹层(Task 5 挪进了「添加」四选一)。
 Future<void> openEntrySheet(WidgetTester tester) => openRecordSheet(tester);
 
 Finder get sysBox => find.byType(TextField).at(0);

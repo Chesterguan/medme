@@ -136,3 +136,29 @@ String fmtDate(String? iso) {
   if (d == null) return '';
   return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }
+
+/// 「4 月 27 日」:不补零,与 `monthLabel`(`archive_screen.dart`)同一习惯。
+/// 解析失败原样返回。
+String fmtDay(String iso) {
+  final d = DateTime.tryParse(iso);
+  return d == null ? iso : '${d.month} 月 ${d.day} 日';
+}
+
+/// 「4 月 27 日 – 5 月 3 日」(en dash,两侧空格)。
+String fmtDayRange(String startIso, String endIso) => '${fmtDay(startIso)} – ${fmtDay(endIso)}';
+
+/// 自测指标的中文名。`bp_systolic` / `bp_diastolic` 都叫「血压」——界面把两者并成一行。
+///
+/// `manual_entry_sheet.dart` 六选一录入弹层原先私有一份同样的五个标签
+/// (`_KindMeta.label`),搬到这里统一,弹层改读这个函数——不留两份。同一个
+/// 文件里的错误提示文案(`_analyteErrorLabel`)心率/体重/体温/血糖四项也委托
+/// 这里;只有「收缩压」/「舒张压」两个词是那条错误提示专属的(这里把两者都
+/// 归成「血压」,那边恰恰要分开说是哪个数超了),留在那边,不在这张表里。
+String selfAnalyteLabel(String key) => switch (key) {
+  'bp_systolic' || 'bp_diastolic' => '血压',
+  'heart_rate' => '心率',
+  'body_weight' => '体重',
+  'body_temperature' => '体温',
+  'glucose' => '血糖',
+  _ => key,
+};

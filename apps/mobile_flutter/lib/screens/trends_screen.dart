@@ -3,9 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
-import 'package:mobile_flutter/doc_labels.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
-import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
@@ -17,15 +15,21 @@ import 'package:mobile_flutter/widgets/trend_chart.dart';
 /// 底部导航一级 tab「趋势」—— 使用时刻:**复诊前自己看「这两年怎么变的」**
 /// (设计系统 §八)。
 ///
-/// **这一屏同时是「总的摘要」的落脚处**(mockup `s2`)。概览整屏在 Task 9 解散,
-/// 它的「最近的关键化验」([KeyLabsSnapshot])与最近就诊那一块([RecentVisitsCard])
-/// 先搬到这里 —— 自己量的数和医院的数看的是同一件事,归在同一个 tab。
+/// **自上而下**(Task 6 重整后的顺序):病程档案入口([DiseaseProfileCard])→
+/// 「关键化验」标题 + 检验大类 chip + 「只看异常」开关([PanelChipsRow])→ 一张
+/// `MedCard` 装下全部「测过 ≥ 2 次」的序列,一行一个([TrendRow]:折叠态一条
+/// 78×24 的迷你折线,点开原地放大成真图)→ 页尾折叠「只测过一次的 N 项」
+/// ([_SinglesFold],单次序列按化验行样式列出,没有折线可言)→ [ProvenanceFooter]。
 ///
-/// **自上而下的顺序是 `s2` 定死的,别自己重排:**
-/// 病程档案入口 → 关键化验(标题 + 分类 chip + 各行)→ 最近就诊 →
-/// 记录一下。`s2` 在关键化验各行上画了迷你折线、点开那一行原地放大 —— 那是
-/// Stage 2;Stage 1 保持今天的取值行,全序列的折线卡([SeriesCard])照旧摆在
-/// 它下面,位置先摆对,内容不提前做。
+/// **合并的由来:** 「关键化验各行」(原来独立一张卡,现已删)与「全序列折线卡」
+/// (原来一条序列一张卡,现重排成 [TrendRow])在合并之前是分开的两块——同一个
+/// 指标看两遍,却只有下面那块能点开看全部历史。现在合成一份列表:折叠态就是
+/// 原来「关键化验」那一行的信息量(名称 + 最新值 + 状态),多一条迷你折线;
+/// 点开就是原来的趋势图。「最近就诊」那一块(原来也搬来这一屏的一张独立列表)
+/// 一并删掉——「病历」tab 自己就是完整列表,这里不需要再摆一份摘要。
+///
+/// 「记录一下」原来是这一屏的入口,Task 5 挪进了「病历」tab 的「添加」四选一,
+/// 这一屏不再有它。
 ///
 /// 「病程档案」那一块的内容在 [DiseaseProfileCard] 自己里头(没有病种包 / 装上了
 /// 还没开启 / 开启了,三态各说各的话),这一屏只负责把它摆在第一位。
@@ -40,26 +44,17 @@ import 'package:mobile_flutter/widgets/trend_chart.dart';
 /// 这一屏没有、也不该有任何代码去「聪明地」把它们并起来:UI 层按名字猜哪两条是同一
 /// 个指标,就是在数据里造关系。`TrendSeriesDto` 带着 `analyteKey` / `loinc` 正是为了
 /// 让**归一化在 Rust 侧**做完再下发;`analyteKey == null` 的序列就是没归一化成功的,
-/// 它照原样显示 —— UI 不按名字猜、不合并。**这一屏顶上不再有那段常驻说明**
-/// (`s2` 没有它):这件事现在只在搜不到指标时的空态里说一句「同一项在不同医院
-/// 可能印成「肌酐」「血肌酐」「Cr」」,别把那段话又搬回顶部。
+/// 它照原样显示 —— UI 不按名字猜、不合并。这一屏顶上不放常驻说明,这件事只在
+/// 搜不到指标时的空态里说一句「同一项在不同医院可能印成「肌酐」「血肌酐」「Cr」」。
 class TrendsScreen extends StatefulWidget {
-  const TrendsScreen({
-    super.key,
-    this.load,
-    this.onRequestAddNote,
-    this.profileSource,
-  });
+  const TrendsScreen({super.key, this.load, this.profileSource});
 
-  /// 数据源。null → 三个真实投影(FFI)。
+  /// 数据源。null → 两个真实投影(FFI)。
   ///
   /// 这两个注入点与 `ForDoctorScreen`(Task 3)同款,理由也一样:整屏碰 FFI,
   /// `flutter test` 不带原生库;而「存完一条记录要当场刷新」这条回归
   /// (BUG-4)只有整屏能验。
   final Future<TrendsData> Function()? load;
-
-  /// 「记录一下」按下时走的动作,返回「是否真的存了一条」。null → 开录入弹层(FFI)。
-  final Future<bool?> Function(BuildContext context)? onRequestAddNote;
 
   /// 病程档案那一块的取数口子(装着哪个包 / 算一份视图 / 记一条开关)。
   /// null → 真的那一套(FFI + 平台通道)。**摆成注入点只为测试**,与 [load] 同款。
@@ -69,10 +64,9 @@ class TrendsScreen extends StatefulWidget {
   State<TrendsScreen> createState() => _TrendsScreenState();
 }
 
-/// 这一屏一次要用到的三样东西:全部趋势序列 + 检验大类 chip 的目录(顺序、文案)
-/// + 概览搬过来的那份就诊摘要(关键化验各行 / 最近就诊)。
+/// 这一屏一次要用到的两样东西:全部趋势序列 + 检验大类 chip 的目录(顺序、文案)。
 /// 与 `emergency_card_screen.dart` 的 `_CardData` 同一手法。
-typedef TrendsData = (List<TrendSeriesDto>, List<String>, VisitSummaryDto);
+typedef TrendsData = (List<TrendSeriesDto>, List<String>);
 
 class _TrendsScreenState extends State<TrendsScreen> {
   late Future<TrendsData> _future = _load();
@@ -80,53 +74,26 @@ class _TrendsScreenState extends State<TrendsScreen> {
   Future<TrendsData> _load() async {
     final injected = widget.load;
     if (injected != null) return injected();
-    final r = await Future.wait([
-      viewTrends(),
-      viewTrendPanelCatalog(),
-      viewVisitSummary(),
-    ]);
-    return (
-      r[0] as List<TrendSeriesDto>,
-      r[1] as List<String>,
-      r[2] as VisitSummaryDto,
-    );
+    final r = await Future.wait([viewTrends(), viewTrendPanelCatalog()]);
+    return (r[0] as List<TrendSeriesDto>, r[1] as List<String>);
   }
 
-  /// 「记录一下」(`s9`:血压 / 体重 / 今天不舒服 / 血糖 / 写句话)。
+  /// 「只看异常」开关。**默认关**(Task 6 controller ruling,推翻了这一屏诞生时
+  /// 「默认只看非正常项」的旧默认)。
   ///
-  /// **只有真的存下了才重新拉一次** —— 与 `ForDoctorScreen._addNote` 同一条
-  /// 规矩(BUG-4):划掉弹层什么也没写时白拉一次是浪费,而存了却不拉,用户
-  /// 看着自己刚量的血压没出现。刷新走 [_refresh],它的 `setState` 是**语句块
-  /// 不是箭头**(理由见 `known_defect_setstate_future_test.dart`)。
-  Future<void> _addRecord() async {
-    final add = widget.onRequestAddNote;
-    final saved = add != null
-        ? await add(context)
-        : await showManualEntrySheet(context);
-    if (saved != true || !mounted) return;
-    await _refresh();
-  }
-
-  /// 「只看非正常项」。**默认开。**
-  ///
-  /// 一份血常规就是 22 条序列,真实用户几年下来上百条 —— 全列出来要滚很久,而「复诊
-  /// 前看一眼」的人多半冲着被标过的那两条来。默认过滤确实是在替用户排序,所以代价
-  /// 必须付清:被隐藏了多少条**始终写在开关旁边**,一眼看得见、一下关得掉。
+  /// 旧默认的理由是「替用户排序,但代价必须付清」——那份权衡在合并列表(Task 6)
+  /// 之后站不住了:默认把正常的趋势序列也隐藏掉,会让这份列表和页尾「只测过
+  /// 一次的」折叠区混在一起分不清,到底是没有更多正常序列,还是被过滤掉了。
+  /// 合并后的列表本身已经把异常序列排在前面([trendSplit] 的稳定排序),这个
+  /// 信号已经够用,不需要再默认藏一半内容。
   ///
   /// 判据是 Rust 给的 `anyAbnormal`,**不是** UI 自己拿参考区间算的。
-  ///
-  /// 措辞用「非正常项」而不是「被标过 H/L 的」:`flag` 的定义是「有 ↑/↓/H/L 标记就
-  /// 用标记,没有就拿值和参考区间比」(`labs.rs:63`)—— 一大半 flag 是算出来的,化验
-  /// 单上根本没印箭头。说「被标过 H/L」把这半边排除在外了,不准确。
-  ///
-  /// 被隐藏的那些是「正常或判断不了」两类合一(没有参考区间就得不出结论),所以计数
-  /// 文案照实说,不写成「N 条正常」。
-  bool _abnormalOnly = true;
+  bool _abnormalOnly = false;
 
-  /// 搜索词。**非空时 [_abnormalOnly] 让位。**
-  ///
-  /// 搜索是一次明确的「我要找 X」。若此时仍按非正常过滤,用户搜「肌酐」而肌酐正常,
-  /// 得到的是一片空白 —— 他会以为自己从没查过肌酐。找得到比过滤干净重要。
+  /// 搜索词。**非空时无视 [_abnormalOnly]**——搜索是一次明确的「我要找 X」,若此时
+  /// 仍按异常过滤,用户搜「肌酐」而肌酐正常,得到的是一片空白——他会以为自己
+  /// 从没查过肌酐。找得到比过滤干净重要。但仍然**受大类约束**(与
+  /// [_selectedPanel] 叠加,不是二选一),见 `trendVisible` 的文档。
   final _queryCtl = TextEditingController();
   String _query = '';
 
@@ -139,8 +106,10 @@ class _TrendsScreenState extends State<TrendsScreen> {
   /// 页面都占掉近 90px 把第一张图挤出屏幕。
   bool _searchOpen = false;
 
-  /// 「只看非正常项」被拨动。**关掉那一档才是信号** —— 它是这个默认值
-  /// (全 App 唯一一处替用户排序的默认)唯一的检验,见 [_abnormalOnly] 的文档。
+  /// 「只看异常」被拨动。埋点方向不变(仍然分 on/off 两档,见
+  /// [TrendsFilterControl]),即使默认值从「开」改成了「关」(Task 6,见
+  /// [_abnormalOnly] 的文档)——哪个方向被点得更多,答的还是同一个问题:默认
+  /// 藏没藏错东西。
   void _onToggleAbnormalOnly(bool v) {
     Analytics.track(AnalyticsEvent.trendsFilterUsed, {
       'control': (v
@@ -183,13 +152,15 @@ class _TrendsScreenState extends State<TrendsScreen> {
     });
   }
 
-  /// 选中的检验大类 chip。`null` = 「全部」(不筛)。**选中时 [_abnormalOnly]
-  /// 同样让位** —— 与搜索同一条理由(见 [_query] 的文档):点开一个大类是「我要
-  /// 看这类检查都查过什么」,不是「我要看这类检查里出过问题的那两条」。默认过
-  /// 滤是在替用户排序,而选中大类本身已经是一次明确的缩小范围,不该再叠一层。
+  /// 选中的检验大类 chip。`null` = 「全部」(不筛)。
+  ///
+  /// **与 [_abnormalOnly] 叠加**(Task 6 起,两者不再互相让位):选中一个大类
+  /// 只是缩小范围,开着的「只看异常」照样在这个范围内继续筛——「肾功能」+
+  /// 「只看异常」= 肾功能里的异常项,是两次独立的缩小,不是二选一。
   ///
   /// 取值:一个来自 [viewTrendPanelCatalog] 的大类文案,或 [kOtherTrendPanel]
-  /// (「其他」桶)。与搜索不冲突,可以同时生效(先按大类筛,再按搜索词筛)。
+  /// (「其他」桶)。与搜索不冲突,可以同时生效(先按大类筛,再按搜索词筛;
+  /// 搜索时仍然无视 [_abnormalOnly],见 [_query] 的文档)。
   String? _selectedPanel;
 
   @override
@@ -286,22 +257,19 @@ class _TrendsScreenState extends State<TrendsScreen> {
           // (handoff.rs:369)已经把「全部点都无日期」的序列挡掉了,这里仍然独立
           // 判一次 —— 渲染器该自己知道自己画不了什么,而不是相信下发的数据。
           // 查看器在同一处留了同样的注释。
-          final (series, catalog, summary) = snap.data!;
+          final (series, catalog) = snap.data!;
           final all = series.where(trendSeriesIsRenderable).toList();
           final searching = _query.isNotEmpty;
           final panelSelected = _selectedPanel != null;
           final chips = trendPanelChips(all, catalog: catalog);
-          final shown = trendVisible(
+          final visible = trendVisible(
             all,
             query: _query,
             abnormalOnly: _abnormalOnly,
             panel: _selectedPanel,
           );
-          // 大类和搜索一样让「只看非正常项」让位(理由见 [_selectedPanel] 的文档),
-          // 此时谈不上「被过滤隐藏了多少条」,这句提示本身就不会显示。
-          final hiddenByFilter = (searching || panelSelected)
-              ? 0
-              : all.length - shown.length;
+          // 测过 ≥ 2 次(有日期的点)的才是「趋势」,单次的另放到页尾折叠。
+          final (:multi, :single) = trendSplit(visible);
 
           return RefreshIndicator(
             onRefresh: _refresh,
@@ -316,84 +284,83 @@ class _TrendsScreenState extends State<TrendsScreen> {
               ),
               children: [
                 // ① 病程档案入口。三态(没有病种包 / 装上了还没开启 / 开启了)全在
-                //    卡片自己里头,这一屏只负责把它摆在第一位(`s2`)。
+                //    卡片自己里头(`DiseaseProfileCard`),这一屏只负责把它摆在第一位。
                 DiseaseProfileCard(source: widget.profileSource),
                 const SizedBox(height: MedShape.s4),
-                // ② 「关键化验」标题 + 分类 chip。
-                const _SectionHeader(title: '关键化验'),
+                // ② 「关键化验」标题 + 分类 chip + 「只看异常」开关(末尾一颗
+                //    chip)。搜索展开且有输入时这颗开关不画(Fix round 1,
+                //    Important 3,controller ruling)——搜索本来就无视这个开关
+                //    (见 `trendVisible` 的文档),留着看得见却不生效,像是坏了。
+                //    `all` 为空时整排跟着不画(Minor 4:对着空列表的开关是噪音)。
+                const _SectionHeader('关键化验'),
                 const SizedBox(height: MedShape.s1),
-                if (chips.length > 1) ...[
+                if (all.isNotEmpty) ...[
                   PanelChipsRow(
                     chips: chips,
                     selectedPanel: _selectedPanel,
                     onSelectPanel: _onSelectPanel,
-                  ),
-                  const SizedBox(height: MedShape.s2),
-                ],
-                // ③ 关键化验各行。`s2` 画了迷你折线 —— **Stage 1 保持今天的取值
-                //    行**,折线是 Stage 2(见类文档)。
-                KeyLabsSnapshot(labs: summary.recentLabs, onOpenDoc: _openDoc),
-                const SizedBox(height: MedShape.s3),
-                // ③' 全序列折线卡。`s2` 里它是「点开那一行原地放大」(Stage 2),
-                //     Stage 1 先照旧整列摆在关键化验下面 —— 这一块才是分类 chip
-                //     和「只看非正常项」筛的东西。
-                if (all.isEmpty)
-                  const _EmptyTrends()
-                else ...[
-                  _AbnormalOnlyRow(
-                    searching: searching,
                     abnormalOnly: _abnormalOnly,
-                    hiddenByFilter: hiddenByFilter,
-                    selectedPanel: _selectedPanel,
-                    onToggle: _onToggleAbnormalOnly,
+                    onToggleAbnormal: () =>
+                        _onToggleAbnormalOnly(!_abnormalOnly),
+                    showAbnormalToggle: !searching,
                   ),
                   const SizedBox(height: MedShape.s3),
-                  for (var i = 0; i < shown.length; i++) ...[
-                    if (i > 0) const SizedBox(height: MedShape.s2),
-                    SeriesCard(series: shown[i], onOpenDoc: _openDoc),
-                  ],
-                  if (shown.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: MedShape.s5,
-                      ),
-                      child: Text(
-                        // 说的是「这些记录里没有」,不是「你没查过」—— 没搜到很可能
-                        // 是同一个指标印成了别的名字,下面这句文案就说这个。
-                        searching
-                            ? (panelSelected
-                                  ? '「${_panelChipLabel(_selectedPanel)}」里没有名字含'
-                                        '「$_query」的指标。\n清空搜索可以看这个大类下的全部。'
-                                  : '这些记录里没有名字含「$_query」的指标。\n'
-                                        '换个叫法试试 —— 同一项在不同医院可能印成「肌酐」「血肌酐」「Cr」。')
-                            // chip 只在大类下至少有一条可渲染序列时才出现(见
-                            // `trendPanelChips`),选中后过滤为空理论上到不了这里;
-                            // 留一句兜底文案而不是让页面崩掉或空白一片。
-                            : (panelSelected
-                                  ? '这个大类下没有可显示的指标。'
-                                  : '这些记录里没有非正常项。'),
-                        textAlign: TextAlign.center,
-                        style: MedType.body.copyWith(
-                          color: c.ink2,
-                          height: 1.6,
-                        ),
+                ],
+                // ③ 关键化验 + 全序列折线 合并成的一份列表:一张 `MedCard` 装下
+                //    全部「测过 ≥ 2 次」的序列,`TrendRow` 之间用 `Divider` 分。
+                //    `all` 整体为空 → 空态;`visible`(筛完的结果)整体为空 →
+                //    沿用现有那几句「没有结果」文案;`multi` 为空但 `single`
+                //    非空(筛完只剩单次序列)→ 这里两个分支都不画,交给下面的
+                //    页尾折叠去说(Fix round 1,Important 2:原来拿
+                //    `multi.isEmpty` 当判据,会把「有结果、只是都在折叠区」的
+                //    一屏错说成「没有结果」)。
+                if (all.isEmpty)
+                  const _EmptyTrends()
+                else if (visible.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: MedShape.s5,
+                    ),
+                    child: Text(
+                      // 说的是「这些记录里没有」,不是「你没查过」—— 没搜到很可能
+                      // 是同一个指标印成了别的名字,下面这句文案就说这个。
+                      searching
+                          ? (panelSelected
+                                ? '「${_panelChipLabel(_selectedPanel)}」里没有名字含'
+                                      '「$_query」的指标。\n清空搜索可以看这个大类下的全部。'
+                                : '这些记录里没有名字含「$_query」的指标。\n'
+                                      '换个叫法试试 —— 同一项在不同医院可能印成「肌酐」「血肌酐」「Cr」。')
+                          // 「只看异常」与选中大类是叠加关系(`trendVisible`,两个
+                          // 条件都作用在同一份 `visible` 上),所以选中的大类可能
+                          // 恰好被「只看异常」筛空 —— 让筛子先说话,而不是大类。
+                          : (_abnormalOnly
+                                ? '这些记录里没有非正常项。'
+                                : '这个大类下没有可显示的指标。'),
+                      textAlign: TextAlign.center,
+                      style: MedType.body.copyWith(
+                        color: c.ink2,
+                        height: 1.6,
                       ),
                     ),
-                ],
-                const SizedBox(height: MedShape.s5),
-                // ④ 最近就诊(从解散的概览搬过来)。
-                RecentVisitsCard(
-                  visits: summary.recentVisits,
-                  total: summary.patient.recordCount.toInt(),
-                  onOpenDoc: _openDoc,
-                ),
-                const SizedBox(height: MedShape.s4),
-                // ⑤ 记录一下(`s9`:血压 / 体重 / 今天不舒服 / 血糖 / 写句话)。
-                RecordEntryCard(onTap: _addRecord),
+                  )
+                else if (multi.isNotEmpty)
+                  MedCard(
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < multi.length; i++) ...[
+                          if (i > 0)
+                            Divider(height: 1, thickness: 1, color: c.line2),
+                          TrendRow(series: multi[i], onOpenDoc: _openDoc),
+                        ],
+                      ],
+                    ),
+                  ),
+                // ④ 只测过一次的序列:折叠在页尾,`single` 为空时整块不画。
+                if (single.isNotEmpty)
+                  _SinglesFold(series: single, onOpenDoc: _openDoc),
                 // 页脚只交代一次「参考区间的三种出处」,不重复在每张卡上说——
                 // 只要 `all` 非空(这一屏至少能画出一条线)就露出来,不随筛选
-                // 结果(`shown`)增减而消失,免得用户搜/筛到没有结果时反而看不
-                // 见这段说明。
+                // 结果增减而消失,免得用户搜/筛到没有结果时反而看不见这段说明。
                 if (all.isNotEmpty) ...[
                   const SizedBox(height: MedShape.s5),
                   const ProvenanceFooter(),
@@ -438,16 +405,20 @@ bool trendPanelMatches(TrendSeriesDto s, String? panel) {
   return s.panel == panel;
 }
 
-/// 该显示哪些序列。**搜索、选大类都优先于「只看非正常项」,不是叠加在它上面
-/// —— 但搜索和选大类彼此叠加(先按大类筛,再按搜索词筛)。**
+/// 该显示哪些序列。**先按大类筛,再按搜索(搜索时无视「只看异常」),最后按
+/// 「只看异常」筛——大类与开关叠加,不再互相让位。**
 ///
-/// 「只看非正常项」让位的理由对搜索和选大类是同一条:两者都是用户一次明确的
-/// 「我要看 X」——搜「肌酐」却因为肌酐一直正常被过滤成空白,他会得出「我从没
-/// 查过肌酐」这个错误结论;点开「肾功能」chip 却因为默认过滤只看到里面被标过的
-/// 那两条,他会以为这类检查平时没怎么查。找得到 / 看得全比过滤干净重要。
+/// 大类与「只看异常」曾经互相让位(选中一个大类会让开关整个失效)——Task 6
+/// controller ruling 改掉了这条:合并列表之后异常序列本就排在前面
+/// ([trendSplit] 的稳定排序),选中大类不再需要靠「放开过滤」来避免看起来
+/// 空空如也,两者叠加才是更可预期的行为(「肾功能」+「只看异常」= 肾功能里的
+/// 异常项,不是全部肾功能项)。
 ///
-/// 搜索和选大类不是同一件事(浏览 vs. 输入),所以彼此不互斥、可以同时生效:
-/// 选中「肾功能」后再搜「肌酐」,是在肾功能这个大类里再精确定位。
+/// 搜索仍然优先于「只看异常」:搜索是一次明确的「我要找 X」,若此时仍按异常
+/// 过滤,用户搜「肌酐」而肌酐正常,得到的是一片空白——他会以为自己从没查过
+/// 肌酐。找得到比过滤干净重要。但搜索仍然**受大类约束**:选中「肾功能」后再
+/// 搜「肌酐」,是在肾功能这个大类里再精确定位,不是搜全部(与选大类不是同一
+/// 件事,浏览 vs. 输入,彼此不互斥)。
 List<TrendSeriesDto> trendVisible(
   List<TrendSeriesDto> all, {
   required String query,
@@ -460,10 +431,28 @@ List<TrendSeriesDto> trendVisible(
   if (query.isNotEmpty) {
     return byPanel.where((s) => trendNameMatches(s.name, query)).toList();
   }
-  if (abnormalOnly && panel == null) {
-    return byPanel.where((s) => s.anyAbnormal).toList();
+  return abnormalOnly ? byPanel.where((s) => s.anyAbnormal).toList() : byPanel;
+}
+
+/// 测过 ≥ 2 次(有日期的点)的才是「趋势」;不到 2 次的另放到页尾折叠
+/// ([_SinglesFold])——`trendDatedPoints` 只数有日期的点,无日期的点本来就画
+/// 不到时间轴上,不算「测过」。
+///
+/// `multi` 组内**有异常的排前面**(稳定排序,各自保持 [visible] 原有的相对
+/// 顺序——Rust 给的顺序已经按名称排好,这里不重新按名字排一遍)。理由:合并
+/// 列表之后不再有默认过滤把正常序列整个藏起来(见 [trendVisible] 的 controller
+/// ruling),异常序列排前面是唯一还在的「优先看这几条」的信号。
+({List<TrendSeriesDto> multi, List<TrendSeriesDto> single}) trendSplit(
+  List<TrendSeriesDto> visible,
+) {
+  final multi = <TrendSeriesDto>[];
+  final single = <TrendSeriesDto>[];
+  for (final s in visible) {
+    (trendDatedPoints(s).length >= 2 ? multi : single).add(s);
   }
-  return byPanel;
+  final abnormal = multi.where((s) => s.anyAbnormal).toList();
+  final normal = multi.where((s) => !s.anyAbnormal).toList();
+  return (multi: [...abnormal, ...normal], single: single);
 }
 
 /// 一颗大类 chip 要展示的数据:选中态要喂给 [trendPanelMatches] 的 `panel`
@@ -486,8 +475,8 @@ class TrendPanelChipData {
 /// 给的目录顺序,即化验单印刷惯例的策展顺序)排列,「其他」殿后。
 ///
 /// **计数为 0 的大类 chip 一律不出现**——一个点开什么都没有的 chip 是纯噪音
-/// (需求原文)。计数口径是 `all` 里这条序列的数量,不受当前搜索词/「只看非
-/// 正常项」影响:chip 要稳定地告诉用户「这个大类总共有几条」,不能随手指输入
+/// (需求原文)。计数口径是 `all` 里这条序列的数量,不受当前搜索词/「只看
+/// 异常」影响:chip 要稳定地告诉用户「这个大类总共有几条」,不能随手指输入
 /// 抖动。
 ///
 /// 「全部」和「其他」是产品定的两个**兜底** chip,不是词典策展出来的第 15/16
@@ -523,37 +512,59 @@ List<TrendPanelChipData> trendPanelChips(
 String _panelChipLabel(String? panel) =>
     panel == kOtherTrendPanel ? '其他' : (panel ?? '全部');
 
-/// 「关键化验」标题下面那一排检验大类 chip(`s2` 的 `.chips`)。
+/// 「关键化验」标题下面那一排检验大类 chip([TrendPanelChipData])+ 末尾一颗
+/// 「只看异常」开关 chip(开关原来是整行 `Switch`,Task 6 收进这一排的末尾)。
 ///
 /// 这一排是**检索的主路径**;搜索收进了标题栏的放大镜(见 `_searchOpen`)。
-/// 少于两颗(只有恒在的「全部」)时调用方整排不画 —— 一整排只能点「全部」
-/// 等于什么都点不了,是纯噪音。
 ///
-/// **公开是为了可测**(与 `SeriesCard`/`ProvenanceFooter` 同一先例):
-/// 每一颗的渲染是共用的 [MedChip](Task 10 从这里的私有 `_PanelChip` 提到
-/// `med_card.dart`,R8——「一份病历」页的 `.tab2` 同一形状);这一层继续留着,
-/// 管选中态与横向滚动布局。
+/// **公开是为了可测**(与 `TrendRow`/`ProvenanceFooter` 同一先例):
+/// 每一颗大类 chip 的渲染是共用的 [MedChip];这一层继续留着,管选中态、开关态
+/// 与横向滚动布局。
 class PanelChipsRow extends StatelessWidget {
   const PanelChipsRow({
     super.key,
     required this.chips,
     required this.selectedPanel,
     required this.onSelectPanel,
+    required this.abnormalOnly,
+    required this.onToggleAbnormal,
+    required this.showAbnormalToggle,
   });
 
   final List<TrendPanelChipData> chips;
   final String? selectedPanel;
   final ValueChanged<String?> onSelectPanel;
 
+  /// 「只看异常」开关的当前值,渲染成末尾那一颗 [MedChip](`count: null`,纯
+  /// 开关,不带计数)。与 [selectedPanel] 叠加,不再互相让位——见
+  /// `trendVisible` 的文档。
+  final bool abnormalOnly;
+  final VoidCallback onToggleAbnormal;
+
+  /// 末尾那颗开关 chip 要不要画。**搜索时传 `false`**(controller ruling,
+  /// Fix round 1 Important 3)——`trendVisible` 里搜索本来就无视这个开关,
+  /// 一颗看得见却点了没用的开关比没有更误导人;关掉搜索它自然回来。
+  final bool showAbnormalToggle;
+
   @override
   Widget build(BuildContext context) {
+    final itemCount = chips.length + (showAbnormalToggle ? 1 : 0);
     return SizedBox(
       height: 36,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        itemCount: chips.length,
+        itemCount: itemCount,
         separatorBuilder: (_, _) => const SizedBox(width: MedShape.s1),
         itemBuilder: (context, i) {
+          // 末尾一颗开关 chip:与大类叠加,不再互相让位;搜索时整颗不画。
+          if (showAbnormalToggle && i == chips.length) {
+            return MedChip(
+              label: '只看异常',
+              count: null,
+              selected: abnormalOnly,
+              onTap: onToggleAbnormal,
+            );
+          }
           final chip = chips[i];
           return MedChip(
             label: chip.label,
@@ -568,79 +579,40 @@ class PanelChipsRow extends StatelessWidget {
   }
 }
 
-/// 折线卡列表上面那一行:「只看非正常项」开关,或它让位时的一句说明。
+/// 一条序列一行。**折叠态**(恒在)= 名称 + 状态词 + 78×24 迷你折线 + 最新值 +
+/// 「历年数值/图例」那一行(自测图例、参考区间图例或换算说明、测了几次)。
+/// **展开态**(点 ▾ 才画)= 96 高的真图 + 出处引文 + 未定日说明 + 「查看最新
+/// 一次的原件」——这几样是这一条序列自己的细节,折叠着的时候不该占地方
+/// (Fix round 1,Important 4,controller ruling:原来这几行不受展开态影响、
+/// 恒在,把「一行摘要」硬撑成了「一份详情」)。
 ///
-/// **紧挨着它筛的那批卡**(不是整屏最顶上)—— 它筛的是下面那列全序列折线卡,
-/// 不是上面那几行关键化验取值。
-class _AbnormalOnlyRow extends StatelessWidget {
-  const _AbnormalOnlyRow({
-    required this.searching,
-    required this.abnormalOnly,
-    required this.hiddenByFilter,
-    required this.selectedPanel,
-    required this.onToggle,
-  });
-
-  final bool searching;
-  final bool abnormalOnly;
-  final int hiddenByFilter;
-  final String? selectedPanel;
-  final ValueChanged<bool> onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    // 搜索或选中大类时开关整个让位(理由见 `trendVisible` 的文档)。留一颗
-    // 按不动的开关在那儿,只会让人以为是它没生效。
-    if (searching || selectedPanel != null) {
-      return Text(
-        searching
-            ? '搜索时不过滤 —— 正常项也一起找。'
-            : '「${_panelChipLabel(selectedPanel)}」下不过滤 —— 这类检查查过的都在这。',
-        style: MedType.secondary.copyWith(color: c.ink3),
-      );
-    }
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            // 隐藏了多少条**必须**一直写着:默认开过滤是在替用户排序,
-            // 代价就是让他随时看得见自己没在看什么。
-            abnormalOnly && hiddenByFilter > 0
-                ? '只看非正常项 · 另有 $hiddenByFilter 条正常或判断不了'
-                : '只看非正常项',
-            style: MedType.body.copyWith(color: c.ink),
-          ),
-        ),
-        Switch(value: abnormalOnly, onChanged: onToggle),
-      ],
-    );
-  }
-}
-
-/// 一条序列一张卡:卡头(项目名 + pill + 最新值)→ 折线 → 参考区间图例 + 时间跨度
-/// → 最新一次的原件入口。
+/// 这是**派生**内容:一条趋势是从许多份原件里算出来的结论,背后没有「某一张
+/// 纸」叫做「肌酐趋势」(规范 §五,那里正是拿趋势汇总卡当反例的)。可溯源由
+/// 展开区下方那颗「最新一次的原件」兑现——它指向一个具体的 `documentId`,
+/// **只在点开之后才够得到**。
 ///
-/// 这是一张派生卡:一条趋势是从许多份原件里算出来的结论,背后没有「某一张纸」
-/// 叫做「肌酐趋势」(规范 §五,那里正是拿趋势汇总卡当反例的)。可溯源由卡底那颗
-/// 「最新一次的原件」兑现 —— 它指向一个具体的 `documentId`。
-class SeriesCard extends StatefulWidget {
-  /// **公开是为了可测。** 「自测序列必须带文字图例」这条只能在渲染出来的卡上验证
-  /// —— 整屏 pump 需要 `viewTrends()` 的 Rust FFI,测试环境没有原生库。与
+/// **不再自带外层 `MedCard`**(Task 6 由「一条序列一张卡」改名重排):现在
+/// 「关键化验」整份列表共用**一张**卡([_TrendsScreenState.build] 里的那个
+/// `MedCard(Column([TrendRow, Divider, TrendRow, …]))`),行与行之间靠
+/// `Divider` 分,不再各自一张卡——那张卡内部已经垫了一层透明 `Material`
+/// (`MedCard` 自己的 R24),这一行的 `InkWell` 不需要再单独垫一层。
+class TrendRow extends StatefulWidget {
+  /// **公开是为了可测。** 「自测序列必须带文字图例」这条只能在渲染出来的行上
+  /// 验证 —— 整屏 pump 需要 `viewTrends()` 的 Rust FFI,测试环境没有原生库。与
   /// `manualEntryRangeError` 同一个先例:把被测单元暴露出来,而不是把断言降级成
   /// 「只测纯函数、渲染层靠肉眼」。
-  const SeriesCard({super.key, required this.series, required this.onOpenDoc});
+  const TrendRow({super.key, required this.series, required this.onOpenDoc});
 
   final TrendSeriesDto series;
   final void Function(int docId) onOpenDoc;
 
   @override
-  State<SeriesCard> createState() => _SeriesCardState();
+  State<TrendRow> createState() => _TrendRowState();
 }
 
-/// 现在是 `StatefulWidget`——趋势行按 mockup `.tr` 加了「点开原地展开」
-/// (`▾`/`▴`),需要一个本地的展开态。
-class _SeriesCardState extends State<SeriesCard> {
+/// `StatefulWidget`——行按 mockup `.tr` 有「点开原地展开」(`▾`/`▴`),需要一个
+/// 本地的展开态。
+class _TrendRowState extends State<TrendRow> {
   bool _expanded = false;
 
   @override
@@ -648,8 +620,8 @@ class _SeriesCardState extends State<SeriesCard> {
     final c = MedColors.of(context);
     final series = widget.series;
     final pts = trendDatedPoints(series);
-    // 调用方已经 gate 过 `trendSeriesIsRenderable`,这里必不为空;真为空也只是
-    // 少画一张卡,不崩。
+    // 调用方已经从 `trendVisible`/`trendSplit` 过滤过,这里 pts 必不为空;真为
+    // 空也只是少画一行,不崩。
     if (pts.isEmpty) return const SizedBox.shrink();
 
     final last = pts.last;
@@ -661,161 +633,153 @@ class _SeriesCardState extends State<SeriesCard> {
     // 最后一个点的(见 DTO 文档)。这里显示的就是最后一个点,两者其实同源。
     final unit = last.unit ?? series.unit;
     final undated = series.points.length - pts.length;
-    // 「第二行历年数值」的字阶(brief §形):12 · ink3 · tabular · 400。这一屏
-    // 里几段图例/引文原来各写各的 `secondary`,统一成这一档,颜色/字号不变文字。
+    // 「第二行历年数值」的字阶(brief §形):12 · ink3 · tabular · 400。
     final metaStyle = MedType.caption.copyWith(
       color: c.ink3,
       fontFeatures: MedType.tabular,
       fontWeight: FontWeight.w400,
     );
 
-    return MedCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // ── 趋势行本体(mockup `.tr`):名称+pill | 78×24 小折线 | 数值 + ▾ ──
-          Material(
-            type: MaterialType.transparency,
-            child: InkWell(
-              onTap: () => setState(() => _expanded = !_expanded),
-              child: Container(
-                // 左内边距 s3(16):减法稿去掉 4px 色条前是 s2(12)+4px 色条=16,
-                // 与卡片下方分块(同样 s3 起手)对齐;色条没了,内边距直接改 s3,
-                // 不然内容会比卡里其余内容整体左移 4px。
-                padding: const EdgeInsets.fromLTRB(
-                  MedShape.s3,
-                  MedShape.s2,
-                  MedShape.s3,
-                  MedShape.s2,
-                ),
-                child: Column(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── 折叠态本体(mockup `.tr`):名称+状态词 | 78×24 迷你折线 | 数值 + ▾ ──
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(
+              MedShape.s3,
+              MedShape.s2,
+              MedShape.s3,
+              MedShape.s2,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Wrap(
-                            spacing: MedShape.s1,
-                            runSpacing: 4,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                series.name,
-                                style: MedType.subtitle.copyWith(color: c.ink),
-                              ),
-                              ?word,
-                            ],
+                    Expanded(
+                      child: Wrap(
+                        spacing: MedShape.s1,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            series.name,
+                            style: MedType.subtitle.copyWith(color: c.ink),
                           ),
-                        ),
-                        const SizedBox(width: MedShape.s2),
-                        // 78×24 的小折线占位。**Stage 3 只管这一行的样式**;真折线(数据 → 路径)是
-                        // Stage 2 的活,到时候把这个 SizedBox 换成 TrendChart 的 mini 版即可,行的布局不用动。
-                        const SizedBox(width: 78, height: 24),
-                        const SizedBox(width: MedShape.s2),
-                        // 最新值用 `value` 字阶(16 · 500 · 等宽表格数字,mockup
-                        // `.tr .v`)。sparkSVG 是把它用 10px 画在图里的 —— 10 低于
-                        // 字阶下限 12,而且画布里的字不跟系统字号放大。放在行里
-                        // 既更大也更可放大。
-                        //
-                        // Fix round 1(控制者裁定 R19):这一簇原来是
-                        // `Row(mainAxisSize: min)`,长名称 + 长单位在 2× 字号下会
-                        // 把它顶出卡外(`RenderFlex overflowed`)。换成有宽度上限
-                        // 的 `Wrap`——装不下时单位/箭头自己换行,不越界。brief
-                        // §形「单位小字可折到数值下一行」本来就是为这种情况写的,
-                        // 只是之前只在化验行(`LabLine`)接了,这里漏了。
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(
-                            maxWidth: MedBrand.trendValueMaxWidth,
-                          ),
-                          child: Wrap(
-                            alignment: WrapAlignment.end,
-                            crossAxisAlignment: WrapCrossAlignment.end,
-                            spacing: 4,
-                            children: [
-                              Text(
-                                fmtLabNumber(last.value),
-                                style: MedType.value.copyWith(
-                                  color: labStatusColor(context, status),
-                                ),
-                              ),
-                              if (unit != null && unit.isNotEmpty)
-                                Text(
-                                  unit,
-                                  style: MedType.secondary.copyWith(color: c.ink3),
-                                ),
-                              // `▾`/`▴`:mockup 用一个文字字形,这里改用 Icon——
-                              // 与本文件其余展开/收起箭头(`_TimelineItem` 的
-                              // `expand_more`/`expand_less`)同一个画法,不额外
-                              // 造一个新的可见字符串。
-                              Icon(
-                                _expanded ? Icons.expand_less : Icons.expand_more,
-                                size: 18,
-                                color: c.ink3,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                          ?word,
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 4),
-
-                    // ── 第二行:历年数值/图例(mockup `.tr .m`,跨满整行)──
-                    Wrap(
-                      spacing: MedShape.s2,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        // 自测序列必须**用文字**说出来。图上的空心点是区分手段,但形状不能
-                        // 是唯一载体 —— 没有图例的形状编码等于没有编码,没人知道空心圈是
-                        // 「这是你自己填的」。这与 `lab_status.dart` 那条同源:状态同时编码
-                        // 在状态词的文字和刻度条上圆点的颜色/位置上,少任何一个就有一类
-                        // 用户读不到结论。
-                        //
-                        // 同屏的化验快照([KeyLabsSnapshot])和「给医生看」
-                        // (`visit_summary_sheet.dart` 的 `_LabRow`)早就在日期旁标了
-                        // 「· 家测」,只有这张折线卡漏了。措辞与它们一致,不另造一套。
-                        if (series.selfMeasured) _SelfMeasuredLegend(style: metaStyle),
-                        // 图例本身只加一句短后缀交代出处:医院化验的出处是化验单原件
-                        // 本身,不新造一个跳转入口 —— 卡底「查看最新一次的原件」按钮
-                        // 已经能兑现它,这里只是指一下。家测序列的出处(指南/共识引文)
-                        // 往往一句话放不下,另起一段显示在展开区下面,见下方
-                        // `refSourceCitation`。
-                        if (ref != null)
-                          _RefLegend(text: trendRefLegendText(series, ref), style: metaStyle)
-                        // 家测但**没有**参考区间(体温/体重/血糖)—— 不是漏配,是
-                        // `self_entry::home_ref_range` 的拍板决定(查不到出处就不给
-                        // 区间)。裸值旁边说一句,免得用户以为是 bug。
-                        else if (series.selfMeasured)
-                          Text(trendNoHomeRangeNote, style: metaStyle),
-                        // 这条线上混了不同医院/不同单位的报告,Rust 把值和参考区间一起
-                        // 换算到了规范单位(否则连不成一条线)。**说出来** —— 屏幕上
-                        // 这些数字在用户手里那张化验单上找不到,不说等于改写原文。
-                        if (series.valuesConverted)
-                          Text(unitConvertedNote(unit), style: metaStyle),
-                        Text(
-                          pts.length == 1
-                              ? '只有 ${pts.first.date} 这一次'
-                              : '${pts.first.date} 起 ${pts.length} 次',
-                          style: metaStyle,
-                        ),
-                      ],
+                    const SizedBox(width: MedShape.s2),
+                    // 78×24 迷你折线:compact 模式只画线和点,不画参考带/末点
+                    // 光环(`TrendChart` 的 `compact` 分支);不描画动画——折叠态
+                    // 是默认呈现,不该每次进页面都跑一遍描线动画。
+                    SizedBox(
+                      width: 78,
+                      height: 24,
+                      child: TrendChart(
+                        series: series,
+                        height: 24,
+                        compact: true,
+                        animate: false,
+                      ),
+                    ),
+                    const SizedBox(width: MedShape.s2),
+                    // 最新值用 `value` 字阶(16 · 500 · 等宽表格数字,mockup
+                    // `.tr .v`)。`Wrap` 带宽度上限:装不下时单位/箭头自己换行,
+                    // 不越界(fix round 1 R19,长名称 + 长单位在 2× 字号下会把
+                    // 一个不设上限的 `Row` 顶出卡外)。
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: MedBrand.trendValueMaxWidth,
+                      ),
+                      child: Wrap(
+                        alignment: WrapAlignment.end,
+                        crossAxisAlignment: WrapCrossAlignment.end,
+                        spacing: 4,
+                        children: [
+                          Text(
+                            fmtLabNumber(last.value),
+                            style: MedType.value.copyWith(
+                              color: labStatusColor(context, status),
+                            ),
+                          ),
+                          if (unit != null && unit.isNotEmpty)
+                            Text(
+                              unit,
+                              style: MedType.secondary.copyWith(color: c.ink3),
+                            ),
+                          Icon(
+                            _expanded ? Icons.expand_less : Icons.expand_more,
+                            size: 18,
+                            color: c.ink3,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
-              ),
+                const SizedBox(height: 4),
+
+                // ── 第二行:历年数值/图例(mockup `.tr .m`,跨满整行)──
+                Wrap(
+                  spacing: MedShape.s2,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    // 自测序列必须**用文字**说出来。图上的空心点是区分手段,但形状不能
+                    // 是唯一载体 —— 没有图例的形状编码等于没有编码,没人知道空心圈是
+                    // 「这是你自己填的」。这与 `lab_status.dart` 那条同源:状态同时编码
+                    // 在状态词的文字和刻度条上圆点的颜色/位置上,少任何一个就有一类
+                    // 用户读不到结论。
+                    if (series.selfMeasured)
+                      _SelfMeasuredLegend(style: metaStyle),
+                    // 图例本身只加一句短后缀交代出处:医院化验的出处是化验单原件
+                    // 本身,不新造一个跳转入口 —— 展开区下方「查看最新一次的
+                    // 原件」按钮已经能兑现它,这里只是指一下。家测序列的出处
+                    // (指南/共识引文)往往一句话放不下,另起一段显示在展开区
+                    // 下面,见下方 `refSourceCitation`。
+                    if (ref != null)
+                      _RefLegend(
+                        text: trendRefLegendText(series, ref),
+                        style: metaStyle,
+                      )
+                    // 家测但**没有**参考区间(体温/体重/血糖)—— 不是漏配,是
+                    // `self_entry::home_ref_range` 的拍板决定(查不到出处就不给
+                    // 区间)。裸值旁边说一句,免得用户以为是 bug。
+                    else if (series.selfMeasured)
+                      Text(trendNoHomeRangeNote, style: metaStyle),
+                    // 这条线上混了不同医院/不同单位的报告,Rust 把值和参考区间一起
+                    // 换算到了规范单位(否则连不成一条线)。**说出来** —— 屏幕上
+                    // 这些数字在用户手里那张化验单上找不到,不说等于改写原文。
+                    if (series.valuesConverted)
+                      Text(unitConvertedNote(unit), style: metaStyle),
+                    Text(
+                      pts.length == 1
+                          ? '只有 ${pts.first.date} 这一次'
+                          : '${pts.first.date} 起 ${pts.length} 次',
+                      style: metaStyle,
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
+        ),
 
-          // ── 展开区(mockup `.xp`):点开原地放大。Stage 3 只给它样式(底色、
-          // 82px 高),真折线是 Stage 2 的活。减法稿 2026-09-22:不再画左色条。──
-          if (_expanded)
-            Container(
-              height: 82,
-              decoration: const BoxDecoration(color: MedBrand.expandedChartBg),
-            ),
-
-          // ── 其余:出处引文 / 未定日说明 / 查看原件 —— 不受展开态影响,恒在 ──
+        // ── 展开态:点开才画,折叠时不占地方(Fix round 1,Important 4)──
+        // 真图(96 高,底色 expandedChartBg)+ 出处引文 / 未定日说明 / 查看
+        // 原件——这几样是这一条序列自己的详情,原来跟折叠态无关地恒在,现在
+        // 跟着 `_expanded` 一起收起/展开。
+        if (_expanded) ...[
+          Container(
+            padding: const EdgeInsets.all(MedShape.s2),
+            color: MedBrand.expandedChartBg,
+            child: TrendChart(series: series),
+          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(
               MedShape.s3,
@@ -833,7 +797,10 @@ class _SeriesCardState extends State<SeriesCard> {
                 if (refSourceCitation != null) ...[
                   Text(
                     '出处:$refSourceCitation',
-                    style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
+                    style: MedType.secondary.copyWith(
+                      color: c.ink3,
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 4),
                 ],
@@ -843,7 +810,10 @@ class _SeriesCardState extends State<SeriesCard> {
                 if (undated > 0) ...[
                   Text(
                     '另有 $undated 次没能从报告上定出日期,画不到时间轴上;它们在「病历」里照样能翻到。',
-                    style: MedType.secondary.copyWith(color: c.ink3, height: 1.4),
+                    style: MedType.secondary.copyWith(
+                      color: c.ink3,
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 4),
                 ],
@@ -854,7 +824,9 @@ class _SeriesCardState extends State<SeriesCard> {
                     onPressed: () => widget.onOpenDoc(last.documentId),
                     style: TextButton.styleFrom(
                       foregroundColor: c.sealInk,
-                      padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: MedShape.s1,
+                      ),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
@@ -865,7 +837,7 @@ class _SeriesCardState extends State<SeriesCard> {
             ),
           ),
         ],
-      ),
+      ],
     );
   }
 }
@@ -887,7 +859,7 @@ class _SeriesCardState extends State<SeriesCard> {
 class _SelfMeasuredLegend extends StatelessWidget {
   const _SelfMeasuredLegend({required this.style});
 
-  /// 「历年数值」那一行的字阶(`SeriesCard` 的 `metaStyle`)——只此一处调用,
+  /// 「历年数值」那一行的字阶(`TrendRow` 的 `metaStyle`)——只此一处调用,
   /// 颜色/字号跟着行走,不在这里另存一份裸样式。
   final TextStyle style;
 
@@ -913,8 +885,8 @@ class _SelfMeasuredLegend extends StatelessWidget {
   }
 }
 
-/// 参考区间图例上的文字。医院化验序列的出处就是化验单原件本身 —— 卡底已经有
-/// 「查看最新一次的原件」入口(见 [SeriesCard]),这里只是**指一下**,不新造
+/// 参考区间图例上的文字。医院化验序列的出处就是化验单原件本身 —— 展开区下方
+/// 已经有「查看最新一次的原件」入口(见 [TrendRow]),这里只是**指一下**,不新造
 /// 一个跳转;家测序列的出处是一句可能很长的指南/共识引文,放不进这一行短图例,
 /// 另起一段显示,见 [trendRefSourceCitation]。
 String trendRefLegendText(TrendSeriesDto series, String ref) => series.selfMeasured
@@ -997,7 +969,7 @@ const _hypertensionGuidelineUrl =
 /// 那条现在能给出经过验证的链接(见 [_hypertensionGuidelineUrl]),其余两类
 /// 只有文字说明,这一段把三类都说全,不是只给能链接的那类交代。
 ///
-/// **公开是为了可测**,与 [SeriesCard] 同一个先例(见那里的文档):整屏
+/// **公开是为了可测**,与 [TrendRow] 同一个先例(见那里的文档):整屏
 /// `TrendsScreen` 需要 `viewTrends()` 的 Rust FFI,测试环境没有原生库,只能
 /// 把这块单独暴露出来,直接 pump 它来测文案是否齐全。
 class ProvenanceFooter extends StatelessWidget {
@@ -1101,315 +1073,131 @@ class _EmptyTrends extends StatelessWidget {
   }
 }
 
-// ── 从概览搬过来的两块 ───────────────────────────────────────────────────────
-//
-// 概览整屏在 Task 9 解散。**先搬家再拆房**:中间不能有一版是两处都没有。
-// 逻辑一字未改,只改了三处名字与文案(分区标题按词表改成「最近就诊」、空态改口、
-// 「看趋势」那颗自链接去掉 —— 人已经在趋势里了)。
+// 「关键化验各行」(原 `KeyLabsSnapshot`)与「最近就诊」(原
+// `RecentVisitsCard`/`_VisitCard`/`visitCardShowsDate`/`visitCardDesc`)
+// Task 6 全部删掉:前者并进了上面的 `TrendRow` 列表(折叠态就是它原来的信息
+// 量,多一条迷你折线);后者没有下家——「病历」tab 本来就是完整列表,这一屏
+// 不需要再摆一份摘要。
 
-/// 「你怎么样」—— 关键化验各行(`s2` 的 `.card` 那一块)。
+/// 页尾折叠:测过不到 2 次(没有折线可言)的序列,收进一行「只测过一次的 N
+/// 项」里,点开按化验行([LabLine])样式列出——名称 · 值 · 状态词 · 日期,
+/// 没有折线。
 ///
-/// 数据是 `recentLabs`:每条序列取**最新一个带日期的点**,按日期倒序。也就是说这
-/// 张卡回答的是「我最近一次测的这些指标是多少」,**不是**「我现在的身体状况」。
-///
-/// **标题不在这里画。** 「关键化验」那行抬头连同分类 chip 由屏幕自己摆在上面
-/// (`s2` 的固定顺序),这块只负责各行 —— 搬过来之前它自带一个「最近的关键化验 /
-/// 看趋势」的抬头,那颗「看趋势」在这一屏上是指向自己的链接。
-///
-/// 卡里每一行来自不同的原件,这张卡本身不对应任何一张纸。可溯源由每一行右侧的
-/// 箭头兑现(点进去就是那一次化验的那份报告)。
-///
-/// **公开是为了可测**,与 [SeriesCard] 同一先例:整屏要 FFI,这一块不要。
-class KeyLabsSnapshot extends StatelessWidget {
-  const KeyLabsSnapshot({
-    super.key,
-    required this.labs,
-    required this.onOpenDoc,
-  });
+/// **`series` 为空时调用方不渲染这个 widget**(见 [_TrendsScreenState.build]
+/// 的 `single.isNotEmpty` 判断),这里不再自己判空。
+class _SinglesFold extends StatefulWidget {
+  const _SinglesFold({required this.series, required this.onOpenDoc});
 
-  final List<VisitLabDto> labs;
+  final List<TrendSeriesDto> series;
   final void Function(int docId) onOpenDoc;
 
   @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    return MedCard(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
-        child: labs.isEmpty
-            ? Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  MedShape.s4,
-                  MedShape.s2,
-                  MedShape.s4,
-                  MedShape.s2,
-                ),
-                // 空态说的是我们**观察到**什么,不是用户身上有没有事。
-                child: Text(
-                  '已添加的病历里还没有读到可显示的化验数值。拍一张化验单试试。',
-                  style: MedType.body.copyWith(color: c.ink2, height: 1.5),
-                ),
-              )
-            : Column(
-                children: [
-                  for (var i = 0; i < labs.length; i++) ...[
-                    if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
-                    LabLine(
-                      name: labs[i].name,
-                      value: labs[i].value,
-                      unit: labs[i].unit,
-                      flag: labs[i].flag,
-                      refLow: labs[i].refLow,
-                      refHigh: labs[i].refHigh,
-                      // 见 visit_summary_sheet.dart 的 `_LabRow` 同一处注释。
-                      meta: [
-                        labs[i].date,
-                        if (labs[i].selfMeasured) '家测',
-                        if (labs[i].valuesConverted)
-                          unitConvertedNote(labs[i].unit),
-                      ].join(' · '),
-                      // 云抽取图片档没能逐字核对上的行:照常显示,标出来。
-                      unverified: labs[i].unverified,
-                      onTap: () => onOpenDoc(labs[i].documentId),
-                    ),
-                  ],
-                ],
-              ),
-      ),
-    );
-  }
+  State<_SinglesFold> createState() => _SinglesFoldState();
 }
 
-/// 「东西在哪」—— 最近就诊的几份(`s2` 的「最近就诊」)。
-///
-/// 每一条各自一张卡,点进哪里按文档数分:
-///  · 只含一份文档的记录 → 点了就是那一份原件;
-///  · 一次就诊含好几份 → 点了是去「病历」里展开那一组。
-class RecentVisitsCard extends StatelessWidget {
-  const RecentVisitsCard({
-    super.key,
-    required this.visits,
-    required this.total,
-    required this.onOpenDoc,
-  });
+class _SinglesFoldState extends State<_SinglesFold> {
+  bool _open = false;
 
-  final List<VisitRecordDto> visits;
-  final int total;
-  final void Function(int docId) onOpenDoc;
+  /// 单次序列的唯一一个点,按化验行样式画一行:没有折线可言,`LabLine` 已经是
+  /// 「名称 · 值 · 状态词 · 参考区间」这套渲染的唯一实现,不再另写一份。
+  ///
+  /// `meta` 拼「日期 · 家测 · 已统一换算」(Fix round 1,Important 1)——原来
+  /// 只传了日期,把这两个标注漏掉了。措辞与 `KeyLabsSnapshot`(已删)当年拼
+  /// 同一份 `meta` 时一致(`lab.date`/`'家测'`/`unitConvertedNote(...)`,同一句
+  /// 「· 家测」`_SelfMeasuredLegend`/`visit_summary_sheet.dart` 也在用),不是
+  /// 新造的说法:一条只测过一次的家测序列(比如只量过一次的血压)混进这个
+  /// 折叠区,没有这两个标注就会被误读成医院化验值。
+  ///
+  /// `trendDatedPoints(s).single`:调用方(`_TrendsScreenState.build` 的
+  /// `trendSplit`)已经保证 `single` 桶里的序列**恰好**有一个有日期的点——
+  /// 整条序列在进这个桶之前先经过 `trendSeriesIsRenderable` 过滤(至少一个点
+  /// 带日期),再被 `trendSplit` 按「< 2」分进 `single`,两条约束叠起来就是
+  /// 「恰好 1 个」,`.single` 不会抛。
+  Widget _row(TrendSeriesDto s) {
+    final p = trendDatedPoints(s).single;
+    return LabLine(
+      name: s.name,
+      value: p.value,
+      unit: p.unit ?? s.unit,
+      flag: p.flag,
+      refLow: s.refLow,
+      refHigh: s.refHigh,
+      meta: [
+        p.date,
+        if (s.selfMeasured) '家测',
+        if (s.valuesConverted) unitConvertedNote(p.unit ?? s.unit),
+      ].join(' · '),
+      unverified: p.unverified,
+      onTap: () => widget.onOpenDoc(p.documentId),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SectionHeader(
-          title: '最近就诊',
-          actionLabel: '全部 $total 份',
-          onAction: goToRecords,
-        ),
-        const SizedBox(height: MedShape.s1),
-        if (visits.isEmpty)
-          MedCard(
-            child: Padding(
-              padding: const EdgeInsets.all(MedShape.s4),
-              child: Text(
-                '还没有添加过病历。',
-                style: MedType.body.copyWith(color: c.ink2),
+        InkWell(
+          onTap: () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, MedShape.s4, 4, 6),
+            // 正文里的可点行,最小可点高度钉在 48(Minor 8,与
+            // `visit_summary_sheet.dart` 「在用药」标题行同一手法)——文字自己
+            // 那一行不到 48,不能让可点区域只剩文字那么高。
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '只测过一次的 ${widget.series.length} 项',
+                      style: MedType.secondary.copyWith(color: c.ink3),
+                    ),
+                  ),
+                  Icon(
+                    _open ? Icons.expand_less : Icons.expand_more,
+                    size: 18,
+                    color: c.ink3,
+                  ),
+                ],
               ),
             ),
-          )
-        else
-          for (var i = 0; i < visits.length; i++) ...[
-            if (i > 0) const SizedBox(height: MedShape.s2),
-            _VisitCard(visit: visits[i], onOpenDoc: onOpenDoc),
-          ],
+          ),
+        ),
+        if (_open)
+          MedCard(
+            child: Column(
+              children: [
+                for (var i = 0; i < widget.series.length; i++) ...[
+                  if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
+                  _row(widget.series[i]),
+                ],
+              ],
+            ),
+          ),
       ],
     );
   }
 }
 
-/// 右侧那一列日期该不该渲染 —— 标题里已经带了就不重复。
-///
-/// 公开是为了可测:整屏 pump 需要 `viewVisitSummary()` 的 Rust FFI,测试环境没有
-/// 原生库。与 `manualEntryRangeError`、`SeriesCard` 同一先例。
-bool visitCardShowsDate({required String title, required String date}) =>
-    date.isNotEmpty && !title.contains(date);
-
-/// 副标题文案 —— 标题里已有的类型不重复,份数(多份时)照常给。全被涵盖时返回空串,
-/// 调用方据此整行不渲染。
-String visitCardDesc({
-  required String title,
-  required String kindLabel,
-  required int docCount,
-}) => [
-  if (!title.contains(kindLabel)) kindLabel,
-  if (docCount != 1) '$docCount 份记录',
-].join(' · ');
-
-class _VisitCard extends StatelessWidget {
-  const _VisitCard({required this.visit, required this.onOpenDoc});
-
-  final VisitRecordDto visit;
-  final void Function(int docId) onOpenDoc;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    final single = visit.documentIds.length == 1;
-    final date = fmtDate(visit.date);
-    final kindLabel = visitKindLabel(visit.kind);
-    final title = visit.title ?? kindLabel;
-
-    // **标题里已经有的东西不再重复说一遍。**
-    //
-    // 标题来自病历箱里的就诊组标题,而它常常已经把类型和日期都拼进去了
-    // (示例数据里就是 `门诊 · 2026-06-20`)。此前这里无条件在右侧再渲染一次日期、
-    // 在副标题里再渲染一次类型,于是一张卡把同样的信息说三遍:
-    //
-    //     门诊 · 2026-06-20        2026-06-20
-    //     门诊
-    //
-    // 三处各自都对,合起来是坏的。改成按标题的实际内容裁剪。
-    final showDate = visitCardShowsDate(title: title, date: date);
-    final desc = visitCardDesc(
-      title: title,
-      kindLabel: kindLabel,
-      docCount: visit.documentIds.length,
-    );
-
-    return MedCard(
-      child: InkWell(
-        onTap: single
-            ? () => onOpenDoc(visit.documentIds.first.toInt())
-            // 多份的一组在这里不展开 —— 展开是「病历」的事,那里才有删除、
-            // 子文档列表这些配套。这里只负责把人送过去。
-            : goToRecords,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: MedShape.s3,
-            vertical: MedShape.s2,
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            style: MedType.subtitle.copyWith(color: c.ink),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (showDate) ...[
-                          const SizedBox(width: MedShape.s1),
-                          Text(
-                            date,
-                            style: MedType.secondary.copyWith(
-                              color: c.ink3,
-                              fontFeatures: MedType.tabular,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    // 全被标题涵盖时整行不渲染 —— 空的副标题只会留一道空隙。
-                    if (desc.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        desc,
-                        style: MedType.secondary.copyWith(color: c.ink2),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              Icon(Icons.chevron_right, size: 20, color: c.ink3),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 分区标题 + 右侧的一个次级动作。与 `archive_screen.dart` 的 `MonthHeader`
-/// 同一档:13 号 `ink3` 左、14·500 `seal` 右,padding `0 4`。
+/// 分区标题:13 号 `ink3`,padding 左右 4。
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, this.actionLabel, this.onAction});
+  const _SectionHeader(this.title);
 
   final String title;
-  final String? actionLabel;
-  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(title, style: MedType.secondary.copyWith(color: c.ink3)),
-          ),
-          if (actionLabel != null)
-            TextButton(
-              onPressed: onAction,
-              style: TextButton.styleFrom(
-                foregroundColor: c.seal,
-                padding: const EdgeInsets.symmetric(horizontal: MedShape.s1),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(actionLabel!, style: MedType.secondary.copyWith(
-                  fontSize: 14, color: c.seal, fontWeight: FontWeight.w500,
-                  fontVariations: MedType.w500)),
-            ),
-        ],
-      ),
+      child: Text(title, style: MedType.secondary.copyWith(color: c.ink3)),
     );
   }
 }
 
-// ── `s2` 上的两张新卡 ────────────────────────────────────────────────────────
-//
 // 「病程档案」入口卡搬去了 `widgets/disease_profile_card.dart`:它现在是有状态、
 // 要取数的一块(装着哪个包、开没开启、包给的摘要),不再是这一屏里的一张死卡。
-
-/// 「记录一下」入口(`s2` 底部那颗;点开是 `s9`:血压 / 体重 / 今天不舒服 /
-/// 血糖 / 写句话)。从解散的概览快捷操作搬过来 —— 自己填的数和医院的数看的是
-/// 同一件事,归属在「趋势」。
-class RecordEntryCard extends StatelessWidget {
-  const RecordEntryCard({super.key, this.onTap});
-
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = MedColors.of(context);
-    // mockup 的 `.btn.ghost`:透明底、`seal` 字、字重 400、无阴影 —— **不用**
-    // `MedPrimaryButton`(那是一块颜色面,会让这一屏的颜色面预算从 0 变成 1)。
-    return Material(
-      type: MaterialType.transparency,
-      child: ListTile(
-        leading: Icon(Icons.edit_note_outlined, color: c.seal),
-        title: Text(
-          '记录一下',
-          style: MedType.body.copyWith(color: c.seal, fontWeight: FontWeight.w400),
-        ),
-        subtitle: Text(
-          '自己量的血压、体重,或者想记一句话',
-          style: MedType.secondary.copyWith(color: c.ink2),
-        ),
-        onTap: onTap,
-      ),
-    );
-  }
-}
+// 「记录一下」入口(原来住在这里的 `RecordEntryCard`)Task 5 挪进了「病历」
+// tab 的「添加」四选一(`import_flow.dart` 的 `AddSheetBody`)。

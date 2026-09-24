@@ -129,13 +129,23 @@ const Map<String, String> _kReminderStateLabel = {
   'pending': '待核',
 };
 
+/// `state` → 状态标签(`_kReminderStateLabel`)。**公开**:首页待办卡
+/// (`widgets/home_todo.dart` 的 `reminderNote`)与本页 [_ReminderRow] 共用同一份
+/// 映射,不许各写各的措辞。
+String reminderStateLabel(dynamic state) => _kReminderStateLabel[state] ?? '未知';
+
+/// 「超期 N 天」。**公开**,理由同 [reminderStateLabel]——首页待办卡的超期行要
+/// 显示与本页逐字相同的这句话,不重写第二份措辞。
+String reminderOverdueNote(dynamic overdueDays) => '超期 $overdueDays 天';
+
 /// `hcq_body` 的体重来源(`rules.rs::latest_weight_kg`),只有这两个值。
 const Map<String, String> _kWeightSourceLabel = {
   'self_reported': '自测',
   'record': '病历',
 };
 
-String? _basisLabel(dynamic v) =>
+/// `basis` → 出处标签(`_kBasisLabel`)。**公开**,理由同 [reminderStateLabel]。
+String? reminderBasisLabel(dynamic v) =>
     v == null ? null : (_kBasisLabel[v] ?? v.toString());
 
 String _verdictLabel(dynamic v) => _kVerdictLabel[v] ?? '未知';
@@ -959,10 +969,8 @@ class _ReminderRow extends StatelessWidget {
     // `pending:true` = 这条规则的数没核实,只显示不算到期——永远显示成「待核」,
     // 不许显示成一个算出来的到期日(brief 的硬约束)。
     final pending = item['pending'] == true;
-    final stateLabel = pending
-        ? '待核'
-        : (_kReminderStateLabel[item['state']] ?? '未知');
-    final basis = _basisLabel(item['basis']);
+    final stateLabel = pending ? '待核' : reminderStateLabel(item['state']);
+    final basis = reminderBasisLabel(item['basis']);
     final text =
         (item['text'] as String?) ??
         (item['action'] as String?) ??
@@ -997,7 +1005,7 @@ class _ReminderRow extends StatelessWidget {
         ),
         meta: [
           (!pending && item['state'] == 'overdue' && overdueDays != null)
-              ? '超期 $overdueDays 天'
+              ? reminderOverdueNote(overdueDays)
               : null,
           diseaseState,
           [

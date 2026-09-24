@@ -141,7 +141,8 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
     }
     if (!mounted) return;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const ArchiveScreen()),
+      // 待办卡(档案到期 + 30 天异常)只在个人模式出现——见 `showTodo` 类文档。
+      MaterialPageRoute<void>(builder: (_) => const ArchiveScreen(showTodo: false)),
     );
     await _refresh();
   }
