@@ -1,5 +1,7 @@
-// 「病程档案」入口卡 —— 「趋势」tab 自上而下的**第一块**(mockup `s2`:
-// 病程档案入口 → 关键化验 → 最近就诊 → 记录一下)。
+// 「病程档案」入口卡 —— 「趋势」tab 自上而下的**第一块**(病程档案入口 →
+// 「关键化验」标题 + 分类 chip + 只看异常开关 → 合并后的趋势行列表 → 只测过
+// 一次的折叠 → 参考区间出处。「记录一下」Task 5 挪去了「病历」tab 的「添加」
+// 四选一,「最近就诊」Task 6 整块删掉,都不再是这一屏的一站)。
 //
 // 三态,各说各的实话:
 //  · **一个病种包都没装上** —— 只说「还没准备好」,并**静默**拉一次清单
@@ -106,16 +108,18 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
     });
   }
 
-  /// 开启:记一条 `enable`,**记上了才重算** —— 开关状态由事件算出来,不在本地猜。
+  /// 开启:记一条 `enable`。**不在这里显式重算**——记上了 `record()` 会
+  /// `bumpVaultRevision()`,这张卡自己就监听着这个信号(`_onVaultChanged`),
+  /// 记上的那一刻已经重算过一次;这里再调一次 `_reload()` 只是把同一份投影
+  /// 白算第二遍。开关状态由事件算出来,不在本地猜——「没记上」那一态仍然
+  /// 原地说清楚,不重算。
   Future<void> _enable(String packageId) async {
     if (_busy) return;
     setState(() => _busy = true);
     final ok = await _source.record('enable', packageId);
     if (!mounted) return;
     setState(() => _busy = false);
-    if (ok) {
-      _reload();
-    } else {
+    if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         appSnackBar(content: const Text('这次没记上 —— 再点一下试试')),
       );

@@ -101,7 +101,10 @@ void main() {
     await gotoTab(tester, HomeTab.trends);
     await waitFor(tester, find.text('收缩压'), what: '趋势屏上的「收缩压」卡');
 
-    // 「家测」文字图例:形状(空心圈)不能是唯一载体。
+    // 「家测」文字图例:形状(空心圈)不能是唯一载体。这两句都是 `TrendRow`
+    // 折叠态本体里的「历年数值/图例」那一行(mockup `.tr .m`),不用先点开
+    // ▾——sdd task-6 fix round 1(Important 4)挪进展开态的只有出处引文/未定日
+    // 说明/「查看最新一次的原件」,图例本身没有跟着挪。
     expect(find.text('家测'), findsWidgets, reason: '趋势卡上没有「家测」文字图例');
     // 参考带图例带数值。
     expect(find.textContaining('参考区间'), findsWidgets);
@@ -134,12 +137,12 @@ void main() {
     watch.assertClean();
   });
 
-  testWidgets('跨 30 天每天一条 → 线画得出来、只看非正常项开关的计数对得上', (tester) async {
+  testWidgets('跨 30 天每天一条 → 线画得出来、只看异常开关的计数对得上', (tester) async {
     await resetEverything();
 
     final start = DateTime(2026, 6, 1, 7, 30);
     for (var d = 0; d < 30; d++) {
-      // 前 15 天正常、后 15 天偏高 —— 让「只看非正常项」有东西可过滤。
+      // 前 15 天正常、后 15 天偏高 —— 让「只看异常」有东西可过滤。
       final sys = d < 15 ? 120.0 + d % 5 : 150.0 + d % 7;
       final dia = d < 15 ? 78.0 + d % 4 : 95.0 + d % 5;
       await addBp(sys, dia, start.add(Duration(days: d)));
@@ -155,14 +158,18 @@ void main() {
     expect(sys.points.length, 30);
     expect(sys.anyAbnormal, isTrue, reason: '30 天里一半是 150+,却没有任何点被标异常');
 
-    // 关掉「只看非正常项」,序列不该减少。
+    // 打开「只看异常」,收缩压(anyAbnormal 已断言为真)不该被挡掉。
     //
-    // `findsWidgets` 而不是 `findsOneWidget`:概览解散之后「关键化验」那一块也
-    // 搬进了「趋势」,同一屏上「收缩压」会出现在关键化验那一行**和**趋势卡标题
-    // 两处 —— 这里要的是「切开关之后这条序列还在」,不是数它出现几次。
-    final sw = find.byType(Switch);
-    if (sw.evaluate().isNotEmpty) {
-      await tester.tap(sw.first);
+    // 「只看异常」现在是 `PanelChipsRow` 末尾一颗 `MedChip`(sdd task-6 删了
+    // 整行 `Switch` 的 `_AbnormalOnlyRow`)——原来这里 `find.byType(Switch)`
+    // 永远是空集,这段 `if` 从来没真正跑过。改成点这颗 chip,判存在性的写法
+    // 照旧(找不到就跳过,同原来「若存在」的宽容度)。`findsWidgets` 而不是
+    // `findsOneWidget`:关键化验与全序列折线合并前「收缩压」曾经在两处各出现
+    // 一次,合并之后通常只有一处,但这里只要「切开关之后这条序列还在」,不
+    // 关心具体出现几次。
+    final toggle = find.text('只看异常');
+    if (toggle.evaluate().isNotEmpty) {
+      await tester.tap(toggle.first);
       await settle(tester);
       expect(find.text('收缩压'), findsWidgets);
     }

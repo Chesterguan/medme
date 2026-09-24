@@ -179,6 +179,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SelfWeekDocDto> dco_decode_list_self_week_doc_dto(dynamic raw);
+
+  @protected
+  List<SelfWeekItemDto> dco_decode_list_self_week_item_dto(dynamic raw);
+
+  @protected
   List<SyncEventDto> dco_decode_list_sync_event_dto(dynamic raw);
 
   @protected
@@ -271,6 +277,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SelfMeasuredValueDto dco_decode_self_measured_value_dto(dynamic raw);
+
+  @protected
+  SelfWeekDocDto dco_decode_self_week_doc_dto(dynamic raw);
+
+  @protected
+  SelfWeekItemDto dco_decode_self_week_item_dto(dynamic raw);
 
   @protected
   ShareResultDto dco_decode_share_result_dto(dynamic raw);
@@ -511,6 +523,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SelfWeekDocDto> sse_decode_list_self_week_doc_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<SelfWeekItemDto> sse_decode_list_self_week_item_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<SyncEventDto> sse_decode_list_sync_event_dto(
     SseDeserializer deserializer,
   );
@@ -629,6 +651,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SelfMeasuredValueDto sse_decode_self_measured_value_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  SelfWeekDocDto sse_decode_self_week_doc_dto(SseDeserializer deserializer);
+
+  @protected
+  SelfWeekItemDto sse_decode_self_week_item_dto(SseDeserializer deserializer);
 
   @protected
   ShareResultDto sse_decode_share_result_dto(SseDeserializer deserializer);
@@ -938,6 +966,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_self_week_doc_dto(
+    List<SelfWeekDocDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_self_week_item_dto(
+    List<SelfWeekItemDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_sync_event_dto(
     List<SyncEventDto> self,
     SseSerializer serializer,
@@ -1087,6 +1127,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_self_measured_value_dto(
     SelfMeasuredValueDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_self_week_doc_dto(
+    SelfWeekDocDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_self_week_item_dto(
+    SelfWeekItemDto self,
     SseSerializer serializer,
   );
 

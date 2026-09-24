@@ -599,10 +599,11 @@ class _LabRow extends StatelessWidget {
       refHigh: lab.refHigh,
       // 自测值(家测血压/血糖/体重/体温/心率)与医院值排在同一份「我最近的
       // 变化」里,靠这个标注分清"这是病人自己量的"——见 MANUAL-ENTRY-DESIGN.md,
-      // 措辞与趋势页复用同一个"· 家测"。
+      // 措辞与趋势页曾经复用同一个"· 家测"(原 `KeyLabsSnapshot`)。
       // `valuesConverted` 见 `unitConvertedNote` —— 这一行的数值不是纸上印的那个
-      // 时必须标注,趋势的化验快照(`trends_screen.dart` 的 `KeyLabsSnapshot`)
-      // 用同一份措辞。
+      // 时必须标注。sdd task-6(趋势重整)把 `KeyLabsSnapshot` 删掉、合并进了
+      // `TrendRow`,页尾「只测过一次的」折叠(`_SinglesFold`)不重复这份拼法——
+      // 这里现在是唯一还这样拼 `meta` 的地方。
       meta: [
         lab.date,
         if (lab.selfMeasured) '家测',

@@ -26,21 +26,32 @@ TrendSeriesDto _series() => TrendSeriesDto(
   selfMeasured: false,
 );
 
+/// 带参考区间的序列——用来验证 compact 模式跳过参考带(`_series()` 没配
+/// refLow/refHigh,非 compact 时本来就不画带,测不出「跳过」这件事)。
+TrendSeriesDto _seriesWithBand() => TrendSeriesDto(
+  name: '肌酐',
+  unit: 'umol/L',
+  valuesConverted: false,
+  anyAbnormal: false,
+  points: [_pt('2024-01-01', 1), _pt('2024-02-01', 2), _pt('2024-03-01', 3), _pt('2024-04-01', 4)],
+  selfMeasured: false,
+  refLow: 0.5,
+  refHigh: 3.5,
+);
+
 Widget _host(Widget chart) =>
     MaterialApp(home: Scaffold(body: SizedBox(width: 300, child: chart)));
 
-/// `_TrendPainter` 是私有类,测试拼不出它的类名 —— 但它的字段 `progress` 不带
-/// 下划线,借 `dynamic` 动态取值不需要点名类型,和 `glossary_guard` 一样只借
+/// `_TrendPainter` 是私有类,测试拼不出它的类名 —— 但它的字段 `progress`/`compact`
+/// 不带下划线,借 `dynamic` 动态取值不需要点名类型,和 `glossary_guard` 一样只借
 /// 扫描/反射挡行为,不越权改私有边界。
-double _paintedProgress(WidgetTester tester) =>
-    (tester
-                .widget<CustomPaint>(
-                  find.descendant(of: find.byType(TrendChart), matching: find.byType(CustomPaint)),
-                )
-                .painter
-            as dynamic)
-        .progress
-        as double;
+dynamic _painter(WidgetTester tester) => tester
+    .widget<CustomPaint>(
+      find.descendant(of: find.byType(TrendChart), matching: find.byType(CustomPaint)),
+    )
+    .painter;
+
+double _paintedProgress(WidgetTester tester) => _painter(tester).progress as double;
 
 void main() {
   test('屏与 widget 里没有任何进场淡入', () {
@@ -158,5 +169,42 @@ void main() {
     await tester.pump();
     expect(tester.binding.hasScheduledFrame, isFalse, reason: '不该重新排队动画帧');
     expect(_paintedProgress(tester), 1.0, reason: '已经描过一次,不重播');
+  });
+
+  testWidgets('compact 模式:24 高、78 宽也画得出来,不抛异常,animate:false 直接画完', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 78,
+            height: 24,
+            child: TrendChart(series: _series(), height: 24, compact: true, animate: false),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(_paintedProgress(tester), 1.0);
+  });
+
+  testWidgets('compact 模式不画参考带', (tester) async {
+    // 参考带用单独的 `canvas.drawRect` 调用画(见 `_TrendPainter.paint`)——选
+    // `paints` matcher 直接断言画布调用本身,比只读 `painter.compact` 字段更
+    // 能挡住「compact 传对了、但 paint() 里的分支写漏」这类回归。
+    final chart = find.descendant(of: find.byType(TrendChart), matching: find.byType(CustomPaint)).first;
+
+    // 先证明前提:这份数据配了参考区间,非 compact 时确实画带——不然下面
+    // 「compact 跳过」的断言测不出东西(`_series()` 没配参考区间,那样不管
+    // compact 与否本来就不画带)。
+    await tester.pumpWidget(_host(TrendChart(series: _seriesWithBand(), animate: false)));
+    await tester.pump();
+    expect(chart, paints..rect());
+
+    await tester.pumpWidget(
+      _host(TrendChart(series: _seriesWithBand(), animate: false, compact: true)),
+    );
+    await tester.pump();
+    expect(chart, isNot(paints..rect()));
   });
 }

@@ -17,6 +17,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart' show fmtDate;
 import 'package:mobile_flutter/skill_packages.dart';
 import 'package:mobile_flutter/src/rust/api/vault_profile.dart' as rust_profile;
+import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
 import 'package:mobile_flutter/widgets/profile_sections.dart';
@@ -96,9 +97,15 @@ class DiseaseProfileSource {
   ///
   /// 记不上时回 `false` 而不是抛:两个调用方(入口卡与本页)的处置一样 ——
   /// 原地说一句「这次没记上」,**绝不假装已经开了**。
+  ///
+  /// 记上了要 [bumpVaultRevision]:这一条动作日志是真写进病历箱的一份文档,
+  /// 首页待办卡(`ArchiveScreen` 监听 `vaultRevision`)和防抖同步推送都靠这个信号
+  /// 才知道要重新算一次 —— 放在这个包装函数里(而不是 `_recordToVault` 内部),
+  /// 注入假 `record` 的测试也照样会触发。
   Future<bool> record(String kind, String packageId) async {
     try {
       await _record(kind, packageId, fmtDate(DateTime.now().toIso8601String()));
+      bumpVaultRevision();
       return true;
     } catch (e) {
       // 这里只有 kind/包 id 和一句错误文本,没有病历内容,可以进日志。

@@ -250,7 +250,12 @@ void main() {
       expect(fake.calls.length, 1, reason: '恰好一条');
       expect(fake.calls.single.sublist(0, 2), ['enable', 'sle']);
       expect(fake.calls.single[2], _today(), reason: 'at = 今天,YYYY-MM-DD');
-      expect(fake.views, 2, reason: '记完重算');
+      // 记完重算走的是信号那条路:`record()` 记上了会 `bumpVaultRevision()`
+      // (F-A 修复,首页待办卡与防抖同步推送也靠这个信号),这张卡自己监听着
+      // `vaultRevision`(见下面「添加了新病历」那条),记上的那一刻就重算了
+      // 一次——`_enable` 自己不再另外调 `_reload()`,不然是同一份投影白算
+      // 第二遍。
+      expect(fake.views, 2, reason: '记完重算(经 vaultRevision 信号,不是显式调用)');
       expect(find.text('待补 / 逾期'), findsOneWidget);
     });
 
@@ -436,6 +441,32 @@ void main() {
         await t.pumpAndSettle();
         expect(t.takeException(), isNull, reason: '第 $i 屏溢出');
       }
+    });
+  });
+
+  group('record 记上了要唤醒首页待办与同步推送', () {
+    // 开关病程档案写下的是一条真实的病历箱文档 —— 首页待办卡(`ArchiveScreen`
+    // 监听 `vaultRevision`)和防抖同步推送都靠这个信号才知道要重新算一次。
+    test('记上了:vaultRevision +1', () async {
+      final source = DiseaseProfileSource(record: (kind, pkg, at) async {});
+      final before = vaultRevision.value;
+
+      final ok = await source.record('enable', 'x');
+
+      expect(ok, isTrue);
+      expect(vaultRevision.value, before + 1);
+    });
+
+    test('没记上:vaultRevision 不动', () async {
+      final source = DiseaseProfileSource(
+        record: (kind, pkg, at) async => throw StateError('x'),
+      );
+      final before = vaultRevision.value;
+
+      final ok = await source.record('enable', 'x');
+
+      expect(ok, isFalse);
+      expect(vaultRevision.value, before);
     });
   });
 }

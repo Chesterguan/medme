@@ -1,15 +1,23 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
+import 'package:mobile_flutter/skill_packages.dart' show skillCacheDir;
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/src/rust/api/vault_profile.dart' show vaultProfileDueReminders;
+import 'package:mobile_flutter/src/rust/api/vault_projections.dart' show viewAbnormal30D;
 import 'package:mobile_flutter/widgets/brand_surfaces.dart';
 import 'package:mobile_flutter/widgets/brand_logo.dart';
+import 'package:mobile_flutter/widgets/home_todo.dart';
 import 'package:mobile_flutter/widgets/import_queue_card.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/med_icon.dart';
+import 'package:mobile_flutter/widgets/self_week.dart';
+import 'package:mobile_flutter/screens/disease_profile_screen.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/screens/for_doctor_screen.dart';
 import 'package:mobile_flutter/vault_events.dart';
@@ -40,6 +48,7 @@ String _groupTitle(TimelineGroupDto g) {
           ? '${kindLabel[encounter.kind] ?? encounter.kind} · ${encounter.provider}'
           : (kindLabel[encounter.kind] ?? encounter.kind),
     TimelineGroupDto_Document(:final doc) => docDisplayTitle(doc),
+    TimelineGroupDto_SelfWeek(:final weekStart, :final weekEnd) => selfWeekTitle(weekStart, weekEnd),
   };
 }
 
@@ -49,6 +58,7 @@ String _groupDate(TimelineGroupDto g) {
       encounter.startDate,
     ),
     TimelineGroupDto_Document(:final doc) => fmtDate(doc.docDate),
+    TimelineGroupDto_SelfWeek(:final weekStart) => weekStart,
   };
 }
 
@@ -74,6 +84,25 @@ List<List<TimelineGroupDto>> byMonth(List<TimelineGroupDto> groups) {
   return out;
 }
 
+/// 时间线只留事件:开关病程档案写下的动作日志(`doc_type == 'profile_event'`)
+/// 是设置动作,不是病历记录 —— 不进时间线、不参与「最近就诊」。只在这一处过滤:
+/// Rust 的 `load_archive` 必须继续把它们带回来(`gather_profile_events` 靠它算
+/// 档案开没开),所以不能在 Rust 那边排除。
+List<TimelineGroupDto> timelineGroups(List<TimelineGroupDto> raw) => [
+  for (final g in raw)
+    if (g is! TimelineGroupDto_Document || g.doc.docType != 'profile_event') g,
+];
+
+/// 「最近就诊」= 时间线最新一条**非自测周**的日期:在家量的血压不是就诊。
+/// 没有这样的一条 → null(成员头那一行自己显示「暂无」)。
+String? recentVisitDate(List<TimelineGroupDto> groups) {
+  for (final g in groups) {
+    if (g is TimelineGroupDto_SelfWeek) continue;
+    return _groupDate(g);
+  }
+  return null;
+}
+
 String _groupDesc(TimelineGroupDto g) {
   return switch (g) {
     TimelineGroupDto_Encounter(:final encounter, :final docs) => () {
@@ -91,8 +120,18 @@ String _groupDesc(TimelineGroupDto g) {
       docRowLabel(doc),
       if (doc.sliceCount != null) '影像 ${doc.sliceCount} 张',
     ].join(' · '),
+    TimelineGroupDto_SelfWeek(:final summary) => selfWeekDesc(summary),
   };
 }
+
+/// 这一组在 [_ArchiveScreenState._expanded] 里的 key:就诊组按 `encounter.id`,
+/// 自测周按 `weekStart`(同一周只会有一组,足够当 key)。独立文档不展开,给一个
+/// 永远不会被加进 `_expanded` 的空串——调用方不会为它触发展开。
+String _expandKey(TimelineGroupDto g) => switch (g) {
+  TimelineGroupDto_Encounter(:final encounter) => 'enc-${encounter.id}',
+  TimelineGroupDto_SelfWeek(:final weekStart) => 'week-$weekStart',
+  TimelineGroupDto_Document() => '',
+};
 
 /// 把时间线分组拍平成文档列表(就诊组内文档 + 独立文档),用于「还没核对」筛选。
 List<DocumentSummaryDto> _allDocs(List<TimelineGroupDto> groups) {
@@ -103,6 +142,8 @@ List<DocumentSummaryDto> _allDocs(List<TimelineGroupDto> groups) {
         out.addAll(docs);
       case TimelineGroupDto_Document(:final doc):
         out.add(doc);
+      case TimelineGroupDto_SelfWeek(:final docs):
+        out.addAll(docs.map((d) => d.doc));
     }
   }
   return out;
@@ -126,22 +167,34 @@ List<TimelineGroupDto> _confirmedOnly(List<TimelineGroupDto> groups) {
               ? g
               : TimelineGroupDto.encounter(encounter: encounter, docs: kept),
         );
+      case TimelineGroupDto_SelfWeek():
+        // 自测文档不走「还没核对」流程(add_self_measurement 落库即确认),
+        // 原样透传——周内没有条目需要按核对状态过滤。
+        out.add(g);
     }
   }
   return out;
 }
 
 class ArchiveScreen extends StatefulWidget {
-  const ArchiveScreen({super.key});
+  const ArchiveScreen({super.key, this.showTodo = true});
+
+  /// 待办卡([HomeTodo]:档案到期提醒 + 30 天异常项数)只在个人模式出现——
+  /// `doctor_home_screen.dart` 代拍模式传 `false`(全局约束「代拍模式不受影响」)。
+  final bool showTodo;
 
   @override
   State<ArchiveScreen> createState() => _ArchiveScreenState();
 }
 
 class _ArchiveScreenState extends State<ArchiveScreen> {
-  late Future<(PatientProfileDto, List<TimelineGroupDto>)> _future = _load();
-  // 已展开的就诊组(按 **encounter.id** 记,不用列表下标——删除/导入后下标会错位)。
-  final Set<int> _expanded = {};
+  late Future<(PatientProfileDto, List<TimelineGroupDto>, List<DueReminder>, int)> _future = _load();
+  // 已展开的组(按 [_expandKey] 记,不用列表下标——删除/导入后下标会错位到别的组)。
+  final Set<String> _expanded = {};
+  // 待办卡「档案到期」那几行点开要用同一个 source(与「趋势」tab 入口卡同款,
+  // 见 disease_profile_screen.dart / disease_profile_card.dart)——`ArchiveScreen`
+  // 自己没有现成的 source,就地默认构造。
+  late final DiseaseProfileSource _profileSource = DiseaseProfileSource();
   // 「还没核对」横幅点一下要滚去的地方——挂在横幅自己身上(banner 下面紧跟着
   // 就是核对卡片,滚到横幅即等于把那一段带进可视区域)。
   final _pendingSectionKey = GlobalKey();
@@ -163,10 +216,10 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     if (mounted) _refresh();
   }
 
-  Future<(PatientProfileDto, List<TimelineGroupDto>)> _load() async {
+  Future<(PatientProfileDto, List<TimelineGroupDto>, List<DueReminder>, int)> _load() async {
     final results = await Future.wait([patientProfile(), loadArchive()]);
     final profile = results[0] as PatientProfileDto;
-    final groups = results[1] as List<TimelineGroupDto>;
+    final groups = timelineGroups(results[1] as List<TimelineGroupDto>);
     // 载入「还没核对」集(build 里同步判断 isPending 前要先加载好)。
     await ReviewState.instance.ensureLoaded();
     // 兜底自动命名:示例数据等不走导入流程的路径,也能把默认档案改成识别到的姓名。
@@ -179,7 +232,38 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
       ProfileManager.instance.currentId.value,
       profile.recordCount,
     );
-    return (profile, groups);
+
+    var reminders = const <DueReminder>[];
+    var abnormal30d = 0;
+    if (widget.showTodo) {
+      // 待办卡的两样:个人模式下并行拉,任一失败退空/0——不许拖累上面已经读好
+      // 的时间线(时间线自己的错误原样往上抛,进 FutureBuilder 的 hasError 分支,
+      // 不在这里被吞掉)。
+      final todo = await Future.wait([
+        _dueReminders().catchError((Object e) {
+          debugPrint('[archive] due-reminders: $e');
+          return const <DueReminder>[];
+        }),
+        viewAbnormal30D().catchError((Object e) {
+          debugPrint('[archive] abnormal-30d: $e');
+          return 0;
+        }),
+      ]);
+      reminders = todo[0] as List<DueReminder>;
+      abnormal30d = todo[1] as int;
+    }
+    return (profile, groups, reminders, abnormal30d);
+  }
+
+  /// 所有已开启档案里到期的提醒——取 `dir` 的路径与 `DiseaseProfileSource` 内部
+  /// 一致(`disease_profile_screen.dart` 的 `_viewFromVault`),不是从那个类身上
+  /// 挖一个字段出来。
+  Future<List<DueReminder>> _dueReminders() async {
+    final dir = await skillCacheDir();
+    final json = await vaultProfileDueReminders(dir: dir);
+    return (jsonDecode(json) as List)
+        .map((e) => DueReminder.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   /// 删除前确认(销毁性操作)。返回用户是否确认。
@@ -237,8 +321,10 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     },
   );
 
-  /// 「添加」:弹三选一(拍照 / 相册 / 选文件),排进后台队列后本屏经
-  /// `vaultRevision` 自动刷新。顶栏那颗和 [HomeTiles] 那颗走的是**同一条**。
+  /// 「添加」:弹四选一(拍照 / 相册 / 选文件 / 记录一下)。前三项排进后台队列,
+  /// 第四项直接开录入弹层——两条路都靠 `vaultRevision` 让本屏自动刷新(前三项
+  /// 队列跑完自己 bump,第四项录入弹层存完自己 bump,见 `import_flow.dart` 的
+  /// `showImportSheet`)。顶栏那颗和 [HomeTiles] 那颗走的是**同一条**。
   ///
   /// ⚠️ 这里曾是 `() => showImportSheet(context)` —— 一个**没人 await、没有
   /// catchError 的 Future**。里面抛出的任何异常都只会掉进 zone,屏上一片安静,
@@ -281,6 +367,25 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     ).push(MaterialPageRoute(builder: (_) => DocumentDetailScreen(docId: id)));
   }
 
+  /// 待办卡一条「档案到期」:整页病程档案(不定位到某一条——现有构造器没有这个
+  /// 参数,记为后续)。回来重刷一次:可能刚在那一页开/关过档案,到期提醒该跟着变。
+  Future<void> _openProfile(String packageId) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DiseaseProfileScreen(packageId: packageId, source: _profileSource),
+      ),
+    );
+    if (mounted) _refresh();
+  }
+
+  /// 「给医生看」的唯一去处——[HomeTiles] 那颗药丸与待办卡「30 天异常」那行共用
+  /// 同一条路,不重复一份导航代码。
+  void _openForDoctor() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const ForDoctorScreen()),
+    );
+  }
+
   /// 横幅点一下:把「还没核对」那一段滚动进可视区域——上面的识别队列卡数量不
   /// 定,可能把横幅推到折叠线附近。`count == 0` 时横幅自己不画(见
   /// [PendingReviewBanner.build]),这颗 key 也就没挂上任何渲染对象,取不到
@@ -289,6 +394,12 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     final ctx = _pendingSectionKey.currentContext;
     if (ctx != null) Scrollable.ensureVisible(ctx);
   }
+
+  /// 就诊组 / 自测周共用的展开开关——[_expandKey] 给的那个 key 在集合里就摘掉,
+  /// 不在就加上。
+  void _toggleExpanded(String key) => setState(() {
+    if (!_expanded.add(key)) _expanded.remove(key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -310,7 +421,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
         // 顶栏不放按钮(mockup s1):「添加」只有成员一行下面那颗药丸一条路,
         // 「给医生看」同理 —— 每个功能只有一条路到达(ia-proposal §2)。
       ),
-      body: FutureBuilder<(PatientProfileDto, List<TimelineGroupDto>)>(
+      body: FutureBuilder<(PatientProfileDto, List<TimelineGroupDto>, List<DueReminder>, int)>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
@@ -335,7 +446,26 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
             );
           }
 
-          final (profile, groups) = snap.data!;
+          final (profile, groups, reminders, abnormal30d) = snap.data!;
+          // 待办卡条目——单独算好,好判断「一条都没有就不画那道间距」(fix round 1
+          // Minor 2:`if (widget.showTodo)` 只管 FFI 拉不拉,不代表一定有条目;
+          // 拉到了但两样都是空/0 时,`HomeTodo` 自己会 `SizedBox.shrink()`,
+          // 上面那道 `SizedBox(height: s3)` 间距不能跟着一起画)。
+          final todoItems = [
+            for (final r in reminders)
+              HomeTodoItem(
+                title: r.text,
+                note: reminderNote(r),
+                titleColor: r.state == 'overdue' ? c.high : null,
+                onTap: () => _openProfile(r.packageId),
+              ),
+            if (abnormal30d > 0)
+              HomeTodoItem(
+                title: '最近 30 天有 $abnormal30d 项偏高或偏低',
+                note: '给医生看',
+                onTap: _openForDoctor,
+              ),
+          ];
           // 还没核对(新导入)文档:置顶,新的(id 大)在前;确认在详情页做。
           final pending =
               _allDocs(
@@ -366,22 +496,26 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   gender: profile.gender,
                   age: profile.age,
                   recordCount: profile.recordCount.toInt(),
-                  // 「最近就诊」取时间线最新一条的日期(`s1` 那一行),不是这一行
-                  // 单独算的数:没有记录、或那条没识别到日期,这一行自己显示「暂无」。
-                  recentVisitDate: groups.isNotEmpty
-                      ? _groupDate(groups.first)
-                      : null,
+                  // 「最近就诊」取时间线最新一条**非自测周**的日期:在家量的血压不是
+                  // 就诊。没有这样的一条(或那条没识别到日期),这一行自己显示「暂无」。
+                  recentVisitDate: recentVisitDate(groups),
                   onSwitchMember: _showProfileSwitcher,
                 ),
                 const SizedBox(height: MedShape.s3),
                 HomeTiles(
                   onAdd: _startAdd,
-                  onForDoctor: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const ForDoctorScreen(),
-                    ),
-                  ),
+                  onForDoctor: _openForDoctor,
                 ),
+                // 待办卡:档案到期提醒 + 30 天异常项数,`HomeTiles` 之下、
+                // `ImportQueueCard` 之上——`PendingReviewBanner`/`ImportQueueCard`
+                // 已经是待办的前两条,位置不动。代拍模式(`showTodo: false`)整块
+                // 不装配,两个 FFI 调用也不会跑(见 `_load`);个人模式下两样都没有
+                // 条目时同样不画(含那道间距——`HomeTodo` 空列表已经 `shrink`,
+                // 间距若不跟着一起省,空手时还是会多出一道 32px 的空白)。
+                if (widget.showTodo && todoItems.isNotEmpty) ...[
+                  const SizedBox(height: MedShape.s3),
+                  HomeTodo(items: todoItems),
+                ],
                 const SizedBox(height: MedShape.s3),
                 // 后台识别队列:添加点完就回到这一屏,这几行是「东西确实在处理」
                 // 的唯一去处(见 `import_queue.dart`)。它自己监听模块级的
@@ -418,19 +552,14 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                             if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
                             _TimelineItem(
                               group: section[i],
-                              // 按就诊组 id 记展开态(不用列表下标)——删除/导入后下标会错位到别的组。
-                              expanded: switch (section[i]) {
-                                TimelineGroupDto_Encounter(:final encounter) => _expanded.contains(encounter.id),
-                                _ => false,
-                              },
+                              expanded: _expanded.contains(_expandKey(section[i])),
                               onTap: () {
                                 switch (section[i]) {
                                   case TimelineGroupDto_Document(:final doc):
                                     _openDoc(doc.id);
-                                  case TimelineGroupDto_Encounter(:final encounter):
-                                    setState(() {
-                                      if (!_expanded.add(encounter.id)) _expanded.remove(encounter.id);
-                                    });
+                                  case TimelineGroupDto_Encounter():
+                                  case TimelineGroupDto_SelfWeek():
+                                    _toggleExpanded(_expandKey(section[i]));
                                 }
                               },
                               onOpenSubDoc: _openDoc,
@@ -483,25 +612,6 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-/// 时间线/还没核对项左滑删除时的红底背景(靠右露出删除图标),Outlook 邮件式。
-///
-/// [rounded] 默认 true:`_PendingCard` 仍是独立的一张 `MedCard`,背景圆角要跟它
-/// 同一个令牌(`MedShape.radiusCard`,不写死数字)。时间线行/子文档行减法稿后
-/// 不再各自有 `MedCard` 外壳(整月共用一张卡,圆角只在卡的最外沿)——那两处传
-/// `rounded: false` 画直角背景,否则滑动到扁平的行中间会露出一圈裁不掉的圆角
-/// 缺口(卡片圆角在别处,这条红底自己却还想画圆角)。
-Widget swipeDeleteBackground(BuildContext context, {bool rounded = true}) =>
-    Container(
-      alignment: Alignment.centerRight,
-      padding: const EdgeInsets.symmetric(horizontal: MedShape.s4),
-      decoration: BoxDecoration(
-        // 删除是销毁性动作 —— `critical` 在个人模式里只用在这里和危急值上。
-        color: MedColors.of(context).critical,
-        borderRadius: rounded ? BorderRadius.circular(MedShape.radiusCard) : null,
-      ),
-      child: const Icon(Icons.delete_outline, color: Colors.white),
-    );
-
 /// 时间线一项:就诊组(可展开子文档)或独立文档。
 class _TimelineItem extends StatelessWidget {
   final TimelineGroupDto group;
@@ -521,7 +631,7 @@ class _TimelineItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final isEncounter = group is TimelineGroupDto_Encounter;
+    final isExpandable = group is TimelineGroupDto_Encounter || group is TimelineGroupDto_SelfWeek;
 
     final Widget row = Column(
       children: [
@@ -575,7 +685,7 @@ class _TimelineItem extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (isEncounter)
+                if (isExpandable)
                   Icon(
                     expanded ? Icons.expand_less : Icons.expand_more,
                     size: 20,
@@ -590,6 +700,11 @@ class _TimelineItem extends StatelessWidget {
             TimelineGroupDto_Encounter(:final docs) => _SubDocList(
               docs: docs,
               onOpenSubDoc: onOpenSubDoc,
+              onDelete: onDelete,
+            ),
+            TimelineGroupDto_SelfWeek(:final docs) => SelfWeekRows(
+              docs: docs,
+              onOpen: onOpenSubDoc,
               onDelete: onDelete,
             ),
             TimelineGroupDto_Document() => const SizedBox.shrink(),

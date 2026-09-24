@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 905592103;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 706802771;
 
 // Section: executor
 
@@ -2761,6 +2761,42 @@ fn wire__crate__api__vault__vault_cloud_redact_image_impl(
         },
     )
 }
+fn wire__crate__api__vault_profile__vault_profile_due_reminders_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "vault_profile_due_reminders",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok =
+                            crate::api::vault_profile::vault_profile_due_reminders(api_dir)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__vault_profile__vault_profile_install_package_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2946,6 +2982,40 @@ fn wire__crate__api__vault_profile__vault_profile_view_impl(
                     (move || {
                         let output_ok =
                             crate::api::vault_profile::vault_profile_view(api_dir, api_package_id)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__vault_projections__view_abnormal_30d_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "view_abnormal_30d",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault_projections::view_abnormal_30d()?;
                         Ok(output_ok)
                     })(),
                 )
@@ -3659,6 +3729,30 @@ impl SseDecode for Vec<crate::api::dto::SelfMeasuredValueDto> {
     }
 }
 
+impl SseDecode for Vec<crate::api::dto::SelfWeekDocDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::dto::SelfWeekDocDto>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::dto::SelfWeekItemDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::dto::SelfWeekItemDto>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::dto::SyncEventDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4056,6 +4150,36 @@ impl SseDecode for crate::api::dto::SelfMeasuredValueDto {
     }
 }
 
+impl SseDecode for crate::api::dto::SelfWeekDocDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_doc = <crate::api::dto::DocumentSummaryDto>::sse_decode(deserializer);
+        let mut var_values = <Vec<crate::api::dto::SelfMeasuredValueDto>>::sse_decode(deserializer);
+        return crate::api::dto::SelfWeekDocDto {
+            doc: var_doc,
+            values: var_values,
+        };
+    }
+}
+
+impl SseDecode for crate::api::dto::SelfWeekItemDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_analyteKey = <String>::sse_decode(deserializer);
+        let mut var_count = <i64>::sse_decode(deserializer);
+        let mut var_min = <f64>::sse_decode(deserializer);
+        let mut var_max = <f64>::sse_decode(deserializer);
+        let mut var_unit = <String>::sse_decode(deserializer);
+        return crate::api::dto::SelfWeekItemDto {
+            analyte_key: var_analyteKey,
+            count: var_count,
+            min: var_min,
+            max: var_max,
+            unit: var_unit,
+        };
+    }
+}
+
 impl SseDecode for crate::api::dto::ShareResultDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4144,6 +4268,19 @@ impl SseDecode for crate::api::dto::TimelineGroupDto {
             1 => {
                 let mut var_doc = <crate::api::dto::DocumentSummaryDto>::sse_decode(deserializer);
                 return crate::api::dto::TimelineGroupDto::Document { doc: var_doc };
+            }
+            2 => {
+                let mut var_weekStart = <String>::sse_decode(deserializer);
+                let mut var_weekEnd = <String>::sse_decode(deserializer);
+                let mut var_docs = <Vec<crate::api::dto::SelfWeekDocDto>>::sse_decode(deserializer);
+                let mut var_summary =
+                    <Vec<crate::api::dto::SelfWeekItemDto>>::sse_decode(deserializer);
+                return crate::api::dto::TimelineGroupDto::SelfWeek {
+                    week_start: var_weekStart,
+                    week_end: var_weekEnd,
+                    docs: var_docs,
+                    summary: var_summary,
+                };
             }
             _ => {
                 unimplemented!("");
@@ -4588,52 +4725,64 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        74 => wire__crate__api__vault_profile__vault_profile_install_package_impl(
+        74 => wire__crate__api__vault_profile__vault_profile_due_reminders_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        75 => wire__crate__api__vault_profile__vault_profile_record_event_impl(
+        75 => wire__crate__api__vault_profile__vault_profile_install_package_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        76 => wire__crate__api__vault_profile__vault_profile_refresh_terms_impl(
+        76 => wire__crate__api__vault_profile__vault_profile_record_event_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        77 => wire__crate__api__vault_profile__vault_profile_verify_index_impl(
+        77 => wire__crate__api__vault_profile__vault_profile_refresh_terms_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        78 => wire__crate__api__vault_profile__vault_profile_view_impl(
+        78 => wire__crate__api__vault_profile__vault_profile_verify_index_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        79 => wire__crate__api__vault_projections__view_emergency_card_impl(
+        79 => wire__crate__api__vault_profile__vault_profile_view_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        80 => wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
+        80 => wire__crate__api__vault_projections__view_abnormal_30d_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => {
+        81 => wire__crate__api__vault_projections__view_emergency_card_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        82 => wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        83 => {
             wire__crate__api__vault_projections__view_trends_impl(port, ptr, rust_vec_len, data_len)
         }
-        82 => wire__crate__api__vault_projections__view_visit_summary_impl(
+        84 => wire__crate__api__vault_projections__view_visit_summary_impl(
             port,
             ptr,
             rust_vec_len,
@@ -5285,6 +5434,51 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::SelfMeasuredValueDto>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::SelfWeekDocDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.doc.into_into_dart().into_dart(),
+            self.values.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::dto::SelfWeekDocDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::SelfWeekDocDto>
+    for crate::api::dto::SelfWeekDocDto
+{
+    fn into_into_dart(self) -> crate::api::dto::SelfWeekDocDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::SelfWeekItemDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.analyte_key.into_into_dart().into_dart(),
+            self.count.into_into_dart().into_dart(),
+            self.min.into_into_dart().into_dart(),
+            self.max.into_into_dart().into_dart(),
+            self.unit.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::dto::SelfWeekItemDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::SelfWeekItemDto>
+    for crate::api::dto::SelfWeekItemDto
+{
+    fn into_into_dart(self) -> crate::api::dto::SelfWeekItemDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::dto::ShareResultDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -5389,6 +5583,19 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::TimelineGroupDto {
             crate::api::dto::TimelineGroupDto::Document { doc } => {
                 [1.into_dart(), doc.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::dto::TimelineGroupDto::SelfWeek {
+                week_start,
+                week_end,
+                docs,
+                summary,
+            } => [
+                2.into_dart(),
+                week_start.into_into_dart().into_dart(),
+                week_end.into_into_dart().into_dart(),
+                docs.into_into_dart().into_dart(),
+                summary.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -5982,6 +6189,26 @@ impl SseEncode for Vec<crate::api::dto::SelfMeasuredValueDto> {
     }
 }
 
+impl SseEncode for Vec<crate::api::dto::SelfWeekDocDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::dto::SelfWeekDocDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::dto::SelfWeekItemDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::dto::SelfWeekItemDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::dto::SyncEventDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -6270,6 +6497,25 @@ impl SseEncode for crate::api::dto::SelfMeasuredValueDto {
     }
 }
 
+impl SseEncode for crate::api::dto::SelfWeekDocDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::dto::DocumentSummaryDto>::sse_encode(self.doc, serializer);
+        <Vec<crate::api::dto::SelfMeasuredValueDto>>::sse_encode(self.values, serializer);
+    }
+}
+
+impl SseEncode for crate::api::dto::SelfWeekItemDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.analyte_key, serializer);
+        <i64>::sse_encode(self.count, serializer);
+        <f64>::sse_encode(self.min, serializer);
+        <f64>::sse_encode(self.max, serializer);
+        <String>::sse_encode(self.unit, serializer);
+    }
+}
+
 impl SseEncode for crate::api::dto::ShareResultDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -6325,6 +6571,18 @@ impl SseEncode for crate::api::dto::TimelineGroupDto {
             crate::api::dto::TimelineGroupDto::Document { doc } => {
                 <i32>::sse_encode(1, serializer);
                 <crate::api::dto::DocumentSummaryDto>::sse_encode(doc, serializer);
+            }
+            crate::api::dto::TimelineGroupDto::SelfWeek {
+                week_start,
+                week_end,
+                docs,
+                summary,
+            } => {
+                <i32>::sse_encode(2, serializer);
+                <String>::sse_encode(week_start, serializer);
+                <String>::sse_encode(week_end, serializer);
+                <Vec<crate::api::dto::SelfWeekDocDto>>::sse_encode(docs, serializer);
+                <Vec<crate::api::dto::SelfWeekItemDto>>::sse_encode(summary, serializer);
             }
             _ => {
                 unimplemented!("");

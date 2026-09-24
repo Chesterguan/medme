@@ -125,8 +125,8 @@ pub struct TrendSeriesDto {
     ///
     /// 医院化验序列(`self_measured == false`)恒为 `None`:那条序列的参考区间
     /// 出处是化验单原件本身,不是这段可引用的指南/共识文字能替代的——UI 改用卡底
-    /// 「查看原件」入口交代来源(`trends_screen.dart` 的 `SeriesCard`),不读这个
-    /// 字段。
+    /// 「查看原件」入口交代来源(`trends_screen.dart` 的 `TrendRow`,sdd task-6
+    /// 把原来的 `SeriesCard` 合并进了这个 widget),不读这个字段。
     ///
     /// **追加在结尾**,不插进中间——与本文件头「函数命名为什么统一 `view_`
     /// 前缀」那条注释同一个用意:FRB 的 `sse_encode`/`sse_decode` 按字段声明顺序
@@ -347,6 +347,16 @@ fn fmt_date(d: NaiveDate) -> String {
     d.format("%Y-%m-%d").to_string()
 }
 
+/// 设备本地日期。与 `vault_profile.rs` 里同名的私有函数逐字同一实现(`chrono::Local`
+/// 不是 `chrono::Utc`),理由也一样:「最近 30 天」要按用户所在时区的今天算,UTC
+/// 会把东八区的清晨算成昨天,让 30 天窗口整体错一天。两个模块各留一份私有实现,
+/// 不把 `vault_profile` 那份改成 `pub(crate)` 互相导出 —— `vault_profile.rs` 本来就
+/// 依赖 `vault_projections`(投影层在下,档案在上),反向再导出一个一行函数只会
+/// 添耦合,不添价值。
+fn today() -> NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
 /// 把 `AnalyteSeries` 等结构里的 `SourceDoc::index` 列表翻译成真实 document_id。
 /// 越界的序号(不该出现)静默跳过,不 panic。
 fn document_ids_for(docs: &[ProjectionDoc], indices: &[usize]) -> Vec<i64> {
@@ -424,6 +434,22 @@ fn flat_docs() -> anyhow::Result<(Vec<FlatDoc>, Vec<VisitRecordDto>)> {
                     date: date.map(fmt_date),
                     document_ids: vec![doc.id],
                 });
+            }
+            // 趋势图/应急卡/就诊摘要单三个投影按单份文档读(`gather_profile_events`
+            // 逐份重读正文抽取事件),不理解「自测周」这个只在首页时间线存在的
+            // 展示层折叠——原样展开回每一份自测文档,行为与折叠前逐字一致。
+            TimelineGroupDto::SelfWeek { docs, .. } => {
+                for d in docs {
+                    let doc = &d.doc;
+                    let date = doc.doc_date.as_deref().and_then(parse_rfc3339_date);
+                    flat.push((doc.id, date, doc.doc_type.to_lowercase(), doc.title.clone()));
+                    visits.push(VisitRecordDto {
+                        title: doc.title.clone(),
+                        kind: doc.doc_type.to_lowercase(),
+                        date: date.map(fmt_date),
+                        document_ids: vec![doc.id],
+                    });
+                }
             }
         }
     }
@@ -1163,6 +1189,33 @@ fn render_plain_text(
     }
 
     out
+}
+
+/// 首页待办第 4 条:最近 30 天内、最近一次被 Rust 标为 H/L 的化验项数。自测不算
+/// (自测的 flag 来自家测区间,不是化验单印的)。**只数,不判定。**
+pub fn view_abnormal_30d() -> anyhow::Result<u32> {
+    let p = gather()?;
+    let src = source_docs(&p.docs);
+    let agg = parser::aggregate(&src);
+    let today = today();
+    let mut n = 0u32;
+    for s in agg.labs.iter().filter(|s| !s.self_measured && is_renderable(s)) {
+        let Some(last) = s.points.iter().filter(|pt| pt.date.is_some()).max_by_key(|pt| pt.date)
+        else {
+            continue;
+        };
+        let Some(d) = last.date else { continue };
+        // 未来日期(页脚年份 OCR 错行的常见错法)不算「最近」——不能只挡下界。
+        if !(0..=30).contains(&(today - d).num_days()) {
+            continue;
+        }
+        // 与 view_visit_summary 的 recent_changes 同一条判法:只认 "H" / "L",印的
+        // "N" 不算(`last.flag: Option<String>`,同一份 `parser::LabPoint::flag`)。
+        if matches!(last.flag.as_deref(), Some("H") | Some("L")) {
+            n += 1;
+        }
+    }
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -2471,5 +2524,75 @@ mod tests {
             view_trends().unwrap().is_empty(),
             "这就是错误顺序的后果:记录整个消失了"
         );
+    }
+
+    /// 首页待办「最近 30 天有 N 项偏高或偏低」:只数**医院化验**、最近一次被标
+    /// H/L、且在 30 天窗口内的序列;30 天外的(哪怕标了 H/L)与自测(哪怕数值
+    /// 落在家测区间外、被标了 H)都不算。
+    #[test]
+    fn abnormal_30d_counts_only_recent_hospital_h_l() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        crate::api::vault::open_vault(
+            home.path().join("docs").to_string_lossy().to_string(),
+            home.path().join("data").to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+
+        // 同一个私有 `today()`(设备本地日期)——与被测函数用的是同一份,窗口
+        // 边界不会因为测试自己另算一遍 UTC 今天而偏移。
+        let today = today();
+        let d20 = today - chrono::Duration::days(20);
+        let d60 = today - chrono::Duration::days(60);
+        let d_future = today + chrono::Duration::days(400);
+
+        // 20 天前:一份化验单,一项偏高(H)——落在 30 天窗口内,该数。
+        crate::api::vault::ingest_bytes(
+            "化验-20天前.txt".into(),
+            format!(
+                "生化检验报告单\n检验日期 {}\n甘油三酯 2.90 mmol/L 0.00-1.70 H\n",
+                d20.format("%Y-%m-%d")
+            )
+            .into_bytes(),
+        )
+        .unwrap();
+
+        // 60 天前:一份化验单,一项偏低(L)——窗口外,不该数。
+        crate::api::vault::ingest_bytes(
+            "化验-60天前.txt".into(),
+            format!(
+                "生化检验报告单\n检验日期 {}\n血钾 3.0 mmol/L 3.5-5.5 L\n",
+                d60.format("%Y-%m-%d")
+            )
+            .into_bytes(),
+        )
+        .unwrap();
+
+        // 同一天(20 天前)还自测了一次心率,160 远超家测区间上限 100、会被标
+        // H —— 但自测不算,不该数。
+        crate::api::vault::add_self_measurement(
+            vec![SelfMeasuredValueDto {
+                analyte_key: "heart_rate".into(),
+                value: 160.0,
+                unit: "/min".into(),
+            }],
+            Some(format!("{}T08:00:00Z", d20.format("%Y-%m-%d"))),
+        )
+        .unwrap();
+
+        // 未来日期(页脚年份 OCR 错行的常见错法):一项偏高(H),但日期在
+        // 「今天」之后 400 天——不落在 0..=30 窗口内,不该数。
+        crate::api::vault::ingest_bytes(
+            "化验-未来日期.txt".into(),
+            format!(
+                "生化检验报告单\n检验日期 {}\n血糖 15.0 mmol/L 3.9-6.1 H\n",
+                d_future.format("%Y-%m-%d")
+            )
+            .into_bytes(),
+        )
+        .unwrap();
+
+        assert_eq!(view_abnormal_30d().unwrap(), 1);
     }
 }

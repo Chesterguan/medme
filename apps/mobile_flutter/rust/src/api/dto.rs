@@ -159,6 +159,25 @@ impl EncounterSummaryDto {
     }
 }
 
+/// 「自测周」里的一份自测:文档摘要 + 它的结构化值(从 `###MEDME-SELF-V1###` 载荷读出,
+/// 与 `self_measurement_values` 同一条读法,读不出就是空)。
+#[derive(Debug, Clone)]
+pub struct SelfWeekDocDto {
+    pub doc: DocumentSummaryDto,
+    pub values: Vec<SelfMeasuredValueDto>,
+}
+
+/// 一周里某个指标的汇总:次数与范围。**只汇总,不判定**——没有 flag,颜色由界面按
+/// 规则决定(减法:自测周行本来就不上色)。
+#[derive(Debug, Clone)]
+pub struct SelfWeekItemDto {
+    pub analyte_key: String,
+    pub count: i64,
+    pub min: f64,
+    pub max: f64,
+    pub unit: String,
+}
+
 /// `load_archive` 返回的分组:就诊组 或 独立文档(与桌面/Tauri 移动端的
 /// `TimelineGroup` 同构)。
 #[derive(Debug, Clone)]
@@ -169,6 +188,14 @@ pub enum TimelineGroupDto {
     },
     Document {
         doc: DocumentSummaryDto,
+    },
+    /// 同一自然周(周一到周日)的自测记录折成一行(用户 2026-09-23:单次自测没意义,
+    /// 一周才看得出东西)。`week_start`/`week_end` 是 `YYYY-MM-DD`。
+    SelfWeek {
+        week_start: String,
+        week_end: String,
+        docs: Vec<SelfWeekDocDto>,
+        summary: Vec<SelfWeekItemDto>,
     },
 }
 
