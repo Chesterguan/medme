@@ -1,7 +1,7 @@
 # 阿里云配置(后端)—— 现状与操作手册
 
 > 以此文件为准;改了资源就改这里。**任何密钥都不写进来**(AK 在 `~/.aliyun/config.json` 的 `medme` profile;数据库密码只在函数环境变量;DeepSeek key 在仓库根 `.deepseek_key`,不入库)。
-> 最后核对:2026-09-21(每项都是用 CLI 实查过的)。
+> 最后核对:2026-09-21(每项都是用 CLI 实查过的);§1/§6 的短信部分 2026-09-25 按号码认证服务文档改正(之前误写成要去短信服务申请签名)。
 
 ## 1. 账号与权限
 
@@ -11,7 +11,7 @@
 | RAM 用户 | `medme`(CLI profile 同名;另有 `medme-admin` profile,同一把 key) |
 | 地域 | `cn-hangzhou`(所有资源) |
 | 现挂策略 | `AdministratorAccess`(2026-09-20 临时给的,**跑通后撤**)+ `AliyunVPCFullAccess` `AliyunECSFullAccess` `AliyunRDSFullAccess` `AliyunOSSFullAccess` `AliyunFCFullAccess` `AliyunDypnsFullAccess` |
-| 日常运维最小集 | 上面 6 个 FullAccess;要代办短信签名/模板再加 `AliyunDysmsFullAccess` |
+| 日常运维最小集 | 上面 6 个 FullAccess(短信认证的发送/查询都在 `dypns` 下,**不需要** `AliyunDysmsFullAccess`) |
 | 已创建的服务关联角色 | `AliyunServiceRoleForRdsPgsqlOnEcs`(RDS PG 必需;用 `aliyun rds CreateServiceLinkedRole --ServiceLinkedRole AliyunServiceRoleForRdsPgsqlOnEcs --RegionId cn-hangzhou --force` 建,**不是** `ram CreateServiceLinkedRole`) |
 
 CLI:`aliyun configure list` 看 profile;`aliyun configure get` **打码输出 AK**,脚本要从 `~/.aliyun/config.json` 读(`services/api/deploy/creds.py`)。
@@ -57,9 +57,16 @@ CLI:`aliyun configure list` 看 profile;`aliyun configure get` **打码输出 AK
 
 ⚠️ `API_JWT_SECRET` / `PHONE_HMAC_KEY` 若 env.sh 没给,`deploy_api.sh` **每次重新随机**——重部署会让已发的 token 全失效、手机号哈希对不上旧数据。生产上从函数环境变量抄回 env.sh 固定住。
 
-## 6. 短信(未完成)
+## 6. 短信(号码认证服务 · 短信认证,免资质)
 
-登录验证码走 PNVS `SendSmsVerifyCode`(`services/api/auth.py`)。需要控制台申请**签名**(建议「医我」/「MedMe」)与**验证码模板**并审核通过,填进 `PNVS_SIGN_NAME` / `PNVS_TEMPLATE_CODE` 后重部署。查/申请签名模板是 `dysms` 权限,`AliyunDypnsFullAccess` 只管发。
+登录验证码走 PNVS `SendSmsVerifyCode`(`services/api/auth.py`),用的是**号码认证服务里的「短信认证」**,不是短信服务:个人实名账号即可,**不用营业执照、不用申请签名和模板、没有审核**——平台赠送签名和 5 个验证码模板,而且赠送签名只能配赠送模板,不支持自定义(文档:`help.aliyun.com/zh/pnvs/use-cases/sms-verify-for-individual-developers`)。只发大陆 +86 号码,按条计费、失败不计费。
+
+开通与取值(控制台,主账号或有 `AliyunDypnsFullAccess` 的账号):
+1. `dypns.console.aliyun.com/functions` → 「短信认证」开通(没开时 API 报 `FUNCTION_NOT_OPENED`)。
+2. 短信认证 → 参数配置 → 签名配置 → **赠送签名配置**:任选一个,签名名称原样抄给 `PNVS_SIGN_NAME`。
+3. 同处 → 模板配置 → **赠送模板配置**:「登录/注册」模板编号 `100001` → `PNVS_TEMPLATE_CODE`。模板变量是 `code`(验证码)和 `min`(有效期分钟),`auth.py` 两个都传;验证码是我们自己生成、自己在 `otp` 表里校验的,不用 `CheckSmsVerifyCode`。
+4. 填进 `deploy/env.sh` 后 `bash deploy/deploy_api.sh` 重部署(⚠️ 先把 `API_JWT_SECRET` / `PHONE_HMAC_KEY` 从函数环境变量抄回 env.sh,见 §5)。
+5. 想先在控制台试发:短信认证 → 测试,只能发给已绑定的测试号(每账号 5 个),试发也计费。
 
 ## 7. 手机端怎么指向后端
 
