@@ -55,7 +55,7 @@ CLI:`aliyun configure list` 看 profile;`aliyun configure get` **打码输出 AK
 
 环境变量(值不写这里):`DATABASE_URL` `API_JWT_SECRET` `PHONE_HMAC_KEY` `ALIYUN_ACCESS_KEY_ID/SECRET` `PNVS_SIGN_NAME` `PNVS_TEMPLATE_CODE`(**目前为空,短信发不出**)`APPLE_BUNDLE_ID=com.medme.mobile` `OSS_ACCESS_KEY_ID/SECRET` `OSS_BUCKET=medme-vault` `OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com` `DEEPSEEK_API_KEY` `DEEPSEEK_MODEL_TEXT/VISION`(现 `deepseek-flash`,模型名不绑死)`MEDME_SKILLS_DIR=/code/skills` `MEDME_PROMPTS_DIR=/code/prompts` `PYTHONPATH=/code`。
 
-⚠️ `API_JWT_SECRET` / `PHONE_HMAC_KEY` 若 env.sh 没给,`deploy_api.sh` **每次重新随机**——重部署会让已发的 token 全失效、手机号哈希对不上旧数据。生产上从函数环境变量抄回 env.sh 固定住。
+`API_JWT_SECRET` / `PHONE_HMAC_KEY` / `DATABASE_URL`:`deploy_api.sh` 在函数已存在时**沿用线上函数环境变量里的值**(env.sh 不必、也不该再抄一份密钥);只有首次创建才随机生成。env.sh 只放 VPC/vSwitch/安全组 ID 和 `PNVS_*`。
 
 ## 6. 短信(号码认证服务 · 短信认证,免资质)
 
@@ -65,7 +65,7 @@ CLI:`aliyun configure list` 看 profile;`aliyun configure get` **打码输出 AK
 1. `dypns.console.aliyun.com/functions` → 「短信认证」开通(没开时 API 报 `FUNCTION_NOT_OPENED`)。
 2. 短信认证 → 参数配置 → 签名配置 → **赠送签名配置**:任选一个,签名名称原样抄给 `PNVS_SIGN_NAME`。
 3. 同处 → 模板配置 → **赠送模板配置**:「登录/注册」模板编号 `100001` → `PNVS_TEMPLATE_CODE`。模板变量是 `code`(验证码)和 `min`(有效期分钟),`auth.py` 两个都传;验证码是我们自己生成、自己在 `otp` 表里校验的,不用 `CheckSmsVerifyCode`。
-4. 填进 `deploy/env.sh` 后 `bash deploy/deploy_api.sh` 重部署(⚠️ 先把 `API_JWT_SECRET` / `PHONE_HMAC_KEY` 从函数环境变量抄回 env.sh,见 §5)。
+4. 填进 `deploy/env.sh` 后 `bash deploy/deploy_api.sh` 重部署(密钥自动沿用线上的,见 §5)。
 5. 想先在控制台试发:短信认证 → 测试,只能发给已绑定的测试号(每账号 5 个),试发也计费。
 
 ## 7. 手机端怎么指向后端
@@ -76,7 +76,7 @@ CI(`.github/workflows/mobile.yml`)读仓库变量 `MEDME_API_BASE`(已设为上�
 
 1. 打包:`bash services/api/deploy/build_api_pkg.sh` → `deploy/medme-api.zip`(pip 按 manylinux2014/cp39 拉 wheel)。
 2. 上传:`export ALIYUN_ACCESS_KEY_ID=$(python3 deploy/creds.py medme id) ALIYUN_ACCESS_KEY_SECRET=$(python3 deploy/creds.py medme secret); /usr/bin/python3 deploy/mpu.py deploy/medme-api.zip`(分片 + 加速端点,可断点续传;用系统 python,python.org 的 3.9 缺 CA 证书)。
-3. 部署/更新函数:`cp deploy/env.example.sh deploy/env.sh` 填好 → `bash deploy/deploy_api.sh`(存在则 PUT 更新,不存在则 POST 创建 + 建触发器)。
+3. 部署/更新函数:`cp deploy/env.example.sh deploy/env.sh` 填好 → `bash deploy/deploy_api.sh`(存在则 PUT 更新并沿用线上密钥,不存在则 POST 创建 + 建触发器)。
 4. 首次建库全套:`bash deploy/finish_backend.sh`(幂等:建实例 → 等 Running → 账号/库/DBOwner → 写 env.sh → 部署 → curl)。
 5. 验证:`curl https://medme-api-sphuddkjsn.cn-hangzhou.fcapp.run/v1/skills/index.json` 应 200;启动失败时 412 响应体里带完整 traceback(`Message` 字段,去掉 ANSI 色码看)。
 
