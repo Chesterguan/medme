@@ -9,7 +9,7 @@
 //! `canonicalize`/`has_lab_evidence`)——两条路径各自实现一遍、稍有出入,就是
 //! 图表安全事故的来源(见这三个函数的文档)。
 use crate::labs::{canonicalize, has_lab_evidence, parse_decimal_token, LabObservation};
-use crate::meds::{extract_meds, MedObservation};
+use crate::meds::MedObservation;
 
 /// 数值解析:与 `extract_labs` 同一个 `parse_decimal_token`(逗号当小数点),
 /// 额外拒收非有限值(`NaN`/`inf`/溢出成 `inf` 的 `1e999`)—— 这些都是"parse
@@ -130,10 +130,9 @@ pub fn labs_from_json(json: &str) -> Result<LabsFromJson, deid::DeidError> {
 
 /// 云抽取 `meds` → [`MedObservation`]。
 ///
-/// 每条 `MedItem` 拼成一行「药名 剂量 频次」交给 [`extract_meds`]:剂量/频次/给药
-/// 途径/药名解析全部复用正则路径那一套(单位归一、`g/L` 不当剂量、「用法:」说明行
-/// 守卫、`resolve_drug`),不另写第二份规则。`route` 不进行——`strip_trailing_route`
-/// 会剥掉它,而 `MedObservation` 也没有这个字段(D2 若要静滴/口服再加)。
+/// 每条 `MedItem` 交给 `meds::from_parts`:名字/剂量/频次**分开**解析,但单位归一、
+/// `g/L` 不当剂量、说明行守卫、`resolve_drug` 全是正则路径同一套函数,不另写第二份
+/// 规则。`route` 不进行——`MedObservation` 没有这个字段(D2 若要静滴/口服再加)。
 ///
 /// 跟 [`labs_from_json`] 一样:`Err` = JSON 坏(调用方退回正则);`Ok` 且 `meds`
 /// 为空也由调用方退回正则(零条不等于「没有药」)。`unverified` 逐条带出。
@@ -149,20 +148,10 @@ pub fn meds_from_json(json: &str) -> Result<MedsFromJson, deid::DeidError> {
     let e = deid::parse_extraction(json)?;
     let mut out = MedsFromJson { meds: Vec::new(), dropped: 0, unverified: 0 };
     for item in e.meds {
-        let name = item.name.trim();
-        if name.is_empty() {
-            out.dropped += 1;
-            continue;
-        }
-        let line = format!("{name} {} {}", item.dose.trim(), item.freq.trim());
-        let Some(mut obs) = extract_meds(line.trim()).pop() else {
+        let Some(mut obs) = crate::meds::from_parts(&item.name, &item.dose, &item.freq) else {
             out.dropped += 1;
             continue;
         };
-        // 模型写的频次原话解析不出码(「早晚各一次」)时,码留空、原话不丢。
-        if obs.frequency_raw.is_none() && !item.freq.trim().is_empty() {
-            obs.frequency_raw = Some(item.freq.trim().to_string());
-        }
         obs.unverified = item.unverified;
         if item.unverified {
             out.unverified += 1;
@@ -334,6 +323,47 @@ mod tests {
         assert_eq!(r.meds.len(), 1);
         assert_eq!(r.meds[0].frequency, None, "解析不出的频次不猜码");
         assert_eq!(r.meds[0].frequency_raw.as_deref(), Some("早晚各一次"), "原话要留着");
+    }
+
+    #[test]
+    fn meds_from_json_parses_fields_separately() {
+        // 审查 I-3:模型已经把名字/剂量/频次分开了,拼成一行再解析会把名字里的数字当剂量。
+        let j = r#"{"meds":[
+          {"name":"碳酸钙D3片","dose":"0.6g","freq":"每日一次","route":"口服"},
+          {"name":"0.9%氯化钠注射液","dose":"250ml","freq":"","route":"静滴"},
+          {"name":"泼尼松","dose":"每次 5mg","freq":"qd","route":""}
+        ]}"#;
+        let r = meds_from_json(j).expect("valid json");
+        assert_eq!(r.meds.len(), 3, "{:?}", r.meds.iter().map(|m| &m.raw_name).collect::<Vec<_>>());
+        assert_eq!(r.meds[0].raw_name, "碳酸钙D3片");
+        assert_eq!((r.meds[0].dose_num, r.meds[0].dose_unit.as_deref()), (Some(0.6), Some("g")));
+        assert_eq!(r.meds[1].raw_name, "0.9%氯化钠注射液", "行首的 0. 不是列表序号");
+        assert_eq!((r.meds[1].dose_num, r.meds[1].dose_unit.as_deref()), (Some(250.0), Some("mL")));
+        assert_eq!(r.meds[2].raw_name, "泼尼松");
+        assert_eq!(r.meds[2].dose_num, Some(5.0));
+    }
+
+    #[test]
+    fn meds_from_json_keeps_concentration_with_empty_freq() {
+        // 审查 I-4a:浓度不是剂量,频次也空,词典里也没有这味药(泼尼松龙不在内置
+        // 词典)—— 模型在原文里读到了剂量原话,照样留,只是剂量数值为空。
+        let j = r#"{"meds":[{"name":"泼尼松龙","dose":"5mg/ml","freq":"","route":""}]}"#;
+        let r = meds_from_json(j).expect("valid json");
+        assert_eq!(r.meds.len(), 1);
+        assert_eq!(r.meds[0].raw_name, "泼尼松龙");
+        assert_eq!(r.meds[0].dose_num, None);
+        assert_eq!(r.dropped, 0);
+    }
+
+    #[test]
+    fn meds_from_json_keeps_unparsed_frequency_without_dose() {
+        // 审查 I-4b:没剂量、频次解析不出码、药名词典里没有 —— 原话仍是证据,不丢。
+        let j = r#"{"meds":[{"name":"某某胶囊","dose":"","freq":"早晚各一次","route":""}]}"#;
+        let r = meds_from_json(j).expect("valid json");
+        assert_eq!(r.meds.len(), 1);
+        assert_eq!(r.meds[0].raw_name, "某某胶囊", "频次原话不能拼进名字");
+        assert_eq!(r.meds[0].frequency, None);
+        assert_eq!(r.meds[0].frequency_raw.as_deref(), Some("早晚各一次"));
     }
 
     #[test]

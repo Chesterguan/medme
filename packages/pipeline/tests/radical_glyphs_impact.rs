@@ -50,8 +50,9 @@ const FOLDED_MEDS_WITH_ATC: usize = 8;
 /// 药物总行数。修复前(部首缺陷未折叠)是 9 —— 其中两条是 `⼆甲双胍` /
 /// `⼝服阿司匹林` 被部首拆出来的重复条目,折叠后曾并回 7 正条。新增文档带来
 /// 两个语料里从未出现过的药名(氯吡格雷、头孢曲松钠),7 → 9,与部首缺陷
-/// 无关。
-const MEDS_ROWS: usize = 9;
+/// 无关。2026-09-30 起 8:第 9 条是「阿托伐他汀钙片 20mg qn」在页宽处硬换行
+/// 切出来的假药「片」,`aggregate::rejoin_wrapped_lines` 把它接回去了。
+const MEDS_ROWS: usize = 8;
 /// 影像/病理「诊断意见」段落抽出正文的份数(`意⻅` 的 `⻅` 是 U+2EC5,
 /// 标签匹配不上,整段 impression 从医生摘要/分享里消失)。
 const AS_IS_IMAGING_FINDINGS: usize = 3;

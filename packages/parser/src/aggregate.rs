@@ -414,8 +414,24 @@ fn sections_text(text: &str, want: SecKind) -> Vec<String> {
 /// 「片」的名义进用药单。规则:上一行最后一段(最后一个分隔符之后)既没剂量也没频次
 /// (名字断在半截),下一行以文字开头、不是列表项也不是标题,就接上。一行一药的
 /// 列表(每行都带剂量/频次)不受影响。
-/// ponytail: 「继续服用阿司匹林\n氯吡格雷 75mg qd」这种裸名换行会被误接成一个名字,
-/// 段落式医嘱一般有分隔符,真撞上再加"上一段能解析为药名就不接"的判断。
+/// 两道闸(审查 C-1):上一段本身不能是标题(「出院带药」没冒号时整行就是标题,
+/// 它也「没有剂量」);下一行剂量之前的名字自己**不能**解析成药——「片」解析不出,
+/// 「碳酸钙片」「阿司匹林肠溶片」解析得出,后者是完整的一味药,不接。
+/// ponytail: 「继续服用阿司匹林\n某某胶囊 1粒 qd」这种裸名换行 + 词典没有的下一味药
+/// 仍会被误接;真撞上再加"上一段能解析为药名就不接"的判断。
+/// 出院医嘱常把用法动词写在药名前(「继续口服阿司匹林…」);分段后、解析前剥掉,
+/// 让每味药各成干净一行。`rejoin_wrapped_lines` 判断下一行是不是完整的一味药时也
+/// 先剥它——否则「继续口服阿司匹林肠溶片」解析不出药,会被当成半截名字接上去。
+fn strip_usage_verb(line: &str) -> &str {
+    let t = line.trim_start();
+    for p in ["继续口服", "继续服用", "继续", "口服", "服用", "给予", "予"] {
+        if let Some(rest) = t.strip_prefix(p) {
+            return rest;
+        }
+    }
+    t
+}
+
 fn rejoin_wrapped_lines(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     // pdf_extract 在换行处吐的是空行(`…钙\n\n片 20mg qn`),空行不能把「半截名字」
@@ -426,10 +442,12 @@ fn rejoin_wrapped_lines(text: &str) -> String {
             .next()
             .unwrap_or("");
         let tail_is_fragment = tail.chars().any(|c| c.is_alphabetic())
-            && !crate::meds::has_dose_or_frequency(tail);
+            && !crate::meds::has_dose_or_frequency(tail)
+            && header_kind(tail).is_none();
         let cont = line.trim_start();
         let starts_like_entry = cont.starts_with(|c: char| c.is_alphabetic())
-            && header_kind(cont).is_none();
+            && header_kind(cont).is_none()
+            && terminology::resolve_drug(&crate::meds::name_part(strip_usage_verb(cont))).is_none();
         if !out.is_empty() && tail_is_fragment && starts_like_entry {
             out.push_str(cont);
         } else {
@@ -910,16 +928,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                         // 时,不切开名字就带着冒号被 #141 守卫整条拒掉,那味药无声消失。
                         .replace(['、', '；', ';', '，', ',', '。', ':', '：'], "\n")
                         .lines()
-                        .map(|l| {
-                            let t = l.trim_start();
-                            for p in ["继续口服", "继续服用", "继续", "口服", "服用", "给予", "予"]
-                            {
-                                if let Some(rest) = t.strip_prefix(p) {
-                                    return rest;
-                                }
-                            }
-                            t
-                        })
+                        .map(strip_usage_verb)
                         .collect::<Vec<_>>()
                         .join("\n");
                     extract_meds(&normalized)
@@ -962,8 +971,12 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             b.sources.insert(doc.index);
             // Keep the dose of the most-recently-dated mention; ties/undated keep
             // the first seen (stable). Fallback: any mention (the first one).
+            // 没剂量的提及(门诊病历「羟氯喹维持」)可以延长跨度、计入来源,但不能把
+            // 已有的剂量冲成空 —— HCQ mg/kg 之类的规则读的就是 latest_dose(审查 I-2)。
             let replace = if !b.has_best {
                 true
+            } else if this_dose.is_none() && b.best_dose.is_some() {
+                false
             } else {
                 match (doc.date, b.best_date) {
                     (Some(m), Some(cur)) => m > cur,
@@ -2042,6 +2055,74 @@ mod tests {
                 ("阿托伐他汀", Some("20mg qn")),
             ]
         );
+    }
+
+    #[test]
+    fn header_or_prose_lines_are_not_glued_to_the_next_drug() {
+        // 审查 C-1:不带冒号的标题行、医嘱散文行、只写药名的一行,都「没有剂量/频次」,
+        // 不能因此把下一味药粘上来。真正的半截名字(「…钙」+「片 20mg qn」)另有测试。
+        let cases: &[(&str, &[(&str, Option<&str>)])] = &[
+            (
+                "出院带药\n醋酸泼尼松片 50mg qd\n羟氯喹\n碳酸钙片 0.6g qd",
+                &[("醋酸泼尼松片", Some("50mg qd")), ("羟氯喹", None), ("碳酸钙片", Some("0.6g qd"))],
+            ),
+            ("出院医嘱:注意休息\n阿司匹林肠溶片 100mg qd", &[("阿司匹林肠溶片", Some("100mg qd"))]),
+            ("出院带药:\n低盐低脂饮食\n阿司匹林肠溶片 100mg qd", &[("阿司匹林肠溶片", Some("100mg qd"))]),
+            ("出院医嘱:定期复查血常规\n继续口服阿司匹林肠溶片 100mg qd", &[("阿司匹林肠溶片", Some("100mg qd"))]),
+        ];
+        for (text, want) in cases {
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some("dischargesummary".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2026, 7, 15),
+                text,
+            }];
+            let agg = aggregate(&docs);
+            for (raw, dose) in *want {
+                let m = agg
+                    .meds
+                    .iter()
+                    .find(|m| m.raw_names.iter().any(|r| r == raw))
+                    .unwrap_or_else(|| {
+                        panic!("{text:?}: 缺 {raw},得到 {:?}", agg.meds.iter().map(|m| &m.raw_names).collect::<Vec<_>>())
+                    });
+                assert_eq!(m.latest_dose.as_deref(), *dose, "{text:?} {raw}");
+                assert!(m.drug_key.is_some(), "{text:?} {raw} 必须能解析成药");
+            }
+        }
+    }
+
+    #[test]
+    fn dose_less_mention_does_not_erase_the_latest_dose() {
+        // 审查 I-2:门诊病历「羟氯喹维持」被模型抽成无剂量的一条,日期更新;它可以延长
+        // 时间跨度、计入来源,但不能把处方上的 0.2g bid 冲成空。
+        let j = r#"{"meds":[{"name":"羟氯喹","dose":"","freq":""}]}"#;
+        let docs = vec![
+            SourceDoc {
+                index: 0,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2024, 9, 20),
+                text: "硫酸羟氯喹片 0.2g bid",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("outpatient".into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2025, 9, 12),
+                text: "羟氯喹维持",
+            },
+        ];
+        let agg = aggregate(&docs);
+        assert_eq!(agg.meds.len(), 1, "同一味药");
+        let m = &agg.meds[0];
+        assert_eq!(m.latest_dose.as_deref(), Some("0.2g bid"), "没剂量的提及不能冲掉已有剂量");
+        assert_eq!(m.end, d(2025, 9, 12), "但时间跨度要延长");
+        assert_eq!(m.sources, vec![0, 1]);
     }
 
     #[test]
