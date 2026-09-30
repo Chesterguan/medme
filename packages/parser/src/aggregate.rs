@@ -190,6 +190,9 @@ pub struct MedSpan {
     pub status: String,
     /// All [`SourceDoc::index`] that mention it, deduped, ascending.
     pub sources: Vec<usize>,
+    /// 任一条来源是云抽取图片模式下没核对上的(`MedObservation::unverified`)。
+    /// 界面标「需核对」;D2 依据层按 source 细分,这里先给整条一个标记。
+    pub unverified: bool,
 }
 
 /// A deduped condition mention across documents.
@@ -571,6 +574,7 @@ struct MedBuilder {
     best_raw_name: Option<String>,
     best_date: Option<NaiveDate>,
     has_best: bool,
+    unverified: bool,
 }
 
 struct CondBuilder {
@@ -882,6 +886,15 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // (self_measurement/note) 显式跳过,见本函数开头 is_manual_entry 的注释。
         let doc_meds = if is_manual_entry {
             Vec::new()
+        } else if let Some(parsed) = doc
+            .extraction_json
+            .and_then(|j| crate::extraction::meds_from_json(j).ok())
+            .filter(|p| !p.meds.is_empty())
+        {
+            // 与上面 labs 同一条规则:有云抽取、能解析、**且真读出了药**才用它;
+            // `Err` 或零条都退回下面的正则路径。不按 doc_type 过滤 —— verify 已保证
+            // 每条都是原文逐字,模型在化验单 notes 里读到的药也是原文。
+            parsed.meds
         } else if wants_meds(dt) {
             extract_meds(doc.text)
         } else {
@@ -933,7 +946,9 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 best_raw_name: None,
                 best_date: None,
                 has_best: false,
+                unverified: false,
             });
+            b.unverified |= obs.unverified;
             b.raw_names.insert(obs.raw_name.clone());
             if !b.meta_from_match && matched {
                 if let Some(name) = &obs.canonical_name {
@@ -1021,6 +1036,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             end: b.end,
             status: "active".to_string(),
             sources: b.sources.into_iter().collect(),
+            unverified: b.unverified,
         })
         .collect();
     med_out.sort_by(|a, b| {
@@ -1115,6 +1131,90 @@ mod tests {
     /// 正则**。这条曾经断言的是反面(零条也算「用抽取结果」),而那正是把「云端漏读
     /// 一份单子」放大成「整份文档永久空白」的那个放大器:空结果是无条件落盘的,之后
     /// 每次投影都读它(extract-repro-report.md §4)。
+    #[test]
+    fn json_meds_are_preferred_over_regex() {
+        // JSON 说二甲双胍,正文说阿托伐他汀:用 JSON 的,正文不跑。
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"bid","route":"口服"}]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("prescription".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 6, 20),
+            text: "阿托伐他汀钙片 20mg qn",
+        }];
+        let agg = aggregate(&docs);
+        let names: Vec<&str> = agg.meds.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["二甲双胍"]);
+        assert_eq!(agg.meds[0].latest_dose.as_deref(), Some("0.5g bid"));
+        assert!(!agg.meds[0].unverified);
+    }
+
+    #[test]
+    fn json_with_no_meds_falls_back_to_regex() {
+        for j in [r#"{}"#, r#"{"meds":[]}"#, "not json"] {
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2026, 6, 20),
+                text: "阿托伐他汀钙片 20mg qn",
+            }];
+            let agg = aggregate(&docs);
+            let names: Vec<&str> = agg.meds.iter().map(|m| m.name.as_str()).collect();
+            assert_eq!(names, vec!["阿托伐他汀"], "extraction_json={j:?} 时必须退回正则");
+        }
+    }
+
+    #[test]
+    fn unverified_json_med_is_kept_and_flagged() {
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"bid","route":"","unverified":true}]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("prescription".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 6, 20),
+            text: "(图片档,正文为 OCR)",
+        }];
+        let agg = aggregate(&docs);
+        assert_eq!(agg.meds.len(), 1, "没核上的药照样进列表");
+        assert!(agg.meds[0].unverified);
+    }
+
+    #[test]
+    fn lab_report_with_json_meds_lists_them() {
+        // D1 决定:有云抽取结果就不按 doc_type 过滤 —— verify 已保证逐字。
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"bid","route":""}]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 6, 20),
+            text: "肌酐 88 μmol/L 59-104",
+        }];
+        let agg = aggregate(&docs);
+        assert_eq!(agg.meds.len(), 1);
+    }
+
+    #[test]
+    fn manual_entry_docs_ignore_json_meds() {
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"bid","route":""}]}"#;
+        for dt in ["self_measurement", "note", "profile_event"] {
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some(dt.into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2026, 6, 20),
+                text: "",
+            }];
+            assert!(aggregate(&docs).meds.is_empty(), "{dt} 不出药");
+        }
+    }
+
     #[test]
     fn extraction_json_valid_but_empty_falls_back_to_regex() {
         let docs = vec![SourceDoc {
