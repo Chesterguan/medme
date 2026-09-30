@@ -193,6 +193,12 @@ fn strip_trailing_route(mut name: &str) -> &str {
     }
 }
 
+/// 这段文字里有没有剂量或频次 —— 有,说明它是一条完整的药行;没有,多半是
+/// 被换行截断的半个名字(`aggregate::rejoin_wrapped_lines` 用它判断要不要接行)。
+pub(crate) fn has_dose_or_frequency(line: &str) -> bool {
+    parse_dose(line).is_some() || parse_frequency(line).is_some()
+}
+
 /// Extract medication observations, one per line. Unmatched-but-clearly-a-med
 /// lines (they carry a dose or a frequency) are kept with drug_key = None.
 pub fn extract_meds(text: &str) -> Vec<MedObservation> {

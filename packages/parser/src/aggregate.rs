@@ -406,6 +406,39 @@ fn sections_text(text: &str, want: SecKind) -> Vec<String> {
     out
 }
 
+/// 把 PDF/OCR 在页宽处硬换行断开的药名接回去。`出院医嘱:…;阿托伐他汀钙\n片 20mg qn;…`
+/// 原样分段会得到「阿托伐他汀钙」(无剂量)和「片 20mg qn」(名字=片)两条,后者以
+/// 「片」的名义进用药单。规则:上一行最后一段(最后一个分隔符之后)既没剂量也没频次
+/// (名字断在半截),下一行以文字开头、不是列表项也不是标题,就接上。一行一药的
+/// 列表(每行都带剂量/频次)不受影响。
+/// ponytail: 「继续服用阿司匹林\n氯吡格雷 75mg qd」这种裸名换行会被误接成一个名字,
+/// 段落式医嘱一般有分隔符,真撞上再加"上一段能解析为药名就不接"的判断。
+fn rejoin_wrapped_lines(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    // pdf_extract 在换行处吐的是空行(`…钙\n\n片 20mg qn`),空行不能把「半截名字」
+    // 的状态冲掉;extract_meds 本来就跳过空行,丢掉无损。
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let tail = out
+            .rsplit(['、', '；', ';', '，', ',', '。', ':', '：', '\n'])
+            .next()
+            .unwrap_or("");
+        let tail_is_fragment = tail.chars().any(|c| c.is_alphabetic())
+            && !crate::meds::has_dose_or_frequency(tail);
+        let cont = line.trim_start();
+        let starts_like_entry = cont.starts_with(|c: char| c.is_alphabetic())
+            && header_kind(cont).is_none();
+        if !out.is_empty() && tail_is_fragment && starts_like_entry {
+            out.push_str(cont);
+        } else {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 /// Medication-block headers used to **mask** text out of whole-document lab
 /// mining. Deliberately a strict subset of [`header_kind`]'s `MEDS`: the bare
 /// `用药` / `医嘱` entries are left out on purpose, because as raw prefixes they
@@ -859,8 +892,10 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                     // (继续口服阿司匹林…)。extract_meds 按行抽、#141 整句标点 guard 会拒
                     // 整行。故:先按分隔符拆行,再剥去行首用法动词,让每个药各成干净一行
                     // (散文碎片如「低盐低脂饮食」无剂量,仍被 guard 正确拒掉)。
-                    let normalized: String = s
-                        .replace(['、', '；', ';', '，', ',', '。'], "\n")
+                    let normalized: String = rejoin_wrapped_lines(s)
+                        // 冒号也切:「出院医嘱:阿司匹林肠溶片 100mg qd」标题与第一味药同行
+                        // 时,不切开名字就带着冒号被 #141 守卫整条拒掉,那味药无声消失。
+                        .replace(['、', '；', ';', '，', ',', '。', ':', '：'], "\n")
                         .lines()
                         .map(|l| {
                             let t = l.trim_start();
@@ -1870,6 +1905,64 @@ mod tests {
         assert_eq!(s.points[0].date, d(2024, 1, 1));
         assert_eq!(s.points[1].date, None); // undated point last, retained
         assert_eq!(s.points[1].source, 0);
+    }
+
+    #[test]
+    fn discharge_orders_survive_page_wrap_and_header_on_same_line() {
+        // `ocr::recognize_pdf_mixed`(pdf_extract)对 `2026-07-15_出院记录_冠脉支架术后.pdf` 的
+        // 原样输出:标题与第一味药同行,「阿托伐他汀钙片」在页宽处被硬换行成「…钙」+
+        // 空行 +「片 20mg qn」。
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("dischargesummary".into()),
+            title: None,
+            extraction_json: None,
+            date: d(2026, 7, 15),
+            text: "\
+出院诊断:1. 冠状动脉粥样硬化性心脏病
+出院医嘱:阿司匹林肠溶片 100mg qd 长期服用;硫酸氢氯吡格雷片 75mg qd,服用 1 年后门诊评估是否停用;阿托伐他汀钙
+
+片 20mg qn;继续原降压降糖方案;今后就医请主动告知磺胺类药物用药禁忌;1 个月后心内科门诊复查,监测血脂、肝肾功能;
+
+如再发胸闷、气短及时就诊。
+医师:陈志强 审核:王海燕
+",
+        }];
+        let agg = aggregate(&docs);
+        let names: Vec<(&str, Option<&str>)> = agg
+            .meds
+            .iter()
+            .map(|m| (m.name.as_str(), m.latest_dose.as_deref()))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("氯吡格雷", Some("75mg qd")),
+                ("阿司匹林", Some("100mg qd")),
+                ("阿托伐他汀", Some("20mg qn")),
+            ]
+        );
+    }
+
+    #[test]
+    fn one_drug_per_line_lists_are_not_glued_together() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("dischargesummary".into()),
+            title: None,
+            extraction_json: None,
+            date: d(2026, 7, 15),
+            text: "\
+出院带药:
+阿司匹林肠溶片 100mg qd 口服
+氯吡格雷 75mg qd 口服
+低盐低脂饮食
+神经内科门诊随访
+",
+        }];
+        let agg = aggregate(&docs);
+        let names: Vec<&str> = agg.meds.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["氯吡格雷", "阿司匹林"]);
     }
 
     #[test]
