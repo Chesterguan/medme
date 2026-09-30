@@ -1,14 +1,15 @@
 //! 云抽取结果(deid schema v1)→ `LabObservation`,与 `extract_labs` 的产物同构,
 //! 好让 aggregate / assemble_summary / 趋势零改动地吃它。
 //!
-//! 只吃 labs——meds/diagnoses/impression 仍走 `extract_labs`/`extract_meds`/
-//! `extract_conditions` 的正则路径,本模块不碰(Task 11 范围;见 spec §5)。
+//! labs 见 `labs_from_json`,meds 见 `meds_from_json`;diagnoses/impression 仍走
+//! `extract_conditions` 的正则路径,本模块不碰(见 2026-09-30 三视图 spec §5)。
 //!
 //! 数值解析、单位换算、"这是不是一条化验行"的证据闸门,三处都直接复用
 //! `labs.rs` 给 OCR/正则路径写的同一份函数(`parse_decimal_token`/
 //! `canonicalize`/`has_lab_evidence`)——两条路径各自实现一遍、稍有出入,就是
 //! 图表安全事故的来源(见这三个函数的文档)。
 use crate::labs::{canonicalize, has_lab_evidence, parse_decimal_token, LabObservation};
+use crate::meds::{extract_meds, MedObservation};
 
 /// 数值解析:与 `extract_labs` 同一个 `parse_decimal_token`(逗号当小数点),
 /// 额外拒收非有限值(`NaN`/`inf`/溢出成 `inf` 的 `1e999`)—— 这些都是"parse
@@ -125,6 +126,50 @@ pub fn labs_from_json(json: &str) -> Result<LabsFromJson, deid::DeidError> {
         dropped_unparseable,
         unverified,
     })
+}
+
+/// 云抽取 `meds` → [`MedObservation`]。
+///
+/// 每条 `MedItem` 拼成一行「药名 剂量 频次」交给 [`extract_meds`]:剂量/频次/给药
+/// 途径/药名解析全部复用正则路径那一套(单位归一、`g/L` 不当剂量、「用法:」说明行
+/// 守卫、`resolve_drug`),不另写第二份规则。`route` 不进行——`strip_trailing_route`
+/// 会剥掉它,而 `MedObservation` 也没有这个字段(D2 若要静滴/口服再加)。
+///
+/// 跟 [`labs_from_json`] 一样:`Err` = JSON 坏(调用方退回正则);`Ok` 且 `meds`
+/// 为空也由调用方退回正则(零条不等于「没有药」)。`unverified` 逐条带出。
+#[derive(Debug, Clone)]
+pub struct MedsFromJson {
+    pub meds: Vec<MedObservation>,
+    /// 空药名、或拼出来的行过不了 `extract_meds` 的守卫(说明行、纯标点)。
+    pub dropped: usize,
+    pub unverified: usize,
+}
+
+pub fn meds_from_json(json: &str) -> Result<MedsFromJson, deid::DeidError> {
+    let e = deid::parse_extraction(json)?;
+    let mut out = MedsFromJson { meds: Vec::new(), dropped: 0, unverified: 0 };
+    for item in e.meds {
+        let name = item.name.trim();
+        if name.is_empty() {
+            out.dropped += 1;
+            continue;
+        }
+        let line = format!("{name} {} {}", item.dose.trim(), item.freq.trim());
+        let Some(mut obs) = extract_meds(line.trim()).pop() else {
+            out.dropped += 1;
+            continue;
+        };
+        // 模型写的频次原话解析不出码(「早晚各一次」)时,码留空、原话不丢。
+        if obs.frequency_raw.is_none() && !item.freq.trim().is_empty() {
+            obs.frequency_raw = Some(item.freq.trim().to_string());
+        }
+        obs.unverified = item.unverified;
+        if item.unverified {
+            out.unverified += 1;
+        }
+        out.meds.push(obs);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -246,5 +291,55 @@ mod tests {
             "词典不认识这个印刷单位,规范值必须是 None,不能恒等式地照抄印刷值"
         );
         assert_eq!(r.labs[0].unit_canonical, None);
+    }
+
+    #[test]
+    fn meds_from_json_reuses_the_line_parser() {
+        let j = r#"{"meds":[
+          {"name":"醋酸泼尼松片","dose":"7.5mg","freq":"每日一次","route":"口服"},
+          {"name":"吗替麦考酚酯胶囊","dose":"0.5g","freq":"每日两次","route":"口服","unverified":true},
+          {"name":"","dose":"10mg","freq":"qd","route":""}
+        ]}"#;
+        let r = meds_from_json(j).expect("valid json");
+        assert_eq!(r.meds.len(), 2, "空药名那条丢掉");
+        assert_eq!(r.dropped, 1);
+        assert_eq!(r.unverified, 1);
+        let p = &r.meds[0];
+        assert_eq!(p.raw_name, "醋酸泼尼松片");
+        assert_eq!(p.dose_num, Some(7.5));
+        assert_eq!(p.dose_unit.as_deref(), Some("mg"));
+        assert_eq!(p.frequency.as_deref(), Some("qd"));
+        assert_eq!(p.frequency_raw.as_deref(), Some("每日一次"));
+        assert!(!p.unverified);
+        let m = &r.meds[1];
+        assert_eq!(m.dose_num, Some(0.5));
+        assert_eq!(m.dose_unit.as_deref(), Some("g"));
+        assert_eq!(m.frequency.as_deref(), Some("bid"));
+        assert!(m.unverified, "图片模式没核上的要带标记进来");
+    }
+
+    #[test]
+    fn meds_from_json_keeps_item_when_dose_is_a_concentration() {
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"5mg/ml","freq":"bid","route":""}]}"#;
+        let r = meds_from_json(j).expect("valid json");
+        assert_eq!(r.meds.len(), 1, "浓度不是剂量,但有频次和药名匹配,这条要留");
+        assert_eq!(r.meds[0].dose_num, None);
+        assert_eq!(r.meds[0].frequency.as_deref(), Some("bid"));
+    }
+
+    #[test]
+    fn meds_from_json_keeps_unparsed_frequency_text() {
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"早晚各一次","route":""}]}"#;
+        let r = meds_from_json(j).expect("valid json");
+        assert_eq!(r.meds.len(), 1);
+        assert_eq!(r.meds[0].frequency, None, "解析不出的频次不猜码");
+        assert_eq!(r.meds[0].frequency_raw.as_deref(), Some("早晚各一次"), "原话要留着");
+    }
+
+    #[test]
+    fn meds_from_json_malformed_is_err_and_empty_object_is_zero() {
+        assert!(meds_from_json("not json").is_err());
+        let r = meds_from_json("{}").expect("schema 1 without meds key is still valid");
+        assert_eq!(r.meds.len(), 0);
     }
 }

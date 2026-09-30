@@ -53,6 +53,9 @@ pub struct MedObservation {
     pub frequency_raw: Option<String>,
     /// 0.0 if unmatched; else the terminology `Match.confidence`.
     pub confidence: f32,
+    /// 云抽取图片模式下这条没能逐字核对上(`deid::MedItem::unverified`);正则路径
+    /// 恒为 false。界面标「需核对」,**不丢**。
+    pub unverified: bool,
 }
 
 /// Leading list marker: `1.` `1、` `1)` `①`..`⑩` `-` `•` `*` `·`.
@@ -264,6 +267,7 @@ pub fn extract_meds(text: &str) -> Vec<MedObservation> {
             frequency: freq.as_ref().map(|f| f.0.clone()),
             frequency_raw: freq.as_ref().map(|f| f.1.clone()),
             confidence: m.as_ref().map_or(0.0, |m| m.confidence),
+            unverified: false,
         });
     }
     out
