@@ -1,0 +1,122 @@
+{
+ "doc_type": "discharge",
+ "doc_date": "2024-03-15",
+ "labs": [
+  {
+   "name": "抗核抗体",
+   "value": "1:640 均质型",
+   "unit": "",
+   "ref_low": "",
+   "ref_high": "",
+   "flag": ""
+  },
+  {
+   "name": "抗双链DNA抗体",
+   "value": "186",
+   "unit": "IU/mL",
+   "ref_low": "",
+   "ref_high": "",
+   "flag": ""
+  },
+  {
+   "name": "补体 C3/C4",
+   "value": "降低",
+   "unit": "",
+   "ref_low": "",
+   "ref_high": "",
+   "flag": "L"
+  },
+  {
+   "name": "24 小时尿蛋白",
+   "value": "3.2",
+   "unit": "g",
+   "ref_low": "",
+   "ref_high": "",
+   "flag": ""
+  },
+  {
+   "name": "白蛋白",
+   "value": "28.4",
+   "unit": "g/L",
+   "ref_low": "",
+   "ref_high": "",
+   "flag": ""
+  }
+ ],
+ "meds": [
+  {
+   "name": "醋酸泼尼松片",
+   "dose": "50mg",
+   "freq": "qd",
+   "route": ""
+  },
+  {
+   "name": "吗替麦考酚酯胶囊",
+   "dose": "0.75g",
+   "freq": "bid",
+   "route": ""
+  },
+  {
+   "name": "硫酸羟氯喹片",
+   "dose": "0.2g",
+   "freq": "bid",
+   "route": ""
+  },
+  {
+   "name": "碳酸钙片",
+   "dose": "0.6g",
+   "freq": "qd",
+   "route": ""
+  }
+ ],
+ "diagnoses": [
+  {
+   "text": "系统性红斑狼疮",
+   "icd": ""
+  },
+  {
+   "text": "狼疮性肾炎(ISN/RPS IV-G(A) 型)",
+   "icd": ""
+  }
+ ],
+ "impression": "",
+ "notes": "",
+ "facts": [
+  {
+   "type": "organ_involvement",
+   "organ": "kidney",
+   "date": "2024-03-08",
+   "text": "狼疮肾炎",
+   "evidence": "入院诊断:系统性红斑狼疮 狼疮肾炎"
+  },
+  {
+   "type": "hospitalization",
+   "date_start": "2024-03-08",
+   "date_end": "2024-03-15",
+   "reason": "系统性红斑狼疮 狼疮肾炎",
+   "evidence": "入院日期:2024-03-08    出院日期:2024-03-15    科室:风湿科"
+  },
+  {
+   "type": "biopsy",
+   "organ": "kidney",
+   "date": "2024-03-12",
+   "result": "狼疮性肾炎 IV-G(A) 型",
+   "evidence": "3 月 12 日行超声引导下肾穿刺活检,病理示狼疮性肾炎 IV-G(A) 型"
+  },
+  {
+   "type": "infusion",
+   "drug": "甲泼尼龙",
+   "dose": "0.5 g",
+   "date": "",
+   "evidence": "予甲泼尼龙 0.5 g 静脉冲击 3 天后改口服激素"
+  },
+  {
+   "type": "scale",
+   "name": "other",
+   "value": "10/24",
+   "date": "2024-03-12",
+   "evidence": "NIH 活动指数 10/24"
+  }
+ ],
+ "_model": "deepseek-flash"
+}

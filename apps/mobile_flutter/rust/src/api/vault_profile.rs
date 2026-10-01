@@ -17,6 +17,11 @@ use std::path::Path;
 
 /// 验清单的签名并原样交给 Dart。**Dart 永远不自己解析未验签的清单** —— 那是中间人
 /// 改一行 `version` 就能拿去拼路径的地方(`lib/skill_packages.dart`)。
+/// 出厂内置的那份签名 SLE 包(与仓库 `skills/sle/<version>.json` 逐字节相同)。
+/// 只给示例数据载入用:让病程档案在没登录、没拉过 `/v1/skills` 的机器上也能亮起来。
+/// 线上更新照常走 `skill_packages.dart`;缓存里已有更新版本时 `cache_store` 会拒绝降级。
+pub(crate) const SLE_PACKAGE_ENVELOPE: &str = include_str!("../../../../../skills/sle/2026.10.1.json");
+
 pub fn vault_profile_verify_index(envelope_json: String) -> anyhow::Result<String> {
     let idx = profile::load_signed_index(&envelope_json).map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(serde_json::to_string(&serde_json::json!({
@@ -74,7 +79,11 @@ pub fn vault_profile_view(dir: String, package_id: String) -> anyhow::Result<Str
     // 换掉的是「没开启也解一整箱病历」。
     let docs = input.source_docs();
     let view = profile::materialize(&docs, &input.events, &pkg, today());
-    Ok(serde_json::to_string(&view)?)
+    // 三视图的依据只带 `SourceDoc::index`(引擎不知道 document_id);这里附一张桥,
+    // 界面按 `doc` 查 `documents[].document_id` 去开原件。顶层新键,老界面不读、不碍事。
+    let mut json = serde_json::to_value(&view)?;
+    json["documents"] = serde_json::Value::Array(input.document_refs());
+    Ok(serde_json::to_string(&json)?)
 }
 
 /// 按**当前开着的保险箱**重装术语覆盖层(装着且开着的包的 `terms` 合并成一份)。

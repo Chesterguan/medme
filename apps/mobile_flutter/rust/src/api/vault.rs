@@ -43,6 +43,13 @@ const MOBILE_OCR_MODEL: &str = "mlkit-v2-zh";
 /// 编译进本 crate 的二进制(~4MB,可接受)。见 `load_demo_data`。
 static DEMO_DATA: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/demo-data");
 
+/// 李静(狼疮)示例:`packages/profile/testdata` 里的语料 + DeepSeek 原始输出的副本,
+/// 编译进二进制。文本档走 `pipeline::ingest`;模型输出经 `deid::verify` 后当作已完成的
+/// 云抽取落库 —— 和登录用户开了云端整理之后的数据形状一样,病程档案三视图靠它才有
+/// facts。副本不手编:`cp packages/profile/testdata/{corpus,extractions}/* demo-data-sle/…`。
+static DEMO_DATA_SLE: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/demo-data-sle");
+
 /// 全局 Vault 持有者,镜像 Tauri 的 `AppState`:真相根/派生库路径/设备 id 随
 /// Vault 一起存(`reset_vault` 需要同时读写这几样)。`data_dir` 是 App 沙盒 data
 /// 目录,存 `device_id` 文件,也是 `ingest_bytes`/`load_demo_data` 的临时文件落点
@@ -1575,6 +1582,149 @@ pub fn load_demo_data(progress: StreamSink<DemoLoadProgressDto>) -> anyhow::Resu
 /// (`db_path`),再用 `open_split_resilient` 在同一位置重建。之后 `load_archive`
 /// 会返回空。与桌面/Tauri 移动端的 `reset_vault` 同构,包括同一条安全兜底:
 /// `truth_root` 必须是一个名为 `vault` 的目录,防止误删沙盒其它内容。
+/// 载入李静(狼疮)示例:见 [`DEMO_DATA_SLE`]。装内置病种包、写「开启档案」与体重事件
+/// 都在 `with_state` **外面**做(`vault_profile_record_event` 自己拿锁)。
+/// `skill_cache_dir` 与 Dart 侧 `skillCacheDir()` 同一个目录。
+pub fn load_demo_data_sle(
+    progress: StreamSink<DemoLoadProgressDto>,
+    skill_cache_dir: String,
+) -> anyhow::Result<()> {
+    let result = with_state(|state| {
+        let v = &state.vault;
+        let mut files: Vec<&include_dir::File<'_>> = DEMO_DATA_SLE
+            .get_dir("corpus")
+            .map(|d| d.files().collect())
+            .unwrap_or_default();
+        files.sort_by_key(|f| f.path().to_path_buf());
+        let total = files.len() as i64;
+        let tmp_root = state.data_dir.join("medme-demo-data-sle");
+        std::fs::create_dir_all(&tmp_root)?;
+        let mut count = 0i64;
+        let mut loaded = 0i64;
+        for f in files.iter() {
+            let tmp_path = tmp_root.join(f.path());
+            if let Some(parent) = tmp_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&tmp_path, f.contents())?;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                pipeline::ingest(v, &tmp_path)
+            }));
+            match result {
+                Ok(Ok(outcome)) => {
+                    count += 1;
+                    attach_demo_extraction(v, f, outcome.source_file_id);
+                }
+                Ok(Err(e)) => log_warn(&format!(
+                    "[demo-data-sle] ingest failed for {}: {e}",
+                    tmp_path.display()
+                )),
+                Err(_) => log_warn(&format!(
+                    "[demo-data-sle] ingest panicked (isolated) for {}",
+                    tmp_path.display()
+                )),
+            }
+            loaded += 1;
+            let _ = progress.add(DemoLoadProgressDto {
+                loaded,
+                total,
+                succeeded: count,
+                error: None,
+            });
+        }
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        v.rebuild_encounters()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(count)
+    });
+    match result {
+        Ok(_) => {
+            // 内置的那份签名包:缓存里已有更新的就跳过(`Downgrade`),别的错误只记日志 ——
+            // 示例数据本身已经进去了,包装不上只是档案页先空着。
+            match profile::cache_store(
+                Path::new(&skill_cache_dir),
+                crate::api::vault_profile::SLE_PACKAGE_ENVELOPE,
+            ) {
+                Ok(_) | Err(profile::PackageError::Downgrade { .. }) => {}
+                Err(e) => log_warn(&format!("[demo-data-sle] 内置病种包装不上:{e}")),
+            }
+            for (kind, at, payload) in [
+                ("enable", "2024-03-15", "{}"),
+                // 2025-06-18 输液记录单上印的体重。
+                ("weight", "2025-06-18", r#"{"kg":56}"#),
+            ] {
+                if let Err(e) = crate::api::vault_profile::vault_profile_record_event(
+                    kind.into(),
+                    "sle".into(),
+                    at.into(),
+                    payload.into(),
+                ) {
+                    log_warn(&format!("[demo-data-sle] 写 {kind} 事件失败:{e}"));
+                }
+            }
+        }
+        Err(e) => {
+            let _ = progress.add(DemoLoadProgressDto {
+                loaded: 0,
+                total: 0,
+                succeeded: 0,
+                error: Some(e.to_string()),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// 把与语料同名的模型输出(`extractions/<stem>.json`)经 `deid::verify` 后作为 schema 2
+/// 云抽取挂到刚 ingest 的文档上。任何一步失败只记日志:文档本身已经在了。
+fn attach_demo_extraction(v: &Vault, f: &include_dir::File<'_>, source_file_id: i64) {
+    let Some(stem) = f.path().file_stem().and_then(|s| s.to_str()) else {
+        return;
+    };
+    let Some(fx) = DEMO_DATA_SLE.get_file(format!("extractions/{stem}.json")) else {
+        return;
+    };
+    let (Ok(text), Ok(raw)) = (
+        std::str::from_utf8(f.contents()),
+        std::str::from_utf8(fx.contents()),
+    ) else {
+        return;
+    };
+    let doc = match v.document_by_source_file_id(source_file_id) {
+        Ok(Some(d)) => d,
+        Ok(None) => return,
+        Err(e) => {
+            log_warn(&format!("[demo-data-sle] {stem}: 找不到文档:{e}"));
+            return;
+        }
+    };
+    let parsed = match deid::parse_extraction(raw) {
+        Ok(p) => p,
+        Err(e) => {
+            log_warn(&format!("[demo-data-sle] {stem}: 模型输出不是合法 JSON:{e}"));
+            return;
+        }
+    };
+    let verified = deid::verify(parsed, text, deid::Mode::Text);
+    let model = serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|j| j.get("_model").and_then(|m| m.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "fixture".into());
+    let Ok(result_json) = serde_json::to_string(&verified.extraction) else {
+        return;
+    };
+    if let Err(e) = v.add_extraction(core_model::NewExtraction {
+        document_id: doc.id,
+        backend: "deepseek".into(),
+        model_version: model,
+        mode: "text".into(),
+        schema: 2,
+        result_json,
+    }) {
+        log_warn(&format!("[demo-data-sle] {stem}: 挂云抽取失败:{e}"));
+    }
+}
+
 pub fn reset_vault() -> anyhow::Result<()> {
     with_state_mut(|state| {
         if state.truth_root.file_name().and_then(|n| n.to_str()) != Some("vault") {
