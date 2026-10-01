@@ -31,7 +31,16 @@
               "value": 5
             }
           ],
-          "unconvertible": []
+          "unconvertible": [
+            {
+              "dose": "10mg qd",
+              "name": "激素",
+              "reason": "换算表待核",
+              "sources": [
+                10
+              ]
+            }
+          ]
         },
         "hcq": {
           "daily_mg": 200.0,
@@ -44,6 +53,7 @@
           "sources": [
             3,
             6,
+            10,
             13
           ],
           "target": 5,
@@ -67,6 +77,7 @@
             "sources": [
               3,
               6,
+              10,
               13
             ]
           },
@@ -165,6 +176,38 @@
           {
             "evidence": [
               {
+                "analyte": "urine_rbc_hpf",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "/HP",
+                "unit_canonical": "/[HPF]",
+                "value": "2",
+                "value_canonical": 2.0,
+                "values_converted": false
+              }
+            ],
+            "id": "hematuria",
+            "label": "血尿"
+          },
+          {
+            "evidence": [
+              {
+                "analyte": "urine_wbc_hpf",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "/HP",
+                "unit_canonical": "/[HPF]",
+                "value": "1",
+                "value_canonical": 1.0,
+                "values_converted": false
+              }
+            ],
+            "id": "pyuria",
+            "label": "脓尿"
+          },
+          {
+            "evidence": [
+              {
                 "analyte": "casts",
                 "date": "2026-09-10",
                 "document_index": 14,
@@ -212,18 +255,7 @@
           }
         ],
         "score": 2,
-        "unscored": [
-          {
-            "id": "hematuria",
-            "label": "血尿",
-            "reason": "最近这段时间没有做这一项"
-          },
-          {
-            "id": "pyuria",
-            "label": "脓尿",
-            "reason": "最近这段时间没有做这一项"
-          }
-        ],
+        "unscored": [],
         "window_days": 10
       },
       "empty_hint": null,
@@ -543,6 +575,13 @@
                     "value": 186.0
                   },
                   {
+                    "date": "2024-03-15",
+                    "document_index": 3,
+                    "flag": null,
+                    "unverified": false,
+                    "value": 186.0
+                  },
+                  {
                     "date": "2024-06-10",
                     "document_index": 4,
                     "flag": "H",
@@ -634,20 +673,6 @@
                     "value": 760.0
                   },
                   {
-                    "date": "2025-12-05",
-                    "document_index": 11,
-                    "flag": "H",
-                    "unverified": false,
-                    "value": 520.0
-                  },
-                  {
-                    "date": "2026-03-14",
-                    "document_index": 12,
-                    "flag": "H",
-                    "unverified": false,
-                    "value": 420.0
-                  },
-                  {
                     "date": "2026-09-10",
                     "document_index": 14,
                     "flag": "H",
@@ -678,6 +703,13 @@
                     "value": 3.2
                   },
                   {
+                    "date": "2024-03-15",
+                    "document_index": 3,
+                    "flag": null,
+                    "unverified": false,
+                    "value": 3.2
+                  },
+                  {
                     "date": "2024-06-10",
                     "document_index": 4,
                     "flag": "H",
@@ -699,20 +731,6 @@
                     "value": 0.9
                   },
                   {
-                    "date": "2025-12-05",
-                    "document_index": 11,
-                    "flag": "H",
-                    "unverified": false,
-                    "value": 0.6
-                  },
-                  {
-                    "date": "2026-03-14",
-                    "document_index": 12,
-                    "flag": "H",
-                    "unverified": false,
-                    "value": 0.45
-                  },
-                  {
                     "date": "2026-09-10",
                     "document_index": 14,
                     "flag": "H",
@@ -721,8 +739,8 @@
                   }
                 ],
                 "qualitative": [],
-                "ref_high": 0.15,
-                "ref_low": 0.0,
+                "ref_high": null,
+                "ref_low": null,
                 "role": "organ:kidney",
                 "undated": [],
                 "unit": "g/24h",
@@ -762,13 +780,6 @@
                     "flag": "H",
                     "unverified": false,
                     "value": 79.0
-                  },
-                  {
-                    "date": "2025-12-05",
-                    "document_index": 11,
-                    "flag": "H",
-                    "unverified": false,
-                    "value": 75.0
                   },
                   {
                     "date": "2026-03-14",
@@ -824,7 +835,7 @@
                   {
                     "date": "2025-02-20",
                     "document_index": 7,
-                    "flag": "N",
+                    "flag": null,
                     "unverified": false,
                     "value": 98.0
                   },
@@ -845,7 +856,7 @@
                   {
                     "date": "2026-09-10",
                     "document_index": 14,
-                    "flag": "N",
+                    "flag": null,
                     "unverified": false,
                     "value": 106.0
                   }
@@ -1164,7 +1175,74 @@
     {
       "body": {
         "undated": [],
-        "years": []
+        "years": [
+          {
+            "events": [
+              {
+                "date": "2024-03-08",
+                "document_index": 3,
+                "severity": "high",
+                "text": "入院日期:2024-03-08    出院日期:2024-03-15    科室:风湿科",
+                "type": "hospitalization",
+                "unverified": false
+              },
+              {
+                "date": "2024-03-12",
+                "document_index": 2,
+                "severity": "normal",
+                "text": "病理诊断:狼疮性肾炎,ISN/RPS 2003 分型 IV-G(A)。",
+                "type": "biopsy",
+                "unverified": false
+              },
+              {
+                "date": "2024-03-15",
+                "document_index": 3,
+                "severity": "normal",
+                "text": "予甲泼尼龙 0.5 g 静脉冲击 3 天后改口服激素",
+                "type": "infusion",
+                "unverified": false
+              }
+            ],
+            "year": 2024
+          },
+          {
+            "events": [
+              {
+                "date": "2025-06-18",
+                "document_index": 9,
+                "severity": "normal",
+                "text": "贝利尤单抗 560mg 静脉滴注",
+                "type": "infusion",
+                "unverified": false
+              },
+              {
+                "date": "2025-09-12",
+                "document_index": 10,
+                "severity": "normal",
+                "text": "贝利尤单抗已规律输注 3 个月,无输液反应。",
+                "type": "infusion",
+                "unverified": false
+              },
+              {
+                "date": "2025-09-12",
+                "document_index": 10,
+                "severity": "normal",
+                "text": "激素继续缓慢减量至 10mg 每日一次",
+                "type": "dose_change",
+                "unverified": false
+              },
+              {
+                "date": "2025-09-12",
+                "document_index": 10,
+                "severity": "normal",
+                "text": "吗替麦考酚酯减至 0.5g 每日两次",
+                "type": "dose_change",
+                "unverified": false
+              }
+            ],
+            "year": 2025
+          }
+        ]
       },
       "empty_hint": null,
       "id": null,
@@ -1178,14 +1256,14 @@
             "id": "doris",
             "items": [
               {
-                "actual": null,
+                "actual": 0,
                 "actual_at": null,
                 "id": "csledai_zero",
                 "label": "临床 SLEDAI = 0(去掉补体、dsDNA 两项)",
                 "note": "Box 1 原文只说「irrespective of serology」;落到低补体、dsDNA 升高这两行,是按 §B.1 里仅有的两条血清学描述符推出来的对应(源里标 PARAPHRASE),待 Task 19 核",
-                "reason": "「血尿」还没读到,SLEDAI 算不全",
+                "reason": null,
                 "source": "S5",
-                "verdict": "unknown"
+                "verdict": "yes"
               },
               {
                 "actual": null,
@@ -1227,14 +1305,14 @@
             "id": "lldas",
             "items": [
               {
-                "actual": null,
+                "actual": 2,
                 "actual_at": null,
                 "id": "sledai_le4",
                 "label": "SLEDAI-2K ≤ 4",
                 "note": null,
-                "reason": "「血尿」还没读到,SLEDAI 算不全",
+                "reason": null,
                 "source": "S6",
-                "verdict": "unknown"
+                "verdict": "yes"
               },
               {
                 "actual": null,
@@ -1303,6 +1381,45 @@
       "body": {
         "items": [
           {
+            "actual": null,
+            "actual_at": null,
+            "actual_unit": null,
+            "analyte": null,
+            "any_of": [
+              "urine_protein_24h",
+              "urine_pcr"
+            ],
+            "by_days": 90,
+            "drop_pct": 25,
+            "evidence": [],
+            "from": {
+              "baseline_window_days": 30,
+              "drug_classes": [
+                "mmf",
+                "aza",
+                "ctx",
+                "mtx",
+                "cni",
+                "belimumab",
+                "telitacicept",
+                "rtx"
+              ],
+              "note": "起算日(T0)的口径是**包定的**,不是指南给的:取「最早一条肾受累记录」与「最早一次上面那几类药的处方」里更早的那个,基线取 T0 ±30 天内治疗开始前的最后一次结果。spec §5.5 只说「以确诊/治疗起始为 T0」,天数与药物清单由包填。",
+              "organ": "kidney",
+              "source": "PKG"
+            },
+            "id": "upr_drop_25_3m",
+            "kind": "proteinuria_drop_pct",
+            "label": "3 个月蛋白尿较基线下降 ≥25%",
+            "note": "§E.2 rec 2 逐字:「a reduction in proteinuria of at least 25% by 3 months (2b/C), 50% by 6 months (2a/B), and a UPCR target <700 mg/g by 12 months (1b/B)」。「3 个月」按 90 天算是包里的换算,原文只写 months。24h 尿蛋白与 UPCR 各自跟自己的基线比,不合并",
+            "reason": "单位不一致,算不了",
+            "source": "S8",
+            "t0": "2024-03-02",
+            "t0_basis": "最早一条器官受累记录:泡沫尿 3 周",
+            "verdict": "unknown",
+            "year": 2025
+          },
+          {
             "actual": 42.9,
             "actual_at": "2024-06-10",
             "actual_unit": "%",
@@ -1311,8 +1428,8 @@
               "urine_protein_24h",
               "urine_pcr"
             ],
-            "by_days": 90,
-            "drop_pct": 25,
+            "by_days": 180,
+            "drop_pct": 50,
             "evidence": [
               {
                 "analyte": "urine_pcr",
@@ -1347,66 +1464,6 @@
                 "telitacicept",
                 "rtx"
               ],
-              "note": "起算日(T0)的口径是**包定的**,不是指南给的:取「最早一条肾受累记录」与「最早一次上面那几类药的处方」里更早的那个,基线取 T0 ±30 天内治疗开始前的最后一次结果。spec §5.5 只说「以确诊/治疗起始为 T0」,天数与药物清单由包填。",
-              "organ": "kidney",
-              "source": "PKG"
-            },
-            "id": "upr_drop_25_3m",
-            "kind": "proteinuria_drop_pct",
-            "label": "3 个月蛋白尿较基线下降 ≥25%",
-            "note": "§E.2 rec 2 逐字:「a reduction in proteinuria of at least 25% by 3 months (2b/C), 50% by 6 months (2a/B), and a UPCR target <700 mg/g by 12 months (1b/B)」。「3 个月」按 90 天算是包里的换算,原文只写 months。24h 尿蛋白与 UPCR 各自跟自己的基线比,不合并",
-            "reason": null,
-            "source": "S8",
-            "t0": "2024-03-15",
-            "t0_basis": "最早一次处方:吗替麦考酚酯",
-            "verdict": "yes",
-            "year": 2025
-          },
-          {
-            "actual": 65.0,
-            "actual_at": "2024-09-09",
-            "actual_unit": "%",
-            "analyte": "urine_pcr",
-            "any_of": [
-              "urine_protein_24h",
-              "urine_pcr"
-            ],
-            "by_days": 180,
-            "drop_pct": 50,
-            "evidence": [
-              {
-                "analyte": "urine_pcr",
-                "date": "2024-03-05",
-                "document_index": 1,
-                "unit": "mg/g",
-                "unit_canonical": "mg/g",
-                "value": "2800",
-                "value_canonical": 2800.0,
-                "values_converted": false
-              },
-              {
-                "analyte": "urine_pcr",
-                "date": "2024-09-09",
-                "document_index": 5,
-                "unit": "mg/g",
-                "unit_canonical": "mg/g",
-                "value": "980",
-                "value_canonical": 980.0,
-                "values_converted": false
-              }
-            ],
-            "from": {
-              "baseline_window_days": 30,
-              "drug_classes": [
-                "mmf",
-                "aza",
-                "ctx",
-                "mtx",
-                "cni",
-                "belimumab",
-                "telitacicept",
-                "rtx"
-              ],
               "organ": "kidney",
               "source": "PKG"
             },
@@ -1416,9 +1473,9 @@
             "note": "§E.2 叙述逐字把这一档称作 partial response:「the goals of 25% reduction by 3 months, 50% by 6 months (partial response)」。「6 个月」按 180 天算是包里的换算",
             "reason": null,
             "source": "S8",
-            "t0": "2024-03-15",
-            "t0_basis": "最早一次处方:吗替麦考酚酯",
-            "verdict": "yes",
+            "t0": "2024-03-02",
+            "t0_basis": "最早一条器官受累记录:泡沫尿 3 周",
+            "verdict": "no",
             "year": 2025
           },
           {
@@ -1460,27 +1517,27 @@
             "note": "§E.2 逐字:「an absolute UPCR value of <700 mg/g at 12 months remained unchanged; a change from the range of 500 to 700 mg (referred in the 2019 recommendations) was decided for the sake of simplification」。EULAR 2023 复述 2019 时写的是 500–700 mg/day,与这一条不是同一个数。「12 个月」按 365 天算是包里的换算",
             "reason": null,
             "source": "S8",
-            "t0": "2024-03-15",
-            "t0_basis": "最早一次处方:吗替麦考酚酯",
+            "t0": "2024-03-02",
+            "t0_basis": "最早一条器官受累记录:泡沫尿 3 周",
             "threshold": 700,
             "threshold_unit": "mg/g",
             "verdict": "no",
             "year": 2025
           },
           {
-            "actual": 420.0,
-            "actual_at": "2026-03-14",
+            "actual": 380.0,
+            "actual_at": "2026-09-10",
             "actual_unit": "mg/g",
             "analyte": "urine_pcr",
             "evidence": [
               {
                 "analyte": "urine_pcr",
-                "date": "2026-03-14",
-                "document_index": 12,
+                "date": "2026-09-10",
+                "document_index": 14,
                 "unit": "mg/g",
                 "unit_canonical": "mg/g",
-                "value": "420",
-                "value_canonical": 420.0,
+                "value": "380",
+                "value_canonical": 380.0,
                 "values_converted": false
               }
             ],
@@ -1505,27 +1562,27 @@
             "note": "§E.2 逐字:「Complete renal response should be defined as UPCR <500 mg/g at any time point.」⚠️ 这里的「任一时点」只数**起算日之后**的结果:治疗开始前就 <500 的那一次说明的是起病时蛋白尿本来就不高,不是治疗达到了完全肾应答。KDIGO 2024(S15,Figure 11)的完全缓解口径逐字是「Reduction in proteinuria <0.5 g/g (50 mg/mmol)」= 同一个数,但它另外要求「Stabilization or improvement in kidney function (±10%–15% of baseline)」 —— 那一半在 gfr_80_baseline 那条(两份指南的肾功能条件本身也不一样,§E.2 的 ⚠️ 框)",
             "reason": null,
             "source": "S8",
-            "t0": "2024-03-15",
-            "t0_basis": "最早一次处方:吗替麦考酚酯",
+            "t0": "2024-03-02",
+            "t0_basis": "最早一条器官受累记录:泡沫尿 3 周",
             "threshold": 500,
             "threshold_unit": "mg/g",
             "verdict": "yes",
             "year": 2025
           },
           {
-            "actual": 450.0,
-            "actual_at": "2026-03-14",
+            "actual": 350.0,
+            "actual_at": "2026-09-10",
             "actual_unit": "mg/24h",
             "analyte": "urine_protein_24h",
             "evidence": [
               {
                 "analyte": "urine_protein_24h",
-                "date": "2026-03-14",
-                "document_index": 12,
+                "date": "2026-09-10",
+                "document_index": 14,
                 "unit": "g/24h",
                 "unit_canonical": "mg/24h",
-                "value": "0.45",
-                "value_canonical": 450.0,
+                "value": "0.35",
+                "value_canonical": 350.0,
                 "values_converted": false
               }
             ],
@@ -1550,8 +1607,8 @@
             "note": "§E.2 逐字:「complete renal remission (proteinuria <500 mg/24 hours and SCr within 10% from baseline)」。⚠️ 这一条只答**蛋白尿那一半**:另一半「肌酐在基线 10% 以内」与 EULAR 2025 的「GFR ≥ 基线 80%」是两把不同的尺,包里不把它们混成一条。2019 与 2025 的单位也不同(mg/24h vs mg/g),所以另立一条、各带各的年份。同样只数起算日之后的结果",
             "reason": null,
             "source": "S3",
-            "t0": "2024-03-15",
-            "t0_basis": "最早一次处方:吗替麦考酚酯",
+            "t0": "2024-03-02",
+            "t0_basis": "最早一条器官受累记录:泡沫尿 3 周",
             "threshold": 500,
             "threshold_unit": "mg/24h",
             "verdict": "yes",
@@ -1705,8 +1762,7 @@
           {
             "as_of": "2026-09-10",
             "evidence": [
-              "ev:14:2",
-              "ev:12:1"
+              "ev:14:2"
             ],
             "key": "renal_response",
             "label": "肾脏应答(UPCR <500 mg/g)",
@@ -1754,11 +1810,22 @@
                 "unverified": false
               },
               {
+                "at": "2025-09-12",
+                "evidence": [
+                  "ev:10:1"
+                ],
+                "from": "20mg qd",
+                "kind": "change",
+                "text": "激素",
+                "to": "10mg qd",
+                "unverified": false
+              },
+              {
                 "at": "2026-06-15",
                 "evidence": [
                   "ev:13:1"
                 ],
-                "from": "20mg qd",
+                "from": "10mg qd",
                 "kind": "change",
                 "text": "醋酸泼尼松片",
                 "to": "7.5mg qd",
@@ -1845,28 +1912,6 @@
                 "unverified": false
               },
               {
-                "at": "2025-12-05",
-                "evidence": [
-                  "ev:11:1"
-                ],
-                "from": null,
-                "kind": "point",
-                "text": "H",
-                "to": "520 mg/g",
-                "unverified": false
-              },
-              {
-                "at": "2026-03-14",
-                "evidence": [
-                  "ev:12:1"
-                ],
-                "from": null,
-                "kind": "point",
-                "text": "H",
-                "to": "420 mg/g",
-                "unverified": false
-              },
-              {
                 "at": "2026-09-10",
                 "evidence": [
                   "ev:14:2"
@@ -1875,6 +1920,82 @@
                 "kind": "point",
                 "text": "H",
                 "to": "380 mg/g",
+                "unverified": false
+              }
+            ],
+            "quality": "verified"
+          },
+          {
+            "key": "hospitalization",
+            "label": "住院",
+            "nodes": [
+              {
+                "at": "2024-03-08",
+                "evidence": [
+                  "ev:3:3"
+                ],
+                "from": null,
+                "kind": "hospitalization",
+                "text": "入院日期:2024-03-08    出院日期:2024-03-15    科室:风湿科",
+                "to": "2024-03-08 → 2024-03-15",
+                "unverified": false
+              }
+            ],
+            "quality": "verified"
+          },
+          {
+            "key": "biopsy",
+            "label": "活检",
+            "nodes": [
+              {
+                "at": "2024-03-12",
+                "evidence": [
+                  "ev:2:1"
+                ],
+                "from": null,
+                "kind": "biopsy",
+                "text": "病理诊断:狼疮性肾炎,ISN/RPS 2003 分型 IV-G(A)。",
+                "to": "kidney 狼疮性肾炎,ISN/RPS 2003 分型 IV-G(A)",
+                "unverified": false
+              }
+            ],
+            "quality": "verified"
+          },
+          {
+            "key": "infusion",
+            "label": "输注",
+            "nodes": [
+              {
+                "at": "2024-03-15",
+                "evidence": [
+                  "ev:3:4"
+                ],
+                "from": null,
+                "kind": "infusion",
+                "text": "予甲泼尼龙 0.5 g 静脉冲击 3 天后改口服激素",
+                "to": "甲泼尼龙 0.5 g",
+                "unverified": false
+              },
+              {
+                "at": "2025-06-18",
+                "evidence": [
+                  "ev:9:1"
+                ],
+                "from": null,
+                "kind": "infusion",
+                "text": "贝利尤单抗 560mg 静脉滴注",
+                "to": "贝利尤单抗 560mg",
+                "unverified": false
+              },
+              {
+                "at": "2025-09-12",
+                "evidence": [
+                  "ev:10:2"
+                ],
+                "from": null,
+                "kind": "infusion",
+                "text": "贝利尤单抗已规律输注 3 个月,无输液反应。",
+                "to": "贝利尤单抗",
                 "unverified": false
               }
             ],
@@ -1900,7 +2021,7 @@
             "date": "2026-06-15",
             "doc": 13,
             "id": "ev:13:1",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "醋酸泼尼松片   7.5mg   每日一次   口服",
             "span": [
               200,
@@ -1913,7 +2034,7 @@
             "date": "2026-06-15",
             "doc": 13,
             "id": "ev:13:2",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "硫酸羟氯喹片   0.2g    每日一次   口服",
             "span": [
               305,
@@ -1936,7 +2057,7 @@
             "date": "2026-09-10",
             "doc": 14,
             "id": "ev:14:1",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "C3         补体C3                0.78      g/L             0.90 - 1.80     ↓",
             "span": [
               377,
@@ -1946,23 +2067,10 @@
             "verified": true
           },
           {
-            "date": "2026-03-14",
-            "doc": 12,
-            "id": "ev:12:1",
-            "origin": "regex",
-            "quote": "UPCR       尿蛋白/肌酐比         420       mg/g            0 - 150         ↑",
-            "span": [
-              1076,
-              1079
-            ],
-            "title": null,
-            "verified": true
-          },
-          {
             "date": "2026-09-10",
             "doc": 14,
             "id": "ev:14:2",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "UPCR       尿蛋白/肌酐比         380       mg/g            0 - 150         ↑",
             "span": [
               1580,
@@ -1975,7 +2083,7 @@
             "date": "2024-03-15",
             "doc": 3,
             "id": "ev:3:1",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "出院医嘱:低盐优质蛋白饮食,避免日晒;继续口服醋酸泼尼松片 50mg qd、吗替麦考酚酯胶囊",
             "span": [
               840,
@@ -1988,7 +2096,7 @@
             "date": "2024-09-20",
             "doc": 6,
             "id": "ev:6:1",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "醋酸泼尼松片   20mg    每日一次   口服",
             "span": [
               203,
@@ -1998,10 +2106,23 @@
             "verified": true
           },
           {
+            "date": "2025-09-12",
+            "doc": 10,
+            "id": "ev:10:1",
+            "origin": "llm",
+            "quote": "评估:病情稳定,激素继续缓慢减量至 10mg 每日一次,吗替麦考酚酯减至 0.5g 每日两次,",
+            "span": [
+              495,
+              501
+            ],
+            "title": null,
+            "verified": true
+          },
+          {
             "date": "2024-03-15",
             "doc": 3,
             "id": "ev:3:2",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "0.75g bid、硫酸羟氯喹片 0.2g bid、碳酸钙片 0.6g qd;风湿科门诊每月随访,监测血常规、",
             "span": [
               906,
@@ -2014,7 +2135,7 @@
             "date": "2024-03-05",
             "doc": 1,
             "id": "ev:1:1",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "UPCR       尿蛋白/肌酐比         2800      mg/g            0 - 150         ↑",
             "span": [
               1400,
@@ -2027,7 +2148,7 @@
             "date": "2024-06-10",
             "doc": 4,
             "id": "ev:4:1",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "UPCR       尿蛋白/肌酐比         1600      mg/g            0 - 150         ↑",
             "span": [
               1415,
@@ -2040,7 +2161,7 @@
             "date": "2024-09-09",
             "doc": 5,
             "id": "ev:5:1",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "UPCR       尿蛋白/肌酐比         980       mg/g            0 - 150         ↑",
             "span": [
               1226,
@@ -2053,7 +2174,7 @@
             "date": "2025-02-20",
             "doc": 7,
             "id": "ev:7:1",
-            "origin": "regex",
+            "origin": "llm",
             "quote": "UPCR       尿蛋白/肌酐比         760       mg/g            0 - 150         ↑",
             "span": [
               1229,
@@ -2063,14 +2184,66 @@
             "verified": true
           },
           {
-            "date": "2025-12-05",
-            "doc": 11,
-            "id": "ev:11:1",
-            "origin": "regex",
-            "quote": "UPCR       尿蛋白/肌酐比         520       mg/g            0 - 150         ↑",
+            "date": "2024-03-15",
+            "doc": 3,
+            "id": "ev:3:3",
+            "origin": "llm",
+            "quote": "入院日期:2024-03-08    出院日期:2024-03-15    科室:风湿科",
             "span": [
-              1244,
-              1247
+              128,
+              198
+            ],
+            "title": null,
+            "verified": true
+          },
+          {
+            "date": "2024-03-12",
+            "doc": 2,
+            "id": "ev:2:1",
+            "origin": "llm",
+            "quote": "病理诊断:狼疮性肾炎,ISN/RPS 2003 分型 IV-G(A)。",
+            "span": [
+              857,
+              916
+            ],
+            "title": null,
+            "verified": true
+          },
+          {
+            "date": "2024-03-15",
+            "doc": 3,
+            "id": "ev:3:4",
+            "origin": "llm",
+            "quote": "予甲泼尼龙 0.5 g 静脉冲击 3 天后改口服激素",
+            "span": [
+              516,
+              574
+            ],
+            "title": null,
+            "verified": true
+          },
+          {
+            "date": "2025-06-18",
+            "doc": 9,
+            "id": "ev:9:1",
+            "origin": "llm",
+            "quote": "贝利尤单抗 560mg 静脉滴注",
+            "span": [
+              256,
+              290
+            ],
+            "title": null,
+            "verified": true
+          },
+          {
+            "date": "2025-09-12",
+            "doc": 10,
+            "id": "ev:10:2",
+            "origin": "llm",
+            "quote": "贝利尤单抗已规律输注 3 个月,无输液反应。",
+            "span": [
+              316,
+              374
             ],
             "title": null,
             "verified": true
