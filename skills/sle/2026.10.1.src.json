@@ -2,7 +2,7 @@
   "manifest": {
     "id": "sle",
     "family": "immune",
-    "version": "2026.09.1",
+    "version": "2026.10.1",
     "min_engine": 1,
     "display": {"name": "系统性红斑狼疮", "short": "狼疮"},
     "disclaimer": "仅整理你的病历,不做诊断",
@@ -129,7 +129,7 @@
 
   "drugs": [
     {"class": "gc", "atc_prefix": "H02AB",
-     "names": ["泼尼松", "泼尼松龙", "甲泼尼龙", "地塞米松", "倍他米松", "曲安西龙", "可的松"],
+     "names": ["泼尼松", "泼尼松龙", "甲泼尼龙", "地塞米松", "倍他米松", "曲安西龙", "可的松", "激素"],
      "pred_equiv": {"氢化可的松": 0.25, "可的松": 0.2, "泼尼松": 1, "泼尼松龙": 1,
                     "甲泼尼龙": 1.25, "曲安西龙": 1.25,
                     "地塞米松": 6.666666666666667, "倍他米松": 8.333333333333334},
@@ -429,6 +429,9 @@
       {"kind": "checklist", "id": "ln_milestones", "title": "狼疮肾炎治疗里程碑"},
       {"kind": "series_chart", "title": "指标趋势",
        "empty_hint": "还没有这些指标的化验结果,下次抽血后这里会自动画出来"},
+      {"kind": "state", "title": "现在", "empty_hint": "还没有能算出来的状态,导入处方或化验单后这里会出现"},
+      {"kind": "journey", "title": "怎么走到今天", "empty_hint": "还没有变化记录,导入门诊病历或出院小结后这里会长出来"},
+      {"kind": "evidence", "title": "依据", "empty_hint": "还没有可以回看的依据"},
       {"kind": "timeline", "title": "病程时间轴",
        "severity_high": ["flare", "hospitalization"],
        "empty_hint": "还没有可以放上时间轴的记录,导入门诊病历或出院小结后这里会自动长出来"}
@@ -440,5 +443,19 @@
       {"kind": "reminders", "title": "逾期监测"},
       {"kind": "sources", "title": "各院来源"}
     ]
-  }
+  },
+  "state_vars": [
+    {"key": "gc_pred_equiv_mg_per_day", "label": "激素(泼尼松等效)", "unit": "mg/天", "derive": "latest_dose",
+     "drug_class": "gc", "stale_after_days": 90, "source": "S10",
+     "note": "换算表见 drugs.gc.pred_equiv(S10);陈旧阈值 90 天 = 稳定期每 3–6 月复诊的下限(S4),已拍板按包给"},
+    {"key": "hcq_mg_per_kg", "label": "羟氯喹(按实际体重)", "unit": "mg/kg/天", "derive": "ratio_to_weight",
+     "drug_class": "hcq", "stale_after_days": 90, "source": "S4",
+     "note": "目标 ≤5 mg/kg 实际体重(S4);体重取最近一次自测或病历记录"},
+    {"key": "activity_band", "label": "活动度分档(化验可算部分)", "unit": null, "derive": "band",
+     "stale_after_days": 90, "source": "S10",
+     "note": "只用化验可算的 x/18 对照 rules.bands(S10),不是 SLEDAI 总分,症状项没录就标注"},
+    {"key": "renal_response", "label": "肾脏应答(UPCR <500 mg/g)", "unit": null, "derive": "milestone",
+     "milestone": "upcr_below_500_any", "stale_after_days": 180, "source": "PKG",
+     "note": "直接引用 rules.milestones.upcr_below_500_any 的判定(EULAR 2025,见该条 source);不下「缓解」结论"}
+  ]
 }

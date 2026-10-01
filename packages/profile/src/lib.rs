@@ -13,9 +13,9 @@ pub mod view;
 
 pub use package::{
     cache_load, cache_store, load_signed, load_signed_index, verify_envelope, verify_envelope_body,
-    version_tuple, ActivityRules, Analyte, Display, Drug, Index, IndexEntry, Manifest, Marker,
-    Package, PackageError, Rules, Source, Terms, Triggers, UnitRow, Views, ENGINE_VERSION,
-    SIGNING_PUBLIC_KEY_HEX,
+    version_tuple, ActivityRules, Analyte, Band, Bands, Display, Drug, Index, IndexEntry, Manifest,
+    Marker, Package, PackageError, Rules, Source, StateVar, Terms, Triggers, UnitRow, Views,
+    ENGINE_VERSION, SIGNING_PUBLIC_KEY_HEX,
 };
 pub use view::{ProfileView, Section, SourceOut};
 

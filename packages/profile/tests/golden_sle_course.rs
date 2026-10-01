@@ -87,7 +87,7 @@ fn the_synthetic_sle_course_renders_the_pinned_profile_view() {
         },
     ];
 
-    // 用的就是**发布出去的那一份**(`common::FULL` = `skills/sle/2026.09.1.src.json`
+    // 用的就是**发布出去的那一份**(`common::FULL` = `skills/sle/2026.10.1.src.json`
     // 的原文逐字节),不是另一份长得差不多的夹具 —— 所以这份 golden 钉住的是用户
     // 真会装上的那个包。「签好的信封里也是这一份」由 `shipped_package.rs` 钉住。
     let pkg = common::full_pkg();

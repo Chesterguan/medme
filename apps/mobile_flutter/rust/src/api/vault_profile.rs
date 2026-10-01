@@ -294,7 +294,7 @@ mod tests {
     /// 私钥不在仓库里(`~/.medme_skill_signing_key`),而这两份文件正是线上
     /// `GET /v1/skills/*` 会返回的字节,拿它们当夹具等于顺手钉住「App 装得上我们
     /// 自己发的包」。
-    const SLE_PACKAGE: &str = include_str!("../../../../../skills/sle/2026.09.1.json");
+    const SLE_PACKAGE: &str = include_str!("../../../../../skills/sle/2026.10.1.json");
     const SKILLS_INDEX: &str = include_str!("../../../../../skills/index.json");
 
     fn ev(kind: &str, at: &str) -> parser::ProfileEvent {
@@ -338,7 +338,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         let first = &v["skills"][0];
         assert_eq!(first["id"], "sle");
-        assert_eq!(first["version"], "2026.09.1");
+        assert_eq!(first["version"], "2026.10.1");
         assert_eq!(first["min_engine"], 1);
     }
 
@@ -346,7 +346,7 @@ mod tests {
     fn a_tampered_index_is_refused_so_nobody_can_redirect_the_fetcher() {
         // 中间人把 version 改成别的号:客户端照着拼路径就会去拉一个我们没发过的
         // 文件。签名在这儿挡住,所以 Dart 那边永远拿不到「验过的 version」。
-        let tampered = SKILLS_INDEX.replace("2026.09.1", "2026.09.9");
+        let tampered = SKILLS_INDEX.replace("2026.10.1", "2026.09.9");
         assert!(tampered != SKILLS_INDEX, "改写必须真的发生");
         assert!(vault_profile_verify_index(tampered).is_err());
     }
@@ -383,7 +383,7 @@ mod tests {
         // 但一块都不算(spec §4)。
         let before = parse(vault_profile_view(dir_s.clone(), "sle".into()).unwrap());
         assert_eq!(before["package_id"], "sle");
-        assert_eq!(before["package_version"], "2026.09.1");
+        assert_eq!(before["package_version"], "2026.10.1");
         assert_eq!(before["display_name"], "系统性红斑狼疮");
         assert_eq!(before["enabled"], false);
         assert_eq!(before["sections"].as_array().unwrap().len(), 0);
