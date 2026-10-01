@@ -1023,8 +1023,38 @@ pub(crate) fn drug_class<'p>(
         d.atc_prefix
             .as_deref()
             .is_some_and(|p| m.atc.as_deref().is_some_and(|a| a.starts_with(p)))
-            || d.names.iter().any(|n| m.name.contains(n.as_str()))
+            // 别名按子串配(「泼尼松龙片」含「泼尼松龙」),但两个字以内的泛称
+            // (「激素」)只认整个名字就是它 —— 不然「雌激素」「甲状腺激素」全成了糖皮质
+            // 激素(审查 I-8)。
+            || d.names
+                .iter()
+                .any(|n| m.name == n.as_str() || (n.chars().count() > 2 && m.name.contains(n.as_str())))
     })
+}
+
+/// 外用/局部制剂(乳膏、滴眼液……)不是全身用药:现行方案、状态行、泳道都不算它。
+/// 看规范名 + 原样写法 + 剂量串,小写比。
+pub(crate) fn is_nonsystemic_gc(m: &parser::MedSpan) -> bool {
+    GC_NONSYSTEMIC.iter().any(|k| form_haystack(m).contains(k))
+}
+
+pub(crate) fn is_nonsystemic_gc_name(raw_name: &str) -> bool {
+    let h = raw_name.to_ascii_lowercase();
+    GC_NONSYSTEMIC.iter().any(|k| h.contains(k))
+}
+
+/// 一次提及的泼尼松等效日剂量(给进程泳道:泼尼松 20mg 换甲泼尼龙 16mg 是等效换药,
+/// 不是减量)。表里查不到、剂量读不出 → `None`,节点保留原串。
+pub(crate) fn equiv_mg_per_day(d: &crate::package::Drug, raw_name: &str, dose: &str) -> Option<f64> {
+    let tbl = d.pred_equiv.as_ref()?;
+    let (_, factor) = tbl
+        .iter()
+        .filter(|(k, _)| raw_name.contains(k.as_str()))
+        .min_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(b.0)))?;
+    let mg = dose_mg(dose)?;
+    let times = per_day(dose)?;
+    let v = mg * times * factor;
+    (v.is_finite() && v > 0.0).then_some(v)
 }
 
 /// 从 `latest_dose`(`aggregate` 拼的「0.2g bid」这种串)里取**一次**的 mg 数。
@@ -1083,6 +1113,13 @@ pub(crate) fn per_day(s: &str) -> Option<f64> {
 pub(crate) fn gc_daily_mg(d: &crate::package::Drug, m: &parser::MedSpan) -> Result<f64, String> {
     if GC_INJECTION.iter().any(|k| form_haystack(m).contains(k)) {
         return Err("注射剂型,不按口服换算".into());
+    }
+    // 名字就是包里的泛称别名(「激素」),换算表里当然没有它:原因是没写具体是哪一种,
+    // 不是「换算表待核」(审查 I-8)。
+    if d.names.iter().any(|n| *n == m.name)
+        && d.pred_equiv.as_ref().is_some_and(|t| !t.keys().any(|k| m.name.contains(k.as_str())))
+    {
+        return Err("没写具体是哪一种激素,算不了等效剂量".into());
     }
     let factor = match &d.pred_equiv {
         // 换算表待核(`null`):**只认规范名逐字等于「泼尼松」的那一个**。
@@ -1205,7 +1242,13 @@ pub fn regimen_eval(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> Regimen {
     let conflict = same_day.len() > 1;
 
     let mut unconvertible = Vec::new();
+    let newest_date = newest.flatten();
     for (m, r) in &gc_lines {
+        // 比现行那条更早的历史提及(2025 年的「激素 10mg」、2026 年已换成泼尼松)
+        // 不是「算不进现行方案」,它根本不在现行方案里 —— 不列(审查 I-8)。
+        if m.end < newest_date {
+            continue;
+        }
         let reason = match (conflict && Some(m.end) == newest, r) {
             (true, _) => Some(GC_MULTI_SAME_DAY.to_string()),
             (false, Err(why)) => Some(why.clone()),

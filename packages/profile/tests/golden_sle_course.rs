@@ -115,7 +115,8 @@ fn render(with_llm: bool) -> serde_json::Value {
     got
 }
 
-fn check_golden(got: serde_json::Value, file: &str) {
+/// 返回 `true` = 这次是重写 golden(调用方在全部写完后再 panic 提醒 review)。
+fn check_golden(got: serde_json::Value, file: &str) -> bool {
     let golden_path = testdata().join(file);
     if std::env::var("UPDATE_GOLDEN").is_ok() {
         std::fs::write(
@@ -123,22 +124,22 @@ fn check_golden(got: serde_json::Value, file: &str) {
             serde_json::to_string_pretty(&got).unwrap() + "\n",
         )
         .unwrap();
-        panic!("golden 已重写 —— 人工 review 这次 diff 之后再跑一遍(不带 UPDATE_GOLDEN)");
+        return true;
     }
     let want: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&golden_path).expect("golden 文件在"))
             .expect("golden 是合法 JSON");
     assert_eq!(got, want, "ProfileView 变了;确认是有意的再 UPDATE_GOLDEN=1 重生成");
+    false
 }
 
+/// 两条路在**同一个**测试里顺序跑:`terminology::set_overlay` 是进程全局的,拆成两个
+/// `#[test]` 会并行、互相清掉对方的覆盖层,golden 时红时绿。
 #[test]
-fn the_synthetic_sle_course_renders_the_pinned_profile_view() {
-    check_golden(render(false), "golden_profile_view.json");
-}
-
-#[test]
-fn the_synthetic_sle_course_with_cloud_extraction_renders_the_pinned_profile_view() {
-    check_golden(render(true), "golden_profile_view_llm.json");
+fn the_synthetic_sle_course_renders_both_pinned_profile_views() {
+    let wrote = check_golden(render(false), "golden_profile_view.json")
+        | check_golden(render(true), "golden_profile_view_llm.json");
+    assert!(!wrote, "golden 已重写 —— 人工 review 这次 diff 之后再跑一遍(不带 UPDATE_GOLDEN)");
 }
 
 #[test]

@@ -580,7 +580,7 @@ class _AboutScreenState extends State<AboutScreen> {
   Future<void> _loadDemoDataSle() => _loadDemo(
     member: _demoMemberSle,
     run: () async* {
-      yield* loadDemoDataSle(skillCacheDir: await skillCacheDir());
+      yield* vaultLoadDemoDataSle(skillCacheDir: await skillCacheDir());
     },
   );
 

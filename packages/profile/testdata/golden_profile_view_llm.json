@@ -31,16 +31,7 @@
               "value": 5
             }
           ],
-          "unconvertible": [
-            {
-              "dose": "10mg qd",
-              "name": "激素",
-              "reason": "换算表待核",
-              "sources": [
-                10
-              ]
-            }
-          ]
+          "unconvertible": []
         },
         "hcq": {
           "daily_mg": 200.0,
@@ -1752,12 +1743,12 @@
             ],
             "key": "activity_band",
             "label": "活动度分档(化验可算部分)",
-            "note": "化验可算部分 2/18",
+            "note": "化验可算部分 2/18 · 症状项未录,不分档",
             "source": "S10",
             "stale": false,
             "stale_after_days": 90,
             "unit": null,
-            "value": "轻度活动"
+            "value": null
           },
           {
             "as_of": "2026-09-10",
@@ -1789,6 +1780,7 @@
             "nodes": [
               {
                 "at": "2024-03-15",
+                "equiv_mg_per_day": 50.0,
                 "evidence": [
                   "ev:3:1"
                 ],
@@ -1800,6 +1792,7 @@
               },
               {
                 "at": "2024-09-20",
+                "equiv_mg_per_day": 20.0,
                 "evidence": [
                   "ev:6:1"
                 ],
@@ -1822,6 +1815,7 @@
               },
               {
                 "at": "2026-06-15",
+                "equiv_mg_per_day": 7.5,
                 "evidence": [
                   "ev:13:1"
                 ],
@@ -1832,7 +1826,8 @@
                 "unverified": false
               }
             ],
-            "quality": "verified"
+            "quality": "verified",
+            "severity": "normal"
           },
           {
             "key": "hcq_mg_per_kg",
@@ -1861,7 +1856,8 @@
                 "unverified": false
               }
             ],
-            "quality": "verified"
+            "quality": "verified",
+            "severity": "normal"
           },
           {
             "key": "renal_response",
@@ -1923,7 +1919,8 @@
                 "unverified": false
               }
             ],
-            "quality": "verified"
+            "quality": "verified",
+            "severity": "normal"
           },
           {
             "key": "hospitalization",
@@ -1941,7 +1938,8 @@
                 "unverified": false
               }
             ],
-            "quality": "verified"
+            "quality": "verified",
+            "severity": "high"
           },
           {
             "key": "biopsy",
@@ -1959,7 +1957,8 @@
                 "unverified": false
               }
             ],
-            "quality": "verified"
+            "quality": "verified",
+            "severity": "normal"
           },
           {
             "key": "infusion",
@@ -1999,13 +1998,34 @@
                 "unverified": false
               }
             ],
-            "quality": "verified"
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "dose_change",
+            "label": "用药调整",
+            "nodes": [
+              {
+                "at": "2025-09-12",
+                "evidence": [
+                  "ev:10:3"
+                ],
+                "from": null,
+                "kind": "dose_change",
+                "text": "吗替麦考酚酯减至 0.5g 每日两次",
+                "to": "0.5g",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
           },
           {
             "key": "activity_band",
             "label": "活动度分档(化验可算部分)",
             "nodes": [],
-            "quality": "empty"
+            "quality": "empty",
+            "severity": "normal"
           }
         ]
       },
@@ -2244,6 +2264,19 @@
             "span": [
               316,
               374
+            ],
+            "title": null,
+            "verified": true
+          },
+          {
+            "date": "2025-09-12",
+            "doc": 10,
+            "id": "ev:10:3",
+            "origin": "llm",
+            "quote": "吗替麦考酚酯减至 0.5g 每日两次",
+            "span": [
+              541,
+              583
             ],
             "title": null,
             "verified": true

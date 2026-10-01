@@ -136,10 +136,139 @@ fn band_state_var_maps_the_lab_score_to_rules_bands() {
     let docs = common::mk_docs(&texts);
     let v = view(&docs, &enable());
     let r = state_row(&v, "activity_band");
-    assert_eq!(r["value"], "轻度活动");
-    assert_eq!(r["note"], "化验可算部分 6/18");
+    // 审查 C-1:分档表只用于症状项勾选后的总评分(包 bands.note 原文),化验可算部分
+    // 单独套档就是替医生下「轻度活动」的结论。没有症状分就不出档名,分数照给。
+    assert_eq!(r["value"], Value::Null);
+    assert_eq!(r["note"], "化验可算部分 6/18 · 症状项未录,不分档");
     assert_eq!(r["as_of"], "2026-09-10");
     assert_eq!(r["evidence"].as_array().unwrap().len(), 2, "两条命中各一条依据");
+}
+
+#[test]
+fn band_zero_lab_score_is_not_mild_activity() {
+    let texts = [("2026-09-10", common::lab_doc("补体C3 1.20 g/L 0.90-1.80"))];
+    let docs = common::mk_docs(&texts);
+    let v = view(&docs, &enable());
+    let r = state_row(&v, "activity_band");
+    assert_eq!(r["value"], Value::Null, "0 分不是「轻度活动」");
+    assert!(r["note"].as_str().unwrap().starts_with("化验可算部分 0/18"), "{r}");
+}
+
+#[test]
+fn lab_evidence_points_at_the_value_line_not_an_earlier_digit_match() {
+    // 审查 I-2:门诊号里先出现了 88,依据必须指向化验那一行。
+    let mut pkg_json: Value = serde_json::from_str(common::MINIMAL).unwrap();
+    pkg_json["markers"] = serde_json::json!([{"key":"creatinine","role":"organ:kidney"}]);
+    pkg_json["state_vars"] = serde_json::json!([{"key":"cr","label":"肌酐","unit":"µmol/L","derive":"latest_value","marker":"creatinine","stale_after_days":365}]);
+    pkg_json["views"] = serde_json::json!({"sections":[{"kind":"state","title":"现在"},{"kind":"journey","title":"路"},{"kind":"evidence","title":"据"}]});
+    let pkg: profile::Package = serde_json::from_value(pkg_json).unwrap();
+    let text = "检验报告单\n姓名:李静  门诊号:PUMCH-20260301-0885\n项目 结果 单位 参考区间\n肌酐 88 μmol/L 59-104\n".to_string();
+    let docs = vec![parser::SourceDoc { index: 0, date: Some(day("2026-03-01")), text: &text, doc_type: Some("lab_report".into()), title: None, extraction_json: None }];
+    let events = vec![parser::ProfileEvent { kind: "enable".into(), package: "t".into(), at: "2026-01-01".into(), payload: Value::Null }];
+    let v = serde_json::to_value(profile::materialize(&docs, &events, &pkg, day(TODAY))).unwrap();
+    let e = evidence(&v, state_row(&v, "cr")["evidence"][0].as_str().unwrap());
+    assert!(e["quote"].as_str().unwrap().contains("肌酐 88"), "{e}");
+    let span = e["span"].as_array().unwrap();
+    let (a, b) = (span[0].as_u64().unwrap() as usize, span[1].as_u64().unwrap() as usize);
+    assert_eq!(&text[a..b], "88");
+    assert!(a > text.find("0885").unwrap(), "span 在化验行上,不在门诊号里");
+}
+
+#[test]
+fn unverified_lab_point_evidence_is_marked_unverified() {
+    // 审查 I-3:图片模式没核上的化验点,依据页不能标已核。
+    let mut pkg_json: Value = serde_json::from_str(common::MINIMAL).unwrap();
+    pkg_json["markers"] = serde_json::json!([{"key":"creatinine","role":"organ:kidney"}]);
+    pkg_json["state_vars"] = serde_json::json!([{"key":"cr","label":"肌酐","unit":"µmol/L","derive":"latest_value","marker":"creatinine","stale_after_days":365}]);
+    pkg_json["views"] = serde_json::json!({"sections":[{"kind":"state","title":"现在"},{"kind":"journey","title":"路"},{"kind":"evidence","title":"据"}]});
+    let pkg: profile::Package = serde_json::from_value(pkg_json).unwrap();
+    let j = r#"{"labs":[{"name":"肌酐","value":"95","unit":"μmol/L","ref_low":"59","ref_high":"104","flag":"","unverified":true}]}"#;
+    let text = "(图片档,正文为 OCR)".to_string();
+    let docs = vec![parser::SourceDoc { index: 0, date: Some(day("2026-08-01")), text: &text, doc_type: Some("lab_report".into()), title: None, extraction_json: Some(j) }];
+    let events = vec![parser::ProfileEvent { kind: "enable".into(), package: "t".into(), at: "2026-01-01".into(), payload: Value::Null }];
+    let v = serde_json::to_value(profile::materialize(&docs, &events, &pkg, day(TODAY))).unwrap();
+    let r = state_row(&v, "cr");
+    assert_eq!(r["value"], "95");
+    let e = evidence(&v, r["evidence"][0].as_str().unwrap());
+    assert_eq!(e["verified"], false);
+    assert_eq!(e["span"], Value::Null, "原文里找不到的值没有 span,也不能冒充逐字");
+}
+
+#[test]
+fn nonsystemic_gc_does_not_become_the_current_dose_or_a_lane_node() {
+    // 审查 I-5:外用激素(乳膏)不是全身用药,现行方案不算它,状态行与泳道也不能算。
+    let texts = [
+        ("2026-06-15", common::rx_doc("醋酸泼尼松片 7.5mg 每日一次 口服")),
+        ("2026-08-01", common::rx_doc("氢化可的松乳膏 10g 外用")),
+    ];
+    let docs = common::mk_docs(&texts);
+    let v = view(&docs, &enable());
+    let r = state_row(&v, "gc_pred_equiv_mg_per_day");
+    assert_eq!(r["value"], "7.5");
+    assert_eq!(r["as_of"], "2026-06-15", "乳膏那份不能把截至日期往后拖");
+    assert_eq!(evidence(&v, r["evidence"][0].as_str().unwrap())["doc"], 0);
+    let l = lane(&v, "gc_pred_equiv_mg_per_day");
+    assert_eq!(l["nodes"].as_array().unwrap().len(), 1, "乳膏不进泼尼松等效泳道");
+}
+
+#[test]
+fn gc_lane_node_carries_drug_name_and_prednisone_equivalent() {
+    // 审查 I-6:泼尼松 20mg 换成甲泼尼龙 16mg 是等效换药,不是减量 —— 节点要带药名和等效量。
+    let texts = [
+        ("2026-03-01", common::rx_doc("醋酸泼尼松片 20mg 每日一次 口服")),
+        ("2026-06-01", common::rx_doc("甲泼尼龙片 16mg 每日一次 口服")),
+    ];
+    let docs = common::mk_docs(&texts);
+    let v = view(&docs, &enable());
+    let l = lane(&v, "gc_pred_equiv_mg_per_day");
+    let nodes = l["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 2);
+    assert_eq!(nodes[0]["text"], "醋酸泼尼松片");
+    assert_eq!(nodes[0]["equiv_mg_per_day"], 20.0);
+    assert_eq!(nodes[1]["text"], "甲泼尼龙片");
+    assert_eq!(nodes[1]["equiv_mg_per_day"], 20.0);
+}
+
+#[test]
+fn other_drug_dose_change_gets_its_own_event_lane() {
+    // 审查 I-7:吗替麦考酚酯的减量不属于任何状态变量,但不能从界面上消失。
+    let text = "门诊病历\n评估:病情稳定,吗替麦考酚酯减至 0.5g 每日两次。".to_string();
+    let json = r#"{"facts":[{"type":"dose_change","drug":"吗替麦考酚酯","from":"0.75g","to":"0.5g","date":"2025-09-12","evidence":"吗替麦考酚酯减至 0.5g 每日两次"}]}"#;
+    let docs = vec![parser::SourceDoc { index: 0, date: Some(day("2025-09-12")), text: &text, doc_type: Some("outpatient".into()), title: None, extraction_json: Some(json) }];
+    let v = view(&docs, &enable());
+    let l = lane(&v, "dose_change");
+    assert_eq!(l["nodes"][0]["to"], "0.5g");
+    assert_eq!(l["nodes"][0]["from"], "0.75g");
+    assert_eq!(l["nodes"][0]["text"], "吗替麦考酚酯减至 0.5g 每日两次");
+    assert_eq!(l["quality"], "verified");
+}
+
+#[test]
+fn flare_lane_is_marked_high_severity_from_the_package() {
+    let text = "门诊病历\n病情活动加重。".to_string();
+    let json = r#"{"facts":[{"type":"flare","date":"2025-02-01","text":"病情活动加重","evidence":"病情活动加重"}]}"#;
+    let docs = vec![parser::SourceDoc { index: 0, date: Some(day("2025-02-01")), text: &text, doc_type: Some("outpatient".into()), title: None, extraction_json: Some(json) }];
+    let v = view(&docs, &enable());
+    assert_eq!(lane(&v, "flare")["severity"], "high", "复发标红是包说的(views.sections[timeline].severity_high)");
+    assert_eq!(lane(&v, "gc_pred_equiv_mg_per_day")["severity"], "normal");
+}
+
+#[test]
+fn generic_hormone_alias_matches_the_whole_name_only() {
+    // 审查 I-8:「激素」作 gc 别名只认整个名字就是「激素」;「雌激素」不是糖皮质激素。
+    let texts = [("2026-06-15", common::rx_doc("雌激素 1mg 每日一次 口服"))];
+    let docs = common::mk_docs(&texts);
+    let v = view(&docs, &enable());
+    let r = state_row(&v, "gc_pred_equiv_mg_per_day");
+    assert_eq!(r["value"], Value::Null);
+    assert!(r["note"].as_str().unwrap().contains("还没读到"), "{r}");
+    // 光写「激素 10mg」:是 gc,但不知道哪一种,说清楚原因,不说「换算表待核」。
+    let texts = [("2026-06-15", common::rx_doc("激素 10mg 每日一次"))];
+    let docs = common::mk_docs(&texts);
+    let v = view(&docs, &enable());
+    let r = state_row(&v, "gc_pred_equiv_mg_per_day");
+    assert_eq!(r["value"], Value::Null);
+    assert!(r["note"].as_str().unwrap().contains("哪一种激素"), "{r}");
 }
 
 #[test]

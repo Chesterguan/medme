@@ -1525,6 +1525,8 @@ class _Lane extends StatelessWidget {
     final nodes = _asMapList(lane['nodes']);
     final quality = lane['quality'] as String?;
     final qualityLabel = _kLaneQualityLabel[quality];
+    // 复发/住院标红是包说的(`severity_high`),颜色只说状态。
+    final high = lane['severity'] == 'high';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1532,23 +1534,27 @@ class _Lane extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Text('${lane['label'] ?? ''}', style: MedType.subtitle.copyWith(color: c.ink)),
+              child: Text(
+                '${lane['label'] ?? ''}',
+                style: MedType.subtitle.copyWith(color: high ? c.high : c.ink),
+              ),
             ),
             if (qualityLabel != null)
               Text(qualityLabel, style: MedType.caption.copyWith(color: c.ink3)),
           ],
         ),
-        for (final n in nodes) _NodeRow(n, links),
+        for (final n in nodes) _NodeRow(n, links, high: high),
       ],
     );
   }
 }
 
 class _NodeRow extends StatelessWidget {
-  const _NodeRow(this.node, this.links);
+  const _NodeRow(this.node, this.links, {this.high = false});
 
   final Map<String, dynamic> node;
   final ProfileLinks? links;
+  final bool high;
 
   @override
   Widget build(BuildContext context) {
@@ -1561,6 +1567,16 @@ class _NodeRow extends StatelessWidget {
     final ids = (node['evidence'] as List? ?? const []).whereType<String>().toList();
     final first = ids.isEmpty ? null : links?.byId(ids.first);
     final headline = from == null || from.isEmpty ? to : '$from → $to';
+    // 用药节点:第二行是药名(泼尼松 20mg 换甲泼尼龙 16mg 不是减量)+ 泼尼松等效日剂量;
+    // 事件节点的 `text` 是原话,依据页能看全文,这里不重复。
+    final kind = node['kind'] as String?;
+    final isDose = kind == 'first' || kind == 'change' || kind == 'dose_change';
+    final name = isDose ? node['text'] as String? : null;
+    final equiv = node['equiv_mg_per_day'];
+    final sub = [
+      if (name != null && name.isNotEmpty && kind != 'dose_change') name,
+      if (equiv is num) '等效 ${_num(equiv.toDouble())} mg/天',
+    ].join(' · ');
     final row = Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -1571,14 +1587,21 @@ class _NodeRow extends StatelessWidget {
             child: Text(at, style: MedType.secondary.copyWith(color: c.ink2)),
           ),
           Expanded(
-            child: Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(text: headline, style: MedType.body.copyWith(color: c.ink)),
-                  if (unverified)
-                    TextSpan(text: '  需核对', style: MedType.caption.copyWith(color: c.ink3)),
-                ],
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(text: headline, style: MedType.body.copyWith(color: high ? c.high : c.ink)),
+                      if (unverified)
+                        TextSpan(text: '  需核对', style: MedType.caption.copyWith(color: c.ink3)),
+                    ],
+                  ),
+                ),
+                if (sub.isNotEmpty)
+                  Text(sub, style: MedType.caption.copyWith(color: c.ink2)),
+              ],
             ),
           ),
           if (first != null) Icon(Icons.chevron_right, size: 18, color: c.ink3),
@@ -1655,8 +1678,7 @@ class _SeriesValuesLine extends StatelessWidget {
       ..sort((a, b) => a.date!.compareTo(b.date!));
     final latest = dated.isNotEmpty ? dated.last : dto.points.last;
     final unit = dto.unit ?? '';
-    // 整数不带 `.0`(70 不写成 70.0);其余原样 toString,不四舍五入。
-    String n(double x) => x == x.roundToDouble() ? '${x.toInt()}' : '$x';
+    String n(double x) => _num(x);
     String v(double x) => unit.isEmpty ? n(x) : '${n(x)} $unit';
     final flagWord = switch (latest.flag) { 'H' => '偏高', 'L' => '偏低', _ => null };
     final flagColor = switch (latest.flag) { 'H' => c.high, 'L' => c.low, _ => c.ink2 };
@@ -1683,3 +1705,7 @@ class _SeriesValuesLine extends StatelessWidget {
     );
   }
 }
+
+
+/// 整数不带 `.0`,其余原样 `toString`(文件头「数值原则」:不四舍五入)。
+String _num(double x) => x == x.roundToDouble() ? '${x.toInt()}' : '$x';

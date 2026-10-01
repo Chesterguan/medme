@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -431139239;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -2001302906;
 
 // Section: executor
 
@@ -1353,48 +1353,6 @@ fn wire__crate__api__vault__load_demo_data_impl(
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || {
                         let output_ok = crate::api::vault::load_demo_data(api_progress)?;
-                        Ok(output_ok)
-                    })(),
-                )
-            }
-        },
-    )
-}
-fn wire__crate__api__vault__load_demo_data_sle_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "load_demo_data_sle",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_progress = <StreamSink<
-                crate::api::dto::DemoLoadProgressDto,
-                flutter_rust_bridge::for_generated::SseCodec,
-            >>::sse_decode(&mut deserializer);
-            let api_skill_cache_dir = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                    (move || {
-                        let output_ok = crate::api::vault::load_demo_data_sle(
-                            api_progress,
-                            api_skill_cache_dir,
-                        )?;
                         Ok(output_ok)
                     })(),
                 )
@@ -2796,6 +2754,48 @@ fn wire__crate__api__vault__vault_cloud_redact_image_impl(
                     (move || {
                         let output_ok =
                             crate::api::vault::vault_cloud_redact_image(api__bytes, api__paint)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__vault__vault_load_demo_data_sle_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "vault_load_demo_data_sle",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_progress = <StreamSink<
+                crate::api::dto::DemoLoadProgressDto,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
+            let api_skill_cache_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault::vault_load_demo_data_sle(
+                            api_progress,
+                            api_skill_cache_dir,
+                        )?;
                         Ok(output_ok)
                     })(),
                 )
@@ -4485,147 +4485,152 @@ fn pde_ffi_dispatcher_primary_impl(
         34 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
         35 => wire__crate__api__vault__load_archive_impl(port, ptr, rust_vec_len, data_len),
         36 => wire__crate__api__vault__load_demo_data_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__vault__load_demo_data_sle_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__vault__merge_photos_into_document_impl(
+        37 => wire__crate__api__vault__merge_photos_into_document_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__vault__open_vault_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__vault__patient_profile_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__vault__proxy_claim_blob_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__vault__proxy_summary_impl(port, ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__vault__qr_share_blob_impl(port, ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__vault__read_source_bytes_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__vault__recognize_image_pp_impl(port, ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__vault__render_dicom_png_impl(port, ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__vault__reset_vault_impl(port, ptr, rust_vec_len, data_len),
-        48 => {
+        38 => wire__crate__api__vault__open_vault_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__vault__patient_profile_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__vault__proxy_claim_blob_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__vault__proxy_summary_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__vault__qr_share_blob_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__vault__read_source_bytes_impl(port, ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__vault__recognize_image_pp_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__vault__render_dicom_png_impl(port, ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__vault__reset_vault_impl(port, ptr, rust_vec_len, data_len),
+        47 => {
             wire__crate__api__vault__self_measurement_values_impl(port, ptr, rust_vec_len, data_len)
         }
-        49 => {
+        48 => {
             wire__crate__api__vault__source_file_object_path_impl(port, ptr, rust_vec_len, data_len)
         }
-        50 => wire__crate__api__vault_sync__sync_account_keys_new_impl(
+        49 => wire__crate__api__vault_sync__sync_account_keys_new_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        51 => wire__crate__api__vault_sync__sync_all_object_ids_impl(
+        50 => wire__crate__api__vault_sync__sync_all_object_ids_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        52 => wire__crate__api__vault_sync__sync_current_vault_is_keyed_impl(
+        51 => wire__crate__api__vault_sync__sync_current_vault_is_keyed_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        53 => wire__crate__api__vault_sync__sync_date_shift_days_impl(
+        52 => wire__crate__api__vault_sync__sync_date_shift_days_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        54 => wire__crate__api__vault_sync__sync_encrypt_object_impl(
+        53 => wire__crate__api__vault_sync__sync_encrypt_object_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        55 => {
+        54 => {
             wire__crate__api__vault_sync__sync_export_events_impl(port, ptr, rust_vec_len, data_len)
         }
-        56 => {
+        55 => {
             wire__crate__api__vault_sync__sync_import_events_impl(port, ptr, rust_vec_len, data_len)
         }
-        57 => {
+        56 => {
             wire__crate__api__vault_sync__sync_kdf_bench_ms_impl(port, ptr, rust_vec_len, data_len)
         }
-        58 => {
+        57 => {
             wire__crate__api__vault_sync__sync_local_seq_map_impl(port, ptr, rust_vec_len, data_len)
         }
-        59 => wire__crate__api__vault_sync__sync_missing_objects_impl(
+        58 => wire__crate__api__vault_sync__sync_missing_objects_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        60 => wire__crate__api__vault_sync__sync_open_profile_vault_impl(
+        59 => wire__crate__api__vault_sync__sync_open_profile_vault_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        61 => {
+        60 => {
             wire__crate__api__vault_sync__sync_open_sealed_impl(port, ptr, rust_vec_len, data_len)
         }
-        62 => wire__crate__api__vault_sync__sync_profile_key_new_impl(
+        61 => wire__crate__api__vault_sync__sync_profile_key_new_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        63 => wire__crate__api__vault_sync__sync_recovery_code_new_impl(
+        62 => wire__crate__api__vault_sync__sync_recovery_code_new_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        64 => wire__crate__api__vault_sync__sync_seal_to_impl(port, ptr, rust_vec_len, data_len),
-        65 => {
+        63 => wire__crate__api__vault_sync__sync_seal_to_impl(port, ptr, rust_vec_len, data_len),
+        64 => {
             wire__crate__api__vault_sync__sync_store_object_impl(port, ptr, rust_vec_len, data_len)
         }
-        66 => wire__crate__api__vault_sync__sync_unwrap_private_pw_impl(
+        65 => wire__crate__api__vault_sync__sync_unwrap_private_pw_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        67 => wire__crate__api__vault_sync__sync_unwrap_private_rc_impl(
+        66 => wire__crate__api__vault_sync__sync_unwrap_private_rc_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        68 => wire__crate__api__vault_sync__sync_unwrap_with_token_impl(
+        67 => wire__crate__api__vault_sync__sync_unwrap_with_token_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        69 => {
+        68 => {
             wire__crate__api__vault_sync__sync_wrap_private_impl(port, ptr, rust_vec_len, data_len)
         }
-        70 => wire__crate__api__vault_sync__sync_wrap_private_rc_impl(
+        69 => wire__crate__api__vault_sync__sync_wrap_private_rc_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        71 => wire__crate__api__vault_sync__sync_wrap_with_token_impl(
+        70 => wire__crate__api__vault_sync__sync_wrap_with_token_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        72 => wire__crate__api__vault__vault_cloud_commit_extraction_impl(
+        71 => wire__crate__api__vault__vault_cloud_commit_extraction_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        73 => wire__crate__api__vault__vault_cloud_prepare_extraction_impl(
+        72 => wire__crate__api__vault__vault_cloud_prepare_extraction_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        74 => wire__crate__api__vault__vault_cloud_redact_image_impl(
+        73 => wire__crate__api__vault__vault_cloud_redact_image_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        74 => wire__crate__api__vault__vault_load_demo_data_sle_impl(
             port,
             ptr,
             rust_vec_len,

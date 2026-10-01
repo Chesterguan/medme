@@ -1582,10 +1582,11 @@ pub fn load_demo_data(progress: StreamSink<DemoLoadProgressDto>) -> anyhow::Resu
 /// (`db_path`),再用 `open_split_resilient` 在同一位置重建。之后 `load_archive`
 /// 会返回空。与桌面/Tauri 移动端的 `reset_vault` 同构,包括同一条安全兜底:
 /// `truth_root` 必须是一个名为 `vault` 的目录,防止误删沙盒其它内容。
-/// 载入李静(狼疮)示例:见 [`DEMO_DATA_SLE`]。装内置病种包、写「开启档案」与体重事件
+/// 载入李静(狼疮)示例:见 [`DEMO_DATA_SLE`]。名字以 `vault_` 起头是硬要求:FRB 派发表按
+/// 函数名字典序编号,`recognize_image_pp` 的 44 号是 iOS 端的外部契约(`tests/frb_dispatch_indices.rs`)。装内置病种包、写「开启档案」与体重事件
 /// 都在 `with_state` **外面**做(`vault_profile_record_event` 自己拿锁)。
 /// `skill_cache_dir` 与 Dart 侧 `skillCacheDir()` 同一个目录。
-pub fn load_demo_data_sle(
+pub fn vault_load_demo_data_sle(
     progress: StreamSink<DemoLoadProgressDto>,
     skill_cache_dir: String,
 ) -> anyhow::Result<()> {

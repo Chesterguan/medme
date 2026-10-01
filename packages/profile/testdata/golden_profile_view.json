@@ -165,6 +165,38 @@
           {
             "evidence": [
               {
+                "analyte": "urine_rbc_hpf",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "/HP",
+                "unit_canonical": "/[HPF]",
+                "value": "2",
+                "value_canonical": 2.0,
+                "values_converted": false
+              }
+            ],
+            "id": "hematuria",
+            "label": "血尿"
+          },
+          {
+            "evidence": [
+              {
+                "analyte": "urine_wbc_hpf",
+                "date": "2026-09-10",
+                "document_index": 14,
+                "unit": "/HP",
+                "unit_canonical": "/[HPF]",
+                "value": "1",
+                "value_canonical": 1.0,
+                "values_converted": false
+              }
+            ],
+            "id": "pyuria",
+            "label": "脓尿"
+          },
+          {
+            "evidence": [
+              {
                 "analyte": "casts",
                 "date": "2026-09-10",
                 "document_index": 14,
@@ -212,18 +244,7 @@
           }
         ],
         "score": 2,
-        "unscored": [
-          {
-            "id": "hematuria",
-            "label": "血尿",
-            "reason": "最近这段时间没有做这一项"
-          },
-          {
-            "id": "pyuria",
-            "label": "脓尿",
-            "reason": "最近这段时间没有做这一项"
-          }
-        ],
+        "unscored": [],
         "window_days": 10
       },
       "empty_hint": null,
@@ -1178,14 +1199,14 @@
             "id": "doris",
             "items": [
               {
-                "actual": null,
+                "actual": 0,
                 "actual_at": null,
                 "id": "csledai_zero",
                 "label": "临床 SLEDAI = 0(去掉补体、dsDNA 两项)",
                 "note": "Box 1 原文只说「irrespective of serology」;落到低补体、dsDNA 升高这两行,是按 §B.1 里仅有的两条血清学描述符推出来的对应(源里标 PARAPHRASE),待 Task 19 核",
-                "reason": "「血尿」还没读到,SLEDAI 算不全",
+                "reason": null,
                 "source": "S5",
-                "verdict": "unknown"
+                "verdict": "yes"
               },
               {
                 "actual": null,
@@ -1227,14 +1248,14 @@
             "id": "lldas",
             "items": [
               {
-                "actual": null,
+                "actual": 2,
                 "actual_at": null,
                 "id": "sledai_le4",
                 "label": "SLEDAI-2K ≤ 4",
                 "note": null,
-                "reason": "「血尿」还没读到,SLEDAI 算不全",
+                "reason": null,
                 "source": "S6",
-                "verdict": "unknown"
+                "verdict": "yes"
               },
               {
                 "actual": null,
@@ -1695,12 +1716,12 @@
             ],
             "key": "activity_band",
             "label": "活动度分档(化验可算部分)",
-            "note": "化验可算部分 2/18",
+            "note": "化验可算部分 2/18 · 症状项未录,不分档",
             "source": "S10",
             "stale": false,
             "stale_after_days": 90,
             "unit": null,
-            "value": "轻度活动"
+            "value": null
           },
           {
             "as_of": "2026-09-10",
@@ -1733,6 +1754,7 @@
             "nodes": [
               {
                 "at": "2024-03-15",
+                "equiv_mg_per_day": 50.0,
                 "evidence": [
                   "ev:3:1"
                 ],
@@ -1744,6 +1766,7 @@
               },
               {
                 "at": "2024-09-20",
+                "equiv_mg_per_day": 20.0,
                 "evidence": [
                   "ev:6:1"
                 ],
@@ -1755,6 +1778,7 @@
               },
               {
                 "at": "2026-06-15",
+                "equiv_mg_per_day": 7.5,
                 "evidence": [
                   "ev:13:1"
                 ],
@@ -1765,7 +1789,8 @@
                 "unverified": false
               }
             ],
-            "quality": "verified"
+            "quality": "verified",
+            "severity": "normal"
           },
           {
             "key": "hcq_mg_per_kg",
@@ -1794,7 +1819,8 @@
                 "unverified": false
               }
             ],
-            "quality": "verified"
+            "quality": "verified",
+            "severity": "normal"
           },
           {
             "key": "renal_response",
@@ -1878,13 +1904,15 @@
                 "unverified": false
               }
             ],
-            "quality": "verified"
+            "quality": "verified",
+            "severity": "normal"
           },
           {
             "key": "activity_band",
             "label": "活动度分档(化验可算部分)",
             "nodes": [],
-            "quality": "empty"
+            "quality": "empty",
+            "severity": "normal"
           }
         ]
       },
