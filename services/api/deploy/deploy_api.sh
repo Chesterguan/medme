@@ -9,19 +9,34 @@ set -euo pipefail
 export PATH=/opt/homebrew/bin:$PATH
 HERE=$(dirname "$0"); source "$HERE/env.sh"
 : "${VPC_ID:?}" "${VSWITCH_ID:?}" "${SG_ID:?}"
-LIVE_JSON=$(aliyun --profile medme fc GET /2023-03-30/functions/medme-api 2>/dev/null || true)
+# 「函数存在」按 CLI 的退出码判,不按 stdout 有没有东西:报错正文也会打到 stdout,
+# 拿它当线上配置会走进 PUT 分支、再把密钥当成「读不到」现场重生成 —— 那正是本脚本
+# 要防的事故(全部已发 token 作废、手机号哈希对不上旧数据)。
+if LIVE_JSON=$(aliyun --profile medme fc GET /2023-03-30/functions/medme-api 2>/dev/null); then
+  FUNC_EXISTS=1
+else
+  FUNC_EXISTS=0
+  LIVE_JSON=""
+fi
 export LIVE_JSON
-if [ -z "${DATABASE_URL:-}" ] || [ -z "${API_JWT_SECRET:-}" ] || [ -z "${PHONE_HMAC_KEY:-}" ]; then
-  if [ -n "$LIVE_JSON" ]; then
-    eval "$(python3 - <<'PY'
-import json, os, shlex
+if [ "$FUNC_EXISTS" = 1 ] && { [ -z "${DATABASE_URL:-}" ] || [ -z "${API_JWT_SECRET:-}" ] || [ -z "${PHONE_HMAC_KEY:-}" ]; }; then
+  # 先接住 python 的输出再 eval:直接 eval "$(...)" 会把 python 的失败(非 JSON、缺键)
+  # 吞成空字符串,悄悄落到下面的「随机生成」。
+  if ! CARRY=$(python3 - <<'PY'
+import json, os, shlex, sys
 env = json.loads(os.environ["LIVE_JSON"]).get("environmentVariables") or {}
+missing = [k for k in ("DATABASE_URL", "API_JWT_SECRET", "PHONE_HMAC_KEY") if not os.environ.get(k) and not env.get(k)]
+if missing:
+    sys.exit(f"线上函数环境变量里没有 {missing},拒绝重部署:这会把密钥换掉。请在 env.sh 里显式给出。")
 for k in ("DATABASE_URL", "API_JWT_SECRET", "PHONE_HMAC_KEY"):
-    if not os.environ.get(k) and env.get(k):
+    if not os.environ.get(k):
         print(f"export {k}={shlex.quote(env[k])}")
 PY
-)"
+  ); then
+    echo "deploy_api.sh: 读不到线上密钥,中止(见上面的原因)" >&2
+    exit 1
   fi
+  eval "$CARRY"
 fi
 : "${DATABASE_URL:?首次创建需要 env.sh 里给 DATABASE_URL}"
 API_JWT_SECRET=${API_JWT_SECRET:-$(openssl rand -hex 32)}
@@ -49,7 +64,7 @@ body = {"functionName": "medme-api", "runtime": "custom.debian11", "handler": "i
  "vpcConfig": {"vpcId": os.environ["VPC_ID"], "vSwitchIds": [os.environ["VSWITCH_ID"]], "securityGroupId": os.environ["SG_ID"]}}
 print(json.dumps(body))
 PY
-if [ -n "$LIVE_JSON" ]; then
+if [ "$FUNC_EXISTS" = 1 ]; then
   python3 -c "import json;d=json.load(open('$HERE/create.json'));d.pop('functionName');d.pop('runtime');print(json.dumps(d))" > "$HERE/update.json"
   aliyun --profile medme fc PUT /2023-03-30/functions/medme-api --header "Content-Type=application/json" --body "$(cat "$HERE/update.json")" >/dev/null && echo "updated medme-api"
 else

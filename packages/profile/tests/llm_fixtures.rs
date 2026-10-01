@@ -28,7 +28,9 @@ fn corpus_stems() -> Vec<String> {
     std::fs::read_dir(testdata().join("corpus"))
         .unwrap()
         .flatten()
-        .map(|f| f.path().file_stem().unwrap().to_string_lossy().to_string())
+        .map(|f| f.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "txt"))
+        .map(|p| p.file_stem().unwrap().to_string_lossy().to_string())
         .collect()
 }
 

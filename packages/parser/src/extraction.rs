@@ -139,7 +139,8 @@ pub fn labs_from_json(json: &str) -> Result<LabsFromJson, deid::DeidError> {
 #[derive(Debug, Clone)]
 pub struct MedsFromJson {
     pub meds: Vec<MedObservation>,
-    /// 空药名、或拼出来的行过不了 `extract_meds` 的守卫(说明行、纯标点)。
+    /// 被 `meds::from_parts` 丢掉的条数:空药名、名字带整句标点、说明行(「一次1片」),
+    /// 或光秃秃一个词典里没有的名字且没写剂量频次。目前只有测试读它。
     pub dropped: usize,
     pub unverified: usize,
 }
@@ -364,6 +365,20 @@ mod tests {
         assert_eq!(r.meds[0].raw_name, "某某胶囊", "频次原话不能拼进名字");
         assert_eq!(r.meds[0].frequency, None);
         assert_eq!(r.meds[0].frequency_raw.as_deref(), Some("早晚各一次"));
+    }
+
+    #[test]
+    fn meds_from_json_rejects_usage_lines() {
+        // PR 审查:正则路径的「用法/一次…」说明行守卫,JSON 路径也要有。
+        let j = r#"{"meds":[
+          {"name":"一次1片","dose":"0.5g","freq":"bid","route":""},
+          {"name":"用法","dose":"10mg","freq":"qd","route":""},
+          {"name":"二甲双胍","dose":"0.5g","freq":"bid","route":""}
+        ]}"#;
+        let r = meds_from_json(j).expect("valid json");
+        let names: Vec<&str> = r.meds.iter().map(|m| m.raw_name.as_str()).collect();
+        assert_eq!(names, vec!["二甲双胍"]);
+        assert_eq!(r.dropped, 2);
     }
 
     #[test]

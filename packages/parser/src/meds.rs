@@ -202,6 +202,13 @@ pub(crate) fn has_dose_or_frequency(line: &str) -> bool {
     parse_dose(line).is_some() || parse_frequency(line).is_some()
 }
 
+/// 处方里的「剂量/用法说明行」不是药(`一次1片 一日2次`、`用法:口服`),正则路径和
+/// 云抽取路径同一道守卫。
+fn is_usage_line(name: &str) -> bool {
+    const USAGE_PREFIXES: &[&str] = &["用法", "用量", "一次", "每次", "服法", "Sig", "sig"];
+    USAGE_PREFIXES.iter().any(|p| name.starts_with(p))
+}
+
 /// 单条药的构造:正则路径(`extract_meds`)与云抽取路径(`from_parts`)共用,
 /// 免得两边各写一遍字段映射、稍有出入。
 fn build(
@@ -240,6 +247,7 @@ pub(crate) fn from_parts(name_text: &str, dose_text: &str, freq_text: &str) -> O
     if name
         .chars()
         .any(|c| matches!(c, '，' | ',' | '。' | '；' | ';' | '、' | '：' | ':'))
+        || is_usage_line(name)
     {
         return None;
     }
@@ -309,8 +317,7 @@ pub fn extract_meds(text: &str) -> Vec<MedObservation> {
         {
             continue;
         }
-        const USAGE_PREFIXES: &[&str] = &["用法", "用量", "一次", "每次", "服法", "Sig", "sig"];
-        if USAGE_PREFIXES.iter().any(|p| name.starts_with(p)) {
+        if is_usage_line(name) {
             continue;
         }
 
