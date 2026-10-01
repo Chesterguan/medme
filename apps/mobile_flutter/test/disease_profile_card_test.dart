@@ -351,10 +351,17 @@ void main() {
       for (var tab = 0; tab < 3; tab++) {
         await t.tap(find.descendant(of: find.byType(TabBar), matching: find.text(tabTitles[tab])));
         await t.pumpAndSettle();
+        // 每个 tab 的主卡(state / journey / evidence)置顶,其余按包给的顺序。
+        const lead = {'state', 'journey', 'evidence'};
+        final inTab = _goldenSections().where((s) => tabOf[s['kind']] == tab).toList();
+        final ordered = [
+          ...inTab.where((s) => lead.contains(s['kind'])),
+          ...inTab.where((s) => !lead.contains(s['kind'])),
+        ];
         var last = -1.0;
-        for (final s in _goldenSections()) {
+        for (final s in ordered) {
           final title = s['title'] as String?;
-          if (title == null || title.isEmpty || tabOf[s['kind']] != tab) continue;
+          if (title == null || title.isEmpty) continue;
           expect(find.text(title), findsWidgets, reason: title);
           final y = dy(title);
           expect(y, greaterThan(last), reason: '「$title」没按包给的顺序摆');

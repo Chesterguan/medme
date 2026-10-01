@@ -284,7 +284,7 @@ class _Failed extends StatelessWidget {
 
 /// 三视图(spec 2026-09-30 §7):包给了 `state` 段就分三个 tab,tab 名就是那三段
 /// 的标题(包给的,不是这里写的)。「现在」放状态 + 现行方案/活动度/提醒/达标表,
-/// 「怎么走到今天」放轨迹 + 指标趋势,「依据」放依据;老的 `timeline` 段被轨迹
+/// 「进程」放轨迹 + 指标趋势,「依据」放依据;老的 `timeline` 段被轨迹
 /// 取代,在 tab 模式下不再显示。包没给 `state` 段(老包)就还是原来的一页流。
 const Map<String, int> _kTabOfKind = {
   'state': 0,
@@ -474,9 +474,16 @@ class _TabbedBody extends StatelessWidget {
         .map((s) => (s as Map).cast<String, dynamic>())
         .toList();
     final disclaimer = view['disclaimer'] as String? ?? '';
+    // 每个 tab 的「主卡」(state / journey / evidence,就是这个 tab 的答案)永远在最
+    // 上面,其余按包给的顺序。
+    const lead = {'state', 'journey', 'evidence'};
     List<Widget> page(int tab) => [
       for (final s in sections)
-        if (_kTabOfKind[s['kind']] == tab) ProfileSectionView(s, links: links),
+        if (_kTabOfKind[s['kind']] == tab && lead.contains(s['kind']))
+          ProfileSectionView(s, links: links),
+      for (final s in sections)
+        if (_kTabOfKind[s['kind']] == tab && !lead.contains(s['kind']))
+          ProfileSectionView(s, links: links),
     ];
     const pad = EdgeInsets.fromLTRB(MedShape.s3, MedShape.s3, MedShape.s3, MedShape.s6);
     return DefaultTabController(
@@ -490,7 +497,7 @@ class _TabbedBody extends StatelessWidget {
             dividerColor: c.line,
             tabs: [
               Tab(text: _tabTitle('state', '现在')),
-              Tab(text: _tabTitle('journey', '怎么走到今天')),
+              Tab(text: _tabTitle('journey', '进程')),
               Tab(text: _tabTitle('evidence', '依据')),
             ],
           ),

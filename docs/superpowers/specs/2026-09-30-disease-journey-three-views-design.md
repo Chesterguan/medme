@@ -1,10 +1,10 @@
-# 病程档案 · 三个视图(现在 / 怎么走到今天 / 依据)— 设计
+# 病程档案 · 三个视图(现在 / 进程 / 依据)— 设计
 
 增补 [2026-09-16 病程档案 skill 框架](2026-09-16-disease-profile-skill-framework-design.md) 的 §6 视图规格,其余章节不变。日期 2026-09-30。
 
 ## 0. 一句话
 
-**一份事件日志,三个投影。** 「现在」是状态变量折叠到今天;「怎么走到今天」是状态变量的变更日志;「依据」是每个值、每次变更点回去的原件位置。三者同源,规则引擎仍是纯函数,不加事件类型。
+**一份事件日志,三个投影。** 「现在」是状态变量折叠到今天;「进程」是状态变量的变更日志;「依据」是每个值、每次变更点回去的原件位置。三者同源,规则引擎仍是纯函数,不加事件类型。
 
 定位:记录类产品(含 MedMe 保险箱本体)解决 record collection + timeline;病程档案解决 **state reconstruction + clinical trajectory + provenance**。
 
@@ -81,17 +81,17 @@
 
 ## 7. 界面名字
 
-对用户不用 Clinical state / Journey / Evidence。三个 tab 叫「现在」「怎么走到今天」「依据」(词表定稿前的占位,按减法口径:一个词说一件事)。
+对用户不用 Clinical state / Journey / Evidence。三个 tab 叫「现在」「进程」「依据」(词表定稿前的占位,按减法口径:一个词说一件事)。
 
 ## 8. 代码落点与分期
 
 - **D1 数据**(已完成 2026-09-30):`parser::meds_from_json`;`aggregate` 优先 JSON meds、零条退回正则;`MedSpan.unverified`;李静语料 DeepSeek fixture + 召回测试(`profile/tests/llm_fixtures.rs`)。不跑 MedRepBench(labs 路径未动)。
-- **D2 引擎**:`packages/profile`:`state`/`journey`/`evidence` 三段进 `ProfileView`;`derive` 五种;包格式加 `state_vars`;SLE 包声明四个变量;签名脚本不变。
-- **D3 界面**:病程档案页改三 tab;渲染引擎加 `state`、`journey`(泳道)、`evidence` 三种 section;原件高亮。医生交接单 `handoff` 顶部改成状态变量表。
+- **D2 引擎**(已完成 2026-10-01):`packages/profile/src/state.rs`:`state`/`journey`/`evidence` 三段进 `ProfileView`;`derive` 五种;包格式加 `state_vars` 与 `rules.bands`;SLE 包 2026.10.1 声明四个变量、「激素」作 gc 别名;`MedSpan.mentions` 给轨迹用;两份 golden(正则 / 云抽取)。
+- **D3 界面**(已完成 2026-10-01,交接单部分未做):病程档案页三 tab(tab 名来自包);渲染引擎加三种 section;依据点开原件高亮;趋势图下加数值行;「李静·狼疮」示例(语料 + 模型输出当云抽取)。医生交接单 `handoff` 顶部改成状态变量表 → 下一步。
 - 三步各自独立验收,D1 不依赖 D2/D3。
 
 ## 9. 已拍板(2026-09-30)
 
 1. `stale_after_days` **由包给,按该病指南的复诊节律**,不由引擎统一。每个病种包各自声明,SLE 取稳定期复诊 90 天;引擎没拿到就当未声明,不显示陈旧标记。
 2. 图片档依据第一版只跳到那一页,不画框。
-3. 「怎么走到今天」泳道默认展开:**有高质量数据的先展示**。排序键:已逐字校验且有变更的变量 → 复发/住院 → 其余折叠成一行。「需核对」的节点不参与排序权重。
+3. 「进程」泳道默认展开:**有高质量数据的先展示**。排序键:已逐字校验且有变更的变量 → 复发/住院 → 其余折叠成一行。「需核对」的节点不参与排序权重。

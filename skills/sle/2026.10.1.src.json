@@ -430,7 +430,7 @@
       {"kind": "series_chart", "title": "指标趋势",
        "empty_hint": "还没有这些指标的化验结果,下次抽血后这里会自动画出来"},
       {"kind": "state", "title": "现在", "empty_hint": "还没有能算出来的状态,导入处方或化验单后这里会出现"},
-      {"kind": "journey", "title": "怎么走到今天", "empty_hint": "还没有变化记录,导入门诊病历或出院小结后这里会长出来"},
+      {"kind": "journey", "title": "进程", "empty_hint": "还没有变化记录,导入门诊病历或出院小结后这里会长出来"},
       {"kind": "evidence", "title": "依据", "empty_hint": "还没有可以回看的依据"},
       {"kind": "timeline", "title": "病程时间轴",
        "severity_high": ["flare", "hospitalization"],

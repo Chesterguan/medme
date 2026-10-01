@@ -895,6 +895,12 @@ class _SeriesCard extends StatelessWidget {
         if (_seriesDto(name, unit, series, points) case final dto when dto.points.isNotEmpty) ...[
           const SizedBox(height: MedShape.s1),
           TrendChart(series: dto),
+          // 画布里一个字都没有(`TrendChart` 的文档),数值由这一行给:最近一次是多少、
+          // 哪天、偏高还是偏低、参考区间、历史最低/最高 —— 光一条线医生读不出数。
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: _SeriesValuesLine(dto: dto, points: points),
+          ),
         ],
         if (_metaLine(context, [
           undated.isEmpty ? null : '另有 ${undated.length} 项没有日期',
@@ -1366,7 +1372,7 @@ class _HandoffBody extends StatelessWidget {
 
 
 // ---------------------------------------------------------------------------
-// 三视图(spec 2026-09-30):现在 / 怎么走到今天 / 依据
+// 三视图(spec 2026-09-30):现在 / 进程 / 依据
 // ---------------------------------------------------------------------------
 
 /// `state`:每个状态变量一行——值 + 单位、截至日期、陈旧与否、一句说明、依据。
@@ -1473,14 +1479,14 @@ class _EvidenceChips extends StatelessWidget {
   }
 }
 
-String _evidenceShort(Map<String, dynamic> e) {
+String _evidenceShort(Map<String, dynamic> e, {bool withOrigin = true}) {
   final date = fmtDate(e['date'] as String?);
   final title = e['title'] as String?;
   final verified = e['verified'] != false;
   return [
     if (date.isNotEmpty) date,
     if (title != null && title.isNotEmpty) title
-    else if (e['origin'] == 'self_entry') _kOriginLabel['self_entry']!,
+    else if (withOrigin && e['origin'] == 'self_entry') _kOriginLabel['self_entry']!,
     if (!verified) '需核对',
   ].join(' · ');
 }
@@ -1620,7 +1626,7 @@ class _EvidenceRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            [_evidenceShort(item), origin, if (!verified) '需核对'].join(' · '),
+            [_evidenceShort(item, withOrigin: false), origin, if (!verified) '需核对'].join(' · '),
             style: MedType.caption.copyWith(color: c.ink2),
           ),
           const SizedBox(height: 2),
@@ -1630,5 +1636,50 @@ class _EvidenceRow extends StatelessWidget {
     );
     if (links == null || item['doc'] == null) return row;
     return InkWell(onTap: () => links!.onOpen(item), child: row);
+  }
+}
+
+
+/// 趋势图下面那一行数:最近一次(值 · 日期 · 偏高/偏低)· 参考区间 · 历史最低/最高。
+/// 值一律用引擎给的 `value` 原样 `toString()`(文件头「数值原则」),不四舍五入。
+class _SeriesValuesLine extends StatelessWidget {
+  const _SeriesValuesLine({required this.dto, required this.points});
+
+  final TrendSeriesDto dto;
+  final List<Map<String, dynamic>> points;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final dated = dto.points.where((p) => p.date != null && p.date!.isNotEmpty).toList()
+      ..sort((a, b) => a.date!.compareTo(b.date!));
+    final latest = dated.isNotEmpty ? dated.last : dto.points.last;
+    final unit = dto.unit ?? '';
+    // 整数不带 `.0`(70 不写成 70.0);其余原样 toString,不四舍五入。
+    String n(double x) => x == x.roundToDouble() ? '${x.toInt()}' : '$x';
+    String v(double x) => unit.isEmpty ? n(x) : '${n(x)} $unit';
+    final flagWord = switch (latest.flag) { 'H' => '偏高', 'L' => '偏低', _ => null };
+    final flagColor = switch (latest.flag) { 'H' => c.high, 'L' => c.low, _ => c.ink2 };
+    final lo = dto.points.map((p) => p.value).reduce((a, b) => a < b ? a : b);
+    final hi = dto.points.map((p) => p.value).reduce((a, b) => a > b ? a : b);
+    final ref = switch ((dto.refLow, dto.refHigh)) {
+      (final l?, final h?) => '参考 ${n(l)}–${n(h)}',
+      (null, final h?) => '参考 ≤ ${n(h)}',
+      (final l?, null) => '参考 ≥ ${n(l)}',
+      _ => null,
+    };
+    return Text.rich(
+      TextSpan(
+        style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
+        children: [
+          const TextSpan(text: '最近 '),
+          TextSpan(text: v(latest.value), style: MedType.secondary.copyWith(color: c.ink, fontWeight: FontWeight.w600)),
+          if (flagWord != null) TextSpan(text: ' $flagWord', style: MedType.secondary.copyWith(color: flagColor)),
+          if (latest.date != null && latest.date!.isNotEmpty) TextSpan(text: ' · ${fmtDate(latest.date)}'),
+          if (ref != null) TextSpan(text: ' · $ref'),
+          if (dto.points.length > 1) TextSpan(text: ' · 最低 ${v(lo)} · 最高 ${v(hi)}'),
+        ],
+      ),
+    );
   }
 }
