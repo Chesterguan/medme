@@ -274,6 +274,9 @@ void main() {
     expect(_goldenSections.map((s) => s['kind']).toSet(), {
       'status_card', 'score_card', 'reminders', 'series_chart', 'timeline',
       'checklist',
+      // 三视图(2026-10-01):state / journey / evidence,渲染看门在
+      // `profile_three_views_test.dart`。
+      'state', 'journey', 'evidence',
     });
   });
 

@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart' show fmtDate;
+import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/skill_packages.dart';
 import 'package:mobile_flutter/src/rust/api/vault_profile.dart' as rust_profile;
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
@@ -281,6 +282,21 @@ class _Failed extends StatelessWidget {
   }
 }
 
+/// 三视图(spec 2026-09-30 §7):包给了 `state` 段就分三个 tab,tab 名就是那三段
+/// 的标题(包给的,不是这里写的)。「现在」放状态 + 现行方案/活动度/提醒/达标表,
+/// 「怎么走到今天」放轨迹 + 指标趋势,「依据」放依据;老的 `timeline` 段被轨迹
+/// 取代,在 tab 模式下不再显示。包没给 `state` 段(老包)就还是原来的一页流。
+const Map<String, int> _kTabOfKind = {
+  'state': 0,
+  'status_card': 0,
+  'score_card': 0,
+  'reminders': 0,
+  'checklist': 0,
+  'journey': 1,
+  'series_chart': 1,
+  'evidence': 2,
+};
+
 /// 正文:包给的 section 按包给的顺序 → 开关 → 出处 → 免责声明(逐字,最后一行)。
 class _Body extends StatelessWidget {
   const _Body({required this.view, required this.busy, required this.onToggle});
@@ -289,6 +305,50 @@ class _Body extends StatelessWidget {
   final bool busy;
   final Future<void> Function({required bool enabled}) onToggle;
 
+  /// `documents[]` 桥(`vault_profile_view` 附的):`SourceDoc::index` → document_id。
+  Map<int, int> _documentIds() => {
+    for (final d in (view['documents'] as List? ?? const []))
+      if (d is Map && d['index'] is num && d['document_id'] is num)
+        (d['index'] as num).toInt(): (d['document_id'] as num).toInt(),
+  };
+
+  ProfileLinks _links(BuildContext context, List<Map<String, dynamic>> sections) {
+    final evidence = <String, Map<String, dynamic>>{};
+    for (final s in sections) {
+      if (s['kind'] != 'evidence') continue;
+      final body = s['body'];
+      final items = body is Map ? body['items'] : null;
+      if (items is! List) continue;
+      for (final e in items) {
+        if (e is Map && e['id'] is String) {
+          evidence[e['id'] as String] = e.cast<String, dynamic>();
+        }
+      }
+    }
+    final docIds = _documentIds();
+    return ProfileLinks(
+      evidenceById: evidence,
+      onOpen: (e) {
+        final idx = (e['doc'] as num?)?.toInt();
+        final docId = idx == null ? null : docIds[idx];
+        if (docId == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            appSnackBar(content: Text('${e['quote'] ?? ''}')),
+          );
+          return;
+        }
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => DocumentDetailScreen(
+              docId: docId,
+              highlight: e['quote'] as String?,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
@@ -296,6 +356,15 @@ class _Body extends StatelessWidget {
     final sections = (view['sections'] as List? ?? const [])
         .map((s) => (s as Map).cast<String, dynamic>())
         .toList();
+    if (enabled && sections.any((s) => s['kind'] == 'state')) {
+      return _TabbedBody(
+        view: view,
+        sections: sections,
+        links: _links(context, sections),
+        busy: busy,
+        onToggle: onToggle,
+      );
+    }
     final sources = (view['sources'] as List? ?? const [])
         .map((s) => (s as Map).cast<String, dynamic>())
         .toList();
@@ -372,6 +441,87 @@ class _Sources extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+
+/// 三 tab 版正文。tab 名 = 那三段各自的 `title`(包给的)。
+class _TabbedBody extends StatelessWidget {
+  const _TabbedBody({
+    required this.view,
+    required this.sections,
+    required this.links,
+    required this.busy,
+    required this.onToggle,
+  });
+
+  final Map<String, dynamic> view;
+  final List<Map<String, dynamic>> sections;
+  final ProfileLinks links;
+  final bool busy;
+  final Future<void> Function({required bool enabled}) onToggle;
+
+  String _tabTitle(String kind, String fallback) =>
+      sections.firstWhere((s) => s['kind'] == kind, orElse: () => const {})['title']
+          as String? ??
+      fallback;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final sources = (view['sources'] as List? ?? const [])
+        .map((s) => (s as Map).cast<String, dynamic>())
+        .toList();
+    final disclaimer = view['disclaimer'] as String? ?? '';
+    List<Widget> page(int tab) => [
+      for (final s in sections)
+        if (_kTabOfKind[s['kind']] == tab) ProfileSectionView(s, links: links),
+    ];
+    const pad = EdgeInsets.fromLTRB(MedShape.s3, MedShape.s3, MedShape.s3, MedShape.s6);
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          TabBar(
+            labelColor: c.sealInk,
+            unselectedLabelColor: c.ink2,
+            indicatorColor: c.seal,
+            dividerColor: c.line,
+            tabs: [
+              Tab(text: _tabTitle('state', '现在')),
+              Tab(text: _tabTitle('journey', '怎么走到今天')),
+              Tab(text: _tabTitle('evidence', '依据')),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                ListView(
+                  padding: pad,
+                  children: [
+                    ...page(0),
+                    const SizedBox(height: MedShape.s2),
+                    OutlinedButton(
+                      onPressed: busy ? null : () => onToggle(enabled: true),
+                      child: const Text('关闭病程档案'),
+                    ),
+                    const SizedBox(height: MedShape.s4),
+                    if (sources.isNotEmpty) _Sources(sources),
+                    const SizedBox(height: MedShape.s2),
+                    Text(
+                      disclaimer,
+                      style: MedType.secondary.copyWith(color: c.ink3, height: 1.6),
+                    ),
+                  ],
+                ),
+                ListView(padding: pad, children: page(1)),
+                ListView(padding: pad, children: page(2)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

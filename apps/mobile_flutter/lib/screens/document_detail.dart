@@ -71,7 +71,10 @@ Future<Uint8List> _renderDicomMaterialized(int sourceFileId) async {
 /// 查看原件(图片/PDF/DICOM 各自渲染,其余格式优雅降级不崩)。
 class DocumentDetailScreen extends StatefulWidget {
   final int docId;
-  const DocumentDetailScreen({super.key, required this.docId});
+
+  /// 从病程档案的「依据」进来时要高亮的那句原文(逐字);其余入口为 null。
+  final String? highlight;
+  const DocumentDetailScreen({super.key, required this.docId, this.highlight});
 
   @override
   State<DocumentDetailScreen> createState() => _DocumentDetailScreenState();
@@ -186,7 +189,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
               ),
             );
           }
-          return DetailBody(detail: snap.data!);
+          return DetailBody(detail: snap.data!, highlight: widget.highlight);
         },
       ),
     );
@@ -254,7 +257,11 @@ class DocumentReviewActionBar extends StatelessWidget {
 /// `flutter test` 挂不住)就能直接 pump。
 class DetailBody extends StatelessWidget {
   final DocumentDetailDto detail;
-  const DetailBody({super.key, required this.detail});
+
+  /// 见 [DocumentDetailScreen.highlight]。原文里找得到就以高亮纯文本显示正文
+  /// (内容感知渲染会把一句话拆进表格,高亮跨不过去);找不到照常渲染。
+  final String? highlight;
+  const DetailBody({super.key, required this.detail, this.highlight});
 
   @override
   Widget build(BuildContext context) {
@@ -368,10 +375,13 @@ class DetailBody extends StatelessWidget {
           ],
         ),
         const SizedBox(height: MedShape.s2),
-        ReportContent(
-          text: _displayText(detail.ocrText, doc.docType),
-          docType: doc.docType,
-        ),
+        if (highlight case final h? when h.isNotEmpty && detail.ocrText.contains(h))
+          _HighlightedText(text: detail.ocrText, highlight: h)
+        else
+          ReportContent(
+            text: _displayText(detail.ocrText, doc.docType),
+            docType: doc.docType,
+          ),
       ],
     );
   }
@@ -595,6 +605,35 @@ class _ViewerFallback extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+
+/// 原文纯文本 + 一处高亮(病程档案「依据」点进来的那句)。只高亮第一处匹配。
+class _HighlightedText extends StatelessWidget {
+  const _HighlightedText({required this.text, required this.highlight});
+
+  final String text;
+  final String highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final i = text.indexOf(highlight);
+    final base = MedType.body.copyWith(color: c.ink, height: 1.6);
+    return SelectableText.rich(
+      TextSpan(
+        style: base,
+        children: [
+          TextSpan(text: text.substring(0, i)),
+          TextSpan(
+            text: highlight,
+            style: base.copyWith(backgroundColor: c.sealWash, color: c.sealInk),
+          ),
+          TextSpan(text: text.substring(i + highlight.length)),
+        ],
       ),
     );
   }
