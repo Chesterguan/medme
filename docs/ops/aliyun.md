@@ -1,7 +1,7 @@
 # 阿里云配置(后端)—— 现状与操作手册
 
 > 以此文件为准;改了资源就改这里。**任何密钥都不写进来**(AK 在 `~/.aliyun/config.json` 的 `medme` profile;数据库密码只在函数环境变量;DeepSeek key 在仓库根 `.deepseek_key`,不入库)。
-> 最后核对:2026-09-21(每项都是用 CLI 实查过的);§1/§6 的短信部分 2026-09-25 按号码认证服务文档改正(之前误写成要去短信服务申请签名)。
+> 最后核对:2026-09-21(每项都是用 CLI 实查过的);§1/§6 的短信部分 2026-09-25 按号码认证服务文档改正(之前误写成要去短信服务申请签名);2026-09-28 短信真发通、§5/§6 更新。
 
 ## 1. 账号与权限
 
@@ -53,7 +53,7 @@ CLI:`aliyun configure list` 看 profile;`aliyun configure get` **打码输出 AK
 
 `medme-api` 启动命令 `python3 -m uvicorn app:app --host 0.0.0.0 --port 9000`,代码来自 OSS `medme-deploy/medme-api.zip`(包根 = `services/api/*.py` + 依赖 wheel + `skills/` + `prompts/`)。
 
-环境变量(值不写这里):`DATABASE_URL` `API_JWT_SECRET` `PHONE_HMAC_KEY` `ALIYUN_ACCESS_KEY_ID/SECRET` `PNVS_SIGN_NAME` `PNVS_TEMPLATE_CODE`(**目前为空,短信发不出**)`APPLE_BUNDLE_ID=com.medme.mobile` `OSS_ACCESS_KEY_ID/SECRET` `OSS_BUCKET=medme-vault` `OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com` `DEEPSEEK_API_KEY` `DEEPSEEK_MODEL_TEXT/VISION`(现 `deepseek-flash`,模型名不绑死)`MEDME_SKILLS_DIR=/code/skills` `MEDME_PROMPTS_DIR=/code/prompts` `PYTHONPATH=/code`。
+环境变量(值不写这里):`DATABASE_URL` `API_JWT_SECRET` `PHONE_HMAC_KEY` `ALIYUN_ACCESS_KEY_ID/SECRET` `PNVS_SIGN_NAME` `PNVS_TEMPLATE_CODE`(2026-09-28 起已填:签名「恒创联众」、模板 100001)`APPLE_BUNDLE_ID=com.medme.mobile` `OSS_ACCESS_KEY_ID/SECRET` `OSS_BUCKET=medme-vault` `OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com` `DEEPSEEK_API_KEY` `DEEPSEEK_MODEL_TEXT/VISION`(现 `deepseek-flash`,模型名不绑死)`MEDME_SKILLS_DIR=/code/skills` `MEDME_PROMPTS_DIR=/code/prompts` `PYTHONPATH=/code`。
 
 `API_JWT_SECRET` / `PHONE_HMAC_KEY` / `DATABASE_URL`:`deploy_api.sh` 在函数已存在时**沿用线上函数环境变量里的值**(env.sh 不必、也不该再抄一份密钥);只有首次创建才随机生成。env.sh 只放 VPC/vSwitch/安全组 ID 和 `PNVS_*`。
 
@@ -66,7 +66,8 @@ CLI:`aliyun configure list` 看 profile;`aliyun configure get` **打码输出 AK
 2. 短信认证 → 参数配置 → 签名配置 → **赠送签名配置**:任选一个,签名名称原样抄给 `PNVS_SIGN_NAME`。
 3. 同处 → 模板配置 → **赠送模板配置**:「登录/注册」模板编号 `100001` → `PNVS_TEMPLATE_CODE`。模板变量是 `code`(验证码)和 `min`(有效期分钟),`auth.py` 两个都传;验证码是我们自己生成、自己在 `otp` 表里校验的,不用 `CheckSmsVerifyCode`。
 4. 填进 `deploy/env.sh` 后 `bash deploy/deploy_api.sh` 重部署(密钥自动沿用线上的,见 §5)。
-5. 想先在控制台试发:短信认证 → 测试,只能发给已绑定的测试号(每账号 5 个),试发也计费。
+5. 想先在控制台试发:短信认证 → 测试,只能发给已绑定的测试号(每账号 5 个),试发也计费。本机直接调 `SendSmsVerifyCode` 复现 `auth.py` 参数时要用 `/usr/bin/python3`(python.org 的 3.9 缺 CA 证书,SSL 握手就挂)。
+6. 投递回执只能在控制台「短信认证 → 发送记录」看:`QuerySendDetails` 用 V1 签名或 CLI 调 dypnsapi 都报 `InvalidAction.NotFound`,短信服务侧 `QuerySendDetails` 查不到号码认证发的记录(0 条)。
 
 ## 7. 手机端怎么指向后端
 
