@@ -213,6 +213,33 @@ void main() {
       expect(find.text('开启'), findsNothing, reason: '已经开着了');
     });
 
+    testWidgets('装了两个病种包:一个病一张卡,各自开各自的', (t) async {
+      // 多个慢性病并存:引擎按 package 各算各的,入口卡也得一人一张,不能只显示
+      // 第一个(原先的 ponytail 注释:「今天清单里就一个病」)。
+      _usePhone(t, height: 2000);
+      final opened = <String>[];
+      final source = DiseaseProfileSource(
+        installed: () async => const ['mg', 'sle'],
+        view: (id) async {
+          final v = Map<String, dynamic>.from(_onView());
+          v['package_id'] = id;
+          v['display_name'] = id == 'sle' ? '系统性红斑狼疮' : '重症肌无力';
+          if (id == 'mg') v['enabled'] = false;
+          return jsonEncode(v);
+        },
+        record: (kind, pkg, at) async => opened.add('$kind:$pkg'),
+        refresh: () async {},
+      );
+      await t.pumpWidget(_wrap(DiseaseProfileCard(source: source)));
+      await t.pumpAndSettle();
+      expect(find.text('病程档案 · 系统性红斑狼疮'), findsOneWidget, reason: '开着的那个带病名');
+      expect(find.textContaining('重症肌无力'), findsOneWidget, reason: '没开的那个给「开启」');
+      expect(find.text('开启'), findsOneWidget);
+      await t.tap(find.text('开启'));
+      await t.pumpAndSettle();
+      expect(opened, ['enable:mg'], reason: '开启记在它自己的包上');
+    });
+
     testWidgets('开启了但这一块还没数据:原样举着包给的那句空态提示', (t) async {
       _usePhone(t);
       final fake = _Fake(
