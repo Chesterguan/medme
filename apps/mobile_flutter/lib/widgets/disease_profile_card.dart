@@ -75,7 +75,7 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
           out.add((id, await _source.view(id)));
         } catch (e) {
           // 包 id 与错误文本里没有病历内容,可以进日志。
-          debugPrint('[profile] 入口卡这次没拿到「$id」的档案:$e');
+          debugPrint('[profile] 入口卡这次没拿到档案:$id $e');
         }
       }
       return out;
