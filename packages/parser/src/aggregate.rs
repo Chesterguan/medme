@@ -191,7 +191,26 @@ pub struct MedSpan {
     /// All [`SourceDoc::index`] that mention it, deduped, ascending.
     pub sources: Vec<usize>,
     /// 任一条来源是云抽取图片模式下没核对上的(`MedObservation::unverified`)。
-    /// 界面标「需核对」;D2 依据层按 source 细分,这里先给整条一个标记。
+    /// 界面标「需核对」;逐条粒度看 `mentions[].unverified`。
+    pub unverified: bool,
+    /// `latest_dose` 来自哪份文档(`SourceDoc::index`)、哪条路径 —— 「现在」这个值的出处。
+    pub latest_source: Option<usize>,
+    pub latest_origin: Option<String>,
+    /// 每一次提及,按日期升序(无日期的排最后,输入顺序稳定)。病程轨迹从这里看剂量
+    /// 怎么一步步变的;`latest_dose` 只是它的最后一个有剂量的点。
+    pub mentions: Vec<MedMention>,
+}
+
+/// 一次用药提及:某份文档里写的某个剂量。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MedMention {
+    pub date: Option<NaiveDate>,
+    /// `dose_string` 的结果;这份文档只提了名没写剂量时为 `None`。
+    pub dose: Option<String>,
+    pub raw_name: String,
+    pub source: usize,
+    /// `"llm"`(云抽取 JSON)或 `"regex"`(正文正则)。
+    pub origin: String,
     pub unverified: bool,
 }
 
@@ -620,6 +639,9 @@ struct MedBuilder {
     best_date: Option<NaiveDate>,
     has_best: bool,
     unverified: bool,
+    best_source: Option<usize>,
+    best_origin: Option<String>,
+    mentions: Vec<MedMention>,
 }
 
 struct CondBuilder {
@@ -929,8 +951,8 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // --- meds: whole-doc for prescriptions; else only from embedded 用药/带药
         // sections (a discharge summary's 出院医嘱 list) —— #148. 手动录入文档
         // (self_measurement/note) 显式跳过,见本函数开头 is_manual_entry 的注释。
-        let doc_meds = if is_manual_entry {
-            Vec::new()
+        let (doc_meds, med_origin) = if is_manual_entry {
+            (Vec::new(), "regex")
         } else if let Some(parsed) = doc
             .extraction_json
             .and_then(|j| crate::extraction::meds_from_json(j).ok())
@@ -939,11 +961,11 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             // 与上面 labs 同一条规则:有云抽取、能解析、**且真读出了药**才用它;
             // `Err` 或零条都退回下面的正则路径。不按 doc_type 过滤 —— verify 已保证
             // 每条都是原文逐字,模型在化验单 notes 里读到的药也是原文。
-            parsed.meds
+            (parsed.meds, "llm")
         } else if wants_meds(dt) {
-            extract_meds(doc.text)
+            (extract_meds(doc.text), "regex")
         } else {
-            sections_text(doc.text, SecKind::Meds)
+            let v = sections_text(doc.text, SecKind::Meds)
                 .iter()
                 .flat_map(|s| {
                     // 出院医嘱等常把多药写在**一行**、用「、;,。」分隔,且带用法动词
@@ -962,7 +984,8 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                         .join("\n");
                     extract_meds(&normalized)
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            (v, "regex")
         };
         for obs in doc_meds {
             let matched = obs.drug_key.is_some();
@@ -985,8 +1008,19 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 best_date: None,
                 has_best: false,
                 unverified: false,
+                best_source: None,
+                best_origin: None,
+                mentions: Vec::new(),
             });
             b.unverified |= obs.unverified;
+            b.mentions.push(MedMention {
+                date: doc.date,
+                dose: this_dose.clone(),
+                raw_name: obs.raw_name.clone(),
+                source: doc.index,
+                origin: med_origin.to_string(),
+                unverified: obs.unverified,
+            });
             b.raw_names.insert(obs.raw_name.clone());
             if !b.meta_from_match && matched {
                 if let Some(name) = &obs.canonical_name {
@@ -1023,6 +1057,8 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 // 跟 `best_dose` **同一条 mention** 的原样写法。分开取会把「今天这片
                 // 口服药」和「三月那次静脉冲击」拼成一条自相矛盾的记录。
                 b.best_raw_name = Some(obs.raw_name.clone());
+                b.best_source = Some(doc.index);
+                b.best_origin = Some(med_origin.to_string());
                 b.has_best = true;
             }
         }
@@ -1083,6 +1119,14 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             status: "active".to_string(),
             sources: b.sources.into_iter().collect(),
             unverified: b.unverified,
+            latest_source: b.best_source,
+            latest_origin: b.best_origin,
+            mentions: {
+                let mut m = b.mentions;
+                // 有日期的按日期升序,无日期的排最后;stable 排序保住输入顺序。
+                m.sort_by_key(|x| x.date.map_or((1, NaiveDate::MAX), |d| (0, d)));
+                m
+            },
         })
         .collect();
     med_out.sort_by(|a, b| {
@@ -2230,6 +2274,43 @@ mod tests {
         let agg = aggregate(&docs);
         assert_eq!(agg.meds.len(), 1);
         assert_eq!(agg.meds[0].latest_dose.as_deref(), Some("0.2g bid"));
+    }
+
+    #[test]
+    fn med_span_keeps_every_mention_in_date_order() {
+        // D2 轨迹要看剂量怎么一步步变的:每次提及都留下来,按日期排,带来源和出处。
+        let j = r#"{"meds":[{"name":"激素","dose":"10mg","freq":"每日一次","route":""}]}"#;
+        let docs = vec![
+            SourceDoc { index: 0, doc_type: Some("prescription".into()), title: None, extraction_json: None, date: d(2024, 9, 20), text: "醋酸泼尼松片 20mg 每日一次" },
+            SourceDoc { index: 1, doc_type: Some("outpatient".into()), title: None, extraction_json: Some(j), date: d(2025, 9, 12), text: "激素继续缓慢减量至 10mg 每日一次" },
+            SourceDoc { index: 2, doc_type: Some("prescription".into()), title: None, extraction_json: None, date: d(2024, 3, 15), text: "醋酸泼尼松片 50mg qd" },
+        ];
+        let agg = aggregate(&docs);
+        let pred = agg.meds.iter().find(|m| m.name == "泼尼松").expect("泼尼松");
+        let seq: Vec<(Option<&str>, usize, &str)> = pred
+            .mentions
+            .iter()
+            .map(|x| (x.dose.as_deref(), x.source, x.origin.as_str()))
+            .collect();
+        assert_eq!(seq, vec![(Some("50mg qd"), 2, "regex"), (Some("20mg qd"), 0, "regex")]);
+        assert_eq!(pred.mentions[0].date, d(2024, 3, 15));
+        assert_eq!(pred.mentions[0].raw_name, "醋酸泼尼松片");
+        let gen = agg.meds.iter().find(|m| m.name == "激素").expect("激素(词典外,按原名)");
+        assert_eq!(gen.mentions.len(), 1);
+        assert_eq!(gen.mentions[0].origin, "llm");
+    }
+
+    #[test]
+    fn latest_source_follows_latest_dose() {
+        let docs = vec![
+            SourceDoc { index: 0, doc_type: Some("prescription".into()), title: None, extraction_json: None, date: d(2024, 9, 20), text: "醋酸泼尼松片 20mg qd" },
+            SourceDoc { index: 1, doc_type: Some("prescription".into()), title: None, extraction_json: None, date: d(2026, 6, 15), text: "醋酸泼尼松片 7.5mg qd" },
+        ];
+        let agg = aggregate(&docs);
+        let m = &agg.meds[0];
+        assert_eq!(m.latest_dose.as_deref(), Some("7.5mg qd"));
+        assert_eq!(m.latest_source, Some(1), "最新剂量来自哪份文档要能指出来");
+        assert_eq!(m.latest_origin.as_deref(), Some("regex"));
     }
 
     #[test]
