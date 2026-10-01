@@ -19,3 +19,4 @@ spec:`docs/superpowers/specs/2026-09-30-disease-journey-three-views-design.md`�
 - 分档泳道为空(分数只对今天的窗口算);`ActiveMedDto` 的 `unverified` 仍未进 App 用药列表。
 - 李静 fixture 里 2025-12-05、2026-03-14 两份检验报告的 UPCR 模型没抽到(云抽取路径 golden 肾应答泳道 5 个点 vs 正则 7 个),labs 召回缺口,记。
 - 示例文档标题带 `.txt`(demo 文件名),真实导入没有这个问题。
+- 用户发现:`.txt` 文档的「查看原件」不能预览(只有图片/PDF/DICOM 查看器)。稍后解决。
