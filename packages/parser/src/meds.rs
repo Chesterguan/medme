@@ -239,7 +239,11 @@ fn build(
 /// 在 `freq_text` 里找。留下的条件按**原话**算而不按解析结果算:模型写了剂量或频次
 /// (哪怕是浓度 `5mg/ml`、解析不出码的「早晚各一次」),就是它在原文里看到了一味药,
 /// 原话逐字、verify 核过,丢了就没了;只有光秃秃一个词典里也没有的名字才丢。
-pub(crate) fn from_parts(name_text: &str, dose_text: &str, freq_text: &str) -> Option<MedObservation> {
+pub(crate) fn from_parts(
+    name_text: &str,
+    dose_text: &str,
+    freq_text: &str,
+) -> Option<MedObservation> {
     let name = strip_trailing_route(name_text.trim());
     if name.is_empty() || !name.chars().any(|c| c.is_alphabetic()) {
         return None;
@@ -270,11 +274,14 @@ pub(crate) fn from_parts(name_text: &str, dose_text: &str, freq_text: &str) -> O
 pub(crate) fn name_part(line: &str) -> String {
     let cleaned = list_marker_re().replace(line, "");
     let cleaned = cleaned.trim();
-    let end = [parse_dose(cleaned).map(|d| d.2), parse_frequency(cleaned).map(|f| f.2)]
-        .into_iter()
-        .flatten()
-        .min()
-        .unwrap_or(cleaned.len());
+    let end = [
+        parse_dose(cleaned).map(|d| d.2),
+        parse_frequency(cleaned).map(|f| f.2),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(cleaned.len());
     strip_trailing_route(&cleaned[..end]).to_string()
 }
 

@@ -469,7 +469,10 @@ fn strip_header_prefix(section: &str) -> String {
     } else {
         first
     };
-    std::iter::once(first).chain(lines).collect::<Vec<_>>().join("\n")
+    std::iter::once(first)
+        .chain(lines)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn rejoin_wrapped_lines(text: &str) -> String {
@@ -1253,7 +1256,11 @@ mod tests {
             }];
             let agg = aggregate(&docs);
             let names: Vec<&str> = agg.meds.iter().map(|m| m.name.as_str()).collect();
-            assert_eq!(names, vec!["阿托伐他汀"], "extraction_json={j:?} 时必须退回正则");
+            assert_eq!(
+                names,
+                vec!["阿托伐他汀"],
+                "extraction_json={j:?} 时必须退回正则"
+            );
         }
     }
 
@@ -2138,14 +2145,28 @@ mod tests {
     fn header_or_prose_lines_are_not_glued_to_the_next_drug() {
         // 审查 C-1:不带冒号的标题行、医嘱散文行、只写药名的一行,都「没有剂量/频次」,
         // 不能因此把下一味药粘上来。真正的半截名字(「…钙」+「片 20mg qn」)另有测试。
-        let cases: &[(&str, &[(&str, Option<&str>)])] = &[
+        type Expect<'a> = &'a [(&'a str, Option<&'a str>)];
+        let cases: &[(&str, Expect)] = &[
             (
                 "出院带药\n醋酸泼尼松片 50mg qd\n羟氯喹\n碳酸钙片 0.6g qd",
-                &[("醋酸泼尼松片", Some("50mg qd")), ("羟氯喹", None), ("碳酸钙片", Some("0.6g qd"))],
+                &[
+                    ("醋酸泼尼松片", Some("50mg qd")),
+                    ("羟氯喹", None),
+                    ("碳酸钙片", Some("0.6g qd")),
+                ],
             ),
-            ("出院医嘱:注意休息\n阿司匹林肠溶片 100mg qd", &[("阿司匹林肠溶片", Some("100mg qd"))]),
-            ("出院带药:\n低盐低脂饮食\n阿司匹林肠溶片 100mg qd", &[("阿司匹林肠溶片", Some("100mg qd"))]),
-            ("出院医嘱:定期复查血常规\n继续口服阿司匹林肠溶片 100mg qd", &[("阿司匹林肠溶片", Some("100mg qd"))]),
+            (
+                "出院医嘱:注意休息\n阿司匹林肠溶片 100mg qd",
+                &[("阿司匹林肠溶片", Some("100mg qd"))],
+            ),
+            (
+                "出院带药:\n低盐低脂饮食\n阿司匹林肠溶片 100mg qd",
+                &[("阿司匹林肠溶片", Some("100mg qd"))],
+            ),
+            (
+                "出院医嘱:定期复查血常规\n继续口服阿司匹林肠溶片 100mg qd",
+                &[("阿司匹林肠溶片", Some("100mg qd"))],
+            ),
         ];
         for (text, want) in cases {
             let docs = vec![SourceDoc {
@@ -2163,7 +2184,10 @@ mod tests {
                     .iter()
                     .find(|m| m.raw_names.iter().any(|r| r == raw))
                     .unwrap_or_else(|| {
-                        panic!("{text:?}: 缺 {raw},得到 {:?}", agg.meds.iter().map(|m| &m.raw_names).collect::<Vec<_>>())
+                        panic!(
+                            "{text:?}: 缺 {raw},得到 {:?}",
+                            agg.meds.iter().map(|m| &m.raw_names).collect::<Vec<_>>()
+                        )
                     });
                 assert_eq!(m.latest_dose.as_deref(), *dose, "{text:?} {raw}");
                 assert!(m.drug_key.is_some(), "{text:?} {raw} 必须能解析成药");
@@ -2197,7 +2221,11 @@ mod tests {
         let agg = aggregate(&docs);
         assert_eq!(agg.meds.len(), 1, "同一味药");
         let m = &agg.meds[0];
-        assert_eq!(m.latest_dose.as_deref(), Some("0.2g bid"), "没剂量的提及不能冲掉已有剂量");
+        assert_eq!(
+            m.latest_dose.as_deref(),
+            Some("0.2g bid"),
+            "没剂量的提及不能冲掉已有剂量"
+        );
         assert_eq!(m.end, d(2025, 9, 12), "但时间跨度要延长");
         assert_eq!(m.sources, vec![0, 1]);
     }
@@ -2207,8 +2235,14 @@ mod tests {
         // PR 审查:词典里没有的药(某某胶囊)解析不出,原先会被当成半截名字接到上一行。
         // 规则改为:只有上一行本身是用分隔符连写的清单(真正会在页宽处换行的那种)才接。
         let cases: &[(&str, &[&str])] = &[
-            ("出院医嘱:低盐低脂饮食\n某某胶囊 1粒 qd\n阿司匹林肠溶片 100mg qd", &["某某胶囊", "阿司匹林肠溶片"]),
-            ("出院带药\n羟氯喹\n某某胶囊 0.5g bid", &["羟氯喹", "某某胶囊"]),
+            (
+                "出院医嘱:低盐低脂饮食\n某某胶囊 1粒 qd\n阿司匹林肠溶片 100mg qd",
+                &["某某胶囊", "阿司匹林肠溶片"],
+            ),
+            (
+                "出院带药\n羟氯喹\n某某胶囊 0.5g bid",
+                &["羟氯喹", "某某胶囊"],
+            ),
         ];
         for (text, want) in cases {
             let docs = vec![SourceDoc {
@@ -2222,10 +2256,14 @@ mod tests {
             let agg = aggregate(&docs);
             let raws: Vec<&String> = agg.meds.iter().flat_map(|m| m.raw_names.iter()).collect();
             for w in *want {
-                assert!(raws.iter().any(|r| r == w), "{text:?}: 缺 {w},得到 {raws:?}");
+                assert!(
+                    raws.iter().any(|r| r == w),
+                    "{text:?}: 缺 {w},得到 {raws:?}"
+                );
             }
             assert!(
-                raws.iter().all(|r| !r.contains("饮食") && !r.contains("羟氯喹某")),
+                raws.iter()
+                    .all(|r| !r.contains("饮食") && !r.contains("羟氯喹某")),
                 "{text:?}: 粘出了假药名 {raws:?}"
             );
         }
@@ -2243,9 +2281,18 @@ mod tests {
             text: "出院医嘱:\n阿司匹林肠溶片:100mg qd\n氯吡格雷片:75mg qd",
         }];
         let agg = aggregate(&docs);
-        let doses: Vec<(&str, Option<&str>)> =
-            agg.meds.iter().map(|m| (m.name.as_str(), m.latest_dose.as_deref())).collect();
-        assert_eq!(doses, vec![("氯吡格雷", Some("75mg qd")), ("阿司匹林", Some("100mg qd"))]);
+        let doses: Vec<(&str, Option<&str>)> = agg
+            .meds
+            .iter()
+            .map(|m| (m.name.as_str(), m.latest_dose.as_deref()))
+            .collect();
+        assert_eq!(
+            doses,
+            vec![
+                ("氯吡格雷", Some("75mg qd")),
+                ("阿司匹林", Some("100mg qd"))
+            ]
+        );
     }
 
     #[test]
@@ -2281,21 +2328,53 @@ mod tests {
         // D2 轨迹要看剂量怎么一步步变的:每次提及都留下来,按日期排,带来源和出处。
         let j = r#"{"meds":[{"name":"激素","dose":"10mg","freq":"每日一次","route":""}]}"#;
         let docs = vec![
-            SourceDoc { index: 0, doc_type: Some("prescription".into()), title: None, extraction_json: None, date: d(2024, 9, 20), text: "醋酸泼尼松片 20mg 每日一次" },
-            SourceDoc { index: 1, doc_type: Some("outpatient".into()), title: None, extraction_json: Some(j), date: d(2025, 9, 12), text: "激素继续缓慢减量至 10mg 每日一次" },
-            SourceDoc { index: 2, doc_type: Some("prescription".into()), title: None, extraction_json: None, date: d(2024, 3, 15), text: "醋酸泼尼松片 50mg qd" },
+            SourceDoc {
+                index: 0,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2024, 9, 20),
+                text: "醋酸泼尼松片 20mg 每日一次",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("outpatient".into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2025, 9, 12),
+                text: "激素继续缓慢减量至 10mg 每日一次",
+            },
+            SourceDoc {
+                index: 2,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2024, 3, 15),
+                text: "醋酸泼尼松片 50mg qd",
+            },
         ];
         let agg = aggregate(&docs);
-        let pred = agg.meds.iter().find(|m| m.name == "泼尼松").expect("泼尼松");
+        let pred = agg
+            .meds
+            .iter()
+            .find(|m| m.name == "泼尼松")
+            .expect("泼尼松");
         let seq: Vec<(Option<&str>, usize, &str)> = pred
             .mentions
             .iter()
             .map(|x| (x.dose.as_deref(), x.source, x.origin.as_str()))
             .collect();
-        assert_eq!(seq, vec![(Some("50mg qd"), 2, "regex"), (Some("20mg qd"), 0, "regex")]);
+        assert_eq!(
+            seq,
+            vec![(Some("50mg qd"), 2, "regex"), (Some("20mg qd"), 0, "regex")]
+        );
         assert_eq!(pred.mentions[0].date, d(2024, 3, 15));
         assert_eq!(pred.mentions[0].raw_name, "醋酸泼尼松片");
-        let gen = agg.meds.iter().find(|m| m.name == "激素").expect("激素(词典外,按原名)");
+        let gen = agg
+            .meds
+            .iter()
+            .find(|m| m.name == "激素")
+            .expect("激素(词典外,按原名)");
         assert_eq!(gen.mentions.len(), 1);
         assert_eq!(gen.mentions[0].origin, "llm");
     }
@@ -2303,8 +2382,22 @@ mod tests {
     #[test]
     fn latest_source_follows_latest_dose() {
         let docs = vec![
-            SourceDoc { index: 0, doc_type: Some("prescription".into()), title: None, extraction_json: None, date: d(2024, 9, 20), text: "醋酸泼尼松片 20mg qd" },
-            SourceDoc { index: 1, doc_type: Some("prescription".into()), title: None, extraction_json: None, date: d(2026, 6, 15), text: "醋酸泼尼松片 7.5mg qd" },
+            SourceDoc {
+                index: 0,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2024, 9, 20),
+                text: "醋酸泼尼松片 20mg qd",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2026, 6, 15),
+                text: "醋酸泼尼松片 7.5mg qd",
+            },
         ];
         let agg = aggregate(&docs);
         let m = &agg.meds[0];

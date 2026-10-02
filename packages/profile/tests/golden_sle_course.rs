@@ -35,7 +35,12 @@ fn load_corpus() -> Vec<(String, String, NaiveDate, String)> {
         let mut parts = stem.splitn(3, '_');
         let date: NaiveDate = parts.next().unwrap().parse().unwrap();
         let kind = parts.next().unwrap().to_string();
-        out.push((stem.clone(), kind, date, std::fs::read_to_string(&p).unwrap()));
+        out.push((
+            stem.clone(),
+            kind,
+            date,
+            std::fs::read_to_string(&p).unwrap(),
+        ));
     }
     out.sort_by_key(|(_, _, d, _)| *d);
     out
@@ -70,8 +75,12 @@ fn render(with_llm: bool) -> serde_json::Value {
             if !with_llm {
                 return None;
             }
-            let raw = std::fs::read_to_string(testdata().join("extractions").join(format!("{stem}.json")))
-                .unwrap_or_else(|e| panic!("{stem}.json 缺 —— 跑 examples/demo-dataset/extract_sle_fixtures.py: {e}"));
+            let raw = std::fs::read_to_string(
+                testdata().join("extractions").join(format!("{stem}.json")),
+            )
+            .unwrap_or_else(|e| {
+                panic!("{stem}.json 缺 —— 跑 examples/demo-dataset/extract_sle_fixtures.py: {e}")
+            });
             let parsed = deid::parse_extraction(&raw).expect("fixture 是合法 JSON");
             let v = deid::verify(parsed, text, deid::Mode::Text);
             Some(serde_json::to_string(&v.extraction).unwrap())
@@ -129,7 +138,10 @@ fn check_golden(got: serde_json::Value, file: &str) -> bool {
     let want: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&golden_path).expect("golden 文件在"))
             .expect("golden 是合法 JSON");
-    assert_eq!(got, want, "ProfileView 变了;确认是有意的再 UPDATE_GOLDEN=1 重生成");
+    assert_eq!(
+        got, want,
+        "ProfileView 变了;确认是有意的再 UPDATE_GOLDEN=1 重生成"
+    );
     false
 }
 
@@ -139,7 +151,10 @@ fn check_golden(got: serde_json::Value, file: &str) -> bool {
 fn the_synthetic_sle_course_renders_both_pinned_profile_views() {
     let wrote = check_golden(render(false), "golden_profile_view.json")
         | check_golden(render(true), "golden_profile_view_llm.json");
-    assert!(!wrote, "golden 已重写 —— 人工 review 这次 diff 之后再跑一遍(不带 UPDATE_GOLDEN)");
+    assert!(
+        !wrote,
+        "golden 已重写 —— 人工 review 这次 diff 之后再跑一遍(不带 UPDATE_GOLDEN)"
+    );
 }
 
 #[test]

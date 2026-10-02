@@ -72,7 +72,12 @@ impl EvidenceBook {
         date_if_no_doc: Option<NaiveDate>,
         whole_line: bool,
     ) -> String {
-        let key = (doc, needle.to_string(), origin.to_string(), hints.join("\u{1f}"));
+        let key = (
+            doc,
+            needle.to_string(),
+            origin.to_string(),
+            hints.join("\u{1f}"),
+        );
         if let Some(id) = self.seen.get(&key) {
             return id.clone();
         }
@@ -83,7 +88,9 @@ impl EvidenceBook {
             None => format!("ev:self:{n}"),
         };
         let d = doc.and_then(|i| ctx.docs.iter().find(|x| x.index == i));
-        let numeric = needle.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+        let numeric = needle
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
             && needle.chars().any(|c| c.is_ascii_digit());
         let mut best: Option<(i32, usize, usize, usize)> = None; // (score, start, line_start, line_end)
         if let Some(d) = d {
@@ -120,7 +127,10 @@ impl EvidenceBook {
         self.items.push(EvidenceOut {
             id: id.clone(),
             doc,
-            date: d.and_then(|x| x.date).or(date_if_no_doc).map(|x| x.to_string()),
+            date: d
+                .and_then(|x| x.date)
+                .or(date_if_no_doc)
+                .map(|x| x.to_string()),
             title: d.and_then(|x| x.title.clone()),
             quote,
             span,
@@ -235,7 +245,9 @@ fn lab_origin(ctx: &Ctx<'_>, doc: usize) -> &'static str {
 }
 
 fn dose_number(dose: &str) -> String {
-    dose.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect()
+    dose.chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect()
 }
 
 /// 一条用药区间「现在」那个值的依据:最新剂量来自的那份文档里,含药名**且含剂量数字**
@@ -296,7 +308,10 @@ fn point_unit(s: &parser::AnalyteSeries, p: &parser::LabPoint) -> Option<String>
     p.unit.clone().or_else(|| s.unit_canonical.clone())
 }
 
-fn latest_point<'c>(ctx: &'c Ctx<'_>, key: &str) -> Option<(&'c parser::AnalyteSeries, &'c parser::LabPoint)> {
+fn latest_point<'c>(
+    ctx: &'c Ctx<'_>,
+    key: &str,
+) -> Option<(&'c parser::AnalyteSeries, &'c parser::LabPoint)> {
     ctx.clinical
         .labs
         .iter()
@@ -361,7 +376,10 @@ fn eval_var(
             let spans = spans_of_class(ctx, pkg, class);
             let newest = spans.iter().max_by_key(|m| m.end);
             row.value = body.get("mg_per_kg").and_then(|v| v.as_f64()).map(fmt_1dec);
-            row.note = body.get("reason").and_then(|v| v.as_str()).map(str::to_string);
+            row.note = body
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             if let Some(m) = newest {
                 as_of = m.end;
                 row.evidence = cite_span(ctx, book, m);
@@ -402,7 +420,10 @@ fn eval_var(
                 return Some(row);
             }
             let score = rules::weight_sum(&activity.hits);
-            row.note = Some(format!("化验可算部分 {score}/{} · 症状项未录,不分档", a.max));
+            row.note = Some(format!(
+                "化验可算部分 {score}/{} · 症状项未录,不分档",
+                a.max
+            ));
             for h in &activity.hits {
                 for e in &h.evidence {
                     let d = e.date.as_deref().and_then(|s| s.parse::<NaiveDate>().ok());
@@ -440,7 +461,10 @@ fn eval_var(
                 }
                 .into(),
             );
-            row.note = out.get("reason").and_then(|v| v.as_str()).map(str::to_string);
+            row.note = out
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             if let Some(evs) = out.get("evidence").and_then(|v| v.as_array()) {
                 for e in evs {
                     let Ok(e) = serde_json::from_value::<rules::Evidence>(e.clone()) else {
@@ -479,7 +503,10 @@ fn eval_var(
                 }
             }
             if row.source.is_none() {
-                row.source = out.get("source").and_then(|v| v.as_str()).map(str::to_string);
+                row.source = out
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
             }
         }
         "latest_value" => {
@@ -528,7 +555,11 @@ pub(crate) fn state_section(
         kind: "state".into(),
         id: rules::view_id(pkg, "state", None),
         title: rules::view_title(pkg, "state", None),
-        empty_hint: if any_value { None } else { empty_hint(pkg, "state") },
+        empty_hint: if any_value {
+            None
+        } else {
+            empty_hint(pkg, "state")
+        },
         body: serde_json::json!({ "vars": vars }),
     })
 }
@@ -549,7 +580,11 @@ fn severity_high(pkg: &Package) -> Vec<String> {
         .iter()
         .find(|s| rules::str_field(s, "kind") == "timeline")
         .and_then(|s| s.get("severity_high").and_then(|v| v.as_array()))
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -628,13 +663,16 @@ fn dose_lane_nodes(
     }
     // 模型抽出来的 dose_change 事实(「激素减至 10mg」):药名对得上这一类就并进来。
     // 泛称别名(两个字以内)只认整名,与 `rules::drug_class` 同一条规矩。
-    let names: Vec<&str> = drug.map(|d| d.names.iter().map(String::as_str).collect()).unwrap_or_default();
+    let names: Vec<&str> = drug
+        .map(|d| d.names.iter().map(String::as_str).collect())
+        .unwrap_or_default();
     for (doc, doc_date, f) in &ctx.facts {
         if f.r#type != "dose_change" || f.drug.trim().is_empty() {
             continue;
         }
         let hit = names.iter().any(|n| {
-            f.drug == *n || (n.chars().count() > 2 && (f.drug.contains(n) || n.contains(f.drug.as_str())))
+            f.drug == *n
+                || (n.chars().count() > 2 && (f.drug.contains(n) || n.contains(f.drug.as_str())))
         });
         if !hit {
             continue;
@@ -646,7 +684,16 @@ fn dose_lane_nodes(
         if nodes.iter().any(|n| n.at == at && same_dose(&n.to, &f.to)) {
             continue;
         }
-        let id = book.cite(ctx, Some(*doc), &f.evidence, &[], "llm", !f.unverified, None, false);
+        let id = book.cite(
+            ctx,
+            Some(*doc),
+            &f.evidence,
+            &[],
+            "llm",
+            !f.unverified,
+            None,
+            false,
+        );
         nodes.push(Node {
             at,
             kind: "dose_change".into(),
@@ -720,19 +767,34 @@ fn event_headline(ty: &str, f: &deid::Fact) -> String {
         "infusion" => join(&[&f.drug, &f.dose]),
         "biopsy" => join(&[&f.organ, &f.result]),
         "dose_change" => f.to.clone(),
-        _ => [f.text.as_str(), f.reason.as_str(), f.status.as_str(), f.evidence.as_str()]
-            .iter()
-            .find(|s| !s.trim().is_empty())
-            .map_or(String::new(), |s| s.to_string()),
+        _ => [
+            f.text.as_str(),
+            f.reason.as_str(),
+            f.status.as_str(),
+            f.evidence.as_str(),
+        ]
+        .iter()
+        .find(|s| !s.trim().is_empty())
+        .map_or(String::new(), |s| s.to_string()),
     }
 }
 
-pub(crate) fn journey_section(ctx: &Ctx<'_>, pkg: &Package, book: &mut EvidenceBook) -> Option<Section> {
+pub(crate) fn journey_section(
+    ctx: &Ctx<'_>,
+    pkg: &Package,
+    book: &mut EvidenceBook,
+) -> Option<Section> {
     if pkg.state_vars.is_empty() {
         return None;
     }
     let high = severity_high(pkg);
-    let sev = |key: &str| if high.iter().any(|h| h == key) { "high" } else { "normal" };
+    let sev = |key: &str| {
+        if high.iter().any(|h| h == key) {
+            "high"
+        } else {
+            "normal"
+        }
+    };
     // (排序键, 泳道):变量泳道有核过的变更 → 0;事件泳道 → 1;需核对 → 2;空 → 3。
     let mut lanes: Vec<(u8, Lane)> = Vec::new();
     let mut consumed: Vec<(usize, String)> = Vec::new();
@@ -750,12 +812,16 @@ pub(crate) fn journey_section(ctx: &Ctx<'_>, pkg: &Package, book: &mut EvidenceB
                     .rules
                     .milestones
                     .iter()
-                    .find(|it| rules::str_field(it, "id") == var.milestone.as_deref().unwrap_or_default())
+                    .find(|it| {
+                        rules::str_field(it, "id") == var.milestone.as_deref().unwrap_or_default()
+                    })
                     .map(|it| rules::str_field(it, "key").to_string())
                     .unwrap_or_default();
                 series_lane_nodes(ctx, &key, book)
             }
-            "latest_value" => series_lane_nodes(ctx, var.marker.as_deref().unwrap_or_default(), book),
+            "latest_value" => {
+                series_lane_nodes(ctx, var.marker.as_deref().unwrap_or_default(), book)
+            }
             // 分档没有逐日历史(分数只对今天的窗口算),泳道留空。
             _ => Vec::new(),
         };
@@ -786,11 +852,21 @@ pub(crate) fn journey_section(ctx: &Ctx<'_>, pkg: &Package, book: &mut EvidenceB
                         && consumed.iter().any(|(d, e)| d == doc && *e == f.evidence))
             })
             .map(|(doc, doc_date, f)| {
-                let id = book.cite(ctx, Some(*doc), &f.evidence, &[], "llm", !f.unverified, None, false);
+                let id = book.cite(
+                    ctx,
+                    Some(*doc),
+                    &f.evidence,
+                    &[],
+                    "llm",
+                    !f.unverified,
+                    None,
+                    false,
+                );
                 Node {
                     at: fact_date(*doc_date, f).map(|d| d.to_string()),
                     kind: ty.into(),
-                    from: (ty == "dose_change" && !f.from.trim().is_empty()).then(|| f.from.clone()),
+                    from: (ty == "dose_change" && !f.from.trim().is_empty())
+                        .then(|| f.from.clone()),
                     to: event_headline(ty, f),
                     text: (!f.evidence.is_empty()).then(|| f.evidence.clone()),
                     equiv_mg_per_day: None,
@@ -807,7 +883,13 @@ pub(crate) fn journey_section(ctx: &Ctx<'_>, pkg: &Package, book: &mut EvidenceB
         let rank = if q == "verified" { 1 } else { 2 };
         lanes.push((
             rank,
-            Lane { key: ty.into(), label: label.into(), quality: q.into(), severity: sev(ty).into(), nodes },
+            Lane {
+                key: ty.into(),
+                label: label.into(),
+                quality: q.into(),
+                severity: sev(ty).into(),
+                nodes,
+            },
         ));
     }
     lanes.sort_by_key(|(r, _)| *r);
@@ -817,7 +899,11 @@ pub(crate) fn journey_section(ctx: &Ctx<'_>, pkg: &Package, book: &mut EvidenceB
         kind: "journey".into(),
         id: rules::view_id(pkg, "journey", None),
         title: rules::view_title(pkg, "journey", None),
-        empty_hint: if any { None } else { empty_hint(pkg, "journey") },
+        empty_hint: if any {
+            None
+        } else {
+            empty_hint(pkg, "journey")
+        },
         body: serde_json::json!({ "lanes": lanes }),
     })
 }
@@ -830,7 +916,11 @@ pub(crate) fn evidence_section(pkg: &Package, book: &EvidenceBook) -> Option<Sec
         kind: "evidence".into(),
         id: rules::view_id(pkg, "evidence", None),
         title: rules::view_title(pkg, "evidence", None),
-        empty_hint: if book.is_empty() { empty_hint(pkg, "evidence") } else { None },
+        empty_hint: if book.is_empty() {
+            empty_hint(pkg, "evidence")
+        } else {
+            None
+        },
         body: serde_json::json!({ "items": book.items }),
     })
 }

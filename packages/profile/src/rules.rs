@@ -333,7 +333,11 @@ fn view_section<'p>(
 /// section 的标题。包里没写就 `None` —— 引擎里垫一句中文,「加一个病不发版」这条
 /// 前提上就多了一个例外,而例外只会越来越多。**空标题要是 `null` 不是 `""`**:
 /// 后者在 JSON 里和「作者写了个空标题」长得一样,渲染层分不出包漏了还是包故意的。
-pub(crate) fn view_title(pkg: &crate::package::Package, kind: &str, id: Option<&str>) -> Option<String> {
+pub(crate) fn view_title(
+    pkg: &crate::package::Package,
+    kind: &str,
+    id: Option<&str>,
+) -> Option<String> {
     view_section(pkg, kind, id)
         .and_then(|s| s.get("title").and_then(|t| t.as_str()))
         .map(str::to_string)
@@ -342,7 +346,11 @@ pub(crate) fn view_title(pkg: &crate::package::Package, kind: &str, id: Option<&
 /// section 的 id,原样来自包里那条配置(见 [`crate::view::Section::id`])。包里那条
 /// 没写 id、或包里压根没有这块的配置 → `None`,引擎**不替它编一个** —— 渲染层看到
 /// `null` 就知道这块在包里没有身份,而不是拿一个引擎自造的 id 去对包里的配置。
-pub(crate) fn view_id(pkg: &crate::package::Package, kind: &str, id: Option<&str>) -> Option<String> {
+pub(crate) fn view_id(
+    pkg: &crate::package::Package,
+    kind: &str,
+    id: Option<&str>,
+) -> Option<String> {
     view_section(pkg, kind, id)
         .and_then(|s| s.get("id").and_then(|v| v.as_str()))
         .map(str::to_string)
@@ -1045,7 +1053,11 @@ pub(crate) fn is_nonsystemic_gc_name(raw_name: &str) -> bool {
 
 /// 一次提及的泼尼松等效日剂量(给进程泳道:泼尼松 20mg 换甲泼尼龙 16mg 是等效换药,
 /// 不是减量)。表里查不到、剂量读不出 → `None`,节点保留原串。
-pub(crate) fn equiv_mg_per_day(d: &crate::package::Drug, raw_name: &str, dose: &str) -> Option<f64> {
+pub(crate) fn equiv_mg_per_day(
+    d: &crate::package::Drug,
+    raw_name: &str,
+    dose: &str,
+) -> Option<f64> {
     let tbl = d.pred_equiv.as_ref()?;
     let (_, factor) = tbl
         .iter()
@@ -1116,8 +1128,10 @@ pub(crate) fn gc_daily_mg(d: &crate::package::Drug, m: &parser::MedSpan) -> Resu
     }
     // 名字就是包里的泛称别名(「激素」),换算表里当然没有它:原因是没写具体是哪一种,
     // 不是「换算表待核」(审查 I-8)。
-    if d.names.iter().any(|n| *n == m.name)
-        && d.pred_equiv.as_ref().is_some_and(|t| !t.keys().any(|k| m.name.contains(k.as_str())))
+    if d.names.contains(&m.name)
+        && d.pred_equiv
+            .as_ref()
+            .is_some_and(|t| !t.keys().any(|k| m.name.contains(k.as_str())))
     {
         return Err("没写具体是哪一种激素,算不了等效剂量".into());
     }

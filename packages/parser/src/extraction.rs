@@ -147,7 +147,11 @@ pub struct MedsFromJson {
 
 pub fn meds_from_json(json: &str) -> Result<MedsFromJson, deid::DeidError> {
     let e = deid::parse_extraction(json)?;
-    let mut out = MedsFromJson { meds: Vec::new(), dropped: 0, unverified: 0 };
+    let mut out = MedsFromJson {
+        meds: Vec::new(),
+        dropped: 0,
+        unverified: 0,
+    };
     for item in e.meds {
         let Some(mut obs) = crate::meds::from_parts(&item.name, &item.dose, &item.freq) else {
             out.dropped += 1;
@@ -323,7 +327,11 @@ mod tests {
         let r = meds_from_json(j).expect("valid json");
         assert_eq!(r.meds.len(), 1);
         assert_eq!(r.meds[0].frequency, None, "解析不出的频次不猜码");
-        assert_eq!(r.meds[0].frequency_raw.as_deref(), Some("早晚各一次"), "原话要留着");
+        assert_eq!(
+            r.meds[0].frequency_raw.as_deref(),
+            Some("早晚各一次"),
+            "原话要留着"
+        );
     }
 
     #[test]
@@ -335,11 +343,25 @@ mod tests {
           {"name":"泼尼松","dose":"每次 5mg","freq":"qd","route":""}
         ]}"#;
         let r = meds_from_json(j).expect("valid json");
-        assert_eq!(r.meds.len(), 3, "{:?}", r.meds.iter().map(|m| &m.raw_name).collect::<Vec<_>>());
+        assert_eq!(
+            r.meds.len(),
+            3,
+            "{:?}",
+            r.meds.iter().map(|m| &m.raw_name).collect::<Vec<_>>()
+        );
         assert_eq!(r.meds[0].raw_name, "碳酸钙D3片");
-        assert_eq!((r.meds[0].dose_num, r.meds[0].dose_unit.as_deref()), (Some(0.6), Some("g")));
-        assert_eq!(r.meds[1].raw_name, "0.9%氯化钠注射液", "行首的 0. 不是列表序号");
-        assert_eq!((r.meds[1].dose_num, r.meds[1].dose_unit.as_deref()), (Some(250.0), Some("mL")));
+        assert_eq!(
+            (r.meds[0].dose_num, r.meds[0].dose_unit.as_deref()),
+            (Some(0.6), Some("g"))
+        );
+        assert_eq!(
+            r.meds[1].raw_name, "0.9%氯化钠注射液",
+            "行首的 0. 不是列表序号"
+        );
+        assert_eq!(
+            (r.meds[1].dose_num, r.meds[1].dose_unit.as_deref()),
+            (Some(250.0), Some("mL"))
+        );
         assert_eq!(r.meds[2].raw_name, "泼尼松");
         assert_eq!(r.meds[2].dose_num, Some(5.0));
     }

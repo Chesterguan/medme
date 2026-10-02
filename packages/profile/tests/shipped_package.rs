@@ -767,7 +767,12 @@ fn state_vars_parse_from_shipped_package_and_cite_a_source() {
     let keys: Vec<&str> = pkg.state_vars.iter().map(|v| v.key.as_str()).collect();
     assert_eq!(
         keys,
-        vec!["gc_pred_equiv_mg_per_day", "hcq_mg_per_kg", "activity_band", "renal_response"]
+        vec![
+            "gc_pred_equiv_mg_per_day",
+            "hcq_mg_per_kg",
+            "activity_band",
+            "renal_response"
+        ]
     );
     let ids: Vec<&str> = pkg.manifest.sources.iter().map(|s| s.id.as_str()).collect();
     for v in &pkg.state_vars {
@@ -776,11 +781,20 @@ fn state_vars_parse_from_shipped_package_and_cite_a_source() {
             "{} 的 source 必须在 manifest.sources 里",
             v.key
         );
-        assert!(v.stale_after_days.is_some(), "{} 要按包给陈旧阈值(已拍板)", v.key);
+        assert!(
+            v.stale_after_days.is_some(),
+            "{} 要按包给陈旧阈值(已拍板)",
+            v.key
+        );
     }
-    assert!(!pkg.rules.bands.bands.is_empty(), "bands 要能解析出来给 derive:band 用");
     assert!(
-        pkg.drugs.iter().any(|d| d.class == "gc" && d.names.iter().any(|n| n == "激素")),
+        !pkg.rules.bands.bands.is_empty(),
+        "bands 要能解析出来给 derive:band 用"
+    );
+    assert!(
+        pkg.drugs
+            .iter()
+            .any(|d| d.class == "gc" && d.names.iter().any(|n| n == "激素")),
         "「激素」作为 gc 别名"
     );
 }

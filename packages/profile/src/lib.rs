@@ -64,7 +64,9 @@ pub fn materialize(
         // 三视图(spec 2026-09-30):三段共用一本依据簿,所以 state 与 journey 引用的
         // 每个 id 都在 evidence 里。包没声明 state_vars 时三段都不出(老包不变)。
         let mut book = state::EvidenceBook::default();
-        out.extend(state::state_section(&ctx, pkg, &regimen, &activity, &mut book));
+        out.extend(state::state_section(
+            &ctx, pkg, &regimen, &activity, &mut book,
+        ));
         out.extend(state::journey_section(&ctx, pkg, &mut book));
         out.extend(state::evidence_section(pkg, &book));
         out

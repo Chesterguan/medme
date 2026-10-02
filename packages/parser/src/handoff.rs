@@ -1463,9 +1463,15 @@ mod tests {
             .iter()
             .flat_map(|p| p["meds"].as_array().expect("meds").iter())
             .collect();
-        let met = all_meds.iter().find(|m| m["name"] == "二甲双胍").expect("二甲双胍");
+        let met = all_meds
+            .iter()
+            .find(|m| m["name"] == "二甲双胍")
+            .expect("二甲双胍");
         assert_eq!(met["unverified"], json!(true));
-        let ator = all_meds.iter().find(|m| m["name"] == "阿托伐他汀").expect("阿托伐他汀");
+        let ator = all_meds
+            .iter()
+            .find(|m| m["name"] == "阿托伐他汀")
+            .expect("阿托伐他汀");
         assert!(ator.get("unverified").is_none(), "核过的不带键");
     }
 

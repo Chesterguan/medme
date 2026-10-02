@@ -14,7 +14,9 @@ fn load(name: &str) -> (String, deid::Extraction) {
     let text = std::fs::read_to_string(testdata().join("corpus").join(format!("{name}.txt")))
         .unwrap_or_else(|e| panic!("{name}.txt: {e}"));
     let json = std::fs::read_to_string(testdata().join("extractions").join(format!("{name}.json")))
-        .unwrap_or_else(|e| panic!("{name}.json 缺 —— 跑 examples/demo-dataset/extract_sle_fixtures.py: {e}"));
+        .unwrap_or_else(|e| {
+            panic!("{name}.json 缺 —— 跑 examples/demo-dataset/extract_sle_fixtures.py: {e}")
+        });
     let parsed = deid::parse_extraction(&json).expect("fixture 是合法 JSON");
     let v = deid::verify(parsed, &text, deid::Mode::Text);
     (text, v.extraction)
@@ -38,7 +40,10 @@ fn corpus_stems() -> Vec<String> {
 fn every_corpus_file_has_a_fixture() {
     for stem in corpus_stems() {
         assert!(
-            testdata().join("extractions").join(format!("{stem}.json")).exists(),
+            testdata()
+                .join("extractions")
+                .join(format!("{stem}.json"))
+                .exists(),
             "{stem} 没有 fixture"
         );
     }
@@ -49,11 +54,19 @@ fn prescriptions_yield_all_three_drugs_with_dose_and_frequency() {
     for (name, want) in [
         (
             "2024-09-20_处方_华西",
-            [("醋酸泼尼松片", 20.0, "mg", "qd"), ("吗替麦考酚酯胶囊", 0.75, "g", "bid"), ("硫酸羟氯喹片", 0.2, "g", "bid")],
+            [
+                ("醋酸泼尼松片", 20.0, "mg", "qd"),
+                ("吗替麦考酚酯胶囊", 0.75, "g", "bid"),
+                ("硫酸羟氯喹片", 0.2, "g", "bid"),
+            ],
         ),
         (
             "2026-06-15_处方_协和",
-            [("醋酸泼尼松片", 7.5, "mg", "qd"), ("吗替麦考酚酯胶囊", 0.5, "g", "bid"), ("硫酸羟氯喹片", 0.2, "g", "qd")],
+            [
+                ("醋酸泼尼松片", 7.5, "mg", "qd"),
+                ("吗替麦考酚酯胶囊", 0.5, "g", "bid"),
+                ("硫酸羟氯喹片", 0.2, "g", "qd"),
+            ],
         ),
     ] {
         let (_, e) = load(name);
@@ -84,7 +97,11 @@ fn lab_reports_yield_no_meds() {
         "2026-09-10_检验报告_协和",
     ] {
         let (_, e) = load(name);
-        assert!(e.meds.is_empty(), "{name}: 化验单不该抽出药,抽到了 {:?}", e.meds);
+        assert!(
+            e.meds.is_empty(),
+            "{name}: 化验单不该抽出药,抽到了 {:?}",
+            e.meds
+        );
     }
 }
 
@@ -94,7 +111,8 @@ fn discharge_record_yields_hospitalization_with_both_dates() {
     let h = facts_of(&e, "hospitalization");
     assert!(!h.is_empty(), "缺 hospitalization");
     assert!(
-        h.iter().any(|f| f.date_start == "2024-03-08" && f.date_end == "2024-03-15"),
+        h.iter()
+            .any(|f| f.date_start == "2024-03-08" && f.date_end == "2024-03-15"),
         "住院日期不对:{h:?}"
     );
     assert!(
@@ -107,7 +125,10 @@ fn discharge_record_yields_hospitalization_with_both_dates() {
 fn pathology_report_yields_kidney_biopsy() {
     let (_, e) = load("2024-03-12_病理报告_仁济");
     let b = facts_of(&e, "biopsy");
-    assert!(b.iter().any(|f| f.organ == "kidney"), "缺 kidney biopsy:{b:?}");
+    assert!(
+        b.iter().any(|f| f.organ == "kidney"),
+        "缺 kidney biopsy:{b:?}"
+    );
 }
 
 #[test]
@@ -115,7 +136,9 @@ fn infusion_record_yields_belimumab_infusion() {
     let (_, e) = load("2025-06-18_输液记录_中山一院");
     let i = facts_of(&e, "infusion");
     assert!(
-        i.iter().any(|f| f.drug.contains("贝利尤单抗") && f.dose.contains("560") && f.date == "2025-06-18"),
+        i.iter().any(|f| f.drug.contains("贝利尤单抗")
+            && f.dose.contains("560")
+            && f.date == "2025-06-18"),
         "缺 贝利尤单抗 560mg 2025-06-18:{i:?}"
     );
 }
@@ -123,7 +146,10 @@ fn infusion_record_yields_belimumab_infusion() {
 #[test]
 fn eye_report_yields_exam_done_for_oct_and_visual_field() {
     let (_, e) = load("2025-03-08_眼科报告_协和");
-    let names: Vec<&str> = facts_of(&e, "exam_done").iter().map(|f| f.name.as_str()).collect();
+    let names: Vec<&str> = facts_of(&e, "exam_done")
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
     assert!(names.contains(&"OCT"), "缺 OCT:{names:?}");
     assert!(names.contains(&"视野"), "缺 视野:{names:?}");
 }
@@ -136,7 +162,10 @@ fn eye_report_yields_exam_done_for_oct_and_visual_field() {
 #[ignore = "召回缺口:眼底 exam_done 的 evidence 跨原文换行被 verify 丢掉,见 log 2026-09-30"]
 fn eye_report_yields_exam_done_for_fundus() {
     let (_, e) = load("2025-03-08_眼科报告_协和");
-    let names: Vec<&str> = facts_of(&e, "exam_done").iter().map(|f| f.name.as_str()).collect();
+    let names: Vec<&str> = facts_of(&e, "exam_done")
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
     assert!(names.contains(&"眼底"), "缺 眼底:{names:?}");
 }
 
@@ -144,8 +173,14 @@ fn eye_report_yields_exam_done_for_fundus() {
 fn outpatient_note_yields_the_two_dose_changes() {
     let (_, e) = load("2025-09-12_门诊病历_中山一院");
     let c = facts_of(&e, "dose_change");
-    assert!(c.iter().any(|f| f.to.contains("10")), "缺 激素减至 10mg:{c:?}");
-    assert!(c.iter().any(|f| f.to.contains("0.5")), "缺 吗替麦考酚酯减至 0.5g:{c:?}");
+    assert!(
+        c.iter().any(|f| f.to.contains("10")),
+        "缺 激素减至 10mg:{c:?}"
+    );
+    assert!(
+        c.iter().any(|f| f.to.contains("0.5")),
+        "缺 吗替麦考酚酯减至 0.5g:{c:?}"
+    );
 }
 
 #[test]
