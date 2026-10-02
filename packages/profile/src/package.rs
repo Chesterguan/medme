@@ -161,6 +161,58 @@ pub struct Rules {
     /// 一次,以后加一个病就多一次发版。
     #[serde(default)]
     pub targets: serde_json::Value,
+    /// 活动度分档(化验可算部分的分数 → 「轻/中/重度活动」标签)。只给状态变量
+    /// `derive:"band"` 用;score_card 本身不显示分档(spec §5.2:不显示为总分)。
+    #[serde(default)]
+    pub bands: Bands,
+}
+
+/// `rules.bands`:分档表。`min`/`max` 任一缺省即开区间;分数落在 `[min, max]` 内取该档。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Bands {
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub bands: Vec<Band>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Band {
+    #[serde(default)]
+    pub min: Option<u32>,
+    #[serde(default)]
+    pub max: Option<u32>,
+    pub label: String,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+/// 一个状态变量(三视图 spec §2):包声明「要算什么」,引擎只实现有限几种 `derive`:
+/// `latest_dose`(按 `drug_class` 取最近剂量;gc 走泼尼松等效换算)、`ratio_to_weight`
+/// (`drug_class` 日剂量 / 最近体重)、`band`(活动度分数 → `rules.bands`)、
+/// `milestone`(`rules.milestones` 里 id 为 `milestone` 的那条的判定)、`latest_value`
+/// (`marker` 最近一次化验值)。认不出的 `derive` 整条跳过,不报错(包可以先于引擎走)。
+#[derive(Debug, Clone, Deserialize)]
+pub struct StateVar {
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub unit: Option<String>,
+    pub derive: String,
+    #[serde(default)]
+    pub drug_class: Option<String>,
+    #[serde(default)]
+    pub marker: Option<String>,
+    #[serde(default)]
+    pub milestone: Option<String>,
+    /// 超过这么多天没有新证据就标「陈旧」;包按该病指南的复诊节律给(已拍板),
+    /// 没给就不标。
+    #[serde(default)]
+    pub stale_after_days: Option<i64>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -206,6 +258,9 @@ pub struct Package {
     pub rules: Rules,
     #[serde(default)]
     pub views: Views,
+    /// 状态变量声明(三视图 spec §2)。老包没有这个键 → 空,引擎不出 `state` 段。
+    #[serde(default)]
+    pub state_vars: Vec<StateVar>,
 }
 
 #[derive(Deserialize)]

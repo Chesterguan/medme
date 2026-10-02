@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 905592103;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -2001302906;
 
 // Section: executor
 
@@ -2761,6 +2761,48 @@ fn wire__crate__api__vault__vault_cloud_redact_image_impl(
         },
     )
 }
+fn wire__crate__api__vault__vault_load_demo_data_sle_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "vault_load_demo_data_sle",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_progress = <StreamSink<
+                crate::api::dto::DemoLoadProgressDto,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
+            let api_skill_cache_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault::vault_load_demo_data_sle(
+                            api_progress,
+                            api_skill_cache_dir,
+                        )?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__vault_profile__vault_profile_install_package_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -4588,52 +4630,58 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        74 => wire__crate__api__vault_profile__vault_profile_install_package_impl(
+        74 => wire__crate__api__vault__vault_load_demo_data_sle_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        75 => wire__crate__api__vault_profile__vault_profile_record_event_impl(
+        75 => wire__crate__api__vault_profile__vault_profile_install_package_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        76 => wire__crate__api__vault_profile__vault_profile_refresh_terms_impl(
+        76 => wire__crate__api__vault_profile__vault_profile_record_event_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        77 => wire__crate__api__vault_profile__vault_profile_verify_index_impl(
+        77 => wire__crate__api__vault_profile__vault_profile_refresh_terms_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        78 => wire__crate__api__vault_profile__vault_profile_view_impl(
+        78 => wire__crate__api__vault_profile__vault_profile_verify_index_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        79 => wire__crate__api__vault_projections__view_emergency_card_impl(
+        79 => wire__crate__api__vault_profile__vault_profile_view_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        80 => wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
+        80 => wire__crate__api__vault_projections__view_emergency_card_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => {
+        81 => wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        82 => {
             wire__crate__api__vault_projections__view_trends_impl(port, ptr, rust_vec_len, data_len)
         }
-        82 => wire__crate__api__vault_projections__view_visit_summary_impl(
+        83 => wire__crate__api__vault_projections__view_visit_summary_impl(
             port,
             ptr,
             rust_vec_len,

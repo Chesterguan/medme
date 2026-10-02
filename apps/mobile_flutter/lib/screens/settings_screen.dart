@@ -7,6 +7,7 @@ import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
+import 'package:mobile_flutter/skill_packages.dart' show skillCacheDir;
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/member_detail_screen.dart';
@@ -31,7 +32,7 @@ import 'package:mobile_flutter/widgets/member_switcher.dart';
 /// 前的号)。`test/app_version_test.dart` 会拿这里的字面量去和 `pubspec.yaml` 比对,
 /// 漂了就会红——改这两行时记得同时改 `pubspec.yaml`,或者反过来。
 const _appVersionName = '3.0.0';
-const _appBuildNumber = '57';
+const _appBuildNumber = '58';
 
 /// 底部导航一级 tab「我」(`s5`)—— 云端 / 这台手机上的病历 / 口令与恢复码 ·
 /// 我的设备 · 关于 / 给医生看 · 导出 / 删掉全部。
@@ -346,9 +347,15 @@ class _DemoDataRow extends StatelessWidget {
     required this.loading,
     required this.progressText,
     required this.onTap,
+    required this.idleTitle,
+    required this.idleSubtitle,
   });
 
   final bool loading;
+
+  /// 没在载入时这一行的标题/说明(两套示例各一句)。
+  final String idleTitle;
+  final String idleSubtitle;
 
   /// 逐份进度文案(如「正在载入 3/22…」)。拿不到具体进度(刚点下去、第一条
   /// 还没从 Rust 侧报回来)时为 null——退化成一句不确定进度的提示,总比空着强。
@@ -368,13 +375,13 @@ class _DemoDataRow extends StatelessWidget {
             )
           : Icon(Icons.download_outlined, color: c.seal),
       title: Text(
-        loading ? '正在载入示例数据…' : '载入示例数据(张建国)',
+        loading ? '正在载入示例数据…' : idleTitle,
         style: TextStyle(fontWeight: FontWeight.w600, color: c.ink),
       ),
       subtitle: Text(
         loading
             ? (progressText ?? '正在载入示例数据…')
-            : '单独放一个成员里,不和你的病历混在一起;看完可以去「我」首页的「这台手机上的病历」里把这个成员整个移除',
+            : idleSubtitle,
         style: TextStyle(color: c.ink3),
       ),
       trailing: loading
@@ -553,6 +560,10 @@ class _AboutScreenState extends State<AboutScreen> {
   /// 自动命名成「张建国」,想清掉就只能动用「清空所有数据」那颗核弹。)
   static const _demoMember = '张建国(示例)';
 
+  /// 第二套示例:李静,系统性红斑狼疮三年病程(四家医院),连同模型抽取结果一起
+  /// 载入,给病程档案三视图看效果用。
+  static const _demoMemberSle = '李静(示例·狼疮)';
+
   /// 载入示例数据要先把「当前成员」切到 [_demoMember](写入侧的技术要求——Rust
   /// 那颗 vault 是进程级单例,写哪个成员就得先开哪个成员的箱子,见
   /// `vault_boot.dart` 顶部说明),但**这只是写入侧的手段,不代表用户想把「正在
@@ -563,7 +574,20 @@ class _AboutScreenState extends State<AboutScreen> {
   /// 现在的分工:切成员是**手段**,载入完立刻切回用户载入前正看着的那个人;
   /// 是否要去看示例数据,交给 SnackBar 上的「去看看」——用户自己点了,才在同一次
   /// 点击里把视角切过去 + 跳到「病历」,两件事绑在一起,而不是替他做主。
-  Future<void> _loadDemoData() async {
+  Future<void> _loadDemoData() =>
+      _loadDemo(member: _demoMember, run: loadDemoData);
+
+  Future<void> _loadDemoDataSle() => _loadDemo(
+    member: _demoMemberSle,
+    run: () async* {
+      yield* vaultLoadDemoDataSle(skillCacheDir: await skillCacheDir());
+    },
+  );
+
+  Future<void> _loadDemo({
+    required String member,
+    required Stream<DemoLoadProgressDto> Function() run,
+  }) async {
     setState(() {
       _busy = true;
       _demoLoading = true;
@@ -576,12 +600,12 @@ class _AboutScreenState extends State<AboutScreen> {
       // 按名字找已存在的示例成员:名字本来可重复,但这个是我们自己建的、用户改不到,
       // 拿它认一下就够,免得再存一个 id。找不到就新建(新建会自动切过去)。
       final existing = pm.profiles
-          .where((p) => p.name == _demoMember)
+          .where((p) => p.name == member)
           .firstOrNull;
       final String demoMemberId;
       if (existing == null) {
         final created = await createProfileAndReopen(
-          _demoMember,
+          member,
           userManaged: false,
         );
         if (created == null) throw StateError('无法创建示例成员');
@@ -598,7 +622,7 @@ class _AboutScreenState extends State<AboutScreen> {
       // 失败改用 `error` 字段带出来,这里判它、`break` 出循环。
       var succeeded = 0;
       String? failure;
-      await for (final p in loadDemoData()) {
+      await for (final p in run()) {
         if (p.error != null) {
           failure = p.error;
           break;
@@ -632,7 +656,7 @@ class _AboutScreenState extends State<AboutScreen> {
       // 带 action 的 SnackBar,而不是直接跳走:去不去看示例数据由用户自己决定。
       ScaffoldMessenger.of(context).showSnackBar(
         appSnackBar(
-          content: Text('已载入 $succeeded 份示例病历(在「$_demoMember」里)'),
+          content: Text('已载入 $succeeded 份示例病历(在「$member」里)'),
           action: SnackBarAction(
             label: '去看看',
             onPressed: () async {
@@ -763,6 +787,16 @@ class _AboutScreenState extends State<AboutScreen> {
                 loading: _demoLoading,
                 progressText: _demoProgressText,
                 onTap: _busy ? null : _loadDemoData,
+                idleTitle: '载入示例数据(张建国)',
+                idleSubtitle:
+                    '单独放一个成员里,不和你的病历混在一起;看完可以去「我」首页的「这台手机上的病历」里把这个成员整个移除',
+              ),
+              _DemoDataRow(
+                loading: _demoLoading,
+                progressText: _demoProgressText,
+                onTap: _busy ? null : _loadDemoDataSle,
+                idleTitle: '载入示例数据(李静·狼疮病程档案)',
+                idleSubtitle: '三年四家医院的狼疮病程,连同云端整理的结果一起载入,看「病程档案」三个视图的效果',
               ),
             ],
           ),

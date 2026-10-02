@@ -9,5 +9,7 @@ mkdir -p "$OUT/prompts"; cp "$SRC"/packages/deid/prompts/*.txt "$SRC"/packages/d
 # FC 自定义运行时(Python 3.9.2, custom.debian11 x86_64):用 pip 下载对应平台的 wheel
 python3 -m pip install -r "$SRC"/services/api/requirements.txt -t "$OUT" \
   --platform manylinux2014_x86_64 --python-version 3.9 --only-binary=:all: --implementation cp --upgrade -q
+# 先删旧包:`zip -r` 对已有的 zip 是**追加/更新**,删掉的文件(旧版病种包)会一直留在包里。
+rm -f "$(dirname "$0")/medme-api.zip"
 ( cd "$OUT" && zip -qr ../medme-api.zip . )
 ls -la "$(dirname "$0")/medme-api.zip"

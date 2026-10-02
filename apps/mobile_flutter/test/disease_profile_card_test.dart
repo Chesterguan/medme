@@ -213,6 +213,33 @@ void main() {
       expect(find.text('开启'), findsNothing, reason: '已经开着了');
     });
 
+    testWidgets('装了两个病种包:一个病一张卡,各自开各自的', (t) async {
+      // 多个慢性病并存:引擎按 package 各算各的,入口卡也得一人一张,不能只显示
+      // 第一个(原先的 ponytail 注释:「今天清单里就一个病」)。
+      _usePhone(t, height: 2000);
+      final opened = <String>[];
+      final source = DiseaseProfileSource(
+        installed: () async => const ['mg', 'sle'],
+        view: (id) async {
+          final v = Map<String, dynamic>.from(_onView());
+          v['package_id'] = id;
+          v['display_name'] = id == 'sle' ? '系统性红斑狼疮' : '重症肌无力';
+          if (id == 'mg') v['enabled'] = false;
+          return jsonEncode(v);
+        },
+        record: (kind, pkg, at) async => opened.add('$kind:$pkg'),
+        refresh: () async {},
+      );
+      await t.pumpWidget(_wrap(DiseaseProfileCard(source: source)));
+      await t.pumpAndSettle();
+      expect(find.text('病程档案 · 系统性红斑狼疮'), findsOneWidget, reason: '开着的那个带病名');
+      expect(find.textContaining('重症肌无力'), findsOneWidget, reason: '没开的那个给「开启」');
+      expect(find.text('开启'), findsOneWidget);
+      await t.tap(find.text('开启'));
+      await t.pumpAndSettle();
+      expect(opened, ['enable:mg'], reason: '开启记在它自己的包上');
+    });
+
     testWidgets('开启了但这一块还没数据:原样举着包给的那句空态提示', (t) async {
       _usePhone(t);
       final fake = _Fake(
@@ -329,33 +356,51 @@ void main() {
       expect(find.text('病程档案'), findsOneWidget);
     });
 
-    testWidgets('成功:包给的 section 按包给的顺序全画出来,免责声明逐字在最后', (t) async {
-      // 视口拉高,好让 `ListView` 一次把整页布局出来 —— 顺序只能整页比。
-      // 24000:包的 `note`(每条「与指南口径有差」的话)进了渲染层之后,整页比
-      // 原来高出一截,12000 装不下最后那句免责声明,`ListView` 压根不建它。
+    testWidgets('成功:三个 tab,每个 tab 里的 section 按包给的顺序,免责声明在「现在」最后', (t) async {
+      // 三视图(spec 2026-09-30 §7):包给了 `state` 段,页面就分三个 tab,tab 名是
+      // 那三段的标题(包给的)。视口拉高,好让每个 tab 的 `ListView` 一次整页布局。
       _usePhone(t, height: 24000);
       final fake = _Fake(view: _golden);
       await t.pumpWidget(_page(fake.source));
       await t.pumpAndSettle();
-
-      // 标题是包给的病名。
       expect(find.text('系统性红斑狼疮'), findsOneWidget);
-
-      double dy(String text) => t.getTopLeft(find.text(text)).dy;
-      var last = -1.0;
-      for (final s in _goldenSections()) {
-        final title = s['title'] as String?;
-        if (title == null || title.isEmpty) continue;
-        expect(find.text(title), findsOneWidget, reason: title);
-        final y = dy(title);
-        expect(y, greaterThan(last), reason: '「$title」没按包给的顺序摆');
-        last = y;
+      const tabOf = {
+        'state': 0, 'status_card': 0, 'score_card': 0, 'reminders': 0, 'checklist': 0,
+        'journey': 1, 'series_chart': 1, 'evidence': 2,
+      };
+      String titleOf(String kind) =>
+          _goldenSections().firstWhere((s) => s['kind'] == kind)['title'] as String;
+      final tabTitles = ['state', 'journey', 'evidence'].map(titleOf).toList();
+      // 旧的时间轴段被轨迹取代,tab 模式下不画。
+      expect(find.text(titleOf('timeline')), findsNothing);
+      // section 标题与 tab 标签同名(「现在」既是 tab 也是卡片标题),取最后一个 = 卡片。
+      double dy(String text) => t.getTopLeft(find.text(text).last).dy;
+      for (var tab = 0; tab < 3; tab++) {
+        await t.tap(find.descendant(of: find.byType(TabBar), matching: find.text(tabTitles[tab])));
+        await t.pumpAndSettle();
+        // 每个 tab 的主卡(state / journey / evidence)置顶,其余按包给的顺序。
+        const lead = {'state', 'journey', 'evidence'};
+        final inTab = _goldenSections().where((s) => tabOf[s['kind']] == tab).toList();
+        final ordered = [
+          ...inTab.where((s) => lead.contains(s['kind'])),
+          ...inTab.where((s) => !lead.contains(s['kind'])),
+        ];
+        var last = -1.0;
+        for (final s in ordered) {
+          final title = s['title'] as String?;
+          if (title == null || title.isEmpty) continue;
+          expect(find.text(title), findsWidgets, reason: title);
+          final y = dy(title);
+          expect(y, greaterThan(last), reason: '「$title」没按包给的顺序摆');
+          last = y;
+        }
+        if (tab == 0) {
+          // 免责声明:**包给的那句**,逐字,在「现在」这个 tab 的最后。
+          final disclaimer = _golden['disclaimer'] as String;
+          expect(find.text(disclaimer), findsOneWidget);
+          expect(dy(disclaimer), greaterThan(last));
+        }
       }
-
-      // 免责声明:**包给的那句**,逐字,而且在所有 section 后面。
-      final disclaimer = _golden['disclaimer'] as String;
-      expect(find.text(disclaimer), findsOneWidget);
-      expect(dy(disclaimer), greaterThan(last));
     });
 
     testWidgets('出处:默认收起,展开后包里每一条题录逐字都在', (t) async {

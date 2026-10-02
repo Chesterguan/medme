@@ -446,6 +446,10 @@ fn med_to_json(m: &MedSpan) -> Value {
         map.insert("span".into(), json!(sp));
     }
     map.insert("evidence".into(), json!(m.sources));
+    // 只在为真时带键:老查看器/DTO 的形状不变,D3 的界面按它标「需核对」。
+    if m.unverified {
+        map.insert("unverified".into(), json!(true));
+    }
     Value::Object(map)
 }
 
@@ -1427,6 +1431,48 @@ mod tests {
         assert_eq!(lab["refLow"].as_f64(), Some(0.6));
         assert_eq!(lab["refHigh"].as_f64(), Some(1.3));
         assert_eq!(lab["pts"][0][1].as_f64(), Some(1.2));
+    }
+
+    #[test]
+    fn unverified_med_is_flagged_in_viewer_json() {
+        // 审查 I-5:图片模式没核上的药要带 `unverified: true` 进查看器 JSON;
+        // 核过的和正则来的不带这个键(老查看器形状不变)。
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"bid","route":"","unverified":true}]}"#;
+        let docs = vec![
+            SourceDoc {
+                index: 0,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2026, 6, 20),
+                text: "",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2026, 6, 21),
+                text: "阿托伐他汀钙片 20mg qn",
+            },
+        ];
+        let s = assemble_summary(&docs);
+        let all_meds: Vec<&Value> = s["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .flat_map(|p| p["meds"].as_array().expect("meds").iter())
+            .collect();
+        let met = all_meds
+            .iter()
+            .find(|m| m["name"] == "二甲双胍")
+            .expect("二甲双胍");
+        assert_eq!(met["unverified"], json!(true));
+        let ator = all_meds
+            .iter()
+            .find(|m| m["name"] == "阿托伐他汀")
+            .expect("阿托伐他汀");
+        assert!(ator.get("unverified").is_none(), "核过的不带键");
     }
 
     #[test]
