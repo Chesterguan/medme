@@ -502,6 +502,23 @@ impl ProfileInput {
     pub(crate) fn source_docs(&self) -> Vec<parser::SourceDoc<'_>> {
         source_docs(&self.docs)
     }
+
+    /// `SourceDoc::index` → `document_id` 的桥,给病程档案 JSON 顶层的 `documents[]`。
+    /// 与 [`source_docs`] 同一个 `enumerate`,所以 index 一定对得上。
+    pub(crate) fn document_refs(&self) -> Vec<serde_json::Value> {
+        self.docs
+            .iter()
+            .enumerate()
+            .map(|(index, d)| {
+                serde_json::json!({
+                    "index": index,
+                    "document_id": d.document_id,
+                    "title": d.title,
+                    "date": d.date.map(|x| x.to_string()),
+                })
+            })
+            .collect()
+    }
 }
 
 /// 读一遍保险箱,顺带把 `doc_type == "profile_event"` 的文档解成动作日志。

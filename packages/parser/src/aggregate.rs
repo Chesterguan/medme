@@ -190,6 +190,28 @@ pub struct MedSpan {
     pub status: String,
     /// All [`SourceDoc::index`] that mention it, deduped, ascending.
     pub sources: Vec<usize>,
+    /// 任一条来源是云抽取图片模式下没核对上的(`MedObservation::unverified`)。
+    /// 界面标「需核对」;逐条粒度看 `mentions[].unverified`。
+    pub unverified: bool,
+    /// `latest_dose` 来自哪份文档(`SourceDoc::index`)、哪条路径 —— 「现在」这个值的出处。
+    pub latest_source: Option<usize>,
+    pub latest_origin: Option<String>,
+    /// 每一次提及,按日期升序(无日期的排最后,输入顺序稳定)。病程轨迹从这里看剂量
+    /// 怎么一步步变的;`latest_dose` 只是它的最后一个有剂量的点。
+    pub mentions: Vec<MedMention>,
+}
+
+/// 一次用药提及:某份文档里写的某个剂量。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MedMention {
+    pub date: Option<NaiveDate>,
+    /// `dose_string` 的结果;这份文档只提了名没写剂量时为 `None`。
+    pub dose: Option<String>,
+    pub raw_name: String,
+    pub source: usize,
+    /// `"llm"`(云抽取 JSON)或 `"regex"`(正文正则)。
+    pub origin: String,
+    pub unverified: bool,
 }
 
 /// A deduped condition mention across documents.
@@ -406,6 +428,87 @@ fn sections_text(text: &str, want: SecKind) -> Vec<String> {
     out
 }
 
+/// 把 PDF/OCR 在页宽处硬换行断开的药名接回去。`出院医嘱:…;阿托伐他汀钙\n片 20mg qn;…`
+/// 原样分段会得到「阿托伐他汀钙」(无剂量)和「片 20mg qn」(名字=片)两条,后者以
+/// 「片」的名义进用药单。规则:上一行最后一段(最后一个分隔符之后)既没剂量也没频次
+/// (名字断在半截),下一行以文字开头、不是列表项也不是标题,就接上。一行一药的
+/// 列表(每行都带剂量/频次)不受影响。
+/// 两道闸(审查 C-1):上一段本身不能是标题(「出院带药」没冒号时整行就是标题,
+/// 它也「没有剂量」);下一行剂量之前的名字自己**不能**解析成药——「片」解析不出,
+/// 「碳酸钙片」「阿司匹林肠溶片」解析得出,后者是完整的一味药,不接。
+/// ponytail: 「继续服用阿司匹林\n某某胶囊 1粒 qd」这种裸名换行 + 词典没有的下一味药
+/// 仍会被误接;真撞上再加"上一段能解析为药名就不接"的判断。
+/// 出院医嘱常把用法动词写在药名前(「继续口服阿司匹林…」);分段后、解析前剥掉,
+/// 让每味药各成干净一行。`rejoin_wrapped_lines` 判断下一行是不是完整的一味药时也
+/// 先剥它——否则「继续口服阿司匹林肠溶片」解析不出药,会被当成半截名字接上去。
+fn strip_usage_verb(line: &str) -> &str {
+    let t = line.trim_start();
+    for p in ["继续口服", "继续服用", "继续", "口服", "服用", "给予", "予"] {
+        if let Some(rest) = t.strip_prefix(p) {
+            return rest;
+        }
+    }
+    t
+}
+
+/// 段落第一行是标题(`header_kind`)且带冒号时,去掉「标题:」只留后面的内容;
+/// 其余行原样。
+fn strip_header_prefix(section: &str) -> String {
+    let mut lines = section.lines();
+    let Some(first) = lines.next() else {
+        return String::new();
+    };
+    let first = if header_kind(first).is_some() {
+        match first.find([':', '：']) {
+            Some(i) => {
+                let colon_len = first[i..].chars().next().map_or(1, char::len_utf8);
+                &first[i + colon_len..]
+            }
+            None => first,
+        }
+    } else {
+        first
+    };
+    std::iter::once(first)
+        .chain(lines)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn rejoin_wrapped_lines(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    // pdf_extract 在换行处吐的是空行(`…钙\n\n片 20mg qn`),空行不能把「半截名字」
+    // 的状态冲掉;extract_meds 本来就跳过空行,丢掉无损。
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let prev_line = out.rsplit('\n').next().unwrap_or("");
+        let tail = prev_line
+            .rsplit(['、', '；', ';', '，', ',', '。', ':', '：'])
+            .next()
+            .unwrap_or("");
+        // 只有上一行本身是用分隔符连写的清单(「…;…;阿托伐他汀钙」)才可能在页宽处
+        // 换行;一行一条的散文/裸名(「低盐低脂饮食」「羟氯喹」)后面接的是新的一行,
+        // 不接 —— 不然词典里没有的下一味药解析不出,就会被粘成假药名(PR 审查)。
+        let prev_is_list = prev_line.contains(['、', '；', ';', '，', ',', '。']);
+        let tail_is_fragment = prev_is_list
+            && tail.chars().any(|c| c.is_alphabetic())
+            && !crate::meds::has_dose_or_frequency(tail)
+            && header_kind(tail).is_none();
+        let cont = line.trim_start();
+        let starts_like_entry = cont.starts_with(|c: char| c.is_alphabetic())
+            && header_kind(cont).is_none()
+            && terminology::resolve_drug(&crate::meds::name_part(strip_usage_verb(cont))).is_none();
+        if !out.is_empty() && tail_is_fragment && starts_like_entry {
+            out.push_str(cont);
+        } else {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 /// Medication-block headers used to **mask** text out of whole-document lab
 /// mining. Deliberately a strict subset of [`header_kind`]'s `MEDS`: the bare
 /// `用药` / `医嘱` entries are left out on purpose, because as raw prefixes they
@@ -538,6 +641,10 @@ struct MedBuilder {
     best_raw_name: Option<String>,
     best_date: Option<NaiveDate>,
     has_best: bool,
+    unverified: bool,
+    best_source: Option<usize>,
+    best_origin: Option<String>,
+    mentions: Vec<MedMention>,
 }
 
 struct CondBuilder {
@@ -847,36 +954,41 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // --- meds: whole-doc for prescriptions; else only from embedded 用药/带药
         // sections (a discharge summary's 出院医嘱 list) —— #148. 手动录入文档
         // (self_measurement/note) 显式跳过,见本函数开头 is_manual_entry 的注释。
-        let doc_meds = if is_manual_entry {
-            Vec::new()
+        let (doc_meds, med_origin) = if is_manual_entry {
+            (Vec::new(), "regex")
+        } else if let Some(parsed) = doc
+            .extraction_json
+            .and_then(|j| crate::extraction::meds_from_json(j).ok())
+            .filter(|p| !p.meds.is_empty())
+        {
+            // 与上面 labs 同一条规则:有云抽取、能解析、**且真读出了药**才用它;
+            // `Err` 或零条都退回下面的正则路径。不按 doc_type 过滤 —— verify 已保证
+            // 每条都是原文逐字,模型在化验单 notes 里读到的药也是原文。
+            (parsed.meds, "llm")
         } else if wants_meds(dt) {
-            extract_meds(doc.text)
+            (extract_meds(doc.text), "regex")
         } else {
-            sections_text(doc.text, SecKind::Meds)
+            let v = sections_text(doc.text, SecKind::Meds)
                 .iter()
                 .flat_map(|s| {
                     // 出院医嘱等常把多药写在**一行**、用「、;,。」分隔,且带用法动词
                     // (继续口服阿司匹林…)。extract_meds 按行抽、#141 整句标点 guard 会拒
                     // 整行。故:先按分隔符拆行,再剥去行首用法动词,让每个药各成干净一行
                     // (散文碎片如「低盐低脂饮食」无剂量,仍被 guard 正确拒掉)。
-                    let normalized: String = s
+                    // 标题与第一味药同行(「出院医嘱:阿司匹林肠溶片 100mg qd」)时先把标题
+                    // 连冒号剥掉,不然名字带着冒号被 #141 守卫整条拒掉,那味药无声消失。
+                    // 只剥标题那一个冒号 —— 「阿司匹林肠溶片:100mg qd」这种药名冒号剂量
+                    // 的写法主干上解析得对,不能把所有冒号都当分隔符(PR 审查)。
+                    let normalized: String = rejoin_wrapped_lines(&strip_header_prefix(s))
                         .replace(['、', '；', ';', '，', ',', '。'], "\n")
                         .lines()
-                        .map(|l| {
-                            let t = l.trim_start();
-                            for p in ["继续口服", "继续服用", "继续", "口服", "服用", "给予", "予"]
-                            {
-                                if let Some(rest) = t.strip_prefix(p) {
-                                    return rest;
-                                }
-                            }
-                            t
-                        })
+                        .map(strip_usage_verb)
                         .collect::<Vec<_>>()
                         .join("\n");
                     extract_meds(&normalized)
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            (v, "regex")
         };
         for obs in doc_meds {
             let matched = obs.drug_key.is_some();
@@ -898,6 +1010,19 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 best_raw_name: None,
                 best_date: None,
                 has_best: false,
+                unverified: false,
+                best_source: None,
+                best_origin: None,
+                mentions: Vec::new(),
+            });
+            b.unverified |= obs.unverified;
+            b.mentions.push(MedMention {
+                date: doc.date,
+                dose: this_dose.clone(),
+                raw_name: obs.raw_name.clone(),
+                source: doc.index,
+                origin: med_origin.to_string(),
+                unverified: obs.unverified,
             });
             b.raw_names.insert(obs.raw_name.clone());
             if !b.meta_from_match && matched {
@@ -912,7 +1037,15 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             b.sources.insert(doc.index);
             // Keep the dose of the most-recently-dated mention; ties/undated keep
             // the first seen (stable). Fallback: any mention (the first one).
+            // 没剂量的提及(门诊病历「羟氯喹维持」)可以延长跨度、计入来源,但不能把
+            // 已有的剂量冲成空 —— HCQ mg/kg 之类的规则读的就是 latest_dose(审查 I-2)。
             let replace = if !b.has_best {
+                true
+            } else if this_dose.is_none() && b.best_dose.is_some() {
+                false
+            } else if this_dose.is_some() && b.best_dose.is_none() {
+                // 对称:先到的是无剂量提及(有日期)、后到的是有剂量的处方(哪怕没日期),
+                // 剂量也要进来 —— 生产顺序无日期的排最后(PR 审查)。
                 true
             } else {
                 match (doc.date, b.best_date) {
@@ -927,6 +1060,8 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 // 跟 `best_dose` **同一条 mention** 的原样写法。分开取会把「今天这片
                 // 口服药」和「三月那次静脉冲击」拼成一条自相矛盾的记录。
                 b.best_raw_name = Some(obs.raw_name.clone());
+                b.best_source = Some(doc.index);
+                b.best_origin = Some(med_origin.to_string());
                 b.has_best = true;
             }
         }
@@ -986,6 +1121,15 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             end: b.end,
             status: "active".to_string(),
             sources: b.sources.into_iter().collect(),
+            unverified: b.unverified,
+            latest_source: b.best_source,
+            latest_origin: b.best_origin,
+            mentions: {
+                let mut m = b.mentions;
+                // 有日期的按日期升序,无日期的排最后;stable 排序保住输入顺序。
+                m.sort_by_key(|x| x.date.map_or((1, NaiveDate::MAX), |d| (0, d)));
+                m
+            },
         })
         .collect();
     med_out.sort_by(|a, b| {
@@ -1080,6 +1224,94 @@ mod tests {
     /// 正则**。这条曾经断言的是反面(零条也算「用抽取结果」),而那正是把「云端漏读
     /// 一份单子」放大成「整份文档永久空白」的那个放大器:空结果是无条件落盘的,之后
     /// 每次投影都读它(extract-repro-report.md §4)。
+    #[test]
+    fn json_meds_are_preferred_over_regex() {
+        // JSON 说二甲双胍,正文说阿托伐他汀:用 JSON 的,正文不跑。
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"bid","route":"口服"}]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("prescription".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 6, 20),
+            text: "阿托伐他汀钙片 20mg qn",
+        }];
+        let agg = aggregate(&docs);
+        let names: Vec<&str> = agg.meds.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["二甲双胍"]);
+        assert_eq!(agg.meds[0].latest_dose.as_deref(), Some("0.5g bid"));
+        assert!(!agg.meds[0].unverified);
+    }
+
+    #[test]
+    fn json_with_no_meds_falls_back_to_regex() {
+        for j in [r#"{}"#, r#"{"meds":[]}"#, "not json"] {
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2026, 6, 20),
+                text: "阿托伐他汀钙片 20mg qn",
+            }];
+            let agg = aggregate(&docs);
+            let names: Vec<&str> = agg.meds.iter().map(|m| m.name.as_str()).collect();
+            assert_eq!(
+                names,
+                vec!["阿托伐他汀"],
+                "extraction_json={j:?} 时必须退回正则"
+            );
+        }
+    }
+
+    #[test]
+    fn unverified_json_med_is_kept_and_flagged() {
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"bid","route":"","unverified":true}]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("prescription".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 6, 20),
+            text: "(图片档,正文为 OCR)",
+        }];
+        let agg = aggregate(&docs);
+        assert_eq!(agg.meds.len(), 1, "没核上的药照样进列表");
+        assert!(agg.meds[0].unverified);
+    }
+
+    #[test]
+    fn lab_report_with_json_meds_lists_them() {
+        // D1 决定:有云抽取结果就不按 doc_type 过滤 —— verify 已保证逐字。
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"bid","route":""}]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("lab_report".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 6, 20),
+            text: "肌酐 88 μmol/L 59-104",
+        }];
+        let agg = aggregate(&docs);
+        assert_eq!(agg.meds.len(), 1);
+    }
+
+    #[test]
+    fn manual_entry_docs_ignore_json_meds() {
+        let j = r#"{"meds":[{"name":"二甲双胍","dose":"0.5g","freq":"bid","route":""}]}"#;
+        for dt in ["self_measurement", "note", "profile_event"] {
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some(dt.into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2026, 6, 20),
+                text: "",
+            }];
+            assert!(aggregate(&docs).meds.is_empty(), "{dt} 不出药");
+        }
+    }
+
     #[test]
     fn extraction_json_valid_but_empty_falls_back_to_regex() {
         let docs = vec![SourceDoc {
@@ -1870,6 +2102,329 @@ mod tests {
         assert_eq!(s.points[0].date, d(2024, 1, 1));
         assert_eq!(s.points[1].date, None); // undated point last, retained
         assert_eq!(s.points[1].source, 0);
+    }
+
+    #[test]
+    fn discharge_orders_survive_page_wrap_and_header_on_same_line() {
+        // `ocr::recognize_pdf_mixed`(pdf_extract)对 `2026-07-15_出院记录_冠脉支架术后.pdf` 的
+        // 原样输出:标题与第一味药同行,「阿托伐他汀钙片」在页宽处被硬换行成「…钙」+
+        // 空行 +「片 20mg qn」。
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("dischargesummary".into()),
+            title: None,
+            extraction_json: None,
+            date: d(2026, 7, 15),
+            text: "\
+出院诊断:1. 冠状动脉粥样硬化性心脏病
+出院医嘱:阿司匹林肠溶片 100mg qd 长期服用;硫酸氢氯吡格雷片 75mg qd,服用 1 年后门诊评估是否停用;阿托伐他汀钙
+
+片 20mg qn;继续原降压降糖方案;今后就医请主动告知磺胺类药物用药禁忌;1 个月后心内科门诊复查,监测血脂、肝肾功能;
+
+如再发胸闷、气短及时就诊。
+医师:陈志强 审核:王海燕
+",
+        }];
+        let agg = aggregate(&docs);
+        let names: Vec<(&str, Option<&str>)> = agg
+            .meds
+            .iter()
+            .map(|m| (m.name.as_str(), m.latest_dose.as_deref()))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("氯吡格雷", Some("75mg qd")),
+                ("阿司匹林", Some("100mg qd")),
+                ("阿托伐他汀", Some("20mg qn")),
+            ]
+        );
+    }
+
+    #[test]
+    fn header_or_prose_lines_are_not_glued_to_the_next_drug() {
+        // 审查 C-1:不带冒号的标题行、医嘱散文行、只写药名的一行,都「没有剂量/频次」,
+        // 不能因此把下一味药粘上来。真正的半截名字(「…钙」+「片 20mg qn」)另有测试。
+        type Expect<'a> = &'a [(&'a str, Option<&'a str>)];
+        let cases: &[(&str, Expect)] = &[
+            (
+                "出院带药\n醋酸泼尼松片 50mg qd\n羟氯喹\n碳酸钙片 0.6g qd",
+                &[
+                    ("醋酸泼尼松片", Some("50mg qd")),
+                    ("羟氯喹", None),
+                    ("碳酸钙片", Some("0.6g qd")),
+                ],
+            ),
+            (
+                "出院医嘱:注意休息\n阿司匹林肠溶片 100mg qd",
+                &[("阿司匹林肠溶片", Some("100mg qd"))],
+            ),
+            (
+                "出院带药:\n低盐低脂饮食\n阿司匹林肠溶片 100mg qd",
+                &[("阿司匹林肠溶片", Some("100mg qd"))],
+            ),
+            (
+                "出院医嘱:定期复查血常规\n继续口服阿司匹林肠溶片 100mg qd",
+                &[("阿司匹林肠溶片", Some("100mg qd"))],
+            ),
+        ];
+        for (text, want) in cases {
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some("dischargesummary".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2026, 7, 15),
+                text,
+            }];
+            let agg = aggregate(&docs);
+            for (raw, dose) in *want {
+                let m = agg
+                    .meds
+                    .iter()
+                    .find(|m| m.raw_names.iter().any(|r| r == raw))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{text:?}: 缺 {raw},得到 {:?}",
+                            agg.meds.iter().map(|m| &m.raw_names).collect::<Vec<_>>()
+                        )
+                    });
+                assert_eq!(m.latest_dose.as_deref(), *dose, "{text:?} {raw}");
+                assert!(m.drug_key.is_some(), "{text:?} {raw} 必须能解析成药");
+            }
+        }
+    }
+
+    #[test]
+    fn dose_less_mention_does_not_erase_the_latest_dose() {
+        // 审查 I-2:门诊病历「羟氯喹维持」被模型抽成无剂量的一条,日期更新;它可以延长
+        // 时间跨度、计入来源,但不能把处方上的 0.2g bid 冲成空。
+        let j = r#"{"meds":[{"name":"羟氯喹","dose":"","freq":""}]}"#;
+        let docs = vec![
+            SourceDoc {
+                index: 0,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2024, 9, 20),
+                text: "硫酸羟氯喹片 0.2g bid",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("outpatient".into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2025, 9, 12),
+                text: "羟氯喹维持",
+            },
+        ];
+        let agg = aggregate(&docs);
+        assert_eq!(agg.meds.len(), 1, "同一味药");
+        let m = &agg.meds[0];
+        assert_eq!(
+            m.latest_dose.as_deref(),
+            Some("0.2g bid"),
+            "没剂量的提及不能冲掉已有剂量"
+        );
+        assert_eq!(m.end, d(2025, 9, 12), "但时间跨度要延长");
+        assert_eq!(m.sources, vec![0, 1]);
+    }
+
+    #[test]
+    fn prose_or_bare_name_line_before_an_unknown_drug_is_not_glued() {
+        // PR 审查:词典里没有的药(某某胶囊)解析不出,原先会被当成半截名字接到上一行。
+        // 规则改为:只有上一行本身是用分隔符连写的清单(真正会在页宽处换行的那种)才接。
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "出院医嘱:低盐低脂饮食\n某某胶囊 1粒 qd\n阿司匹林肠溶片 100mg qd",
+                &["某某胶囊", "阿司匹林肠溶片"],
+            ),
+            (
+                "出院带药\n羟氯喹\n某某胶囊 0.5g bid",
+                &["羟氯喹", "某某胶囊"],
+            ),
+        ];
+        for (text, want) in cases {
+            let docs = vec![SourceDoc {
+                index: 0,
+                doc_type: Some("dischargesummary".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2026, 7, 15),
+                text,
+            }];
+            let agg = aggregate(&docs);
+            let raws: Vec<&String> = agg.meds.iter().flat_map(|m| m.raw_names.iter()).collect();
+            for w in *want {
+                assert!(
+                    raws.iter().any(|r| r == w),
+                    "{text:?}: 缺 {w},得到 {raws:?}"
+                );
+            }
+            assert!(
+                raws.iter()
+                    .all(|r| !r.contains("饮食") && !r.contains("羟氯喹某")),
+                "{text:?}: 粘出了假药名 {raws:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn name_colon_dose_lines_keep_their_dose() {
+        // PR 审查:冒号全切会把「药名:剂量」切断,主干上本来解析得对。
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("dischargesummary".into()),
+            title: None,
+            extraction_json: None,
+            date: d(2026, 7, 15),
+            text: "出院医嘱:\n阿司匹林肠溶片:100mg qd\n氯吡格雷片:75mg qd",
+        }];
+        let agg = aggregate(&docs);
+        let doses: Vec<(&str, Option<&str>)> = agg
+            .meds
+            .iter()
+            .map(|m| (m.name.as_str(), m.latest_dose.as_deref()))
+            .collect();
+        assert_eq!(
+            doses,
+            vec![
+                ("氯吡格雷", Some("75mg qd")),
+                ("阿司匹林", Some("100mg qd"))
+            ]
+        );
+    }
+
+    #[test]
+    fn dosed_mention_fills_a_dose_less_best_even_when_undated() {
+        // PR 审查:生产顺序是按日期升序、无日期的排最后。有日期的无剂量提及先到,
+        // 无日期的处方后到 —— 剂量不能因为「没日期」就被拒之门外。
+        let j = r#"{"meds":[{"name":"羟氯喹","dose":"","freq":""}]}"#;
+        let docs = vec![
+            SourceDoc {
+                index: 0,
+                doc_type: Some("outpatient".into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2025, 9, 12),
+                text: "羟氯喹维持",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: None,
+                text: "硫酸羟氯喹片 0.2g bid",
+            },
+        ];
+        let agg = aggregate(&docs);
+        assert_eq!(agg.meds.len(), 1);
+        assert_eq!(agg.meds[0].latest_dose.as_deref(), Some("0.2g bid"));
+    }
+
+    #[test]
+    fn med_span_keeps_every_mention_in_date_order() {
+        // D2 轨迹要看剂量怎么一步步变的:每次提及都留下来,按日期排,带来源和出处。
+        let j = r#"{"meds":[{"name":"激素","dose":"10mg","freq":"每日一次","route":""}]}"#;
+        let docs = vec![
+            SourceDoc {
+                index: 0,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2024, 9, 20),
+                text: "醋酸泼尼松片 20mg 每日一次",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("outpatient".into()),
+                title: None,
+                extraction_json: Some(j),
+                date: d(2025, 9, 12),
+                text: "激素继续缓慢减量至 10mg 每日一次",
+            },
+            SourceDoc {
+                index: 2,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2024, 3, 15),
+                text: "醋酸泼尼松片 50mg qd",
+            },
+        ];
+        let agg = aggregate(&docs);
+        let pred = agg
+            .meds
+            .iter()
+            .find(|m| m.name == "泼尼松")
+            .expect("泼尼松");
+        let seq: Vec<(Option<&str>, usize, &str)> = pred
+            .mentions
+            .iter()
+            .map(|x| (x.dose.as_deref(), x.source, x.origin.as_str()))
+            .collect();
+        assert_eq!(
+            seq,
+            vec![(Some("50mg qd"), 2, "regex"), (Some("20mg qd"), 0, "regex")]
+        );
+        assert_eq!(pred.mentions[0].date, d(2024, 3, 15));
+        assert_eq!(pred.mentions[0].raw_name, "醋酸泼尼松片");
+        let gen = agg
+            .meds
+            .iter()
+            .find(|m| m.name == "激素")
+            .expect("激素(词典外,按原名)");
+        assert_eq!(gen.mentions.len(), 1);
+        assert_eq!(gen.mentions[0].origin, "llm");
+    }
+
+    #[test]
+    fn latest_source_follows_latest_dose() {
+        let docs = vec![
+            SourceDoc {
+                index: 0,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2024, 9, 20),
+                text: "醋酸泼尼松片 20mg qd",
+            },
+            SourceDoc {
+                index: 1,
+                doc_type: Some("prescription".into()),
+                title: None,
+                extraction_json: None,
+                date: d(2026, 6, 15),
+                text: "醋酸泼尼松片 7.5mg qd",
+            },
+        ];
+        let agg = aggregate(&docs);
+        let m = &agg.meds[0];
+        assert_eq!(m.latest_dose.as_deref(), Some("7.5mg qd"));
+        assert_eq!(m.latest_source, Some(1), "最新剂量来自哪份文档要能指出来");
+        assert_eq!(m.latest_origin.as_deref(), Some("regex"));
+    }
+
+    #[test]
+    fn one_drug_per_line_lists_are_not_glued_together() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("dischargesummary".into()),
+            title: None,
+            extraction_json: None,
+            date: d(2026, 7, 15),
+            text: "\
+出院带药:
+阿司匹林肠溶片 100mg qd 口服
+氯吡格雷 75mg qd 口服
+低盐低脂饮食
+神经内科门诊随访
+",
+        }];
+        let agg = aggregate(&docs);
+        let names: Vec<&str> = agg.meds.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["氯吡格雷", "阿司匹林"]);
     }
 
     #[test]

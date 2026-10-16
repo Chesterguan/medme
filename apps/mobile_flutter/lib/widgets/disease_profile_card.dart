@@ -51,13 +51,16 @@ class DiseaseProfileCard extends StatefulWidget {
 class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
   late final DiseaseProfileSource _source =
       widget.source ?? DiseaseProfileSource();
-  late Future<_Entry?> _future = _load();
+  late Future<List<_Entry>> _future = _load();
 
   /// 「开启」记录中 —— 防连点。
   bool _busy = false;
 
-  /// `null` = 没有可显示的档案(一个包都没装上,或者这次读不出来)。
-  Future<_Entry?> _load() async {
+  /// 空列表 = 没有可显示的档案(一个包都没装上,或者这次一个都读不出来)。
+  ///
+  /// 装了几个病种包就几张卡(多个慢性病并存):每个包各算各的档案,事件也按
+  /// `package` 分开记,互不干扰。某一个包这次读不出来只少它那一张,不拖垮其它的。
+  Future<List<_Entry>> _load() async {
     try {
       var ids = await _source.installedPackages();
       if (ids.isEmpty) {
@@ -66,16 +69,19 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
         await _source.refresh();
         ids = await _source.installedPackages();
       }
-      if (ids.isEmpty) return null;
-      // ponytail: 装了不止一个包时只显示第一个 —— 今天清单里就一个病。真出现第二
-      // 个病时再决定怎么挑(或者并排摆两张),那是一次要重新看设计的改动,不是这里
-      // 随手加个循环能定的。
-      final id = ids.first;
-      return (id, await _source.view(id));
+      final out = <_Entry>[];
+      for (final id in ids) {
+        try {
+          out.add((id, await _source.view(id)));
+        } catch (e) {
+          // 包 id 与错误文本里没有病历内容,可以进日志。
+          debugPrint('[profile] 入口卡这次没拿到档案:$id $e');
+        }
+      }
+      return out;
     } catch (e) {
-      // 包 id 与错误文本里没有病历内容,可以进日志。
       debugPrint('[profile] 入口卡这次没拿到档案:$e');
-      return null;
+      return const [];
     }
   }
 
@@ -137,7 +143,7 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<_Entry?>(
+    return FutureBuilder<List<_Entry>>(
       future: _future,
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.done) {
@@ -145,38 +151,51 @@ class _DiseaseProfileCardState extends State<DiseaseProfileCard> {
           // 方块什么也没告诉用户,而这一句同时把「这一块是干什么的」说清楚了。
           return const _ProfileEntry(title: _kTitle, subtitle: '$_kWhatItIs正在准备…');
         }
-        final entry = snap.data;
-        if (entry == null) {
+        final entries = snap.data ?? const <_Entry>[];
+        if (entries.isEmpty) {
           return _ProfileEntry(
             title: _kTitle,
             subtitle: '$_kWhatItIs还没准备好 —— 联网之后点一下重试。',
             onTap: _reload,
           );
         }
-        final (packageId, view) = entry;
-        final name = view['display_name'] as String? ?? '';
-        if (view['enabled'] != true) {
-          return _ProfileEntry(
-            title: _kTitle,
-            subtitle: name.isEmpty
-                ? '开启之后,这个病的用药、检查、该复查的会串成一页。'
-                : '可以整理「$name」这个病 —— 开启之后,用药、检查、该复查的会串成一页。',
-            action: MedSecondaryButton(
-              label: '开启',
-              onPressed: _busy ? null : () => _enable(packageId),
-            ),
-          );
-        }
-        final summary = _summaryOf(view);
-        final (subtitle, bigNumber, bigNumberCaption) = _splitSummary(summary);
-        return _ProfileEntry(
-          title: name.isEmpty ? _kTitle : '$_kTitle · $name',
-          subtitle: subtitle,
-          bigNumber: bigNumber,
-          bigNumberCaption: bigNumberCaption,
-          onTap: () => _open(packageId),
+        // 一个病一张卡,按包的安装顺序(id 排序)。只有一个病时和原来一模一样。
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < entries.length; i++) ...[
+              if (i > 0) const SizedBox(height: MedShape.s2),
+              _entryCard(entries[i]),
+            ],
+          ],
         );
       },
+    );
+  }
+
+  Widget _entryCard(_Entry entry) {
+    final (packageId, view) = entry;
+    final name = view['display_name'] as String? ?? '';
+    if (view['enabled'] != true) {
+      return _ProfileEntry(
+        title: _kTitle,
+        subtitle: name.isEmpty
+            ? '开启之后,这个病的用药、检查、该复查的会串成一页。'
+            : '可以整理「$name」这个病 —— 开启之后,用药、检查、该复查的会串成一页。',
+        action: MedSecondaryButton(
+          label: '开启',
+          onPressed: _busy ? null : () => _enable(packageId),
+        ),
+      );
+    }
+    final summary = _summaryOf(view);
+    final (subtitle, bigNumber, bigNumberCaption) = _splitSummary(summary);
+    return _ProfileEntry(
+      title: name.isEmpty ? _kTitle : '$_kTitle · $name',
+      subtitle: subtitle,
+      bigNumber: bigNumber,
+      bigNumberCaption: bigNumberCaption,
+      onTap: () => _open(packageId),
     );
   }
 }

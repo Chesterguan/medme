@@ -8,8 +8,6 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `alias_only_entry`, `analyte_entry`, `human_lines`, `installed_packages`, `kind_label`, `overlay_entries`, `today`
 
-/// 验清单的签名并原样交给 Dart。**Dart 永远不自己解析未验签的清单** —— 那是中间人
-/// 改一行 `version` 就能拿去拼路径的地方(`lib/skill_packages.dart`)。
 Future<String> vaultProfileVerifyIndex({required String envelopeJson}) =>
     RustLib.instance.api.crateApiVaultProfileVaultProfileVerifyIndex(
       envelopeJson: envelopeJson,

@@ -53,6 +53,9 @@ pub struct MedObservation {
     pub frequency_raw: Option<String>,
     /// 0.0 if unmatched; else the terminology `Match.confidence`.
     pub confidence: f32,
+    /// 云抽取图片模式下这条没能逐字核对上(`deid::MedItem::unverified`);正则路径
+    /// 恒为 false。界面标「需核对」,**不丢**。
+    pub unverified: bool,
 }
 
 /// Leading list marker: `1.` `1、` `1)` `①`..`⑩` `-` `•` `*` `·`.
@@ -193,6 +196,95 @@ fn strip_trailing_route(mut name: &str) -> &str {
     }
 }
 
+/// 这段文字里有没有剂量或频次 —— 有,说明它是一条完整的药行;没有,多半是
+/// 被换行截断的半个名字(`aggregate::rejoin_wrapped_lines` 用它判断要不要接行)。
+pub(crate) fn has_dose_or_frequency(line: &str) -> bool {
+    parse_dose(line).is_some() || parse_frequency(line).is_some()
+}
+
+/// 处方里的「剂量/用法说明行」不是药(`一次1片 一日2次`、`用法:口服`),正则路径和
+/// 云抽取路径同一道守卫。
+fn is_usage_line(name: &str) -> bool {
+    const USAGE_PREFIXES: &[&str] = &["用法", "用量", "一次", "每次", "服法", "Sig", "sig"];
+    USAGE_PREFIXES.iter().any(|p| name.starts_with(p))
+}
+
+/// 单条药的构造:正则路径(`extract_meds`)与云抽取路径(`from_parts`)共用,
+/// 免得两边各写一遍字段映射、稍有出入。
+fn build(
+    name: &str,
+    dose: Option<(f64, String, usize)>,
+    freq: Option<(String, String, usize)>,
+    m: Option<terminology::Match>,
+) -> MedObservation {
+    MedObservation {
+        raw_name: name.to_string(),
+        drug_key: m.as_ref().map(|m| m.key.clone()),
+        canonical_name: m.as_ref().map(|m| m.canonical_name.clone()),
+        ingredient: m.as_ref().and_then(|m| m.ingredient.clone()),
+        rxnorm: m.as_ref().and_then(|m| m.codes.rxnorm.clone()),
+        atc: m.as_ref().and_then(|m| m.codes.atc.clone()),
+        dose_num: dose.as_ref().map(|d| d.0),
+        dose_unit: dose.as_ref().map(|d| d.1.clone()),
+        frequency: freq.as_ref().map(|f| f.0.clone()),
+        frequency_raw: freq.as_ref().map(|f| f.1.clone()),
+        confidence: m.as_ref().map_or(0.0, |m| m.confidence),
+        unverified: false,
+    }
+}
+
+/// 云抽取已经把名字/剂量/频次分好了:**分开解析**,别拼回一行再切——名字里的数字
+/// (碳酸钙D3片、维生素B12)会被当成剂量,行首的 `0.9%` 会被当成列表序号,频次原话
+/// 会粘进名字(审查 I-3/I-4)。名字只剥给药途径;剂量只在 `dose_text` 里找;频次只
+/// 在 `freq_text` 里找。留下的条件按**原话**算而不按解析结果算:模型写了剂量或频次
+/// (哪怕是浓度 `5mg/ml`、解析不出码的「早晚各一次」),就是它在原文里看到了一味药,
+/// 原话逐字、verify 核过,丢了就没了;只有光秃秃一个词典里也没有的名字才丢。
+pub(crate) fn from_parts(
+    name_text: &str,
+    dose_text: &str,
+    freq_text: &str,
+) -> Option<MedObservation> {
+    let name = strip_trailing_route(name_text.trim());
+    if name.is_empty() || !name.chars().any(|c| c.is_alphabetic()) {
+        return None;
+    }
+    if name
+        .chars()
+        .any(|c| matches!(c, '，' | ',' | '。' | '；' | ';' | '、' | '：' | ':'))
+        || is_usage_line(name)
+    {
+        return None;
+    }
+    let dose = parse_dose(dose_text);
+    let freq = parse_frequency(freq_text);
+    let m = resolve_drug(name);
+    let freq_text = freq_text.trim();
+    if dose_text.trim().is_empty() && freq_text.is_empty() && m.is_none() {
+        return None;
+    }
+    let mut obs = build(name, dose, freq, m);
+    if obs.frequency_raw.is_none() && !freq_text.is_empty() {
+        obs.frequency_raw = Some(freq_text.to_string());
+    }
+    Some(obs)
+}
+
+/// 一行药的「名字那截」:去列表序号、截到剂量/频次之前、剥给药途径。给
+/// `aggregate::rejoin_wrapped_lines` 判断下一行是不是自己就是一味完整的药。
+pub(crate) fn name_part(line: &str) -> String {
+    let cleaned = list_marker_re().replace(line, "");
+    let cleaned = cleaned.trim();
+    let end = [
+        parse_dose(cleaned).map(|d| d.2),
+        parse_frequency(cleaned).map(|f| f.2),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(cleaned.len());
+    strip_trailing_route(&cleaned[..end]).to_string()
+}
+
 /// Extract medication observations, one per line. Unmatched-but-clearly-a-med
 /// lines (they carry a dose or a frequency) are kept with drug_key = None.
 pub fn extract_meds(text: &str) -> Vec<MedObservation> {
@@ -232,8 +324,7 @@ pub fn extract_meds(text: &str) -> Vec<MedObservation> {
         {
             continue;
         }
-        const USAGE_PREFIXES: &[&str] = &["用法", "用量", "一次", "每次", "服法", "Sig", "sig"];
-        if USAGE_PREFIXES.iter().any(|p| name.starts_with(p)) {
+        if is_usage_line(name) {
             continue;
         }
 
@@ -246,19 +337,7 @@ pub fn extract_meds(text: &str) -> Vec<MedObservation> {
             continue;
         }
 
-        out.push(MedObservation {
-            raw_name: name.to_string(),
-            drug_key: m.as_ref().map(|m| m.key.clone()),
-            canonical_name: m.as_ref().map(|m| m.canonical_name.clone()),
-            ingredient: m.as_ref().and_then(|m| m.ingredient.clone()),
-            rxnorm: m.as_ref().and_then(|m| m.codes.rxnorm.clone()),
-            atc: m.as_ref().and_then(|m| m.codes.atc.clone()),
-            dose_num: dose.as_ref().map(|d| d.0),
-            dose_unit: dose.as_ref().map(|d| d.1.clone()),
-            frequency: freq.as_ref().map(|f| f.0.clone()),
-            frequency_raw: freq.as_ref().map(|f| f.1.clone()),
-            confidence: m.as_ref().map_or(0.0, |m| m.confidence),
-        });
+        out.push(build(name, dose, freq, m));
     }
     out
 }

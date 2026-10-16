@@ -1,0 +1,47 @@
+{
+ "doc_type": "prescription",
+ "doc_date": "2026-06-15",
+ "labs": [],
+ "meds": [
+  {
+   "name": "醋酸泼尼松片",
+   "dose": "7.5mg",
+   "freq": "每日一次",
+   "route": "口服"
+  },
+  {
+   "name": "吗替麦考酚酯胶囊",
+   "dose": "0.5g",
+   "freq": "每日两次",
+   "route": "口服"
+  },
+  {
+   "name": "硫酸羟氯喹片",
+   "dose": "0.2g",
+   "freq": "每日一次",
+   "route": "口服"
+  }
+ ],
+ "diagnoses": [
+  {
+   "text": "系统性红斑狼疮",
+   "icd": ""
+  },
+  {
+   "text": "狼疮性肾炎",
+   "icd": ""
+  }
+ ],
+ "impression": "",
+ "notes": "",
+ "facts": [
+  {
+   "type": "organ_involvement",
+   "organ": "kidney",
+   "date": "",
+   "text": "狼疮性肾炎",
+   "evidence": "诊断:系统性红斑狼疮;狼疮性肾炎"
+  }
+ ],
+ "_model": "deepseek-flash"
+}

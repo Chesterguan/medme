@@ -9,13 +9,14 @@ pub mod package;
 // 规则求值是本 crate 的内部实现:`Ctx`/`Evidence` 的形状会随 Task 11–15 一路长,
 // 不对外承诺。对外只有 `view` 里那三个类型 + `materialize`。
 mod rules;
+mod state;
 pub mod view;
 
 pub use package::{
     cache_load, cache_store, load_signed, load_signed_index, verify_envelope, verify_envelope_body,
-    version_tuple, ActivityRules, Analyte, Display, Drug, Index, IndexEntry, Manifest, Marker,
-    Package, PackageError, Rules, Source, Terms, Triggers, UnitRow, Views, ENGINE_VERSION,
-    SIGNING_PUBLIC_KEY_HEX,
+    version_tuple, ActivityRules, Analyte, Band, Bands, Display, Drug, Index, IndexEntry, Manifest,
+    Marker, Package, PackageError, Rules, Source, StateVar, Terms, Triggers, UnitRow, Views,
+    ENGINE_VERSION, SIGNING_PUBLIC_KEY_HEX,
 };
 pub use view::{ProfileView, Section, SourceOut};
 
@@ -60,6 +61,14 @@ pub fn materialize(
         out.extend(rules::timeline_section(&ctx, pkg));
         out.extend(rules::states_section(&ctx, pkg, &activity, &regimen));
         out.extend(rules::milestones_section(&ctx, pkg));
+        // 三视图(spec 2026-09-30):三段共用一本依据簿,所以 state 与 journey 引用的
+        // 每个 id 都在 evidence 里。包没声明 state_vars 时三段都不出(老包不变)。
+        let mut book = state::EvidenceBook::default();
+        out.extend(state::state_section(
+            &ctx, pkg, &regimen, &activity, &mut book,
+        ));
+        out.extend(state::journey_section(&ctx, pkg, &mut book));
+        out.extend(state::evidence_section(pkg, &book));
         out
     } else {
         // 没开启就**不碰**临床输入:不 aggregate、不解抽取结果。既省一趟全量

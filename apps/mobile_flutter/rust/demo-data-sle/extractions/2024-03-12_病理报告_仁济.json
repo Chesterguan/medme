@@ -1,0 +1,45 @@
+{
+ "doc_type": "other",
+ "doc_date": "2024-03-15",
+ "labs": [],
+ "meds": [],
+ "diagnoses": [
+  {
+   "text": "狼疮性肾炎,ISN/RPS 2003 分型 IV-G(A)",
+   "icd": ""
+  }
+ ],
+ "impression": "狼疮性肾炎,ISN/RPS 2003 分型 IV-G(A)。",
+ "notes": "建议:结合临床,按增殖性狼疮肾炎方案治疗,定期复查尿蛋白与肾功能。",
+ "facts": [
+  {
+   "type": "biopsy",
+   "organ": "kidney",
+   "date": "",
+   "result": "狼疮性肾炎,ISN/RPS 2003 分型 IV-G(A)",
+   "evidence": "病理诊断:狼疮性肾炎,ISN/RPS 2003 分型 IV-G(A)。"
+  },
+  {
+   "type": "organ_involvement",
+   "organ": "kidney",
+   "date": "",
+   "text": "狼疮性肾炎",
+   "evidence": "病理诊断:狼疮性肾炎,ISN/RPS 2003 分型 IV-G(A)。"
+  },
+  {
+   "type": "scale",
+   "name": "other",
+   "value": "10/24",
+   "date": "",
+   "evidence": "NIH 活动指数 10/24"
+  },
+  {
+   "type": "scale",
+   "name": "other",
+   "value": "2/12",
+   "date": "",
+   "evidence": "慢性指数 2/12"
+  }
+ ],
+ "_model": "deepseek-flash"
+}

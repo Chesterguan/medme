@@ -1,0 +1,42 @@
+{
+ "doc_type": "outpatient",
+ "doc_date": "2024-03-02",
+ "labs": [],
+ "meds": [],
+ "diagnoses": [
+  {
+   "text": "系统性红斑狼疮?",
+   "icd": ""
+  },
+  {
+   "text": "狼疮肾炎?",
+   "icd": ""
+  }
+ ],
+ "impression": "系统性红斑狼疮?狼疮肾炎?",
+ "notes": "",
+ "facts": [
+  {
+   "type": "organ_involvement",
+   "organ": "skin",
+   "date": "",
+   "text": "面部红斑 3 个月",
+   "evidence": "3 个月前日晒后出现双颊蝶形红斑"
+  },
+  {
+   "type": "organ_involvement",
+   "organ": "joint",
+   "date": "",
+   "text": "双手关节疼痛 2 个月",
+   "evidence": "2 个月前出现双手近端指间关节疼痛伴晨僵约 1 小时"
+  },
+  {
+   "type": "organ_involvement",
+   "organ": "kidney",
+   "date": "",
+   "text": "泡沫尿 3 周",
+   "evidence": "3 周前发现尿中泡沫增多、久不消散,伴双下肢轻度水肿"
+  }
+ ],
+ "_model": "deepseek-flash"
+}

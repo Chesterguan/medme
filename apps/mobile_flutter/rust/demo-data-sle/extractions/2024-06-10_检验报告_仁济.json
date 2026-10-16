@@ -1,0 +1,132 @@
+{
+ "doc_type": "lab",
+ "doc_date": "2024-06-10",
+ "labs": [
+  {
+   "name": "补体C3",
+   "value": "0.58",
+   "unit": "g/L",
+   "ref_low": "0.90",
+   "ref_high": "1.80",
+   "flag": "L"
+  },
+  {
+   "name": "补体C4",
+   "value": "0.09",
+   "unit": "g/L",
+   "ref_low": "0.10",
+   "ref_high": "0.40",
+   "flag": "L"
+  },
+  {
+   "name": "抗双链DNA抗体",
+   "value": "96",
+   "unit": "IU/mL",
+   "ref_low": "0",
+   "ref_high": "30",
+   "flag": "H"
+  },
+  {
+   "name": "白细胞",
+   "value": "4.2",
+   "unit": "10^9/L",
+   "ref_low": "3.5",
+   "ref_high": "9.5",
+   "flag": ""
+  },
+  {
+   "name": "血小板",
+   "value": "168",
+   "unit": "10^9/L",
+   "ref_low": "125",
+   "ref_high": "350",
+   "flag": ""
+  },
+  {
+   "name": "血红蛋白",
+   "value": "112",
+   "unit": "g/L",
+   "ref_low": "115",
+   "ref_high": "150",
+   "flag": "L"
+  },
+  {
+   "name": "谷丙转氨酶",
+   "value": "32",
+   "unit": "U/L",
+   "ref_low": "7",
+   "ref_high": "40",
+   "flag": ""
+  },
+  {
+   "name": "谷草转氨酶",
+   "value": "28",
+   "unit": "U/L",
+   "ref_low": "13",
+   "ref_high": "35",
+   "flag": ""
+  },
+  {
+   "name": "肌酐",
+   "value": "88",
+   "unit": "umol/L",
+   "ref_low": "41",
+   "ref_high": "73",
+   "flag": "H"
+  },
+  {
+   "name": "估算肾小球滤过率",
+   "value": "92",
+   "unit": "mL/min/1.73m2",
+   "ref_low": "90",
+   "ref_high": "",
+   "flag": ""
+  },
+  {
+   "name": "白蛋白",
+   "value": "34.6",
+   "unit": "g/L",
+   "ref_low": "40",
+   "ref_high": "55",
+   "flag": "L"
+  },
+  {
+   "name": "尿蛋白定量",
+   "value": "1.90",
+   "unit": "g/24h",
+   "ref_low": "0.00",
+   "ref_high": "0.15",
+   "flag": "H"
+  },
+  {
+   "name": "尿蛋白/肌酐比",
+   "value": "1600",
+   "unit": "mg/g",
+   "ref_low": "0",
+   "ref_high": "150",
+   "flag": "H"
+  },
+  {
+   "name": "高倍镜下红细胞",
+   "value": "6",
+   "unit": "/HP",
+   "ref_low": "0",
+   "ref_high": "3",
+   "flag": "H"
+  },
+  {
+   "name": "高倍镜下白细胞",
+   "value": "2",
+   "unit": "/HP",
+   "ref_low": "0",
+   "ref_high": "5",
+   "flag": ""
+  }
+ ],
+ "meds": [],
+ "diagnoses": [],
+ "impression": "",
+ "notes": "检验者:周敏    审核者:李建\n提示:较 2024-03-05 明显好转,24 小时尿蛋白由 3.20 g 降至 1.90 g。",
+ "facts": [],
+ "_model": "deepseek-flash"
+}

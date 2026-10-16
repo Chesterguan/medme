@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `add_synthetic_document`, `clear_terminology_overlay`, `collect_demo_files`, `detected_name_for`, `extraction_json_for`, `fmt_value`, `format_plausibility_violation`, `hex_to_bytes`, `home_monitoring_demo_entries`, `ingest_one`, `known_identity`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `unwrap_restore_map`, `vault_cell`, `with_state_mut`, `with_state`, `wrap_restore_map`
+// These functions are ignored because they are not marked as `pub`: `add_self_measurement_to`, `add_synthetic_document`, `attach_demo_extraction`, `clear_terminology_overlay`, `collect_demo_files`, `detected_name_for`, `extraction_json_for`, `fmt_value`, `format_plausibility_violation`, `hex_to_bytes`, `home_monitoring_demo_entries`, `ingest_one`, `known_identity`, `machine_device_id`, `open_resilient_with_fallback`, `parse_measured_at`, `resolve_vault_paths`, `self_measured_label`, `self_measured_title`, `unwrap_restore_map`, `vault_cell`, `with_state_mut`, `with_state`, `wrap_restore_map`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `VaultState`
 
 /// 打开(或新建)保险箱。iCloud 容器路径由 **Dart 侧经 MethodChannel 解析后传入**
@@ -378,6 +378,16 @@ Stream<DemoLoadProgressDto> loadDemoData() =>
 /// (`db_path`),再用 `open_split_resilient` 在同一位置重建。之后 `load_archive`
 /// 会返回空。与桌面/Tauri 移动端的 `reset_vault` 同构,包括同一条安全兜底:
 /// `truth_root` 必须是一个名为 `vault` 的目录,防止误删沙盒其它内容。
+/// 载入李静(狼疮)示例:见 [`DEMO_DATA_SLE`]。名字以 `vault_` 起头是硬要求:FRB 派发表按
+/// 函数名字典序编号,`recognize_image_pp` 的 44 号是 iOS 端的外部契约(`tests/frb_dispatch_indices.rs`)。装内置病种包、写「开启档案」与体重事件
+/// 都在 `with_state` **外面**做(`vault_profile_record_event` 自己拿锁)。
+/// `skill_cache_dir` 与 Dart 侧 `skillCacheDir()` 同一个目录。
+Stream<DemoLoadProgressDto> vaultLoadDemoDataSle({
+  required String skillCacheDir,
+}) => RustLib.instance.api.crateApiVaultVaultLoadDemoDataSle(
+  skillCacheDir: skillCacheDir,
+);
+
 Future<void> resetVault() => RustLib.instance.api.crateApiVaultResetVault();
 
 /// iCloud 同步是否已在本设备开启(读持久标记 `<data_dir>/icloud_enabled`)。

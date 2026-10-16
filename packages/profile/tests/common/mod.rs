@@ -42,14 +42,14 @@ pub fn rx_doc(rows: &str) -> String {
     format!("处方笺\nRp:\n{rows}\n")
 }
 
-/// **发布出去的那一份 SLE 包的原文逐字节**(`skills/sle/2026.09.1.src.json`,
+/// **发布出去的那一份 SLE 包的原文逐字节**(`skills/sle/2026.10.1.src.json`,
 /// 由 `scripts/sign_skill.py` 签成同目录的 `.json` 信封)。
 ///
 /// 夹具与真包从此是同一份字节:规则引擎的每一条用例测的都是用户真会装上的那个包,
 /// 不是一份「长得差不多」的复制品 —— 两份内容各自长歪过一次,就再也没人说得清
 /// golden 钉住的是哪一个。「签好的信封里也是这一份」由
 /// `packages/profile/tests/shipped_package.rs` 另外钉住。
-pub const FULL: &str = include_str!("../../../../skills/sle/2026.09.1.src.json");
+pub const FULL: &str = include_str!("../../../../skills/sle/2026.10.1.src.json");
 
 /// 发布包解析出来的那一份。
 pub fn full_pkg() -> Package {

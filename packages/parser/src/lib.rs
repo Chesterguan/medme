@@ -17,10 +17,11 @@ mod meds;
 mod profile_event;
 mod self_entry;
 pub use aggregate::{
-    aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedSpan, SourceDoc,
+    aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedMention,
+    MedSpan, SourceDoc,
 };
 pub use conditions::{extract_conditions, ConditionMention};
-pub use extraction::{labs_from_json, LabsFromJson};
+pub use extraction::{labs_from_json, meds_from_json, LabsFromJson, MedsFromJson};
 pub use handoff::{assemble_summary, match_disease};
 pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};

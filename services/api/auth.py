@@ -91,7 +91,11 @@ def otp_send(conn, phone: str):
         _pnvs_call("SendSmsVerifyCode", {
             "PhoneNumber": phone, "SignName": os.environ["PNVS_SIGN_NAME"],
             "TemplateCode": os.environ["PNVS_TEMPLATE_CODE"],
-            "TemplateParam": json.dumps({"code": code}), "ValidTime": str(OTP_TTL),
+            # 赠送的验证码模板有两个变量:验证码 `code` 与有效期 `min`(分钟)。验证码
+            # 传我们自己生成的那个值(不是 `##code##`),因为校验在上面自己的 otp 表里做,
+            # 不走 CheckSmsVerifyCode。少传 `min` 会被 INVALID_PARAMETERS 打回。
+            "TemplateParam": json.dumps({"code": code, "min": str(OTP_TTL // 60)}),
+            "ValidTime": str(OTP_TTL),
         })
 
 

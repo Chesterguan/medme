@@ -32,8 +32,24 @@ import 'package:mobile_flutter/widgets/trend_chart.dart';
 /// 不显示旁边算好的 `value_canonical`——前者是原文逐字,后者是引擎为了比较造的
 /// 数,两者在极少数进制/单位场景下可能不是同一个打印形式。其余没有原文可退的数值
 /// (`score`/`mg_per_kg` 这类本来就是算出来的)直接 `toString()`,不在这里四舍五入。
+/// 三视图(spec 2026-09-30 §4)的依据回链:`state`/`journey` 里引用的
+/// `ev:<doc>:<n>` 在这里翻成那条依据;怎么开原件是页面的事(页面才知道
+/// `document_index` → `document_id` 的桥),这里只负责把那条依据递出去。
+class ProfileLinks {
+  const ProfileLinks({required this.evidenceById, required this.onOpen});
+
+  final Map<String, Map<String, dynamic>> evidenceById;
+  final void Function(Map<String, dynamic> evidence) onOpen;
+
+  Map<String, dynamic>? byId(dynamic id) =>
+      id is String ? evidenceById[id] : null;
+}
+
 class ProfileSectionView extends StatelessWidget {
-  const ProfileSectionView(this.section, {super.key});
+  const ProfileSectionView(this.section, {super.key, this.links});
+
+  /// 依据回链;`null` = 这一页不提供(老页面、测试),依据只显示不可点。
+  final ProfileLinks? links;
 
   /// 一个 `ProfileView.sections[]` 元素:`{kind,id,title,empty_hint,body}`。
   final Map<String, dynamic> section;
@@ -64,6 +80,9 @@ class ProfileSectionView extends StatelessWidget {
         body: body,
       ),
       'handoff' => _HandoffBody(body),
+      'state' => _StateBody(body, links),
+      'journey' => _JourneyBody(body, links),
+      'evidence' => _EvidenceBody(body, links),
       _ => const SizedBox.shrink(), // 上面已经守过一遍 kind,理论上到不了这里。
     };
 
@@ -87,6 +106,22 @@ const Map<String, IconData> _kIconFor = {
   'timeline': Icons.timeline,
   'checklist': Icons.checklist,
   'handoff': Icons.share_outlined,
+  'state': Icons.flag_outlined,
+  'journey': Icons.route_outlined,
+  'evidence': Icons.fact_check_outlined,
+};
+
+/// 依据的来路(`packages/profile/src/state.rs` 的 `origin`,固定三个值)。
+const Map<String, String> _kOriginLabel = {
+  'llm': '模型读的',
+  'regex': '规则读的',
+  'self_entry': '自己记的',
+};
+
+/// 泳道质量(`journey.lanes[].quality`,固定三个值)。
+const Map<String, String> _kLaneQualityLabel = {
+  'needs_review': '需核对',
+  'empty': '还没有记录',
 };
 
 /// `basis` 四档(spec §5.4):监测提醒到底是指南写的、说明书写的、文献写的,
@@ -860,6 +895,12 @@ class _SeriesCard extends StatelessWidget {
         if (_seriesDto(name, unit, series, points) case final dto when dto.points.isNotEmpty) ...[
           const SizedBox(height: MedShape.s1),
           TrendChart(series: dto),
+          // 画布里一个字都没有(`TrendChart` 的文档),数值由这一行给:最近一次是多少、
+          // 哪天、偏高还是偏低、参考区间、历史最低/最高 —— 光一条线医生读不出数。
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: _SeriesValuesLine(dto: dto, points: points),
+          ),
         ],
         if (_metaLine(context, [
           undated.isEmpty ? null : '另有 ${undated.length} 项没有日期',
@@ -1328,3 +1369,343 @@ class _HandoffBody extends StatelessWidget {
     );
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// 三视图(spec 2026-09-30):现在 / 进程 / 依据
+// ---------------------------------------------------------------------------
+
+/// `state`:每个状态变量一行——值 + 单位、截至日期、陈旧与否、一句说明、依据。
+/// 不下结论:`value` 为 null 就是「未知」,旁边的 `note` 说为什么。
+class _StateBody extends StatelessWidget {
+  const _StateBody(this.body, this.links);
+
+  final Map<String, dynamic> body;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final vars = _asMapList(body['vars']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < vars.length; i++) ...[
+          if (i > 0) const SizedBox(height: MedShape.s3),
+          _StateRow(vars[i], links),
+        ],
+      ],
+    );
+  }
+}
+
+class _StateRow extends StatelessWidget {
+  const _StateRow(this.row, this.links);
+
+  final Map<String, dynamic> row;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final value = row['value'] as String?;
+    final unit = row['unit'] as String?;
+    final asOf = fmtDate(row['as_of'] as String?);
+    final stale = row['stale'] == true;
+    final staleAfter = (row['stale_after_days'] as num?)?.toInt();
+    final note = row['note'] as String?;
+    final ids = (row['evidence'] as List? ?? const []).whereType<String>().toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${row['label'] ?? ''}', style: MedType.caption.copyWith(color: c.ink2)),
+        const SizedBox(height: 2),
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(
+                text: value ?? '未知',
+                style: MedType.value.copyWith(color: value == null ? c.ink3 : c.ink),
+              ),
+              if (value != null && unit != null && unit.isNotEmpty)
+                TextSpan(text: ' $unit', style: MedType.secondary.copyWith(color: c.ink2)),
+            ],
+          ),
+        ),
+        if (asOf.isNotEmpty || stale || note != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            [
+              if (asOf.isNotEmpty) '截至 $asOf',
+              if (stale && staleAfter != null) '超过 $staleAfter 天没有新记录',
+              ?note,
+            ].join(' · '),
+            style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
+          ),
+        ],
+        if (ids.isNotEmpty && links != null) _EvidenceChips(ids: ids, links: links!),
+      ],
+    );
+  }
+}
+
+/// 一行依据小按钮:每条依据一颗,文字是「日期 · 文档标题」,点开原件。
+class _EvidenceChips extends StatelessWidget {
+  const _EvidenceChips({required this.ids, required this.links});
+
+  final List<String> ids;
+  final ProfileLinks links;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final items = ids.map(links.byId).whereType<Map<String, dynamic>>().toList();
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: MedShape.s1),
+      child: Wrap(
+        spacing: MedShape.s1,
+        runSpacing: MedShape.s1,
+        children: [
+          for (final e in items)
+            ActionChip(
+              label: Text(_evidenceShort(e)),
+              labelStyle: MedType.caption.copyWith(color: c.sealInk),
+              side: BorderSide(color: c.line),
+              onPressed: () => links.onOpen(e),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+String _evidenceShort(Map<String, dynamic> e, {bool withOrigin = true}) {
+  final date = fmtDate(e['date'] as String?);
+  final title = e['title'] as String?;
+  final verified = e['verified'] != false;
+  return [
+    if (date.isNotEmpty) date,
+    if (title != null && title.isNotEmpty) title
+    else if (withOrigin && e['origin'] == 'self_entry') _kOriginLabel['self_entry']!,
+    if (!verified) '需核对',
+  ].join(' · ');
+}
+
+/// `journey`:每条泳道一组,节点按日期——「从 A 到 B」或一个值或一件事。
+class _JourneyBody extends StatelessWidget {
+  const _JourneyBody(this.body, this.links);
+
+  final Map<String, dynamic> body;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final lanes = _asMapList(body['lanes']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < lanes.length; i++) ...[
+          if (i > 0) const SizedBox(height: MedShape.s3),
+          _Lane(lanes[i], links),
+        ],
+      ],
+    );
+  }
+}
+
+class _Lane extends StatelessWidget {
+  const _Lane(this.lane, this.links);
+
+  final Map<String, dynamic> lane;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final nodes = _asMapList(lane['nodes']);
+    final quality = lane['quality'] as String?;
+    final qualityLabel = _kLaneQualityLabel[quality];
+    // 复发/住院标红是包说的(`severity_high`),颜色只说状态。
+    final high = lane['severity'] == 'high';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                '${lane['label'] ?? ''}',
+                style: MedType.subtitle.copyWith(color: high ? c.high : c.ink),
+              ),
+            ),
+            if (qualityLabel != null)
+              Text(qualityLabel, style: MedType.caption.copyWith(color: c.ink3)),
+          ],
+        ),
+        for (final n in nodes) _NodeRow(n, links, high: high),
+      ],
+    );
+  }
+}
+
+class _NodeRow extends StatelessWidget {
+  const _NodeRow(this.node, this.links, {this.high = false});
+
+  final Map<String, dynamic> node;
+  final ProfileLinks? links;
+  final bool high;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final atRaw = fmtDate(node['at'] as String?);
+    final at = atRaw.isEmpty ? '日期不详' : atRaw;
+    final from = node['from'] as String?;
+    final to = node['to'] as String? ?? '';
+    final unverified = node['unverified'] == true;
+    final ids = (node['evidence'] as List? ?? const []).whereType<String>().toList();
+    final first = ids.isEmpty ? null : links?.byId(ids.first);
+    final headline = from == null || from.isEmpty ? to : '$from → $to';
+    // 用药节点:第二行是药名(泼尼松 20mg 换甲泼尼龙 16mg 不是减量)+ 泼尼松等效日剂量;
+    // 事件节点的 `text` 是原话,依据页能看全文,这里不重复。
+    final kind = node['kind'] as String?;
+    final isDose = kind == 'first' || kind == 'change' || kind == 'dose_change';
+    final name = isDose ? node['text'] as String? : null;
+    final equiv = node['equiv_mg_per_day'];
+    final sub = [
+      if (name != null && name.isNotEmpty && kind != 'dose_change') name,
+      if (equiv is num) '等效 ${_num(equiv.toDouble())} mg/天',
+    ].join(' · ');
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 84,
+            child: Text(at, style: MedType.secondary.copyWith(color: c.ink2)),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(text: headline, style: MedType.body.copyWith(color: high ? c.high : c.ink)),
+                      if (unverified)
+                        TextSpan(text: '  需核对', style: MedType.caption.copyWith(color: c.ink3)),
+                    ],
+                  ),
+                ),
+                if (sub.isNotEmpty)
+                  Text(sub, style: MedType.caption.copyWith(color: c.ink2)),
+              ],
+            ),
+          ),
+          if (first != null) Icon(Icons.chevron_right, size: 18, color: c.ink3),
+        ],
+      ),
+    );
+    if (first == null) return row;
+    return InkWell(onTap: () => links!.onOpen(first), child: row);
+  }
+}
+
+/// `evidence`:全部依据,按日期倒序;每条是「日期 · 文档 · 来路」+ 原文那一句。
+class _EvidenceBody extends StatelessWidget {
+  const _EvidenceBody(this.body, this.links);
+
+  final Map<String, dynamic> body;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _asMapList(body['items'])
+      ..sort((a, b) => '${b['date'] ?? ''}'.compareTo('${a['date'] ?? ''}'));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [for (final e in items) _EvidenceRow(e, links)],
+    );
+  }
+}
+
+class _EvidenceRow extends StatelessWidget {
+  const _EvidenceRow(this.item, this.links);
+
+  final Map<String, dynamic> item;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final origin = _kOriginLabel[item['origin']] ?? '${item['origin'] ?? ''}';
+    final verified = item['verified'] != false;
+    final quote = item['quote'] as String? ?? '';
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            [_evidenceShort(item, withOrigin: false), origin, if (!verified) '需核对'].join(' · '),
+            style: MedType.caption.copyWith(color: c.ink2),
+          ),
+          const SizedBox(height: 2),
+          Text(quote, style: MedType.body.copyWith(color: c.ink, height: 1.5)),
+        ],
+      ),
+    );
+    if (links == null || item['doc'] == null) return row;
+    return InkWell(onTap: () => links!.onOpen(item), child: row);
+  }
+}
+
+
+/// 趋势图下面那一行数:最近一次(值 · 日期 · 偏高/偏低)· 参考区间 · 历史最低/最高。
+/// 值一律用引擎给的 `value` 原样 `toString()`(文件头「数值原则」),不四舍五入。
+class _SeriesValuesLine extends StatelessWidget {
+  const _SeriesValuesLine({required this.dto, required this.points});
+
+  final TrendSeriesDto dto;
+  final List<Map<String, dynamic>> points;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final dated = dto.points.where((p) => p.date != null && p.date!.isNotEmpty).toList()
+      ..sort((a, b) => a.date!.compareTo(b.date!));
+    final latest = dated.isNotEmpty ? dated.last : dto.points.last;
+    final unit = dto.unit ?? '';
+    String n(double x) => _num(x);
+    String v(double x) => unit.isEmpty ? n(x) : '${n(x)} $unit';
+    final flagWord = switch (latest.flag) { 'H' => '偏高', 'L' => '偏低', _ => null };
+    final flagColor = switch (latest.flag) { 'H' => c.high, 'L' => c.low, _ => c.ink2 };
+    final lo = dto.points.map((p) => p.value).reduce((a, b) => a < b ? a : b);
+    final hi = dto.points.map((p) => p.value).reduce((a, b) => a > b ? a : b);
+    final ref = switch ((dto.refLow, dto.refHigh)) {
+      (final l?, final h?) => '参考 ${n(l)}–${n(h)}',
+      (null, final h?) => '参考 ≤ ${n(h)}',
+      (final l?, null) => '参考 ≥ ${n(l)}',
+      _ => null,
+    };
+    return Text.rich(
+      TextSpan(
+        style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
+        children: [
+          const TextSpan(text: '最近 '),
+          TextSpan(text: v(latest.value), style: MedType.secondary.copyWith(color: c.ink, fontWeight: FontWeight.w600)),
+          if (flagWord != null) TextSpan(text: ' $flagWord', style: MedType.secondary.copyWith(color: flagColor)),
+          if (latest.date != null && latest.date!.isNotEmpty) TextSpan(text: ' · ${fmtDate(latest.date)}'),
+          if (ref != null) TextSpan(text: ' · $ref'),
+          if (dto.points.length > 1) TextSpan(text: ' · 最低 ${v(lo)} · 最高 ${v(hi)}'),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// 整数不带 `.0`,其余原样 `toString`(文件头「数值原则」:不四舍五入)。
+String _num(double x) => x == x.roundToDouble() ? '${x.toInt()}' : '$x';

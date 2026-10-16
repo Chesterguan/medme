@@ -1,0 +1,84 @@
+{
+ "doc_type": "lab",
+ "doc_date": "2026-03-14",
+ "labs": [
+  {
+   "name": "补体C3",
+   "value": "0.92",
+   "unit": "g/L",
+   "ref_low": "0.90",
+   "ref_high": "1.80",
+   "flag": ""
+  },
+  {
+   "name": "补体C4",
+   "value": "0.15",
+   "unit": "g/L",
+   "ref_low": "0.10",
+   "ref_high": "0.40",
+   "flag": ""
+  },
+  {
+   "name": "抗双链DNA抗体",
+   "value": "16",
+   "unit": "IU/mL",
+   "ref_low": "0",
+   "ref_high": "30",
+   "flag": ""
+  },
+  {
+   "name": "白细胞",
+   "value": "5.1",
+   "unit": "10^9/L",
+   "ref_low": "3.5",
+   "ref_high": "9.5",
+   "flag": ""
+  },
+  {
+   "name": "血小板",
+   "value": "224",
+   "unit": "10^9/L",
+   "ref_low": "125",
+   "ref_high": "350",
+   "flag": ""
+  },
+  {
+   "name": "肌酐",
+   "value": "72",
+   "unit": "umol/L",
+   "ref_low": "41",
+   "ref_high": "73",
+   "flag": ""
+  },
+  {
+   "name": "估算肾小球滤过率",
+   "value": "104",
+   "unit": "mL/min/1.73m2",
+   "ref_low": "90",
+   "ref_high": "",
+   "flag": ""
+  },
+  {
+   "name": "尿蛋白定量",
+   "value": "0.45",
+   "unit": "g/24h",
+   "ref_low": "0.00",
+   "ref_high": "0.15",
+   "flag": "H"
+  },
+  {
+   "name": "尿蛋白/肌酐比",
+   "value": "420",
+   "unit": "mg/g",
+   "ref_low": "0",
+   "ref_high": "150",
+   "flag": "H"
+  }
+ ],
+ "meds": [],
+ "diagnoses": [],
+ "impression": "",
+ "notes": "",
+ "facts": [],
+ "_model": "deepseek-flash"
+}

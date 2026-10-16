@@ -8,7 +8,7 @@ use chrono::{Datelike, NaiveDate};
 /// (跨院可比的那一套)另放在 `value_canonical`/`unit_canonical` 下,名字自己说
 /// 清楚 —— 把 `0.3 g/24h` 显示成 `300 mg/24h` 是一个医生有理由不信的数字,哪怕
 /// 换算本身没错。
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Evidence {
     /// `parser::SourceDoc::index` —— 调用方据此翻回 document_id。
     pub document_index: usize,
@@ -258,7 +258,7 @@ pub fn activity_section(
 /// 说的必须是同一次计分。
 pub struct Activity {
     pub hits: Vec<Hit>,
-    missed: Vec<Missed>,
+    pub(crate) missed: Vec<Missed>,
     unscored: Vec<Unscored>,
 }
 
@@ -302,7 +302,7 @@ pub fn activity_eval(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> Activity {
 /// 一组命中的总分。`saturating_add`:`items` 是裸 JSON,权重是包作者写的。手滑写个
 /// 大数在 debug 下是 panic、release 下是回绕成小分数 —— 后者更糟,它看起来像个正
 /// 常分数。
-fn weight_sum<'h>(hits: impl IntoIterator<Item = &'h Hit>) -> u32 {
+pub(crate) fn weight_sum<'h>(hits: impl IntoIterator<Item = &'h Hit>) -> u32 {
     hits.into_iter()
         .map(|h| h.weight)
         .fold(0u32, u32::saturating_add)
@@ -333,7 +333,11 @@ fn view_section<'p>(
 /// section 的标题。包里没写就 `None` —— 引擎里垫一句中文,「加一个病不发版」这条
 /// 前提上就多了一个例外,而例外只会越来越多。**空标题要是 `null` 不是 `""`**:
 /// 后者在 JSON 里和「作者写了个空标题」长得一样,渲染层分不出包漏了还是包故意的。
-fn view_title(pkg: &crate::package::Package, kind: &str, id: Option<&str>) -> Option<String> {
+pub(crate) fn view_title(
+    pkg: &crate::package::Package,
+    kind: &str,
+    id: Option<&str>,
+) -> Option<String> {
     view_section(pkg, kind, id)
         .and_then(|s| s.get("title").and_then(|t| t.as_str()))
         .map(str::to_string)
@@ -342,13 +346,17 @@ fn view_title(pkg: &crate::package::Package, kind: &str, id: Option<&str>) -> Op
 /// section 的 id,原样来自包里那条配置(见 [`crate::view::Section::id`])。包里那条
 /// 没写 id、或包里压根没有这块的配置 → `None`,引擎**不替它编一个** —— 渲染层看到
 /// `null` 就知道这块在包里没有身份,而不是拿一个引擎自造的 id 去对包里的配置。
-fn view_id(pkg: &crate::package::Package, kind: &str, id: Option<&str>) -> Option<String> {
+pub(crate) fn view_id(
+    pkg: &crate::package::Package,
+    kind: &str,
+    id: Option<&str>,
+) -> Option<String> {
     view_section(pkg, kind, id)
         .and_then(|s| s.get("id").and_then(|v| v.as_str()))
         .map(str::to_string)
 }
 
-fn str_field<'j>(v: &'j serde_json::Value, k: &str) -> &'j str {
+pub(crate) fn str_field<'j>(v: &'j serde_json::Value, k: &str) -> &'j str {
     v.get(k).and_then(|x| x.as_str()).unwrap_or_default()
 }
 
@@ -1015,7 +1023,7 @@ fn form_haystack(m: &parser::MedSpan) -> String {
 
 /// 把 `MedSpan` 归到包里的某个 `drugs[]` 类(先按 `atc_prefix`,再按 `names` 逐字含)。
 /// 包不认得的药返回 `None` —— 它们**不会消失**,照样以 `class: null` 进 `others[]`。
-fn drug_class<'p>(
+pub(crate) fn drug_class<'p>(
     pkg: &'p crate::package::Package,
     m: &parser::MedSpan,
 ) -> Option<&'p crate::package::Drug> {
@@ -1023,15 +1031,49 @@ fn drug_class<'p>(
         d.atc_prefix
             .as_deref()
             .is_some_and(|p| m.atc.as_deref().is_some_and(|a| a.starts_with(p)))
-            || d.names.iter().any(|n| m.name.contains(n.as_str()))
+            // 别名按子串配(「泼尼松龙片」含「泼尼松龙」),但两个字以内的泛称
+            // (「激素」)只认整个名字就是它 —— 不然「雌激素」「甲状腺激素」全成了糖皮质
+            // 激素(审查 I-8)。
+            || d.names
+                .iter()
+                .any(|n| m.name == n.as_str() || (n.chars().count() > 2 && m.name.contains(n.as_str())))
     })
+}
+
+/// 外用/局部制剂(乳膏、滴眼液……)不是全身用药:现行方案、状态行、泳道都不算它。
+/// 看规范名 + 原样写法 + 剂量串,小写比。
+pub(crate) fn is_nonsystemic_gc(m: &parser::MedSpan) -> bool {
+    GC_NONSYSTEMIC.iter().any(|k| form_haystack(m).contains(k))
+}
+
+pub(crate) fn is_nonsystemic_gc_name(raw_name: &str) -> bool {
+    let h = raw_name.to_ascii_lowercase();
+    GC_NONSYSTEMIC.iter().any(|k| h.contains(k))
+}
+
+/// 一次提及的泼尼松等效日剂量(给进程泳道:泼尼松 20mg 换甲泼尼龙 16mg 是等效换药,
+/// 不是减量)。表里查不到、剂量读不出 → `None`,节点保留原串。
+pub(crate) fn equiv_mg_per_day(
+    d: &crate::package::Drug,
+    raw_name: &str,
+    dose: &str,
+) -> Option<f64> {
+    let tbl = d.pred_equiv.as_ref()?;
+    let (_, factor) = tbl
+        .iter()
+        .filter(|(k, _)| raw_name.contains(k.as_str()))
+        .min_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(b.0)))?;
+    let mg = dose_mg(dose)?;
+    let times = per_day(dose)?;
+    let v = mg * times * factor;
+    (v.is_finite() && v > 0.0).then_some(v)
 }
 
 /// 从 `latest_dose`(`aggregate` 拼的「0.2g bid」这种串)里取**一次**的 mg 数。
 ///
 /// 认不出返回 `None` —— 猜一个数会直接进 DORIS 的「泼尼松 <5 mg」判定,错的比没有
 /// 更糟。只认 mg/g:µg、IU、片、粒这些换不成 mg(一片几毫克是规格,处方上没写)。
-fn dose_mg(s: &str) -> Option<f64> {
+pub(crate) fn dose_mg(s: &str) -> Option<f64> {
     let t = s.split_whitespace().next()?.to_ascii_lowercase();
     let mg = if let Some(v) = t.strip_suffix("mg") {
         v.parse::<f64>().ok()?
@@ -1044,7 +1086,7 @@ fn dose_mg(s: &str) -> Option<f64> {
 /// 每天几次。`aggregate` 把频次规范成代码(`qd`/`bid`/…),原文串(「每日两次」)
 /// 也认。认不出 → `None`:`qw`/`prn` 这类本来就没有「日剂量」这回事,没写频次的
 /// 处方更是 —— 默认 1 次/天等于替处方笺补一个它没写的字。
-fn per_day(s: &str) -> Option<f64> {
+pub(crate) fn per_day(s: &str) -> Option<f64> {
     let f = s.to_ascii_lowercase();
     // 长的/具体的在前:`tid ac` 含 `tid`,「每日四次」与「每日一次」只差一个字。
     for (pat, n) in [
@@ -1080,9 +1122,18 @@ fn per_day(s: &str) -> Option<f64> {
 /// 一条激素医嘱的泼尼松等效日剂量;算不出来时返回**为什么**(逐字进
 /// `gc.unconvertible[].reason`,界面原样显示)。外用/局部剂型不走这里,
 /// 在 [`regimen_eval`] 里就被拦去了 `others[]`。
-fn gc_daily_mg(d: &crate::package::Drug, m: &parser::MedSpan) -> Result<f64, String> {
+pub(crate) fn gc_daily_mg(d: &crate::package::Drug, m: &parser::MedSpan) -> Result<f64, String> {
     if GC_INJECTION.iter().any(|k| form_haystack(m).contains(k)) {
         return Err("注射剂型,不按口服换算".into());
+    }
+    // 名字就是包里的泛称别名(「激素」),换算表里当然没有它:原因是没写具体是哪一种,
+    // 不是「换算表待核」(审查 I-8)。
+    if d.names.contains(&m.name)
+        && d.pred_equiv
+            .as_ref()
+            .is_some_and(|t| !t.keys().any(|k| m.name.contains(k.as_str())))
+    {
+        return Err("没写具体是哪一种激素,算不了等效剂量".into());
     }
     let factor = match &d.pred_equiv {
         // 换算表待核(`null`):**只认规范名逐字等于「泼尼松」的那一个**。
@@ -1120,13 +1171,13 @@ fn gc_daily_mg(d: &crate::package::Drug, m: &parser::MedSpan) -> Result<f64, Str
 }
 
 /// 现行激素方案的一次求值。
-struct Gc {
-    daily_mg: Option<f64>,
-    drug: Option<String>,
+pub(crate) struct Gc {
+    pub(crate) daily_mg: Option<f64>,
+    pub(crate) drug: Option<String>,
     /// 处方上的原剂量串(`"10mg qd"`),证据链用。
-    dose: Option<String>,
+    pub(crate) dose: Option<String>,
     /// 这条医嘱出现在哪几份文档里(`parser::SourceDoc::index`)。
-    sources: Vec<usize>,
+    pub(crate) sources: Vec<usize>,
     /// 最早一次被提到的日期。
     since: Option<NaiveDate>,
     /// **截至哪天** —— 最近一次被提到的日期(`MedSpan.end`)。
@@ -1135,17 +1186,17 @@ struct Gc {
     /// DORIS 的「<5 mg」直接 ✔。`since` 是**起始**日期,读起来像「一直吃到现在」,
     /// 答不了这个问题。引擎**不设时效**(与 PGA 同一条:多久算过期由包/渲染层说),
     /// 只负责把日期说出来。
-    as_of: Option<NaiveDate>,
+    pub(crate) as_of: Option<NaiveDate>,
     /// 算不进日剂量的激素,`{name, dose, reason, sources}`。
-    unconvertible: Vec<serde_json::Value>,
+    pub(crate) unconvertible: Vec<serde_json::Value>,
     /// `daily_mg` 为 `None` 时给达标表的那句理由(`None` = 算出来了)。
-    blocked_reason: Option<String>,
+    pub(crate) blocked_reason: Option<String>,
 }
 
 /// 现行方案的一次求值:激素那一格 + 其它药那一格。**一份输入只算一遍**,
 /// `status_card` 与达标表读的是同一次结果(与 `activity_eval` 同一条理由)。
 pub struct Regimen {
-    gc: Gc,
+    pub(crate) gc: Gc,
     /// 激素与羟氯喹之外的药,`{class, name, latest_dose, since, sources, infusion}`。
     others: Vec<serde_json::Value>,
 }
@@ -1205,7 +1256,13 @@ pub fn regimen_eval(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> Regimen {
     let conflict = same_day.len() > 1;
 
     let mut unconvertible = Vec::new();
+    let newest_date = newest.flatten();
     for (m, r) in &gc_lines {
+        // 比现行那条更早的历史提及(2025 年的「激素 10mg」、2026 年已换成泼尼松)
+        // 不是「算不进现行方案」,它根本不在现行方案里 —— 不列(审查 I-8)。
+        if m.end < newest_date {
+            continue;
+        }
         let reason = match (conflict && Some(m.end) == newest, r) {
             (true, _) => Some(GC_MULTI_SAME_DAY.to_string()),
             (false, Err(why)) => Some(why.clone()),
@@ -1272,15 +1329,18 @@ pub fn regimen_eval(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> Regimen {
 ///
 /// 没有体重就不给 mg/kg。拿理想体重公式、拿人群均值、拿上次住院的体重垫一个数出来,
 /// 都是在编一个 mg/kg —— 而 5 mg/kg 那条线的分母就是它。
-fn latest_weight_kg(ctx: &Ctx<'_>, package_id: &str) -> Option<(Option<NaiveDate>, f64, String)> {
-    let mut best: Option<(Option<NaiveDate>, f64, String)> = None;
-    let mut offer = |at: Option<NaiveDate>, kg: f64, src: &str| {
+pub(crate) fn latest_weight_kg(
+    ctx: &Ctx<'_>,
+    package_id: &str,
+) -> Option<(Option<NaiveDate>, f64, String, Option<usize>)> {
+    let mut best: Option<(Option<NaiveDate>, f64, String, Option<usize>)> = None;
+    let mut offer = |at: Option<NaiveDate>, kg: f64, src: &str, doc: Option<usize>| {
         // 0 或负数会让 mg/kg 变成 inf/负数,而这是用户手录的字段。
         if !(kg.is_finite() && kg > 0.0) {
             return;
         }
-        if best.as_ref().is_none_or(|(cur, _, _)| at >= *cur) {
-            best = Some((at, kg, src.to_string()));
+        if best.as_ref().is_none_or(|(cur, _, _, _)| at >= *cur) {
+            best = Some((at, kg, src.to_string(), doc));
         }
     };
     for s in &ctx.clinical.labs {
@@ -1299,7 +1359,7 @@ fn latest_weight_kg(ctx: &Ctx<'_>, package_id: &str) -> Option<(Option<NaiveDate
         };
         for p in &s.points {
             if let Some(v) = p.value_canonical {
-                offer(p.date, v, src);
+                offer(p.date, v, src, Some(p.source));
             }
         }
     }
@@ -1311,7 +1371,7 @@ fn latest_weight_kg(ctx: &Ctx<'_>, package_id: &str) -> Option<(Option<NaiveDate
         let Some(kg) = e.payload.get("kg").and_then(serde_json::Value::as_f64) else {
             continue;
         };
-        offer(e.at.parse().ok(), kg, "self_reported");
+        offer(e.at.parse().ok(), kg, "self_reported", None);
     }
     best
 }
@@ -1324,7 +1384,7 @@ fn latest_weight_kg(ctx: &Ctx<'_>, package_id: &str) -> Option<(Option<NaiveDate
 ///
 /// 剂量与体重**各带各的日期**(`dose_at` / `weight_at`):一张 2019 年的处方配今天
 /// 的体重,算出来的 mg/kg 看着像今天的,不说日期就是一句不实的话。
-fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
+pub(crate) fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
     let t = pkg.rules.targets.get("hcq");
     // `serde_json::Value::get` 对 JSON `null` 返回的是 `Some(Value::Null)`,所以
     // 「包里写了 label_rule: null」和「包里有一条 label_rule」在这里长得一样 ——
@@ -1342,7 +1402,7 @@ fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
         Some(dose_mg(dose)? * per_day(dose)?)
     });
     let weight = latest_weight_kg(ctx, &pkg.manifest.id);
-    let mg_per_kg = daily.zip(weight.as_ref()).map(|(d, (_, kg, _))| d / kg);
+    let mg_per_kg = daily.zip(weight.as_ref()).map(|(d, (_, kg, _, _))| d / kg);
     // 未知必须带一句为什么,不然界面上的空白和「这项我们不打算算」长得一样。
     let reason = match (med, daily, &weight) {
         (None, _, _) => Some("还没读到羟氯喹的处方"),
@@ -1355,11 +1415,11 @@ fn hcq_body(ctx: &Ctx<'_>, pkg: &crate::package::Package) -> serde_json::Value {
         "dose": med.and_then(|m| m.latest_dose.clone()),
         "dose_at": med.and_then(|m| m.end).map(|d| d.to_string()),
         "sources": med.map(|m| m.sources.clone()).unwrap_or_default(),
-        "weight_kg": weight.as_ref().map(|(_, kg, _)| *kg),
+        "weight_kg": weight.as_ref().map(|(_, kg, _, _)| *kg),
         // 体重是哪天的。三年前的体重和今天刚录的,少了这一行在界面上长得一模一样
         // (与达标表里 PGA 的 `actual_at` 同一条理由)。
-        "weight_at": weight.as_ref().and_then(|(at, _, _)| at.map(|d| d.to_string())),
-        "weight_source": weight.as_ref().map(|(_, _, s)| s.as_str()),
+        "weight_at": weight.as_ref().and_then(|(at, _, _, _)| at.map(|d| d.to_string())),
+        "weight_source": weight.as_ref().map(|(_, _, s, _)| s.as_str()),
         "mg_per_kg": mg_per_kg,
         "target": t.and_then(|h| h.get("target")),
         "target_source": t.and_then(|h| h.get("target_source")),
@@ -2479,7 +2539,7 @@ fn milestone_keys(it: &serde_json::Value) -> Vec<&str> {
 /// 「肾」是包里 `from.organ` 写的那个器官,蛋白尿那几项是包里**除 GFR 之外**的
 /// 条目点名的 key —— 引擎不写死 `urine_pcr` 这种字符串,否则换个病就得改引擎。
 /// GFR 不算开场条件:一张普通的肾功能单子不该让一整块全是「未知」的里程碑长出来。
-fn milestones_apply(ctx: &Ctx<'_>, ms: &[serde_json::Value]) -> bool {
+pub(crate) fn milestones_apply(ctx: &Ctx<'_>, ms: &[serde_json::Value]) -> bool {
     let organ_hit = ms
         .iter()
         .filter_map(|it| it.get("from").map(|f| str_field(f, "organ")))
@@ -2861,7 +2921,7 @@ fn biopsy_item(ctx: &Ctx<'_>, it: &serde_json::Value) -> MsOut {
 /// `eval_monitor` 同一套做法。
 ///
 /// `None` = 这一条压根不是个对象(包写坏了),不出现在列表里。
-fn eval_milestone(
+pub(crate) fn eval_milestone(
     ctx: &Ctx<'_>,
     pkg: &crate::package::Package,
     it: &serde_json::Value,

@@ -22,7 +22,7 @@ fn src_json() -> serde_json::Value {
 
 /// 签好的信封走**生产路径**加载:用编进二进制的生产公钥验签 + 过引擎版本闸。
 fn signed_pkg() -> profile::Package {
-    let signed = std::fs::read_to_string(repo().join("skills/sle/2026.09.1.json"))
+    let signed = std::fs::read_to_string(repo().join("skills/sle/2026.10.1.json"))
         .expect("签好的包必须在仓库里");
     profile::load_signed(&signed).expect("已发布的 SLE 包必须用生产公钥验过并加载")
 }
@@ -48,7 +48,7 @@ fn the_signed_envelope_carries_exactly_the_source_file() {
     assert_eq!(b["version"], a["manifest"]["version"]);
     assert_eq!(b["min_engine"], 1, "min_engine 必须是 1");
     // 逐字节:信封内层原文就是 `.src.json` 的全文。
-    let raw = std::fs::read_to_string(repo().join("skills/sle/2026.09.1.json")).expect("信封");
+    let raw = std::fs::read_to_string(repo().join("skills/sle/2026.10.1.json")).expect("信封");
     let body = profile::verify_envelope_body(&raw).expect("验签");
     assert_eq!(body, common::FULL, "信封里装的不是 .src.json 那串字节");
 }
@@ -557,7 +557,7 @@ fn views_cover_every_section_kind_the_engine_can_emit() {
     // 块加 id,它们的标题查找会全部落空。
     let v = src_json();
     let sections = v["views"]["sections"].as_array().expect("sections 是数组");
-    let want: [(&str, Option<&str>); 7] = [
+    let want: [(&str, Option<&str>); 10] = [
         ("status_card", None),
         ("score_card", None),
         ("reminders", None),
@@ -565,6 +565,9 @@ fn views_cover_every_section_kind_the_engine_can_emit() {
         ("timeline", None),
         ("checklist", None),
         ("checklist", Some("ln_milestones")),
+        ("state", None),
+        ("journey", None),
+        ("evidence", None),
     ];
     for (kind, id) in want {
         let hit = sections
@@ -751,4 +754,47 @@ fn doc_type_for(kind: &str) -> String {
         _ => "other",
     }
     .to_string()
+}
+
+// --- 状态变量(三视图 spec §2) ---------------------------------------------
+
+#[test]
+fn state_vars_parse_from_shipped_package_and_cite_a_source() {
+    let pkg = profile::verify_envelope(
+        &std::fs::read_to_string(repo().join("skills/sle/2026.10.1.json")).expect("信封"),
+    )
+    .expect("签名合法");
+    let keys: Vec<&str> = pkg.state_vars.iter().map(|v| v.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        vec![
+            "gc_pred_equiv_mg_per_day",
+            "hcq_mg_per_kg",
+            "activity_band",
+            "renal_response"
+        ]
+    );
+    let ids: Vec<&str> = pkg.manifest.sources.iter().map(|s| s.id.as_str()).collect();
+    for v in &pkg.state_vars {
+        assert!(
+            v.source.as_deref().is_some_and(|s| ids.contains(&s)),
+            "{} 的 source 必须在 manifest.sources 里",
+            v.key
+        );
+        assert!(
+            v.stale_after_days.is_some(),
+            "{} 要按包给陈旧阈值(已拍板)",
+            v.key
+        );
+    }
+    assert!(
+        !pkg.rules.bands.bands.is_empty(),
+        "bands 要能解析出来给 derive:band 用"
+    );
+    assert!(
+        pkg.drugs
+            .iter()
+            .any(|d| d.class == "gc" && d.names.iter().any(|n| n == "激素")),
+        "「激素」作为 gc 别名"
+    );
 }

@@ -1,0 +1,42 @@
+{
+ "doc_type": "other",
+ "doc_date": "2025-06-18",
+ "labs": [],
+ "meds": [
+  {
+   "name": "贝利尤单抗",
+   "dose": "560mg",
+   "freq": "",
+   "route": "静脉滴注"
+  }
+ ],
+ "diagnoses": [
+  {
+   "text": "系统性红斑狼疮",
+   "icd": ""
+  },
+  {
+   "text": "狼疮性肾炎",
+   "icd": ""
+  }
+ ],
+ "impression": "",
+ "notes": "本次为第 3 次输注(第 0、2、4 周诱导阶段),下次按每 4 周一次预约。",
+ "facts": [
+  {
+   "type": "organ_involvement",
+   "organ": "kidney",
+   "date": "",
+   "text": "狼疮性肾炎",
+   "evidence": "诊断:系统性红斑狼疮;狼疮性肾炎"
+  },
+  {
+   "type": "infusion",
+   "drug": "贝利尤单抗",
+   "dose": "560mg",
+   "date": "2025-06-18",
+   "evidence": "贝利尤单抗 560mg 静脉滴注"
+  }
+ ],
+ "_model": "deepseek-flash"
+}
