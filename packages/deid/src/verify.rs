@@ -20,6 +20,11 @@ pub struct LabItem {
     pub flag: String,
     #[serde(default)]
     pub unverified: bool,
+    /// LOINC 码。**不在云抽取 prompt schema 里**,只有结构化导入(myEHR Epic
+    /// 适配器包的 sidecar)会带;空串时序列化不出现,云路径落库的 JSON 逐字节不变。
+    /// 是码不是原文,[`verify`] 不碰它。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub loinc: String,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 pub struct MedItem {
@@ -716,6 +721,13 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
         &mut unverified_fields,
     );
 
+    // `loinc` 是码不是原文,逐字校验对它没有意义;云 LLM 要是编了一个,留下来会
+    // 把化验挂到错的趋势线上。verify 的产物一律清掉——结构化导入的 sidecar 不经
+    // 这里落库(原文直接存),只有它才合法地带码(见 `LabItem::loinc`)。
+    for l in &mut e.labs {
+        l.loinc.clear();
+    }
+
     let mut keep = |ok: bool, flag: &mut bool| -> bool {
         match (mode, ok) {
             (_, true) => true,
@@ -828,6 +840,27 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lab_item_loinc_is_optional_and_absent_when_empty() {
+        let json = serde_json::to_string(&LabItem::default()).unwrap();
+        assert!(
+            !json.contains("loinc"),
+            "空 loinc 不许出现在序列化结果里:{json}"
+        );
+        let e =
+            parse_extraction(r#"{"labs":[{"name":"x","value":"1","loinc":"14682-9"}]}"#).unwrap();
+        assert_eq!(e.labs[0].loinc, "14682-9");
+        assert!(serde_json::to_string(&e)
+            .unwrap()
+            .contains(r#""loinc":"14682-9""#));
+        // 经 verify 的产物不带码:云路径落库的 JSON 不会因为模型多吐一个键而变样。
+        let v = verify(e, "x 1", Mode::Image);
+        assert!(v.extraction.labs.iter().all(|l| l.loinc.is_empty()));
+        assert!(!serde_json::to_string(&v.extraction)
+            .unwrap()
+            .contains("loinc"));
+    }
     const SRC: &str =
         "白细胞计数 WBC 5.6 10^9/L 4.0-10.0\n血红蛋白 HGB 13,5 g/L 115-150\n诊断:2型糖尿病 E11.9";
 

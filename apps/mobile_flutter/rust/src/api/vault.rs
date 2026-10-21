@@ -1676,6 +1676,67 @@ pub fn vault_load_demo_data_sle(
     Ok(())
 }
 
+/// 结构化导入:吃 myEHR Epic 适配器包(`.zip`,Flutter 侧 file_picker 选的路径;
+/// 文件夹也行,给调试用)。类型/日期/标题以 manifest 为准,sidecar 原样挂成
+/// extraction,末尾重建就诊分组——全在 `pipeline::import_bundle`,见
+/// `docs/superpowers/specs/2026-10-21-structured-import-design.md`。
+///
+/// 进度复用 [DemoLoadProgressDto](每份推一条,`succeeded` = 已挂上 extraction 的
+/// 份数);整体失败(manifest 读不到)推一条带 `error`。与 `vault_load_demo_data_sle`
+/// 同一手法:整包在一把 vault 锁下同步做完,Dart 侧是模态进度框。
+///
+/// 名字必须按字典序排在 `recognize_image_pp` 之后(`tests/frb_dispatch_indices.rs`)。
+pub fn vault_import_bundle(
+    progress: StreamSink<DemoLoadProgressDto>,
+    path: String,
+) -> anyhow::Result<()> {
+    let result = with_state(|state| {
+        let v = &state.vault;
+        // 进行中只知道「做到第几份」;成功份数要等整包报告出来,末尾那条才有。
+        let report = pipeline::import_bundle(v, Path::new(&path), &mut |done, total| {
+            let _ = progress.add(DemoLoadProgressDto {
+                loaded: done as i64,
+                total: total as i64,
+                succeeded: 0,
+                error: None,
+            });
+        })?;
+        for (file, why) in &report.failed {
+            log_warn(&format!("[import-bundle] {file}: {why}"));
+        }
+        log_warn(&format!(
+            "[import-bundle] total {} imported {} deduped {} no_text {} failed {} verify_rejected {} verify_unverified {}",
+            report.total,
+            report.imported,
+            report.deduped,
+            report.no_text,
+            report.failed.len(),
+            report.verify_rejected,
+            report.verify_unverified
+        ));
+        Ok(report)
+    });
+    match result {
+        Ok(report) => {
+            let _ = progress.add(DemoLoadProgressDto {
+                loaded: report.total as i64,
+                total: report.total as i64,
+                succeeded: report.imported as i64,
+                error: None,
+            });
+        }
+        Err(e) => {
+            let _ = progress.add(DemoLoadProgressDto {
+                loaded: 0,
+                total: 0,
+                succeeded: 0,
+                error: Some(format!("{e:#}")),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// 把与语料同名的模型输出(`extractions/<stem>.json`)经 `deid::verify` 后作为 schema 2
 /// 云抽取挂到刚 ingest 的文档上。任何一步失败只记日志:文档本身已经在了。
 fn attach_demo_extraction(v: &Vault, f: &include_dir::File<'_>, source_file_id: i64) {

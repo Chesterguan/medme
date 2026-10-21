@@ -12,8 +12,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    Import { files: Vec<PathBuf> },
-    Search { query: String },
+    Import {
+        files: Vec<PathBuf>,
+    },
+    /// 导入 myEHR Epic 适配器产出的包(文件夹或 .zip):类型/日期/标题以 manifest
+    /// 为准,sidecar 原样挂成 extraction。见 `pipeline::import_bundle`。
+    ImportBundle {
+        path: PathBuf,
+    },
+    Search {
+        query: String,
+    },
     Timeline,
 }
 
@@ -73,6 +82,24 @@ fn main() -> anyhow::Result<()> {
                     }
                 };
                 println!("{line}");
+            }
+        }
+        Cmd::ImportBundle { path } => {
+            let r = pipeline::import_bundle(&vault, &path, &mut |done, total| {
+                eprintln!("[{done}/{total}]");
+            })?;
+            println!(
+                "total {}  imported {}  deduped {}  no_text {}  failed {}  verify_rejected {}  verify_unverified {}",
+                r.total,
+                r.imported,
+                r.deduped,
+                r.no_text,
+                r.failed.len(),
+                r.verify_rejected,
+                r.verify_unverified
+            );
+            for (file, why) in &r.failed {
+                println!("failed {file}: {why}");
             }
         }
         Cmd::Search { query } => {

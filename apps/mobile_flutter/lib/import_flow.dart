@@ -20,6 +20,7 @@ import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
+import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
@@ -94,6 +95,9 @@ Future<ImportRunResult?> showImportSheet(BuildContext context) async {
   final choice = await showModalBottomSheet<ImportChoice>(
     context: context,
     showDragHandle: true,
+    // 四个选项在小屏上超过默认 9/16 高度上限(真机 iPhone 14 Pro 溢出 86px),
+    // 让 sheet 按内容定高,超出再滚。
+    isScrollControlled: true,
     builder: (context) => const SafeArea(child: AddSheetBody()),
   );
   if (choice == null || !context.mounted) return null;
@@ -111,50 +115,60 @@ class AddSheetBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            MedShape.s4,
-            4,
-            MedShape.s4,
-            MedShape.s1,
-          ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '添加病历',
-              style: MedType.subtitle.copyWith(color: MedColors.of(context).ink),
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              MedShape.s4,
+              4,
+              MedShape.s4,
+              MedShape.s1,
+            ),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '添加病历',
+                style: MedType.subtitle.copyWith(
+                  color: MedColors.of(context).ink,
+                ),
+              ),
             ),
           ),
-        ),
-        _SheetTile(
-          icon: Icons.photo_camera_outlined,
-          title: '拍照',
-          subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
-          choice: ImportChoice.camera,
-          // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
-          // 改版后那一排快捷操作整个没了(今天「病历」首页只剩「添加」与
-          // 「给医生看」两颗方块),拍照要多经一次这个选择表才能到达。视觉上
-          // 做成主选项(蓝底块 + `highlighted`)抵消这多出来的一次点击——它
-          // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
-          primary: true,
-        ),
-        _SheetTile(
-          icon: Icons.photo_library_outlined,
-          title: '从相册选',
-          subtitle: '选一张或多张已经拍好的病历照片',
-          choice: ImportChoice.gallery,
-        ),
-        _SheetTile(
-          icon: Icons.folder_open_outlined,
-          title: '选择文件',
-          subtitle: 'PDF、图片、TXT',
-          choice: ImportChoice.files,
-        ),
-        const SizedBox(height: 8),
-      ],
+          _SheetTile(
+            icon: Icons.photo_camera_outlined,
+            title: '拍照',
+            subtitle: '对着化验单、处方拍一张,自动识别上面的文字',
+            choice: ImportChoice.camera,
+            // 首页快捷操作原先专门有一颗「拍照」,直达这三选一里的这一项;
+            // 改版后那一排快捷操作整个没了(今天「病历」首页只剩「添加」与
+            // 「给医生看」两颗方块),拍照要多经一次这个选择表才能到达。视觉上
+            // 做成主选项(蓝底块 + `highlighted`)抵消这多出来的一次点击——它
+            // 仍然是最高频的动作,不该因为少了专属入口就变得不显眼。
+            primary: true,
+          ),
+          _SheetTile(
+            icon: Icons.photo_library_outlined,
+            title: '从相册选',
+            subtitle: '选一张或多张已经拍好的病历照片',
+            choice: ImportChoice.gallery,
+          ),
+          _SheetTile(
+            icon: Icons.folder_open_outlined,
+            title: '选择文件',
+            subtitle: 'PDF、图片、TXT',
+            choice: ImportChoice.files,
+          ),
+          _SheetTile(
+            icon: Icons.archive_outlined,
+            title: '导入 Epic 病历包',
+            subtitle: 'myEHR 导出的 .zip,一次导入整份病历',
+            choice: ImportChoice.bundle,
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
     );
   }
 }
@@ -184,6 +198,10 @@ Future<ImportRunResult?> runImport(
   // 插件没有,所以在这里补一帧等待。
   await Future<void>.delayed(const Duration(milliseconds: 350));
   if (!context.mounted) return null;
+
+  // 整包导入不走「取件 → 队列逐份 OCR」那条路:包里每份都已切好、带着类型/日期/
+  // 抽取,Rust 侧 `vault_import_bundle` 一次做完,这里只负责选 zip 和显示进度。
+  if (choice == ImportChoice.bundle) return _runBundleImport(context);
 
   // 屏上探针的出口。**在任何 await 之前同步取出**,之后就不再碰 context ——
   // 添加期间用户可能把这一屏推走,而 `ScaffoldMessengerState` 自己知道有没有 mounted。
@@ -218,11 +236,123 @@ Future<ImportRunResult?> runImport(
   return _runImport(context, items, choice);
 }
 
+/// 「导入 Epic 病历包」:选一个 myEHR 导出的 `.zip` → `vaultImportBundle` 流式进度
+/// (模态框,不可关闭)→ 完成后 SnackBar 报成功/跳过份数。失败明细在 Rust 日志
+/// (`[import-bundle]`)。不进 [ReviewState] 核对队列:包里的类型/日期/抽取是
+/// 适配器已经定好并逐字校验过的,不是 OCR 猜的。
+Future<ImportRunResult?> _runBundleImport(BuildContext context) async {
+  final probe = ScaffoldMessenger.of(context);
+  final FilePickerResult? picked;
+  try {
+    picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zip'],
+    );
+  } catch (e) {
+    debugPrint('[import-bundle] 文件选择器打不开: $e');
+    _report(
+      probe,
+      ImportChoice.bundle,
+      ImportCaptureIssue.pickerThrew,
+      '打不开文件选择器:$e',
+    );
+    return null;
+  }
+  final path = picked?.files.firstOrNull?.path;
+  if (path == null) {
+    if (picked != null && picked.files.isNotEmpty) {
+      _report(
+        probe,
+        ImportChoice.bundle,
+        ImportCaptureIssue.emptyResult,
+        '选中的文件在本机上取不到(可能还没从云端下载完)',
+      );
+    }
+    return null;
+  }
+  if (!context.mounted) return null;
+
+  // 流只开一次、只有这里一个监听者;对话框只读一个 ValueNotifier。把流放进
+  // `builder` 里会让 route 每重建一次就再跑一遍整包导入。
+  final status = ValueNotifier<String>('正在读取…');
+  DemoLoadProgressDto? last;
+  Object? streamError;
+  final finished = vaultImportBundle(path: path)
+      .listen(
+        (p) {
+          last = p;
+          status.value = p.error != null
+              ? '导入失败:${p.error}'
+              : '已处理 ${p.loaded}/${p.total}';
+        },
+        onError: (Object e) {
+          streamError = e;
+          status.value = '导入失败:$e';
+        },
+        cancelOnError: true,
+      )
+      .asFuture<void>()
+      .catchError((_) {});
+
+  // 记住对话框自己的 context:完成时只 pop 它这一条 route。用外层 context 去 pop
+  // 根导航器,会把中途被深链推上来的别的页面关掉,对话框反而留在那儿。
+  BuildContext? dialogContext;
+  unawaited(
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        dialogContext = ctx;
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('正在导入病历包'),
+            content: ValueListenableBuilder<String>(
+              valueListenable: status,
+              builder: (_, text, _) => Row(
+                children: [
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: MedShape.s3),
+                  Expanded(child: Text(text)),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+  await finished;
+  final dc = dialogContext;
+  if (dc != null && dc.mounted) Navigator.of(dc).pop();
+  status.dispose();
+  // 整包导入不走后台队列,队列那条「每份识别完就 bump」在这里不会发生;不 bump
+  // 的话档案/趋势屏监听不到变化,导完还显示旧列表。
+  if ((last?.succeeded ?? 0) > 0) bumpVaultRevision();
+
+  final String msg;
+  if (streamError != null || last == null) {
+    msg = '病历包导入失败:${streamError ?? '没有收到任何进度'}';
+  } else if (last!.error != null) {
+    msg = '病历包导入失败:${last!.error}';
+  } else {
+    final skipped = last!.total - last!.succeeded;
+    final tail = skipped > 0 ? ',跳过 $skipped 份(已存在、读不到或校验不符;明细见日志)' : '';
+    msg = '导入完成:成功 ${last!.succeeded} 份$tail';
+  }
+  probe.showSnackBar(appSnackBar(content: Text(msg)));
+  return const ImportRunResult([]);
+}
+
 /// 添加来源:拍照(含文档扫描器)/ 从相册选 / 选择文件。`public`——除了本文件的
 /// [showImportSheet],「医生代拍」临时会话流程(`screens/doctor/proxy_intake_flow.dart`)
 /// 也复用 [pickImportItems] 拿取件入口(自己另起一个只含「拍照/选择文件」的选择
 /// 表,不复用 `showImportSheet` 的三选一 UI)。
-enum ImportChoice { camera, gallery, files }
+enum ImportChoice { camera, gallery, files, bundle }
 
 /// 按 [choice] 走对应的原生取件器,返回待导入项(用户取消为空列表)。**纯取件,
 /// 不碰 OCR/落库**——OCR 识别出来的文字、往哪个病历箱落库,都由调用方在拿到
@@ -432,6 +562,10 @@ Future<List<PendingImport>> pickImportItems(
         _report(probe, choice, ImportCaptureIssue.pickerThrew, '打不开相册:$e');
         return const [];
       }
+    case ImportChoice.bundle:
+      // 不可达:`runImport` 在取件之前就把它分流给 `_runBundleImport` 了。留这条
+      // 只为 switch 穷尽。
+      return const [];
     case ImportChoice.files:
       try {
         final result = await FilePicker.platform.pickFiles(
@@ -656,9 +790,9 @@ Future<ImportRunResult> _runImport(
   } catch (e) {
     debugPrint('[import] 读不到当前病历箱根目录,这一批没有排队: $e');
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        appSnackBar(content: const Text('病历还没打开,这次没能添加')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(appSnackBar(content: const Text('病历还没打开,这次没能添加')));
     }
     return const ImportRunResult([]);
   }
@@ -980,7 +1114,12 @@ class _SheetTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(MedShape.s4, 0, MedShape.s4, MedShape.s1),
+      padding: const EdgeInsets.fromLTRB(
+        MedShape.s4,
+        0,
+        MedShape.s4,
+        MedShape.s1,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -997,8 +1136,15 @@ class _SheetTile extends StatelessWidget {
             // 点击区域是上面那一整行图标+标题(MedSheetOption 自带的
             // InkWell);这句说明文字不参与点击。
             padding: const EdgeInsets.fromLTRB(
-              MedSheetOption.hPad + MedBrand.iconSlot + MedShape.s2, 0, MedShape.s2, 0),
-            child: Text(subtitle, style: MedType.secondary.copyWith(color: c.ink3)),
+              MedSheetOption.hPad + MedBrand.iconSlot + MedShape.s2,
+              0,
+              MedShape.s2,
+              0,
+            ),
+            child: Text(
+              subtitle,
+              style: MedType.secondary.copyWith(color: c.ink3),
+            ),
           ),
         ],
       ),

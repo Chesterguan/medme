@@ -29,6 +29,16 @@ lopdf.workspace = true
 # 从「间接可达」提到「pipeline 自己也直接声明」,版本号照抄 ocr/Cargo.toml,
 # Cargo.lock 里已经解析过这个版本,不会触发新的网络下载。
 image = "0.25"
+# 结构化导入(`bundle::import_bundle`,吃 myEHR Epic 适配器包):读 manifest /
+# sidecar 要 serde;sidecar 合法性与 `deid::verify` 计数要 deid。三个都早在
+# workspace 与两份 Cargo.lock 里,只是 pipeline 之前没直接声明。
+serde.workspace = true
+serde_json.workspace = true
+deid = { path = "../deid" }
+# **新依赖**:包以 zip 形式进手机(spec §5.3),按 manifest 列的名字从归档直接读
+# 进内存,不解压到磁盘。只开 deflate(Finder/`zip -r` 的默认压缩法),不要
+# bzip2/zstd/lzma/aes 那些 C 依赖。
+zip = { version = "7", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile.workspace = true
