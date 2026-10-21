@@ -3,8 +3,10 @@ use core_model::{DocType, NewDocument, NewImagingInstance, NewOcr, OcrBackendKin
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
+mod bundle;
 mod merge;
 pub mod photo;
+pub use bundle::{import_bundle, BundleReport};
 pub use photo::compress_photo;
 
 /// 原件真实页数(多页 TIFF → >1,其余一律 1)。转出给移动端 crate 用:它在
@@ -412,6 +414,7 @@ pub fn ingest_with_dicom_parser(
             imp.deduped,
             &BTreeMap::new(),
             (None, None),
+            None,
         );
     }
 
@@ -547,6 +550,10 @@ struct CarriedOcr {
 /// 的长文本里猜。理由见 `merge_documents_into_pdf` 里那段注释。普通导入传
 /// `(None, None)`,照旧走 `parser::guess_date_range` —— 两头都空本来就是「不知道」,
 /// 与「没传」是同一件事,不必再包一层 `Option`。
+// 8 个参数:`carried`(合并照片带过来的文字)、`date_span`、`typed` 三个「覆盖项」
+// 各来自一条不同的入库路径(合并 / 结构化导入),合成一个 struct 只是把同样的
+// 八样东西换个地方摆,调用方反而要多写一层。
+#[allow(clippy::too_many_arguments)]
 fn ingest_pdf(
     vault: &Vault,
     sid: i64,
@@ -555,6 +562,10 @@ fn ingest_pdf(
     deduped: bool,
     carried: &BTreeMap<i32, CarriedOcr>,
     date_span: (Option<DateTime<Utc>>, Option<DateTime<Utc>>),
+    // 结构化导入(`bundle`)给的类型 + 标题:包里已经定好了,不再 `classify`、
+    // 标题也不用文件名。`None` = 老行为。`DocumentAdded` 对同一文件只写一次,
+    // 这里就是唯一能把它写对的机会。
+    typed: Option<(DocType, String)>,
 ) -> anyhow::Result<IngestOutcome> {
     let mixed = match ocr::recognize_pdf_mixed(bytes) {
         Ok(m) => m,
@@ -675,7 +686,10 @@ fn ingest_pdf(
         outcome.pages_without_text = pages_without_text;
         return Ok(outcome);
     }
-    let doc_type = parser::classify(&text);
+    let (doc_type, title) = match typed {
+        Some((t, title)) => (t, title),
+        None => (parser::classify(&text), name.to_string()),
+    };
     let (doc_date, doc_date_end) = match date_span {
         (None, None) => parser::guess_date_range(&text),
         span => span,
@@ -685,7 +699,7 @@ fn ingest_pdf(
         doc_type: doc_type.clone(),
         doc_date,
         doc_date_end,
-        title: Some(name.to_string()),
+        title: Some(title),
         language: parser::detect_language(&text),
         page_count,
     })?;
@@ -1009,6 +1023,7 @@ pub fn merge_documents_into_pdf(
         imp.deduped,
         &carried,
         date_span,
+        None,
     )?;
 
     // 新文档确认建成(上面两行没有提前返回 Err)才轮到删旧的——见本函数文档
