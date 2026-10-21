@@ -146,6 +146,10 @@ struct Index {
     drug_aliases: HashMap<String, AliasHit>,
     /// drug 的 OCR 混淆表(同上,按类别分)。
     drug_confusions: HashMap<String, AliasHit>,
+    /// LOINC 码 -> 化验/体征条目(药不进表)。给带码的结构化导入(Epic 适配器包)
+    /// 用:名字认不出时按码反查。字典里 `14749-6` 挂了两条(glucose 与同族),
+    /// 先到先得——反查只是名字落空后的兜底,先到的那条就是通用的那条。
+    loinc: HashMap<String, usize>,
 }
 
 /// Normalization applied to BOTH index keys and query terms so lookups are
@@ -209,9 +213,13 @@ fn build_index() -> Index {
     let mut confusions: HashMap<String, AliasHit> = HashMap::new();
     let mut drug_aliases: HashMap<String, AliasHit> = HashMap::new();
     let mut drug_confusions: HashMap<String, AliasHit> = HashMap::new();
+    let mut loinc: HashMap<String, usize> = HashMap::new();
 
     for (entry_idx, entry) in dict.entries.iter().enumerate() {
         let is_drug = entry.category == Category::Drug;
+        if let (false, Some(code)) = (is_drug, entry.codes.loinc.as_deref()) {
+            loinc.entry(code.trim().to_string()).or_insert(entry_idx);
+        }
         for alias in &entry.aliases {
             let norm = normalize_term(alias);
             let hit = AliasHit {
@@ -254,6 +262,7 @@ fn build_index() -> Index {
         confusions,
         drug_aliases,
         drug_confusions,
+        loinc,
     }
 }
 
@@ -912,6 +921,23 @@ fn fuzzy_lookup(name: &str, unit: Option<&str>) -> Option<Match> {
     Some(idx.to_match(&hit, FUZZY_CONFIDENCE))
 }
 
+/// 按 LOINC 码反查字典条目(只化验/体征)。给带码的结构化导入兜底:名字
+/// `resolve` 不出来、但 sidecar 给了码时用。码是适配器给的、不是原文,所以调用方
+/// 应当**名字优先**。`matched_alias` 回传的是码本身,`confidence` 1.0(码是精确键)。
+pub fn resolve_loinc(code: &str) -> Option<Match> {
+    let code = code.trim();
+    if code.is_empty() {
+        return None;
+    }
+    let idx = index();
+    let entry_idx = *idx.loinc.get(code)?;
+    let hit = AliasHit {
+        entry_idx,
+        alias: code.to_string(),
+    };
+    Some(idx.to_match(&hit, 1.0))
+}
+
 /// 报告一行(项名 + 单位)→ 概念。**提取层该用的入口**,不是 [`normalize`]。
 ///
 /// 拆候选后**不是「第一个命中即用」** —— 那样结果取决于候选顺序,很脆:
@@ -1147,6 +1173,20 @@ pub fn panel_for(key: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resolve_loinc_finds_lab_by_code() {
+        let m = super::resolve_loinc("14682-9").expect("creatinine LOINC in dictionary");
+        assert_eq!(m.key, "creatinine");
+        assert_eq!(m.matched_alias, "14682-9");
+        assert_eq!(m.confidence, 1.0);
+        assert_eq!(
+            super::resolve_loinc(" 14682-9 ").map(|m| m.key).as_deref(),
+            Some("creatinine")
+        );
+        assert!(super::resolve_loinc("0000-0").is_none());
+        assert!(super::resolve_loinc("").is_none());
+    }
+
     use super::*;
 
     /// Every analyte/vital/drug key required by docs/015 §3.5. The dictionary
