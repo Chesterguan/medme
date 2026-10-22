@@ -308,6 +308,242 @@ pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section 
     )
 }
 
+// ─────────────────────────── 现在:用药表 ───────────────────────────
+
+/// 用药 stale 默认阈值(§9 第 3 条):慢病门诊常隔 3–6 个月,90 天误报太多。
+pub(crate) const STALE_DAYS: i64 = 180;
+
+/// 剂量键 = 剂量串里第一个数字 + 紧跟的单位 token,小写(`5mg qd`、`5 mg daily`、
+/// `5mg daily` 同键;频次不进键;`5mg/ml` 取到 `5mg` 为止)。没有数字 → `None`。
+pub(crate) fn dose_key(dose: &str) -> Option<String> {
+    let chars: Vec<char> = dose.chars().collect();
+    let start = chars.iter().position(|c| c.is_ascii_digit())?;
+    let mut i = start;
+    let mut out = String::new();
+    while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+        out.push(chars[i]);
+        i += 1;
+    }
+    while i < chars.len() && chars[i] == ' ' {
+        i += 1;
+    }
+    while i < chars.len() && (chars[i].is_ascii_alphabetic() || matches!(chars[i], 'µ' | 'μ' | '%'))
+    {
+        out.push(chars[i].to_ascii_lowercase());
+        i += 1;
+    }
+    Some(out)
+}
+
+/// 这一行写了停药吗。只认写在原文里的:中文 `停用|停药|停服|已停`,英文整词
+/// `discontinued|stopped|stop taking|dc'd|d/c'd`(大小写不敏感)。裸 `d/c`、
+/// `discharge`、`stoppage` 不算 —— 这里**不**判「停的是哪味药」,调用方只对含药名的行调它。
+pub(crate) fn is_stop_line(line: &str) -> bool {
+    const CN: &[&str] = &["停用", "停药", "停服", "已停"];
+    const EN: &[&str] = &["discontinued", "stopped", "stop taking", "dc'd", "d/c'd"];
+    if CN.iter().any(|k| line.contains(k)) {
+        return true;
+    }
+    let lower = line.to_ascii_lowercase();
+    EN.iter().any(|k| {
+        lower.match_indices(k).any(|(start, _)| {
+            let end = start + k.len();
+            let before = lower[..start].chars().next_back();
+            let after = lower[end..].chars().next();
+            !before.is_some_and(|c| c.is_ascii_alphanumeric())
+                && !after.is_some_and(|c| c.is_ascii_alphanumeric())
+        })
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Stopped {
+    at: String,
+    evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MedRow {
+    name: String,
+    raw_name: String,
+    dose: Option<String>,
+    /// 「记录中自 YYYY-MM-DD 起」:该剂量键连续出现的起点。
+    since: Option<String>,
+    first_seen: Option<String>,
+    last_seen: Option<String>,
+    days_since: Option<i64>,
+    stale: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stopped: Option<Stopped>,
+    family: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    family_note: Option<&'static str>,
+    evidence: Vec<String>,
+    unverified: bool,
+}
+
+/// 一味药的进程泳道(剂量变化 + 原文写了的停药),给 `journey_section` 用。
+pub(crate) struct MedLane {
+    pub(crate) key: String,
+    pub(crate) label: String,
+    pub(crate) nodes: Vec<state::Node>,
+}
+
+/// 某次提及所在文档里,含药名**且**写了停药的那一整行。
+fn stop_line_of(ctx: &Ctx<'_>, m: &parser::MedMention) -> Option<String> {
+    let d = ctx.docs.iter().find(|d| d.index == m.source)?;
+    let name = m.raw_name.to_ascii_lowercase();
+    d.text
+        .lines()
+        .map(str::trim)
+        .find(|l| l.to_ascii_lowercase().contains(&name) && is_stop_line(l))
+        .map(str::to_string)
+}
+
+fn med_row(ctx: &Ctx<'_>, m: &parser::MedSpan, book: &mut EvidenceBook) -> (MedRow, MedLane) {
+    // 提及已按日期升序(无日期在最后);这里只看有日期的。
+    let dated: Vec<&parser::MedMention> = m.mentions.iter().filter(|x| x.date.is_some()).collect();
+    let mut nodes: Vec<state::Node> = Vec::new();
+    let mut prev_key: Option<String> = None;
+    let mut prev_dose: Option<String> = None;
+    let mut stopped: Option<Stopped> = None;
+    // 「自何日起」的候选:当前剂量键连续出现的起点;剂量键变了或中间有停药就重置。
+    let mut since: Option<NaiveDate> = None;
+    for x in &dated {
+        if let Some(line) = stop_line_of(ctx, x) {
+            let id = book.cite(
+                ctx,
+                Some(x.source),
+                &line,
+                &[],
+                &x.origin,
+                !x.unverified,
+                None,
+                true,
+            );
+            let at = x.date.map(|d| d.to_string()).unwrap_or_default();
+            nodes.push(state::Node {
+                at: Some(at.clone()),
+                kind: "stopped".into(),
+                from: prev_dose.clone(),
+                to: "病历写了停药".into(),
+                text: Some(line),
+                equiv_mg_per_day: None,
+                evidence: vec![id.clone()],
+                unverified: x.unverified,
+            });
+            stopped = Some(Stopped { at, evidence: id });
+            since = None;
+            prev_key = None;
+            continue;
+        }
+        let Some(dose) = x.dose.as_deref() else {
+            continue;
+        };
+        let key = dose_key(dose);
+        if key.is_none() {
+            continue;
+        }
+        // 停之后又出现带剂量的提及 → 回到正常行,停那一次只留在泳道里。
+        stopped = None;
+        if key != prev_key {
+            let num = state::dose_number(dose);
+            let id = book.cite(
+                ctx,
+                Some(x.source),
+                &x.raw_name,
+                &[num.as_str()],
+                &x.origin,
+                !x.unverified,
+                None,
+                true,
+            );
+            nodes.push(state::Node {
+                at: x.date.map(|d| d.to_string()),
+                kind: if prev_key.is_none() {
+                    "first"
+                } else {
+                    "change"
+                }
+                .into(),
+                from: prev_dose.clone(),
+                to: dose.to_string(),
+                text: Some(x.raw_name.clone()),
+                equiv_mg_per_day: None,
+                evidence: vec![id],
+                unverified: x.unverified,
+            });
+            since = x.date;
+            prev_key = key;
+        }
+        prev_dose = Some(dose.to_string());
+    }
+    let (family, family_note) = crate::generic_tables::family_of_atc(m.atc.as_deref());
+    let days_since = m.end.map(|e| (ctx.today - e).num_days());
+    let row = MedRow {
+        name: m.name.clone(),
+        raw_name: m.latest_raw_name.clone().unwrap_or_else(|| m.name.clone()),
+        dose: m.latest_dose.clone(),
+        since: if stopped.is_some() {
+            None
+        } else {
+            since.map(|d| d.to_string())
+        },
+        first_seen: m.start.map(|d| d.to_string()),
+        last_seen: m.end.map(|d| d.to_string()),
+        days_since,
+        stale: days_since.is_some_and(|n| n > STALE_DAYS),
+        stopped,
+        family,
+        family_note,
+        evidence: state::cite_span(ctx, book, m),
+        unverified: m.unverified,
+    };
+    let lane = MedLane {
+        key: format!(
+            "med:{}",
+            m.drug_key.clone().unwrap_or_else(|| m.name.clone())
+        ),
+        label: m.name.clone(),
+        nodes,
+    };
+    (row, lane)
+}
+
+/// 用药表(spec §3.2)。`exclude` 是 `ctx.clinical.meds` 里被包的状态行替换掉的下标。
+pub(crate) fn med_section(
+    ctx: &Ctx<'_>,
+    book: &mut EvidenceBook,
+    exclude: &[usize],
+) -> (Section, Vec<MedLane>) {
+    let mut rows: Vec<MedRow> = Vec::new();
+    let mut lanes: Vec<MedLane> = Vec::new();
+    for (i, m) in ctx.clinical.meds.iter().enumerate() {
+        if exclude.contains(&i) {
+            continue;
+        }
+        let (row, lane) = med_row(ctx, m, book);
+        rows.push(row);
+        lanes.push(lane);
+    }
+    // 停了的沉底;其余按最近记录日倒序,无日期最后,并列按名字。
+    rows.sort_by(|a, b| {
+        a.stopped
+            .is_some()
+            .cmp(&b.stopped.is_some())
+            .then(b.last_seen.is_some().cmp(&a.last_seen.is_some()))
+            .then(b.last_seen.cmp(&a.last_seen))
+            .then(a.name.cmp(&b.name))
+    });
+    let section = general_section(
+        "med_table",
+        "general_meds",
+        "现在",
+        serde_json::json!({ "rows": rows, "stale_after_days": STALE_DAYS }),
+    );
+    (section, lanes)
+}
+
 // ─────────────────────────── 装配 ───────────────────────────
 
 /// 通用层 + 每个**开着的**包叠在后面(spec §4)。**纯函数**。
@@ -325,6 +561,8 @@ pub fn materialize_generic(
     let ctx = Ctx::build(docs, events, today);
     let mut book = EvidenceBook::default();
     let mut sections = vec![family_section(&ctx, &mut book)];
+    let (meds, _med_lanes) = med_section(&ctx, &mut book, &[]);
+    sections.push(meds);
     sections.push(general_section(
         "evidence",
         "general_evidence",
@@ -358,5 +596,37 @@ pub fn materialize_generic(
         disclaimer: "只整理你病历里已有的记录,不做诊断。".into(),
         sections,
         sources,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dose_key_is_first_number_plus_unit() {
+        assert_eq!(dose_key("5mg qd").as_deref(), Some("5mg"));
+        assert_eq!(dose_key("5 mg daily").as_deref(), Some("5mg"));
+        assert_eq!(dose_key("5mg").as_deref(), Some("5mg"));
+        assert_eq!(dose_key("0.5g bid").as_deref(), Some("0.5g"));
+        assert_eq!(dose_key("5mg/ml").as_deref(), Some("5mg"));
+        assert_eq!(dose_key("qd"), None);
+        assert_eq!(dose_key(""), None);
+        assert_eq!(dose_key("5").as_deref(), Some("5"));
+    }
+
+    #[test]
+    fn stop_line_only_matches_written_discontinuation() {
+        assert!(is_stop_line(
+            "Voriconazole discontinued after 24 weeks of therapy."
+        ));
+        assert!(is_stop_line("Stopped warfarin due to bleeding"));
+        assert!(is_stop_line("停用阿司匹林"));
+        assert!(is_stop_line("华法林已停"));
+        assert!(is_stop_line("Lisinopril dc'd"));
+        assert!(!is_stop_line("d/c summary reviewed."));
+        assert!(!is_stop_line("Discharge medications: Warfarin 5mg"));
+        assert!(!is_stop_line("Metoprolol 25mg twice daily"));
+        assert!(!is_stop_line("stoppage"));
     }
 }
