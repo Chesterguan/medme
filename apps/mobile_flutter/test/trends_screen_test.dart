@@ -26,11 +26,13 @@ Widget wrap(Widget child, {double textScale = 1.0}) => MaterialApp(
 
 /// 病程档案那一块的假口子:这一屏的测试不关心它的内容,只要它别去碰 FFI 与网络
 /// (卡片自己的三态由 `test/disease_profile_card_test.dart` 验)。
+/// 空箱子、一个病种包都没装:通用视图里一条诊断、一种药都没有(2026-10-22 通用病程档案)。
 DiseaseProfileSource noProfilePackage() => DiseaseProfileSource(
   installed: () async => const [],
   view: (id) async => '{}',
   record: (kind, pkg, at) async {},
   refresh: () async {},
+  general: () async => '{"package_id":"general","sections":[],"packages":[],"documents":[]}',
 );
 
 void useNarrowPhone(WidgetTester tester) {
@@ -148,7 +150,7 @@ void main() {
   });
 
   // ── 整屏:s2 的顺序是固定的 ─────────────────────────────────────────────────
-  testWidgets('整屏按 s2 自上而下摆;病程档案没内容时不占位', (tester) async {
+  testWidgets('整屏按 s2 自上而下摆;病程档案没内容时只写一行', (tester) async {
     // 注入 `load` 就一次 FFI 都不碰,整屏 pump 得起来(与 `ForDoctorScreen.load`
     // 同一手法)。视口拉高是为了让 `ListView` 一次把六块都布局出来,
     // 好按 y 坐标比顺序 —— 顺序只能整屏验,逐块 pump 验不到。
@@ -203,10 +205,10 @@ void main() {
     expect(dy('关键化验'), lessThan(dy('肌酐')));
     expect(dy('肌酐'), lessThan(dy('最近就诊')));
     expect(dy('最近就诊'), lessThan(dy('记录一下')));
-    // ① 病程档案入口**恒在**(mockup `s2` 的第一块)。这一屏的测试里一个病种包都
-    // 没装上,所以它说的是「还没准备好」——「装上了 / 开启了」那两态在
-    // `test/disease_profile_card_test.dart` 里验。
-    expect(find.textContaining('还没准备好'), findsOneWidget);
+    // ① 病程档案入口**恒在**(mockup `s2` 的第一块)。这一屏的箱子是空的、一个病种包
+    // 都没装上,所以它只写一行「还没有诊断或用药记录」(2026-10-22 spec §4 门槛)——
+    // 有内容的那几态在 `test/generic_profile_test.dart` 里验。
+    expect(find.textContaining('还没有诊断或用药记录'), findsOneWidget);
     // 顶栏只有「趋势」两个字,不加成员 chip(s2)。
     expect(find.text('趋势'), findsOneWidget);
   });
