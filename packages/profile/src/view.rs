@@ -37,6 +37,10 @@ pub struct Section {
     /// `Some(提示语)` = 这块**没数据**,折叠成一行(spec §5.6);`None` = 展开。
     pub empty_hint: Option<String>,
     pub body: serde_json::Value,
+    /// 这一段属于谁:通用层恒 `"general"`,包段为包 id(2026-10-22 通用病程档案 spec §4)。
+    /// 单包路径(`materialize`)恒 `None` 且**不序列化** —— 两份 SLE golden 逐字节不变。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
