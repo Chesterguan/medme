@@ -66,6 +66,8 @@ pub struct ConditionMention {
     /// `2型糖尿病(E11.9)`), captured verbatim, `None` when the note prints none.
     /// Never derived — stripped out of `raw_text`, kept here for FHIR groundwork.
     pub icd_code: Option<String>,
+    /// 云抽取图片模式没逐字核上的条目(`deid::DiagnosisItem::unverified`);正则路径恒 `false`。
+    pub unverified: bool,
 }
 
 /// A diagnosis-section label **anywhere on a line**: a boundary, an optional list
@@ -242,6 +244,7 @@ pub fn extract_conditions(text: &str) -> Vec<ConditionMention> {
         |dx: String, section: &str, icd: Option<String>, out: &mut Vec<ConditionMention>| {
             if seen.insert((dx.clone(), section.to_string())) {
                 out.push(ConditionMention {
+                    unverified: false,
                     raw_text: dx,
                     section: Some(section.to_string()),
                     icd_code: icd,

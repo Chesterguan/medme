@@ -226,6 +226,8 @@ pub struct AggregatedCondition {
     pub icd_code: Option<String>,
     /// All [`SourceDoc::index`] that mention it, deduped, ascending.
     pub sources: Vec<usize>,
+    /// 任一来源是云抽取图片模式没核上的(`ConditionMention::unverified`)。
+    pub unverified: bool,
 }
 
 /// The derived clinical layer: analyte trends, med spans, and conditions.
@@ -652,6 +654,7 @@ struct CondBuilder {
     onset: Option<NaiveDate>,
     icd_code: Option<String>,
     sources: BTreeSet<usize>,
+    unverified: bool,
 }
 
 /// Build a [`LabObservation`] from one structured self-measured value
@@ -1072,7 +1075,15 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         if is_manual_entry {
             continue;
         }
-        for c in extract_conditions(doc.text) {
+        // 与 labs/meds 同一条规矩:有抽取 JSON、能解析、**且真读出了诊断**才用它
+        // (sidecar 的 ICD 从这里进来,英文病历正则本来就零条);零条或没有 JSON 退回正则。
+        let doc_conds = doc
+            .extraction_json
+            .and_then(|j| crate::extraction::diagnoses_from_json(j).ok())
+            .filter(|p| !p.conditions.is_empty())
+            .map(|p| p.conditions)
+            .unwrap_or_else(|| extract_conditions(doc.text));
+        for c in doc_conds {
             let raw = c.raw_text.trim().to_string();
             if raw.is_empty() {
                 continue;
@@ -1082,12 +1093,14 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 onset: None,
                 icd_code: None,
                 sources: BTreeSet::new(),
+                unverified: false,
             });
             b.onset = min_date(b.onset, doc.date);
             // First document that printed a code for this diagnosis wins.
             if b.icd_code.is_none() {
                 b.icd_code = c.icd_code;
             }
+            b.unverified |= c.unverified;
             b.sources.insert(doc.index);
         }
     }
@@ -1145,6 +1158,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             onset: b.onset,
             icd_code: b.icd_code,
             sources: b.sources.into_iter().collect(),
+            unverified: b.unverified,
         })
         .collect();
     cond_out.sort_by(|a, b| {
@@ -1182,6 +1196,70 @@ mod tests {
             .iter()
             .find(|s| s.analyte_key.as_deref() == Some(key))
             .unwrap_or_else(|| panic!("no series for {key}"))
+    }
+
+    /// D0(2026-10-22 通用病程档案 spec §3.0):有抽取 JSON 且 `diagnoses` 非空的文档,
+    /// 诊断**只**用 JSON(英文病历正则本来就零条);JSON 零条或没有 JSON 退回正则 ——
+    /// 与 labs/meds 同一条「零条也退回」规矩。
+    fn cond_texts(agg: &AggregatedClinical) -> Vec<String> {
+        agg.conditions.iter().map(|c| c.raw_text.clone()).collect()
+    }
+
+    #[test]
+    fn extraction_diagnoses_present_replace_regex_conditions() {
+        let j = r#"{"diagnoses":[{"text":"Aortic stenosis","icd":"I35.0"},{"text":"Hypertension","icd":"","unverified":true}]}"#;
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("discharge_summary".into()),
+            title: None,
+            extraction_json: Some(j),
+            date: d(2026, 1, 1),
+            text: "出院记录\n诊断:2型糖尿病\nDiagnoses: Aortic stenosis I35.0; Hypertension",
+        }];
+        let agg = aggregate(&docs);
+        assert_eq!(cond_texts(&agg), vec!["Aortic stenosis", "Hypertension"]);
+        let a = agg
+            .conditions
+            .iter()
+            .find(|c| c.raw_text == "Aortic stenosis")
+            .unwrap();
+        assert_eq!(a.icd_code.as_deref(), Some("I35.0"));
+        assert!(!a.unverified);
+        assert!(
+            agg.conditions
+                .iter()
+                .find(|c| c.raw_text == "Hypertension")
+                .unwrap()
+                .unverified
+        );
+    }
+
+    #[test]
+    fn extraction_diagnoses_empty_falls_back_to_regex() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("discharge_summary".into()),
+            title: None,
+            extraction_json: Some(r#"{"diagnoses":[]}"#),
+            date: d(2026, 1, 1),
+            text: "出院记录\n诊断:2型糖尿病",
+        }];
+        assert_eq!(cond_texts(&aggregate(&docs)), vec!["2型糖尿病"]);
+    }
+
+    #[test]
+    fn no_extraction_json_keeps_regex_conditions() {
+        let docs = vec![SourceDoc {
+            index: 0,
+            doc_type: Some("discharge_summary".into()),
+            title: None,
+            extraction_json: None,
+            date: d(2026, 1, 1),
+            text: "出院记录\n诊断:2型糖尿病",
+        }];
+        let agg = aggregate(&docs);
+        assert_eq!(cond_texts(&agg), vec!["2型糖尿病"]);
+        assert!(!agg.conditions[0].unverified);
     }
 
     /// 同一份文档:`extraction_json` 给「白细胞计数」,`text` 里写的是「肌酐」的

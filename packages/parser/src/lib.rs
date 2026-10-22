@@ -21,7 +21,10 @@ pub use aggregate::{
     MedSpan, SourceDoc,
 };
 pub use conditions::{extract_conditions, ConditionMention};
-pub use extraction::{labs_from_json, meds_from_json, LabsFromJson, MedsFromJson};
+pub use extraction::{
+    diagnoses_from_json, labs_from_json, meds_from_json, DiagnosesFromJson, LabsFromJson,
+    MedsFromJson,
+};
 pub use handoff::{assemble_summary, match_disease};
 pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};
