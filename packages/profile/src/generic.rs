@@ -544,6 +544,212 @@ pub(crate) fn med_section(
     (section, lanes)
 }
 
+// ─────────────────────────── 进程 ───────────────────────────
+
+fn doc_node(
+    ctx: &Ctx<'_>,
+    d: &crate::rules::Doc<'_>,
+    text: Option<String>,
+    book: &mut EvidenceBook,
+) -> state::Node {
+    let id = book.cite_doc(ctx, d.index);
+    state::Node {
+        at: d.date.map(|x| x.to_string()),
+        kind: "doc".into(),
+        from: None,
+        to: d.title.clone().unwrap_or_default(),
+        text,
+        equiv_mg_per_day: None,
+        evidence: vec![id],
+        unverified: false,
+    }
+}
+
+/// 住院/急诊节点:`起 → 止 · 住院 N 天`(N = 出院 − 入院,同日/缺止日/止早于起 记 1,
+/// 与时间线页同口径);依据 = 该次就诊的每份文档(整份)。
+fn encounter_node(ctx: &Ctx<'_>, e: &EncounterRef, book: &mut EvidenceBook) -> state::Node {
+    let start = e.start.map(|d| d.to_string()).unwrap_or_default();
+    // 止日早于起日当缺止日(数据坏了就只写起日,不出负数)。
+    let end = e.end.filter(|t| e.start.is_none_or(|s| *t >= s));
+    let to = match (e.start, end) {
+        (Some(s), Some(t)) if e.kind == "inpatient" => {
+            let days = (t - s).num_days().max(1);
+            format!("{s} → {t} · 住院 {days} 天")
+        }
+        (Some(s), _) if e.kind == "inpatient" => format!("{s} · 住院 1 天"),
+        (Some(s), _) => s.to_string(),
+        (None, _) => e.title.clone().unwrap_or_default(),
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(p) = &e.provider {
+        parts.push(p.clone());
+    }
+    if !e.doc_indices.is_empty() {
+        parts.push(format!("{} 份", e.doc_indices.len()));
+    }
+    let evidence: Vec<String> = e
+        .doc_indices
+        .iter()
+        .map(|&i| book.cite_doc(ctx, i))
+        .collect();
+    state::Node {
+        at: (!start.is_empty()).then_some(start),
+        kind: e.kind.clone(),
+        from: None,
+        to,
+        text: (!parts.is_empty()).then(|| parts.join(" · ")),
+        equiv_mg_per_day: None,
+        evidence,
+        unverified: false,
+    }
+}
+
+fn make_lane(key: &str, label: &str, severity: &str, mut nodes: Vec<state::Node>) -> state::Lane {
+    state::sort_nodes(&mut nodes);
+    state::Lane {
+        key: key.into(),
+        label: label.into(),
+        quality: state::quality(&nodes).into(),
+        severity: severity.into(),
+        nodes,
+    }
+}
+
+pub(crate) fn journey_section(
+    ctx: &Ctx<'_>,
+    encounters: &[EncounterRef],
+    med_lanes: Vec<MedLane>,
+    book: &mut EvidenceBook,
+) -> Section {
+    let mut lanes: Vec<state::Lane> = Vec::new();
+    for (kind, key, label) in [
+        ("inpatient", "enc_inpatient", "住院"),
+        ("emergency", "enc_emergency", "急诊"),
+    ] {
+        let nodes: Vec<state::Node> = encounters
+            .iter()
+            .filter(|e| e.kind == kind)
+            .map(|e| encounter_node(ctx, e, book))
+            .collect();
+        lanes.push(make_lane(key, label, "high", nodes));
+    }
+    for (doc_type, key, label) in [
+        ("surgery", "surgery", "手术"),
+        ("imaging_report", "imaging", "影像"),
+        ("pathology", "pathology", "病理"),
+    ] {
+        let nodes: Vec<state::Node> = ctx
+            .docs
+            .iter()
+            .filter(|d| d.doc_type.as_deref() == Some(doc_type))
+            .map(|d| {
+                let text = match doc_type {
+                    "imaging_report" => parser::imaging_impression(d.text),
+                    "pathology" => parser::pathology_impression(d.text),
+                    _ => None,
+                };
+                doc_node(ctx, d, text, book)
+            })
+            .collect();
+        lanes.push(make_lane(key, label, "normal", nodes));
+    }
+    for m in med_lanes {
+        lanes.push(make_lane(&m.key, &m.label, "normal", m.nodes));
+    }
+    // 诊断首次出现:每族一条,节点 = 该族每条诊断的首次提及。
+    let merged = merge_diagnoses(ctx);
+    let mut per_family: BTreeMap<&'static str, Vec<state::Node>> = BTreeMap::new();
+    for b in merged.values() {
+        let fam = match b.code.as_deref() {
+            Some(c) => family_of_icd(c).0,
+            None => "uncoded",
+        };
+        // 最早那份文档里的那种写法。
+        let Some((text, doc)) = b
+            .variants
+            .iter()
+            .flat_map(|(t, srcs)| srcs.iter().map(move |s| (t, *s)))
+            .min_by_key(|(_, s)| (doc_date(ctx, *s).is_none(), doc_date(ctx, *s), *s))
+        else {
+            continue;
+        };
+        let id = book.cite(
+            ctx,
+            Some(doc),
+            text,
+            &[],
+            doc_origin(ctx, doc),
+            !b.unverified,
+            None,
+            true,
+        );
+        per_family.entry(fam).or_default().push(state::Node {
+            at: b.first_seen.map(|d| d.to_string()),
+            kind: "first".into(),
+            from: None,
+            to: match &b.code {
+                Some(c) => format!("{text} · {c}"),
+                None => text.clone(),
+            },
+            text: None,
+            equiv_mg_per_day: None,
+            evidence: vec![id],
+            unverified: b.unverified,
+        });
+    }
+    for (key, label) in FAMILIES {
+        if let Some(nodes) = per_family.remove(key) {
+            lanes.push(make_lane(
+                &format!("dx:{key}"),
+                &format!("诊断 · {label}"),
+                "normal",
+                nodes,
+            ));
+        }
+    }
+    // 排序沿用三视图 spec §9 决定 3:有核过节点的先、需核对的后;空道不出(折叠)。
+    lanes.retain(|l| !l.nodes.is_empty());
+    let rank = |l: &state::Lane| match l.quality.as_str() {
+        "verified" => 0,
+        _ => 1,
+    };
+    lanes.sort_by_key(rank);
+    general_section(
+        "journey",
+        "general_journey",
+        "进程",
+        serde_json::json!({ "lanes": lanes }),
+    )
+}
+
+/// 开着的包用自己的状态行替换通用层对同一批药的行(spec §4):包 `state_vars` 里
+/// `latest_dose`/`ratio_to_weight` 声明的药类,命中 `rules::drug_class` 的 `MedSpan` 下标。
+fn replaced_by_packages(
+    ctx: &Ctx<'_>,
+    events: &[parser::ProfileEvent],
+    installed: &[Package],
+) -> Vec<usize> {
+    let mut out = Vec::new();
+    for pkg in installed {
+        if !crate::is_enabled(events, &pkg.manifest.id) {
+            continue;
+        }
+        let classes: Vec<&str> = pkg
+            .state_vars
+            .iter()
+            .filter(|v| matches!(v.derive.as_str(), "latest_dose" | "ratio_to_weight"))
+            .filter_map(|v| v.drug_class.as_deref())
+            .collect();
+        for (i, m) in ctx.clinical.meds.iter().enumerate() {
+            if crate::rules::drug_class(pkg, m).is_some_and(|d| classes.contains(&d.class.as_str()))
+            {
+                out.push(i);
+            }
+        }
+    }
+    out
+}
+
 // ─────────────────────────── 装配 ───────────────────────────
 
 /// 通用层 + 每个**开着的**包叠在后面(spec §4)。**纯函数**。
@@ -557,12 +763,13 @@ pub fn materialize_generic(
     installed: &[Package],
     today: NaiveDate,
 ) -> ProfileView {
-    let _ = encounters;
     let ctx = Ctx::build(docs, events, today);
     let mut book = EvidenceBook::default();
     let mut sections = vec![family_section(&ctx, &mut book)];
-    let (meds, _med_lanes) = med_section(&ctx, &mut book, &[]);
+    let exclude = replaced_by_packages(&ctx, events, installed);
+    let (meds, med_lanes) = med_section(&ctx, &mut book, &exclude);
     sections.push(meds);
+    sections.push(journey_section(&ctx, encounters, med_lanes, &mut book));
     sections.push(general_section(
         "evidence",
         "general_evidence",
