@@ -1,0 +1,14 @@
+{"doc_type":"clinical_note","doc_date":"2024-07-15",
+ "labs":[
+  {"name":"INR","value":"2.3","unit":"","ref_low":"2.0","ref_high":"3.0","flag":"","loinc":"6301-6"}
+ ],
+ "meds":[
+  {"name":"Warfarin","dose":"5 mg","freq":"daily","route":"","rxnorm":"11289"},
+  {"name":"Metoprolol","dose":"25mg","freq":"twice daily","route":"","rxnorm":"6918"},
+  {"name":"Zebrafoam","dose":"10mg","freq":"daily","route":"","rxnorm":""}
+ ],
+ "diagnoses":[
+  {"text":"Status post AVR","icd":"Z95.2"},
+  {"text":"Long term (current) use of anticoagulants","icd":"Z79.01"},
+  {"text":"Hypertension","icd":""}
+ ]}

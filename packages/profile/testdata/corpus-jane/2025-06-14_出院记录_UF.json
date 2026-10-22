@@ -1,0 +1,14 @@
+{"doc_type":"discharge_summary","doc_date":"2025-06-14",
+ "labs":[
+  {"name":"Galactomannan","value":"1.8","unit":"index","ref_low":"0","ref_high":"0.5","flag":"H","loinc":""},
+  {"name":"CRP","value":"31","unit":"mg/L","ref_low":"0","ref_high":"5","flag":"H","loinc":"1988-5"},
+  {"name":"WBC","value":"9.1","unit":"10*3/uL","ref_low":"4.0","ref_high":"10.0","flag":"","loinc":"6690-2"},
+  {"name":"INR","value":"2.9","unit":"","ref_low":"2.0","ref_high":"3.0","flag":"","loinc":"6301-6"}],
+ "meds":[
+  {"name":"Voriconazole","dose":"200mg","freq":"twice daily","route":"","rxnorm":"121243"},
+  {"name":"Warfarin","dose":"4mg","freq":"daily","route":"","rxnorm":"11289"},
+  {"name":"Metoprolol","dose":"25mg","freq":"twice daily","route":"","rxnorm":"6918"}],
+ "diagnoses":[
+  {"text":"Invasive pulmonary aspergillosis","icd":"B44.1"},
+  {"text":"Status post aortic valve replacement","icd":"Z95.2"},
+  {"text":"Hypertension","icd":""}]}

@@ -1,0 +1,9 @@
+UF Health Shands Hospital
+Patient: Doe, Jane    MRN: 00000000    DOB: 1965-02-11    Sex: F
+OPERATIVE REPORT
+Date of Procedure: 2024-03-03
+Preoperative Diagnosis: Severe aortic stenosis (I35.0)
+Procedure: Surgical aortic valve replacement with 23 mm bioprosthetic valve
+Surgeon: J. Smith, MD
+Findings: Heavily calcified trileaflet aortic valve. Valve excised and replaced without complication.
+Estimated blood loss: 400 mL.

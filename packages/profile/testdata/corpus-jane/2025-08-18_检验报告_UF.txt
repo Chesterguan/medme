@@ -1,0 +1,7 @@
+UF Health Shands Hospital
+Patient: Doe, Jane    MRN: 00000000    DOB: 1965-02-11    Sex: F
+LABORATORY REPORT
+Collected: 2025-08-18
+Galactomannan 0.6 index (0-0.5) H
+CRP 12 mg/L (0-5) H
+Voriconazole level 2.4 ug/mL (1.0-5.5)

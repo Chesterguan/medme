@@ -1,0 +1,15 @@
+UF Health Shands Hospital
+Patient: Doe, Jane    MRN: 00000000    DOB: 1965-02-11    Sex: F
+OFFICE VISIT — Infectious Diseases Clinic
+Visit Date: 2025-11-17
+Assessment:
+1. Invasive pulmonary aspergillosis, resolved (B44.1)
+d/c summary reviewed.
+Patient stopped smoking in 2020.
+Voriconazole discontinued after 24 weeks of therapy.
+Current Medications:
+Warfarin 4mg daily
+Metoprolol 25mg twice daily
+Labs today:
+Galactomannan 0.2 index (0-0.5)
+CRP 3 mg/L (0-5)
