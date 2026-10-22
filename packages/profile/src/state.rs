@@ -143,6 +143,31 @@ impl EvidenceBook {
         id
     }
 
+    /// 整份文档当依据(出院小结、手术记录):`span: None`,只跳到文档;quote 是标题
+    /// (没有就空)。文档在就算核过 —— 这里引的不是一句话,是这一份本身。
+    pub(crate) fn cite_doc(&mut self, ctx: &Ctx<'_>, doc: usize) -> String {
+        let key = (Some(doc), String::new(), "doc".to_string(), String::new());
+        if let Some(id) = self.seen.get(&key) {
+            return id.clone();
+        }
+        let n = self.per_doc.entry(Some(doc)).or_insert(0);
+        *n += 1;
+        let id = format!("ev:{doc}:{n}");
+        let d = ctx.docs.iter().find(|x| x.index == doc);
+        self.items.push(EvidenceOut {
+            id: id.clone(),
+            doc: Some(doc),
+            date: d.and_then(|x| x.date).map(|x| x.to_string()),
+            title: d.and_then(|x| x.title.clone()),
+            quote: d.and_then(|x| x.title.clone()).unwrap_or_default(),
+            span: None,
+            origin: "doc".into(),
+            verified: d.is_some(),
+        });
+        self.seen.insert(key, id.clone());
+        id
+    }
+
     fn is_empty(&self) -> bool {
         self.items.is_empty()
     }

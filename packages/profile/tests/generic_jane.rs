@@ -401,3 +401,276 @@ fn med_table_stale_after_180_days() {
     assert_eq!(med_row(&v, "美托洛尔")["stale"], false);
     assert_eq!(section(&v, "med_table")["body"]["stale_after_days"], 180);
 }
+
+fn lane<'a>(view: &'a serde_json::Value, key: &str) -> &'a serde_json::Value {
+    section(view, "journey")["body"]["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["key"] == key)
+        .unwrap_or_else(|| panic!("没有泳道 {key}"))
+}
+
+fn lane_opt<'a>(view: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    section(view, "journey")["body"]["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["key"] == key)
+}
+
+/// 验收 6:进程 —— 住院 2(天数 9/12)、急诊 1、手术 1、影像 1(IMPRESSION 段)、病理 1;
+/// 住院/急诊 severity high;用药泳道华法林 5mg → 4mg 两份依据、伏立康唑有停节点。
+#[test]
+fn journey_lanes_from_encounters_docs_and_meds() {
+    let view = render(TODAY, &[], &[]);
+    let inp = lane(&view, "enc_inpatient");
+    assert_eq!(inp["severity"], "high");
+    let nodes = inp["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 2);
+    assert_eq!(nodes[0]["at"], "2024-03-01");
+    assert_eq!(nodes[0]["to"], "2024-03-01 → 2024-03-10 · 住院 9 天");
+    assert_eq!(nodes[0]["text"], "UF Health Shands · 2 份");
+    assert_eq!(nodes[1]["to"], "2025-06-02 → 2025-06-14 · 住院 12 天");
+    let ed = lane(&view, "enc_emergency");
+    assert_eq!(ed["severity"], "high");
+    assert_eq!(ed["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(lane(&view, "surgery")["nodes"].as_array().unwrap().len(), 1);
+    let img = lane(&view, "imaging");
+    assert_eq!(img["severity"], "normal");
+    let img_text = img["nodes"][0]["text"].as_str().unwrap();
+    assert!(
+        img_text.starts_with("Cavitary right upper lobe lesion"),
+        "{img_text}"
+    );
+    assert!(!img_text.contains("Electronically"), "{img_text}");
+    let path_text = lane(&view, "pathology")["nodes"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(
+        path_text.starts_with("Invasive fungal infection"),
+        "{path_text}"
+    );
+    // 用药泳道
+    let w = lane(&view, "med:warfarin");
+    let wn = w["nodes"].as_array().unwrap();
+    assert_eq!(wn.len(), 2, "5mg → 4mg 只有一个变化:{wn:?}");
+    assert_eq!(wn[1]["kind"], "change");
+    assert!(
+        wn[1]["from"].as_str().unwrap().starts_with("5mg"),
+        "from 是变化前最后一次的原样剂量串:{:?}",
+        wn[1]["from"]
+    );
+    assert_eq!(wn[1]["to"], "4mg");
+    assert_eq!(wn[1]["at"], "2025-01-14");
+    let v = lane(&view, "med:voriconazole");
+    assert!(v["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|n| n["kind"] == "stopped"));
+    // 诊断首次出现泳道
+    let dx = lane(&view, "dx:cardio");
+    assert!(dx["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|n| n["to"].as_str().unwrap().contains("I35.0")));
+    // 空道不出。
+    assert!(lane_opt(&view, "dx:oncology").is_none());
+}
+
+/// 验收 7:每个 ev: 都在依据段;整份依据 span 为 null。
+#[test]
+fn every_evidence_id_resolves_and_whole_doc_citations_have_no_span() {
+    let view = render(TODAY, &[], &[]);
+    let ev = section(&view, "evidence");
+    let items = ev["body"]["items"].as_array().unwrap();
+    let ids: Vec<&str> = items.iter().map(|e| e["id"].as_str().unwrap()).collect();
+    let mut referenced: Vec<String> = Vec::new();
+    for r in section(&view, "med_table")["body"]["rows"]
+        .as_array()
+        .unwrap()
+    {
+        for e in r["evidence"].as_array().unwrap() {
+            referenced.push(e.as_str().unwrap().into());
+        }
+        if let Some(s) = r["stopped"]["evidence"].as_str() {
+            referenced.push(s.into());
+        }
+    }
+    for l in section(&view, "journey")["body"]["lanes"]
+        .as_array()
+        .unwrap()
+    {
+        for n in l["nodes"].as_array().unwrap() {
+            for e in n["evidence"].as_array().unwrap() {
+                referenced.push(e.as_str().unwrap().into());
+            }
+        }
+    }
+    assert!(!referenced.is_empty());
+    for r in &referenced {
+        assert!(ids.contains(&r.as_str()), "{r} 不在依据段");
+    }
+    let inp_ev = lane(&view, "enc_inpatient")["nodes"][0]["evidence"][0]
+        .as_str()
+        .unwrap();
+    let item = items.iter().find(|e| e["id"] == inp_ev).unwrap();
+    assert!(item["span"].is_null(), "整份依据 span 为 null:{item}");
+    assert_eq!(item["verified"], true);
+}
+
+/// Review Focus 4:缺 end / end < start 的住院不出负数,记 1 天。
+#[test]
+fn inpatient_days_never_negative() {
+    let corpus = load_corpus();
+    let docs: Vec<parser::SourceDoc> = corpus
+        .iter()
+        .enumerate()
+        .map(|(i, d)| parser::SourceDoc {
+            index: i,
+            date: Some(d.date),
+            text: &d.text,
+            doc_type: Some(doc_type_for(&d.kind).into()),
+            title: Some(d.stem.clone()),
+            extraction_json: None,
+        })
+        .collect();
+    let d = |s: &str| s.parse::<NaiveDate>().ok();
+    let encs = vec![
+        profile::EncounterRef {
+            kind: "inpatient".into(),
+            start: d("2024-03-01"),
+            end: None,
+            provider: None,
+            title: None,
+            doc_indices: vec![],
+        },
+        profile::EncounterRef {
+            kind: "inpatient".into(),
+            start: d("2025-06-14"),
+            end: d("2025-06-02"),
+            provider: None,
+            title: None,
+            doc_indices: vec![],
+        },
+        profile::EncounterRef {
+            kind: "inpatient".into(),
+            start: d("2026-01-01"),
+            end: d("2026-01-01"),
+            provider: None,
+            title: None,
+            doc_indices: vec![],
+        },
+    ];
+    let view = profile::materialize_generic(&docs, &encs, &[], &[], TODAY.parse().unwrap());
+    let view = serde_json::to_value(&view).unwrap();
+    let nodes = lane(&view, "enc_inpatient")["nodes"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(nodes.len(), 3);
+    assert_eq!(nodes[0]["to"], "2024-03-01 · 住院 1 天");
+    assert_eq!(nodes[1]["to"], "2025-06-14 · 住院 1 天");
+    assert_eq!(nodes[2]["to"], "2026-01-01 → 2026-01-01 · 住院 1 天");
+}
+
+fn enable_sle() -> Vec<parser::ProfileEvent> {
+    vec![parser::ProfileEvent {
+        kind: "enable".into(),
+        package: "sle".into(),
+        at: "2024-03-15".into(),
+        payload: serde_json::json!({}),
+    }]
+}
+
+/// 验收 8 + 9 + 12 一个测试里顺序跑(覆盖层是进程全局,拆开会互相清):
+/// 无包无事件 → 通用段照出;装了 SLE 没 enable → 只有通用段;enable → 通用在前、包段在后、
+/// 华法林不受影响、泼尼松从用药表消失(包的 gc 行替换);SLE golden 由 golden_sle_course 另守。
+#[test]
+fn packages_stack_behind_the_general_layer_only_when_enabled() {
+    let pkg = common::full_pkg();
+    let kinds = |v: &serde_json::Value| -> Vec<(String, String)> {
+        v["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["package_id"].as_str().unwrap().into(),
+                    s["kind"].as_str().unwrap().into(),
+                )
+            })
+            .collect()
+    };
+    // 1. 无包、无事件。
+    let bare = render(TODAY, &[], &[]);
+    let k = kinds(&bare);
+    assert_eq!(
+        k.iter().map(|(_, x)| x.as_str()).collect::<Vec<_>>(),
+        vec!["family_cards", "med_table", "journey", "evidence"]
+    );
+    assert!(k.iter().all(|(p, _)| p == "general"));
+    assert_eq!(bare["package_id"], "general");
+    assert_eq!(bare["enabled"], true);
+    assert!(bare["sources"].as_array().unwrap().is_empty());
+    // 2. 装了 SLE 但没 enable:与 1 逐字节相同。
+    let installed = render(TODAY, &[], std::slice::from_ref(&pkg));
+    assert_eq!(installed, bare, "没开启的包一段都不出");
+    // 3. enable:通用在前、包段在后。
+    terminology::set_overlay(common::overlay_entries(&pkg));
+    let both = render(TODAY, &enable_sle(), std::slice::from_ref(&pkg));
+    terminology::set_overlay(vec![]);
+    let k = kinds(&both);
+    assert_eq!(&k[..4], &kinds(&bare)[..]);
+    assert!(k[4..].iter().all(|(p, _)| p == "sle"), "{k:?}");
+    assert!(k[4..].iter().any(|(_, x)| x == "state"));
+    assert!(!both["sources"].as_array().unwrap().is_empty());
+    let w = med_row(&both, "华法林");
+    assert_eq!(w["since"], "2025-01-14");
+    assert!(
+        section(&both, "med_table")["body"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["name"] != "泼尼松"),
+        "包的 gc 状态行替换掉通用层的泼尼松行"
+    );
+    assert!(
+        med_row(&bare, "泼尼松")["dose"].is_string(),
+        "没包时泼尼松在通用表里"
+    );
+}
+
+/// 返回 `true` = 这次是重写 golden(调用方在全部写完后再 panic 提醒 review)。
+fn check_golden(got: serde_json::Value, file: &str) -> bool {
+    let golden_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata")
+        .join(file);
+    if std::env::var("UPDATE_GOLDEN").is_ok() {
+        std::fs::write(
+            &golden_path,
+            serde_json::to_string_pretty(&got).unwrap() + "\n",
+        )
+        .unwrap();
+        return true;
+    }
+    let want: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&golden_path).expect("golden 文件在"))
+            .expect("golden 是合法 JSON");
+    assert_eq!(
+        got, want,
+        "通用层 ProfileView 变了;确认是有意的再 UPDATE_GOLDEN=1 重生成"
+    );
+    false
+}
+
+#[test]
+fn the_jane_course_renders_the_pinned_generic_view() {
+    let wrote = check_golden(render(TODAY, &[], &[]), "golden_generic_view.json");
+    assert!(
+        !wrote,
+        "golden 已重写 —— 人工 review 这次 diff 之后再跑一遍(不带 UPDATE_GOLDEN)"
+    );
+}
