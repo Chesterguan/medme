@@ -162,7 +162,9 @@ pub fn meds_from_json(json: &str) -> Result<MedsFromJson, deid::DeidError> {
         unverified: 0,
     };
     for item in e.meds {
-        let Some(mut obs) = crate::meds::from_parts(&item.name, &item.dose, &item.freq) else {
+        let Some(mut obs) =
+            crate::meds::from_parts(&item.name, &item.dose, &item.freq, &item.rxnorm)
+        else {
             out.dropped += 1;
             continue;
         };
@@ -378,6 +380,30 @@ mod tests {
         assert_eq!(r.dropped, 1);
         assert!(diagnoses_from_json("not json").is_err());
         assert_eq!(diagnoses_from_json("{}").unwrap().conditions.len(), 0);
+    }
+
+    #[test]
+    fn meds_from_json_rxnorm_is_name_first_code_fallback() {
+        let j = r#"{"meds":[
+          {"name":"Some Odd Brand","dose":"5mg","freq":"daily","rxnorm":"11289"},
+          {"name":"美托洛尔","dose":"25mg","freq":"bid","rxnorm":"11289"},
+          {"name":"Zebrafoam","dose":"10mg","freq":"daily","rxnorm":"999999999"}
+        ]}"#;
+        let r = meds_from_json(j).expect("valid json");
+        assert_eq!(r.meds.len(), 3);
+        assert_eq!(
+            r.meds[0].drug_key.as_deref(),
+            Some("warfarin"),
+            "名字不认识 → 按 RxNorm 反查"
+        );
+        assert_eq!(r.meds[0].raw_name, "Some Odd Brand", "原文名照留");
+        assert_eq!(
+            r.meds[1].drug_key.as_deref(),
+            Some("metoprolol"),
+            "名字认得出时名字优先于码"
+        );
+        assert!(r.meds[2].drug_key.is_none(), "码也不认 → 原样透传");
+        assert_eq!(r.meds[2].atc, None);
     }
 
     #[test]
