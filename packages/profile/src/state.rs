@@ -316,7 +316,7 @@ pub(crate) fn point_unit(s: &parser::AnalyteSeries, p: &parser::LabPoint) -> Opt
     p.unit.clone().or_else(|| s.unit_canonical.clone())
 }
 
-fn latest_point<'c>(
+pub(crate) fn latest_point<'c>(
     ctx: &'c Ctx<'_>,
     key: &str,
 ) -> Option<(&'c parser::AnalyteSeries, &'c parser::LabPoint)> {

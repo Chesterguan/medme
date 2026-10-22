@@ -16,7 +16,7 @@ mod rules;
 mod state;
 pub mod view;
 
-pub use generic::EncounterRef;
+pub use generic::{materialize_generic, EncounterRef};
 pub use package::{
     cache_load, cache_store, load_signed, load_signed_index, verify_envelope, verify_envelope_body,
     version_tuple, ActivityRules, Analyte, Band, Bands, Display, Drug, Index, IndexEntry, Manifest,
