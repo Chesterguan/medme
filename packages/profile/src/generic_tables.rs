@@ -49,7 +49,10 @@ const ICD_OVERRIDES: &[(&str, &str, Option<&str>)] = &[
     ("Q27", "cardio", None),
     ("Q28", "cardio", None),
     ("I33", "cardio", Some("infection")),      // 感染性心内膜炎
-    ("J15", "infection", Some("respiratory")), // 肺炎 J15–J18
+    ("J12", "infection", Some("respiratory")), // 肺炎 J12–J18(病毒/肺炎链球菌/流感嗜血杆菌/其它)
+    ("J13", "infection", Some("respiratory")),
+    ("J14", "infection", Some("respiratory")),
+    ("J15", "infection", Some("respiratory")),
     ("J16", "infection", Some("respiratory")),
     ("J17", "infection", Some("respiratory")),
     ("J18", "infection", Some("respiratory")),
@@ -140,7 +143,8 @@ const ATC_PREFIXES: &[(&str, &str, Option<&str>)] = &[
     ("N04", "neuro", None),
     ("N07", "neuro", None),
     ("L01", "oncology", None),
-    // N02 止痛、N05/N06 精神类 → other,不往「神经」里扫。
+    ("L02", "oncology", None), // 内分泌治疗(他莫昔芬、阿那曲唑)也是肿瘤用药(核查补)
+                               // N02 止痛、N05/N06 精神类 → other,不往「神经」里扫。
 ];
 
 pub(crate) fn family_of_atc(atc: Option<&str>) -> (&'static str, Option<&'static str>) {
@@ -263,6 +267,7 @@ mod tests {
         assert_eq!(family_of_icd("K50.9"), ("immune", Some("digestive")));
         assert_eq!(family_of_icd("Q21.0"), ("cardio", None));
         assert_eq!(family_of_icd("T81.4"), ("infection", None));
+        assert_eq!(family_of_icd("J13"), ("infection", Some("respiratory")));
     }
 
     #[test]
@@ -300,6 +305,7 @@ mod tests {
         assert_eq!(family_of_atc(Some("N02BE01")), ("other", None));
         assert_eq!(family_of_atc(Some("N05AH")), ("other", None));
         assert_eq!(family_of_atc(Some("L01XC")), ("oncology", None));
+        assert_eq!(family_of_atc(Some("L02BA01")), ("oncology", None));
         assert_eq!(family_of_atc(Some("R03AC")), ("respiratory", None));
         assert_eq!(family_of_atc(None), ("other", None));
     }

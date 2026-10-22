@@ -16525,7 +16525,9 @@
       "canonical_name": "伏立康唑血药浓度",
       "category": "lab",
       "system": "serum/plasma",
-      "codes": {},
+      "codes": {
+        "loinc": "38370-3"
+      },
       "canonical_unit": "ug/mL",
       "units": [
         {
@@ -16547,7 +16549,7 @@
         "Voriconazole trough"
       ],
       "ocr_confusions": [],
-      "note": "2026-10-22 通用病程档案补。LOINC 未逐条核到,留空不编。"
+      "note": "2026-10-22 通用病程档案补。LOINC 38370-3 = Voriconazole [Mass/volume] in Serum or Plasma(loinc.org 核过);谷浓度另有 73676-9,不收。"
     }
   ]
 }
