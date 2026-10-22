@@ -5174,6 +5174,7 @@ dependencies = [
  "lopdf 0.45.0",
  "ocr",
  "parser",
+ "profile",
  "serde",
  "serde_json",
  "tempfile",
