@@ -496,6 +496,9 @@ pub(crate) struct ProfileInput {
     /// 解得出载荷的 `profile_event` 文档,**按保险箱追加顺序**(见
     /// [`gather_for_profile`])。解不出来的跳过,不猜。
     pub(crate) events: Vec<parser::ProfileEvent>,
+    /// 就诊记录(`Vault::encounters_with_docs()`,时间线页用的那份),文档 id 已映射成
+    /// `SourceDoc::index`;通用病程档案的住院/急诊泳道从这里来(2026-10-22 spec §3.4)。
+    pub(crate) encounters: Vec<profile::EncounterRef>,
 }
 
 impl ProfileInput {
@@ -535,9 +538,27 @@ pub(crate) fn gather_for_profile() -> anyhow::Result<ProfileInput> {
         .filter(|d| d.doc_type.as_deref() == Some("profile_event"))
         .filter_map(|d| parser::parse_profile_event_payload(&d.text))
         .collect();
+    let index_of = |id: i64| projection.docs.iter().position(|d| d.document_id == id);
+    let encounters = crate::api::vault::with_state(|state| {
+        state
+            .vault
+            .encounters_with_docs()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+    })?
+    .into_iter()
+    .map(|(e, ds)| profile::EncounterRef {
+        kind: e.kind.as_str().to_string(),
+        start: e.start_date.map(|x| x.date_naive()),
+        end: e.end_date.map(|x| x.date_naive()),
+        provider: e.provider.clone(),
+        title: e.title.clone(),
+        doc_indices: ds.iter().filter_map(|d| index_of(d.id)).collect(),
+    })
+    .collect();
     Ok(ProfileInput {
         docs: projection.docs,
         events,
+        encounters,
     })
 }
 
