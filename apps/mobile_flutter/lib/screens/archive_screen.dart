@@ -23,7 +23,8 @@ import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
 /// 底部导航一级 tab「病历」(`s1`)—— 生命时间线:就诊组 + 独立文档,按月分组、
 /// 日期倒序,点开看详情。数据来自 FFI `loadArchive` / `patientProfile`
-/// (见 lib/src/rust/api/vault.dart)。
+/// (见 lib/src/rust/api/vault.dart)。时间线本体是 [ArchiveTimeline](三档分开画,
+/// 见 `docs/superpowers/specs/2026-10-21-timeline-tiers-design.md` 稿 B)。
 ///
 /// 三 tab 信息架构里这一屏**同时是首页**:概览整屏解散之后,「你是谁、现在看的是谁」
 /// 那一行([MemberHeader])搬到了这里的最上面,底下是两颗等宽药丸
@@ -77,6 +78,10 @@ List<List<TimelineGroupDto>> byMonth(List<TimelineGroupDto> groups) {
 String _groupDesc(TimelineGroupDto g) {
   return switch (g) {
     TimelineGroupDto_Encounter(:final encounter, :final docs) => () {
+      if (encounter.kind == 'inpatient') {
+        return inpatientSummary(encounter, docs.length) +
+            (encounter.transferred ? ' · 转院' : '');
+      }
       final kinds = <String>{};
       for (final d in docs) {
         kinds.add(docLabel[d.docType] ?? d.docType);
@@ -92,6 +97,38 @@ String _groupDesc(TimelineGroupDto g) {
       if (doc.sliceCount != null) '影像 ${doc.sliceCount} 张',
     ].join(' · '),
   };
+}
+
+/// 三档:就诊组按 `kind` 归到 `inpatient` / `emergency` / `outpatient`(Rust 只产这三种,
+/// 别的值与它那边一样兜底成门诊);独立文档不归任何一档(`null`)。
+String? tierOf(TimelineGroupDto g) => switch (g) {
+  TimelineGroupDto_Encounter(:final encounter) => switch (encounter.kind) {
+    'inpatient' => 'inpatient',
+    'emergency' => 'emergency',
+    _ => 'outpatient',
+  },
+  TimelineGroupDto_Document() => null,
+};
+
+/// 三档各几次就诊(chip 上的数)。独立文档不计入任何一档。
+Map<String, int> tierCounts(List<TimelineGroupDto> groups) {
+  final out = {'inpatient': 0, 'emergency': 0, 'outpatient': 0};
+  for (final g in groups) {
+    final t = tierOf(g);
+    if (t != null) out[t] = out[t]! + 1;
+  }
+  return out;
+}
+
+/// 住院卡副标:`2026-03-02 → 2026-03-08 · 住院 6 天 · 14 份`。天数 = 出院日 − 入院日,
+/// 同日出入院记 1 天;没有出院日只写 `住院 · 14 份`。份数用实际 docs 数(与
+/// [_groupDesc] 同口径,`docCount` 在还没核对剔除后会 stale)。
+String inpatientSummary(EncounterSummaryDto e, int docCount) {
+  final start = DateTime.tryParse(e.startDate ?? '');
+  final end = DateTime.tryParse(e.endDate ?? '');
+  if (start == null || end == null) return '住院 · $docCount 份';
+  final days = end.difference(start).inDays;
+  return '${fmtDate(e.startDate)} → ${fmtDate(e.endDate)} · 住院 ${days < 1 ? 1 : days} 天 · $docCount 份';
 }
 
 /// 把时间线分组拍平成文档列表(就诊组内文档 + 独立文档),用于「还没核对」筛选。
@@ -140,8 +177,6 @@ class ArchiveScreen extends StatefulWidget {
 
 class _ArchiveScreenState extends State<ArchiveScreen> {
   late Future<(PatientProfileDto, List<TimelineGroupDto>)> _future = _load();
-  // 已展开的就诊组(按 **encounter.id** 记,不用列表下标——删除/导入后下标会错位)。
-  final Set<int> _expanded = {};
   // 「还没核对」横幅点一下要滚去的地方——挂在横幅自己身上(banner 下面紧跟着
   // 就是核对卡片,滚到横幅即等于把那一段带进可视区域)。
   final _pendingSectionKey = GlobalKey();
@@ -408,39 +443,11 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 if (pending.isEmpty && confirmed.isEmpty)
                   const _EmptyState()
                 else
-                  for (final section in byMonth(confirmed)) ...[
-                    MonthHeader(label: monthLabel(_groupDate(section.first))),
-                    // 整月的行在一张卡里,行间细分隔线(减法稿:白卡浅底,层级靠留白)。
-                    MedCard(
-                      child: Column(
-                        children: [
-                          for (var i = 0; i < section.length; i++) ...[
-                            if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
-                            _TimelineItem(
-                              group: section[i],
-                              // 按就诊组 id 记展开态(不用列表下标)——删除/导入后下标会错位到别的组。
-                              expanded: switch (section[i]) {
-                                TimelineGroupDto_Encounter(:final encounter) => _expanded.contains(encounter.id),
-                                _ => false,
-                              },
-                              onTap: () {
-                                switch (section[i]) {
-                                  case TimelineGroupDto_Document(:final doc):
-                                    _openDoc(doc.id);
-                                  case TimelineGroupDto_Encounter(:final encounter):
-                                    setState(() {
-                                      if (!_expanded.add(encounter.id)) _expanded.remove(encounter.id);
-                                    });
-                                }
-                              },
-                              onOpenSubDoc: _openDoc,
-                              onDelete: _confirmAndDelete,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
+                  ArchiveTimeline(
+                    groups: confirmed,
+                    onOpenDoc: _openDoc,
+                    onDelete: _confirmAndDelete,
+                  ),
               ],
             ),
           );
@@ -448,6 +455,206 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
       ),
     );
   }
+}
+
+/// 时间线本体(2026-10-21 分档稿 B):chip 一排 → 按月 → 住院/急诊**每次一张卡**
+/// (卡级左色条:住院 `seal`、急诊 `high`)→ 门诊整月**一张折叠卡**「门诊 N 次」,
+/// 点开在卡内长出各次 → 独立文档(笔记/自测/没锚点那天的)一张卡。
+///
+/// 只吃 `List<TimelineGroupDto>`、不碰 FFI —— 为了能在 widget test 里直接 pump
+/// (`test/archive_timeline_test.dart`)。两个展开集都在这里:就诊组按
+/// `encounter.id` 记,门诊折叠按月份标签记;筛选不持久化(本屏在 `IndexedStack`
+/// 里保活,切走回来还在)。
+class ArchiveTimeline extends StatefulWidget {
+  const ArchiveTimeline({
+    super.key,
+    required this.groups,
+    required this.onOpenDoc,
+    required this.onDelete,
+  });
+
+  final List<TimelineGroupDto> groups;
+  final void Function(int docId) onOpenDoc;
+  final Future<void> Function(int docId, String label) onDelete;
+
+  @override
+  State<ArchiveTimeline> createState() => _ArchiveTimelineState();
+}
+
+class _ArchiveTimelineState extends State<ArchiveTimeline> {
+  /// `null` = 全部;否则 [tierOf] 的三个值之一。
+  String? _filter;
+  // 已展开的就诊组(按 **encounter.id** 记,不用列表下标——删除/导入后下标会错位)。
+  final Set<int> _expanded = {};
+  // 点开的门诊折叠卡(按月份标签记)。
+  final Set<String> _openMonths = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final counts = tierCounts(widget.groups);
+    // 与趋势页同规则:「全部」恒在最前,计数 0 的不出现,只剩「全部」整排不画。
+    final chips = <(String, String?, int)>[
+      ('全部', null, counts.values.fold(0, (a, b) => a + b)),
+      for (final t in const ['inpatient', 'emergency', 'outpatient'])
+        if (counts[t]! > 0) (kindLabel[t]!, t, counts[t]!),
+    ];
+    final visible = _filter == null
+        ? widget.groups
+        : widget.groups.where((g) => tierOf(g) == _filter).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (chips.length > 1) ...[
+          const SizedBox(height: MedShape.s3),
+          SizedBox(
+            height: 36,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: chips.length,
+              separatorBuilder: (_, _) => const SizedBox(width: MedShape.s1),
+              itemBuilder: (context, i) {
+                final (label, tier, n) = chips[i];
+                return MedChip(
+                  label: label,
+                  count: n,
+                  selected: tier == _filter,
+                  // 点已选中的回到「全部」(趋势页同一手势)。
+                  onTap: () => setState(() => _filter = tier == _filter ? null : tier),
+                );
+              },
+            ),
+          ),
+        ],
+        for (final section in byMonth(visible)) ...[
+          MonthHeader(label: monthLabel(_groupDate(section.first))),
+          ..._monthCards(context, section),
+        ],
+      ],
+    );
+  }
+
+  /// 一个月的卡:住院/急诊各一张(按日期序)→ 门诊折叠卡 → 独立文档卡。
+  List<Widget> _monthCards(BuildContext context, List<TimelineGroupDto> section) {
+    final c = MedColors.of(context);
+    final cards = <Widget>[];
+    final outpatient = <TimelineGroupDto>[];
+    final standalone = <TimelineGroupDto>[];
+    for (final g in section) {
+      switch (tierOf(g)) {
+        case 'inpatient':
+          cards.add(_tierCard(c.seal, g));
+        case 'emergency':
+          cards.add(_tierCard(c.high, g));
+        case 'outpatient':
+          outpatient.add(g);
+        default:
+          standalone.add(g);
+      }
+    }
+    if (outpatient.isNotEmpty) {
+      cards.add(_outpatientFold(context, monthLabel(_groupDate(section.first)), outpatient));
+    }
+    if (standalone.isNotEmpty) cards.add(_rowsCard(c, standalone));
+    return [
+      for (var i = 0; i < cards.length; i++) ...[
+        if (i > 0) const SizedBox(height: MedShape.s2),
+        cards[i],
+      ],
+    ];
+  }
+
+  Widget _item(TimelineGroupDto g) => _TimelineItem(
+    group: g,
+    expanded: switch (g) {
+      TimelineGroupDto_Encounter(:final encounter) => _expanded.contains(encounter.id),
+      _ => false,
+    },
+    onTap: () {
+      switch (g) {
+        case TimelineGroupDto_Document(:final doc):
+          widget.onOpenDoc(doc.id);
+        case TimelineGroupDto_Encounter(:final encounter):
+          setState(() {
+            if (!_expanded.add(encounter.id)) _expanded.remove(encounter.id);
+          });
+      }
+    },
+    onOpenSubDoc: widget.onOpenDoc,
+    onDelete: widget.onDelete,
+  );
+
+  /// 住院 / 急诊:一张卡,左侧 3px 色条贯穿全卡(展开的子文档也在条内)。
+  /// 色条写法与 `_MismatchBanner` 同一套(`Border(left:)`),不是第二块颜色面。
+  Widget _tierCard(Color bar, TimelineGroupDto g) => MedCard(
+    child: Container(
+      decoration: BoxDecoration(border: Border(left: BorderSide(color: bar, width: 3))),
+      child: _item(g),
+    ),
+  );
+
+  /// 门诊整月一张卡:默认只有「门诊 N 次」一行;筛到「门诊」时各月**默认展开**
+  /// (筛到门诊再折着就什么都看不见),这时那一行不再响应点击。
+  Widget _outpatientFold(BuildContext context, String month, List<TimelineGroupDto> visits) {
+    final c = MedColors.of(context);
+    final forced = _filter == 'outpatient';
+    final open = forced || _openMonths.contains(month);
+    return MedCard(
+      child: Column(
+        children: [
+          InkWell(
+            onTap: forced
+                ? null
+                : () => setState(() {
+                    if (!_openMonths.add(month)) _openMonths.remove(month);
+                  }),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: MedShape.s3,
+                vertical: MedShape.s2,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '门诊 ${visits.length} 次',
+                      style: MedType.body.copyWith(
+                        color: c.ink,
+                        fontWeight: FontWeight.w500,
+                        fontVariations: MedType.w500,
+                      ),
+                    ),
+                  ),
+                  if (!forced)
+                    Icon(
+                      open ? Icons.expand_less : Icons.chevron_right,
+                      size: 20,
+                      color: c.ink3,
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (open)
+            for (final g in visits) ...[
+              Divider(height: 1, thickness: 1, color: c.line2),
+              _item(g),
+            ],
+        ],
+      ),
+    );
+  }
+
+  /// 独立文档:一张卡,行间细分隔线(减法稿原来的整月卡)。
+  Widget _rowsCard(MedColors c, List<TimelineGroupDto> rows) => MedCard(
+    child: Column(
+      children: [
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0) Divider(height: 1, thickness: 1, color: c.line2),
+          _item(rows[i]),
+        ],
+      ],
+    ),
+  );
 }
 
 /// 空态引导:没有记录时提示点上面那颗「添加」,或去「我 → 关于」载入示例数据。
@@ -556,15 +763,18 @@ class _TimelineItem extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          const SizedBox(width: MedShape.s1),
-                          Text(
-                            _groupDate(group),
-                            // 日期是数字,等宽 —— 一列日期才对得齐。
-                            style: MedType.secondary.copyWith(
-                              color: c.ink3,
-                              fontFeatures: MedType.tabular,
+                          // 住院卡的起止日在副标里(稿 B),右边不再印一遍入院日。
+                          if (tierOf(group) != 'inpatient') ...[
+                            const SizedBox(width: MedShape.s1),
+                            Text(
+                              _groupDate(group),
+                              // 日期是数字,等宽 —— 一列日期才对得齐。
+                              style: MedType.secondary.copyWith(
+                                color: c.ink3,
+                                fontFeatures: MedType.tabular,
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 3),

@@ -332,8 +332,16 @@ class _TrendsScreenState extends State<TrendsScreen> {
                 ],
                 // ③ 关键化验各行。`s2` 画了迷你折线 —— **Stage 1 保持今天的取值
                 //    行**,折线是 Stage 2(见类文档)。
-                KeyLabsSnapshot(labs: summary.recentLabs, onOpenDoc: _openDoc),
-                const SizedBox(height: MedShape.s3),
+                //
+                //    **选了大类 / 在搜索时整张让位。** 这张快照是 Rust 封顶 8 行的
+                //    「最近关键化验」,不认 chip 也不认搜索词;而 chip 筛的是下面那列
+                //    折线卡 —— 在它正下方的这 8 行一动不动,用户眼里就是「点了切不动」
+                //    (2026-10-21 真机回报,模拟器 17 条序列即复现)。让位之后 chip
+                //    正下方直接就是筛出来的那批卡。
+                if (!searching && !panelSelected) ...[
+                  KeyLabsSnapshot(labs: summary.recentLabs, onOpenDoc: _openDoc),
+                  const SizedBox(height: MedShape.s3),
+                ],
                 // ③' 全序列折线卡。`s2` 里它是「点开那一行原地放大」(Stage 2),
                 //     Stage 1 先照旧整列摆在关键化验下面 —— 这一块才是分类 chip
                 //     和「只看非正常项」筛的东西。
