@@ -13,6 +13,8 @@ spec:`docs/superpowers/specs/2026-10-22-generic-chronic-profile-design.md`(用�
 
 **验证**:`cargo test --workspace` 49 个测试二进制全绿(998 条);`cargo clippy --workspace --all-targets -D warnings` 与 `cargo fmt --check` 干净;手机 crate `cargo test` 84 + frb_dispatch_indices 绿(下标 44 不动),clippy 只剩 2026-10-21 记过的 5 条旧告警;`flutter analyze` 零 issue;`flutter test` 全量 1111 过、1 红 = `glossary_guard` 弱闸「导入」(`import_flow.dart`,PR #243 起就红,本分支没动它);文案闸基线挪到稿 A 落地提交 d731618。
 
+**独立审查(code-reviewer,整分支)抓出 1 Critical 2 Important,全修、各带回归测试**:停药判定只看「含药名的行有停词」会把「Do not stop taking warfarin」「不可自行停药」「Aspirin stopped; continue metoprolol」都标成停 → 改成同一子句 + 停词前无否定(`stops_drug`,语料加了两条诱饵行);通用段与包段各自从 1 编依据号,界面合并后点开错的那句 → 共用一本 `EvidenceBook`(单包路径不变,SLE golden 不动);缺出院日写「住院 1 天」是编数 → 只写「起日 · 住院」。Minor 留着:ICD-10-CM 第三位带字母的码(D3A/M1A)归一失败当无码;`dose_key` 对 `.5mg`/`2.50mg`/`1,000 mg`/「毫克」会出假的剂量变化;未来日期的文档 `days_since` 为负;入口卡对形状错误的 JSON(families 不是数组)会抛;在「进程/依据」tab 开关包会跳回「现在」。
+
 **留的**
 - 中文诊断名 → ICD 映射、通用英文医院名识别、Epic `Patient not taking` 解析、桌面 Tauri 都没做(spec §6)。
 - 有化验无诊断的族不单独出卡;化验行参考区间是解析后的数(`2-3`,不是印刷的 `2.0-3.0`)。
