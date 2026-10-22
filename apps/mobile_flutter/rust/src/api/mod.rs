@@ -1,3 +1,5 @@
+// 内置病种包清单(没有 FFI 函数,不占派发序号)。
+pub mod builtin_skills;
 pub mod dto;
 pub mod simple;
 pub mod vault;

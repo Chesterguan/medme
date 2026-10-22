@@ -1,0 +1,19 @@
+UF Health Shands Hospital
+Patient: Doe, Jane    MRN: 00000000    DOB: 1965-02-11    Sex: F
+DISCHARGE SUMMARY
+Admission Date: 2024-03-01    Discharge Date: 2024-03-10
+Discharge Diagnoses:
+1. Aortic stenosis, severe, status post surgical aortic valve replacement 2024-03-03 (I35.0)
+2. Status post aortic valve replacement (Z95.2)
+3. Hypertension
+
+Hospital Course: Admitted with exertional dyspnea. Underwent surgical aortic valve replacement on 2024-03-03. Post-operative course uncomplicated. Anticoagulation started.
+
+Discharge Medications:
+Warfarin 5mg daily
+Metoprolol 25mg twice daily
+
+Labs at discharge:
+INR 2.1 (2.0-3.0)
+Creatinine 0.9 mg/dL (0.6-1.2)
+BNP 210 pg/mL (0-100) H

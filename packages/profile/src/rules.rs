@@ -57,6 +57,9 @@ pub struct Ctx<'a> {
     pub raw_labs: Vec<(usize, Option<NaiveDate>, deid::LabItem)>,
     /// 每份文档(顺序与调用方给的 `docs` 一致)。
     pub docs: Vec<Doc<'a>>,
+    /// 抽取结果解析得出来的那些文档(`SourceDoc::index`):通用层给诊断依据标
+    /// `origin`(`llm`/`regex`)用 —— `AggregatedCondition` 不带来源路径。
+    pub extracted: Vec<usize>,
     /// 动作日志(开启/关停、PGA、以后的症状勾选…)。开启闸在 `materialize` 里读,
     /// 规则侧由达标表读最近一次 `pga`。
     pub events: &'a [parser::ProfileEvent],
@@ -77,6 +80,7 @@ impl<'a> Ctx<'a> {
         let mut facts = Vec::new();
         let mut raw_labs = Vec::new();
         let mut out_docs = Vec::new();
+        let mut extracted = Vec::new();
         for d in docs {
             out_docs.push(Doc {
                 index: d.index,
@@ -89,6 +93,7 @@ impl<'a> Ctx<'a> {
             // 约定一致(解析失败退回正则路径,而不是让整个投影失败)。
             if let Some(json) = d.extraction_json {
                 if let Ok(e) = deid::parse_extraction(json) {
+                    extracted.push(d.index);
                     for f in e.facts {
                         facts.push((d.index, d.date, f));
                     }
@@ -103,6 +108,7 @@ impl<'a> Ctx<'a> {
             facts,
             raw_labs,
             docs: out_docs,
+            extracted,
             events,
             today,
         }
@@ -228,6 +234,7 @@ pub fn activity_section(
         .iter()
         .any(|d| ctx.in_window(d.date, a.window_days));
     Some(crate::view::Section {
+        package_id: None,
         kind: "score_card".into(),
         id: view_id(pkg, "score_card", None),
         title: view_title(pkg, "score_card", None),
@@ -802,6 +809,7 @@ pub fn states_section(
         }));
     }
     Some(crate::view::Section {
+        package_id: None,
         kind: "checklist".into(),
         id: view_id(pkg, "checklist", None),
         title: view_title(pkg, "checklist", None),
@@ -1507,6 +1515,7 @@ pub fn status_section(
         && hcq["daily_mg"].is_null()
         && reg.others.is_empty();
     Some(crate::view::Section {
+        package_id: None,
         kind: "status_card".into(),
         id: view_id(pkg, "status_card", None),
         title: view_title(pkg, "status_card", None),
@@ -1634,6 +1643,7 @@ pub fn reminders_section(
         (rank, -i["overdue_days"].as_i64().unwrap_or(0))
     });
     Some(crate::view::Section {
+        package_id: None,
         kind: "reminders".into(),
         id: view_id(pkg, "reminders", None),
         title: view_title(pkg, "reminders", None),
@@ -2263,6 +2273,7 @@ pub fn series_section(
         }
     }
     Some(crate::view::Section {
+        package_id: None,
         kind: "series_chart".into(),
         id: view_id(pkg, "series_chart", None),
         title: view_title(pkg, "series_chart", None),
@@ -2370,6 +2381,7 @@ pub fn timeline_section(
         })
         .collect();
     Some(crate::view::Section {
+        package_id: None,
         kind: "timeline".into(),
         id: view_id(pkg, "timeline", None),
         title: view_title(pkg, "timeline", None),
@@ -2982,6 +2994,7 @@ pub fn milestones_section(
         return None;
     }
     Some(crate::view::Section {
+        package_id: None,
         kind: "checklist".into(),
         id: view_id(pkg, "checklist", Some(MILESTONES_VIEW_ID)),
         title: view_title(pkg, "checklist", Some(MILESTONES_VIEW_ID)),

@@ -1,0 +1,21 @@
+UF Health Shands Hospital
+Patient: Doe, Jane    MRN: 00000000    DOB: 1965-02-11    Sex: F
+DISCHARGE SUMMARY
+Admission Date: 2025-06-02    Discharge Date: 2025-06-14
+Discharge Diagnoses:
+1. Invasive pulmonary aspergillosis (B44.1)
+2. Status post aortic valve replacement (Z95.2)
+3. Hypertension
+
+Hospital Course: Admitted from the ED with fever and hemoptysis. CT chest and biopsy confirmed invasive pulmonary aspergillosis. Started on voriconazole with therapeutic drug monitoring. Clinically improved.
+
+Discharge Medications:
+Voriconazole 200mg twice daily
+Warfarin 4mg daily
+Metoprolol 25mg twice daily
+
+Labs at discharge:
+Galactomannan 1.8 index (0-0.5) H
+CRP 31 mg/L (0-5) H
+WBC 9.1 10*3/uL (4.0-10.0)
+INR 2.9 (2.0-3.0)

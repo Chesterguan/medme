@@ -618,7 +618,7 @@ fn imaging_label_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(
-            r"^\s*(?:\d+\s*[.、)）]|[\u{2460}-\u{2473}]|[-•*·])?\s*(影像所见|检查所见|超声所见|诊断意见|影像诊断|超声提示|影像提示|检查提示|心电图诊断|印象|结论|意见|所见)\s*[:：]\s*(.*)$",
+            r"^\s*(?:\d+\s*[.、)）]|[\u{2460}-\u{2473}]|[-•*·])?\s*(影像所见|检查所见|超声所见|诊断意见|影像诊断|超声提示|影像提示|检查提示|心电图诊断|印象|结论|意见|所见|(?i:IMPRESSION|FINDINGS|CONCLUSION))\s*[:：]\s*(.*)$",
         )
         .expect("imaging label re")
     })
@@ -631,7 +631,7 @@ fn pathology_label_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(
-            r"^\s*(?:\d+\s*[.、)）]|[\u{2460}-\u{2473}]|[-•*·])?\s*(病理诊断|病理所见|免疫组化|镜下所见|肉眼所见)\s*[:：]\s*(.*)$",
+            r"^\s*(?:\d+\s*[.、)）]|[\u{2460}-\u{2473}]|[-•*·])?\s*(病理诊断|病理所见|免疫组化|镜下所见|肉眼所见|(?i:IMPRESSION|FINDINGS|CONCLUSION))\s*[:：]\s*(.*)$",
         )
         .expect("pathology label re")
     })
@@ -651,12 +651,18 @@ fn is_impression_label(label: &str) -> bool {
             | "印象"
             | "结论"
             | "意见"
-    )
+    ) || is_english_impression_label(label)
+}
+
+/// 英文报告(Epic)的结论标签:`IMPRESSION`/`CONCLUSION` 是结论,`FINDINGS` 是所见。
+/// 大小写不敏感,只认这三个词(2026-10-22 通用病程档案 spec §9 第 6 条)。
+fn is_english_impression_label(label: &str) -> bool {
+    label.eq_ignore_ascii_case("IMPRESSION") || label.eq_ignore_ascii_case("CONCLUSION")
 }
 
 /// Whether a pathology label names the conclusion (`病理诊断`) vs a raw finding.
 fn is_pathology_impression_label(label: &str) -> bool {
-    label == "病理诊断"
+    label == "病理诊断" || is_english_impression_label(label)
 }
 
 /// Lines that end an impression/findings block even without a blank separator:
@@ -675,7 +681,12 @@ fn is_impression_terminator(line: &str) -> bool {
         "医师:",
         "医师：",
     ];
-    TERMS.iter().any(|k| line.starts_with(k))
+    // Epic 报告的签名脚注(与「报告医师」同一角色);只认行首、大小写不敏感。
+    const EN_TERMS: &[&str] = &["electronically signed", "signed by", "dictated by"];
+    TERMS.iter().any(|k| line.starts_with(k)) || {
+        let lower = line.to_ascii_lowercase();
+        EN_TERMS.iter().any(|k| lower.starts_with(k))
+    }
 }
 
 /// Pull the impression/findings paragraph out of an imaging report's OCR text.
@@ -683,20 +694,23 @@ fn is_impression_terminator(line: &str) -> bool {
 /// Recognizes the labeled sections in [`imaging_label_re`] (line starts, optional
 /// list number, then `:`/`：`); the block is the inline remainder plus following
 /// non-empty lines up to a blank line or the next labeled section. An
-/// impression/结论/诊断意见 label wins over a raw 所见 when both are present.
+/// impression/结论/诊断意见 (or English `IMPRESSION:`/`CONCLUSION:`) label wins over
+/// a raw 所见/`FINDINGS:` when both are present.
 /// Returns the trimmed text, or `None` if no labeled section carried content.
+///
+/// `pub`:病程档案的进程泳道用它取影像节点的正文(2026-10-22 spec §3.4)。
 ///
 /// NOT handled (kept honest): unlabeled prose findings; non-imaging section
 /// headers between labels are not treated as boundaries (a stray `检查方法:` line
 /// after 所见 would be swallowed) — reports put 结论 last, so this is rare.
-fn imaging_impression(text: &str) -> Option<String> {
+pub fn imaging_impression(text: &str) -> Option<String> {
     labeled_impression(text, imaging_label_re(), is_impression_label)
 }
 
 /// Pull a pathology report's **conclusion** (`病理诊断` narrative, else 镜下/肉眼所见).
 /// Same block-scan as imaging; the narrative stays a single verbatim conclusion and
 /// is NEVER comma-split into problems (quality dim 6).
-fn pathology_impression(text: &str) -> Option<String> {
+pub fn pathology_impression(text: &str) -> Option<String> {
     labeled_impression(text, pathology_label_re(), is_pathology_impression_label)
 }
 
@@ -1780,6 +1794,25 @@ mod tests {
             extract_allergies_pairs("过敏史:青霉素过敏,过敏史不详。"),
             vec![("青霉素过敏".to_string(), String::new())],
         );
+    }
+
+    /// 2026-10-22 通用病程档案 spec §3.4:Epic 报告的结论段印英文标签。只认这三个词,
+    /// 大小写不敏感;中文用例上面两条原样全绿,输出一个字节不变。
+    #[test]
+    fn imaging_impression_reads_english_labels() {
+        let ct = "CT CHEST WITH CONTRAST\n\nFINDINGS: Nodular opacity in the right upper lobe with surrounding ground glass.\n\nIMPRESSION: Findings consistent with invasive aspergillosis.\n\nElectronically signed by Dr. X\n";
+        assert_eq!(
+            imaging_impression(ct).expect("impression"),
+            "Findings consistent with invasive aspergillosis."
+        );
+        let only = "CT CHEST\nFindings: Small nodule.\n";
+        assert_eq!(imaging_impression(only).expect("findings"), "Small nodule.");
+        let path = "PATHOLOGY REPORT\n\nFINDINGS: Septate hyphae.\n\nCONCLUSION: Invasive fungal infection, morphology consistent with Aspergillus.\n";
+        assert_eq!(
+            pathology_impression(path).expect("conclusion"),
+            "Invasive fungal infection, morphology consistent with Aspergillus."
+        );
+        assert!(imaging_impression("Plain office note, no impression here.").is_none());
     }
 
     #[test]

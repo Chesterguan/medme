@@ -239,10 +239,13 @@ fn build(
 /// 在 `freq_text` 里找。留下的条件按**原话**算而不按解析结果算:模型写了剂量或频次
 /// (哪怕是浓度 `5mg/ml`、解析不出码的「早晚各一次」),就是它在原文里看到了一味药,
 /// 原话逐字、verify 核过,丢了就没了;只有光秃秃一个词典里也没有的名字才丢。
+///
+/// `rxnorm` 是 sidecar 带的码(结构化导入),名字认不出时用它兜底;空串 = 没有码。
 pub(crate) fn from_parts(
     name_text: &str,
     dose_text: &str,
     freq_text: &str,
+    rxnorm: &str,
 ) -> Option<MedObservation> {
     let name = strip_trailing_route(name_text.trim());
     if name.is_empty() || !name.chars().any(|c| c.is_alphabetic()) {
@@ -257,7 +260,7 @@ pub(crate) fn from_parts(
     }
     let dose = parse_dose(dose_text);
     let freq = parse_frequency(freq_text);
-    let m = resolve_drug(name);
+    let m = resolve_drug(name).or_else(|| terminology::resolve_rxnorm(rxnorm));
     let freq_text = freq_text.trim();
     if dose_text.trim().is_empty() && freq_text.is_empty() && m.is_none() {
         return None;

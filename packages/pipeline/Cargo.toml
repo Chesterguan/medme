@@ -42,6 +42,8 @@ zip = { version = "7", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+# 只给 `tests/import_bundle_generic.rs`:Epic 包导入后通用病程档案要读得到码与住院窗口。
+profile = { path = "../profile" }
 # Test-only: `ocr::testing`'s multi-page-TIFF builders, for the multi-page-image
 # regression test below (`ocr` is already a normal dependency above; this entry
 # only turns on the fixture-builder feature for the test profile, so nothing

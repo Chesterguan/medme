@@ -1,0 +1,6 @@
+{"doc_type":"lab_report","doc_date":"2025-08-18",
+ "labs":[
+  {"name":"Galactomannan","value":"0.6","unit":"index","ref_low":"0","ref_high":"0.5","flag":"H","loinc":""},
+  {"name":"CRP","value":"12","unit":"mg/L","ref_low":"0","ref_high":"5","flag":"H","loinc":"1988-5"},
+  {"name":"Voriconazole level","value":"2.4","unit":"ug/mL","ref_low":"1.0","ref_high":"5.5","flag":"","loinc":""}],
+ "meds":[],"diagnoses":[]}

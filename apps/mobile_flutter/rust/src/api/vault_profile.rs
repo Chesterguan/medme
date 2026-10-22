@@ -17,11 +17,6 @@ use std::path::Path;
 
 /// 验清单的签名并原样交给 Dart。**Dart 永远不自己解析未验签的清单** —— 那是中间人
 /// 改一行 `version` 就能拿去拼路径的地方(`lib/skill_packages.dart`)。
-/// 出厂内置的那份签名 SLE 包(与仓库 `skills/sle/<version>.json` 逐字节相同)。
-/// 只给示例数据载入用:让病程档案在没登录、没拉过 `/v1/skills` 的机器上也能亮起来。
-/// 线上更新照常走 `skill_packages.dart`;缓存里已有更新版本时 `cache_store` 会拒绝降级。
-pub(crate) const SLE_PACKAGE_ENVELOPE: &str = include_str!("../../../../../skills/sle/2026.10.1.json");
-
 pub fn vault_profile_verify_index(envelope_json: String) -> anyhow::Result<String> {
     let idx = profile::load_signed_index(&envelope_json).map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(serde_json::to_string(&serde_json::json!({
@@ -46,6 +41,41 @@ pub fn vault_profile_install_package(dir: String, envelope_json: String) -> anyh
         terminology::set_overlay(overlay_entries(dir, &events));
     }
     Ok(id)
+}
+
+/// 首启(或每次开箱,幂等)装内置包:`builtin_skills::BUILTIN` 逐个 `cache_store`,返回装上
+/// 的 id。本地文件写入、不联网,不受首启告知门限制(spec §5 第 5 条)。
+pub fn vault_profile_install_builtin(dir: String) -> anyhow::Result<Vec<String>> {
+    Ok(crate::api::builtin_skills::install_builtin(Path::new(&dir)))
+}
+
+/// 通用病程档案视图(2026-10-22 spec §4 FFI):不查包、不查 enable,先算通用段;再把缓存里
+/// 每个**开着**的包的 sections 追加在后;顶层 `documents[]` 桥同 [`vault_profile_view`],
+/// 另加 `packages[]{id, display_name, enabled}` 给入口卡画「每包一行」。
+pub fn vault_profile_view_general(dir: String) -> anyhow::Result<String> {
+    let dir = Path::new(&dir);
+    let events = vault_projections::gather_profile_events()?;
+    terminology::set_overlay(overlay_entries(dir, &events));
+    let installed = installed_packages(dir);
+    let input = vault_projections::gather_for_profile()?;
+    let docs = input.source_docs();
+    let view =
+        profile::materialize_generic(&docs, &input.encounters, &input.events, &installed, today());
+    let mut json = serde_json::to_value(&view)?;
+    json["documents"] = serde_json::Value::Array(input.document_refs());
+    json["packages"] = serde_json::Value::Array(
+        installed
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "id": p.manifest.id,
+                    "display_name": p.manifest.display.name,
+                    "enabled": profile::is_enabled(&input.events, &p.manifest.id),
+                })
+            })
+            .collect(),
+    );
+    Ok(serde_json::to_string(&json)?)
 }
 
 /// 算一份 `ProfileView` 并序列化给 Dart。**纯投影**:不写任何东西进保险箱。
@@ -322,6 +352,119 @@ mod tests {
             None,
         )
         .unwrap();
+    }
+
+    /// 内置清单必须与仓库 `skills/index.json` 的 (id, version) 逐一相等:少一个、版本不一致都红
+    /// (2026-10-22 spec §5 第 1 条:内置版本 ≤ 线上版本是发布纪律,由这条在仓库侧守)。
+    #[test]
+    fn builtin_list_matches_repo_index() {
+        let idx = profile::load_signed_index(SKILLS_INDEX).unwrap();
+        let mut listed: Vec<(String, String)> = idx
+            .skills
+            .iter()
+            .map(|s| (s.id.clone(), s.version.clone()))
+            .collect();
+        listed.sort();
+        let mut builtin: Vec<(String, String)> = crate::api::builtin_skills::BUILTIN
+            .iter()
+            .map(|(id, ver, _)| (id.to_string(), ver.to_string()))
+            .collect();
+        builtin.sort();
+        assert_eq!(builtin, listed, "内置清单 ↔ skills/index.json 不一致");
+        for (id, ver, envelope) in crate::api::builtin_skills::BUILTIN {
+            let pkg = profile::load_signed(envelope).expect("内置信封要验得过");
+            assert_eq!(
+                (pkg.manifest.id.as_str(), pkg.manifest.version.as_str()),
+                (*id, *ver)
+            );
+        }
+    }
+
+    /// 装两次都算成功(第二次 `Downgrade`,缓存里已有同版本);装完能从缓存读回。
+    #[test]
+    fn install_builtin_twice_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().display().to_string();
+        assert_eq!(
+            vault_profile_install_builtin(d.clone()).unwrap(),
+            vec!["sle".to_string()]
+        );
+        assert_eq!(
+            vault_profile_install_builtin(d.clone()).unwrap(),
+            vec!["sle".to_string()]
+        );
+        assert!(profile::cache_load(dir.path(), "sle").is_some());
+    }
+
+    /// 通用视图:没装任何包也出通用段;装了没开的包列在 `packages[]` 里、不出它的段。
+    #[test]
+    fn general_view_works_without_packages_and_lists_disabled_ones() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        open_temp_vault(home.path());
+        let dir_s = home.path().join("skills-cache").display().to_string();
+        let parse = |json: String| serde_json::from_str::<serde_json::Value>(&json).unwrap();
+
+        // 一份出院小结(正则路径带码诊断)—— 通用层从这里读出诊断族。
+        crate::api::vault::with_state(|state| {
+            crate::api::vault::add_synthetic_document(
+                &state.vault,
+                core_model::DocType::DischargeSummary,
+                "2026-01-10T00:00:00Z".parse().unwrap(),
+                "ds.txt",
+                "出院记录".into(),
+                Some("zh".into()),
+                "出院记录\n诊断:2型糖尿病(E11.9)\n出院带药:二甲双胍 0.5g bid\n".into(),
+            )
+        })
+        .unwrap();
+
+        let v = parse(vault_profile_view_general(dir_s.clone()).unwrap());
+        assert_eq!(v["package_id"], "general");
+        let kinds: Vec<&str> = v["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["family_cards", "med_table", "journey", "evidence"]
+        );
+        assert_eq!(v["packages"].as_array().unwrap().len(), 0);
+        assert!(
+            !v["documents"].as_array().unwrap().is_empty(),
+            "documents 桥要在"
+        );
+        let fams = &v["sections"][0]["body"]["families"];
+        assert_eq!(fams[0]["key"], "endocrine", "{fams}");
+
+        vault_profile_install_builtin(dir_s.clone()).unwrap();
+        let v = parse(vault_profile_view_general(dir_s.clone()).unwrap());
+        assert_eq!(v["packages"][0]["id"], "sle");
+        assert_eq!(v["packages"][0]["enabled"], false);
+        assert_eq!(v["packages"][0]["display_name"], "系统性红斑狼疮");
+        assert!(v["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["package_id"] == "general"));
+
+        vault_profile_record_event(
+            "enable".into(),
+            "sle".into(),
+            "2026-01-01".into(),
+            "{}".into(),
+        )
+        .unwrap();
+        let v = parse(vault_profile_view_general(dir_s).unwrap());
+        assert_eq!(v["packages"][0]["enabled"], true);
+        assert!(v["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["package_id"] == "sle"));
+        terminology::set_overlay(Vec::new());
     }
 
     #[test]

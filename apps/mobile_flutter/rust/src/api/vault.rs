@@ -1640,15 +1640,9 @@ pub fn vault_load_demo_data_sle(
     });
     match result {
         Ok(_) => {
-            // 内置的那份签名包:缓存里已有更新的就跳过(`Downgrade`),别的错误只记日志 ——
+            // 内置的那些签名包:缓存里已有更新的就跳过(`Downgrade`),别的错误只记日志 ——
             // 示例数据本身已经进去了,包装不上只是档案页先空着。
-            match profile::cache_store(
-                Path::new(&skill_cache_dir),
-                crate::api::vault_profile::SLE_PACKAGE_ENVELOPE,
-            ) {
-                Ok(_) | Err(profile::PackageError::Downgrade { .. }) => {}
-                Err(e) => log_warn(&format!("[demo-data-sle] 内置病种包装不上:{e}")),
-            }
+            crate::api::builtin_skills::install_builtin(Path::new(&skill_cache_dir));
             for (kind, at, payload) in [
                 ("enable", "2024-03-15", "{}"),
                 // 2025-06-18 输液记录单上印的体重。
@@ -1763,7 +1757,9 @@ fn attach_demo_extraction(v: &Vault, f: &include_dir::File<'_>, source_file_id: 
     let parsed = match deid::parse_extraction(raw) {
         Ok(p) => p,
         Err(e) => {
-            log_warn(&format!("[demo-data-sle] {stem}: 模型输出不是合法 JSON:{e}"));
+            log_warn(&format!(
+                "[demo-data-sle] {stem}: 模型输出不是合法 JSON:{e}"
+            ));
             return;
         }
     };
