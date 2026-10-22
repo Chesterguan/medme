@@ -41,7 +41,7 @@ pub(crate) struct EvidenceOut {
 
 #[derive(Default)]
 pub(crate) struct EvidenceBook {
-    items: Vec<EvidenceOut>,
+    pub(crate) items: Vec<EvidenceOut>,
     seen: HashMap<(Option<usize>, String, String, String), String>,
     per_doc: HashMap<Option<usize>, usize>,
 }
@@ -149,7 +149,7 @@ impl EvidenceBook {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct StateRow {
+pub(crate) struct StateRow {
     key: String,
     label: String,
     value: Option<String>,
@@ -163,30 +163,30 @@ struct StateRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct Node {
-    at: Option<String>,
+pub(crate) struct Node {
+    pub(crate) at: Option<String>,
     /// `first` / `change` / `dose_change` / `point` / 事件类型名。
-    kind: String,
-    from: Option<String>,
-    to: String,
+    pub(crate) kind: String,
+    pub(crate) from: Option<String>,
+    pub(crate) to: String,
     /// 药名(用药节点)或原话(事件节点)。
-    text: Option<String>,
+    pub(crate) text: Option<String>,
     /// 激素类的泼尼松等效日剂量(mg/天),换药时看这个才知道是不是减量;算不出为 `None`。
     #[serde(skip_serializing_if = "Option::is_none")]
-    equiv_mg_per_day: Option<f64>,
-    evidence: Vec<String>,
-    unverified: bool,
+    pub(crate) equiv_mg_per_day: Option<f64>,
+    pub(crate) evidence: Vec<String>,
+    pub(crate) unverified: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct Lane {
-    key: String,
-    label: String,
+pub(crate) struct Lane {
+    pub(crate) key: String,
+    pub(crate) label: String,
     /// `verified`(有核过的节点)/ `needs_review`(节点全是没核上的)/ `empty`。
-    quality: String,
+    pub(crate) quality: String,
     /// `high` = 包在 `views.sections[timeline].severity_high` 里点名的(复发、住院);否则 `normal`。
-    severity: String,
-    nodes: Vec<Node>,
+    pub(crate) severity: String,
+    pub(crate) nodes: Vec<Node>,
 }
 
 /// 事件型 fact 的泳道;顺序即展示顺序。标签是族级通用词,不是病种文案。
@@ -201,7 +201,7 @@ const EVENT_LANES: [(&str, &str); 7] = [
     ("pregnancy", "妊娠"),
 ];
 
-fn fmt_num(x: f64) -> String {
+pub(crate) fn fmt_num(x: f64) -> String {
     let r = (x * 100.0).round() / 100.0;
     if r.fract() == 0.0 {
         format!("{}", r as i64)
@@ -214,7 +214,7 @@ fn fmt_1dec(x: f64) -> String {
     format!("{:.1}", (x * 10.0).round() / 10.0)
 }
 
-fn stale(today: NaiveDate, as_of: Option<NaiveDate>, after: Option<i64>) -> bool {
+pub(crate) fn stale(today: NaiveDate, as_of: Option<NaiveDate>, after: Option<i64>) -> bool {
     match (as_of, after) {
         (Some(d), Some(n)) => (today - d).num_days() > n,
         _ => false,
@@ -236,7 +236,7 @@ fn spans_of_class<'c>(ctx: &'c Ctx<'_>, pkg: &Package, class: &str) -> Vec<&'c p
         .collect()
 }
 
-fn lab_origin(ctx: &Ctx<'_>, doc: usize) -> &'static str {
+pub(crate) fn lab_origin(ctx: &Ctx<'_>, doc: usize) -> &'static str {
     if ctx.raw_labs.iter().any(|(i, _, _)| *i == doc) {
         "llm"
     } else {
@@ -244,7 +244,7 @@ fn lab_origin(ctx: &Ctx<'_>, doc: usize) -> &'static str {
     }
 }
 
-fn dose_number(dose: &str) -> String {
+pub(crate) fn dose_number(dose: &str) -> String {
     dose.chars()
         .take_while(|c| c.is_ascii_digit() || *c == '.')
         .collect()
@@ -252,7 +252,11 @@ fn dose_number(dose: &str) -> String {
 
 /// 一条用药区间「现在」那个值的依据:最新剂量来自的那份文档里,含药名**且含剂量数字**
 /// 的那一行(同一份病历里既往剂量和现剂量都写着药名时,靠剂量分开,审查 I-2)。
-fn cite_span(ctx: &Ctx<'_>, book: &mut EvidenceBook, m: &parser::MedSpan) -> Vec<String> {
+pub(crate) fn cite_span(
+    ctx: &Ctx<'_>,
+    book: &mut EvidenceBook,
+    m: &parser::MedSpan,
+) -> Vec<String> {
     let needle = m.latest_raw_name.clone().unwrap_or_else(|| m.name.clone());
     let num = dose_number(m.latest_dose.as_deref().unwrap_or_default());
     vec![book.cite(
@@ -268,7 +272,7 @@ fn cite_span(ctx: &Ctx<'_>, book: &mut EvidenceBook, m: &parser::MedSpan) -> Vec
 }
 
 /// 一个化验点的依据:值所在的那一行,用项目名和印刷单位把同一个数的别的行排开。
-fn cite_lab(
+pub(crate) fn cite_lab(
     ctx: &Ctx<'_>,
     book: &mut EvidenceBook,
     e: &rules::Evidence,
@@ -289,7 +293,11 @@ fn cite_lab(
     )
 }
 
-fn point_evidence(s: &parser::AnalyteSeries, p: &parser::LabPoint, key: &str) -> rules::Evidence {
+pub(crate) fn point_evidence(
+    s: &parser::AnalyteSeries,
+    p: &parser::LabPoint,
+    key: &str,
+) -> rules::Evidence {
     rules::Evidence {
         document_index: p.source,
         date: p.date.map(|d| d.to_string()),
@@ -304,7 +312,7 @@ fn point_evidence(s: &parser::AnalyteSeries, p: &parser::LabPoint, key: &str) ->
 
 /// 显示基准值配**印刷单位**(`LabPoint.value` ↔ `LabPoint.unit`,审查 I-4);没印单位
 /// 时才退到序列的规范单位。
-fn point_unit(s: &parser::AnalyteSeries, p: &parser::LabPoint) -> Option<String> {
+pub(crate) fn point_unit(s: &parser::AnalyteSeries, p: &parser::LabPoint) -> Option<String> {
     p.unit.clone().or_else(|| s.unit_canonical.clone())
 }
 
@@ -552,6 +560,7 @@ pub(crate) fn state_section(
         .collect();
     let any_value = vars.iter().any(|r| r.value.is_some());
     Some(Section {
+        package_id: None,
         kind: "state".into(),
         id: rules::view_id(pkg, "state", None),
         title: rules::view_title(pkg, "state", None),
@@ -596,7 +605,7 @@ fn fact_date(doc_date: Option<NaiveDate>, f: &deid::Fact) -> Option<NaiveDate> {
 }
 
 /// 无日期排最后,有日期按日期;stable。
-fn sort_nodes(nodes: &mut [Node]) {
+pub(crate) fn sort_nodes(nodes: &mut [Node]) {
     nodes.sort_by_key(|n| match &n.at {
         Some(d) => (0, d.clone()),
         None => (1, String::new()),
@@ -740,7 +749,7 @@ fn series_lane_nodes(ctx: &Ctx<'_>, key: &str, book: &mut EvidenceBook) -> Vec<N
         .collect()
 }
 
-fn quality(nodes: &[Node]) -> &'static str {
+pub(crate) fn quality(nodes: &[Node]) -> &'static str {
     if nodes.is_empty() {
         "empty"
     } else if nodes.iter().all(|n| n.unverified) {
@@ -896,6 +905,7 @@ pub(crate) fn journey_section(
     let any = lanes.iter().any(|(_, l)| !l.nodes.is_empty());
     let lanes: Vec<Lane> = lanes.into_iter().map(|(_, l)| l).collect();
     Some(Section {
+        package_id: None,
         kind: "journey".into(),
         id: rules::view_id(pkg, "journey", None),
         title: rules::view_title(pkg, "journey", None),
@@ -913,6 +923,7 @@ pub(crate) fn evidence_section(pkg: &Package, book: &EvidenceBook) -> Option<Sec
         return None;
     }
     Some(Section {
+        package_id: None,
         kind: "evidence".into(),
         id: rules::view_id(pkg, "evidence", None),
         title: rules::view_title(pkg, "evidence", None),

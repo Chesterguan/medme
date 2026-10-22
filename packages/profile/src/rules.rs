@@ -228,6 +228,7 @@ pub fn activity_section(
         .iter()
         .any(|d| ctx.in_window(d.date, a.window_days));
     Some(crate::view::Section {
+        package_id: None,
         kind: "score_card".into(),
         id: view_id(pkg, "score_card", None),
         title: view_title(pkg, "score_card", None),
@@ -802,6 +803,7 @@ pub fn states_section(
         }));
     }
     Some(crate::view::Section {
+        package_id: None,
         kind: "checklist".into(),
         id: view_id(pkg, "checklist", None),
         title: view_title(pkg, "checklist", None),
@@ -1507,6 +1509,7 @@ pub fn status_section(
         && hcq["daily_mg"].is_null()
         && reg.others.is_empty();
     Some(crate::view::Section {
+        package_id: None,
         kind: "status_card".into(),
         id: view_id(pkg, "status_card", None),
         title: view_title(pkg, "status_card", None),
@@ -1634,6 +1637,7 @@ pub fn reminders_section(
         (rank, -i["overdue_days"].as_i64().unwrap_or(0))
     });
     Some(crate::view::Section {
+        package_id: None,
         kind: "reminders".into(),
         id: view_id(pkg, "reminders", None),
         title: view_title(pkg, "reminders", None),
@@ -2263,6 +2267,7 @@ pub fn series_section(
         }
     }
     Some(crate::view::Section {
+        package_id: None,
         kind: "series_chart".into(),
         id: view_id(pkg, "series_chart", None),
         title: view_title(pkg, "series_chart", None),
@@ -2370,6 +2375,7 @@ pub fn timeline_section(
         })
         .collect();
     Some(crate::view::Section {
+        package_id: None,
         kind: "timeline".into(),
         id: view_id(pkg, "timeline", None),
         title: view_title(pkg, "timeline", None),
@@ -2982,6 +2988,7 @@ pub fn milestones_section(
         return None;
     }
     Some(crate::view::Section {
+        package_id: None,
         kind: "checklist".into(),
         id: view_id(pkg, "checklist", Some(MILESTONES_VIEW_ID)),
         title: view_title(pkg, "checklist", Some(MILESTONES_VIEW_ID)),
