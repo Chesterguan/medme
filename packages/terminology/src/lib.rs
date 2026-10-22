@@ -150,6 +150,8 @@ struct Index {
     /// 用:名字认不出时按码反查。字典里 `14749-6` 挂了两条(glucose 与同族),
     /// 先到先得——反查只是名字落空后的兜底,先到的那条就是通用的那条。
     loinc: HashMap<String, usize>,
+    /// RxNorm 码 -> 药条目(只 drug)。给 sidecar 的 `meds[].rxnorm` 兜底,同 `loinc`。
+    rxnorm: HashMap<String, usize>,
 }
 
 /// Normalization applied to BOTH index keys and query terms so lookups are
@@ -214,11 +216,15 @@ fn build_index() -> Index {
     let mut drug_aliases: HashMap<String, AliasHit> = HashMap::new();
     let mut drug_confusions: HashMap<String, AliasHit> = HashMap::new();
     let mut loinc: HashMap<String, usize> = HashMap::new();
+    let mut rxnorm: HashMap<String, usize> = HashMap::new();
 
     for (entry_idx, entry) in dict.entries.iter().enumerate() {
         let is_drug = entry.category == Category::Drug;
         if let (false, Some(code)) = (is_drug, entry.codes.loinc.as_deref()) {
             loinc.entry(code.trim().to_string()).or_insert(entry_idx);
+        }
+        if let (true, Some(code)) = (is_drug, entry.codes.rxnorm.as_deref()) {
+            rxnorm.entry(code.trim().to_string()).or_insert(entry_idx);
         }
         for alias in &entry.aliases {
             let norm = normalize_term(alias);
@@ -263,6 +269,7 @@ fn build_index() -> Index {
         drug_aliases,
         drug_confusions,
         loinc,
+        rxnorm,
     }
 }
 
@@ -938,6 +945,22 @@ pub fn resolve_loinc(code: &str) -> Option<Match> {
     Some(idx.to_match(&hit, 1.0))
 }
 
+/// 按 RxNorm 码反查药条目(只 drug)。与 [`resolve_loinc`] 同一手法、同一条规矩:
+/// 码是适配器给的、不是原文,调用方**名字优先**、码兜底。
+pub fn resolve_rxnorm(code: &str) -> Option<Match> {
+    let code = code.trim();
+    if code.is_empty() {
+        return None;
+    }
+    let idx = index();
+    let entry_idx = *idx.rxnorm.get(code)?;
+    let hit = AliasHit {
+        entry_idx,
+        alias: code.to_string(),
+    };
+    Some(idx.to_match(&hit, 1.0))
+}
+
 /// 报告一行(项名 + 单位)→ 概念。**提取层该用的入口**,不是 [`normalize`]。
 ///
 /// 拆候选后**不是「第一个命中即用」** —— 那样结果取决于候选顺序,很脆:
@@ -1173,6 +1196,24 @@ pub fn panel_for(key: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resolve_rxnorm_finds_drug_by_code() {
+        let m = super::resolve_rxnorm("11289").expect("warfarin RxNorm in dictionary");
+        assert_eq!(m.key, "warfarin");
+        assert_eq!(m.matched_alias, "11289");
+        assert_eq!(m.confidence, 1.0);
+        assert_eq!(
+            super::resolve_rxnorm(" 11289 ").map(|m| m.key).as_deref(),
+            Some("warfarin")
+        );
+        assert!(
+            super::resolve_rxnorm("14682-9").is_none(),
+            "LOINC 码不在药表里"
+        );
+        assert!(super::resolve_rxnorm("0").is_none());
+        assert!(super::resolve_rxnorm("").is_none());
+    }
+
     #[test]
     fn resolve_loinc_finds_lab_by_code() {
         let m = super::resolve_loinc("14682-9").expect("creatinine LOINC in dictionary");

@@ -38,6 +38,10 @@ pub struct MedItem {
     pub route: String,
     #[serde(default)]
     pub unverified: bool,
+    /// RxNorm 码,只有结构化导入的 sidecar 合法地带它(同 `LabItem::loinc`):云抽取
+    /// 产物经 `verify` 一律清空。空时不序列化,云路径落库 JSON 逐字节不变。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub rxnorm: String,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 pub struct DiagnosisItem {
@@ -727,6 +731,9 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
     for l in &mut e.labs {
         l.loinc.clear();
     }
+    for m in &mut e.meds {
+        m.rxnorm.clear();
+    }
 
     let mut keep = |ok: bool, flag: &mut bool| -> bool {
         match (mode, ok) {
@@ -840,6 +847,27 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn med_item_rxnorm_is_optional_and_cleared_by_verify() {
+        let json = serde_json::to_string(&MedItem::default()).unwrap();
+        assert!(
+            !json.contains("rxnorm"),
+            "空 rxnorm 不许出现在序列化结果里:{json}"
+        );
+        let e = parse_extraction(r#"{"meds":[{"name":"Warfarin","dose":"5mg","rxnorm":"11289"}]}"#)
+            .unwrap();
+        assert_eq!(e.meds[0].rxnorm, "11289");
+        assert!(serde_json::to_string(&e)
+            .unwrap()
+            .contains(r#""rxnorm":"11289""#));
+        let v = verify(e, "Warfarin 5mg", Mode::Text);
+        assert_eq!(v.extraction.meds.len(), 1);
+        assert!(
+            v.extraction.meds.iter().all(|m| m.rxnorm.is_empty()),
+            "verify 产物不带码"
+        );
+    }
 
     #[test]
     fn lab_item_loinc_is_optional_and_absent_when_empty() {
