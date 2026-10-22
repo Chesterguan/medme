@@ -1,13 +1,15 @@
 //! 云抽取结果(deid schema v1)→ `LabObservation`,与 `extract_labs` 的产物同构,
 //! 好让 aggregate / assemble_summary / 趋势零改动地吃它。
 //!
-//! labs 见 `labs_from_json`,meds 见 `meds_from_json`;diagnoses/impression 仍走
-//! `extract_conditions` 的正则路径,本模块不碰(见 2026-09-30 三视图 spec §5)。
+//! labs 见 `labs_from_json`,meds 见 `meds_from_json`,diagnoses 见 `diagnoses_from_json`
+//! (2026-10-22 通用病程档案 spec §3.0 之前 diagnoses 只走正则,sidecar 的 ICD 没人读);
+//! impression 仍走 `handoff` 的正则路径。
 //!
 //! 数值解析、单位换算、"这是不是一条化验行"的证据闸门,三处都直接复用
 //! `labs.rs` 给 OCR/正则路径写的同一份函数(`parse_decimal_token`/
 //! `canonicalize`/`has_lab_evidence`)——两条路径各自实现一遍、稍有出入,就是
 //! 图表安全事故的来源(见这三个函数的文档)。
+use crate::conditions::ConditionMention;
 use crate::labs::{canonicalize, has_lab_evidence, parse_decimal_token, LabObservation};
 use crate::meds::MedObservation;
 
@@ -173,6 +175,46 @@ pub fn meds_from_json(json: &str) -> Result<MedsFromJson, deid::DeidError> {
     Ok(out)
 }
 
+/// 云抽取 / sidecar 的 `diagnoses` → [`ConditionMention`](`section = "extraction"`)。
+///
+/// 与 [`meds_from_json`] 同一条规矩:`Err` = JSON 坏;`Ok` 且零条由调用方退回正则。
+/// `icd` 原样带出(空串 → `None`,不留空串);码的可信度由上游保证(云路径 `deid::verify`
+/// 逐字核过,sidecar 路径适配器对原文核过),这里不再判。空 `text` 丢掉:一个码没有原文
+/// 对不回任何一行。
+#[derive(Debug, Clone)]
+pub struct DiagnosesFromJson {
+    pub conditions: Vec<ConditionMention>,
+    pub dropped: usize,
+    pub unverified: usize,
+}
+
+pub fn diagnoses_from_json(json: &str) -> Result<DiagnosesFromJson, deid::DeidError> {
+    let e = deid::parse_extraction(json)?;
+    let mut out = DiagnosesFromJson {
+        conditions: Vec::new(),
+        dropped: 0,
+        unverified: 0,
+    };
+    for d in e.diagnoses {
+        let text = d.text.trim();
+        if text.is_empty() {
+            out.dropped += 1;
+            continue;
+        }
+        if d.unverified {
+            out.unverified += 1;
+        }
+        let icd = d.icd.trim();
+        out.conditions.push(ConditionMention {
+            raw_text: text.to_string(),
+            section: Some("extraction".into()),
+            icd_code: (!icd.is_empty()).then(|| icd.to_string()),
+            unverified: d.unverified,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +357,27 @@ mod tests {
             "词典不认识这个印刷单位,规范值必须是 None,不能恒等式地照抄印刷值"
         );
         assert_eq!(r.labs[0].unit_canonical, None);
+    }
+
+    #[test]
+    fn diagnoses_from_json_reads_code_and_text() {
+        let j = r#"{"diagnoses":[
+          {"text":"Aortic stenosis","icd":"I35.0"},
+          {"text":"Hypertension","icd":""},
+          {"text":"","icd":"Z95.2"},
+          {"text":"CKD","icd":"N18.3","unverified":true}
+        ]}"#;
+        let r = diagnoses_from_json(j).expect("valid json");
+        assert_eq!(r.conditions.len(), 3, "空 text 丢");
+        assert_eq!(r.conditions[0].raw_text, "Aortic stenosis");
+        assert_eq!(r.conditions[0].icd_code.as_deref(), Some("I35.0"));
+        assert_eq!(r.conditions[0].section.as_deref(), Some("extraction"));
+        assert_eq!(r.conditions[1].icd_code, None, "空码 → None,不留空串");
+        assert!(r.conditions[2].unverified);
+        assert_eq!(r.unverified, 1);
+        assert_eq!(r.dropped, 1);
+        assert!(diagnoses_from_json("not json").is_err());
+        assert_eq!(diagnoses_from_json("{}").unwrap().conditions.len(), 0);
     }
 
     #[test]
