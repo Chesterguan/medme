@@ -383,6 +383,25 @@ fn med_table_marks_only_written_discontinuation() {
     }
     // 泼尼松只出现过一次、之后清单里没有它 —— 不推停药。
     assert!(med_row(&view, "泼尼松")["stopped"].is_null());
+    // 审查 C1:「Do not stop taking warfarin」是叮嘱继续吃;「Aspirin stopped; continue metoprolol」
+    // 停的是另一味 —— 两条都在 2025-11-17 那份里,华法林与美托洛尔都不许被标停,since 也不重置。
+    assert_eq!(med_row(&view, "华法林")["since"], "2025-01-14");
+    assert_eq!(med_row(&view, "美托洛尔")["since"], "2024-03-10");
+    for l in section(&view, "journey")["body"]["lanes"]
+        .as_array()
+        .unwrap()
+    {
+        if l["key"] == "med:warfarin" || l["key"] == "med:metoprolol" {
+            assert!(
+                l["nodes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|n| n["kind"] != "stopped"),
+                "{l}"
+            );
+        }
+    }
     assert!(!serde_json::to_string(section(&view, "med_table"))
         .unwrap()
         .contains("已停"));
@@ -571,8 +590,9 @@ fn inpatient_days_never_negative() {
         .unwrap()
         .clone();
     assert_eq!(nodes.len(), 3);
-    assert_eq!(nodes[0]["to"], "2024-03-01 · 住院 1 天");
-    assert_eq!(nodes[1]["to"], "2025-06-14 · 住院 1 天");
+    // 审查 I2:没有出院日(或止早于起)就不编天数,与时间线页「住院 · N 份」同口径。
+    assert_eq!(nodes[0]["to"], "2024-03-01 · 住院");
+    assert_eq!(nodes[1]["to"], "2025-06-14 · 住院");
     assert_eq!(nodes[2]["to"], "2026-01-01 → 2026-01-01 · 住院 1 天");
 }
 
@@ -641,6 +661,38 @@ fn packages_stack_behind_the_general_layer_only_when_enabled() {
         med_row(&bare, "泼尼松")["dose"].is_string(),
         "没包时泼尼松在通用表里"
     );
+    // 审查 I1:通用段与包段共用一本依据簿 —— 同一个 ev: id 在所有 evidence 段里只能对应一句话,
+    // 且包段引用的每个 ev: 都查得到。
+    let mut quote_of: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for s in both["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["kind"] == "evidence")
+    {
+        for e in s["body"]["items"].as_array().unwrap() {
+            let id = e["id"].as_str().unwrap().to_string();
+            let q = e["quote"].as_str().unwrap_or("").to_string();
+            if let Some(prev) = quote_of.insert(id.clone(), q.clone()) {
+                assert_eq!(prev, q, "{id} 在两段里指向不同的话");
+            }
+        }
+    }
+    let mut referenced: Vec<String> = Vec::new();
+    for s in both["sections"].as_array().unwrap() {
+        if s["package_id"] != "sle" || s["kind"] == "evidence" {
+            continue;
+        }
+        let body = serde_json::to_string(&s["body"]).unwrap();
+        for (i, _) in body.match_indices("\"ev:") {
+            let rest = &body[i + 1..];
+            referenced.push(rest[..rest.find('"').unwrap()].to_string());
+        }
+    }
+    assert!(!referenced.is_empty());
+    for r in &referenced {
+        assert!(quote_of.contains_key(r), "{r} 查不到");
+    }
 }
 
 /// 返回 `true` = 这次是重写 golden(调用方在全部写完后再 panic 提醒 review)。

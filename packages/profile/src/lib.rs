@@ -45,7 +45,8 @@ pub fn materialize(
     let enabled = is_enabled(events, &pkg.manifest.id);
     let sections = if enabled {
         let ctx = rules::Ctx::build(docs, events, today);
-        sections_for(&ctx, pkg)
+        let mut book = state::EvidenceBook::default();
+        sections_for(&ctx, pkg, &mut book)
     } else {
         // 没开启就**不碰**临床输入:不 aggregate、不解抽取结果。既省一趟全量
         // 计算,也是 spec §4「从未开启 = 不算、不显示、不提醒」的字面实现。
@@ -73,7 +74,14 @@ pub fn materialize(
 
 /// 一个**开着的**包在这份 `Ctx` 上的全部 sections(开启闸由调用方过)。`materialize`
 /// 与通用层(`materialize_generic`)共用:后者建一次 `Ctx`,给每个开着的包各算一遍。
-pub(crate) fn sections_for(ctx: &rules::Ctx<'_>, pkg: &package::Package) -> Vec<Section> {
+///
+/// `book` 由调用方给:单包路径自己新开一本;通用层把它那本传进来,包段的 `ev:` 与通用段
+/// 同一个编号空间(审查 I1)。
+pub(crate) fn sections_for(
+    ctx: &rules::Ctx<'_>,
+    pkg: &package::Package,
+    book: &mut state::EvidenceBook,
+) -> Vec<Section> {
     // Task 13–15 继续往这里加 section。「开启了但还没有任何数据」与「没开启」
     // 是两种不同的显示状态:前者出卡片、卡片自己带 `empty_hint`,后者没卡片。
     let mut out = Vec::new();
@@ -97,12 +105,9 @@ pub(crate) fn sections_for(ctx: &rules::Ctx<'_>, pkg: &package::Package) -> Vec<
     out.extend(rules::milestones_section(ctx, pkg));
     // 三视图(spec 2026-09-30):三段共用一本依据簿,所以 state 与 journey 引用的
     // 每个 id 都在 evidence 里。包没声明 state_vars 时三段都不出(老包不变)。
-    let mut book = state::EvidenceBook::default();
-    out.extend(state::state_section(
-        ctx, pkg, &regimen, &activity, &mut book,
-    ));
-    out.extend(state::journey_section(ctx, pkg, &mut book));
-    out.extend(state::evidence_section(pkg, &book));
+    out.extend(state::state_section(ctx, pkg, &regimen, &activity, book));
+    out.extend(state::journey_section(ctx, pkg, book));
+    out.extend(state::evidence_section(pkg, book));
     out
 }
 

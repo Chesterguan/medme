@@ -853,8 +853,8 @@
             "origin": "llm",
             "quote": "CRP 3 mg/L (0-5)",
             "span": [
-              448,
-              449
+              542,
+              543
             ],
             "title": "2025-11-17_门诊病历_UF",
             "verified": true
@@ -879,8 +879,8 @@
             "origin": "llm",
             "quote": "Galactomannan 0.2 index (0-0.5)",
             "span": [
-              426,
-              429
+              520,
+              523
             ],
             "title": "2025-11-17_门诊病历_UF",
             "verified": true

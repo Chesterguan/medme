@@ -356,6 +356,41 @@ pub(crate) fn is_stop_line(line: &str) -> bool {
     })
 }
 
+/// 这一行写了停**这味药**吗(审查 C1)。按 `;；。,，` 拆子句:药名与停词必须在**同一个子句**里
+/// (「Aspirin stopped; continue metoprolol」停的是阿司匹林),且该子句在停词之前没有否定
+/// (「Do not stop taking warfarin」「不可自行停药」「勿擅自停用」是叮嘱继续吃)。
+pub(crate) fn stops_drug(line: &str, name: &str) -> bool {
+    const NEG: &[&str] = &[
+        "do not", "don't", "not ", "never", "without", "不可", "不要", "勿", "切勿", "禁止",
+        "避免", "自行", "擅自", "是否",
+    ];
+    let name_l = name.trim().to_ascii_lowercase();
+    if name_l.is_empty() {
+        return false;
+    }
+    line.split([';', '；', '。', ',', '，'])
+        .filter(|c| c.to_ascii_lowercase().contains(&name_l))
+        .filter(|c| is_stop_line(c))
+        .any(|c| {
+            let lower = c.to_ascii_lowercase();
+            // 停词在子句里的位置;它前面那一截里有否定就不算停。
+            let stop_at = [
+                "停",
+                "discontinued",
+                "stopped",
+                "stop taking",
+                "dc'd",
+                "d/c'd",
+            ]
+            .iter()
+            .filter_map(|k| lower.find(k))
+            .min()
+            .unwrap_or(0);
+            let before = &lower[..stop_at];
+            !NEG.iter().any(|n| before.contains(n))
+        })
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct Stopped {
     at: String,
@@ -389,14 +424,13 @@ pub(crate) struct MedLane {
     pub(crate) nodes: Vec<state::Node>,
 }
 
-/// 某次提及所在文档里,含药名**且**写了停药的那一整行。
+/// 某次提及所在文档里,写了停**这味药**的那一整行([`stops_drug`]);没有就 `None`。
 fn stop_line_of(ctx: &Ctx<'_>, m: &parser::MedMention) -> Option<String> {
     let d = ctx.docs.iter().find(|d| d.index == m.source)?;
-    let name = m.raw_name.to_ascii_lowercase();
     d.text
         .lines()
         .map(str::trim)
-        .find(|l| l.to_ascii_lowercase().contains(&name) && is_stop_line(l))
+        .find(|l| stops_drug(l, &m.raw_name))
         .map(str::to_string)
 }
 
@@ -576,7 +610,8 @@ fn encounter_node(ctx: &Ctx<'_>, e: &EncounterRef, book: &mut EvidenceBook) -> s
             let days = (t - s).num_days().max(1);
             format!("{s} → {t} · 住院 {days} 天")
         }
-        (Some(s), _) if e.kind == "inpatient" => format!("{s} · 住院 1 天"),
+        // 没有出院日就不编天数(审查 I2;时间线页同样只写「住院 · N 份」)。
+        (Some(s), _) if e.kind == "inpatient" => format!("{s} · 住院"),
         (Some(s), _) => s.to_string(),
         (None, _) => e.title.clone().unwrap_or_default(),
     };
@@ -770,18 +805,14 @@ pub fn materialize_generic(
     let (meds, med_lanes) = med_section(&ctx, &mut book, &exclude);
     sections.push(meds);
     sections.push(journey_section(&ctx, encounters, med_lanes, &mut book));
-    sections.push(general_section(
-        "evidence",
-        "general_evidence",
-        "依据",
-        serde_json::json!({ "items": book.items }),
-    ));
+    // 包段与通用段**共用这一本**依据簿(审查 I1:各自从 1 编号会撞 id,界面合并后点开错的
+    // 那句);通用的 evidence 段等包都登记完再装,固定排在通用三段之后、包段之前。
     let mut sources: Vec<SourceOut> = Vec::new();
     for pkg in installed {
         if !crate::is_enabled(events, &pkg.manifest.id) {
             continue;
         }
-        for mut s in crate::sections_for(&ctx, pkg) {
+        for mut s in crate::sections_for(&ctx, pkg, &mut book) {
             s.package_id = Some(pkg.manifest.id.clone());
             sections.push(s);
         }
@@ -795,6 +826,15 @@ pub fn materialize_generic(
             }
         }
     }
+    sections.insert(
+        3,
+        general_section(
+            "evidence",
+            "general_evidence",
+            "依据",
+            serde_json::json!({ "items": book.items }),
+        ),
+    );
     ProfileView {
         package_id: GENERAL_ID.into(),
         package_version: "1".into(),
@@ -835,5 +875,51 @@ mod tests {
         assert!(!is_stop_line("Discharge medications: Warfarin 5mg"));
         assert!(!is_stop_line("Metoprolol 25mg twice daily"));
         assert!(!is_stop_line("stoppage"));
+    }
+
+    /// 审查 C1:停词必须与**这味药**在同一个子句里,且前面没有否定 —— 「Do not stop taking
+    /// warfarin」「不可自行停药」是叮嘱继续吃;「Aspirin stopped; continue metoprolol」停的是另一味。
+    #[test]
+    fn stop_clause_needs_same_clause_and_no_negation() {
+        assert!(stops_drug(
+            "Voriconazole discontinued after 24 weeks of therapy.",
+            "Voriconazole"
+        ));
+        assert!(stops_drug("Stopped warfarin due to bleeding", "warfarin"));
+        assert!(stops_drug(
+            "阿司匹林肠溶片已停用,改用氯吡格雷。",
+            "阿司匹林肠溶片"
+        ));
+        assert!(stops_drug(
+            "Aspirin stopped; continue metoprolol.",
+            "Aspirin"
+        ));
+        assert!(!stops_drug(
+            "Do not stop taking warfarin without calling the clinic.",
+            "warfarin"
+        ));
+        assert!(!stops_drug("Warfarin: do not discontinue.", "Warfarin"));
+        assert!(!stops_drug(
+            "Never stop taking metoprolol abruptly.",
+            "metoprolol"
+        ));
+        assert!(!stops_drug(
+            "Aspirin stopped; continue metoprolol.",
+            "metoprolol"
+        ));
+        assert!(!stops_drug(
+            "阿司匹林肠溶片 100mg qd,不可自行停药。",
+            "阿司匹林肠溶片"
+        ));
+        assert!(!stops_drug(
+            "服用阿司匹林 1 年后门诊评估是否停用;阿托伐他汀继续。",
+            "阿司匹林"
+        ));
+        assert!(!stops_drug("勿擅自停用华法林", "华法林"));
+        assert!(!stops_drug("Metoprolol 25mg twice daily", "Metoprolol"));
+        assert!(!stops_drug(
+            "Aspirin stopped; continue metoprolol.",
+            "lisinopril"
+        ));
     }
 }
