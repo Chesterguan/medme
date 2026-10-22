@@ -322,3 +322,82 @@ fn family_cards_attach_lab_tables() {
         }
     }
 }
+
+fn med_row<'a>(view: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    section(view, "med_table")["body"]["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == name)
+        .unwrap_or_else(|| panic!("用药表没有 {name}"))
+}
+
+/// 验收 2:华法林 —— 最近剂量、记录中自何日起、首次出现、5mg qd / 5 mg daily 不算变化。
+#[test]
+fn med_table_since_is_start_of_current_dose_run() {
+    let view = render(TODAY, &[], &[]);
+    let w = med_row(&view, "华法林");
+    assert_eq!(w["dose"], "4mg");
+    assert_eq!(w["since"], "2025-01-14");
+    assert_eq!(w["first_seen"], "2024-03-10");
+    assert_eq!(w["last_seen"], "2026-09-14");
+    assert_eq!(w["family"], "cardio");
+    assert!(w["stopped"].is_null());
+    assert!(!w["evidence"].as_array().unwrap().is_empty());
+    // 其他字段:词典认不出的原文名照列、族 other;伏立康唑带「抗真菌」小标。
+    let z = med_row(&view, "Zebrafoam");
+    assert_eq!(z["family"], "other");
+    assert_eq!(z["raw_name"], "Zebrafoam");
+    let v = med_row(&view, "伏立康唑");
+    assert_eq!(v["family"], "infection");
+    assert_eq!(v["family_note"], "抗真菌");
+}
+
+/// 验收 3:停药只认原文写了的;`d/c summary reviewed`、`stopped smoking` 不触发;
+/// 没有任何药因为「清单里不再出现」被标停。
+#[test]
+fn med_table_marks_only_written_discontinuation() {
+    let view = render(TODAY, &[], &[]);
+    let v = med_row(&view, "伏立康唑");
+    assert_eq!(v["stopped"]["at"], "2025-11-17");
+    assert!(v["since"].is_null(), "停了之后「自何日起」留空");
+    let ev = section(&view, "evidence");
+    let stop_ev = v["stopped"]["evidence"].as_str().unwrap();
+    let quote = ev["body"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == stop_ev)
+        .unwrap()["quote"]
+        .as_str()
+        .unwrap();
+    assert!(quote.contains("discontinued"), "{quote}");
+    let rows = section(&view, "med_table")["body"]["rows"]
+        .as_array()
+        .unwrap();
+    assert_eq!(rows.last().unwrap()["name"], "伏立康唑", "停了的排最后");
+    for r in rows {
+        if r["name"] != "伏立康唑" {
+            assert!(r["stopped"].is_null(), "{} 不该被标停", r["name"]);
+        }
+    }
+    // 泼尼松只出现过一次、之后清单里没有它 —— 不推停药。
+    assert!(med_row(&view, "泼尼松")["stopped"].is_null());
+    assert!(!serde_json::to_string(section(&view, "med_table"))
+        .unwrap()
+        .contains("已停"));
+}
+
+/// 验收 4:stale 按 180 天;文案不说「停」。
+#[test]
+fn med_table_stale_after_180_days() {
+    let last = "2026-09-14".parse::<NaiveDate>().unwrap();
+    let plus = |n: i64| (last + chrono::Duration::days(n)).to_string();
+    let v = render(&plus(181), &[], &[]);
+    let m = med_row(&v, "美托洛尔");
+    assert_eq!(m["stale"], true);
+    assert_eq!(m["days_since"], 181);
+    let v = render(&plus(179), &[], &[]);
+    assert_eq!(med_row(&v, "美托洛尔")["stale"], false);
+    assert_eq!(section(&v, "med_table")["body"]["stale_after_days"], 180);
+}
