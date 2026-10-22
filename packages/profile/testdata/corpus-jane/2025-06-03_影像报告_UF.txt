@@ -1,0 +1,10 @@
+UF Health Shands Hospital
+Patient: Doe, Jane    MRN: 00000000    DOB: 1965-02-11    Sex: F
+CT CHEST WITH CONTRAST
+Exam Date: 2025-06-03
+
+FINDINGS: 3.2 cm cavitary nodular opacity in the right upper lobe with surrounding ground-glass halo. No pleural effusion. Prosthetic aortic valve in situ.
+
+IMPRESSION: Cavitary right upper lobe lesion with halo sign, findings consistent with invasive aspergillosis in an immunocompromised host.
+
+Electronically signed by R. Lee, MD 2025-06-03

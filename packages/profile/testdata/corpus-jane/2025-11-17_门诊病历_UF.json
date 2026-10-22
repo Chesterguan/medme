@@ -1,0 +1,10 @@
+{"doc_type":"clinical_note","doc_date":"2025-11-17",
+ "labs":[
+  {"name":"Galactomannan","value":"0.2","unit":"index","ref_low":"0","ref_high":"0.5","flag":"","loinc":""},
+  {"name":"CRP","value":"3","unit":"mg/L","ref_low":"0","ref_high":"5","flag":"","loinc":"1988-5"}],
+ "meds":[
+  {"name":"Voriconazole","dose":"","freq":"","route":"","rxnorm":"121243"},
+  {"name":"Warfarin","dose":"4mg","freq":"daily","route":"","rxnorm":"11289"},
+  {"name":"Metoprolol","dose":"25mg","freq":"twice daily","route":"","rxnorm":"6918"}],
+ "diagnoses":[
+  {"text":"Invasive pulmonary aspergillosis, resolved","icd":"B44.1"}]}

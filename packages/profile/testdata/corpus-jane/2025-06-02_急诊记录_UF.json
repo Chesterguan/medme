@@ -1,0 +1,5 @@
+{"doc_type":"clinical_note","doc_date":"2025-06-02",
+ "labs":[
+  {"name":"WBC","value":"14.2","unit":"10*3/uL","ref_low":"4.0","ref_high":"10.0","flag":"H","loinc":"6690-2"},
+  {"name":"CRP","value":"96","unit":"mg/L","ref_low":"0","ref_high":"5","flag":"H","loinc":"1988-5"}],
+ "meds":[],"diagnoses":[]}
