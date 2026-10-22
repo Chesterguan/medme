@@ -1233,6 +1233,14 @@ mod tests {
     /// Every analyte/vital/drug key required by docs/015 §3.5. The dictionary
     /// may add siblings, but must never drop one of these.
     const REQUIRED_KEYS: &[&str] = &[
+        // 2026-10-22 通用病程档案 spec §8.1 第 7 条:本轮补的 5 个 key(降钙素原早就有,
+        // key 是 `pct`,spec 里的「procalcitonin ✗」是 key 名没对上)。
+        "voriconazole",
+        "lisinopril",
+        "pct",
+        "tacrolimus_level",
+        "digoxin_level",
+        "voriconazole_level",
         // labs: renal, glucose, lipids, liver, CBC, thyroid
         "creatinine",
         "egfr",
@@ -1771,10 +1779,12 @@ mod tests {
         // 被模糊配成 urine_acr,见 upcr_is_its_own_concept_and_never_lands_on_acr)= 641。
         // +1 (2026-09-17.2:ch50,总补体溶血活性 —— 同一类问题,补之前「CH50」被模糊
         // 配成 ca50,见 ch50_is_its_own_concept_and_never_lands_on_ca50)= 642。
+        // +5 (2026-10-22 通用病程档案:voriconazole/lisinopril 两味药 + tacrolimus_level/
+        // digoxin_level/voriconazole_level 三个血药浓度化验)= 647。
         // A drift here means an entry was accidentally dropped or duplicated.
         assert_eq!(
             dictionary_entries().len(),
-            642,
+            647,
             "unexpected dictionary entry count"
         );
     }
