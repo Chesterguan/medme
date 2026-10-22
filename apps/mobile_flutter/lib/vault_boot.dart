@@ -5,7 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:mobile_flutter/src/rust/api/vault.dart';
-import 'package:mobile_flutter/src/rust/api/vault_profile.dart' show vaultProfileRefreshTerms;
+import 'package:mobile_flutter/src/rust/api/vault_profile.dart'
+    show vaultProfileInstallBuiltin, vaultProfileRefreshTerms;
 import 'package:mobile_flutter/src/rust/api/vault_sync.dart' show syncOpenProfileVault, syncCurrentVaultIsKeyed;
 import 'package:mobile_flutter/account.dart';
 import 'package:mobile_flutter/icloud_bridge.dart';
@@ -196,7 +197,20 @@ Future<void> openCurrentProfileVaultUnserialized() async {
         throw StateError('本地病历箱开箱后状态核对失败:不应为 keyed');
       }
   }
+  await _installBuiltinSkills();
   await _refreshProfileTerms();
+}
+
+/// 首启(或每次开箱,幂等)先把 App 内置的病种包装进缓存,再按箱子重装术语覆盖层 ——
+/// 断网首启也看得到内置包(2026-10-22 通用病程档案 spec §5)。本地文件写入、不联网,
+/// 不受首启告知门限制;线上更新照旧走 `SkillPackages.refreshIndex`,单调版本闸保证
+/// 线上包只会把内置包往前推。失败只是「这次没装上」,绝不挡住开箱。
+Future<void> _installBuiltinSkills() async {
+  try {
+    await vaultProfileInstallBuiltin(dir: await skillCacheDir());
+  } catch (e) {
+    debugPrint('[skills] 内置病种包这次没装上(不影响开箱):$e');
+  }
 }
 
 /// 按**刚开的这个箱子**重装病种包的术语覆盖层。

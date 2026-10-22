@@ -83,6 +83,8 @@ class ProfileSectionView extends StatelessWidget {
       'state' => _StateBody(body, links),
       'journey' => _JourneyBody(body, links),
       'evidence' => _EvidenceBody(body, links),
+      'family_cards' => _FamilyCardsBody(body, links),
+      'med_table' => _MedTableBody(body, links),
       _ => const SizedBox.shrink(), // 上面已经守过一遍 kind,理论上到不了这里。
     };
 
@@ -107,6 +109,8 @@ const Map<String, IconData> _kIconFor = {
   'checklist': Icons.checklist,
   'handoff': Icons.share_outlined,
   'state': Icons.flag_outlined,
+  'family_cards': Icons.folder_open_outlined,
+  'med_table': Icons.medication_outlined,
   'journey': Icons.route_outlined,
   'evidence': Icons.fact_check_outlined,
 };
@@ -1709,3 +1713,273 @@ class _SeriesValuesLine extends StatelessWidget {
 
 /// 整数不带 `.0`,其余原样 `toString`(文件头「数值原则」:不四舍五入)。
 String _num(double x) => x == x.roundToDouble() ? '${x.toInt()}' : '$x';
+
+
+// ---------------------------------------------------------------------------
+// 通用病程档案层(2026-10-22 spec §4 契约):`family_cards` 与 `med_table`。
+// 这两块**不靠包**;文案是引擎级通用词(族名、「记录中自 … 起」),不是病种文案。
+// 不下结论:没有任何结论性措辞(spec §6 列的那几个词一个都不出现),只有日期、次数、原文、码。
+// ---------------------------------------------------------------------------
+
+/// `family_cards`:每族一张可折叠条(默认折叠),`other` 折成一行「其他 N 条」;
+/// 展开后每条诊断「原文 · 码 · 首次 · 最近 · N 份记录提到」+ 这一族的化验小表;
+/// 末尾「血常规 / 电解质 / 肝功能」通用一排。
+class _FamilyCardsBody extends StatelessWidget {
+  const _FamilyCardsBody(this.body, this.links);
+
+  final Map<String, dynamic> body;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final families = _asMapList(body['families']);
+    final common = _asMapList(body['common_labs']);
+    if (families.isEmpty && common.isEmpty) {
+      return _HintLine('还没有诊断记录');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final f in families) _FamilyTile(f, links),
+        if (common.isNotEmpty) ...[
+          const SizedBox(height: MedShape.s2),
+          Text('血常规 / 电解质 / 肝功能 最近值', style: MedType.caption.copyWith(color: c.ink2)),
+          const SizedBox(height: MedShape.s1),
+          _LabRows(common, links),
+        ],
+      ],
+    );
+  }
+}
+
+class _FamilyTile extends StatelessWidget {
+  const _FamilyTile(this.family, this.links);
+
+  final Map<String, dynamic> family;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final label = '${family['label'] ?? ''}';
+    final count = (family['count'] as num?)?.toInt() ?? 0;
+    final last = fmtDate(family['last_seen'] as String?);
+    final diagnoses = _asMapList(family['diagnoses']);
+    final labs = _asMapList(family['labs']);
+    final isOther = family['key'] == 'other';
+    final title = isOther
+        ? '其他 $count 条'
+        : [label, '$count 条诊断', if (last.isNotEmpty) '最近 $last'].join(' · ');
+    return ExpansionTile(
+      title: Text(title, style: MedType.subtitle.copyWith(color: c.ink)),
+      shape: const Border(),
+      collapsedShape: const Border(),
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(left: MedShape.s2, bottom: MedShape.s2),
+      expandedCrossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final d in diagnoses) _DiagnosisRow(d, links),
+        if (labs.isNotEmpty) ...[
+          const SizedBox(height: MedShape.s2),
+          Text('化验', style: MedType.caption.copyWith(color: c.ink2)),
+          _LabRows(labs, links),
+        ],
+      ],
+    );
+  }
+}
+
+class _DiagnosisRow extends StatelessWidget {
+  const _DiagnosisRow(this.dx, this.links);
+
+  final Map<String, dynamic> dx;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final texts = (dx['texts'] as List? ?? const []).map((t) => '$t').toList();
+    final code = dx['code'] as String?;
+    final secondary = dx['secondary'] as String?;
+    final first = fmtDate(dx['first_seen'] as String?);
+    final last = fmtDate(dx['last_seen'] as String?);
+    final n = (dx['doc_count'] as num?)?.toInt() ?? 0;
+    final ids = (dx['evidence'] as List? ?? const []).whereType<String>().toList();
+    final unverified = dx['unverified'] == true;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: texts.isEmpty ? '' : texts.first, style: MedType.body.copyWith(color: c.ink)),
+                if (code != null) TextSpan(text: '  $code', style: MedType.caption.copyWith(color: c.ink2)),
+                if (secondary != null)
+                  TextSpan(text: '  ${_kFamilyLabel[secondary] ?? secondary}', style: MedType.caption.copyWith(color: c.ink3)),
+                if (unverified) TextSpan(text: '  需核对', style: MedType.caption.copyWith(color: c.ink3)),
+              ],
+            ),
+          ),
+          if (texts.length > 1)
+            Text(texts.skip(1).join(' / '), style: MedType.caption.copyWith(color: c.ink3)),
+          Text(
+            [if (first.isNotEmpty) '首次 $first', if (last.isNotEmpty) '最近 $last', '$n 份记录提到'].join(' · '),
+            style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
+          ),
+          if (ids.isNotEmpty && links != null) _EvidenceChips(ids: ids, links: links!),
+        ],
+      ),
+    );
+  }
+}
+
+/// 族 key → 中文(与 Rust `generic_tables::FAMILIES` 同一份词;第二族灰字用)。
+const Map<String, String> _kFamilyLabel = {
+  'cardio': '心血管', 'infection': '感染', 'respiratory': '呼吸', 'renal': '肾',
+  'endocrine': '内分泌', 'immune': '免疫', 'neuro': '神经', 'digestive': '消化',
+  'oncology': '肿瘤', 'blood': '血液', 'musculoskeletal': '骨骼肌肉', 'other': '其他',
+  'uncoded': '未归类',
+};
+
+/// 化验小表的行:`label  value unit  偏高  (date)  参考 ref`,点依据开原件。
+class _LabRows extends StatelessWidget {
+  const _LabRows(this.rows, this.links);
+
+  final List<Map<String, dynamic>> rows;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final l in rows)
+          Builder(builder: (context) {
+            final unit = l['unit'] as String?;
+            final value = '${l['value'] ?? ''}${unit == null || unit.isEmpty || unit == '1' ? '' : ' $unit'}';
+            final flagWord = switch (l['flag']) { 'H' => '偏高', 'L' => '偏低', _ => null };
+            final flagColor = switch (l['flag']) { 'H' => c.high, 'L' => c.low, _ => c.ink2 };
+            final date = fmtDate(l['date'] as String?);
+            final ref = l['ref'] as String?;
+            final ev = links?.byId(l['evidence']);
+            final row = Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Text('${l['label'] ?? l['key'] ?? ''}', style: MedType.secondary.copyWith(color: c.ink2)),
+                  ),
+                  Expanded(
+                    flex: 4,
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(text: value, style: MedType.body.copyWith(color: c.ink, fontWeight: FontWeight.w600)),
+                          if (flagWord != null) TextSpan(text: ' $flagWord', style: MedType.caption.copyWith(color: flagColor)),
+                          if (l['unverified'] == true) TextSpan(text: ' 需核对', style: MedType.caption.copyWith(color: c.ink3)),
+                          TextSpan(
+                            text: [if (date.isNotEmpty) '\n$date', if (ref != null) '参考 $ref'].join(' · '),
+                            style: MedType.caption.copyWith(color: c.ink3),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (ev != null) Icon(Icons.chevron_right, size: 18, color: c.ink3),
+                ],
+              ),
+            );
+            if (ev == null) return row;
+            return InkWell(onTap: () => links!.onOpen(ev), child: row);
+          }),
+      ],
+    );
+  }
+}
+
+/// `med_table`:每个药一行「名 剂量 · 记录中自 YYYY-MM-DD 起 · N 天前有记录」;
+/// 超过阈值的灰字「N 天没有新记录」;病历写了停药的一行「病历写了停药 · 日期」沉底。
+class _MedTableBody extends StatelessWidget {
+  const _MedTableBody(this.body, this.links);
+
+  final Map<String, dynamic> body;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _asMapList(body['rows']);
+    if (rows.isEmpty) return _HintLine('还没有用药记录');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0) const SizedBox(height: MedShape.s2),
+          _MedRow(rows[i], links),
+        ],
+      ],
+    );
+  }
+}
+
+class _MedRow extends StatelessWidget {
+  const _MedRow(this.row, this.links);
+
+  final Map<String, dynamic> row;
+  final ProfileLinks? links;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final name = '${row['name'] ?? ''}';
+    final dose = row['dose'] as String?;
+    final since = fmtDate(row['since'] as String?);
+    final days = (row['days_since'] as num?)?.toInt();
+    final stale = row['stale'] == true;
+    final stopped = row['stopped'];
+    final family = row['family'] as String?;
+    final note = row['family_note'] as String?;
+    final ids = (row['evidence'] as List? ?? const []).whereType<String>().toList();
+    final stopEv = stopped is Map ? links?.byId(stopped['evidence']) : null;
+    final muted = stale || stopped is Map;
+    final tags = [
+      if (family != null && family != 'other') _kFamilyLabel[family] ?? family,
+      ?note,
+    ].join(' · ');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: name, style: MedType.body.copyWith(color: muted ? c.ink2 : c.ink, fontWeight: FontWeight.w600)),
+              if (dose != null && dose.isNotEmpty)
+                TextSpan(text: '  $dose', style: MedType.body.copyWith(color: muted ? c.ink2 : c.ink)),
+              if (tags.isNotEmpty) TextSpan(text: '  $tags', style: MedType.caption.copyWith(color: c.ink3)),
+              if (row['unverified'] == true) TextSpan(text: '  需核对', style: MedType.caption.copyWith(color: c.ink3)),
+            ],
+          ),
+        ),
+        Text(
+          stopped is Map
+              ? '病历写了停药 · ${fmtDate(stopped['at'] as String?)}'
+              : [
+                  if (since.isNotEmpty) '记录中自 $since 起',
+                  if (days != null) stale ? '$days 天没有新记录' : '$days 天前有记录',
+                ].join(' · '),
+          style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
+        ),
+        if (links != null)
+          _EvidenceChips(
+            ids: [if (stopEv != null) stopped['evidence'] as String, ...ids],
+            links: links!,
+          ),
+      ],
+    );
+  }
+}
