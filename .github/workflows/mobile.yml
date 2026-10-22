@@ -77,7 +77,7 @@ jobs:
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "17"
@@ -133,7 +133,7 @@ jobs:
           --dart-define=POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
           --dart-define=MEDME_UPLOAD_TOKEN=${{ secrets.MEDME_UPLOAD_TOKEN }}
           ${{ vars.MEDME_API_BASE != '' && format('--dart-define=MEDME_API_BASE={0}', vars.MEDME_API_BASE) || '' }}
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 # TODO: SHA 钉版
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.1 # TODO: SHA 钉版
         with:
           name: medme-android
           path: ${{ env.WORKDIR }}/build/app/outputs/flutter-apk/app-release.apk
@@ -260,7 +260,7 @@ jobs:
             exit 1
           fi
           echo "✓ Package.resolved 与提交时一致"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: medme-ios-ipa
           path: ${{ env.WORKDIR }}/build/ios/ipa/*.ipa
