@@ -605,11 +605,49 @@ fn enable_sle() -> Vec<parser::ProfileEvent> {
     }]
 }
 
+/// 同一份语料外加一条诊断(最后一份门诊正文一行 + 侧文件一条),其余逐字不动。
+fn render_with_dx(
+    today: &str,
+    pkgs: &[profile::Package],
+    text: &str,
+    icd: &str,
+) -> serde_json::Value {
+    let mut corpus = load_corpus();
+    let last = corpus
+        .iter_mut()
+        .rev()
+        .find(|d| d.kind == "门诊病历")
+        .unwrap();
+    last.text.push_str(&format!("{text} [{icd}]\n"));
+    let mut sidecar: serde_json::Value = serde_json::from_str(&last.sidecar).unwrap();
+    sidecar["diagnoses"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"text": text, "icd": icd}));
+    last.sidecar = sidecar.to_string();
+    let docs: Vec<parser::SourceDoc> = corpus
+        .iter()
+        .enumerate()
+        .map(|(i, d)| parser::SourceDoc {
+            index: i,
+            date: Some(d.date),
+            text: &d.text,
+            doc_type: Some(doc_type_for(&d.kind).into()),
+            title: Some(d.stem.clone()),
+            extraction_json: Some(&d.sidecar),
+        })
+        .collect();
+    let encs = encounters(&corpus);
+    let view = profile::materialize_generic(&docs, &encs, &[], pkgs, today.parse().unwrap());
+    serde_json::to_value(&view).unwrap()
+}
+
 /// 验收 8 + 9 + 12 一个测试里顺序跑(覆盖层是进程全局,拆开会互相清):
-/// 无包无事件 → 通用段照出;装了 SLE 没 enable → 只有通用段;enable → 通用在前、包段在后、
-/// 华法林不受影响、泼尼松从用药表消失(包的 gc 行替换);SLE golden 由 golden_sle_course 另守。
+/// 无包无事件 → 通用段照出;装了 SLE 但没有狼疮诊断 → 只有通用段(`enable` 事件也不算);
+/// 有 M32 诊断 → 通用在前、包段在后、华法林不受影响、泼尼松仍在用药表(2026-10-23 起不替换);
+/// SLE golden 由 golden_sle_course 另守。
 #[test]
-fn packages_stack_behind_the_general_layer_only_when_enabled() {
+fn packages_stack_behind_the_general_layer_only_when_they_apply() {
     let pkg = common::full_pkg();
     let kinds = |v: &serde_json::Value| -> Vec<(String, String)> {
         v["sections"]
@@ -635,31 +673,35 @@ fn packages_stack_behind_the_general_layer_only_when_enabled() {
     assert_eq!(bare["package_id"], "general");
     assert_eq!(bare["enabled"], true);
     assert!(bare["sources"].as_array().unwrap().is_empty());
-    // 2. 装了 SLE 但没 enable:与 1 逐字节相同。
-    let installed = render(TODAY, &[], std::slice::from_ref(&pkg));
-    assert_eq!(installed, bare, "没开启的包一段都不出");
-    // 3. enable:通用在前、包段在后。
+    assert!(bare.get("packages").is_none(), "没装包就没有 packages 键");
+    // 2. 装了 SLE、甚至写过 enable,但 Jane 没有狼疮诊断:sections 与 1 逐字节相同。
+    let installed = render(TODAY, &enable_sle(), std::slice::from_ref(&pkg));
+    assert_eq!(
+        installed["sections"], bare["sections"],
+        "没命中的包一段都不出"
+    );
+    assert_eq!(installed["packages"][0]["applies"], false);
+    assert_eq!(installed["packages"][0]["family"], "immune");
+    // 3. 有 M32 诊断:通用在前、包段在后。
     terminology::set_overlay(common::overlay_entries(&pkg));
-    let both = render(TODAY, &enable_sle(), std::slice::from_ref(&pkg));
+    let both = render_with_dx(
+        TODAY,
+        std::slice::from_ref(&pkg),
+        "Lupus nephritis",
+        "M32.14",
+    );
     terminology::set_overlay(vec![]);
     let k = kinds(&both);
     assert_eq!(&k[..4], &kinds(&bare)[..]);
     assert!(k[4..].iter().all(|(p, _)| p == "sle"), "{k:?}");
     assert!(k[4..].iter().any(|(_, x)| x == "state"));
     assert!(!both["sources"].as_array().unwrap().is_empty());
+    assert_eq!(both["packages"][0]["applies"], true);
     let w = med_row(&both, "华法林");
     assert_eq!(w["since"], "2025-01-14");
     assert!(
-        section(&both, "med_table")["body"]["rows"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|r| r["name"] != "泼尼松"),
-        "包的 gc 状态行替换掉通用层的泼尼松行"
-    );
-    assert!(
-        med_row(&bare, "泼尼松")["dose"].is_string(),
-        "没包时泼尼松在通用表里"
+        med_row(&both, "泼尼松")["dose"].is_string(),
+        "包段在「现在」、药表在「用药」,不在同一屏,泼尼松行不替换"
     );
     // 审查 I1:通用段与包段共用一本依据簿 —— 同一个 ev: id 在所有 evidence 段里只能对应一句话,
     // 且包段引用的每个 ev: 都查得到。

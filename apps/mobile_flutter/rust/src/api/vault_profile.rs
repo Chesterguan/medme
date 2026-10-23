@@ -63,18 +63,6 @@ pub fn vault_profile_view_general(dir: String) -> anyhow::Result<String> {
         profile::materialize_generic(&docs, &input.encounters, &input.events, &installed, today());
     let mut json = serde_json::to_value(&view)?;
     json["documents"] = serde_json::Value::Array(input.document_refs());
-    json["packages"] = serde_json::Value::Array(
-        installed
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "id": p.manifest.id,
-                    "display_name": p.manifest.display.name,
-                    "enabled": profile::is_enabled(&input.events, &p.manifest.id),
-                })
-            })
-            .collect(),
-    );
     Ok(serde_json::to_string(&json)?)
 }
 
@@ -244,18 +232,15 @@ fn installed_packages(dir: &Path) -> Vec<profile::Package> {
         .collect()
 }
 
-/// 装着**而且开着**的包,把它们的 `terms` 并成**一份**覆盖层条目表。
+/// 装着的**全部**包,把它们的 `terms` 并成**一份**覆盖层条目表。
 ///
-/// 两件事必须在这里做,`terminology::set_overlay` 一概不代管(见它的文档):
-/// * **合并**:整体替换,分两次调用后一次会把前一包冲掉;
-/// * **闸**:没开启的病不许把别名塞进全局词典(spec §4「从未开启 = 不算、不显示、
-///   不提醒」)—— 闸用 `profile::is_enabled` 那一个实现,不在这儿照着重写一遍。
-fn overlay_entries(dir: &Path, events: &[parser::ProfileEvent]) -> Vec<terminology::Entry> {
+/// 合并必须在这里做,`terminology::set_overlay` 不代管(见它的文档):整体替换,分两次
+/// 调用后一次会把前一包冲掉。2026-10-23 起不再按 `enable` 事件过滤:包出不出现由诊断
+/// 触发(`profile::package_applies`),用户没有「开启」动作;覆盖层只加不改(ADR 0011
+/// 决定 6),装着就装上。`events` 参数留着给调用方,不再读。
+fn overlay_entries(dir: &Path, _events: &[parser::ProfileEvent]) -> Vec<terminology::Entry> {
     let mut out: Vec<terminology::Entry> = Vec::new();
     for pkg in installed_packages(dir) {
-        if !profile::is_enabled(events, &pkg.manifest.id) {
-            continue;
-        }
         for a in &pkg.terms.analytes {
             out.push(analyte_entry(a));
         }
@@ -396,9 +381,10 @@ mod tests {
         assert!(profile::cache_load(dir.path(), "sle").is_some());
     }
 
-    /// 通用视图:没装任何包也出通用段;装了没开的包列在 `packages[]` 里、不出它的段。
+    /// 通用视图:没装任何包也出通用段;装了但诊断没命中的包列在 `packages[]` 里
+    /// (`applies: false`)、不出它的段。
     #[test]
-    fn general_view_works_without_packages_and_lists_disabled_ones() {
+    fn general_view_works_without_packages_and_lists_non_applying_ones() {
         let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let home = tempfile::tempdir().unwrap();
         open_temp_vault(home.path());
@@ -431,7 +417,7 @@ mod tests {
             kinds,
             vec!["family_cards", "med_table", "journey", "evidence"]
         );
-        assert_eq!(v["packages"].as_array().unwrap().len(), 0);
+        assert!(v.get("packages").is_none(), "没装包就没有 packages 键");
         assert!(
             !v["documents"].as_array().unwrap().is_empty(),
             "documents 桥要在"
@@ -442,7 +428,8 @@ mod tests {
         vault_profile_install_builtin(dir_s.clone()).unwrap();
         let v = parse(vault_profile_view_general(dir_s.clone()).unwrap());
         assert_eq!(v["packages"][0]["id"], "sle");
-        assert_eq!(v["packages"][0]["enabled"], false);
+        assert_eq!(v["packages"][0]["applies"], false);
+        assert_eq!(v["packages"][0]["family"], "immune");
         assert_eq!(v["packages"][0]["display_name"], "系统性红斑狼疮");
         assert!(v["sections"]
             .as_array()
@@ -450,15 +437,21 @@ mod tests {
             .iter()
             .all(|s| s["package_id"] == "general"));
 
-        vault_profile_record_event(
-            "enable".into(),
-            "sle".into(),
-            "2026-01-01".into(),
-            "{}".into(),
-        )
+        // 再来一份写着狼疮诊断的病历(正则路径,无码)→ 触发词命中,包段出现;不需要任何事件。
+        crate::api::vault::with_state(|state| {
+            crate::api::vault::add_synthetic_document(
+                &state.vault,
+                core_model::DocType::DischargeSummary,
+                "2026-02-10T00:00:00Z".parse().unwrap(),
+                "ds2.txt",
+                "出院记录".into(),
+                Some("zh".into()),
+                "出院记录\n诊断:系统性红斑狼疮\n".into(),
+            )
+        })
         .unwrap();
         let v = parse(vault_profile_view_general(dir_s).unwrap());
-        assert_eq!(v["packages"][0]["enabled"], true);
+        assert_eq!(v["packages"][0]["applies"], true);
         assert!(v["sections"]
             .as_array()
             .unwrap()
@@ -667,13 +660,17 @@ mod tests {
     }
 
     #[test]
-    fn a_package_that_was_never_enabled_contributes_nothing_to_the_overlay() {
-        // spec §4:从未开启 = 不算、不显示、不提醒 —— 也包括「别往全局词典里塞词」。
+    fn an_installed_package_contributes_its_terms_regardless_of_events() {
+        // 2026-10-23 起包没有「开启」动作:装着就装上它的词(覆盖层只加不改),
+        // `enable`/`disable` 事件对覆盖层没有影响。
         let dir = tempfile::tempdir().unwrap();
         vault_profile_install_package(dir.path().display().to_string(), SLE_PACKAGE.into())
             .unwrap();
-        assert!(overlay_entries(dir.path(), &[]).is_empty());
-        assert!(overlay_entries(dir.path(), &[ev("disable", "2026-01-01")]).is_empty());
+        assert!(!overlay_entries(dir.path(), &[]).is_empty());
+        assert_eq!(
+            overlay_entries(dir.path(), &[]).len(),
+            overlay_entries(dir.path(), &[ev("disable", "2026-01-01")]).len()
+        );
     }
 
     #[test]
@@ -749,8 +746,8 @@ mod tests {
 
     #[test]
     fn opening_another_members_vault_clears_the_overlay() {
-        // 覆盖层是进程级全局,保险箱一次只开一个:A 开着狼疮,切到 B 之后 B 的
-        // 化验识别不许还认得狼疮包里的词(spec §4 在跨成员这一侧的落点)。
+        // 覆盖层是进程级全局,保险箱一次只开一个:切箱那一刻必须清空,由开完箱的
+        // 调用方按新箱子重装。
         let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let a = tempfile::tempdir().unwrap();
         open_temp_vault(a.path());
@@ -778,8 +775,9 @@ mod tests {
             "换箱之后覆盖层必须退回内置"
         );
 
-        // B 自己没开过任何病 —— 重装一次也还是空的(装着不等于开着)。
+        // 包缓存是 App 级的、不分成员:B 开箱后重装一次,装着的包的词就回来了
+        // (2026-10-23 起装着即装上,不看事件)。
         vault_profile_refresh_terms(dir_s).unwrap();
-        assert!(terminology::normalize("镜检红细胞").is_none());
+        assert!(terminology::normalize("镜检红细胞").is_some());
     }
 }

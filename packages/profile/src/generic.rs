@@ -20,12 +20,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::generic_tables::{
-    family_of_icd, family_rank, normalize_icd, FAMILIES, LAB_KEYS, PANEL_FAMILY,
+    family_of_icd, family_rank, normalize_icd, FAMILIES, LAB_KEYS, PACKAGE_ICD_PREFIXES,
+    PANEL_FAMILY,
 };
 use crate::package::Package;
 use crate::rules::Ctx;
 use crate::state::{self, EvidenceBook};
-use crate::view::{ProfileView, Section, SourceOut};
+use crate::view::{PackageOut, ProfileView, Section, SourceOut};
 
 pub(crate) const GENERAL_ID: &str = "general";
 
@@ -544,18 +545,11 @@ fn med_row(ctx: &Ctx<'_>, m: &parser::MedSpan, book: &mut EvidenceBook) -> (MedR
     (row, lane)
 }
 
-/// 用药表(spec §3.2)。`exclude` 是 `ctx.clinical.meds` 里被包的状态行替换掉的下标。
-pub(crate) fn med_section(
-    ctx: &Ctx<'_>,
-    book: &mut EvidenceBook,
-    exclude: &[usize],
-) -> (Section, Vec<MedLane>) {
+/// 用药表(spec §3.2)。全部药都列:包的状态行在「现在」的包段,药表在「用药」tab,不在同一屏,不替换。
+pub(crate) fn med_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> (Section, Vec<MedLane>) {
     let mut rows: Vec<MedRow> = Vec::new();
     let mut lanes: Vec<MedLane> = Vec::new();
-    for (i, m) in ctx.clinical.meds.iter().enumerate() {
-        if exclude.contains(&i) {
-            continue;
-        }
+    for m in &ctx.clinical.meds {
         let (row, lane) = med_row(ctx, m, book);
         rows.push(row);
         lanes.push(lane);
@@ -757,40 +751,39 @@ pub(crate) fn journey_section(
     )
 }
 
-/// 开着的包用自己的状态行替换通用层对同一批药的行(spec §4):包 `state_vars` 里
-/// `latest_dose`/`ratio_to_weight` 声明的药类,命中 `rules::drug_class` 的 `MedSpan` 下标。
-fn replaced_by_packages(
-    ctx: &Ctx<'_>,
-    events: &[parser::ProfileEvent],
-    installed: &[Package],
-) -> Vec<usize> {
-    let mut out = Vec::new();
-    for pkg in installed {
-        if !crate::is_enabled(events, &pkg.manifest.id) {
-            continue;
+/// 包出不出现(spec 2026-10-23 §4.4):保险箱里任一诊断的原文含包 `triggers.diagnosis_patterns`
+/// 任一项(子串,大小写不敏感),**或**任一诊断归一后的 ICD 以 [`PACKAGE_ICD_PREFIXES`] 里该包的
+/// 前缀开头。纯函数,不看 `enable`/`disable` 事件——那是查看器/分享单包路径的事。
+pub fn package_applies(pkg: &Package, conditions: &[parser::AggregatedCondition]) -> bool {
+    let patterns: Vec<String> = pkg
+        .triggers
+        .diagnosis_patterns
+        .iter()
+        .map(|p| p.to_lowercase())
+        .filter(|p| !p.is_empty())
+        .collect();
+    let prefixes: &[&str] = PACKAGE_ICD_PREFIXES
+        .iter()
+        .find(|(id, _)| *id == pkg.manifest.id)
+        .map_or(&[], |(_, p)| p);
+    conditions.iter().any(|c| {
+        let text = c.raw_text.to_lowercase();
+        if patterns.iter().any(|p| text.contains(p.as_str())) {
+            return true;
         }
-        let classes: Vec<&str> = pkg
-            .state_vars
-            .iter()
-            .filter(|v| matches!(v.derive.as_str(), "latest_dose" | "ratio_to_weight"))
-            .filter_map(|v| v.drug_class.as_deref())
-            .collect();
-        for (i, m) in ctx.clinical.meds.iter().enumerate() {
-            if crate::rules::drug_class(pkg, m).is_some_and(|d| classes.contains(&d.class.as_str()))
-            {
-                out.push(i);
-            }
-        }
-    }
-    out
+        c.icd_code
+            .as_deref()
+            .and_then(normalize_icd)
+            .is_some_and(|code| prefixes.iter().any(|p| code.starts_with(p)))
+    })
 }
 
 // ─────────────────────────── 装配 ───────────────────────────
 
-/// 通用层 + 每个**开着的**包叠在后面(spec §4)。**纯函数**。
+/// 通用层 + 每个**命中触发**的包叠在后面(spec 2026-10-23 §4.4)。**纯函数**。
 ///
-/// `installed` 是缓存里装着的全部包;开没开按 `events` 里的 `enable`/`disable`
-/// (`is_enabled`)判,没开的包一段都不出、也不碰它的 terms(覆盖层由调用方装)。
+/// `installed` 是缓存里装着的全部包;出不出按 [`package_applies`] 判,`events` 只喂 `Ctx`
+/// (自填/动作日志),不再读 `enable`/`disable`。覆盖层由调用方装。
 pub fn materialize_generic(
     docs: &[parser::SourceDoc<'_>],
     encounters: &[EncounterRef],
@@ -801,15 +794,23 @@ pub fn materialize_generic(
     let ctx = Ctx::build(docs, events, today);
     let mut book = EvidenceBook::default();
     let mut sections = vec![family_section(&ctx, &mut book)];
-    let exclude = replaced_by_packages(&ctx, events, installed);
-    let (meds, med_lanes) = med_section(&ctx, &mut book, &exclude);
+    let (meds, med_lanes) = med_section(&ctx, &mut book);
     sections.push(meds);
     sections.push(journey_section(&ctx, encounters, med_lanes, &mut book));
     // 包段与通用段**共用这一本**依据簿(审查 I1:各自从 1 编号会撞 id,界面合并后点开错的
     // 那句);通用的 evidence 段等包都登记完再装,固定排在通用三段之后、包段之前。
     let mut sources: Vec<SourceOut> = Vec::new();
-    for pkg in installed {
-        if !crate::is_enabled(events, &pkg.manifest.id) {
+    let packages: Vec<PackageOut> = installed
+        .iter()
+        .map(|p| PackageOut {
+            id: p.manifest.id.clone(),
+            display_name: p.manifest.display.name.clone(),
+            family: p.manifest.family.clone(),
+            applies: package_applies(p, &ctx.clinical.conditions),
+        })
+        .collect();
+    for (pkg, out) in installed.iter().zip(&packages) {
+        if !out.applies {
             continue;
         }
         for mut s in crate::sections_for(&ctx, pkg, &mut book) {
@@ -843,6 +844,7 @@ pub fn materialize_generic(
         disclaimer: "只整理你病历里已有的记录,不做诊断。".into(),
         sections,
         sources,
+        packages,
     }
 }
 
