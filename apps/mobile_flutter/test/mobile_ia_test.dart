@@ -28,6 +28,7 @@ import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
 import 'package:mobile_flutter/screens/trends_screen.dart';
+import 'package:mobile_flutter/widgets/provenance_footer.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
