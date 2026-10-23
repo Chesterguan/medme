@@ -91,7 +91,7 @@ void main() {
     bumpVaultRevision();
 
     // 自测血压落在「趋势」的「关键化验」里(概览解散之后那一块搬去了那儿)。
-    await gotoTab(tester, HomeTab.trends);
+    await gotoTab(tester, HomeTab.now);
     await waitFor(tester, find.text('关键化验'));
 
     await gotoAbout(tester);

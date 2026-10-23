@@ -234,7 +234,7 @@ void main() {
     );
     bumpVaultRevision();
 
-    await gotoTab(tester, HomeTab.trends);
+    await gotoTab(tester, HomeTab.now);
     await waitFor(tester, find.text('收缩压'));
 
     // 128 / 82 都在家测参考区间(≤135 / ≤85)之内 —— 完全正常,不该有任何 pill。

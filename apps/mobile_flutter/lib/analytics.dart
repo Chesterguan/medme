@@ -740,7 +740,10 @@ enum ImportCaptureIssue {
 /// 一起稀释,而**图上看不出来**。
 enum AnalyticsTab {
   records,
-  trends,
+  // 2026-10-23:「趋势」拆成「现在」「用药」两个 tab;`trends` 这个值随之消失,
+  // 看板上那条曲线到此为止,新的两条从这天起算。
+  now,
+  meds,
   me;
 
   /// 下标 → 名字。越界返回 `null`,调用点据此**不报**(与 `is_first` 同一条

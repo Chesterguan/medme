@@ -85,7 +85,8 @@ void main() {
     // ③ 三个 tab 逐个进,记录首屏耗时。
     for (final (idx, label) in [
       (HomeTab.records, '病历'),
-      (HomeTab.trends, '趋势'),
+      (HomeTab.now, '现在'),
+      (HomeTab.meds, '用药'),
       (HomeTab.me, '我'),
     ]) {
       final t = Stopwatch()..start();
@@ -117,7 +118,7 @@ void main() {
         reason: '「关键化验」一次要画 ${s.recentLabs.length} 行');
 
     // ⑤ 趋势列表滚到底不崩。
-    await gotoTab(tester, HomeTab.trends);
+    await gotoTab(tester, HomeTab.now);
     await settle(tester, total: const Duration(seconds: 2));
     for (var i = 0; i < 12; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -600));
