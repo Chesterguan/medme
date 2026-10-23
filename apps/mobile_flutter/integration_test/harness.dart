@@ -395,8 +395,8 @@ Future<void> withTextScale(
 /// 当前成员名(调试输出用)。
 String get currentMemberName => ProfileManager.instance.current.name;
 
-/// 三个一级 tab 的标签,顺序同 `HomeTab`。
-const tabLabels = ['病历', '趋势', '我'];
+/// 四个一级 tab 的标签,顺序同 `HomeTab`(2026-10-23:病历 / 现在 / 用药 / 我)。
+const tabLabels = ['病历', '现在', '用药', '我'];
 
 /// 「病历」→ hero 卡下面那颗白底方块「给医生看」→ 整页(`s4`)。
 ///
@@ -438,17 +438,18 @@ Future<void> gotoEmergencyCard(WidgetTester tester) async {
   );
 }
 
-/// 「趋势」→「记录一下」→ 录入弹层(`s9`)。
+/// 「病历」→「添加」→「记录一下」→ 录入弹层(`s9`)。
 ///
-/// 这颗快捷键原来在概览上,概览 Task 9 解散之后归到「趋势」—— 自己量的数和医院
-/// 的数看的是同一件事(`trends_screen.dart` 的 `RecordEntryCard`)。
+/// 2026-10-23 底部四 tab:「趋势」取消,「记录一下」搬进「病历」首页「添加」弹层的最后一行
+///(与添加病历同一入口)。
 Future<void> openRecordSheet(WidgetTester tester) async {
-  await gotoTab(tester, HomeTab.trends);
-  // 「记录一下」在「趋势」最底下(`s2`),而这一屏上面那几块在有数据时很长 ——
-  // 先往回翻到顶,再一路往下找,两个方向都给足次数。
-  await scrollUpToFind(tester, find.text('关键化验'));
-  final found = await scrollToFind(tester, find.text('记录一下'), maxSwipes: 40);
-  if (!found) throw TestFailure('「趋势」里翻不到「记录一下」');
+  await gotoTab(tester, HomeTab.records);
+  if (!await scrollUpToFind(tester, find.text('添加'))) {
+    throw TestFailure('「病历」首页翻回顶部也找不到「添加」');
+  }
+  await tester.tap(find.text('添加').first);
+  await settle(tester, total: const Duration(seconds: 2));
+  await waitFor(tester, find.text('记录一下'), what: '「添加」弹层里的「记录一下」');
   await tester.tap(find.text('记录一下').last);
   await settle(tester, total: const Duration(seconds: 2));
   await waitFor(tester, find.text('保存'), what: '录入弹层的「保存」按钮');

@@ -795,36 +795,40 @@ void main() {
       expect(find.byType(TextField), findsNothing);
       expect(find.byType(TextFormField), findsNothing);
       expect(find.text('未登记'), findsOneWidget);
-      // 它不再是底栏的一项(底栏只有三个:病历 / 趋势 / 我)。
+      // 它不再是底栏的一项(底栏四个:病历 / 现在 / 用药 / 我)。
       expect(
         HomeShell.tabDestinations.map((d) => d.label),
         isNot(contains('急救卡')),
       );
-      expect(HomeShell.tabDestinations.length, 3);
+      expect(HomeShell.tabDestinations.length, 4);
     });
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  group('三 tab 信息架构', () {
+  group('四 tab 信息架构(2026-10-23:病历 / 现在 / 用药 / 我)', () {
     test('tab 数 == 页面数 == 底栏项数', () {
       // 这三个数字散在两处 const 列表和一组常量里。加一个 tab 时最容易漏掉其中
       // 一处,而漏掉的表现是运行时越界或**点 A 进了 B**,不是编译错误。
-      expect(HomeTab.count, 3);
+      expect(HomeTab.count, 4);
       expect(HomeShell.tabScreens.length, HomeTab.count);
       expect(HomeShell.tabDestinations.length, HomeTab.count);
     });
 
     test('下标连续、互不重复', () {
-      const order = [HomeTab.records, HomeTab.trends, HomeTab.me];
-      expect(order, [0, 1, 2]);
+      const order = [HomeTab.records, HomeTab.now, HomeTab.meds, HomeTab.me];
+      expect(order, [0, 1, 2, 3]);
       expect(order.toSet().length, HomeTab.count);
     });
 
-    test('底栏文案就是 mockup 那三个词', () {
+    test('底栏文案就是 spec 那四个词', () {
       expect(
         HomeShell.tabDestinations.map((d) => d.label).toList(),
-        ['病历', '趋势', '我'],
+        ['病历', '现在', '用药', '我'],
       );
+    });
+
+    test('冷启动落在「病历」', () {
+      expect(HomeTab.records, 0);
     });
 
     test('「给医生看」**不在**底栏 —— 它是从「病历」推进去的一整页', () {
@@ -841,8 +845,14 @@ void main() {
     });
 
     test('程序化跳转落在正确的 tab 上', () {
-      goToTrends();
-      expect(selectedTab.value, HomeTab.trends);
+      goToNow();
+      expect(selectedTab.value, HomeTab.now);
+      goToMeds();
+      expect(selectedTab.value, HomeTab.meds);
+      expect(medsFilterFamily.value, isNull);
+      goToMeds(family: 'cardio');
+      expect(medsFilterFamily.value, 'cardio');
+      medsFilterFamily.value = null;
       goToMe();
       expect(selectedTab.value, HomeTab.me);
       goToRecords();
@@ -852,8 +862,10 @@ void main() {
     test('埋点枚举与 tab 一一对应 —— 少一个就会把 A 的人气记成 B', () {
       expect(AnalyticsTab.values.length, HomeTab.count);
       expect(AnalyticsTab.of(HomeTab.records), AnalyticsTab.records);
+      expect(AnalyticsTab.of(HomeTab.now), AnalyticsTab.now);
+      expect(AnalyticsTab.of(HomeTab.meds), AnalyticsTab.meds);
       expect(AnalyticsTab.of(HomeTab.me), AnalyticsTab.me);
-      expect(AnalyticsTab.of(3), isNull);
+      expect(AnalyticsTab.of(4), isNull);
     });
   });
 

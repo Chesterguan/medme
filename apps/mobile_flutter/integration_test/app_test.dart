@@ -56,14 +56,15 @@ void main() {
     watch.assertClean();
   });
 
-  testWidgets('程序化切 tab 与手点是同一条路径(goToRecords / goToTrends 等)', (
+  testWidgets('程序化切 tab 与手点是同一条路径(goToRecords / goToNow 等)', (
     tester,
   ) async {
     await bootApp(tester, reset: false);
 
     for (final (idx, label) in [
       (HomeTab.records, '病历'),
-      (HomeTab.trends, '趋势'),
+      (HomeTab.now, '现在'),
+      (HomeTab.meds, '用药'),
       (HomeTab.me, '我'),
     ]) {
       await gotoTab(tester, idx);
