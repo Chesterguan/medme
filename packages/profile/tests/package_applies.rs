@@ -134,3 +134,35 @@ fn single_package_view_has_no_packages_key() {
     let json = serde_json::to_value(&view).unwrap();
     assert!(json.get("packages").is_none());
 }
+
+#[test]
+fn ascii_trigger_words_match_whole_words_only() {
+    // 审查 C1:「SLE」不能命中 "Obstructive sleep apnea" / "Measles";中文触发词仍按子串。
+    let corpus = jane_with_extra_dx("Obstructive sleep apnea", "G47.33");
+    let docs = corpus_docs(&corpus);
+    let pkg = common::full_pkg();
+    let view = profile::materialize_generic(&docs, &[], &[], std::slice::from_ref(&pkg), today());
+    assert!(!view.packages[0].applies, "sleep 不是 SLE");
+    let corpus = jane_with_extra_dx("Measles", "B05.9");
+    let docs = corpus_docs(&corpus);
+    let view = profile::materialize_generic(&docs, &[], &[], std::slice::from_ref(&pkg), today());
+    assert!(!view.packages[0].applies, "Measles 不是 SLE");
+    let corpus = jane_with_extra_dx("SLE, in remission", "Z86.59");
+    let docs = corpus_docs(&corpus);
+    let view = profile::materialize_generic(&docs, &[], &[], std::slice::from_ref(&pkg), today());
+    assert!(view.packages[0].applies, "整词 SLE 命中");
+}
+
+#[test]
+fn single_package_view_gates_on_diagnosis_not_on_events() {
+    let pkg = common::full_pkg();
+    let corpus = load_jane();
+    let docs = corpus_docs(&corpus);
+    let off = profile::materialize_applied(&docs, &enable_sle(), &pkg, today());
+    assert!(!off.enabled && off.sections.is_empty());
+    let corpus = load_lijing();
+    let docs = corpus_docs(&corpus);
+    let on = profile::materialize_applied(&docs, &[], &pkg, today());
+    assert!(on.enabled && !on.sections.is_empty());
+    assert!(serde_json::to_value(&on).unwrap().get("packages").is_none());
+}

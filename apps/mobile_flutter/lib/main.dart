@@ -681,6 +681,8 @@ class _HomeShellState extends State<HomeShell> {
     if (tab != null) {
       Analytics.track(AnalyticsEvent.homeTabSelected, {'tab': tab.name});
     }
+    // 手点「用药」= 看全部;族预填只在从「现在」族卡跳过来(`goToMeds(family:)`)时带着。
+    if (i == HomeTab.meds) medsFilterFamily.value = null;
     selectedTab.value = i;
   }
 

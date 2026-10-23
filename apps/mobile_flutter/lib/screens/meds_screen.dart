@@ -197,7 +197,7 @@ class MedsBody extends StatelessWidget {
           ),
         _SectionTitle('最近的用药 · ${recent.length}', sub: '$staleDays 天内有记录'),
         if (recent.isEmpty)
-          _Hint('最近 $staleDays 天没有用药记录')
+          _Hint(query.isEmpty && family == null ? '最近 $staleDays 天没有用药记录' : '没有符合的药')
         else
           MedCard(
             child: Column(
@@ -205,7 +205,7 @@ class MedsBody extends StatelessWidget {
               children: [
                 for (var i = 0; i < recent.length; i++) ...[
                   if (i > 0) Divider(height: 1, color: c.line),
-                  MedRowView(row: recent[i], index: index),
+                  MedRowView(key: ValueKey('med:${recent[i]['drug_key'] ?? recent[i]['name']}'), row: recent[i], index: index),
                 ],
               ],
             ),
@@ -238,7 +238,7 @@ class MedsBody extends StatelessWidget {
               children: [
                 for (var i = 0; i < earlier.length; i++) ...[
                   if (i > 0) Divider(height: 1, color: c.line),
-                  MedRowView(row: earlier[i], index: index),
+                  MedRowView(key: ValueKey('med:${earlier[i]['drug_key'] ?? earlier[i]['name']}'), row: earlier[i], index: index),
                 ],
               ],
             ),

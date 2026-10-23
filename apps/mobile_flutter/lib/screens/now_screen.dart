@@ -244,7 +244,7 @@ class NowBody extends StatelessWidget {
               ),
             )
           else
-            for (final s in hits) LabTrendRow(series: s, onOpenDoc: onOpenDoc),
+            for (final s in hits) LabTrendRow(key: ValueKey('lab:${s.analyteKey ?? s.name}'), series: s, onOpenDoc: onOpenDoc),
         ],
       );
     }
@@ -263,7 +263,12 @@ class NowBody extends StatelessWidget {
       }
     }
     final common = byFamily.remove('common') ?? const [];
-    final familyKeys = familyCards.map((f) => '${f['key']}').toSet();
+    // 「其他 N 条」「未归类」两张诊断卡不挂化验(与 Rust 同一条规矩,审查 I4):能挂化验的族卡
+    // 只有有 key 表的那些。
+    final familyKeys = familyCards
+        .map((f) => '${f['key']}')
+        .where((k) => k != 'other' && k != 'uncoded')
+        .toSet();
     // 一条序列只要已经出现在某张族卡里就不再列进「其他化验」;一张族卡都没落到的
     //(族没有诊断卡、或词典认不出、或自测)才进「其他化验」。
     final other = <TrendSeriesDto>[
@@ -313,8 +318,9 @@ class NowBody extends StatelessWidget {
       children: [
         for (final f in familyCards)
           FamilyTile(
+            key: ValueKey('family:${f['key']}'),
             family: f,
-            labs: byFamily['${f['key']}'] ?? const [],
+            labs: familyKeys.contains('${f['key']}') ? (byFamily['${f['key']}'] ?? const []) : const [],
             medNames: recentMedNamesOfFamily(medRows, '${f['key']}'),
             index: index,
             onOpenDoc: onOpenDoc,
@@ -328,12 +334,12 @@ class NowBody extends StatelessWidget {
         if (common.isNotEmpty) ...[
           const SizedBox(height: MedShape.s3),
           _Header('血常规 / 电解质 / 肝功能'),
-          for (final s in common) LabTrendRow(series: s, onOpenDoc: onOpenDoc),
+          for (final s in common) LabTrendRow(key: ValueKey('lab:${s.analyteKey ?? s.name}'), series: s, onOpenDoc: onOpenDoc),
         ],
         if (other.isNotEmpty) ...[
           const SizedBox(height: MedShape.s3),
           _Header('其他化验 · ${other.length}'),
-          for (final s in other) LabTrendRow(series: s, onOpenDoc: onOpenDoc),
+          for (final s in other) LabTrendRow(key: ValueKey('lab:${s.analyteKey ?? s.name}'), series: s, onOpenDoc: onOpenDoc),
         ],
         if (earlierFamilies.isNotEmpty) ...[
           const SizedBox(height: MedShape.s3),
@@ -350,7 +356,7 @@ class NowBody extends StatelessWidget {
         if (split.earlier.isNotEmpty) ...[
           _Fold(
             title: '更早的化验 · ${split.earlier.length} 项',
-            children: [for (final s in split.earlier) LabTrendRow(series: s, onOpenDoc: onOpenDoc)],
+            children: [for (final s in split.earlier) LabTrendRow(key: ValueKey('lab:${s.analyteKey ?? s.name}'), series: s, onOpenDoc: onOpenDoc)],
           ),
         ],
         const SizedBox(height: MedShape.s4),
@@ -487,7 +493,7 @@ class FamilyTile extends StatelessWidget {
         if (labs.isNotEmpty) ...[
           const SizedBox(height: MedShape.s1),
           Text('化验', style: MedType.caption.copyWith(color: c.ink2)),
-          for (final s in labs) LabTrendRow(series: s, onOpenDoc: onOpenDoc),
+          for (final s in labs) LabTrendRow(key: ValueKey('lab:${s.analyteKey ?? s.name}'), series: s, onOpenDoc: onOpenDoc),
         ],
         ...trailing,
       ],

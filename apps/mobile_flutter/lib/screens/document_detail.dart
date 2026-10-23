@@ -289,6 +289,10 @@ class DetailBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final doc = detail.document;
     final sf = detail.sourceFile;
+    // 只算一次:每次换算都要把整份原文编成 UTF-8(审查建议)。
+    final highlightStart = highlight == null || highlight!.isEmpty
+        ? null
+        : highlightIndex(detail.ocrText, highlight!, highlightSpan);
     // 与档案行同一句话(`docRowLabel`):这里原先抄了一份 `docLabel` 映射,
     // 于是「待归类」在详情页永远只有一种说法。
     final typeLabel = docRowLabel(doc);
@@ -397,13 +401,8 @@ class DetailBody extends StatelessWidget {
           ],
         ),
         const SizedBox(height: MedShape.s2),
-        if (highlight case final h?
-            when h.isNotEmpty && highlightIndex(detail.ocrText, h, highlightSpan) != null)
-          HighlightedText(
-            text: detail.ocrText,
-            highlight: h,
-            start: highlightIndex(detail.ocrText, h, highlightSpan)!,
-          )
+        if (highlight case final h? when highlightStart != null)
+          HighlightedText(text: detail.ocrText, highlight: h, start: highlightStart)
         else
           ReportContent(
             text: _displayText(detail.ocrText, doc.docType),

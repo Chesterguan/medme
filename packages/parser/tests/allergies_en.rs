@@ -74,3 +74,38 @@ fn chinese_and_english_layers_coexist() {
         ]
     );
 }
+
+#[test]
+fn epic_placeholders_and_food_negations_yield_nothing() {
+    for t in [
+        "Allergies: Not on File\n",
+        "Allergies: No Active Allergies\n",
+        "Allergies: No known food allergies\n",
+        "Allergies: NKFA\n",
+        "Allergies: None\n",
+    ] {
+        assert!(parser::extract_allergies_pairs(t).is_empty(), "{t:?}");
+    }
+}
+
+#[test]
+fn a_real_allergen_survives_a_trailing_negation_on_the_same_line() {
+    // 审查 I6:假阴性更糟——整行里有否定不等于每一项都是否定。
+    let v = parser::extract_allergies_pairs("Allergies: Sulfa, otherwise no known allergies\n");
+    assert_eq!(v, vec![("Sulfa".to_string(), String::new())]);
+    let v = parser::extract_allergies_pairs("Allergies: Reviewed; Latex\n");
+    assert_eq!(v.len(), 2, "{v:?}");
+}
+
+#[test]
+fn table_rows_split_on_tab_and_skip_indented_comment_lines() {
+    let t = "Allergies\nAllergen\tReactions\n • Penicillins\tHives\n     Childhood reaction\n • Latex  \n\nHome Medications:\n";
+    let v = parser::extract_allergies_pairs(t);
+    assert_eq!(
+        v,
+        vec![
+            ("Penicillins".to_string(), "Hives".to_string()),
+            ("Latex".to_string(), String::new()),
+        ]
+    );
+}
