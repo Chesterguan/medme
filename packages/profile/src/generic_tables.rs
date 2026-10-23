@@ -76,6 +76,11 @@ const ICD_OVERRIDES: &[(&str, &str, Option<&str>)] = &[
 
 /// 码的归一(spec §3.1):大写、去空白;第 4 位不是 `.` 且长度 >3 时在第 3 位后补 `.`
 /// (Epic 无点写法 `I350` → `I35.0`);不是 `[A-Z]\d\d` 开头 → `None`(当作无码)。
+/// 病种包的 ICD 触发前缀(spec 2026-10-23 §4.4):保险箱里任一诊断归一后的码以此开头 →
+/// 该包出现。放在 crate 常量里而不是包里,是为了**不重签包**;包自己的
+/// `triggers.diagnosis_patterns`(原文子串)是另一条触发路。
+pub(crate) const PACKAGE_ICD_PREFIXES: &[(&str, &[&str])] = &[("sle", &["M32"])];
+
 pub(crate) fn normalize_icd(raw: &str) -> Option<String> {
     let s: String = raw
         .chars()

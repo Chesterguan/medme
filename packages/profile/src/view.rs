@@ -54,4 +54,17 @@ pub struct ProfileView {
     pub sections: Vec<Section>,
     /// 包里声明的全部出处。界面上每个数值旁边的出处 id 到这里查全文。
     pub sources: Vec<SourceOut>,
+    /// 装着的包各一条(只有 `materialize_generic` 填):出不出现由 `applies` 说
+    /// (触发词或 ICD 前缀命中,spec 2026-10-23 §4.4),`family` 是界面上放它那一段的族。
+    /// 单包路径恒空 → 不序列化,两份 SLE golden 逐字节不变。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<PackageOut>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageOut {
+    pub id: String,
+    pub display_name: String,
+    pub family: String,
+    pub applies: bool,
 }

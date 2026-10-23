@@ -16,14 +16,14 @@ mod rules;
 mod state;
 pub mod view;
 
-pub use generic::{materialize_generic, EncounterRef};
+pub use generic::{materialize_generic, package_applies, EncounterRef};
 pub use package::{
     cache_load, cache_store, load_signed, load_signed_index, verify_envelope, verify_envelope_body,
     version_tuple, ActivityRules, Analyte, Band, Bands, Display, Drug, Index, IndexEntry, Manifest,
     Marker, Package, PackageError, Rules, Source, StateVar, Terms, Triggers, UnitRow, Views,
     ENGINE_VERSION, SIGNING_PUBLIC_KEY_HEX,
 };
-pub use view::{ProfileView, Section, SourceOut};
+pub use view::{PackageOut, ProfileView, Section, SourceOut};
 
 use chrono::NaiveDate;
 
@@ -69,6 +69,7 @@ pub fn materialize(
                 url: s.url.clone(),
             })
             .collect(),
+        packages: Vec::new(),
     }
 }
 
