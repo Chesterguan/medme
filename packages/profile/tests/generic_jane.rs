@@ -774,11 +774,7 @@ fn the_jane_course_renders_the_pinned_generic_view() {
 // ─────────────────────────── 「现在」只留最近 12 个月(2026-10-23 spec §4.1) ───────────────────────────
 
 fn all_codes(fams: &serde_json::Value) -> Vec<String> {
-    fams.as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|f| codes(f))
-        .collect()
+    fams.as_array().unwrap().iter().flat_map(codes).collect()
 }
 
 #[test]

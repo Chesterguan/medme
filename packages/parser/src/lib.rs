@@ -25,7 +25,10 @@ pub use extraction::{
     diagnoses_from_json, labs_from_json, meds_from_json, DiagnosesFromJson, LabsFromJson,
     MedsFromJson,
 };
-pub use handoff::{assemble_summary, imaging_impression, match_disease, pathology_impression};
+pub use handoff::{
+    assemble_summary, extract_allergies_pairs, imaging_impression, match_disease,
+    pathology_impression,
+};
 pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
 pub use meds::{extract_meds, MedObservation};
 pub use profile_event::{

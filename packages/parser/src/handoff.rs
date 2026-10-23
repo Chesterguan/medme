@@ -556,7 +556,12 @@ fn is_allergy_unclear(item: &str) -> bool {
 /// fire, and the negation only shows up once the clause is split into items.
 ///
 /// Empty clauses/items are skipped either way.
-fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
+///
+/// **English layer** (2026-10-23, Epic-style charts): after the Chinese scan,
+/// [`extract_allergies_en`] runs over the same text and its results are
+/// appended. The two layers never see each other's lines — the Chinese scan
+/// keys on the CJK label, the English one on `Allergies`.
+pub fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in text.lines() {
         // Prefer the longer label so `过敏史:` isn't split at `过敏`.
@@ -578,6 +583,102 @@ fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
                 }
             }
         }
+    }
+    out.extend(extract_allergies_en(text));
+    out
+}
+
+/// English negations, matched case-insensitively against a whole item. Deliberately
+/// a short, exact list: a substance name that merely *contains* "no" must survive.
+const EN_ALLERGY_NEGATIONS: [&str; 6] = [
+    "no known allergies",
+    "no known drug allergies",
+    "no allergies",
+    "nkda",
+    "nka",
+    "none",
+];
+
+fn is_en_allergy_negation(item: &str) -> bool {
+    let s = item.trim().trim_end_matches('.').to_lowercase();
+    EN_ALLERGY_NEGATIONS.contains(&s.as_str()) || s.contains("no known allerg")
+}
+
+/// Two structured English forms, nothing else:
+///
+/// * **Table**: a line that is just `Allergies` (optional colon), then a header line
+///   containing both `Allergen` and `Reactions`, then one row per `•`/`·` bullet —
+///   `substance` and `reaction` separated by two or more spaces (reaction may be
+///   absent). The table ends at the first blank line, at a line ending in `:`
+///   (the next heading), or at a line without a bullet.
+/// * **Inline**: `Allergies: a, b, c` on one line, split on commas.
+///
+/// A row/item that is an English negation ([`is_en_allergy_negation`]) yields
+/// nothing — same exit as the Chinese 否认/无 layer, kept separate because the
+/// vocabularies share no words.
+fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i].trim();
+        let lower = line.to_lowercase();
+        if lower == "allergies" || lower == "allergies:" {
+            // Table form: find the header within the next two non-empty lines.
+            let mut j = i + 1;
+            let mut header = None;
+            while j < lines.len() && j <= i + 2 {
+                let l = lines[j].trim().to_lowercase();
+                if l.contains("allergen") && l.contains("reaction") {
+                    header = Some(j);
+                    break;
+                }
+                if l.is_empty() || l == "allergies" || l == "allergies:" {
+                    j += 1;
+                    continue;
+                }
+                break;
+            }
+            if let Some(h) = header {
+                let mut k = h + 1;
+                while k < lines.len() {
+                    let row = lines[k].trim();
+                    if row.is_empty() || row.ends_with(':') {
+                        break;
+                    }
+                    let Some(body) = row.strip_prefix(['•', '·']) else {
+                        break;
+                    };
+                    let body = body.trim();
+                    let (substance, reaction) = match body.find("  ") {
+                        Some(p) => (body[..p].trim(), body[p..].trim()),
+                        None => (body, ""),
+                    };
+                    if !substance.is_empty() && !is_en_allergy_negation(substance) {
+                        out.push((substance.to_string(), reaction.to_string()));
+                    }
+                    k += 1;
+                }
+                i = k;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(rest) = lower
+            .starts_with("allergies:")
+            .then(|| line[line.find(':').unwrap() + 1..].trim())
+        {
+            if !rest.is_empty() && !is_en_allergy_negation(rest) {
+                for item in rest.split(',') {
+                    let item = item.trim().trim_end_matches('.');
+                    if !item.is_empty() && !is_en_allergy_negation(item) {
+                        out.push((item.to_string(), String::new()));
+                    }
+                }
+            }
+        }
+        i += 1;
     }
     out
 }
