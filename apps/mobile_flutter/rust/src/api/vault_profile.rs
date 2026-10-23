@@ -53,17 +53,39 @@ pub fn vault_profile_install_builtin(dir: String) -> anyhow::Result<Vec<String>>
 /// 每个**开着**的包的 sections 追加在后;顶层 `documents[]` 桥同 [`vault_profile_view`],
 /// 另加 `packages[]{id, display_name, enabled}` 给入口卡画「每包一行」。
 pub fn vault_profile_view_general(dir: String) -> anyhow::Result<String> {
-    let dir = Path::new(&dir);
-    let events = vault_projections::gather_profile_events()?;
-    terminology::set_overlay(overlay_entries(dir, &events));
-    let installed = installed_packages(dir);
-    let input = vault_projections::gather_for_profile()?;
+    let (input, installed) = general_input(Path::new(&dir))?;
     let docs = input.source_docs();
     let view =
         profile::materialize_generic(&docs, &input.encounters, &input.events, &installed, today());
     let mut json = serde_json::to_value(&view)?;
     json["documents"] = serde_json::Value::Array(input.document_refs());
     Ok(serde_json::to_string(&json)?)
+}
+
+/// 「用药」tab 的视图(`profile::materialize_meds`):最近 / 更早 / 过敏 + 同一本依据簿,
+/// 外加 `documents[]` 桥。**纯投影**。名字按字典序排在 `recognize_image_pp` 之后。
+pub fn vault_profile_meds_view(dir: String) -> anyhow::Result<String> {
+    let (input, _installed) = general_input(Path::new(&dir))?;
+    let docs = input.source_docs();
+    let view = profile::materialize_meds(&docs, &input.events, today());
+    let mut json = serde_json::to_value(&view)?;
+    json["documents"] = serde_json::Value::Array(input.document_refs());
+    Ok(serde_json::to_string(&json)?)
+}
+
+/// 化验「key → 族」表 + 12 个月窗(`profile::lab_family_table`),给「现在」页按族摆化验行。
+/// 纯常量,不读保险箱。
+pub fn vault_profile_lab_families() -> anyhow::Result<String> {
+    Ok(serde_json::to_string(&profile::lab_family_table())?)
+}
+
+/// 通用视图与用药视图共用的前置:装术语覆盖层、读装着的包、读整箱投影。
+fn general_input(dir: &Path) -> anyhow::Result<(vault_projections::ProfileInput, Vec<profile::Package>)> {
+    let events = vault_projections::gather_profile_events()?;
+    terminology::set_overlay(overlay_entries(dir, &events));
+    let installed = installed_packages(dir);
+    let input = vault_projections::gather_for_profile()?;
+    Ok((input, installed))
 }
 
 /// 算一份 `ProfileView` 并序列化给 Dart。**纯投影**:不写任何东西进保险箱。

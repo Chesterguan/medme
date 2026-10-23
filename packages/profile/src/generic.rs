@@ -980,6 +980,32 @@ pub fn materialize_meds(
     }
 }
 
+/// 化验「key → 族」三张表的 JSON 形态,给手机端「现在」页按族摆化验行
+/// (`vault_profile_lab_families`)。表本身是 crate 常量,这里只是序列化;`recent_days`
+/// 一并下发,化验的 12 个月窗与诊断那一半用同一个数。
+pub fn lab_family_table() -> serde_json::Value {
+    let families: Vec<serde_json::Value> = FAMILIES
+        .iter()
+        .map(|(key, label)| {
+            let keys: Vec<&str> = LAB_KEYS
+                .iter()
+                .find(|(f, _)| f == key)
+                .map(|(_, ks)| ks.to_vec())
+                .unwrap_or_default();
+            serde_json::json!({ "key": key, "label": label, "keys": keys })
+        })
+        .collect();
+    let panel_family: serde_json::Map<String, serde_json::Value> = PANEL_FAMILY
+        .iter()
+        .map(|(p, f)| (p.to_string(), serde_json::Value::String(f.to_string())))
+        .collect();
+    serde_json::json!({
+        "recent_days": RECENT_DAYS,
+        "families": families,
+        "panel_family": panel_family,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

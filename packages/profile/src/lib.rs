@@ -17,8 +17,8 @@ mod state;
 pub mod view;
 
 pub use generic::{
-    materialize_generic, materialize_meds, package_applies, AllergyOut, EncounterRef, MedRow,
-    MedWithNodes, MedsView,
+    lab_family_table, materialize_generic, materialize_meds, package_applies, AllergyOut,
+    EncounterRef, MedRow, MedWithNodes, MedsView,
 };
 pub use generic_tables::RECENT_DAYS;
 pub use package::{

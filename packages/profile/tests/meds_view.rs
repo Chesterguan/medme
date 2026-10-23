@@ -174,3 +174,23 @@ fn empty_vault_gives_empty_lists_not_an_error() {
     assert!(v["earlier"].as_array().unwrap().is_empty());
     assert!(v["allergies"].as_array().unwrap().is_empty());
 }
+
+#[test]
+fn lab_family_table_exposes_keys_and_panel_map() {
+    let t = profile::lab_family_table();
+    assert_eq!(t["recent_days"], profile::RECENT_DAYS);
+    let cardio = t["families"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["key"] == "cardio")
+        .unwrap();
+    assert_eq!(cardio["label"], "心血管");
+    assert!(cardio["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|k| k == "inr"));
+    assert_eq!(t["panel_family"]["肾功能"], "renal");
+    assert_eq!(t["panel_family"]["血常规"], "common");
+}
