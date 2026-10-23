@@ -204,3 +204,16 @@ fn undated_mentions_go_to_earlier_not_recent() {
     assert!(row(&v["recent"], "阿司匹林").is_none());
     assert!(row(&v["earlier"], "阿司匹林").is_some());
 }
+
+#[test]
+fn allergies_merge_case_variants() {
+    let mut corpus = load_jane();
+    corpus[0].text.push_str("\nAllergies: Shellfish allergy\n");
+    corpus[1].text.push_str("\nAllergies: SHELLFISH ALLERGY\n");
+    let docs = corpus_docs(&corpus);
+    let v = meds_json(&docs, TODAY);
+    let al = v["allergies"].as_array().unwrap();
+    assert_eq!(al.len(), 1, "{al:?}");
+    assert_eq!(al[0]["substance"], "Shellfish allergy");
+    assert_eq!(al[0]["evidence"].as_array().unwrap().len(), 2);
+}

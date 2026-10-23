@@ -606,6 +606,19 @@ const EN_ALLERGY_NEGATIONS: [&str; 10] = [
     "nkfa",
 ];
 
+/// An inline item that is a real allergen, not a negation and not a sentence fragment
+/// ("reviewed allergy section in the chart", "and"): short, and not narrative.
+fn is_en_inline_allergy_item(item: &str) -> bool {
+    if item.is_empty() || is_en_allergy_negation(item) {
+        return false;
+    }
+    let lower = item.to_lowercase();
+    if lower.starts_with("review") || lower.contains(" chart") || lower == "and" {
+        return false;
+    }
+    lower.split_whitespace().count() <= 6
+}
+
 fn is_en_allergy_negation(item: &str) -> bool {
     let s = item.trim().trim_end_matches('.').to_lowercase();
     EN_ALLERGY_NEGATIONS.contains(&s.as_str())
@@ -678,11 +691,31 @@ fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
         }
         if lower.starts_with("allergies:") {
             if let Some((_, rest)) = line.split_once(':') {
-                for item in rest.split([',', ';']) {
-                    let item = item.trim().trim_end_matches('.');
-                    if !item.is_empty() && !is_en_allergy_negation(item) {
-                        out.push((item.to_string(), String::new()));
+                // Epic wraps a long inline list: a line ending in `,` or `-` continues on the
+                // next (indented) line. Join before splitting, else the tail is lost and the
+                // hyphenated name is cut in half.
+                let mut joined = rest.trim().to_string();
+                while (joined.ends_with(',') || joined.ends_with('-')) && i + 1 < lines.len() {
+                    let next = lines[i + 1].trim();
+                    if next.is_empty() || next.to_lowercase().starts_with("allergies") {
+                        break;
                     }
+                    if !joined.ends_with('-') {
+                        joined.push(' ');
+                    }
+                    joined.push_str(next);
+                    i += 1;
+                }
+                for item in joined.split([',', ';']).flat_map(|c| c.split(" and ")) {
+                    let item = item
+                        .trim()
+                        .trim_end_matches('.')
+                        .trim_start_matches("and ")
+                        .trim();
+                    if !is_en_inline_allergy_item(item) {
+                        continue;
+                    }
+                    out.push((item.to_string(), String::new()));
                 }
             }
         }
