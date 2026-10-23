@@ -16,7 +16,10 @@ mod rules;
 mod state;
 pub mod view;
 
-pub use generic::{materialize_generic, package_applies, EncounterRef};
+pub use generic::{
+    materialize_generic, materialize_meds, package_applies, AllergyOut, EncounterRef, MedRow,
+    MedWithNodes, MedsView,
+};
 pub use generic_tables::RECENT_DAYS;
 pub use package::{
     cache_load, cache_store, load_signed, load_signed_index, verify_envelope, verify_envelope_body,
