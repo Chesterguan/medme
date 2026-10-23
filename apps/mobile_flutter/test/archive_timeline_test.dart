@@ -10,6 +10,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/theme.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 const _uf = 'UF Health Shands';
 
@@ -69,6 +70,7 @@ Widget _wrap(List<TimelineGroupDto> groups, {double textScale = 1.0}) => Materia
 );
 
 void main() {
+  _docTypeChipTests();
   testWidgets('默认:住院一眼可见并带「住院 6 天 · 3 份」,门诊折叠成「门诊 N 次」,点开才见各次', (tester) async {
     await tester.pumpWidget(_wrap(_groups()));
     expect(find.text('住院 · $_uf'), findsOneWidget);
@@ -164,6 +166,72 @@ void main() {
         expect(tester.takeException(), isNull, reason: '展开第 $i 次门诊后');
       }
       expect(find.text('门诊 2 次'), findsNWidgets(2));
+    });
+  }
+}
+
+// ─────────────── 2026-10-23:手术 / 影像 / 病理 三颗文档类型 chip(「进程」泳道并入) ───────────────
+
+List<TimelineGroupDto> _groupsWithDocTypes() => [
+  _enc(10, 'inpatient', '2026-05-02', [
+    _doc(20, 'discharge_summary', '2026-05-08'),
+    // 住院里的影像,文档自己没有机构名 → 行标题用就诊的。
+    _doc(21, 'imaging_report', '2026-05-03', title: 'CT Chest'),
+  ], end: '2026-05-08'),
+  _outpatients[0],
+  TimelineGroupDto.document(doc: _doc(22, 'pathology', '2026-04-01')),
+];
+
+void _docTypeChipTests() {
+  testWidgets('chip:影像 1、病理 1,没有手术;选「影像」只列那一份且带医院名', (tester) async {
+    await tester.pumpWidget(_wrap(_groupsWithDocTypes()));
+    expect(find.text('影像 1'), findsOneWidget);
+    expect(find.text('病理 1'), findsOneWidget);
+    expect(find.text('手术 1'), findsNothing);
+    await tester.tap(find.text('影像 1'));
+    await tester.pumpAndSettle();
+    final rows = find.descendant(of: find.byType(MedCard), matching: find.byType(Text));
+    expect(find.descendant(of: find.byType(MedCard), matching: find.textContaining('门诊')), findsNothing);
+    expect(find.descendant(of: find.byType(MedCard), matching: find.textContaining('住院')), findsNothing);
+    expect(rows, findsAtLeast(1));
+    expect(find.text('$_uf · 影像'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('选「病理」:独立文档没有机构名 → 只写类型,不崩', (tester) async {
+    await tester.pumpWidget(_wrap(_groupsWithDocTypes()));
+    await tester.tap(find.text('病理 1'));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byType(MedCard), matching: find.text('病理')), findsAtLeast(1));
+    expect(find.descendant(of: find.byType(MedCard), matching: find.textContaining('影像')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('flattenByDocType / docTypeCounts 纯函数', () {
+    final g = _groupsWithDocTypes();
+    expect(docTypeCounts(g), {'surgery': 0, 'imaging_report': 1, 'pathology': 1});
+    final flat = flattenByDocType(g, 'imaging_report');
+    expect(flat.length, 1);
+    final doc = (flat.single as TimelineGroupDto_Document).doc;
+    expect(doc.provider, _uf);
+    expect(doc.id, 21);
+  });
+
+  for (final scale in [1.0, 1.3, 1.6]) {
+    testWidgets('393 宽 字号 $scale:七颗 chip + 平铺行不溢出', (tester) async {
+      tester.view.physicalSize = const Size(393 * 3, 4000 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      await tester.pumpWidget(_wrap([..._groupsWithDocTypes(), _emergency, TimelineGroupDto.document(doc: _doc(23, 'surgery', '2026-01-01'))], textScale: scale));
+      // 七颗 chip 在 393 宽里横向滚动,「影像」在屏外:先把 chip 排拖过来再点。
+      await tester.dragUntilVisible(find.text('影像 1'), find.byType(ListView).at(1), const Offset(-120, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('影像 1'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
     });
   }
 }

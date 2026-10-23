@@ -110,6 +110,58 @@ String? tierOf(TimelineGroupDto g) => switch (g) {
   TimelineGroupDto_Document() => null,
 };
 
+/// 2026-10-23 底部四 tab:「进程」的手术 / 影像 / 病理三条泳道并进病历页的筛选 chip ——
+/// 它们是**文档类型**筛选,就诊组里的和独立的都算。
+const List<String> docTypeTiers = ['surgery', 'imaging_report', 'pathology'];
+
+/// 三类文档各几份(chip 上的数):就诊组内的 + 独立的。
+Map<String, int> docTypeCounts(List<TimelineGroupDto> groups) {
+  final out = {for (final t in docTypeTiers) t: 0};
+  for (final g in groups) {
+    final docs = switch (g) {
+      TimelineGroupDto_Encounter(:final docs) => docs,
+      TimelineGroupDto_Document(:final doc) => [doc],
+    };
+    for (final d in docs) {
+      if (out.containsKey(d.docType)) out[d.docType] = out[d.docType]! + 1;
+    }
+  }
+  return out;
+}
+
+/// 选中某类文档时的时间线:把就诊组里和独立的这一类文档**抽出来平铺**,一份一行,
+/// 按日期倒序。文档自己没有机构名时用所属就诊的(行标题要能写「影像 · 医院名」);都没有就只写类型。
+List<TimelineGroupDto> flattenByDocType(List<TimelineGroupDto> groups, String docType) {
+  final out = <DocumentSummaryDto>[];
+  for (final g in groups) {
+    switch (g) {
+      case TimelineGroupDto_Encounter(:final encounter, :final docs):
+        for (final d in docs) {
+          if (d.docType != docType) continue;
+          out.add(
+            d.provider != null || encounter.provider == null
+                ? d
+                : DocumentSummaryDto(
+                    id: d.id,
+                    docType: d.docType,
+                    docDate: d.docDate,
+                    docDateEnd: d.docDateEnd,
+                    title: d.title,
+                    pageCount: d.pageCount,
+                    sliceCount: d.sliceCount,
+                    extractionItemCount: d.extractionItemCount,
+                    provider: encounter.provider,
+                  ),
+          );
+        }
+      case TimelineGroupDto_Document(:final doc):
+        if (doc.docType == docType) out.add(doc);
+    }
+  }
+  out.sort((a, b) => (b.docDate ?? '').compareTo(a.docDate ?? ''));
+  return [for (final d in out) TimelineGroupDto.document(doc: d)];
+}
+
 /// 三档各几次就诊(chip 上的数)。独立文档不计入任何一档。
 Map<String, int> tierCounts(List<TimelineGroupDto> groups) {
   final out = {'inpatient': 0, 'emergency': 0, 'outpatient': 0};
@@ -492,14 +544,20 @@ class _ArchiveTimelineState extends State<ArchiveTimeline> {
   @override
   Widget build(BuildContext context) {
     final counts = tierCounts(widget.groups);
-    // 与趋势页同规则:「全部」恒在最前,计数 0 的不出现,只剩「全部」整排不画。
+    final docCounts = docTypeCounts(widget.groups);
+    // 「全部」恒在最前,计数 0 的不出现,只剩「全部」整排不画。七颗:全部 / 住院 / 急诊 / 门诊 /
+    // 手术 / 影像 / 病理(后三颗是文档类型,2026-10-23「进程」泳道并入)。
     final chips = <(String, String?, int)>[
       ('全部', null, counts.values.fold(0, (a, b) => a + b)),
       for (final t in const ['inpatient', 'emergency', 'outpatient'])
         if (counts[t]! > 0) (kindLabel[t]!, t, counts[t]!),
+      for (final t in docTypeTiers)
+        if (docCounts[t]! > 0) (docLabel[t]!, t, docCounts[t]!),
     ];
     final visible = _filter == null
         ? widget.groups
+        : docTypeTiers.contains(_filter)
+        ? flattenByDocType(widget.groups, _filter!)
         : widget.groups.where((g) => tierOf(g) == _filter).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
