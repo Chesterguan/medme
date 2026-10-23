@@ -23,7 +23,7 @@ import 'package:mobile_flutter/api_client.dart';
 import 'package:mobile_flutter/grant_link.dart';
 import 'package:mobile_flutter/grants.dart';
 import 'package:mobile_flutter/profile_manager.dart';
-import 'package:mobile_flutter/screens/disease_profile_screen.dart';
+import 'package:mobile_flutter/profile_source.dart';
 import 'package:mobile_flutter/screens/qr_notice_sheet.dart';
 import 'package:mobile_flutter/screens/qr_share_screen.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';

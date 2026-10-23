@@ -88,6 +88,10 @@ class _NowScreenState extends State<NowScreen> {
   }
 
   void _toggleSearch() {
+    // 展开一次发一次,不随输入发(输入的是内容)。
+    if (!_searchOpen) {
+      Analytics.track(AnalyticsEvent.trendsFilterUsed, {'control': TrendsFilterControl.search.name});
+    }
     setState(() {
       _searchOpen = !_searchOpen;
       if (!_searchOpen) {

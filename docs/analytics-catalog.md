@@ -109,7 +109,7 @@
 | `doc_import_failed` | `source`, `count_bucket`, `failed_bucket`, `duration_bucket`, `per_doc_duration_bucket`, `is_first`, `stage`, `reason_code` | `import_flow.dart`、`screens/doctor/proxy_intake_flow.dart` | 失败集中在哪一步、哪个原因 |
 | `doc_capture_degraded` | `source`, `reason` | `import_flow.dart` | **「点拍照没反应」到底是哪一种病因。** 采集器没起来、已降级到普通相机 —— 是 GMS 检测自己炸了、扫描器抛异常、还是扫描器永久挂起 |
 | `doc_capture_aborted` | `source`, `reason` | `import_flow.dart` | **用户主动取消 vs 采集器静默返回空。** 这两者在屏上完全一样,不分开就永远算不出「没反应」的真实占比 |
-| `doc_opened` | 无 | `screens/archive_screen.dart`、`screens/trends_screen.dart`、`screens/for_doctor_screen.dart`、`screens/emergency_card_screen.dart` | **病历是被看的还是被堆的。** 导入了从不打开 = 垃圾桶不是助手 |
+| `doc_opened` | 无 | `screens/archive_screen.dart`、`screens/now_screen.dart`、`screens/for_doctor_screen.dart`、`screens/emergency_card_screen.dart` | **病历是被看的还是被堆的。** 导入了从不打开 = 垃圾桶不是助手 |
 
 > 「点开一份」有四个入口,这条**仍然不带来源** —— 「被看还是被堆」不需要
 > 知道从哪一屏点的,而多一维就多一次泄露面评估。(触发点那一列 2026-09-18 再校一次:
@@ -186,7 +186,7 @@
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `home_tab_selected` | `tab`(枚举 `AnalyticsTab`:`records`/`trends`/`me`) | `main.dart` | **三个一级席位分别被用多少。** 「把一年用十次的动作做成常驻席位」那个赌注,五 tab 版赌输了(概览与急救卡都被撤了);这条继续盯剩下三个 |
+| `home_tab_selected` | `tab`(枚举 `AnalyticsTab`:`records`/`now`/`meds`/`me`;2026-10-23 前是 `records`/`trends`/`me`,`trends` 那条曲线到此为止) | `main.dart` | **四个一级席位分别被用多少。** 「把一年用十次的动作做成常驻席位」那个赌注,五 tab 版赌输了(概览与急救卡都被撤了);2026-10-23 趋势拆成「现在」「用药」两席,这条盯新的四个 |
 
 ⚠️ **取值在 UX Stage 1 整组换过,查数的人要先按版本切一刀。**
 最后一个发五个旧值的版本是 `1.6.0`(`apps/mobile_flutter/pubspec.yaml`),新值随其后
@@ -262,7 +262,7 @@ Stage 1 起断了**,别再拿它算空转率。
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `trends_filter_used` | `control`(枚举 `TrendsFilterControl`) | `screens/trends_screen.dart` | **「只看非正常项」默认开对不对** —— 这是全 App 唯一一处替用户排序的默认值,代码里为它写了整整一段辩护,而用户把它**关掉**的频次就是那段辩护唯一的检验。顺带:检验大类 chip 是本版新做的(Rust 一份 panel 目录 + 词典投入),chip 与搜索各自被用了多少,决定要不要继续往词典里投、那颗放大镜还留不留 |
+| `trends_filter_used` | `control`(枚举 `TrendsFilterControl`;2026-10-23 起只会发 `search`) | `screens/now_screen.dart`、`screens/meds_screen.dart` | **那颗放大镜还留不留。** 2026-10-23 趋势页取消,「只看非正常项」与大类 chip 随之消失(`abnormal_only_*`/`panel` 三个取值从此不再发,历史曲线到此为止);「现在」「用药」两页各有一颗搜索,展开一次发一次 |
 
 `control` 取值:
 

@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart' show fmtDate;
 import 'package:mobile_flutter/evidence_open.dart';
@@ -69,6 +70,10 @@ class _MedsScreenState extends State<MedsScreen> {
   }
 
   void _toggleSearch() {
+    // 展开一次发一次,不随输入发(输入的是内容)。
+    if (!_searchOpen) {
+      Analytics.track(AnalyticsEvent.trendsFilterUsed, {'control': TrendsFilterControl.search.name});
+    }
     setState(() {
       _searchOpen = !_searchOpen;
       if (!_searchOpen) {
