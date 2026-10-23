@@ -194,3 +194,13 @@ fn lab_family_table_exposes_keys_and_panel_map() {
     assert_eq!(t["panel_family"]["肾功能"], "renal");
     assert_eq!(t["panel_family"]["血常规"], "common");
 }
+
+#[test]
+fn undated_mentions_go_to_earlier_not_recent() {
+    // 审查 I3:没有日期的提及说不出「180 天内」,进「更早」。
+    let raw = [("", "处方\n阿司匹林 100mg qd\n".to_string())];
+    let docs = common::mk_docs(&raw);
+    let v = meds_json(&docs, "2026-10-22");
+    assert!(row(&v["recent"], "阿司匹林").is_none());
+    assert!(row(&v["earlier"], "阿司匹林").is_some());
+}

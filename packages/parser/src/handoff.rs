@@ -588,34 +588,42 @@ pub fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
     out
 }
 
-/// English negations, matched case-insensitively against a whole item. Deliberately
-/// a short, exact list: a substance name that merely *contains* "no" must survive.
-const EN_ALLERGY_NEGATIONS: [&str; 6] = [
+/// English negations / placeholders, matched case-insensitively against **one item**
+/// (never a whole line: "Sulfa, otherwise no known allergies" must keep Sulfa — the
+/// Chinese layer's rule that a false negative is the worse failure applies here too).
+/// Epic placeholders ("Not on File", "No Active Allergies", "NKDA/NKA/NKFA") count as
+/// "nothing recorded", not as an allergen.
+const EN_ALLERGY_NEGATIONS: [&str; 10] = [
     "no known allergies",
     "no known drug allergies",
+    "no known food allergies",
+    "no active allergies",
     "no allergies",
+    "not on file",
+    "none",
     "nkda",
     "nka",
-    "none",
+    "nkfa",
 ];
 
 fn is_en_allergy_negation(item: &str) -> bool {
     let s = item.trim().trim_end_matches('.').to_lowercase();
-    EN_ALLERGY_NEGATIONS.contains(&s.as_str()) || s.contains("no known allerg")
+    EN_ALLERGY_NEGATIONS.contains(&s.as_str())
+        || (s.starts_with("no known ") && s.contains("allerg"))
+        || (s.starts_with("no ") && s.ends_with("allergies"))
+        || s.contains("no known allerg")
 }
 
 /// Two structured English forms, nothing else:
 ///
 /// * **Table**: a line that is just `Allergies` (optional colon), then a header line
 ///   containing both `Allergen` and `Reactions`, then one row per `•`/`·` bullet —
-///   `substance` and `reaction` separated by two or more spaces (reaction may be
-///   absent). The table ends at the first blank line, at a line ending in `:`
-///   (the next heading), or at a line without a bullet.
-/// * **Inline**: `Allergies: a, b, c` on one line, split on commas.
+///   `substance` and `reaction` separated by a tab or two or more spaces (reaction may be
+///   absent). Indented non-bullet lines under a row (Epic's comment lines) are skipped; the
+///   table ends at a blank line or at a line ending in `:` (the next heading).
+/// * **Inline**: `Allergies: a, b; c` on one line, split on commas and semicolons.
 ///
-/// A row/item that is an English negation ([`is_en_allergy_negation`]) yields
-/// nothing — same exit as the Chinese 否认/无 layer, kept separate because the
-/// vocabularies share no words.
+/// An item that is an English negation ([`is_en_allergy_negation`]) yields nothing.
 fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let lines: Vec<&str> = text.lines().collect();
@@ -642,18 +650,21 @@ fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
             if let Some(h) = header {
                 let mut k = h + 1;
                 while k < lines.len() {
-                    let row = lines[k].trim();
+                    let raw = lines[k];
+                    let row = raw.trim();
                     if row.is_empty() || row.ends_with(':') {
                         break;
                     }
                     let Some(body) = row.strip_prefix(['•', '·']) else {
+                        // Epic prints a row's comment on the next, indented line — skip it;
+                        // a non-indented, non-bullet line is the next section.
+                        if raw.starts_with(' ') || raw.starts_with('\t') {
+                            k += 1;
+                            continue;
+                        }
                         break;
                     };
-                    let body = body.trim();
-                    let (substance, reaction) = match body.find("  ") {
-                        Some(p) => (body[..p].trim(), body[p..].trim()),
-                        None => (body, ""),
-                    };
+                    let (substance, reaction) = split_columns(body.trim());
                     if !substance.is_empty() && !is_en_allergy_negation(substance) {
                         out.push((substance.to_string(), reaction.to_string()));
                     }
@@ -665,12 +676,9 @@ fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
             i += 1;
             continue;
         }
-        if let Some(rest) = lower
-            .starts_with("allergies:")
-            .then(|| line[line.find(':').unwrap() + 1..].trim())
-        {
-            if !rest.is_empty() && !is_en_allergy_negation(rest) {
-                for item in rest.split(',') {
+        if lower.starts_with("allergies:") {
+            if let Some((_, rest)) = line.split_once(':') {
+                for item in rest.split([',', ';']) {
                     let item = item.trim().trim_end_matches('.');
                     if !item.is_empty() && !is_en_allergy_negation(item) {
                         out.push((item.to_string(), String::new()));
@@ -681,6 +689,22 @@ fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
         i += 1;
     }
     out
+}
+
+/// `substance<TAB>reaction` or `substance  reaction` (2+ whitespace). One column → reaction empty.
+fn split_columns(body: &str) -> (&str, &str) {
+    if let Some((a, b)) = body.split_once('\t') {
+        return (a.trim(), b.trim());
+    }
+    let bytes: Vec<(usize, char)> = body.char_indices().collect();
+    for w in bytes.windows(2) {
+        let (i, c1) = w[0];
+        let (_, c2) = w[1];
+        if c1 == ' ' && c2 == ' ' {
+            return (body[..i].trim(), body[i..].trim());
+        }
+    }
+    (body, "")
 }
 
 /// Parse one allergy item like `青霉素(皮疹)` → `("青霉素", "皮疹")`, or bare

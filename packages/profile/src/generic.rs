@@ -780,6 +780,21 @@ pub(crate) fn journey_section(
     )
 }
 
+/// 触发词命中:中文按子串;**纯 ASCII** 的词(`SLE`)按整词——两侧不能是 ASCII 字母数字,
+/// 否则 `sle` 会命中 "Obstructive **sle**ep apnea" / "Mea**sle**s",狼疮包就在没有狼疮的人
+/// 身上「强行打开」(审查 C1)。
+fn pattern_hits(text: &str, pattern: &str) -> bool {
+    if !pattern.is_ascii() {
+        return text.contains(pattern);
+    }
+    text.match_indices(pattern).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = text[i + pattern.len()..].chars().next();
+        !before.is_some_and(|c| c.is_ascii_alphanumeric())
+            && !after.is_some_and(|c| c.is_ascii_alphanumeric())
+    })
+}
+
 /// 包出不出现(spec 2026-10-23 §4.4):保险箱里任一诊断的原文含包 `triggers.diagnosis_patterns`
 /// 任一项(子串,大小写不敏感),**或**任一诊断归一后的 ICD 以 [`PACKAGE_ICD_PREFIXES`] 里该包的
 /// 前缀开头。纯函数,不看 `enable`/`disable` 事件——那是查看器/分享单包路径的事。
@@ -797,7 +812,7 @@ pub fn package_applies(pkg: &Package, conditions: &[parser::AggregatedCondition]
         .map_or(&[], |(_, p)| p);
     conditions.iter().any(|c| {
         let text = c.raw_text.to_lowercase();
-        if patterns.iter().any(|p| text.contains(p.as_str())) {
+        if patterns.iter().any(|p| pattern_hits(&text, p)) {
             return true;
         }
         c.icd_code
@@ -925,7 +940,10 @@ pub fn materialize_meds(
             nodes: lane.nodes,
             row,
         };
-        if item.row.stopped.is_none() && !item.row.stale {
+        // 「最近」= 有日期、且在 180 天内、且原文没写停;没有日期的提及说不出「N 天内」,
+        // 与诊断那边无日期进「更早」同一条规矩(审查 I3)。
+        let within = item.row.days_since.is_some_and(|n| n <= STALE_DAYS);
+        if item.row.stopped.is_none() && within {
             recent.push(item);
         } else {
             earlier.push(item);
@@ -947,11 +965,12 @@ pub fn materialize_meds(
     let mut allergies: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     for d in &ctx.docs {
         for (substance, reaction) in parser::extract_allergies_pairs(d.text) {
+            // 提示词把「Allergies」那一行排在同名的药物清单行前面(审查 I9)。
             let id = book.cite(
                 &ctx,
                 Some(d.index),
                 &substance,
-                &[],
+                &["Allerg", "allerg", "过敏"],
                 "regex",
                 true,
                 None,

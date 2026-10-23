@@ -189,6 +189,22 @@ void main() {
     expect(find.text('其他化验 · 2'), findsOneWidget);
   });
 
+  testWidgets('「其他 N 条」诊断卡不挂化验;认不出的化验仍在「其他化验」', (t) async {
+    final v = _view();
+    (v['sections'][0]['body']['families'] as List).add({
+      'key': 'other', 'label': '其他', 'count': 1, 'last_seen': '2026-09-01',
+      'diagnoses': [
+        {'code': 'Z00.0', 'texts': ['Encounter for general adult medical examination'], 'first_seen': '2026-09-01', 'last_seen': '2026-09-01', 'doc_count': 1, 'evidence': [], 'unverified': false},
+      ],
+      'labs': [],
+    });
+    await _pump(t, view: v);
+    expect(find.text('其他化验 · 2'), findsOneWidget);
+    await t.tap(find.text('其他 1 条'));
+    await t.pumpAndSettle();
+    expect(find.descendant(of: find.byType(FamilyTile), matching: find.text('甲胎蛋白')), findsNothing);
+  });
+
   testWidgets('更早的化验展开后是趋势行;更早的诊断展开后有 I35.0', (t) async {
     await _pump(t);
     await t.tap(find.text('更早的化验 · 1 项'));

@@ -442,33 +442,9 @@ fn flat_docs() -> anyhow::Result<(Vec<FlatDoc>, Vec<VisitRecordDto>)> {
 /// 读一份文档的正文。**投影里最贵的一步**(每份都要解密 + 读盘),所以
 /// 「这一趟到底逐份读了几份」的计数也放在这唯一的一处。
 fn read_text(id: i64) -> String {
-    #[cfg(test)]
-    DOC_TEXT_READS.with(|c| c.set(c.get() + 1));
     crate::api::vault::get_document(id)
         .map(|d| d.ocr_text)
         .unwrap_or_default()
-}
-
-// 测试用:`read_text` 在**当前线程**至今被调用了多少次。只在 `cfg(test)` 下存在 ——
-// 「没开启病程档案就一份临床正文都不读」这条断言需要一个能观察的量,而给生产
-// 热路径挂一个常驻计数器不值得。(普通注释而非 ///:宏调用上的文档注释 clippy 会报 unused。)
-//
-// 线程局部而不是进程全局:cargo test 并行跑,别的测试在自己线程里读正文会把一个
-// 全局计数器顶高(CI 上出现过 4 ≠ 3);投影是同步的、在调用线程上读,所以按线程数
-// 正好只数自己这一趟。
-#[cfg(test)]
-thread_local! {
-    pub(crate) static DOC_TEXT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(crate) fn reset_doc_text_reads() {
-    DOC_TEXT_READS.with(|c| c.set(0));
-}
-
-#[cfg(test)]
-pub(crate) fn doc_text_reads() -> usize {
-    DOC_TEXT_READS.with(|c| c.get())
 }
 
 fn source_docs(docs: &[ProjectionDoc]) -> Vec<parser::SourceDoc<'_>> {
