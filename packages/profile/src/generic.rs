@@ -21,7 +21,7 @@ use serde::Serialize;
 
 use crate::generic_tables::{
     family_of_icd, family_rank, normalize_icd, FAMILIES, LAB_KEYS, PACKAGE_ICD_PREFIXES,
-    PANEL_FAMILY,
+    PANEL_FAMILY, RECENT_DAYS,
 };
 use crate::package::Package;
 use crate::rules::Ctx;
@@ -227,10 +227,15 @@ fn panel_family(key: &str) -> Option<&'static str> {
         .map(|(_, f)| *f)
 }
 
-pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section {
-    let merged = merge_diagnoses(ctx);
+/// 一批诊断 → 族卡(分族、族内排序、族排序;`with_labs` 决定要不要挂该族的化验小表)。
+fn families_of(
+    ctx: &Ctx<'_>,
+    builders: &[&DxBuilder],
+    with_labs: bool,
+    book: &mut EvidenceBook,
+) -> Vec<FamilyOut> {
     let mut per_family: BTreeMap<&'static str, Vec<DiagnosisOut>> = BTreeMap::new();
-    for b in merged.values() {
+    for b in builders {
         let fam = match b.code.as_deref() {
             Some(c) => family_of_icd(c).0,
             None => "uncoded",
@@ -254,7 +259,7 @@ pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section 
                 .then(b.doc_count.cmp(&a.doc_count))
                 .then(a.texts.cmp(&b.texts))
         });
-        let labs = if matches!(*key, "other" | "uncoded") {
+        let labs = if !with_labs || matches!(*key, "other" | "uncoded") {
             Vec::new()
         } else {
             family_lab_keys(ctx, key)
@@ -286,6 +291,19 @@ pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section 
             .then(b.count.cmp(&a.count))
             .then(family_rank(a.key).cmp(&family_rank(b.key)))
     });
+    families
+}
+
+pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section {
+    let merged = merge_diagnoses(ctx);
+    // 「现在」只留最近 RECENT_DAYS 天内有记录提到的诊断(spec 2026-10-23 §4.1);更早的、
+    // 没有日期的另列 `earlier_families`,不挂化验。判定只看事实(最近出现日),不判活动/已解决。
+    let (recent, earlier): (Vec<&DxBuilder>, Vec<&DxBuilder>) = merged.values().partition(|b| {
+        b.last_seen
+            .is_some_and(|d| (ctx.today - d).num_days() <= RECENT_DAYS)
+    });
+    let families = families_of(ctx, &recent, true, book);
+    let earlier_families = families_of(ctx, &earlier, false, book);
     // 通用一排:血常规 / 电解质 / 肝功能 / 尿液 的最近值,不归任何族。
     let mut common_keys: Vec<String> = ctx
         .clinical
@@ -305,7 +323,12 @@ pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section 
         "family_cards",
         "general_families",
         "现在",
-        serde_json::json!({ "families": families, "common_labs": common_labs }),
+        serde_json::json!({
+            "families": families,
+            "earlier_families": earlier_families,
+            "recent_days": RECENT_DAYS,
+            "common_labs": common_labs,
+        }),
     )
 }
 

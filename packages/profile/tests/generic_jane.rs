@@ -193,11 +193,13 @@ fn family_cards_group_diagnoses_by_icd() {
     assert_eq!(s["id"], "general_families");
     let fams = &s["body"]["families"];
     let cardio = family(fams, "cardio");
+    // I35.0 最近 2024-03,超过 12 个月 → 在「更早」的心血管里,不在「现在」。
     assert!(
-        codes(cardio).contains(&"I35.0".into()),
+        !codes(cardio).contains(&"I35.0".into()),
         "{:?}",
         codes(cardio)
     );
+    assert!(codes(family(&s["body"]["earlier_families"], "cardio")).contains(&"I35.0".into()));
     assert!(codes(cardio).contains(&"Z95.2".into()));
     assert!(
         codes(cardio).contains(&"Z79.01".into()),
@@ -240,7 +242,7 @@ fn family_cards_group_diagnoses_by_icd() {
         .collect();
     assert_eq!(keys.last().copied(), Some("uncoded"));
     assert_eq!(keys[0], "cardio", "{keys:?}");
-    assert_eq!(cardio["count"], 3);
+    assert_eq!(cardio["count"], 2, "I35.0 在「更早」,不计入");
     assert_eq!(cardio["last_seen"], "2026-09-14");
 }
 
@@ -767,4 +769,52 @@ fn the_jane_course_renders_the_pinned_generic_view() {
         !wrote,
         "golden 已重写 —— 人工 review 这次 diff 之后再跑一遍(不带 UPDATE_GOLDEN)"
     );
+}
+
+// ─────────────────────────── 「现在」只留最近 12 个月(2026-10-23 spec §4.1) ───────────────────────────
+
+fn all_codes(fams: &serde_json::Value) -> Vec<String> {
+    fams.as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|f| codes(f))
+        .collect()
+}
+
+#[test]
+fn diagnoses_older_than_recent_days_go_to_earlier_families() {
+    // Jane:I35.0 最近 2024-03;Z95.2 最近 2026-09-14。today = 2026-10-22 → I35.0 在「更早」。
+    let view = render(TODAY, &[], &[]);
+    let body = &section(&view, "family_cards")["body"];
+    let recent = all_codes(&body["families"]);
+    let earlier = all_codes(&body["earlier_families"]);
+    assert!(recent.contains(&"Z95.2".to_string()), "{recent:?}");
+    assert!(!recent.contains(&"I35.0".to_string()), "{recent:?}");
+    assert!(earlier.contains(&"I35.0".to_string()), "{earlier:?}");
+    // 同一个码不会两边都在。
+    for c in &recent {
+        assert!(!earlier.contains(c), "{c} 两边都出现");
+    }
+    // 「更早」不算化验、不参与族 count。
+    for f in body["earlier_families"].as_array().unwrap() {
+        assert!(f["labs"].as_array().unwrap().is_empty());
+    }
+    assert_eq!(body["recent_days"], profile::RECENT_DAYS);
+}
+
+#[test]
+fn recent_window_boundary_is_inclusive_at_365_days() {
+    // Z95.2 最近 2026-09-14:today = +365 天 还在「现在」;+366 天 进「更早」。
+    let at = |today: &str| {
+        let view = render(today, &[], &[]);
+        let body = &section(&view, "family_cards")["body"];
+        (
+            all_codes(&body["families"]),
+            all_codes(&body["earlier_families"]),
+        )
+    };
+    let (r, e) = at("2027-09-14");
+    assert!(r.contains(&"Z95.2".to_string()) && !e.contains(&"Z95.2".to_string()));
+    let (r, e) = at("2027-09-15");
+    assert!(!r.contains(&"Z95.2".to_string()) && e.contains(&"Z95.2".to_string()));
 }
