@@ -232,6 +232,7 @@
           {
             "days_since": 38,
             "dose": "10mg",
+            "drug_key": null,
             "evidence": [
               "ev:15:6"
             ],
@@ -240,6 +241,9 @@
             "last_seen": "2026-09-14",
             "name": "Zebrafoam",
             "raw_name": "Zebrafoam",
+            "raw_names": [
+              "Zebrafoam"
+            ],
             "since": "2024-04-15",
             "stale": false,
             "unverified": false
@@ -247,6 +251,7 @@
           {
             "days_since": 38,
             "dose": "4mg",
+            "drug_key": "warfarin",
             "evidence": [
               "ev:15:7"
             ],
@@ -255,6 +260,9 @@
             "last_seen": "2026-09-14",
             "name": "华法林",
             "raw_name": "Warfarin",
+            "raw_names": [
+              "Warfarin"
+            ],
             "since": "2025-01-14",
             "stale": false,
             "unverified": false
@@ -262,6 +270,7 @@
           {
             "days_since": 38,
             "dose": "25mg",
+            "drug_key": "metoprolol",
             "evidence": [
               "ev:15:8"
             ],
@@ -270,6 +279,9 @@
             "last_seen": "2026-09-14",
             "name": "美托洛尔",
             "raw_name": "Metoprolol",
+            "raw_names": [
+              "Metoprolol"
+            ],
             "since": "2024-03-10",
             "stale": false,
             "unverified": false
@@ -277,6 +289,7 @@
           {
             "days_since": 220,
             "dose": "5mg",
+            "drug_key": "prednisone",
             "evidence": [
               "ev:14:2"
             ],
@@ -285,6 +298,9 @@
             "last_seen": "2026-03-16",
             "name": "泼尼松",
             "raw_name": "Prednisone",
+            "raw_names": [
+              "Prednisone"
+            ],
             "since": "2026-03-16",
             "stale": true,
             "unverified": false
@@ -292,6 +308,7 @@
           {
             "days_since": 339,
             "dose": "200mg",
+            "drug_key": "voriconazole",
             "evidence": [
               "ev:12:2"
             ],
@@ -301,6 +318,9 @@
             "last_seen": "2025-11-17",
             "name": "伏立康唑",
             "raw_name": "Voriconazole",
+            "raw_names": [
+              "Voriconazole"
+            ],
             "since": null,
             "stale": true,
             "stopped": {

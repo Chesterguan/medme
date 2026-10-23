@@ -416,15 +416,19 @@ pub(crate) fn stops_drug(line: &str, name: &str) -> bool {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct Stopped {
+pub struct Stopped {
     at: String,
     evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct MedRow {
+pub struct MedRow {
     name: String,
     raw_name: String,
+    /// 词典 key(认不出则空);「用药」tab 按它聚合。
+    drug_key: Option<String>,
+    /// 原文出现过的全部写法(搜索用)。
+    raw_names: Vec<String>,
     dose: Option<String>,
     /// 「记录中自 YYYY-MM-DD 起」:该剂量键连续出现的起点。
     since: Option<String>,
@@ -541,6 +545,8 @@ fn med_row(ctx: &Ctx<'_>, m: &parser::MedSpan, book: &mut EvidenceBook) -> (MedR
     let row = MedRow {
         name: m.name.clone(),
         raw_name: m.latest_raw_name.clone().unwrap_or_else(|| m.name.clone()),
+        drug_key: m.drug_key.clone(),
+        raw_names: m.raw_names.clone(),
         dose: m.latest_dose.clone(),
         since: if stopped.is_some() {
             None
@@ -868,6 +874,109 @@ pub fn materialize_generic(
         sections,
         sources,
         packages,
+    }
+}
+
+// ─────────────────────────── 「用药」tab(spec 2026-10-23 §5) ───────────────────────────
+
+/// 「用药」tab 的一份视图:最近 / 更早两段 + 过敏,全部在同一本依据簿里。
+#[derive(Debug, Clone, Serialize)]
+pub struct MedsView {
+    /// 180 天内有记录且原文没写停。
+    pub recent: Vec<MedWithNodes>,
+    /// 超过 180 天没新记录,或病历写了停药。
+    pub earlier: Vec<MedWithNodes>,
+    pub allergies: Vec<AllergyOut>,
+    pub evidence: Vec<state::EvidenceOut>,
+    pub stale_after_days: i64,
+}
+
+/// 一味药 + 它的剂量链(`first` / `change` / `stopped` 节点,按日期)。
+#[derive(Debug, Clone, Serialize)]
+pub struct MedWithNodes {
+    #[serde(flatten)]
+    pub row: MedRow,
+    pub nodes: Vec<state::Node>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AllergyOut {
+    pub substance: String,
+    pub reaction: String,
+    /// 每份提到它的文档一条(物质串所在的那一行)。
+    pub evidence: Vec<String>,
+}
+
+/// 「用药」tab(spec 2026-10-23 §5)。**纯函数**:与 [`materialize_generic`] 同一份
+/// `Ctx`、同一个 `med_row`,只是切成最近 / 更早两段并带上剂量链;过敏用
+/// `parser::extract_allergies_pairs` 逐份扫,在同一本依据簿里引出处。
+pub fn materialize_meds(
+    docs: &[parser::SourceDoc<'_>],
+    events: &[parser::ProfileEvent],
+    today: NaiveDate,
+) -> MedsView {
+    let ctx = Ctx::build(docs, events, today);
+    let mut book = EvidenceBook::default();
+    let mut recent: Vec<MedWithNodes> = Vec::new();
+    let mut earlier: Vec<MedWithNodes> = Vec::new();
+    for m in &ctx.clinical.meds {
+        let (row, lane) = med_row(&ctx, m, &mut book);
+        let item = MedWithNodes {
+            nodes: lane.nodes,
+            row,
+        };
+        if item.row.stopped.is_none() && !item.row.stale {
+            recent.push(item);
+        } else {
+            earlier.push(item);
+        }
+    }
+    // 两边都按最近记录日倒序,无日期最后,并列按名字。
+    let order = |a: &MedWithNodes, b: &MedWithNodes| {
+        b.row
+            .last_seen
+            .is_some()
+            .cmp(&a.row.last_seen.is_some())
+            .then(b.row.last_seen.cmp(&a.row.last_seen))
+            .then(a.row.name.cmp(&b.row.name))
+    };
+    recent.sort_by(order);
+    earlier.sort_by(order);
+
+    // 过敏:按 (物质, 反应) 合并,每份提到它的文档引一条(物质串所在的那一行)。
+    let mut allergies: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    for d in &ctx.docs {
+        for (substance, reaction) in parser::extract_allergies_pairs(d.text) {
+            let id = book.cite(
+                &ctx,
+                Some(d.index),
+                &substance,
+                &[],
+                "regex",
+                true,
+                None,
+                true,
+            );
+            let ids = allergies.entry((substance, reaction)).or_default();
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    let allergies = allergies
+        .into_iter()
+        .map(|((substance, reaction), evidence)| AllergyOut {
+            substance,
+            reaction,
+            evidence,
+        })
+        .collect();
+    MedsView {
+        recent,
+        earlier,
+        allergies,
+        evidence: book.items,
+        stale_after_days: STALE_DAYS,
     }
 }
 
