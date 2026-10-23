@@ -93,8 +93,9 @@ fn a_real_allergen_survives_a_trailing_negation_on_the_same_line() {
     // 审查 I6:假阴性更糟——整行里有否定不等于每一项都是否定。
     let v = parser::extract_allergies_pairs("Allergies: Sulfa, otherwise no known allergies\n");
     assert_eq!(v, vec![("Sulfa".to_string(), String::new())]);
+    // 「Reviewed」是叙述,不是过敏原;Latex 要留。
     let v = parser::extract_allergies_pairs("Allergies: Reviewed; Latex\n");
-    assert_eq!(v.len(), 2, "{v:?}");
+    assert_eq!(v, vec![("Latex".to_string(), String::new())]);
 }
 
 #[test]
@@ -107,5 +108,27 @@ fn table_rows_split_on_tab_and_skip_indented_comment_lines() {
             ("Penicillins".to_string(), "Hives".to_string()),
             ("Latex".to_string(), String::new()),
         ]
+    );
+}
+
+#[test]
+fn inline_list_wrapped_across_lines_and_narrative_fragments() {
+    // 真实 Epic 形状(合成内容):行尾 `-` 续到下一行;`and` 连接;叙述句不算过敏原。
+    let t = "          Allergies: Penicillin, Latex, Shellfish protein-\n          containing drug products, Shellfish proteins\nHome Medications:\n";
+    let v = parser::extract_allergies_pairs(t);
+    assert_eq!(
+        v.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>(),
+        [
+            "Penicillin",
+            "Latex",
+            "Shellfish protein-containing drug products",
+            "Shellfish proteins"
+        ]
+    );
+    let t = "Allergies: Shellfish allergy and Seasonal ic [octacosanol], and reviewed allergy section in the chart\n";
+    let v = parser::extract_allergies_pairs(t);
+    assert_eq!(
+        v.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>(),
+        ["Shellfish allergy", "Seasonal ic [octacosanol]"]
     );
 }

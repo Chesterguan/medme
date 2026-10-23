@@ -962,7 +962,9 @@ pub fn materialize_meds(
     earlier.sort_by(order);
 
     // 过敏:按 (物质, 反应) 合并,每份提到它的文档引一条(物质串所在的那一行)。
-    let mut allergies: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    // key = 小写的 (物质, 反应);值 = 第一次见到的写法 + 依据 id。
+    type AllergyAcc = BTreeMap<(String, String), ((String, String), Vec<String>)>;
+    let mut allergies: AllergyAcc = BTreeMap::new();
     for d in &ctx.docs {
         for (substance, reaction) in parser::extract_allergies_pairs(d.text) {
             // 提示词把「Allergies」那一行排在同名的药物清单行前面(审查 I9)。
@@ -976,14 +978,18 @@ pub fn materialize_meds(
                 None,
                 true,
             );
-            let ids = allergies.entry((substance, reaction)).or_default();
+            // 同一物质的不同大小写写法(Epic 各处抄法不一)合成一行,留第一次见到的写法。
+            let key = (substance.to_lowercase(), reaction.to_lowercase());
+            let (_, ids) = allergies
+                .entry(key)
+                .or_insert_with(|| ((substance.clone(), reaction.clone()), Vec::new()));
             if !ids.contains(&id) {
                 ids.push(id);
             }
         }
     }
     let allergies = allergies
-        .into_iter()
+        .into_values()
         .map(|((substance, reaction), evidence)| AllergyOut {
             substance,
             reaction,
