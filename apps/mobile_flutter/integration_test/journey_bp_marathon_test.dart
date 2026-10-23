@@ -98,7 +98,7 @@ void main() {
 
     // ── 再看屏上画成了什么 ──
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.trends);
+    await gotoTab(tester, HomeTab.now);
     await waitFor(tester, find.text('收缩压'), what: '趋势屏上的「收缩压」卡');
 
     // 「家测」文字图例:形状(空心圈)不能是唯一载体。
@@ -126,7 +126,7 @@ void main() {
 
     // ── 「趋势」的「关键化验」也应当认得出这条家测 ──
     // (概览 Task 9 解散,那一块搬进了「趋势」,标题跟着词表去掉了「最近的」。)
-    await gotoTab(tester, HomeTab.trends);
+    await gotoTab(tester, HomeTab.now);
     await waitFor(tester, find.text('关键化验'));
     expect(find.textContaining('家测'), findsWidgets,
         reason: '「关键化验」没把家测值标出来,会被当成医院化验值');
@@ -147,7 +147,7 @@ void main() {
     bumpVaultRevision();
 
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.trends);
+    await gotoTab(tester, HomeTab.now);
     await waitFor(tester, find.text('收缩压'));
 
     final series = await viewTrends();

@@ -16,14 +16,18 @@ mod rules;
 mod state;
 pub mod view;
 
-pub use generic::{materialize_generic, EncounterRef};
+pub use generic::{
+    lab_family_table, materialize_generic, materialize_meds, package_applies, AllergyOut,
+    EncounterRef, MedRow, MedWithNodes, MedsView,
+};
+pub use generic_tables::RECENT_DAYS;
 pub use package::{
     cache_load, cache_store, load_signed, load_signed_index, verify_envelope, verify_envelope_body,
     version_tuple, ActivityRules, Analyte, Band, Bands, Display, Drug, Index, IndexEntry, Manifest,
     Marker, Package, PackageError, Rules, Source, StateVar, Terms, Triggers, UnitRow, Views,
     ENGINE_VERSION, SIGNING_PUBLIC_KEY_HEX,
 };
-pub use view::{ProfileView, Section, SourceOut};
+pub use view::{PackageOut, ProfileView, Section, SourceOut};
 
 use chrono::NaiveDate;
 
@@ -69,6 +73,45 @@ pub fn materialize(
                 url: s.url.clone(),
             })
             .collect(),
+        packages: Vec::new(),
+    }
+}
+
+/// 单包视图,但闸不是 `enable` 事件而是诊断(2026-10-23 spec §4.4):保险箱里有命中的诊断
+/// → 算它的 sections、`enabled: true`;没有 → 空 sections、`enabled: false`。形状与
+/// [`materialize`] 逐字段相同,给查看器 / 二维码分享那条单包路。
+pub fn materialize_applied(
+    docs: &[parser::SourceDoc<'_>],
+    events: &[parser::ProfileEvent],
+    pkg: &package::Package,
+    today: NaiveDate,
+) -> ProfileView {
+    let ctx = rules::Ctx::build(docs, events, today);
+    let applies = package_applies(pkg, &ctx.clinical.conditions);
+    let sections = if applies {
+        let mut book = state::EvidenceBook::default();
+        sections_for(&ctx, pkg, &mut book)
+    } else {
+        Vec::new()
+    };
+    ProfileView {
+        package_id: pkg.manifest.id.clone(),
+        package_version: pkg.manifest.version.clone(),
+        display_name: pkg.manifest.display.name.clone(),
+        enabled: applies,
+        disclaimer: pkg.manifest.disclaimer.clone(),
+        sections,
+        sources: pkg
+            .manifest
+            .sources
+            .iter()
+            .map(|s| SourceOut {
+                id: s.id.clone(),
+                cite: s.cite.clone(),
+                url: s.url.clone(),
+            })
+            .collect(),
+        packages: Vec::new(),
     }
 }
 

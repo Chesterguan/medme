@@ -151,7 +151,9 @@ fn imported_bundle_feeds_the_generic_profile() {
             doc_indices: ds.iter().map(|d| index_of(d.id)).collect(),
         })
         .collect();
-    let today: NaiveDate = "2026-10-22".parse().unwrap();
+    // 「今天」取在最后一份文档(2025-04-14)之后、Z95.2 最近出现(2025-01-14)的 12 个月之内:
+    // Z95.2 在「现在」、I35.0(最近 2024-03-10)在「更早」(2026-10-23 spec §4.1)。
+    let today: NaiveDate = "2025-10-01".parse().unwrap();
     let view = profile::materialize_generic(&source_docs, &encounters, &[], &[], today);
     let v = serde_json::to_value(&view).unwrap();
     let find = |kind: &str| {
@@ -177,10 +179,23 @@ fn imported_bundle_feeds_the_generic_profile() {
         .iter()
         .map(|d| d["code"].as_str().unwrap())
         .collect();
+    // I35.0 最近 2024-03,超过 12 个月 → 在 earlier_families 的心血管里(2026-10-23 spec §4.1)。
     assert!(
-        codes.contains(&"I35.0") && codes.contains(&"Z95.2"),
+        codes.contains(&"Z95.2") && !codes.contains(&"I35.0"),
         "{codes:?}"
     );
+    let earlier = find("family_cards")["body"]["earlier_families"].clone();
+    let earlier_cardio = earlier
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["key"] == "cardio")
+        .expect("更早的心血管");
+    assert!(earlier_cardio["diagnoses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| d["code"] == "I35.0"));
     let labs: Vec<&str> = cardio["labs"]
         .as_array()
         .unwrap()

@@ -6,6 +6,7 @@ import 'package:pdfx/pdfx.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
+import 'package:mobile_flutter/evidence_open.dart' show highlightIndex;
 import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
@@ -72,9 +73,18 @@ Future<Uint8List> _renderDicomMaterialized(int sourceFileId) async {
 class DocumentDetailScreen extends StatefulWidget {
   final int docId;
 
-  /// 从病程档案的「依据」进来时要高亮的那句原文(逐字);其余入口为 null。
+  /// 从「现在」「用药」的值点进来时要高亮的那句原文(逐字);其余入口为 null。
   final String? highlight;
-  const DocumentDetailScreen({super.key, required this.docId, this.highlight});
+
+  /// 引文里那个值在原文中的 UTF-8 字节区间(Rust `EvidenceOut.span`),同一引文出现
+  /// 多次时用它挑对那一处;null 退回第一处。见 `evidence_open.dart` 的 `highlightIndex`。
+  final List<int>? highlightSpan;
+  const DocumentDetailScreen({
+    super.key,
+    required this.docId,
+    this.highlight,
+    this.highlightSpan,
+  });
 
   @override
   State<DocumentDetailScreen> createState() => _DocumentDetailScreenState();
@@ -189,7 +199,11 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
               ),
             );
           }
-          return DetailBody(detail: snap.data!, highlight: widget.highlight);
+          return DetailBody(
+            detail: snap.data!,
+            highlight: widget.highlight,
+            highlightSpan: widget.highlightSpan,
+          );
         },
       ),
     );
@@ -261,12 +275,24 @@ class DetailBody extends StatelessWidget {
   /// 见 [DocumentDetailScreen.highlight]。原文里找得到就以高亮纯文本显示正文
   /// (内容感知渲染会把一句话拆进表格,高亮跨不过去);找不到照常渲染。
   final String? highlight;
-  const DetailBody({super.key, required this.detail, this.highlight});
+
+  /// 见 [DocumentDetailScreen.highlightSpan]。
+  final List<int>? highlightSpan;
+  const DetailBody({
+    super.key,
+    required this.detail,
+    this.highlight,
+    this.highlightSpan,
+  });
 
   @override
   Widget build(BuildContext context) {
     final doc = detail.document;
     final sf = detail.sourceFile;
+    // 只算一次:每次换算都要把整份原文编成 UTF-8(审查建议)。
+    final highlightStart = highlight == null || highlight!.isEmpty
+        ? null
+        : highlightIndex(detail.ocrText, highlight!, highlightSpan);
     // 与档案行同一句话(`docRowLabel`):这里原先抄了一份 `docLabel` 映射,
     // 于是「待归类」在详情页永远只有一种说法。
     final typeLabel = docRowLabel(doc);
@@ -375,8 +401,8 @@ class DetailBody extends StatelessWidget {
           ],
         ),
         const SizedBox(height: MedShape.s2),
-        if (highlight case final h? when h.isNotEmpty && detail.ocrText.contains(h))
-          _HighlightedText(text: detail.ocrText, highlight: h)
+        if (highlight case final h? when highlightStart != null)
+          HighlightedText(text: detail.ocrText, highlight: h, start: highlightStart)
         else
           ReportContent(
             text: _displayText(detail.ocrText, doc.docType),
@@ -611,17 +637,24 @@ class _ViewerFallback extends StatelessWidget {
 }
 
 
-/// 原文纯文本 + 一处高亮(病程档案「依据」点进来的那句)。只高亮第一处匹配。
-class _HighlightedText extends StatelessWidget {
-  const _HighlightedText({required this.text, required this.highlight});
+/// 原文纯文本 + 一处高亮(从「现在」「用药」的值点进来的那句)。高亮 [start] 起的那一处
+/// (由 `highlightIndex` 选定,同一引文出现多次时按 span 挑对)。
+class HighlightedText extends StatelessWidget {
+  const HighlightedText({
+    super.key,
+    required this.text,
+    required this.highlight,
+    required this.start,
+  });
 
   final String text;
   final String highlight;
+  final int start;
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final i = text.indexOf(highlight);
+    final i = start;
     final base = MedType.body.copyWith(color: c.ink, height: 1.6);
     return SelectableText.rich(
       TextSpan(

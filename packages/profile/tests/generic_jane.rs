@@ -193,11 +193,13 @@ fn family_cards_group_diagnoses_by_icd() {
     assert_eq!(s["id"], "general_families");
     let fams = &s["body"]["families"];
     let cardio = family(fams, "cardio");
+    // I35.0 最近 2024-03,超过 12 个月 → 在「更早」的心血管里,不在「现在」。
     assert!(
-        codes(cardio).contains(&"I35.0".into()),
+        !codes(cardio).contains(&"I35.0".into()),
         "{:?}",
         codes(cardio)
     );
+    assert!(codes(family(&s["body"]["earlier_families"], "cardio")).contains(&"I35.0".into()));
     assert!(codes(cardio).contains(&"Z95.2".into()));
     assert!(
         codes(cardio).contains(&"Z79.01".into()),
@@ -240,7 +242,7 @@ fn family_cards_group_diagnoses_by_icd() {
         .collect();
     assert_eq!(keys.last().copied(), Some("uncoded"));
     assert_eq!(keys[0], "cardio", "{keys:?}");
-    assert_eq!(cardio["count"], 3);
+    assert_eq!(cardio["count"], 2, "I35.0 在「更早」,不计入");
     assert_eq!(cardio["last_seen"], "2026-09-14");
 }
 
@@ -605,11 +607,49 @@ fn enable_sle() -> Vec<parser::ProfileEvent> {
     }]
 }
 
+/// 同一份语料外加一条诊断(最后一份门诊正文一行 + 侧文件一条),其余逐字不动。
+fn render_with_dx(
+    today: &str,
+    pkgs: &[profile::Package],
+    text: &str,
+    icd: &str,
+) -> serde_json::Value {
+    let mut corpus = load_corpus();
+    let last = corpus
+        .iter_mut()
+        .rev()
+        .find(|d| d.kind == "门诊病历")
+        .unwrap();
+    last.text.push_str(&format!("{text} [{icd}]\n"));
+    let mut sidecar: serde_json::Value = serde_json::from_str(&last.sidecar).unwrap();
+    sidecar["diagnoses"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"text": text, "icd": icd}));
+    last.sidecar = sidecar.to_string();
+    let docs: Vec<parser::SourceDoc> = corpus
+        .iter()
+        .enumerate()
+        .map(|(i, d)| parser::SourceDoc {
+            index: i,
+            date: Some(d.date),
+            text: &d.text,
+            doc_type: Some(doc_type_for(&d.kind).into()),
+            title: Some(d.stem.clone()),
+            extraction_json: Some(&d.sidecar),
+        })
+        .collect();
+    let encs = encounters(&corpus);
+    let view = profile::materialize_generic(&docs, &encs, &[], pkgs, today.parse().unwrap());
+    serde_json::to_value(&view).unwrap()
+}
+
 /// 验收 8 + 9 + 12 一个测试里顺序跑(覆盖层是进程全局,拆开会互相清):
-/// 无包无事件 → 通用段照出;装了 SLE 没 enable → 只有通用段;enable → 通用在前、包段在后、
-/// 华法林不受影响、泼尼松从用药表消失(包的 gc 行替换);SLE golden 由 golden_sle_course 另守。
+/// 无包无事件 → 通用段照出;装了 SLE 但没有狼疮诊断 → 只有通用段(`enable` 事件也不算);
+/// 有 M32 诊断 → 通用在前、包段在后、华法林不受影响、泼尼松仍在用药表(2026-10-23 起不替换);
+/// SLE golden 由 golden_sle_course 另守。
 #[test]
-fn packages_stack_behind_the_general_layer_only_when_enabled() {
+fn packages_stack_behind_the_general_layer_only_when_they_apply() {
     let pkg = common::full_pkg();
     let kinds = |v: &serde_json::Value| -> Vec<(String, String)> {
         v["sections"]
@@ -635,31 +675,35 @@ fn packages_stack_behind_the_general_layer_only_when_enabled() {
     assert_eq!(bare["package_id"], "general");
     assert_eq!(bare["enabled"], true);
     assert!(bare["sources"].as_array().unwrap().is_empty());
-    // 2. 装了 SLE 但没 enable:与 1 逐字节相同。
-    let installed = render(TODAY, &[], std::slice::from_ref(&pkg));
-    assert_eq!(installed, bare, "没开启的包一段都不出");
-    // 3. enable:通用在前、包段在后。
+    assert!(bare.get("packages").is_none(), "没装包就没有 packages 键");
+    // 2. 装了 SLE、甚至写过 enable,但 Jane 没有狼疮诊断:sections 与 1 逐字节相同。
+    let installed = render(TODAY, &enable_sle(), std::slice::from_ref(&pkg));
+    assert_eq!(
+        installed["sections"], bare["sections"],
+        "没命中的包一段都不出"
+    );
+    assert_eq!(installed["packages"][0]["applies"], false);
+    assert_eq!(installed["packages"][0]["family"], "immune");
+    // 3. 有 M32 诊断:通用在前、包段在后。
     terminology::set_overlay(common::overlay_entries(&pkg));
-    let both = render(TODAY, &enable_sle(), std::slice::from_ref(&pkg));
+    let both = render_with_dx(
+        TODAY,
+        std::slice::from_ref(&pkg),
+        "Lupus nephritis",
+        "M32.14",
+    );
     terminology::set_overlay(vec![]);
     let k = kinds(&both);
     assert_eq!(&k[..4], &kinds(&bare)[..]);
     assert!(k[4..].iter().all(|(p, _)| p == "sle"), "{k:?}");
     assert!(k[4..].iter().any(|(_, x)| x == "state"));
     assert!(!both["sources"].as_array().unwrap().is_empty());
+    assert_eq!(both["packages"][0]["applies"], true);
     let w = med_row(&both, "华法林");
     assert_eq!(w["since"], "2025-01-14");
     assert!(
-        section(&both, "med_table")["body"]["rows"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|r| r["name"] != "泼尼松"),
-        "包的 gc 状态行替换掉通用层的泼尼松行"
-    );
-    assert!(
-        med_row(&bare, "泼尼松")["dose"].is_string(),
-        "没包时泼尼松在通用表里"
+        med_row(&both, "泼尼松")["dose"].is_string(),
+        "包段在「现在」、药表在「用药」,不在同一屏,泼尼松行不替换"
     );
     // 审查 I1:通用段与包段共用一本依据簿 —— 同一个 ev: id 在所有 evidence 段里只能对应一句话,
     // 且包段引用的每个 ev: 都查得到。
@@ -725,4 +769,48 @@ fn the_jane_course_renders_the_pinned_generic_view() {
         !wrote,
         "golden 已重写 —— 人工 review 这次 diff 之后再跑一遍(不带 UPDATE_GOLDEN)"
     );
+}
+
+// ─────────────────────────── 「现在」只留最近 12 个月(2026-10-23 spec §4.1) ───────────────────────────
+
+fn all_codes(fams: &serde_json::Value) -> Vec<String> {
+    fams.as_array().unwrap().iter().flat_map(codes).collect()
+}
+
+#[test]
+fn diagnoses_older_than_recent_days_go_to_earlier_families() {
+    // Jane:I35.0 最近 2024-03;Z95.2 最近 2026-09-14。today = 2026-10-22 → I35.0 在「更早」。
+    let view = render(TODAY, &[], &[]);
+    let body = &section(&view, "family_cards")["body"];
+    let recent = all_codes(&body["families"]);
+    let earlier = all_codes(&body["earlier_families"]);
+    assert!(recent.contains(&"Z95.2".to_string()), "{recent:?}");
+    assert!(!recent.contains(&"I35.0".to_string()), "{recent:?}");
+    assert!(earlier.contains(&"I35.0".to_string()), "{earlier:?}");
+    // 同一个码不会两边都在。
+    for c in &recent {
+        assert!(!earlier.contains(c), "{c} 两边都出现");
+    }
+    // 「更早」不算化验、不参与族 count。
+    for f in body["earlier_families"].as_array().unwrap() {
+        assert!(f["labs"].as_array().unwrap().is_empty());
+    }
+    assert_eq!(body["recent_days"], profile::RECENT_DAYS);
+}
+
+#[test]
+fn recent_window_boundary_is_inclusive_at_365_days() {
+    // Z95.2 最近 2026-09-14:today = +365 天 还在「现在」;+366 天 进「更早」。
+    let at = |today: &str| {
+        let view = render(today, &[], &[]);
+        let body = &section(&view, "family_cards")["body"];
+        (
+            all_codes(&body["families"]),
+            all_codes(&body["earlier_families"]),
+        )
+    };
+    let (r, e) = at("2027-09-14");
+    assert!(r.contains(&"Z95.2".to_string()) && !e.contains(&"Z95.2".to_string()));
+    let (r, e) = at("2027-09-15");
+    assert!(!r.contains(&"Z95.2".to_string()) && e.contains(&"Z95.2".to_string()));
 }

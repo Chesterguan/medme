@@ -20,12 +20,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::generic_tables::{
-    family_of_icd, family_rank, normalize_icd, FAMILIES, LAB_KEYS, PANEL_FAMILY,
+    family_of_icd, family_rank, normalize_icd, FAMILIES, LAB_KEYS, PACKAGE_ICD_PREFIXES,
+    PANEL_FAMILY, RECENT_DAYS,
 };
 use crate::package::Package;
 use crate::rules::Ctx;
 use crate::state::{self, EvidenceBook};
-use crate::view::{ProfileView, Section, SourceOut};
+use crate::view::{PackageOut, ProfileView, Section, SourceOut};
 
 pub(crate) const GENERAL_ID: &str = "general";
 
@@ -226,10 +227,15 @@ fn panel_family(key: &str) -> Option<&'static str> {
         .map(|(_, f)| *f)
 }
 
-pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section {
-    let merged = merge_diagnoses(ctx);
+/// 一批诊断 → 族卡(分族、族内排序、族排序;`with_labs` 决定要不要挂该族的化验小表)。
+fn families_of(
+    ctx: &Ctx<'_>,
+    builders: &[&DxBuilder],
+    with_labs: bool,
+    book: &mut EvidenceBook,
+) -> Vec<FamilyOut> {
     let mut per_family: BTreeMap<&'static str, Vec<DiagnosisOut>> = BTreeMap::new();
-    for b in merged.values() {
+    for b in builders {
         let fam = match b.code.as_deref() {
             Some(c) => family_of_icd(c).0,
             None => "uncoded",
@@ -253,7 +259,7 @@ pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section 
                 .then(b.doc_count.cmp(&a.doc_count))
                 .then(a.texts.cmp(&b.texts))
         });
-        let labs = if matches!(*key, "other" | "uncoded") {
+        let labs = if !with_labs || matches!(*key, "other" | "uncoded") {
             Vec::new()
         } else {
             family_lab_keys(ctx, key)
@@ -285,6 +291,19 @@ pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section 
             .then(b.count.cmp(&a.count))
             .then(family_rank(a.key).cmp(&family_rank(b.key)))
     });
+    families
+}
+
+pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section {
+    let merged = merge_diagnoses(ctx);
+    // 「现在」只留最近 RECENT_DAYS 天内有记录提到的诊断(spec 2026-10-23 §4.1);更早的、
+    // 没有日期的另列 `earlier_families`,不挂化验。判定只看事实(最近出现日),不判活动/已解决。
+    let (recent, earlier): (Vec<&DxBuilder>, Vec<&DxBuilder>) = merged.values().partition(|b| {
+        b.last_seen
+            .is_some_and(|d| (ctx.today - d).num_days() <= RECENT_DAYS)
+    });
+    let families = families_of(ctx, &recent, true, book);
+    let earlier_families = families_of(ctx, &earlier, false, book);
     // 通用一排:血常规 / 电解质 / 肝功能 / 尿液 的最近值,不归任何族。
     let mut common_keys: Vec<String> = ctx
         .clinical
@@ -304,7 +323,12 @@ pub(crate) fn family_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> Section 
         "family_cards",
         "general_families",
         "现在",
-        serde_json::json!({ "families": families, "common_labs": common_labs }),
+        serde_json::json!({
+            "families": families,
+            "earlier_families": earlier_families,
+            "recent_days": RECENT_DAYS,
+            "common_labs": common_labs,
+        }),
     )
 }
 
@@ -392,15 +416,19 @@ pub(crate) fn stops_drug(line: &str, name: &str) -> bool {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct Stopped {
+pub struct Stopped {
     at: String,
     evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct MedRow {
+pub struct MedRow {
     name: String,
     raw_name: String,
+    /// 词典 key(认不出则空);「用药」tab 按它聚合。
+    drug_key: Option<String>,
+    /// 原文出现过的全部写法(搜索用)。
+    raw_names: Vec<String>,
     dose: Option<String>,
     /// 「记录中自 YYYY-MM-DD 起」:该剂量键连续出现的起点。
     since: Option<String>,
@@ -517,6 +545,8 @@ fn med_row(ctx: &Ctx<'_>, m: &parser::MedSpan, book: &mut EvidenceBook) -> (MedR
     let row = MedRow {
         name: m.name.clone(),
         raw_name: m.latest_raw_name.clone().unwrap_or_else(|| m.name.clone()),
+        drug_key: m.drug_key.clone(),
+        raw_names: m.raw_names.clone(),
         dose: m.latest_dose.clone(),
         since: if stopped.is_some() {
             None
@@ -544,18 +574,11 @@ fn med_row(ctx: &Ctx<'_>, m: &parser::MedSpan, book: &mut EvidenceBook) -> (MedR
     (row, lane)
 }
 
-/// 用药表(spec §3.2)。`exclude` 是 `ctx.clinical.meds` 里被包的状态行替换掉的下标。
-pub(crate) fn med_section(
-    ctx: &Ctx<'_>,
-    book: &mut EvidenceBook,
-    exclude: &[usize],
-) -> (Section, Vec<MedLane>) {
+/// 用药表(spec §3.2)。全部药都列:包的状态行在「现在」的包段,药表在「用药」tab,不在同一屏,不替换。
+pub(crate) fn med_section(ctx: &Ctx<'_>, book: &mut EvidenceBook) -> (Section, Vec<MedLane>) {
     let mut rows: Vec<MedRow> = Vec::new();
     let mut lanes: Vec<MedLane> = Vec::new();
-    for (i, m) in ctx.clinical.meds.iter().enumerate() {
-        if exclude.contains(&i) {
-            continue;
-        }
+    for m in &ctx.clinical.meds {
         let (row, lane) = med_row(ctx, m, book);
         rows.push(row);
         lanes.push(lane);
@@ -757,40 +780,54 @@ pub(crate) fn journey_section(
     )
 }
 
-/// 开着的包用自己的状态行替换通用层对同一批药的行(spec §4):包 `state_vars` 里
-/// `latest_dose`/`ratio_to_weight` 声明的药类,命中 `rules::drug_class` 的 `MedSpan` 下标。
-fn replaced_by_packages(
-    ctx: &Ctx<'_>,
-    events: &[parser::ProfileEvent],
-    installed: &[Package],
-) -> Vec<usize> {
-    let mut out = Vec::new();
-    for pkg in installed {
-        if !crate::is_enabled(events, &pkg.manifest.id) {
-            continue;
-        }
-        let classes: Vec<&str> = pkg
-            .state_vars
-            .iter()
-            .filter(|v| matches!(v.derive.as_str(), "latest_dose" | "ratio_to_weight"))
-            .filter_map(|v| v.drug_class.as_deref())
-            .collect();
-        for (i, m) in ctx.clinical.meds.iter().enumerate() {
-            if crate::rules::drug_class(pkg, m).is_some_and(|d| classes.contains(&d.class.as_str()))
-            {
-                out.push(i);
-            }
-        }
+/// 触发词命中:中文按子串;**纯 ASCII** 的词(`SLE`)按整词——两侧不能是 ASCII 字母数字,
+/// 否则 `sle` 会命中 "Obstructive **sle**ep apnea" / "Mea**sle**s",狼疮包就在没有狼疮的人
+/// 身上「强行打开」(审查 C1)。
+fn pattern_hits(text: &str, pattern: &str) -> bool {
+    if !pattern.is_ascii() {
+        return text.contains(pattern);
     }
-    out
+    text.match_indices(pattern).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = text[i + pattern.len()..].chars().next();
+        !before.is_some_and(|c| c.is_ascii_alphanumeric())
+            && !after.is_some_and(|c| c.is_ascii_alphanumeric())
+    })
+}
+
+/// 包出不出现(spec 2026-10-23 §4.4):保险箱里任一诊断的原文含包 `triggers.diagnosis_patterns`
+/// 任一项(子串,大小写不敏感),**或**任一诊断归一后的 ICD 以 [`PACKAGE_ICD_PREFIXES`] 里该包的
+/// 前缀开头。纯函数,不看 `enable`/`disable` 事件——那是查看器/分享单包路径的事。
+pub fn package_applies(pkg: &Package, conditions: &[parser::AggregatedCondition]) -> bool {
+    let patterns: Vec<String> = pkg
+        .triggers
+        .diagnosis_patterns
+        .iter()
+        .map(|p| p.to_lowercase())
+        .filter(|p| !p.is_empty())
+        .collect();
+    let prefixes: &[&str] = PACKAGE_ICD_PREFIXES
+        .iter()
+        .find(|(id, _)| *id == pkg.manifest.id)
+        .map_or(&[], |(_, p)| p);
+    conditions.iter().any(|c| {
+        let text = c.raw_text.to_lowercase();
+        if patterns.iter().any(|p| pattern_hits(&text, p)) {
+            return true;
+        }
+        c.icd_code
+            .as_deref()
+            .and_then(normalize_icd)
+            .is_some_and(|code| prefixes.iter().any(|p| code.starts_with(p)))
+    })
 }
 
 // ─────────────────────────── 装配 ───────────────────────────
 
-/// 通用层 + 每个**开着的**包叠在后面(spec §4)。**纯函数**。
+/// 通用层 + 每个**命中触发**的包叠在后面(spec 2026-10-23 §4.4)。**纯函数**。
 ///
-/// `installed` 是缓存里装着的全部包;开没开按 `events` 里的 `enable`/`disable`
-/// (`is_enabled`)判,没开的包一段都不出、也不碰它的 terms(覆盖层由调用方装)。
+/// `installed` 是缓存里装着的全部包;出不出按 [`package_applies`] 判,`events` 只喂 `Ctx`
+/// (自填/动作日志),不再读 `enable`/`disable`。覆盖层由调用方装。
 pub fn materialize_generic(
     docs: &[parser::SourceDoc<'_>],
     encounters: &[EncounterRef],
@@ -801,15 +838,23 @@ pub fn materialize_generic(
     let ctx = Ctx::build(docs, events, today);
     let mut book = EvidenceBook::default();
     let mut sections = vec![family_section(&ctx, &mut book)];
-    let exclude = replaced_by_packages(&ctx, events, installed);
-    let (meds, med_lanes) = med_section(&ctx, &mut book, &exclude);
+    let (meds, med_lanes) = med_section(&ctx, &mut book);
     sections.push(meds);
     sections.push(journey_section(&ctx, encounters, med_lanes, &mut book));
     // 包段与通用段**共用这一本**依据簿(审查 I1:各自从 1 编号会撞 id,界面合并后点开错的
     // 那句);通用的 evidence 段等包都登记完再装,固定排在通用三段之后、包段之前。
     let mut sources: Vec<SourceOut> = Vec::new();
-    for pkg in installed {
-        if !crate::is_enabled(events, &pkg.manifest.id) {
+    let packages: Vec<PackageOut> = installed
+        .iter()
+        .map(|p| PackageOut {
+            id: p.manifest.id.clone(),
+            display_name: p.manifest.display.name.clone(),
+            family: p.manifest.family.clone(),
+            applies: package_applies(p, &ctx.clinical.conditions),
+        })
+        .collect();
+    for (pkg, out) in installed.iter().zip(&packages) {
+        if !out.applies {
             continue;
         }
         for mut s in crate::sections_for(&ctx, pkg, &mut book) {
@@ -843,7 +888,147 @@ pub fn materialize_generic(
         disclaimer: "只整理你病历里已有的记录,不做诊断。".into(),
         sections,
         sources,
+        packages,
     }
+}
+
+// ─────────────────────────── 「用药」tab(spec 2026-10-23 §5) ───────────────────────────
+
+/// 「用药」tab 的一份视图:最近 / 更早两段 + 过敏,全部在同一本依据簿里。
+#[derive(Debug, Clone, Serialize)]
+pub struct MedsView {
+    /// 180 天内有记录且原文没写停。
+    pub recent: Vec<MedWithNodes>,
+    /// 超过 180 天没新记录,或病历写了停药。
+    pub earlier: Vec<MedWithNodes>,
+    pub allergies: Vec<AllergyOut>,
+    pub evidence: Vec<state::EvidenceOut>,
+    pub stale_after_days: i64,
+}
+
+/// 一味药 + 它的剂量链(`first` / `change` / `stopped` 节点,按日期)。
+#[derive(Debug, Clone, Serialize)]
+pub struct MedWithNodes {
+    #[serde(flatten)]
+    pub row: MedRow,
+    pub nodes: Vec<state::Node>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AllergyOut {
+    pub substance: String,
+    pub reaction: String,
+    /// 每份提到它的文档一条(物质串所在的那一行)。
+    pub evidence: Vec<String>,
+}
+
+/// 「用药」tab(spec 2026-10-23 §5)。**纯函数**:与 [`materialize_generic`] 同一份
+/// `Ctx`、同一个 `med_row`,只是切成最近 / 更早两段并带上剂量链;过敏用
+/// `parser::extract_allergies_pairs` 逐份扫,在同一本依据簿里引出处。
+pub fn materialize_meds(
+    docs: &[parser::SourceDoc<'_>],
+    events: &[parser::ProfileEvent],
+    today: NaiveDate,
+) -> MedsView {
+    let ctx = Ctx::build(docs, events, today);
+    let mut book = EvidenceBook::default();
+    let mut recent: Vec<MedWithNodes> = Vec::new();
+    let mut earlier: Vec<MedWithNodes> = Vec::new();
+    for m in &ctx.clinical.meds {
+        let (row, lane) = med_row(&ctx, m, &mut book);
+        let item = MedWithNodes {
+            nodes: lane.nodes,
+            row,
+        };
+        // 「最近」= 有日期、且在 180 天内、且原文没写停;没有日期的提及说不出「N 天内」,
+        // 与诊断那边无日期进「更早」同一条规矩(审查 I3)。
+        let within = item.row.days_since.is_some_and(|n| n <= STALE_DAYS);
+        if item.row.stopped.is_none() && within {
+            recent.push(item);
+        } else {
+            earlier.push(item);
+        }
+    }
+    // 两边都按最近记录日倒序,无日期最后,并列按名字。
+    let order = |a: &MedWithNodes, b: &MedWithNodes| {
+        b.row
+            .last_seen
+            .is_some()
+            .cmp(&a.row.last_seen.is_some())
+            .then(b.row.last_seen.cmp(&a.row.last_seen))
+            .then(a.row.name.cmp(&b.row.name))
+    };
+    recent.sort_by(order);
+    earlier.sort_by(order);
+
+    // 过敏:按 (物质, 反应) 合并,每份提到它的文档引一条(物质串所在的那一行)。
+    // key = 小写的 (物质, 反应);值 = 第一次见到的写法 + 依据 id。
+    type AllergyAcc = BTreeMap<(String, String), ((String, String), Vec<String>)>;
+    let mut allergies: AllergyAcc = BTreeMap::new();
+    for d in &ctx.docs {
+        for (substance, reaction) in parser::extract_allergies_pairs(d.text) {
+            // 提示词把「Allergies」那一行排在同名的药物清单行前面(审查 I9)。
+            let id = book.cite(
+                &ctx,
+                Some(d.index),
+                &substance,
+                &["Allerg", "allerg", "过敏"],
+                "regex",
+                true,
+                None,
+                true,
+            );
+            // 同一物质的不同大小写写法(Epic 各处抄法不一)合成一行,留第一次见到的写法。
+            let key = (substance.to_lowercase(), reaction.to_lowercase());
+            let (_, ids) = allergies
+                .entry(key)
+                .or_insert_with(|| ((substance.clone(), reaction.clone()), Vec::new()));
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    let allergies = allergies
+        .into_values()
+        .map(|((substance, reaction), evidence)| AllergyOut {
+            substance,
+            reaction,
+            evidence,
+        })
+        .collect();
+    MedsView {
+        recent,
+        earlier,
+        allergies,
+        evidence: book.items,
+        stale_after_days: STALE_DAYS,
+    }
+}
+
+/// 化验「key → 族」三张表的 JSON 形态,给手机端「现在」页按族摆化验行
+/// (`vault_profile_lab_families`)。表本身是 crate 常量,这里只是序列化;`recent_days`
+/// 一并下发,化验的 12 个月窗与诊断那一半用同一个数。
+pub fn lab_family_table() -> serde_json::Value {
+    let families: Vec<serde_json::Value> = FAMILIES
+        .iter()
+        .map(|(key, label)| {
+            let keys: Vec<&str> = LAB_KEYS
+                .iter()
+                .find(|(f, _)| f == key)
+                .map(|(_, ks)| ks.to_vec())
+                .unwrap_or_default();
+            serde_json::json!({ "key": key, "label": label, "keys": keys })
+        })
+        .collect();
+    let panel_family: serde_json::Map<String, serde_json::Value> = PANEL_FAMILY
+        .iter()
+        .map(|(p, f)| (p.to_string(), serde_json::Value::String(f.to_string())))
+        .collect();
+    serde_json::json!({
+        "recent_days": RECENT_DAYS,
+        "families": families,
+        "panel_family": panel_family,
+    })
 }
 
 #[cfg(test)]
