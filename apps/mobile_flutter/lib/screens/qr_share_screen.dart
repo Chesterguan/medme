@@ -24,7 +24,7 @@ import '../grants.dart';
 import '../profile_manager.dart';
 import '../src/rust/api/vault.dart';
 import '../widgets/med_card.dart';
-import 'disease_profile_screen.dart' show DiseaseProfileSource;
+import 'package:mobile_flutter/profile_source.dart' show DiseaseProfileSource;
 import 'qr_notice_sheet.dart';
 
 /// 医生扫码后打开的查看器地址。数据在 `#` 之后,不会随请求上行。

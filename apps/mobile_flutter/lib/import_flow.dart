@@ -18,6 +18,7 @@ import 'package:mobile_flutter/ocr_bridge.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/cloud_extract_ask_sheet.dart';
 import 'package:mobile_flutter/screens/import_helpers.dart';
+import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
 import 'package:mobile_flutter/src/rust/api/vault.dart';
 import 'package:mobile_flutter/vault_events.dart';
@@ -101,6 +102,11 @@ Future<ImportRunResult?> showImportSheet(BuildContext context) async {
     builder: (context) => const SafeArea(child: AddSheetBody()),
   );
   if (choice == null || !context.mounted) return null;
+  if (choice == ImportChoice.manualEntry) {
+    final saved = await showManualEntrySheet(context);
+    if (saved == true) bumpVaultRevision();
+    return null;
+  }
   return runImport(context, choice);
 }
 
@@ -166,6 +172,12 @@ class AddSheetBody extends StatelessWidget {
             subtitle: 'myEHR 导出的 .zip,一次导入整份病历',
             choice: ImportChoice.bundle,
           ),
+          _SheetTile(
+            icon: Icons.edit_note_outlined,
+            title: '记录一下',
+            subtitle: '血压 / 体重 / 血糖 / 今天不舒服',
+            choice: ImportChoice.manualEntry,
+          ),
           const SizedBox(height: 8),
         ],
       ),
@@ -202,6 +214,8 @@ Future<ImportRunResult?> runImport(
   // 整包导入不走「取件 → 队列逐份 OCR」那条路:包里每份都已切好、带着类型/日期/
   // 抽取,Rust 侧 `vault_import_bundle` 一次做完,这里只负责选 zip 和显示进度。
   if (choice == ImportChoice.bundle) return _runBundleImport(context);
+  // 「记录一下」在 showImportSheet 里就拦下了,不会走到这里。
+  if (choice == ImportChoice.manualEntry) return null;
 
   // 屏上探针的出口。**在任何 await 之前同步取出**,之后就不再碰 context ——
   // 添加期间用户可能把这一屏推走,而 `ScaffoldMessengerState` 自己知道有没有 mounted。
@@ -352,7 +366,16 @@ Future<ImportRunResult?> _runBundleImport(BuildContext context) async {
 /// [showImportSheet],「医生代拍」临时会话流程(`screens/doctor/proxy_intake_flow.dart`)
 /// 也复用 [pickImportItems] 拿取件入口(自己另起一个只含「拍照/选择文件」的选择
 /// 表,不复用 `showImportSheet` 的三选一 UI)。
-enum ImportChoice { camera, gallery, files, bundle }
+enum ImportChoice {
+  camera,
+  gallery,
+  files,
+  bundle,
+
+  /// 「记录一下」:不是取件,是打开录入弹层(血压 / 体重 / 血糖 / 今天不舒服)。
+  /// 2026-10-23 趋势页取消,这颗从趋势页底部搬进「添加」弹层最后一行。
+  manualEntry,
+}
 
 /// 按 [choice] 走对应的原生取件器,返回待导入项(用户取消为空列表)。**纯取件,
 /// 不碰 OCR/落库**——OCR 识别出来的文字、往哪个病历箱落库,都由调用方在拿到
@@ -368,6 +391,9 @@ Future<List<PendingImport>> pickImportItems(
   ScaffoldMessengerState? probe,
 }) async {
   switch (choice) {
+    case ImportChoice.manualEntry:
+      // 不是取件:showImportSheet 已经把它拦下开录入弹层了。
+      return const [];
     case ImportChoice.camera:
       // 文档扫描器(iOS VisionKit / 安卓 ML Kit Document Scanner)自动画框 + 透视
       // 校正,拿到已拉正的图 —— 斜着拍的表格变回横平竖直,OCR 才拼得回整行。
