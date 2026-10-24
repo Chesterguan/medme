@@ -92,10 +92,15 @@ String docDisplayTitle(DocumentSummaryDto doc) {
     return title;
   }
   final provider = doc.provider?.trim() ?? '';
+  // 英文 Epic 标题有中文显示标题(Rust `display_title_zh`,如「出院小结」「门诊 · Cardiology」
+  // 「CT · CHEST W CONTRAST」)时顶替类型标签 —— 中文在前,英文原标题留在详情页。
   // `unknown` 不是一种类型,是「还没分出来」—— 它的说法归 [docRowLabel] 管。
-  final label = doc.docType == 'unknown'
-      ? ''
-      : (docLabel[doc.docType] ?? '记录');
+  final titleZh = doc.titleZh?.trim() ?? '';
+  final label = titleZh.isNotEmpty
+      ? titleZh
+      : doc.docType == 'unknown'
+          ? ''
+          : (docLabel[doc.docType] ?? '记录');
   final parts = [
     if (provider.isNotEmpty) provider,
     if (label.isNotEmpty) label else fmtDate(doc.docDate),

@@ -65,6 +65,10 @@ pub struct DocumentSummaryDto {
     /// `image_picker_….jpg`。前端(`doc_labels.dart` 的 `docDisplayTitle`)拿它
     /// 拼出「协和医院 · 化验」,不用再把一个临时文件名端给用户看。
     pub provider: Option<String>,
+    /// 英文 Epic 标题的中文显示标题(`parser::display_title_zh`:小节名闭集 /
+    /// 就诊类型前缀 / 影像方式前缀),**只用于显示**;`title` 本身一个字节不动,
+    /// 已是中文或认不出的标题为 `None`,前端退回类型标签(`doc_labels.dart`)。
+    pub title_zh: Option<String>,
 }
 impl From<&Document> for DocumentSummaryDto {
     fn from(d: &Document) -> Self {
@@ -78,6 +82,7 @@ impl From<&Document> for DocumentSummaryDto {
             slice_count: None,
             extraction_item_count: None,
             provider: None,
+            title_zh: d.title.as_deref().and_then(parser::display_title_zh),
         }
     }
 }
@@ -490,6 +495,34 @@ pub struct SyncImportOutcomeDto {
 #[cfg(test)]
 mod tests {
     use crate::api::vault::VAULT_TEST_LOCK as TEST_LOCK;
+
+    fn doc_with_title(title: &str) -> core_model::Document {
+        core_model::Document {
+            id: 1,
+            source_file_id: 1,
+            doc_type: core_model::DocType::DischargeSummary,
+            doc_date: None,
+            doc_date_end: None,
+            title: Some(title.to_string()),
+            language: Some("en".into()),
+            page_count: 1,
+            encounter_id: None,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    /// 档案行中文在前(2026-10-23 中文化 spec §2.1.3):英文 Epic 小节名映射成 `title_zh`,
+    /// 已是中文的标题不映射(键为 None),`title` 本身一个字节不动。
+    #[test]
+    fn summary_dto_carries_title_zh_only_for_mappable_english_titles() {
+        let en = super::DocumentSummaryDto::from(&doc_with_title("Discharge Summary Note"));
+        assert_eq!(en.title_zh.as_deref(), Some("出院小结"));
+        assert_eq!(en.title.as_deref(), Some("Discharge Summary Note"));
+        let zh = super::DocumentSummaryDto::from(&doc_with_title("化验 2025-06-14"));
+        assert_eq!(zh.title_zh, None);
+        let img = super::DocumentSummaryDto::from(&doc_with_title("CT CHEST W CONTRAST"));
+        assert_eq!(img.title_zh.as_deref(), Some("CT · CHEST W CONTRAST"));
+    }
 
     /// 档案行上的标题要能说出「在哪家医院」——而院名只印在纸上,`document` 表里
     /// 没有这一列。这里钉住 `doc_summary` 真的从这份文档自己的 OCR 文本里把它捞
