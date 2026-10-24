@@ -284,6 +284,11 @@ fn build_share_blob_inner(
             "pdf": pdf_data_uri,
             "dicom": dicom_json,
         });
+        // 中文化第一层(spec 2026-10-23 §4.3,严格加法):英文 Epic 标题有中文显示标题时
+        // 多一个 `title_zh` 给查看器中文在前;中文标题、认不出的标题没有这个键。
+        if let Some(zh) = parser::display_title_zh(&title) {
+            record_json["title_zh"] = serde_json::json!(zh);
+        }
         // 医生代拍确认工作流(严格加法):只有传入了 confirmed 集合的调用方
         // (`build_encrypted_share_with_consent_and_confirmed`)才会看到这个键——
         // 普通分享(桌面/病人自己导出)不传集合,records 形状逐字节不变。
@@ -1395,6 +1400,48 @@ mod tests {
     /// `build_encrypted_share_with_consent`)的 records 里绝不应出现 `confirmed`
     /// 键——它们就是 `build_encrypted_share_with_consent_and_confirmed(..., None)`
     /// 的特例,现有分享(桌面/病人自己导出/普通医生代拍)逐字节不受影响。
+    /// 中文化第一层(2026-10-23 spec §4.3):英文 Epic 标题的记录多一个 `title_zh`
+    /// 给查看器中文在前;已是中文的标题不带这个键,老分享与现有测试形状不变。
+    #[test]
+    fn share_records_carry_title_zh_for_mappable_titles_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path()).unwrap();
+        let add = |name: &str, title: &str| {
+            let imp = vault.import(name, "text/plain", name.as_bytes()).unwrap();
+            vault
+                .add_document(core_model::NewDocument {
+                    source_file_id: imp.source_file.id,
+                    doc_type: core_model::DocType::DischargeSummary,
+                    doc_date: None,
+                    doc_date_end: None,
+                    title: Some(title.into()),
+                    language: Some("en".into()),
+                    page_count: 1,
+                })
+                .unwrap();
+        };
+        add("en.txt", "Discharge Summary Note");
+        add("zh.txt", "化验 2025-06-14");
+
+        let (html, pass, _n) =
+            build_encrypted_share(&vault, 5, &crate::render_dicom_png_in_process).unwrap();
+        let payload = decrypt_payload(&html, &pass);
+        let records = payload["records"].as_array().unwrap();
+        let en = records
+            .iter()
+            .find(|r| r["title"] == "Discharge Summary Note")
+            .expect("英文标题那份在");
+        assert_eq!(en["title_zh"], "出院小结");
+        let zh = records
+            .iter()
+            .find(|r| r["title"] == "化验 2025-06-14")
+            .expect("中文标题那份在");
+        assert!(
+            zh.get("title_zh").is_none(),
+            "已是中文的标题不带 title_zh 键"
+        );
+    }
+
     #[test]
     fn build_encrypted_share_omits_confirmed_key_when_not_using_confirmed_variant() {
         let dir = tempfile::tempdir().unwrap();
