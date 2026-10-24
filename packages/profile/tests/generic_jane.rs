@@ -246,6 +246,25 @@ fn family_cards_group_diagnoses_by_icd() {
 
 /// 验收 5:化验小表 —— 值与单位来自同一个 LabPoint;认不出的 key 不出现、不报错。
 #[test]
+fn family_card_diagnoses_carry_chinese_names_when_the_table_has_them() {
+    let view = render(TODAY, &[], &[]);
+    let dx: Vec<serde_json::Value> = section(&view, "family_cards")["body"]["families"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|f| f["diagnoses"].as_array().unwrap().clone())
+        .collect();
+    let i35 = dx.iter().find(|d| d["code"] == "I35.0").unwrap();
+    assert_eq!(i35["name_zh"], "主动脉瓣狭窄");
+    assert_eq!(i35["name_zh_level"], "sub4");
+    let z79 = dx.iter().find(|d| d["code"] == "Z79.01").unwrap();
+    assert!(z79.get("name_zh").is_none(), "表里没有就不出现这个键");
+    assert!(z79.get("name_zh_level").is_none());
+    let htn = dx.iter().find(|d| d["texts"][0] == "Hypertension").unwrap();
+    assert!(htn.get("name_zh").is_none(), "无码诊断不编中文名");
+}
+
+#[test]
 fn family_cards_attach_lab_tables() {
     let view = render(TODAY, &[], &[]);
     let fams = &section(&view, "family_cards")["body"]["families"];

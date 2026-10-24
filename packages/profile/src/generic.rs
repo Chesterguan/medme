@@ -68,6 +68,13 @@ struct DiagnosisOut {
     doc_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     secondary: Option<&'static str>,
+    /// ICD-10 中文名(国家临床版 2.0 两列表,`terminology::resolve_icd10_zh`)与命中级别
+    /// (`sub4` 四位亚目 / `cat3` 只到类目)。无码或表外不出现这两个键 —— 不编名;
+    /// 单包路径(SLE golden)里的中文诊断没有码,形状逐字节不变。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name_zh: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name_zh_level: Option<&'static str>,
     evidence: Vec<String>,
     unverified: bool,
 }
@@ -157,6 +164,7 @@ fn diagnosis_out(ctx: &Ctx<'_>, b: &DxBuilder, book: &mut EvidenceBook) -> Diagn
             }
         }
     }
+    let zh = b.code.as_deref().and_then(terminology::resolve_icd10_zh);
     DiagnosisOut {
         code: b.code.clone(),
         texts: b.variants.keys().cloned().collect(),
@@ -164,6 +172,8 @@ fn diagnosis_out(ctx: &Ctx<'_>, b: &DxBuilder, book: &mut EvidenceBook) -> Diagn
         last_seen: b.last_seen.map(|d| d.to_string()),
         doc_count: b.sources.len(),
         secondary: b.code.as_deref().and_then(|c| family_of_icd(c).1),
+        name_zh: zh.as_ref().map(|z| z.name.clone()),
+        name_zh_level: zh.as_ref().map(|z| z.level.as_str()),
         evidence,
         unverified: b.unverified,
     }

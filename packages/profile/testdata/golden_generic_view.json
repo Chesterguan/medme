@@ -37,6 +37,8 @@
                 ],
                 "first_seen": "2024-03-10",
                 "last_seen": "2026-09-14",
+                "name_zh": "具有假体心脏瓣膜",
+                "name_zh_level": "sub4",
                 "texts": [
                   "Presence of prosthetic heart valve",
                   "Status post AVR",
@@ -67,6 +69,8 @@
                 ],
                 "first_seen": "2024-03-03",
                 "last_seen": "2024-03-10",
+                "name_zh": "主动脉瓣狭窄",
+                "name_zh_level": "sub4",
                 "texts": [
                   "Aortic stenosis, severe, status post surgical aortic valve replacement 2024-03-03",
                   "Severe aortic stenosis"
@@ -125,6 +129,8 @@
                 ],
                 "first_seen": "2025-06-14",
                 "last_seen": "2025-11-17",
+                "name_zh": "肺曲霉病，其他的",
+                "name_zh_level": "sub4",
                 "secondary": "respiratory",
                 "texts": [
                   "Invasive pulmonary aspergillosis",
