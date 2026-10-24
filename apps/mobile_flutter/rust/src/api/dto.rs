@@ -82,7 +82,13 @@ impl From<&Document> for DocumentSummaryDto {
             slice_count: None,
             extraction_item_count: None,
             provider: None,
-            title_zh: d.title.as_deref().and_then(parser::display_title_zh),
+            // 笔记 / 自测 / 档案事件的 title 是**内容**(笔记首行、「血压」),不是 Epic 标题,不映射。
+            title_zh: match d.doc_type {
+                core_model::DocType::Note
+                | core_model::DocType::SelfMeasurement
+                | core_model::DocType::ProfileEvent => None,
+                _ => d.title.as_deref().and_then(parser::display_title_zh),
+            },
         }
     }
 }
@@ -522,6 +528,21 @@ mod tests {
         assert_eq!(zh.title_zh, None);
         let img = super::DocumentSummaryDto::from(&doc_with_title("CT CHEST W CONTRAST"));
         assert_eq!(img.title_zh.as_deref(), Some("CT · CHEST W CONTRAST"));
+    }
+
+    /// 审查 I1:笔记 / 自测 / 档案事件的 `title` 是内容不是 Epic 标题(「ED visit tomorrow」
+    /// 这种笔记首行),不映射。
+    #[test]
+    fn summary_dto_never_maps_titles_of_synthetic_documents() {
+        for dt in [
+            core_model::DocType::Note,
+            core_model::DocType::SelfMeasurement,
+            core_model::DocType::ProfileEvent,
+        ] {
+            let mut d = doc_with_title("ED visit tomorrow");
+            d.doc_type = dt;
+            assert_eq!(super::DocumentSummaryDto::from(&d).title_zh, None);
+        }
     }
 
     /// 档案行上的标题要能说出「在哪家医院」——而院名只印在纸上,`document` 表里

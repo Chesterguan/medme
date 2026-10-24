@@ -286,8 +286,16 @@ fn build_share_blob_inner(
         });
         // 中文化第一层(spec 2026-10-23 §4.3,严格加法):英文 Epic 标题有中文显示标题时
         // 多一个 `title_zh` 给查看器中文在前;中文标题、认不出的标题没有这个键。
-        if let Some(zh) = parser::display_title_zh(&title) {
-            record_json["title_zh"] = serde_json::json!(zh);
+        let synthetic = matches!(
+            doc.doc_type,
+            core_model::DocType::Note
+                | core_model::DocType::SelfMeasurement
+                | core_model::DocType::ProfileEvent
+        );
+        if !synthetic {
+            if let Some(zh) = parser::display_title_zh(&title) {
+                record_json["title_zh"] = serde_json::json!(zh);
+            }
         }
         // 医生代拍确认工作流(严格加法):只有传入了 confirmed 集合的调用方
         // (`build_encrypted_share_with_consent_and_confirmed`)才会看到这个键——

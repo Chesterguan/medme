@@ -45,6 +45,16 @@ const MODALITY_PREFIX: &[(&str, &str)] = &[
     ("pet", "PET"),
 ];
 
+/// 像文件名:以 `.` + 2–4 个字母数字结尾(`.pdf` `.jpeg` `.PDF` `.txt`)。适配器的标题从不带扩展名,
+/// 而每一次 OCR 导入都把文件名写进 `title`(`vault.rs` / `pipeline::ingest`)。
+pub(crate) fn looks_like_file_name(s: &str) -> bool {
+    let Some(dot) = s.rfind('.') else {
+        return false;
+    };
+    let ext = &s[dot + 1..];
+    (2..=4).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 fn has_cjk(s: &str) -> bool {
     s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
 }
@@ -86,7 +96,9 @@ fn join(zh: &str, rest: &str) -> String {
 /// Epic 英文标题 → 中文显示标题;已是中文、空串、认不出的英文 → `None`(界面用原文)。
 pub fn display_title_zh(title: &str) -> Option<String> {
     let t = title.trim();
-    if t.is_empty() || has_cjk(t) {
+    // 带扩展名 = 用户导入的文件名(`Pet insurance.pdf`、`MR Jones letter.pdf`),不是 Epic 标题,
+    // 一律不碰(审查 I1);适配器的标题从不带扩展名。
+    if t.is_empty() || has_cjk(t) || looks_like_file_name(t) {
         return None;
     }
     let lower = t.to_ascii_lowercase();
@@ -177,6 +189,22 @@ mod tests {
             display_title_zh("CT").is_none(),
             "只有方式没有部位,不值得改写"
         );
+    }
+
+    /// 审查 I1:导入的文件名也会成为 `title`(`Pet insurance.pdf`、`MR Jones letter.pdf`),
+    /// 带扩展名的一律不映射 —— 适配器的标题从不带扩展名。
+    #[test]
+    fn file_names_with_an_extension_are_never_mapped() {
+        for t in [
+            "Pet insurance.pdf",
+            "MR Jones letter.pdf",
+            "US visa medical.pdf",
+            "Emergency contacts.PDF",
+            "CT abdomen.jpeg",
+            "ED notes.txt",
+        ] {
+            assert!(display_title_zh(t).is_none(), "{t}");
+        }
     }
 
     #[test]

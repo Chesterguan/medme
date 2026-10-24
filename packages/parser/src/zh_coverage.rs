@@ -1,8 +1,9 @@
 //! 第一层中文化的覆盖率计数(2026-10-23 spec §2.1.2):诊断 ICD → 中文名命中到哪一级、
 //! 用药 RxNorm / 名字命中词典没有、化验 LOINC / 名字命中没有、标题映射得上没有。
 //!
-//! **只有计数与码**:输出里不出现任何值、日期、人名、原文;未命中的 LOINC / RxNorm 码与
-//! 英文标题(Epic 小节名)列出来,是给补词典用的清单。用户在自己机器上对真实包跑
+//! **只有计数与码**:输出里不出现任何值、日期、原文;未命中的 LOINC / RxNorm 码与**不带扩展名的**
+//! 英文标题(Epic 小节名)列出来,是给补词典 / 补标题表用的清单。带扩展名的标题是用户自己导入的
+//! 文件名,可能含人名,只计数不列出 —— 贴回来之前仍请自己扫一眼那几行标题。用户在自己机器上对真实包跑
 //! `medme --vault <dir> zh-coverage`,把这段文本贴回来即可。
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,6 +18,8 @@ pub struct ZhCoverage {
     /// 标题:`display_title_zh` 映射得上 / 本来就是中文 / 英文但认不出(去重列出,Epic 小节名)。
     pub titles_mapped: usize,
     pub titles_already_zh: usize,
+    /// 带扩展名的标题 = 用户导入的文件名(可能含人名),只计数、**不列出**(审查 I2)。
+    pub titles_file_names: usize,
     pub titles_unmapped: BTreeSet<String>,
     /// 诊断:四位亚目命中 / 只到类目 / 有码但表里没有(码列出)/ 没码。
     pub dx_sub4: usize,
@@ -51,6 +54,8 @@ pub fn tally<'a>(
         if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
             if has_cjk(t) {
                 c.titles_already_zh += 1;
+            } else if crate::title_zh::looks_like_file_name(t) {
+                c.titles_file_names += 1;
             } else if crate::display_title_zh(t).is_some() {
                 c.titles_mapped += 1;
             } else {
@@ -123,9 +128,10 @@ impl fmt::Display for ZhCoverage {
         }
         writeln!(
             f,
-            "titles  mapped {}  already_zh {}  unmapped {}",
+            "titles  mapped {}  already_zh {}  file_names {}  unmapped {}",
             self.titles_mapped,
             self.titles_already_zh,
+            self.titles_file_names,
             self.titles_unmapped.len()
         )?;
         for t in &self.titles_unmapped {
@@ -225,6 +231,15 @@ mod tests {
                 && text.contains("SURGICAL PATHOLOGY")
         );
         assert!(!text.contains("Doe"), "输出里不该有任何原文/人名");
+    }
+
+    /// 审查 I2:用户自己起的文件名(可能含人名)不进「未命中标题」清单,只计数。
+    #[test]
+    fn user_file_names_are_counted_but_never_listed() {
+        let c = tally([("other", Some("John Smith MRI results.pdf"), None)]);
+        assert_eq!(c.titles_file_names, 1);
+        assert!(c.titles_unmapped.is_empty());
+        assert!(!c.to_string().contains("Smith"));
     }
 
     #[test]
