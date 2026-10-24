@@ -29,6 +29,10 @@ SUB4 = re.compile(r"^([A-Z]\d\d)\.(\d)00$")
 CAT3_X = re.compile(r"^([A-Z]\d\d)\.x00$")
 CAT3_9 = re.compile(r"^([A-Z]\d\d)\.900$")
 UNSPEC = re.compile(r"[,，]?\s*(未特指的?|其他特指的?)$")
+# `.900` 兜底名若带限定语(`不伴有…`、`，其他的`、`经…证实的`、`未特指的…病`),拿来当整个类目的
+# 名字是错的 —— `I11.900 高血压心脏病不伴有(充血性)心力衰竭` 不能叫 I11(I11.0 恰恰是伴心衰)。
+# 命中就放弃,这个类目 None、界面保留英文(审查 I3,96 条)。
+QUALIFIED = re.compile(r"伴有|其他|特指|证实|[,，]")
 
 
 def main(xlsx: str, out: str) -> int:
@@ -50,10 +54,13 @@ def main(xlsx: str, out: str) -> int:
             cat3[m.group(1)] = name
         # `.900` 既是 WHO 亚目 Xnn.9(进 sub4),也是类目名的兜底来源 —— 两边都要,不是 elif。
         if m := CAT3_9.match(code):
-            cat3_fallback[m.group(1)] = UNSPEC.sub("", name)
+            stripped = UNSPEC.sub("", name)
+            if not QUALIFIED.search(stripped):
+                cat3_fallback[m.group(1)] = stripped
     for k, v in cat3_fallback.items():
         cat3.setdefault(k, v)
-    assert len(sub4) >= 8500 and len(cat3) >= 1300, (len(sub4), len(cat3))
+    assert len(sub4) >= 8500 and len(cat3) >= 1200, (len(sub4), len(cat3))
+    assert "I11" not in cat3 and "E14" not in cat3 and cat3["N18"] == "慢性肾衰竭", "限定语兜底名必须被丢掉"
     doc = {
         "version": "clinical-2.0-2022",
         "source": {**SOURCE, "sha256": sha, "fetched": date.today().isoformat()},
@@ -63,7 +70,8 @@ def main(xlsx: str, out: str) -> int:
     with open(out, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=0)
         f.write("\n")
-    print(f"sub4 {len(sub4)} cat3 {len(cat3)} I35.0={sub4['I35.0']} I10={cat3['I10']} "
+    print(f"sub4 {len(sub4)} cat3 {len(cat3)} (x00 {sum(1 for k in cat3 if k not in cat3_fallback)}, "
+          f"900-fallback {sum(1 for k in cat3 if k in cat3_fallback and k not in [])}) I35.0={sub4['I35.0']} I10={cat3['I10']} "
           f"Z79 {'present' if 'Z79' in cat3 else 'absent'} N18.3 {'present' if 'N18.3' in sub4 else 'absent'}")
     return 0
 

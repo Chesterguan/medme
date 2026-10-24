@@ -55,9 +55,10 @@ const _dx = [
   },
 ];
 
-/// 主行:`Text.rich` 的纯文本以 [prefix] 开头(码、族名跟在后面)。
+/// 主行:诊断行里**只有主行**是 `Text.rich`(码、族名跟在后面),小字行是普通 `Text`。
+/// 只认 `textSpan != null`,否则切换是空操作时小字行也能冒充主行(审查 I4)。
 Finder _mainRow(String prefix) => find.byWidgetPredicate(
-  (w) => w is Text && (w.textSpan?.toPlainText() ?? w.data ?? '').startsWith(prefix),
+  (w) => w is Text && w.textSpan != null && w.textSpan!.toPlainText().startsWith(prefix),
 );
 
 void main() {

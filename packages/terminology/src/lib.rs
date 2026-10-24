@@ -2178,6 +2178,11 @@ pub fn normalize_icd10(raw: &str) -> Option<String> {
         .filter(|c| !c.is_whitespace() && *c != '†' && *c != '*')
         .map(|c| c.to_ascii_uppercase())
         .collect();
+    // 非 ASCII(全角数字、破折号……)一律当无码:下游按字节切前 3/5 位,切在多字节字符中间会 panic
+    // (审查 C1,`I35.０` 从病程档案渲染一路可达)。
+    if !s.is_ascii() {
+        return None;
+    }
     let b = s.as_bytes();
     if b.len() < 3 || !b[0].is_ascii_uppercase() || !b[1].is_ascii_digit() || !b[2].is_ascii_digit()
     {
@@ -2220,7 +2225,8 @@ mod icd10_zh_tests {
     #[test]
     fn icd10_zh_table_parses_with_expected_size() {
         assert!(icd10_zh_index().sub4.len() >= 8500);
-        assert!(icd10_zh_index().cat3.len() >= 1300);
+        // 1,246 = 237 个 `.x00` 类目 + 1,009 个无限定语的 `.900` 兜底(94 个带限定语的被丢掉)。
+        assert!(icd10_zh_index().cat3.len() >= 1200);
     }
 
     #[test]
@@ -2255,5 +2261,29 @@ mod icd10_zh_tests {
         assert_eq!(normalize_icd10("D3A.0"), None);
         assert_eq!(normalize_icd10("35.0"), None);
         assert_eq!(normalize_icd10(""), None);
+    }
+
+    /// 审查 C1:全角数字 / 破折号这类非 ASCII 字节活过归一后,`&code[..5]` 切在字符中间会 panic,
+    /// 而这条路从病程档案渲染一路可达。非 ASCII 一律当无码。
+    #[test]
+    fn non_ascii_codes_are_none_not_a_panic() {
+        assert_eq!(normalize_icd10("I35.０"), None);
+        assert!(resolve_icd10_zh("I35.０").is_none());
+        assert!(resolve_icd10_zh("I35—0").is_none());
+        assert!(resolve_icd10_zh("Ｉ35.0").is_none());
+    }
+
+    /// 审查 I3:`.900` 兜底只在名字不带限定语时才当类目名。`I11.900 高血压心脏病不伴有(充血性)
+    /// 心力衰竭` 拿来当 I11 整类的名字是错的(I11.0 恰恰是伴心衰),宁可 None。
+    #[test]
+    fn category_names_never_come_from_qualified_unspecified_rows() {
+        for code in ["I11", "I12", "E14", "B02", "I28", "A15"] {
+            assert!(resolve_icd10_zh(code).is_none(), "{code} 不该有类目名");
+        }
+        // `A35.x00 破伤风，其他的` 来自 `.x00`(WHO 只有三位的类目),不是 `.900` 兜底:
+        // WHO A35 的类目名就叫「其他破伤风」(A33 新生儿、A34 产科另列),原样保留。
+        assert_eq!(resolve_icd10_zh("A35").unwrap().name, "破伤风，其他的");
+        assert_eq!(resolve_icd10_zh("N18").unwrap().name, "慢性肾衰竭");
+        assert_eq!(resolve_icd10_zh("J18").unwrap().name, "肺炎");
     }
 }
