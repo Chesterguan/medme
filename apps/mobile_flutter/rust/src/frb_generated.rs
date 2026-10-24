@@ -3450,6 +3450,7 @@ impl SseDecode for crate::api::dto::DocumentSummaryDto {
         let mut var_sliceCount = <Option<i32>>::sse_decode(deserializer);
         let mut var_extractionItemCount = <Option<i32>>::sse_decode(deserializer);
         let mut var_provider = <Option<String>>::sse_decode(deserializer);
+        let mut var_titleZh = <Option<String>>::sse_decode(deserializer);
         return crate::api::dto::DocumentSummaryDto {
             id: var_id,
             doc_type: var_docType,
@@ -3460,6 +3461,7 @@ impl SseDecode for crate::api::dto::DocumentSummaryDto {
             slice_count: var_sliceCount,
             extraction_item_count: var_extractionItemCount,
             provider: var_provider,
+            title_zh: var_titleZh,
         };
     }
 }
@@ -5068,6 +5070,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::DocumentSummaryDto {
             self.slice_count.into_into_dart().into_dart(),
             self.extraction_item_count.into_into_dart().into_dart(),
             self.provider.into_into_dart().into_dart(),
+            self.title_zh.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5881,6 +5884,7 @@ impl SseEncode for crate::api::dto::DocumentSummaryDto {
         <Option<i32>>::sse_encode(self.slice_count, serializer);
         <Option<i32>>::sse_encode(self.extraction_item_count, serializer);
         <Option<String>>::sse_encode(self.provider, serializer);
+        <Option<String>>::sse_encode(self.title_zh, serializer);
     }
 }
 

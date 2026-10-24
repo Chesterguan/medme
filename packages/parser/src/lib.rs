@@ -16,6 +16,8 @@ mod labs;
 mod meds;
 mod profile_event;
 mod self_entry;
+mod title_zh;
+mod zh_coverage;
 pub use aggregate::{
     aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedMention,
     MedSpan, SourceDoc,
@@ -36,6 +38,8 @@ pub use self_entry::{
     validate_self_measured_values, HomeRefRange, PlausibilityViolation, PlausibleRange,
     SelfMeasuredValue, SELF_MEASUREMENT_MARKER,
 };
+pub use title_zh::display_title_zh;
+pub use zh_coverage::{tally, ZhCoverage};
 
 pub struct Extracted {
     pub text: String,

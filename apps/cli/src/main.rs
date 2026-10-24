@@ -24,6 +24,9 @@ enum Cmd {
         query: String,
     },
     Timeline,
+    /// 第一层中文化覆盖率:只打计数与未命中的码/英文标题(不含任何值、日期、人名),
+    /// 给补词典 / 补标题表用。见 `parser::tally`。
+    ZhCoverage,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -110,6 +113,23 @@ fn main() -> anyhow::Result<()> {
             for h in hits {
                 println!("#{}  {}", h.document_id, h.snippet);
             }
+        }
+        Cmd::ZhCoverage => {
+            let entries = vault.timeline()?;
+            let mut rows: Vec<(String, Option<String>, Option<String>)> =
+                Vec::with_capacity(entries.len());
+            for e in &entries {
+                rows.push((
+                    e.doc_type.as_str().to_string(),
+                    e.title.clone(),
+                    vault.extraction_json(e.document_id)?,
+                ));
+            }
+            let c = parser::tally(
+                rows.iter()
+                    .map(|(t, title, j)| (t.as_str(), title.as_deref(), j.as_deref())),
+            );
+            print!("{c}");
         }
         Cmd::Timeline => {
             for e in vault.timeline()? {

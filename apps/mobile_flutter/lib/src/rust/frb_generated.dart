@@ -3545,8 +3545,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DocumentSummaryDto dco_decode_document_summary_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 9)
-      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return DocumentSummaryDto(
       id: dco_decode_i_64(arr[0]),
       docType: dco_decode_String(arr[1]),
@@ -3557,6 +3557,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sliceCount: dco_decode_opt_box_autoadd_i_32(arr[6]),
       extractionItemCount: dco_decode_opt_box_autoadd_i_32(arr[7]),
       provider: dco_decode_opt_String(arr[8]),
+      titleZh: dco_decode_opt_String(arr[9]),
     );
   }
 
@@ -4540,6 +4541,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_sliceCount = sse_decode_opt_box_autoadd_i_32(deserializer);
     var var_extractionItemCount = sse_decode_opt_box_autoadd_i_32(deserializer);
     var var_provider = sse_decode_opt_String(deserializer);
+    var var_titleZh = sse_decode_opt_String(deserializer);
     return DocumentSummaryDto(
       id: var_id,
       docType: var_docType,
@@ -4550,6 +4552,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sliceCount: var_sliceCount,
       extractionItemCount: var_extractionItemCount,
       provider: var_provider,
+      titleZh: var_titleZh,
     );
   }
 
@@ -5747,6 +5750,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_i_32(self.sliceCount, serializer);
     sse_encode_opt_box_autoadd_i_32(self.extractionItemCount, serializer);
     sse_encode_opt_String(self.provider, serializer);
+    sse_encode_opt_String(self.titleZh, serializer);
   }
 
   @protected

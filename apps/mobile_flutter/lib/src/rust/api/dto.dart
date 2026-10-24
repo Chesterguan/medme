@@ -279,6 +279,11 @@ class DocumentSummaryDto {
   /// 拼出「协和医院 · 化验」,不用再把一个临时文件名端给用户看。
   final String? provider;
 
+  /// 英文 Epic 标题的中文显示标题(`parser::display_title_zh`:小节名闭集 /
+  /// 就诊类型前缀 / 影像方式前缀),**只用于显示**;`title` 本身一个字节不动,
+  /// 已是中文或认不出的标题为 `None`,前端退回类型标签(`doc_labels.dart`)。
+  final String? titleZh;
+
   const DocumentSummaryDto({
     required this.id,
     required this.docType,
@@ -289,6 +294,7 @@ class DocumentSummaryDto {
     this.sliceCount,
     this.extractionItemCount,
     this.provider,
+    this.titleZh,
   });
 
   @override
@@ -301,7 +307,8 @@ class DocumentSummaryDto {
       pageCount.hashCode ^
       sliceCount.hashCode ^
       extractionItemCount.hashCode ^
-      provider.hashCode;
+      provider.hashCode ^
+      titleZh.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -316,7 +323,8 @@ class DocumentSummaryDto {
           pageCount == other.pageCount &&
           sliceCount == other.sliceCount &&
           extractionItemCount == other.extractionItemCount &&
-          provider == other.provider;
+          provider == other.provider &&
+          titleZh == other.titleZh;
 }
 
 class EncounterSummaryDto {
