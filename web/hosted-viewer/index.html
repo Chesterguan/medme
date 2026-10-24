@@ -17,7 +17,7 @@
         a=d.find(o,i)
         if a<0:break
         a+=len(o);b=d.find(c,a);print(base64.b64encode(hashlib.sha256(d[a:b].encode()).digest()).decode());i=b" -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-1W78FH/BnYVBaSZPQ8EiW/CSi++FJj/q5GxT2mdqVnc='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fgk+h9rJftq7C6Ngdgk2wa+WjUN+z1br38BoaevBIAA=' 'sha256-Wtbvhs1sTMN5ZjswK4x9lWs7OKeVM2v/8LgtkWOeGHI=' 'sha256-7Z0+4VB3CnpMGP9NdEXdG4wifm/kpyirE2yqr+CEnyc=' 'sha256-d+2tjLF9STjvKzneCqG45K1ckGmfgoUWGhp6yvAMz+I='; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src data:; connect-src https://medme-claim.oss-cn-hangzhou.aliyuncs.com; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* 首屏防闪:载荷进来时藏口令屏、亮出等待态。两者由同一个类控制,不会互相打架。 */
@@ -86,6 +86,7 @@
   .record { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; page-break-inside: avoid; }
   .record-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
   .record-head h2 { font-size: 16px; margin: 0; color: #0f172a; flex: 1; min-width: 120px; }
+  .record-head h2 .orig { font-size: 12px; font-weight: 400; color: #64748b; margin-left: 6px; }
   .badge { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 10px; }
   .date { font-size: 12px; color: #64748b; font-variant-numeric: tabular-nums; }
   .content { font-size: 15px; line-height: 1.7; color: #334155; }
@@ -1602,14 +1603,16 @@ function render(payload) {
     const type = r.doc_type || "unknown";
     const label = TYPE_LABEL[type] || TYPE_LABEL.unknown;
     const bc = TYPE_BADGE[type] || TYPE_BADGE.unknown;
-    const title = r.title || label;
+    // 中文化第一层:英文 Epic 标题带 `title_zh`(App 端查表)时中文在前,英文原标题退成小字。
+    const title = r.title_zh || r.title || label;
+    const origTitle = r.title_zh && r.title ? r.title : "";
     let dateStr = "无日期";
     if (r.doc_date && r.doc_date_end && r.doc_date !== r.doc_date_end) dateStr = r.doc_date + " → " + r.doc_date_end;
     else if (r.doc_date) dateStr = r.doc_date;
 
     html += '<section class="record" id="rec-' + ri + '"><div class="record-head">';
     html += '<span class="badge" style="background:' + bc[0] + ";color:" + bc[1] + '">' + esc(label) + "</span>";
-    html += "<h2>" + esc(title) + '</h2><span class="date">' + esc(dateStr) + "</span></div>";
+    html += "<h2>" + esc(title) + (origTitle ? ' <span class="orig">' + esc(origTitle) + "</span>" : "") + '</h2><span class="date">' + esc(dateStr) + "</span></div>";
     html += '<div class="content">' + renderContent(r.text || "", type);
     for (const img of (r.images || [])) {
       if (isDataImage(img)) html += '<img class="img" src="' + img + '" alt="原件">';
