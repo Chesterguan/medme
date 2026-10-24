@@ -63,6 +63,8 @@
                 ],
                 "first_seen": "2024-03-10",
                 "last_seen": "2026-09-14",
+                "name_zh": "具有假体心脏瓣膜",
+                "name_zh_level": "sub4",
                 "texts": [
                   "Presence of prosthetic heart valve",
                   "Status post AVR",
@@ -136,6 +138,8 @@
                 ],
                 "first_seen": "2025-06-14",
                 "last_seen": "2025-11-17",
+                "name_zh": "肺曲霉病，其他的",
+                "name_zh_level": "sub4",
                 "secondary": "respiratory",
                 "texts": [
                   "Invasive pulmonary aspergillosis",
