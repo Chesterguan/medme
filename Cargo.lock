@@ -4016,6 +4016,7 @@ dependencies = [
  "clap",
  "core-model",
  "ocr",
+ "parser",
  "pipeline",
 ]
 

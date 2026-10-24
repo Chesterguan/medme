@@ -8,6 +8,7 @@ name = "medme"
 path = "src/main.rs"
 
 [dependencies]
+parser = { path = "../../packages/parser" }
 core-model = { path = "../../packages/core-model" }
 pipeline = { path = "../../packages/pipeline" }
 # Re-enable oar-ocr (feature unification with pipeline's default-features-off
