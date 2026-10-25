@@ -4519,6 +4519,7 @@ impl SseDecode for crate::api::vault_projections::TrendSeriesDto {
             <Vec<crate::api::vault_projections::TrendPointDto>>::sse_decode(deserializer);
         let mut var_selfMeasured = <bool>::sse_decode(deserializer);
         let mut var_refSource = <Option<String>>::sse_decode(deserializer);
+        let mut var_rawName = <Option<String>>::sse_decode(deserializer);
         return crate::api::vault_projections::TrendSeriesDto {
             name: var_name,
             analyte_key: var_analyteKey,
@@ -4532,6 +4533,7 @@ impl SseDecode for crate::api::vault_projections::TrendSeriesDto {
             points: var_points,
             self_measured: var_selfMeasured,
             ref_source: var_refSource,
+            raw_name: var_rawName,
         };
     }
 }
@@ -5868,6 +5870,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::TrendSerie
             self.points.into_into_dart().into_dart(),
             self.self_measured.into_into_dart().into_dart(),
             self.ref_source.into_into_dart().into_dart(),
+            self.raw_name.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6828,6 +6831,7 @@ impl SseEncode for crate::api::vault_projections::TrendSeriesDto {
         <Vec<crate::api::vault_projections::TrendPointDto>>::sse_encode(self.points, serializer);
         <bool>::sse_encode(self.self_measured, serializer);
         <Option<String>>::sse_encode(self.ref_source, serializer);
+        <Option<String>>::sse_encode(self.raw_name, serializer);
     }
 }
 

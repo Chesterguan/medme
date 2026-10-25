@@ -430,6 +430,10 @@ class TrendSeriesDto {
   /// 逐个编解码,新增字段放最后,现有字段的顺序 / 生成代码的既有形状都不挪动。
   final String? refSource;
 
+  /// 化验单上的英文 / 原始名(词典认得、且与中文名不同时才有;列表里灰字小一号列在中文名下)。
+  /// **追加在结尾**(FRB 按字段声明顺序编解码)。
+  final String? rawName;
+
   const TrendSeriesDto({
     required this.name,
     this.analyteKey,
@@ -443,6 +447,7 @@ class TrendSeriesDto {
     required this.points,
     required this.selfMeasured,
     this.refSource,
+    this.rawName,
   });
 
   @override
@@ -458,7 +463,8 @@ class TrendSeriesDto {
       panel.hashCode ^
       points.hashCode ^
       selfMeasured.hashCode ^
-      refSource.hashCode;
+      refSource.hashCode ^
+      rawName.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -476,7 +482,8 @@ class TrendSeriesDto {
           panel == other.panel &&
           points == other.points &&
           selfMeasured == other.selfMeasured &&
-          refSource == other.refSource;
+          refSource == other.refSource &&
+          rawName == other.rawName;
 }
 
 /// 摘要单上的一行化验:一个具体的测量点。

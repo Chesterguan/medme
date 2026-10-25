@@ -74,7 +74,9 @@ List<TrendSeriesDto> labsVisible(List<TrendSeriesDto> all, {required String grou
   final q = query.trim().toLowerCase();
   return [
     for (final s in all)
-      if ((group == kAllGroup || labGroupOf(s) == group) && (q.isEmpty || s.name.toLowerCase().contains(q))) s,
+      if ((group == kAllGroup || labGroupOf(s) == group) &&
+          (q.isEmpty || s.name.toLowerCase().contains(q) || (s.rawName ?? '').toLowerCase().contains(q)))
+        s,
   ];
 }
 

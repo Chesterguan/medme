@@ -319,7 +319,7 @@ class LabReportsList extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(r.title, style: MedType.body.copyWith(color: c.ink, fontWeight: FontWeight.w600)),
+                    Text(r.title, maxLines: 3, overflow: TextOverflow.ellipsis, style: MedType.body.copyWith(color: c.ink, fontWeight: FontWeight.w600)),
                     Text(
                       [fmtDate(r.date), ?r.time, '${r.items.length} 项'].where((s) => s.isNotEmpty).join(' · '),
                       style: MedType.secondary.copyWith(color: c.ink2, fontFeatures: MedType.tabular),
@@ -405,12 +405,16 @@ class LabAnalytesList extends StatelessWidget {
     final chips = labGroupChips(trendRecentSplit(series, today: today, recentDays: null).recent);
     final tiers = labTiers(visible, today: today, recentDays: chartRangeDays(range), keyKeys: keyKeys, abnormalOnly: abnormalOnly);
     // 自测与医院值同 key 不同序列(aggregate 刻意分组),key 要带上 selfMeasured 才唯一(审查 C4)。
-    Widget row(TrendSeriesDto s) => LabTrendRow(
-      key: ValueKey('lab:${s.selfMeasured}:${s.analyteKey ?? s.name}'),
-      series: s,
-      range: range,
-      today: today,
-      onTap: () => onOpenSeries(s),
+    // 一个指标一张卡,卡间 12pt(用户:「不用挤在一行里面的,每一个 lab 一个块呀」)。
+    Widget row(TrendSeriesDto s) => Padding(
+      padding: const EdgeInsets.only(bottom: MedShape.s2),
+      child: LabTrendCard(
+        key: ValueKey('lab:${s.selfMeasured}:${s.analyteKey ?? s.name}'),
+        series: s,
+        range: range,
+        today: today,
+        onTap: () => onOpenSeries(s),
+      ),
     );
     Widget header(String text) => Padding(
       padding: const EdgeInsets.only(top: MedShape.s2, bottom: MedShape.s1),

@@ -14,6 +14,9 @@ import 'package:mobile_flutter/widgets/trend_chart.dart' show trendDatedPoints;
 /// 超过这么多点就降采样 + 只画线。
 const int kChartMaxRawPoints = 60;
 
+/// 迷你图(列表卡片里的那张)的阈值:≤ 12 个点画点 + 连线,更多只画线、按周取中位数。
+const int kCompactMaxRawPoints = 12;
+
 /// 单位里来自原件的占位(`(CALC)`、`(CALC`、`Detected)`)不显示。
 String? cleanUnit(String? unit) {
   if (unit == null) return null;
@@ -61,8 +64,8 @@ List<TrendPointDto> pointsInRange(List<TrendPointDto> dated, ChartRange range, {
 
 /// 按周取中位数:同一周(ISO 周一起算)的点合成一个点,日期取该周中间那天;flag 取该周里
 /// 出现过的最严重的(H/L 优先于正常),好让最后一次仍能标异常。
-List<TrendPointDto> downsampleWeeklyMedian(List<TrendPointDto> dated) {
-  if (dated.length <= kChartMaxRawPoints) return dated;
+List<TrendPointDto> downsampleWeeklyMedian(List<TrendPointDto> dated, {int maxRaw = kChartMaxRawPoints}) {
+  if (dated.length <= maxRaw) return dated;
   final buckets = <int, List<TrendPointDto>>{};
   for (final p in dated) {
     final d = DateTime.parse(p.date!);
@@ -133,7 +136,8 @@ class LabLineChart extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     final raw = points ?? trendDatedPoints(series);
-    final drawn = downsampleWeeklyMedian(raw);
+    final maxRaw = compact ? kCompactMaxRawPoints : kChartMaxRawPoints;
+    final drawn = downsampleWeeklyMedian(raw, maxRaw: maxRaw);
     final lastRaw = raw.isEmpty ? null : raw.last;
     return SizedBox(
       height: height,
@@ -142,7 +146,7 @@ class LabLineChart extends StatelessWidget {
         painter: _LabLinePainter(
           points: drawn,
           last: lastRaw,
-          drawDots: raw.length <= kChartMaxRawPoints && !compact,
+          drawDots: raw.length <= maxRaw,
           refLow: series.refLow,
           refHigh: series.refHigh,
           compact: compact,
@@ -196,10 +200,10 @@ class _LabLinePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (points.isEmpty) return;
-    final padL = compact ? 2.0 : 34.0;
-    final padR = compact ? 4.0 : 8.0;
-    final padT = compact ? 3.0 : 8.0;
-    final padB = compact ? 3.0 : 18.0;
+    final padL = compact ? 3.0 : 34.0;
+    final padR = compact ? 3.0 : 8.0;
+    final padT = compact ? 4.0 : 8.0;
+    final padB = compact ? 4.0 : 18.0;
     final plotW = size.width - padL - padR;
     final plotH = size.height - padT - padB;
     if (plotW <= 0 || plotH <= 0) return;
@@ -216,9 +220,11 @@ class _LabLinePainter extends CustomPainter {
       hi = lo + (lo == 0 ? 1 : lo.abs() * 0.1);
       lo = lo - (lo == 0 ? 1 : lo.abs() * 0.1);
     }
-    final step = niceStep(hi - lo, compact ? 2 : 4);
-    final yLo = (lo / step).floor() * step;
-    final yHi = (hi / step).ceil() * step;
+    // 迷你图:y = 参考区间 ∪ 数据范围,上下各留 10%,正常值在带内、异常值出带;
+    // 完整图:取「好看的」刻度步长,让 y 轴标签落在整数上。
+    final step = compact ? 0.0 : niceStep(hi - lo, 4);
+    final yLo = compact ? lo - (hi - lo) * 0.1 : (lo / step).floor() * step;
+    final yHi = compact ? hi + (hi - lo) * 0.1 : (hi / step).ceil() * step;
     double y(double v) => padT + plotH - (v - yLo) / (yHi - yLo) * plotH;
 
     final days = points.map((p) => DateTime.parse(p.date!).millisecondsSinceEpoch / 86400000.0).toList();
@@ -292,25 +298,26 @@ class _LabLinePainter extends CustomPainter {
         Paint()
           ..color = line
           ..style = PaintingStyle.stroke
-          ..strokeWidth = compact ? 1.2 : 1.6
+          // 迷你图:点少时细线 + 点,点多时只画 2pt 粗线。
+          ..strokeWidth = compact ? (drawDots ? 1.5 : 2.0) : 1.6
           ..strokeJoin = StrokeJoin.round,
       );
     }
     if (drawDots) {
       for (var i = 0; i < points.length; i++) {
-        canvas.drawCircle(Offset(x(days[i]), y(points[i].value)), 2.2, Paint()..color = _dotColor(points[i].flag));
+        canvas.drawCircle(Offset(x(days[i]), y(points[i].value)), compact ? 2.0 : 2.2, Paint()..color = _dotColor(points[i].flag));
       }
     } else if (compact) {
-      // 迷你图不画所有点,但异常点要看得见(橙 / 蓝)。
+      // 迷你图点多时不画所有点,但异常点要看得见(橙 / 蓝)。
       for (var i = 0; i < points.length; i++) {
         if (labStatusOf(points[i].flag) == null) continue;
         canvas.drawCircle(Offset(x(days[i]), y(points[i].value)), 1.8, Paint()..color = _dotColor(points[i].flag));
       }
     }
-    // 最后一次结果:一个点,颜色说状态。
+    // 最后一次结果:实心一个点(迷你 5pt、完整 8pt),颜色说状态。
     if (last != null) {
       final lastDay = DateTime.parse(last!.date!).millisecondsSinceEpoch / 86400000.0;
-      canvas.drawCircle(Offset(x(lastDay), y(last!.value)), compact ? 2.6 : 4, Paint()..color = _dotColor(last!.flag));
+      canvas.drawCircle(Offset(x(lastDay), y(last!.value)), compact ? 2.5 : 4, Paint()..color = _dotColor(last!.flag));
     }
   }
 

@@ -32,13 +32,15 @@ List<TrendSeriesDto> _allSeries() => [
   _series('乳酸脱氢酶', 'ldh', null, [('2024-01-01', 200, 3)]),
 ];
 
+const _longTitle = '肾功能、血常规、电解质 等 14 个面板';
+
 List<LabReportDto> _reports() => [
   LabReportDto(
     documentId: 2,
     date: '2026-10-01',
     time: '08:15',
-    panels: const ['肾功能', '血常规'],
-    title: '肾功能、血常规',
+    panels: const ['肾功能', '血常规', '电解质', '肝功能', '血糖', '血脂', '凝血', '炎症/感染', '甲状腺功能', '心肌', '尿常规', '血气', '铁代谢', '维生素'],
+    title: _longTitle,
     abnormalCount: 1,
     items: const [
       LabReportItemDto(name: '肌酐', analyteKey: 'creatinine', value: '1.4', unit: 'mg/dL', reference: '0.6-1.2', flag: 'H', unverified: false),
@@ -76,7 +78,7 @@ Future<void> _pump(WidgetTester t, {double scale = 1.0}) async {
 void main() {
   testWidgets('按报告:一天一行,面板名 + 日期 · 时间 · 项数 + 异常徽标;区间外折进「更早的报告」;点开是表', (t) async {
     await _pump(t);
-    expect(find.text('肾功能、血常规'), findsOneWidget);
+    expect(find.text(_longTitle), findsOneWidget);
     expect(find.text('2026-10-01 · 08:15 · 3 项'), findsOneWidget);
     expect(find.text('1 项异常'), findsOneWidget);
     expect(find.text('2025-01-01 · 1 项'), findsNothing, reason: '默认 1 年,2025 的单折起来');
@@ -113,8 +115,9 @@ void main() {
     expect(find.text('肝肾 2'), findsOneWidget);
     expect(find.text('其他 1'), findsOneWidget);
     expect(find.text('关键指标 · 2'), findsOneWidget);
-    expect(find.byType(LabTrendRow), findsNWidgets(2), reason: '关键指标 2 项展开;其他 / 更早折着');
-    expect(find.descendant(of: find.byType(LabTrendRow), matching: find.byType(CustomPaint)), findsAtLeast(2));
+    expect(find.byType(LabTrendCard), findsNWidgets(2), reason: '关键指标 2 项展开;其他 / 更早折着');
+    expect(find.descendant(of: find.byType(LabTrendCard), matching: find.byType(CustomPaint)), findsAtLeast(2));
+    expect(find.descendant(of: find.byType(LabTrendCard), matching: find.byType(MedCard)), findsNWidgets(2), reason: '一个指标一张卡');
     expect(find.text('其他指标 · 还有 1 项'), findsOneWidget);
     expect(find.text('更早的 1 项(超过1 年没有结果)'), findsOneWidget);
     await t.tap(find.text('其他指标 · 还有 1 项'));
@@ -128,7 +131,7 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('肝肾 2'));
     await t.pumpAndSettle();
-    expect(find.byType(LabTrendRow), findsNWidgets(2));
+    expect(find.byType(LabTrendCard), findsNWidgets(2));
     expect(find.text('肌酐'), findsOneWidget);
     expect(find.text('ALT'), findsOneWidget);
     expect(find.text('其他指标 · 还有 1 项'), findsNothing);
@@ -136,7 +139,7 @@ void main() {
     await t.pumpAndSettle();
     await t.enterText(find.byType(TextField), '肌酐');
     await t.pumpAndSettle();
-    expect(find.byType(LabTrendRow), findsOneWidget);
+    expect(find.byType(LabTrendCard), findsOneWidget);
   });
 
   testWidgets('指标折线页:默认 1 年(四档可切)、高 ≥120 的折线、参考带说明、切「全部」后每个点可点回原件', (t) async {
@@ -167,9 +170,10 @@ void main() {
   });
 
   for (final scale in [1.0, 1.3, 1.6]) {
-    testWidgets('393 宽 字号 $scale:两种视图与报告页不溢出', (t) async {
+    testWidgets('393 宽 字号 $scale:两种视图(含加长报告标题)与报告页不溢出', (t) async {
       await _pump(t, scale: scale);
       expect(t.takeException(), isNull);
+      expect(find.text(_longTitle), findsOneWidget);
       await t.tap(find.text('按指标'));
       await t.pumpAndSettle();
       expect(t.takeException(), isNull);

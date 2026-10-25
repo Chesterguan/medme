@@ -132,6 +132,9 @@ pub struct TrendSeriesDto {
     /// 前缀」那条注释同一个用意:FRB 的 `sse_encode`/`sse_decode` 按字段声明顺序
     /// 逐个编解码,新增字段放最后,现有字段的顺序 / 生成代码的既有形状都不挪动。
     pub ref_source: Option<String>,
+    /// 化验单上的英文 / 原始名(词典认得、且与中文名不同时才有;列表里灰字小一号列在中文名下)。
+    /// **追加在结尾**(FRB 按字段声明顺序编解码)。
+    pub raw_name: Option<String>,
 }
 
 /// 序列上的一个观测点。
@@ -718,6 +721,7 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
             .flatten()
             .and_then(parser::home_ref_range)
             .map(|r| r.source.to_string()),
+        raw_name: s.raw_name.clone(),
     }
 }
 
