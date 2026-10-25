@@ -262,7 +262,7 @@ Stage 1 起断了**,别再拿它算空转率。
 
 | 事件 | 属性 | 触发点 | 回答什么决定 |
 |---|---|---|---|
-| `trends_filter_used` | `control`(枚举 `TrendsFilterControl`;2026-10-23 起只会发 `search`) | `screens/labs_screen.dart`、`screens/meds_screen.dart` | **那颗放大镜还留不留。** 2026-10-23 趋势页取消,「只看非正常项」与大类 chip 随之消失(`abnormal_only_*`/`panel` 三个取值从此不再发,历史曲线到此为止);「化验·按指标」「用药」两页各有一颗搜索,展开一次发一次 |
+| `trends_filter_used` | `control`(枚举 `TrendsFilterControl`;2026-10-23 起发 `search`,2026-10-25 起加 `range`) | `screens/labs_screen.dart`、`screens/meds_screen.dart` | **那颗放大镜还留不留;医生会不会切时间区间。** 2026-10-23 趋势页取消,「只看非正常项」与大类 chip 随之消失(`abnormal_only_*`/`panel` 三个取值从此不再发,历史曲线到此为止);「化验·按指标」「用药」两页各有一颗搜索,展开一次发一次;2026-10-25 化验 / 用药顶部加时间区间 chip(3 个月 / 半年 / 1 年 / 全部),切一次发一次 `range`,不报切到哪一档 |
 
 `control` 取值:
 

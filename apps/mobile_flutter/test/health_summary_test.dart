@@ -34,6 +34,11 @@ Map<String, dynamic> _view({bool withSle = false, bool lijingStyle = false}) => 
               'diagnoses': [{'code': 'M32.14', 'texts': ['Lupus nephritis'], 'first_seen': '2025-01-01', 'last_seen': '2026-08-01', 'doc_count': 3, 'evidence': ['ev:1:2'], 'unverified': false}],
               'labs': [],
             },
+          {
+            'key': 'other', 'label': '其他', 'count': 1, 'last_seen': '2026-09-01',
+            'diagnoses': [{'code': 'R53.83', 'texts': ['Fatigue', 'Other fatigue', 'Fatigue, unspecified'], 'first_seen': '2026-09-01', 'last_seen': '2026-09-01', 'doc_count': 1, 'evidence': ['ev:1:1'], 'unverified': false}],
+            'labs': [],
+          },
           if (withSle && lijingStyle)
             {
               'key': 'uncoded', 'label': '未归类', 'count': 1, 'last_seen': '2026-08-01',
@@ -129,11 +134,17 @@ void main() {
     expect(find.textContaining('Presence of prosthetic'), findsOneWidget, reason: '植入物段列 Z95.2;族卡折叠着');
     expect(find.text('过敏 · 1'), findsOneWidget);
     expect(find.text('Penicillin · Rash'), findsOneWidget);
-    expect(find.text('更早的诊断 · 1 条'), findsOneWidget);
+    // 「其他」不是族:排到族卡后,和更早的诊断一起折叠;写法最多两种 + 「还有 N 个写法」。
+    expect(find.text('其他 1 条'), findsNothing);
+    expect(find.text('更早的诊断与未归类 · 2 条'), findsOneWidget);
     expect(find.textContaining('Severe aortic stenosis'), findsNothing);
-    await t.tap(find.text('更早的诊断 · 1 条'));
+    expect(find.textContaining('Fatigue'), findsNothing);
+    await t.tap(find.text('更早的诊断与未归类 · 2 条'));
     await t.pumpAndSettle();
     expect(find.textContaining('Severe aortic stenosis'), findsOneWidget);
+    expect(find.textContaining('Fatigue'), findsOneWidget);
+    expect(find.text('Other fatigue · 还有 1 个写法'), findsOneWidget);
+    expect(find.text('Fatigue, unspecified'), findsNothing);
   });
 
   testWidgets('族卡展开:诊断行 + 最近的用药一行;诊断多依据 → 弹层', (t) async {

@@ -1,30 +1,31 @@
-// 「用药」tab(2026-10-23 spec §5):最近的用药(180 天内有记录、原文没写停)在上,过敏紧随,
-// 下面可搜索的更早的用药按药名聚合、点开看剂量变化链;每行、每个节点、每条过敏都能点开原件。
-// 用户原话:「把药单独加一个 tab 显示最近,医生可以搜过往,过敏也移过去」。
+// 「用药」tab(2026-10-23 spec §5;修订 2 返工 2026-10-25):过敏钉在最上(按过敏原合并,展开,最多
+// 1/3 屏),时间区间 chip 与化验页同一套(默认 1 年);「最近的用药」按药类分组(抗感染 / 心血管 /
+// 抗凝 / 电解质·营养 / 其他),每行中文名在前、剂量、「记录中自 X 起 · N 天前有记录」;「更早的用药」
+// 一味药一行「首次 → 最近 · N 次记录」按最近倒序、同类相邻;搜索跨药名(中英)/ 过敏原,结果横跨两段;
+// 点行 = 剂量变化链,每个节点回原件。用户原话:「用药也是类似的,也有时效性的,你不能只管 list,重点是医生要能找到信息」。
 // 措辞不用「当前用药 / 在吃 / 已停」:MedSpan.status 恒 active,不能暗示有效医嘱。
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart' show fmtDate;
 import 'package:mobile_flutter/evidence_open.dart';
-import 'package:mobile_flutter/screens/meds_model.dart';
+import 'package:mobile_flutter/profile_cache.dart';
 import 'package:mobile_flutter/profile_json.dart' show asMapList;
-import 'package:mobile_flutter/skill_packages.dart';
-import 'package:mobile_flutter/src/rust/api/vault_profile.dart' as rust_profile;
+import 'package:mobile_flutter/screens/labs_screen.dart' show ChartRangeChips;
+import 'package:mobile_flutter/screens/meds_model.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/lab_line_chart.dart' show ChartRange, chartRangeDays, kChartRangeLabel;
 import 'package:mobile_flutter/widgets/med_card.dart';
 
-Future<Map<String, dynamic>> _loadFromVault() async =>
-    jsonDecode(await rust_profile.vaultProfileMedsView(dir: await skillCacheDir())) as Map<String, dynamic>;
-
 class MedsScreen extends StatefulWidget {
-  const MedsScreen({super.key, this.load});
+  const MedsScreen({super.key, this.load, this.today});
 
-  /// null → 真的那一套(FFI)。测试注入。
+  /// null → 真的那一套(FFI,进程内缓存)。测试注入。
   final Future<Map<String, dynamic>> Function()? load;
+
+  /// 时间区间的「今天」;null → `DateTime.now()`。
+  final DateTime? today;
 
   @override
   State<MedsScreen> createState() => _MedsScreenState();
@@ -35,8 +36,9 @@ class _MedsScreenState extends State<MedsScreen> {
   final _queryCtl = TextEditingController();
   String _query = '';
   bool _searchOpen = false;
+  ChartRange _range = ChartRange.oneYear;
 
-  Future<Map<String, dynamic>> _load() => (widget.load ?? _loadFromVault)();
+  Future<Map<String, dynamic>> _load() => (widget.load ?? cachedMedsView)();
 
   @override
   void initState() {
@@ -96,7 +98,7 @@ class _MedsScreenState extends State<MedsScreen> {
                 textInputAction: TextInputAction.search,
                 style: MedType.subtitle.copyWith(color: c.ink),
                 decoration: InputDecoration(
-                  hintText: '搜药名,如「华法林」「Warfarin」',
+                  hintText: '搜药名或过敏原,如「华法林」「Warfarin」',
                   hintStyle: MedType.subtitle.copyWith(color: c.ink3),
                   border: InputBorder.none,
                   isDense: true,
@@ -107,7 +109,7 @@ class _MedsScreenState extends State<MedsScreen> {
           IconButton(
             icon: Icon(_searchOpen ? Icons.close : Icons.search),
             color: c.ink2,
-            tooltip: _searchOpen ? '关闭搜索' : '按名字搜药',
+            tooltip: _searchOpen ? '关闭搜索' : '按名字搜药或过敏原',
             onPressed: _toggleSearch,
           ),
         ],
@@ -147,6 +149,12 @@ class _MedsScreenState extends State<MedsScreen> {
               view: snap.data!,
               query: _query,
               family: medsFilterFamily.value,
+              range: _range,
+              today: widget.today ?? DateTime.now(),
+              onRangeChanged: (r) {
+                Analytics.track(AnalyticsEvent.trendsFilterUsed, {'control': TrendsFilterControl.range.name});
+                setState(() => _range = r);
+              },
               onClearFamily: () => medsFilterFamily.value = null,
             ),
           );
@@ -161,28 +169,71 @@ class MedsBody extends StatelessWidget {
   const MedsBody({
     super.key,
     required this.view,
+    required this.today,
     this.query = '',
     this.family,
+    this.range = ChartRange.oneYear,
+    this.onRangeChanged,
     this.onClearFamily,
   });
 
   final Map<String, dynamic> view;
+  final DateTime today;
   final String query;
   final String? family;
+  final ChartRange range;
+  final ValueChanged<ChartRange>? onRangeChanged;
   final VoidCallback? onClearFamily;
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     final index = EvidenceIndex.fromView(view);
-    final staleDays = (view['stale_after_days'] as num?)?.toInt() ?? 180;
-    final recent = medsByFamily(asMapList(view['recent']), family).where((r) => medMatches(r, query)).toList();
-    final earlier = medsByFamily(asMapList(view['earlier']), family).where((r) => medMatches(r, query)).toList();
+    final all = medsByFamily([...asMapList(view['recent']), ...asMapList(view['earlier'])], family)
+        .where((r) => medMatches(r, query))
+        .toList();
+    final split = medsSplit(all, today: today, recentDays: chartRangeDays(range));
+    final recentGroups = medsByClass(split.recent);
+    final earlierGroups = medsByClass(split.earlier);
     final allergies = asMapList(view['allergies']).where((a) => allergyMatches(a, query)).toList();
+    final maxAllergyHeight = MediaQuery.sizeOf(context).height / 3;
+    Widget sectionCard(List<Widget> rows) => MedCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i > 0) Divider(height: 1, color: c.line),
+            rows[i],
+          ],
+        ],
+      ),
+    );
+    Widget classLabel(String text) => Padding(
+      padding: const EdgeInsets.only(top: MedShape.s2, bottom: 4),
+      child: Text(text, style: MedType.caption.copyWith(color: c.ink2)),
+    );
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(MedShape.s3, MedShape.s3, MedShape.s3, MedShape.s6),
       children: [
+        // 过敏钉在最上(spec §5.2 + 修订 2 返工):空态不说「无过敏」——没找到不等于没有。
+        _SectionTitle('过敏 · ${allergies.length}'),
+        if (allergies.isEmpty)
+          _Hint(query.isEmpty ? '记录里没找到过敏史' : '没有含「$query」的过敏原')
+        else
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxAllergyHeight),
+            child: MedCard(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                itemCount: allergies.length,
+                separatorBuilder: (_, _) => Divider(height: 1, color: c.line),
+                itemBuilder: (context, i) => _AllergyRow(allergies[i], index, key: ValueKey('allergy:${allergies[i]['substance']}')),
+              ),
+            ),
+          ),
+        const SizedBox(height: MedShape.s3),
         if (family != null)
           Align(
             alignment: Alignment.centerLeft,
@@ -195,54 +246,30 @@ class MedsBody extends StatelessWidget {
               labelStyle: MedType.secondary.copyWith(color: c.sealInk),
             ),
           ),
-        _SectionTitle('最近的用药 · ${recent.length}', sub: '$staleDays 天内有记录'),
-        if (recent.isEmpty)
-          _Hint(query.isEmpty && family == null ? '最近 $staleDays 天没有用药记录' : '没有符合的药')
+        if (onRangeChanged != null) ChartRangeChips(value: range, onChanged: onRangeChanged!),
+        const SizedBox(height: MedShape.s2),
+        _SectionTitle('最近的用药 · ${split.recent.length}', sub: '${kChartRangeLabel[range]}内有记录'),
+        if (split.recent.isEmpty)
+          _Hint(query.isEmpty && family == null ? '${kChartRangeLabel[range]}内没有用药记录' : '没有符合的药')
         else
-          MedCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < recent.length; i++) ...[
-                  if (i > 0) Divider(height: 1, color: c.line),
-                  MedRowView(key: ValueKey('med:${recent[i]['drug_key'] ?? recent[i]['name']}'), row: recent[i], index: index),
-                ],
-              ],
-            ),
-          ),
+          for (final g in recentGroups) ...[
+            if (recentGroups.length > 1 || g.label != '其他') classLabel('${g.label} · ${g.rows.length}'),
+            sectionCard([
+              for (final r in g.rows) MedRowView(key: ValueKey('med:${r['drug_key'] ?? r['name']}'), row: r, index: index),
+            ]),
+          ],
         const SizedBox(height: MedShape.s4),
-        // 过敏紧随最近的用药(spec §5.2):空态不说「无过敏」——没找到不等于没有。
-        _SectionTitle('过敏 · ${allergies.length}'),
-        if (allergies.isEmpty)
-          _Hint('记录里没找到过敏史')
-        else
-          MedCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < allergies.length; i++) ...[
-                  if (i > 0) Divider(height: 1, color: c.line),
-                  _AllergyRow(allergies[i], index),
-                ],
-              ],
-            ),
-          ),
-        const SizedBox(height: MedShape.s4),
-        _SectionTitle('更早的用药 · ${earlier.length}'),
-        if (earlier.isEmpty)
+        _SectionTitle('更早的用药 · ${split.earlier.length}', sub: '一味药一行 · 首次 → 最近'),
+        if (split.earlier.isEmpty)
           _Hint(query.isEmpty ? '没有更早的用药记录' : '没有名字含「$query」的药')
         else
-          MedCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < earlier.length; i++) ...[
-                  if (i > 0) Divider(height: 1, color: c.line),
-                  MedRowView(key: ValueKey('med:${earlier[i]['drug_key'] ?? earlier[i]['name']}'), row: earlier[i], index: index),
-                ],
-              ],
-            ),
-          ),
+          for (final g in earlierGroups) ...[
+            if (earlierGroups.length > 1 || g.label != '其他') classLabel('${g.label} · ${g.rows.length}'),
+            sectionCard([
+              for (final r in g.rows)
+                MedRowView(key: ValueKey('med-earlier:${r['drug_key'] ?? r['name']}'), row: r, index: index, earlier: true),
+            ]),
+          ],
         const SizedBox(height: MedShape.s4),
         Text(
           view['disclaimer'] as String? ?? '只整理你病历里已有的记录,不做诊断。',
@@ -284,13 +311,16 @@ class _Hint extends StatelessWidget {
   );
 }
 
-/// 一味药一行:名 · 剂量 · 族;第二行「记录中自 … 起 · N 天前有记录」或「病历写了停药 · 日期」;
-/// 点开 → 剂量变化链,每个节点带「原件 ›」。
+/// 一味药一行:名 · 剂量 · 族;第二行「记录中自 … 起 · N 天前有记录」(最近)或
+/// 「首次 → 最近 · N 次记录」(更早);点开 → 剂量变化链,每个节点带「原件 ›」。
 class MedRowView extends StatefulWidget {
-  const MedRowView({super.key, required this.row, required this.index});
+  const MedRowView({super.key, required this.row, required this.index, this.earlier = false});
 
   final Map<String, dynamic> row;
   final EvidenceIndex index;
+
+  /// 「更早的用药」段的一行:第二行写首次 → 最近 · N 次记录。
+  final bool earlier;
 
   @override
   State<MedRowView> createState() => _MedRowViewState();
@@ -314,7 +344,15 @@ class _MedRowViewState extends State<MedRowView> {
     final note = row['family_note'] as String?;
     final tags = [if (fam != null && fam != 'other') kFamilyLabel[fam] ?? fam, ?note].join(' · ');
     final nodes = asMapList(row['nodes']);
-    final muted = stale || stopped is Map;
+    final muted = widget.earlier || stale || stopped is Map;
+    final second = widget.earlier
+        ? medEarlierLine(row)
+        : stopped is Map
+            ? '病历写了停药 · ${fmtDate(stopped['at'] as String?)}'
+            : [
+                if (since.isNotEmpty) '记录中自 $since 起',
+                if (days != null) stale ? '$days 天没有新记录' : '$days 天前有记录',
+              ].join(' · ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -340,15 +378,7 @@ class _MedRowViewState extends State<MedRowView> {
                         ),
                       ),
                       if (raw.isNotEmpty && raw != name) Text(raw, style: MedType.caption.copyWith(color: c.ink3)),
-                      Text(
-                        stopped is Map
-                            ? '病历写了停药 · ${fmtDate(stopped['at'] as String?)}'
-                            : [
-                                if (since.isNotEmpty) '记录中自 $since 起',
-                                if (days != null) stale ? '$days 天没有新记录' : '$days 天前有记录',
-                              ].join(' · '),
-                        style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),
-                      ),
+                      Text(second, style: MedType.secondary.copyWith(color: c.ink2, height: 1.5, fontFeatures: MedType.tabular)),
                     ],
                   ),
                 ),
@@ -413,18 +443,56 @@ class _NodeLine extends StatelessWidget {
   }
 }
 
+/// 一个过敏原一行:名(词典中文在前)+ 合并的反应 + 「N 份记录」;点开看原文各写法,每条可进原件。
 class _AllergyRow extends StatelessWidget {
-  const _AllergyRow(this.a, this.index);
+  const _AllergyRow(this.a, this.index, {super.key});
   final Map<String, dynamic> a;
   final EvidenceIndex index;
+
+  void _showOriginals(BuildContext context) {
+    final c = MedColors.of(context);
+    final ids = (a['evidence'] as List? ?? const []);
+    final aliases = (a['aliases'] as List? ?? const []).map((x) => '$x').toList();
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(MedShape.s3, 0, MedShape.s3, MedShape.s4),
+          children: [
+            Text('${a['substance'] ?? ''}', style: MedType.subtitle.copyWith(color: c.ink)),
+            const SizedBox(height: MedShape.s1),
+            Text('病历里的写法 · ${aliases.length}', style: MedType.caption.copyWith(color: c.ink3)),
+            for (final s in aliases)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(s, style: MedType.secondary.copyWith(color: c.ink2, height: 1.5)),
+              ),
+            if (index.resolve(ids).isNotEmpty) ...[
+              const SizedBox(height: MedShape.s2),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  openEvidence(context, index, ids);
+                },
+                icon: const Icon(Icons.visibility_outlined),
+                label: Text('查看原件 · ${ids.length} 份'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     final ids = (a['evidence'] as List? ?? const []);
-    final has = index.resolve(ids).isNotEmpty;
     final reaction = '${a['reaction'] ?? ''}';
     return InkWell(
-      onTap: has ? () => openEvidence(context, index, ids) : null,
+      onTap: () => _showOriginals(context),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: MedShape.s3, vertical: MedShape.s2),
         child: Row(
@@ -435,11 +503,12 @@ class _AllergyRow extends StatelessWidget {
                   children: [
                     TextSpan(text: '${a['substance'] ?? ''}', style: MedType.body.copyWith(color: c.ink, fontWeight: FontWeight.w600)),
                     if (reaction.isNotEmpty) TextSpan(text: '  $reaction', style: MedType.secondary.copyWith(color: c.ink2)),
+                    if (ids.isNotEmpty) TextSpan(text: '  ${ids.length} 份记录', style: MedType.caption.copyWith(color: c.ink3)),
                   ],
                 ),
               ),
             ),
-            if (has) Icon(Icons.chevron_right, size: 18, color: c.ink3),
+            Icon(Icons.chevron_right, size: 18, color: c.ink3),
           ],
         ),
       ),
