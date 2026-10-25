@@ -46,3 +46,5 @@ spec:`docs/superpowers/specs/2026-10-23-bottom-tabs-redesign-design.md`(稿 A;�
 **checkpoint 1 修正(2026-10-25)**:父会话按医生场景在 Real3 上走查(清单在其 scratchpad `findings-checkpoint1.md`),必修 6 条 + 应修 6 条 + 小项都落了(spec「checkpoint 1 修正」):F15 带码行名字只许整名精确命中别名(直接 / 总胆红素不再合并,回归测试);F1/F5/F3 标题以 `document.title` 为先、就诊组内按类型排序、最近就诊跳过病历摘要;F11 最近 = 区间内 ∧ ≤180 天 ∧ 没写停,护理医嘱不进用药;F12 过敏按词根归并 + 中文;F6/F7/F9/F10 文档详情的结论卡 / 跳到 chip / 折页眉 / 滚到高亮;F4 病历 tab 概况行;F13 报告按日期搜。
 - 重导去重的发现(checkpoint 1 汇报过):去重键是原件 sha256,适配器重生成的字节变了就算新文档;适配器已改成字节确定性,本轮未动 MedMe。
 - 留给后续:F14「给医生看」按新四 tab 重排(另开 PR);钾序列的参考带(印刷单位 mmol/L vs mEq/L 疑混);迷你折线线尾(周中位数)与实心点(原始值)偶尔错开;`0mg` / `bid` 当剂量。
+
+**收口(2026-10-25 晚)**:checkpoint 2 父会话在 Real4 复核通过(F1/F3/F4/F5/F6/F9/F11/F12/F15 都对)。收尾三小项:「跳到」认行内写法(Epic 的「Discharge Diagnoses: …」整行);复方剂量 `875-125 MG` 原样显示(`MedObservation.dose_raw`,不再截成 125mg);「给医生看」页眉用成员名(`VisitSummaryBody.memberName`),页面结构重排仍留 F14 另开 PR。清理:计划文件早在修订 2 前已删;中间产物(截图 / 包 / 日志)都在 scratchpad 与 /tmp,仓库里没有;`docs/superpowers/plans/` 里剩的两份是 9 月别的工作的,没动。

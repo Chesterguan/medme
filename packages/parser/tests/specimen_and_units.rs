@@ -134,3 +134,23 @@ fn direct_and_total_bilirubin_with_different_loincs_never_merge() {
     let agg = aggregate(&[doc(0, "2026-01-02", b)]);
     assert_eq!(agg.labs[0].analyte_key.as_deref(), Some("creatinine"));
 }
+
+/// checkpoint 2 收尾:复方剂量 `875-125 MG` 原样显示,不截成「125mg」。
+#[test]
+fn compound_dose_is_kept_verbatim() {
+    let j = r#"{"meds":[{"name":"amoxicillin-clavulanate (AUGMENTIN) 875-125 MG Oral Tablet","dose":"875-125 MG","freq":"q12h"},{"name":"Warfarin","dose":"5 mg","freq":"qd"}],"labs":[],"diagnoses":[]}"#;
+    let docs = vec![doc(0, "2026-10-01", j)];
+    let agg = aggregate(&docs);
+    let aug = agg
+        .meds
+        .iter()
+        .find(|m| m.name.to_lowercase().contains("amoxicillin") || m.name.contains("阿莫西林"))
+        .expect("阿莫西林克拉维酸");
+    assert_eq!(aug.latest_dose.as_deref(), Some("875-125mg q12h"));
+    let w = agg
+        .meds
+        .iter()
+        .find(|m| m.name.contains("华法林") || m.name.to_lowercase().contains("warfarin"))
+        .unwrap();
+    assert_eq!(w.latest_dose.as_deref(), Some("5mg qd"));
+}

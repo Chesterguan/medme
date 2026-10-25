@@ -32,21 +32,21 @@ String foldRepeatedHeaders(String text, {int headerLines = 6}) {
 }
 
 /// 「跳到」锚点(F6):出院诊断 / 住院经过 / 出院用药 / 随访,中英文标题都认;返回出现的那些
-/// (标签, 行号),按行号排。同一标签只取第一处。
+/// (标签, 行号),按行号排。同一标签只取第一处。行内写法也认(Epic 的「Discharge Diagnoses: …」
+/// 诊断就跟在同一行后面),只有「随访」要求是短标题行,免得命中正文里的 follow-up 句子。
 List<({String label, int line})> docAnchors(String text) {
-  final rules = <(String, RegExp)>[
-    ('出院诊断', RegExp(r'^\s*(discharge\s+diagnos|final\s+diagnos|出院诊断)', caseSensitive: false)),
-    ('住院经过', RegExp(r'^\s*(hospital\s+course|brief\s+hospital\s+course|住院经过|诊疗经过|病程)', caseSensitive: false)),
-    ('出院用药', RegExp(r'^\s*(discharge\s+medication|medications?\s+at\s+discharge|出院带药|出院用药|出院医嘱)', caseSensitive: false)),
-    ('随访', RegExp(r'^\s*(follow[\s-]?up|随访|复诊)', caseSensitive: false)),
+  final rules = <(String, RegExp, bool)>[
+    ('出院诊断', RegExp(r'^\s*(discharge\s+diagnos\w*|final\s+diagnos\w*|出院诊断)\s*[::]?', caseSensitive: false), false),
+    ('住院经过', RegExp(r'^\s*(brief\s+hospital\s+course|hospital\s+course|住院经过|诊疗经过|病程)\s*[::]?', caseSensitive: false), false),
+    ('出院用药', RegExp(r'^\s*(discharge\s+medications?|medications?\s+at\s+discharge|出院带药|出院用药|出院医嘱)\s*[::]?', caseSensitive: false), false),
+    ('随访', RegExp(r'^\s*(follow[\s-]?up|随访|复诊)', caseSensitive: false), true),
   ];
   final lines = text.split('\n');
   final out = <({String label, int line})>[];
-  for (final (label, re) in rules) {
+  for (final (label, re, shortOnly) in rules) {
     for (var i = 0; i < lines.length; i++) {
       final t = lines[i].trim();
-      // 标题行:短、不是整句(≤ 60 字符),避免命中正文里提到 follow-up 的句子。
-      if (t.length <= 60 && re.hasMatch(t)) {
+      if ((!shortOnly || t.length <= 60) && re.hasMatch(t)) {
         out.add((label: label, line: i));
         break;
       }

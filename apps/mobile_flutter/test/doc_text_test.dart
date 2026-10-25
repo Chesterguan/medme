@@ -19,7 +19,8 @@ void main() {
   });
 
   test('docAnchors:出院诊断 / 住院经过 / 出院用药 / 随访,中英文,按行号排,正文里的句子不算', () {
-    const text = 'Header\nDischarge Diagnoses:\nAortic stenosis\nHospital Course:\nWe will follow up on the labs next week after discharge from the unit.\nDischarge Medications:\nWarfarin\nFollow-up:\nClinic in 2 weeks\n';
+    // Epic 的出院诊断是行内写法(「Discharge Diagnoses: Aortic stenosis, …」整行很长),也要认。
+    const text = 'Header\nDischarge Diagnoses: Aortic stenosis, chronic bacterial endocarditis, pulmonary aspergillosis\nAortic stenosis\nHospital Course:\nWe will follow up on the labs next week after discharge from the unit.\nDischarge Medications:\nWarfarin\nFollow-up:\nClinic in 2 weeks\n';
     final a = docAnchors(text);
     expect(a.map((x) => x.label), ['出院诊断', '住院经过', '出院用药', '随访']);
     expect(a.map((x) => x.line), [1, 3, 5, 7]);
