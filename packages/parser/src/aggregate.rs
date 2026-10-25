@@ -764,10 +764,16 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
     // 这条线上印了几种单位?没印单位的点不参与表决 —— 它在纸上本来就没有单位,
     // 显示成一个光秃秃的数才是忠实的;但它也证明不了同质,所以只在「印了单位的
     // 点」之间比。
+    // 印刷单位只差大小写(Epic 同一项目印 `mg/dL` 也印 `MG/DL`)算同一种:否则 225 个点的
+    // 肌酐被判成「混了单位」,走不到规范套、也拿不到参考带(修订 2 返工,2026-10-25)。
     let printed_units: BTreeSet<String> = b
         .points
         .iter()
-        .filter_map(|p| p.unit_printed.as_deref().map(normalize_unit))
+        .filter_map(|p| {
+            p.unit_printed
+                .as_deref()
+                .map(|u| normalize_unit(u).to_lowercase())
+        })
         .collect();
     let series_printed_unit = printed_units.iter().next().cloned();
     let printed_homogeneous = printed_units.len() <= 1;
@@ -784,7 +790,11 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
     let (display_values, canonical_basis, ref_low, ref_high) = if printed_homogeneous {
         // ① 单位同质 ⇒ 显示纸上那个数。参考区间还要过一道闸:必须来自印刷单位与
         // 本序列一致的那份报告,否则宁可没有区间,也不给一个错单位的区间。
-        let ref_ok = b.ref_unit_printed.as_deref().map(normalize_unit) == series_printed_unit;
+        let ref_ok = b
+            .ref_unit_printed
+            .as_deref()
+            .map(|u| normalize_unit(u).to_lowercase())
+            == series_printed_unit;
         let (lo, hi) = if ref_ok {
             (b.ref_low, b.ref_high)
         } else {
