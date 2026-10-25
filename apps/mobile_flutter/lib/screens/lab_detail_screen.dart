@@ -1,15 +1,17 @@
-// 一个指标的折线页(修订 2 硬验收):完整折线 + 参考范围带 + 每个点可点回那份原件。
+// 一个指标的折线页(修订 2 硬验收):完整折线(y 轴 / x 轴刻度 + 参考范围灰带)+ 时间范围切换
+// (3 个月 / 1 年 / 全部,默认 1 年)+ 每个点可点回那份原件。
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
+import 'package:mobile_flutter/widgets/lab_line_chart.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
-import 'package:mobile_flutter/widgets/trend_chart.dart';
+import 'package:mobile_flutter/widgets/trend_chart.dart' show trendDatedPoints;
 
-class LabDetailScreen extends StatelessWidget {
+class LabDetailScreen extends StatefulWidget {
   const LabDetailScreen({super.key, required this.series, this.onOpenDoc});
 
   final TrendSeriesDto series;
@@ -17,8 +19,15 @@ class LabDetailScreen extends StatelessWidget {
   /// null → 真的那一套(push `DocumentDetailScreen`)。测试注入。
   final void Function(int docId)? onOpenDoc;
 
-  void _open(BuildContext context, int docId) {
-    if (onOpenDoc != null) return onOpenDoc!(docId);
+  @override
+  State<LabDetailScreen> createState() => _LabDetailScreenState();
+}
+
+class _LabDetailScreenState extends State<LabDetailScreen> {
+  ChartRange _range = ChartRange.oneYear;
+
+  void _open(int docId) {
+    if (widget.onOpenDoc != null) return widget.onOpenDoc!(docId);
     Analytics.track(AnalyticsEvent.docOpened);
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => DocumentDetailScreen(docId: docId)));
   }
@@ -26,9 +35,11 @@ class LabDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final pts = trendDatedPoints(series);
-    // 没有日期的点画不上轴,但原件照样可达(「原件永远可达」):列在最后。
+    final series = widget.series;
+    final dated = trendDatedPoints(series);
+    final inRange = pointsInRange(dated, _range);
     final undated = series.points.where((p) => p.date == null).toList();
+    final unit = cleanUnit(series.unit);
     final ref = refRangeText(series.refLow, series.refHigh);
     final meta = MedType.caption.copyWith(color: c.ink3, fontFeatures: MedType.tabular);
     return Scaffold(
@@ -36,22 +47,42 @@ class LabDetailScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(MedShape.s3, MedShape.s3, MedShape.s3, MedShape.s6),
         children: [
+          SegmentedButton<ChartRange>(
+            segments: const [
+              ButtonSegment(value: ChartRange.threeMonths, label: Text('3 个月')),
+              ButtonSegment(value: ChartRange.oneYear, label: Text('1 年')),
+              ButtonSegment(value: ChartRange.all, label: Text('全部')),
+            ],
+            selected: {_range},
+            showSelectedIcon: false,
+            onSelectionChanged: (s) => setState(() => _range = s.first),
+          ),
+          const SizedBox(height: MedShape.s2),
           MedCard(
             child: Padding(
               padding: const EdgeInsets.all(MedShape.s3),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TrendChart(series: series, height: 160),
+                  if (inRange.isEmpty)
+                    Text('这段时间没有结果', style: MedType.secondary.copyWith(color: c.ink2))
+                  else
+                    LabLineChart(series: series, points: inRange, height: 200),
                   const SizedBox(height: MedShape.s1),
                   Wrap(
                     spacing: MedShape.s2,
                     runSpacing: 4,
                     children: [
-                      if (ref != null) Text('参考范围 $ref(底色带)', style: meta),
+                      if (unit != null) Text('单位 $unit', style: meta),
+                      if (ref != null) Text('参考范围 $ref(灰带)', style: meta),
                       if (series.selfMeasured) Text('家测', style: meta),
-                      if (series.valuesConverted) Text(unitConvertedNote(series.unit), style: meta),
-                      Text(pts.isEmpty ? '' : '${pts.first.date} 起 ${pts.length} 次', style: meta),
+                      if (series.valuesConverted) Text(unitConvertedNote(unit), style: meta),
+                      Text(
+                        inRange.length > kChartMaxRawPoints
+                            ? '${inRange.length} 次 · 按周取中位数画线'
+                            : '${inRange.length} 次',
+                        style: meta,
+                      ),
                     ],
                   ),
                 ],
@@ -65,10 +96,10 @@ class LabDetailScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final (i, p) in [...pts.reversed, ...undated].indexed) ...[
+                for (final (i, p) in [...inRange.reversed, ...undated].indexed) ...[
                   if (i > 0) Divider(height: 1, color: c.line),
                   InkWell(
-                    onTap: () => _open(context, p.documentId.toInt()),
+                    onTap: () => _open(p.documentId.toInt()),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: MedShape.s3, vertical: MedShape.s2),
                       child: Row(
@@ -77,7 +108,7 @@ class LabDetailScreen extends StatelessWidget {
                           const SizedBox(width: MedShape.s2),
                           Expanded(
                             child: Text(
-                              '${fmtLabNumber(p.value)}${p.unit == null || p.unit!.isEmpty ? '' : ' ${p.unit}'}'
+                              '${fmtLabNumber(p.value)}${cleanUnit(p.unit) == null ? '' : ' ${cleanUnit(p.unit)}'}'
                               '${p.unverified ? ' · 需核对' : ''}',
                               textAlign: TextAlign.end,
                               style: MedType.body.copyWith(

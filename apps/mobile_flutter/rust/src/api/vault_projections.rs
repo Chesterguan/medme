@@ -732,8 +732,11 @@ pub struct LabReportDto {
     pub document_id: i64,
     /// `"YYYY-MM-DD"`;定不出日期为 None(排最后)。
     pub date: Option<String>,
-    /// 「血常规 · 肝功能」这类词典面板名(最多两个,按项目数排);一个都认不出 → 文档标题 → 「化验」。
+    /// 单子里**第一个**认得出的项目所在的词典面板名(「血常规」「肾功能」);一个都认不出 →
+    /// 文档标题 → 「化验」。同一天多张单靠 `time` 区分。
     pub title: String,
+    /// 采集 / 出结果时间 `HH:MM`(原件里 `Collected by: MM/DD/YY HHMM`,其次 `Resulted:`);没有为 None。
+    pub time: Option<String>,
     pub abnormal_count: u32,
     pub items: Vec<LabReportItemDto>,
 }
@@ -864,17 +867,12 @@ fn lab_report_items(d: &ProjectionDoc) -> Vec<LabReportItemDto> {
 }
 
 fn lab_report_title(d: &ProjectionDoc, items: &[LabReportItemDto]) -> String {
-    let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
-    for it in items {
-        if let Some(p) = it.analyte_key.as_deref().and_then(terminology::panel_for) {
-            *counts.entry(p).or_default() += 1;
-        }
-    }
-    let mut panels: Vec<(&'static str, usize)> = counts.into_iter().collect();
-    panels.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-    let names: Vec<&str> = panels.iter().take(2).map(|(p, _)| *p).collect();
-    if !names.is_empty() {
-        return names.join(" · ");
+    if let Some(p) = items
+        .iter()
+        .filter_map(|it| it.analyte_key.as_deref().and_then(terminology::panel_for))
+        .next()
+    {
+        return p.to_string();
     }
     d.title
         .as_deref()
@@ -882,6 +880,27 @@ fn lab_report_title(d: &ProjectionDoc, items: &[LabReportItemDto]) -> String {
         .filter(|t| !t.is_empty())
         .unwrap_or("化验")
         .to_string()
+}
+
+/// 原件里的采集 / 出结果时间:`Collected by: 10/12/26 0815` → `08:15`;没有采集时间用 `Resulted:`。
+fn lab_report_time(text: &str) -> Option<String> {
+    fn after(text: &str, label: &str) -> Option<String> {
+        for line in text.lines() {
+            if let Some(rest) = line.find(label).map(|i| &line[i + label.len()..]) {
+                let rest = rest.trim();
+                // MM/DD/YY HHMM
+                let mut parts = rest.split_whitespace();
+                let _date = parts.next()?;
+                let t = parts.next()?;
+                if t.len() == 4 && t.chars().all(|c| c.is_ascii_digit()) {
+                    return Some(format!("{}:{}", &t[..2], &t[2..]));
+                }
+                return None;
+            }
+        }
+        None
+    }
+    after(text, "Collected by:").or_else(|| after(text, "Resulted:"))
 }
 
 /// 「化验 · 按报告」:每份带化验项目的文档一行,按日期倒序(无日期最后)。
@@ -905,6 +924,7 @@ pub fn view_lab_reports() -> anyhow::Result<Vec<LabReportDto>> {
             document_id: d.document_id,
             date: d.date.map(fmt_date),
             title: lab_report_title(d, &items),
+            time: lab_report_time(&d.text),
             abnormal_count,
             items,
         });
@@ -1260,7 +1280,10 @@ mod tests {
         assert_eq!(hiv.name, "HIV抗体");
         assert!(hiv.flag.is_none());
         let title = lab_report_title(&d, &items);
-        assert!(title.contains("肾功能") || title.contains("血常规") || title.contains("电解质"), "{title}");
+        assert_eq!(title, "肾功能", "第一个认得出的项目(肌酐)的面板");
+        assert_eq!(lab_report_time("Labs\nCollected by: 10/14/26 0815 \nResulted: 10/14/26 1130\n").as_deref(), Some("08:15"));
+        assert_eq!(lab_report_time("Resulted: 10/14/26 1130\n").as_deref(), Some("11:30"));
+        assert!(lab_report_time("Collected by:   \n").is_none());
         assert_eq!(items.iter().filter(|i| i.flag.is_some()).count(), 2);
     }
 

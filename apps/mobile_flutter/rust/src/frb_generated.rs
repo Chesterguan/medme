@@ -3695,6 +3695,7 @@ impl SseDecode for crate::api::vault_projections::LabReportDto {
         let mut var_documentId = <i64>::sse_decode(deserializer);
         let mut var_date = <Option<String>>::sse_decode(deserializer);
         let mut var_title = <String>::sse_decode(deserializer);
+        let mut var_time = <Option<String>>::sse_decode(deserializer);
         let mut var_abnormalCount = <u32>::sse_decode(deserializer);
         let mut var_items =
             <Vec<crate::api::vault_projections::LabReportItemDto>>::sse_decode(deserializer);
@@ -3702,6 +3703,7 @@ impl SseDecode for crate::api::vault_projections::LabReportDto {
             document_id: var_documentId,
             date: var_date,
             title: var_title,
+            time: var_time,
             abnormal_count: var_abnormalCount,
             items: var_items,
         };
@@ -5401,6 +5403,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::LabReportD
             self.document_id.into_into_dart().into_dart(),
             self.date.into_into_dart().into_dart(),
             self.title.into_into_dart().into_dart(),
+            self.time.into_into_dart().into_dart(),
             self.abnormal_count.into_into_dart().into_dart(),
             self.items.into_into_dart().into_dart(),
         ]
@@ -6224,6 +6227,7 @@ impl SseEncode for crate::api::vault_projections::LabReportDto {
         <i64>::sse_encode(self.document_id, serializer);
         <Option<String>>::sse_encode(self.date, serializer);
         <String>::sse_encode(self.title, serializer);
+        <Option<String>>::sse_encode(self.time, serializer);
         <u32>::sse_encode(self.abnormal_count, serializer);
         <Vec<crate::api::vault_projections::LabReportItemDto>>::sse_encode(self.items, serializer);
     }

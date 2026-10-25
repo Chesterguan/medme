@@ -3761,14 +3761,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   LabReportDto dco_decode_lab_report_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return LabReportDto(
       documentId: dco_decode_i_64(arr[0]),
       date: dco_decode_opt_String(arr[1]),
       title: dco_decode_String(arr[2]),
-      abnormalCount: dco_decode_u_32(arr[3]),
-      items: dco_decode_list_lab_report_item_dto(arr[4]),
+      time: dco_decode_opt_String(arr[3]),
+      abnormalCount: dco_decode_u_32(arr[4]),
+      items: dco_decode_list_lab_report_item_dto(arr[5]),
     );
   }
 
@@ -4810,12 +4811,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_documentId = sse_decode_i_64(deserializer);
     var var_date = sse_decode_opt_String(deserializer);
     var var_title = sse_decode_String(deserializer);
+    var var_time = sse_decode_opt_String(deserializer);
     var var_abnormalCount = sse_decode_u_32(deserializer);
     var var_items = sse_decode_list_lab_report_item_dto(deserializer);
     return LabReportDto(
       documentId: var_documentId,
       date: var_date,
       title: var_title,
+      time: var_time,
       abnormalCount: var_abnormalCount,
       items: var_items,
     );
@@ -6057,6 +6060,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_64(self.documentId, serializer);
     sse_encode_opt_String(self.date, serializer);
     sse_encode_String(self.title, serializer);
+    sse_encode_opt_String(self.time, serializer);
     sse_encode_u_32(self.abnormalCount, serializer);
     sse_encode_list_lab_report_item_dto(self.items, serializer);
   }

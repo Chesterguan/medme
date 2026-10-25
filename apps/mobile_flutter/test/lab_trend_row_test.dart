@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/lab_trend_row.dart';
+import 'package:mobile_flutter/widgets/lab_line_chart.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
 TrendSeriesDto _series({
@@ -43,10 +44,11 @@ void main() {
     expect(find.text('112'), findsOneWidget);
     expect(find.text('参考 44–133'), findsOneWidget);
     expect(find.text('2025-01-01 起 3 次'), findsOneWidget);
-    expect(find.byType(TrendChart), findsOneWidget);
+    expect(find.byType(LabLineChart), findsOneWidget, reason: '收起时迷你折线');
+    expect(find.byType(TrendChart), findsNothing);
     await t.tap(find.text('肌酐'));
     await t.pumpAndSettle();
-    expect(find.byType(TrendChart), findsNWidgets(2));
+    expect(find.byType(TrendChart), findsOneWidget, reason: '展开后整条折线');
     expect(find.text('2025-06-01'), findsOneWidget);
     await t.tap(find.text('2025-06-01'));
     expect(opened, [2]);
@@ -56,7 +58,7 @@ void main() {
     await t.pumpWidget(_wrap(LabTrendRow(series: _series(pts: const [('2025-01-01', 90, 1)]), onOpenDoc: (_) {})));
     expect(t.takeException(), isNull);
     expect(find.text('只有这一次'), findsOneWidget);
-    expect(find.byType(TrendChart), findsOneWidget);
+    expect(find.byType(LabLineChart), findsOneWidget);
   });
 
   testWidgets('全无日期:整行不画', (t) async {

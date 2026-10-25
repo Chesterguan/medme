@@ -12,6 +12,7 @@ import 'package:mobile_flutter/screens/lab_detail_screen.dart';
 import 'package:mobile_flutter/screens/labs_model.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/lab_line_chart.dart' show cleanUnit;
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/lab_trend_row.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
@@ -255,7 +256,7 @@ class LabReportsList extends StatelessWidget {
                       children: [
                         Text(r.title, style: MedType.body.copyWith(color: c.ink, fontWeight: FontWeight.w600)),
                         Text(
-                          [fmtDate(r.date), '${r.items.length} 项'].where((s) => s.isNotEmpty).join(' · '),
+                          [fmtDate(r.date), ?r.time, '${r.items.length} 项'].where((s) => s.isNotEmpty).join(' · '),
                           style: MedType.secondary.copyWith(color: c.ink2, fontFeatures: MedType.tabular),
                         ),
                       ],
@@ -398,7 +399,7 @@ class LabReportScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(MedShape.s3, MedShape.s3, MedShape.s3, MedShape.s6),
         children: [
           Text(
-            [fmtDate(report.date), '${report.items.length} 项', if (report.abnormalCount > 0) '${report.abnormalCount} 项异常']
+            [fmtDate(report.date), ?report.time, '${report.items.length} 项', if (report.abnormalCount > 0) '${report.abnormalCount} 项异常']
                 .where((s) => s.isNotEmpty)
                 .join(' · '),
             style: MedType.secondary.copyWith(color: c.ink2, fontFeatures: MedType.tabular),
@@ -454,7 +455,7 @@ class _ItemRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '${item.value}${item.unit == null ? '' : ' ${item.unit}'}$arrow${item.unverified ? ' · 需核对' : ''}',
+                    '${item.value}${cleanUnit(item.unit) == null ? '' : ' ${cleanUnit(item.unit)}'}$arrow${item.unverified ? ' · 需核对' : ''}',
                     textAlign: TextAlign.end,
                     style: MedType.body.copyWith(color: labStatusColor(context, status), fontWeight: FontWeight.w600, fontFeatures: MedType.tabular),
                   ),
