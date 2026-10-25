@@ -116,6 +116,8 @@ pub struct AnalyteSeries {
     pub analyte_key: Option<String>,
     /// Display/grouping label: canonical name if resolved, else the raw name.
     pub group_name: String,
+    /// 化验单上最近一次印的原名(与 `group_name` 不同时才给;词典认不出的序列两者相同 → `None`)。
+    pub raw_name: Option<String>,
     pub loinc: Option<String>,
     /// Reference range, taken from the most recent observation in the group that
     /// carried one (fallback: any). The viewer draws the normal band from these.
@@ -639,6 +641,8 @@ struct PendingPoint {
 struct LabBuilder {
     analyte_key: Option<String>,
     group_name: String,
+    /// 最近一个点印的原名。
+    raw_name: String,
     loinc: Option<String>,
     /// Whether `group_name`/`loinc` were taken from a matched observation yet.
     meta_from_match: bool,
@@ -857,6 +861,7 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
         .collect();
 
     AnalyteSeries {
+        raw_name: (b.raw_name != b.group_name).then_some(b.raw_name),
         analyte_key: b.analyte_key,
         group_name: b.group_name,
         loinc: b.loinc,
@@ -927,6 +932,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             let b = labs.entry(key).or_insert_with(|| LabBuilder {
                 analyte_key: obs.analyte_key.clone(),
                 group_name: obs.raw_name.clone(),
+                raw_name: obs.raw_name.clone(),
                 loinc: None,
                 meta_from_match: false,
                 ref_low: None,
@@ -942,6 +948,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 self_measured: obs.self_measured,
                 needs_review_count: 0,
             });
+            b.raw_name = obs.raw_name.clone();
             // 序列内恒定(见字段文档);第一个换算得出来的点供出即可。
             if b.unit_canonical.is_none() {
                 b.unit_canonical = obs.unit_canonical.clone();
