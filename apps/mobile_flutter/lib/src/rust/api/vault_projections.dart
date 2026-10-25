@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `document_refs`, `flat_docs`, `fmt_date`, `fmt_num`, `gather_for_profile`, `gather_profile_events`, `gather`, `is_renderable`, `lab_report_items`, `lab_report_title`, `norm_flag`, `parse_rfc3339_date`, `read_text`, `ref_text`, `render_plain_text`, `source_docs`, `source_docs`, `trend_series`
+// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `document_refs`, `flat_docs`, `fmt_date`, `fmt_num`, `gather_for_profile`, `gather_profile_events`, `gather`, `is_renderable`, `lab_report_items`, `lab_report_time`, `lab_report_title`, `norm_flag`, `parse_num`, `parse_rfc3339_date`, `read_text`, `ref_text`, `render_plain_text`, `source_docs`, `source_docs`, `trend_series`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ProfileInput`, `ProjectionDoc`, `VaultProjection`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -204,8 +204,12 @@ class LabReportDto {
   /// `"YYYY-MM-DD"`;定不出日期为 None(排最后)。
   final String? date;
 
-  /// 「血常规 · 肝功能」这类词典面板名(最多两个,按项目数排);一个都认不出 → 文档标题 → 「化验」。
+  /// 单子里**第一个**认得出的项目所在的词典面板名(「血常规」「肾功能」);一个都认不出 →
+  /// 文档标题 → 「化验」。同一天多张单靠 `time` 区分。
   final String title;
+
+  /// 采集 / 出结果时间 `HH:MM`(原件里 `Collected by: MM/DD/YY HHMM`,其次 `Resulted:`);没有为 None。
+  final String? time;
   final int abnormalCount;
   final List<LabReportItemDto> items;
 
@@ -213,6 +217,7 @@ class LabReportDto {
     required this.documentId,
     this.date,
     required this.title,
+    this.time,
     required this.abnormalCount,
     required this.items,
   });
@@ -222,6 +227,7 @@ class LabReportDto {
       documentId.hashCode ^
       date.hashCode ^
       title.hashCode ^
+      time.hashCode ^
       abnormalCount.hashCode ^
       items.hashCode;
 
@@ -233,6 +239,7 @@ class LabReportDto {
           documentId == other.documentId &&
           date == other.date &&
           title == other.title &&
+          time == other.time &&
           abnormalCount == other.abnormalCount &&
           items == other.items;
 }

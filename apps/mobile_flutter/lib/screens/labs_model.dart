@@ -47,10 +47,16 @@ List<TrendSeriesDto> sortByLatest(List<TrendSeriesDto> list) {
   final out = [...list];
   out.sort((a, b) {
     final c = latest[b]!.compareTo(latest[a]!);
-    return c != 0 ? c : a.name.compareTo(b.name);
+    if (c != 0) return c;
+    // 同一天:词典认得的中文名在前,没命中词典的英文原名在后。
+    final za = _startsCjk(a.name) ? 0 : 1;
+    final zb = _startsCjk(b.name) ? 0 : 1;
+    return za != zb ? za - zb : a.name.compareTo(b.name);
   });
   return out;
 }
+
+bool _startsCjk(String s) => s.isNotEmpty && s.codeUnitAt(0) >= 0x3400;
 
 /// chip + 搜索一起筛。
 List<TrendSeriesDto> labsVisible(List<TrendSeriesDto> all, {required String group, required String query}) {

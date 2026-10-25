@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
+import 'package:mobile_flutter/widgets/lab_line_chart.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
@@ -42,7 +43,7 @@ class _LabTrendRowState extends State<LabTrendRow> {
     final status = labStatusOf(last.flag);
     final word = labStatusWord(context, last.flag);
     final ref = refRangeText(series.refLow, series.refHigh);
-    final unit = last.unit ?? series.unit;
+    final unit = cleanUnit(last.unit ?? series.unit);
     final meta = MedType.caption.copyWith(
       color: c.ink3,
       fontFeatures: MedType.tabular,
@@ -73,11 +74,16 @@ class _LabTrendRowState extends State<LabTrendRow> {
                       ),
                     ),
                     const SizedBox(width: MedShape.s2),
-                    // 迷你折线:不描画动画(一屏几十条,每条起一个 ticker 没有意义)。
+                    // 迷你折线:最近 1 年、按周取中位数、只画线,最后一次一个点说状态(无 ticker)。
                     SizedBox(
                       width: 78,
                       height: 24,
-                      child: TrendChart(series: series, height: 24, animate: false),
+                      child: LabLineChart(
+                        series: series,
+                        points: pointsInRange(pts, ChartRange.oneYear),
+                        height: 24,
+                        compact: true,
+                      ),
                     ),
                     const SizedBox(width: MedShape.s2),
                     ConstrainedBox(
@@ -143,7 +149,7 @@ class _LabTrendRowState extends State<LabTrendRow> {
                     // 长单位(换算说明)在大字号下折行,不顶出行外。
                     Expanded(
                       child: Text(
-                        '${fmtLabNumber(p.value)}${p.unit == null || p.unit!.isEmpty ? '' : ' ${p.unit}'}'
+                        '${fmtLabNumber(p.value)}${cleanUnit(p.unit) == null ? '' : ' ${cleanUnit(p.unit)}'}'
                         '${p.unverified ? ' · 需核对' : ''}',
                         textAlign: TextAlign.end,
                         style: MedType.secondary.copyWith(

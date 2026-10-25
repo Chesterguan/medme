@@ -8,7 +8,7 @@ import 'package:mobile_flutter/src/rust/api/vault_projections.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/widgets/lab_trend_row.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
-import 'package:mobile_flutter/widgets/trend_chart.dart';
+import 'package:mobile_flutter/widgets/lab_line_chart.dart';
 
 final _today = DateTime(2026, 10, 22);
 
@@ -36,7 +36,8 @@ List<LabReportDto> _reports() => [
   LabReportDto(
     documentId: 2,
     date: '2026-10-01',
-    title: '肾功能 · 血常规',
+    time: '08:15',
+    title: '肾功能',
     abnormalCount: 1,
     items: const [
       LabReportItemDto(name: '肌酐', analyteKey: 'creatinine', value: '1.4', unit: 'mg/dL', reference: '0.6-1.2', flag: 'H', unverified: false),
@@ -44,7 +45,7 @@ List<LabReportDto> _reports() => [
       LabReportItemDto(name: 'HIV抗体', analyteKey: 'hiv_ab', value: 'Nonreactive', unit: null, reference: null, flag: null, unverified: false),
     ],
   ),
-  LabReportDto(documentId: 1, date: '2025-01-01', title: '肾功能', abnormalCount: 0, items: const [
+  LabReportDto(documentId: 1, date: '2025-01-01', time: null, title: '肾功能', abnormalCount: 0, items: const [
     LabReportItemDto(name: '肌酐', analyteKey: 'creatinine', value: '0.9', unit: 'mg/dL', reference: '0.6-1.2', flag: null, unverified: false),
   ]),
 ];
@@ -71,10 +72,11 @@ Future<void> _pump(WidgetTester t, {double scale = 1.0}) async {
 void main() {
   testWidgets('按报告:每张单一行,标题 + 日期 + 项数 + 异常徽标;点开是表,每行有参考与箭头', (t) async {
     await _pump(t);
-    expect(find.text('肾功能 · 血常规'), findsOneWidget);
-    expect(find.text('2026-10-01 · 3 项'), findsOneWidget);
+    expect(find.text('肾功能'), findsNWidgets(2));
+    expect(find.text('2026-10-01 · 08:15 · 3 项'), findsOneWidget);
+    expect(find.text('2025-01-01 · 1 项'), findsOneWidget);
     expect(find.text('1 项异常'), findsOneWidget);
-    await t.tap(find.text('肾功能 · 血常规'));
+    await t.tap(find.text('2026-10-01 · 08:15 · 3 项'));
     await t.pumpAndSettle();
     expect(find.byType(LabReportScreen), findsOneWidget);
     expect(find.text('1.4 mg/dL↑'), findsOneWidget);
@@ -85,7 +87,7 @@ void main() {
     await t.tap(find.text('1.4 mg/dL↑'));
     await t.pumpAndSettle();
     expect(find.byType(LabDetailScreen), findsOneWidget);
-    expect(find.byType(TrendChart), findsOneWidget);
+    expect(find.byType(LabLineChart), findsOneWidget);
   });
 
   testWidgets('按指标:chip 八颗里只画有数的;肝肾含肌酐与 ALT;搜索;更早折叠;每行有迷你折线', (t) async {
@@ -110,13 +112,18 @@ void main() {
     expect(find.byType(LabTrendRow), findsOneWidget);
   });
 
-  testWidgets('指标折线页:高 ≥120 的 TrendChart、参考带说明、每个点可点回原件', (t) async {
+  testWidgets('指标折线页:默认 1 年、高 ≥120 的折线、参考带说明、切「全部」后每个点可点回原件', (t) async {
     final opened = <int>[];
     await t.pumpWidget(_wrap(LabDetailScreen(series: _allSeries().first, onOpenDoc: opened.add)));
     await t.pumpAndSettle();
-    final chart = t.widget<TrendChart>(find.byType(TrendChart));
+    final chart = t.widget<LabLineChart>(find.byType(LabLineChart));
     expect(chart.height, greaterThanOrEqualTo(120));
-    expect(find.text('参考范围 44–133(底色带)'), findsOneWidget);
+    expect(find.text('参考范围 44–133(灰带)'), findsOneWidget);
+    // 默认 1 年:2025-01-01 那次不在范围里。
+    expect(find.text('2025-01-01'), findsNothing);
+    expect(find.text('1 次'), findsOneWidget);
+    await t.tap(find.text('全部'));
+    await t.pumpAndSettle();
     expect(find.text('2025-01-01'), findsOneWidget);
     await t.tap(find.text('2025-01-01'));
     expect(opened, [1]);
@@ -140,7 +147,7 @@ void main() {
       expect(t.takeException(), isNull);
       await t.tap(find.text('按报告'));
       await t.pumpAndSettle();
-      await t.tap(find.text('肾功能 · 血常规'));
+      await t.tap(find.text('2026-10-01 · 08:15 · 3 项'));
       await t.pumpAndSettle();
       expect(t.takeException(), isNull);
     });
