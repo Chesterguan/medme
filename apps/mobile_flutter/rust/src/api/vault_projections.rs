@@ -672,7 +672,11 @@ fn collect_conditions(
 /// `AnalyteSeries` → 趋势序列 DTO(全保真:点不截断、日精度、带 flag 与 document_id)。
 fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSeriesDto {
     TrendSeriesDto {
-        name: s.group_name.clone(),
+        // 词典认不出、名字带标本标记(`Creatinine, Ur`)的序列在名字后加「(尿)」,别让它和血清肌酐看着像一回事。
+        name: match (&s.analyte_key, parser::specimen_marker(&s.group_name)) {
+            (None, Some(m)) => format!("{}({m})", s.group_name),
+            _ => s.group_name.clone(),
+        },
         analyte_key: s.analyte_key.clone(),
         loinc: s.loinc.clone(),
         panel: s
@@ -732,7 +736,9 @@ pub struct LabReportDto {
     pub document_id: i64,
     /// `"YYYY-MM-DD"`;定不出日期为 None(排最后)。
     pub date: Option<String>,
-    /// 单子里**第一个**认得出的项目所在的词典面板名(「血常规」「肾功能」);一个都认不出 →
+    /// 单上出现的词典面板名(按项目顺序去重;Epic 一份文档是一整天的化验,常有十几个面板)。
+    pub panels: Vec<String>,
+    /// 面板 ≤ 3 个 → 「肾功能、血常规」;更多 → 「电解质、血常规、肝功能 等 N 个面板」;一个都认不出 →
     /// 文档标题 → 「化验」。同一天多张单靠 `time` 区分。
     pub title: String,
     /// 采集 / 出结果时间 `HH:MM`(原件里 `Collected by: MM/DD/YY HHMM`,其次 `Resulted:`);没有为 None。
@@ -866,13 +872,25 @@ fn lab_report_items(d: &ProjectionDoc) -> Vec<LabReportItemDto> {
         .collect()
 }
 
-fn lab_report_title(d: &ProjectionDoc, items: &[LabReportItemDto]) -> String {
-    if let Some(p) = items
+fn lab_report_panels(items: &[LabReportItemDto]) -> Vec<String> {
+    let mut panels: Vec<String> = Vec::new();
+    for p in items
         .iter()
         .filter_map(|it| it.analyte_key.as_deref().and_then(terminology::panel_for))
-        .next()
     {
-        return p.to_string();
+        if !panels.iter().any(|x| x == p) {
+            panels.push(p.to_string());
+        }
+    }
+    panels
+}
+
+fn lab_report_title(d: &ProjectionDoc, items: &[LabReportItemDto]) -> String {
+    let panels = lab_report_panels(items);
+    match panels.len() {
+        0 => {}
+        1..=3 => return panels.join("、"),
+        n => return format!("{} 等 {n} 个面板", panels[..3].join("、")),
     }
     d.title
         .as_deref()
@@ -923,6 +941,7 @@ pub fn view_lab_reports() -> anyhow::Result<Vec<LabReportDto>> {
         out.push(LabReportDto {
             document_id: d.document_id,
             date: d.date.map(fmt_date),
+            panels: lab_report_panels(&items),
             title: lab_report_title(d, &items),
             time: lab_report_time(&d.text),
             abnormal_count,
@@ -1280,7 +1299,15 @@ mod tests {
         assert_eq!(hiv.name, "HIV抗体");
         assert!(hiv.flag.is_none());
         let title = lab_report_title(&d, &items);
-        assert_eq!(title, "肾功能", "第一个认得出的项目(肌酐)的面板");
+        assert_eq!(title, "肾功能、血常规、电解质", "≤3 个面板全列");
+        assert_eq!(lab_report_panels(&items), ["肾功能", "血常规", "电解质"]);
+        let mut many = items.clone();
+        many.extend(items.iter().cloned());
+        assert_eq!(lab_report_title(&d, &many), "肾功能、血常规、电解质", "重复面板去重");
+        let mut alt = cr.clone();
+        alt.analyte_key = Some("alt".into());
+        many.push(alt);
+        assert_eq!(lab_report_title(&d, &many), "肾功能、血常规、电解质 等 4 个面板");
         assert_eq!(lab_report_time("Labs\nCollected by: 10/14/26 0815 \nResulted: 10/14/26 1130\n").as_deref(), Some("08:15"));
         assert_eq!(lab_report_time("Resulted: 10/14/26 1130\n").as_deref(), Some("11:30"));
         assert!(lab_report_time("Collected by:   \n").is_none());

@@ -3761,15 +3761,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   LabReportDto dco_decode_lab_report_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return LabReportDto(
       documentId: dco_decode_i_64(arr[0]),
       date: dco_decode_opt_String(arr[1]),
-      title: dco_decode_String(arr[2]),
-      time: dco_decode_opt_String(arr[3]),
-      abnormalCount: dco_decode_u_32(arr[4]),
-      items: dco_decode_list_lab_report_item_dto(arr[5]),
+      panels: dco_decode_list_String(arr[2]),
+      title: dco_decode_String(arr[3]),
+      time: dco_decode_opt_String(arr[4]),
+      abnormalCount: dco_decode_u_32(arr[5]),
+      items: dco_decode_list_lab_report_item_dto(arr[6]),
     );
   }
 
@@ -4810,6 +4811,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_documentId = sse_decode_i_64(deserializer);
     var var_date = sse_decode_opt_String(deserializer);
+    var var_panels = sse_decode_list_String(deserializer);
     var var_title = sse_decode_String(deserializer);
     var var_time = sse_decode_opt_String(deserializer);
     var var_abnormalCount = sse_decode_u_32(deserializer);
@@ -4817,6 +4819,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return LabReportDto(
       documentId: var_documentId,
       date: var_date,
+      panels: var_panels,
       title: var_title,
       time: var_time,
       abnormalCount: var_abnormalCount,
@@ -6059,6 +6062,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_64(self.documentId, serializer);
     sse_encode_opt_String(self.date, serializer);
+    sse_encode_list_String(self.panels, serializer);
     sse_encode_String(self.title, serializer);
     sse_encode_opt_String(self.time, serializer);
     sse_encode_u_32(self.abnormalCount, serializer);

@@ -125,13 +125,33 @@ struct DxBuilder {
     unverified: bool,
 }
 
+/// 诊断写法的清洗(只用于展示与无码合并键,引依据仍用原文):去 Epic 的风险调整标签
+/// `(CMS-HCC: 108)` / `(HCC)`,去手术记录的前缀 `Preop Dx:` / `Preoperative Diagnosis:`。
+pub fn clean_dx_text(text: &str) -> String {
+    let mut t = text.trim().to_string();
+    for tag in ["(CMS-HCC", "(HCC"] {
+        while let Some(i) = t.find(tag) {
+            let end = t[i..].find(')').map(|j| i + j + 1).unwrap_or(t.len());
+            t.replace_range(i..end, "");
+        }
+    }
+    let lower = t.to_lowercase();
+    for prefix in ["preoperative diagnosis:", "preop diagnosis:", "preop dx:"] {
+        if lower.starts_with(prefix) {
+            t = t[prefix.len()..].to_string();
+            break;
+        }
+    }
+    t.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn merge_diagnoses(ctx: &Ctx<'_>) -> BTreeMap<String, DxBuilder> {
     let mut out: BTreeMap<String, DxBuilder> = BTreeMap::new();
     for c in &ctx.clinical.conditions {
         let code = c.icd_code.as_deref().and_then(normalize_icd);
         let key = match &code {
             Some(code) => format!("code:{code}"),
-            None => format!("text:{}", c.raw_text),
+            None => format!("text:{}", clean_dx_text(&c.raw_text).to_lowercase()),
         };
         let b = out.entry(key).or_default();
         b.code = code;
@@ -177,9 +197,16 @@ fn diagnosis_out(ctx: &Ctx<'_>, b: &DxBuilder, book: &mut EvidenceBook) -> Diagn
             }
         }
     }
+    // 展示用写法:清洗后去重(同一诊断带不带 HCC 标签算一种写法)。
+    let mut texts: Vec<String> = Vec::new();
+    for t in b.variants.keys().map(|t| clean_dx_text(t)) {
+        if !t.is_empty() && !texts.iter().any(|x| x.eq_ignore_ascii_case(&t)) {
+            texts.push(t);
+        }
+    }
     DiagnosisOut {
         code: b.code.clone(),
-        texts: b.variants.keys().cloned().collect(),
+        texts,
         first_seen: b.first_seen.map(|d| d.to_string()),
         last_seen: b.last_seen.map(|d| d.to_string()),
         doc_count: b.sources.len(),
@@ -448,6 +475,10 @@ pub struct MedRow {
     drug_key: Option<String>,
     /// 原文出现过的全部写法(搜索用)。
     raw_names: Vec<String>,
+    /// ATC 码(词典给的);「用药」tab 按它分药类。
+    atc: Option<String>,
+    /// 提及次数(「N 次记录」)。
+    mention_count: usize,
     dose: Option<String>,
     /// 「记录中自 YYYY-MM-DD 起」:该剂量键连续出现的起点。
     since: Option<String>,
@@ -483,7 +514,15 @@ fn stop_line_of(ctx: &Ctx<'_>, m: &parser::MedMention) -> Option<String> {
 
 fn med_row(ctx: &Ctx<'_>, m: &parser::MedSpan, book: &mut EvidenceBook) -> (MedRow, MedLane) {
     // 提及已按日期升序(无日期在最后);这里只看有日期的。
-    let dated: Vec<&parser::MedMention> = m.mentions.iter().filter(|x| x.date.is_some()).collect();
+    // 病历摘要类文档(Epic 患者摘要)的日期是打印日:它只算「最近有记录」(`m.end`),
+    // 不开剂量链、不定「记录中自」。
+    let dated: Vec<&parser::MedMention> = m
+        .mentions
+        .iter()
+        .filter(|x| x.date.is_some() && !is_summary_doc(ctx, x.source))
+        .collect();
+    // 侧文件给了起始日(Epic `Start date`)就以最早那个为「记录中自」。
+    let sidecar_start = m.mentions.iter().filter_map(|x| x.start_date).min();
     let mut nodes: Vec<state::Node> = Vec::new();
     let mut prev_key: Option<String> = None;
     let mut prev_dose: Option<String> = None;
@@ -570,8 +609,10 @@ fn med_row(ctx: &Ctx<'_>, m: &parser::MedSpan, book: &mut EvidenceBook) -> (MedR
         since: if stopped.is_some() {
             None
         } else {
-            since.map(|d| d.to_string())
+            sidecar_start.or(since).map(|d| d.to_string())
         },
+        atc: m.atc.clone(),
+        mention_count: m.mentions.len(),
         first_seen: m.start.map(|d| d.to_string()),
         last_seen: m.end.map(|d| d.to_string()),
         days_since,
@@ -935,10 +976,35 @@ pub struct MedWithNodes {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AllergyOut {
+    /// 展示名:词典认得就「中文(原名)」,否则清洗后的原名。
     pub substance: String,
+    /// 各写法的反应合并(「、」连),没有为空串。
     pub reaction: String,
     /// 每份提到它的文档一条(物质串所在的那一行)。
     pub evidence: Vec<String>,
+    /// 合并进来的原文写法(含反应),点开看。
+    pub aliases: Vec<String>,
+}
+
+/// 过敏原的合并键:小写、去方括号 / 圆括号里的成分注释与「(See Comments)」、去标点。
+pub fn allergen_key(raw: &str) -> String {
+    allergen_display(raw).to_lowercase()
+}
+
+/// 过敏原的清洗写法(保留大小写):`Penicillins [PENICILLIN G] (See Comments)` → `Penicillins`。
+pub fn allergen_display(raw: &str) -> String {
+    let mut t = raw.to_string();
+    for (open, close) in [('[', ']'), ('(', ')')] {
+        while let Some(i) = t.find(open) {
+            let end = t[i..].find(close).map(|j| i + j + 1).unwrap_or(t.len());
+            t.replace_range(i..end, "");
+        }
+    }
+    t.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace())
+        .to_string()
 }
 
 /// 「用药」tab(spec 2026-10-23 §5)。**纯函数**:与 [`materialize_generic`] 同一份
@@ -980,10 +1046,15 @@ pub fn materialize_meds(
     recent.sort_by(order);
     earlier.sort_by(order);
 
-    // 过敏:按 (物质, 反应) 合并,每份提到它的文档引一条(物质串所在的那一行)。
-    // key = 小写的 (物质, 反应);值 = 第一次见到的写法 + 依据 id。
-    type AllergyAcc = BTreeMap<(String, String), ((String, String), Vec<String>)>;
-    let mut allergies: AllergyAcc = BTreeMap::new();
+    // 过敏:按**过敏原**合并(去大小写 / 成分注释 / See Comments),反应各写法合并,
+    // 每份提到它的文档引一条(物质串所在的那一行);原文写法留着点开看。
+    struct AllergyAcc {
+        display: String,
+        reactions: Vec<String>,
+        evidence: Vec<String>,
+        aliases: Vec<String>,
+    }
+    let mut allergies: BTreeMap<String, AllergyAcc> = BTreeMap::new();
     for d in &ctx.docs {
         for (substance, reaction) in parser::extract_allergies_pairs(d.text) {
             // 提示词把「Allergies」那一行排在同名的药物清单行前面(审查 I9)。
@@ -997,24 +1068,62 @@ pub fn materialize_meds(
                 None,
                 true,
             );
-            // 同一物质的不同大小写写法(Epic 各处抄法不一)合成一行,留第一次见到的写法。
-            let key = (substance.to_lowercase(), reaction.to_lowercase());
-            let (_, ids) = allergies
-                .entry(key)
-                .or_insert_with(|| ((substance.clone(), reaction.clone()), Vec::new()));
-            if !ids.contains(&id) {
-                ids.push(id);
+            let key = allergen_key(&substance);
+            if key.is_empty() {
+                continue;
+            }
+            let acc = allergies.entry(key).or_insert_with(|| {
+                let shown = allergen_display(&substance);
+                let display = match terminology::resolve_drug(&shown) {
+                    Some(m) if m.canonical_name != shown => {
+                        format!("{}({})", m.canonical_name, shown)
+                    }
+                    _ => shown,
+                };
+                AllergyAcc {
+                    display,
+                    reactions: Vec::new(),
+                    evidence: Vec::new(),
+                    aliases: Vec::new(),
+                }
+            });
+            if !acc.evidence.contains(&id) {
+                acc.evidence.push(id);
+            }
+            let reaction = reaction.trim();
+            if !reaction.is_empty()
+                && !acc
+                    .reactions
+                    .iter()
+                    .any(|r| r.eq_ignore_ascii_case(reaction))
+            {
+                acc.reactions.push(reaction.to_string());
+            }
+            let alias = if reaction.is_empty() {
+                substance.clone()
+            } else {
+                format!("{substance} · {reaction}")
+            };
+            if !acc.aliases.contains(&alias) {
+                acc.aliases.push(alias);
             }
         }
     }
-    let allergies = allergies
+    let mut allergies: Vec<AllergyOut> = allergies
         .into_values()
-        .map(|((substance, reaction), evidence)| AllergyOut {
-            substance,
-            reaction,
-            evidence,
+        .map(|a| AllergyOut {
+            substance: a.display,
+            reaction: a.reactions.join("、"),
+            evidence: a.evidence,
+            aliases: a.aliases,
         })
         .collect();
+    allergies.sort_by(|a, b| {
+        b.evidence
+            .len()
+            .cmp(&a.evidence.len())
+            .then(a.substance.cmp(&b.substance))
+    });
     MedsView {
         recent,
         earlier,

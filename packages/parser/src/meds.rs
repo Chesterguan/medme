@@ -53,6 +53,8 @@ pub struct MedObservation {
     pub frequency_raw: Option<String>,
     /// 0.0 if unmatched; else the terminology `Match.confidence`.
     pub confidence: f32,
+    /// 侧文件给的用药起始日;正则路径与云抽取恒 `None`。
+    pub start: Option<chrono::NaiveDate>,
     /// 云抽取图片模式下这条没能逐字核对上(`deid::MedItem::unverified`);正则路径
     /// 恒为 false。界面标「需核对」,**不丢**。
     pub unverified: bool,
@@ -229,6 +231,7 @@ fn build(
         frequency: freq.as_ref().map(|f| f.0.clone()),
         frequency_raw: freq.as_ref().map(|f| f.1.clone()),
         confidence: m.as_ref().map_or(0.0, |m| m.confidence),
+        start: None,
         unverified: false,
     }
 }

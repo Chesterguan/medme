@@ -230,6 +230,7 @@
       "body": {
         "rows": [
           {
+            "atc": null,
             "days_since": 38,
             "dose": "10mg",
             "drug_key": null,
@@ -239,6 +240,7 @@
             "family": "other",
             "first_seen": "2024-04-15",
             "last_seen": "2026-09-14",
+            "mention_count": 8,
             "name": "Zebrafoam",
             "raw_name": "Zebrafoam",
             "raw_names": [
@@ -249,6 +251,7 @@
             "unverified": false
           },
           {
+            "atc": "B01AA03",
             "days_since": 38,
             "dose": "4mg",
             "drug_key": "warfarin",
@@ -258,6 +261,7 @@
             "family": "cardio",
             "first_seen": "2024-03-10",
             "last_seen": "2026-09-14",
+            "mention_count": 11,
             "name": "华法林",
             "raw_name": "Warfarin",
             "raw_names": [
@@ -268,6 +272,7 @@
             "unverified": false
           },
           {
+            "atc": "C07AB02",
             "days_since": 38,
             "dose": "25mg",
             "drug_key": "metoprolol",
@@ -277,6 +282,7 @@
             "family": "cardio",
             "first_seen": "2024-03-10",
             "last_seen": "2026-09-14",
+            "mention_count": 11,
             "name": "美托洛尔",
             "raw_name": "Metoprolol",
             "raw_names": [
@@ -287,6 +293,7 @@
             "unverified": false
           },
           {
+            "atc": "H02AB07",
             "days_since": 220,
             "dose": "5mg",
             "drug_key": "prednisone",
@@ -296,6 +303,7 @@
             "family": "immune",
             "first_seen": "2026-03-16",
             "last_seen": "2026-03-16",
+            "mention_count": 1,
             "name": "泼尼松",
             "raw_name": "Prednisone",
             "raw_names": [
@@ -306,6 +314,7 @@
             "unverified": false
           },
           {
+            "atc": "J02AC03",
             "days_since": 339,
             "dose": "200mg",
             "drug_key": "voriconazole",
@@ -316,6 +325,7 @@
             "family_note": "抗真菌",
             "first_seen": "2025-06-14",
             "last_seen": "2025-11-17",
+            "mention_count": 3,
             "name": "伏立康唑",
             "raw_name": "Voriconazole",
             "raw_names": [
