@@ -48,6 +48,22 @@ class _HealthSummaryScreenState extends State<HealthSummaryScreen> {
 
   Future<HealthSummaryData> _load() => (widget.load ?? _loadFromVault)();
 
+  @override
+  void initState() {
+    super.initState();
+    vaultRevision.addListener(_onVaultChanged);
+  }
+
+  @override
+  void dispose() {
+    vaultRevision.removeListener(_onVaultChanged);
+    super.dispose();
+  }
+
+  void _onVaultChanged() {
+    if (mounted) _refresh();
+  }
+
   Future<void> _refresh() async {
     final next = _load();
     setState(() {

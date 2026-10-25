@@ -48,7 +48,7 @@ fn doc_date(ctx: &Ctx<'_>, index: usize) -> Option<NaiveDate> {
         .and_then(|d| d.date)
 }
 
-/// 病历摘要类文档(Epic 导出的「患者摘要」:`doc_type == other`、标题含「摘要」/「summary」):
+/// 病历摘要类文档(Epic 导出的「患者摘要」:`doc_type == other`、标题含「患者 / 病历摘要」/「patient / health summary」):
 /// 它的日期是打印 / 导出日,不是临床事件日。诊断的「最近出现」不认它(修订 2),
 /// 「N 份记录提到」与依据照旧算。
 fn is_summary_doc(ctx: &Ctx<'_>, index: usize) -> bool {
@@ -56,7 +56,10 @@ fn is_summary_doc(ctx: &Ctx<'_>, index: usize) -> bool {
         d.doc_type.as_deref() == Some("other")
             && d.title.as_deref().is_some_and(|t| {
                 let t = t.to_lowercase();
-                t.contains("摘要") || t.contains("summary")
+                // 只认「患者 / 病历摘要」这类导出物;「出院摘要」「After Visit Summary」是真实事件日,不排除。
+                ["患者摘要", "病历摘要", "patient summary", "health summary"]
+                    .iter()
+                    .any(|k| t.contains(k))
             })
     })
 }

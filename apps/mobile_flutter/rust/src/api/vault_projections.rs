@@ -754,68 +754,103 @@ pub struct LabReportItemDto {
     pub unverified: bool,
 }
 
+/// 数值串 → f64;`<5`、`>60` 这种带不等号的**不是**一个定值,比不了区间。
+fn parse_num(s: &str) -> Option<f64> {
+    let t = s.trim();
+    if t.starts_with(['<', '>', '≤', '≥']) {
+        return None;
+    }
+    t.parse::<f64>().ok()
+}
+
+/// 箭头:**区间优先**(两端任一能解析就按区间判,与 `labs_from_json` 同一规矩,否则「按报告」
+/// 与折线页对同一个值说法不一);只有没区间可比时才信印刷的 H/L;带 `<`/`>` 的值不按区间判。
 fn norm_flag(raw: &str, value: &str, lo: &str, hi: &str) -> Option<String> {
-    let r = raw.trim();
-    if r.contains('↑') || r.starts_with('H') || r.starts_with('h') {
-        return Some("H".into());
-    }
-    if r.contains('↓') || r.starts_with('L') || r.starts_with('l') {
-        return Some("L".into());
-    }
-    let v: f64 = value.trim().trim_start_matches(['<', '>']).parse().ok()?;
-    if let Ok(h) = hi.trim().parse::<f64>() {
-        if v > h {
+    let (l, h) = (parse_num(lo), parse_num(hi));
+    if l.is_some() || h.is_some() {
+        let v = parse_num(value)?;
+        if h.is_some_and(|h| v > h) {
             return Some("H".into());
         }
-    }
-    if let Ok(l) = lo.trim().parse::<f64>() {
-        if v < l {
+        if l.is_some_and(|l| v < l) {
             return Some("L".into());
         }
+        return None;
+    }
+    let r = raw.trim();
+    if r.contains('↑') || r.starts_with(['H', 'h']) {
+        return Some("H".into());
+    }
+    if r.contains('↓') || r.starts_with(['L', 'l']) {
+        return Some("L".into());
     }
     None
 }
 
+/// 参考范围文字:两端都有 → `lo-hi`;只有一端且是数 → `<hi` / `>lo`;一端是定性文字 → 原样。
 fn ref_text(lo: Option<String>, hi: Option<String>) -> Option<String> {
-    match (lo.filter(|s| !s.is_empty()), hi.filter(|s| !s.is_empty())) {
+    let lo = lo.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let hi = hi.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    match (lo, hi) {
         (Some(l), Some(h)) => Some(format!("{l}-{h}")),
-        (None, Some(h)) => Some(format!("<{h}")),
-        (Some(l), None) => Some(format!(">{l}")),
+        (None, Some(h)) => Some(if parse_num(&h).is_some() { format!("<{h}") } else { h }),
+        (Some(l), None) => Some(if parse_num(&l).is_some() { format!(">{l}") } else { l }),
         (None, None) => None,
     }
 }
 
+/// 一份文档在「按报告」里的行。侧文件(云抽取 / 适配器)非空 → 逐条取**印刷值**:数值项要有
+/// 单位、区间、箭头或词典 key 之一(与 `labs_from_json` 的证据闸同一精神,年龄 / 检查号不进
+/// 表);定性值(阴性 / Nonreactive)只在词典认得项目名时进表。侧文件缺或零项 → 与 `aggregate`
+/// 同一条按文档类型限定的正则路(`parser::doc_lab_observations`),出院小结正文里的血压不会
+/// 冒出来当化验单。
 fn lab_report_items(d: &ProjectionDoc) -> Vec<LabReportItemDto> {
     if let Some(json) = d.extraction_json.as_deref() {
         if let Ok(e) = deid::parse_extraction(json) {
-            return e
+            let items: Vec<LabReportItemDto> = e
                 .labs
                 .iter()
                 .filter(|l| !l.name.trim().is_empty() && !l.value.trim().is_empty())
-                .map(|l| {
-                    let m = terminology::resolve_loinc(&l.loinc)
-                        .or_else(|| terminology::normalize(&l.name));
-                    LabReportItemDto {
+                .filter_map(|l| {
+                    let unit = l.unit.trim();
+                    let m = terminology::resolve(&l.name, Some(unit).filter(|u| !u.is_empty()))
+                        .or_else(|| terminology::resolve_loinc(&l.loinc));
+                    let numeric = parse_num(&l.value).is_some()
+                        || l.value.trim().starts_with(['<', '>', '≤', '≥']);
+                    let has_evidence = !unit.is_empty()
+                        || !l.ref_low.trim().is_empty()
+                        || !l.ref_high.trim().is_empty()
+                        || !l.flag.trim().is_empty()
+                        || m.is_some();
+                    if (numeric && !has_evidence) || (!numeric && m.is_none()) {
+                        return None;
+                    }
+                    Some(LabReportItemDto {
                         name: m
                             .as_ref()
                             .map(|m| m.canonical_name.clone())
                             .unwrap_or_else(|| l.name.trim().to_string()),
                         analyte_key: m.map(|m| m.key),
                         value: l.value.trim().to_string(),
-                        unit: Some(l.unit.trim().to_string()).filter(|u| !u.is_empty()),
-                        reference: ref_text(
-                            Some(l.ref_low.trim().to_string()),
-                            Some(l.ref_high.trim().to_string()),
-                        ),
+                        unit: Some(unit.to_string()).filter(|u| !u.is_empty()),
+                        reference: ref_text(Some(l.ref_low.clone()), Some(l.ref_high.clone())),
                         flag: norm_flag(&l.flag, &l.value, &l.ref_low, &l.ref_high),
                         unverified: l.unverified,
-                    }
+                    })
                 })
                 .collect();
+            if !items.is_empty() {
+                return items;
+            }
         }
     }
-    parser::extract_labs(&d.text)
+    let docs = source_docs(std::slice::from_ref(d));
+    let Some(sd) = docs.first() else {
+        return Vec::new();
+    };
+    parser::doc_lab_observations(sd)
         .into_iter()
+        .filter(|o| !o.self_measured)
         .map(|o| LabReportItemDto {
             name: o.canonical_name.clone().unwrap_or_else(|| o.raw_name.clone()),
             analyte_key: o.analyte_key.clone(),
@@ -1218,6 +1253,8 @@ mod tests {
         assert_eq!(cr.flag.as_deref(), Some("H"));
         let k = items.iter().find(|i| i.analyte_key.as_deref() == Some("potassium")).unwrap();
         assert_eq!(k.flag.as_deref(), Some("L"), "没印箭头就按区间判");
+        let hgb = items.iter().find(|i| i.analyte_key.as_deref() == Some("hgb")).unwrap();
+        assert!(hgb.flag.is_none());
         // 词典认得「HIV Ab」→ 中文名;定性值原样进表、不判箭头。
         let hiv = items.iter().find(|i| i.value == "Nonreactive").unwrap();
         assert_eq!(hiv.name, "HIV抗体");
@@ -1225,6 +1262,35 @@ mod tests {
         let title = lab_report_title(&d, &items);
         assert!(title.contains("肾功能") || title.contains("血常规") || title.contains("电解质"), "{title}");
         assert_eq!(items.iter().filter(|i| i.flag.is_some()).count(), 2);
+    }
+
+    /// 审查 C3 / S9 / S10:印刷 H 但值在区间内 → 以区间为准不出箭头;`<0.1` 这种不按区间判;
+    /// 单端定性区间原样;年龄这种没证据的数不进表;侧文件零项退回正则。
+    #[test]
+    fn lab_report_flag_rules_and_evidence_gate() {
+        let json = r#"{"doc_type":"lab_report","doc_date":"2026-10-14","labs":[
+            {"name":"Hemoglobin","value":"14","unit":"g/dL","ref_low":"13","ref_high":"17","flag":"H","loinc":"718-7"},
+            {"name":"Troponin I","value":"<0.01","unit":"ng/mL","ref_low":"","ref_high":"0.04","flag":""},
+            {"name":"年龄","value":"60","unit":"","ref_low":"","ref_high":"","flag":""},
+            {"name":"HBsAg","value":"Negative","unit":"","ref_low":"","ref_high":"Negative","flag":""}
+        ],"meds":[],"diagnoses":[]}"#;
+        let d = doc("", Some(json), "lab_report", "Labs");
+        let items = lab_report_items(&d);
+        let hgb = items.iter().find(|i| i.analyte_key.as_deref() == Some("hgb")).unwrap();
+        assert!(hgb.flag.is_none(), "区间优先于印刷 H");
+        let tn = items.iter().find(|i| i.value == "<0.01").unwrap();
+        assert!(tn.flag.is_none());
+        assert_eq!(tn.reference.as_deref(), Some("<0.04"));
+        assert!(items.iter().all(|i| i.name != "年龄"), "{items:?}");
+        if let Some(hb) = items.iter().find(|i| i.value == "Negative") {
+            assert_eq!(hb.reference.as_deref(), Some("Negative"), "定性区间不加 <");
+        }
+        // 侧文件零项 → 正则路(按文档类型限定):出院小结正文里的血压不是化验单。
+        let empty = r#"{"doc_type":"discharge_summary","doc_date":"2026-10-14","labs":[],"meds":[],"diagnoses":[]}"#;
+        let ds = doc("出院小结\n入院时血压 150/90 mmHg\n出院带药:美托洛尔 25mg\n", Some(empty), "discharge_summary", "出院小结");
+        assert!(lab_report_items(&ds).is_empty(), "{:?}", lab_report_items(&ds));
+        let lab = doc("检验报告单\n肌酐 95 umol/L 44-133\n", Some(empty), "lab_report", "化验单");
+        assert_eq!(lab_report_items(&lab).len(), 1, "化验单零项侧文件退回正则读到肌酐");
     }
 
     #[test]

@@ -40,11 +40,13 @@ String labGroupOf(TrendSeriesDto s) => switch (s.panel) {
 
 /// 按最近一次结果日期倒序(同日按名字)。
 List<TrendSeriesDto> sortByLatest(List<TrendSeriesDto> list) {
+  // 最近日期各算一次,不在比较器里反复排点(几百条序列 × 几百个点)。
+  final latest = <TrendSeriesDto, String>{
+    for (final s in list) s: trendDatedPoints(s).lastOrNull?.date ?? '',
+  };
   final out = [...list];
   out.sort((a, b) {
-    final da = trendDatedPoints(a).last.date!;
-    final db = trendDatedPoints(b).last.date!;
-    final c = db.compareTo(da);
+    final c = latest[b]!.compareTo(latest[a]!);
     return c != 0 ? c : a.name.compareTo(b.name);
   });
   return out;
