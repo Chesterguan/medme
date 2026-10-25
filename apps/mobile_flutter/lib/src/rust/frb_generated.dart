@@ -3614,13 +3614,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DemoLoadProgressDto dco_decode_demo_load_progress_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return DemoLoadProgressDto(
       loaded: dco_decode_i_64(arr[0]),
       total: dco_decode_i_64(arr[1]),
       succeeded: dco_decode_i_64(arr[2]),
-      error: dco_decode_opt_String(arr[3]),
+      updated: dco_decode_i_64(arr[3]),
+      error: dco_decode_opt_String(arr[4]),
     );
   }
 
@@ -4640,11 +4641,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_loaded = sse_decode_i_64(deserializer);
     var var_total = sse_decode_i_64(deserializer);
     var var_succeeded = sse_decode_i_64(deserializer);
+    var var_updated = sse_decode_i_64(deserializer);
     var var_error = sse_decode_opt_String(deserializer);
     return DemoLoadProgressDto(
       loaded: var_loaded,
       total: var_total,
       succeeded: var_succeeded,
+      updated: var_updated,
       error: var_error,
     );
   }
@@ -5926,6 +5929,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_64(self.loaded, serializer);
     sse_encode_i_64(self.total, serializer);
     sse_encode_i_64(self.succeeded, serializer);
+    sse_encode_i_64(self.updated, serializer);
     sse_encode_opt_String(self.error, serializer);
   }
 

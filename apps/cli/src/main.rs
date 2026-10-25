@@ -89,9 +89,10 @@ fn main() -> anyhow::Result<()> {
                 eprintln!("[{done}/{total}]");
             })?;
             println!(
-                "total {}  imported {}  deduped {}  no_text {}  failed {}  verify_rejected {}  verify_unverified {}",
+                "total {}  imported {}  updated {}  deduped {}  no_text {}  failed {}  verify_rejected {}  verify_unverified {}",
                 r.total,
                 r.imported,
+                r.updated,
                 r.deduped,
                 r.no_text,
                 r.failed.len(),

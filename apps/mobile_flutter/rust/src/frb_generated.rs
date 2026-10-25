@@ -3514,11 +3514,13 @@ impl SseDecode for crate::api::dto::DemoLoadProgressDto {
         let mut var_loaded = <i64>::sse_decode(deserializer);
         let mut var_total = <i64>::sse_decode(deserializer);
         let mut var_succeeded = <i64>::sse_decode(deserializer);
+        let mut var_updated = <i64>::sse_decode(deserializer);
         let mut var_error = <Option<String>>::sse_decode(deserializer);
         return crate::api::dto::DemoLoadProgressDto {
             loaded: var_loaded,
             total: var_total,
             succeeded: var_succeeded,
+            updated: var_updated,
             error: var_error,
         };
     }
@@ -5204,6 +5206,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::DemoLoadProgressDto {
             self.loaded.into_into_dart().into_dart(),
             self.total.into_into_dart().into_dart(),
             self.succeeded.into_into_dart().into_dart(),
+            self.updated.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -6093,6 +6096,7 @@ impl SseEncode for crate::api::dto::DemoLoadProgressDto {
         <i64>::sse_encode(self.loaded, serializer);
         <i64>::sse_encode(self.total, serializer);
         <i64>::sse_encode(self.succeeded, serializer);
+        <i64>::sse_encode(self.updated, serializer);
         <Option<String>>::sse_encode(self.error, serializer);
     }
 }
