@@ -611,9 +611,11 @@ fn mask_meds_blocks(text: &str) -> Cow<'_, str> {
 /// carries neither a dose nor a frequency.
 fn dose_string(m: &MedObservation) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
-    match (m.dose_num, &m.dose_unit) {
-        (Some(n), Some(u)) => parts.push(format!("{n}{u}")),
-        (Some(n), None) => parts.push(format!("{n}")),
+    match (&m.dose_raw, m.dose_num, &m.dose_unit) {
+        // 复方剂量(`875-125mg`)原样,别截成最后一段。
+        (Some(raw), _, _) => parts.push(raw.clone()),
+        (None, Some(n), Some(u)) => parts.push(format!("{n}{u}")),
+        (None, Some(n), None) => parts.push(format!("{n}")),
         _ => {}
     }
     if let Some(f) = &m.frequency {

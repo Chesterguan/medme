@@ -44,6 +44,7 @@ class VisitSummaryBody extends StatefulWidget {
     required this.summary,
     required this.onOpenDoc,
     required this.onAddNote,
+    this.memberName,
     this.showHeading = true,
     this.footer,
   });
@@ -51,6 +52,9 @@ class VisitSummaryBody extends StatefulWidget {
   final VisitSummaryDto summary;
   final void Function(int docId) onOpenDoc;
   final VoidCallback onAddNote;
+
+  /// 页眉用成员名(用户给档案起的名),不用病历里抽出来的大写姓氏;null 退回抽出来的名字。
+  final String? memberName;
 
   /// 正文顶部要不要画一行「给医生看」抬头。`ForDoctorScreen` 传 `false` ——
   /// 那一页的 AppBar 上已经写着「给医生看」,正文再画一遍就是同屏两个自己的
@@ -79,7 +83,7 @@ class _VisitSummaryBodyState extends State<VisitSummaryBody> {
     final s = widget.summary;
     final p = s.patient;
     final who = [
-      p.name,
+      (widget.memberName ?? '').isNotEmpty ? widget.memberName : p.name,
       p.gender,
       p.age,
     ].whereType<String>().where((x) => x.isNotEmpty).join(' · ');
