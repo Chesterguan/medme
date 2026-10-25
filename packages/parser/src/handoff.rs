@@ -643,9 +643,21 @@ const EN_REACTION_WORDS: &[&str] = &[
     "numbness",
 ];
 
-/// `Bactrim Ds Hives and Other` → (`Bactrim Ds`, `Hives and Other`);没有反应词 → 原样。
+/// `Bactrim Ds [Sulfamethoxazole-Trimethoprim] Hives and Other (See Comments)` →
+/// (`Bactrim Ds`, `Hives and Other`);没有反应词 → 原样(方括号成分注释原样保留)。
 fn split_trailing_reactions(item: &str) -> (String, String) {
-    let words: Vec<&str> = item.split_whitespace().collect();
+    // 先去掉方括号 / 圆括号里的注释(成分、See Comments)再找结尾的反应词;找不到就原样返回。
+    let mut clean = String::new();
+    let mut depth = 0usize;
+    for ch in item.chars() {
+        match ch {
+            '[' | '(' => depth += 1,
+            ']' | ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => clean.push(ch),
+            _ => {}
+        }
+    }
+    let words: Vec<&str> = clean.split_whitespace().collect();
     let mut cut = words.len();
     while cut > 1 {
         let w = words[cut - 1]
@@ -662,6 +674,9 @@ fn split_trailing_reactions(item: &str) -> (String, String) {
     // 反应段不能以 and / or 开头(`X and Hives` 里的 and 属于反应段才算)。
     while cut < words.len() && matches!(words[cut].to_lowercase().as_str(), "and" | "or") {
         cut += 1;
+    }
+    if cut == words.len() {
+        return (item.trim().to_string(), String::new());
     }
     (words[..cut].join(" "), words[cut..].join(" "))
 }
@@ -724,9 +739,12 @@ fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
                         break;
                     }
                     let Some(body) = row.strip_prefix(['•', '·']) else {
-                        // Epic prints a row's comment on the next, indented line — skip it;
-                        // a non-indented, non-bullet line is the next section.
-                        if raw.starts_with(' ') || raw.starts_with('\t') {
+                        // Epic prints a row's comment on the next line — indented, or (PDF 抽出来的
+                        // 文本)不缩进但紧接着下一颗 bullet;都跳过。其余非 bullet 行是下一节。
+                        let next_is_bullet = lines
+                            .get(k + 1)
+                            .is_some_and(|l| l.trim().starts_with(['•', '·']));
+                        if raw.starts_with(' ') || raw.starts_with('\t') || next_is_bullet {
                             k += 1;
                             continue;
                         }

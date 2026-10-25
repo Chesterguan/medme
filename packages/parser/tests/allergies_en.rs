@@ -135,7 +135,7 @@ fn inline_list_wrapped_across_lines_and_narrative_fragments() {
 
 #[test]
 fn single_space_rows_split_trailing_reaction_words_and_headings_are_dropped() {
-    let t = "Allergies\nAllergen   Reactions\n • Bactrim Ds Hives and Other\n • Shellfish Allergy Itching\n • Seasonal Ic Other\n • Allergies\n • Penicillins\n\n";
+    let t = "Allergies:\nAllergies\nAllergen Reactions\n• Bactrim Ds [Sulfamethoxazole-Trimethoprim] Hives and Other (See Comments)\nPatient states he had a fever after every dose\n• Shellfish Allergy Itching\n• Seasonal Ic [Octacosanol] Other\n• Allergies\n• Penicillins\n\n";
     assert_eq!(
         parser::extract_allergies_pairs(t),
         vec![
