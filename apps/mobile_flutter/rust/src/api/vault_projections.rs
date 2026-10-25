@@ -726,6 +726,164 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
 ///
 /// 序列顺序沿用 `parser::aggregate` 的确定序(按显示名、再按 `analyte_key`)。
 /// 全部点都无日期的序列不出现在结果里 —— 见 [`is_renderable`]。
+/// 「化验 · 按报告」的一行(修订 2,MyChart Test Results):一份化验文档 = 一张单。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabReportDto {
+    pub document_id: i64,
+    /// `"YYYY-MM-DD"`;定不出日期为 None(排最后)。
+    pub date: Option<String>,
+    /// 「血常规 · 肝功能」这类词典面板名(最多两个,按项目数排);一个都认不出 → 文档标题 → 「化验」。
+    pub title: String,
+    pub abnormal_count: u32,
+    pub items: Vec<LabReportItemDto>,
+}
+
+/// 单上的一行:项目 / 印刷值 / 单位 / 参考 / 箭头。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabReportItemDto {
+    /// 词典中文名;认不出用原名。
+    pub name: String,
+    pub analyte_key: Option<String>,
+    /// **印刷值**(侧文件 / 抽取的原字符串;正则路径是解析出的数,按显示规则格式化)。
+    pub value: String,
+    pub unit: Option<String>,
+    /// `lo-hi` / `<hi` / `>lo`;没有为 None。
+    pub reference: Option<String>,
+    /// `"H"` / `"L"`;正常或判不出为 None。
+    pub flag: Option<String>,
+    pub unverified: bool,
+}
+
+fn norm_flag(raw: &str, value: &str, lo: &str, hi: &str) -> Option<String> {
+    let r = raw.trim();
+    if r.contains('↑') || r.starts_with('H') || r.starts_with('h') {
+        return Some("H".into());
+    }
+    if r.contains('↓') || r.starts_with('L') || r.starts_with('l') {
+        return Some("L".into());
+    }
+    let v: f64 = value.trim().trim_start_matches(['<', '>']).parse().ok()?;
+    if let Ok(h) = hi.trim().parse::<f64>() {
+        if v > h {
+            return Some("H".into());
+        }
+    }
+    if let Ok(l) = lo.trim().parse::<f64>() {
+        if v < l {
+            return Some("L".into());
+        }
+    }
+    None
+}
+
+fn ref_text(lo: Option<String>, hi: Option<String>) -> Option<String> {
+    match (lo.filter(|s| !s.is_empty()), hi.filter(|s| !s.is_empty())) {
+        (Some(l), Some(h)) => Some(format!("{l}-{h}")),
+        (None, Some(h)) => Some(format!("<{h}")),
+        (Some(l), None) => Some(format!(">{l}")),
+        (None, None) => None,
+    }
+}
+
+fn lab_report_items(d: &ProjectionDoc) -> Vec<LabReportItemDto> {
+    if let Some(json) = d.extraction_json.as_deref() {
+        if let Ok(e) = deid::parse_extraction(json) {
+            return e
+                .labs
+                .iter()
+                .filter(|l| !l.name.trim().is_empty() && !l.value.trim().is_empty())
+                .map(|l| {
+                    let m = terminology::resolve_loinc(&l.loinc)
+                        .or_else(|| terminology::normalize(&l.name));
+                    LabReportItemDto {
+                        name: m
+                            .as_ref()
+                            .map(|m| m.canonical_name.clone())
+                            .unwrap_or_else(|| l.name.trim().to_string()),
+                        analyte_key: m.map(|m| m.key),
+                        value: l.value.trim().to_string(),
+                        unit: Some(l.unit.trim().to_string()).filter(|u| !u.is_empty()),
+                        reference: ref_text(
+                            Some(l.ref_low.trim().to_string()),
+                            Some(l.ref_high.trim().to_string()),
+                        ),
+                        flag: norm_flag(&l.flag, &l.value, &l.ref_low, &l.ref_high),
+                        unverified: l.unverified,
+                    }
+                })
+                .collect();
+        }
+    }
+    parser::extract_labs(&d.text)
+        .into_iter()
+        .map(|o| LabReportItemDto {
+            name: o.canonical_name.clone().unwrap_or_else(|| o.raw_name.clone()),
+            analyte_key: o.analyte_key.clone(),
+            value: fmt_num(o.value_num),
+            unit: o.unit_raw.clone(),
+            reference: ref_text(o.ref_low.map(fmt_num), o.ref_high.map(fmt_num)),
+            flag: o.flag.clone().filter(|f| f == "H" || f == "L"),
+            unverified: o.unverified,
+        })
+        .collect()
+}
+
+fn lab_report_title(d: &ProjectionDoc, items: &[LabReportItemDto]) -> String {
+    let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for it in items {
+        if let Some(p) = it.analyte_key.as_deref().and_then(terminology::panel_for) {
+            *counts.entry(p).or_default() += 1;
+        }
+    }
+    let mut panels: Vec<(&'static str, usize)> = counts.into_iter().collect();
+    panels.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    let names: Vec<&str> = panels.iter().take(2).map(|(p, _)| *p).collect();
+    if !names.is_empty() {
+        return names.join(" · ");
+    }
+    d.title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or("化验")
+        .to_string()
+}
+
+/// 「化验 · 按报告」:每份带化验项目的文档一行,按日期倒序(无日期最后)。
+/// 自测记录 / 笔记 / 动作日志不是化验单,不列。
+pub fn view_lab_reports() -> anyhow::Result<Vec<LabReportDto>> {
+    let projection = gather()?;
+    let mut out: Vec<LabReportDto> = Vec::new();
+    for d in &projection.docs {
+        if matches!(
+            d.doc_type.as_deref(),
+            Some("self_measurement") | Some("note") | Some("profile_event")
+        ) {
+            continue;
+        }
+        let items = lab_report_items(d);
+        if items.is_empty() {
+            continue;
+        }
+        let abnormal_count = items.iter().filter(|i| i.flag.is_some()).count() as u32;
+        out.push(LabReportDto {
+            document_id: d.document_id,
+            date: d.date.map(fmt_date),
+            title: lab_report_title(d, &items),
+            abnormal_count,
+            items,
+        });
+    }
+    out.sort_by(|a, b| {
+        b.date
+            .is_some()
+            .cmp(&a.date.is_some())
+            .then(b.date.cmp(&a.date))
+            .then(b.document_id.cmp(&a.document_id))
+    });
+    Ok(out)
+}
+
 pub fn view_trends() -> anyhow::Result<Vec<TrendSeriesDto>> {
     let projection = gather()?;
     let src = source_docs(&projection.docs);
@@ -1030,6 +1188,58 @@ fn render_plain_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn doc(text: &str, json: Option<&str>, doc_type: &str, title: &str) -> ProjectionDoc {
+        ProjectionDoc {
+            document_id: 7,
+            date: "2026-10-14".parse().ok(),
+            text: text.into(),
+            doc_type: Some(doc_type.into()),
+            title: Some(title.into()),
+            extraction_json: json.map(str::to_string),
+        }
+    }
+
+    /// 修订 2:按报告的一行 —— 侧文件路径取印刷值、箭头按 flag / 区间判,标题用面板中文名。
+    #[test]
+    fn lab_report_from_sidecar_keeps_printed_values_and_titles_by_panel() {
+        let json = r#"{"doc_type":"lab_report","doc_date":"2026-10-14","labs":[
+            {"name":"Creatinine","value":"1.4","unit":"mg/dL","ref_low":"0.6","ref_high":"1.2","flag":"H","loinc":"2160-0"},
+            {"name":"Hemoglobin","value":"13.5","unit":"g/dL","ref_low":"13","ref_high":"17","flag":"","loinc":"718-7"},
+            {"name":"Potassium","value":"3.2","unit":"mmol/L","ref_low":"3.5","ref_high":"5.1","flag":"","loinc":"2823-3"},
+            {"name":"HIV Ab","value":"Nonreactive","unit":"","ref_low":"","ref_high":"","flag":""}
+        ],"meds":[],"diagnoses":[]}"#;
+        let d = doc("irrelevant", Some(json), "lab_report", "Labs");
+        let items = lab_report_items(&d);
+        assert_eq!(items.len(), 4);
+        let cr = items.iter().find(|i| i.analyte_key.as_deref() == Some("creatinine")).unwrap();
+        assert_eq!(cr.value, "1.4");
+        assert_eq!(cr.reference.as_deref(), Some("0.6-1.2"));
+        assert_eq!(cr.flag.as_deref(), Some("H"));
+        let k = items.iter().find(|i| i.analyte_key.as_deref() == Some("potassium")).unwrap();
+        assert_eq!(k.flag.as_deref(), Some("L"), "没印箭头就按区间判");
+        // 词典认得「HIV Ab」→ 中文名;定性值原样进表、不判箭头。
+        let hiv = items.iter().find(|i| i.value == "Nonreactive").unwrap();
+        assert_eq!(hiv.name, "HIV抗体");
+        assert!(hiv.flag.is_none());
+        let title = lab_report_title(&d, &items);
+        assert!(title.contains("肾功能") || title.contains("血常规") || title.contains("电解质"), "{title}");
+        assert_eq!(items.iter().filter(|i| i.flag.is_some()).count(), 2);
+    }
+
+    #[test]
+    fn lab_report_from_plain_text_and_title_fallback() {
+        let d = doc("检验报告单\n肌酐 95 umol/L 44-133\n", None, "lab_report", "化验单 2026-10-14");
+        let items = lab_report_items(&d);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].analyte_key.as_deref(), Some("creatinine"));
+        assert_eq!(items[0].reference.as_deref(), Some("44-133"));
+        let none = doc("今天天气不错", None, "clinical_note", "门诊病历");
+        assert!(lab_report_items(&none).is_empty());
+        let unknown = doc("", Some(r#"{"doc_type":"lab_report","doc_date":"2026-10-14","labs":[{"name":"Zebra index","value":"3","unit":"u","ref_low":"","ref_high":"","flag":""}],"meds":[],"diagnoses":[]}"#), "lab_report", "Special panel");
+        let items = lab_report_items(&unknown);
+        assert_eq!(lab_report_title(&unknown, &items), "Special panel", "一个都认不出就用文档标题");
+    }
     use crate::api::dto::SelfMeasuredValueDto;
 
     // 端到端测试跑同一个进程级 `api::vault::VAULT` cell(和生产代码一样,一次只有一个

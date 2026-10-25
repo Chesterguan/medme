@@ -47,7 +47,7 @@ void main() {
         reason: '空态没给第二条出路(我 → 关于 里的示例数据)');
 
     // ── 趋势(`s2`)──
-    await gotoTab(tester, HomeTab.now);
+    await gotoTab(tester, HomeTab.labs);
     await waitFor(tester, find.text('还画不出趋势'));
     expect(find.text('去「病历」添加化验单'), findsOneWidget, reason: '趋势空态没有出路按钮');
     // 说的是「我们观察到什么」,不是「你没查过」。
@@ -129,7 +129,7 @@ void main() {
     await settle(tester, total: const Duration(seconds: 2));
     // 最后一次是 i=19 → 19 % 3 == 1 → 趋势。
     expect(
-      find.descendant(of: find.byType(AppBar), matching: find.text('现在')),
+      find.descendant(of: find.byType(AppBar), matching: find.text('化验')),
       findsOneWidget,
       reason: '快切之后 tab 与内容对不上',
     );

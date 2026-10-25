@@ -18,7 +18,7 @@ void bumpVaultRevision() => vaultRevision.value++;
 /// | 病历 | 拍/添加一份,以及回头找某一张 |
 /// | 趋势 | 这个病现在怎么样、吃过什么药、该查没查 |
 /// | 我 | 云端、成员、口令与恢复码、设置 |
-/// (2026-10-23 起四个 tab:病历 / 现在 / 用药 / 我,见 spec 2026-10-23-bottom-tabs。)
+/// (2026-10-25 修订 2 起四个 tab:病历 / 化验 / 用药 / 我,见 spec 2026-10-23-bottom-tabs。)
 ///
 /// **「给医生看」不是 tab** —— 它是「病历」首页那颗主按钮推进去的一整页
 /// (`screens/for_doctor_screen.dart`)。急救大字模式在那一页里。
@@ -28,7 +28,7 @@ class HomeTab {
   HomeTab._();
 
   static const int records = 0;
-  static const int now = 1;
+  static const int labs = 1;
   static const int meds = 2;
   static const int me = 3;
 
@@ -43,10 +43,10 @@ final ValueNotifier<int> selectedTab = ValueNotifier<int>(HomeTab.records);
 /// 跳到「病历」tab。
 void goToRecords() => selectedTab.value = HomeTab.records;
 
-/// 跳到「现在」tab。
-void goToNow() => selectedTab.value = HomeTab.now;
+/// 跳到「化验」tab。
+void goToLabs() => selectedTab.value = HomeTab.labs;
 
-/// 「用药」tab 的预填族筛选(「现在」族卡上的「最近的用药:… ›」点过来时带着;
+/// 「用药」tab 的预填族筛选(健康摘要族卡上的「最近的用药:… ›」点过来时带着;
 /// 用户在「用药」页清掉 chip 即回到全部)。`null` = 不筛。
 final ValueNotifier<String?> medsFilterFamily = ValueNotifier<String?>(null);
 

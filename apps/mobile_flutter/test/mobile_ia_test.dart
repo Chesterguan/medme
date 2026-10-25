@@ -464,7 +464,7 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  group('四 tab 信息架构(2026-10-23:病历 / 现在 / 用药 / 我)', () {
+  group('四 tab 信息架构(2026-10-25:病历 / 化验 / 用药 / 我)', () {
     test('tab 数 == 页面数 == 底栏项数', () {
       // 这三个数字散在两处 const 列表和一组常量里。加一个 tab 时最容易漏掉其中
       // 一处,而漏掉的表现是运行时越界或**点 A 进了 B**,不是编译错误。
@@ -474,7 +474,7 @@ void main() {
     });
 
     test('下标连续、互不重复', () {
-      const order = [HomeTab.records, HomeTab.now, HomeTab.meds, HomeTab.me];
+      const order = [HomeTab.records, HomeTab.labs, HomeTab.meds, HomeTab.me];
       expect(order, [0, 1, 2, 3]);
       expect(order.toSet().length, HomeTab.count);
     });
@@ -482,7 +482,7 @@ void main() {
     test('底栏文案就是 spec 那四个词', () {
       expect(
         HomeShell.tabDestinations.map((d) => d.label).toList(),
-        ['病历', '现在', '用药', '我'],
+        ['病历', '化验', '用药', '我'],
       );
     });
 
@@ -504,8 +504,8 @@ void main() {
     });
 
     test('程序化跳转落在正确的 tab 上', () {
-      goToNow();
-      expect(selectedTab.value, HomeTab.now);
+      goToLabs();
+      expect(selectedTab.value, HomeTab.labs);
       goToMeds();
       expect(selectedTab.value, HomeTab.meds);
       expect(medsFilterFamily.value, isNull);
@@ -521,7 +521,7 @@ void main() {
     test('埋点枚举与 tab 一一对应 —— 少一个就会把 A 的人气记成 B', () {
       expect(AnalyticsTab.values.length, HomeTab.count);
       expect(AnalyticsTab.of(HomeTab.records), AnalyticsTab.records);
-      expect(AnalyticsTab.of(HomeTab.now), AnalyticsTab.now);
+      expect(AnalyticsTab.of(HomeTab.labs), AnalyticsTab.labs);
       expect(AnalyticsTab.of(HomeTab.meds), AnalyticsTab.meds);
       expect(AnalyticsTab.of(HomeTab.me), AnalyticsTab.me);
       expect(AnalyticsTab.of(4), isNull);

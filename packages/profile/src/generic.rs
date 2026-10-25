@@ -48,6 +48,19 @@ fn doc_date(ctx: &Ctx<'_>, index: usize) -> Option<NaiveDate> {
         .and_then(|d| d.date)
 }
 
+/// 病历摘要类文档(Epic 导出的「患者摘要」:`doc_type == other`、标题含「摘要」/「summary」):
+/// 它的日期是打印 / 导出日,不是临床事件日。诊断的「最近出现」不认它(修订 2),
+/// 「N 份记录提到」与依据照旧算。
+fn is_summary_doc(ctx: &Ctx<'_>, index: usize) -> bool {
+    ctx.docs.iter().find(|d| d.index == index).is_some_and(|d| {
+        d.doc_type.as_deref() == Some("other")
+            && d.title.as_deref().is_some_and(|t| {
+                let t = t.to_lowercase();
+                t.contains("摘要") || t.contains("summary")
+            })
+    })
+}
+
 fn doc_origin(ctx: &Ctx<'_>, index: usize) -> &'static str {
     if ctx.extracted.contains(&index) {
         "llm"
@@ -128,6 +141,9 @@ fn merge_diagnoses(ctx: &Ctx<'_>) -> BTreeMap<String, DxBuilder> {
             (a, x) => a.or(x),
         };
         for &s in &c.sources {
+            if is_summary_doc(ctx, s) {
+                continue;
+            }
             b.last_seen = b.last_seen.max(doc_date(ctx, s));
         }
         b.sources.extend(c.sources.iter().copied());

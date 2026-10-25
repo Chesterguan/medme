@@ -11,7 +11,7 @@ import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart' show fmtDate;
 import 'package:mobile_flutter/evidence_open.dart';
 import 'package:mobile_flutter/screens/meds_model.dart';
-import 'package:mobile_flutter/screens/now_model.dart' show asMapList;
+import 'package:mobile_flutter/profile_json.dart' show asMapList;
 import 'package:mobile_flutter/skill_packages.dart';
 import 'package:mobile_flutter/src/rust/api/vault_profile.dart' as rust_profile;
 import 'package:mobile_flutter/vault_events.dart';

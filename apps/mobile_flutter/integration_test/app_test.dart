@@ -63,7 +63,7 @@ void main() {
 
     for (final (idx, label) in [
       (HomeTab.records, '病历'),
-      (HomeTab.now, '现在'),
+      (HomeTab.labs, '化验'),
       (HomeTab.meds, '用药'),
       (HomeTab.me, '我'),
     ]) {

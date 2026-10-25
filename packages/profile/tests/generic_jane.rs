@@ -814,3 +814,40 @@ fn recent_window_boundary_is_inclusive_at_365_days() {
     let (r, e) = at("2027-09-15");
     assert!(!r.contains(&"Z95.2".to_string()) && e.contains(&"Z95.2".to_string()));
 }
+
+/// 修订 2:病历摘要文档(`doc_type: other`、标题含「摘要」)的日期是导出日,不算「最近出现」。
+#[test]
+fn summary_documents_do_not_set_a_diagnosis_last_seen() {
+    let mut corpus = load_corpus();
+    corpus.push(Doc {
+        stem: "2026-10-20_病历摘要_UF".into(),
+        kind: "病历摘要".into(),
+        date: "2026-10-20".parse().unwrap(),
+        text: "Epic patient summary printed 2026-10-20\nProblem List\nPresence of prosthetic heart valve [Z95.2]\n".into(),
+        sidecar: r#"{"doc_type":"other","doc_date":"2026-10-20","labs":[],"meds":[],"diagnoses":[{"text":"Presence of prosthetic heart valve","icd":"Z95.2"}]}"#.into(),
+    });
+    assert_eq!(doc_type_for("病历摘要"), "other");
+    let docs: Vec<parser::SourceDoc> = corpus
+        .iter()
+        .enumerate()
+        .map(|(i, d)| parser::SourceDoc {
+            index: i,
+            date: Some(d.date),
+            text: &d.text,
+            doc_type: Some(doc_type_for(&d.kind).into()),
+            title: Some(d.stem.clone()),
+            extraction_json: Some(&d.sidecar),
+        })
+        .collect();
+    let view = profile::materialize_generic(&docs, &[], &[], &[], TODAY.parse().unwrap());
+    let v = serde_json::to_value(&view).unwrap();
+    let cardio = family(&section(&v, "family_cards")["body"]["families"], "cardio");
+    let z95 = cardio["diagnoses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["code"] == "Z95.2")
+        .unwrap();
+    assert_eq!(z95["last_seen"], "2026-09-14", "摘要文档的日期不算最近出现");
+    assert_eq!(z95["doc_count"], 11, "但仍算一份记录提到");
+}
