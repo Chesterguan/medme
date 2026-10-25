@@ -743,7 +743,7 @@ class _AnchoredTextState extends State<AnchoredText> {
 
   void _jump(int i) {
     final ctx = _keys[i].currentContext;
-    if (ctx != null) Scrollable.ensureVisible(ctx, alignment: 0.05, duration: const Duration(milliseconds: 300));
+    if (ctx != null) Scrollable.ensureVisible(ctx, alignment: 0, duration: const Duration(milliseconds: 300));
   }
 
   @override
@@ -757,7 +757,8 @@ class _AnchoredTextState extends State<AnchoredText> {
       final from = cuts[k], to = cuts[k + 1];
       if (from >= to) continue;
       final isAnchor = k > 0;
-      final body = lines.sublist(isAnchor ? from + 1 : from, to).join('\n');
+      // 段首 / 段尾的空行不画(页眉折掉后会留下一串空行,首段顶上会空一大块)。
+      final body = lines.sublist(isAnchor ? from + 1 : from, to).join('\n').replaceAll(RegExp(r'^\n+|\n+$'), '');
       segments.add(
         Column(
           key: isAnchor ? _keys[k - 1] : null,

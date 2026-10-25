@@ -1018,7 +1018,12 @@ pub fn is_nursing_order(name: &str) -> bool {
 /// → `shellfish`;`Bactrim Ds [Sulfamethoxazole-Trimethoprim]` → `sulfamethoxazole-trimethoprim`。
 pub fn allergen_key(raw: &str) -> String {
     // 方括号里是成分(`[PENICILLIN G]` / `[Sulfamethoxazole-Trimethoprim]`):取成分的第一个词。
-    let base = bracket_content(raw).unwrap_or_else(|| allergen_display(raw));
+    allergen_root(&bracket_content(raw).unwrap_or_else(|| allergen_display(raw)))
+}
+
+/// 一串过敏原文字的词根:去 allergy / products / protein / containing / derived 这类后缀词,取第一个
+/// 实体词,单复数同根。
+pub fn allergen_root(text: &str) -> String {
     const GENERIC: &[&str] = &[
         "allergy",
         "allergies",
@@ -1042,7 +1047,7 @@ pub fn allergen_key(raw: &str) -> String {
         "the",
         "of",
     ];
-    let word = base
+    let word = text
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
         .find(|w| !w.is_empty() && !GENERIC.contains(w))
@@ -1217,6 +1222,19 @@ pub fn materialize_meds(
         aliases: Vec<String>,
     }
     let mut allergies: BTreeMap<String, AllergyAcc> = BTreeMap::new();
+    // 第一遍:带方括号成分的写法(`Bactrim Ds [Sulfamethoxazole-Trimethoprim]`)告诉我们品牌词根
+    // → 成分词根;不带方括号的同一品牌(`Bactrim Ds`)第二遍靠它并进同一行。
+    let mut brand_to_ingredient: BTreeMap<String, String> = BTreeMap::new();
+    for d in &ctx.docs {
+        for (substance, _) in parser::extract_allergies_pairs(d.text) {
+            if let Some(ing) = bracket_content(&substance) {
+                let brand = allergen_root(&allergen_display(&substance));
+                if !brand.is_empty() {
+                    brand_to_ingredient.insert(brand, allergen_root(&ing));
+                }
+            }
+        }
+    }
     for d in &ctx.docs {
         for (substance, reaction) in parser::extract_allergies_pairs(d.text) {
             // 提示词把「Allergies」那一行排在同名的药物清单行前面(审查 I9)。
@@ -1230,7 +1248,12 @@ pub fn materialize_meds(
                 None,
                 true,
             );
-            let key = allergen_key(&substance);
+            let mut key = allergen_key(&substance);
+            if bracket_content(&substance).is_none() {
+                if let Some(ing) = brand_to_ingredient.get(&key) {
+                    key = ing.clone();
+                }
+            }
             if key.is_empty() {
                 continue;
             }
