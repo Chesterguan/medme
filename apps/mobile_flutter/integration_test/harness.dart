@@ -395,8 +395,8 @@ Future<void> withTextScale(
 /// 当前成员名(调试输出用)。
 String get currentMemberName => ProfileManager.instance.current.name;
 
-/// 四个一级 tab 的标签,顺序同 `HomeTab`(2026-10-23:病历 / 现在 / 用药 / 我)。
-const tabLabels = ['病历', '现在', '用药', '我'];
+/// 四个一级 tab 的标签,顺序同 `HomeTab`(2026-10-25:病历 / 化验 / 用药 / 我)。
+const tabLabels = ['病历', '化验', '用药', '我'];
 
 /// 「病历」→ hero 卡下面那颗白底方块「给医生看」→ 整页(`s4`)。
 ///

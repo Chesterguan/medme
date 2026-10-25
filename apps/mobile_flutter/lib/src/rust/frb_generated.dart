@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 600123809;
+  int get rustContentHash => -1765312480;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -439,6 +439,8 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<EmergencyCardDto> crateApiVaultProjectionsViewEmergencyCard();
+
+  Future<List<LabReportDto>> crateApiVaultProjectionsViewLabReports();
 
   Future<List<String>> crateApiVaultProjectionsViewTrendPanelCatalog();
 
@@ -3321,7 +3323,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "view_emergency_card", argNames: []);
 
   @override
-  Future<List<String>> crateApiVaultProjectionsViewTrendPanelCatalog() {
+  Future<List<LabReportDto>> crateApiVaultProjectionsViewLabReports() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -3330,6 +3332,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             generalizedFrbRustBinding,
             serializer,
             funcId: 86,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_lab_report_dto,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiVaultProjectionsViewLabReportsConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVaultProjectionsViewLabReportsConstMeta =>
+      const TaskConstMeta(debugName: "view_lab_reports", argNames: []);
+
+  @override
+  Future<List<String>> crateApiVaultProjectionsViewTrendPanelCatalog() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 87,
             port: port_,
           );
         },
@@ -3356,7 +3385,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 87,
+            funcId: 88,
             port: port_,
           );
         },
@@ -3383,7 +3412,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 88,
+            funcId: 89,
             port: port_,
           );
         },
@@ -3728,6 +3757,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LabReportDto dco_decode_lab_report_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return LabReportDto(
+      documentId: dco_decode_i_64(arr[0]),
+      date: dco_decode_opt_String(arr[1]),
+      title: dco_decode_String(arr[2]),
+      abnormalCount: dco_decode_u_32(arr[3]),
+      items: dco_decode_list_lab_report_item_dto(arr[4]),
+    );
+  }
+
+  @protected
+  LabReportItemDto dco_decode_lab_report_item_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return LabReportItemDto(
+      name: dco_decode_String(arr[0]),
+      analyteKey: dco_decode_opt_String(arr[1]),
+      value: dco_decode_String(arr[2]),
+      unit: dco_decode_opt_String(arr[3]),
+      reference: dco_decode_opt_String(arr[4]),
+      flag: dco_decode_opt_String(arr[5]),
+      unverified: dco_decode_bool(arr[6]),
+    );
+  }
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_String).toList();
@@ -3763,6 +3824,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<DocumentSummaryDto> dco_decode_list_document_summary_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_document_summary_dto).toList();
+  }
+
+  @protected
+  List<LabReportDto> dco_decode_list_lab_report_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_lab_report_dto).toList();
+  }
+
+  @protected
+  List<LabReportItemDto> dco_decode_list_lab_report_item_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_lab_report_item_dto).toList();
   }
 
   @protected
@@ -4729,6 +4802,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LabReportDto sse_decode_lab_report_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_documentId = sse_decode_i_64(deserializer);
+    var var_date = sse_decode_opt_String(deserializer);
+    var var_title = sse_decode_String(deserializer);
+    var var_abnormalCount = sse_decode_u_32(deserializer);
+    var var_items = sse_decode_list_lab_report_item_dto(deserializer);
+    return LabReportDto(
+      documentId: var_documentId,
+      date: var_date,
+      title: var_title,
+      abnormalCount: var_abnormalCount,
+      items: var_items,
+    );
+  }
+
+  @protected
+  LabReportItemDto sse_decode_lab_report_item_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_name = sse_decode_String(deserializer);
+    var var_analyteKey = sse_decode_opt_String(deserializer);
+    var var_value = sse_decode_String(deserializer);
+    var var_unit = sse_decode_opt_String(deserializer);
+    var var_reference = sse_decode_opt_String(deserializer);
+    var var_flag = sse_decode_opt_String(deserializer);
+    var var_unverified = sse_decode_bool(deserializer);
+    return LabReportItemDto(
+      name: var_name,
+      analyteKey: var_analyteKey,
+      value: var_value,
+      unit: var_unit,
+      reference: var_reference,
+      flag: var_flag,
+      unverified: var_unverified,
+    );
+  }
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -4806,6 +4919,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <DocumentSummaryDto>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_document_summary_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<LabReportDto> sse_decode_list_lab_report_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <LabReportDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_lab_report_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<LabReportItemDto> sse_decode_list_lab_report_item_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <LabReportItemDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_lab_report_item_dto(deserializer));
     }
     return ans_;
   }
@@ -5907,6 +6048,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_lab_report_dto(LabReportDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.documentId, serializer);
+    sse_encode_opt_String(self.date, serializer);
+    sse_encode_String(self.title, serializer);
+    sse_encode_u_32(self.abnormalCount, serializer);
+    sse_encode_list_lab_report_item_dto(self.items, serializer);
+  }
+
+  @protected
+  void sse_encode_lab_report_item_dto(
+    LabReportItemDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.name, serializer);
+    sse_encode_opt_String(self.analyteKey, serializer);
+    sse_encode_String(self.value, serializer);
+    sse_encode_opt_String(self.unit, serializer);
+    sse_encode_opt_String(self.reference, serializer);
+    sse_encode_opt_String(self.flag, serializer);
+    sse_encode_bool(self.unverified, serializer);
+  }
+
+  @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
@@ -5972,6 +6138,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_document_summary_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_lab_report_dto(
+    List<LabReportDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_lab_report_dto(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_lab_report_item_dto(
+    List<LabReportItemDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_lab_report_item_dto(item, serializer);
     }
   }
 

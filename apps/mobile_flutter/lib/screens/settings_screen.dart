@@ -13,6 +13,7 @@ import 'package:mobile_flutter/screens/account_screen.dart';
 import 'package:mobile_flutter/screens/member_detail_screen.dart';
 import 'package:mobile_flutter/sync_engine.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/screens/health_summary_screen.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/profile_manager.dart';
@@ -178,6 +179,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
           _SettingsGroup(
             children: [
+              _SettingsRow(
+                icon: Icons.summarize_outlined,
+                title: '健康摘要',
+                subtitle: '诊断、手术史、植入物、过敏',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const HealthSummaryScreen()),
+                ),
+              ),
               _SettingsRow(
                 icon: Icons.key_outlined,
                 title: '口令与恢复码',

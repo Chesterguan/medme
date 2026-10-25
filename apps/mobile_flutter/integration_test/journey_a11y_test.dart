@@ -56,7 +56,7 @@ Future<void> seed() async {
 Future<void> sweepTabs(WidgetTester tester) async {
   for (final (idx, label) in [
     (HomeTab.records, '病历'),
-    (HomeTab.now, '现在'),
+    (HomeTab.labs, '化验'),
       (HomeTab.meds, '用药'),
     (HomeTab.me, '我'),
   ]) {
@@ -188,7 +188,7 @@ void main() {
     addTearDown(watch.stop);
 
     await bootApp(tester, reset: false);
-    await gotoTab(tester, HomeTab.now);
+    await gotoTab(tester, HomeTab.labs);
     await waitFor(tester, find.text('收缩压'));
 
     // inactive → resumed,来回三轮。
@@ -211,7 +211,7 @@ void main() {
 
     // 回来还得停在趋势,数据还在。
     expect(
-      find.descendant(of: find.byType(AppBar), matching: find.text('现在')),
+      find.descendant(of: find.byType(AppBar), matching: find.text('化验')),
       findsOneWidget,
       reason: '后台切回后 tab 变了',
     );

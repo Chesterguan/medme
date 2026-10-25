@@ -24,7 +24,7 @@ import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
 import 'package:mobile_flutter/screens/meds_screen.dart';
-import 'package:mobile_flutter/screens/now_screen.dart';
+import 'package:mobile_flutter/screens/labs_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
@@ -583,12 +583,12 @@ Widget modeRoot(AppModeKind? mode) => switch (mode) {
   _ => const HomeShell(),
 };
 
-/// 底部导航壳:**四个一级 tab**(2026-10-23 spec:病历 / 现在 / 用药 / 我)。
+/// 底部导航壳:**四个一级 tab**(2026-10-25 修订 2:病历 / 化验 / 用药 / 我,照 MyChart)。
 ///
 /// | tab | 用户在干什么 |
 /// |---|---|
 /// | 病历 | 拍/添加一份,以及回头找某一张 |
-/// | 现在 | 最近 12 个月有记录的诊断与化验,按族 |
+/// | 化验 | 按报告 / 按指标,每个指标有折线 |
 /// | 用药 | 最近的用药、过敏、更早的用药 |
 /// | 我 | 云端、成员、口令与恢复码、设置 |
 ///
@@ -616,7 +616,7 @@ class HomeShell extends StatefulWidget {
   /// 「页面数 == 底栏项数 == [HomeTab.count]」。
   static const List<Widget> tabScreens = [
     ArchiveScreen(),
-    NowScreen(),
+    LabsScreen(),
     MedsScreen(),
     SettingsScreen(),
   ];
@@ -629,9 +629,9 @@ class HomeShell extends StatefulWidget {
       label: '病历',
     ),
     NavigationDestination(
-      icon: Icon(Icons.favorite_outline),
-      selectedIcon: Icon(Icons.favorite),
-      label: '现在',
+      icon: Icon(Icons.science_outlined),
+      selectedIcon: Icon(Icons.science),
+      label: '化验',
     ),
     NavigationDestination(
       icon: Icon(Icons.medication_outlined),

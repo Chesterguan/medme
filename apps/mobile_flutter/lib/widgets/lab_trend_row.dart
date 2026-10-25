@@ -17,10 +17,13 @@ List<TrendSeriesDto> trendSearch(List<TrendSeriesDto> all, String query) {
 }
 
 class LabTrendRow extends StatefulWidget {
-  const LabTrendRow({super.key, required this.series, required this.onOpenDoc});
+  const LabTrendRow({super.key, required this.series, required this.onOpenDoc, this.onTap});
 
   final TrendSeriesDto series;
   final void Function(int docId) onOpenDoc;
+
+  /// 给了就整行点它(修订 2:「按指标」点一行进折线页),不再原地展开。
+  final VoidCallback? onTap;
 
   @override
   State<LabTrendRow> createState() => _LabTrendRowState();
@@ -49,7 +52,7 @@ class _LabTrendRowState extends State<LabTrendRow> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         InkWell(
-          onTap: () => setState(() => _expanded = !_expanded),
+          onTap: widget.onTap ?? () => setState(() => _expanded = !_expanded),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
             child: Column(
@@ -91,7 +94,9 @@ class _LabTrendRowState extends State<LabTrendRow> {
                           if (unit != null && unit.isNotEmpty)
                             Text(unit, style: MedType.secondary.copyWith(color: c.ink3)),
                           Icon(
-                            _expanded ? Icons.expand_less : Icons.expand_more,
+                            widget.onTap != null
+                                ? Icons.chevron_right
+                                : (_expanded ? Icons.expand_less : Icons.expand_more),
                             size: 18,
                             color: c.ink3,
                           ),
