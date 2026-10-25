@@ -134,7 +134,7 @@ class _LabsScreenState extends State<LabsScreen> {
                 textInputAction: TextInputAction.search,
                 style: MedType.subtitle.copyWith(color: c.ink),
                 decoration: InputDecoration(
-                  hintText: '搜指标名,如「肌酐」「血红蛋白」',
+                  hintText: _mode == LabsMode.reports ? '搜日期或面板,如「2025-03」「肾功能」' : '搜指标名,如「肌酐」「血红蛋白」',
                   hintStyle: MedType.subtitle.copyWith(color: c.ink3),
                   border: InputBorder.none,
                   isDense: true,
@@ -142,13 +142,12 @@ class _LabsScreenState extends State<LabsScreen> {
               )
             : const Text('化验'),
         actions: [
-          if (_mode == LabsMode.analytes)
-            IconButton(
-              icon: Icon(_searchOpen ? Icons.close : Icons.search),
-              color: c.ink2,
-              tooltip: _searchOpen ? '关闭搜索' : '按名字搜指标',
-              onPressed: _toggleSearch,
-            ),
+          IconButton(
+            icon: Icon(_searchOpen ? Icons.close : Icons.search),
+            color: c.ink2,
+            tooltip: _searchOpen ? '关闭搜索' : (_mode == LabsMode.reports ? '按日期或面板搜报告' : '按名字搜指标'),
+            onPressed: _toggleSearch,
+          ),
           IconButton(
             icon: const Icon(Icons.info_outline),
             color: c.ink2,
@@ -216,6 +215,7 @@ class _LabsScreenState extends State<LabsScreen> {
                           reports: reports,
                           today: today,
                           range: _range,
+                          query: _query,
                           onOpen: (r) => _openReport(r, series),
                         )
                       : LabAnalytesList(
@@ -278,12 +278,16 @@ class LabReportsList extends StatelessWidget {
     required this.onOpen,
     required this.today,
     this.range = ChartRange.oneYear,
+    this.query = '',
   });
 
   final List<LabReportDto> reports;
   final void Function(LabReportDto) onOpen;
   final DateTime today;
   final ChartRange range;
+
+  /// 搜日期(「2025-03」「2025-03-19」)或面板名(checkpoint 1 F13:175 张单只能滚)。
+  final String query;
 
   @override
   Widget build(BuildContext context) {
@@ -303,7 +307,14 @@ class LabReportsList extends StatelessWidget {
     final cutoff = days == null ? null : DateTime(today.year, today.month, today.day).subtract(Duration(days: days));
     final recent = <LabReportDto>[];
     final earlier = <LabReportDto>[];
+    final q = query.trim().toLowerCase();
     for (final r in reports) {
+      if (q.isNotEmpty &&
+          !(r.date ?? '').startsWith(q) &&
+          !r.title.toLowerCase().contains(q) &&
+          !r.panels.any((p) => p.toLowerCase().contains(q))) {
+        continue;
+      }
       final d = r.date == null ? null : DateTime.tryParse(r.date!);
       (cutoff != null && d != null && d.isBefore(cutoff) ? earlier : recent).add(r);
     }
@@ -348,7 +359,11 @@ class LabReportsList extends StatelessWidget {
       if (recent.isEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: MedShape.s3),
-          child: Text('${kChartRangeLabel[range]}内没有化验单', textAlign: TextAlign.center, style: MedType.body.copyWith(color: c.ink2)),
+          child: Text(
+            q.isNotEmpty ? '${kChartRangeLabel[range]}内没有含「$query」的化验单' : '${kChartRangeLabel[range]}内没有化验单',
+            textAlign: TextAlign.center,
+            style: MedType.body.copyWith(color: c.ink2),
+          ),
         ),
       for (final r in recent) Padding(padding: const EdgeInsets.only(bottom: MedShape.s1), child: row(r)),
       if (earlier.isNotEmpty)

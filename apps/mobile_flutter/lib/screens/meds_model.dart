@@ -47,8 +47,8 @@ bool allergyMatches(Map<String, dynamic> a, String query) {
       (a['aliases'] as List? ?? const []).any((x) => '$x'.toLowerCase().contains(q));
 }
 
-/// 最近 / 更早按顶部时间区间重切(Rust 给的 180 天切法只是默认):最近 = 原文没写停、最近记录在
-/// `recentDays` 内(null = 不限);其余更早。无日期的进更早。
+/// 最近 / 更早(checkpoint 1 F11):时间区间决定看哪一段;「最近」= 区间内、原文没写停、且最后一次
+/// 记录距今 ≤ 180 天(Rust 的 `stale`);区间内但超过 180 天没新记录的归「更早」。无日期的进更早。
 ({List<Map<String, dynamic>> recent, List<Map<String, dynamic>> earlier}) medsSplit(
   List<Map<String, dynamic>> all, {
   required DateTime today,
@@ -60,7 +60,7 @@ bool allergyMatches(Map<String, dynamic> a, String query) {
   for (final r in all) {
     final last = DateTime.tryParse('${r['last_seen'] ?? ''}');
     final within = last != null && (cutoff == null || !last.isBefore(cutoff));
-    (r['stopped'] == null && within ? recent : earlier).add(r);
+    (r['stopped'] == null && within && r['stale'] != true ? recent : earlier).add(r);
   }
   return (recent: recent, earlier: earlier);
 }

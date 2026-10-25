@@ -194,7 +194,8 @@ void _docTypeChipTests() {
     expect(find.descendant(of: find.byType(MedCard), matching: find.textContaining('门诊')), findsNothing);
     expect(find.descendant(of: find.byType(MedCard), matching: find.textContaining('住院')), findsNothing);
     expect(rows, findsAtLeast(1));
-    expect(find.text('$_uf · 影像'), findsOneWidget);
+    // 行标题 = document.title(checkpoint 1 F5),医院名在副标。
+    expect(find.text('CT Chest'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

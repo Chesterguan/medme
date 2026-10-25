@@ -116,7 +116,15 @@ class LabTrendCard extends StatelessWidget {
                 )
               else
                 LabLineChart(series: series, points: shown, height: kLabMiniChartHeight, compact: true),
-              const SizedBox(height: 4),
+              // 两端年月小字(规格里有):单点只写左边。
+              Row(
+                children: [
+                  Text(shown.first.date!.substring(0, 7), style: meta),
+                  const Spacer(),
+                  if (shown.length > 1) Text(shown.last.date!.substring(0, 7), style: meta),
+                ],
+              ),
+              const SizedBox(height: 2),
               Row(
                 children: [
                   Expanded(

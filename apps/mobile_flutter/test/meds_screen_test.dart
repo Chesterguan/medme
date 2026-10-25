@@ -93,8 +93,8 @@ void main() {
       expect(s.recent.map((r) => r['name']), ['华法林', '赖诺普利', '左甲状腺素']);
       expect(s.earlier.map((r) => r['name']), ['伏立康唑', '美托洛尔']);
       final all = medsSplit(rows, today: DateTime(2026, 10, 22), recentDays: null);
-      expect(all.recent.length, 4, reason: '全部:没写停的都算最近');
-      expect(all.earlier.map((r) => r['name']), ['伏立康唑']);
+      expect(all.recent.length, 3, reason: '全部:没写停、且 180 天内有记录的才算最近(F11)');
+      expect(all.earlier.map((r) => r['name']), ['伏立康唑', '美托洛尔']);
       expect(medsByClass(s.recent).map((g) => g.label), ['心血管', '抗凝', '其他']);
       expect(medEarlierLine(s.earlier[1]), '2024-03-10 → 2025-03-01 · 3 次记录');
       expect(medEarlierLine(s.earlier[0]), '2024-03-10 → 2026-10-10 · 3 次记录 · 病历写了停药 2025-11-17');
@@ -123,8 +123,9 @@ void main() {
     expect(find.text('2024-03-10 → 2025-03-01 · 3 次记录'), findsOneWidget);
     await t.tap(find.byKey(const ValueKey('range:all')));
     await t.pumpAndSettle();
-    expect(find.text('最近的用药 · 4'), findsOneWidget);
-    expect(find.text('更早的用药 · 1'), findsOneWidget);
+    // 「全部」只放宽区间;超过 180 天没新记录的(美托洛尔)仍在更早(F11)。
+    expect(find.text('最近的用药 · 3'), findsOneWidget);
+    expect(find.text('更早的用药 · 2'), findsOneWidget);
   });
 
   testWidgets('搜「vori」:只剩伏立康唑,三段标题还在', (t) async {

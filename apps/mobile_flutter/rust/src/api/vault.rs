@@ -293,12 +293,21 @@ pub fn get_document(id: i64) -> anyhow::Result<DocumentDetailDto> {
         let ocr_backend = v
             .ocr_backend(id)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let impression = v
+            .extraction_json(id)
+            .ok()
+            .flatten()
+            .and_then(|j| deid::parse_extraction(&j).ok())
+            .map(|e| e.impression.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| crate::api::dto::impression_from_text(&ocr_text));
         Ok(DocumentDetailDto {
             document: doc_summary(v, &doc),
             source_file: SourceFileMetaDto::from(&sf),
             ocr_text,
             ocr_confidence,
             ocr_backend,
+            impression,
         })
     })
 }

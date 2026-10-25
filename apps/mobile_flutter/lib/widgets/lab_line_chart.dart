@@ -330,8 +330,9 @@ class _LabLinePainter extends CustomPainter {
   (int, String Function(DateTime)) _xStep(double spanDays) {
     if (spanDays <= 45) return (7, (d) => '${d.month}/${d.day}');
     if (spanDays <= 120) return (14, (d) => '${d.month}/${d.day}');
-    if (spanDays <= 400) return (61, (d) => '${d.year % 100}/${d.month.toString().padLeft(2, '0')}');
-    if (spanDays <= 800) return (122, (d) => '${d.year % 100}/${d.month.toString().padLeft(2, '0')}');
+    // 「26/01」会被读成 26 日 1 月:写全 「2026-01」。
+    if (spanDays <= 400) return (61, (d) => '${d.year}-${d.month.toString().padLeft(2, '0')}');
+    if (spanDays <= 800) return (122, (d) => '${d.year}-${d.month.toString().padLeft(2, '0')}');
     return (365, (d) => '${d.year}');
   }
 

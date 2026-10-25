@@ -141,10 +141,11 @@ void main() {
         body: HighlightedText(text: 'INR 2.4\nINR 2.4', highlight: 'INR 2.4', start: 8),
       ),
     ));
-    final rich = t.widget<SelectableText>(find.byType(SelectableText));
-    final spans = (rich.textSpan as TextSpan).children!.cast<TextSpan>();
-    expect(spans[0].text, 'INR 2.4\n');
-    expect(spans[1].text, 'INR 2.4');
-    expect(spans[1].style?.backgroundColor, isNotNull);
+    // 高亮段单独一个 widget(打开后要能 ensureVisible 滚到它):前文 + 高亮,后文为空不画。
+    expect(find.byType(SelectableText), findsNWidgets(2));
+    expect(t.widget<SelectableText>(find.byType(SelectableText).at(0)).data, 'INR 2.4\n');
+    final hl = t.widget<SelectableText>(find.byType(SelectableText).at(1));
+    expect(hl.data, 'INR 2.4');
+    expect(hl.style?.fontWeight, FontWeight.w600);
   });
 }

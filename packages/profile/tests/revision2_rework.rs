@@ -31,7 +31,7 @@ fn allergies_merge_by_allergen_across_spellings_and_annotations() {
         .unwrap()
         .to_lowercase()
         .contains("penicillin"));
-    assert_eq!(al[0]["reaction"], "Rash、Hives");
+    assert_eq!(al[0]["reaction"], "皮疹、荨麻疹");
     assert_eq!(al[0]["evidence"].as_array().unwrap().len(), 3);
     assert_eq!(al[0]["aliases"].as_array().unwrap().len(), 3);
     assert_eq!(
@@ -98,4 +98,54 @@ fn sidecar_start_date_sets_since_and_summary_docs_do_not_open_a_run() {
         "摘要文档不开剂量链:{nodes:?}"
     );
     assert!(w["atc"].is_string() || w["atc"].is_null());
+}
+
+/// checkpoint 1 F12:过敏按词根归并,显示中文 + 最短写法,反应译成中文,写法数单算。
+#[test]
+fn allergens_merge_by_root_word_and_bracket_ingredient() {
+    let docs = [
+        (
+            "2026-01-02",
+            "Allergies\nAllergen   Reactions\n • Shellfish Allergy   Itching\n • Seasonal Ic [Octacosanol]   Other\n\n".to_string(),
+        ),
+        (
+            "2026-02-02",
+            "Allergies\nAllergen   Reactions\n • Shellfish-Derived Products   Itching\n • SEASONAL IC [OCTACOSANOL]   Other\n\n".to_string(),
+        ),
+        (
+            "2026-03-02",
+            "Allergies\nAllergen   Reactions\n • SHELLFISH PROTEIN-CONTAINING DRUG PRODUCTS   Itching\n\n".to_string(),
+        ),
+    ];
+    let v = meds_json(&mk_docs(&docs));
+    let al = v["allergies"].as_array().unwrap();
+    assert_eq!(al.len(), 2, "贝类三种写法 + 二十八烷醇两种写法:{al:?}");
+    let shell = al
+        .iter()
+        .find(|a| a["substance"].as_str().unwrap().contains("贝类"))
+        .expect("贝类");
+    assert_eq!(shell["substance"], "贝类(Shellfish Allergy)");
+    assert_eq!(shell["reaction"], "瘙痒");
+    assert_eq!(shell["spellings"], 3);
+    assert_eq!(shell["evidence"].as_array().unwrap().len(), 3);
+    let oct = al
+        .iter()
+        .find(|a| a["substance"].as_str().unwrap().contains("二十八烷醇"))
+        .expect("二十八烷醇");
+    assert_eq!(oct["reaction"], "其他");
+    assert_eq!(oct["spellings"], 1, "只差大小写算同一种写法");
+    assert_eq!(
+        profile::allergen_key("Bactrim Ds [Sulfamethoxazole-Trimethoprim]"),
+        "sulfamethoxazole"
+    );
+    assert_eq!(profile::allergen_key("Penicillins"), "penicillin");
+}
+
+/// checkpoint 1 F11:护理医嘱不算用药。
+#[test]
+fn nursing_orders_are_not_meds() {
+    assert!(profile::is_nursing_order("CHG Treatment"));
+    assert!(profile::is_nursing_order("Chlorhexidine bath"));
+    assert!(!profile::is_nursing_order("Warfarin"));
+    assert!(!profile::is_nursing_order("melatonin"));
 }

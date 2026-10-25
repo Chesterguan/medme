@@ -24,6 +24,26 @@ DocumentSummaryDto _doc({
 
 void main() {
   group('docDisplayTitle', () {
+    test('适配器给的标题(不是文件名)排第一:医院名降到副标(checkpoint 1 F1 / F5)', () {
+      final d = _doc(provider: 'UF Health Shands', docType: 'surgery', title: '手术 · Sternal wound debridement', docDate: '2025-02-13T00:00:00+00:00');
+      expect(docDisplayTitle(d), '手术 · Sternal wound debridement');
+      expect(docSubtitle(d), '手术 · UF Health Shands · 2025-02-13');
+      expect(docDisplayTitle(_doc(provider: 'UF Health Shands', docType: 'other', title: 'Epic 病历摘要')), 'Epic 病历摘要');
+      expect(isSummaryDoc(_doc(docType: 'other', title: 'Epic 病历摘要')), isTrue);
+      expect(isSummaryDoc(_doc(docType: 'discharge_summary', title: 'Discharge Summary')), isFalse);
+      // 带扩展名的用户文件名仍是最后一档。
+      expect(docDisplayTitle(_doc(provider: '北京协和医院', docType: 'lab_report', title: '化验单扫描.pdf')), '北京协和医院 · 化验');
+      expect(
+        sortEncounterDocs([
+          _doc(docType: 'lab_report', title: 'Labs', docDate: '2026-10-05T00:00:00+00:00'),
+          _doc(docType: 'other', title: '护理记录', docDate: '2026-10-05T00:00:00+00:00'),
+          _doc(docType: 'discharge_summary', title: '出院小结', docDate: '2026-10-07T00:00:00+00:00'),
+          _doc(docType: 'surgery', title: '手术 · AVR', docDate: '2026-10-06T00:00:00+00:00'),
+        ]).map((d) => d.title),
+        ['出院小结', '手术 · AVR', 'Labs', '护理记录'],
+      );
+    });
+
     test('院名 + 类型:认得出来的都说出来', () {
       expect(
         docDisplayTitle(

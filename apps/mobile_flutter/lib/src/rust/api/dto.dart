@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `doc_summary`, `extraction_item_count`, `from_encounter`
+// These functions are ignored because they are not marked as `pub`: `doc_summary`, `extraction_item_count`, `from_encounter`, `impression_from_text`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// 认领结果:医生代拍的包被还原进本机保险箱之后,各类记录各有几份。
@@ -230,12 +230,17 @@ class DocumentDetailDto {
   final double? ocrConfidence;
   final String? ocrBackend;
 
+  /// 影像 / 病理的结论段:侧文件 `extraction.impression`(myEHR 适配器抽的),没有就按原文
+  /// `IMPRESSION:` / `FINDINGS:` / 「印象」「结论」标题抓;都没有为 None。**追加在结尾**。
+  final String? impression;
+
   const DocumentDetailDto({
     required this.document,
     required this.sourceFile,
     required this.ocrText,
     this.ocrConfidence,
     this.ocrBackend,
+    this.impression,
   });
 
   @override
@@ -244,7 +249,8 @@ class DocumentDetailDto {
       sourceFile.hashCode ^
       ocrText.hashCode ^
       ocrConfidence.hashCode ^
-      ocrBackend.hashCode;
+      ocrBackend.hashCode ^
+      impression.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -255,7 +261,8 @@ class DocumentDetailDto {
           sourceFile == other.sourceFile &&
           ocrText == other.ocrText &&
           ocrConfidence == other.ocrConfidence &&
-          ocrBackend == other.ocrBackend;
+          ocrBackend == other.ocrBackend &&
+          impression == other.impression;
 }
 
 class DocumentSummaryDto {
