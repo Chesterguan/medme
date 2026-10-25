@@ -221,9 +221,10 @@ class MedsBody extends StatelessWidget {
         if (allergies.isEmpty)
           _Hint(query.isEmpty ? '记录里没找到过敏史' : '没有含「$query」的过敏原')
         else
-          ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: maxAllergyHeight),
-            child: MedCard(
+          // 最多 1/3 屏,多了在卡内滚;ConstrainedBox 放在卡**里**(卡的 Column 给子项的高度是无界的)。
+          MedCard(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxAllergyHeight),
               child: ListView.separated(
                 shrinkWrap: true,
                 padding: EdgeInsets.zero,
