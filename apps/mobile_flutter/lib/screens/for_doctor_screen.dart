@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_flutter/analytics.dart';
 import 'package:mobile_flutter/app_mode.dart';
 import 'package:mobile_flutter/design_tokens.dart';
+import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/screens/document_detail.dart';
 import 'package:mobile_flutter/screens/emergency_card_screen.dart';
 import 'package:mobile_flutter/screens/export_screen.dart';
@@ -170,6 +171,7 @@ class _ForDoctorScreenState extends State<ForDoctorScreen> {
           // `ListView` 的 children(纵向 viewport 拿到无穷高约束,当场炸),
           // 所以那三条是经 `footer` 接进它自己的滚动流里的。
           return VisitSummaryBody(
+            memberName: ProfileManager.instance.displayName,
             summary: snap.data!,
             onOpenDoc: _openDoc,
             onAddNote: _addNote,

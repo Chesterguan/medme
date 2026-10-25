@@ -293,12 +293,21 @@ pub fn get_document(id: i64) -> anyhow::Result<DocumentDetailDto> {
         let ocr_backend = v
             .ocr_backend(id)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let impression = v
+            .extraction_json(id)
+            .ok()
+            .flatten()
+            .and_then(|j| deid::parse_extraction(&j).ok())
+            .map(|e| e.impression.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| crate::api::dto::impression_from_text(&ocr_text));
         Ok(DocumentDetailDto {
             document: doc_summary(v, &doc),
             source_file: SourceFileMetaDto::from(&sf),
             ocr_text,
             ocr_confidence,
             ocr_backend,
+            impression,
         })
     })
 }
@@ -1538,6 +1547,7 @@ pub fn load_demo_data(progress: StreamSink<DemoLoadProgressDto>) -> anyhow::Resu
                 loaded,
                 total,
                 succeeded: count,
+                updated: 0,
                 error: None,
             });
         }
@@ -1556,6 +1566,7 @@ pub fn load_demo_data(progress: StreamSink<DemoLoadProgressDto>) -> anyhow::Resu
                 loaded,
                 total,
                 succeeded: count,
+                updated: 0,
                 error: None,
             });
         }
@@ -1572,6 +1583,7 @@ pub fn load_demo_data(progress: StreamSink<DemoLoadProgressDto>) -> anyhow::Resu
             loaded: 0,
             total: 0,
             succeeded: 0,
+            updated: 0,
             error: Some(e.to_string()),
         });
     }
@@ -1630,6 +1642,7 @@ pub fn vault_load_demo_data_sle(
                 loaded,
                 total,
                 succeeded: count,
+                updated: 0,
                 error: None,
             });
         }
@@ -1663,6 +1676,7 @@ pub fn vault_load_demo_data_sle(
                 loaded: 0,
                 total: 0,
                 succeeded: 0,
+                updated: 0,
                 error: Some(e.to_string()),
             });
         }
@@ -1692,6 +1706,7 @@ pub fn vault_import_bundle(
                 loaded: done as i64,
                 total: total as i64,
                 succeeded: 0,
+                updated: 0,
                 error: None,
             });
         })?;
@@ -1699,9 +1714,10 @@ pub fn vault_import_bundle(
             log_warn(&format!("[import-bundle] {file}: {why}"));
         }
         log_warn(&format!(
-            "[import-bundle] total {} imported {} deduped {} no_text {} failed {} verify_rejected {} verify_unverified {}",
+            "[import-bundle] total {} imported {} updated {} deduped {} no_text {} failed {} verify_rejected {} verify_unverified {}",
             report.total,
             report.imported,
+            report.updated,
             report.deduped,
             report.no_text,
             report.failed.len(),
@@ -1716,6 +1732,7 @@ pub fn vault_import_bundle(
                 loaded: report.total as i64,
                 total: report.total as i64,
                 succeeded: report.imported as i64,
+                updated: report.updated as i64,
                 error: None,
             });
         }
@@ -1724,6 +1741,7 @@ pub fn vault_import_bundle(
                 loaded: 0,
                 total: 0,
                 succeeded: 0,
+                updated: 0,
                 error: Some(format!("{e:#}")),
             });
         }

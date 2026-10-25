@@ -169,3 +169,10 @@ ADR 按规矩不改原文,但上面两处「入口尚未接入」的**事实陈�
 
 - 设计:[disease-profile-skill-framework-design](../superpowers/specs/2026-09-16-disease-profile-skill-framework-design.md)
 - 独立临床核查记录:[2026-09-16-sle-package-clinical-verification](../log/2026-09-16-sle-package-clinical-verification.md)
+
+## Addendum(2026-10-23)
+
+[ADR 0013](0013-bottom-tabs-profile-merged-into-home.md):入口卡与独立档案页删除,「现在」成为
+底部 tab;包出不出现由诊断决定(`triggers.diagnosis_patterns` 第一次有读者 + crate 常量里的 ICD
+前缀),决定 5 的 `enable/disable` 事件只剩查看器 / 分享的单包路径在读,手机通用视图不读;术语
+覆盖层改成装着就装上。八条决定不改,原文不改,以 0013 为准。

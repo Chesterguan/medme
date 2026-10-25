@@ -53,6 +53,10 @@ pub struct MedObservation {
     pub frequency_raw: Option<String>,
     /// 0.0 if unmatched; else the terminology `Match.confidence`.
     pub confidence: f32,
+    /// 侧文件给的用药起始日;正则路径与云抽取恒 `None`。
+    pub start: Option<chrono::NaiveDate>,
+    /// 复方剂量原样(`875-125mg`):`dose_num` 只装得下一个数,显示层优先用它。
+    pub dose_raw: Option<String>,
     /// 云抽取图片模式下这条没能逐字核对上(`deid::MedItem::unverified`);正则路径
     /// 恒为 false。界面标「需核对」,**不丢**。
     pub unverified: bool,
@@ -229,8 +233,33 @@ fn build(
         frequency: freq.as_ref().map(|f| f.0.clone()),
         frequency_raw: freq.as_ref().map(|f| f.1.clone()),
         confidence: m.as_ref().map_or(0.0, |m| m.confidence),
+        start: None,
+        dose_raw: None,
         unverified: false,
     }
+}
+
+/// 复方剂量 `875-125 MG` / `5/325 mg`:两个数夹着 `-` 或 `/` 再跟单位。原样保留(单位规范化),
+/// 否则 `parse_dose` 只取到最后一段「125mg」。
+fn compound_dose_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(
+            r"(?i)^\s*(\d+(?:\.\d+)?)\s*([-/])\s*(\d+(?:\.\d+)?)\s*(µg|μg|mcg|mg|iu|ml|ug|g|u)\b",
+        )
+        .expect("compound dose re")
+    })
+}
+
+fn compound_dose(dose_text: &str) -> Option<String> {
+    let c = compound_dose_re().captures(dose_text)?;
+    Some(format!(
+        "{}{}{}{}",
+        &c[1],
+        &c[2],
+        &c[3],
+        normalize_dose_unit(&c[4])
+    ))
 }
 
 /// 云抽取已经把名字/剂量/频次分好了:**分开解析**,别拼回一行再切——名字里的数字
@@ -269,6 +298,7 @@ pub(crate) fn from_parts(
     if obs.frequency_raw.is_none() && !freq_text.is_empty() {
         obs.frequency_raw = Some(freq_text.to_string());
     }
+    obs.dose_raw = compound_dose(dose_text);
     Some(obs)
 }
 

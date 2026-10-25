@@ -20,9 +20,35 @@
             "value": "9.1"
           }
         ],
+        "earlier_families": [
+          {
+            "count": 1,
+            "diagnoses": [
+              {
+                "code": "I35.0",
+                "doc_count": 2,
+                "evidence": [
+                  "ev:1:3",
+                  "ev:0:1"
+                ],
+                "first_seen": "2024-03-03",
+                "last_seen": "2024-03-10",
+                "texts": [
+                  "Aortic stenosis, severe, status post surgical aortic valve replacement 2024-03-03",
+                  "Severe aortic stenosis"
+                ],
+                "unverified": false
+              }
+            ],
+            "key": "cardio",
+            "label": "心血管",
+            "labs": [],
+            "last_seen": "2024-03-10"
+          }
+        ],
         "families": [
           {
-            "count": 3,
+            "count": 2,
             "diagnoses": [
               {
                 "code": "Z95.2",
@@ -32,7 +58,7 @@
                   "ev:14:1",
                   "ev:3:1",
                   "ev:15:2",
-                  "ev:1:2",
+                  "ev:1:1",
                   "ev:10:2"
                 ],
                 "first_seen": "2024-03-10",
@@ -55,21 +81,6 @@
                 "last_seen": "2026-09-14",
                 "texts": [
                   "Long term (current) use of anticoagulants"
-                ],
-                "unverified": false
-              },
-              {
-                "code": "I35.0",
-                "doc_count": 2,
-                "evidence": [
-                  "ev:1:1",
-                  "ev:0:1"
-                ],
-                "first_seen": "2024-03-03",
-                "last_seen": "2024-03-10",
-                "texts": [
-                  "Aortic stenosis, severe, status post surgical aortic valve replacement 2024-03-03",
-                  "Severe aortic stenosis"
                 ],
                 "unverified": false
               }
@@ -190,7 +201,7 @@
                 "code": null,
                 "doc_count": 10,
                 "evidence": [
-                  "ev:1:3",
+                  "ev:1:2",
                   "ev:15:3"
                 ],
                 "first_seen": "2024-03-10",
@@ -206,7 +217,8 @@
             "labs": [],
             "last_seen": "2026-09-14"
           }
-        ]
+        ],
+        "recent_days": 365
       },
       "empty_hint": null,
       "id": "general_families",
@@ -218,68 +230,94 @@
       "body": {
         "rows": [
           {
+            "atc": null,
             "days_since": 38,
             "dose": "10mg",
+            "drug_key": null,
             "evidence": [
               "ev:15:6"
             ],
             "family": "other",
             "first_seen": "2024-04-15",
             "last_seen": "2026-09-14",
+            "mention_count": 8,
             "name": "Zebrafoam",
             "raw_name": "Zebrafoam",
+            "raw_names": [
+              "Zebrafoam"
+            ],
             "since": "2024-04-15",
             "stale": false,
             "unverified": false
           },
           {
+            "atc": "B01AA03",
             "days_since": 38,
             "dose": "4mg",
+            "drug_key": "warfarin",
             "evidence": [
               "ev:15:7"
             ],
             "family": "cardio",
             "first_seen": "2024-03-10",
             "last_seen": "2026-09-14",
+            "mention_count": 11,
             "name": "华法林",
             "raw_name": "Warfarin",
+            "raw_names": [
+              "Warfarin"
+            ],
             "since": "2025-01-14",
             "stale": false,
             "unverified": false
           },
           {
+            "atc": "C07AB02",
             "days_since": 38,
             "dose": "25mg",
+            "drug_key": "metoprolol",
             "evidence": [
               "ev:15:8"
             ],
             "family": "cardio",
             "first_seen": "2024-03-10",
             "last_seen": "2026-09-14",
+            "mention_count": 11,
             "name": "美托洛尔",
             "raw_name": "Metoprolol",
+            "raw_names": [
+              "Metoprolol"
+            ],
             "since": "2024-03-10",
             "stale": false,
             "unverified": false
           },
           {
+            "atc": "H02AB07",
             "days_since": 220,
             "dose": "5mg",
+            "drug_key": "prednisone",
             "evidence": [
               "ev:14:2"
             ],
             "family": "immune",
             "first_seen": "2026-03-16",
             "last_seen": "2026-03-16",
+            "mention_count": 1,
             "name": "泼尼松",
             "raw_name": "Prednisone",
+            "raw_names": [
+              "Prednisone"
+            ],
             "since": "2026-03-16",
             "stale": true,
             "unverified": false
           },
           {
+            "atc": "J02AC03",
             "days_since": 339,
             "dose": "200mg",
+            "drug_key": "voriconazole",
             "evidence": [
               "ev:12:2"
             ],
@@ -287,8 +325,12 @@
             "family_note": "抗真菌",
             "first_seen": "2025-06-14",
             "last_seen": "2025-11-17",
+            "mention_count": 3,
             "name": "伏立康唑",
             "raw_name": "Voriconazole",
+            "raw_names": [
+              "Voriconazole"
+            ],
             "since": null,
             "stale": true,
             "stopped": {
@@ -553,7 +595,7 @@
               {
                 "at": "2024-03-10",
                 "evidence": [
-                  "ev:1:2"
+                  "ev:1:1"
                 ],
                 "from": null,
                 "kind": "first",
@@ -602,7 +644,7 @@
               {
                 "at": "2024-03-10",
                 "evidence": [
-                  "ev:1:3"
+                  "ev:1:2"
                 ],
                 "from": null,
                 "kind": "first",
@@ -649,32 +691,6 @@
               215
             ],
             "title": "2025-11-17_门诊病历_UF",
-            "verified": true
-          },
-          {
-            "date": "2024-03-10",
-            "doc": 1,
-            "id": "ev:1:1",
-            "origin": "llm",
-            "quote": "1. Aortic stenosis, severe, status post surgical aortic valve replacement 2024-03-03 (I35.0)",
-            "span": [
-              190,
-              271
-            ],
-            "title": "2024-03-10_出院记录_UF",
-            "verified": true
-          },
-          {
-            "date": "2024-03-03",
-            "doc": 0,
-            "id": "ev:0:1",
-            "origin": "llm",
-            "quote": "Preoperative Diagnosis: Severe aortic stenosis (I35.0)",
-            "span": [
-              162,
-              184
-            ],
-            "title": "2024-03-03_手术记录_UF",
             "verified": true
           },
           {
@@ -758,7 +774,7 @@
           {
             "date": "2024-03-10",
             "doc": 1,
-            "id": "ev:1:2",
+            "id": "ev:1:1",
             "origin": "llm",
             "quote": "2. Status post aortic valve replacement (Z95.2)",
             "span": [
@@ -784,7 +800,7 @@
           {
             "date": "2024-03-10",
             "doc": 1,
-            "id": "ev:1:3",
+            "id": "ev:1:2",
             "origin": "llm",
             "quote": "3. Hypertension",
             "span": [
@@ -896,6 +912,32 @@
               207
             ],
             "title": "2025-08-18_检验报告_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-10",
+            "doc": 1,
+            "id": "ev:1:3",
+            "origin": "llm",
+            "quote": "1. Aortic stenosis, severe, status post surgical aortic valve replacement 2024-03-03 (I35.0)",
+            "span": [
+              190,
+              271
+            ],
+            "title": "2024-03-10_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-03",
+            "doc": 0,
+            "id": "ev:0:1",
+            "origin": "llm",
+            "quote": "Preoperative Diagnosis: Severe aortic stenosis (I35.0)",
+            "span": [
+              162,
+              184
+            ],
+            "title": "2024-03-03_手术记录_UF",
             "verified": true
           },
           {

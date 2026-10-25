@@ -54,3 +54,11 @@ Epic 全量病历导进来之后(677 条带 ICD-10 的诊断、11666 条化验 8
 
 - 设计:[2026-10-22-generic-chronic-profile-design](../superpowers/specs/2026-10-22-generic-chronic-profile-design.md)
 - 工程日志:[2026-10-22-generic-chronic-profile](../log/2026-10-22-generic-chronic-profile.md)
+
+## Addendum(2026-10-23)
+
+[ADR 0013](0013-bottom-tabs-profile-merged-into-home.md) 把病程档案并进主界面:没有入口卡、没有
+独立页、没有「进程 / 依据」tab,「现在」是底部一个 tab;包按诊断自动出现,不再要用户开启;包的
+`latest_dose` 行**不再替换**通用层的用药行(本 ADR 的设计 §4 那条作废);「现在」只留最近 12 个月
+有记录的诊断与化验。五条决定(两层、只分组不判断、常量表、零新事件、内置包)一条不改。原文不改,
+以 0013 为准。

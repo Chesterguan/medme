@@ -22,7 +22,7 @@ use crate::view::Section;
 
 /// 一条依据:哪份文档、原文哪一句、哪条路径读的、逐字核过没有。
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct EvidenceOut {
+pub struct EvidenceOut {
     pub id: String,
     /// `parser::SourceDoc::index`;自测/手录(`self_entry`)没有文档,为 `None`。
     pub doc: Option<usize>,
@@ -188,7 +188,7 @@ pub(crate) struct StateRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct Node {
+pub struct Node {
     pub(crate) at: Option<String>,
     /// `first` / `change` / `dose_change` / `point` / 事件类型名。
     pub(crate) kind: String,

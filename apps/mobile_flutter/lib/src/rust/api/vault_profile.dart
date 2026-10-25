@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `alias_only_entry`, `analyte_entry`, `human_lines`, `installed_packages`, `kind_label`, `overlay_entries`, `today`
+// These functions are ignored because they are not marked as `pub`: `alias_only_entry`, `analyte_entry`, `general_input`, `human_lines`, `installed_packages`, `kind_label`, `overlay_entries`, `today`
 
 /// 验清单的签名并原样交给 Dart。**Dart 永远不自己解析未验签的清单** —— 那是中间人
 /// 改一行 `version` 就能拿去拼路径的地方(`lib/skill_packages.dart`)。
@@ -37,6 +37,16 @@ Future<List<String>> vaultProfileInstallBuiltin({required String dir}) =>
 /// 另加 `packages[]{id, display_name, enabled}` 给入口卡画「每包一行」。
 Future<String> vaultProfileViewGeneral({required String dir}) =>
     RustLib.instance.api.crateApiVaultProfileVaultProfileViewGeneral(dir: dir);
+
+/// 「用药」tab 的视图(`profile::materialize_meds`):最近 / 更早 / 过敏 + 同一本依据簿,
+/// 外加 `documents[]` 桥。**纯投影**。名字按字典序排在 `recognize_image_pp` 之后。
+Future<String> vaultProfileMedsView({required String dir}) =>
+    RustLib.instance.api.crateApiVaultProfileVaultProfileMedsView(dir: dir);
+
+/// 化验「key → 族」表 + 12 个月窗(`profile::lab_family_table`),给「现在」页按族摆化验行。
+/// 纯常量,不读保险箱。
+Future<String> vaultProfileLabFamilies() =>
+    RustLib.instance.api.crateApiVaultProfileVaultProfileLabFamilies();
 
 /// 算一份 `ProfileView` 并序列化给 Dart。**纯投影**:不写任何东西进保险箱。
 ///

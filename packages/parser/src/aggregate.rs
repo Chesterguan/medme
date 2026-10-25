@@ -116,6 +116,8 @@ pub struct AnalyteSeries {
     pub analyte_key: Option<String>,
     /// Display/grouping label: canonical name if resolved, else the raw name.
     pub group_name: String,
+    /// 化验单上最近一次印的原名(与 `group_name` 不同时才给;词典认不出的序列两者相同 → `None`)。
+    pub raw_name: Option<String>,
     pub loinc: Option<String>,
     /// Reference range, taken from the most recent observation in the group that
     /// carried one (fallback: any). The viewer draws the normal band from these.
@@ -205,6 +207,8 @@ pub struct MedSpan {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MedMention {
     pub date: Option<NaiveDate>,
+    /// 侧文件给的用药起始日(Epic `Start date`);没有为 `None`。
+    pub start_date: Option<NaiveDate>,
     /// `dose_string` 的结果;这份文档只提了名没写剂量时为 `None`。
     pub dose: Option<String>,
     pub raw_name: String,
@@ -288,6 +292,43 @@ fn max_date(cur: Option<NaiveDate>, new: Option<NaiveDate>) -> Option<NaiveDate>
 /// and sentence fragments as "labs" (`二甲双胍 0.5g` → analyte, CT text → analyte).
 /// `None`/unknown stays permissive so callers that don't classify still work
 /// (and to keep the low-level aggregate unit tests type-agnostic). Quality dim 3/4.
+/// 一份文档读出哪些化验观测(spec #148 的 section-scoped 规则,**所有读者共用**):有云抽取
+/// 结果且非空 → 用它;自测记录读结构化载荷;化验类文档 whole-doc(先屏蔽带药段);其余文档只
+/// 读内嵌的化验 section。手机端「化验 · 按报告」与 `aggregate` 走同一条路,免得一份出院小结
+/// 的正文血压在报告列表里冒出来。
+pub fn doc_lab_observations(doc: &SourceDoc<'_>) -> Vec<LabObservation> {
+    let dt = doc.doc_type.as_deref();
+    if let Some(parsed) = doc
+        .extraction_json
+        .and_then(|j| crate::extraction::labs_from_json(j).ok())
+        .filter(|p| !p.labs.is_empty())
+    {
+        // 有云抽取结果、能解析、**且真读出了东西**才用它,不再对 text 跑正则;
+        // `Err`(格式不对/被拒收)才落到下面几条分支,退回正则。
+        //
+        // 零条 lab 也退回正则(extract-repro-report.md §4):云端漏读一份单子
+        // (上游超时、图被涂黑带盖住、模型返回 `labs: []`)时,旧代码把「正则本来
+        // 能读出 8–18 条」变成**整份空白**;而这个空结果是无条件落盘的
+        // (`vault_cloud_commit_extraction`),此后每次投影都读它 —— 一次失败永久
+        // 生效。落盘行为不变(那份文档仍要能显示「云端整理没有读出内容」),只是
+        // summary 不再拿它当准。
+        parsed.labs
+    } else if dt == Some("self_measurement") {
+        self_entry::parse_self_measurement_payload(doc.text)
+            .unwrap_or_default()
+            .iter()
+            .map(build_self_measured_observation)
+            .collect()
+    } else if wants_labs(dt) {
+        extract_labs(&mask_meds_blocks(doc.text))
+    } else {
+        sections_text(doc.text, SecKind::Labs)
+            .iter()
+            .flat_map(|s| extract_labs(s))
+            .collect()
+    }
+}
+
 fn wants_labs(doc_type: Option<&str>) -> bool {
     doc_type.is_none_or(|t| t.contains("lab"))
 }
@@ -570,9 +611,11 @@ fn mask_meds_blocks(text: &str) -> Cow<'_, str> {
 /// carries neither a dose nor a frequency.
 fn dose_string(m: &MedObservation) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
-    match (m.dose_num, &m.dose_unit) {
-        (Some(n), Some(u)) => parts.push(format!("{n}{u}")),
-        (Some(n), None) => parts.push(format!("{n}")),
+    match (&m.dose_raw, m.dose_num, &m.dose_unit) {
+        // 复方剂量(`875-125mg`)原样,别截成最后一段。
+        (Some(raw), _, _) => parts.push(raw.clone()),
+        (None, Some(n), Some(u)) => parts.push(format!("{n}{u}")),
+        (None, Some(n), None) => parts.push(format!("{n}")),
         _ => {}
     }
     if let Some(f) = &m.frequency {
@@ -600,6 +643,8 @@ struct PendingPoint {
 struct LabBuilder {
     analyte_key: Option<String>,
     group_name: String,
+    /// 最近一个点印的原名。
+    raw_name: String,
     loinc: Option<String>,
     /// Whether `group_name`/`loinc` were taken from a matched observation yet.
     meta_from_match: bool,
@@ -727,11 +772,28 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
     // 这条线上印了几种单位?没印单位的点不参与表决 —— 它在纸上本来就没有单位,
     // 显示成一个光秃秃的数才是忠实的;但它也证明不了同质,所以只在「印了单位的
     // 点」之间比。
-    let printed_units: BTreeSet<String> = b
+    // 印刷单位只差大小写(Epic 同一项目印 `mg/dL` 也印 `MG/DL`)算同一种:否则 225 个点的
+    // 肌酐被判成「混了单位」,走不到规范套、也拿不到参考带(修订 2 返工,2026-10-25)。
+    let raw_units: BTreeSet<String> = b
         .points
         .iter()
-        .filter_map(|p| p.unit_printed.as_deref().map(normalize_unit))
+        .filter_map(|p| {
+            p.unit_printed
+                .as_deref()
+                .map(|u| normalize_unit(u).to_lowercase())
+        })
         .collect();
+    // 被截断的单位(Epic 把 `MG/DL` 印成 `MG/D`)算成它所截断的那个完整单位:≥3 个字符、且是
+    // 本序列另一个单位的前缀。真正不同的单位(`g/l` vs `mg/dl`)不是前缀关系,不受影响。
+    let full_unit = |u: &str| -> String {
+        raw_units
+            .iter()
+            .filter(|v| u.len() >= 3 && v.len() > u.len() && v.starts_with(u))
+            .max_by_key(|v| v.len())
+            .cloned()
+            .unwrap_or_else(|| u.to_string())
+    };
+    let printed_units: BTreeSet<String> = raw_units.iter().map(|u| full_unit(u)).collect();
     let series_printed_unit = printed_units.iter().next().cloned();
     let printed_homogeneous = printed_units.len() <= 1;
 
@@ -747,7 +809,11 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
     let (display_values, canonical_basis, ref_low, ref_high) = if printed_homogeneous {
         // ① 单位同质 ⇒ 显示纸上那个数。参考区间还要过一道闸:必须来自印刷单位与
         // 本序列一致的那份报告,否则宁可没有区间,也不给一个错单位的区间。
-        let ref_ok = b.ref_unit_printed.as_deref().map(normalize_unit) == series_printed_unit;
+        let ref_ok = b
+            .ref_unit_printed
+            .as_deref()
+            .map(|u| full_unit(&normalize_unit(u).to_lowercase()))
+            == series_printed_unit;
         let (lo, hi) = if ref_ok {
             (b.ref_low, b.ref_high)
         } else {
@@ -797,6 +863,7 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
         .collect();
 
     AnalyteSeries {
+        raw_name: (b.raw_name != b.group_name).then_some(b.raw_name),
         analyte_key: b.analyte_key,
         group_name: b.group_name,
         loinc: b.loinc,
@@ -842,35 +909,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // 抽(section-scoped,so a discharge summary's prose 血压 stays out) —— #148。
         // whole-doc 那条路上先把 出院医嘱/带药 段屏蔽掉:一行药读起来就是一行化验,
         // 而 `wants_labs` 会对一份标题被 OCR 丢掉的出院小结点头 —— 见 mask_meds_blocks。 ---
-        let doc_labs: Vec<LabObservation> = if let Some(parsed) = doc
-            .extraction_json
-            .and_then(|j| crate::extraction::labs_from_json(j).ok())
-            .filter(|p| !p.labs.is_empty())
-        {
-            // 有云抽取结果、能解析、**且真读出了东西**才用它,不再对 text 跑正则;
-            // `Err`(格式不对/被拒收)才落到下面几条分支,退回正则。
-            //
-            // 零条 lab 也退回正则(extract-repro-report.md §4):云端漏读一份单子
-            // (上游超时、图被涂黑带盖住、模型返回 `labs: []`)时,旧代码把「正则本来
-            // 能读出 8–18 条」变成**整份空白**;而这个空结果是无条件落盘的
-            // (`vault_cloud_commit_extraction`),此后每次投影都读它 —— 一次失败永久
-            // 生效。落盘行为不变(那份文档仍要能显示「云端整理没有读出内容」),只是
-            // summary 不再拿它当准。
-            parsed.labs
-        } else if dt == Some("self_measurement") {
-            self_entry::parse_self_measurement_payload(doc.text)
-                .unwrap_or_default()
-                .iter()
-                .map(build_self_measured_observation)
-                .collect()
-        } else if wants_labs(dt) {
-            extract_labs(&mask_meds_blocks(doc.text))
-        } else {
-            sections_text(doc.text, SecKind::Labs)
-                .iter()
-                .flat_map(|s| extract_labs(s))
-                .collect()
-        };
+        let doc_labs: Vec<LabObservation> = doc_lab_observations(doc);
         for obs in doc_labs {
             let matched = obs.analyte_key.is_some();
             // 自测值与医院值永不同组:即使 analyte_key 相同(如同是
@@ -895,6 +934,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             let b = labs.entry(key).or_insert_with(|| LabBuilder {
                 analyte_key: obs.analyte_key.clone(),
                 group_name: obs.raw_name.clone(),
+                raw_name: obs.raw_name.clone(),
                 loinc: None,
                 meta_from_match: false,
                 ref_low: None,
@@ -910,6 +950,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
                 self_measured: obs.self_measured,
                 needs_review_count: 0,
             });
+            b.raw_name = obs.raw_name.clone();
             // 序列内恒定(见字段文档);第一个换算得出来的点供出即可。
             if b.unit_canonical.is_none() {
                 b.unit_canonical = obs.unit_canonical.clone();
@@ -1021,6 +1062,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             b.unverified |= obs.unverified;
             b.mentions.push(MedMention {
                 date: doc.date,
+                start_date: obs.start,
                 dose: this_dose.clone(),
                 raw_name: obs.raw_name.clone(),
                 source: doc.index,

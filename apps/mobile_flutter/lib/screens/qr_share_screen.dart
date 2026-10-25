@@ -24,7 +24,7 @@ import '../grants.dart';
 import '../profile_manager.dart';
 import '../src/rust/api/vault.dart';
 import '../widgets/med_card.dart';
-import 'disease_profile_screen.dart' show DiseaseProfileSource;
+import 'package:mobile_flutter/profile_source.dart' show DiseaseProfileSource;
 import 'qr_notice_sheet.dart';
 
 /// 医生扫码后打开的查看器地址。数据在 `#` 之后,不会随请求上行。
@@ -79,6 +79,7 @@ Future<String?> profileJsonForShare(DiseaseProfileSource source) async {
     if (ids.isEmpty) return null;
     // 与入口卡同一条(`widgets/disease_profile_card.dart`):今天清单里就一个病,
     // 装了不止一个时只带第一个。真出现第二个病时那是一次要重新看设计的改动。
+    // 2026-10-23 起 `enabled` = 诊断命中(Rust `materialize_applied`),不再是用户开关。
     final json = await source.viewJson(ids.first);
     final view = jsonDecode(json);
     return (view is Map && view['enabled'] == true) ? json : null;

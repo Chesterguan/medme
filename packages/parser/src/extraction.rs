@@ -70,14 +70,24 @@ pub fn labs_from_json(json: &str) -> Result<LabsFromJson, deid::DeidError> {
                     return None;
                 }
             };
+            // 修订 2 返工:**码是第一键**——sidecar 带 LOINC(结构化导入,见
+            // `deid::LabItem::loinc`)且词典认得这个码,就按码并序列,名字不再参与;码认不得
+            // (Epic 的 2160-0 vs 词典的 14682-9)才退回名字。名字带标本标记(`, Ur` / `Urine` /
+            // `CSF` / `Fluid`)的行不许靠名字并进血清序列,单独成序列(`labs::specimen_marker`)。
+            // 码认不得时名字只许**整名精确命中别名**(归一化后的整名 == 命中的别名):
+            // 「Bilirubin, Direct」靠候选剥壳命中别名「Bilirubin」并进总胆红素、再套总胆红素的
+            // 区间,就是 checkpoint 1 的 F15;带码的行名字不许推断。
             let unit = (!l.unit.is_empty()).then(|| l.unit.clone());
-            // 名字精确命中(1.0)优先——名字是原文。否则 sidecar 带的 LOINC 码
-            // (结构化导入,见 `deid::LabItem::loinc`)压过名字的剥壳/混淆/模糊命中:
-            // 码是精确键,模糊名字是推算。都没有才用名字的弱命中。
-            let by_name = terminology::resolve(&l.name, unit.as_deref());
-            let m = match by_name {
-                Some(ref m) if m.confidence >= 1.0 || l.loinc.is_empty() => by_name,
-                _ => terminology::resolve_loinc(&l.loinc).or(by_name),
+            let by_code = terminology::resolve_loinc(&l.loinc);
+            let m = match by_code {
+                Some(_) => by_code,
+                None => terminology::resolve(&l.name, unit.as_deref())
+                    .filter(|m| crate::labs::specimen_ok(&l.name, &m.key))
+                    .filter(|m| {
+                        l.loinc.is_empty()
+                            || terminology::normalize_term(&l.name)
+                                == terminology::normalize_term(&m.matched_alias)
+                    }),
             };
             let (ref_low, ref_high) = (num(&l.ref_low), num(&l.ref_high));
             let explicit_flag = matches!(l.flag.as_str(), "H" | "L").then(|| l.flag.clone());
@@ -169,6 +179,8 @@ pub fn meds_from_json(json: &str) -> Result<MedsFromJson, deid::DeidError> {
             continue;
         };
         obs.unverified = item.unverified;
+        // 侧文件给的起始日(Epic Current Medications 的 `Start date`):「记录中自」优先用它。
+        obs.start = item.start.parse().ok();
         if item.unverified {
             out.unverified += 1;
         }
@@ -238,8 +250,8 @@ mod tests {
         assert_eq!(v[0].loinc.as_deref(), Some("14682-9"));
         assert_eq!(
             v[1].analyte_key.as_deref(),
-            Some("creatinine"),
-            "名字能认时名字优先于码(码指向 glucose)"
+            Some("glucose"),
+            "码是第一键:词典认得的 LOINC 压过名字(修订 2 返工)"
         );
         assert!(v[2].analyte_key.is_none(), "无码无名原样透传");
     }

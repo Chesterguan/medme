@@ -23,7 +23,8 @@ import 'package:mobile_flutter/screens/archive_screen.dart';
 import 'package:mobile_flutter/screens/doctor/doctor_home_screen.dart';
 import 'package:mobile_flutter/screens/first_run_consent.dart';
 import 'package:mobile_flutter/screens/settings_screen.dart';
-import 'package:mobile_flutter/screens/trends_screen.dart';
+import 'package:mobile_flutter/screens/meds_screen.dart';
+import 'package:mobile_flutter/screens/labs_screen.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
@@ -582,12 +583,13 @@ Widget modeRoot(AppModeKind? mode) => switch (mode) {
   _ => const HomeShell(),
 };
 
-/// 底部导航壳:**三个一级 tab**(mockup,创始人拍板)。
+/// 底部导航壳:**四个一级 tab**(2026-10-25 修订 2:病历 / 化验 / 用药 / 我,照 MyChart)。
 ///
 /// | tab | 用户在干什么 |
 /// |---|---|
 /// | 病历 | 拍/添加一份,以及回头找某一张 |
-/// | 趋势 | 这个病现在怎么样、吃过什么药、该查没查 |
+/// | 化验 | 按报告 / 按指标,每个指标有折线 |
+/// | 用药 | 最近的用药、过敏、更早的用药 |
 /// | 我 | 云端、成员、口令与恢复码、设置 |
 ///
 /// ## 四处刻意的缺席
@@ -603,22 +605,23 @@ Widget modeRoot(AppModeKind? mode) => switch (mode) {
 /// **「概览」整屏解散**:成员卡进「我」,化验快照与最近就诊进「趋势」,最近添加
 /// 与「病历」tab 重复,三颗快捷操作各归各位。
 ///
-/// **「趋势」保留原名**,不叫「看懂」——「病程档案」的入口位落在它里面。
+/// **「趋势」tab 已取消**(2026-10-23):化验进「现在」,药进「用药」,病程档案不再有入口卡。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
-  /// 三个 tab 的页面,顺序必须与 [HomeTab] 的常量逐一对应 —— `IndexedStack` 按
+  /// 四个 tab 的页面,顺序必须与 [HomeTab] 的常量逐一对应 —— `IndexedStack` 按
   /// 下标取,错一位就是点「趋势」进了「我」。
   ///
   /// 与 [tabDestinations] 一起公开是为了让 `test/mobile_ia_test.dart` 能钉住
   /// 「页面数 == 底栏项数 == [HomeTab.count]」。
   static const List<Widget> tabScreens = [
     ArchiveScreen(),
-    TrendsScreen(),
+    LabsScreen(),
+    MedsScreen(),
     SettingsScreen(),
   ];
 
-  /// 底栏三项,顺序同 [tabScreens]。
+  /// 底栏四项,顺序同 [tabScreens]。
   static const List<NavigationDestination> tabDestinations = [
     NavigationDestination(
       icon: Icon(Icons.folder_outlined),
@@ -626,9 +629,14 @@ class HomeShell extends StatefulWidget {
       label: '病历',
     ),
     NavigationDestination(
-      icon: Icon(Icons.show_chart_outlined),
-      selectedIcon: Icon(Icons.show_chart),
-      label: '趋势',
+      icon: Icon(Icons.science_outlined),
+      selectedIcon: Icon(Icons.science),
+      label: '化验',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.medication_outlined),
+      selectedIcon: Icon(Icons.medication),
+      label: '用药',
     ),
     NavigationDestination(
       icon: Icon(Icons.person_outline),
@@ -673,6 +681,8 @@ class _HomeShellState extends State<HomeShell> {
     if (tab != null) {
       Analytics.track(AnalyticsEvent.homeTabSelected, {'tab': tab.name});
     }
+    // 手点「用药」= 看全部;族预填只在从「现在」族卡跳过来(`goToMeds(family:)`)时带着。
+    if (i == HomeTab.meds) medsFilterFamily.value = null;
     selectedTab.value = i;
   }
 

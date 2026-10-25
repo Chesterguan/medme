@@ -17,16 +17,22 @@ mod meds;
 mod profile_event;
 mod self_entry;
 pub use aggregate::{
-    aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedMention,
-    MedSpan, SourceDoc,
+    aggregate, doc_lab_observations, AggregatedClinical, AggregatedCondition, AnalyteSeries,
+    LabPoint, MedMention, MedSpan, SourceDoc,
 };
 pub use conditions::{extract_conditions, ConditionMention};
 pub use extraction::{
     diagnoses_from_json, labs_from_json, meds_from_json, DiagnosesFromJson, LabsFromJson,
     MedsFromJson,
 };
-pub use handoff::{assemble_summary, imaging_impression, match_disease, pathology_impression};
-pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
+pub use handoff::{
+    assemble_summary, extract_allergies_pairs, imaging_impression, match_disease,
+    pathology_impression,
+};
+pub use labs::{
+    extract_labs, extract_labs_with_unreadable, specimen_marker, specimen_ok, LabObservation,
+    UnreadableRow,
+};
 pub use meds::{extract_meds, MedObservation};
 pub use profile_event::{
     parse_profile_event_payload, render_profile_event_text, ProfileEvent, PROFILE_EVENT_MARKER,

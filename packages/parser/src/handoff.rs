@@ -556,7 +556,12 @@ fn is_allergy_unclear(item: &str) -> bool {
 /// fire, and the negation only shows up once the clause is split into items.
 ///
 /// Empty clauses/items are skipped either way.
-fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
+///
+/// **English layer** (2026-10-23, Epic-style charts): after the Chinese scan,
+/// [`extract_allergies_en`] runs over the same text and its results are
+/// appended. The two layers never see each other's lines — the Chinese scan
+/// keys on the CJK label, the English one on `Allergies`.
+pub fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in text.lines() {
         // Prefer the longer label so `过敏史:` isn't split at `过敏`.
@@ -579,7 +584,243 @@ fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
             }
         }
     }
+    out.extend(extract_allergies_en(text));
     out
+}
+
+/// English negations / placeholders, matched case-insensitively against **one item**
+/// (never a whole line: "Sulfa, otherwise no known allergies" must keep Sulfa — the
+/// Chinese layer's rule that a false negative is the worse failure applies here too).
+/// Epic placeholders ("Not on File", "No Active Allergies", "NKDA/NKA/NKFA") count as
+/// "nothing recorded", not as an allergen.
+const EN_ALLERGY_NEGATIONS: [&str; 10] = [
+    "no known allergies",
+    "no known drug allergies",
+    "no known food allergies",
+    "no active allergies",
+    "no allergies",
+    "not on file",
+    "none",
+    "nkda",
+    "nka",
+    "nkfa",
+];
+
+/// An inline item that is a real allergen, not a negation and not a sentence fragment
+/// ("reviewed allergy section in the chart", "and"): short, and not narrative.
+fn is_en_inline_allergy_item(item: &str) -> bool {
+    if item.is_empty() || is_en_allergy_negation(item) {
+        return false;
+    }
+    let lower = item.to_lowercase();
+    if lower.starts_with("review") || lower.contains(" chart") || lower == "and" {
+        return false;
+    }
+    lower.split_whitespace().count() <= 6
+}
+
+/// Epic 过敏表里常见的反应词;物质串结尾连着的这些词(含中间的 and / or)是反应,不是物质。
+const EN_REACTION_WORDS: &[&str] = &[
+    "hives",
+    "rash",
+    "itching",
+    "itch",
+    "swelling",
+    "other",
+    "nausea",
+    "vomiting",
+    "diarrhea",
+    "anaphylaxis",
+    "unknown",
+    "cough",
+    "dizziness",
+    "headache",
+    "angioedema",
+    "unspecified",
+    "wheezing",
+    "flushing",
+    "tingling",
+    "numbness",
+];
+
+/// `Bactrim Ds [Sulfamethoxazole-Trimethoprim] Hives and Other (See Comments)` →
+/// (`Bactrim Ds`, `Hives and Other`);没有反应词 → 原样(方括号成分注释原样保留)。
+fn split_trailing_reactions(item: &str) -> (String, String) {
+    // 先去掉方括号 / 圆括号里的注释(成分、See Comments)再找结尾的反应词;找不到就原样返回。
+    let mut clean = String::new();
+    let mut depth = 0usize;
+    for ch in item.chars() {
+        match ch {
+            '[' | '(' => depth += 1,
+            ']' | ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => clean.push(ch),
+            _ => {}
+        }
+    }
+    let words: Vec<&str> = clean.split_whitespace().collect();
+    let mut cut = words.len();
+    while cut > 1 {
+        let w = words[cut - 1]
+            .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+            .to_lowercase();
+        if EN_REACTION_WORDS.contains(&w.as_str())
+            || ((w == "and" || w == "or") && cut < words.len())
+        {
+            cut -= 1;
+        } else {
+            break;
+        }
+    }
+    // 反应段不能以 and / or 开头(`X and Hives` 里的 and 属于反应段才算)。
+    while cut < words.len() && matches!(words[cut].to_lowercase().as_str(), "and" | "or") {
+        cut += 1;
+    }
+    if cut == words.len() {
+        return (item.trim().to_string(), String::new());
+    }
+    (words[..cut].join(" "), words[cut..].join(" "))
+}
+
+/// 被当成过敏原抓进来的表头 / 栏目名。
+fn is_en_allergy_heading(item: &str) -> bool {
+    matches!(
+        item.trim().trim_end_matches(':').to_lowercase().as_str(),
+        "allergies" | "allergy" | "allergen" | "allergens" | "reactions" | "reaction"
+    )
+}
+
+fn is_en_allergy_negation(item: &str) -> bool {
+    let s = item.trim().trim_end_matches('.').to_lowercase();
+    EN_ALLERGY_NEGATIONS.contains(&s.as_str())
+        || (s.starts_with("no known ") && s.contains("allerg"))
+        || (s.starts_with("no ") && s.ends_with("allergies"))
+        || s.contains("no known allerg")
+}
+
+/// Two structured English forms, nothing else:
+///
+/// * **Table**: a line that is just `Allergies` (optional colon), then a header line
+///   containing both `Allergen` and `Reactions`, then one row per `•`/`·` bullet —
+///   `substance` and `reaction` separated by a tab or two or more spaces (reaction may be
+///   absent). Indented non-bullet lines under a row (Epic's comment lines) are skipped; the
+///   table ends at a blank line or at a line ending in `:` (the next heading).
+/// * **Inline**: `Allergies: a, b; c` on one line, split on commas and semicolons.
+///
+/// An item that is an English negation ([`is_en_allergy_negation`]) yields nothing.
+fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i].trim();
+        let lower = line.to_lowercase();
+        if lower == "allergies" || lower == "allergies:" {
+            // Table form: find the header within the next two non-empty lines.
+            let mut j = i + 1;
+            let mut header = None;
+            while j < lines.len() && j <= i + 2 {
+                let l = lines[j].trim().to_lowercase();
+                if l.contains("allergen") && l.contains("reaction") {
+                    header = Some(j);
+                    break;
+                }
+                if l.is_empty() || l == "allergies" || l == "allergies:" {
+                    j += 1;
+                    continue;
+                }
+                break;
+            }
+            if let Some(h) = header {
+                let mut k = h + 1;
+                while k < lines.len() {
+                    let raw = lines[k];
+                    let row = raw.trim();
+                    if row.is_empty() || row.ends_with(':') {
+                        break;
+                    }
+                    let Some(body) = row.strip_prefix(['•', '·']) else {
+                        // Epic prints a row's comment on the next line — indented, or (PDF 抽出来的
+                        // 文本)不缩进但紧接着下一颗 bullet;都跳过。其余非 bullet 行是下一节。
+                        let next_is_bullet = lines
+                            .get(k + 1)
+                            .is_some_and(|l| l.trim().starts_with(['•', '·']));
+                        if raw.starts_with(' ') || raw.starts_with('\t') || next_is_bullet {
+                            k += 1;
+                            continue;
+                        }
+                        break;
+                    };
+                    let (substance, reaction) = split_columns(body.trim());
+                    // Epic 的另一种印法里物质和反应只隔一个空格(`Shellfish Allergy Itching`、
+                    // `Bactrim Ds Hives and Other`):反应列为空时把结尾的反应词拆出来。
+                    let (substance, reaction) = if reaction.is_empty() {
+                        split_trailing_reactions(substance)
+                    } else {
+                        (substance.to_string(), reaction.to_string())
+                    };
+                    if !substance.is_empty()
+                        && !is_en_allergy_negation(&substance)
+                        && !is_en_allergy_heading(&substance)
+                    {
+                        out.push((substance, reaction));
+                    }
+                    k += 1;
+                }
+                i = k;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if lower.starts_with("allergies:") {
+            if let Some((_, rest)) = line.split_once(':') {
+                // Epic wraps a long inline list: a line ending in `,` or `-` continues on the
+                // next (indented) line. Join before splitting, else the tail is lost and the
+                // hyphenated name is cut in half.
+                let mut joined = rest.trim().to_string();
+                while (joined.ends_with(',') || joined.ends_with('-')) && i + 1 < lines.len() {
+                    let next = lines[i + 1].trim();
+                    if next.is_empty() || next.to_lowercase().starts_with("allergies") {
+                        break;
+                    }
+                    if !joined.ends_with('-') {
+                        joined.push(' ');
+                    }
+                    joined.push_str(next);
+                    i += 1;
+                }
+                for item in joined.split([',', ';']).flat_map(|c| c.split(" and ")) {
+                    let item = item
+                        .trim()
+                        .trim_end_matches('.')
+                        .trim_start_matches("and ")
+                        .trim();
+                    if !is_en_inline_allergy_item(item) || is_en_allergy_heading(item) {
+                        continue;
+                    }
+                    out.push(split_trailing_reactions(item));
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// `substance<TAB>reaction` or `substance  reaction` (2+ whitespace). One column → reaction empty.
+fn split_columns(body: &str) -> (&str, &str) {
+    if let Some((a, b)) = body.split_once('\t') {
+        return (a.trim(), b.trim());
+    }
+    let bytes: Vec<(usize, char)> = body.char_indices().collect();
+    for w in bytes.windows(2) {
+        let (i, c1) = w[0];
+        let (_, c2) = w[1];
+        if c1 == ' ' && c2 == ' ' {
+            return (body[..i].trim(), body[i..].trim());
+        }
+    }
+    (body, "")
 }
 
 /// Parse one allergy item like `青霉素(皮疹)` → `("青霉素", "皮疹")`, or bare

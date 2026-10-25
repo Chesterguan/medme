@@ -27,7 +27,6 @@ import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/lab_status.dart';
 import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/recorded_meds.dart';
-import 'package:mobile_flutter/screens/trends_screen.dart';
 import 'package:mobile_flutter/screens/visit_summary_sheet.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart';
 
@@ -333,348 +332,8 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  group('趋势:搜索与「只看非正常项」', () {
-    TrendSeriesDto s(String name, {required bool abnormal, String? panel}) =>
-        TrendSeriesDto(
-          name: name,
-          unit: 'umol/L',
-          valuesConverted: false,
-          anyAbnormal: abnormal,
-          panel: panel,
-          points: [pt('2024-03-01', 1)],
-          selfMeasured: false,
-        );
-
-    final all = [
-      s('肌酐', abnormal: false),
-      s('血红蛋白', abnormal: true),
-      s('Cr 血肌酐', abnormal: false),
-    ];
-
-    test('默认只列非正常项', () {
-      final v = trendVisible(all, query: '', abnormalOnly: true);
-      expect(v.map((e) => e.name), ['血红蛋白']);
-    });
-
-    test('关掉开关就全列', () {
-      expect(trendVisible(all, query: '', abnormalOnly: false).length, 3);
-    });
-
-    // 这条是整个特性最容易写错的地方:叠加会让「搜正常项」永远搜不到。
-    test('搜索时绕过「只看非正常项」—— 正常的也要找得到', () {
-      final v = trendVisible(all, query: '肌酐', abnormalOnly: true);
-      expect(v.map((e) => e.name), ['肌酐', 'Cr 血肌酐'],
-          reason: '两条都正常,若与非正常过滤叠加就会一条都搜不到');
-    });
-
-    test('大小写无关', () {
-      expect(trendVisible(all, query: 'cr', abnormalOnly: true).length, 1);
-    });
-
-    test('不做模糊匹配 —— 没查过的项目不许冒出来', () {
-      expect(trendVisible(all, query: '肌钙蛋白', abnormalOnly: false), isEmpty);
-    });
-  });
-
   // ───────────────────────────────────────────────────────────────────────────
-  // 分类入口(chip):产品判断是搜索框在手机上不够用,要能直接点「这类检查有哪
-  // 些」。大类匹配(哪条序列属于哪个 panel)在 Rust 侧按 analyteKey 查词典算完、
-  // 通过 `TrendSeriesDto.panel` 下发 —— 这里只测 UI 拿到这份结果之后怎么用,
-  // **不重新猜一遍匹配**(那是 Rust 单测的事,`vault_projections.rs` 里有)。
-  group('趋势:检验大类 chip', () {
-    TrendSeriesDto s(String name, {String? panel, bool abnormal = false}) =>
-        TrendSeriesDto(
-          name: name,
-          unit: 'umol/L',
-          valuesConverted: false,
-          anyAbnormal: abnormal,
-          panel: panel,
-          points: [pt('2024-03-01', 1)],
-          selfMeasured: false,
-        );
-
-    test('「其他」桶:兜底不漏项 —— 没能归一化(panel 为 null)的序列必须能'
-        '被「其他」选中', () {
-      // 血常规里一大类计数项(嗜酸性粒细胞、血小板分布宽度……)现实中经常没能
-      // 归一化出 analyteKey,`panel` 因此是 null —— 这条序列就是那种情况的
-      // 构造版本。没有「其他」兜底,它会从分类入口里彻底消失(需求原文)。
-      final unmapped = s('嗜酸性粒细胞百分比', panel: null);
-      expect(trendPanelMatches(unmapped, kOtherTrendPanel), isTrue);
-      expect(trendPanelMatches(unmapped, null), isTrue, reason: '「全部」不筛');
-      expect(trendPanelMatches(unmapped, '肾功能'), isFalse);
-
-      final all = [unmapped, s('肌酐', panel: '肾功能')];
-      final chips = trendPanelChips(all, catalog: const ['肾功能']);
-      final other = chips.singleWhere((c) => c.panel == kOtherTrendPanel);
-      expect(other.label, '其他');
-      expect(other.count, 1);
-      expect(
-        trendVisible(
-          all,
-          query: '',
-          abnormalOnly: false,
-          panel: kOtherTrendPanel,
-        ).map((e) => e.name),
-        ['嗜酸性粒细胞百分比'],
-      );
-    });
-
-    test('「全部」不筛,选中具体大类精确匹配 panel', () {
-      final all = [
-        s('低密度脂蛋白胆固醇', panel: '血脂'),
-        s('促甲状腺激素', panel: '甲状腺功能'),
-      ];
-      expect(
-        trendVisible(all, query: '', abnormalOnly: false, panel: null).length,
-        2,
-        reason: '全部 = 不筛',
-      );
-      expect(
-        trendVisible(all, query: '', abnormalOnly: false, panel: '血脂')
-            .map((e) => e.name),
-        ['低密度脂蛋白胆固醇'],
-      );
-      expect(
-        trendVisible(all, query: '', abnormalOnly: false, panel: '甲状腺功能')
-            .map((e) => e.name),
-        ['促甲状腺激素'],
-      );
-    });
-
-    test('选中大类时「只看非正常项」让位,与搜索同一条理由', () {
-      final all = [
-        s('肌酐', panel: '肾功能', abnormal: false),
-        s('estimated 肾小球滤过率', panel: '肾功能', abnormal: false),
-      ];
-      // 两条都正常;若选中大类时仍叠加 abnormalOnly,会把刚打开的大类过滤成空。
-      final shown = trendVisible(
-        all,
-        query: '',
-        abnormalOnly: true,
-        panel: '肾功能',
-      );
-      expect(shown.length, 2, reason: '选中大类后不该再被「只看非正常项」清空');
-    });
-
-    test('大类与搜索可以叠加:先按大类筛,再按名字筛', () {
-      final all = [
-        s('肌酐', panel: '肾功能'),
-        s('估算肾小球滤过率', panel: '肾功能'),
-        s('尿酸', panel: '肾功能'),
-      ];
-      final shown = trendVisible(
-        all,
-        query: '肌酐',
-        abnormalOnly: false,
-        panel: '肾功能',
-      );
-      expect(shown.map((e) => e.name), ['肌酐']);
-    });
-
-    test('chip 目录:计数为 0 的大类不出现,「全部」恒在最前', () {
-      final all = [s('肌酐', panel: '肾功能'), s('未归类指标', panel: null)];
-      final chips = trendPanelChips(
-        all,
-        catalog: const ['血常规', '肾功能', '血脂'],
-      );
-      expect(chips.first.label, '全部');
-      expect(chips.first.count, 2);
-      // 「血常规」「血脂」在这批数据里计数为 0,不该出现。
-      expect(chips.map((c) => c.label), ['全部', '肾功能', '其他']);
-      expect(chips.firstWhere((c) => c.label == '肾功能').count, 1);
-    });
-
-    test('目录为空、只有未归类序列时,只剩「全部」+「其他」两颗兜底 chip', () {
-      final all = [s('未归类指标A'), s('未归类指标B')];
-      final chips = trendPanelChips(all, catalog: const []);
-      expect(chips.map((c) => c.label), ['全部', '其他']);
-      expect(chips.last.count, 2);
-    });
-  });
-
   // ───────────────────────────────────────────────────────────────────────────
-  group('趋势:自测序列必须有文字图例', () {
-    // 图上的自测点画成空心圈,但形状不能是唯一载体 —— 没有图例的形状编码等于
-    // 没有编码。产品负责人真机看到图后原话:「trend 里面没有 legend,谁知道
-    // 空心是自测数据呢」。
-    TrendSeriesDto s({required bool self}) => TrendSeriesDto(
-      name: '收缩压',
-      unit: 'mmHg',
-      valuesConverted: false,
-      anyAbnormal: true,
-      refHigh: 135,
-      panel: '生命体征',
-      selfMeasured: self,
-      points: [pt('2026-08-05', 138, flag: 'H')],
-    );
-
-    testWidgets('自测序列的卡上出现「家测」二字', (tester) async {
-      await tester.pumpWidget(
-        wrap(SeriesCard(series: s(self: true), onOpenDoc: (_) {})),
-      );
-      expect(find.text('家测'), findsOneWidget);
-    });
-
-    testWidgets('医院序列不出现「家测」', (tester) async {
-      await tester.pumpWidget(
-        wrap(SeriesCard(series: s(self: false), onOpenDoc: (_) {})),
-      );
-      expect(find.text('家测'), findsNothing);
-    });
-  });
-
-  // ───────────────────────────────────────────────────────────────────────────
-  group('趋势:换算过的序列必须说出来', () {
-    // 常态下屏幕上的数值/单位/参考区间就是化验单上逐字印的那一套。只有同一指标
-    // 的几份报告用了不同单位、一条线上没法同时画两种单位时,Rust 才把值和区间
-    // 一起换到规范单位(`aggregate.rs` 的「哪一层用哪一套单位」②)。那一刻用户
-    // 在自己那张纸上找不到屏幕上这个数字 —— 不说出来等于改写原文。
-    TrendSeriesDto s({required bool converted}) => TrendSeriesDto(
-      name: '肌酐',
-      unit: converted ? 'umol/L' : 'mg/dL',
-      valuesConverted: converted,
-      anyAbnormal: false,
-      refLow: converted ? 59 : 0.6,
-      refHigh: converted ? 104 : 1.3,
-      panel: '肾功能',
-      selfMeasured: false,
-      points: [pt('2026-08-05', converted ? 96 : 1.2, flag: 'N')],
-    );
-
-    testWidgets('换算过 → 卡上出现「已统一换算为 umol/L」', (tester) async {
-      await tester.pumpWidget(
-        wrap(SeriesCard(series: s(converted: true), onOpenDoc: (_) {})),
-      );
-      expect(find.text('已统一换算为 umol/L'), findsOneWidget);
-    });
-
-    testWidgets('没换算 → 一个字都不许多说(那会让人以为数字被动过)', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        wrap(SeriesCard(series: s(converted: false), onOpenDoc: (_) {})),
-      );
-      expect(find.textContaining('已统一换算'), findsNothing);
-      // 卡上就是纸上那一套:1.2 与 参考区间 0.6–1.3。医院化验序列(`selfMeasured:
-      // false`)的图例带「出自化验单原件」后缀,见 `trendRefLegendText`。
-      expect(find.text('1.2'), findsOneWidget);
-      expect(find.text('参考区间 0.6–1.3 · 出自化验单原件'), findsOneWidget);
-      expect(find.text('mg/dL'), findsOneWidget);
-    });
-  });
-
-  // ───────────────────────────────────────────────────────────────────────────
-  group('趋势:参考区间的出处', () {
-    // 产品要求(2026-08-06):趋势页的参考区间要能证明「我们用的是官方来源」——
-    // 医院化验的出处是化验单原件本身,家测的出处是 `TrendSeriesDto.refSource`
-    // 带的指南/共识引文,两者不能混着说。
-
-    TrendSeriesDto hospitalSeries({double? refLow, double? refHigh}) =>
-        TrendSeriesDto(
-          name: '肌酐',
-          unit: 'umol/L',
-          valuesConverted: false,
-          anyAbnormal: false,
-          refLow: refLow,
-          refHigh: refHigh,
-          panel: '肾功能',
-          selfMeasured: false,
-          points: [pt('2026-08-05', 96, flag: 'N')],
-        );
-
-    TrendSeriesDto homeSeries({
-      double? refLow,
-      double? refHigh,
-      String? refSource,
-    }) => TrendSeriesDto(
-      name: '心率',
-      unit: '/min',
-      valuesConverted: false,
-      anyAbnormal: false,
-      refLow: refLow,
-      refHigh: refHigh,
-      refSource: refSource,
-      panel: '生命体征',
-      selfMeasured: true,
-      points: [pt('2026-08-05', 72)],
-    );
-
-    test('图例文字:医院序列加「出自化验单原件」后缀,家测序列不加', () {
-      expect(
-        trendRefLegendText(hospitalSeries(refLow: 0.6, refHigh: 1.3), '0.6–1.3'),
-        '参考区间 0.6–1.3 · 出自化验单原件',
-      );
-      expect(
-        trendRefLegendText(homeSeries(refHigh: 100), '≤ 100'),
-        '参考区间 ≤ 100',
-      );
-    });
-
-    test('引文:只有家测序列读 refSource,医院序列恒为 null', () {
-      expect(
-        trendRefSourceCitation(homeSeries(refHigh: 100, refSource: '内科学共识')),
-        '内科学共识',
-      );
-      // 医院序列即使 DTO 上手滑填了 refSource(不该发生,Rust 侧恒为 null),
-      // UI 也不该读它 —— 出处必须是化验单原件,不是这段引文的用途。
-      expect(
-        trendRefSourceCitation(
-          TrendSeriesDto(
-            name: '肌酐',
-            valuesConverted: false,
-            anyAbnormal: false,
-            refLow: 0.6,
-            refHigh: 1.3,
-            refSource: '不该被读到的引文',
-            selfMeasured: false,
-            points: const [],
-          ),
-        ),
-        isNull,
-      );
-    });
-
-    testWidgets('家测且有出处 → 卡上出现「出处:引文原文」这一整段', (tester) async {
-      await tester.pumpWidget(
-        wrap(
-          SeriesCard(
-            series: homeSeries(refHigh: 100, refSource: '成年人静息心率正常范围'),
-            onOpenDoc: (_) {},
-          ),
-        ),
-      );
-      expect(find.text('出处:成年人静息心率正常范围'), findsOneWidget);
-    });
-
-    testWidgets('家测但没有区间(体温/体重/血糖同构)→ 提示「暂无公认家测正常区间」', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        wrap(SeriesCard(series: homeSeries(), onOpenDoc: (_) {})),
-      );
-      expect(find.text(trendNoHomeRangeNote), findsOneWidget);
-      // 没有区间就没有出处可言,「出处:」那一段不该出现。
-      expect(find.textContaining('出处:'), findsNothing);
-    });
-
-    testWidgets('医院序列没有区间 → 不画任何「暂无家测区间」提示(那句只给家测用)', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        wrap(SeriesCard(series: hospitalSeries(), onOpenDoc: (_) {})),
-      );
-      expect(find.text(trendNoHomeRangeNote), findsNothing);
-    });
-
-    testWidgets('页脚:三种出处都说到,且给出那条验证过的指南链接', (tester) async {
-      await tester.pumpWidget(wrap(const ProvenanceFooter()));
-      expect(find.textContaining('医院化验'), findsOneWidget);
-      expect(find.textContaining('家测'), findsOneWidget);
-      expect(find.textContaining('体温、体重、血糖'), findsOneWidget);
-      expect(find.text('查看《中国高血压防治指南(2024年修订版)》原文'), findsOneWidget);
-    });
-  });
-
   // ───────────────────────────────────────────────────────────────────────────
   group('应急卡', () {
     final emptyCard = const EmergencyCardDto(
@@ -795,36 +454,40 @@ void main() {
       expect(find.byType(TextField), findsNothing);
       expect(find.byType(TextFormField), findsNothing);
       expect(find.text('未登记'), findsOneWidget);
-      // 它不再是底栏的一项(底栏只有三个:病历 / 趋势 / 我)。
+      // 它不再是底栏的一项(底栏四个:病历 / 现在 / 用药 / 我)。
       expect(
         HomeShell.tabDestinations.map((d) => d.label),
         isNot(contains('急救卡')),
       );
-      expect(HomeShell.tabDestinations.length, 3);
+      expect(HomeShell.tabDestinations.length, 4);
     });
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  group('三 tab 信息架构', () {
+  group('四 tab 信息架构(2026-10-25:病历 / 化验 / 用药 / 我)', () {
     test('tab 数 == 页面数 == 底栏项数', () {
       // 这三个数字散在两处 const 列表和一组常量里。加一个 tab 时最容易漏掉其中
       // 一处,而漏掉的表现是运行时越界或**点 A 进了 B**,不是编译错误。
-      expect(HomeTab.count, 3);
+      expect(HomeTab.count, 4);
       expect(HomeShell.tabScreens.length, HomeTab.count);
       expect(HomeShell.tabDestinations.length, HomeTab.count);
     });
 
     test('下标连续、互不重复', () {
-      const order = [HomeTab.records, HomeTab.trends, HomeTab.me];
-      expect(order, [0, 1, 2]);
+      const order = [HomeTab.records, HomeTab.labs, HomeTab.meds, HomeTab.me];
+      expect(order, [0, 1, 2, 3]);
       expect(order.toSet().length, HomeTab.count);
     });
 
-    test('底栏文案就是 mockup 那三个词', () {
+    test('底栏文案就是 spec 那四个词', () {
       expect(
         HomeShell.tabDestinations.map((d) => d.label).toList(),
-        ['病历', '趋势', '我'],
+        ['病历', '化验', '用药', '我'],
       );
+    });
+
+    test('冷启动落在「病历」', () {
+      expect(HomeTab.records, 0);
     });
 
     test('「给医生看」**不在**底栏 —— 它是从「病历」推进去的一整页', () {
@@ -841,8 +504,14 @@ void main() {
     });
 
     test('程序化跳转落在正确的 tab 上', () {
-      goToTrends();
-      expect(selectedTab.value, HomeTab.trends);
+      goToLabs();
+      expect(selectedTab.value, HomeTab.labs);
+      goToMeds();
+      expect(selectedTab.value, HomeTab.meds);
+      expect(medsFilterFamily.value, isNull);
+      goToMeds(family: 'cardio');
+      expect(medsFilterFamily.value, 'cardio');
+      medsFilterFamily.value = null;
       goToMe();
       expect(selectedTab.value, HomeTab.me);
       goToRecords();
@@ -852,8 +521,10 @@ void main() {
     test('埋点枚举与 tab 一一对应 —— 少一个就会把 A 的人气记成 B', () {
       expect(AnalyticsTab.values.length, HomeTab.count);
       expect(AnalyticsTab.of(HomeTab.records), AnalyticsTab.records);
+      expect(AnalyticsTab.of(HomeTab.labs), AnalyticsTab.labs);
+      expect(AnalyticsTab.of(HomeTab.meds), AnalyticsTab.meds);
       expect(AnalyticsTab.of(HomeTab.me), AnalyticsTab.me);
-      expect(AnalyticsTab.of(3), isNull);
+      expect(AnalyticsTab.of(4), isNull);
     });
   });
 

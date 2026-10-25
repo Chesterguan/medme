@@ -951,6 +951,49 @@ fn parse_rest_with_residual(
 /// silently discards lines that can't be read at all. To also see those lines
 /// (surfaced for human review instead of thrown away), use
 /// `extract_labs_with_unreadable`.
+/// 项目名里的标本标记(只看英文:`, Ur` / `Urine` / `UA` / `24 hr` → 尿;`CSF` → 脑脊液;
+/// `Fluid` → 体液)。中文名不看——「尿素」「尿酸」是血清项目,中文的尿项目词典本来就认。
+/// 带标记的名字只许命中词典里同标本的条目(key `urine_*` / `csf_*` / `fluid_*`),否则不并、
+/// 单独成序列,见 [`specimen_ok`]。返回中文标记给界面在名称后加「(尿)」。
+pub fn specimen_marker(name: &str) -> Option<&'static str> {
+    let lower = name.trim().to_lowercase();
+    let toks: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let word = |w: &str| toks.contains(&w);
+    // 「UA」在中文化验单上是尿酸的缩写、「Ur」可能是任何缩写:只认 Epic 的逗号后缀写法
+    // 「Protein, UA」「Creatinine, Ur」——逗号后第一个词是 ua / ur 才算。
+    let comma_suffix = lower.split(',').skip(1).any(|seg| {
+        matches!(
+            seg.split_whitespace()
+                .next()
+                .map(|t| t.trim_matches(|c: char| !c.is_ascii_alphanumeric())),
+            Some("ur") | Some("ua")
+        )
+    });
+    if word("urine") || comma_suffix || lower.contains("24 hr") {
+        return Some("尿");
+    }
+    if word("csf") {
+        return Some("脑脊液");
+    }
+    if word("fluid") {
+        return Some("体液");
+    }
+    None
+}
+
+/// 名字带标本标记时,词典命中只许落在同标本的条目上。
+pub fn specimen_ok(name: &str, key: &str) -> bool {
+    match specimen_marker(name) {
+        None => true,
+        Some("尿") => key.starts_with("urine_"),
+        Some("脑脊液") => key.starts_with("csf_"),
+        _ => key.starts_with("fluid_"),
+    }
+}
+
 pub fn extract_labs(text: &str) -> Vec<LabObservation> {
     extract_labs_with_unreadable(text).0
 }
@@ -1433,12 +1476,16 @@ fn parse_line_budgeted(raw_line: &str, budget: u8) -> (LineOutcome, Vec<LabObser
     // harmless) row into a charted one with a fabricated value.
     let is_bare_pair =
         unit_raw.is_none() && ref_low.is_none() && ref_high.is_none() && explicit_flag.is_none();
-    let m = resolve(raw_name, unit_raw.as_deref()).or_else(|| {
-        is_bare_pair
-            .then(|| strip_serial_prefix(raw_name))
-            .flatten()
-            .and_then(|n| resolve(n, unit_raw.as_deref()))
-    });
+    // 名字带标本标记(尿 / 脑脊液 / 体液)的行不许靠名字模糊匹配并进血清序列(修订 2 返工:
+    // 「Creatinine, Ur」72–97 mg/dL 并进「肌酐」就是两根冲天的尖峰)。单独成序列,原名照列。
+    let m = resolve(raw_name, unit_raw.as_deref())
+        .or_else(|| {
+            is_bare_pair
+                .then(|| strip_serial_prefix(raw_name))
+                .flatten()
+                .and_then(|n| resolve(n, unit_raw.as_deref()))
+        })
+        .filter(|m| specimen_ok(raw_name, &m.key));
     // Lab-row gate: some evidence beyond "a name and a number" must exist,
     // else it's demographics/metadata (年龄:60) — skip it.
     if !has_lab_evidence(

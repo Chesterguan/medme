@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 499936682;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1765312480;
 
 // Section: executor
 
@@ -2918,6 +2918,76 @@ fn wire__crate__api__vault_profile__vault_profile_install_package_impl(
         },
     )
 }
+fn wire__crate__api__vault_profile__vault_profile_lab_families_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "vault_profile_lab_families",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault_profile::vault_profile_lab_families()?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__vault_profile__vault_profile_meds_view_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "vault_profile_meds_view",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok =
+                            crate::api::vault_profile::vault_profile_meds_view(api_dir)?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__vault_profile__vault_profile_record_event_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3134,6 +3204,40 @@ fn wire__crate__api__vault_projections__view_emergency_card_impl(
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || {
                         let output_ok = crate::api::vault_projections::view_emergency_card()?;
+                        Ok(output_ok)
+                    })(),
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__vault_projections__view_lab_reports_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "view_lab_reports",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::vault_projections::view_lab_reports()?;
                         Ok(output_ok)
                     })(),
                 )
@@ -3410,11 +3514,13 @@ impl SseDecode for crate::api::dto::DemoLoadProgressDto {
         let mut var_loaded = <i64>::sse_decode(deserializer);
         let mut var_total = <i64>::sse_decode(deserializer);
         let mut var_succeeded = <i64>::sse_decode(deserializer);
+        let mut var_updated = <i64>::sse_decode(deserializer);
         let mut var_error = <Option<String>>::sse_decode(deserializer);
         return crate::api::dto::DemoLoadProgressDto {
             loaded: var_loaded,
             total: var_total,
             succeeded: var_succeeded,
+            updated: var_updated,
             error: var_error,
         };
     }
@@ -3428,12 +3534,14 @@ impl SseDecode for crate::api::dto::DocumentDetailDto {
         let mut var_ocrText = <String>::sse_decode(deserializer);
         let mut var_ocrConfidence = <Option<f32>>::sse_decode(deserializer);
         let mut var_ocrBackend = <Option<String>>::sse_decode(deserializer);
+        let mut var_impression = <Option<String>>::sse_decode(deserializer);
         return crate::api::dto::DocumentDetailDto {
             document: var_document,
             source_file: var_sourceFile,
             ocr_text: var_ocrText,
             ocr_confidence: var_ocrConfidence,
             ocr_backend: var_ocrBackend,
+            impression: var_impression,
         };
     }
 }
@@ -3583,6 +3691,51 @@ impl SseDecode for crate::api::dto::ImportOutcomeDto {
     }
 }
 
+impl SseDecode for crate::api::vault_projections::LabReportDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_documentId = <i64>::sse_decode(deserializer);
+        let mut var_date = <Option<String>>::sse_decode(deserializer);
+        let mut var_panels = <Vec<String>>::sse_decode(deserializer);
+        let mut var_title = <String>::sse_decode(deserializer);
+        let mut var_time = <Option<String>>::sse_decode(deserializer);
+        let mut var_abnormalCount = <u32>::sse_decode(deserializer);
+        let mut var_items =
+            <Vec<crate::api::vault_projections::LabReportItemDto>>::sse_decode(deserializer);
+        return crate::api::vault_projections::LabReportDto {
+            document_id: var_documentId,
+            date: var_date,
+            panels: var_panels,
+            title: var_title,
+            time: var_time,
+            abnormal_count: var_abnormalCount,
+            items: var_items,
+        };
+    }
+}
+
+impl SseDecode for crate::api::vault_projections::LabReportItemDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_analyteKey = <Option<String>>::sse_decode(deserializer);
+        let mut var_value = <String>::sse_decode(deserializer);
+        let mut var_unit = <Option<String>>::sse_decode(deserializer);
+        let mut var_reference = <Option<String>>::sse_decode(deserializer);
+        let mut var_flag = <Option<String>>::sse_decode(deserializer);
+        let mut var_unverified = <bool>::sse_decode(deserializer);
+        return crate::api::vault_projections::LabReportItemDto {
+            name: var_name,
+            analyte_key: var_analyteKey,
+            value: var_value,
+            unit: var_unit,
+            reference: var_reference,
+            flag: var_flag,
+            unverified: var_unverified,
+        };
+    }
+}
+
 impl SseDecode for Vec<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3660,6 +3813,32 @@ impl SseDecode for Vec<crate::api::dto::DocumentSummaryDto> {
             ans_.push(<crate::api::dto::DocumentSummaryDto>::sse_decode(
                 deserializer,
             ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::LabReportDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::LabReportDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::vault_projections::LabReportItemDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::vault_projections::LabReportItemDto>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -4342,6 +4521,7 @@ impl SseDecode for crate::api::vault_projections::TrendSeriesDto {
             <Vec<crate::api::vault_projections::TrendPointDto>>::sse_decode(deserializer);
         let mut var_selfMeasured = <bool>::sse_decode(deserializer);
         let mut var_refSource = <Option<String>>::sse_decode(deserializer);
+        let mut var_rawName = <Option<String>>::sse_decode(deserializer);
         return crate::api::vault_projections::TrendSeriesDto {
             name: var_name,
             analyte_key: var_analyteKey,
@@ -4355,6 +4535,7 @@ impl SseDecode for crate::api::vault_projections::TrendSeriesDto {
             points: var_points,
             self_measured: var_selfMeasured,
             ref_source: var_refSource,
+            raw_name: var_rawName,
         };
     }
 }
@@ -4761,52 +4942,70 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        78 => wire__crate__api__vault_profile__vault_profile_record_event_impl(
+        78 => wire__crate__api__vault_profile__vault_profile_lab_families_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        79 => wire__crate__api__vault_profile__vault_profile_refresh_terms_impl(
+        79 => wire__crate__api__vault_profile__vault_profile_meds_view_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        80 => wire__crate__api__vault_profile__vault_profile_verify_index_impl(
+        80 => wire__crate__api__vault_profile__vault_profile_record_event_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => wire__crate__api__vault_profile__vault_profile_view_impl(
+        81 => wire__crate__api__vault_profile__vault_profile_refresh_terms_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        82 => wire__crate__api__vault_profile__vault_profile_view_general_impl(
+        82 => wire__crate__api__vault_profile__vault_profile_verify_index_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        83 => wire__crate__api__vault_projections__view_emergency_card_impl(
+        83 => wire__crate__api__vault_profile__vault_profile_view_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        84 => wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
+        84 => wire__crate__api__vault_profile__vault_profile_view_general_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        85 => {
+        85 => wire__crate__api__vault_projections__view_emergency_card_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        86 => wire__crate__api__vault_projections__view_lab_reports_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        87 => wire__crate__api__vault_projections__view_trend_panel_catalog_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        88 => {
             wire__crate__api__vault_projections__view_trends_impl(port, ptr, rust_vec_len, data_len)
         }
-        86 => wire__crate__api__vault_projections__view_visit_summary_impl(
+        89 => wire__crate__api__vault_projections__view_visit_summary_impl(
             port,
             ptr,
             rust_vec_len,
@@ -5015,6 +5214,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::DemoLoadProgressDto {
             self.loaded.into_into_dart().into_dart(),
             self.total.into_into_dart().into_dart(),
             self.succeeded.into_into_dart().into_dart(),
+            self.updated.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -5040,6 +5240,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::DocumentDetailDto {
             self.ocr_text.into_into_dart().into_dart(),
             self.ocr_confidence.into_into_dart().into_dart(),
             self.ocr_backend.into_into_dart().into_dart(),
+            self.impression.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5199,6 +5400,58 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::ImportOutcomeDto>
     for crate::api::dto::ImportOutcomeDto
 {
     fn into_into_dart(self) -> crate::api::dto::ImportOutcomeDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::LabReportDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.document_id.into_into_dart().into_dart(),
+            self.date.into_into_dart().into_dart(),
+            self.panels.into_into_dart().into_dart(),
+            self.title.into_into_dart().into_dart(),
+            self.time.into_into_dart().into_dart(),
+            self.abnormal_count.into_into_dart().into_dart(),
+            self.items.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::LabReportDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::LabReportDto>
+    for crate::api::vault_projections::LabReportDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::LabReportDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::LabReportItemDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.name.into_into_dart().into_dart(),
+            self.analyte_key.into_into_dart().into_dart(),
+            self.value.into_into_dart().into_dart(),
+            self.unit.into_into_dart().into_dart(),
+            self.reference.into_into_dart().into_dart(),
+            self.flag.into_into_dart().into_dart(),
+            self.unverified.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::vault_projections::LabReportItemDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::vault_projections::LabReportItemDto>
+    for crate::api::vault_projections::LabReportItemDto
+{
+    fn into_into_dart(self) -> crate::api::vault_projections::LabReportItemDto {
         self
     }
 }
@@ -5620,6 +5873,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::vault_projections::TrendSerie
             self.points.into_into_dart().into_dart(),
             self.self_measured.into_into_dart().into_dart(),
             self.ref_source.into_into_dart().into_dart(),
+            self.raw_name.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5854,6 +6108,7 @@ impl SseEncode for crate::api::dto::DemoLoadProgressDto {
         <i64>::sse_encode(self.loaded, serializer);
         <i64>::sse_encode(self.total, serializer);
         <i64>::sse_encode(self.succeeded, serializer);
+        <i64>::sse_encode(self.updated, serializer);
         <Option<String>>::sse_encode(self.error, serializer);
     }
 }
@@ -5866,6 +6121,7 @@ impl SseEncode for crate::api::dto::DocumentDetailDto {
         <String>::sse_encode(self.ocr_text, serializer);
         <Option<f32>>::sse_encode(self.ocr_confidence, serializer);
         <Option<String>>::sse_encode(self.ocr_backend, serializer);
+        <Option<String>>::sse_encode(self.impression, serializer);
     }
 }
 
@@ -5975,6 +6231,32 @@ impl SseEncode for crate::api::dto::ImportOutcomeDto {
     }
 }
 
+impl SseEncode for crate::api::vault_projections::LabReportDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i64>::sse_encode(self.document_id, serializer);
+        <Option<String>>::sse_encode(self.date, serializer);
+        <Vec<String>>::sse_encode(self.panels, serializer);
+        <String>::sse_encode(self.title, serializer);
+        <Option<String>>::sse_encode(self.time, serializer);
+        <u32>::sse_encode(self.abnormal_count, serializer);
+        <Vec<crate::api::vault_projections::LabReportItemDto>>::sse_encode(self.items, serializer);
+    }
+}
+
+impl SseEncode for crate::api::vault_projections::LabReportItemDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.name, serializer);
+        <Option<String>>::sse_encode(self.analyte_key, serializer);
+        <String>::sse_encode(self.value, serializer);
+        <Option<String>>::sse_encode(self.unit, serializer);
+        <Option<String>>::sse_encode(self.reference, serializer);
+        <Option<String>>::sse_encode(self.flag, serializer);
+        <bool>::sse_encode(self.unverified, serializer);
+    }
+}
+
 impl SseEncode for Vec<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -6031,6 +6313,26 @@ impl SseEncode for Vec<crate::api::dto::DocumentSummaryDto> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::dto::DocumentSummaryDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::LabReportDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::LabReportDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::vault_projections::LabReportItemDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::vault_projections::LabReportItemDto>::sse_encode(item, serializer);
         }
     }
 }
@@ -6533,6 +6835,7 @@ impl SseEncode for crate::api::vault_projections::TrendSeriesDto {
         <Vec<crate::api::vault_projections::TrendPointDto>>::sse_encode(self.points, serializer);
         <bool>::sse_encode(self.self_measured, serializer);
         <Option<String>>::sse_encode(self.ref_source, serializer);
+        <Option<String>>::sse_encode(self.raw_name, serializer);
     }
 }
 
