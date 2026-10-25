@@ -7,6 +7,7 @@ import 'package:mobile_flutter/screens/meds_model.dart';
 import 'package:mobile_flutter/screens/meds_screen.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
+import 'package:mobile_flutter/widgets/med_card.dart';
 
 Map<String, dynamic> _row(String name, String raw, String dose, String family, {String? atc, bool stale = false, Map<String, dynamic>? stopped, List<Map<String, dynamic>> nodes = const []}) => {
   'name': name, 'raw_name': raw, 'raw_names': [raw], 'drug_key': name, 'dose': dose, 'atc': atc, 'mention_count': 3,
@@ -163,6 +164,18 @@ void main() {
     await _pump(t, view: _view(allergies: false, recent: false));
     expect(find.text('记录里没找到过敏史'), findsOneWidget);
     expect(find.text('1 年内没有用药记录'), findsOneWidget);
+  });
+
+  testWidgets('过敏很多(12 条):卡不超过 1/3 屏、卡内可滚、不溢出', (t) async {
+    final v = _view();
+    v['allergies'] = [
+      for (var i = 0; i < 12; i++) {'substance': 'Allergen $i', 'reaction': 'Hives', 'evidence': ['ev:0:3'], 'aliases': ['Allergen $i']},
+    ];
+    await _pump(t, view: v);
+    expect(t.takeException(), isNull);
+    expect(find.text('过敏 · 12'), findsOneWidget);
+    final card = find.ancestor(of: find.textContaining('Allergen 0'), matching: find.byType(MedCard)).first;
+    expect(t.getSize(card).height, lessThanOrEqualTo(852 / 3 + 3), reason: '1/3 屏 + 卡的边框');
   });
 
   testWidgets('族预填:只剩心血管行,chip 可清掉', (t) async {

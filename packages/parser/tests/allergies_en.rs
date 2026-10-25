@@ -132,3 +132,17 @@ fn inline_list_wrapped_across_lines_and_narrative_fragments() {
         ["Shellfish allergy", "Seasonal ic [octacosanol]"]
     );
 }
+
+#[test]
+fn single_space_rows_split_trailing_reaction_words_and_headings_are_dropped() {
+    let t = "Allergies\nAllergen   Reactions\n • Bactrim Ds Hives and Other\n • Shellfish Allergy Itching\n • Seasonal Ic Other\n • Allergies\n • Penicillins\n\n";
+    assert_eq!(
+        parser::extract_allergies_pairs(t),
+        vec![
+            ("Bactrim Ds".to_string(), "Hives and Other".to_string()),
+            ("Shellfish Allergy".to_string(), "Itching".to_string()),
+            ("Seasonal Ic".to_string(), "Other".to_string()),
+            ("Penicillins".to_string(), String::new()),
+        ]
+    );
+}

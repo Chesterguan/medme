@@ -619,6 +619,61 @@ fn is_en_inline_allergy_item(item: &str) -> bool {
     lower.split_whitespace().count() <= 6
 }
 
+/// Epic 过敏表里常见的反应词;物质串结尾连着的这些词(含中间的 and / or)是反应,不是物质。
+const EN_REACTION_WORDS: &[&str] = &[
+    "hives",
+    "rash",
+    "itching",
+    "itch",
+    "swelling",
+    "other",
+    "nausea",
+    "vomiting",
+    "diarrhea",
+    "anaphylaxis",
+    "unknown",
+    "cough",
+    "dizziness",
+    "headache",
+    "angioedema",
+    "unspecified",
+    "wheezing",
+    "flushing",
+    "tingling",
+    "numbness",
+];
+
+/// `Bactrim Ds Hives and Other` → (`Bactrim Ds`, `Hives and Other`);没有反应词 → 原样。
+fn split_trailing_reactions(item: &str) -> (String, String) {
+    let words: Vec<&str> = item.split_whitespace().collect();
+    let mut cut = words.len();
+    while cut > 1 {
+        let w = words[cut - 1]
+            .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+            .to_lowercase();
+        if EN_REACTION_WORDS.contains(&w.as_str())
+            || ((w == "and" || w == "or") && cut < words.len())
+        {
+            cut -= 1;
+        } else {
+            break;
+        }
+    }
+    // 反应段不能以 and / or 开头(`X and Hives` 里的 and 属于反应段才算)。
+    while cut < words.len() && matches!(words[cut].to_lowercase().as_str(), "and" | "or") {
+        cut += 1;
+    }
+    (words[..cut].join(" "), words[cut..].join(" "))
+}
+
+/// 被当成过敏原抓进来的表头 / 栏目名。
+fn is_en_allergy_heading(item: &str) -> bool {
+    matches!(
+        item.trim().trim_end_matches(':').to_lowercase().as_str(),
+        "allergies" | "allergy" | "allergen" | "allergens" | "reactions" | "reaction"
+    )
+}
+
 fn is_en_allergy_negation(item: &str) -> bool {
     let s = item.trim().trim_end_matches('.').to_lowercase();
     EN_ALLERGY_NEGATIONS.contains(&s.as_str())
@@ -678,8 +733,18 @@ fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
                         break;
                     };
                     let (substance, reaction) = split_columns(body.trim());
-                    if !substance.is_empty() && !is_en_allergy_negation(substance) {
-                        out.push((substance.to_string(), reaction.to_string()));
+                    // Epic 的另一种印法里物质和反应只隔一个空格(`Shellfish Allergy Itching`、
+                    // `Bactrim Ds Hives and Other`):反应列为空时把结尾的反应词拆出来。
+                    let (substance, reaction) = if reaction.is_empty() {
+                        split_trailing_reactions(substance)
+                    } else {
+                        (substance.to_string(), reaction.to_string())
+                    };
+                    if !substance.is_empty()
+                        && !is_en_allergy_negation(&substance)
+                        && !is_en_allergy_heading(&substance)
+                    {
+                        out.push((substance, reaction));
                     }
                     k += 1;
                 }
@@ -712,10 +777,10 @@ fn extract_allergies_en(text: &str) -> Vec<(String, String)> {
                         .trim_end_matches('.')
                         .trim_start_matches("and ")
                         .trim();
-                    if !is_en_inline_allergy_item(item) {
+                    if !is_en_inline_allergy_item(item) || is_en_allergy_heading(item) {
                         continue;
                     }
-                    out.push((item.to_string(), String::new()));
+                    out.push(split_trailing_reactions(item));
                 }
             }
         }
