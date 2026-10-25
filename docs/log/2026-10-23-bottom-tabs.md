@@ -1,4 +1,4 @@
-# 2026-10-23 · 底部四 tab:病历 / 现在 / 用药 / 我
+# 2026-10-23 · 底部四 tab:病历 / 现在 / 用药 / 我 → 修订 2(10-25)改成 病历 / 化验 / 用药 / 我
 
 spec:`docs/superpowers/specs/2026-10-23-bottom-tabs-redesign-design.md`(稿 A;用户指令 spec 写完不等审直接实施,「只有用户能答」的问题由实施者定,§11.1 逐条标明);ADR:[0013](../ADR/0013-bottom-tabs-profile-merged-into-home.md)(Amends 0011/0012)。分支 `feat/bottom-tabs`,基于 `feat/generic-profile`。背景:用户把 Epic 全量病历装到 iPhone 14 Pro 试 #243/#247/#248 后的原话——「依据没必要列出来,点的时候显示原件就好」「现在里面很多东西不是现在的」「把药单独加一个 tab 显示最近,医生可以搜过往,过敏也移过去」「还是只有红斑狼疮的包,强行打开没有意义」「重新思考底部 tab」「太久远的化验不用展示」「化验值没有折线图不容易看」。
 
@@ -27,3 +27,11 @@ spec:`docs/superpowers/specs/2026-10-23-bottom-tabs-redesign-design.md`(稿 A;�
 - Problem List `Resolved On`、Epic `Patient not taking`、中文诊断名→ICD、行式过敏跨行续写、tab 位置持久化、图片档依据画框、桌面 Tauri(ADR 0013 Consequences)。
 - 集成测试没在模拟器上跑;`openRecordSheet` 走新路径(病历 → 添加 → 记录一下)未实跑。
 - `glossary_guard` 弱闸「导入」仍红(#243 起)。
+
+**修订 2(2026-10-25)**:用户装了真机 debug 包(iOS 14+ 的 debug 包不能从桌面自启,先撞了一次闪退;profile 包要自动签名覆盖才编得过,编好没装——用户叫停)后的原话:「现在 是别的是个啥 乱得很 趋势也不见了」「化验的折线是必须要有的 你实在不会 模仿 mychart 的设计都行」。照 MyChart 收口(spec「修订 2」、ADR 0013 Addendum):
+- 「现在」tab 取消 → **化验**:按报告(`view_lab_reports`:一份化验文档一行,词典面板中文名 · 日期,异常徽标;表里是印刷值、定性值原样、箭头按 flag / 区间判)/ 按指标(原趋势行 + 八颗分类 chip + 搜索 + 12 个月「更早」折叠),任何指标点开 = `LabDetailScreen`(160 高 `TrendChart` + 参考带 + 每点回原件)。参考区间的出处收进 ⓘ。
+- **我 → 健康摘要**:诊断按族折叠(+ 最近的用药一行 + 包段)、手术史(surgery 泳道)、植入物(Z95–Z97)、过敏、「更早的诊断」折叠。
+- 诊断「最近」排除 `doc_type: other` 且标题含「摘要 / summary」的文档(Epic 患者摘要的日期是导出日)。
+- 验证:`flutter test` 1098 过(两道预期红不变)、`cargo test -p profile` 与手机 crate 绿、clippy / fmt 干净;独立审查与真实数据见下。
+- 修订 2 的独立审查抓出 4 严重 4 重要,全修(4a7fcac):「按报告」的正则兜底此前对所有文档 whole-doc 跑 `extract_labs`(出院小结正文的血压会冒出来当化验单)→ parser 抽出 `doc_lab_observations` 与 `aggregate` 共用;箭头区间优先、与折线页一致;自测序列 key 唯一;列表按需构建;摘要文档判定收窄到「患者 / 病历摘要」。
+- 顺手:重导病历包时侧文件内容变了就重挂抽取(`updated` 计数,46ab4eb)——适配器修了化验解析后用户重导新包即可,不必删成员。
