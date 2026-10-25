@@ -288,6 +288,43 @@ fn max_date(cur: Option<NaiveDate>, new: Option<NaiveDate>) -> Option<NaiveDate>
 /// and sentence fragments as "labs" (`二甲双胍 0.5g` → analyte, CT text → analyte).
 /// `None`/unknown stays permissive so callers that don't classify still work
 /// (and to keep the low-level aggregate unit tests type-agnostic). Quality dim 3/4.
+/// 一份文档读出哪些化验观测(spec #148 的 section-scoped 规则,**所有读者共用**):有云抽取
+/// 结果且非空 → 用它;自测记录读结构化载荷;化验类文档 whole-doc(先屏蔽带药段);其余文档只
+/// 读内嵌的化验 section。手机端「化验 · 按报告」与 `aggregate` 走同一条路,免得一份出院小结
+/// 的正文血压在报告列表里冒出来。
+pub fn doc_lab_observations(doc: &SourceDoc<'_>) -> Vec<LabObservation> {
+    let dt = doc.doc_type.as_deref();
+    if let Some(parsed) = doc
+        .extraction_json
+        .and_then(|j| crate::extraction::labs_from_json(j).ok())
+        .filter(|p| !p.labs.is_empty())
+    {
+        // 有云抽取结果、能解析、**且真读出了东西**才用它,不再对 text 跑正则;
+        // `Err`(格式不对/被拒收)才落到下面几条分支,退回正则。
+        //
+        // 零条 lab 也退回正则(extract-repro-report.md §4):云端漏读一份单子
+        // (上游超时、图被涂黑带盖住、模型返回 `labs: []`)时,旧代码把「正则本来
+        // 能读出 8–18 条」变成**整份空白**;而这个空结果是无条件落盘的
+        // (`vault_cloud_commit_extraction`),此后每次投影都读它 —— 一次失败永久
+        // 生效。落盘行为不变(那份文档仍要能显示「云端整理没有读出内容」),只是
+        // summary 不再拿它当准。
+        parsed.labs
+    } else if dt == Some("self_measurement") {
+        self_entry::parse_self_measurement_payload(doc.text)
+            .unwrap_or_default()
+            .iter()
+            .map(build_self_measured_observation)
+            .collect()
+    } else if wants_labs(dt) {
+        extract_labs(&mask_meds_blocks(doc.text))
+    } else {
+        sections_text(doc.text, SecKind::Labs)
+            .iter()
+            .flat_map(|s| extract_labs(s))
+            .collect()
+    }
+}
+
 fn wants_labs(doc_type: Option<&str>) -> bool {
     doc_type.is_none_or(|t| t.contains("lab"))
 }
@@ -842,35 +879,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
         // 抽(section-scoped,so a discharge summary's prose 血压 stays out) —— #148。
         // whole-doc 那条路上先把 出院医嘱/带药 段屏蔽掉:一行药读起来就是一行化验,
         // 而 `wants_labs` 会对一份标题被 OCR 丢掉的出院小结点头 —— 见 mask_meds_blocks。 ---
-        let doc_labs: Vec<LabObservation> = if let Some(parsed) = doc
-            .extraction_json
-            .and_then(|j| crate::extraction::labs_from_json(j).ok())
-            .filter(|p| !p.labs.is_empty())
-        {
-            // 有云抽取结果、能解析、**且真读出了东西**才用它,不再对 text 跑正则;
-            // `Err`(格式不对/被拒收)才落到下面几条分支,退回正则。
-            //
-            // 零条 lab 也退回正则(extract-repro-report.md §4):云端漏读一份单子
-            // (上游超时、图被涂黑带盖住、模型返回 `labs: []`)时,旧代码把「正则本来
-            // 能读出 8–18 条」变成**整份空白**;而这个空结果是无条件落盘的
-            // (`vault_cloud_commit_extraction`),此后每次投影都读它 —— 一次失败永久
-            // 生效。落盘行为不变(那份文档仍要能显示「云端整理没有读出内容」),只是
-            // summary 不再拿它当准。
-            parsed.labs
-        } else if dt == Some("self_measurement") {
-            self_entry::parse_self_measurement_payload(doc.text)
-                .unwrap_or_default()
-                .iter()
-                .map(build_self_measured_observation)
-                .collect()
-        } else if wants_labs(dt) {
-            extract_labs(&mask_meds_blocks(doc.text))
-        } else {
-            sections_text(doc.text, SecKind::Labs)
-                .iter()
-                .flat_map(|s| extract_labs(s))
-                .collect()
-        };
+        let doc_labs: Vec<LabObservation> = doc_lab_observations(doc);
         for obs in doc_labs {
             let matched = obs.analyte_key.is_some();
             // 自测值与医院值永不同组:即使 analyte_key 相同(如同是

@@ -310,53 +310,57 @@ class LabAnalytesList extends StatelessWidget {
     final chips = labGroupChips([...split.recent, ...split.earlier]);
     final recent = sortByLatest(labsVisible(split.recent, group: group, query: query));
     final earlier = sortByLatest(labsVisible(split.earlier, group: group, query: query));
+    // 自测与医院值同 key 不同序列(aggregate 刻意分组),key 要带上 selfMeasured 才唯一(审查 C4)。
     Widget row(TrendSeriesDto s) => LabTrendRow(
-      key: ValueKey('lab:${s.analyteKey ?? s.name}'),
+      key: ValueKey('lab:${s.selfMeasured}:${s.analyteKey ?? s.name}'),
       series: s,
       onOpenDoc: onOpenDoc,
       onTap: () => onOpenSeries(s),
     );
-    return ListView(
+    // 几百条序列、每条一个带 ticker 的折线:按需构建,不一次全建(审查 I7)。
+    final items = <Widget>[
+      if (chips.length > 1)
+        SizedBox(
+          height: 36,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: chips.length,
+            separatorBuilder: (_, _) => const SizedBox(width: MedShape.s1),
+            itemBuilder: (context, i) => MedChip(
+              label: chips[i].group,
+              count: chips[i].count,
+              selected: chips[i].group == group,
+              onTap: () => onSelectGroup(chips[i].group == group ? kAllGroup : chips[i].group),
+            ),
+          ),
+        ),
+      const SizedBox(height: MedShape.s2),
+      if (recent.isEmpty && earlier.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: MedShape.s5),
+          child: Text(
+            query.isNotEmpty ? '没有名字含「$query」的指标。' : '还没有可以画的指标。',
+            textAlign: TextAlign.center,
+            style: MedType.body.copyWith(color: c.ink2, height: 1.6),
+          ),
+        ),
+      for (final s in recent) row(s),
+      if (earlier.isNotEmpty)
+        ExpansionTile(
+          title: Text('更早 · ${earlier.length} 项(超过 12 个月没有结果)', style: MedType.body.copyWith(color: c.ink2)),
+          shape: const Border(),
+          collapsedShape: const Border(),
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: EdgeInsets.zero,
+          expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [for (final s in earlier) row(s)],
+        ),
+    ];
+    return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(MedShape.s3, MedShape.s2, MedShape.s3, MedShape.s6),
-      children: [
-        if (chips.length > 1)
-          SizedBox(
-            height: 36,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: chips.length,
-              separatorBuilder: (_, _) => const SizedBox(width: MedShape.s1),
-              itemBuilder: (context, i) => MedChip(
-                label: chips[i].group,
-                count: chips[i].count,
-                selected: chips[i].group == group,
-                onTap: () => onSelectGroup(chips[i].group == group ? kAllGroup : chips[i].group),
-              ),
-            ),
-          ),
-        const SizedBox(height: MedShape.s2),
-        if (recent.isEmpty && earlier.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: MedShape.s5),
-            child: Text(
-              query.isNotEmpty ? '没有名字含「$query」的指标。' : '还没有可以画的指标。',
-              textAlign: TextAlign.center,
-              style: MedType.body.copyWith(color: c.ink2, height: 1.6),
-            ),
-          ),
-        for (final s in recent) row(s),
-        if (earlier.isNotEmpty)
-          ExpansionTile(
-            title: Text('更早 · ${earlier.length} 项(超过 12 个月没有结果)', style: MedType.body.copyWith(color: c.ink2)),
-            shape: const Border(),
-            collapsedShape: const Border(),
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: EdgeInsets.zero,
-            expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [for (final s in earlier) row(s)],
-          ),
-      ],
+      itemCount: items.length,
+      itemBuilder: (context, i) => items[i],
     );
   }
 }

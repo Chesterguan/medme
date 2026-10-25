@@ -17,8 +17,8 @@ mod meds;
 mod profile_event;
 mod self_entry;
 pub use aggregate::{
-    aggregate, AggregatedClinical, AggregatedCondition, AnalyteSeries, LabPoint, MedMention,
-    MedSpan, SourceDoc,
+    aggregate, doc_lab_observations, AggregatedClinical, AggregatedCondition, AnalyteSeries,
+    LabPoint, MedMention, MedSpan, SourceDoc,
 };
 pub use conditions::{extract_conditions, ConditionMention};
 pub use extraction::{

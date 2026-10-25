@@ -27,6 +27,8 @@ class LabDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
     final pts = trendDatedPoints(series);
+    // 没有日期的点画不上轴,但原件照样可达(「原件永远可达」):列在最后。
+    final undated = series.points.where((p) => p.date == null).toList();
     final ref = refRangeText(series.refLow, series.refHigh);
     final meta = MedType.caption.copyWith(color: c.ink3, fontFeatures: MedType.tabular);
     return Scaffold(
@@ -63,29 +65,29 @@ class LabDetailScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (var i = pts.length - 1; i >= 0; i--) ...[
-                  if (i < pts.length - 1) Divider(height: 1, color: c.line),
+                for (final (i, p) in [...pts.reversed, ...undated].indexed) ...[
+                  if (i > 0) Divider(height: 1, color: c.line),
                   InkWell(
-                    onTap: () => _open(context, pts[i].documentId.toInt()),
+                    onTap: () => _open(context, p.documentId.toInt()),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: MedShape.s3, vertical: MedShape.s2),
                       child: Row(
                         children: [
-                          Text(pts[i].date ?? '', style: MedType.secondary.copyWith(color: c.ink2, fontFeatures: MedType.tabular)),
+                          Text(p.date ?? '日期不详', style: MedType.secondary.copyWith(color: c.ink2, fontFeatures: MedType.tabular)),
                           const SizedBox(width: MedShape.s2),
                           Expanded(
                             child: Text(
-                              '${fmtLabNumber(pts[i].value)}${pts[i].unit == null || pts[i].unit!.isEmpty ? '' : ' ${pts[i].unit}'}'
-                              '${pts[i].unverified ? ' · 需核对' : ''}',
+                              '${fmtLabNumber(p.value)}${p.unit == null || p.unit!.isEmpty ? '' : ' ${p.unit}'}'
+                              '${p.unverified ? ' · 需核对' : ''}',
                               textAlign: TextAlign.end,
                               style: MedType.body.copyWith(
-                                color: labStatusColor(context, labStatusOf(pts[i].flag)),
+                                color: labStatusColor(context, labStatusOf(p.flag)),
                                 fontFeatures: MedType.tabular,
                               ),
                             ),
                           ),
                           const SizedBox(width: MedShape.s1),
-                          ?labStatusWord(context, pts[i].flag),
+                          ?labStatusWord(context, p.flag),
                           Icon(Icons.chevron_right, size: 18, color: c.ink3),
                         ],
                       ),
