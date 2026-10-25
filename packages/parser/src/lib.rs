@@ -29,7 +29,10 @@ pub use handoff::{
     assemble_summary, extract_allergies_pairs, imaging_impression, match_disease,
     pathology_impression,
 };
-pub use labs::{extract_labs, extract_labs_with_unreadable, LabObservation, UnreadableRow};
+pub use labs::{
+    extract_labs, extract_labs_with_unreadable, specimen_marker, specimen_ok, LabObservation,
+    UnreadableRow,
+};
 pub use meds::{extract_meds, MedObservation};
 pub use profile_event::{
     parse_profile_event_payload, render_profile_event_text, ProfileEvent, PROFILE_EVENT_MARKER,

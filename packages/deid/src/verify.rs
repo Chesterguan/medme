@@ -42,6 +42,10 @@ pub struct MedItem {
     /// 产物经 `verify` 一律清空。空时不序列化,云路径落库 JSON 逐字节不变。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub rxnorm: String,
+    /// 用药起始日 `YYYY-MM-DD`(Epic Current Medications 的 `Start date`)。不在云抽取 prompt
+    /// schema 里,只有结构化导入的 sidecar 会带;空串时序列化不出现,`verify` 不碰它。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub start: String,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 pub struct DiagnosisItem {
@@ -733,6 +737,7 @@ pub fn verify(mut e: Extraction, source_text: &str, mode: Mode) -> Verified {
     }
     for m in &mut e.meds {
         m.rxnorm.clear();
+        m.start.clear();
     }
 
     let mut keep = |ok: bool, flag: &mut bool| -> bool {

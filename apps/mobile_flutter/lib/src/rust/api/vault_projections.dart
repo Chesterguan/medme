@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `document_refs`, `flat_docs`, `fmt_date`, `fmt_num`, `gather_for_profile`, `gather_profile_events`, `gather`, `is_renderable`, `lab_report_items`, `lab_report_time`, `lab_report_title`, `norm_flag`, `parse_num`, `parse_rfc3339_date`, `read_text`, `ref_text`, `render_plain_text`, `source_docs`, `source_docs`, `trend_series`
+// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `document_refs`, `flat_docs`, `fmt_date`, `fmt_num`, `gather_for_profile`, `gather_profile_events`, `gather`, `is_renderable`, `lab_report_items`, `lab_report_panels`, `lab_report_time`, `lab_report_title`, `norm_flag`, `parse_num`, `parse_rfc3339_date`, `read_text`, `ref_text`, `render_plain_text`, `source_docs`, `source_docs`, `trend_series`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ProfileInput`, `ProjectionDoc`, `VaultProjection`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -204,7 +204,10 @@ class LabReportDto {
   /// `"YYYY-MM-DD"`;定不出日期为 None(排最后)。
   final String? date;
 
-  /// 单子里**第一个**认得出的项目所在的词典面板名(「血常规」「肾功能」);一个都认不出 →
+  /// 单上出现的词典面板名(按项目顺序去重;Epic 一份文档是一整天的化验,常有十几个面板)。
+  final List<String> panels;
+
+  /// 面板 ≤ 3 个 → 「肾功能、血常规」;更多 → 「电解质、血常规、肝功能 等 N 个面板」;一个都认不出 →
   /// 文档标题 → 「化验」。同一天多张单靠 `time` 区分。
   final String title;
 
@@ -216,6 +219,7 @@ class LabReportDto {
   const LabReportDto({
     required this.documentId,
     this.date,
+    required this.panels,
     required this.title,
     this.time,
     required this.abnormalCount,
@@ -226,6 +230,7 @@ class LabReportDto {
   int get hashCode =>
       documentId.hashCode ^
       date.hashCode ^
+      panels.hashCode ^
       title.hashCode ^
       time.hashCode ^
       abnormalCount.hashCode ^
@@ -238,6 +243,7 @@ class LabReportDto {
           runtimeType == other.runtimeType &&
           documentId == other.documentId &&
           date == other.date &&
+          panels == other.panels &&
           title == other.title &&
           time == other.time &&
           abnormalCount == other.abnormalCount &&

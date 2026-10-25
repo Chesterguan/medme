@@ -205,6 +205,8 @@ pub struct MedSpan {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MedMention {
     pub date: Option<NaiveDate>,
+    /// 侧文件给的用药起始日(Epic `Start date`);没有为 `None`。
+    pub start_date: Option<NaiveDate>,
     /// `dose_string` 的结果;这份文档只提了名没写剂量时为 `None`。
     pub dose: Option<String>,
     pub raw_name: String,
@@ -766,7 +768,7 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
     // 点」之间比。
     // 印刷单位只差大小写(Epic 同一项目印 `mg/dL` 也印 `MG/DL`)算同一种:否则 225 个点的
     // 肌酐被判成「混了单位」,走不到规范套、也拿不到参考带(修订 2 返工,2026-10-25)。
-    let printed_units: BTreeSet<String> = b
+    let raw_units: BTreeSet<String> = b
         .points
         .iter()
         .filter_map(|p| {
@@ -775,6 +777,17 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
                 .map(|u| normalize_unit(u).to_lowercase())
         })
         .collect();
+    // 被截断的单位(Epic 把 `MG/DL` 印成 `MG/D`)算成它所截断的那个完整单位:≥3 个字符、且是
+    // 本序列另一个单位的前缀。真正不同的单位(`g/l` vs `mg/dl`)不是前缀关系,不受影响。
+    let full_unit = |u: &str| -> String {
+        raw_units
+            .iter()
+            .filter(|v| u.len() >= 3 && v.len() > u.len() && v.starts_with(u))
+            .max_by_key(|v| v.len())
+            .cloned()
+            .unwrap_or_else(|| u.to_string())
+    };
+    let printed_units: BTreeSet<String> = raw_units.iter().map(|u| full_unit(u)).collect();
     let series_printed_unit = printed_units.iter().next().cloned();
     let printed_homogeneous = printed_units.len() <= 1;
 
@@ -793,7 +806,7 @@ fn finalize_lab_series(b: LabBuilder) -> AnalyteSeries {
         let ref_ok = b
             .ref_unit_printed
             .as_deref()
-            .map(|u| normalize_unit(u).to_lowercase())
+            .map(|u| full_unit(&normalize_unit(u).to_lowercase()))
             == series_printed_unit;
         let (lo, hi) = if ref_ok {
             (b.ref_low, b.ref_high)
@@ -1040,6 +1053,7 @@ pub fn aggregate(docs: &[SourceDoc<'_>]) -> AggregatedClinical {
             b.unverified |= obs.unverified;
             b.mentions.push(MedMention {
                 date: doc.date,
+                start_date: obs.start,
                 dose: this_dose.clone(),
                 raw_name: obs.raw_name.clone(),
                 source: doc.index,
