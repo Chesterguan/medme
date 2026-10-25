@@ -114,7 +114,7 @@ fn allergens_merge_by_root_word_and_bracket_ingredient() {
         ),
         (
             "2026-03-02",
-            "Allergies\nAllergen   Reactions\n • SHELLFISH PROTEIN-CONTAINING DRUG PRODUCTS   Itching\n\n".to_string(),
+            "Allergies\nAllergen   Reactions\n • SHELLFISH PROTEIN-CONTAINING DRUG PRODUCTS   Itching\n • Seasonal Ic   Other\n\n".to_string(),
         ),
     ];
     let v = meds_json(&mk_docs(&docs));
@@ -134,6 +134,11 @@ fn allergens_merge_by_root_word_and_bracket_ingredient() {
         .expect("二十八烷醇");
     assert_eq!(oct["reaction"], "其他");
     assert_eq!(oct["spellings"], 1, "只差大小写算同一种写法");
+    assert_eq!(
+        oct["evidence"].as_array().unwrap().len(),
+        3,
+        "不带方括号的「Seasonal Ic」靠品牌词根并进二十八烷醇"
+    );
     assert_eq!(
         profile::allergen_key("Bactrim Ds [Sulfamethoxazole-Trimethoprim]"),
         "sulfamethoxazole"

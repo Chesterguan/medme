@@ -264,6 +264,8 @@ class _LabLinePainter extends CustomPainter {
       final (stepDays, fmt) = _xStep(spanDays);
       var t = DateTime(first.year, first.month, first.day);
       var n = 0;
+      // 上一个标签的右边缘:挨得太近的标签不画(「2026-01」「2026-03」叠在一起读不出来)。
+      var lastRight = double.negativeInfinity;
       while (n < 8) {
         final day = t.millisecondsSinceEpoch / 86400000.0;
         if (day - x0 > xSpan + 0.5) break;
@@ -273,7 +275,10 @@ class _LabLinePainter extends CustomPainter {
           final tp = TextPainter(text: TextSpan(text: fmt(t), style: labelStyle), textDirection: TextDirection.ltr)
             ..layout();
           final left = (xx - tp.width / 2).clamp(padL, size.width - tp.width);
-          tp.paint(canvas, Offset(left, padT + plotH + 4));
+          if (left >= lastRight + 6) {
+            tp.paint(canvas, Offset(left, padT + plotH + 4));
+            lastRight = left + tp.width;
+          }
           n++;
         }
         t = _advance(t, stepDays);

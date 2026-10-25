@@ -304,10 +304,11 @@ class LabReportsList extends StatelessWidget {
       );
     }
     final days = chartRangeDays(range);
-    final cutoff = days == null ? null : DateTime(today.year, today.month, today.day).subtract(Duration(days: days));
+    final q = query.trim().toLowerCase();
+    // 搜着看就不按区间折了:搜「2025-03」要的就是那个月,折进「更早」等于没搜到。
+    final cutoff = days == null || q.isNotEmpty ? null : DateTime(today.year, today.month, today.day).subtract(Duration(days: days));
     final recent = <LabReportDto>[];
     final earlier = <LabReportDto>[];
-    final q = query.trim().toLowerCase();
     for (final r in reports) {
       if (q.isNotEmpty &&
           !(r.date ?? '').startsWith(q) &&
