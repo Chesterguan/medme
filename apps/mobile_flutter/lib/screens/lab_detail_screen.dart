@@ -1,5 +1,5 @@
 // 一个指标的折线页(修订 2 硬验收):完整折线(y 轴 / x 轴刻度 + 参考范围灰带)+ 时间范围切换
-// (3 个月 / 1 年 / 全部,默认 1 年)+ 每个点可点回那份原件。
+// (3 个月 / 半年 / 1 年 / 全部,初值跟化验页顶部的全局区间)+ 每个点可点回那份原件。
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/analytics.dart';
@@ -12,9 +12,10 @@ import 'package:mobile_flutter/widgets/med_card.dart';
 import 'package:mobile_flutter/widgets/trend_chart.dart' show trendDatedPoints;
 
 class LabDetailScreen extends StatefulWidget {
-  const LabDetailScreen({super.key, required this.series, this.onOpenDoc});
+  const LabDetailScreen({super.key, required this.series, this.onOpenDoc, this.initialRange = ChartRange.oneYear});
 
   final TrendSeriesDto series;
+  final ChartRange initialRange;
 
   /// null → 真的那一套(push `DocumentDetailScreen`)。测试注入。
   final void Function(int docId)? onOpenDoc;
@@ -24,7 +25,7 @@ class LabDetailScreen extends StatefulWidget {
 }
 
 class _LabDetailScreenState extends State<LabDetailScreen> {
-  ChartRange _range = ChartRange.oneYear;
+  late ChartRange _range = widget.initialRange;
 
   void _open(int docId) {
     if (widget.onOpenDoc != null) return widget.onOpenDoc!(docId);
@@ -48,10 +49,8 @@ class _LabDetailScreenState extends State<LabDetailScreen> {
         padding: const EdgeInsets.fromLTRB(MedShape.s3, MedShape.s3, MedShape.s3, MedShape.s6),
         children: [
           SegmentedButton<ChartRange>(
-            segments: const [
-              ButtonSegment(value: ChartRange.threeMonths, label: Text('3 个月')),
-              ButtonSegment(value: ChartRange.oneYear, label: Text('1 年')),
-              ButtonSegment(value: ChartRange.all, label: Text('全部')),
+            segments: [
+              for (final r in ChartRange.values) ButtonSegment(value: r, label: Text(kChartRangeLabel[r]!)),
             ],
             selected: {_range},
             showSelectedIcon: false,

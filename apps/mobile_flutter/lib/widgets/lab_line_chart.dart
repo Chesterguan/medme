@@ -27,16 +27,33 @@ String? cleanUnit(String? unit) {
   return u;
 }
 
-/// 时间范围(相对于最近一个点):3 个月 / 1 年 / 全部。
-enum ChartRange { threeMonths, oneYear, all }
+/// 时间范围:3 个月 / 半年 / 1 年 / 全部。化验 tab 顶部一组 chip 定全局的,折线页自己也能切。
+enum ChartRange { threeMonths, halfYear, oneYear, all }
 
-List<TrendPointDto> pointsInRange(List<TrendPointDto> dated, ChartRange range) {
+const Map<ChartRange, String> kChartRangeLabel = {
+  ChartRange.threeMonths: '3 个月',
+  ChartRange.halfYear: '半年',
+  ChartRange.oneYear: '1 年',
+  ChartRange.all: '全部',
+};
+
+/// 范围的天数;「全部」为 null。
+int? chartRangeDays(ChartRange r) => switch (r) {
+  ChartRange.threeMonths => 91,
+  ChartRange.halfYear => 182,
+  ChartRange.oneYear => 365,
+  ChartRange.all => null,
+};
+
+/// 范围的起点:`anchor`(列表页传「今天」)或最近一个点(折线页)往前数。
+List<TrendPointDto> pointsInRange(List<TrendPointDto> dated, ChartRange range, {DateTime? anchor}) {
   if (dated.isEmpty || range == ChartRange.all) return dated;
-  final last = DateTime.tryParse(dated.last.date!);
-  if (last == null) return dated;
+  final end = anchor ?? DateTime.tryParse(dated.last.date!);
+  if (end == null) return dated;
   final cutoff = switch (range) {
-    ChartRange.threeMonths => DateTime(last.year, last.month - 3, last.day),
-    ChartRange.oneYear => DateTime(last.year - 1, last.month, last.day),
+    ChartRange.threeMonths => DateTime(end.year, end.month - 3, end.day),
+    ChartRange.halfYear => DateTime(end.year, end.month - 6, end.day),
+    ChartRange.oneYear => DateTime(end.year - 1, end.month, end.day),
     ChartRange.all => DateTime(1900),
   };
   return [for (final p in dated) if (!DateTime.parse(p.date!).isBefore(cutoff)) p];
@@ -282,6 +299,12 @@ class _LabLinePainter extends CustomPainter {
     if (drawDots) {
       for (var i = 0; i < points.length; i++) {
         canvas.drawCircle(Offset(x(days[i]), y(points[i].value)), 2.2, Paint()..color = _dotColor(points[i].flag));
+      }
+    } else if (compact) {
+      // 迷你图不画所有点,但异常点要看得见(橙 / 蓝)。
+      for (var i = 0; i < points.length; i++) {
+        if (labStatusOf(points[i].flag) == null) continue;
+        canvas.drawCircle(Offset(x(days[i]), y(points[i].value)), 1.8, Paint()..color = _dotColor(points[i].flag));
       }
     }
     // 最后一次结果:一个点,颜色说状态。

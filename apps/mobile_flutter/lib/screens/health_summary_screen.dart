@@ -1,16 +1,14 @@
 // 「我 → 健康摘要」(修订 2,照 MyChart Health Summary):诊断 / 问题按族折叠(ADR 0012 通用层的族)、
-// 手术史、植入物、过敏;SLE 包只在该族有命中诊断时出现在该族下;「更早的诊断」在这里折叠。
-// 任何值点一下进原件(`evidence_open.dart`)。
-import 'dart:convert';
-
+// 手术史、植入物、过敏;SLE 包只在该族有命中诊断时出现在该族下;首屏只放最近 12 个月有诊断的族,
+// 「其他 / 未归类」与「更早的诊断」一起折叠在族卡后;诊断写法最多两种 + 「还有 N 个写法」。
+// 通用视图走 `profile_cache.dart`(同一 vault 版本只算一次,切 tab 不重算)。任何值点一下进原件。
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart' show fmtDate;
 import 'package:mobile_flutter/evidence_open.dart';
+import 'package:mobile_flutter/profile_cache.dart';
 import 'package:mobile_flutter/profile_json.dart';
-import 'package:mobile_flutter/skill_packages.dart';
-import 'package:mobile_flutter/src/rust/api/vault_profile.dart' as rust_profile;
 import 'package:mobile_flutter/vault_events.dart';
 import 'package:mobile_flutter/widgets/profile_sections.dart';
 
@@ -18,13 +16,12 @@ import 'package:mobile_flutter/widgets/profile_sections.dart';
 typedef HealthSummaryData = (Map<String, dynamic> view, Map<String, dynamic> meds);
 
 Future<HealthSummaryData> _loadFromVault() async {
-  final dir = await skillCacheDir();
-  final r = await Future.wait<String>([
-    rust_profile.vaultProfileViewGeneral(dir: dir),
-    rust_profile.vaultProfileMedsView(dir: dir),
-  ]);
-  return (jsonDecode(r[0]) as Map<String, dynamic>, jsonDecode(r[1]) as Map<String, dynamic>);
+  final r = await Future.wait<Map<String, dynamic>>([cachedGeneralView(), cachedMedsView()]);
+  return (r[0], r[1]);
 }
+
+/// 「其他」「未归类」不是真正的族:排到族卡后面,和更早的诊断一起折叠。
+const _kTailFamilies = {'other', 'uncoded'};
 
 /// 包段落在健康摘要的哪些 section kind(包的 journey / series_chart / evidence 不在这页)。
 const _kPackageKindsOnSummary = {'state', 'status_card', 'score_card', 'checklist', 'reminders'};
@@ -130,8 +127,10 @@ class HealthSummaryBody extends StatelessWidget {
     final index = EvidenceIndex.fromView(view);
     final medsIndex = EvidenceIndex.fromView(meds);
     final fam = _section('family_cards')?['body'] as Map<String, dynamic>? ?? const {};
-    final families = asMapList(fam['families']);
-    final earlierFamilies = asMapList(fam['earlier_families']);
+    final allFamilies = asMapList(fam['families']);
+    final families = allFamilies.where((f) => !_kTailFamilies.contains(f['key'])).toList();
+    final tailFamilies = allFamilies.where((f) => _kTailFamilies.contains(f['key'])).toList();
+    final earlierFamilies = [...tailFamilies, ...asMapList(fam['earlier_families'])];
     final medRows = asMapList((_section('med_table')?['body'] as Map?)?['rows']);
     final lanes = asMapList((_section('journey')?['body'] as Map?)?['lanes']);
     final surgeries = asMapList(lanes.where((l) => l['key'] == 'surgery').firstOrNull?['nodes']);
@@ -156,7 +155,7 @@ class HealthSummaryBody extends StatelessWidget {
     final placed = <String>{};
     final sources = asMapList(view['sources']);
     final disclaimer = view['disclaimer'] as String? ?? '';
-    final empty = families.isEmpty && earlierFamilies.isEmpty && surgeries.isEmpty && allergies.isEmpty;
+    final empty = allFamilies.isEmpty && earlierFamilies.isEmpty && surgeries.isEmpty && allergies.isEmpty;
     const pad = EdgeInsets.fromLTRB(MedShape.s3, MedShape.s3, MedShape.s3, MedShape.s6);
     if (empty) {
       return ListView(
@@ -192,7 +191,8 @@ class HealthSummaryBody extends StatelessWidget {
           if (placed.add('${p['id']}')) ...[const SizedBox(height: MedShape.s2), ...packageBlock(p)],
         if (earlierFamilies.isNotEmpty)
           _Fold(
-            title: '更早的诊断 · ${earlierFamilies.fold<int>(0, (n, f) => n + asMapList(f['diagnoses']).length)} 条',
+            title:
+                '${tailFamilies.isEmpty ? '更早的诊断' : '更早的诊断与未归类'} · ${earlierFamilies.fold<int>(0, (n, f) => n + asMapList(f['diagnoses']).length)} 条',
             children: [
               for (final f in earlierFamilies) ...[
                 Text('${f['label']}', style: MedType.caption.copyWith(color: c.ink2)),
@@ -422,7 +422,12 @@ class DiagnosisRow extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (texts.length > 1) Text(texts.skip(1).join(' / '), style: MedType.caption.copyWith(color: c.ink3)),
+                  // 写法最多再列一种,其余只说有几个(Epic 同一诊断能有五六种抄法)。
+                  if (texts.length > 1)
+                    Text(
+                      [texts[1], if (texts.length > 2) '还有 ${texts.length - 2} 个写法'].join(' · '),
+                      style: MedType.caption.copyWith(color: c.ink3),
+                    ),
                   Text(
                     [if (first.isNotEmpty) '首次 $first', if (last.isNotEmpty) '最近 $last', '$n 份记录提到'].join(' · '),
                     style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),

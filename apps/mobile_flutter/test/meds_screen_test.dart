@@ -8,8 +8,8 @@ import 'package:mobile_flutter/screens/meds_screen.dart';
 import 'package:mobile_flutter/theme.dart';
 import 'package:mobile_flutter/vault_events.dart';
 
-Map<String, dynamic> _row(String name, String raw, String dose, String family, {bool stale = false, Map<String, dynamic>? stopped, List<Map<String, dynamic>> nodes = const []}) => {
-  'name': name, 'raw_name': raw, 'raw_names': [raw], 'drug_key': name, 'dose': dose,
+Map<String, dynamic> _row(String name, String raw, String dose, String family, {String? atc, bool stale = false, Map<String, dynamic>? stopped, List<Map<String, dynamic>> nodes = const []}) => {
+  'name': name, 'raw_name': raw, 'raw_names': [raw], 'drug_key': name, 'dose': dose, 'atc': atc, 'mention_count': 3,
   'since': '2025-01-14', 'first_seen': '2024-03-10', 'last_seen': stale ? '2025-03-01' : '2026-10-10',
   'days_since': stale ? 600 : 12, 'stale': stale, 'stopped': ?stopped,
   'family': family, 'evidence': ['ev:1:1'], 'unverified': false, 'nodes': nodes,
@@ -23,24 +23,24 @@ Map<String, dynamic> _view({bool allergies = true, bool recent = true}) => {
   ],
   'recent': recent
       ? [
-          _row('华法林', 'Warfarin', '4mg', 'cardio', nodes: [
+          _row('华法林', 'Warfarin', '4mg', 'cardio', atc: 'B01AA03', nodes: [
             {'at': '2024-03-10', 'kind': 'first', 'from': null, 'to': '5mg daily', 'text': 'Warfarin', 'evidence': ['ev:0:1'], 'unverified': false},
             {'at': '2025-01-14', 'kind': 'change', 'from': '5mg daily', 'to': '4mg daily', 'text': 'Warfarin', 'evidence': ['ev:1:1'], 'unverified': false},
           ]),
-          _row('赖诺普利', 'Lisinopril', '10mg', 'cardio'),
-          _row('左甲状腺素', 'Levothyroxine', '50mcg', 'endocrine'),
+          _row('赖诺普利', 'Lisinopril', '10mg', 'cardio', atc: 'C09AA03'),
+          _row('左甲状腺素', 'Levothyroxine', '50mcg', 'endocrine', atc: 'H03AA01'),
         ]
       : [],
   'earlier': [
-    _row('伏立康唑', 'Voriconazole', '200mg bid', 'infection', stopped: {'at': '2025-11-17', 'evidence': 'ev:1:2'}, nodes: [
+    _row('伏立康唑', 'Voriconazole', '200mg bid', 'infection', atc: 'J02AC03', stopped: {'at': '2025-11-17', 'evidence': 'ev:1:2'}, nodes: [
       {'at': '2025-06-14', 'kind': 'first', 'from': null, 'to': '200mg bid', 'text': 'Voriconazole', 'evidence': ['ev:0:1'], 'unverified': false},
       {'at': '2025-11-17', 'kind': 'stopped', 'from': '200mg bid', 'to': '病历写了停药', 'text': 'Voriconazole discontinued', 'evidence': ['ev:1:2'], 'unverified': false},
     ]),
-    _row('美托洛尔', 'Metoprolol', '25mg', 'cardio', stale: true),
+    _row('美托洛尔', 'Metoprolol', '25mg', 'cardio', atc: 'C07AB02', stale: true),
   ],
   'allergies': allergies
       ? [
-          {'substance': 'Penicillin', 'reaction': 'Rash', 'evidence': ['ev:0:3']},
+          {'substance': 'Penicillin', 'reaction': 'Rash', 'evidence': ['ev:0:3'], 'aliases': ['Penicillin · Rash', 'PENICILLINS']},
         ]
       : [],
   'evidence': [
@@ -67,7 +67,7 @@ Future<void> _pump(WidgetTester t, {Map<String, dynamic>? view, double scale = 1
     t.view.resetDevicePixelRatio();
     medsFilterFamily.value = null;
   });
-  await t.pumpWidget(_wrap(MedsScreen(key: UniqueKey(), load: () async => view ?? _view()), scale: scale));
+  await t.pumpWidget(_wrap(MedsScreen(key: UniqueKey(), today: DateTime(2026, 10, 22), load: () async => view ?? _view()), scale: scale));
   await t.pumpAndSettle();
 }
 
@@ -80,6 +80,25 @@ void main() {
       expect(medMatches(r, 'vori'), isFalse);
       expect(medMatches(r, ''), isTrue);
     });
+    test('medClassOf:ATC → 药类;medsSplit 按区间重切;medsByClass 同类相邻、类内按最近倒序;medEarlierLine', () {
+      expect(medClassOf('B01AA03'), '抗凝');
+      expect(medClassOf('J01CA04'), '抗感染');
+      expect(medClassOf('C07AB02'), '心血管');
+      expect(medClassOf('A12AA04'), '电解质 / 营养');
+      expect(medClassOf('H03AA01'), '其他');
+      expect(medClassOf(null), '其他');
+      final rows = [..._view()['recent'] as List, ..._view()['earlier'] as List].cast<Map<String, dynamic>>();
+      final s = medsSplit(rows, today: DateTime(2026, 10, 22), recentDays: 365);
+      expect(s.recent.map((r) => r['name']), ['华法林', '赖诺普利', '左甲状腺素']);
+      expect(s.earlier.map((r) => r['name']), ['伏立康唑', '美托洛尔']);
+      final all = medsSplit(rows, today: DateTime(2026, 10, 22), recentDays: null);
+      expect(all.recent.length, 4, reason: '全部:没写停的都算最近');
+      expect(all.earlier.map((r) => r['name']), ['伏立康唑']);
+      expect(medsByClass(s.recent).map((g) => g.label), ['心血管', '抗凝', '其他']);
+      expect(medEarlierLine(s.earlier[1]), '2024-03-10 → 2025-03-01 · 3 次记录');
+      expect(medEarlierLine(s.earlier[0]), '2024-03-10 → 2026-10-10 · 3 次记录 · 病历写了停药 2025-11-17');
+      expect(allergyMatches({'substance': 'Penicillin', 'aliases': ['PENICILLINS']}, 'penicillins'), isTrue);
+    });
     test('medNodeText 三种节点', () {
       expect(medNodeText({'kind': 'first', 'to': '5mg'}), '记录中自此起 5mg');
       expect(medNodeText({'kind': 'change', 'from': '5mg', 'to': '4mg'}), '5mg → 4mg');
@@ -87,15 +106,24 @@ void main() {
     });
   });
 
-  testWidgets('三段计数;最近行写「记录中自 … 起 · N 天前有记录」;更早行写停药', (t) async {
+  testWidgets('过敏在最上;三段计数;最近按药类分组;更早一味药一行「首次 → 最近 · N 次记录」;区间切全部', (t) async {
     await _pump(t);
     expect(find.text('最近的用药 · 3'), findsOneWidget);
-    expect(find.text('180 天内有记录'), findsOneWidget);
+    expect(find.text('1 年内有记录'), findsOneWidget);
     expect(find.text('过敏 · 1'), findsOneWidget);
     expect(find.text('更早的用药 · 2'), findsOneWidget);
+    // 过敏在最近的用药之上。
+    expect(t.getTopLeft(find.text('过敏 · 1')).dy, lessThan(t.getTopLeft(find.text('最近的用药 · 3')).dy));
+    expect(find.text('抗凝 · 1'), findsOneWidget);
+    expect(find.text('心血管 · 1'), findsNWidgets(2), reason: '最近一组、更早一组');
+    expect(find.text('抗感染 · 1'), findsOneWidget);
     expect(find.text('记录中自 2025-01-14 起 · 12 天前有记录'), findsNWidgets(3));
-    expect(find.text('病历写了停药 · 2025-11-17'), findsOneWidget);
-    expect(find.text('记录中自 2025-01-14 起 · 600 天没有新记录'), findsOneWidget);
+    expect(find.text('2024-03-10 → 2026-10-10 · 3 次记录 · 病历写了停药 2025-11-17'), findsOneWidget);
+    expect(find.text('2024-03-10 → 2025-03-01 · 3 次记录'), findsOneWidget);
+    await t.tap(find.byKey(const ValueKey('range:all')));
+    await t.pumpAndSettle();
+    expect(find.text('最近的用药 · 4'), findsOneWidget);
+    expect(find.text('更早的用药 · 1'), findsOneWidget);
   });
 
   testWidgets('搜「vori」:只剩伏立康唑,三段标题还在', (t) async {
@@ -123,15 +151,18 @@ void main() {
     expect(find.text('5mg daily → 4mg daily'), findsOneWidget);
   });
 
-  testWidgets('过敏行可点(有依据);空过敏「记录里没找到过敏史」;空最近「最近 180 天没有用药记录」', (t) async {
+  testWidgets('过敏行点开看原文写法 + 查看原件;空过敏「记录里没找到过敏史」;空最近「1 年内没有用药记录」', (t) async {
     await _pump(t);
-    // 单条依据 → 直接 push 原件页,真 FFI 在测试里拿不到文档,所以只验这一行是可点的。
-    final ink = find.ancestor(of: find.textContaining('Penicillin'), matching: find.byType(InkWell)).first;
-    expect(t.widget<InkWell>(ink).onTap, isNotNull);
+    expect(find.textContaining('1 份记录'), findsOneWidget);
+    await t.tap(find.textContaining('Penicillin'));
+    await t.pumpAndSettle();
+    expect(find.text('病历里的写法 · 2'), findsOneWidget);
+    expect(find.text('PENICILLINS'), findsOneWidget);
+    expect(find.text('查看原件 · 1 份'), findsOneWidget);
     expect(find.byType(EvidencePickerBody), findsNothing);
     await _pump(t, view: _view(allergies: false, recent: false));
     expect(find.text('记录里没找到过敏史'), findsOneWidget);
-    expect(find.text('最近 180 天没有用药记录'), findsOneWidget);
+    expect(find.text('1 年内没有用药记录'), findsOneWidget);
   });
 
   testWidgets('族预填:只剩心血管行,chip 可清掉', (t) async {

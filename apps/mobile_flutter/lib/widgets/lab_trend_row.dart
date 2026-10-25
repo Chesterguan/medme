@@ -1,7 +1,6 @@
-// 化验趋势行(2026-10-23 spec §4.2):名称 + 78×24 迷你折线 + 最近值 + 偏高/偏低;
-// 第二行参考区间 + 日期;点开原地放大成 96 高折线 + 历年数值行,每个点可点回原件。
-// 用户原话:「化验值没有折线图不容易看」。原趋势页 SeriesCard 的 78×24 占位从没放过真折线,
-// 这里直接用现成的 TrendChart(只靠 height 定尺寸,无文字)。
+// 化验「按指标」的一行(修订 2 返工,三层):① 名称 + 偏高/偏低 | 最近值大一号 + 单位;
+// ② 整行宽迷你折线(淡灰参考带、异常点橙、最后一点实心、两端年月);③ 「最近 YYYY-MM-DD」。
+// 整行点进折线页。用户原话:「你觉得好看吗?挤在一起,那个缩略图可以换行呀」。
 import 'package:flutter/material.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
@@ -17,154 +16,95 @@ List<TrendSeriesDto> trendSearch(List<TrendSeriesDto> all, String query) {
   return all.where((s) => s.name.toLowerCase().contains(q)).toList();
 }
 
-class LabTrendRow extends StatefulWidget {
-  const LabTrendRow({super.key, required this.series, required this.onOpenDoc, this.onTap});
+String _yearMonth(String iso) => iso.length >= 7 ? iso.substring(0, 7) : iso;
+
+class LabTrendRow extends StatelessWidget {
+  const LabTrendRow({
+    super.key,
+    required this.series,
+    required this.onTap,
+    this.range = ChartRange.oneYear,
+    this.today,
+  });
 
   final TrendSeriesDto series;
-  final void Function(int docId) onOpenDoc;
+  final VoidCallback onTap;
 
-  /// 给了就整行点它(修订 2:「按指标」点一行进折线页),不再原地展开。
-  final VoidCallback? onTap;
-
-  @override
-  State<LabTrendRow> createState() => _LabTrendRowState();
-}
-
-class _LabTrendRowState extends State<LabTrendRow> {
-  bool _expanded = false;
+  /// 顶部 chip 定的全局区间;迷你折线只画这段(这段没点就画全部)。
+  final ChartRange range;
+  final DateTime? today;
 
   @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final series = widget.series;
     final pts = trendDatedPoints(series);
     if (pts.isEmpty) return const SizedBox.shrink();
     final last = pts.last;
     final status = labStatusOf(last.flag);
     final word = labStatusWord(context, last.flag);
-    final ref = refRangeText(series.refLow, series.refHigh);
     final unit = cleanUnit(last.unit ?? series.unit);
-    final meta = MedType.caption.copyWith(
-      color: c.ink3,
-      fontFeatures: MedType.tabular,
-      fontWeight: FontWeight.w400,
-    );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        InkWell(
-          onTap: widget.onTap ?? () => setState(() => _expanded = !_expanded),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    final inRange = pointsInRange(pts, range, anchor: today);
+    final shown = inRange.isEmpty ? pts : inRange;
+    final meta = MedType.caption.copyWith(color: c.ink3, fontFeatures: MedType.tabular, fontWeight: FontWeight.w400);
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: MedShape.s2),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Wrap(
-                        spacing: MedShape.s1,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Text(series.name, style: MedType.body.copyWith(color: c.ink)),
-                          ?word,
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: MedShape.s2),
-                    // 迷你折线:最近 1 年、按周取中位数、只画线,最后一次一个点说状态(无 ticker)。
-                    SizedBox(
-                      width: 78,
-                      height: 24,
-                      child: LabLineChart(
-                        series: series,
-                        points: pointsInRange(pts, ChartRange.oneYear),
-                        height: 24,
-                        compact: true,
-                      ),
-                    ),
-                    const SizedBox(width: MedShape.s2),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: MedBrand.trendValueMaxWidth),
-                      child: Wrap(
-                        alignment: WrapAlignment.end,
-                        crossAxisAlignment: WrapCrossAlignment.end,
-                        spacing: 4,
-                        children: [
-                          Text(
-                            fmtLabNumber(last.value),
-                            style: MedType.value.copyWith(color: labStatusColor(context, status)),
-                          ),
-                          if (unit != null && unit.isNotEmpty)
-                            Text(unit, style: MedType.secondary.copyWith(color: c.ink3)),
-                          Icon(
-                            widget.onTap != null
-                                ? Icons.chevron_right
-                                : (_expanded ? Icons.expand_less : Icons.expand_more),
-                            size: 18,
-                            color: c.ink3,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                Expanded(
+                  flex: 3,
+                  child: Wrap(
+                    spacing: MedShape.s1,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(series.name, style: MedType.body.copyWith(color: c.ink, fontWeight: FontWeight.w600)),
+                      ?word,
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 2),
-                Wrap(
-                  spacing: MedShape.s2,
-                  runSpacing: 2,
-                  children: [
-                    if (ref != null) Text('参考 $ref', style: meta),
-                    if (last.date != null) Text(last.date!, style: meta),
-                    if (series.selfMeasured) Text('家测', style: meta),
-                    if (last.unverified) Text('需核对', style: meta),
-                    if (series.valuesConverted) Text(unitConvertedNote(unit), style: meta),
-                    Text(
-                      pts.length == 1 ? '只有这一次' : '${pts.first.date} 起 ${pts.length} 次',
-                      style: meta,
-                    ),
-                  ],
+                const SizedBox(width: MedShape.s2),
+                // 长单位(换算说明)在大字号下折到数值下面,不顶出行外。
+                Flexible(
+                  flex: 2,
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    crossAxisAlignment: WrapCrossAlignment.end,
+                    spacing: 4,
+                    children: [
+                      Text(fmtLabNumber(last.value), style: MedType.value.copyWith(color: labStatusColor(context, status))),
+                      if (unit != null && unit.isNotEmpty) Text(unit, style: MedType.secondary.copyWith(color: c.ink3)),
+                    ],
+                  ),
                 ),
               ],
             ),
-          ),
-        ),
-        if (_expanded) ...[
-          Container(
-            decoration: const BoxDecoration(color: MedBrand.expandedChartBg),
-            padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
-            child: TrendChart(series: series, height: 96),
-          ),
-          for (final p in pts.reversed)
-            InkWell(
-              onTap: () => widget.onOpenDoc(p.documentId.toInt()),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    Text(p.date ?? '', style: meta.copyWith(color: c.ink2)),
-                    const SizedBox(width: MedShape.s2),
-                    // 长单位(换算说明)在大字号下折行,不顶出行外。
-                    Expanded(
-                      child: Text(
-                        '${fmtLabNumber(p.value)}${cleanUnit(p.unit) == null ? '' : ' ${cleanUnit(p.unit)}'}'
-                        '${p.unverified ? ' · 需核对' : ''}',
-                        textAlign: TextAlign.end,
-                        style: MedType.secondary.copyWith(
-                          color: labStatusColor(context, labStatusOf(p.flag)),
-                          fontFeatures: MedType.tabular,
-                        ),
-                      ),
-                    ),
-                    Icon(Icons.chevron_right, size: 16, color: c.ink3),
-                  ],
-                ),
-              ),
+            const SizedBox(height: 4),
+            LabLineChart(series: series, points: shown, height: 36, compact: true),
+            Row(
+              children: [
+                Text(_yearMonth(shown.first.date!), style: meta),
+                const Spacer(),
+                if (shown.length > 1) Text(_yearMonth(shown.last.date!), style: meta),
+              ],
             ),
-        ],
-      ],
+            Text(
+              [
+                '最近 ${last.date}',
+                if (series.selfMeasured) '家测',
+                if (last.unverified) '需核对',
+                if (series.valuesConverted) unitConvertedNote(unit),
+              ].join(' · '),
+              style: meta,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

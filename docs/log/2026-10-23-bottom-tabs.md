@@ -35,3 +35,9 @@ spec:`docs/superpowers/specs/2026-10-23-bottom-tabs-redesign-design.md`(稿 A;�
 - 验证:`flutter test` 1098 过(两道预期红不变)、`cargo test -p profile` 与手机 crate 绿、clippy / fmt 干净;独立审查与真实数据见下。
 - 修订 2 的独立审查抓出 4 严重 4 重要,全修(4a7fcac):「按报告」的正则兜底此前对所有文档 whole-doc 跑 `extract_labs`(出院小结正文的血压会冒出来当化验单)→ parser 抽出 `doc_lab_observations` 与 `aggregate` 共用;箭头区间优先、与折线页一致;自测序列 key 唯一;列表按需构建;摘要文档判定收窄到「患者 / 病历摘要」。
 - 顺手:重导病历包时侧文件内容变了就重挂抽取(`updated` 计数,46ab4eb)——适配器修了化验解析后用户重导新包即可,不必删成员。
+
+**修订 2 返工(2026-10-25)**:父会话把真实数据在模拟器上过了一遍后的原话:「超过一年或者没有临床意义的为啥不分开」「挤在一起,那个缩略图可以换行呀」「应该在顶部直接允许医生选择时间区间」「用药也是类似的,也有时效性的」。整批做完再 run(spec「修订 2 返工」):
+- Rust:LOINC 是第一键(`extraction::labs_from_json`,词典认得的码压过名字,旧测试「名字优先」反转);`labs::specimen_marker / specimen_ok`(只看英文标记,`尿素 / 尿酸 / 单独 UA` 不算;带标记的名字只许命中 `urine_* / csf_* / fluid_*`);`finalize_lab_series` 把截断单位 `MG/D` 并进 `mg/dl`(≥ 3 字符的前缀);`MedItem.start` → `MedObservation.start` → `MedMention.start_date` → `MedRow.since`(摘要类文档不开剂量链);`MedRow.atc / mention_count`;过敏按 `allergen_key` 合并(`AllergyOut.aliases`);`clean_dx_text`(无码合并键也用它);`LabReportDto.panels` + 「A、B、C 等 N 个面板」;趋势 DTO 名字带「(尿)」。Jane 通用 golden 只多了 `atc / mention_count` 两个字段,SLE golden 不动。
+- Flutter:`ChartRange` 加半年,`pointsInRange(anchor:)`;`labs_model` 三层 `labTiers` + `keyLabKeys`(通用关键项 + 有诊断的族的化验表);`LabTrendRow` 三层无展开;化验页顶部 `ChartRangeChips` + 「只看异常」;报告列表按区间折叠;`meds_model` `medClassOf / medsSplit / medsByClass / medEarlierLine`;用药页过敏钉顶、按类分组、更早一药一行;健康摘要写法 ≤ 2、其他 / 未归类进折叠;`profile_cache.dart` 三个视图进程内缓存。埋点 `trends_filter_used` 加 `range`。
+- 验证:`cargo test --workspace` 绿(含新 `specimen_and_units` / `revision2_rework`),workspace clippy / fmt 干净(手机 crate 的 clippy 有 5 条**早就在**的 `vault.rs` 报错,不在本分支范围);`flutter analyze` 零;`flutter test` 1108 过、3 红 = copy 基线两道(本提交后前移)+ `glossary_guard` 弱闸(#243 起)。
+- 没做:按指标行的英文原名灰小字(`TrendSeriesDto` 没带原名);用药「途径」搜索(行里没有 route)。
