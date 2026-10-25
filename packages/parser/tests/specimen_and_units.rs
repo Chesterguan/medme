@@ -103,3 +103,34 @@ fn truncated_printed_unit_counts_as_the_full_unit() {
     assert_eq!(s.points.len(), 3);
     assert_eq!((s.ref_low, s.ref_high), (Some(0.6), Some(1.2)), "{s:?}");
 }
+
+/// checkpoint 1 F15:同词根、不同 LOINC 的两个项目不得合并。词典认不得这两个码,名字又只差
+/// 「, Direct」—— 带码的行名字只许精确别名命中,「Bilirubin, Direct」不许剥壳成「Bilirubin」。
+#[test]
+fn direct_and_total_bilirubin_with_different_loincs_never_merge() {
+    let a = r#"{"labs":[
+        {"name":"Bilirubin, Direct","value":"0.3","unit":"mg/dL","ref_low":"0.0","ref_high":"0.2","flag":"H","loinc":"1968-7"},
+        {"name":"Total Bilirubin","value":"1.0","unit":"mg/dL","ref_low":"0.0","ref_high":"1.0","flag":"","loinc":"1975-2"}
+    ]}"#;
+    let docs = vec![doc(0, "2026-01-02", a)];
+    let agg = aggregate(&docs);
+    let names: Vec<&str> = agg.labs.iter().map(|s| s.group_name.as_str()).collect();
+    assert_eq!(agg.labs.len(), 2, "两条序列:{names:?}");
+    for s in &agg.labs {
+        assert_eq!(s.points.len(), 1, "{}:每条只有自己那一个点", s.group_name);
+    }
+    let direct = agg
+        .labs
+        .iter()
+        .find(|s| s.points[0].value == 0.3)
+        .expect("直接胆红素那条");
+    assert_eq!(
+        (direct.ref_low, direct.ref_high),
+        (Some(0.0), Some(0.2)),
+        "直接胆红素用自己的区间,不是总胆红素的 0–1"
+    );
+    // 有码但词典认不得、名字精确别名命中仍可并(Creatinine 2160-0 → creatinine)。
+    let b = r#"{"labs":[{"name":"Creatinine","value":"1.1","unit":"mg/dL","ref_low":"0.6","ref_high":"1.2","flag":"","loinc":"2160-0"}]}"#;
+    let agg = aggregate(&[doc(0, "2026-01-02", b)]);
+    assert_eq!(agg.labs[0].analyte_key.as_deref(), Some("creatinine"));
+}

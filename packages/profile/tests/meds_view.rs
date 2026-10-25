@@ -127,8 +127,15 @@ fn allergies_are_cited_from_the_documents_that_mention_them() {
     let v = meds_json(&docs, TODAY);
     let al = v["allergies"].as_array().unwrap();
     assert_eq!(al.len(), 2, "{al:?}");
-    let pen = al.iter().find(|a| a["substance"] == "Penicillin").unwrap();
-    assert_eq!(pen["reaction"], "Rash");
+    let pen = al
+        .iter()
+        .find(|a| a["substance"].as_str().unwrap().contains("Penicillin"))
+        .unwrap();
+    assert_eq!(
+        pen["substance"], "青霉素(Penicillin)",
+        "中文在前,原文写法在括号里"
+    );
+    assert_eq!(pen["reaction"], "皮疹", "反应译成中文");
     assert_eq!(
         pen["evidence"].as_array().unwrap().len(),
         2,
@@ -214,6 +221,6 @@ fn allergies_merge_case_variants() {
     let v = meds_json(&docs, TODAY);
     let al = v["allergies"].as_array().unwrap();
     assert_eq!(al.len(), 1, "{al:?}");
-    assert_eq!(al[0]["substance"], "Shellfish allergy");
+    assert_eq!(al[0]["substance"], "贝类(Shellfish allergy)");
     assert_eq!(al[0]["evidence"].as_array().unwrap().len(), 2);
 }

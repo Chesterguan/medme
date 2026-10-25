@@ -984,11 +984,168 @@ pub struct AllergyOut {
     pub evidence: Vec<String>,
     /// 合并进来的原文写法(含反应),点开看。
     pub aliases: Vec<String>,
+    /// 不同的物质写法数(「3 种写法」)。
+    pub spellings: usize,
 }
 
-/// 过敏原的合并键:小写、去方括号 / 圆括号里的成分注释与「(See Comments)」、去标点。
+/// Epic 的护理医嘱 / 非药物项目(`CHG Treatment`、`Wound Care`):词典认不出且名字命中这些词的
+/// 不算用药。
+pub fn is_nursing_order(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    const WORDS: &[&str] = &[
+        "treatment",
+        "bath",
+        "wipe",
+        "wipes",
+        "cloth",
+        "dressing",
+        "wound care",
+        "protocol",
+        "chg ",
+        "chlorhexidine bath",
+        "oral care",
+        "skin care",
+        "turn ",
+        "restraint",
+        "diet",
+    ];
+    WORDS.iter().any(|w| lower.contains(w))
+}
+
+/// 过敏原的合并键(F12:按**词根**归并):方括号里有成分(`Seasonal Ic [Octacosanol]`)就用成分;
+/// 否则去掉 allergy / products / protein / containing / derived 这类后缀词,取第一个实体词。
+/// `Shellfish Allergy` / `Shellfish-Derived Products` / `SHELLFISH PROTEIN-CONTAINING DRUG PRODUCTS`
+/// → `shellfish`;`Bactrim Ds [Sulfamethoxazole-Trimethoprim]` → `sulfamethoxazole-trimethoprim`。
 pub fn allergen_key(raw: &str) -> String {
-    allergen_display(raw).to_lowercase()
+    // 方括号里是成分(`[PENICILLIN G]` / `[Sulfamethoxazole-Trimethoprim]`):取成分的第一个词。
+    let base = bracket_content(raw).unwrap_or_else(|| allergen_display(raw));
+    const GENERIC: &[&str] = &[
+        "allergy",
+        "allergies",
+        "allergen",
+        "derived",
+        "product",
+        "products",
+        "containing",
+        "drug",
+        "drugs",
+        "protein",
+        "proteins",
+        "class",
+        "related",
+        "agents",
+        "agent",
+        "other",
+        "unspecified",
+        "and",
+        "or",
+        "the",
+        "of",
+    ];
+    let word = base
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .find(|w| !w.is_empty() && !GENERIC.contains(w))
+        .unwrap_or_default()
+        .to_string();
+    // 单复数算一个词根:penicillins / penicillin、sulfonamides / sulfonamide。
+    if word.len() > 4 && word.ends_with('s') && !word.ends_with("ss") {
+        word[..word.len() - 1].to_string()
+    } else {
+        word
+    }
+}
+
+fn bracket_content(raw: &str) -> Option<String> {
+    let i = raw.find('[')?;
+    let j = raw[i..].find(']')? + i;
+    let s = raw[i + 1..j].trim();
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// 常见过敏原的中文(词典只认药;食物 / 环境 / 材料这里补一小张表)。
+fn allergen_zh(key: &str) -> Option<&'static str> {
+    const TABLE: &[(&str, &str)] = &[
+        ("shellfish", "贝类"),
+        ("seafood", "海鲜"),
+        ("fish", "鱼类"),
+        ("peanut", "花生"),
+        ("peanuts", "花生"),
+        ("nut", "坚果"),
+        ("nuts", "坚果"),
+        ("egg", "鸡蛋"),
+        ("eggs", "鸡蛋"),
+        ("milk", "牛奶"),
+        ("soy", "大豆"),
+        ("wheat", "小麦"),
+        ("gluten", "麸质"),
+        ("latex", "乳胶"),
+        ("adhesive", "胶布"),
+        ("tape", "胶布"),
+        ("iodine", "碘"),
+        ("iodinated", "碘造影剂"),
+        ("contrast", "造影剂"),
+        ("penicillin", "青霉素"),
+        ("penicillins", "青霉素类"),
+        ("sulfa", "磺胺类"),
+        ("sulfonamide", "磺胺类"),
+        ("sulfonamides", "磺胺类"),
+        ("nsaid", "非甾体抗炎药"),
+        ("nsaids", "非甾体抗炎药"),
+        ("aspirin", "阿司匹林"),
+        ("codeine", "可待因"),
+        ("morphine", "吗啡"),
+        ("octacosanol", "二十八烷醇"),
+        ("bee", "蜂毒"),
+        ("pollen", "花粉"),
+        ("dust", "尘螨"),
+        ("mold", "霉菌"),
+        ("cat", "猫毛"),
+        ("dog", "狗毛"),
+        ("seasonal", "季节性过敏原"),
+    ];
+    TABLE.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+}
+
+/// 反应词的中文;认不出原样。
+fn reaction_zh(raw: &str) -> String {
+    let lower = raw.trim().to_lowercase();
+    const TABLE: &[(&str, &str)] = &[
+        ("itching", "瘙痒"),
+        ("itch", "瘙痒"),
+        ("hives", "荨麻疹"),
+        ("rash", "皮疹"),
+        ("swelling", "肿胀"),
+        ("angioedema", "血管性水肿"),
+        ("nausea", "恶心"),
+        ("vomiting", "呕吐"),
+        ("diarrhea", "腹泻"),
+        ("anaphylaxis", "过敏性休克"),
+        ("other", "其他"),
+        ("unknown", "不详"),
+        ("cough", "咳嗽"),
+        ("wheezing", "喘鸣"),
+        ("dizziness", "头晕"),
+        ("headache", "头痛"),
+        ("flushing", "潮红"),
+        ("unspecified", "未注明"),
+    ];
+    let words: Vec<String> = lower
+        .split(|c: char| c == ',' || c == '/' || c.is_whitespace())
+        .filter(|w| !w.is_empty() && *w != "and" && *w != "or")
+        .map(|w| {
+            TABLE
+                .iter()
+                .find(|(k, _)| *k == w)
+                .map(|(_, v)| v.to_string())
+                .unwrap_or_else(|| w.to_string())
+        })
+        .collect();
+    if words.iter().all(|w| w.is_ascii()) {
+        raw.trim().to_string()
+    } else {
+        words.join("、")
+    }
 }
 
 /// 过敏原的清洗写法(保留大小写):`Penicillins [PENICILLIN G] (See Comments)` → `Penicillins`。
@@ -1020,6 +1177,10 @@ pub fn materialize_meds(
     let mut recent: Vec<MedWithNodes> = Vec::new();
     let mut earlier: Vec<MedWithNodes> = Vec::new();
     for m in &ctx.clinical.meds {
+        // 护理医嘱(氯己定擦浴、敷料)不是用药:词典认不出且名字像护理项目的不进「用药」tab。
+        if m.drug_key.is_none() && is_nursing_order(&m.name) {
+            continue;
+        }
         let (row, lane) = med_row(&ctx, m, &mut book);
         let item = MedWithNodes {
             nodes: lane.nodes,
@@ -1049,7 +1210,8 @@ pub fn materialize_meds(
     // 过敏:按**过敏原**合并(去大小写 / 成分注释 / See Comments),反应各写法合并,
     // 每份提到它的文档引一条(物质串所在的那一行);原文写法留着点开看。
     struct AllergyAcc {
-        display: String,
+        key: String,
+        shown: Vec<String>,
         reactions: Vec<String>,
         evidence: Vec<String>,
         aliases: Vec<String>,
@@ -1072,32 +1234,28 @@ pub fn materialize_meds(
             if key.is_empty() {
                 continue;
             }
-            let acc = allergies.entry(key).or_insert_with(|| {
-                let shown = allergen_display(&substance);
-                let display = match terminology::resolve_drug(&shown) {
-                    Some(m) if m.canonical_name != shown => {
-                        format!("{}({})", m.canonical_name, shown)
-                    }
-                    _ => shown,
-                };
-                AllergyAcc {
-                    display,
-                    reactions: Vec::new(),
-                    evidence: Vec::new(),
-                    aliases: Vec::new(),
-                }
+            let acc = allergies.entry(key.clone()).or_insert_with(|| AllergyAcc {
+                key,
+                shown: Vec::new(),
+                reactions: Vec::new(),
+                evidence: Vec::new(),
+                aliases: Vec::new(),
             });
+            let shown = allergen_display(&substance);
+            if !acc.shown.iter().any(|s| s.eq_ignore_ascii_case(&shown)) {
+                acc.shown.push(shown);
+            }
             if !acc.evidence.contains(&id) {
                 acc.evidence.push(id);
             }
-            let reaction = reaction.trim();
-            if !reaction.is_empty()
+            let reaction_cn = reaction_zh(&reaction);
+            if !reaction_cn.is_empty()
                 && !acc
                     .reactions
                     .iter()
-                    .any(|r| r.eq_ignore_ascii_case(reaction))
+                    .any(|r| r.eq_ignore_ascii_case(&reaction_cn))
             {
-                acc.reactions.push(reaction.to_string());
+                acc.reactions.push(reaction_cn);
             }
             let alias = if reaction.is_empty() {
                 substance.clone()
@@ -1111,11 +1269,29 @@ pub fn materialize_meds(
     }
     let mut allergies: Vec<AllergyOut> = allergies
         .into_values()
-        .map(|a| AllergyOut {
-            substance: a.display,
-            reaction: a.reactions.join("、"),
-            evidence: a.evidence,
-            aliases: a.aliases,
+        .map(|a| {
+            // 展示名:最短的那种写法;中文在前(词典认得的药,或过敏原小表)。
+            let shortest = a
+                .shown
+                .iter()
+                .min_by_key(|s| s.len())
+                .cloned()
+                .unwrap_or_default();
+            let zh = allergen_zh(&a.key)
+                .map(str::to_string)
+                .or_else(|| terminology::resolve_drug(&a.key).map(|m| m.canonical_name))
+                .or_else(|| terminology::resolve_drug(&shortest).map(|m| m.canonical_name));
+            let substance = match zh {
+                Some(z) if z != shortest => format!("{z}({shortest})"),
+                _ => shortest,
+            };
+            AllergyOut {
+                substance,
+                reaction: a.reactions.join("、"),
+                evidence: a.evidence,
+                aliases: a.aliases,
+                spellings: a.shown.len(),
+            }
         })
         .collect();
     allergies.sort_by(|a, b| {

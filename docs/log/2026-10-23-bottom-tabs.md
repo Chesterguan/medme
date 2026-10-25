@@ -42,3 +42,7 @@ spec:`docs/superpowers/specs/2026-10-23-bottom-tabs-redesign-design.md`(稿 A;�
 - 验证:`cargo test --workspace` 绿(含新 `specimen_and_units` / `revision2_rework`),workspace clippy / fmt 干净(手机 crate 的 clippy 有 5 条**早就在**的 `vault.rs` 报错,不在本分支范围);`flutter analyze` 零;`flutter test` 1108 过、3 红 = copy 基线两道(本提交后前移)+ `glossary_guard` 弱闸(#243 起)。
 - 父会话再看模拟器:「还是有点挤,这个简略图的可视性不强」「如果 lab 的名字太长还会崩……每一个 lab 一个块呀」→ 按指标改成一个指标一张 `LabTrendCard`(名称两行 + 英文原名、右侧数值固定宽、整卡宽 48 高迷你折线、「仅 1 次」),迷你图 y 范围 = 参考区间 ∪ 数据 ± 10%、≤ 12 点画点、更多只画线按周取中位数;`AnalyteSeries.raw_name` → `TrendSeriesDto.raw_name`(FRB 再生成一次)。widget test:393 宽 × 三档字号 × 四种名称(最长 80 字符)+ 加长报告标题不溢出。
 - 没做:用药「途径」搜索(行里没有 route)。
+
+**checkpoint 1 修正(2026-10-25)**:父会话按医生场景在 Real3 上走查(清单在其 scratchpad `findings-checkpoint1.md`),必修 6 条 + 应修 6 条 + 小项都落了(spec「checkpoint 1 修正」):F15 带码行名字只许整名精确命中别名(直接 / 总胆红素不再合并,回归测试);F1/F5/F3 标题以 `document.title` 为先、就诊组内按类型排序、最近就诊跳过病历摘要;F11 最近 = 区间内 ∧ ≤180 天 ∧ 没写停,护理医嘱不进用药;F12 过敏按词根归并 + 中文;F6/F7/F9/F10 文档详情的结论卡 / 跳到 chip / 折页眉 / 滚到高亮;F4 病历 tab 概况行;F13 报告按日期搜。
+- 重导去重的发现(checkpoint 1 汇报过):去重键是原件 sha256,适配器重生成的字节变了就算新文档;适配器已改成字节确定性,本轮未动 MedMe。
+- 留给后续:F14「给医生看」按新四 tab 重排(另开 PR);钾序列的参考带(印刷单位 mmol/L vs mEq/L 疑混);迷你折线线尾(周中位数)与实心点(原始值)偶尔错开;`0mg` / `bid` 当剂量。

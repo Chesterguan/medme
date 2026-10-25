@@ -18,6 +18,7 @@ import 'package:mobile_flutter/review_state.dart';
 import 'package:mobile_flutter/profile_manager.dart';
 import 'package:mobile_flutter/vault_boot.dart';
 import 'package:mobile_flutter/widgets/member_header.dart';
+import 'package:mobile_flutter/widgets/overview_row.dart';
 import 'package:mobile_flutter/widgets/member_switcher.dart';
 import 'package:mobile_flutter/widgets/app_snack_bar.dart';
 
@@ -97,6 +98,15 @@ String _groupDesc(TimelineGroupDto g) {
       if (doc.sliceCount != null) '影像 ${doc.sliceCount} 张',
     ].join(' · '),
   };
+}
+
+/// 「最近就诊」:时间线最新一条的日期,跳过 Epic 病历摘要那种打印日文档(checkpoint 1 F3)。
+String? recentVisitDate(List<TimelineGroupDto> groups) {
+  for (final g in groups) {
+    if (g case TimelineGroupDto_Document(:final doc) when isSummaryDoc(doc)) continue;
+    return _groupDate(g);
+  }
+  return null;
 }
 
 /// 三档:就诊组按 `kind` 归到 `inpatient` / `emergency` / `outpatient`(Rust 只产这三种,
@@ -455,11 +465,11 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   recordCount: profile.recordCount.toInt(),
                   // 「最近就诊」取时间线最新一条的日期(`s1` 那一行),不是这一行
                   // 单独算的数:没有记录、或那条没识别到日期,这一行自己显示「暂无」。
-                  recentVisitDate: groups.isNotEmpty
-                      ? _groupDate(groups.first)
-                      : null,
+                  recentVisitDate: recentVisitDate(groups),
                   onSwitchMember: _showProfileSwitcher,
                 ),
+                // checkpoint 1 F4:一行概况(诊断 ｜ 最近用药 N ｜ 过敏 N),点进健康摘要。
+                const OverviewRow(),
                 const SizedBox(height: MedShape.s3),
                 HomeTiles(
                   onAdd: _startAdd,
@@ -899,7 +909,8 @@ class _SubDocList extends StatelessWidget {
     final c = MedColors.of(context);
     return Column(
       children: [
-        for (final d in docs)
+        // checkpoint 1 F5:行显示 document.title;出院小结 / 手术 / 影像排前,化验与护理在后。
+        for (final d in sortEncounterDocs(docs))
           Dismissible(
             key: ValueKey('sub-doc-${d.id}'),
             direction: DismissDirection.endToStart,
@@ -925,8 +936,9 @@ class _SubDocList extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          docRowLabel(d),
+                          docDisplayTitle(d),
                           style: MedType.body.copyWith(color: c.ink),
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),

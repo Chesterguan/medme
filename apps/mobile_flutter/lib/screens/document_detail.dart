@@ -6,6 +6,7 @@ import 'package:pdfx/pdfx.dart';
 
 import 'package:mobile_flutter/design_tokens.dart';
 import 'package:mobile_flutter/doc_labels.dart';
+import 'package:mobile_flutter/doc_text.dart';
 import 'package:mobile_flutter/evidence_open.dart' show highlightIndex;
 import 'package:mobile_flutter/screens/manual_entry_sheet.dart';
 import 'package:mobile_flutter/src/rust/api/dto.dart';
@@ -33,13 +34,6 @@ String _displayText(String ocrText, String docType) {
   if (docType != 'self_measurement') return ocrText;
   final idx = ocrText.indexOf('\n\n');
   return idx == -1 ? ocrText : ocrText.substring(0, idx);
-}
-
-String _fmtDate(String? iso) {
-  if (iso == null || iso.isEmpty) return '';
-  final d = DateTime.tryParse(iso);
-  if (d == null) return '';
-  return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }
 
 /// iOS-only:读盘前先确保对象已从 iCloud 下载到本地。开启 iCloud 同步后,`objects/`
@@ -79,11 +73,16 @@ class DocumentDetailScreen extends StatefulWidget {
   /// 引文里那个值在原文中的 UTF-8 字节区间(Rust `EvidenceOut.span`),同一引文出现
   /// 多次时用它挑对那一处;null 退回第一处。见 `evidence_open.dart` 的 `highlightIndex`。
   final List<int>? highlightSpan;
+
+  /// 从化验折线页点回原件(checkpoint 1 F10):找第一行同时含这些词(项目名 + 数值)的行,
+  /// 整行高亮并滚到它。与 [highlight] 二选一。
+  final List<String>? highlightTokens;
   const DocumentDetailScreen({
     super.key,
     required this.docId,
     this.highlight,
     this.highlightSpan,
+    this.highlightTokens,
   });
 
   @override
@@ -203,6 +202,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
             detail: snap.data!,
             highlight: widget.highlight,
             highlightSpan: widget.highlightSpan,
+            highlightTokens: widget.highlightTokens,
           );
         },
       ),
@@ -278,25 +278,43 @@ class DetailBody extends StatelessWidget {
 
   /// 见 [DocumentDetailScreen.highlightSpan]。
   final List<int>? highlightSpan;
+
+  /// 见 [DocumentDetailScreen.highlightTokens]。
+  final List<String>? highlightTokens;
   const DetailBody({
     super.key,
     required this.detail,
     this.highlight,
     this.highlightSpan,
+    this.highlightTokens,
   });
+
+  /// 影像 / 病理先看结论(F9)。
+  bool get _showsImpression =>
+      (detail.impression ?? '').trim().isNotEmpty &&
+      (detail.document.docType == 'imaging_report' || detail.document.docType == 'pathology');
+
+  /// 出院小结 / 病程这类长文给「跳到」锚点(F6)。
+  bool get _anchorable => const {'discharge_summary', 'clinical_note', 'surgery', 'other'}.contains(detail.document.docType);
 
   @override
   Widget build(BuildContext context) {
     final doc = detail.document;
     final sf = detail.sourceFile;
-    // 只算一次:每次换算都要把整份原文编成 UTF-8(审查建议)。
-    final highlightStart = highlight == null || highlight!.isEmpty
-        ? null
-        : highlightIndex(detail.ocrText, highlight!, highlightSpan);
-    // 与档案行同一句话(`docRowLabel`):这里原先抄了一份 `docLabel` 映射,
-    // 于是「待归类」在详情页永远只有一种说法。
-    final typeLabel = docRowLabel(doc);
     final isManualEntry = _isManualEntry(doc.docType);
+    // 依据的 span 是按原文算的字节偏移,折页眉会挪动它:带 span 的那条路用原文,其余先折页眉(F7)。
+    final text = highlightSpan != null || isManualEntry ? detail.ocrText : foldRepeatedHeaders(detail.ocrText);
+    // 只算一次:每次换算都要把整份原文编成 UTF-8(审查建议)。
+    var highlightStart = highlight == null || highlight!.isEmpty ? null : highlightIndex(text, highlight!, highlightSpan);
+    var highlightText = highlight;
+    if (highlightStart == null && highlightTokens != null) {
+      final hit = findLineWith(text, highlightTokens!);
+      if (hit != null) {
+        highlightStart = hit.start;
+        highlightText = hit.line;
+      }
+    }
+    final anchors = _anchorable && highlightStart == null ? docAnchors(text) : const <({String label, int line})>[];
 
     final c = MedColors.of(context);
 
@@ -328,16 +346,14 @@ class DetailBody extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // F1:标题 = document.title;类型 · 医院 · 日期降到副标。
                           Text(
                             docDisplayTitle(doc),
                             style: MedType.title.copyWith(color: c.ink),
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            [
-                              typeLabel,
-                              if (doc.docDate != null) _fmtDate(doc.docDate),
-                            ].join(' · '),
+                            docSubtitle(doc),
                             style: MedType.secondary.copyWith(
                               color: c.ink2,
                               fontFeatures: MedType.tabular,
@@ -392,6 +408,23 @@ class DetailBody extends StatelessWidget {
           ),
         ),
 
+        if (_showsImpression) ...[
+          const SizedBox(height: MedShape.s3),
+          // F9:影像 / 病理先放结论,全文在下面。
+          MedCard(
+            child: Padding(
+              padding: const EdgeInsets.all(MedShape.s3),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('结论', style: MedType.subtitle.copyWith(color: c.ink)),
+                  const SizedBox(height: MedShape.s1),
+                  SelectableText(detail.impression!.trim(), style: MedType.body.copyWith(color: c.ink, height: 1.6)),
+                ],
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: MedShape.s5),
         Row(
           children: [
@@ -401,11 +434,13 @@ class DetailBody extends StatelessWidget {
           ],
         ),
         const SizedBox(height: MedShape.s2),
-        if (highlight case final h? when highlightStart != null)
-          HighlightedText(text: detail.ocrText, highlight: h, start: highlightStart)
+        if (highlightText case final h? when highlightStart != null)
+          HighlightedText(text: text, highlight: h, start: highlightStart)
+        else if (anchors.isNotEmpty)
+          AnchoredText(text: text, anchors: anchors)
         else
           ReportContent(
-            text: _displayText(detail.ocrText, doc.docType),
+            text: _displayText(text, doc.docType),
             docType: doc.docType,
           ),
       ],
@@ -637,9 +672,10 @@ class _ViewerFallback extends StatelessWidget {
 }
 
 
-/// 原文纯文本 + 一处高亮(从「现在」「用药」的值点进来的那句)。高亮 [start] 起的那一处
-/// (由 `highlightIndex` 选定,同一引文出现多次时按 span 挑对)。
-class HighlightedText extends StatelessWidget {
+/// 原文纯文本 + 一处高亮(从健康摘要 / 用药 / 化验折线页的值点进来的那句)。高亮 [start] 起的那一处
+/// (由 `highlightIndex` 选定,同一引文出现多次时按 span 挑对)。打开后**滚到那一处**(F10):
+/// 高亮段单独一个 widget,首帧后 `ensureVisible`。
+class HighlightedText extends StatefulWidget {
   const HighlightedText({
     super.key,
     required this.text,
@@ -652,22 +688,108 @@ class HighlightedText extends StatelessWidget {
   final int start;
 
   @override
+  State<HighlightedText> createState() => _HighlightedTextState();
+}
+
+class _HighlightedTextState extends State<HighlightedText> {
+  final _key = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _key.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx, alignment: 0.2, duration: const Duration(milliseconds: 300));
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final i = start;
+    final i = widget.start;
     final base = MedType.body.copyWith(color: c.ink, height: 1.6);
-    return SelectableText.rich(
-      TextSpan(
-        style: base,
-        children: [
-          TextSpan(text: text.substring(0, i)),
-          TextSpan(
-            text: highlight,
-            style: base.copyWith(backgroundColor: c.sealWash, color: c.sealInk),
-          ),
-          TextSpan(text: text.substring(i + highlight.length)),
-        ],
-      ),
+    final before = widget.text.substring(0, i);
+    final after = widget.text.substring(i + widget.highlight.length);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (before.isNotEmpty) SelectableText(before, style: base),
+        Container(
+          key: _key,
+          color: c.sealWash,
+          child: SelectableText(widget.highlight, style: base.copyWith(color: c.sealInk, fontWeight: FontWeight.w600)),
+        ),
+        if (after.isNotEmpty) SelectableText(after, style: base),
+      ],
+    );
+  }
+}
+
+/// 长文 + 「跳到」chip(F6):按锚点把正文切段,每段一个 key,点 chip 滚到那一段(标题行加粗)。
+class AnchoredText extends StatefulWidget {
+  const AnchoredText({super.key, required this.text, required this.anchors});
+
+  final String text;
+  final List<({String label, int line})> anchors;
+
+  @override
+  State<AnchoredText> createState() => _AnchoredTextState();
+}
+
+class _AnchoredTextState extends State<AnchoredText> {
+  late final List<GlobalKey> _keys = [for (final _ in widget.anchors) GlobalKey()];
+
+  void _jump(int i) {
+    final ctx = _keys[i].currentContext;
+    if (ctx != null) Scrollable.ensureVisible(ctx, alignment: 0.05, duration: const Duration(milliseconds: 300));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = MedColors.of(context);
+    final lines = widget.text.split('\n');
+    final base = MedType.body.copyWith(color: c.ink, height: 1.6);
+    final cuts = [0, ...widget.anchors.map((a) => a.line), lines.length];
+    final segments = <Widget>[];
+    for (var k = 0; k + 1 < cuts.length; k++) {
+      final from = cuts[k], to = cuts[k + 1];
+      if (from >= to) continue;
+      final isAnchor = k > 0;
+      final body = lines.sublist(isAnchor ? from + 1 : from, to).join('\n');
+      segments.add(
+        Column(
+          key: isAnchor ? _keys[k - 1] : null,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (isAnchor) SelectableText(lines[from], style: base.copyWith(fontWeight: FontWeight.w700)),
+            if (body.trim().isNotEmpty) SelectableText(body, style: base),
+          ],
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: MedShape.s1,
+          runSpacing: 4,
+          children: [
+            Text('跳到', style: MedType.caption.copyWith(color: c.ink3)),
+            for (final (i, a) in widget.anchors.indexed)
+              ActionChip(
+                key: ValueKey('anchor:${a.label}'),
+                label: Text(a.label),
+                labelStyle: MedType.secondary.copyWith(color: c.sealInk),
+                side: BorderSide(color: c.line),
+                onPressed: () => _jump(i),
+              ),
+          ],
+        ),
+        const SizedBox(height: MedShape.s2),
+        ...segments,
+      ],
     );
   }
 }

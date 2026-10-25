@@ -27,10 +27,17 @@ class LabDetailScreen extends StatefulWidget {
 class _LabDetailScreenState extends State<LabDetailScreen> {
   late ChartRange _range = widget.initialRange;
 
-  void _open(int docId) {
+  void _open(int docId, {double? value}) {
     if (widget.onOpenDoc != null) return widget.onOpenDoc!(docId);
     Analytics.track(AnalyticsEvent.docOpened);
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => DocumentDetailScreen(docId: docId)));
+    // F10:带项目名 + 数值定位,打开后滚到并高亮那一行。
+    final s = widget.series;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => DocumentDetailScreen(
+        docId: docId,
+        highlightTokens: [s.rawName ?? s.name, if (value != null) fmtLabNumber(value)],
+      ),
+    ));
   }
 
   @override
@@ -98,7 +105,7 @@ class _LabDetailScreenState extends State<LabDetailScreen> {
                 for (final (i, p) in [...inRange.reversed, ...undated].indexed) ...[
                   if (i > 0) Divider(height: 1, color: c.line),
                   InkWell(
-                    onTap: () => _open(p.documentId.toInt()),
+                    onTap: () => _open(p.documentId.toInt(), value: p.value),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: MedShape.s3, vertical: MedShape.s2),
                       child: Row(
