@@ -346,7 +346,7 @@ Future<ImportRunResult?> _runBundleImport(BuildContext context) async {
   status.dispose();
   // 整包导入不走后台队列,队列那条「每份识别完就 bump」在这里不会发生;不 bump
   // 的话档案/趋势屏监听不到变化,导完还显示旧列表。
-  if ((last?.succeeded ?? 0) > 0) bumpVaultRevision();
+  if ((last?.succeeded ?? 0) > 0 || (last?.updated ?? 0) > 0) bumpVaultRevision();
 
   final String msg;
   if (streamError != null || last == null) {
@@ -354,9 +354,11 @@ Future<ImportRunResult?> _runBundleImport(BuildContext context) async {
   } else if (last!.error != null) {
     msg = '病历包导入失败:${last!.error}';
   } else {
-    final skipped = last!.total - last!.succeeded;
+    final updated = last!.updated;
+    final skipped = last!.total - last!.succeeded - updated;
+    final upd = updated > 0 ? ',更新 $updated 份' : '';
     final tail = skipped > 0 ? ',跳过 $skipped 份(已存在、读不到或校验不符;明细见日志)' : '';
-    msg = '导入完成:成功 ${last!.succeeded} 份$tail';
+    msg = '导入完成:成功 ${last!.succeeded} 份$upd$tail';
   }
   probe.showSnackBar(appSnackBar(content: Text(msg)));
   return const ImportRunResult([]);

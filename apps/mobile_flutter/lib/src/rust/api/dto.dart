@@ -188,6 +188,9 @@ class DemoLoadProgressDto {
   /// 到目前为止成功入库的份数(累计)。
   final PlatformInt64 succeeded;
 
+  /// 整包导入里「文档已在、抽取内容变了 → 重挂」的份数;其它操作恒 0。
+  final PlatformInt64 updated;
+
   /// 整个操作失败的原因;正常进行中/正常完成为 `None`。
   final String? error;
 
@@ -195,12 +198,17 @@ class DemoLoadProgressDto {
     required this.loaded,
     required this.total,
     required this.succeeded,
+    required this.updated,
     this.error,
   });
 
   @override
   int get hashCode =>
-      loaded.hashCode ^ total.hashCode ^ succeeded.hashCode ^ error.hashCode;
+      loaded.hashCode ^
+      total.hashCode ^
+      succeeded.hashCode ^
+      updated.hashCode ^
+      error.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -210,6 +218,7 @@ class DemoLoadProgressDto {
           loaded == other.loaded &&
           total == other.total &&
           succeeded == other.succeeded &&
+          updated == other.updated &&
           error == other.error;
 }
 

@@ -32,6 +32,10 @@ pub struct BundleReport {
     pub imported: usize,
     /// 同一份 PDF 已在库里(含用户之前手动导过的):元数据不改、不重复挂 extraction。
     pub deduped: usize,
+    /// 文档在、类型相同、但包里 sidecar 的内容(sha256)与已挂的 extraction 不同 → 重新挂
+    /// (`ExtractionAdded` 以 `created_at` 新者为准,零新事件类型)。适配器修了解析后,
+    /// 用户重导新包即可刷新抽取,不必删成员重来。
+    pub updated: usize,
     /// 整份没有可用文本(建不了文档,原件仍在 CAS)。
     pub no_text: usize,
     /// (manifest 里的 `file`, 原因)。
@@ -233,9 +237,25 @@ fn import_one(
             // 文档在了。上次 sidecar 缺/坏、或建档后被杀,extraction 还没挂上 → 这次
             // 补挂(就是「重跑即续传」);类型对不上说明是用户手动导过的同一份 PDF,
             // 元数据不动、也不替它挂包里的抽取。
-            if doc.doc_type == doc_type && vault.extraction_json(doc.id)?.is_none() {
-                attach_sidecar(vault, src, &sidecar_rel, doc.id, report)?;
-                report.imported += 1;
+            if doc.doc_type == doc_type {
+                match vault.extraction_json(doc.id)? {
+                    None => {
+                        attach_sidecar(vault, src, &sidecar_rel, doc.id, report)?;
+                        report.imported += 1;
+                    }
+                    Some(existing) => {
+                        // 内容变了才重挂:同一份 sidecar 再导一次仍是 deduped。
+                        let incoming = src.read(&sidecar_rel).context("sidecar")?;
+                        if core_model::cas::sha256_hex(&incoming)
+                            != core_model::cas::sha256_hex(existing.as_bytes())
+                        {
+                            attach_sidecar(vault, src, &sidecar_rel, doc.id, report)?;
+                            report.updated += 1;
+                        } else {
+                            report.deduped += 1;
+                        }
+                    }
+                }
             } else {
                 report.deduped += 1;
             }

@@ -34,6 +34,8 @@ pub struct DemoLoadProgressDto {
     pub total: i64,
     /// 到目前为止成功入库的份数(累计)。
     pub succeeded: i64,
+    /// 整包导入里「文档已在、抽取内容变了 → 重挂」的份数;其它操作恒 0。
+    pub updated: i64,
     /// 整个操作失败的原因;正常进行中/正常完成为 `None`。
     pub error: Option<String>,
 }
