@@ -8,7 +8,7 @@ members = ["packages/core-model", "packages/parser", "packages/profile", "packag
 exclude = ["apps/mobile_flutter/rust", "fuzz"]
 
 [workspace.dependencies]
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 sha2 = "0.11"
 hmac = "0.13"
 chrono = { version = "0.4", features = ["serde"] }
@@ -21,7 +21,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 regex = "1"
-lopdf = "0.45"
+lopdf = "0.46"
 
 [profile.release]
 # Strip symbols from release binaries/.so's — the main lever for a slim
