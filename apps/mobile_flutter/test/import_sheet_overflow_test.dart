@@ -36,7 +36,7 @@ void main() {
       );
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
-      expect(find.text('导入 Epic 病历包'), findsOneWidget);
+      expect(find.text('添加 Epic 病历包'), findsOneWidget);
       expect(errors.where((e) => e.toString().contains('overflowed')), isEmpty,
           reason: errors.map((e) => e.exceptionAsString()).join('\n'));
     });

@@ -162,8 +162,8 @@ class AddSheetBody extends StatelessWidget {
           ),
           _SheetTile(
             icon: Icons.archive_outlined,
-            title: '导入 Epic 病历包',
-            subtitle: 'myEHR 导出的 .zip,一次导入整份病历',
+            title: '添加 Epic 病历包',
+            subtitle: 'myEHR 导出的 .zip,一次添加整份病历',
             choice: ImportChoice.bundle,
           ),
           const SizedBox(height: 8),
@@ -236,7 +236,7 @@ Future<ImportRunResult?> runImport(
   return _runImport(context, items, choice);
 }
 
-/// 「导入 Epic 病历包」:选一个 myEHR 导出的 `.zip` → `vaultImportBundle` 流式进度
+/// 「添加 Epic 病历包」:选一个 myEHR 导出的 `.zip` → `vaultImportBundle` 流式进度
 /// (模态框,不可关闭)→ 完成后 SnackBar 报成功/跳过份数。失败明细在 Rust 日志
 /// (`[import-bundle]`)。不进 [ReviewState] 核对队列:包里的类型/日期/抽取是
 /// 适配器已经定好并逐字校验过的,不是 OCR 猜的。
@@ -282,12 +282,12 @@ Future<ImportRunResult?> _runBundleImport(BuildContext context) async {
         (p) {
           last = p;
           status.value = p.error != null
-              ? '导入失败:${p.error}'
+              ? '添加失败:${p.error}'
               : '已处理 ${p.loaded}/${p.total}';
         },
         onError: (Object e) {
           streamError = e;
-          status.value = '导入失败:$e';
+          status.value = '添加失败:$e';
         },
         cancelOnError: true,
       )
@@ -306,7 +306,7 @@ Future<ImportRunResult?> _runBundleImport(BuildContext context) async {
         return PopScope(
           canPop: false,
           child: AlertDialog(
-            title: const Text('正在导入病历包'),
+            title: const Text('正在添加病历包'),
             content: ValueListenableBuilder<String>(
               valueListenable: status,
               builder: (_, text, _) => Row(
@@ -336,13 +336,13 @@ Future<ImportRunResult?> _runBundleImport(BuildContext context) async {
 
   final String msg;
   if (streamError != null || last == null) {
-    msg = '病历包导入失败:${streamError ?? '没有收到任何进度'}';
+    msg = '病历包添加失败:${streamError ?? '没有收到任何进度'}';
   } else if (last!.error != null) {
-    msg = '病历包导入失败:${last!.error}';
+    msg = '病历包添加失败:${last!.error}';
   } else {
     final skipped = last!.total - last!.succeeded;
     final tail = skipped > 0 ? ',跳过 $skipped 份(已存在、读不到或校验不符;明细见日志)' : '';
-    msg = '导入完成:成功 ${last!.succeeded} 份$tail';
+    msg = '添加完成:成功 ${last!.succeeded} 份$tail';
   }
   probe.showSnackBar(appSnackBar(content: Text(msg)));
   return const ImportRunResult([]);
