@@ -388,6 +388,19 @@ Stream<DemoLoadProgressDto> vaultLoadDemoDataSle({
   skillCacheDir: skillCacheDir,
 );
 
+/// 结构化导入:吃 myEHR Epic 适配器包(`.zip`,Flutter 侧 file_picker 选的路径;
+/// 文件夹也行,给调试用)。类型/日期/标题以 manifest 为准,sidecar 原样挂成
+/// extraction,末尾重建就诊分组——全在 `pipeline::import_bundle`,见
+/// `docs/superpowers/specs/2026-10-21-structured-import-design.md`。
+///
+/// 进度复用 [DemoLoadProgressDto](每份推一条,`succeeded` = 已挂上 extraction 的
+/// 份数);整体失败(manifest 读不到)推一条带 `error`。与 `vault_load_demo_data_sle`
+/// 同一手法:整包在一把 vault 锁下同步做完,Dart 侧是模态进度框。
+///
+/// 名字必须按字典序排在 `recognize_image_pp` 之后(`tests/frb_dispatch_indices.rs`)。
+Stream<DemoLoadProgressDto> vaultImportBundle({required String path}) =>
+    RustLib.instance.api.crateApiVaultVaultImportBundle(path: path);
+
 Future<void> resetVault() => RustLib.instance.api.crateApiVaultResetVault();
 
 /// iCloud 同步是否已在本设备开启(读持久标记 `<data_dir>/icloud_enabled`)。

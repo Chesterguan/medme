@@ -69,7 +69,14 @@ pub fn labs_from_json(json: &str) -> Result<LabsFromJson, deid::DeidError> {
                 }
             };
             let unit = (!l.unit.is_empty()).then(|| l.unit.clone());
-            let m = terminology::resolve(&l.name, unit.as_deref());
+            // 名字精确命中(1.0)优先——名字是原文。否则 sidecar 带的 LOINC 码
+            // (结构化导入,见 `deid::LabItem::loinc`)压过名字的剥壳/混淆/模糊命中:
+            // 码是精确键,模糊名字是推算。都没有才用名字的弱命中。
+            let by_name = terminology::resolve(&l.name, unit.as_deref());
+            let m = match by_name {
+                Some(ref m) if m.confidence >= 1.0 || l.loinc.is_empty() => by_name,
+                _ => terminology::resolve_loinc(&l.loinc).or(by_name),
+            };
             let (ref_low, ref_high) = (num(&l.ref_low), num(&l.ref_high));
             let explicit_flag = matches!(l.flag.as_str(), "H" | "L").then(|| l.flag.clone());
             if !has_lab_evidence(
@@ -169,6 +176,29 @@ pub fn meds_from_json(json: &str) -> Result<MedsFromJson, deid::DeidError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loinc_code_resolves_when_name_does_not() {
+        let j = r#"{"labs":[
+          {"name":"Some Odd Name","value":"1.1","unit":"mg/dL","loinc":"14682-9"},
+          {"name":"肌酐","value":"80","unit":"umol/L","loinc":"14749-6"},
+          {"name":"Zzz Unknown","value":"1","unit":"mg/dL"}
+        ]}"#;
+        let v = labs_from_json(j).expect("valid json").labs;
+        assert_eq!(v.len(), 3);
+        assert_eq!(
+            v[0].analyte_key.as_deref(),
+            Some("creatinine"),
+            "名字不认识 → 按 LOINC 反查"
+        );
+        assert_eq!(v[0].loinc.as_deref(), Some("14682-9"));
+        assert_eq!(
+            v[1].analyte_key.as_deref(),
+            Some("creatinine"),
+            "名字能认时名字优先于码(码指向 glucose)"
+        );
+        assert!(v[2].analyte_key.is_none(), "无码无名原样透传");
+    }
 
     #[test]
     fn labs_from_json_resolves_and_flags() {
