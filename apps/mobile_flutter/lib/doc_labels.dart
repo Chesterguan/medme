@@ -55,6 +55,10 @@ bool isTempCaptureName(String name) {
   return _tempNamePatterns.any((re) => re.hasMatch(n));
 }
 
+/// 带扩展名的是文件名(用户自己起的扫描件名),不是适配器写的标题:仍排在最后一档。
+bool _looksLikeFileName(String title) =>
+    RegExp(r'\.(pdf|jpe?g|png|heic|heif|tiff?|txt|zip|dcm)$', caseSensitive: false).hasMatch(title.trim());
+
 final List<RegExp> _tempNamePatterns = [
   // 相机/相册的序号名:iOS `IMG_0042`、安卓 `CAP_`/`PXL_`/`DSC`。
   RegExp(r'^(img|cap|pxl|dsc|dcim)[_-]?\d', caseSensitive: false),
@@ -91,6 +95,10 @@ String docDisplayTitle(DocumentSummaryDto doc) {
       (doc.docType == 'note' || doc.docType == 'self_measurement')) {
     return title;
   }
+  // checkpoint 1 F1 / F5:适配器给的 `document.title`(「手术 · Sternal wound debridement」
+  // 「Epic 病历摘要」「病程记录」)是最有信息的一行,只要不是机器起的临时名就用它;
+  // 医院名降到副标([docSubtitle])。
+  if (title.isNotEmpty && !isTempCaptureName(title) && !_looksLikeFileName(title)) return title;
   final provider = doc.provider?.trim() ?? '';
   // `unknown` 不是一种类型,是「还没分出来」—— 它的说法归 [docRowLabel] 管。
   final label = doc.docType == 'unknown'
@@ -104,6 +112,42 @@ String docDisplayTitle(DocumentSummaryDto doc) {
 
   if (title.isNotEmpty && !isTempCaptureName(title)) return title;
   return docRowLabel(doc);
+}
+
+/// 详情页 / 档案行的副标:「类型 · 医院 · 日期」里有什么写什么。
+String docSubtitle(DocumentSummaryDto doc) {
+  final provider = doc.provider?.trim() ?? '';
+  return [
+    docRowLabel(doc),
+    if (provider.isNotEmpty) provider,
+    if (doc.docDate != null) fmtDate(doc.docDate),
+  ].where((s) => s.isNotEmpty).join(' · ');
+}
+
+/// Epic 导出的「患者 / 病历摘要」:`doc_type == other` 且标题含「摘要」/「summary」。它的日期是
+/// 打印 / 导出日,不是就诊日 —— 「最近就诊」不认它(checkpoint 1 F3)。
+bool isSummaryDoc(DocumentSummaryDto doc) {
+  if (doc.docType != 'other') return false;
+  final t = (doc.title ?? '').toLowerCase();
+  return t.contains('摘要') || t.contains('summary');
+}
+
+/// 就诊组里文档的排序权重:出院小结 / 手术 / 影像 / 病理 / 病历在前,化验与护理(其他)在后。
+const Map<String, int> docTypeOrder = {
+  'discharge_summary': 0, 'surgery': 1, 'imaging_report': 2, 'pathology': 3, 'clinical_note': 4,
+  'prescription': 5, 'lab_report': 6, 'other': 7, 'unknown': 8,
+};
+
+/// 就诊组展开后的行序(checkpoint 1 F5):类型权重 → 日期升序 → 标题。
+List<DocumentSummaryDto> sortEncounterDocs(List<DocumentSummaryDto> docs) {
+  final out = [...docs];
+  out.sort((a, b) {
+    final c = (docTypeOrder[a.docType] ?? 9).compareTo(docTypeOrder[b.docType] ?? 9);
+    if (c != 0) return c;
+    final d = (a.docDate ?? '').compareTo(b.docDate ?? '');
+    return d != 0 ? d : docDisplayTitle(a).compareTo(docDisplayTitle(b));
+  });
+  return out;
 }
 
 /// 就诊组 `kind` → 中文标签。

@@ -53,29 +53,39 @@ pub fn vault_profile_install_builtin(dir: String) -> anyhow::Result<Vec<String>>
 /// 每个**开着**的包的 sections 追加在后;顶层 `documents[]` 桥同 [`vault_profile_view`],
 /// 另加 `packages[]{id, display_name, enabled}` 给入口卡画「每包一行」。
 pub fn vault_profile_view_general(dir: String) -> anyhow::Result<String> {
-    let dir = Path::new(&dir);
-    let events = vault_projections::gather_profile_events()?;
-    terminology::set_overlay(overlay_entries(dir, &events));
-    let installed = installed_packages(dir);
-    let input = vault_projections::gather_for_profile()?;
+    let (input, installed) = general_input(Path::new(&dir))?;
     let docs = input.source_docs();
     let view =
         profile::materialize_generic(&docs, &input.encounters, &input.events, &installed, today());
     let mut json = serde_json::to_value(&view)?;
     json["documents"] = serde_json::Value::Array(input.document_refs());
-    json["packages"] = serde_json::Value::Array(
-        installed
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "id": p.manifest.id,
-                    "display_name": p.manifest.display.name,
-                    "enabled": profile::is_enabled(&input.events, &p.manifest.id),
-                })
-            })
-            .collect(),
-    );
     Ok(serde_json::to_string(&json)?)
+}
+
+/// 「用药」tab 的视图(`profile::materialize_meds`):最近 / 更早 / 过敏 + 同一本依据簿,
+/// 外加 `documents[]` 桥。**纯投影**。名字按字典序排在 `recognize_image_pp` 之后。
+pub fn vault_profile_meds_view(dir: String) -> anyhow::Result<String> {
+    let (input, _installed) = general_input(Path::new(&dir))?;
+    let docs = input.source_docs();
+    let view = profile::materialize_meds(&docs, &input.events, today());
+    let mut json = serde_json::to_value(&view)?;
+    json["documents"] = serde_json::Value::Array(input.document_refs());
+    Ok(serde_json::to_string(&json)?)
+}
+
+/// 化验「key → 族」表 + 12 个月窗(`profile::lab_family_table`),给「现在」页按族摆化验行。
+/// 纯常量,不读保险箱。
+pub fn vault_profile_lab_families() -> anyhow::Result<String> {
+    Ok(serde_json::to_string(&profile::lab_family_table())?)
+}
+
+/// 通用视图与用药视图共用的前置:装术语覆盖层、读装着的包、读整箱投影。
+fn general_input(dir: &Path) -> anyhow::Result<(vault_projections::ProfileInput, Vec<profile::Package>)> {
+    let events = vault_projections::gather_profile_events()?;
+    terminology::set_overlay(overlay_entries(dir, &events));
+    let installed = installed_packages(dir);
+    let input = vault_projections::gather_for_profile()?;
+    Ok((input, installed))
 }
 
 /// 算一份 `ProfileView` 并序列化给 Dart。**纯投影**:不写任何东西进保险箱。
@@ -88,27 +98,15 @@ pub fn vault_profile_view(dir: String, package_id: String) -> anyhow::Result<Str
     // (装包早于开箱是正常顺序)。
     let pkg = profile::cache_load(dir, &package_id)
         .ok_or_else(|| anyhow::anyhow!("没有可用的病种包:{package_id}"))?;
-    // **闸排在整箱逐份读之前。** 先只读动作日志那几份:没开启的话引擎一块都不算
-    // (spec §4「从未开启 = 不算、不显示、不提醒」),那就没有任何理由去解一整箱
-    // 病历的正文与抽取结果 —— 而「装上了还没开启」正是入口卡每次打开「趋势」都会
-    // 走的那一态。
     let events = vault_projections::gather_profile_events()?;
-    // 术语覆盖层必须在 `aggregate` **之前**装上(`materialize` 第一步就是它),
-    // 否则 UPCR 这类包里新定义的分析物在分组那一步就已经落进「未识别」桶了。
-    // 它的输入只有事件,与这份视图算不算得出来无关,所以两条路上都先装好 ——
-    // 趋势页这些**不走病程档案**的界面也靠它认包里的新分析物。
+    // 术语覆盖层必须在 `aggregate` **之前**装上,否则包里新定义的分析物在分组那一步
+    // 就已经落进「未识别」桶了。
     terminology::set_overlay(overlay_entries(dir, &events));
-    if !profile::is_enabled(&events, &pkg.manifest.id) {
-        // `materialize` 在关着时本来就不碰 `docs`(它直接给空 sections),所以这里
-        // 传一个空切片得到的是**与全量读那条路逐字节相同**的一份「关着」的视图。
-        let view = profile::materialize(&[], &events, &pkg, today());
-        return Ok(serde_json::to_string(&view)?);
-    }
+    // 2026-10-23 起闸是诊断、不是 `enable` 事件(`profile::materialize_applied`):有命中的
+    // 诊断才算,没有就是空 sections、`enabled: false`——二维码分享按 `enabled` 决定带不带。
     let input = vault_projections::gather_for_profile()?;
-    // 动作日志那几份在这一趟里被读了第二次 —— 这是把闸提前的代价,几份合成文本,
-    // 换掉的是「没开启也解一整箱病历」。
     let docs = input.source_docs();
-    let view = profile::materialize(&docs, &input.events, &pkg, today());
+    let view = profile::materialize_applied(&docs, &input.events, &pkg, today());
     // 三视图的依据只带 `SourceDoc::index`(引擎不知道 document_id);这里附一张桥,
     // 界面按 `doc` 查 `documents[].document_id` 去开原件。顶层新键,老界面不读、不碍事。
     let mut json = serde_json::to_value(&view)?;
@@ -244,18 +242,15 @@ fn installed_packages(dir: &Path) -> Vec<profile::Package> {
         .collect()
 }
 
-/// 装着**而且开着**的包,把它们的 `terms` 并成**一份**覆盖层条目表。
+/// 装着的**全部**包,把它们的 `terms` 并成**一份**覆盖层条目表。
 ///
-/// 两件事必须在这里做,`terminology::set_overlay` 一概不代管(见它的文档):
-/// * **合并**:整体替换,分两次调用后一次会把前一包冲掉;
-/// * **闸**:没开启的病不许把别名塞进全局词典(spec §4「从未开启 = 不算、不显示、
-///   不提醒」)—— 闸用 `profile::is_enabled` 那一个实现,不在这儿照着重写一遍。
-fn overlay_entries(dir: &Path, events: &[parser::ProfileEvent]) -> Vec<terminology::Entry> {
+/// 合并必须在这里做,`terminology::set_overlay` 不代管(见它的文档):整体替换,分两次
+/// 调用后一次会把前一包冲掉。2026-10-23 起不再按 `enable` 事件过滤:包出不出现由诊断
+/// 触发(`profile::package_applies`),用户没有「开启」动作;覆盖层只加不改(ADR 0011
+/// 决定 6),装着就装上。`events` 参数留着给调用方,不再读。
+fn overlay_entries(dir: &Path, _events: &[parser::ProfileEvent]) -> Vec<terminology::Entry> {
     let mut out: Vec<terminology::Entry> = Vec::new();
     for pkg in installed_packages(dir) {
-        if !profile::is_enabled(events, &pkg.manifest.id) {
-            continue;
-        }
         for a in &pkg.terms.analytes {
             out.push(analyte_entry(a));
         }
@@ -396,9 +391,10 @@ mod tests {
         assert!(profile::cache_load(dir.path(), "sle").is_some());
     }
 
-    /// 通用视图:没装任何包也出通用段;装了没开的包列在 `packages[]` 里、不出它的段。
+    /// 通用视图:没装任何包也出通用段;装了但诊断没命中的包列在 `packages[]` 里
+    /// (`applies: false`)、不出它的段。
     #[test]
-    fn general_view_works_without_packages_and_lists_disabled_ones() {
+    fn general_view_works_without_packages_and_lists_non_applying_ones() {
         let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let home = tempfile::tempdir().unwrap();
         open_temp_vault(home.path());
@@ -431,7 +427,7 @@ mod tests {
             kinds,
             vec!["family_cards", "med_table", "journey", "evidence"]
         );
-        assert_eq!(v["packages"].as_array().unwrap().len(), 0);
+        assert!(v.get("packages").is_none(), "没装包就没有 packages 键");
         assert!(
             !v["documents"].as_array().unwrap().is_empty(),
             "documents 桥要在"
@@ -442,7 +438,8 @@ mod tests {
         vault_profile_install_builtin(dir_s.clone()).unwrap();
         let v = parse(vault_profile_view_general(dir_s.clone()).unwrap());
         assert_eq!(v["packages"][0]["id"], "sle");
-        assert_eq!(v["packages"][0]["enabled"], false);
+        assert_eq!(v["packages"][0]["applies"], false);
+        assert_eq!(v["packages"][0]["family"], "immune");
         assert_eq!(v["packages"][0]["display_name"], "系统性红斑狼疮");
         assert!(v["sections"]
             .as_array()
@@ -450,15 +447,21 @@ mod tests {
             .iter()
             .all(|s| s["package_id"] == "general"));
 
-        vault_profile_record_event(
-            "enable".into(),
-            "sle".into(),
-            "2026-01-01".into(),
-            "{}".into(),
-        )
+        // 再来一份写着狼疮诊断的病历(正则路径,无码)→ 触发词命中,包段出现;不需要任何事件。
+        crate::api::vault::with_state(|state| {
+            crate::api::vault::add_synthetic_document(
+                &state.vault,
+                core_model::DocType::DischargeSummary,
+                "2026-02-10T00:00:00Z".parse().unwrap(),
+                "ds2.txt",
+                "出院记录".into(),
+                Some("zh".into()),
+                "出院记录\n诊断:系统性红斑狼疮\n".into(),
+            )
+        })
         .unwrap();
         let v = parse(vault_profile_view_general(dir_s).unwrap());
-        assert_eq!(v["packages"][0]["enabled"], true);
+        assert_eq!(v["packages"][0]["applies"], true);
         assert!(v["sections"]
             .as_array()
             .unwrap()
@@ -518,7 +521,8 @@ mod tests {
     }
 
     #[test]
-    fn recording_enable_then_disable_flips_the_gate_in_the_view() {
+    fn a_lupus_diagnosis_flips_the_gate_in_the_single_package_view() {
+        // 2026-10-23:单包视图的闸是诊断,不是 enable/disable 事件。
         let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let home = tempfile::tempdir().unwrap();
         open_temp_vault(home.path());
@@ -528,11 +532,8 @@ mod tests {
             vault_profile_install_package(dir_s.clone(), SLE_PACKAGE.into()).unwrap(),
             "sle"
         );
-
         let parse = |json: String| serde_json::from_str::<serde_json::Value>(&json).unwrap();
 
-        // 从没开启过 = 关着:出得来一份视图(界面要拿它的名字/免责声明画入口卡),
-        // 但一块都不算(spec §4)。
         let before = parse(vault_profile_view(dir_s.clone(), "sle".into()).unwrap());
         assert_eq!(before["package_id"], "sle");
         assert_eq!(before["package_version"], "2026.10.1");
@@ -541,6 +542,7 @@ mod tests {
         assert_eq!(before["sections"].as_array().unwrap().len(), 0);
         assert!(!before["disclaimer"].as_str().unwrap().is_empty());
 
+        // 写 enable 事件:载荷要解得回来,但对视图没有影响。
         let id = vault_profile_record_event(
             "enable".into(),
             "sle".into(),
@@ -549,7 +551,6 @@ mod tests {
         )
         .unwrap();
         assert!(id > 0);
-        // 文档正文既能给人读,也能被原样解回载荷(动作日志的两半)。
         let text = crate::api::vault::get_document(id).unwrap().ocr_text;
         assert!(text.starts_with("开启病程档案"), "{text}");
         let back = parser::parse_profile_event_payload(&text).expect("载荷要解得回来");
@@ -558,14 +559,29 @@ mod tests {
             ("enable", "sle")
         );
         assert_eq!(back.at, "2026-01-01");
+        let still_off = parse(vault_profile_view(dir_s.clone(), "sle".into()).unwrap());
+        assert_eq!(still_off["enabled"], false);
 
+        // 一份写着狼疮诊断的病历 → 开。
+        crate::api::vault::with_state(|state| {
+            crate::api::vault::add_synthetic_document(
+                &state.vault,
+                core_model::DocType::DischargeSummary,
+                "2026-02-10T00:00:00Z".parse().unwrap(),
+                "ds.txt",
+                "出院记录".into(),
+                Some("zh".into()),
+                "出院记录\n诊断:系统性红斑狼疮\n".into(),
+            )
+        })
+        .unwrap();
         let on = parse(vault_profile_view(dir_s.clone(), "sle".into()).unwrap());
         assert_eq!(on["enabled"], true);
         assert!(
             !on["sections"].as_array().unwrap().is_empty(),
-            "开着就该出卡片(空数据的那几块自带 empty_hint)"
+            "命中就该出卡片(空数据的那几块自带 empty_hint)"
         );
-
+        // disable 事件也关不掉。
         vault_profile_record_event(
             "disable".into(),
             "sle".into(),
@@ -573,57 +589,8 @@ mod tests {
             "{}".into(),
         )
         .unwrap();
-        let off = parse(vault_profile_view(dir_s, "sle".into()).unwrap());
-        assert_eq!(off["enabled"], false);
-        assert_eq!(off["sections"].as_array().unwrap().len(), 0);
-
-        terminology::set_overlay(Vec::new());
-    }
-
-    /// 闸排在整箱逐份读之前 —— 没开启就一份临床正文都不读。
-    ///
-    /// 这条是**代价**测试,不是功能测试:关着的那份视图本来就长这样(上一条已经
-    /// 钉过),这里钉的是「拿到它花了多少」。入口卡在「装上了还没开启」这一态下
-    /// 每次打开「趋势」都会走这条路,读一整箱病历只为了发现「没开启」是纯浪费。
-    #[test]
-    fn a_disabled_package_reads_no_clinical_document_at_all() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let home = tempfile::tempdir().unwrap();
-        open_temp_vault(home.path());
-        let dir_s = home.path().join("skills-cache").display().to_string();
-        vault_profile_install_package(dir_s.clone(), SLE_PACKAGE.into()).unwrap();
-
-        // 箱里放一份真的临床文档 —— 逐份读的时候它就是最贵的那一类。
-        crate::api::vault::add_note("今天血压 130/80".into(), None).unwrap();
-
-        let parse = |json: String| serde_json::from_str::<serde_json::Value>(&json).unwrap();
-
-        // ① 从没开启过:一份正文都没读,视图照样出得来(入口卡要拿它的名字)。
-        vault_projections::reset_doc_text_reads();
-        let off = parse(vault_profile_view(dir_s.clone(), "sle".into()).unwrap());
-        assert_eq!(off["enabled"], false);
-        assert_eq!(off["sections"].as_array().unwrap().len(), 0);
-        assert_eq!(off["display_name"], "系统性红斑狼疮");
-        assert_eq!(
-            vault_projections::doc_text_reads(),
-            0,
-            "没开启就不该读任何一份正文(箱里那份笔记一次都不该被解开)"
-        );
-
-        // ② 开启之后:动作日志那份 + 笔记那份都读到了。3 = 闸那一趟读动作日志
-        //    (1)+ 全量那一趟读两份(2);动作日志被读两次就是把闸提前的代价。
-        vault_profile_record_event(
-            "enable".into(),
-            "sle".into(),
-            "2026-01-02".into(),
-            "{}".into(),
-        )
-        .unwrap();
-        vault_projections::reset_doc_text_reads();
-        let on = parse(vault_profile_view(dir_s, "sle".into()).unwrap());
-        assert_eq!(on["enabled"], true);
-        assert!(!on["sections"].as_array().unwrap().is_empty());
-        assert_eq!(vault_projections::doc_text_reads(), 3);
+        let after = parse(vault_profile_view(dir_s, "sle".into()).unwrap());
+        assert_eq!(after["enabled"], true);
 
         terminology::set_overlay(Vec::new());
     }
@@ -667,13 +634,17 @@ mod tests {
     }
 
     #[test]
-    fn a_package_that_was_never_enabled_contributes_nothing_to_the_overlay() {
-        // spec §4:从未开启 = 不算、不显示、不提醒 —— 也包括「别往全局词典里塞词」。
+    fn an_installed_package_contributes_its_terms_regardless_of_events() {
+        // 2026-10-23 起包没有「开启」动作:装着就装上它的词(覆盖层只加不改),
+        // `enable`/`disable` 事件对覆盖层没有影响。
         let dir = tempfile::tempdir().unwrap();
         vault_profile_install_package(dir.path().display().to_string(), SLE_PACKAGE.into())
             .unwrap();
-        assert!(overlay_entries(dir.path(), &[]).is_empty());
-        assert!(overlay_entries(dir.path(), &[ev("disable", "2026-01-01")]).is_empty());
+        assert!(!overlay_entries(dir.path(), &[]).is_empty());
+        assert_eq!(
+            overlay_entries(dir.path(), &[]).len(),
+            overlay_entries(dir.path(), &[ev("disable", "2026-01-01")]).len()
+        );
     }
 
     #[test]
@@ -702,9 +673,10 @@ mod tests {
         // 于是「同一天里最后那条说了算」。
         assert!(ids[0] < ids[1] && ids[1] < ids[2], "{ids:?}");
 
-        let view: serde_json::Value =
-            serde_json::from_str(&vault_profile_view(dir_s, "sle".into()).unwrap()).unwrap();
-        assert_eq!(view["enabled"], true, "同日开→关→再开,最后是开着");
+        // 2026-10-23 起视图的闸是诊断,不读这些事件;事件本身仍要按追加顺序取最后一条。
+        let events = vault_projections::gather_profile_events().unwrap();
+        assert!(profile::is_enabled(&events, "sle"), "同日开→关→再开,最后是开着");
+        let _ = dir_s;
 
         crate::api::vault::clear_terminology_overlay();
     }
@@ -749,8 +721,8 @@ mod tests {
 
     #[test]
     fn opening_another_members_vault_clears_the_overlay() {
-        // 覆盖层是进程级全局,保险箱一次只开一个:A 开着狼疮,切到 B 之后 B 的
-        // 化验识别不许还认得狼疮包里的词(spec §4 在跨成员这一侧的落点)。
+        // 覆盖层是进程级全局,保险箱一次只开一个:切箱那一刻必须清空,由开完箱的
+        // 调用方按新箱子重装。
         let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let a = tempfile::tempdir().unwrap();
         open_temp_vault(a.path());
@@ -778,8 +750,9 @@ mod tests {
             "换箱之后覆盖层必须退回内置"
         );
 
-        // B 自己没开过任何病 —— 重装一次也还是空的(装着不等于开着)。
+        // 包缓存是 App 级的、不分成员:B 开箱后重装一次,装着的包的词就回来了
+        // (2026-10-23 起装着即装上,不看事件)。
         vault_profile_refresh_terms(dir_s).unwrap();
-        assert!(terminology::normalize("镜检红细胞").is_none());
+        assert!(terminology::normalize("镜检红细胞").is_some());
     }
 }

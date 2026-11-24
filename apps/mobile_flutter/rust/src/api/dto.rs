@@ -34,6 +34,8 @@ pub struct DemoLoadProgressDto {
     pub total: i64,
     /// 到目前为止成功入库的份数(累计)。
     pub succeeded: i64,
+    /// 整包导入里「文档已在、抽取内容变了 → 重挂」的份数;其它操作恒 0。
+    pub updated: i64,
     /// 整个操作失败的原因;正常进行中/正常完成为 `None`。
     pub error: Option<String>,
 }
@@ -201,6 +203,54 @@ pub struct DocumentDetailDto {
     pub ocr_text: String,
     pub ocr_confidence: Option<f32>,
     pub ocr_backend: Option<String>,
+    /// 影像 / 病理的结论段:侧文件 `extraction.impression`(myEHR 适配器抽的),没有就按原文
+    /// `IMPRESSION:` / `FINDINGS:` / 「印象」「结论」标题抓;都没有为 None。**追加在结尾**。
+    pub impression: Option<String>,
+}
+
+/// 原文里的结论段:`IMPRESSION:`(其次 `FINDINGS:` / 「印象」/「结论」)标题起,到空行或下一个
+/// 全大写标题止;标题同一行里带的内容也算。
+pub(crate) fn impression_from_text(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    for head in ["impression", "印象", "结论", "findings"] {
+        for (i, line) in lines.iter().enumerate() {
+            let t = line.trim();
+            let lower = t.to_lowercase();
+            let rest = match lower.strip_prefix(head) {
+                Some(r) if r.starts_with(':') || r.starts_with(':') || r.is_empty() => {
+                    t[head.len()..].trim_start_matches([':', ':']).trim().to_string()
+                }
+                _ => continue,
+            };
+            let mut out: Vec<String> = Vec::new();
+            if !rest.is_empty() {
+                out.push(rest);
+            }
+            for l in lines.iter().skip(i + 1) {
+                let t = l.trim();
+                if t.is_empty() {
+                    if out.is_empty() {
+                        continue;
+                    }
+                    break;
+                }
+                let is_heading = t.len() > 3
+                    && t.ends_with(':')
+                    && t.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase());
+                if is_heading {
+                    break;
+                }
+                out.push(t.to_string());
+                if out.len() > 40 {
+                    break;
+                }
+            }
+            if !out.is_empty() {
+                return Some(out.join("\n"));
+            }
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone)]

@@ -132,6 +132,9 @@ pub struct TrendSeriesDto {
     /// 前缀」那条注释同一个用意:FRB 的 `sse_encode`/`sse_decode` 按字段声明顺序
     /// 逐个编解码,新增字段放最后,现有字段的顺序 / 生成代码的既有形状都不挪动。
     pub ref_source: Option<String>,
+    /// 化验单上的英文 / 原始名(词典认得、且与中文名不同时才有;列表里灰字小一号列在中文名下)。
+    /// **追加在结尾**(FRB 按字段声明顺序编解码)。
+    pub raw_name: Option<String>,
 }
 
 /// 序列上的一个观测点。
@@ -442,33 +445,9 @@ fn flat_docs() -> anyhow::Result<(Vec<FlatDoc>, Vec<VisitRecordDto>)> {
 /// 读一份文档的正文。**投影里最贵的一步**(每份都要解密 + 读盘),所以
 /// 「这一趟到底逐份读了几份」的计数也放在这唯一的一处。
 fn read_text(id: i64) -> String {
-    #[cfg(test)]
-    DOC_TEXT_READS.with(|c| c.set(c.get() + 1));
     crate::api::vault::get_document(id)
         .map(|d| d.ocr_text)
         .unwrap_or_default()
-}
-
-// 测试用:`read_text` 在**当前线程**至今被调用了多少次。只在 `cfg(test)` 下存在 ——
-// 「没开启病程档案就一份临床正文都不读」这条断言需要一个能观察的量,而给生产
-// 热路径挂一个常驻计数器不值得。(普通注释而非 ///:宏调用上的文档注释 clippy 会报 unused。)
-//
-// 线程局部而不是进程全局:cargo test 并行跑,别的测试在自己线程里读正文会把一个
-// 全局计数器顶高(CI 上出现过 4 ≠ 3);投影是同步的、在调用线程上读,所以按线程数
-// 正好只数自己这一趟。
-#[cfg(test)]
-thread_local! {
-    pub(crate) static DOC_TEXT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(crate) fn reset_doc_text_reads() {
-    DOC_TEXT_READS.with(|c| c.set(0));
-}
-
-#[cfg(test)]
-pub(crate) fn doc_text_reads() -> usize {
-    DOC_TEXT_READS.with(|c| c.get())
 }
 
 fn source_docs(docs: &[ProjectionDoc]) -> Vec<parser::SourceDoc<'_>> {
@@ -633,166 +612,14 @@ pub fn view_trend_panel_catalog() -> Vec<String> {
 
 // ─────────────────────────── 过敏史 ───────────────────────────
 //
-// `handoff::extract_allergies_pairs` / `parse_allergy_item` 都是 private,且
-// `packages/parser` 不在本次改动范围内,故按**同一规则**在此重写一遍(逐条对照
-// `packages/parser/src/handoff.rs` 的那两个函数)。重写的另一个必要理由:那两个函数
-// 只产出 `(substance, reaction)`,不带来源;应急卡要求每条过敏史能跳回原件,必须在
-// 逐份扫描时自己记住是哪一份文档说的。
+// 过敏抽取用 `parser::extract_allergies_pairs`(中文 + 英文两层,2026-10-23 起公开);
+// 这里只负责逐份扫描时记住「哪一份文档说的」,应急卡要靠它跳回原件。
 
-/// 过敏史否定词前缀集合,分别用在两层检查上:一次判整个分句(第一层,见
-/// `extract_allergies_pairs`),一次判单条 item(第二层,`parse_allergy_item`)——
-/// 两处都要判的原因见各自函数上的注释。同 `handoff::ALLERGY_NEGATION_PREFIXES`。
-///
-/// - `否认`:病历里最常见的否定写法,后面永远跟着"没有的东西"(否认食物过敏/
-///   否认药物过敏史……),不存在"否认"本身就是物质名一部分的歧义,所以整词
-///   前缀匹配是安全的。
-/// - `未见`:查体/病史场景下"未见异常"式的否定,语义上就是"没有"。
-/// - `(-)`/`（-）`:皮试等检验报告惯用的阴性结果记号,同样是"没有"的另一种
-///   写法(半角/全角括号都收,因为录入时括号和减号常常不是同一种宽度)。
-///
-/// `无` **不在这张表里**——它单独处理,见 `is_negation_after_wu`(下方
-/// `is_allergy_negation` 里内联的分支):`无` 后面跟的可能是"没有的东西"
-/// (无过敏史/无殊),也可能是一个恰好以"无"开头的物质名(无花果)。整词
-/// 前缀匹配对"否认"安全,对"无"不安全,不能一视同仁——见 #65。
-///
-/// 刻意不收 `不详`/`不知`/`未知`/`不清楚`:那是"不知道",不是"没有过敏"。把
-/// 这类词也归进否定词,会让应急卡把"信息缺失"显示成"确认无过敏"——这本身
-/// 就是一次反向安全事故,跟这次要修的是同一类问题。这几个词走的是另一条
-/// 独立的"宁缺"规则(见 `is_allergy_unclear`),不产出条目,但**不是**因为
-/// 判成了否定。
-const ALLERGY_NEGATION_PREFIXES: [&str; 4] = ["否认", "未见", "(-)", "（-）"];
-
-/// `无` 后面接的词决定它是不是否定词。这些词都是"没有的东西/没有的说法",
-/// 而不是一个物质名的开头。
-///
-/// **这张表清单是本次 #65 修复里刻意选择的失败方向**:白名单漏收某种病历里
-/// 真实存在、但这里没想到的否定写法,那条会被当成物质名显示在应急卡的红框
-/// 里——一次**假阳性**。假阳性会被使用者/医生看见、质疑、可以当场澄清;而
-/// 误把真实过敏原(比如"无花果过敏")的"无"字当否定词吃掉是**假阴性**——
-/// 过敏原从卡片上直接消失,没人有机会发现少了什么,却仍可能被当作"已确认
-/// 无过敏"来行动。两种错误不对称,所以这张表宁可漏收,也不要贪多误伤真实
-/// 物质名。
-const WU_NEGATION_CONTINUATIONS: [&str; 9] = [
-    "过敏", "特殊", "殊", "明确", "明显", "已知", "药物", "食物", "其他",
-];
-
-/// 判断一段文本(一个分句,或退化到一条 item)是不是以否定词开头。
-fn is_allergy_negation(s: &str) -> bool {
-    let s = s.trim();
-    if let Some(rest) = s.strip_prefix('无') {
-        // 剥掉「无」之后,剩余为空(单独一个「无」)、或以某个"否定延续词"开头,
-        // 才判否定;否则「无」就是物质名自己的第一个字(无花果、无花果酱……)。
-        return rest.is_empty()
-            || WU_NEGATION_CONTINUATIONS
-                .iter()
-                .any(|p| rest.starts_with(p));
-    }
-    ALLERGY_NEGATION_PREFIXES.iter().any(|p| s.starts_with(p))
-}
-
-/// 「不详」类标记:病历里的意思是"没查清楚/没说清楚",既不是"有过敏"也不是
-/// "无过敏"。宁缺规则——卡片默认状态本来就是"未识别",这类条目不构成一条
-/// 明确的过敏原,不需要占红框重复表达同一件事,所以直接不产出。
-///
-/// **这不是否定词**,故意不并进 `is_allergy_negation`/`ALLERGY_NEGATION_PREFIXES`:
-/// 语义上不一样(见该常量上的注释),混在一起会让下一个读代码的人以为"不详"
-/// 可以当"无过敏"处理。
-const ALLERGY_UNCLEAR_MARKERS: [&str; 4] = ["不详", "不知", "未知", "不清楚"];
-
-/// 判断一条 item(标签已经在 `extract_allergies_pairs` 里去掉)是不是"不详"
-/// 类的含糊标记。行标签(过敏史/过敏)有时会在剩余文本里再出现一次——例如
-/// 「过敏史:过敏史不详。」——所以先剥掉可能重复出现的标签前缀,再整词比对。
-fn is_allergy_unclear(item: &str) -> bool {
-    let s = item
-        .trim_start_matches("过敏史")
-        .trim_start_matches("过敏")
-        .trim();
-    ALLERGY_UNCLEAR_MARKERS.contains(&s)
-}
-
-/// 在 `text` 里找过敏史标签(`过敏史` / `过敏`),取标签之后的剩余部分,分两层解析。
-/// 同 `handoff::extract_allergies_pairs`。
-///
-/// **第一层——按分句切,否定分句整句丢弃。** 按 `；;。`(只认句子边界标点)切成
-/// 分句,每个分句是一句完整陈述;分句开头是否定词就整句丢掉,根本不进第二层。
-/// 这就是本次修复的核心:**「否认」/「无」管的是它引出的整个分句,不是紧贴在
-/// 它后面的那一个条目**。「否认食物、药物过敏史」是一句被否定的话,句里的
-/// 食物、药物两个物质都在「否认」的管辖范围内;旧逻辑在判否定之前就先按 `、`
-/// 切开,「食物」独立成第一条(碰巧自己开头是「否认」,还能被挡住),「药物过敏史」
-/// 却独立成第二条,开头既不是「否认」也不是「无」,读起来就成了阳性过敏——
-/// 而且因为它尾巴上还带着行标签同款的「过敏史」三个字,连"物质名"看起来都是
-/// 「药物过敏史」。这就是「无已知过敏」被印成过敏原的根因。`、`/`，`/`,` 故意
-/// 不放进这一层的分隔符里:中文病历里逗号经常身兼两职,既断句又当并列顿号用,
-/// 放进来会把「青霉素过敏,否认食物过敏」这种一句里前阳后否定的写法切成两句,
-/// 破坏第二层"把同一分句内的阳性/否定条目留在一起判"的设计。
-///
-/// **第二层——阳性分句才按顿号/逗号切成条目。** 只有第一层判定为阳性的分句
-/// 才会按 `，,、` 切成 `物质(反应)` 条目,交给 `parse_allergy_item` 逐条解析;
-/// 那个函数自带的条目级否定检查(不变)是第二道防线——「青霉素过敏,否认食物
-/// 过敏」这种一个分句内部混了阳性和否定、且分句内没有 `；;。` 可切的写法,
-/// 第一层因为分句开头是「青霉素」不会触发,靠第二层按逗号切开后逐条判否定
-/// 才能把「否认食物过敏」这一条挡住。
-///
-/// 空分句/空条目两层都会跳过。
-fn extract_allergies_pairs(text: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        // 先试更长的标签,免得 `过敏史:` 被 `过敏` 切开。
-        let rest = ["过敏史", "过敏"].iter().find_map(|lbl| {
-            line.find(lbl).map(|p| {
-                line[p + lbl.len()..]
-                    .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, ':' | '：'))
-            })
-        });
-        let Some(rest) = rest else { continue };
-        for clause in rest.split(['；', ';', '。']) {
-            let clause = clause.trim();
-            if clause.is_empty() || is_allergy_negation(clause) {
-                continue;
-            }
-            for item in clause.split(['，', ',', '、']) {
-                if let Some(pair) = parse_allergy_item(item) {
-                    out.push(pair);
-                }
-            }
-        }
-    }
-    out
-}
-
-/// 解析一条 `青霉素(皮疹)` → `("青霉素", "皮疹")`,或裸的 `磺胺` → `("磺胺", "")`。
-/// 空条目/否定式返回 None——这是 `extract_allergies_pairs` 注释里说的第二道
-/// 防线。「不详」类(`is_allergy_unclear`)也返回 None,但原因不同:不是"确认
-/// 无过敏",只是"不构成一条明确过敏原"(宁缺)——调用方只需要"跳过这条",不
-/// 需要区分原因,所以共用同一个 `None`。同 `handoff::parse_allergy_item`。
-fn parse_allergy_item(item: &str) -> Option<(String, String)> {
-    let item = item
-        .trim()
-        .trim_matches(|c: char| c.is_whitespace() || matches!(c, '。' | '.' | ';' | '；'));
-    if item.is_empty() || is_allergy_negation(item) || is_allergy_unclear(item) {
-        return None;
-    }
-    if let Some(op) = item.find(['(', '（']) {
-        let substance = item[..op].trim().to_string();
-        if substance.is_empty() {
-            return None;
-        }
-        let reaction = item[op..]
-            .trim_matches(|c: char| matches!(c, '(' | '（' | ')' | '）'))
-            .trim()
-            .to_string();
-        return Some((substance, reaction));
-    }
-    Some((item.to_string(), String::new()))
-}
-
-/// 逐份扫过敏史,按 `(substance, reaction)` 去重、合并来源 document_id。
-/// 去重键与 `handoff::assemble_summary` 的 allergies 段一致;多出来的是来源合并。
 fn collect_allergies(docs: &[ProjectionDoc]) -> Vec<AllergyItemDto> {
     // BTreeMap 保证输出顺序确定(按物质名、再按反应)。
     let mut acc: BTreeMap<(String, String), Vec<i64>> = BTreeMap::new();
     for d in docs {
-        for (substance, reaction) in extract_allergies_pairs(&d.text) {
+        for (substance, reaction) in parser::extract_allergies_pairs(&d.text) {
             let ids = acc.entry((substance, reaction)).or_default();
             if !ids.contains(&d.document_id) {
                 ids.push(d.document_id);
@@ -848,7 +675,11 @@ fn collect_conditions(
 /// `AnalyteSeries` → 趋势序列 DTO(全保真:点不截断、日精度、带 flag 与 document_id)。
 fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSeriesDto {
     TrendSeriesDto {
-        name: s.group_name.clone(),
+        // 词典认不出、名字带标本标记(`Creatinine, Ur`)的序列在名字后加「(尿)」,别让它和血清肌酐看着像一回事。
+        name: match (&s.analyte_key, parser::specimen_marker(&s.group_name)) {
+            (None, Some(m)) => format!("{}({m})", s.group_name),
+            _ => s.group_name.clone(),
+        },
         analyte_key: s.analyte_key.clone(),
         loinc: s.loinc.clone(),
         panel: s
@@ -890,6 +721,7 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
             .flatten()
             .and_then(parser::home_ref_range)
             .map(|r| r.source.to_string()),
+        raw_name: s.raw_name.clone(),
     }
 }
 
@@ -902,6 +734,234 @@ fn trend_series(docs: &[ProjectionDoc], s: &parser::AnalyteSeries) -> TrendSerie
 ///
 /// 序列顺序沿用 `parser::aggregate` 的确定序(按显示名、再按 `analyte_key`)。
 /// 全部点都无日期的序列不出现在结果里 —— 见 [`is_renderable`]。
+/// 「化验 · 按报告」的一行(修订 2,MyChart Test Results):一份化验文档 = 一张单。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabReportDto {
+    pub document_id: i64,
+    /// `"YYYY-MM-DD"`;定不出日期为 None(排最后)。
+    pub date: Option<String>,
+    /// 单上出现的词典面板名(按项目顺序去重;Epic 一份文档是一整天的化验,常有十几个面板)。
+    pub panels: Vec<String>,
+    /// 面板 ≤ 3 个 → 「肾功能、血常规」;更多 → 「电解质、血常规、肝功能 等 N 个面板」;一个都认不出 →
+    /// 文档标题 → 「化验」。同一天多张单靠 `time` 区分。
+    pub title: String,
+    /// 采集 / 出结果时间 `HH:MM`(原件里 `Collected by: MM/DD/YY HHMM`,其次 `Resulted:`);没有为 None。
+    pub time: Option<String>,
+    pub abnormal_count: u32,
+    pub items: Vec<LabReportItemDto>,
+}
+
+/// 单上的一行:项目 / 印刷值 / 单位 / 参考 / 箭头。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabReportItemDto {
+    /// 词典中文名;认不出用原名。
+    pub name: String,
+    pub analyte_key: Option<String>,
+    /// **印刷值**(侧文件 / 抽取的原字符串;正则路径是解析出的数,按显示规则格式化)。
+    pub value: String,
+    pub unit: Option<String>,
+    /// `lo-hi` / `<hi` / `>lo`;没有为 None。
+    pub reference: Option<String>,
+    /// `"H"` / `"L"`;正常或判不出为 None。
+    pub flag: Option<String>,
+    pub unverified: bool,
+}
+
+/// 数值串 → f64;`<5`、`>60` 这种带不等号的**不是**一个定值,比不了区间。
+fn parse_num(s: &str) -> Option<f64> {
+    let t = s.trim();
+    if t.starts_with(['<', '>', '≤', '≥']) {
+        return None;
+    }
+    t.parse::<f64>().ok()
+}
+
+/// 箭头:**区间优先**(两端任一能解析就按区间判,与 `labs_from_json` 同一规矩,否则「按报告」
+/// 与折线页对同一个值说法不一);只有没区间可比时才信印刷的 H/L;带 `<`/`>` 的值不按区间判。
+fn norm_flag(raw: &str, value: &str, lo: &str, hi: &str) -> Option<String> {
+    let (l, h) = (parse_num(lo), parse_num(hi));
+    if l.is_some() || h.is_some() {
+        let v = parse_num(value)?;
+        if h.is_some_and(|h| v > h) {
+            return Some("H".into());
+        }
+        if l.is_some_and(|l| v < l) {
+            return Some("L".into());
+        }
+        return None;
+    }
+    let r = raw.trim();
+    if r.contains('↑') || r.starts_with(['H', 'h']) {
+        return Some("H".into());
+    }
+    if r.contains('↓') || r.starts_with(['L', 'l']) {
+        return Some("L".into());
+    }
+    None
+}
+
+/// 参考范围文字:两端都有 → `lo-hi`;只有一端且是数 → `<hi` / `>lo`;一端是定性文字 → 原样。
+fn ref_text(lo: Option<String>, hi: Option<String>) -> Option<String> {
+    let lo = lo.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let hi = hi.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    match (lo, hi) {
+        (Some(l), Some(h)) => Some(format!("{l}-{h}")),
+        (None, Some(h)) => Some(if parse_num(&h).is_some() { format!("<{h}") } else { h }),
+        (Some(l), None) => Some(if parse_num(&l).is_some() { format!(">{l}") } else { l }),
+        (None, None) => None,
+    }
+}
+
+/// 一份文档在「按报告」里的行。侧文件(云抽取 / 适配器)非空 → 逐条取**印刷值**:数值项要有
+/// 单位、区间、箭头或词典 key 之一(与 `labs_from_json` 的证据闸同一精神,年龄 / 检查号不进
+/// 表);定性值(阴性 / Nonreactive)只在词典认得项目名时进表。侧文件缺或零项 → 与 `aggregate`
+/// 同一条按文档类型限定的正则路(`parser::doc_lab_observations`),出院小结正文里的血压不会
+/// 冒出来当化验单。
+fn lab_report_items(d: &ProjectionDoc) -> Vec<LabReportItemDto> {
+    if let Some(json) = d.extraction_json.as_deref() {
+        if let Ok(e) = deid::parse_extraction(json) {
+            let items: Vec<LabReportItemDto> = e
+                .labs
+                .iter()
+                .filter(|l| !l.name.trim().is_empty() && !l.value.trim().is_empty())
+                .filter_map(|l| {
+                    let unit = l.unit.trim();
+                    let m = terminology::resolve(&l.name, Some(unit).filter(|u| !u.is_empty()))
+                        .or_else(|| terminology::resolve_loinc(&l.loinc));
+                    let numeric = parse_num(&l.value).is_some()
+                        || l.value.trim().starts_with(['<', '>', '≤', '≥']);
+                    let has_evidence = !unit.is_empty()
+                        || !l.ref_low.trim().is_empty()
+                        || !l.ref_high.trim().is_empty()
+                        || !l.flag.trim().is_empty()
+                        || m.is_some();
+                    if (numeric && !has_evidence) || (!numeric && m.is_none()) {
+                        return None;
+                    }
+                    Some(LabReportItemDto {
+                        name: m
+                            .as_ref()
+                            .map(|m| m.canonical_name.clone())
+                            .unwrap_or_else(|| l.name.trim().to_string()),
+                        analyte_key: m.map(|m| m.key),
+                        value: l.value.trim().to_string(),
+                        unit: Some(unit.to_string()).filter(|u| !u.is_empty()),
+                        reference: ref_text(Some(l.ref_low.clone()), Some(l.ref_high.clone())),
+                        flag: norm_flag(&l.flag, &l.value, &l.ref_low, &l.ref_high),
+                        unverified: l.unverified,
+                    })
+                })
+                .collect();
+            if !items.is_empty() {
+                return items;
+            }
+        }
+    }
+    let docs = source_docs(std::slice::from_ref(d));
+    let Some(sd) = docs.first() else {
+        return Vec::new();
+    };
+    parser::doc_lab_observations(sd)
+        .into_iter()
+        .filter(|o| !o.self_measured)
+        .map(|o| LabReportItemDto {
+            name: o.canonical_name.clone().unwrap_or_else(|| o.raw_name.clone()),
+            analyte_key: o.analyte_key.clone(),
+            value: fmt_num(o.value_num),
+            unit: o.unit_raw.clone(),
+            reference: ref_text(o.ref_low.map(fmt_num), o.ref_high.map(fmt_num)),
+            flag: o.flag.clone().filter(|f| f == "H" || f == "L"),
+            unverified: o.unverified,
+        })
+        .collect()
+}
+
+fn lab_report_panels(items: &[LabReportItemDto]) -> Vec<String> {
+    let mut panels: Vec<String> = Vec::new();
+    for p in items
+        .iter()
+        .filter_map(|it| it.analyte_key.as_deref().and_then(terminology::panel_for))
+    {
+        if !panels.iter().any(|x| x == p) {
+            panels.push(p.to_string());
+        }
+    }
+    panels
+}
+
+fn lab_report_title(d: &ProjectionDoc, items: &[LabReportItemDto]) -> String {
+    let panels = lab_report_panels(items);
+    match panels.len() {
+        0 => {}
+        1..=3 => return panels.join("、"),
+        n => return format!("{} 等 {n} 个面板", panels[..3].join("、")),
+    }
+    d.title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or("化验")
+        .to_string()
+}
+
+/// 原件里的采集 / 出结果时间:`Collected by: 10/12/26 0815` → `08:15`;没有采集时间用 `Resulted:`。
+fn lab_report_time(text: &str) -> Option<String> {
+    fn after(text: &str, label: &str) -> Option<String> {
+        for line in text.lines() {
+            if let Some(rest) = line.find(label).map(|i| &line[i + label.len()..]) {
+                let rest = rest.trim();
+                // MM/DD/YY HHMM
+                let mut parts = rest.split_whitespace();
+                let _date = parts.next()?;
+                let t = parts.next()?;
+                if t.len() == 4 && t.chars().all(|c| c.is_ascii_digit()) {
+                    return Some(format!("{}:{}", &t[..2], &t[2..]));
+                }
+                return None;
+            }
+        }
+        None
+    }
+    after(text, "Collected by:").or_else(|| after(text, "Resulted:"))
+}
+
+/// 「化验 · 按报告」:每份带化验项目的文档一行,按日期倒序(无日期最后)。
+/// 自测记录 / 笔记 / 动作日志不是化验单,不列。
+pub fn view_lab_reports() -> anyhow::Result<Vec<LabReportDto>> {
+    let projection = gather()?;
+    let mut out: Vec<LabReportDto> = Vec::new();
+    for d in &projection.docs {
+        if matches!(
+            d.doc_type.as_deref(),
+            Some("self_measurement") | Some("note") | Some("profile_event")
+        ) {
+            continue;
+        }
+        let items = lab_report_items(d);
+        if items.is_empty() {
+            continue;
+        }
+        let abnormal_count = items.iter().filter(|i| i.flag.is_some()).count() as u32;
+        out.push(LabReportDto {
+            document_id: d.document_id,
+            date: d.date.map(fmt_date),
+            panels: lab_report_panels(&items),
+            title: lab_report_title(d, &items),
+            time: lab_report_time(&d.text),
+            abnormal_count,
+            items,
+        });
+    }
+    out.sort_by(|a, b| {
+        b.date
+            .is_some()
+            .cmp(&a.date.is_some())
+            .then(b.date.cmp(&a.date))
+            .then(b.document_id.cmp(&a.document_id))
+    });
+    Ok(out)
+}
+
 pub fn view_trends() -> anyhow::Result<Vec<TrendSeriesDto>> {
     let projection = gather()?;
     let src = source_docs(&projection.docs);
@@ -1206,6 +1266,100 @@ fn render_plain_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn doc(text: &str, json: Option<&str>, doc_type: &str, title: &str) -> ProjectionDoc {
+        ProjectionDoc {
+            document_id: 7,
+            date: "2026-10-14".parse().ok(),
+            text: text.into(),
+            doc_type: Some(doc_type.into()),
+            title: Some(title.into()),
+            extraction_json: json.map(str::to_string),
+        }
+    }
+
+    /// 修订 2:按报告的一行 —— 侧文件路径取印刷值、箭头按 flag / 区间判,标题用面板中文名。
+    #[test]
+    fn lab_report_from_sidecar_keeps_printed_values_and_titles_by_panel() {
+        let json = r#"{"doc_type":"lab_report","doc_date":"2026-10-14","labs":[
+            {"name":"Creatinine","value":"1.4","unit":"mg/dL","ref_low":"0.6","ref_high":"1.2","flag":"H","loinc":"2160-0"},
+            {"name":"Hemoglobin","value":"13.5","unit":"g/dL","ref_low":"13","ref_high":"17","flag":"","loinc":"718-7"},
+            {"name":"Potassium","value":"3.2","unit":"mmol/L","ref_low":"3.5","ref_high":"5.1","flag":"","loinc":"2823-3"},
+            {"name":"HIV Ab","value":"Nonreactive","unit":"","ref_low":"","ref_high":"","flag":""}
+        ],"meds":[],"diagnoses":[]}"#;
+        let d = doc("irrelevant", Some(json), "lab_report", "Labs");
+        let items = lab_report_items(&d);
+        assert_eq!(items.len(), 4);
+        let cr = items.iter().find(|i| i.analyte_key.as_deref() == Some("creatinine")).unwrap();
+        assert_eq!(cr.value, "1.4");
+        assert_eq!(cr.reference.as_deref(), Some("0.6-1.2"));
+        assert_eq!(cr.flag.as_deref(), Some("H"));
+        let k = items.iter().find(|i| i.analyte_key.as_deref() == Some("potassium")).unwrap();
+        assert_eq!(k.flag.as_deref(), Some("L"), "没印箭头就按区间判");
+        let hgb = items.iter().find(|i| i.analyte_key.as_deref() == Some("hgb")).unwrap();
+        assert!(hgb.flag.is_none());
+        // 词典认得「HIV Ab」→ 中文名;定性值原样进表、不判箭头。
+        let hiv = items.iter().find(|i| i.value == "Nonreactive").unwrap();
+        assert_eq!(hiv.name, "HIV抗体");
+        assert!(hiv.flag.is_none());
+        let title = lab_report_title(&d, &items);
+        assert_eq!(title, "肾功能、血常规、电解质", "≤3 个面板全列");
+        assert_eq!(lab_report_panels(&items), ["肾功能", "血常规", "电解质"]);
+        let mut many = items.clone();
+        many.extend(items.iter().cloned());
+        assert_eq!(lab_report_title(&d, &many), "肾功能、血常规、电解质", "重复面板去重");
+        let mut alt = cr.clone();
+        alt.analyte_key = Some("alt".into());
+        many.push(alt);
+        assert_eq!(lab_report_title(&d, &many), "肾功能、血常规、电解质 等 4 个面板");
+        assert_eq!(lab_report_time("Labs\nCollected by: 10/14/26 0815 \nResulted: 10/14/26 1130\n").as_deref(), Some("08:15"));
+        assert_eq!(lab_report_time("Resulted: 10/14/26 1130\n").as_deref(), Some("11:30"));
+        assert!(lab_report_time("Collected by:   \n").is_none());
+        assert_eq!(items.iter().filter(|i| i.flag.is_some()).count(), 2);
+    }
+
+    /// 审查 C3 / S9 / S10:印刷 H 但值在区间内 → 以区间为准不出箭头;`<0.1` 这种不按区间判;
+    /// 单端定性区间原样;年龄这种没证据的数不进表;侧文件零项退回正则。
+    #[test]
+    fn lab_report_flag_rules_and_evidence_gate() {
+        let json = r#"{"doc_type":"lab_report","doc_date":"2026-10-14","labs":[
+            {"name":"Hemoglobin","value":"14","unit":"g/dL","ref_low":"13","ref_high":"17","flag":"H","loinc":"718-7"},
+            {"name":"Troponin I","value":"<0.01","unit":"ng/mL","ref_low":"","ref_high":"0.04","flag":""},
+            {"name":"年龄","value":"60","unit":"","ref_low":"","ref_high":"","flag":""},
+            {"name":"HBsAg","value":"Negative","unit":"","ref_low":"","ref_high":"Negative","flag":""}
+        ],"meds":[],"diagnoses":[]}"#;
+        let d = doc("", Some(json), "lab_report", "Labs");
+        let items = lab_report_items(&d);
+        let hgb = items.iter().find(|i| i.analyte_key.as_deref() == Some("hgb")).unwrap();
+        assert!(hgb.flag.is_none(), "区间优先于印刷 H");
+        let tn = items.iter().find(|i| i.value == "<0.01").unwrap();
+        assert!(tn.flag.is_none());
+        assert_eq!(tn.reference.as_deref(), Some("<0.04"));
+        assert!(items.iter().all(|i| i.name != "年龄"), "{items:?}");
+        if let Some(hb) = items.iter().find(|i| i.value == "Negative") {
+            assert_eq!(hb.reference.as_deref(), Some("Negative"), "定性区间不加 <");
+        }
+        // 侧文件零项 → 正则路(按文档类型限定):出院小结正文里的血压不是化验单。
+        let empty = r#"{"doc_type":"discharge_summary","doc_date":"2026-10-14","labs":[],"meds":[],"diagnoses":[]}"#;
+        let ds = doc("出院小结\n入院时血压 150/90 mmHg\n出院带药:美托洛尔 25mg\n", Some(empty), "discharge_summary", "出院小结");
+        assert!(lab_report_items(&ds).is_empty(), "{:?}", lab_report_items(&ds));
+        let lab = doc("检验报告单\n肌酐 95 umol/L 44-133\n", Some(empty), "lab_report", "化验单");
+        assert_eq!(lab_report_items(&lab).len(), 1, "化验单零项侧文件退回正则读到肌酐");
+    }
+
+    #[test]
+    fn lab_report_from_plain_text_and_title_fallback() {
+        let d = doc("检验报告单\n肌酐 95 umol/L 44-133\n", None, "lab_report", "化验单 2026-10-14");
+        let items = lab_report_items(&d);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].analyte_key.as_deref(), Some("creatinine"));
+        assert_eq!(items[0].reference.as_deref(), Some("44-133"));
+        let none = doc("今天天气不错", None, "clinical_note", "门诊病历");
+        assert!(lab_report_items(&none).is_empty());
+        let unknown = doc("", Some(r#"{"doc_type":"lab_report","doc_date":"2026-10-14","labs":[{"name":"Zebra index","value":"3","unit":"u","ref_low":"","ref_high":"","flag":""}],"meds":[],"diagnoses":[]}"#), "lab_report", "Special panel");
+        let items = lab_report_items(&unknown);
+        assert_eq!(lab_report_title(&unknown, &items), "Special panel", "一个都认不出就用文档标题");
+    }
     use crate::api::dto::SelfMeasuredValueDto;
 
     // 端到端测试跑同一个进程级 `api::vault::VAULT` cell(和生产代码一样,一次只有一个
@@ -1628,27 +1782,27 @@ mod tests {
     #[test]
     fn allergy_negation_scopes_the_whole_clause_not_the_first_item() {
         assert_eq!(
-            extract_allergies_pairs("过敏史:否认食物、药物过敏史。"),
+            parser::extract_allergies_pairs("过敏史:否认食物、药物过敏史。"),
             Vec::<(String, String)>::new(),
             "否认同时管着食物和药物,不是只管紧跟其后的食物"
         );
         assert_eq!(
-            extract_allergies_pairs("过敏史:否认药物、食物过敏史。"),
+            parser::extract_allergies_pairs("过敏史:否认药物、食物过敏史。"),
             Vec::<(String, String)>::new(),
             "顺序调换,否认依旧管两项"
         );
         assert_eq!(
-            extract_allergies_pairs("过敏史:否认食物及其他药物过敏史。"),
+            parser::extract_allergies_pairs("过敏史:否认食物及其他药物过敏史。"),
             Vec::<(String, String)>::new(),
             "句内本来就没有顿号——此前已经是对的,不能改坏"
         );
         assert_eq!(
-            extract_allergies_pairs("过敏史:磺胺类药物(皮疹史);否认食物及其他药物过敏史。"),
+            parser::extract_allergies_pairs("过敏史:磺胺类药物(皮疹史);否认食物及其他药物过敏史。"),
             vec![("磺胺类药物".to_string(), "皮疹史".to_string())],
             "真实出院记录写法:阳性分句与否定分句共享一个字段,靠；分开"
         );
         assert_eq!(
-            extract_allergies_pairs("既往史:否认肝炎、结核病史,否认食物、药物过敏史。"),
+            parser::extract_allergies_pairs("既往史:否认肝炎、结核病史,否认食物、药物过敏史。"),
             Vec::<(String, String)>::new(),
             "过敏史标签命中的是句中「药物过敏史」尾巴,剩余部分只有一个句号"
         );
@@ -1659,7 +1813,7 @@ mod tests {
     /// 挡住否定的那一半。
     #[test]
     fn allergy_positive_and_negation_sharing_one_clause() {
-        let pairs = extract_allergies_pairs("过敏史:青霉素过敏,否认食物过敏");
+        let pairs = parser::extract_allergies_pairs("过敏史:青霉素过敏,否认食物过敏");
         assert_eq!(pairs.len(), 1, "实际={pairs:?}");
         assert_eq!(pairs[0].0, "青霉素过敏");
     }
@@ -1667,9 +1821,9 @@ mod tests {
     /// `未见`/`(-)`/`（-）` 是 否认 之外常见的否定写法。
     #[test]
     fn allergy_negation_prefix_variants() {
-        assert!(extract_allergies_pairs("过敏史:未见明确食物、药物过敏史。").is_empty());
-        assert!(extract_allergies_pairs("过敏史:(-)").is_empty());
-        assert!(extract_allergies_pairs("过敏史:（-）").is_empty());
+        assert!(parser::extract_allergies_pairs("过敏史:未见明确食物、药物过敏史。").is_empty());
+        assert!(parser::extract_allergies_pairs("过敏史:(-)").is_empty());
+        assert!(parser::extract_allergies_pairs("过敏史:（-）").is_empty());
     }
 
     /// #65:物质名恰好以「无」开头(无花果,即无花果)不能被「无」否定检查
@@ -1681,7 +1835,7 @@ mod tests {
     #[test]
     fn allergy_wu_prefix_is_not_blanket_negation() {
         assert_eq!(
-            extract_allergies_pairs("过敏史:无花果过敏。"),
+            parser::extract_allergies_pairs("过敏史:无花果过敏。"),
             vec![("无花果过敏".to_string(), String::new())],
             "无花果过敏是阳性条目,「无」在这里是物质名的一部分"
         );
@@ -1698,7 +1852,7 @@ mod tests {
             "过敏史:无其他过敏史。",
         ] {
             assert_eq!(
-                extract_allergies_pairs(negated),
+                parser::extract_allergies_pairs(negated),
                 Vec::<(String, String)>::new(),
                 "应判否定:{negated}"
             );
@@ -1717,13 +1871,13 @@ mod tests {
             "过敏史:不清楚。",
         ] {
             assert_eq!(
-                extract_allergies_pairs(unclear),
+                parser::extract_allergies_pairs(unclear),
                 Vec::<(String, String)>::new(),
                 "「不详」类应当宁缺,不产出条目:{unclear}"
             );
         }
         assert_eq!(
-            extract_allergies_pairs("过敏史:青霉素过敏,过敏史不详。"),
+            parser::extract_allergies_pairs("过敏史:青霉素过敏,过敏史不详。"),
             vec![("青霉素过敏".to_string(), String::new())],
         );
     }

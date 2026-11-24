@@ -122,6 +122,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ImportOutcomeDto dco_decode_import_outcome_dto(dynamic raw);
 
   @protected
+  LabReportDto dco_decode_lab_report_dto(dynamic raw);
+
+  @protected
+  LabReportItemDto dco_decode_lab_report_item_dto(dynamic raw);
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
@@ -138,6 +144,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<DocumentSummaryDto> dco_decode_list_document_summary_dto(dynamic raw);
+
+  @protected
+  List<LabReportDto> dco_decode_list_lab_report_dto(dynamic raw);
+
+  @protected
+  List<LabReportItemDto> dco_decode_list_lab_report_item_dto(dynamic raw);
 
   @protected
   List<OcrLineDto> dco_decode_list_ocr_line_dto(dynamic raw);
@@ -436,6 +448,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ImportOutcomeDto sse_decode_import_outcome_dto(SseDeserializer deserializer);
 
   @protected
+  LabReportDto sse_decode_lab_report_dto(SseDeserializer deserializer);
+
+  @protected
+  LabReportItemDto sse_decode_lab_report_item_dto(SseDeserializer deserializer);
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
@@ -460,6 +478,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<DocumentSummaryDto> sse_decode_list_document_summary_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<LabReportDto> sse_decode_list_lab_report_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<LabReportItemDto> sse_decode_list_lab_report_item_dto(
     SseDeserializer deserializer,
   );
 
@@ -835,6 +863,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_lab_report_dto(LabReportDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_lab_report_item_dto(
+    LabReportItemDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
@@ -864,6 +901,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_document_summary_dto(
     List<DocumentSummaryDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_lab_report_dto(
+    List<LabReportDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_lab_report_item_dto(
+    List<LabReportItemDto> self,
     SseSerializer serializer,
   );
 

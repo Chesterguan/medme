@@ -117,3 +117,81 @@ pub fn mk_docs<'a>(docs: &'a [(&str, String)]) -> Vec<parser::SourceDoc<'a>> {
         })
         .collect()
 }
+
+// ─────────────────────────── 语料加载(Jane / 李静) ───────────────────────────
+
+/// 一份语料文档:`stem`(文件名去后缀)、种类(文件名第二段)、日期、正文、侧文件(没有则空串)。
+pub struct CorpusDoc {
+    pub stem: String,
+    pub kind: String,
+    pub date: chrono::NaiveDate,
+    pub text: String,
+    pub sidecar: String,
+}
+
+fn load_dir(sub: &str) -> Vec<CorpusDoc> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata")
+        .join(sub);
+    let mut out = Vec::new();
+    for f in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = f.path();
+        if p.extension().is_none_or(|e| e != "txt") {
+            continue;
+        }
+        let stem = p.file_stem().unwrap().to_string_lossy().to_string();
+        let mut parts = stem.splitn(3, '_');
+        let date: chrono::NaiveDate = parts.next().unwrap().parse().unwrap();
+        let kind = parts.next().unwrap().to_string();
+        out.push(CorpusDoc {
+            stem: stem.clone(),
+            kind,
+            date,
+            text: std::fs::read_to_string(&p).unwrap(),
+            sidecar: std::fs::read_to_string(p.with_extension("json")).unwrap_or_default(),
+        });
+    }
+    out.sort_by(|a, b| a.date.cmp(&b.date).then(a.stem.cmp(&b.stem)));
+    out
+}
+
+/// Doe, Jane(英文 + Epic 样式侧文件)。
+pub fn load_jane() -> Vec<CorpusDoc> {
+    load_dir("corpus-jane")
+}
+
+/// 李静(中文,无侧文件,诊断走正则)。
+pub fn load_lijing() -> Vec<CorpusDoc> {
+    load_dir("corpus")
+}
+
+pub fn corpus_doc_type(kind: &str) -> &'static str {
+    match kind {
+        "检验报告" => "lab_report",
+        "处方" => "prescription",
+        "出院记录" => "discharge_summary",
+        "门诊病历" => "clinical_note",
+        "急诊记录" => "clinical_note",
+        "手术记录" => "surgery",
+        "影像报告" => "imaging_report",
+        "病理报告" => "pathology",
+        "眼科报告" | "输液记录" => "clinical_note",
+        _ => "other",
+    }
+}
+
+/// 语料 → `SourceDoc`。侧文件为空串的文档 `extraction_json = None`(走正则)。
+pub fn corpus_docs(corpus: &[CorpusDoc]) -> Vec<parser::SourceDoc<'_>> {
+    corpus
+        .iter()
+        .enumerate()
+        .map(|(i, d)| parser::SourceDoc {
+            index: i,
+            date: Some(d.date),
+            text: &d.text,
+            doc_type: Some(corpus_doc_type(&d.kind).into()),
+            title: Some(d.stem.clone()),
+            extraction_json: (!d.sidecar.is_empty()).then_some(d.sidecar.as_str()),
+        })
+        .collect()
+}

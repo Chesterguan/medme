@@ -341,3 +341,41 @@ fn rejects_bad_spans_and_paths_before_touching_the_vault() {
     assert!(r.failed[2].1.contains("路径"), "{:?}", r.failed[2]);
     assert!(vault.timeline().unwrap().is_empty());
 }
+
+/// 同一份 PDF、改过的 sidecar 再导一次 → updated=1、文档数不变、extraction_json 变成新内容;
+/// 再导同一份 sidecar → 仍是 deduped(内容没变就不重挂)。
+#[test]
+fn rerun_with_changed_sidecar_refreshes_the_extraction() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bundle = tmp.path().join("bundle");
+    let (files, manifest) = synth_bundle();
+    write_dir(&bundle, &files, &manifest);
+    let vault = Vault::open(&tmp.path().join("vault")).unwrap();
+    let r = import(&vault, &bundle);
+    assert_eq!((r.imported, r.updated, r.deduped), (3, 0, 0), "{r:?}");
+    let docs_before = vault.timeline().unwrap().len();
+    let lab = vault
+        .timeline()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.doc_type == DocType::LabReport)
+        .unwrap();
+    let before = vault.extraction_json(lab.document_id).unwrap().unwrap();
+
+    // 适配器修了解析:同一份 PDF,sidecar 内容变了(多一个字段)。
+    let side = bundle.join(LAB.replace(".pdf", ".extraction.json"));
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&side).unwrap()).unwrap();
+    v["labs"][0]["flag"] = serde_json::Value::String("H".into());
+    let changed = serde_json::to_string(&v).unwrap();
+    std::fs::write(&side, &changed).unwrap();
+    let r = import(&vault, &bundle);
+    assert_eq!((r.imported, r.updated, r.deduped), (0, 1, 2), "{r:?}");
+    assert_eq!(vault.timeline().unwrap().len(), docs_before, "文档数不变");
+    let after = vault.extraction_json(lab.document_id).unwrap().unwrap();
+    assert_ne!(after, before);
+    assert_eq!(after, changed, "extraction_json 变成新内容");
+
+    // 同一份再导:内容没变 → deduped。
+    let r = import(&vault, &bundle);
+    assert_eq!((r.imported, r.updated, r.deduped), (0, 0, 3), "{r:?}");
+}

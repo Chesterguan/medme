@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `document_refs`, `extract_allergies_pairs`, `flat_docs`, `fmt_date`, `fmt_num`, `gather_for_profile`, `gather_profile_events`, `gather`, `is_allergy_negation`, `is_allergy_unclear`, `is_renderable`, `parse_allergy_item`, `parse_rfc3339_date`, `read_text`, `render_plain_text`, `source_docs`, `source_docs`, `trend_series`
+// These functions are ignored because they are not marked as `pub`: `collect_active_meds`, `collect_allergies`, `collect_conditions`, `collect_recent_notes`, `document_ids_for`, `document_refs`, `flat_docs`, `fmt_date`, `fmt_num`, `gather_for_profile`, `gather_profile_events`, `gather`, `is_renderable`, `lab_report_items`, `lab_report_panels`, `lab_report_time`, `lab_report_title`, `norm_flag`, `parse_num`, `parse_rfc3339_date`, `read_text`, `ref_text`, `render_plain_text`, `source_docs`, `source_docs`, `trend_series`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ProfileInput`, `ProjectionDoc`, `VaultProjection`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// 分组 chip 的完整目录,固定顺序(策展在 `terminology::PANEL_CATALOG`,与每条
 /// [`TrendSeriesDto::panel`] 用的是同一份表)。**只回答「有哪些大类、先后顺序是
@@ -21,13 +21,11 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 Future<List<String>> viewTrendPanelCatalog() =>
     RustLib.instance.api.crateApiVaultProjectionsViewTrendPanelCatalog();
 
-/// **趋势图**:病人保险箱里每一条可渲染的化验序列,全保真。
-///
-/// 与「病情摘要卡」(`proxy_summary`)的区别见本文件头:这里不截断点数、保留日精度
-/// 日期与每点的 H/L 标记、每点都带真实 document_id。
-///
-/// 序列顺序沿用 `parser::aggregate` 的确定序(按显示名、再按 `analyte_key`)。
-/// 全部点都无日期的序列不出现在结果里 —— 见 [`is_renderable`]。
+/// 「化验 · 按报告」:每份带化验项目的文档一行,按日期倒序(无日期最后)。
+/// 自测记录 / 笔记 / 动作日志不是化验单,不列。
+Future<List<LabReportDto>> viewLabReports() =>
+    RustLib.instance.api.crateApiVaultProjectionsViewLabReports();
+
 Future<List<TrendSeriesDto>> viewTrends() =>
     RustLib.instance.api.crateApiVaultProjectionsViewTrends();
 
@@ -192,6 +190,117 @@ class EmergencyCardDto {
           conditions == other.conditions;
 }
 
+/// **趋势图**:病人保险箱里每一条可渲染的化验序列,全保真。
+///
+/// 与「病情摘要卡」(`proxy_summary`)的区别见本文件头:这里不截断点数、保留日精度
+/// 日期与每点的 H/L 标记、每点都带真实 document_id。
+///
+/// 序列顺序沿用 `parser::aggregate` 的确定序(按显示名、再按 `analyte_key`)。
+/// 全部点都无日期的序列不出现在结果里 —— 见 [`is_renderable`]。
+/// 「化验 · 按报告」的一行(修订 2,MyChart Test Results):一份化验文档 = 一张单。
+class LabReportDto {
+  final PlatformInt64 documentId;
+
+  /// `"YYYY-MM-DD"`;定不出日期为 None(排最后)。
+  final String? date;
+
+  /// 单上出现的词典面板名(按项目顺序去重;Epic 一份文档是一整天的化验,常有十几个面板)。
+  final List<String> panels;
+
+  /// 面板 ≤ 3 个 → 「肾功能、血常规」;更多 → 「电解质、血常规、肝功能 等 N 个面板」;一个都认不出 →
+  /// 文档标题 → 「化验」。同一天多张单靠 `time` 区分。
+  final String title;
+
+  /// 采集 / 出结果时间 `HH:MM`(原件里 `Collected by: MM/DD/YY HHMM`,其次 `Resulted:`);没有为 None。
+  final String? time;
+  final int abnormalCount;
+  final List<LabReportItemDto> items;
+
+  const LabReportDto({
+    required this.documentId,
+    this.date,
+    required this.panels,
+    required this.title,
+    this.time,
+    required this.abnormalCount,
+    required this.items,
+  });
+
+  @override
+  int get hashCode =>
+      documentId.hashCode ^
+      date.hashCode ^
+      panels.hashCode ^
+      title.hashCode ^
+      time.hashCode ^
+      abnormalCount.hashCode ^
+      items.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LabReportDto &&
+          runtimeType == other.runtimeType &&
+          documentId == other.documentId &&
+          date == other.date &&
+          panels == other.panels &&
+          title == other.title &&
+          time == other.time &&
+          abnormalCount == other.abnormalCount &&
+          items == other.items;
+}
+
+/// 单上的一行:项目 / 印刷值 / 单位 / 参考 / 箭头。
+class LabReportItemDto {
+  /// 词典中文名;认不出用原名。
+  final String name;
+  final String? analyteKey;
+
+  /// **印刷值**(侧文件 / 抽取的原字符串;正则路径是解析出的数,按显示规则格式化)。
+  final String value;
+  final String? unit;
+
+  /// `lo-hi` / `<hi` / `>lo`;没有为 None。
+  final String? reference;
+
+  /// `"H"` / `"L"`;正常或判不出为 None。
+  final String? flag;
+  final bool unverified;
+
+  const LabReportItemDto({
+    required this.name,
+    this.analyteKey,
+    required this.value,
+    this.unit,
+    this.reference,
+    this.flag,
+    required this.unverified,
+  });
+
+  @override
+  int get hashCode =>
+      name.hashCode ^
+      analyteKey.hashCode ^
+      value.hashCode ^
+      unit.hashCode ^
+      reference.hashCode ^
+      flag.hashCode ^
+      unverified.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LabReportItemDto &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          analyteKey == other.analyteKey &&
+          value == other.value &&
+          unit == other.unit &&
+          reference == other.reference &&
+          flag == other.flag &&
+          unverified == other.unverified;
+}
+
 /// 序列上的一个观测点。
 class TrendPointDto {
   /// **日精度** `"YYYY-MM-DD"`(取自文档的临床日期)。这一份报告没能定出日期时为
@@ -321,6 +430,10 @@ class TrendSeriesDto {
   /// 逐个编解码,新增字段放最后,现有字段的顺序 / 生成代码的既有形状都不挪动。
   final String? refSource;
 
+  /// 化验单上的英文 / 原始名(词典认得、且与中文名不同时才有;列表里灰字小一号列在中文名下)。
+  /// **追加在结尾**(FRB 按字段声明顺序编解码)。
+  final String? rawName;
+
   const TrendSeriesDto({
     required this.name,
     this.analyteKey,
@@ -334,6 +447,7 @@ class TrendSeriesDto {
     required this.points,
     required this.selfMeasured,
     this.refSource,
+    this.rawName,
   });
 
   @override
@@ -349,7 +463,8 @@ class TrendSeriesDto {
       panel.hashCode ^
       points.hashCode ^
       selfMeasured.hashCode ^
-      refSource.hashCode;
+      refSource.hashCode ^
+      rawName.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -367,7 +482,8 @@ class TrendSeriesDto {
           panel == other.panel &&
           points == other.points &&
           selfMeasured == other.selfMeasured &&
-          refSource == other.refSource;
+          refSource == other.refSource &&
+          rawName == other.rawName;
 }
 
 /// 摘要单上的一行化验:一个具体的测量点。

@@ -681,12 +681,14 @@ pub fn ephemeral_get_document(document_id: i64) -> anyhow::Result<DocumentDetail
         let ocr_backend = v
             .ocr_backend(document_id)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let impression = crate::api::dto::impression_from_text(&ocr_text);
         Ok(DocumentDetailDto {
             document: doc_summary(v, &doc),
             source_file: SourceFileMetaDto::from(&sf),
             ocr_text,
             ocr_confidence,
             ocr_backend,
+            impression,
         })
     })
 }
