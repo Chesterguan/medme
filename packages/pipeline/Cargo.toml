@@ -38,7 +38,7 @@ deid = { path = "../deid" }
 # **新依赖**:包以 zip 形式进手机(spec §5.3),按 manifest 列的名字从归档直接读
 # 进内存,不解压到磁盘。只开 deflate(Finder/`zip -r` 的默认压缩法),不要
 # bzip2/zstd/lzma/aes 那些 C 依赖。
-zip = { version = "7", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile.workspace = true

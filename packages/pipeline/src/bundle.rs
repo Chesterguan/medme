@@ -91,9 +91,10 @@ impl Source {
         // 最浅的那个 manifest.json 当包根(macOS「压缩」多一层顶级文件夹);同一深度
         // 有两个就是把两个包压在一起了,不猜。`__MACOSX/` 里的 `._manifest.json`
         // 资源叉不以 `/manifest.json` 结尾,天然进不来。
-        let mut candidates: Vec<&str> = archive
+        let mut candidates: Vec<String> = archive
             .file_names()
-            .filter_map(|n| n.strip_suffix(MANIFEST))
+            .filter_map(|n| n.ok())
+            .filter_map(|n| n.strip_suffix(MANIFEST).map(str::to_owned))
             .filter(|p| p.is_empty() || p.ends_with('/'))
             .collect();
         candidates.sort_by_key(|p| (p.matches('/').count(), p.to_string()));
