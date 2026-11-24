@@ -150,6 +150,8 @@ struct Index {
     /// 用:名字认不出时按码反查。字典里 `14749-6` 挂了两条(glucose 与同族),
     /// 先到先得——反查只是名字落空后的兜底,先到的那条就是通用的那条。
     loinc: HashMap<String, usize>,
+    /// RxNorm 码 -> 药条目(只 drug)。给 sidecar 的 `meds[].rxnorm` 兜底,同 `loinc`。
+    rxnorm: HashMap<String, usize>,
 }
 
 /// Normalization applied to BOTH index keys and query terms so lookups are
@@ -214,11 +216,15 @@ fn build_index() -> Index {
     let mut drug_aliases: HashMap<String, AliasHit> = HashMap::new();
     let mut drug_confusions: HashMap<String, AliasHit> = HashMap::new();
     let mut loinc: HashMap<String, usize> = HashMap::new();
+    let mut rxnorm: HashMap<String, usize> = HashMap::new();
 
     for (entry_idx, entry) in dict.entries.iter().enumerate() {
         let is_drug = entry.category == Category::Drug;
         if let (false, Some(code)) = (is_drug, entry.codes.loinc.as_deref()) {
             loinc.entry(code.trim().to_string()).or_insert(entry_idx);
+        }
+        if let (true, Some(code)) = (is_drug, entry.codes.rxnorm.as_deref()) {
+            rxnorm.entry(code.trim().to_string()).or_insert(entry_idx);
         }
         for alias in &entry.aliases {
             let norm = normalize_term(alias);
@@ -263,6 +269,7 @@ fn build_index() -> Index {
         drug_aliases,
         drug_confusions,
         loinc,
+        rxnorm,
     }
 }
 
@@ -938,6 +945,22 @@ pub fn resolve_loinc(code: &str) -> Option<Match> {
     Some(idx.to_match(&hit, 1.0))
 }
 
+/// 按 RxNorm 码反查药条目(只 drug)。与 [`resolve_loinc`] 同一手法、同一条规矩:
+/// 码是适配器给的、不是原文,调用方**名字优先**、码兜底。
+pub fn resolve_rxnorm(code: &str) -> Option<Match> {
+    let code = code.trim();
+    if code.is_empty() {
+        return None;
+    }
+    let idx = index();
+    let entry_idx = *idx.rxnorm.get(code)?;
+    let hit = AliasHit {
+        entry_idx,
+        alias: code.to_string(),
+    };
+    Some(idx.to_match(&hit, 1.0))
+}
+
 /// 报告一行(项名 + 单位)→ 概念。**提取层该用的入口**,不是 [`normalize`]。
 ///
 /// 拆候选后**不是「第一个命中即用」** —— 那样结果取决于候选顺序,很脆:
@@ -1174,6 +1197,24 @@ pub fn panel_for(key: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn resolve_rxnorm_finds_drug_by_code() {
+        let m = super::resolve_rxnorm("11289").expect("warfarin RxNorm in dictionary");
+        assert_eq!(m.key, "warfarin");
+        assert_eq!(m.matched_alias, "11289");
+        assert_eq!(m.confidence, 1.0);
+        assert_eq!(
+            super::resolve_rxnorm(" 11289 ").map(|m| m.key).as_deref(),
+            Some("warfarin")
+        );
+        assert!(
+            super::resolve_rxnorm("14682-9").is_none(),
+            "LOINC 码不在药表里"
+        );
+        assert!(super::resolve_rxnorm("0").is_none());
+        assert!(super::resolve_rxnorm("").is_none());
+    }
+
+    #[test]
     fn resolve_loinc_finds_lab_by_code() {
         let m = super::resolve_loinc("14682-9").expect("creatinine LOINC in dictionary");
         assert_eq!(m.key, "creatinine");
@@ -1192,6 +1233,14 @@ mod tests {
     /// Every analyte/vital/drug key required by docs/015 §3.5. The dictionary
     /// may add siblings, but must never drop one of these.
     const REQUIRED_KEYS: &[&str] = &[
+        // 2026-10-22 通用病程档案 spec §8.1 第 7 条:本轮补的 5 个 key(降钙素原早就有,
+        // key 是 `pct`,spec 里的「procalcitonin ✗」是 key 名没对上)。
+        "voriconazole",
+        "lisinopril",
+        "pct",
+        "tacrolimus_level",
+        "digoxin_level",
+        "voriconazole_level",
         // labs: renal, glucose, lipids, liver, CBC, thyroid
         "creatinine",
         "egfr",
@@ -1730,10 +1779,12 @@ mod tests {
         // 被模糊配成 urine_acr,见 upcr_is_its_own_concept_and_never_lands_on_acr)= 641。
         // +1 (2026-09-17.2:ch50,总补体溶血活性 —— 同一类问题,补之前「CH50」被模糊
         // 配成 ca50,见 ch50_is_its_own_concept_and_never_lands_on_ca50)= 642。
+        // +5 (2026-10-22 通用病程档案:voriconazole/lisinopril 两味药 + tacrolimus_level/
+        // digoxin_level/voriconazole_level 三个血药浓度化验)= 647。
         // A drift here means an entry was accidentally dropped or duplicated.
         assert_eq!(
             dictionary_entries().len(),
-            642,
+            647,
             "unexpected dictionary entry count"
         );
     }

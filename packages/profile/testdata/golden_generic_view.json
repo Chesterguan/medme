@@ -1,0 +1,1114 @@
+{
+  "disclaimer": "只整理你病历里已有的记录,不做诊断。",
+  "display_name": "病程档案",
+  "enabled": true,
+  "package_id": "general",
+  "package_version": "1",
+  "sections": [
+    {
+      "body": {
+        "common_labs": [
+          {
+            "date": "2025-06-14",
+            "evidence": "ev:10:3",
+            "flag": "N",
+            "key": "wbc",
+            "label": "白细胞",
+            "ref": "4-10",
+            "unit": "10*3/uL",
+            "unverified": false,
+            "value": "9.1"
+          }
+        ],
+        "families": [
+          {
+            "count": 3,
+            "diagnoses": [
+              {
+                "code": "Z95.2",
+                "doc_count": 10,
+                "evidence": [
+                  "ev:2:2",
+                  "ev:14:1",
+                  "ev:3:1",
+                  "ev:15:2",
+                  "ev:1:2",
+                  "ev:10:2"
+                ],
+                "first_seen": "2024-03-10",
+                "last_seen": "2026-09-14",
+                "texts": [
+                  "Presence of prosthetic heart valve",
+                  "Status post AVR",
+                  "Status post aortic valve replacement"
+                ],
+                "unverified": false
+              },
+              {
+                "code": "Z79.01",
+                "doc_count": 8,
+                "evidence": [
+                  "ev:2:1",
+                  "ev:15:1"
+                ],
+                "first_seen": "2024-04-15",
+                "last_seen": "2026-09-14",
+                "texts": [
+                  "Long term (current) use of anticoagulants"
+                ],
+                "unverified": false
+              },
+              {
+                "code": "I35.0",
+                "doc_count": 2,
+                "evidence": [
+                  "ev:1:1",
+                  "ev:0:1"
+                ],
+                "first_seen": "2024-03-03",
+                "last_seen": "2024-03-10",
+                "texts": [
+                  "Aortic stenosis, severe, status post surgical aortic valve replacement 2024-03-03",
+                  "Severe aortic stenosis"
+                ],
+                "unverified": false
+              }
+            ],
+            "key": "cardio",
+            "label": "心血管",
+            "labs": [
+              {
+                "date": "2025-09-15",
+                "evidence": "ev:12:1",
+                "flag": "H",
+                "key": "bnp",
+                "label": "脑钠肽",
+                "ref": "0-100",
+                "unit": "pg/mL",
+                "unverified": false,
+                "value": "120"
+              },
+              {
+                "date": "2026-09-14",
+                "evidence": "ev:15:4",
+                "flag": "N",
+                "key": "inr",
+                "label": "国际标准化比值",
+                "ref": "2-3",
+                "unit": null,
+                "unverified": false,
+                "value": "2.4"
+              },
+              {
+                "date": "2026-09-14",
+                "evidence": "ev:15:5",
+                "flag": "N",
+                "key": "creatinine",
+                "label": "肌酐",
+                "ref": "0.6-1.2",
+                "unit": "mg/dL",
+                "unverified": false,
+                "value": "1.1"
+              }
+            ],
+            "last_seen": "2026-09-14"
+          },
+          {
+            "count": 1,
+            "diagnoses": [
+              {
+                "code": "B44.1",
+                "doc_count": 2,
+                "evidence": [
+                  "ev:10:1",
+                  "ev:13:1"
+                ],
+                "first_seen": "2025-06-14",
+                "last_seen": "2025-11-17",
+                "secondary": "respiratory",
+                "texts": [
+                  "Invasive pulmonary aspergillosis",
+                  "Invasive pulmonary aspergillosis, resolved"
+                ],
+                "unverified": false
+              }
+            ],
+            "key": "infection",
+            "label": "感染",
+            "labs": [
+              {
+                "date": "2025-11-17",
+                "evidence": "ev:13:2",
+                "flag": "N",
+                "key": "crp",
+                "label": "C反应蛋白",
+                "ref": "0-5",
+                "unit": "mg/L",
+                "unverified": false,
+                "value": "3"
+              },
+              {
+                "date": "2025-06-14",
+                "evidence": "ev:10:3",
+                "flag": "N",
+                "key": "wbc",
+                "label": "白细胞",
+                "ref": "4-10",
+                "unit": "10*3/uL",
+                "unverified": false,
+                "value": "9.1"
+              },
+              {
+                "date": "2025-11-17",
+                "evidence": "ev:13:3",
+                "flag": "N",
+                "key": "galactomannan",
+                "label": "半乳甘露聚糖",
+                "ref": "0-0.5",
+                "unit": "index",
+                "unverified": false,
+                "value": "0.2"
+              },
+              {
+                "date": "2025-08-18",
+                "evidence": "ev:11:1",
+                "flag": "N",
+                "key": "voriconazole_level",
+                "label": "伏立康唑血药浓度",
+                "ref": "1-5.5",
+                "unit": "ug/mL",
+                "unverified": false,
+                "value": "2.4"
+              }
+            ],
+            "last_seen": "2025-11-17"
+          },
+          {
+            "count": 1,
+            "diagnoses": [
+              {
+                "code": null,
+                "doc_count": 10,
+                "evidence": [
+                  "ev:1:3",
+                  "ev:15:3"
+                ],
+                "first_seen": "2024-03-10",
+                "last_seen": "2026-09-14",
+                "texts": [
+                  "Hypertension"
+                ],
+                "unverified": false
+              }
+            ],
+            "key": "uncoded",
+            "label": "未归类",
+            "labs": [],
+            "last_seen": "2026-09-14"
+          }
+        ]
+      },
+      "empty_hint": null,
+      "id": "general_families",
+      "kind": "family_cards",
+      "package_id": "general",
+      "title": "现在"
+    },
+    {
+      "body": {
+        "rows": [
+          {
+            "days_since": 38,
+            "dose": "10mg",
+            "evidence": [
+              "ev:15:6"
+            ],
+            "family": "other",
+            "first_seen": "2024-04-15",
+            "last_seen": "2026-09-14",
+            "name": "Zebrafoam",
+            "raw_name": "Zebrafoam",
+            "since": "2024-04-15",
+            "stale": false,
+            "unverified": false
+          },
+          {
+            "days_since": 38,
+            "dose": "4mg",
+            "evidence": [
+              "ev:15:7"
+            ],
+            "family": "cardio",
+            "first_seen": "2024-03-10",
+            "last_seen": "2026-09-14",
+            "name": "华法林",
+            "raw_name": "Warfarin",
+            "since": "2025-01-14",
+            "stale": false,
+            "unverified": false
+          },
+          {
+            "days_since": 38,
+            "dose": "25mg",
+            "evidence": [
+              "ev:15:8"
+            ],
+            "family": "cardio",
+            "first_seen": "2024-03-10",
+            "last_seen": "2026-09-14",
+            "name": "美托洛尔",
+            "raw_name": "Metoprolol",
+            "since": "2024-03-10",
+            "stale": false,
+            "unverified": false
+          },
+          {
+            "days_since": 220,
+            "dose": "5mg",
+            "evidence": [
+              "ev:14:2"
+            ],
+            "family": "immune",
+            "first_seen": "2026-03-16",
+            "last_seen": "2026-03-16",
+            "name": "泼尼松",
+            "raw_name": "Prednisone",
+            "since": "2026-03-16",
+            "stale": true,
+            "unverified": false
+          },
+          {
+            "days_since": 339,
+            "dose": "200mg",
+            "evidence": [
+              "ev:12:2"
+            ],
+            "family": "infection",
+            "family_note": "抗真菌",
+            "first_seen": "2025-06-14",
+            "last_seen": "2025-11-17",
+            "name": "伏立康唑",
+            "raw_name": "Voriconazole",
+            "since": null,
+            "stale": true,
+            "stopped": {
+              "at": "2025-11-17",
+              "evidence": "ev:13:4"
+            },
+            "unverified": false
+          }
+        ],
+        "stale_after_days": 180
+      },
+      "empty_hint": null,
+      "id": "general_meds",
+      "kind": "med_table",
+      "package_id": "general",
+      "title": "现在"
+    },
+    {
+      "body": {
+        "lanes": [
+          {
+            "key": "enc_inpatient",
+            "label": "住院",
+            "nodes": [
+              {
+                "at": "2024-03-01",
+                "evidence": [
+                  "ev:0:2",
+                  "ev:1:6"
+                ],
+                "from": null,
+                "kind": "inpatient",
+                "text": "UF Health Shands · 2 份",
+                "to": "2024-03-01 → 2024-03-10 · 住院 9 天",
+                "unverified": false
+              },
+              {
+                "at": "2025-06-02",
+                "evidence": [
+                  "ev:8:1",
+                  "ev:9:1",
+                  "ev:10:5"
+                ],
+                "from": null,
+                "kind": "inpatient",
+                "text": "UF Health Shands · 3 份",
+                "to": "2025-06-02 → 2025-06-14 · 住院 12 天",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "high"
+          },
+          {
+            "key": "enc_emergency",
+            "label": "急诊",
+            "nodes": [
+              {
+                "at": "2025-06-02",
+                "evidence": [
+                  "ev:7:1"
+                ],
+                "from": null,
+                "kind": "emergency",
+                "text": "UF Health Shands · 1 份",
+                "to": "2025-06-02",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "high"
+          },
+          {
+            "key": "surgery",
+            "label": "手术",
+            "nodes": [
+              {
+                "at": "2024-03-03",
+                "evidence": [
+                  "ev:0:2"
+                ],
+                "from": null,
+                "kind": "doc",
+                "text": null,
+                "to": "2024-03-03_手术记录_UF",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "imaging",
+            "label": "影像",
+            "nodes": [
+              {
+                "at": "2025-06-03",
+                "evidence": [
+                  "ev:8:1"
+                ],
+                "from": null,
+                "kind": "doc",
+                "text": "Cavitary right upper lobe lesion with halo sign, findings consistent with invasive aspergillosis in an immunocompromised host.",
+                "to": "2025-06-03_影像报告_UF",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "pathology",
+            "label": "病理",
+            "nodes": [
+              {
+                "at": "2025-06-05",
+                "evidence": [
+                  "ev:9:1"
+                ],
+                "from": null,
+                "kind": "doc",
+                "text": "Invasive fungal infection, morphology consistent with Aspergillus species.",
+                "to": "2025-06-05_病理报告_UF",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "med:Zebrafoam",
+            "label": "Zebrafoam",
+            "nodes": [
+              {
+                "at": "2024-04-15",
+                "evidence": [
+                  "ev:2:3"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": "Zebrafoam",
+                "to": "10mg",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "med:voriconazole",
+            "label": "伏立康唑",
+            "nodes": [
+              {
+                "at": "2025-06-14",
+                "evidence": [
+                  "ev:10:4"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": "Voriconazole",
+                "to": "200mg",
+                "unverified": false
+              },
+              {
+                "at": "2025-11-17",
+                "evidence": [
+                  "ev:13:4"
+                ],
+                "from": "200mg",
+                "kind": "stopped",
+                "text": "Voriconazole discontinued after 24 weeks of therapy.",
+                "to": "病历写了停药",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "med:warfarin",
+            "label": "华法林",
+            "nodes": [
+              {
+                "at": "2024-03-10",
+                "evidence": [
+                  "ev:1:4"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": "Warfarin",
+                "to": "5mg",
+                "unverified": false
+              },
+              {
+                "at": "2025-01-14",
+                "evidence": [
+                  "ev:5:1"
+                ],
+                "from": "5mg qd",
+                "kind": "change",
+                "text": "Warfarin",
+                "to": "4mg",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "med:prednisone",
+            "label": "泼尼松",
+            "nodes": [
+              {
+                "at": "2026-03-16",
+                "evidence": [
+                  "ev:14:2"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": "Prednisone",
+                "to": "5mg",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "med:metoprolol",
+            "label": "美托洛尔",
+            "nodes": [
+              {
+                "at": "2024-03-10",
+                "evidence": [
+                  "ev:1:5"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": "Metoprolol",
+                "to": "25mg",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "dx:cardio",
+            "label": "诊断 · 心血管",
+            "nodes": [
+              {
+                "at": "2024-03-03",
+                "evidence": [
+                  "ev:0:1"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": null,
+                "to": "Severe aortic stenosis · I35.0",
+                "unverified": false
+              },
+              {
+                "at": "2024-03-10",
+                "evidence": [
+                  "ev:1:2"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": null,
+                "to": "Status post aortic valve replacement · Z95.2",
+                "unverified": false
+              },
+              {
+                "at": "2024-04-15",
+                "evidence": [
+                  "ev:2:1"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": null,
+                "to": "Long term (current) use of anticoagulants · Z79.01",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "dx:infection",
+            "label": "诊断 · 感染",
+            "nodes": [
+              {
+                "at": "2025-06-14",
+                "evidence": [
+                  "ev:10:1"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": null,
+                "to": "Invasive pulmonary aspergillosis · B44.1",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          },
+          {
+            "key": "dx:uncoded",
+            "label": "诊断 · 未归类",
+            "nodes": [
+              {
+                "at": "2024-03-10",
+                "evidence": [
+                  "ev:1:3"
+                ],
+                "from": null,
+                "kind": "first",
+                "text": null,
+                "to": "Hypertension",
+                "unverified": false
+              }
+            ],
+            "quality": "verified",
+            "severity": "normal"
+          }
+        ]
+      },
+      "empty_hint": null,
+      "id": "general_journey",
+      "kind": "journey",
+      "package_id": "general",
+      "title": "进程"
+    },
+    {
+      "body": {
+        "items": [
+          {
+            "date": "2025-06-14",
+            "doc": 10,
+            "id": "ev:10:1",
+            "origin": "llm",
+            "quote": "1. Invasive pulmonary aspergillosis (B44.1)",
+            "span": [
+              190,
+              222
+            ],
+            "title": "2025-06-14_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-11-17",
+            "doc": 13,
+            "id": "ev:13:1",
+            "origin": "llm",
+            "quote": "1. Invasive pulmonary aspergillosis, resolved (B44.1)",
+            "span": [
+              173,
+              215
+            ],
+            "title": "2025-11-17_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-10",
+            "doc": 1,
+            "id": "ev:1:1",
+            "origin": "llm",
+            "quote": "1. Aortic stenosis, severe, status post surgical aortic valve replacement 2024-03-03 (I35.0)",
+            "span": [
+              190,
+              271
+            ],
+            "title": "2024-03-10_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-03",
+            "doc": 0,
+            "id": "ev:0:1",
+            "origin": "llm",
+            "quote": "Preoperative Diagnosis: Severe aortic stenosis (I35.0)",
+            "span": [
+              162,
+              184
+            ],
+            "title": "2024-03-03_手术记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-04-15",
+            "doc": 2,
+            "id": "ev:2:1",
+            "origin": "llm",
+            "quote": "2. Long term (current) use of anticoagulants (Z79.01)",
+            "span": [
+              210,
+              251
+            ],
+            "title": "2024-04-15_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-09-14",
+            "doc": 15,
+            "id": "ev:15:1",
+            "origin": "llm",
+            "quote": "2. Long term (current) use of anticoagulants (Z79.01)",
+            "span": [
+              191,
+              232
+            ],
+            "title": "2026-09-14_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-04-15",
+            "doc": 2,
+            "id": "ev:2:2",
+            "origin": "llm",
+            "quote": "1. Presence of prosthetic heart valve (Z95.2)",
+            "span": [
+              164,
+              198
+            ],
+            "title": "2024-04-15_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-03-16",
+            "doc": 14,
+            "id": "ev:14:1",
+            "origin": "llm",
+            "quote": "1. Presence of prosthetic heart valve (Z95.2)",
+            "span": [
+              164,
+              198
+            ],
+            "title": "2026-03-16_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-07-15",
+            "doc": 3,
+            "id": "ev:3:1",
+            "origin": "llm",
+            "quote": "1. Status post AVR (Z95.2)",
+            "span": [
+              164,
+              179
+            ],
+            "title": "2024-07-15_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-09-14",
+            "doc": 15,
+            "id": "ev:15:2",
+            "origin": "llm",
+            "quote": "1. Status post AVR (Z95.2)",
+            "span": [
+              164,
+              179
+            ],
+            "title": "2026-09-14_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-10",
+            "doc": 1,
+            "id": "ev:1:2",
+            "origin": "llm",
+            "quote": "2. Status post aortic valve replacement (Z95.2)",
+            "span": [
+              283,
+              319
+            ],
+            "title": "2024-03-10_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-06-14",
+            "doc": 10,
+            "id": "ev:10:2",
+            "origin": "llm",
+            "quote": "2. Status post aortic valve replacement (Z95.2)",
+            "span": [
+              234,
+              270
+            ],
+            "title": "2025-06-14_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-10",
+            "doc": 1,
+            "id": "ev:1:3",
+            "origin": "llm",
+            "quote": "3. Hypertension",
+            "span": [
+              331,
+              343
+            ],
+            "title": "2024-03-10_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-09-14",
+            "doc": 15,
+            "id": "ev:15:3",
+            "origin": "llm",
+            "quote": "3. Hypertension",
+            "span": [
+              245,
+              257
+            ],
+            "title": "2026-09-14_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-09-15",
+            "doc": 12,
+            "id": "ev:12:1",
+            "origin": "llm",
+            "quote": "BNP 120 pg/mL (0-100)",
+            "span": [
+              414,
+              417
+            ],
+            "title": "2025-09-15_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-09-14",
+            "doc": 15,
+            "id": "ev:15:4",
+            "origin": "llm",
+            "quote": "INR 2.4 (2.0-3.0)",
+            "span": [
+              365,
+              368
+            ],
+            "title": "2026-09-14_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-09-14",
+            "doc": 15,
+            "id": "ev:15:5",
+            "origin": "llm",
+            "quote": "Creatinine 1.1 mg/dL (0.6-1.2)",
+            "span": [
+              390,
+              393
+            ],
+            "title": "2026-09-14_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-11-17",
+            "doc": 13,
+            "id": "ev:13:2",
+            "origin": "llm",
+            "quote": "CRP 3 mg/L (0-5)",
+            "span": [
+              542,
+              543
+            ],
+            "title": "2025-11-17_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-06-14",
+            "doc": 10,
+            "id": "ev:10:3",
+            "origin": "llm",
+            "quote": "WBC 9.1 10*3/uL (4.0-10.0)",
+            "span": [
+              684,
+              687
+            ],
+            "title": "2025-06-14_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-11-17",
+            "doc": 13,
+            "id": "ev:13:3",
+            "origin": "llm",
+            "quote": "Galactomannan 0.2 index (0-0.5)",
+            "span": [
+              520,
+              523
+            ],
+            "title": "2025-11-17_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-08-18",
+            "doc": 11,
+            "id": "ev:11:1",
+            "origin": "llm",
+            "quote": "Voriconazole level 2.4 ug/mL (1.0-5.5)",
+            "span": [
+              204,
+              207
+            ],
+            "title": "2025-08-18_检验报告_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-04-15",
+            "doc": 2,
+            "id": "ev:2:3",
+            "origin": "llm",
+            "quote": "Zebrafoam 10mg daily",
+            "span": [
+              346,
+              355
+            ],
+            "title": "2024-04-15_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-09-14",
+            "doc": 15,
+            "id": "ev:15:6",
+            "origin": "llm",
+            "quote": "Zebrafoam 10mg daily",
+            "span": [
+              327,
+              336
+            ],
+            "title": "2026-09-14_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-06-14",
+            "doc": 10,
+            "id": "ev:10:4",
+            "origin": "llm",
+            "quote": "Voriconazole 200mg twice daily",
+            "span": [
+              528,
+              540
+            ],
+            "title": "2025-06-14_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-11-17",
+            "doc": 13,
+            "id": "ev:13:4",
+            "origin": "llm",
+            "quote": "Voriconazole discontinued after 24 weeks of therapy.",
+            "span": [
+              279,
+              331
+            ],
+            "title": "2025-11-17_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-09-15",
+            "doc": 12,
+            "id": "ev:12:2",
+            "origin": "llm",
+            "quote": "Voriconazole 200mg twice daily",
+            "span": [
+              348,
+              360
+            ],
+            "title": "2025-09-15_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-10",
+            "doc": 1,
+            "id": "ev:1:4",
+            "origin": "llm",
+            "quote": "Warfarin 5mg daily",
+            "span": [
+              541,
+              549
+            ],
+            "title": "2024-03-10_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-01-14",
+            "doc": 5,
+            "id": "ev:5:1",
+            "origin": "llm",
+            "quote": "Warfarin 4mg daily",
+            "span": [
+              280,
+              288
+            ],
+            "title": "2025-01-14_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-09-14",
+            "doc": 15,
+            "id": "ev:15:7",
+            "origin": "llm",
+            "quote": "Warfarin 4mg daily",
+            "span": [
+              280,
+              288
+            ],
+            "title": "2026-09-14_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-03-16",
+            "doc": 14,
+            "id": "ev:14:2",
+            "origin": "llm",
+            "quote": "Prednisone 5mg daily",
+            "span": [
+              367,
+              377
+            ],
+            "title": "2026-03-16_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-10",
+            "doc": 1,
+            "id": "ev:1:5",
+            "origin": "llm",
+            "quote": "Metoprolol 25mg twice daily",
+            "span": [
+              560,
+              570
+            ],
+            "title": "2024-03-10_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2026-09-14",
+            "doc": 15,
+            "id": "ev:15:8",
+            "origin": "llm",
+            "quote": "Metoprolol 25mg twice daily",
+            "span": [
+              299,
+              309
+            ],
+            "title": "2026-09-14_门诊病历_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-03",
+            "doc": 0,
+            "id": "ev:0:2",
+            "origin": "doc",
+            "quote": "2024-03-03_手术记录_UF",
+            "span": null,
+            "title": "2024-03-03_手术记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2024-03-10",
+            "doc": 1,
+            "id": "ev:1:6",
+            "origin": "doc",
+            "quote": "2024-03-10_出院记录_UF",
+            "span": null,
+            "title": "2024-03-10_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-06-03",
+            "doc": 8,
+            "id": "ev:8:1",
+            "origin": "doc",
+            "quote": "2025-06-03_影像报告_UF",
+            "span": null,
+            "title": "2025-06-03_影像报告_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-06-05",
+            "doc": 9,
+            "id": "ev:9:1",
+            "origin": "doc",
+            "quote": "2025-06-05_病理报告_UF",
+            "span": null,
+            "title": "2025-06-05_病理报告_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-06-14",
+            "doc": 10,
+            "id": "ev:10:5",
+            "origin": "doc",
+            "quote": "2025-06-14_出院记录_UF",
+            "span": null,
+            "title": "2025-06-14_出院记录_UF",
+            "verified": true
+          },
+          {
+            "date": "2025-06-02",
+            "doc": 7,
+            "id": "ev:7:1",
+            "origin": "doc",
+            "quote": "2025-06-02_急诊记录_UF",
+            "span": null,
+            "title": "2025-06-02_急诊记录_UF",
+            "verified": true
+          }
+        ]
+      },
+      "empty_hint": null,
+      "id": "general_evidence",
+      "kind": "evidence",
+      "package_id": "general",
+      "title": "依据"
+    }
+  ],
+  "sources": []
+}

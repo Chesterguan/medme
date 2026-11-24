@@ -8,10 +8,15 @@
 pub mod package;
 // 规则求值是本 crate 的内部实现:`Ctx`/`Evidence` 的形状会随 Task 11–15 一路长,
 // 不对外承诺。对外只有 `view` 里那三个类型 + `materialize`。
+mod generic;
+// 三张表在 Task 7–9 之前只有测试在用。
+#[allow(dead_code)]
+mod generic_tables;
 mod rules;
 mod state;
 pub mod view;
 
+pub use generic::{materialize_generic, EncounterRef};
 pub use package::{
     cache_load, cache_store, load_signed, load_signed_index, verify_envelope, verify_envelope_body,
     version_tuple, ActivityRules, Analyte, Band, Bands, Display, Drug, Index, IndexEntry, Manifest,
@@ -40,36 +45,8 @@ pub fn materialize(
     let enabled = is_enabled(events, &pkg.manifest.id);
     let sections = if enabled {
         let ctx = rules::Ctx::build(docs, events, today);
-        // Task 13–15 继续往这里加 section。「开启了但还没有任何数据」与「没开启」
-        // 是两种不同的显示状态:前者出卡片、卡片自己带 `empty_hint`,后者没卡片。
-        let mut out = Vec::new();
-        // 用药与活动度**各只算一遍**,两张卡和达标表读同一次结果:算两遍就有算出
-        // 两个不同答案的机会,而卡片上那个「泼尼松 5 mg/天」和达标表里判 `<5` 用的
-        // 必须是同一个数(`rules::Regimen` / `rules::Activity` 的文档)。
-        let regimen = rules::regimen_eval(&ctx, pkg);
-        let activity = rules::activity_eval(&ctx, pkg);
-        // 顺序按 spec §6 那张表:现行方案在最前 —— 医生拿到手第一眼要看的是「他
-        // 现在吃什么」,不是分数。
-        out.extend(rules::status_section(&ctx, pkg, &regimen));
-        out.extend(rules::activity_section(&ctx, pkg, &activity));
-        out.extend(rules::reminders_section(&ctx, pkg, &activity, &regimen));
-        // 「待补/逾期」永远排在趋势前面(spec §5.6);时间轴跟在趋势后面,两张
-        // 对照表压轴(spec §6 那张表的相对顺序)。**达标表在里程碑前面**:两块
-        // 同为 `checklist`,谁在前是包无关的、固定的顺序,渲染层按 body 里是
-        // `states` 还是 `items` 分。
-        out.extend(rules::series_section(&ctx, pkg));
-        out.extend(rules::timeline_section(&ctx, pkg));
-        out.extend(rules::states_section(&ctx, pkg, &activity, &regimen));
-        out.extend(rules::milestones_section(&ctx, pkg));
-        // 三视图(spec 2026-09-30):三段共用一本依据簿,所以 state 与 journey 引用的
-        // 每个 id 都在 evidence 里。包没声明 state_vars 时三段都不出(老包不变)。
         let mut book = state::EvidenceBook::default();
-        out.extend(state::state_section(
-            &ctx, pkg, &regimen, &activity, &mut book,
-        ));
-        out.extend(state::journey_section(&ctx, pkg, &mut book));
-        out.extend(state::evidence_section(pkg, &book));
-        out
+        sections_for(&ctx, pkg, &mut book)
     } else {
         // 没开启就**不碰**临床输入:不 aggregate、不解抽取结果。既省一趟全量
         // 计算,也是 spec §4「从未开启 = 不算、不显示、不提醒」的字面实现。
@@ -93,6 +70,45 @@ pub fn materialize(
             })
             .collect(),
     }
+}
+
+/// 一个**开着的**包在这份 `Ctx` 上的全部 sections(开启闸由调用方过)。`materialize`
+/// 与通用层(`materialize_generic`)共用:后者建一次 `Ctx`,给每个开着的包各算一遍。
+///
+/// `book` 由调用方给:单包路径自己新开一本;通用层把它那本传进来,包段的 `ev:` 与通用段
+/// 同一个编号空间(审查 I1)。
+pub(crate) fn sections_for(
+    ctx: &rules::Ctx<'_>,
+    pkg: &package::Package,
+    book: &mut state::EvidenceBook,
+) -> Vec<Section> {
+    // Task 13–15 继续往这里加 section。「开启了但还没有任何数据」与「没开启」
+    // 是两种不同的显示状态:前者出卡片、卡片自己带 `empty_hint`,后者没卡片。
+    let mut out = Vec::new();
+    // 用药与活动度**各只算一遍**,两张卡和达标表读同一次结果:算两遍就有算出
+    // 两个不同答案的机会,而卡片上那个「泼尼松 5 mg/天」和达标表里判 `<5` 用的
+    // 必须是同一个数(`rules::Regimen` / `rules::Activity` 的文档)。
+    let regimen = rules::regimen_eval(ctx, pkg);
+    let activity = rules::activity_eval(ctx, pkg);
+    // 顺序按 spec §6 那张表:现行方案在最前 —— 医生拿到手第一眼要看的是「他
+    // 现在吃什么」,不是分数。
+    out.extend(rules::status_section(ctx, pkg, &regimen));
+    out.extend(rules::activity_section(ctx, pkg, &activity));
+    out.extend(rules::reminders_section(ctx, pkg, &activity, &regimen));
+    // 「待补/逾期」永远排在趋势前面(spec §5.6);时间轴跟在趋势后面,两张
+    // 对照表压轴(spec §6 那张表的相对顺序)。**达标表在里程碑前面**:两块
+    // 同为 `checklist`,谁在前是包无关的、固定的顺序,渲染层按 body 里是
+    // `states` 还是 `items` 分。
+    out.extend(rules::series_section(ctx, pkg));
+    out.extend(rules::timeline_section(ctx, pkg));
+    out.extend(rules::states_section(ctx, pkg, &activity, &regimen));
+    out.extend(rules::milestones_section(ctx, pkg));
+    // 三视图(spec 2026-09-30):三段共用一本依据簿,所以 state 与 journey 引用的
+    // 每个 id 都在 evidence 里。包没声明 state_vars 时三段都不出(老包不变)。
+    out.extend(state::state_section(ctx, pkg, &regimen, &activity, book));
+    out.extend(state::journey_section(ctx, pkg, book));
+    out.extend(state::evidence_section(pkg, book));
+    out
 }
 
 /// 这个包**当前**是不是开着的:只看 `enable`/`disable` 两种 kind,取「最新」的那条。

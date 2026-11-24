@@ -16414,6 +16414,142 @@
       ],
       "ocr_confusions": [],
       "note": null
+    },
+    {
+      "key": "voriconazole",
+      "canonical_name": "伏立康唑",
+      "category": "drug",
+      "ingredient": "Voriconazole",
+      "codes": {
+        "rxnorm": "121243",
+        "atc": "J02AC03"
+      },
+      "aliases": [
+        "伏立康唑",
+        "威凡",
+        "Voriconazole",
+        "VFEND"
+      ],
+      "ocr_confusions": [],
+      "note": "2026-10-22 通用病程档案补:曲霉病一线抗真菌药。"
+    },
+    {
+      "key": "lisinopril",
+      "canonical_name": "赖诺普利",
+      "category": "drug",
+      "ingredient": "Lisinopril",
+      "codes": {
+        "rxnorm": "29046",
+        "atc": "C09AA03"
+      },
+      "aliases": [
+        "赖诺普利",
+        "捷赐瑞",
+        "Lisinopril",
+        "Zestril",
+        "Prinivil"
+      ],
+      "ocr_confusions": [],
+      "note": "2026-10-22 通用病程档案补:美国最常用的 ACEI,Epic 病历高频。"
+    },
+    {
+      "key": "tacrolimus_level",
+      "canonical_name": "他克莫司血药浓度",
+      "category": "lab",
+      "system": "whole blood",
+      "codes": {
+        "loinc": "11253-2"
+      },
+      "canonical_unit": "ng/mL",
+      "units": [
+        {
+          "unit": "ng/mL",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "ug/L",
+          "slope": 1.0,
+          "intercept": 0.0
+        }
+      ],
+      "aliases": [
+        "他克莫司血药浓度",
+        "他克莫司浓度",
+        "他克莫司谷浓度",
+        "FK506浓度",
+        "Tacrolimus level",
+        "Tacrolimus trough",
+        "Tacrolimus, whole blood"
+      ],
+      "ocr_confusions": [],
+      "note": "2026-10-22 通用病程档案补:化验,不是药(药在 tacrolimus)。"
+    },
+    {
+      "key": "digoxin_level",
+      "canonical_name": "地高辛血药浓度",
+      "category": "lab",
+      "system": "serum/plasma",
+      "codes": {
+        "loinc": "10535-3"
+      },
+      "canonical_unit": "ng/mL",
+      "units": [
+        {
+          "unit": "ng/mL",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "ug/L",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "nmol/L",
+          "slope": 0.781,
+          "intercept": 0.0
+        }
+      ],
+      "aliases": [
+        "地高辛血药浓度",
+        "地高辛浓度",
+        "Digoxin level",
+        "Digoxin, serum"
+      ],
+      "ocr_confusions": [],
+      "note": "2026-10-22 通用病程档案补:化验,不是药(药在 digoxin)。"
+    },
+    {
+      "key": "voriconazole_level",
+      "canonical_name": "伏立康唑血药浓度",
+      "category": "lab",
+      "system": "serum/plasma",
+      "codes": {
+        "loinc": "38370-3"
+      },
+      "canonical_unit": "ug/mL",
+      "units": [
+        {
+          "unit": "ug/mL",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "mg/L",
+          "slope": 1.0,
+          "intercept": 0.0
+        }
+      ],
+      "aliases": [
+        "伏立康唑血药浓度",
+        "伏立康唑浓度",
+        "伏立康唑谷浓度",
+        "Voriconazole level",
+        "Voriconazole trough"
+      ],
+      "ocr_confusions": [],
+      "note": "2026-10-22 通用病程档案补。LOINC 38370-3 = Voriconazole [Mass/volume] in Serum or Plasma(loinc.org 核过);谷浓度另有 73676-9,不收。"
     }
   ]
 }

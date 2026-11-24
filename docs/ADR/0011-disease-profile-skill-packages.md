@@ -158,6 +158,13 @@ ADR 按规矩不改原文,但上面两处「入口尚未接入」的**事实陈�
   顺带暴露的不一致:未知的**规则块**无声消失,未知的**条目 kind** 引擎却报成 `unscored`
   + 理由 —— 两级不一样,加第二个病之前值得统一。
 
+## Addendum(2026-10-22)
+
+[ADR 0012](0012-generic-chronic-profile-layer.md) 在本 ADR 之上加了**通用病程档案层**:不装任何包
+也有「现在 / 进程 / 依据」,病种包退成档案页内的一段。上面八条决定一条不改;失效的只有两句事实
+陈述——决定 3「加一个病 = 发一个包」隐含的「没包 = 没档案」,以及入口卡第一态「没包 → 还没准备好」。
+原文不改,以 0012 为准。
+
 ## 参考
 
 - 设计:[disease-profile-skill-framework-design](../superpowers/specs/2026-09-16-disease-profile-skill-framework-design.md)

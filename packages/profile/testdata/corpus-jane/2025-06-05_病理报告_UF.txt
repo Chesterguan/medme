@@ -1,0 +1,11 @@
+UF Health Shands Hospital
+Patient: Doe, Jane    MRN: 00000000    DOB: 1965-02-11    Sex: F
+SURGICAL PATHOLOGY REPORT
+Specimen: Right upper lobe, bronchoscopic biopsy
+Collected: 2025-06-05
+
+FINDINGS: Necrotic lung parenchyma with acute-angle branching septate hyphae invading vessel walls. GMS stain positive.
+
+CONCLUSION: Invasive fungal infection, morphology consistent with Aspergillus species.
+
+Signed by P. Chen, MD

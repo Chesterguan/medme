@@ -1,0 +1,9 @@
+UF Health Shands Hospital
+Patient: Doe, Jane    MRN: 00000000    DOB: 1965-02-11    Sex: F
+ED Visit — Emergency Department
+Arrival: 2025-06-02 03:40
+Chief Complaint: Fever, productive cough, hemoptysis for 4 days.
+Assessment: Febrile, hypoxic. Chest X-ray with right upper lobe consolidation. Admit to medicine.
+Labs:
+WBC 14.2 10*3/uL (4.0-10.0) H
+CRP 96 mg/L (0-5) H

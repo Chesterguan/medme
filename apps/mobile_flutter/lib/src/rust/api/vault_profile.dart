@@ -8,6 +8,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `alias_only_entry`, `analyte_entry`, `human_lines`, `installed_packages`, `kind_label`, `overlay_entries`, `today`
 
+/// 验清单的签名并原样交给 Dart。**Dart 永远不自己解析未验签的清单** —— 那是中间人
+/// 改一行 `version` 就能拿去拼路径的地方(`lib/skill_packages.dart`)。
 Future<String> vaultProfileVerifyIndex({required String envelopeJson}) =>
     RustLib.instance.api.crateApiVaultProfileVaultProfileVerifyIndex(
       envelopeJson: envelopeJson,
@@ -22,6 +24,19 @@ Future<String> vaultProfileInstallPackage({
   dir: dir,
   envelopeJson: envelopeJson,
 );
+
+/// 首启(或每次开箱,幂等)装内置包:`builtin_skills::BUILTIN` 逐个 `cache_store`,返回装上
+/// 的 id。本地文件写入、不联网,不受首启告知门限制(spec §5 第 5 条)。
+Future<List<String>> vaultProfileInstallBuiltin({required String dir}) =>
+    RustLib.instance.api.crateApiVaultProfileVaultProfileInstallBuiltin(
+      dir: dir,
+    );
+
+/// 通用病程档案视图(2026-10-22 spec §4 FFI):不查包、不查 enable,先算通用段;再把缓存里
+/// 每个**开着**的包的 sections 追加在后;顶层 `documents[]` 桥同 [`vault_profile_view`],
+/// 另加 `packages[]{id, display_name, enabled}` 给入口卡画「每包一行」。
+Future<String> vaultProfileViewGeneral({required String dir}) =>
+    RustLib.instance.api.crateApiVaultProfileVaultProfileViewGeneral(dir: dir);
 
 /// 算一份 `ProfileView` 并序列化给 Dart。**纯投影**:不写任何东西进保险箱。
 ///
