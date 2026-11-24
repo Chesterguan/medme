@@ -171,9 +171,33 @@ pub fn extract_provider_clean(text: &str) -> Option<String> {
     extract_provider_inner(text, false)
 }
 
+/// 英文页眉 → 展示名。大小写不敏感(页眉全大写,正文里是 `UF Health`)。
+fn english_header_provider(text: &str) -> Option<String> {
+    let upper = text.to_ascii_uppercase();
+    (upper.contains("SHANDS AT THE UNIVERSITY OF FLORIDA") || upper.contains("UF HEALTH"))
+        .then(|| "UF Health Shands".to_string())
+}
+
+/// 标题看着像急诊:中文「急诊」,或 Epic 英文标题里的 `Emergency` / `ED Visit` /
+/// `ED to`(`ED to Hosp-Admission` 也算 —— 但它若落在出院小结的住院窗里,
+/// 第 1 步已经先把它归进住院,这里根本轮不到;住院窗优先)。
+pub fn is_emergency_title(title: &str) -> bool {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"(?i)急诊|emergency|\bED (?:Visit|to)\b").expect("emergency regex")
+    })
+    .is_match(title)
+}
+
 /// [`extract_provider`] 与 [`extract_provider_clean`] 的共同本体。
 /// `signature_fallback` = 第三轮(页脚签名串)要不要跑。
 fn extract_provider_inner(text: &str, signature_fallback: bool) -> Option<String> {
+    // 第 -1 步:英文页眉。目前只认 UF Health(Epic 导出每页页眉印
+    // `SHANDS AT THE UNIVERSITY OF FLORIDA` 或 `UF Health`),两条入口都认 ——
+    // 页眉是权威出处,不带噪。不做通用英文「… Hospital」识别:没有语料,不发明。
+    if let Some(name) = english_header_provider(text) {
+        return Some(name);
+    }
     // 第 0 步:折部首。不折,后面三轮全部空手而归(见上「三层根因」第 1 条)。
     let text = crate::text::normalize_cjk_radicals(text);
     // 第一轮:抬头,权威出处。字间空格只是排版,收进结果前去掉。
@@ -524,10 +548,7 @@ impl Vault {
                 continue;
             };
             let day = date.format("%Y-%m-%d").to_string();
-            let emerg = title
-                .as_deref()
-                .map(|t| t.contains("急诊"))
-                .unwrap_or(false);
+            let emerg = title.as_deref().is_some_and(is_emergency_title);
             byday
                 .entry(day)
                 .or_default()
@@ -713,7 +734,7 @@ impl Vault {
 
 #[cfg(test)]
 mod tests {
-    use crate::query::{extract_provider, extract_provider_clean};
+    use crate::query::{extract_provider, extract_provider_clean, is_emergency_title};
     use crate::types::{NewDocument, NewOcr};
     use crate::Vault;
     use crate::{DocType, EncounterKind, OcrBackendKind};
@@ -1375,6 +1396,118 @@ mod tests {
             assert_eq!(extract_provider(text).as_deref(), Some(want), "{text:?}");
         }
         assert_eq!(extract_provider("本院 转入我院 医院"), None);
+    }
+
+    /// Epic 页眉:两种写法、大小写、夹在正文里都认;两条入口都给名字。
+    #[test]
+    fn english_uf_health_header_is_recognized() {
+        for text in [
+            "SHANDS AT THE UNIVERSITY OF FLORIDA\nPatient: Doe, Jane\nCBC with differential",
+            "UF Health\nProgress Notes\n",
+            "Page 3 of 12  uf health shands hospital  Doe, Jane",
+        ] {
+            assert_eq!(
+                extract_provider(text).as_deref(),
+                Some("UF Health Shands"),
+                "{text:?}"
+            );
+            assert_eq!(
+                extract_provider_clean(text).as_deref(),
+                Some("UF Health Shands"),
+                "{text:?}"
+            );
+        }
+    }
+
+    /// 不含那两串的英文正文照旧走中文轮,空手而归 —— 不做通用英文医院识别。
+    #[test]
+    fn other_english_text_still_yields_no_provider() {
+        assert_eq!(
+            extract_provider("Mayo Clinic\nProgress Notes\nDoe, Jane"),
+            None
+        );
+        assert_eq!(
+            extract_provider("Patient seen at university hospital today."),
+            None
+        );
+    }
+
+    #[test]
+    fn emergency_title_rule_covers_chinese_and_epic_english() {
+        for t in [
+            "急诊病历",
+            "ED Visit 2024-03-15",
+            "Emergency Department Note",
+            "ED to Hosp-Admission",
+            "ed visit",
+        ] {
+            assert!(is_emergency_title(t), "{t:?}");
+        }
+        for t in [
+            "门诊病历",
+            "Progress Notes",
+            "NEEDED Visit",
+            "MEDICATION Visit",
+            "Reduced to",
+        ] {
+            assert!(!is_emergency_title(t), "{t:?}");
+        }
+    }
+
+    /// `ED to Hosp-Admission` 落在出院小结的住院窗里 → 仍是住院;窗外的急诊标题才建急诊组。
+    #[test]
+    fn ed_to_admission_inside_inpatient_window_stays_inpatient() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        let d = |s: &str| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let mk = |dt: DocType, start: &str, end: Option<&str>, title: &str| {
+            let imp = v.import(title, "text/plain", title.as_bytes()).unwrap();
+            v.add_document(crate::types::NewDocument {
+                source_file_id: imp.source_file.id,
+                doc_type: dt,
+                doc_date: Some(d(start)),
+                doc_date_end: end.map(d),
+                title: Some(title.into()),
+                language: None,
+                page_count: 1,
+            })
+            .unwrap()
+            .id
+        };
+        mk(
+            DocType::DischargeSummary,
+            "2024-03-02T00:00:00Z",
+            Some("2024-03-08T00:00:00Z"),
+            "Discharge Summary",
+        );
+        let ed_in = mk(
+            DocType::ClinicalNote,
+            "2024-03-02T00:00:00Z",
+            None,
+            "ED to Hosp-Admission",
+        );
+        let ed_out = mk(
+            DocType::ClinicalNote,
+            "2024-03-20T00:00:00Z",
+            None,
+            "ED Visit",
+        );
+        v.rebuild_encounters().unwrap();
+        let kind_of = |doc_id: i64| -> String {
+            v.conn()
+                .query_row(
+                    "SELECT e.kind FROM document d JOIN encounter e ON e.id = d.encounter_id WHERE d.id = ?1",
+                    [doc_id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(kind_of(ed_in), "inpatient");
+        assert_eq!(kind_of(ed_out), "emergency");
     }
 
     #[test]

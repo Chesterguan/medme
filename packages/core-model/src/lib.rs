@@ -17,7 +17,9 @@ pub use audit::AuditEntry;
 pub use error::MedmeError;
 pub use event::{DocRef, Event, LogEntry};
 pub use materialize::generate_device_id;
-pub use query::{extract_provider, extract_provider_clean, SearchHit, TimelineEntry};
+pub use query::{
+    extract_provider, extract_provider_clean, is_emergency_title, SearchHit, TimelineEntry,
+};
 pub use text::normalize_cjk_radicals;
 pub use types::{
     DocType, Document, Encounter, EncounterKind, ImagingInstance, Import, NewDocument,
