@@ -98,12 +98,15 @@ String docDisplayTitle(DocumentSummaryDto doc) {
   // checkpoint 1 F1 / F5:适配器给的 `document.title`(「手术 · Sternal wound debridement」
   // 「Epic 病历摘要」「病程记录」)是最有信息的一行,只要不是机器起的临时名就用它;
   // 医院名降到副标([docSubtitle])。
-  if (title.isNotEmpty && !isTempCaptureName(title) && !_looksLikeFileName(title)) return title;
+  // 有中文显示标题时中文优先:早退让位,否则英文原标题会抢在译名之前。
+  final titleZh = doc.titleZh?.trim() ?? '';
+  if (titleZh.isEmpty && title.isNotEmpty && !isTempCaptureName(title) && !_looksLikeFileName(title)) {
+    return title;
+  }
   final provider = doc.provider?.trim() ?? '';
   // 英文 Epic 标题有中文显示标题(Rust `display_title_zh`,如「出院小结」「门诊 · Cardiology」
   // 「CT · CHEST W CONTRAST」)时顶替类型标签 —— 中文在前,英文原标题留在详情页。
   // `unknown` 不是一种类型,是「还没分出来」—— 它的说法归 [docRowLabel] 管。
-  final titleZh = doc.titleZh?.trim() ?? '';
   final label = titleZh.isNotEmpty
       ? titleZh
       : doc.docType == 'unknown'

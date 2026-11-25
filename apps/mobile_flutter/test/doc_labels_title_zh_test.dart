@@ -31,11 +31,11 @@ void main() {
     expect(docDisplayTitle(d), 'UF Health Shands · 出院小结');
   });
 
-  test('without titleZh the row falls back to the type label, as before', () {
+  test('without titleZh the row keeps the main naming order (extracted title first)', () {
     final plain = _dto(docType: 'discharge_summary', title: 'Discharge Summary Note');
-    expect(docDisplayTitle(plain), '出院小结');
+    expect(docDisplayTitle(plain), 'Discharge Summary Note');
     final lab = _dto(docType: 'lab_report', title: '化验 2025-06-14', provider: 'UF Health Shands');
-    expect(docDisplayTitle(lab), 'UF Health Shands · 化验');
+    expect(docDisplayTitle(lab), '化验 2025-06-14');
   });
 
   test('an imaging titleZh keeps the modality and the original body part', () {
