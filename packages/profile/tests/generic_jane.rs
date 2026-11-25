@@ -250,10 +250,11 @@ fn family_cards_group_diagnoses_by_icd() {
 #[test]
 fn family_card_diagnoses_carry_chinese_names_when_the_table_has_them() {
     let view = render(TODAY, &[], &[]);
-    let dx: Vec<serde_json::Value> = section(&view, "family_cards")["body"]["families"]
-        .as_array()
-        .unwrap()
+    let body = &section(&view, "family_cards")["body"];
+    // 分档之后 I35.0 归「更早」,两处都收;筛查项与被查内容不变。
+    let dx: Vec<serde_json::Value> = ["families", "earlier_families"]
         .iter()
+        .flat_map(|k| body[*k].as_array().unwrap().iter())
         .flat_map(|f| f["diagnoses"].as_array().unwrap().clone())
         .collect();
     let i35 = dx.iter().find(|d| d["code"] == "I35.0").unwrap();
