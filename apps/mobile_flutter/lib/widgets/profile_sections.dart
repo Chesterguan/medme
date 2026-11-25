@@ -1724,29 +1724,49 @@ String _num(double x) => x == x.roundToDouble() ? '${x.toInt()}' : '$x';
 /// `family_cards`:每族一张可折叠条(默认折叠),`other` 折成一行「其他 N 条」;
 /// 展开后每条诊断「原文 · 码 · 首次 · 最近 · N 份记录提到」+ 这一族的化验小表;
 /// 末尾「血常规 / 电解质 / 肝功能」通用一排。
-class _FamilyCardsBody extends StatelessWidget {
+class _FamilyCardsBody extends StatefulWidget {
   const _FamilyCardsBody(this.body, this.links);
 
   final Map<String, dynamic> body;
   final ProfileLinks? links;
 
   @override
+  State<_FamilyCardsBody> createState() => _FamilyCardsBodyState();
+}
+
+class _FamilyCardsBodyState extends State<_FamilyCardsBody> {
+  /// 「看原文」:诊断主行换成英文原文、中文名退到小字(2026-10-23 中文化 spec §4.1)。
+  /// 只在至少一条诊断带 `name_zh` 时才出现这个开关 —— 全是中文病历时没有「原文」可切。
+  bool _showOriginal = false;
+
+  @override
   Widget build(BuildContext context) {
     final c = MedColors.of(context);
-    final families = _asMapList(body['families']);
-    final common = _asMapList(body['common_labs']);
+    final families = _asMapList(widget.body['families']);
+    final common = _asMapList(widget.body['common_labs']);
     if (families.isEmpty && common.isEmpty) {
       return _HintLine('还没有诊断记录');
     }
+    final hasZh = families.any(
+      (f) => _asMapList(f['diagnoses']).any((d) => (d['name_zh'] as String?)?.isNotEmpty == true),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final f in families) _FamilyTile(f, links),
+        if (hasZh)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => setState(() => _showOriginal = !_showOriginal),
+              child: Text(_showOriginal ? '看中文' : '看原文'),
+            ),
+          ),
+        for (final f in families) _FamilyTile(f, widget.links, _showOriginal),
         if (common.isNotEmpty) ...[
           const SizedBox(height: MedShape.s2),
           Text('血常规 / 电解质 / 肝功能 最近值', style: MedType.caption.copyWith(color: c.ink2)),
           const SizedBox(height: MedShape.s1),
-          _LabRows(common, links),
+          _LabRows(common, widget.links),
         ],
       ],
     );
@@ -1754,10 +1774,11 @@ class _FamilyCardsBody extends StatelessWidget {
 }
 
 class _FamilyTile extends StatelessWidget {
-  const _FamilyTile(this.family, this.links);
+  const _FamilyTile(this.family, this.links, this.showOriginal);
 
   final Map<String, dynamic> family;
   final ProfileLinks? links;
+  final bool showOriginal;
 
   @override
   Widget build(BuildContext context) {
@@ -1779,7 +1800,7 @@ class _FamilyTile extends StatelessWidget {
       childrenPadding: const EdgeInsets.only(left: MedShape.s2, bottom: MedShape.s2),
       expandedCrossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final d in diagnoses) _DiagnosisRow(d, links),
+        for (final d in diagnoses) _DiagnosisRow(d, links, showOriginal),
         if (labs.isNotEmpty) ...[
           const SizedBox(height: MedShape.s2),
           Text('化验', style: MedType.caption.copyWith(color: c.ink2)),
@@ -1791,10 +1812,11 @@ class _FamilyTile extends StatelessWidget {
 }
 
 class _DiagnosisRow extends StatelessWidget {
-  const _DiagnosisRow(this.dx, this.links);
+  const _DiagnosisRow(this.dx, this.links, this.showOriginal);
 
   final Map<String, dynamic> dx;
   final ProfileLinks? links;
+  final bool showOriginal;
 
   @override
   Widget build(BuildContext context) {
@@ -1807,6 +1829,16 @@ class _DiagnosisRow extends StatelessWidget {
     final n = (dx['doc_count'] as num?)?.toInt() ?? 0;
     final ids = (dx['evidence'] as List? ?? const []).whereType<String>().toList();
     final unverified = dx['unverified'] == true;
+    // ICD 中文名(`name_zh`,国家临床版 2.0 查表,表外没有)。有且没切「看原文」→ 主行中文、
+    // 英文原文整行退到小字;否则主行英文、中文(若有)退到小字。码永远原样跟在主行后。
+    final zh = dx['name_zh'] as String?;
+    final zhFirst = zh != null && zh.isNotEmpty && !showOriginal;
+    final zhLevel = dx['name_zh_level'] == 'cat3' ? ' (类目)' : '';
+    final english = texts.isEmpty ? '' : texts.first;
+    final mainText = zhFirst ? zh : english;
+    final secondaryLine = zhFirst
+        ? texts.join(' / ')
+        : [if (zh != null && zh.isNotEmpty) '$zh$zhLevel', ...texts.skip(1)].join(' / ');
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: MedShape.s1),
       child: Column(
@@ -1815,7 +1847,9 @@ class _DiagnosisRow extends StatelessWidget {
           Text.rich(
             TextSpan(
               children: [
-                TextSpan(text: texts.isEmpty ? '' : texts.first, style: MedType.body.copyWith(color: c.ink)),
+                TextSpan(text: mainText, style: MedType.body.copyWith(color: c.ink)),
+                if (zhFirst && zhLevel.isNotEmpty)
+                  TextSpan(text: zhLevel, style: MedType.caption.copyWith(color: c.ink3)),
                 if (code != null) TextSpan(text: '  $code', style: MedType.caption.copyWith(color: c.ink2)),
                 if (secondary != null)
                   TextSpan(text: '  ${_kFamilyLabel[secondary] ?? secondary}', style: MedType.caption.copyWith(color: c.ink3)),
@@ -1823,8 +1857,8 @@ class _DiagnosisRow extends StatelessWidget {
               ],
             ),
           ),
-          if (texts.length > 1)
-            Text(texts.skip(1).join(' / '), style: MedType.caption.copyWith(color: c.ink3)),
+          if (secondaryLine.isNotEmpty)
+            Text(secondaryLine, style: MedType.caption.copyWith(color: c.ink3)),
           Text(
             [if (first.isNotEmpty) '首次 $first', if (last.isNotEmpty) '最近 $last', '$n 份记录提到'].join(' · '),
             style: MedType.secondary.copyWith(color: c.ink2, height: 1.5),

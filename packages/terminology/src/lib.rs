@@ -2120,3 +2120,170 @@ mod tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// ICD-10 → 中文名(国家临床版 2.0 两列派生表,见 icd10_zh_methodology.md)
+// ---------------------------------------------------------------------------
+
+const ICD10_ZH_JSON: &str = include_str!("../icd10_zh.json");
+
+#[derive(Deserialize)]
+struct Icd10Zh {
+    #[allow(dead_code)]
+    version: String,
+    sub4: HashMap<String, String>,
+    cat3: HashMap<String, String>,
+}
+
+fn icd10_zh_index() -> &'static Icd10Zh {
+    static IDX: OnceLock<Icd10Zh> = OnceLock::new();
+    // 随包资源;解析失败是构建期 bug(`icd10_zh_table_parses_with_expected_size` 守着),
+    // 与 `build_index` 对 dictionary.json 的 `expect` 同一理由。
+    IDX.get_or_init(|| {
+        serde_json::from_str(ICD10_ZH_JSON).expect("icd10_zh.json is a valid, shipped resource")
+    })
+}
+
+/// 中文名命中在哪一级:四位亚目(`B44.1`)还是只到三位类目(`N18.3` → `N18`)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IcdLevel {
+    Sub4,
+    Cat3,
+}
+
+impl IcdLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IcdLevel::Sub4 => "sub4",
+            IcdLevel::Cat3 => "cat3",
+        }
+    }
+}
+
+/// 一次 ICD-10 中文名命中。`matched_code` 是实际查到的键(`S72.001A` → `S72.0`,
+/// `N18.3` → `N18`),界面据 `level` 给类目级命中标「(类目)」。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcdZh {
+    pub name: String,
+    pub level: IcdLevel,
+    pub matched_code: String,
+}
+
+/// ICD-10 码归一:大写、去空白、剥剑号/星号;第 4 位不是 `.` 且长度 >3 时在第 3 位后补点
+/// (Epic 无点写法 `I350` → `I35.0`);不是 `[A-Z]\d\d` 开头(含 CM 第 3 位带字母的 `D3A`)→ `None`。
+/// `profile::generic_tables::normalize_icd` 委托到这里,两边一个口径。
+pub fn normalize_icd10(raw: &str) -> Option<String> {
+    let s: String = raw
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '†' && *c != '*')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    // 非 ASCII(全角数字、破折号……)一律当无码:下游按字节切前 3/5 位,切在多字节字符中间会 panic
+    // (审查 C1,`I35.０` 从病程档案渲染一路可达)。
+    if !s.is_ascii() {
+        return None;
+    }
+    let b = s.as_bytes();
+    if b.len() < 3 || !b[0].is_ascii_uppercase() || !b[1].is_ascii_digit() || !b[2].is_ascii_digit()
+    {
+        return None;
+    }
+    if b.len() > 3 && b[3] != b'.' {
+        return Some(format!("{}.{}", &s[..3], &s[3..]));
+    }
+    Some(s)
+}
+
+/// 按 ICD-10 码查中文名:归一 → 前 5 位查四位亚目 → 前 3 位查类目 → 都没有 `None`。
+/// 只认 WHO 公共部分(Epic 是 ICD-10-CM,国内表是六位扩展,4 位以上互不兼容);
+/// 表外码返回 `None`,调用方保留英文原文,**不编名**。
+pub fn resolve_icd10_zh(raw: &str) -> Option<IcdZh> {
+    let code = normalize_icd10(raw)?;
+    let idx = icd10_zh_index();
+    if code.len() >= 5 {
+        let k = &code[..5];
+        if let Some(name) = idx.sub4.get(k) {
+            return Some(IcdZh {
+                name: name.clone(),
+                level: IcdLevel::Sub4,
+                matched_code: k.to_string(),
+            });
+        }
+    }
+    let k = &code[..3];
+    idx.cat3.get(k).map(|name| IcdZh {
+        name: name.clone(),
+        level: IcdLevel::Cat3,
+        matched_code: k.to_string(),
+    })
+}
+
+#[cfg(test)]
+mod icd10_zh_tests {
+    use super::*;
+
+    #[test]
+    fn icd10_zh_table_parses_with_expected_size() {
+        assert!(icd10_zh_index().sub4.len() >= 8500);
+        // 1,246 = 237 个 `.x00` 类目 + 1,009 个无限定语的 `.900` 兜底(94 个带限定语的被丢掉)。
+        assert!(icd10_zh_index().cat3.len() >= 1200);
+    }
+
+    #[test]
+    fn resolve_icd10_zh_levels() {
+        let m = resolve_icd10_zh("B44.1").unwrap();
+        assert_eq!(
+            (m.name.as_str(), m.level),
+            ("肺曲霉病，其他的", IcdLevel::Sub4)
+        );
+        assert_eq!(resolve_icd10_zh("I350").unwrap().name, "主动脉瓣狭窄"); // 无点
+        assert_eq!(resolve_icd10_zh(" i35.0 ").unwrap().name, "主动脉瓣狭窄"); // 小写 + 空白
+        assert_eq!(resolve_icd10_zh("S72.001A").unwrap().matched_code, "S72.0"); // CM 7 位截前 5
+        let n = resolve_icd10_zh("N18.3").unwrap();
+        assert_eq!(
+            (n.name.as_str(), n.level, n.matched_code.as_str()),
+            ("慢性肾衰竭", IcdLevel::Cat3, "N18")
+        );
+        assert_eq!(resolve_icd10_zh("I10").unwrap().level, IcdLevel::Cat3); // .x00 类目
+        assert_eq!(resolve_icd10_zh("A18.0†").unwrap().matched_code, "A18.0"); // 剑号
+        assert!(resolve_icd10_zh("Z79.01").is_none()); // 表里整类缺
+        assert!(resolve_icd10_zh("D3A.0").is_none()); // CM 第 3 位字母
+        assert!(resolve_icd10_zh("X99.9").is_none()); // 编造码
+        assert!(resolve_icd10_zh("").is_none());
+        assert_eq!(IcdLevel::Sub4.as_str(), "sub4");
+    }
+
+    #[test]
+    fn normalize_icd10_shapes() {
+        assert_eq!(normalize_icd10("i350").as_deref(), Some("I35.0"));
+        assert_eq!(normalize_icd10("I35").as_deref(), Some("I35"));
+        assert_eq!(normalize_icd10("N18.002†").as_deref(), Some("N18.002"));
+        assert_eq!(normalize_icd10("D3A.0"), None);
+        assert_eq!(normalize_icd10("35.0"), None);
+        assert_eq!(normalize_icd10(""), None);
+    }
+
+    /// 审查 C1:全角数字 / 破折号这类非 ASCII 字节活过归一后,`&code[..5]` 切在字符中间会 panic,
+    /// 而这条路从病程档案渲染一路可达。非 ASCII 一律当无码。
+    #[test]
+    fn non_ascii_codes_are_none_not_a_panic() {
+        assert_eq!(normalize_icd10("I35.０"), None);
+        assert!(resolve_icd10_zh("I35.０").is_none());
+        assert!(resolve_icd10_zh("I35—0").is_none());
+        assert!(resolve_icd10_zh("Ｉ35.0").is_none());
+    }
+
+    /// 审查 I3:`.900` 兜底只在名字不带限定语时才当类目名。`I11.900 高血压心脏病不伴有(充血性)
+    /// 心力衰竭` 拿来当 I11 整类的名字是错的(I11.0 恰恰是伴心衰),宁可 None。
+    #[test]
+    fn category_names_never_come_from_qualified_unspecified_rows() {
+        for code in ["I11", "I12", "E14", "B02", "I28", "A15"] {
+            assert!(resolve_icd10_zh(code).is_none(), "{code} 不该有类目名");
+        }
+        // `A35.x00 破伤风，其他的` 来自 `.x00`(WHO 只有三位的类目),不是 `.900` 兜底:
+        // WHO A35 的类目名就叫「其他破伤风」(A33 新生儿、A34 产科另列),原样保留。
+        assert_eq!(resolve_icd10_zh("A35").unwrap().name, "破伤风，其他的");
+        assert_eq!(resolve_icd10_zh("N18").unwrap().name, "慢性肾衰竭");
+        assert_eq!(resolve_icd10_zh("J18").unwrap().name, "肺炎");
+    }
+}

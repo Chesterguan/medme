@@ -87,20 +87,9 @@ pub const RECENT_DAYS: i64 = 365;
 pub(crate) const PACKAGE_ICD_PREFIXES: &[(&str, &[&str])] = &[("sle", &["M32"])];
 
 pub(crate) fn normalize_icd(raw: &str) -> Option<String> {
-    let s: String = raw
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
-    let b = s.as_bytes();
-    if b.len() < 3 || !b[0].is_ascii_uppercase() || !b[1].is_ascii_digit() || !b[2].is_ascii_digit()
-    {
-        return None;
-    }
-    if b.len() > 3 && b[3] != b'.' {
-        return Some(format!("{}.{}", &s[..3], &s[3..]));
-    }
-    Some(s)
+    // 与 `terminology::resolve_icd10_zh` 同一口径(大写、去空白、剥 †*、无点补点、
+    // 第 3 位带字母的 CM 码当无码),一处实现两处用。
+    terminology::normalize_icd10(raw)
 }
 
 /// 归族(spec §3.1):覆盖表最长前缀 → 章节表(只有主族)。输入必须已经 [`normalize_icd`]。
