@@ -30,7 +30,7 @@ anyhow.workspace = true
 # dep) so desktop keeps real local OCR, unchanged from before the Android gate.
 ocr = { path = "../../../packages/ocr" }
 medme-share = { path = "../../../packages/share" }
-notify = "8.2.0"
+notify = "9.0.0"
 tauri-plugin-dialog = "2.7.1"
 chrono.workspace = true
 
