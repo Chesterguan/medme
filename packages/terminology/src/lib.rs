@@ -98,6 +98,19 @@ pub struct Entry {
     /// routed to human review rather than trusted).
     #[serde(default)]
     pub ocr_confusions: Vec<String>,
+    /// 量纲族标签(`per_hpf` / `per_ul` / `ratio_mg_per_g` …)。**声明它 = 声明「我的
+    /// `units[]` 是封闭的」**,带来两条硬后果:
+    /// 1. `resolve(name, unit)` 在印刷单位落在族外时**拒绝**这个候选(不是降分)——
+    ///    见 [`reject_on_unit`];
+    /// 2. 这条条目整条退出模糊匹配 —— 同族里差一个字就是另一个化验(UPCR vs UACR、
+    ///    /HP vs /uL),编辑距离在这一族里是噪音。
+    ///
+    /// **没声明 = 单位族还没策展完**,沿用旧行为。一刀切开这条会掉召回:词典里很多
+    /// 条目的 `units[]` 不完整,而 `normalize_unit` 刻意不折大小写(`mU`≠`MU`),
+    /// `umol/l` 这种常见 OCR 印法会被整条判死。哪些条目够格打这个标签,由 A6 的批量
+    /// 校准给答案、由 A5 的混淆闸守住。
+    #[serde(default)]
+    pub dimension: Option<String>,
     /// Human-readable caveat about this entry's coding/conversion choices, e.g.
     /// a deliberate non-standard concept or a source-unit assumption.
     #[serde(default)]
@@ -137,8 +150,11 @@ struct AliasHit {
 /// Lazily-built lookup index over the dictionary.
 struct Index {
     entries: Vec<Entry>,
-    /// normalized alias -> hit (confidence 1.0)。**化验/体征优先**:见 [`build_index`]。
-    aliases: HashMap<String, AliasHit>,
+    /// normalized alias -> hits(confidence 1.0)。**是列表不是单值**:同一个裸别名
+    /// 可能被两条按印刷单位分家的条目共用(`尿红细胞` 既可能印 /HP 也可能印 /uL),
+    /// 由 [`resolve`] 拿单位裁决。没有单位时取**列表第一项** = 字典里靠前的那条,
+    /// 与拆条之前的行为逐字相同。见 [`build_index`] 的两趟写法。
+    aliases: HashMap<String, Vec<AliasHit>>,
     /// normalized ocr_confusion -> hit (confidence 0.5).
     confusions: HashMap<String, AliasHit>,
     /// 只含 drug 条目的别名表 —— 处方语境用 [`normalize_drug`] 查这张,
@@ -205,13 +221,14 @@ fn to_halfwidth(c: char) -> char {
 /// 同名跨类别是**真实存在**的:「叶酸」既是化验(血清叶酸)也是药(叶酸片);「氢化可的松」
 /// 既是化验(皮质醇)也是药。别名表按类别
 /// 分开建:无类别信息的 [`normalize`] 让**化验/体征优先**(报告单里这些词绝大多数是化验项),
-/// 处方语境改用 [`normalize_drug`] 查 drug 专表。同一类别内别名仍必须唯一
+/// 处方语境改用 [`normalize_drug`] 查 drug 专表。同一类别内别名仍必须唯一,唯一例外是
+/// 「两边都声明 `dimension` 且单位族不相交」的按印刷单位分家条目
 /// (`no_duplicate_alias_within_category` 守着)。
 fn build_index() -> Index {
     let dict: Dictionary = serde_json::from_str(DICTIONARY_JSON)
         .expect("dictionary.json is a valid, shipped resource");
 
-    let mut aliases: HashMap<String, AliasHit> = HashMap::new();
+    let mut aliases: HashMap<String, Vec<AliasHit>> = HashMap::new();
     let mut confusions: HashMap<String, AliasHit> = HashMap::new();
     let mut drug_aliases: HashMap<String, AliasHit> = HashMap::new();
     let mut drug_confusions: HashMap<String, AliasHit> = HashMap::new();
@@ -225,23 +242,6 @@ fn build_index() -> Index {
         }
         if let (true, Some(code)) = (is_drug, entry.codes.rxnorm.as_deref()) {
             rxnorm.entry(code.trim().to_string()).or_insert(entry_idx);
-        }
-        for alias in &entry.aliases {
-            let norm = normalize_term(alias);
-            let hit = AliasHit {
-                entry_idx,
-                alias: alias.clone(),
-            };
-            if is_drug {
-                // 化验优先:通用表里已有(必是化验/体征)就不覆盖。
-                drug_aliases.insert(norm.clone(), hit);
-                aliases.entry(norm).or_insert_with(|| AliasHit {
-                    entry_idx,
-                    alias: alias.clone(),
-                });
-            } else {
-                aliases.insert(norm, hit);
-            }
         }
         for confusion in &entry.ocr_confusions {
             let norm = normalize_term(confusion);
@@ -258,6 +258,34 @@ fn build_index() -> Index {
                 });
             } else {
                 confusions.insert(norm, hit);
+            }
+        }
+    }
+
+    // 两趟:先把化验/体征的别名按字典顺序压进去,再压药。`normalize`(没有类别信息)
+    // 取列表第一项,于是「叶酸」这种跨类同名词仍然优先解析成化验项 —— 与改成列表
+    // 之前那套 `insert` / `or_insert_with` 的组合语义逐字等价,但不再靠覆盖顺序表达。
+    for pass_drug in [false, true] {
+        for (entry_idx, entry) in dict.entries.iter().enumerate() {
+            if (entry.category == Category::Drug) != pass_drug {
+                continue;
+            }
+            for alias in &entry.aliases {
+                let norm = normalize_term(alias);
+                let hit = AliasHit {
+                    entry_idx,
+                    alias: alias.clone(),
+                };
+                if pass_drug {
+                    drug_aliases.insert(
+                        norm.clone(),
+                        AliasHit {
+                            entry_idx,
+                            alias: alias.clone(),
+                        },
+                    );
+                }
+                aliases.entry(norm).or_default().push(hit);
             }
         }
     }
@@ -724,29 +752,35 @@ pub fn normalize_unit(raw: &str) -> String {
 /// (`盐酸二甲双胍片`) doesn't match directly, deterministic salt/form stripping is
 /// retried and, on a **drug** hit, returned at [`STRIPPED_CONFIDENCE`] (0.8) —— 剥壳是推断,
 /// 不能和原样命中同等信任。
-pub fn normalize(raw_term: &str) -> Option<Match> {
+/// [`normalize`] 的多命中版本:精确别名命中可能不止一条(见 [`Index::aliases`])。
+/// 其余几条路径(OCR 混淆表、药名剥壳、覆盖层)天然只有一条,包成单元素列表。
+fn normalize_all(raw_term: &str) -> Vec<Match> {
     let norm = normalize_term(raw_term);
     if norm.is_empty() {
-        return None;
+        return Vec::new();
     }
     let idx = index();
-    if let Some(hit) = idx.aliases.get(&norm) {
-        return Some(idx.to_match(hit, 1.0));
+    if let Some(hits) = idx.aliases.get(&norm) {
+        return hits.iter().map(|h| idx.to_match(h, 1.0)).collect();
     }
     if let Some(hit) = idx.confusions.get(&norm) {
-        return Some(idx.to_match(hit, 0.5));
+        return vec![idx.to_match(hit, 0.5)];
     }
     // 药名剥壳兜底:去盐/剂型后重试,只在 drug 命名空间里查(仍确定性、可核对)。
     for cand in drug_stem_candidates(&norm) {
         if let Some(hit) = idx.drug_aliases.get(&cand) {
-            return Some(idx.to_match(hit, STRIPPED_CONFIDENCE));
+            return vec![idx.to_match(hit, STRIPPED_CONFIDENCE)];
         }
     }
     // 内置全部**精确**路径都没命中,才问病种包的覆盖层(见 [`set_overlay`])。
     // 注意内置的**模糊**路径(`fuzzy_lookup`,0.4)排在覆盖层之后 —— 它由 `resolve`
     // 在所有精确命中都落空之后才跑,所以包的精确别名确实会压过内置的模糊救回。
     // 这是刻意的(模糊本来就是推算),闸门放在签包那一侧:见 [`set_overlay`]。
-    overlay_match(&norm, false)
+    overlay_match(&norm, false).into_iter().collect()
+}
+
+pub fn normalize(raw_term: &str) -> Option<Match> {
+    normalize_all(raw_term).into_iter().next()
 }
 
 /// 这个条目认不认这个单位(记法折叠后比较 canonical_unit 与 units[])。
@@ -754,6 +788,19 @@ fn entry_accepts_unit(entry: &Entry, unit: &str) -> bool {
     let u = normalize_unit(unit);
     entry.canonical_unit.as_deref().map(normalize_unit) == Some(u.clone())
         || entry.units.iter().any(|r| normalize_unit(&r.unit) == u)
+}
+
+/// A1:**给了印刷单位时,单位不在候选词条单位族里就拒绝该候选。** 只对声明了
+/// [`Entry::dimension`] 的条目生效,理由见那个字段的文档。
+fn reject_on_unit(hits: Vec<Match>, unit: Option<&str>) -> Vec<Match> {
+    let Some(u) = unit.map(str::trim).filter(|u| !u.is_empty()) else {
+        return hits;
+    };
+    hits.into_iter()
+        .filter(|m| {
+            entry_for(&m.key).is_none_or(|e| e.dimension.is_none() || entry_accepts_unit(&e, u))
+        })
+        .collect()
 }
 
 /// 模糊匹配置信度:低于 OCR 混淆表命中(0.5,人工核实过的已知误读),因为这是
@@ -844,8 +891,9 @@ fn edit_distance(a: &[char], b: &[char]) -> usize {
 ///    "有效距离 0" 参与全局最小距离/歧义竞争,不与编辑距离候选混着比大小。
 /// 5. **歧义拒绝**:全词典范围内,若最小距离被两个以上不同条目打平,不猜——除非
 ///    本行带着单位,且单位能把打平的候选唯一筛剩一个(数值侧证据消解名字侧歧义)。
-/// 6. **只在化验/体征命名空间找**(跳过 `Category::Drug`):`resolve` 是化验报告单
-///    语境,药名撞进来只有风险没有收益。
+/// 6. **只在化验/体征命名空间找**(跳过 `Category::Drug` 与声明了
+///    [`Entry::dimension`] 的条目):`resolve` 是化验报告单语境,药名撞进来只有风险
+///    没有收益;单位族封闭的那几条里差一个字就是另一个化验,编辑距离是噪音。
 fn fuzzy_lookup(name: &str, unit: Option<&str>) -> Option<Match> {
     let norm = normalize_term(name);
     let len = norm.chars().count();
@@ -860,7 +908,8 @@ fn fuzzy_lookup(name: &str, unit: Option<&str>) -> Option<Match> {
     // 每个条目在其所有别名里的最近距离(达到阈值才收;截断前缀记作 0)。
     let mut best_per_entry: Vec<(usize, String, usize)> = Vec::new();
     for (entry_idx, entry) in idx.entries.iter().enumerate() {
-        if entry.category == Category::Drug {
+        // 药名撞进化验语境只有风险;声明了 dimension 的条目整条退出模糊(见该字段文档)。
+        if entry.category == Category::Drug || entry.dimension.is_some() {
             continue;
         }
         let mut best: Option<(String, usize)> = None;
@@ -980,9 +1029,11 @@ pub fn resolve_rxnorm(code: &str) -> Option<Match> {
 /// `fuzzy_lookup` 文档的歧义拒绝一节)。
 pub fn resolve(name: &str, unit: Option<&str>) -> Option<Match> {
     let cands = term_candidates(name);
-    let hits: Vec<Match> = cands.iter().filter_map(|c| normalize(c)).collect();
+    let hits: Vec<Match> = cands.iter().flat_map(|c| normalize_all(c)).collect();
     if !hits.is_empty() {
-        return pick_best(hits, unit);
+        // **拒绝是终局。** 精确命中被印刷单位否掉之后不再退到模糊 —— 那正是要根治的
+        // 那条路:字典说「不是这一条」,模糊却接着猜一条更不像的。
+        return pick_best(reject_on_unit(hits, unit), unit);
     }
     cands.iter().take(2).find_map(|c| fuzzy_lookup(c, unit))
 }
@@ -1436,6 +1487,110 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_unit_family_rejects_a_foreign_unit_instead_of_guessing() {
+        // A1:声明了 `dimension` 的条目,单位族是**封闭**的 —— 印刷单位落在族外就是
+        // 证据说「这不是这一条」,拒绝,不是降分。`urine_acr` 只认 mg/g,报告若印
+        // 的是 /HP,那一行绝不可能是白蛋白肌酐比。
+        let e = dictionary_entries()
+            .iter()
+            .find(|e| e.key == "urine_acr")
+            .expect("urine_acr 必须在词典里");
+        assert_eq!(
+            e.dimension.as_deref(),
+            Some("ratio_mg_per_g"),
+            "比值族必须打 dimension —— 差一个「白」字就是另一个化验"
+        );
+        assert!(resolve("尿白蛋白肌酐比", Some("/HP")).is_none());
+        // 同一个名字,单位对得上时照常命中(拒绝只针对族外单位)。
+        assert_eq!(
+            resolve("尿白蛋白肌酐比", Some("mg/g")).map(|m| m.key),
+            Some("urine_acr".to_string())
+        );
+    }
+
+    #[test]
+    fn an_entry_without_a_dimension_keeps_the_old_lenient_behaviour() {
+        // **刻意不一刀切。** 词典里大量条目的 `units[]` 并不完整,而 `normalize_unit`
+        // 刻意不折大小写(`mU`≠`MU`,差 6 个数量级)—— 于是 `umol/l`(小写 L,OCR 最
+        // 常见的印法之一)对 creatinine 来说就是「族外单位」。对这种条目也拒绝,召回
+        // 的代价远大于收益。没声明 dimension = 单位族还没策展完,沿用旧行为。
+        assert!(dictionary_entries()
+            .iter()
+            .find(|e| e.key == "creatinine")
+            .is_some_and(|e| e.dimension.is_none()));
+        assert_eq!(
+            resolve("血清肌酐", Some("umol/l")).map(|m| m.key),
+            Some("creatinine".to_string())
+        );
+    }
+
+    #[test]
+    fn a_dimension_tagged_entry_is_never_reached_by_fuzzy() {
+        // A3 的另一半:「跨比值族禁止模糊」。声明了 dimension 的条目整条退出模糊匹配——
+        // 这一族里差一个字就是另一个化验(UPCR vs UACR),编辑距离在这儿是噪音不是信号。
+        assert!(resolve("尿白蛋白肌酐北", Some("mg/g")).is_none());
+    }
+
+    #[test]
+    fn urine_sediment_counts_split_by_printed_unit() {
+        // A32 ③:报告印「尿红细胞 8 个/HP」时,内置那条按**体积**计数的
+        // urine_rbc_count(/uL)会精确吃掉这一行,SLEDAI 血尿那 4 分于是永远算不出来,
+        // 界面显示「未知」,没有任何报错。根治 = 按印刷单位拆成两条,共用裸别名,
+        // **由单位选条**。
+        for (unit, want) in [
+            ("个/HP", "urine_rbc_hpf"),
+            ("/HP", "urine_rbc_hpf"),
+            ("/[HPF]", "urine_rbc_hpf"),
+            ("/uL", "urine_rbc_count"),
+            ("10*6/L", "urine_rbc_count"),
+        ] {
+            let m = resolve("尿红细胞", Some(unit)).unwrap_or_else(|| panic!("{unit} 该有命中"));
+            assert_eq!(m.key, want, "尿红细胞 + {unit}");
+            assert_eq!(m.confidence, 1.0, "两条都是精确别名命中");
+        }
+        // 白细胞侧用「尿白细胞计数」,**不是**裸「尿白细胞」—— 后者在词典里属于试纸
+        // 定性项 `urine_leukocyte_esterase`(2026-09-19 实查),不是这一对里的任何一条。
+        assert_eq!(
+            resolve("尿白细胞计数", Some("个/HP")).map(|m| m.key),
+            Some("urine_wbc_hpf".to_string())
+        );
+        assert_eq!(
+            resolve("尿白细胞计数", Some("/uL")).map(|m| m.key),
+            Some("urine_wbc_count".to_string())
+        );
+        // 没印单位时:**与拆条之前逐字相同** —— 取字典里靠前的那条(按体积)。
+        assert_eq!(
+            resolve("尿红细胞", None).map(|m| m.key),
+            Some("urine_rbc_count".to_string())
+        );
+    }
+
+    #[test]
+    fn the_split_pair_shares_aliases_but_never_shares_a_unit() {
+        // 共用别名之所以安全,只因为两条的单位族**不相交** —— 一个印刷单位永远只落进
+        // 一条。这条不变式一旦破了,`resolve` 就裁决不出来,退化成「靠字典顺序」。
+        let f = |k: &str| {
+            dictionary_entries()
+                .iter()
+                .find(|e| e.key == k)
+                .map(|e| {
+                    e.canonical_unit
+                        .iter()
+                        .map(|u| normalize_unit(u))
+                        .chain(e.units.iter().map(|r| normalize_unit(&r.unit)))
+                        .collect::<std::collections::BTreeSet<_>>()
+                })
+                .expect("键必须在")
+        };
+        for (a, b) in [
+            ("urine_rbc_hpf", "urine_rbc_count"),
+            ("urine_wbc_hpf", "urine_wbc_count"),
+        ] {
+            assert!(f(a).is_disjoint(&f(b)), "{a} 与 {b} 的单位族必须不相交");
+        }
+    }
+
+    #[test]
     fn resolve_fuzzy_matches_ocr_corrupted_names() {
         // 精确路径全部 miss 之后,`resolve` 才会退到模糊路径 —— 单字 OCR 误读、
         // 截断都应该救回来,且置信度必须低于精确/剥壳/OCR混淆表。
@@ -1781,10 +1936,13 @@ mod tests {
         // 配成 ca50,见 ch50_is_its_own_concept_and_never_lands_on_ca50)= 642。
         // +5 (2026-10-22 通用病程档案:voriconazole/lisinopril 两味药 + tacrolimus_level/
         // digoxin_level/voriconazole_level 三个血药浓度化验)= 647。
+        // +2 (2026-09-19:urine_rbc_hpf / urine_wbc_hpf,按面积计数的尿沉渣两项 ——
+        // 补之前「尿红细胞 8 个/HP」被按体积的条目吃掉,SLEDAI 血尿项永远算不出,
+        // 见 urine_sediment_counts_split_by_printed_unit)= 649。
         // A drift here means an entry was accidentally dropped or duplicated.
         assert_eq!(
             dictionary_entries().len(),
-            647,
+            649,
             "unexpected dictionary entry count"
         );
     }
@@ -1966,12 +2124,37 @@ mod tests {
         let mut seen: HashMap<(bool, String), String> = HashMap::new();
         for e in dictionary_entries() {
             let is_drug = e.category == Category::Drug;
-            for a in e.aliases.iter().chain(e.ocr_confusions.iter()) {
+            let aliases = e.aliases.iter().map(|a| (a, false));
+            let confusions = e.ocr_confusions.iter().map(|a| (a, true));
+            for (a, is_confusion) in aliases.chain(confusions) {
                 let k = (is_drug, normalize_term(a));
                 if let Some(prev) = seen.get(&k) {
-                    assert_eq!(
-                        prev, &e.key,
-                        "duplicate normalized alias {a:?} in entries {prev} and {}",
+                    // **唯一的例外:按印刷单位分家的两条。** 条件是两边都声明了
+                    // `dimension`、且单位族不相交 —— 那样一个印刷单位永远只落进一条,
+                    // `resolve` 裁决得出来。其余任何重复仍是错(会静默遮住一条定义)。
+                    // OCR 混淆表不分家:那张表仍是单值索引,重复会静默遮住。
+                    let unit_set = |key: &str| {
+                        dictionary_entries()
+                            .iter()
+                            .find(|x| x.key == key)
+                            .map(|x| {
+                                x.canonical_unit
+                                    .iter()
+                                    .map(|u| normalize_unit(u))
+                                    .chain(x.units.iter().map(|r| normalize_unit(&r.unit)))
+                                    .collect::<std::collections::BTreeSet<_>>()
+                            })
+                            .unwrap_or_default()
+                    };
+                    let prev_e = dictionary_entries().iter().find(|x| &x.key == prev);
+                    let split_ok = !is_confusion
+                        && prev_e.is_some_and(|p| p.dimension.is_some())
+                        && e.dimension.is_some()
+                        && unit_set(prev).is_disjoint(&unit_set(&e.key));
+                    assert!(
+                        prev == &e.key || split_ok,
+                        "duplicate normalized alias {a:?} in entries {prev} and {} —— \
+                         要共用别名,两条都得声明 dimension 且单位族不相交",
                         e.key
                     );
                 }

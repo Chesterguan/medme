@@ -3,11 +3,11 @@
 //! 这些测试**必须串行**跑:覆盖层是进程级全局状态。用一个互斥锁串起来,
 //! 而不是 `--test-threads=1`(那要求每个跑测试的人都记得加参数)。
 //!
-//! 拿 `urine_rbc_hpf`(高倍视野下的尿红细胞)当例子:UPCR 与 CH50 这一轮都补成了
-//! **内置**条目(`dictionary.json` 的 `urine_pcr` / `ch50`),拿它们当「内置没有的
-//! 分析物」会自相矛盾;SLEDAI 血尿项要的按高倍视野计数才是真正还缺的那条
-//! (Task 11–15)。**换算算术**的证据在 `parser/tests/overlay_end_to_end.rs`:/HP 与
-//! /uL 之间没有确定换算,这条夹具只有恒等行,证不了斜率。
+//! 拿 `urine_cast_hpf`(高倍视野下的尿管型)当例子:`urine_rbc_hpf` / `urine_wbc_hpf`
+//! 2026-09-19 起已内置,**不能**再拿它们当「内置没有的分析物」;UPCR 与 CH50 早就是
+//! 内置条目。尿管型仍不在内置里,是真正还缺的那条。**换算算术**的证据在
+//! `parser/tests/overlay_end_to_end.rs`:/HP 与 /uL 之间没有确定换算,这条夹具只有
+//! 恒等行,证不了斜率。
 use std::sync::Mutex;
 use terminology::Entry;
 
@@ -19,19 +19,18 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// 病种包定义的新分析物。内置只有按体积计数的 `urine_rbc_count`(/uL),与「每高倍
-/// 视野几个」**没有确定换算**(词典 `stool_wbc` 那条 note 写的同一条理由),所以这里
-/// 只有恒等行,`/HP` 与 `/[HPF]` 是同一个量的两种印法。
+/// 病种包定义的新分析物。**必须挑一个内置词典里没有的键** —— 内置永远优先,拿一个
+/// 内置已有的键当夹具,测的就不再是覆盖层了(`urine_rbc_hpf` 2026-09-19 起已内置)。
 ///
 /// 别名里**故意**混进一条内置已有的「尿红细胞」:包抢不走它,用例顺带钉住这件事。
-fn urine_rbc_hpf() -> Entry {
+fn overlay_analyte() -> Entry {
     serde_json::from_value(serde_json::json!({
-        "key": "urine_rbc_hpf", "canonical_name": "尿红细胞(高倍视野)", "category": "lab",
+        "key": "urine_cast_hpf", "canonical_name": "尿管型(高倍视野)", "category": "lab",
         "system": "urine", "panel": "尿液", "codes": {},
         "canonical_unit": "/[HPF]",
         "units": [{"unit": "/[HPF]", "slope": 1.0, "intercept": 0.0},
                   {"unit": "/HP", "slope": 1.0, "intercept": 0.0}],
-        "aliases": ["高倍镜下红细胞", "尿红细胞"]
+        "aliases": ["高倍镜下管型", "尿红细胞"]
     }))
     .expect("夹具条目必须解析")
 }
@@ -41,25 +40,32 @@ fn an_overlay_analyte_resolves_and_carries_its_units() {
     let _g = serial();
     terminology::set_overlay(vec![]);
     assert!(
-        terminology::resolve("高倍镜下红细胞", Some("/HP")).is_none(),
+        terminology::resolve("高倍镜下管型", Some("/HP")).is_none(),
         "内置词典里本来没有"
     );
 
-    terminology::set_overlay(vec![urine_rbc_hpf()]);
-    let m = terminology::resolve("高倍镜下红细胞", Some("/HP")).expect("覆盖层要认出来");
-    assert_eq!(m.key, "urine_rbc_hpf");
+    terminology::set_overlay(vec![overlay_analyte()]);
+    let m = terminology::resolve("高倍镜下管型", Some("/HP")).expect("覆盖层要认出来");
+    assert_eq!(m.key, "urine_cast_hpf");
     assert_eq!(m.confidence, 1.0, "精确别名命中 = 1.0,与内置同一条约定");
 
-    let e = terminology::entry_for("urine_rbc_hpf").expect("entry_for 也要查覆盖层");
+    let e = terminology::entry_for("urine_cast_hpf").expect("entry_for 也要查覆盖层");
     assert_eq!(e.canonical_unit.as_deref(), Some("/[HPF]"));
     assert!(e.units.iter().any(|u| u.unit == "/HP"));
 
-    // 包把内置的「尿红细胞」也写进了自己的别名里 —— 内置那条(按体积计数)纹丝不动。
+    // 包把内置的「尿红细胞」也写进了自己的别名里 —— 内置那两条(按体积/按面积)
+    // 谁都不会被抢走,印刷单位说了算。
     assert_eq!(
         terminology::resolve("尿红细胞", Some("/uL"))
             .expect("内置认得")
             .key,
         "urine_rbc_count"
+    );
+    assert_eq!(
+        terminology::resolve("尿红细胞", Some("个/HP"))
+            .expect("内置认得")
+            .key,
+        "urine_rbc_hpf"
     );
     terminology::set_overlay(vec![]);
 }
@@ -148,9 +154,9 @@ fn an_overlay_can_never_shadow_a_builtin_definition() {
 #[test]
 fn clearing_the_overlay_really_clears_it() {
     let _g = serial();
-    terminology::set_overlay(vec![urine_rbc_hpf()]);
-    assert!(terminology::entry_for("urine_rbc_hpf").is_some());
+    terminology::set_overlay(vec![overlay_analyte()]);
+    assert!(terminology::entry_for("urine_cast_hpf").is_some());
     terminology::set_overlay(vec![]);
-    assert!(terminology::entry_for("urine_rbc_hpf").is_none());
-    assert!(terminology::resolve("高倍镜下红细胞", Some("/HP")).is_none());
+    assert!(terminology::entry_for("urine_cast_hpf").is_none());
+    assert!(terminology::resolve("高倍镜下管型", Some("/HP")).is_none());
 }
