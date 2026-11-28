@@ -387,16 +387,27 @@ fn granular_casts_alone_do_not_score_there_is_no_verbatim_chinese_wording() {
 // --- C2:空态只在真的没东西可看时出 ------------------------------------------
 
 #[test]
-fn a_report_the_engine_cannot_score_still_expands_and_never_claims_there_are_no_labs() {
-    // 用户当天交了一张印着 `尿红细胞 8 /HPF`、`尿白细胞 12 /HPF` 的尿常规(两条都
-    // 过 SLEDAI 的 >5)。引擎读不懂它,但绝不能显示成「你还没去抽血」。
-    // 同时钉住裁决 (c):这两条必须落进 unscored,不许被当成「算过了、正常」。
-    let s = section(&[(TODAY, &lab_doc("尿红细胞 8 /HPF 0-5\n尿白细胞 12 /HPF 0-5"))]);
-    assert_eq!(s.body["score"], 0);
-    let u = ids(&s.body, "unscored");
-    assert!(u.contains(&"hematuria".to_string()), "unscored: {u:?}");
-    assert!(u.contains(&"pyuria".to_string()), "unscored: {u:?}");
-    assert!(hit_ids(&s.body).is_empty());
+fn a_per_hpf_urinalysis_scores_hematuria_and_pyuria_instead_of_staying_unscored() {
+    // 用户当天交了一张印着 `尿红细胞 8 /HPF`、`尿白细胞计数 12 /HPF` 的尿常规(两条都
+    // 过 SLEDAI 的 >5)。**2026-09-19 词典拆条之前**这里故意断言 0 分 + unscored:
+    // 内置只有按体积的 urine_rbc_count(/uL),`/HPF` 认不出来。现在内置有了
+    // urine_rbc_hpf / urine_wbc_hpf,这两条必须真算出来 —— 再显示「未知」就是
+    // 那条 silently-wrong 的临床值 bug 本身。
+    // 白细胞那条用「尿白细胞计数」而不是裸「尿白细胞」:后者是试纸酯酶定性项
+    // (`urine_leukocyte_esterase`),词典刻意不让计数条目抢它。
+    // 同时保留空态那半边:当天有单子,绝不能说「最近 10 天还没有化验结果」。
+    let s = section(&[(
+        TODAY,
+        &lab_doc("尿红细胞 8 /HPF 0-5\n尿白细胞计数 12 /HPF 0-5"),
+    )]);
+    assert_eq!(s.body["score"], 8, "血尿 4 + 脓尿 4");
+    let hits = hit_ids(&s.body);
+    assert!(hits.contains(&"hematuria".to_string()), "hits: {hits:?}");
+    assert!(hits.contains(&"pyuria".to_string()), "hits: {hits:?}");
+    assert!(
+        !ids(&s.body, "unscored").contains(&"hematuria".to_string()),
+        "已经能算的项不许再落 unscored"
+    );
     assert!(
         s.empty_hint.is_none(),
         "当天有单子,不许说「最近 10 天还没有化验结果」"

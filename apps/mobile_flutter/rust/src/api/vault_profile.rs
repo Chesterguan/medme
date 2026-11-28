@@ -291,6 +291,9 @@ fn alias_only_entry(key: &str, aliases: &[String]) -> terminology::Entry {
         units: Vec::new(),
         ingredient: None,
         aliases: aliases.to_vec(),
+        // 包定义的分析物**不许自己声明单位族封闭**:那是内置词典策展过的条目才有的
+        // 特权(声明了就能拒绝候选),包来自网络,不给它这个能力。
+        dimension: None,
         // OCR 混淆表是人工核过的误读对照,包不带这种东西。
         ocr_confusions: Vec::new(),
         note: None,

@@ -1685,6 +1685,7 @@
       "category": "lab",
       "system": "urine",
       "panel": "肾功能",
+      "dimension": "ratio_mg_per_g",
       "codes": {
         "loinc": "14959-1",
         "omop_concept_id": 3001802
@@ -1717,6 +1718,7 @@
       "category": "lab",
       "system": "urine",
       "panel": "肾功能",
+      "dimension": "ratio_mg_per_g",
       "codes": {
         "loinc": "2890-2",
         "omop_concept_id": 3001582
@@ -10344,6 +10346,7 @@
       "category": "lab",
       "system": "urine",
       "panel": "尿液",
+      "dimension": "per_ul",
       "codes": {
         "loinc": "30391-7",
         "omop_concept_id": 3002582
@@ -10379,6 +10382,7 @@
       "category": "lab",
       "system": "urine",
       "panel": "尿液",
+      "dimension": "per_ul",
       "codes": {
         "loinc": "30405-5",
         "omop_concept_id": 3018095
@@ -16550,6 +16554,127 @@
       ],
       "ocr_confusions": [],
       "note": "2026-10-22 通用病程档案补。LOINC 38370-3 = Voriconazole [Mass/volume] in Serum or Plasma(loinc.org 核过);谷浓度另有 73676-9,不收。"
+    },
+    {
+      "key": "urine_rbc_hpf",
+      "canonical_name": "尿红细胞(高倍视野)",
+      "category": "lab",
+      "system": "urine",
+      "panel": "尿液",
+      "dimension": "per_hpf",
+      "codes": {
+        "loinc": "13945-1",
+        "omop_concept_id": 3035124
+      },
+      "canonical_unit": "/[HPF]",
+      "units": [
+        {
+          "unit": "/[HPF]",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "/HPF",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "/HP",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "个/HP",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "个/HPF",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "/高倍视野",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "个/高倍视野",
+          "slope": 1.0,
+          "intercept": 0.0
+        }
+      ],
+      "aliases": [
+        "尿红细胞",
+        "尿红细胞计数",
+        "尿沉渣红细胞",
+        "尿RBC",
+        "U-RBC",
+        "RBC-U",
+        "Urine erythrocytes"
+      ],
+      "ocr_confusions": [],
+      "note": "按**面积**(每高倍视野)计数的尿沉渣红细胞,LOINC 13945-1(Erythrocytes [#/area] in Urine sediment by Microscopy high power field,PROPERTY=Naric;OMOP 标准概念 3035124,2026-09-19 对照本地 OMOP 库核过)。与 urine_rbc_count(30391-7,按体积 /uL)是两个不同的量:/HP 与 /uL 之间的换算取决于离心/浓缩倍数,**没有确定系数**,所以两条各有各的 units[],一行都不跨。别名与 urine_rbc_count **刻意重合**——报告上「尿红细胞」既可能印 /HP 也可能印 /uL,靠印刷单位选条(`dimension` 让 resolve 拒掉族外单位的那一条)。没印单位时按字典顺序回落到按体积那条,与拆条之前的行为逐字相同。SLEDAI-2K 血尿描述符用的是 /HP。"
+    },
+    {
+      "key": "urine_wbc_hpf",
+      "canonical_name": "尿白细胞(高倍视野)",
+      "category": "lab",
+      "system": "urine",
+      "panel": "尿液",
+      "dimension": "per_hpf",
+      "codes": {
+        "loinc": "5821-4",
+        "omop_concept_id": 3035583
+      },
+      "canonical_unit": "/[HPF]",
+      "units": [
+        {
+          "unit": "/[HPF]",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "/HPF",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "/HP",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "个/HP",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "个/HPF",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "/高倍视野",
+          "slope": 1.0,
+          "intercept": 0.0
+        },
+        {
+          "unit": "个/高倍视野",
+          "slope": 1.0,
+          "intercept": 0.0
+        }
+      ],
+      "aliases": [
+        "尿白细胞计数",
+        "尿沉渣白细胞",
+        "尿WBC",
+        "U-WBC",
+        "WBC-U",
+        "Urine leukocytes"
+      ],
+      "ocr_confusions": [],
+      "note": "同 urine_rbc_hpf:按面积计数,LOINC 5821-4(Leukocytes [#/area] in Urine sediment by Microscopy high power field;OMOP 3035583,同日核过),与按体积的 urine_wbc_count(30405-5)不跨换算。别名与 urine_wbc_count **逐条相同**(由印刷单位选条)。裸「尿白细胞」刻意不收:那个别名 2026-09-19 实查归 urine_leukocyte_esterase(试纸定性项,没有 canonical_unit),抢过来会把一个定性项变成计数项;裸「白细胞」/「WBC」/「LEU」同样不收,那是血常规项。"
     }
   ]
 }
