@@ -127,6 +127,45 @@ const ROUTE_WORDS: &[&str] = &[
     "鼻饲",
 ];
 
+/// 处方行上「包装规格」的形状:`5mg×60片`、`0.5g*20片`、`5mg x 60`。规格里的那个
+/// 剂量**不是医嘱用量**——把它读成用量,激素日剂量就直接错(A32 ⑥)。
+fn spec_shape_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(
+            r"(?i)\d+(?:\.\d+)?\s*(?:µg|μg|mcg|mg|iu|ml|ug|g|u)\s*[x×*]\s*\d+\s*(?:片|粒|袋|支|丸|ml)?",
+        )
+        .expect("spec shape re")
+    })
+}
+
+/// 「用法」段的起点词:处方笺把医嘱用量写在这些词**后面**。
+/// **只在同一行上还印着规格时**才拿它当切点(见 [`parse_dose`]):没有规格的行里,
+/// 「每晚一次」的「一次」会把真剂量切到界外。
+const USAGE_MARKERS: &[&str] = &[
+    "用法", "用量", "服法", "Sig", "sig", "每次", "一次", "每日", "一日", "每天",
+];
+
+/// 剂型词单独成名不是药名(B4:药名切分不允许以剂型词单独成名)。
+const FORM_WORDS: &[&str] = &[
+    "片",
+    "粒",
+    "胶囊",
+    "颗粒",
+    "注射液",
+    "注射剂",
+    "乳膏",
+    "软膏",
+    "滴眼液",
+    "口服液",
+    "丸",
+    "散",
+    "栓",
+    "贴",
+    "喷雾剂",
+    "混悬液",
+];
+
 /// Canonicalize a matched dose unit to a stable spelling. CJK units pass through.
 fn normalize_dose_unit(u: &str) -> String {
     match u.to_lowercase().as_str() {
@@ -141,13 +180,36 @@ fn normalize_dose_unit(u: &str) -> String {
 }
 
 /// Parse the first dose token: `(number, canonical_unit, byte_start_of_token)`.
-/// Skips matches that are actually a **concentration** unit (the unit is followed
-/// by `/`, e.g. `132 g/L`, `12 mg/L`, `7.4 mmol/L`) — those are lab results, not
-/// drug doses. Without this a lab row like `血红蛋白 132 g/L` would be mis-parsed
-/// as a med with dose `132g` and leak into 用药.
+///
+/// B4「宁缺毋错」:同一行上既有**规格**(`5mg×60片`)又有**用法**(`用法:7.5mg`)时
+/// 只取用法段里的那个;有规格却认不出用法段 → 返回 `None`(下游进「换算不了」),
+/// **绝不拿规格冒充用量**。没有规格的行行为与本规则之前逐字相同。
+///
+/// 另外跳过两类「看着像剂量」的化验行:单位后紧跟 `/`(浓度,`132 g/L`)或紧跟字母
+/// (`112 umol/L` 的 `112 u`)。
 fn parse_dose(line: &str) -> Option<(f64, String, usize)> {
+    let spec: Vec<(usize, usize)> = spec_shape_re()
+        .find_iter(line)
+        .map(|m| (m.start(), m.end()))
+        .collect();
+    let scan_from = if spec.is_empty() {
+        0
+    } else {
+        // 有规格:必须先找到用法段,否则这一行给不出医嘱用量。
+        USAGE_MARKERS.iter().filter_map(|w| line.find(w)).min()?
+    };
     for caps in dose_re().captures_iter(line) {
         let whole = caps.get(0)?;
+        if whole.start() < scan_from {
+            continue;
+        }
+        // 落在规格区间里的剂量一律不算(用法段写在规格前面的少数写法也挡得住)。
+        if spec
+            .iter()
+            .any(|(s, e)| whole.start() >= *s && whole.end() <= *e)
+        {
+            continue;
+        }
         let after = &line[whole.end()..];
         if after.starts_with('/') {
             continue; // 浓度单位(g/L、mg/L…),不是剂量
@@ -203,7 +265,9 @@ fn strip_trailing_route(mut name: &str) -> &str {
 /// 这段文字里有没有剂量或频次 —— 有,说明它是一条完整的药行;没有,多半是
 /// 被换行截断的半个名字(`aggregate::rejoin_wrapped_lines` 用它判断要不要接行)。
 pub(crate) fn has_dose_or_frequency(line: &str) -> bool {
-    parse_dose(line).is_some() || parse_frequency(line).is_some()
+    // 只有规格没有用法的行,B4 之后 `parse_dose` 故意返回 `None`;但它仍是一条
+    // 完整的药行(下一行不是它的续行),所以规格形状也算「有剂量」。
+    parse_dose(line).is_some() || parse_frequency(line).is_some() || spec_shape_re().is_match(line)
 }
 
 /// 处方里的「剂量/用法说明行」不是药(`一次1片 一日2次`、`用法:口服`),正则路径和
@@ -310,6 +374,8 @@ pub(crate) fn name_part(line: &str) -> String {
     let end = [
         parse_dose(cleaned).map(|d| d.2),
         parse_frequency(cleaned).map(|f| f.2),
+        // 只有规格的行 `parse_dose` 恒 `None`,名字仍应截在规格之前。
+        spec_shape_re().find(cleaned).map(|m| m.start()),
     ]
     .into_iter()
     .flatten()
@@ -335,12 +401,17 @@ pub fn extract_meds(text: &str) -> Vec<MedObservation> {
         let freq = parse_frequency(cleaned);
 
         // 3) name = everything before the earliest of dose/frequency; strip route.
-        let name_end = match (dose.as_ref().map(|d| d.2), freq.as_ref().map(|f| f.2)) {
-            (Some(a), Some(b)) => a.min(b),
-            (Some(a), None) => a,
-            (None, Some(b)) => b,
-            (None, None) => cleaned.len(),
-        };
+        // 名字也截在**规格**之前:「醋酸泼尼松片 5mg×60片 用法:7.5mg」里,剂量
+        // 起点在「用法」之后,只按 dose/freq 截会把规格和「用法」一起算进药名。
+        let name_end = [
+            dose.as_ref().map(|d| d.2),
+            freq.as_ref().map(|f| f.2),
+            spec_shape_re().find(cleaned).map(|m| m.start()),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(cleaned.len());
         let name = strip_trailing_route(&cleaned[..name_end]);
         // Need a real name token (a letter or CJK char), else it's not a med line.
         if name.is_empty() || !name.chars().any(|c| c.is_alphabetic()) {
@@ -358,6 +429,10 @@ pub fn extract_meds(text: &str) -> Vec<MedObservation> {
             continue;
         }
         if is_usage_line(name) {
+            continue;
+        }
+        // 剂型词单独成名不是药(B4)。留着它,「用药」里会多出一条名叫「片」的未知药。
+        if FORM_WORDS.contains(&name) {
             continue;
         }
 
@@ -469,6 +544,47 @@ mod tests {
         assert_eq!(o.dose_unit.as_deref(), Some("U"));
         assert_eq!(o.frequency.as_deref(), Some("tid ac"));
         assert_eq!(o.frequency_raw.as_deref(), Some("三餐前"));
+    }
+
+    #[test]
+    fn usage_beats_package_spec_on_a_prescription_line() {
+        // A32 ⑥ / ADR 0011 记的真实写法:一行里既有包装规格(5mg×60片)又有医嘱用法
+        // (7.5mg 每日一次)。取规格 = 激素日剂量直接错,而 DORIS「泼尼松 <5mg」与
+        // 骨保护「≥7.5mg」两条阈值读的正是这个数。
+        let o = &extract_meds("醋酸泼尼松片 5mg×60片 用法:7.5mg 每日一次")[0];
+        assert_eq!(o.raw_name, "醋酸泼尼松片", "规格和「用法」都不能进药名");
+        assert_eq!(o.drug_key.as_deref(), Some("prednisone"), "药还是要认得出");
+        assert_eq!(o.dose_num, Some(7.5), "必须取用法,不是规格");
+        assert_eq!(o.dose_unit.as_deref(), Some("mg"));
+        assert_eq!(o.frequency.as_deref(), Some("qd"));
+    }
+
+    #[test]
+    fn spec_without_usage_yields_no_dose_at_all() {
+        // 只有规格、没有用法 —— 这一行**读不出医嘱用量**。宁可没有剂量(下游进
+        // 「换算不了」并如实显示),也绝不拿包装规格冒充每日用量。
+        let o = &extract_meds("醋酸泼尼松片 5mg×60片")[0];
+        assert_eq!(o.raw_name, "醋酸泼尼松片");
+        assert_eq!(o.drug_key.as_deref(), Some("prednisone"), "药还是认得");
+        assert_eq!(o.dose_num, None, "规格不是剂量");
+        assert_eq!(o.dose_unit, None);
+    }
+
+    #[test]
+    fn a_bare_dosage_form_word_is_not_a_drug_name() {
+        // 切分把剂型词单独留成了名字(「片」「胶囊」)——那不是药,今天却会作为
+        // drug_key = None 的未知药留在「用药」里污染列表。
+        assert!(extract_meds("片 0.5g bid").is_empty());
+        assert!(extract_meds("注射液 5ml qd").is_empty());
+    }
+
+    #[test]
+    fn a_line_with_no_spec_is_unchanged_by_the_usage_rule() {
+        // 回归护栏:没有规格的行,行为与加这条规则之前**逐字相同**。
+        // 「每晚一次」里含着 USAGE_MARKERS 的「一次」,若无条件按它切,20mg 会被切没。
+        let o = &extract_meds("阿托伐他汀钙片 20mg 每晚一次")[0];
+        assert_eq!(o.dose_num, Some(20.0));
+        assert_eq!(o.frequency.as_deref(), Some("qn"));
     }
 
     #[test]
